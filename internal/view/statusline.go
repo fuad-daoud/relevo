@@ -99,8 +99,8 @@ func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns in
 	}
 
 	mid := "r" + strconv.Itoa(round) + " · " + row.Actor
-	if row.Candidate != "" {
-		mid += " on " + row.Harness
+	if row.On != "" {
+		mid += " on " + row.On
 	}
 	if row.Reason != "" {
 		mid += " · " + row.Reason
@@ -341,12 +341,16 @@ type StatusLineRow struct {
 	ReportRound int    `json:"report_round,omitempty"`
 	Harness     string `json:"harness"`
 	Candidate   string `json:"candidate"`
-	Waiting     string `json:"waiting"`
-	Clock       string `json:"clock"`
-	Tokens      string `json:"tokens"`
-	LastKind    string `json:"last_kind"`
-	LastTS      string `json:"last_ts"`
-	Route       string `json:"route"`
+	// On is what the row's actor runs on, as "actor on X" names it: the
+	// candidate's short name, else its harness when the set no longer
+	// holds the token, with "@server" for a remote runner.
+	On       string `json:"on"`
+	Waiting  string `json:"waiting"`
+	Clock    string `json:"clock"`
+	Tokens   string `json:"tokens"`
+	LastKind string `json:"last_kind"`
+	LastTS   string `json:"last_ts"`
+	Route    string `json:"route"`
 	// Actor is who runs the binding: b.Role when it is set, else "builder",
 	// because a builder binding stores an empty role (normRole).
 	Actor string `json:"actor"`
@@ -380,6 +384,16 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 	harness := harnessSegment(b.BuilderCandidate)
 	if b.Server != "" {
 		harness += "@" + b.Server
+	}
+	var on string
+	if b.BuilderCandidate != "" {
+		on = b.BuilderName
+		if on == "" {
+			on = harnessSegment(b.BuilderCandidate)
+		}
+		if b.Server != "" {
+			on += "@" + b.Server
+		}
 	}
 	var lastKind, lastTS string
 	if b.LastPayload != nil {
@@ -425,6 +439,7 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		ReportRound: reportRound,
 		Harness:     harness,
 		Candidate:   b.BuilderCandidate,
+		On:          on,
 		Waiting:     waiting(b),
 		Clock:       roundClock(b, now),
 		Tokens:      roundTokens(b),
