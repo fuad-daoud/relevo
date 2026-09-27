@@ -23,6 +23,17 @@ var Defaults = map[string]Default{
 	"codex":    {"openai", "gpt-5.6-terra:high"},
 }
 
+// BuilderKinds names the harness kinds Defaults can seed a builder for, in harness.All() order: a fixed order, so the note init prints reads the same on every run.
+func BuilderKinds() []string {
+	out := make([]string, 0, len(Defaults))
+	for _, h := range harness.All() {
+		if _, ok := Defaults[h.Kind]; ok {
+			out = append(out, h.Kind)
+		}
+	}
+	return out
+}
+
 // PlannerDefault is a reader actor config init seeds beside the builder: the
 // actor name, the harness kind whose binary must be on PATH, and its one
 // candidate's provider and model.

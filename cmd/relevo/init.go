@@ -98,7 +98,7 @@ func cmdInit(args []string) error {
 		return err
 	}
 	if len(actorSet["builder"].Candidates) == 0 {
-		fmt.Println(`note: no builder candidate (claude only plans); add one: relevo config set actors.builder.candidates '["<name>"]'`)
+		fmt.Printf("note: no builder candidate (claude only plans); add one from a builder harness (%s): relevo config set actors.builder.candidates '[\"<name>\"]'\n", strings.Join(setup.BuilderKinds(), ", "))
 	}
 
 	if !*noAgents {
