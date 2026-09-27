@@ -43,8 +43,8 @@ func mastermindOpenTimed(path string) (*db.DB, func()) {
 	}
 }
 
-// mastermindPriorIDFunc supplies §3.5's "reuse the db row's id". A nil handle
-// means "no prior id" and Init mints one.
+// mastermindPriorIDFunc reuses a database row's id for (kind, session). A nil
+// handle means "no prior id" and Init mints one.
 func mastermindPriorIDFunc(d *db.DB) func(kind, session string) (string, bool) {
 	if d == nil {
 		return nil
@@ -242,10 +242,10 @@ func mastermindWriteConsent(rt relevo.Runtime, cwd string, c db.Consent) error {
 }
 
 // cmdMasterMindGuide renders the model-facing text for a location's consent
-// answer (#632): the guide when the repository answered yes, the ask-note when
-// it has not, and nothing when it answered no or is not a repository. The
-// opencode plugin calls it once per session and pushes the text into the
-// session's system instructions.
+// answer: the guide when the repository answered yes, the ask-note when it has
+// not, and nothing when it answered no or is not a repository. The opencode
+// plugin calls it once per session and pushes the text into the session's
+// system instructions.
 func cmdMasterMindGuide(args []string) error {
 	fs := flag.NewFlagSet("guide", flag.ContinueOnError)
 	cwdFlag := fs.String("cwd", "", "the session's working directory (default: the process cwd)")
