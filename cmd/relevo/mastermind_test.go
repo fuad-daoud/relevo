@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -32,6 +35,70 @@ func mastermindRegistryAt(t *testing.T, state string) *mastermind.DBRegistry {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Root: filepath.Join(dir, "masterminds")}
+}
+
+// mastermindConsentRepo makes a git repository, stores an answer for it in the
+// state root when it is not unset, and returns the repository directory. A
+// test then chdirs there and runs a verb the way a session would.
+func mastermindConsentRepo(t *testing.T, state string, c db.Consent) string {
+	t.Helper()
+	dir := t.TempDir()
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if c == db.ConsentUnset {
+		return dir
+	}
+
+	common, err := filepath.EvalSymlinks(filepath.Join(dir, ".git"))
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	root := filepath.Join(state, "relevo")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatalf("MkdirAll %s: %v", root, err)
+	}
+	d, err := db.Open(filepath.Join(root, "relevo.db"))
+	if err != nil {
+		t.Fatalf("open relevo.db: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if _, err := d.SetRepoConsent(db.Repo{CommonDir: &common}, c, time.Now()); err != nil {
+		t.Fatalf("SetRepoConsent: %v", err)
+	}
+	return dir
+}
+
+// mastermindRepoConsent reads the answer stored for repoDir's repository.
+func mastermindRepoConsent(t *testing.T, state, repoDir string) db.Consent {
+	t.Helper()
+	common, err := filepath.EvalSymlinks(filepath.Join(repoDir, ".git"))
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	d, err := db.Open(filepath.Join(state, "relevo", "relevo.db"))
+	if err != nil {
+		t.Fatalf("open relevo.db: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	c, err := d.RepoConsent(db.Repo{CommonDir: &common})
+	if err != nil {
+		t.Fatalf("RepoConsent: %v", err)
+	}
+	return c
+}
+
+// mastermindRecordsAt lists the registry's records, so a test can pin that a
+// gated hook registered nothing.
+func mastermindRecordsAt(t *testing.T, state string) []mastermind.Record {
+	t.Helper()
+	recs, err := mastermindRegistryAt(t, state).List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	return recs
 }
 
 // stdinFile is a temp file holding payload, rewound and ready to be os.Stdin.
@@ -115,8 +182,9 @@ func TestMasterMindInitHookWritesEnvFile(t *testing.T) {
 	envFile := filepath.Join(t.TempDir(), "claude-env")
 	t.Setenv("CLAUDE_ENV_FILE", envFile)
 	t.Setenv("CLAUDE_CODE_AGENT", "architect")
+	repo := mastermindConsentRepo(t, state, db.ConsentYes)
 
-	payload := `{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-abc","transcript_path":"/tmp/t.jsonl","cwd":"/tmp/mastermind-cwd"}`
+	payload := fmt.Sprintf(`{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-abc","transcript_path":"/tmp/t.jsonl","cwd":%q}`, repo)
 	stdout, _, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
 	if err != nil {
 		t.Fatalf("run = %v, want exit 0", err)
@@ -144,7 +212,7 @@ func TestMasterMindInitHookWritesEnvFile(t *testing.T) {
 	if rec.Name != "architect-1" {
 		t.Errorf("Name = %q, want architect-1", rec.Name)
 	}
-	if rec.TranscriptLocator != "/tmp/t.jsonl" || rec.CWD != "/tmp/mastermind-cwd" {
+	if rec.TranscriptLocator != "/tmp/t.jsonl" || rec.CWD != repo {
 		t.Errorf("record = %+v, want the hook payload's transcript and cwd", rec)
 	}
 	if rec.HostPID != os.Getppid() {
@@ -170,8 +238,9 @@ func TestMasterMindInitHookWithoutEnvFileSaysSo(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("CLAUDE_ENV_FILE", "")
 	t.Setenv("CLAUDE_CODE_AGENT", "architect")
+	repo := mastermindConsentRepo(t, state, db.ConsentYes)
 
-	payload := `{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-noenv","cwd":"/tmp/mastermind-cwd"}`
+	payload := fmt.Sprintf(`{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-noenv","cwd":%q}`, repo)
 	stdout, _, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
 	if err != nil {
 		t.Fatalf("run = %v, want exit 0", err)
@@ -196,6 +265,180 @@ func TestMasterMindInitHookWithoutEnvFileSaysSo(t *testing.T) {
 	}
 	if len(records) != 1 {
 		t.Fatalf("registry holds %d records, want exactly 1", len(records))
+	}
+}
+
+// TestMasterMindInitHookAsksWhenRepoUnanswered pins the unset answer: the hook
+// registers nothing and injects the ask-note, so the model puts the question
+// to the human.
+func TestMasterMindInitHookAsksWhenRepoUnanswered(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("CLAUDE_ENV_FILE", "")
+	repo := mastermindConsentRepo(t, state, db.ConsentUnset)
+
+	payload := fmt.Sprintf(`{"hook_event_name":"SessionStart","session_id":"sess-ask","cwd":%q}`, repo)
+	stdout, _, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
+	if err != nil {
+		t.Fatalf("run = %v, want exit 0", err)
+	}
+
+	var env hookEnvelope
+	if err := json.Unmarshal(bytes.TrimSpace(stdout), &env); err != nil {
+		t.Fatalf("stdout is not the hook envelope: %v: %q", err, stdout)
+	}
+	if got := env.HookSpecificOutput.AdditionalContext; got != mastermind.AskNote {
+		t.Errorf("additionalContext = %q, want the ask-note", got)
+	}
+	if recs := mastermindRecordsAt(t, state); len(recs) != 0 {
+		t.Errorf("registry holds %d records, want none", len(recs))
+	}
+}
+
+// TestMasterMindInitHookStaysSilentWhenRepoSaysNo pins the no answer: no
+// context and no record.
+func TestMasterMindInitHookStaysSilentWhenRepoSaysNo(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("CLAUDE_ENV_FILE", "")
+	repo := mastermindConsentRepo(t, state, db.ConsentNo)
+
+	payload := fmt.Sprintf(`{"hook_event_name":"SessionStart","session_id":"sess-no","cwd":%q}`, repo)
+	stdout, _, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
+	if err != nil {
+		t.Fatalf("run = %v, want exit 0", err)
+	}
+	if got := strings.TrimSpace(string(stdout)); got != "{}" {
+		t.Errorf("stdout = %q, want {}", got)
+	}
+	if recs := mastermindRecordsAt(t, state); len(recs) != 0 {
+		t.Errorf("registry holds %d records, want none", len(recs))
+	}
+}
+
+// TestMasterMindInitHookIgnoresANonRepo pins the no-repository rule: there is
+// nothing to remember, so the session is left entirely alone.
+func TestMasterMindInitHookIgnoresANonRepo(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("CLAUDE_ENV_FILE", "")
+
+	payload := fmt.Sprintf(`{"hook_event_name":"SessionStart","session_id":"sess-nowhere","cwd":%q}`, t.TempDir())
+	stdout, _, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
+	if err != nil {
+		t.Fatalf("run = %v, want exit 0", err)
+	}
+	if got := strings.TrimSpace(string(stdout)); got != "{}" {
+		t.Errorf("stdout = %q, want {}", got)
+	}
+	if recs := mastermindRecordsAt(t, state); len(recs) != 0 {
+		t.Errorf("registry holds %d records, want none", len(recs))
+	}
+}
+
+// TestMasterMindEnableWritesConsentAndRegisters pins the yes answer: the repo
+// gains the answer and the calling session a record.
+func TestMasterMindEnableWritesConsentAndRegisters(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("CLAUDE_ENV_FILE", "")
+	t.Setenv("CLAUDE_CODE_AGENT", "architect")
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sess-enable")
+	repo := mastermindConsentRepo(t, state, db.ConsentUnset)
+	t.Chdir(repo)
+
+	stdout, _, err := captureOutput(t, func() error { return run([]string{"mastermind", "enable", "--repo"}) })
+	if err != nil {
+		t.Fatalf("enable --repo: %v", err)
+	}
+	if !strings.Contains(string(stdout), "MasterMind architect-1 (mm_") {
+		t.Errorf("enable printed %q, want the registered MasterMind", stdout)
+	}
+	if !strings.Contains(string(stdout), "will register this repository's sessions") {
+		t.Errorf("enable printed %q, want the repo confirmation", stdout)
+	}
+
+	if c := mastermindRepoConsent(t, state, repo); c != db.ConsentYes {
+		t.Errorf("repo consent = %q, want yes", c)
+	}
+	recs := mastermindRecordsAt(t, state)
+	if len(recs) != 1 || recs[0].SessionID != "sess-enable" {
+		t.Errorf("records = %+v, want the calling session's one record", recs)
+	}
+}
+
+// TestMasterMindDisableWritesNo pins the no answer.
+func TestMasterMindDisableWritesNo(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	repo := mastermindConsentRepo(t, state, db.ConsentYes)
+	t.Chdir(repo)
+
+	stdout, _, err := captureOutput(t, func() error { return run([]string{"mastermind", "disable", "--repo"}) })
+	if err != nil {
+		t.Fatalf("disable --repo: %v", err)
+	}
+	if !strings.Contains(string(stdout), "will not register") {
+		t.Errorf("disable printed %q, want the confirmation line", stdout)
+	}
+	if c := mastermindRepoConsent(t, state, repo); c != db.ConsentNo {
+		t.Errorf("repo consent = %q, want no", c)
+	}
+}
+
+// TestMasterMindGuideStates pins the verb the opencode plugin reads: the state
+// word, the text per answer, and the record an enabled opencode session gets.
+func TestMasterMindGuideStates(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+
+	type guideOut struct {
+		State string `json:"state"`
+		Text  string `json:"text"`
+		Repo  string `json:"repo"`
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+	}
+	runGuide := func(t *testing.T, cwd string, extra ...string) guideOut {
+		t.Helper()
+		args := append([]string{"mastermind", "guide", "--json", "--cwd", cwd}, extra...)
+		stdout, _, err := captureOutput(t, func() error { return run(args) })
+		if err != nil {
+			t.Fatalf("guide %v: %v", args, err)
+		}
+		var out guideOut
+		if err := json.Unmarshal(stdout, &out); err != nil {
+			t.Fatalf("guide --json output %q: %v", stdout, err)
+		}
+		return out
+	}
+
+	unanswered := mastermindConsentRepo(t, state, db.ConsentUnset)
+	if out := runGuide(t, unanswered); out.State != "ask" || out.Text != mastermind.AskNote || out.Repo == "" {
+		t.Errorf("unset guide = %+v, want ask with the ask-note", out)
+	}
+
+	refused := mastermindConsentRepo(t, state, db.ConsentNo)
+	if out := runGuide(t, refused); out.State != "disabled" || out.Text != "" {
+		t.Errorf("no guide = %+v, want disabled with no text", out)
+	}
+
+	if out := runGuide(t, t.TempDir()); out.State != "disabled" || out.Text != "" {
+		t.Errorf("non-repo guide = %+v, want disabled with no text", out)
+	}
+
+	enabled := mastermindConsentRepo(t, state, db.ConsentYes)
+	out := runGuide(t, enabled, "--kind", "opencode", "--session", "ses_abc123")
+	if out.State != "enabled" || !strings.Contains(out.Text, mastermind.Guide()) {
+		t.Errorf("enabled guide = %+v, want enabled with the guide", out)
+	}
+	if out.ID == "" || out.Name != "opencode-1" {
+		t.Errorf("enabled guide = %+v, want the created opencode record's id and name", out)
+	}
+	recs := mastermindRecordsAt(t, state)
+	if len(recs) != 1 || recs[0].ID != out.ID {
+		t.Errorf("records = %+v, want the one the guide created", recs)
 	}
 }
 

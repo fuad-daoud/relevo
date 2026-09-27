@@ -64,13 +64,24 @@ type MasterMindCheckInput struct {
 
 	Stale   []string // mastermind records seen over 7 days ago with no live binding
 	Running string   // relevo's own version, compared with the installed plugin's; "" skips it
+
+	// ConsentKnown is the repository consent read succeeded; false leaves the
+	// row out. RepoKnown says the cwd resolved to a repository at all.
+	ConsentKnown bool
+	RepoKnown    bool
+	Consent      mastermind.Consent
 }
 
 // MasterMindChecks reports the plugin rows for Claude Code, the installed
-// plugin's SessionStart hook, this session's mastermind, and the stale-record
-// note. Leaving every field zero reports nothing.
+// plugin's SessionStart hook, this session's mastermind, the repository's
+// consent answer, and the stale-record note. Leaving every field zero reports
+// nothing.
 func MasterMindChecks(in MasterMindCheckInput) []Check {
 	var checks []Check
+
+	if in.ConsentKnown {
+		checks = append(checks, consentCheck(in))
+	}
 
 	if in.Claude {
 		checks = append(checks, pluginEnabledCheck(in.Home, in.Repo))
@@ -92,6 +103,42 @@ func MasterMindChecks(in MasterMindCheckInput) []Check {
 	}
 
 	return checks
+}
+
+// consentCheck is the repository answer row: OK when sessions here
+// register, INFO when they ask or stay out. The Fix field always names the
+// command that changes the answer.
+func consentCheck(in MasterMindCheckInput) Check {
+	switch {
+	case !in.RepoKnown:
+		return Check{
+			Name:     "consent",
+			Severity: SevInfo,
+			Detail:   "not in a git repository: relevo registers no session here",
+			Fix:      "run relevo doctor inside the repository, or relevo mastermind init by hand",
+		}
+	case in.Consent == mastermind.ConsentYes:
+		return Check{
+			Name:     "consent",
+			Severity: SevOK,
+			Detail:   "yes: sessions in this repository register as MasterMinds",
+			Fix:      "relevo mastermind disable --repo",
+		}
+	case in.Consent == mastermind.ConsentNo:
+		return Check{
+			Name:     "consent",
+			Severity: SevInfo,
+			Detail:   "no: relevo registers and briefs no session in this repository",
+			Fix:      "relevo mastermind enable --repo",
+		}
+	default:
+		return Check{
+			Name:     "consent",
+			Severity: SevInfo,
+			Detail:   "unset: the next session asks whether to become this repository's MasterMind",
+			Fix:      "relevo mastermind enable --repo (or disable --repo)",
+		}
+	}
 }
 
 // mastermindSessionCheck is the mastermind row for a detected Claude Code session:

@@ -27,11 +27,14 @@ import (
 // SessionStart hook must never block a session on sqlite.
 const mastermindPriorIDTimeout = 2 * time.Second
 
-// cmdMasterMind dispatches `relevo mastermind init|list|rename|forget`
-// (#303 §4.7). It touches no harness:
+// cmdMasterMind dispatches `relevo mastermind init|enable|disable|guide|list|rename|forget`
+// (#303 §4.7, #632). It touches no harness:
 // a mastermind record is relevo's own identity, not a pane.
 func cmdMasterMind(args []string) error {
 	const usage = `usage: relevo mastermind init [--name N] [--kind K --session S] [--hook claude]
+       relevo mastermind enable [--repo] [--kind K --session S]
+       relevo mastermind disable [--repo]
+       relevo mastermind guide [--cwd DIR] [--kind K --session S] [--json]
        relevo mastermind list [--json]
        relevo mastermind rename <id|name> <new-name>
        relevo mastermind forget <id|name>`
@@ -44,6 +47,12 @@ func cmdMasterMind(args []string) error {
 	switch args[0] {
 	case "init":
 		return cmdMasterMindInit(args[1:])
+	case "enable":
+		return cmdMasterMindEnable(args[1:])
+	case "disable":
+		return cmdMasterMindDisable(args[1:])
+	case "guide":
+		return cmdMasterMindGuide(args[1:])
 	case "list":
 		return cmdMasterMindList(args[1:])
 	case "rename":
@@ -111,27 +120,16 @@ func cmdMasterMindInit(args []string) error {
 
 	in := mastermind.InitInput{Name: *name, CWD: cwd, Now: rt.Now()}
 
-	switch {
-	case *kind != "" || *session != "":
-		if *kind == "" || *session == "" {
-			return fmt.Errorf("relevo mastermind init needs both --kind and --session, or neither")
-		}
-		in.Kind, in.SessionID = *kind, *session
-	default:
-		ident, ok := mastermind.Detect(os.Getenv, os.Getppid())
-		if !ok {
-			return fmt.Errorf("not in a detectable mastermind session: pass --kind and --session")
-		}
-		in.Kind = ident.Kind
-		in.SessionID = ident.SessionID
-		in.Agent = os.Getenv("CLAUDE_CODE_AGENT")
-		in.HostPID = ident.HostPID
-		in.HostStartedAt = mastermindHostStart(ident.HostPID)
+	caller, err := mastermindCaller(rt, cwd, *kind, *session)
+	if err != nil {
+		return err
 	}
+	in.Kind, in.SessionID = caller.Kind, caller.SessionID
+	in.Agent, in.HostPID, in.HostStartedAt = caller.Agent, caller.HostPID, caller.HostStartedAt
 
-	prior, closePrior := mastermindPriorID(rt.Store.DBPath())
-	defer closePrior()
-	in.PriorID = prior
+	d, closeDB := mastermindOpenTimed(rt.Store.DBPath())
+	defer closeDB()
+	in.PriorID = mastermindPriorIDFunc(d)
 
 	reg, err := mastermindRegistry(rt)
 	if err != nil {
@@ -165,12 +163,34 @@ func mastermindInitHook(nameFlag string) error {
 		return mastermindInitHookFailure(err)
 	}
 
+	// The repo's answer gates the hook before anything is written. A cwd the
+	// hook cannot resolve to a repository is left alone: there is nothing to
+	// remember, so there is nothing to ask.
+	ref := mastermindRepoOf(context.Background(), rt, in.CWD)
+	if !mastermindRepoKnown(ref) {
+		_, _ = os.Stdout.Write(mastermind.HookConsent(""))
+		return nil
+	}
+
+	// One timed open serves both the prior id and the consent read, so the
+	// hook never waits on sqlite. A read that did not arrive reads as unset --
+	// the ask, never a silent registration.
+	d, closeDB := mastermindOpenTimed(rt.Store.DBPath())
+	defer closeDB()
+	consent := mastermind.ConsentUnset
+	if d != nil {
+		if c, err := d.RepoConsent(ref); err == nil {
+			consent = c
+		}
+	}
+	if consent != mastermind.ConsentYes {
+		_, _ = os.Stdout.Write(mastermind.HookConsent(mastermind.ConsentText(consent, nil)))
+		return nil
+	}
+
 	// The hook's parent is the Claude Code process, which is the same pid
 	// CLAUDE_PID names in a Bash tool and `relevo mcp`'s parent (§1.1).
 	host := os.Getppid()
-
-	prior, closePrior := mastermindPriorID(rt.Store.DBPath())
-	defer closePrior()
 
 	reg, err := mastermindRegistry(rt)
 	if err != nil {
@@ -186,7 +206,7 @@ func mastermindInitHook(nameFlag string) error {
 		HostPID:        host,
 		HostStartedAt:  mastermindHostStart(host),
 		Now:            rt.Now(),
-		PriorID:        prior,
+		PriorID:        mastermindPriorIDFunc(d),
 	})
 	if err != nil {
 		return mastermindInitHookFailure(err)
@@ -236,48 +256,10 @@ func mastermindHostStart(pid int) int64 {
 	return started.Unix()
 }
 
-// mastermindPriorID supplies §3.5's "reuse the db row's id". It opens relevo.db on
-// a goroutine and gives up after mastermindPriorIDTimeout, so a hook never waits on
-// sqlite; a nil function means "no prior id" and Init mints one.
-//
-// The returned close function releases the database, and is a no-op when the
-// open never finished.
-func mastermindPriorID(path string) (func(kind, session string) (string, bool), func()) {
-	opened := make(chan *db.DB, 1)
-	go func() {
-		d, err := openDB(path)
-		if err != nil {
-			opened <- nil
-			return
-		}
-		opened <- d
-	}()
-
-	select {
-	case d := <-opened:
-		if d == nil {
-			return nil, func() {}
-		}
-		return func(kind, session string) (string, bool) {
-			p, ok, err := d.MasterMindBySession(kind, session)
-			if err != nil || !ok {
-				return "", false
-			}
-			return p.ID, true
-		}, func() { _ = d.Close() }
-	case <-time.After(mastermindPriorIDTimeout):
-		// The open is still running; close whatever it eventually produces so
-		// a slow database does not leak a connection for the process's life.
-		go func() {
-			if d := <-opened; d != nil {
-				_ = d.Close()
-			}
-		}()
-		return nil, func() {}
-	}
-}
-
-// appendEnvLine appends one line to the file $CLAUDE_ENV_FILE names.
+// mastermindOpenTimed opens relevo.db on a goroutine and gives up after
+// mastermindPriorIDTimeout, so a hook never waits on sqlite. The caller must
+// call the returned close function; a nil *db.DB means the open did not finish
+// in time, and the safe answers (no prior id, unset consent) follow from it.
 func appendEnvLine(path, line string) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -291,6 +273,9 @@ func appendEnvLine(path, line string) error {
 	return nil
 }
 
+// cmdMasterMindEnable answers yes for this session, and with --repo for the
+// repository, then registers the calling session so the answer takes effect
+// without a restart (#632).
 func cmdMasterMindList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print the records as a JSON array")

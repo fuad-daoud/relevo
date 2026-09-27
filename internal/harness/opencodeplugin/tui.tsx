@@ -5,7 +5,7 @@ import { useTerminalDimensions } from "@opentui/solid";
 
 // Module state: persists across setup calls within the same process
 let started = false;
-const mastermindBySession = new Map<string, { id: string; name: string } | "pending" | "error">();
+const mastermindBySession = new Map<string, { id: string; name: string } | "pending" | "error" | "ask" | "disabled">();
 let currentDoc: any = null;
 let currentDocAt = 0;
 const prevRows = new Map<string, any>();
@@ -139,7 +139,10 @@ function ensureMasterMind(api: any, sessionID: string) {
   if (mastermindBySession.has(sessionID)) return;
 
   mastermindBySession.set(sessionID, "pending");
-  spawnRelevo(["mastermind", "init", "--kind", "opencode", "--session", sessionID])
+  // guide both renders the consent text and, when the repo answered yes,
+  // registers this session, so it replaces the old unconditional init: an
+  // unanswered or refused repository registers nothing.
+  spawnRelevo(["mastermind", "guide", "--json", "--kind", "opencode", "--session", sessionID])
     .then((res) => {
       if (res.enoent) notFound = true;
       if (!res.ok) {
@@ -148,14 +151,16 @@ function ensureMasterMind(api: any, sessionID: string) {
         void pollStatus(api);
         return;
       }
-      const matchID = res.stdout.match(/export RELEVO_MASTERMIND=([a-z0-9_]+)/);
-      const matchName = res.stdout.match(/MasterMind\s+([^\s(]+)\s+\(((?:mm|pl)_[a-z0-9]+)\)/);
-      if (matchID) {
-        const id = matchID[1];
-        const name = matchName ? matchName[1] : id;
-        mastermindBySession.set(sessionID, { id, name });
+      let guide: any = null;
+      try {
+        guide = JSON.parse(res.stdout);
+      } catch {}
+      if (guide?.state === "enabled" && guide.id) {
+        mastermindBySession.set(sessionID, { id: guide.id, name: guide.name || guide.id });
+      } else if (guide?.state === "ask") {
+        mastermindBySession.set(sessionID, "ask");
       } else {
-        mastermindBySession.set(sessionID, "error");
+        mastermindBySession.set(sessionID, "disabled");
       }
       updateStore();
       void pollStatus(api);

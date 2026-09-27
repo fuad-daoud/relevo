@@ -236,7 +236,7 @@ CREATE TABLE repo (
     origin_url TEXT,
     common_dir TEXT,
     first_seen TEXT NOT NULL
-)
+, mastermind_consent TEXT, consent_at TEXT)
 
 table round round
 CREATE TABLE round (
@@ -301,4 +301,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 )
 
-schema_versions have=9 know=9
+schema_versions have=10 know=10

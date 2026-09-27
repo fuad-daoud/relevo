@@ -129,6 +129,40 @@ func TestOpencodeSessionFinder(t *testing.T) {
 	})
 }
 
+// TestOpencodeSessionDirectory pins the session-id lookup the guide verb
+// reads: the recorded directory for a known session, a miss for an unknown id,
+// and ErrNoOpencodeSession on a failed read.
+func TestOpencodeSessionDirectory(t *testing.T) {
+	t.Parallel()
+
+	jsonOut := `[
+		{"id": "ses_one", "directory": "/path/one", "parent_id": null, "title": "one", "updated": 1, "time_archived": null},
+		{"id": "ses_two", "directory": "/path/two", "parent_id": null, "title": "two", "updated": 2, "time_archived": null}
+	]`
+
+	finder := OpencodeSessionFinder{
+		Exec: &fakeFinderExec{
+			tables: []byte(`[{"name":"session"}]`),
+			out:    []byte(jsonOut),
+		},
+		DBPath: "/dummy/opencode.db",
+	}
+	if dir, err := finder.Directory("ses_two"); err != nil || dir != "/path/two" {
+		t.Errorf("Directory(ses_two) = %q, %v, want /path/two", dir, err)
+	}
+	if _, err := finder.Directory("ses_missing"); !errors.Is(err, mastermind.ErrNoOpencodeSession) {
+		t.Errorf("Directory(ses_missing) err = %v, want ErrNoOpencodeSession", err)
+	}
+	if _, err := finder.Directory(""); !errors.Is(err, mastermind.ErrNoOpencodeSession) {
+		t.Errorf("Directory(\"\") err = %v, want ErrNoOpencodeSession", err)
+	}
+
+	failed := OpencodeSessionFinder{Exec: &fakeFinderExec{err: errors.New("command failed")}, DBPath: "/dummy/opencode.db"}
+	if _, err := failed.Directory("ses_one"); !errors.Is(err, mastermind.ErrNoOpencodeSession) {
+		t.Errorf("Directory on exec error: err = %v, want ErrNoOpencodeSession", err)
+	}
+}
+
 // The OpenCode schema fragments the finder tests build their fixtures from.
 const (
 	v2SessionTable    = "create table session (id text, directory text, parent_id text, title text, time_updated integer, time_archived integer)"

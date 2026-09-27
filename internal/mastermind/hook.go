@@ -83,7 +83,7 @@ func Guide() string { return guide }
 
 // HookOutput is what `relevo mastermind init --hook claude` prints on success.
 func HookOutput(r Record) []byte {
-	return encodeHookContext(hookContext(r) + "\n\n" + Guide())
+	return encodeHookContext(ConsentText(ConsentYes, &r))
 }
 
 // HookOutputNoEnv is HookOutput plus the export-failure note.

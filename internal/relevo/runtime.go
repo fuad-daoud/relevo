@@ -269,6 +269,11 @@ type Runtime struct {
 	// Nil when sqlite3 is not on PATH or not configured.
 	OpencodeSession func(cwd string, now time.Time) (string, error)
 
+	// OpencodeSessionDir returns the working directory opencode recorded for
+	// one session, so a caller holding only the session id can resolve its
+	// repository. Nil when sqlite3 is not on PATH or not configured.
+	OpencodeSessionDir func(sessionID string) (string, error)
+
 	// Deliverers routes a mastermind-bound payload to that mastermind kind's own
 	// push path (docs/specs/2026-09-22-opencode-delivery-design.md). A kind
 	// with no entry, and a nil map, leave the entry pending for `relevo wait`.

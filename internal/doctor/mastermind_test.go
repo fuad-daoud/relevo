@@ -315,3 +315,59 @@ func TestDoctorPluginVersionRow(t *testing.T) {
 		}
 	})
 }
+
+// TestDoctorConsentRow pins the repository-consent row: the answer, the
+// command that changes it, and no row when the answer was not read.
+func TestDoctorConsentRow(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      MasterMindCheckInput
+		sev     Severity
+		want    string
+		wantFix string
+	}{
+		{
+			name: "yes",
+			in:   MasterMindCheckInput{ConsentKnown: true, RepoKnown: true, Consent: mastermind.ConsentYes},
+			sev:  SevOK, want: "yes", wantFix: "relevo mastermind disable --repo",
+		},
+		{
+			name: "no",
+			in:   MasterMindCheckInput{ConsentKnown: true, RepoKnown: true, Consent: mastermind.ConsentNo},
+			sev:  SevInfo, want: "no", wantFix: "relevo mastermind enable --repo",
+		},
+		{
+			name: "unset",
+			in:   MasterMindCheckInput{ConsentKnown: true, RepoKnown: true, Consent: mastermind.ConsentUnset},
+			sev:  SevInfo, want: "unset", wantFix: "relevo mastermind enable --repo (or disable --repo)",
+		},
+		{
+			name: "not a repository",
+			in:   MasterMindCheckInput{ConsentKnown: true, RepoKnown: false},
+			sev:  SevInfo, want: "not in a git repository", wantFix: "run relevo doctor inside the repository, or relevo mastermind init by hand",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := findCheck(Report{Checks: MasterMindChecks(tc.in)}, "", "consent")
+			if c == nil {
+				t.Fatal("the consent row must be present when the answer was read")
+			}
+			if c.Severity != tc.sev {
+				t.Errorf("severity = %v (%s), want %v", c.Severity, c.Detail, tc.sev)
+			}
+			if !strings.Contains(c.Detail, tc.want) {
+				t.Errorf("detail = %q, want it to contain %q", c.Detail, tc.want)
+			}
+			if c.Fix != tc.wantFix {
+				t.Errorf("fix = %q, want %q", c.Fix, tc.wantFix)
+			}
+		})
+	}
+
+	t.Run("no read means no row", func(t *testing.T) {
+		if c := findCheck(Report{Checks: MasterMindChecks(MasterMindCheckInput{})}, "", "consent"); c != nil {
+			t.Errorf("consent row present without a read: %+v", c)
+		}
+	})
+}
