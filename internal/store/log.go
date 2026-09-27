@@ -23,7 +23,9 @@ type Direction string
 
 const (
 	DirToBuilder Direction = "to_runner"
-	DirToPlanner Direction = "to_planner"
+	// DirToMasterMind keeps the historical "to_planner" value: log directions
+	// are state already written.
+	DirToMasterMind Direction = "to_planner"
 
 	// DirToConsult is additive: folding it into DirToBuilder would redefine a
 	// persisted value.
@@ -34,7 +36,7 @@ const (
 type Kind string
 
 const (
-	KindPlan     Kind = "plan"
+	KindPrompt   Kind = "prompt"
 	KindReport   Kind = "report"
 	KindQuestion Kind = "question"
 	KindAnswer   Kind = "answer"
@@ -56,7 +58,17 @@ const (
 	KindRetired  Kind = "retired"
 )
 
-// LogEntry is one relayed message. An unconfirmed DirToPlanner entry is also
+// kindPlanLegacy is the kind a round's prompt carried before the rename: it is
+// state already written, matched through IsPromptKind and never written again.
+const kindPlanLegacy Kind = "plan"
+
+// IsPromptKind reports whether k is a round's prompt in either spelling: the
+// value new entries write and the value already written.
+func IsPromptKind(k Kind) bool {
+	return k == KindPrompt || k == kindPlanLegacy
+}
+
+// LogEntry is one relayed message. An unconfirmed DirToMasterMind entry is also
 // relevo's pending-delivery record, which makes a crash mid-delivery
 // recoverable without a second file.
 type LogEntry struct {
@@ -216,7 +228,7 @@ func (s *Store) ReadLogAfter(name string, after int) ([]LogEntry, error) {
 	return entries, err
 }
 
-// PendingEntry is one undelivered planner payload with its index in the log.
+// PendingEntry is one undelivered mastermind payload with its index in the log.
 // confirmIndex marks an entry in place, so the index stays valid while several
 // are confirmed under one lock.
 type PendingEntry struct {
@@ -224,12 +236,12 @@ type PendingEntry struct {
 	Idx   int
 }
 
-func (s *Store) PendingForPlanner(name string) (LogEntry, bool, error) {
+func (s *Store) PendingForMasterMind(name string) (LogEntry, bool, error) {
 	var e LogEntry
 	var found bool
 	err := s.read(name, func(tx *Tx) error {
 		var err error
-		e, _, found, err = tx.PendingForPlanner(name)
+		e, _, found, err = tx.PendingForMasterMind(name)
 		return err
 	})
 	return e, found, err
@@ -251,16 +263,16 @@ func (t *Tx) ReadLogAfter(name string, after int) ([]LogEntry, error) {
 	return t.s.readLogAfter(name, after)
 }
 
-// PendingForPlanner reads the oldest undelivered planner payload and its index
+// PendingForMasterMind reads the oldest undelivered mastermind payload and its index
 // under the held lock.
-func (t *Tx) PendingForPlanner(name string) (LogEntry, int, bool, error) {
-	return t.s.pendingForPlanner(name)
+func (t *Tx) PendingForMasterMind(name string) (LogEntry, int, bool, error) {
+	return t.s.pendingForMasterMind(name)
 }
 
-// PendingForPlannerThrough reads every undelivered planner payload whose round
+// PendingForMasterMindThrough reads every undelivered mastermind payload whose round
 // is at most round -- every round when round <= 0 -- in log order.
-func (t *Tx) PendingForPlannerThrough(name string, round int) ([]PendingEntry, error) {
-	return t.s.pendingForPlannerThrough(name, round)
+func (t *Tx) PendingForMasterMindThrough(name string, round int) ([]PendingEntry, error) {
+	return t.s.pendingForMasterMindThrough(name, round)
 }
 
 func (t *Tx) ConfirmIndex(name string, idx int, route string) error {
@@ -419,18 +431,18 @@ func decodeLog(r io.Reader) ([]LogEntry, error) {
 	return entries, nil
 }
 
-// pendingForPlanner returns the OLDEST undelivered payload bound for the
-// planner. Oldest-first because arrival order is the only order relevo can
+// pendingForMasterMind returns the OLDEST undelivered payload bound for the
+// mastermind. Oldest-first because arrival order is the only order relevo can
 // defend without judging content: a report queued before two consult findings
 // must not be delivered after both of them.
-func (s *Store) pendingForPlanner(name string) (LogEntry, int, bool, error) {
+func (s *Store) pendingForMasterMind(name string) (LogEntry, int, bool, error) {
 	entries, err := s.readLog(name)
 	if err != nil {
 		return LogEntry{}, 0, false, err
 	}
 
 	for i, e := range entries {
-		if e.Direction == DirToPlanner && !e.Confirmed {
+		if e.Direction == DirToMasterMind && !e.Confirmed {
 			return e, i, true, nil
 		}
 	}
@@ -438,8 +450,8 @@ func (s *Store) pendingForPlanner(name string) (LogEntry, int, bool, error) {
 	return LogEntry{}, 0, false, nil
 }
 
-// pendingForPlannerThrough is pendingForPlanner's through-round sibling.
-func (s *Store) pendingForPlannerThrough(name string, round int) ([]PendingEntry, error) {
+// pendingForMasterMindThrough is pendingForMasterMind's through-round sibling.
+func (s *Store) pendingForMasterMindThrough(name string, round int) ([]PendingEntry, error) {
 	entries, err := s.readLog(name)
 	if err != nil {
 		return nil, err
@@ -447,7 +459,7 @@ func (s *Store) pendingForPlannerThrough(name string, round int) ([]PendingEntry
 
 	var pending []PendingEntry
 	for i, e := range entries {
-		if e.Direction == DirToPlanner && !e.Confirmed && (round <= 0 || e.Round <= round) {
+		if e.Direction == DirToMasterMind && !e.Confirmed && (round <= 0 || e.Round <= round) {
 			pending = append(pending, PendingEntry{Entry: e, Idx: i})
 		}
 	}
@@ -460,7 +472,7 @@ func (s *Store) pendingForPlannerThrough(name string, round int) ([]PendingEntry
 // It patches the entry's JSON through a map[string]json.RawMessage, so a key a
 // newer relevo wrote survives this binary. It takes an index rather than
 // re-deriving "the entry we must have meant", so callers holding the lock
-// across pendingForPlanner and this call confirm exactly the entry they read.
+// across pendingForMasterMind and this call confirm exactly the entry they read.
 func (s *Store) confirmIndex(name string, idx int, route string) error {
 	if err := s.importPresent(name); err != nil {
 		return err

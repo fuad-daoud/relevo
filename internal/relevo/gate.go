@@ -135,7 +135,7 @@ func startGate(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	if err := tx.AppendLog(b.Name, store.LogEntry{
 		TS:        rt.Now().UTC(),
 		Round:     b.Round,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindGate,
 		Path:      log,
 		Note:      note,
@@ -156,7 +156,7 @@ func gateTimeoutFor(b store.Binding, pol policy.Policy) time.Duration {
 }
 
 // gateLine is the payload line describing a gate's result. name and round are
-// the binding and the round the gate ran for, so the line points the planner
+// the binding and the round the gate ran for, so the line points the mastermind
 // at `relevo show <name> --round <round> --gate` rather than the log's path
 // (P4a round 2 §4.2):
 //

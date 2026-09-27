@@ -71,8 +71,8 @@ func roundFilter(f Filter) (string, []any) {
 	if f.Binding != "" {
 		add(`binding.name = ?`, f.Binding)
 	}
-	if f.Planner != "" {
-		add(`binding.planner_id IN (SELECT id FROM planner WHERE session_id = ?)`, f.Planner)
+	if f.MasterMind != "" {
+		add(`binding.mastermind_id IN (SELECT id FROM mastermind WHERE session_id = ?)`, f.MasterMind)
 	}
 	if f.Harness != "" {
 		add(`round.harness = ?`, f.Harness)
@@ -191,7 +191,7 @@ func scanRoundRow(s rowScanner) (RoundRow, error) {
 }
 
 // bindingColumns is the column list both binding readers scan.
-const bindingColumns = `binding.id, binding.name, binding.repo_id, binding.planner_id, binding.feature,
+const bindingColumns = `binding.id, binding.name, binding.repo_id, binding.mastermind_id, binding.feature,
 	binding.forked_from_binding_id, binding.forked_from_round, binding.cwd, binding.worktree,
 	binding.branch, binding.base_commit, binding.tier, binding.gate, binding.builder_mode,
 	binding.server, binding.created_at, binding.final_state, binding.archived_at, binding.archive_path,
@@ -201,7 +201,7 @@ const bindingColumns = `binding.id, binding.name, binding.repo_id, binding.plann
 
 func scanBindingRow(s rowScanner) (BindingRow, error) {
 	var br BindingRow
-	var repoID, plannerID, feature, forkedFromBindingID sql.Null[string]
+	var repoID, mastermindID, feature, forkedFromBindingID sql.Null[string]
 	var forkedFromRound sql.Null[int64]
 	var worktree, branch, baseCommit, tier, gate, server sql.Null[string]
 	var createdAt string
@@ -209,7 +209,7 @@ func scanBindingRow(s rowScanner) (BindingRow, error) {
 	var originURL, commonDir sql.Null[string]
 	var lastActivity string
 
-	if err := s.Scan(&br.ID, &br.Name, &repoID, &plannerID, &feature,
+	if err := s.Scan(&br.ID, &br.Name, &repoID, &mastermindID, &feature,
 		&forkedFromBindingID, &forkedFromRound, &br.CWD, &worktree,
 		&branch, &baseCommit, &tier, &gate, &br.BuilderMode,
 		&server, &createdAt, &finalState, &archivedAt, &archivePath,
@@ -219,7 +219,7 @@ func scanBindingRow(s rowScanner) (BindingRow, error) {
 	}
 
 	br.RepoID = ptrIfValid(repoID)
-	br.PlannerID = ptrIfValid(plannerID)
+	br.MasterMindID = ptrIfValid(mastermindID)
 	br.Feature = ptrIfValid(feature)
 	br.ForkedFromBindingID = ptrIfValid(forkedFromBindingID)
 	br.ForkedFromRound = intPtr(forkedFromRound)
@@ -304,8 +304,8 @@ func bindingFilter(f Filter) (string, []any) {
 	if f.Binding != "" {
 		add(`binding.name = ?`, f.Binding)
 	}
-	if f.Planner != "" {
-		add(`binding.planner_id IN (SELECT id FROM planner WHERE session_id = ?)`, f.Planner)
+	if f.MasterMind != "" {
+		add(`binding.mastermind_id IN (SELECT id FROM mastermind WHERE session_id = ?)`, f.MasterMind)
 	}
 	if f.State != "" {
 		add(`binding.final_state = ?`, f.State)

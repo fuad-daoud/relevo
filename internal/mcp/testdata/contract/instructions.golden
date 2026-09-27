@@ -28,13 +28,13 @@ Act on the wait's output after every wait exit except WaitTimeout.
     report; nothing is owed.
 
 A report or a needs_you for a binding you did not personally send still
-belongs to you -- every binding on this planner is yours. Do not ignore a
+belongs to you -- every binding on this MasterMind is yours. Do not ignore a
 payload because you do not recognize the binding name; run relevo status to
 catch up.
 
 Three verbs are tools here, callable directly instead of through the shell:
 
-  - status(name?, all?): one binding, or every binding on this planner, or
+  - status(name?, all?): one binding, or every binding on this MasterMind, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
     runner a new round.
@@ -42,3 +42,38 @@ Three verbs are tools here, callable directly instead of through the shell:
 
 Every other relevo verb -- bind, show, wait, gate, config, and the rest --
 is not a tool here; run it with Bash.
+
+# The relevo guide
+
+This is the guide to relevo, the tool that hands work between you and a runner.
+
+## Using relevo
+
+- `relevo bind [--worktree] --name <n>` starts a fresh runner on the current
+  tree or its own git worktree; `relevo status` shows what is bound and what it
+  is doing.
+- `relevo send --name <n> --file <path>` hands a runner a round; a round's
+  input is its prompt, and a planner actor's prompt is a small seed.
+- `relevo wait --name <n> --timeout <budget>` waits for a round: 0 closes with
+  a report, 3 is NEEDS YOU -- ask the human, 4 is DONE.
+- `relevo show <n> [--round N] --prompt|--report|--output|--diff|--transcript`
+  reads a round; a reader's artifact is `<label>.md`, printed with `--output`.
+
+## The recommended loop
+
+- Seed a planner actor (`planner`, `lite-planner`) with the task and the
+  decisions already made.
+- Review its plan with `relevo show <name> --output`.
+- Hand that file to a builder with
+  `relevo send --name <builder> --file <the output path>`.
+- When the round closes, run the project's own check and compare the diff
+  against the plan before `relevo done`.
+
+## When something is stuck
+
+- `relevo gate <token> --reason '<what it said>'` when a runner reports a usage
+  limit: relevo switches and resends; `relevo gate --clear <provider>` when it
+  lifts.
+- `relevo stop <name>` ends an open round.
+- `relevo bind --resume --name <n>` restores a released worktree.
+- A binding that says NEEDS YOU is waiting on a human.

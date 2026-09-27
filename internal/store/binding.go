@@ -91,19 +91,21 @@ type ServeFacts struct {
 	AuthorEmail string `json:"author_email,omitempty"`
 }
 
-// Binding ties one planner to one builder over one working tree.
+// Binding ties one mastermind to one builder over one working tree.
 type Binding struct {
 	// Format is the on-disk format: 0 (a missing key) is format 1, today's
 	// shape; save refuses to overwrite a Format it does not know.
 	Format int `json:"format,omitempty"`
 
-	Name    string   `json:"name"`
-	CWD     string   `json:"cwd"`
-	Planner Endpoint `json:"planner"`
-	// PlannerID names the relevo planner record this binding belongs to. A
-	// remote binding carries the client planner's id too, even though the
-	// planner never goes over the wire.
-	PlannerID        string   `json:"planner_id,omitempty"`
+	Name string `json:"name"`
+	CWD  string `json:"cwd"`
+	// MasterMind's json key is the historical "planner": bind.json keys are
+	// state already written.
+	MasterMind Endpoint `json:"planner"`
+	// MasterMindID names the relevo mastermind record this binding belongs to. A
+	// remote binding carries the client mastermind's id too, even though the
+	// mastermind never goes over the wire.
+	MasterMindID     string   `json:"planner_id,omitempty"` // why: ditto, state already written
 	Builder          Endpoint `json:"runner"`
 	BuilderCandidate string   `json:"candidate,omitempty"`
 	// Role names the actor the runner plays. It is always written; the empty
@@ -212,11 +214,11 @@ type Binding struct {
 	RoundClosedTree   string `json:"round_closed_tree,omitempty"`
 	RoundBaselineHead string `json:"round_baseline_head,omitempty"`
 	// legacy: bind.json from before pane builders were removed.
-	BuilderScreen   string        `json:"runner_screen,omitempty"`
-	BuilderScreenAt time.Time     `json:"runner_screen_at,omitempty"`
-	PlannerScreen   string        `json:"planner_screen,omitempty"`
-	PlannerScreenAt time.Time     `json:"planner_screen_at,omitempty"`
-	HeldGrace       time.Duration `json:"held_grace,omitempty"`
+	BuilderScreen      string        `json:"runner_screen,omitempty"`
+	BuilderScreenAt    time.Time     `json:"runner_screen_at,omitempty"`
+	MasterMindScreen   string        `json:"planner_screen,omitempty"`    // why: state already written
+	MasterMindScreenAt time.Time     `json:"planner_screen_at,omitempty"` // why: ditto
+	HeldGrace          time.Duration `json:"held_grace,omitempty"`
 
 	// Worktree is the only directory relevo may ever remove.
 	Worktree      string `json:"worktree,omitempty"`

@@ -87,7 +87,7 @@ func RenderDryRun(d DryRun) string {
 		fmt.Sprintf("  %-8s  %s", "runner", dryRunBuilderLine(d)),
 		fmt.Sprintf("  %-8s  %s", "where", d.Where),
 		fmt.Sprintf("  %-8s  %s", "tier", d.Tier),
-		fmt.Sprintf("  %-8s  %s  (staged from %s, %s)", "plan", d.PlanPath, d.PlanFrom, view.HumanBytes(d.PlanBytes)),
+		fmt.Sprintf("  %-8s  %s  (staged from %s, %s)", "prompt", d.PromptPath, d.PromptFrom, view.HumanBytes(d.PromptBytes)),
 		fmt.Sprintf("  %-8s  %s", "report", d.ReportPath),
 		fmt.Sprintf("  %-8s  %s", "marker", d.DonePath),
 	}
@@ -95,7 +95,7 @@ func RenderDryRun(d DryRun) string {
 	if len(d.PromptHead) > 0 {
 		first = d.PromptHead[0]
 	}
-	lines = append(lines, fmt.Sprintf("  %-8s  %s", "prompt", first))
+	lines = append(lines, fmt.Sprintf("  %-8s  %s", "head", first))
 	for _, cont := range d.PromptHead[1:] {
 		lines = append(lines, "            "+cont)
 	}

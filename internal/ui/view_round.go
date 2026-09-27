@@ -81,7 +81,7 @@ func newHistRoundView(env Env, h relevo.HistoryBinding, round int) (View, tea.Cm
 	return roundView{pane: p}, cmd
 }
 
-// row finds a report row by key (BindingStatus.Key()): a planner row keys
+// row finds a report row by key (BindingStatus.Key()): a mastermind row keys
 // by Name, a server row by owner/name, so two clients' same-named bindings
 // never collide. Moved from model.go (R2.8).
 func row(rep view.Report, key string) *view.BindingStatus {
@@ -223,16 +223,16 @@ func roundState(b view.BindingStatus, now time.Time) (pill, age string) {
 
 // contextCells is what line 1 draws after its state-and-time cell. A reader
 // round shows its artifacts count and total size, "repository unchanged" once
-// the round has closed, and the actor, its shape, its planner and its scratch
-// worktree; a writer shows its candidate, its planner, its branch and a dirty
+// the round has closed, and the actor, its shape, its mastermind and its scratch
+// worktree; a writer shows its candidate, its mastermind, its branch and a dirty
 // tree. The cells drop from the right, so a reader loses its scratch worktree
-// first, then its planner, its shape and its actor (round 5b).
+// first, then its mastermind, its shape and its actor (round 5b).
 func (p roundPane) contextCells(b view.BindingStatus) []string {
 	if p.reader {
 		return p.readerContextCells(b)
 	}
 	cells := []string{"      " + textStyle.Render(candidateText(b))}
-	cells = append(cells, faintStyle.Render("  ·  ")+mutedStyle.Render(plannerWordOf(b)))
+	cells = append(cells, faintStyle.Render("  ·  ")+mutedStyle.Render(mastermindWordOf(b)))
 	branch := b.Branch
 	if branch == "" {
 		branch = repoCell(b)
@@ -248,7 +248,7 @@ func (p roundPane) contextCells(b view.BindingStatus) []string {
 
 // readerContextCells is a reader round's cells after the state-and-time: the
 // artifact facts, the closed-round note, then the actor, its shape, its
-// planner and its scratch worktree.
+// mastermind and its scratch worktree.
 func (p roundPane) readerContextCells(b view.BindingStatus) []string {
 	var cells []string
 	c := p.detail.cache[tabArtifacts]
@@ -263,18 +263,18 @@ func (p roundPane) readerContextCells(b view.BindingStatus) []string {
 	cells = append(cells,
 		"      "+textStyle.Render(actorCell(b))+faintStyle.Render(" on ")+textStyle.Render(candidateText(b)),
 		faintStyle.Render("  ·  ")+mutedStyle.Render("reader"),
-		faintStyle.Render("  ·  ")+mutedStyle.Render(plannerWordOf(b)),
+		faintStyle.Render("  ·  ")+mutedStyle.Render(mastermindWordOf(b)),
 		faintStyle.Render("  ·  ")+mutedStyle.Render(scratchText(p.baselineHead)))
 	return cells
 }
 
-// plannerWordOf names the planner as the context row does: the client label
-// when the binding has one, the planner cell otherwise.
-func plannerWordOf(b view.BindingStatus) string {
+// mastermindWordOf names the mastermind as the context row does: the client label
+// when the binding has one, the mastermind cell otherwise.
+func mastermindWordOf(b view.BindingStatus) string {
 	if b.OwnerLabel != "" {
 		return "client " + b.OwnerLabel
 	}
-	return plannerCell(b)
+	return mastermindCell(b)
 }
 
 // roundOpen reports whether the round on screen is the binding's own open
@@ -389,7 +389,7 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		return r, nil
 
 	case pullMsg:
-		// The report the human planner was owed (§4.5): shown in the report
+		// The report the human mastermind was owed (§4.5): shown in the report
 		// tab, with the fleet refetched so the binding stops reading "report
 		// ready". A reply for another binding is stale and dropped.
 		if msg.key != r.pane.detail.name {
@@ -406,7 +406,7 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		at := time.Time{}
 		if b := row(env.Report, r.pane.detail.name); b != nil &&
 			b.LastPayload != nil &&
-			b.LastPayload.Direction == store.DirToPlanner &&
+			b.LastPayload.Direction == store.DirToMasterMind &&
 			b.LastPayload.Kind == store.KindReport &&
 			b.LastPayload.Round == r.pane.detail.round {
 			at = b.LastPayload.TS

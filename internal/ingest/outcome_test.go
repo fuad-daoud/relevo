@@ -25,42 +25,42 @@ func TestDeriveOutcome(t *testing.T) {
 		},
 		{
 			"done marker with no report",
-			[]store.LogEntry{{Round: 1, Kind: store.KindPlan}},
+			[]store.LogEntry{{Round: 1, Kind: store.KindPrompt}},
 			map[string]bool{donePathBase(1): true},
 			store.Binding{Round: 1, State: store.StateActive},
 			db.OutcomeDoneNoReport,
 		},
 		{
 			"exit on the current round",
-			[]store.LogEntry{{Round: 1, Kind: store.KindPlan}, {Round: 1, Kind: store.KindExit}},
+			[]store.LogEntry{{Round: 1, Kind: store.KindPrompt}, {Round: 1, Kind: store.KindExit}},
 			map[string]bool{},
 			store.Binding{Round: 1, State: store.StateNeedsYou},
 			db.OutcomeExited,
 		},
 		{
 			"needs_you on the current round",
-			[]store.LogEntry{{Round: 1, Kind: store.KindPlan}},
+			[]store.LogEntry{{Round: 1, Kind: store.KindPrompt}},
 			map[string]bool{},
 			store.Binding{Round: 1, State: store.StateNeedsYou},
 			db.OutcomeHalted,
 		},
 		{
 			"halt text names the round",
-			[]store.LogEntry{{Round: 1, Kind: store.KindPlan}},
+			[]store.LogEntry{{Round: 1, Kind: store.KindPrompt}},
 			map[string]bool{},
 			store.Binding{Round: 1, State: store.StateActive, Halt: "builder exited (code 1) without a report"},
 			db.OutcomeHalted,
 		},
 		{
 			"switch on a non-current round",
-			[]store.LogEntry{{Round: 1, Kind: store.KindPlan}, {Round: 1, Kind: store.KindSwitch}},
+			[]store.LogEntry{{Round: 1, Kind: store.KindPrompt}, {Round: 1, Kind: store.KindSwitch}},
 			map[string]bool{},
 			store.Binding{Round: 2, State: store.StateActive},
 			db.OutcomeSwitched,
 		},
 		{
 			"nothing",
-			[]store.LogEntry{{Round: 1, Kind: store.KindPlan}},
+			[]store.LogEntry{{Round: 1, Kind: store.KindPrompt}},
 			map[string]bool{},
 			store.Binding{Round: 2, State: store.StateActive},
 			db.OutcomeOpen,
@@ -221,7 +221,7 @@ func TestSwitchesForRound(t *testing.T) {
 		{Round: 1, Kind: store.KindSwitch},
 		{Round: 1, Kind: store.KindSwitch},
 		{Round: 2, Kind: store.KindSwitch},
-		{Round: 1, Kind: store.KindPlan},
+		{Round: 1, Kind: store.KindPrompt},
 	}
 
 	for round, want := range map[int]int{1: 2, 2: 1, 3: 0} {

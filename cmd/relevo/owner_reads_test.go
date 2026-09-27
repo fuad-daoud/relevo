@@ -21,7 +21,7 @@ func ownerTabEntry() store.LogEntry {
 	return store.LogEntry{
 		TS:        at,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Confirmed: true,
 		Usage: &usagepkg.Usage{
@@ -45,7 +45,7 @@ func seedOwnerStore(t *testing.T, s *store.Store, owner string) {
 	}
 	if err := s.AppendLog("api", store.LogEntry{
 		TS: time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC), Round: 1,
-		Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog plan: %v", err)
 	}

@@ -455,7 +455,7 @@ func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	planPath := st.PlanPath(name, 1)
+	planPath := st.PromptPath(name, 1)
 	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +467,7 @@ func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 			{Name: name, Round: 1, Display: "ACTIVE", BuilderStatus: "working"},
 		},
 	}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Second})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Second})
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	res, _ = m.Update(statusMsg{report: rep})
@@ -511,7 +511,7 @@ func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 	if !ok {
 		t.Fatalf("top view must be roundView, got %T", m.top())
 	}
-	if !rv.pane.detail.cache[tabPlan].loaded {
+	if !rv.pane.detail.cache[tabPrompt].loaded {
 		t.Error("plan tab must be loaded")
 	}
 	if rv.pane.tabInFlight {

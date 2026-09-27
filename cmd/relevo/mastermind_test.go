@@ -12,15 +12,15 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// plannerRegistryAt is a registry over the database the state root holds, for
+// mastermindRegistryAt is a registry over the database the state root holds, for
 // a test that inspects what a verb wrote without building a runtime.
-func plannerRegistryAt(t *testing.T, state string) *planner.DBRegistry {
+func mastermindRegistryAt(t *testing.T, state string) *mastermind.DBRegistry {
 	t.Helper()
 	dir := filepath.Join(state, "relevo")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -31,7 +31,7 @@ func plannerRegistryAt(t *testing.T, state string) *planner.DBRegistry {
 		t.Fatalf("open relevo.db: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	return &planner.DBRegistry{KV: db.TxKV{DB: d}, Root: filepath.Join(dir, "planners")}
+	return &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Root: filepath.Join(dir, "masterminds")}
 }
 
 // stdinFile is a temp file holding payload, rewound and ready to be os.Stdin.
@@ -64,7 +64,7 @@ func runWithStdin(t *testing.T, payload string, args ...string) (stdout, stderr 
 	return captureOutput(t, func() error { return run(args) })
 }
 
-// hookEnvelope is the shape both `relevo planner init --hook` answers use.
+// hookEnvelope is the shape both `relevo mastermind init --hook` answers use.
 type hookEnvelope struct {
 	HookSpecificOutput struct {
 		HookEventName     string `json:"hookEventName"`
@@ -72,10 +72,10 @@ type hookEnvelope struct {
 	} `json:"hookSpecificOutput"`
 }
 
-// TestPlannerInitHookAlwaysExitsZero is the hook's contract (§4.4, §6.1): a
+// TestMasterMindInitHookAlwaysExitsZero is the hook's contract (§4.4, §6.1): a
 // hook failure must never block a Claude Code session, so malformed or
 // incomplete stdin still exits 0 and answers on stdout with the note envelope.
-func TestPlannerInitHookAlwaysExitsZero(t *testing.T) {
+func TestMasterMindInitHookAlwaysExitsZero(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	// Never write to whatever the developer's own CLAUDE_ENV_FILE names.
 	t.Setenv("CLAUDE_ENV_FILE", "")
@@ -85,7 +85,7 @@ func TestPlannerInitHookAlwaysExitsZero(t *testing.T) {
 		`{"hook_event_name":"SessionStart","session_id":"sess-1"}`, // no cwd
 		`{"hook_event_name":"SessionStart","cwd":"/tmp/p"}`,        // no session
 	} {
-		stdout, stderr, err := runWithStdin(t, payload, "planner", "init", "--hook", "claude")
+		stdout, stderr, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
 		if err != nil {
 			t.Fatalf("run(%s) = %v, want exit 0", payload, err)
 		}
@@ -97,7 +97,7 @@ func TestPlannerInitHookAlwaysExitsZero(t *testing.T) {
 		if env.HookSpecificOutput.HookEventName != "SessionStart" {
 			t.Errorf("hookEventName = %q, want SessionStart", env.HookSpecificOutput.HookEventName)
 		}
-		if !strings.Contains(env.HookSpecificOutput.AdditionalContext, "relevo planner init failed") {
+		if !strings.Contains(env.HookSpecificOutput.AdditionalContext, "relevo mastermind init failed") {
 			t.Errorf("additionalContext for %s = %q, want the failure note", payload, env.HookSpecificOutput.AdditionalContext)
 		}
 		if len(stderr) == 0 {
@@ -106,18 +106,18 @@ func TestPlannerInitHookAlwaysExitsZero(t *testing.T) {
 	}
 }
 
-// TestPlannerInitHookWritesEnvFile is the hook's happy path: a good payload
-// registers a planner, appends the export line to $CLAUDE_ENV_FILE, and tells
-// the model which planner it is.
-func TestPlannerInitHookWritesEnvFile(t *testing.T) {
+// TestMasterMindInitHookWritesEnvFile is the hook's happy path: a good payload
+// registers a mastermind, appends the export line to $CLAUDE_ENV_FILE, and tells
+// the model which mastermind it is.
+func TestMasterMindInitHookWritesEnvFile(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	envFile := filepath.Join(t.TempDir(), "claude-env")
 	t.Setenv("CLAUDE_ENV_FILE", envFile)
 	t.Setenv("CLAUDE_CODE_AGENT", "architect")
 
-	payload := `{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-abc","transcript_path":"/tmp/t.jsonl","cwd":"/tmp/planner-cwd"}`
-	stdout, _, err := runWithStdin(t, payload, "planner", "init", "--hook", "claude")
+	payload := `{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-abc","transcript_path":"/tmp/t.jsonl","cwd":"/tmp/mastermind-cwd"}`
+	stdout, _, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
 	if err != nil {
 		t.Fatalf("run = %v, want exit 0", err)
 	}
@@ -127,14 +127,14 @@ func TestPlannerInitHookWritesEnvFile(t *testing.T) {
 		t.Fatalf("read %s: %v", envFile, err)
 	}
 	line := strings.TrimSpace(string(raw))
-	if !strings.HasPrefix(line, "export RELEVO_PLANNER=pl_") {
-		t.Fatalf("env file holds %q, want an export RELEVO_PLANNER=<id> line", line)
+	if !strings.HasPrefix(line, "export RELEVO_MASTERMIND=mm_") {
+		t.Fatalf("env file holds %q, want an export RELEVO_MASTERMIND=<id> line", line)
 	}
-	id := strings.TrimPrefix(line, "export RELEVO_PLANNER=")
+	id := strings.TrimPrefix(line, "export RELEVO_MASTERMIND=")
 
-	// The record is in the state root's database, under planner/<id>, and the
+	// The record is in the state root's database, , and the
 	// record's name comes from CLAUDE_CODE_AGENT.
-	rec, err := plannerRegistryAt(t, state).Get(id)
+	rec, err := mastermindRegistryAt(t, state).Get(id)
 	if err != nil {
 		t.Fatalf("read record %s: %v", id, err)
 	}
@@ -144,7 +144,7 @@ func TestPlannerInitHookWritesEnvFile(t *testing.T) {
 	if rec.Name != "architect-1" {
 		t.Errorf("Name = %q, want architect-1", rec.Name)
 	}
-	if rec.TranscriptLocator != "/tmp/t.jsonl" || rec.CWD != "/tmp/planner-cwd" {
+	if rec.TranscriptLocator != "/tmp/t.jsonl" || rec.CWD != "/tmp/mastermind-cwd" {
 		t.Errorf("record = %+v, want the hook payload's transcript and cwd", rec)
 	}
 	if rec.HostPID != os.Getppid() {
@@ -156,23 +156,23 @@ func TestPlannerInitHookWritesEnvFile(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(stdout), &env); err != nil {
 		t.Fatalf("stdout is not the hook envelope: %v: %q", err, stdout)
 	}
-	if !strings.Contains(env.HookSpecificOutput.AdditionalContext, "You are relevo planner architect-1 ("+id+")") {
+	if !strings.Contains(env.HookSpecificOutput.AdditionalContext, "You are relevo MasterMind architect-1 ("+id+")") {
 		t.Errorf("additionalContext = %q, want it to name architect-1 (%s)", env.HookSpecificOutput.AdditionalContext, id)
 	}
 }
 
-// TestPlannerInitHookWithoutEnvFileSaysSo pins §3.4's rule for an unset
+// TestMasterMindInitHookWithoutEnvFileSaysSo pins §3.4's rule for an unset
 // $CLAUDE_ENV_FILE: `init --hook` still registers and exits 0, and its
-// additionalContext says RELEVO_PLANNER could not be exported and that relevo
+// additionalContext says RELEVO_MASTERMIND could not be exported and that relevo
 // resolves the session through its host process instead.
-func TestPlannerInitHookWithoutEnvFileSaysSo(t *testing.T) {
+func TestMasterMindInitHookWithoutEnvFileSaysSo(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("CLAUDE_ENV_FILE", "")
 	t.Setenv("CLAUDE_CODE_AGENT", "architect")
 
-	payload := `{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-noenv","cwd":"/tmp/planner-cwd"}`
-	stdout, _, err := runWithStdin(t, payload, "planner", "init", "--hook", "claude")
+	payload := `{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-noenv","cwd":"/tmp/mastermind-cwd"}`
+	stdout, _, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
 	if err != nil {
 		t.Fatalf("run = %v, want exit 0", err)
 	}
@@ -182,15 +182,15 @@ func TestPlannerInitHookWithoutEnvFileSaysSo(t *testing.T) {
 		t.Fatalf("stdout is not the hook envelope: %v: %q", err, stdout)
 	}
 	ctx := env.HookSpecificOutput.AdditionalContext
-	if !strings.Contains(ctx, "You are relevo planner architect-1 (pl_") {
-		t.Errorf("additionalContext = %q, want it to name the planner", ctx)
+	if !strings.Contains(ctx, "You are relevo MasterMind architect-1 (mm_") {
+		t.Errorf("additionalContext = %q, want it to name the mastermind", ctx)
 	}
-	if !strings.Contains(ctx, "RELEVO_PLANNER could not be exported ($CLAUDE_ENV_FILE is unset); relevo resolves this session through its host process.") {
+	if !strings.Contains(ctx, "RELEVO_MASTERMIND could not be exported ($CLAUDE_ENV_FILE is unset); relevo resolves this session through its host process.") {
 		t.Errorf("additionalContext = %q, want the unset-env-file note", ctx)
 	}
 
 	// Registration still happened: the state root's database holds one record.
-	records, err := plannerRegistryAt(t, state).List()
+	records, err := mastermindRegistryAt(t, state).List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -199,15 +199,15 @@ func TestPlannerInitHookWithoutEnvFileSaysSo(t *testing.T) {
 	}
 }
 
-// TestPlannerVerbsListRenameForget exercises the explicit registration and the
+// TestMasterMindVerbsListRenameForget exercises the explicit registration and the
 // three read/manage verbs, including forget's guard: a binding that is not DONE
 // still names the record, so it must be refused.
-func TestPlannerVerbsListRenameForget(t *testing.T) {
+func TestMasterMindVerbsListRenameForget(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 
 	stdout, _, err := captureOutput(t, func() error {
-		return run([]string{"planner", "init", "--kind", "opencode", "--session", "ses_abc123"})
+		return run([]string{"mastermind", "init", "--kind", "opencode", "--session", "ses_abc123"})
 	})
 	if err != nil {
 		t.Fatalf("init: %v", err)
@@ -216,27 +216,27 @@ func TestPlannerVerbsListRenameForget(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("init printed %d lines, want 2:\n%s", len(lines), stdout)
 	}
-	if !strings.HasPrefix(lines[0], "planner opencode-1 (pl_") || !strings.HasSuffix(lines[0], " created") {
-		t.Errorf("first line = %q, want \"planner opencode-1 (<id>) created\"", lines[0])
+	if !strings.HasPrefix(lines[0], "MasterMind opencode-1 (mm_") || !strings.HasSuffix(lines[0], " created") {
+		t.Errorf("first line = %q, want \"MasterMind opencode-1 (<id>) created\"", lines[0])
 	}
-	if !strings.HasPrefix(lines[1], "export RELEVO_PLANNER=pl_") {
+	if !strings.HasPrefix(lines[1], "export RELEVO_MASTERMIND=mm_") {
 		t.Fatalf("second line = %q, want the export line", lines[1])
 	}
-	id := strings.TrimPrefix(lines[1], "export RELEVO_PLANNER=")
+	id := strings.TrimPrefix(lines[1], "export RELEVO_MASTERMIND=")
 
 	if stdout, _, err = captureOutput(t, func() error {
-		return run([]string{"planner", "rename", id, "reviewer-2"})
+		return run([]string{"mastermind", "rename", id, "reviewer-2"})
 	}); err != nil {
 		t.Fatalf("rename: %v", err)
 	} else if !strings.Contains(string(stdout), "reviewer-2") {
 		t.Errorf("rename printed %q, want the new name", stdout)
 	}
 
-	stdout, _, err = captureOutput(t, func() error { return run([]string{"planner", "list", "--json"}) })
+	stdout, _, err = captureOutput(t, func() error { return run([]string{"mastermind", "list", "--json"}) })
 	if err != nil {
 		t.Fatalf("list --json: %v", err)
 	}
-	var records []planner.Record
+	var records []mastermind.Record
 	if err := json.Unmarshal(stdout, &records); err != nil {
 		t.Fatalf("list --json is not a records array: %v: %q", err, stdout)
 	}
@@ -244,8 +244,8 @@ func TestPlannerVerbsListRenameForget(t *testing.T) {
 		t.Fatalf("records = %+v, want one named reviewer-2", records)
 	}
 
-	// A tabular list names the planner and its session.
-	stdout, _, err = captureOutput(t, func() error { return run([]string{"planner", "list"}) })
+	// A tabular list names the mastermind and its session.
+	stdout, _, err = captureOutput(t, func() error { return run([]string{"mastermind", "list"}) })
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -253,18 +253,18 @@ func TestPlannerVerbsListRenameForget(t *testing.T) {
 		t.Errorf("list printed %q, want the name and the session", stdout)
 	}
 
-	// A live binding that names the planner refuses the forget.
+	// A live binding that names the mastermind refuses the forget.
 	root, err := store.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
 	s := store.New(root)
-	b := store.Binding{Name: "webshop", CWD: t.TempDir(), Round: 1, State: store.StateActive, PlannerID: id}
+	b := store.Binding{Name: "webshop", CWD: t.TempDir(), Round: 1, State: store.StateActive, MasterMindID: id}
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	if _, _, err := captureOutput(t, func() error { return run([]string{"planner", "forget", id}) }); !errors.Is(err, planner.ErrInUse) {
+	if _, _, err := captureOutput(t, func() error { return run([]string{"mastermind", "forget", id}) }); !errors.Is(err, mastermind.ErrInUse) {
 		t.Fatalf("forget with a live binding = %v, want ErrInUse", err)
 	}
 
@@ -278,28 +278,28 @@ func TestPlannerVerbsListRenameForget(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	stdout, _, err = captureOutput(t, func() error { return run([]string{"planner", "forget", id}) })
+	stdout, _, err = captureOutput(t, func() error { return run([]string{"mastermind", "forget", id}) })
 	if err != nil {
 		t.Fatalf("forget: %v", err)
 	}
 	if !strings.Contains(string(stdout), "forgot") {
 		t.Errorf("forget printed %q, want a confirmation line", stdout)
 	}
-	if _, err := plannerRegistryAt(t, state).Get(id); !errors.Is(err, planner.ErrNotFound) {
+	if _, err := mastermindRegistryAt(t, state).Get(id); !errors.Is(err, mastermind.ErrNotFound) {
 		t.Errorf("record row still there after forget: %v", err)
 	}
 }
 
-// TestAnnotatePlannerChat is #386's CLI surface: annotatePlannerChat fills a
-// row's chat label and link from the planner record it names, resolves a
-// repeated id once, and leaves a row naming an unknown planner empty. It writes
+// TestAnnotateMasterMindChat is #386's CLI surface: annotateMasterMindChat fills a
+// row's chat label and link from the mastermind record it names, resolves a
+// repeated id once, and leaves a row naming an unknown mastermind empty. It writes
 // a synthetic claude transcript and names claude records only, so the test
 // spawns nothing and reaches no network.
-func TestAnnotatePlannerChat(t *testing.T) {
+func TestAnnotateMasterMindChat(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 
-	reg := plannerRegistryAt(t, state)
+	reg := mastermindRegistryAt(t, state)
 
 	transcript := filepath.Join(t.TempDir(), "session.jsonl")
 	content := "{\"type\":\"custom-title\",\"customTitle\":\"my chat\"}\n" +
@@ -309,33 +309,33 @@ func TestAnnotatePlannerChat(t *testing.T) {
 	}
 
 	const knownID = "pl_aaaaaaaaaaaa"
-	if _, err := reg.Create(planner.Record{
+	if _, err := reg.Create(mastermind.Record{
 		ID: knownID, Name: "alpha", HarnessKind: "claude",
 		SessionID: "sess-alpha", CWD: t.TempDir(), TranscriptLocator: transcript,
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	rt := relevo.Runtime{Planners: reg}
+	rt := relevo.Runtime{MasterMinds: reg}
 	rep := view.Report{Bindings: []view.BindingStatus{
-		{Name: "one", PlannerID: knownID},
-		{Name: "two", PlannerID: knownID},
-		{Name: "three", PlannerID: "pl_zzzzzzzzzzzz"},
+		{Name: "one", MasterMindID: knownID},
+		{Name: "two", MasterMindID: knownID},
+		{Name: "three", MasterMindID: "pl_zzzzzzzzzzzz"},
 	}}
 
-	annotatePlannerChat(rt, &rep, chatlabel.Resolver{})
+	annotateMasterMindChat(rt, &rep, chatlabel.Resolver{})
 
 	const wantText = "my chat"
 	const wantLink = "https://claude.ai/code/session_01ABCDEF"
 	for i := 0; i < 2; i++ {
-		if rep.Bindings[i].PlannerChatLabel != wantText || rep.Bindings[i].PlannerChatLink != wantLink {
+		if rep.Bindings[i].MasterMindChatLabel != wantText || rep.Bindings[i].MasterMindChatLink != wantLink {
 			t.Errorf("row %d carries label %q / link %q, want %q / %q",
-				i, rep.Bindings[i].PlannerChatLabel, rep.Bindings[i].PlannerChatLink, wantText, wantLink)
+				i, rep.Bindings[i].MasterMindChatLabel, rep.Bindings[i].MasterMindChatLink, wantText, wantLink)
 		}
 	}
-	if rep.Bindings[2].PlannerChatLabel != "" || rep.Bindings[2].PlannerChatLink != "" {
-		t.Errorf("the unknown planner's row carries label %q / link %q, want neither",
-			rep.Bindings[2].PlannerChatLabel, rep.Bindings[2].PlannerChatLink)
+	if rep.Bindings[2].MasterMindChatLabel != "" || rep.Bindings[2].MasterMindChatLink != "" {
+		t.Errorf("the unknown mastermind's row carries label %q / link %q, want neither",
+			rep.Bindings[2].MasterMindChatLabel, rep.Bindings[2].MasterMindChatLink)
 	}
 }
 
@@ -347,11 +347,11 @@ func TestListAlignsLongValues(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 
-	reg := plannerRegistryAt(t, state)
+	reg := mastermindRegistryAt(t, state)
 
 	long := filepath.Join(t.TempDir(), strings.Repeat("long-cwd-segment-", 6))
 	longer := filepath.Join(t.TempDir(), strings.Repeat("an-even-longer-cwd-segment-", 6))
-	for _, rec := range []planner.Record{
+	for _, rec := range []mastermind.Record{
 		{
 			ID: "pl_aaaaaaaaaaaa", Name: "alpha", HarnessKind: "claude",
 			SessionID: "f26cad68-8a43-4de9-80c6-7b13d88aafd0", // 36 characters
@@ -368,14 +368,14 @@ func TestListAlignsLongValues(t *testing.T) {
 		}
 	}
 
-	stdout, _, err := captureOutput(t, func() error { return run([]string{"planner", "list"}) })
+	stdout, _, err := captureOutput(t, func() error { return run([]string{"mastermind", "list"}) })
 	if err != nil {
-		t.Fatalf("planner list: %v", err)
+		t.Fatalf("mastermind list: %v", err)
 	}
 
 	lines := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
 	if len(lines) != 3 {
-		t.Fatalf("planner list printed %d lines, want a header and two rows:\n%s", len(lines), stdout)
+		t.Fatalf("mastermind list printed %d lines, want a header and two rows:\n%s", len(lines), stdout)
 	}
 
 	// seen is the last column, so its cell is the line's last space-separated
@@ -396,15 +396,15 @@ func TestListAlignsLongValues(t *testing.T) {
 	}
 }
 
-// TestListShowsChat is the #386 chat column: a claude planner's row names the
-// chat the way its own harness does, a planner with nothing readable shows "-",
+// TestListShowsChat is the #386 chat column: a claude mastermind's row names the
+// chat the way its own harness does, a mastermind with nothing readable shows "-",
 // and --json carries the same two fields. It writes a synthetic transcript and
 // uses claude records only, so the test spawns nothing and reaches no network.
 func TestListShowsChat(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 
-	reg := plannerRegistryAt(t, state)
+	reg := mastermindRegistryAt(t, state)
 
 	transcript := filepath.Join(t.TempDir(), "session.jsonl")
 	content := "{\"type\":\"custom-title\",\"customTitle\":\"my chat\"}\n" +
@@ -414,7 +414,7 @@ func TestListShowsChat(t *testing.T) {
 	}
 
 	cwd := t.TempDir()
-	for _, rec := range []planner.Record{
+	for _, rec := range []mastermind.Record{
 		{
 			ID: "pl_aaaaaaaaaaaa", Name: "alpha", HarnessKind: "claude",
 			SessionID: "sess-alpha", CWD: cwd, TranscriptLocator: transcript,
@@ -429,14 +429,14 @@ func TestListShowsChat(t *testing.T) {
 		}
 	}
 
-	stdout, _, err := captureOutput(t, func() error { return run([]string{"planner", "list"}) })
+	stdout, _, err := captureOutput(t, func() error { return run([]string{"mastermind", "list"}) })
 	if err != nil {
-		t.Fatalf("planner list: %v", err)
+		t.Fatalf("mastermind list: %v", err)
 	}
 
 	rows := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
 	if len(rows) != 3 {
-		t.Fatalf("planner list printed %d lines, want a header and two rows:\n%s", len(rows), stdout)
+		t.Fatalf("mastermind list printed %d lines, want a header and two rows:\n%s", len(rows), stdout)
 	}
 	if !strings.Contains(rows[0], "chat") {
 		t.Errorf("header %q does not name the chat column", rows[0])
@@ -461,9 +461,9 @@ func TestListShowsChat(t *testing.T) {
 		t.Errorf("beta's chat cell is not \"-\" in row %q", beta)
 	}
 
-	stdout, _, err = captureOutput(t, func() error { return run([]string{"planner", "list", "--json"}) })
+	stdout, _, err = captureOutput(t, func() error { return run([]string{"mastermind", "list", "--json"}) })
 	if err != nil {
-		t.Fatalf("planner list --json: %v", err)
+		t.Fatalf("mastermind list --json: %v", err)
 	}
 	var views []map[string]any
 	if err := json.Unmarshal(stdout, &views); err != nil {
@@ -486,19 +486,51 @@ func TestListShowsChat(t *testing.T) {
 	}
 }
 
-// TestPlannerPruneWasRemoved pins §4.4: pruning is automatic now, so the verb
+// TestMasterMindPruneWasRemoved pins §4.4: pruning is automatic now, so the verb
 // exits 2 naming the daemon's hourly prune.
-func TestPlannerPruneWasRemoved(t *testing.T) {
+func TestMasterMindPruneWasRemoved(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	_, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"planner", "prune"})
+		return run([]string{"mastermind", "prune"})
 	})
 	var ec exitCodeErr
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("run = %v, want exit code 2", runErr)
 	}
-	if !strings.Contains(string(stderr), "the daemon prunes dead planners hourly") {
+	if !strings.Contains(string(stderr), "the daemon prunes dead MasterMinds hourly") {
 		t.Errorf("stderr = %q, want it to name the daemon's hourly prune", stderr)
+	}
+}
+
+// TestPlannerVerbIsRemoved pins D5: `relevo planner ...` names its replacement
+// and exits 2 through removedVerbs, byte for byte like every other removed verb.
+func TestPlannerVerbIsRemoved(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	_, stderr, runErr := captureOutput(t, func() error {
+		return run([]string{"planner", "list"})
+	})
+	var ec exitCodeErr
+	if !errors.As(runErr, &ec) || ec.code != 2 {
+		t.Fatalf("relevo planner list = %v, want exit code 2", runErr)
+	}
+	if !strings.Contains(string(stderr), `"planner" was removed; use relevo mastermind`) {
+		t.Errorf("stderr = %q, want the removed-verb message", stderr)
+	}
+}
+
+// TestRemovedPlannerFlagsAreUnknown pins D5's clean break: --planner and
+// --all-planners are removed, not aliased, so parsing one fails with the flag
+// package's own "flag provided but not defined" error, before any harness runs.
+func TestRemovedPlannerFlagsAreUnknown(t *testing.T) {
+	for _, args := range [][]string{
+		{"bind", "--planner", "x"},
+		{"unbind", "--done", "--all-planners"},
+	} {
+		err := run(args)
+		if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Errorf("%v: got %v, want an unknown-flag error", args, err)
+		}
 	}
 }

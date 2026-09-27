@@ -12,24 +12,24 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Record, haveRec bool) (result AddResult, err error) {
-	// The caller's planner is a hard precondition here exactly as it is on the
-	// local path: a remote binding records the client planner's id and
+func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.Record, haveRec bool) (result AddResult, err error) {
+	// The caller's mastermind is a hard precondition here exactly as it is on the
+	// local path: a remote binding records the client mastermind's id and
 	// session, so without a resolved record there is nothing to record and
 	// nothing may be created on the server.
 	if !haveRec {
-		return AddResult{}, ErrNoPlannerSession
+		return AddResult{}, ErrNoMasterMindSession
 	}
-	opts.PlannerID = rec.ID
-	plannerEP := recordEndpoint(rec)
-	if plannerEP.TranscriptLocator == "" {
-		plannerEP.TranscriptLocator = plannerLocator(rt, plannerEP.Kind, plannerEP.SessionID)
+	opts.MasterMindID = rec.ID
+	mastermindEP := recordEndpoint(rec)
+	if mastermindEP.TranscriptLocator == "" {
+		mastermindEP.TranscriptLocator = mastermindLocator(rt, mastermindEP.Kind, mastermindEP.SessionID)
 	}
 
 	if opts.CWD != "" {
@@ -278,7 +278,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		branchCreated = true
 	}
 
-	// 7. b := Binding{Name, CWD: opts.Repo, Repo: opts.Repo, Branch, Base: base, Planner: <as Add fills it>,
+	// 7. b := Binding{Name, CWD: opts.Repo, Repo: opts.Repo, Branch, Base: base, MasterMind: <as Add fills it>,
 	//                 Builder: Endpoint{Mode: ModeRemote, Server: server, Kind: <kind from view.Candidate's harness, "" if unknown>,
 	//                                   AgentName: name},
 	//                 BuilderCandidate: view.Candidate, Round: 1, State: active, RoundCap/Timeout as Add}
@@ -301,8 +301,8 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		// ExistingBranch records that relevo adopted a branch it did not
 		// create, so nothing here will ever delete it.
 		ExistingBranch: existingBranch,
-		Planner:        plannerEP,
-		PlannerID:      opts.PlannerID,
+		MasterMind:     mastermindEP,
+		MasterMindID:   opts.MasterMindID,
 		Builder: store.Endpoint{
 			Mode:      store.ModeRemote,
 			Server:    opts.Server,
@@ -356,8 +356,8 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 }
 
 // remotePickEntry is addRemote's and sendRemote's pick log entry: the same
-// shape pickEntry writes (DirToPlanner, KindPick, Confirmed) but naming the
-// server and whether the token was named by the planner or picked by the
+// shape pickEntry writes (DirToMasterMind, KindPick, Confirmed) but naming the
+// server and whether the token was named by the mastermind or picked by the
 // server's own policy -- ExplainResolution's "explicit, policy bypassed"
 // wording assumes a local resolveCandidate call that never ran here, so it
 // would misdescribe a token the server picked on its own. round is the round
@@ -369,7 +369,7 @@ func remotePickEntry(now time.Time, server, token string, explicit bool, round i
 		how = "explicit"
 	}
 	return store.LogEntry{
-		TS: now.UTC(), Round: round, Direction: store.DirToPlanner,
+		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
 		Kind: store.KindPick, Confirmed: true,
 		Note: fmt.Sprintf("picked %s on %s: %s", token, server, how),
 	}

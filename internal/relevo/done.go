@@ -22,7 +22,7 @@ type DoneResult struct {
 	Branch          string // b.Branch, for the message; may be "".
 }
 
-// Done stops relaying for a binding once the planner has verified the work,
+// Done stops relaying for a binding once the mastermind has verified the work,
 // and gives a clean worktree back.
 func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 	// Load-modify-save, so it runs inside the state lock: the daemon rewrites
@@ -67,7 +67,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		b.State = store.StateDone
 
 		// A headless round's process is stopped here: the
-		// planner has declared the work finished, so a builder still
+		// mastermind has declared the work finished, so a builder still
 		// editing the tree is now the wrong thing. Failure is reported
 		// after DONE is saved -- the state change stands either way -- and
 		// the pid stays on the endpoint so the human can find it.
@@ -92,7 +92,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// the round's own record of why the process went away is here.
 		if stopErr == nil && pid != 0 {
 			if err := tx.AppendLog(b.Name, store.LogEntry{
-				TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToPlanner,
+				TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind,
 				Kind: store.KindStop, Note: "stopped/done", Confirmed: true,
 			}); err != nil {
 				return err

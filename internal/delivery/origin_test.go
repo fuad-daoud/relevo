@@ -10,32 +10,32 @@ func TestOriginLine(t *testing.T) {
 	t.Parallel()
 
 	t.Run("to runner byte-exact", func(t *testing.T) {
-		got := OriginLine("b1", 2, store.DirToBuilder, store.KindPlan)
-		want := `relevo: round 2 · to runner "b1" · from the planner (not the human)`
+		got := OriginLine("b1", 2, store.DirToBuilder, store.KindPrompt)
+		want := `relevo: round 2 · to runner "b1" · from the MasterMind (not the human)`
 		if got != want {
 			t.Fatalf("got %q, want %q", got, want)
 		}
 	})
 
-	t.Run("to planner report byte-exact", func(t *testing.T) {
-		got := OriginLine("b1", 2, store.DirToPlanner, store.KindReport)
-		want := `relevo: round 2 · to planner · about runner "b1" (not the human)`
+	t.Run("to mastermind report byte-exact", func(t *testing.T) {
+		got := OriginLine("b1", 2, store.DirToMasterMind, store.KindReport)
+		want := `relevo: round 2 · to MasterMind · about runner "b1" (not the human)`
 		if got != want {
 			t.Fatalf("got %q, want %q", got, want)
 		}
 	})
 
-	t.Run("to planner question byte-exact", func(t *testing.T) {
-		got := OriginLine("b1", 3, store.DirToPlanner, store.KindQuestion)
-		want := `relevo: round 3 · to planner · about runner "b1" (not the human)`
+	t.Run("to mastermind question byte-exact", func(t *testing.T) {
+		got := OriginLine("b1", 3, store.DirToMasterMind, store.KindQuestion)
+		want := `relevo: round 3 · to MasterMind · about runner "b1" (not the human)`
 		if got != want {
 			t.Fatalf("got %q, want %q", got, want)
 		}
 	})
 
-	t.Run("to planner findings byte-exact", func(t *testing.T) {
-		got := OriginLine("b1", 1, store.DirToPlanner, store.KindFindings)
-		want := `relevo: consult · to planner · about runner "b1" (not the human)`
+	t.Run("to mastermind findings byte-exact", func(t *testing.T) {
+		got := OriginLine("b1", 1, store.DirToMasterMind, store.KindFindings)
+		want := `relevo: consult · to MasterMind · about runner "b1" (not the human)`
 		if got != want {
 			t.Fatalf("got %q, want %q", got, want)
 		}
@@ -45,7 +45,7 @@ func TestOriginLine(t *testing.T) {
 func TestWithOrigin(t *testing.T) {
 	t.Parallel()
 
-	origin := `relevo: round 1 · to planner · about runner "b1" (not the human)`
+	origin := `relevo: round 1 · to MasterMind · about runner "b1" (not the human)`
 
 	t.Run("plain payload inserts exactly one blank line", func(t *testing.T) {
 		payload := "The runner finished round 1\nReport: /path/to/report"

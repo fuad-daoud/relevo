@@ -24,8 +24,8 @@ func (s *Store) roundFile(name string, round int, suffix, ext string) string {
 var actorNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // ArtifactDir is a round's artifact directory, <state>/<binding>/NNN-<actor>/.
-// It may hold any files, in subdirectories too; summary.md in it is the
-// runner's final message.
+// It may hold any files, in subdirectories too; summary.md in it is a reader
+// runner's pre-rename final message.
 //
 // An actor that cannot be a directory name is a programming error, not input:
 // the actor came from validated config, and every other helper here is total,
@@ -35,10 +35,11 @@ func (s *Store) ArtifactDir(name string, round int, actor string) string {
 	return filepath.Join(s.Dir(name), fmt.Sprintf("%03d-%s", round, actor))
 }
 
-// SummaryPath is the artifact directory's final message. R4 writes it; A5 only
-// names it.
-func (s *Store) SummaryPath(name string, round int, actor string) string {
-	return filepath.Join(s.ArtifactDir(name, round, actor), "summary.md")
+// OutputPath is where a reader round's final message is saved: the artifact
+// directory's <label>.md. label is the actor's resolved output label and is
+// never empty.
+func (s *Store) OutputPath(name string, round int, actor, label string) string {
+	return filepath.Join(s.ArtifactDir(name, round, actor), label+".md")
 }
 
 // ArtifactRel is the round_file name of a file inside a round's artifact
@@ -121,8 +122,22 @@ func containsDotDot(path string) bool {
 	return false
 }
 
-func (s *Store) PlanPath(name string, round int) string {
-	return s.roundFile(name, round, "plan", ".md")
+// PromptPath returns the path of a round's prompt file: the new name when that
+// file exists (on disk or as a sealed row), the pre-rename name when only that
+// exists, or the new name when neither does (the name a fresh round writes).
+// Total: errors and misses are both treated as not-found; the resolver never
+// returns an error. Writers stage through it, so a resend into a round that
+// already holds the old file keeps writing that one file.
+func (s *Store) PromptPath(name string, round int) string {
+	newPath := s.roundFile(name, round, "prompt", ".md")
+	if _, _, ok, _ := s.StatFile(newPath); ok {
+		return newPath
+	}
+	oldPath := s.roundFile(name, round, "plan", ".md")
+	if _, _, ok, _ := s.StatFile(oldPath); ok {
+		return oldPath
+	}
+	return newPath
 }
 
 func (s *Store) ReportPath(name string, round int) string {
@@ -285,12 +300,13 @@ func (s *Store) DBPath() string { return filepath.Join(s.root, "relevo.db") }
 // rows; the claim import reads them from it and removes it.
 func (s *Store) ChannelsDir() string { return filepath.Join(s.root, "channels") }
 
-// PlannersDir is where planner records lived before they became kv rows.
-func (s *Store) PlannersDir() string { return filepath.Join(s.root, "planners") }
+// MasterMindsDir is where mastermind records lived before they became kv rows.
+// The path keeps the historical "planners" name: it is state already written.
+func (s *Store) MasterMindsDir() string { return filepath.Join(s.root, "planners") }
 
 // AgyCredsDir is where captured agy credentials lived before they became
 // secrets. Dot-prefixed so a directory scan never reads it as a record.
-func (s *Store) AgyCredsDir() string { return filepath.Join(s.PlannersDir(), ".agy") }
+func (s *Store) AgyCredsDir() string { return filepath.Join(s.MasterMindsDir(), ".agy") }
 
 // WorktreeDir is dot-prefixed, which is what keeps list() from walking into it
 // and trying to read a working tree as a binding.

@@ -18,7 +18,7 @@ type ConsultState string
 const (
 	ConsultSpawning ConsultState = "spawning" // slot reserved; no process yet
 	ConsultRunning  ConsultState = "running"  // spawned; no findings yet
-	ConsultDone     ConsultState = "done"     // findings queued to the planner
+	ConsultDone     ConsultState = "done"     // findings queued to the mastermind
 	ConsultSilent   ConsultState = "silent"   // gave up; "no findings" reported
 )
 
@@ -37,7 +37,7 @@ type Consult struct {
 	ID string `json:"id"`
 
 	// Role is the actor-table name that was asked, not the candidate that ran
-	// it: the candidate is the planner's choice at the time, the role is what
+	// it: the candidate is the mastermind's choice at the time, the role is what
 	// was intended.
 	Role string `json:"actor"`
 

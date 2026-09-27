@@ -33,7 +33,7 @@ const goldenVersion = "v0.13.0-28-gb66c6fc"
 func goldenModel(t *testing.T, width, height int, rep view.Report) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -48,7 +48,7 @@ func allStatesRows() []view.BindingStatus {
 	return []view.BindingStatus{
 		{
 			Name: "atlas", Round: 4, Display: "ACTIVE",
-			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel", PlannerRouteLive: true,
+			MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "channel", MasterMindRouteLive: true,
 			BuilderKind: "opencode", BuilderStatus: "working", Branch: "relevo/atlas",
 			LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
 				Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
@@ -57,7 +57,7 @@ func allStatesRows() []view.BindingStatus {
 		},
 		{
 			Name: "webshop", Round: 4, Display: "NEEDS YOU",
-			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "pull",
+			MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "pull",
 			BuilderKind: "agy", BuilderStatus: "blocked", Branch: "relevo/webshop",
 			Dirty: true, Consults: 2,
 			LastUsage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
@@ -68,24 +68,24 @@ func allStatesRows() []view.BindingStatus {
 		},
 		{
 			Name: "ledger", Round: 3, Display: "PAUSED",
-			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "pull",
+			MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "pull",
 			BuilderKind: "agy", BuilderStatus: "idle", Branch: "relevo/ledger",
 			Spend: &usage.Spend{Rounds: 3, Measured: 1.23, Estimated: 0.40, Unknown: 1},
 		},
 		{
 			Name: "api", Round: 2, Display: "ACTIVE",
-			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel", PlannerRouteLive: true,
+			MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "channel", MasterMindRouteLive: true,
 			BuilderKind: "agy", BuilderStatus: "working", Branch: "relevo/api",
 		},
 		{
 			Name: "worker", Round: 2, Display: "ACTIVE",
-			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel", PlannerRouteLive: true,
+			MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "channel", MasterMindRouteLive: true,
 			BuilderKind: "opencode", BuilderStatus: "working", BuilderCandidate: "opencode-1", Branch: "relevo/worker",
 			Headless: &view.HeadlessInfo{PID: 48211, StartedAt: railNow.Add(-21 * time.Minute)},
 		},
 		{
 			Name: "docs", Round: 1, Display: "DONE",
-			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "pull",
+			MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "pull",
 			BuilderKind: "agy", BuilderStatus: "unknown", CWD: "/home/x/docs",
 			Last: &view.LastEvent{TS: railNow.Add(-3 * time.Hour)},
 		},
@@ -93,14 +93,14 @@ func allStatesRows() []view.BindingStatus {
 }
 
 // reportReadyRows is the fleet fixture for the report-ready golden: every
-// state row, plus a binding whose human planner is owed a report (§4.5). Its
+// state row, plus a binding whose human mastermind is owed a report (§4.5). Its
 // display word is ACTIVE, so the header's count can only include it through
 // the report-ready rule.
 func reportReadyRows() []view.BindingStatus {
 	rows := append([]view.BindingStatus(nil), allStatesRows()...)
 	return append(rows, view.BindingStatus{
 		Name: "inbox", Round: 3, Display: "ACTIVE",
-		PlannerID: "pl_aaaaaaaabbbb", PlannerName: "you", PlannerKind: "human", PlannerRoute: "pull",
+		MasterMindID: "pl_aaaaaaaabbbb", MasterMindName: "you", MasterMindKind: "human", MasterMindRoute: "pull",
 		BuilderKind: "opencode", BuilderStatus: "exited", Branch: "relevo/inbox",
 		Last:    &view.LastEvent{TS: railNow.Add(-3 * time.Minute), Round: 3, Kind: store.KindReport},
 		Pending: &view.PendingInfo{Round: 3, Kind: store.KindReport},
@@ -151,15 +151,15 @@ func realFleetReport() view.Report {
 
 	bindings := []view.BindingStatus{
 		{
-			Name:        "fix-433",
-			Round:       2,
-			Display:     "NEEDS YOU",
-			BuilderKind: "agy",
-			BuilderName: "deepseek-v4.1-flash",
-			PlannerName: "architect-3",
-			Branch:      "relevo/fix-433",
-			LastClose:   &view.CloseInfo{Commits: 2},
-			Spend:       &usage.Spend{Measured: 0.03},
+			Name:           "fix-433",
+			Round:          2,
+			Display:        "NEEDS YOU",
+			BuilderKind:    "agy",
+			BuilderName:    "deepseek-v4.1-flash",
+			MasterMindName: "architect-3",
+			Branch:         "relevo/fix-433",
+			LastClose:      &view.CloseInfo{Commits: 2},
+			Spend:          &usage.Spend{Measured: 0.03},
 			Waiting: &view.Waiting{
 				Cause: "blocked",
 				Line:  "“Should the dedupe also cover archived bindings, or only live ones?”",
@@ -172,26 +172,26 @@ func realFleetReport() view.Report {
 			},
 		},
 		{
-			Name:          "spool-db",
-			Round:         1,
-			Display:       "ACTIVE",
-			BuilderStatus: "working",
-			QuietFor:      "17s",
-			RoundStart:    railNow.Add(-5 * time.Minute),
-			BuilderName:   "gemini-3.8-flash-high",
-			PlannerName:   "architect-2",
-			Spend:         &usage.Spend{Plan: 1},
+			Name:           "spool-db",
+			Round:          1,
+			Display:        "ACTIVE",
+			BuilderStatus:  "working",
+			QuietFor:       "17s",
+			RoundStart:     railNow.Add(-5 * time.Minute),
+			BuilderName:    "gemini-3.8-flash-high",
+			MasterMindName: "architect-2",
+			Spend:          &usage.Spend{Plan: 1},
 		},
 		{
-			Name:          "tok-seg",
-			Round:         1,
-			Display:       "ACTIVE",
-			BuilderStatus: "working",
-			QuietFor:      "16s",
-			RoundStart:    railNow.Add(-6 * time.Minute),
-			BuilderName:   "gemini-3.8-flash-high",
-			PlannerName:   "architect-5",
-			Spend:         &usage.Spend{Plan: 1},
+			Name:           "tok-seg",
+			Round:          1,
+			Display:        "ACTIVE",
+			BuilderStatus:  "working",
+			QuietFor:       "16s",
+			RoundStart:     railNow.Add(-6 * time.Minute),
+			BuilderName:    "gemini-3.8-flash-high",
+			MasterMindName: "architect-5",
+			Spend:          &usage.Spend{Plan: 1},
 		},
 		{
 			Name:          "oc-tui-a",
@@ -202,10 +202,10 @@ func realFleetReport() view.Report {
 				Kind: store.KindReport,
 				TS:   railNow.Add(-14 * time.Minute),
 			},
-			BuilderName: "deepseek-v4.1-flash",
-			PlannerName: "architect-3",
-			Spend:       &usage.Spend{Measured: 0.20},
-			Unread:      true,
+			BuilderName:    "deepseek-v4.1-flash",
+			MasterMindName: "architect-3",
+			Spend:          &usage.Spend{Measured: 0.20},
+			Unread:         true,
 		},
 		{
 			Name:          "rl-tail",
@@ -216,9 +216,9 @@ func realFleetReport() view.Report {
 				Kind: store.KindReport,
 				TS:   railNow.Add(-31 * time.Minute),
 			},
-			BuilderName: "gemini-3.8-flash-high",
-			PlannerName: "architect-5",
-			Spend:       &usage.Spend{Plan: 1},
+			BuilderName:    "gemini-3.8-flash-high",
+			MasterMindName: "architect-5",
+			Spend:          &usage.Spend{Plan: 1},
 		},
 		{
 			Name:          "oc-tui-probe",
@@ -229,9 +229,9 @@ func realFleetReport() view.Report {
 				Kind: store.KindReport,
 				TS:   railNow.Add(-48 * time.Minute),
 			},
-			BuilderName: "gemini-3.8-flash-high",
-			PlannerName: "architect-3",
-			Spend:       &usage.Spend{Plan: 1},
+			BuilderName:    "gemini-3.8-flash-high",
+			MasterMindName: "architect-3",
+			Spend:          &usage.Spend{Plan: 1},
 		},
 		{
 			Name:          "serve-status-json",
@@ -242,9 +242,9 @@ func realFleetReport() view.Report {
 				Kind: store.KindReport,
 				TS:   railNow.Add(-1 * time.Hour),
 			},
-			BuilderName: "deepseek-v4.1-flash",
-			PlannerName: "architect-13",
-			Spend:       &usage.Spend{Measured: 0.03},
+			BuilderName:    "deepseek-v4.1-flash",
+			MasterMindName: "architect-13",
+			Spend:          &usage.Spend{Measured: 0.03},
 		},
 	}
 	bindings = append(bindings, doneRows...)
@@ -324,7 +324,7 @@ func goldenRoundModel(t *testing.T, width, height int) Model {
 func goldenArchivedRoundModel(t *testing.T, width, height int) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -332,7 +332,7 @@ func goldenArchivedRoundModel(t *testing.T, width, height int) Model {
 	h := histRows()[0]
 	v, _ := newHistRoundView(m.env(), h, 0)
 	m.stack = append(m.stack, v)
-	res, _ = m.Update(tabMsg{name: h.Name, round: 3, t: tabPlan, content: tabContent{loaded: true, round: 3, body: "# Round 3 plan\n\nDo the thing.\n"}})
+	res, _ = m.Update(tabMsg{name: h.Name, round: 3, t: tabPrompt, content: tabContent{loaded: true, round: 3, body: "# Round 3 plan\n\nDo the thing.\n"}})
 	return res.(Model)
 }
 
@@ -364,7 +364,8 @@ func padBytes(s string, n int) string {
 }
 
 // roundReaderArtifactsModel pushes the round view for a closed reader round
-// with its artifacts tab open and the cursor on summary.md (round 5b).
+// with its artifacts tab open and the cursor on the reviewer's output file
+// (round 5b).
 func roundReaderArtifactsModel(t *testing.T, width, height int) Model {
 	t.Helper()
 	const (
@@ -394,7 +395,7 @@ func seedPlanFixture(t *testing.T, st *store.Store, name string, round int, ts t
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	p := st.PlanPath(name, round)
+	p := st.PromptPath(name, round)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +403,7 @@ func seedPlanFixture(t *testing.T, st *store.Store, name string, round int, ts t
 		t.Fatal(err)
 	}
 	if err := st.AppendLog(name, store.LogEntry{
-		TS: ts, Round: round, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: p,
+		TS: ts, Round: round, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: p,
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
@@ -420,7 +421,7 @@ func realRoundModel(t *testing.T, width, height int) Model {
 			rep.Bindings[i].PlanRound = 1
 			rep.Bindings[i].Spend = nil
 			rep.Bindings[i].BuilderName = "gemini-3.8-flash-high"
-			rep.Bindings[i].PlannerName = "architect-2"
+			rep.Bindings[i].MasterMindName = "architect-2"
 			rep.Bindings[i].Branch = "relevo/spool-db"
 			rep.Bindings[i].Headless = &view.HeadlessInfo{
 				PID:       1401366,
@@ -480,7 +481,7 @@ func goldenRoundsModel(t *testing.T, width, height int) Model {
 	}
 	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}},
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
 		Options{Interval: time.Second, Start: "rounds", Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -578,7 +579,7 @@ func goldenLogModel(t *testing.T, width, height int) Model {
 	}
 	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}},
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
 		Options{Interval: time.Second, Start: "log", Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -615,7 +616,7 @@ func goldenStatsModel(t *testing.T, width, height int, rep stats.Report) Model {
 	}
 	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}},
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
 		Options{Interval: time.Second, Start: "stats", Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -1033,7 +1034,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "fleet-error-before-load", width: 140, height: 40,
 			build: func(t *testing.T) Model {
 				st := store.New(t.TempDir())
-				m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
+				m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
 				m.now = func() time.Time { return railNow }
 				res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 				m = res.(Model)

@@ -158,7 +158,7 @@ func (m Model) headerView(env Env) string {
 
 	n := 0
 	for _, b := range env.Report.Bindings {
-		// A report ready for the human planner needs them exactly as a
+		// A report ready for the human mastermind needs them exactly as a
 		// NEEDS YOU question does, so it counts here too (§4.5).
 		if b.Display == "NEEDS YOU" || reportReady(b) {
 			n++

@@ -70,6 +70,39 @@ func TestDedupeMirrorKeepsAnswerArtifacts(t *testing.T) {
 	}
 }
 
+// TestDedupeMirrorDeletesIdenticalPromptUnderEitherFileName pins the prompt
+// artifact's dual base: a prompt row is a duplicate when the record's round
+// file carries the new name or the pre-rename one.
+func TestDedupeMirrorDeletesIdenticalPromptUnderEitherFileName(t *testing.T) {
+	d := openTestDB(t)
+	const name = "webshop"
+	bindingID := seedMirrorBinding(t, d, name)
+	recordID := seedRecordAt(t, d, name, "claude", dedupeAt)
+
+	bodyNew := "003-prompt.md: the round's input\n"
+	round3 := seedMirrorRound(t, d, bindingID, 3)
+	putRoundFile(t, d, recordID, "003-prompt.md", 3, bodyNew)
+	newName := putArtifact(t, d, round3, db.ArtifactPrompt, bodyNew)
+
+	bodyOld := "004-plan.md: the round's input\n"
+	round4 := seedMirrorRound(t, d, bindingID, 4)
+	putRoundFile(t, d, recordID, "004-plan.md", 4, bodyOld)
+	oldName := putArtifact(t, d, round4, db.ArtifactPrompt, bodyOld)
+
+	plan := mustPlan(t, d)
+
+	if plan.stats.ArtifactsDeleted != 2 || plan.stats.ArtifactsKept != 0 {
+		t.Errorf("deleted/kept = %d/%d, want 2/0", plan.stats.ArtifactsDeleted, plan.stats.ArtifactsKept)
+	}
+	deleted := map[string]bool{}
+	for _, id := range plan.artifactIDs {
+		deleted[id] = true
+	}
+	if !deleted[newName.ID] || !deleted[oldName.ID] {
+		t.Errorf("artifactIDs = %v, want both %s and %s", plan.artifactIDs, newName.ID, oldName.ID)
+	}
+}
+
 func TestDedupeMirrorKeepsEveryRowOfAnUnmappedBinding(t *testing.T) {
 	d := openTestDB(t)
 	const name = "webshop"
@@ -356,7 +389,7 @@ func TestDedupeMirrorAcceptsALogDerivedTranscriptWhenAStreamExists(t *testing.T)
 	}
 }
 
-func TestDedupeMirrorNeverPlansPlannerTranscript(t *testing.T) {
+func TestDedupeMirrorNeverPlansMasterMindTranscript(t *testing.T) {
 	d := openTestDB(t)
 	const name = "webshop"
 	bindingID := seedMirrorBinding(t, d, name)
@@ -368,8 +401,8 @@ func TestDedupeMirrorNeverPlansPlannerTranscript(t *testing.T) {
 	roundRecs, _ := streamTranscriptRecords("claude", [][]byte{[]byte(line)}, 0)
 	appendTranscript(t, d, db.OwnerRound, round3, roundRecs)
 
-	appendTranscript(t, d, db.OwnerPlanner, round3, []db.TranscriptRecord{
-		{Seq: 0, RecordJSON: line, Rendered: "the planner's own line"},
+	appendTranscript(t, d, db.OwnerMasterMind, round3, []db.TranscriptRecord{
+		{Seq: 0, RecordJSON: line, Rendered: "the mastermind's own line"},
 	})
 
 	plan := mustPlan(t, d)
@@ -384,12 +417,12 @@ func TestDedupeMirrorNeverPlansPlannerTranscript(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("DeleteRoundTranscript: %v", err)
 	}
-	plannerRows, err := d.Transcript(db.OwnerPlanner, round3, 0, 0)
+	mastermindRows, err := d.Transcript(db.OwnerMasterMind, round3, 0, 0)
 	if err != nil {
-		t.Fatalf("Transcript(planner): %v", err)
+		t.Fatalf("Transcript(mastermind): %v", err)
 	}
-	if len(plannerRows) != 1 {
-		t.Errorf("planner transcript has %d rows after the round's delete, want 1", len(plannerRows))
+	if len(mastermindRows) != 1 {
+		t.Errorf("mastermind transcript has %d rows after the round's delete, want 1", len(mastermindRows))
 	}
 }
 
@@ -495,12 +528,12 @@ func TestDedupeMirrorOnceDeletesBacksUpAndRecordsKV(t *testing.T) {
 	if len(roundRows) != 0 {
 		t.Errorf("round transcript has %d rows after the run, want 0", len(roundRows))
 	}
-	plannerRows, err := d.Transcript(db.OwnerPlanner, round3, 0, 0)
+	mastermindRows, err := d.Transcript(db.OwnerMasterMind, round3, 0, 0)
 	if err != nil {
-		t.Fatalf("Transcript(planner): %v", err)
+		t.Fatalf("Transcript(mastermind): %v", err)
 	}
-	if len(plannerRows) != 1 {
-		t.Errorf("planner transcript has %d rows after the run, want 1", len(plannerRows))
+	if len(mastermindRows) != 1 {
+		t.Errorf("mastermind transcript has %d rows after the run, want 1", len(mastermindRows))
 	}
 
 	stored, ok, err := d.KVGet(dedupeKVKey)

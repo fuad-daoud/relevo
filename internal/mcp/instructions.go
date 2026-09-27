@@ -1,6 +1,8 @@
 package mcp
 
-// InstructionsChannel is the model-facing text for channel mode: events
+import "github.com/fuad-daoud/relevo/internal/mastermind"
+
+// InstructionsChannel is the model-facing prelude for channel mode: events
 // arrive as <channel source="relevo"> blocks, and the model acts on each.
 const InstructionsChannel = `relevo is handing you round events over this channel instead of
 typing them into your input box. A <channel source="relevo" ...> block can
@@ -21,12 +23,12 @@ Event kinds, from the block's kind attribute:
     stop.
 
 An event for a binding you did not personally send still belongs to you --
-every binding on this planner shares this one channel. Do not ignore an event
+every binding on this MasterMind shares this one channel. Do not ignore an event
 because you do not recognize the binding name; run relevo status to catch up.
 
 Three verbs are tools here, callable directly instead of through the shell:
 
-  - status(name?, all?): one binding, or every binding on this planner, or
+  - status(name?, all?): one binding, or every binding on this MasterMind, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
     runner a new round.
@@ -36,7 +38,7 @@ Every other relevo verb -- bind, show, wait, gate, config, and the rest --
 is not a tool here; run it with Bash.
 `
 
-// InstructionsTools is the model-facing text for tools mode: nothing is
+// InstructionsTools is the model-facing prelude for tools mode: nothing is
 // pushed, so the model runs a background wait after every send.
 const InstructionsTools = `relevo is running in tools mode: no events arrive on their own. Everything
 relevo tells you arrives as the output of a command you started.
@@ -68,13 +70,13 @@ Act on the wait's output after every wait exit except WaitTimeout.
     report; nothing is owed.
 
 A report or a needs_you for a binding you did not personally send still
-belongs to you -- every binding on this planner is yours. Do not ignore a
+belongs to you -- every binding on this MasterMind is yours. Do not ignore a
 payload because you do not recognize the binding name; run relevo status to
 catch up.
 
 Three verbs are tools here, callable directly instead of through the shell:
 
-  - status(name?, all?): one binding, or every binding on this planner, or
+  - status(name?, all?): one binding, or every binding on this MasterMind, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
     runner a new round.
@@ -84,10 +86,12 @@ Every other relevo verb -- bind, show, wait, gate, config, and the rest --
 is not a tool here; run it with Bash.
 `
 
-// InstructionsFor picks the text for mode.
+// InstructionsFor picks the mode's prelude and appends the shared guide: the
+// guide is the last thing either mode's model reads.
 func InstructionsFor(mode Mode) string {
+	prelude := InstructionsTools
 	if mode == ModeChannel {
-		return InstructionsChannel
+		prelude = InstructionsChannel
 	}
-	return InstructionsTools
+	return prelude + "\n" + mastermind.Guide()
 }

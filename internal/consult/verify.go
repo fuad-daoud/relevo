@@ -23,7 +23,7 @@ const VerifyRole = "verify"
 
 // Verdict values parseVerdict returns and store.Verdict.Verdict carries. The
 // third is not a judgement: the findings carried no readable block, and the
-// planner reads the prose.
+// mastermind reads the prose.
 const (
 	verdictAccepted     = "accepted"
 	verdictRejected     = "rejected"
@@ -237,7 +237,7 @@ func (v verifyStart) launch(wt, diff, gateLog string) (store.Binding, error) {
 	id := newID(v.d)
 	askPath := v.d.Store.AskPath(v.b.Name, v.round, id)
 	question := verifyQuestion(v.b.Name, v.round,
-		v.d.Store.PlanPath(v.b.Name, v.round), v.d.Store.ReportPath(v.b.Name, v.round), diff, gateLog)
+		v.d.Store.PromptPath(v.b.Name, v.round), v.d.Store.ReportPath(v.b.Name, v.round), diff, gateLog)
 	render := func(ref string) string { return fmt.Sprintf(headlessPrompt, ref) }
 	prompt, inline := inlinePrompt(render, []byte(question))
 	if err := stageVerifyQuestion(v.tx, v.b.Name, v.round, askPath, question, inline); err != nil {

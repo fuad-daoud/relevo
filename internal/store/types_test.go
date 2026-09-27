@@ -53,7 +53,7 @@ func bindingWithRepoRef() Binding {
 	b := newBinding("webshop", "/repo")
 	b.RepoRef = &RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
 	b.Feature = "auth"
-	b.Planner.TranscriptLocator = "/home/x/.claude/projects/slug/S.jsonl"
+	b.MasterMind.TranscriptLocator = "/home/x/.claude/projects/slug/S.jsonl"
 	return b
 }
 

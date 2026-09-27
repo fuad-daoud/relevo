@@ -165,7 +165,7 @@ func Unavailable(d Deps, token string, until time.Time, reason string) (provider
 		At:      now,
 		Until:   until,
 		Note:    reason,
-		Source:  "planner",
+		Source:  "planner", // why: ClearedByMasterMind's value is state already written
 	}
 	if err := d.Store.WithLock(func(*store.Tx) error { return AppendEntryLocked(d, entry) }); err != nil {
 		return "", err
@@ -181,10 +181,10 @@ func Unavailable(d Deps, token string, until time.Time, reason string) (provider
 // Source is source. Zero removed is not an error and records nothing -- the
 // caller reports that nothing was gating.
 //
-// source must be ClearedByPlanner or ClearedByServer; anything else is a
+// source must be ClearedByMasterMind or ClearedByServer; anything else is a
 // programming error and returns an error before any write.
 func Available(d Deps, subject, source string) (provider string, removed int, err error) {
-	if source != ClearedByPlanner && source != ClearedByServer {
+	if source != ClearedByMasterMind && source != ClearedByServer {
 		return "", 0, fmt.Errorf("available: unknown clear source %q", source)
 	}
 	if d.Gates == nil {
@@ -441,7 +441,7 @@ func GateUntilText(until time.Time) string {
 
 // gatedNote is the one advisory line bind, add, fork and ask print after a
 // successful spawn of a candidate the ledger says is gated. Advisory only: the
-// agent is already running, and refusing is the planner's job.
+// agent is already running, and refusing is the mastermind's job.
 func gatedNote(d Deps, token string) string {
 	var parts []string
 	for _, g := range append(LedgerGates(d, []string{token}), rolesMissingGates(d)...) {

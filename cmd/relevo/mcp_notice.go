@@ -13,7 +13,7 @@ import (
 // within a turn or two.
 const mcpNoticeTTL = 30 * time.Second
 
-// mcpNotice is the line a planner session's relevo mcp appends to every tool
+// mcpNotice is the line a mastermind session's relevo mcp appends to every tool
 // result when the daemon has moved on to a newer relevo than the MCP server
 // this session started (#371 §4.10). Pure: this image's own version, the
 // daemon's record and whether there is one are the whole input.

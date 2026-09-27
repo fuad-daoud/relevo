@@ -101,7 +101,7 @@ func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 		t.Errorf("RoundSwitches = %d, want 0 on a fresh round", got.RoundSwitches)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -132,7 +132,7 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 	if got.Round != 2 {
 		t.Errorf("round = %d, want 2 after a report", got.Round)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -220,7 +220,7 @@ func TestReconcileDiffCapture(t *testing.T) {
 			if !entry.Confirmed {
 				t.Error("KindDiff entry must be confirmed")
 			}
-			if entry.Direction != store.DirToPlanner {
+			if entry.Direction != store.DirToMasterMind {
 				t.Errorf("KindDiff direction = %s, want to_planner", entry.Direction)
 			}
 			if entry.Path != rt.Store.DiffPath("webshop", 1) {
@@ -245,10 +245,10 @@ func TestReconcileDiffCapture(t *testing.T) {
 		t.Fatalf("report payload %q does not contain %q", reportEntry.Payload, wantLine)
 	}
 
-	// PendingForPlanner still returns the report
-	pending, ok, err := rt.Store.PendingForPlanner("webshop")
+	// PendingForMasterMind still returns the report
+	pending, ok, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !ok {
-		t.Fatalf("PendingForPlanner: ok=%v, err=%v", ok, err)
+		t.Fatalf("PendingForMasterMind: ok=%v, err=%v", ok, err)
 	}
 	if pending.Kind != store.KindReport {
 		t.Fatalf("pending kind = %s, want report", pending.Kind)
@@ -374,9 +374,9 @@ func TestQueueReportRecordsCommitFacts(t *testing.T) {
 	})
 }
 
-// TestReconcileRefreshesPlannerEndpoint refreshed a planner pane id from
+// TestReconcileRefreshesMasterMindEndpoint refreshed a mastermind pane id from
 // the agent list. Both halves are gone (#303; closed-list items 6 and 8):
-// there is no agent list and Planner.PaneID is written by nothing.
+// there is no agent list and MasterMind.PaneID is written by nothing.
 
 // TestQueueReportRecordsRusage: a headless round's report entry gets
 // Rusage from rt.Runner.Rusage when the runner has one, and stays nil
@@ -501,7 +501,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 			return tx.AppendLog(b.Name, store.LogEntry{
 				TS:        rt.Now().UTC(),
 				Round:     b.Round,
-				Direction: store.DirToPlanner,
+				Direction: store.DirToMasterMind,
 				Kind:      store.KindDiff,
 				Confirmed: true,
 			})
@@ -581,7 +581,7 @@ func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
 	if !got.HaltAt.IsZero() {
 		t.Errorf("HaltAt = %v, want zero after a round close", got.HaltAt)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -607,7 +607,7 @@ func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
 	if !closed || got.Round != 2 {
 		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("entry must be queued: found=%v err=%v", found, err)
 	}
@@ -668,7 +668,7 @@ func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
 	if got.Round != 2 {
 		t.Errorf("round = %d, want 2: the marker closes the round regardless of the process", got.Round)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found || pending.Note != "" {
 		t.Errorf("want a normal report queued: found=%v note=%q err=%v", found, pending.Note, err)
 	}
@@ -692,7 +692,7 @@ func TestReconcileReportWithoutMarkerIsNotAClose(t *testing.T) {
 	if got.Round != 1 {
 		t.Errorf("round = %d, want 1: a report alone is not a close", got.Round)
 	}
-	if _, found, _ := rt.Store.PendingForPlanner("webshop"); found {
+	if _, found, _ := rt.Store.PendingForMasterMind("webshop"); found {
 		t.Error("nothing may be queued off a report without a marker")
 	}
 }
@@ -762,7 +762,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if report.Outcome != reporttail.OutcomeDone {
 			t.Errorf("Outcome = %q, want %q", report.Outcome, reporttail.OutcomeDone)
 		}
-		wantOrigin := delivery.OriginLine("webshop", 1, store.DirToPlanner, store.KindReport)
+		wantOrigin := delivery.OriginLine("webshop", 1, store.DirToMasterMind, store.KindReport)
 		lines := strings.Split(report.Payload, "\n")
 		if len(lines) < 3 {
 			t.Fatalf("unexpected payload lines: %q", report.Payload)
@@ -1341,7 +1341,7 @@ func TestGateNotConfiguredIsUnchanged(t *testing.T) {
 	if len(fr.specs) != 0 {
 		t.Fatalf("Start calls = %d, want 0 with no gate configured", len(fr.specs))
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -1417,7 +1417,7 @@ func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
 	if len(gates(t, rt)) != 1 {
 		t.Fatalf("KindGate entries = %d, want 1", len(gates(t, rt)))
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1490,7 +1490,7 @@ func TestGatePassClosesWithAnnotation(t *testing.T) {
 		t.Errorf("GateRun = %+v, want nil after the round closes", got.GateRun)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -1547,7 +1547,7 @@ func TestGateFailAddsTail(t *testing.T) {
 		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -1621,7 +1621,7 @@ func TestGateTimeoutKills(t *testing.T) {
 		t.Fatalf("kills = %+v, want exactly one kill of pid %d", fr.kills, fr.handles[0].PID)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -1661,7 +1661,7 @@ func TestGateNoRunnerIsErrorNotHang(t *testing.T) {
 		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -1679,7 +1679,7 @@ func TestGateNoRunnerIsErrorNotHang(t *testing.T) {
 // gateRecordFor finds a binding's report entry for one round and returns its
 // gate record, failing the test when the round has no report entry. It is how
 // the regate tests inspect a round that closed earlier than the one currently
-// in flight: PendingForPlanner only ever hands back the oldest.
+// in flight: PendingForMasterMind only ever hands back the oldest.
 func gateRecordFor(t *testing.T, rt Runtime, name string, round int) *store.GateRecord {
 	t.Helper()
 	entries, err := rt.Store.ReadLog(name)
@@ -1687,7 +1687,7 @@ func gateRecordFor(t *testing.T, rt Runtime, name string, round int) *store.Gate
 		t.Fatalf("ReadLog(%s): %v", name, err)
 	}
 	for _, e := range entries {
-		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindReport {
 			return e.Gate
 		}
 	}
@@ -1753,7 +1753,7 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 	if got.Round != 2 {
 		t.Fatalf("Round = %d, want 2", got.Round)
 	}
-	planPath := rt.Store.PlanPath("webshop", 2)
+	planPath := rt.Store.PromptPath("webshop", 2)
 	body, err := os.ReadFile(planPath)
 	if err != nil {
 		t.Fatalf("round 2 plan must exist: %v", err)
@@ -1762,8 +1762,8 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 		t.Errorf("round 2 plan does not name the failed check:\n%s", body)
 	}
 
-	if !anySpecArgv(fr, "002-plan.md") {
-		t.Errorf("no process was handed round 2's repair plan (002-plan.md)")
+	if !anySpecArgv(fr, "002-prompt.md") {
+		t.Errorf("no process was handed round 2's repair plan (002-prompt.md)")
 	}
 
 	entries, err := rt.Store.ReadLog("webshop")
@@ -1772,7 +1772,7 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 	}
 	var repairEntry *store.LogEntry
 	for i := range entries {
-		if entries[i].Round == 2 && entries[i].Direction == store.DirToBuilder && entries[i].Kind == store.KindPlan {
+		if entries[i].Round == 2 && entries[i].Direction == store.DirToBuilder && entries[i].Kind == store.KindPrompt {
 			repairEntry = &entries[i]
 		}
 	}
@@ -1819,8 +1819,8 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 	if got.State != store.StateActive || got.RepairCount != 1 {
 		t.Fatalf("after the first failure: state=%q repairs=%d, want active/1", got.State, got.RepairCount)
 	}
-	if !anySpecArgv(fr, "002-plan.md") {
-		t.Fatalf("no process was handed round 2's repair plan (002-plan.md)")
+	if !anySpecArgv(fr, "002-prompt.md") {
+		t.Fatalf("no process was handed round 2's repair plan (002-prompt.md)")
 	}
 
 	// Round 2's gate fails with different content, so the stall bound cannot
@@ -1833,10 +1833,10 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 	if !strings.Contains(got.Halt, "after 1 repair") {
 		t.Errorf("Halt = %q, want it to mention \"after 1 repair\"", got.Halt)
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 3)); err == nil {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 3)); err == nil {
 		t.Error("no round-3 plan may be staged once the budget is spent")
 	}
-	if anySpecArgv(fr, "003-plan.md") {
+	if anySpecArgv(fr, "003-prompt.md") {
 		t.Error("no round-3 hand-off may happen once the budget is spent")
 	}
 }
@@ -1955,14 +1955,14 @@ func TestNoRegateUnchanged(t *testing.T) {
 	if got.RepairCount != 0 || got.LastGateSig != "" {
 		t.Errorf("repair bookkeeping moved with regate 0: repairs=%d sig=%q", got.RepairCount, got.LastGateSig)
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 2)); err == nil {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 2)); err == nil {
 		t.Error("no round-2 plan may be staged when regate is 0")
 	}
 	if got := len(runnerOf(t, rt).specs); got != 1 {
 		t.Errorf("processes started = %d, want 1 (the gate only, nothing re-sent)", got)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -2197,12 +2197,12 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 		t.Errorf("consult state = %q, want running", vc.State)
 	}
 
-	// The report was queued for the planner: with no live claim it waits for
+	// The report was queued for the mastermind: with no live claim it waits for
 	// `relevo wait`, which is the whole delivery route since #303.
-	if pending, found, err := rt.Store.PendingForPlanner("webshop"); err != nil {
+	if pending, found, err := rt.Store.PendingForMasterMind("webshop"); err != nil {
 		t.Fatal(err)
 	} else if !found {
-		t.Error("the closed round's report must be queued for the planner")
+		t.Error("the closed round's report must be queued for the mastermind")
 	} else if pending.Kind != store.KindReport {
 		t.Errorf("pending kind = %q, want report", pending.Kind)
 	}
@@ -2338,7 +2338,7 @@ func roundReportEntry(t *testing.T, rt Runtime, round int) store.LogEntry {
 		t.Fatalf("ReadLog: %v", err)
 	}
 	for _, e := range entries {
-		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindReport {
 			return e
 		}
 	}

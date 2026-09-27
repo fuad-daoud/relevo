@@ -17,7 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 	"github.com/fuad-daoud/relevo/internal/hooks"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -31,9 +31,9 @@ import (
 // (#235, #463). Tests that t.Setenv the same variables keep working: t.Setenv
 // restores to these values.
 //
-// It also clears the planner identity a harness injects into the shell that
+// It also clears the mastermind identity a harness injects into the shell that
 // runs the tests (a Claude Code session, an agy conversation, an OpenCode shell
-// marked by the relevo plugin's server hook), so no test resolves the planner
+// marked by the relevo plugin's server hook), so no test resolves the mastermind
 // of whoever happens to run `go test`. isolateTestEnv holds the rule; a test
 // that needs one of these variables sets it itself.
 func TestMain(m *testing.M) {
@@ -97,7 +97,7 @@ func TestIsolateTestEnv(t *testing.T) {
 	t.Setenv("CLAUDE_PID", "1")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "x")
 	t.Setenv("RELEVO_HARNESS", "opencode")
-	t.Setenv("RELEVO_PLANNER", "p")
+	t.Setenv("RELEVO_MASTERMIND", "p")
 	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "x")
 	t.Setenv("TYPESAFE_API_KEY", "k")
 	t.Setenv("CLAUDEX_KEEP", "1") // near-miss: no underscore after CLAUDE
@@ -119,7 +119,7 @@ func TestIsolateTestEnv(t *testing.T) {
 
 	for _, name := range []string{
 		"CLAUDECODE", "CLAUDE_ENV_FILE", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID",
-		"RELEVO_HARNESS", "RELEVO_PLANNER",
+		"RELEVO_HARNESS", "RELEVO_MASTERMIND", "RELEVO_PLANNER",
 		"ANTIGRAVITY_CONVERSATION_ID", "TYPESAFE_API_KEY",
 	} {
 		if _, ok := os.LookupEnv(name); ok {
@@ -364,7 +364,7 @@ func TestDiffCommand(t *testing.T) {
 	// Add log entries for round 1
 	if err := s.AppendLog("webshop", store.LogEntry{
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindDiff,
 		Note:      "1 file, +1 -0",
 		Confirmed: true,
@@ -522,7 +522,7 @@ func TestDiffDriftCommand(t *testing.T) {
 	// Add KindDrift log entry for round 2
 	if err := s.AppendLog("webshop", store.LogEntry{
 		Round:     2,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindDrift,
 		Note:      "1 file, +5 -1",
 		Confirmed: true,
@@ -755,19 +755,19 @@ func TestAddBranchWithCwdIsRefusedBeforeRuntime(t *testing.T) {
 }
 
 // TestAddBranchDerivesName pins that a branch alone is enough for the name to
-// be derived: with no relevo planner for this session the run stops on the
-// no-planner error, before any harness call, so the derived name is never
+// be derived: with no relevo mastermind for this session the run stops on the
+// no-mastermind error, before any harness call, so the derived name is never
 // printed and no builder is reached.
 func TestAddBranchDerivesName(t *testing.T) {
-	t.Setenv("RELEVO_PLANNER", "")
+	t.Setenv("RELEVO_MASTERMIND", "")
 	t.Setenv("CLAUDECODE", "")
 
 	err := run([]string{"bind", "--branch", "feature/api-auth"})
 	if err == nil {
-		t.Fatal("add without a relevo planner must refuse")
+		t.Fatal("add without a relevo mastermind must refuse")
 	}
-	if !strings.Contains(err.Error(), "no relevo planner for this session") {
-		t.Fatalf("expected the no-planner error, got %v", err)
+	if !strings.Contains(err.Error(), "no relevo MasterMind for this session") {
+		t.Fatalf("expected the no-mastermind error, got %v", err)
 	}
 	if strings.Contains(err.Error(), "api-auth") {
 		t.Errorf("the derived name must not appear in the refusal: %v", err)
@@ -1405,16 +1405,16 @@ func TestUnbindDoneTakesNoBinding(t *testing.T) {
 	}
 }
 
-// TestUnbindPlannerFlags pins #482: --planner and --all-planners only make
+// TestUnbindMasterMindFlags pins #482: --mastermind and --all-masterminds only make
 // sense with --done, and combining them exits 2 before a runtime is built
-// (except the --planner+--all-planners combo, which gcScope checks after
+// (except the --mastermind+--all-masterminds combo, which gcScope checks after
 // newRuntime and is pinned by TestGCScope instead).
-func TestUnbindPlannerFlags(t *testing.T) {
+func TestUnbindMasterMindFlags(t *testing.T) {
 	for _, args := range [][]string{
-		{"unbind", "--planner", "x"},
-		{"unbind", "--all-planners"},
-		{"unbind", "--sweep", "--planner", "x"},
-		{"unbind", "--sweep", "--all-planners"},
+		{"unbind", "--mastermind", "x"},
+		{"unbind", "--all-masterminds"},
+		{"unbind", "--sweep", "--mastermind", "x"},
+		{"unbind", "--sweep", "--all-masterminds"},
 	} {
 		_, _, err := captureOutput(t, func() error { return run(args) })
 		var ec exitCodeErr
@@ -1424,77 +1424,77 @@ func TestUnbindPlannerFlags(t *testing.T) {
 	}
 }
 
-// TestGCScope pins #482: gcScope turns --planner/--all-planners into a GC
-// scope with no fallback to "everything" when the planner fails to resolve.
+// TestGCScope pins #482: gcScope turns --mastermind/--all-masterminds into a GC
+// scope with no fallback to "everything" when the mastermind fails to resolve.
 func TestGCScope(t *testing.T) {
 	t.Run("empty flag resolves via resolve", func(t *testing.T) {
-		resolve := func(ref string) (planner.Record, error) {
+		resolve := func(ref string) (mastermind.Record, error) {
 			if ref != "" {
 				t.Errorf("resolve called with %q, want \"\"", ref)
 			}
-			return planner.Record{ID: "pl_aaa"}, nil
+			return mastermind.Record{ID: "pl_aaa"}, nil
 		}
 		got, err := gcScope("", false, resolve)
 		if err != nil {
 			t.Fatalf("gcScope: %v", err)
 		}
-		if got != (relevo.GCOptions{PlannerID: "pl_aaa"}) {
-			t.Fatalf("gcScope = %+v, want {PlannerID: pl_aaa}", got)
+		if got != (relevo.GCOptions{MasterMindID: "pl_aaa"}) {
+			t.Fatalf("gcScope = %+v, want {MasterMindID: pl_aaa}", got)
 		}
 	})
 
-	t.Run("planner flag is passed to resolve", func(t *testing.T) {
-		resolve := func(ref string) (planner.Record, error) {
+	t.Run("mastermind flag is passed to resolve", func(t *testing.T) {
+		resolve := func(ref string) (mastermind.Record, error) {
 			if ref != "architect-2" {
 				t.Errorf("resolve called with %q, want architect-2", ref)
 			}
-			return planner.Record{ID: "pl_bbb"}, nil
+			return mastermind.Record{ID: "pl_bbb"}, nil
 		}
 		got, err := gcScope("architect-2", false, resolve)
 		if err != nil {
 			t.Fatalf("gcScope: %v", err)
 		}
-		if got != (relevo.GCOptions{PlannerID: "pl_bbb"}) {
-			t.Fatalf("gcScope = %+v, want {PlannerID: pl_bbb}", got)
+		if got != (relevo.GCOptions{MasterMindID: "pl_bbb"}) {
+			t.Fatalf("gcScope = %+v, want {MasterMindID: pl_bbb}", got)
 		}
 	})
 
-	t.Run("all-planners never calls resolve", func(t *testing.T) {
-		resolve := func(ref string) (planner.Record, error) {
-			t.Fatal("resolve must not be called when --all-planners is set")
-			return planner.Record{}, nil
+	t.Run("all-masterminds never calls resolve", func(t *testing.T) {
+		resolve := func(ref string) (mastermind.Record, error) {
+			t.Fatal("resolve must not be called when --all-masterminds is set")
+			return mastermind.Record{}, nil
 		}
 		got, err := gcScope("", true, resolve)
 		if err != nil {
 			t.Fatalf("gcScope: %v", err)
 		}
-		if got != (relevo.GCOptions{AllPlanners: true}) {
-			t.Fatalf("gcScope = %+v, want {AllPlanners: true}", got)
+		if got != (relevo.GCOptions{AllMasterMinds: true}) {
+			t.Fatalf("gcScope = %+v, want {AllMasterMinds: true}", got)
 		}
 	})
 
-	t.Run("planner and all-planners are exclusive", func(t *testing.T) {
-		resolve := func(ref string) (planner.Record, error) {
+	t.Run("mastermind and all-masterminds are exclusive", func(t *testing.T) {
+		resolve := func(ref string) (mastermind.Record, error) {
 			t.Fatal("resolve must not be called when both flags are set")
-			return planner.Record{}, nil
+			return mastermind.Record{}, nil
 		}
 		if _, err := gcScope("x", true, resolve); err == nil {
 			t.Fatal("gcScope with both flags: want a usage error, got nil")
 		}
 	})
 
-	t.Run("no fallback when the planner does not resolve", func(t *testing.T) {
-		resolve := func(ref string) (planner.Record, error) {
-			return planner.Record{}, errors.New("boom")
+	t.Run("no fallback when the mastermind does not resolve", func(t *testing.T) {
+		resolve := func(ref string) (mastermind.Record, error) {
+			return mastermind.Record{}, errors.New("boom")
 		}
 		got, err := gcScope("", false, resolve)
 		if err == nil {
 			t.Fatal("gcScope with a resolve error: want a usage error, got nil")
 		}
-		if !strings.Contains(err.Error(), "--all-planners") {
-			t.Errorf("gcScope error = %q, want it to mention --all-planners", err.Error())
+		if !strings.Contains(err.Error(), "--all-masterminds") {
+			t.Errorf("gcScope error = %q, want it to mention --all-masterminds", err.Error())
 		}
-		if got.PlannerID != "" || got.AllPlanners {
+		if got.MasterMindID != "" || got.AllMasterMinds {
 			t.Errorf("gcScope result = %+v, want the zero value on error (no fallback)", got)
 		}
 	})
@@ -1571,8 +1571,8 @@ func TestStatusLineFlags(t *testing.T) {
 		}
 	})
 
-	t.Run("status --line --json prints StatusLineDoc with null planner and empty rows", func(t *testing.T) {
-		t.Setenv("RELEVO_PLANNER", "")
+	t.Run("status --line --json prints StatusLineDoc with null mastermind and empty rows", func(t *testing.T) {
+		t.Setenv("RELEVO_MASTERMIND", "")
 		t.Setenv("CLAUDECODE", "")
 		t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
 		t.Setenv("RELEVO_HARNESS", "")
@@ -1588,15 +1588,15 @@ func TestStatusLineFlags(t *testing.T) {
 		if err := json.Unmarshal(stdout, &doc); err != nil {
 			t.Fatalf("unmarshal json %q: %v", stdout, err)
 		}
-		if doc.Planner != nil {
-			t.Errorf("doc.Planner = %+v, want nil", doc.Planner)
+		if doc.MasterMind != nil {
+			t.Errorf("doc.MasterMind = %+v, want nil", doc.MasterMind)
 		}
 		if doc.Rows == nil || len(doc.Rows) != 0 {
 			t.Errorf("doc.Rows = %+v, want empty []", doc.Rows)
 		}
 		s := string(stdout)
-		if !strings.Contains(s, `"planner":null`) {
-			t.Errorf("output %q does not contain '\"planner\":null'", s)
+		if !strings.Contains(s, `"mastermind":null`) {
+			t.Errorf("output %q does not contain '\"mastermind\":null'", s)
 		}
 		if !strings.Contains(s, `"rows":[]`) {
 			t.Errorf("output %q does not contain '\"rows\":[]'", s)

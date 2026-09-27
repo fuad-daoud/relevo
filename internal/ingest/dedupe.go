@@ -42,17 +42,21 @@ type dedupePlan struct {
 // after the "%03d-" prefix. answer is deliberately absent: it comes from a log
 // payload and is always kept.
 var dedupeArtifactSuffix = map[string]string{
-	db.ArtifactPlan:     "plan.md",
+	db.ArtifactPrompt:   "prompt.md",
 	db.ArtifactReport:   "report.md",
 	db.ArtifactDiff:     "diff.patch",
 	db.ArtifactDrift:    "drift.patch",
 	db.ArtifactQuestion: "question.md",
 }
 
+// promptArtifactLegacySuffix is the round-file name a prompt was sealed under
+// before the rename: a round sealed before it still answers that name.
+const promptArtifactLegacySuffix = "plan.md"
+
 // dedupeArtifactKinds is every kind DedupeMirror examines, in order: those with a
 // round-file counterpart, plus answer. gate_log, ask and findings are excluded.
 var dedupeArtifactKinds = []string{
-	db.ArtifactPlan,
+	db.ArtifactPrompt,
 	db.ArtifactReport,
 	db.ArtifactDiff,
 	db.ArtifactDrift,
@@ -60,14 +64,20 @@ var dedupeArtifactKinds = []string{
 	db.ArtifactAnswer,
 }
 
-// dedupeRoundFileBase is the round-file basename kind is sealed under, or "" when
-// the kind has no round file.
-func dedupeRoundFileBase(kind string, number int) string {
+// dedupeRoundFileBases is the round-file basenames kind is sealed under: both
+// names for a prompt, which a round may have sealed under either, and one for
+// every other kind. A kind with no round file yields none.
+func dedupeRoundFileBases(kind string, number int) []string {
 	suffix, ok := dedupeArtifactSuffix[kind]
 	if !ok {
-		return ""
+		return nil
 	}
-	return fmt.Sprintf("%03d-", number) + suffix
+	prefix := fmt.Sprintf("%03d-", number)
+	bases := []string{prefix + suffix}
+	if kind == db.ArtifactPrompt {
+		bases = append(bases, prefix+promptArtifactLegacySuffix)
+	}
+	return bases
 }
 
 // DedupeMirror builds the one-time removal plan for d's ingest mirror,
@@ -79,7 +89,7 @@ func dedupeRoundFileBase(kind string, number int) string {
 // binding's artifact row is a duplicate when the record's round file for it exists,
 // holds the same byte count and hashes to the artifact's own sha256. Its
 // transcript is a duplicate when re-deriving it reproduces every row exactly, or
-// every row is covered by the record's sealed lines (streamLinesCover). Planner
+// every row is covered by the record's sealed lines (streamLinesCover). MasterMind
 // transcripts are never examined.
 //
 // renames are the substitutions a cutover applied to the sealed stream files, so a
@@ -163,12 +173,15 @@ func planArtifacts(plan *dedupePlan, d *db.DB, record db.Record, rd db.Round) er
 		}
 
 		duplicate := false
-		if base := dedupeRoundFileBase(kind, rd.Number); base != "" {
+		for _, base := range dedupeRoundFileBases(kind, rd.Number) {
 			body, _, found, ferr := d.RoundFileGet(record.ID, base)
 			if ferr != nil {
 				return fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, base, ferr)
 			}
-			duplicate = found && sha256Hex(body) == a.SHA256 && int64(len(body)) == a.Bytes
+			if found && sha256Hex(body) == a.SHA256 && int64(len(body)) == a.Bytes {
+				duplicate = true
+				break
+			}
 		}
 
 		if duplicate {

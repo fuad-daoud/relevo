@@ -30,7 +30,7 @@ func TestPullPendingReturnsAndMarksDelivered(t *testing.T) {
 	if !found || payload == "" {
 		t.Fatalf("pullPending found=%v payload=%q, want the queued report", found, payload)
 	}
-	if _, still, err := rt.Store.PendingForPlanner("webshop"); err != nil || still {
+	if _, still, err := rt.Store.PendingForMasterMind("webshop"); err != nil || still {
 		t.Errorf("pullPending must confirm what it returns (still pending=%v err=%v)", still, err)
 	}
 }
@@ -79,7 +79,7 @@ func TestPullPendingMarksDeliveredRoute(t *testing.T) {
 	}
 }
 
-// seedPendingReport saves an active binding and one unconfirmed planner-bound
+// seedPendingReport saves an active binding and one unconfirmed mastermind-bound
 // entry with the caller's Path and Kind, so pullPending's expansion (PushText)
 // is exercised against a file the test owns. seedPending's own entry points at
 // the literal /tmp/report.md, which may exist on a developer machine.
@@ -91,20 +91,20 @@ func TestPullPendingMarksDeliveredRoute(t *testing.T) {
 func seedPendingReport(t *testing.T, rt Deps, name, path string, kind store.Kind) store.Binding {
 	t.Helper()
 	b := store.Binding{
-		Name:      name,
-		CWD:       "/repo/" + name,
-		Round:     1,
-		State:     store.StateActive,
-		Planner:   store.Endpoint{Kind: "claude", SessionID: "sess"},
-		PlannerID: "pl_aaaaaaaabbbb",
-		Builder:   store.Endpoint{Mode: store.ModeHeadless},
+		Name:         name,
+		CWD:          "/repo/" + name,
+		Round:        1,
+		State:        store.StateActive,
+		MasterMind:   store.Endpoint{Kind: "claude", SessionID: "sess"},
+		MasterMindID: "pl_aaaaaaaabbbb",
+		Builder:      store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		if err := tx.Save(b); err != nil {
 			return err
 		}
 		return tx.AppendLog(name, store.LogEntry{
-			TS: rt.Now().UTC(), Round: 1, Direction: store.DirToPlanner, Kind: kind,
+			TS: rt.Now().UTC(), Round: 1, Direction: store.DirToMasterMind, Kind: kind,
 			Payload: "round 1 report", Path: path, Confirmed: false,
 		})
 	}); err != nil {
@@ -114,7 +114,7 @@ func seedPendingReport(t *testing.T, rt Deps, name, path string, kind store.Kind
 }
 
 // TestPullPendingPrintsReportText: pullPending returns the pointer payload
-// followed by a blank line and the report file's own text, so the planner
+// followed by a blank line and the report file's own text, so the mastermind
 // needs no second read.
 func TestPullPendingPrintsReportText(t *testing.T) {
 	t.Parallel()
@@ -287,7 +287,7 @@ func TestRetryBusy(t *testing.T) {
 	})
 }
 
-// seedPendingRounds saves an active binding and one unconfirmed planner-bound
+// seedPendingRounds saves an active binding and one unconfirmed mastermind-bound
 // report per round and path, in the order given: seedPendingReport generalized
 // from one round to several, each entry's payload naming its round.
 func seedPendingRounds(t *testing.T, rt Deps, name string, rounds []int, paths []string) store.Binding {
@@ -296,13 +296,13 @@ func seedPendingRounds(t *testing.T, rt Deps, name string, rounds []int, paths [
 		t.Fatalf("seedPendingRounds: %d rounds for %d paths", len(rounds), len(paths))
 	}
 	b := store.Binding{
-		Name:      name,
-		CWD:       "/repo/" + name,
-		Round:     rounds[len(rounds)-1],
-		State:     store.StateActive,
-		Planner:   store.Endpoint{Kind: "claude", SessionID: "sess"},
-		PlannerID: "pl_aaaaaaaabbbb",
-		Builder:   store.Endpoint{Mode: store.ModeHeadless},
+		Name:         name,
+		CWD:          "/repo/" + name,
+		Round:        rounds[len(rounds)-1],
+		State:        store.StateActive,
+		MasterMind:   store.Endpoint{Kind: "claude", SessionID: "sess"},
+		MasterMindID: "pl_aaaaaaaabbbb",
+		Builder:      store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		if err := tx.Save(b); err != nil {
@@ -310,7 +310,7 @@ func seedPendingRounds(t *testing.T, rt Deps, name string, rounds []int, paths [
 		}
 		for i, round := range rounds {
 			if err := tx.AppendLog(name, store.LogEntry{
-				TS: rt.Now().UTC(), Round: round, Direction: store.DirToPlanner, Kind: store.KindReport,
+				TS: rt.Now().UTC(), Round: round, Direction: store.DirToMasterMind, Kind: store.KindReport,
 				Payload: fmt.Sprintf("round %d report", round), Path: paths[i], Confirmed: false,
 			}); err != nil {
 				return err
@@ -368,7 +368,7 @@ func TestPullPendingThroughDeliversEarlierAndWaited(t *testing.T) {
 		t.Fatalf("ReadLog: %v", err)
 	}
 	for i, e := range entries {
-		if e.Direction != store.DirToPlanner {
+		if e.Direction != store.DirToMasterMind {
 			continue
 		}
 		if !e.Confirmed || e.Route != "wait" {

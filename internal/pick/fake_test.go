@@ -16,7 +16,7 @@ func testBinding(name string) store.Binding {
 	return store.Binding{
 		Name:             name,
 		CWD:              "/tmp/" + name,
-		Planner:          store.Endpoint{PaneID: "w1:p1", SessionID: "planner-session", Kind: "claude"},
+		MasterMind:       store.Endpoint{PaneID: "w1:p1", SessionID: "mastermind-session", Kind: "claude"},
 		Builder:          store.Endpoint{AgentName: name + "-builder", PaneID: "w1:p2", Kind: "opencode"},
 		BuilderCandidate: "agy",
 		Round:            2,

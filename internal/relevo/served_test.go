@@ -203,7 +203,7 @@ func TestRoundStateOf(t *testing.T) {
 		Round: 1,
 	}
 	entries2 := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 	}
 	if got := RoundStateOf(b2, entries2); got != remote.RoundRunning {
 		t.Fatalf("arm 2 (running): got %v, want %v", got, remote.RoundRunning)
@@ -220,8 +220,8 @@ func TestRoundStateOf(t *testing.T) {
 	}
 	// Entries has both plan and report for round 1
 	entries3 := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport},
 	}
 	if got := RoundStateOf(b3, entries3); got != remote.RoundClosed {
 		t.Fatalf("arm 3 (closed): got %v, want %v", got, remote.RoundClosed)
@@ -251,7 +251,7 @@ func TestRoundStateOfQueued(t *testing.T) {
 	t.Parallel()
 
 	entries := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 	}
 
 	queued := store.Binding{
@@ -692,19 +692,19 @@ func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := store.Binding{
-		Name:    "api",
-		Owner:   "client1",
-		State:   store.StateActive,
-		Round:   1,
-		CWD:     t.TempDir(),
-		Planner: store.Endpoint{SessionID: "sess1", PaneID: "p1"},
+		Name:       "api",
+		Owner:      "client1",
+		State:      store.StateActive,
+		Round:      1,
+		CWD:        t.TempDir(),
+		MasterMind: store.Endpoint{SessionID: "sess1", PaneID: "p1"},
 	}
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AppendLog("api", store.LogEntry{
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Payload:   "the report",
 		Confirmed: false,
@@ -773,7 +773,7 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 	if err := st.AppendLog("api", store.LogEntry{
 		Round:     1,
 		Direction: store.DirToBuilder,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -840,7 +840,7 @@ func ownedExitFixture(t *testing.T) (Runtime, store.Binding, *fakeRunner, string
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 	fr.script(1234, false)
@@ -1024,15 +1024,15 @@ func TestServedViewPriorTokens(t *testing.T) {
 	// 1. Server entries with two switches carrying usage in the closed round -> view.PriorTokens is their sum
 	entries := []store.LogEntry{
 		{
-			Round: 2, Kind: store.KindSwitch, Direction: store.DirToPlanner,
+			Round: 2, Kind: store.KindSwitch, Direction: store.DirToMasterMind,
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}},
 		},
 		{
-			Round: 2, Kind: store.KindSwitch, Direction: store.DirToPlanner,
+			Round: 2, Kind: store.KindSwitch, Direction: store.DirToMasterMind,
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}},
 		},
 		{
-			Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner, Outcome: "done",
+			Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind, Outcome: "done",
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 40}},
 		},
 	}
@@ -1048,7 +1048,7 @@ func TestServedViewPriorTokens(t *testing.T) {
 	// 2. None -> nil
 	entriesNoSwitch := []store.LogEntry{
 		{
-			Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner, Outcome: "done",
+			Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind, Outcome: "done",
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 40}},
 		},
 	}

@@ -3,9 +3,9 @@
     working    5m · quiet 17s      gemini-3.8-flash-high  ·  architect-2  ·  relevo/spool-db        
    tokens in 718k · cache 4.2M (85%) · out 64k · no price                  pid 1401366 since 13:57  
                                                                                                     
-   plan     report     transcript     diff     log                        round   [   r1 of 1   ]   
+   prompt     report     transcript     diff     log                      round   [   r1 of 1   ]   
                                                                                                     
-     plan r1 · 13:57                                                                                
+     prompt r1 · 13:57                                                                              
                                                                                                     
      Round diff and consult findings go straight into round_file                                    
                                                                                                     

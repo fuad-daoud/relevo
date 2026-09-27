@@ -46,13 +46,13 @@ func TestRelevoVerbsSendPassesCandidate(t *testing.T) {
 	}
 	saveVerbBinding(t, s, store.Binding{
 		Name: "webshop", CWD: "/repo",
-		Planner:          store.Endpoint{PaneID: "w2:p3"},
+		MasterMind:       store.Endpoint{PaneID: "w2:p3"},
 		Builder:          store.Endpoint{Mode: store.ModeHeadless},
 		BuilderCandidate: "agy/test/m",
 		Round:            1, State: store.StateActive,
 	})
 
-	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
 	plan := writeTempPlan(t, "# do the thing")
 
 	res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, Candidate: "claude/test/m", DryRun: true})

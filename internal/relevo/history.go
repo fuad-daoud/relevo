@@ -114,9 +114,9 @@ func Bindings(ctx context.Context, rt Runtime, here string) ([]HistoryBinding, e
 type HistoryOptions struct {
 	// Here is a cwd to resolve into a repo filter; "" means no such
 	// resolution is wanted (Repo, if set, is used as-is).
-	Here                                                                    string
-	Repo                                                                    string
-	Feature, Binding, Planner, Harness, Provider, Model, Candidate, Outcome string
+	Here                                                                       string
+	Repo                                                                       string
+	Feature, Binding, MasterMind, Harness, Provider, Model, Candidate, Outcome string
 	// Since/Until are relevo.ParseSince forms: "", "24h", "7d", "YYYY-MM-DD".
 	Since, Until string
 	// Archived: nil means both; true archived only; false live only.
@@ -182,7 +182,7 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 	set("repo", q.Filter.Repo, o.Repo, &f.Repo)
 	set("feature", q.Filter.Feature, o.Feature, &f.Feature)
 	set("binding", q.Filter.Binding, o.Binding, &f.Binding)
-	set("planner", q.Filter.Planner, o.Planner, &f.Planner)
+	set("mastermind", q.Filter.MasterMind, o.MasterMind, &f.MasterMind)
 	set("harness", q.Filter.Harness, o.Harness, &f.Harness)
 	set("provider", q.Filter.Provider, o.Provider, &f.Provider)
 	set("model", q.Filter.Model, o.Model, &f.Model)

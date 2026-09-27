@@ -104,8 +104,8 @@ func TestStopPayload(t *testing.T) {
 		{
 			name: "reader, report on disk", how: "killed", round: 1,
 			reportPath: "/s/reports/001.md", haveReport: true,
-			clause:      "Findings: relevo show reader-bind --round 1 --summary",
-			wantPayload: "The runner was stopped (killed) for round 1. Findings: relevo show reader-bind --round 1 --summary",
+			clause:      "Findings: relevo show reader-bind --round 1 --output",
+			wantPayload: "The runner was stopped (killed) for round 1. Findings: relevo show reader-bind --round 1 --output",
 			wantNote:    "stopped",
 		},
 		{
@@ -179,7 +179,7 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 			t.Errorf("Builder.PID = %d, want 0 after the process was stopped", got.Builder.PID)
 		}
 
-		pending, found, err := rt.Store.PendingForPlanner("webshop")
+		pending, found, err := rt.Store.PendingForMasterMind("webshop")
 		if err != nil || !found {
 			t.Fatalf("report must be queued: found=%v err=%v", found, err)
 		}
@@ -204,7 +204,7 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 			t.Fatalf("Stop: %v", err)
 		}
 
-		pending, found, err := rt.Store.PendingForPlanner("webshop")
+		pending, found, err := rt.Store.PendingForMasterMind("webshop")
 		if err != nil || !found {
 			t.Fatalf("report must be queued: found=%v err=%v", found, err)
 		}
@@ -400,7 +400,7 @@ func ownedStopFixture(t *testing.T, fr *fakeRunner, queued bool) (Runtime, store
 		t.Fatal(err)
 	}
 	if err := st.AppendLog("api", store.LogEntry{
-		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -599,7 +599,7 @@ func TestStopRemoteKillsAndCollects(t *testing.T) {
 		t.Errorf("state = %s, want active: a stopped close must not halt", got.State)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("api")
+	pending, found, err := rt.Store.PendingForMasterMind("api")
 	if err != nil || !found {
 		t.Fatalf("report must be pending: found=%v err=%v", found, err)
 	}

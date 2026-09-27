@@ -13,7 +13,7 @@ import (
 // serveShowUsage is the removed `relevo serve show` usage line, updated to
 // the verb that carries the --owner route now (§4.1). cmdShow prints it when
 // an --owner invocation names more than one section.
-const serveShowUsage = "usage: relevo show <name> --owner <label|id> [--round N] [--plan|--report|--diff|--drift|--log|--transcript|--summary|--artifacts] [--json] [--state <dir>]"
+const serveShowUsage = "usage: relevo show <name> --owner <label|id> [--round N] [--prompt|--report|--diff|--drift|--log|--transcript|--output|--artifacts] [--json] [--state <dir>]"
 
 // serveLog is cmdServeLog's body, moved so `relevo show <name> --owner
 // <label> --log` calls it (§4.1). It takes the parsed values: state is the

@@ -19,19 +19,19 @@ import (
 // one place is what lets each old flag keep its name, default and help text
 // (§4.1).
 type bindFlags struct {
-	name      string
-	candidate string
-	planner   string
-	resume    bool
-	rebind    bool
-	timeout   time.Duration
-	tier      string
-	allowYolo bool
-	gate      string
-	noGate    bool
-	regate    *int
-	feature   string
-	role      string
+	name       string
+	candidate  string
+	mastermind string
+	resume     bool
+	rebind     bool
+	timeout    time.Duration
+	tier       string
+	allowYolo  bool
+	gate       string
+	noGate     bool
+	regate     *int
+	feature    string
+	role       string
 
 	// The placement flags choose add's path.
 	worktree bool
@@ -68,7 +68,7 @@ func bindRouteFor(f bindFlags) (bindRoute, error) {
 	}
 }
 
-// cmdBind binds a planner to a builder. It is the one entry point the old
+// cmdBind binds a mastermind to a builder. It is the one entry point the old
 // bind and add merged into (§4.1): the flags choose which of the two
 // bodies runs, and each body stays an unexported helper so none of its logic
 // is duplicated.
@@ -77,24 +77,24 @@ func bindRouteFor(f bindFlags) (bindRoute, error) {
 // surface, so the flag names can never drift from what a test pins (A2 round 3
 // S1).
 type bindFlagValues struct {
-	name        *string
-	candidate   *string
-	plannerFlag *string
-	resume      *bool
-	rebind      *bool
-	timeout     *time.Duration
-	tier        *string
-	allowYolo   *bool
-	gate        *string
-	noGate      *bool
-	regate      *int
-	feature     *string
-	actor       *string
-	worktree    *bool
-	cwd         *string
-	branch      *string
-	server      *string
-	base        *string
+	name           *string
+	candidate      *string
+	mastermindFlag *string
+	resume         *bool
+	rebind         *bool
+	timeout        *time.Duration
+	tier           *string
+	allowYolo      *bool
+	gate           *string
+	noGate         *bool
+	regate         *int
+	feature        *string
+	actor          *string
+	worktree       *bool
+	cwd            *string
+	branch         *string
+	server         *string
+	base           *string
 }
 
 // bindFlagSet defines bind's flags on fs and returns the values they parse
@@ -104,8 +104,8 @@ func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v := &bindFlagValues{}
 	v.name = fs.String("name", "", "binding name (default: sanitized cwd basename)")
 	v.candidate = fs.String("candidate", "", "candidate name or harness/provider/model token to run; omit to take the actor's first ungated candidate")
-	v.plannerFlag = fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
-	v.resume = fs.Bool("resume", false, "adopt an existing binding into this planner")
+	v.mastermindFlag = fs.String("mastermind", "", "act as this mastermind (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
+	v.resume = fs.Bool("resume", false, "adopt an existing binding into this mastermind")
 	v.rebind = fs.Bool("rebind", false,
 		"with --resume: replace a gone runner, picking it by config policy order and the ledger (like bind with --candidate omitted)")
 	v.timeout = fs.Duration("timeout", 0, "round budget before relevo flags the binding (default 24h)")
@@ -116,7 +116,7 @@ func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	v.feature = fs.String("feature", "", "label grouping this binding with others")
 	v.actor = fs.String("actor", "", "the actor this binding runs (default builder); a reader actor leaves artifacts and never changes the tree")
-	v.worktree = fs.Bool("worktree", false, "attach an additional runner to this planner, on its own worktree")
+	v.worktree = fs.Bool("worktree", false, "attach an additional runner to this mastermind, on its own worktree")
 	v.cwd = fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	v.branch = fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
 	v.server = fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
@@ -137,7 +137,7 @@ func cmdBind(args []string) error {
 	}
 
 	f := bindFlags{
-		name: *v.name, candidate: *v.candidate, planner: *v.plannerFlag,
+		name: *v.name, candidate: *v.candidate, mastermind: *v.mastermindFlag,
 		resume: *v.resume, rebind: *v.rebind, timeout: *v.timeout, tier: *v.tier,
 		allowYolo: *v.allowYolo, gate: *v.gate, noGate: *v.noGate, regate: regateOpt,
 		feature: *v.feature, role: *v.actor, worktree: *v.worktree, cwd: *v.cwd,
@@ -193,7 +193,7 @@ func runBind(f bindFlags) error {
 
 	opts := relevo.BindOptions{
 		Name:         f.name,
-		PlannerID:    f.planner,
+		MasterMindID: f.mastermind,
 		CWD:          cwd,
 		Resume:       f.resume,
 		Rebind:       f.rebind,
@@ -273,15 +273,15 @@ func runBind(f bindFlags) error {
 		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
 			"hand it the round with:\n"+
 			"  relevo send --name %s --file %s\n",
-			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
+			b.Name, builderDesc, b.Round, b.Name, rt.Store.PromptPath(b.Name, b.Round))
 		noteRegateNoGate(b)
 		notePick(rt, roleName, res)
 		warnWaitingOnYou(rt, b.Name)
 		return nil
 	}
 
-	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
-		b.Name, b.Planner.PaneID, builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate), b.Round)
+	fmt.Printf("bound %s: mastermind %s -> builder %s (%s), round %d\n",
+		b.Name, b.MasterMind.PaneID, builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate), b.Round)
 	noteRegateNoGate(b)
 	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
@@ -332,21 +332,21 @@ func runAdd(f bindFlags) error {
 	}
 
 	res, err := relevo.Add(context.Background(), rt, relevo.AddOptions{
-		Name:      name,
-		Candidate: f.candidate,
-		PlannerID: f.planner,
-		Repo:      repo,
-		CWD:       cwd,
-		Branch:    branch,
-		Server:    f.server,
-		Base:      f.base,
-		Tier:      f.tier,
-		AllowYolo: f.allowYolo,
-		Gate:      f.gate,
-		NoGate:    f.noGate,
-		Regate:    f.regate,
-		Feature:   f.feature,
-		Role:      f.role,
+		Name:         name,
+		Candidate:    f.candidate,
+		MasterMindID: f.mastermind,
+		Repo:         repo,
+		CWD:          cwd,
+		Branch:       branch,
+		Server:       f.server,
+		Base:         f.base,
+		Tier:         f.tier,
+		AllowYolo:    f.allowYolo,
+		Gate:         f.gate,
+		NoGate:       f.noGate,
+		Regate:       f.regate,
+		Feature:      f.feature,
+		Role:         f.role,
 	})
 	if err != nil {
 		return err

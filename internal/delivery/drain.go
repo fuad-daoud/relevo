@@ -17,12 +17,12 @@ type Pusher interface {
 	Push(ctx context.Context, content string, meta map[string]string) error
 }
 
-// DrainState is one relevo mcp poll loop's memory across polls: which planner
-// it drains, and each of that planner's bindings' last-seen State, so Drain
+// DrainState is one relevo mcp poll loop's memory across polls: which mastermind
+// it drains, and each of that mastermind's bindings' last-seen State, so Drain
 // knows when a state event is a transition rather than a repeat.
 type DrainState struct {
-	Planner string
-	Last    map[string]store.State // binding name -> last-seen state; nil until first poll
+	MasterMind string
+	Last       map[string]store.State // binding name -> last-seen state; nil until first poll
 }
 
 // DrainResult is what one Drain call did.
@@ -32,13 +32,13 @@ type DrainResult struct {
 	Failed []string // binding names whose push returned an error (left pending)
 }
 
-// Drain runs one poll over one planner's bindings: for each binding whose
-// planner is st.Planner and which is not remote-owned, it pushes the oldest
-// pending planner payload (confirming only after the push succeeds), then
+// Drain runs one poll over one mastermind's bindings: for each binding whose
+// mastermind is st.MasterMind and which is not remote-owned, it pushes the oldest
+// pending mastermind payload (confirming only after the push succeeds), then
 // pushes a state event on selected state transitions.
 func Drain(ctx context.Context, d Deps, st *DrainState, p Pusher) (DrainResult, error) {
-	if st.Planner == "" {
-		return DrainResult{}, fmt.Errorf("drain: empty planner")
+	if st.MasterMind == "" {
+		return DrainResult{}, fmt.Errorf("drain: empty mastermind")
 	}
 	if d.Store == nil {
 		return DrainResult{}, fmt.Errorf("drain: nil store")
@@ -51,7 +51,7 @@ func Drain(ctx context.Context, d Deps, st *DrainState, p Pusher) (DrainResult, 
 
 	var mine []store.Binding
 	for _, b := range bindings {
-		if b.PlannerID == st.Planner && b.Owner == "" {
+		if b.MasterMindID == st.MasterMind && b.Owner == "" {
 			mine = append(mine, b)
 		}
 	}
@@ -98,7 +98,7 @@ func drainOne(ctx context.Context, d Deps, p Pusher, st *DrainState, b store.Bin
 	return nil
 }
 
-// pendingFor reads one binding's oldest pending planner entry under the state
+// pendingFor reads one binding's oldest pending mastermind entry under the state
 // lock.
 func pendingFor(d Deps, name string) (store.LogEntry, int, bool, error) {
 	var (
@@ -108,7 +108,7 @@ func pendingFor(d Deps, name string) (store.LogEntry, int, bool, error) {
 	)
 	err := d.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		entry, idx, found, err = tx.PendingForPlanner(name)
+		entry, idx, found, err = tx.PendingForMasterMind(name)
 		return err
 	})
 	return entry, idx, found, err

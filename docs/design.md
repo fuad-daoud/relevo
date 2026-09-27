@@ -1,4 +1,4 @@
-# Relevo — automated planner↔builder handoff across agent harnesses
+# Relevo — automated MasterMind↔builder handoff across agent harnesses
 
 Superseded in part by `docs/specs/2026-09-22-drop-herdr-design.md` (#303).
 
@@ -12,23 +12,23 @@ the design as it was approved then.
 
 ## Problem
 
-Work is split across two agents in two panes. A **planner** (architect role: `planner`,
-`cplanner`, `aplanner`) designs and verifies. A **builder** (`plan-executor` role:
-`builder`, `cbuilder`, `abuilder`) implements. The human talks only to the planner.
+Work is split across two agents in two panes. A **MasterMind** (architect role: `mastermind`,
+`cmastermind`, `amastermind`) designs and verifies. A **builder** (`plan-executor` role:
+`builder`, `cbuilder`, `abuilder`) implements. The human talks only to the MasterMind.
 
-Today the loop is driven by hand: copy the plan out of the planner pane, paste it into
-the builder pane, wait, copy the report back, paste it into the planner, repeat until the
-planner declares the work verified. Questions that need a human are answered by talking to
-the planner, which is the desired behaviour and must survive automation.
+Today the loop is driven by hand: copy the plan out of the MasterMind pane, paste it into
+the builder pane, wait, copy the report back, paste it into the MasterMind, repeat until the
+MasterMind declares the work verified. Questions that need a human are answered by talking to
+the MasterMind, which is the desired behaviour and must survive automation.
 
 The copy-paste is the only manual step, and it is pure mechanism. Relevo automates exactly
 that and nothing else.
 
 ## Goals
 
-- Move plans, reports, questions and answers between a bound planner and builder with no
+- Move plans, reports, questions and answers between a bound MasterMind and builder with no
   human copy-paste.
-- Keep the human in conversation with the planner at all times; never steal or corrupt
+- Keep the human in conversation with the MasterMind at all times; never steal or corrupt
   their input.
 - Let the human choose the builder (`builder` / `cbuilder` / `abuilder`) per binding and
   switch mid-feature.
@@ -38,7 +38,7 @@ that and nothing else.
 ## Non-goals
 
 - Relevo makes no judgements. It never summarises, rewrites, or decides whether work is
-  done. All judgement stays in the planner.
+  done. All judgement stays in the MasterMind.
 - No headless execution. If it isn't in a pane, relevo doesn't run it.
 - No modification of herdr. Relevo is built beside it, against its socket API.
 - No auto-worktrees, no parallel builders on one tree, no scheduling.
@@ -54,7 +54,7 @@ herdr (0.8.2, AUR `herdr-bin`) is the substrate. Everything below already works:
 | Submit a prompt into an agent | `herdr agent prompt <t> <text> [--wait]` |
 | Answer a dialog in a blocked agent | `herdr agent send-keys <t> <key>` |
 | Read terminal output | `herdr agent read --source recent-unwrapped` |
-| Create a visible pane beside the planner | `herdr pane split --current --direction right --cwd "$PWD" --no-focus` |
+| Create a visible pane beside the MasterMind | `herdr pane split --current --direction right --cwd "$PWD" --no-focus` |
 | Start a named agent in that pane | `herdr agent start <name> --kind <kind> --pane <id> -- <args>` |
 | Surface a nudge to the human | `herdr notification show` |
 | Caller's own location | `$HERDR_PANE_ID`, `$HERDR_TAB_ID`, `$HERDR_WORKSPACE_ID` |
@@ -77,8 +77,8 @@ Two herdr constraints shape the design:
 Three pieces, deliberately thin.
 
 ```
-relevo CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, so it
-               works whether the planner is claude, opencode or agy.
+relevo CLI      Invoked by the MASTERMIND through its Bash tool. Harness-agnostic, so it
+               works whether the MasterMind is claude, opencode or agy.
 
                  relevo bind --candidate <candidate> [--name <n>]
                  relevo bind --resume <name>
@@ -91,8 +91,8 @@ relevo CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, 
                  relevo ui [:view [args]]
 
 relayd         One daemon per herdr session. Watches herdr agent state. Three jobs only:
-                 1. builder -> idle    : deliver its report to the planner
-                 2. builder -> blocked : deliver the dialog question to the planner
+                 1. builder -> idle    : deliver its report to the MasterMind
+                 2. builder -> blocked : deliver the dialog question to the MasterMind
                  3. round accounting, timeouts, runaway cap
 
 state          ~/.local/state/relevo/
@@ -103,9 +103,9 @@ state          ~/.local/state/relevo/
                  .daemon.lock        the daemon's lifetime flock
 ```
 
-**Why the CLI and the daemon are separate.** The outbound leg (planner → builder) happens
-while the planner is mid-turn, so the planner can just call `relevo send` synchronously. The
-inbound leg (builder → planner) happens *after* the planner's turn has ended, when no model
+**Why the CLI and the daemon are separate.** The outbound leg (MasterMind → builder) happens
+while the MasterMind is mid-turn, so the MasterMind can just call `relevo send` synchronously. The
+inbound leg (builder → MasterMind) happens *after* the MasterMind's turn has ended, when no model
 is running to notice. That is the only reason a daemon exists.
 
 ## Data structures
@@ -119,9 +119,9 @@ are the ones designed here.
 | --- | --- | --- |
 | `name` | string | binding id, `[a-z][a-z0-9_-]{0,31}`, defaults from cwd basename |
 | `cwd` | abs path | the working tree; **unique across active bindings** |
-| `planner.pane_id` | string | e.g. `w2:p3` |
-| `planner.session_id` | string | from the harness integration; survives pane id changes |
-| `planner.kind` | enum | `claude` \| `opencode` \| `agy` |
+| `mastermind.pane_id` | string | e.g. `w2:p3` |
+| `mastermind.session_id` | string | from the harness integration; survives pane id changes |
+| `mastermind.kind` | enum | `claude` \| `opencode` \| `agy` |
 | `runner.agent_name` | string | herdr agent name, e.g. `upjo-builder` |
 | `runner.pane_id` | string | |
 | `runner.kind` | enum | |
@@ -192,15 +192,15 @@ A `switch` entry is relevo -> log only: the builder was replaced mid-round, and 
 
 ## Message protocol
 
-### Planner → builder
+### MasterMind → builder
 
 ```
-planner writes ./plan.md, then runs:  relevo send --file ./plan.md
+MasterMind writes ./plan.md, then runs:  relevo send --file ./plan.md
 
-relevo: assign round N, copy to <state>/NNN-plan.md
+relevo: assign round N, copy to <state>/NNN-prompt.md
        herdr agent prompt <builder> "
-         Round N from the planner.
-         Read:  <state>/NNN-plan.md
+         Round N from the MasterMind.
+         Read:  <state>/NNN-prompt.md
          When you are done, write your report to: <state>/NNN-report.md
          Then, as the very last thing you do -- after every edit, test and
          commit -- create this empty file: <state>/NNN-done
@@ -208,7 +208,7 @@ relevo: assign round N, copy to <state>/NNN-plan.md
        append log entry, return immediately
 ```
 
-### Builder → planner
+### Builder → MasterMind
 
 ```
 relayd, every tick while the round is open (pane or headless):
@@ -233,7 +233,7 @@ relayd observes builder -> idle|done, no marker:
 headless: a process that exited with a report but no marker closes unmarked;
           with neither, "exited without a report" (see headless spec).
 
-  deliver(payload) -> planner        # see delivery rule below
+  deliver(payload) -> MasterMind        # see delivery rule below
 ```
 
 ### Builder blocked
@@ -245,36 +245,36 @@ relayd observes builder -> blocked
   deliver("Builder is blocked at a dialog. Question: <path>.
            Answer with: relevo answer --keys <key> | --choice <n> | --text <s>")
 
-planner reads the actual dialog, then:  relevo answer --keys enter
+MasterMind reads the actual dialog, then:  relevo answer --keys enter
 relevo: herdr agent send-keys <builder> enter     # NOT agent prompt; that is rejected
 ```
 
 ### Delivery rule (the anti-clobber rule)
 
 `herdr agent prompt` types text and presses Enter. If the human is mid-sentence in the
-planner pane, their draft and the payload merge and submit as garbage. herdr exposes pane
+MasterMind pane, their draft and the payload merge and submit as garbage. herdr exposes pane
 focus but cannot see the input buffer, so:
 
 ```
 deliver(payload):
-    if planner is not idle:            queue, retry on next idle
-    else if planner pane is focused:   queue, state = held
+    if MasterMind is not idle:            queue, retry on next idle
+    else if MasterMind pane is focused:   queue, state = held
                                        herdr notification show "<name>: report ready"
                                        # four ways out of held:
                                        #   human focuses another pane -> inject as normal
-                                       #   planner's input box reads empty (claude) -> inject at once
+                                       #   MasterMind's input box reads empty (claude) -> inject at once
                                        #   screen unchanged for --held-grace -> inject anyway (appends
                                        #     to an abandoned draft, accepted on purpose)
-                                       #   human says "go" -> planner runs `relevo pull`, which PRINTS
+                                       #   human says "go" -> MasterMind runs `relevo pull`, which PRINTS
                                        #     the payload to stdout as tool output. No injection at all,
                                        #     so it cannot collide and cannot be rejected mid-turn.
-    else:                              herdr agent prompt <planner> payload
+    else:                              herdr agent prompt <MasterMind> payload
                                        mark confirmed in log
 ```
 
 ### Termination
 
-The planner calls `relevo done` once it has verified the work. `round_cap` (default 20) is a
+The MasterMind calls `relevo done` once it has verified the work. `round_cap` (default 20) is a
 runaway guard only: on reaching it relevo stops relaying, sets `needs_you`, and notifies.
 
 ## Observability
@@ -284,32 +284,32 @@ $ relevo status
 relayd  running   pid 48213   herdr session default   up 2h14m
 
 webshop    /home/dev/projects/webshop     w2   round 3   ACTIVE
-  planner  cplanner        w2:p3  claude    working
+  MasterMind  cmastermind        w2:p3  claude    working
   builder  upjo-builder    w2:p4  opencode  working    `builder` -> glm-5.3-flash
   last     14:22:07  plan 003 -> builder
   pending  --
 
 career  /home/dev/projects/api               w4   round 1   NEEDS YOU
-  planner  aplanner        w4:pA  agy       idle
+  MasterMind  amastermind        w4:pA  agy       idle
   builder  career-builder  w4:pB  claude    blocked    <- approval dialog
-  last     14:19:51  question 001 -> planner
-  pending  planner to answer
+  last     14:19:51  question 001 -> MasterMind
+  pending  MasterMind to answer
 
 money   /home/dev/money/ai                      wF   round 7   HELD
-  planner  cplanner        wF:p1  claude    idle       (focused -- holding)
+  MasterMind  cmastermind        wF:p1  claude    idle       (focused -- holding)
   builder  money-builder   wF:p2  opencode  idle
-  pending  report round 7 -> planner, held: quiet 45s of 1m0s
+  pending  report round 7 -> MasterMind, held: quiet 45s of 1m0s
 ```
 
 Three display states cover everything: **ACTIVE** (someone is working), **NEEDS YOU**
 (stalled on a human), **HELD** (ready, but the human is in the pane).
 
-- `relevo wait [<name>]` — blocks until a round closes or needs the planner, then prints
+- `relevo wait [<name>]` — blocks until a round closes or needs the MasterMind, then prints
   the pending report.
 - `relevo show <name> --log` — every relayed message: round, direction, file, timestamp. The
-  audit trail for "what did the planner actually tell the builder".
+  audit trail for "what did the MasterMind actually tell the builder".
 - `relevo ui [:view [args]]` — the cockpit: the `:fleet` table, round detail and the `:rounds` grid.
-- `relevo status --line` — one row per binding this planner owns, for Claude Code's `statusLine` setting; store-only, never probes the harness (spec `docs/specs/2026-09-13-statusline-design.md`).
+- `relevo status --line` — one row per binding this MasterMind owns, for Claude Code's `statusLine` setting; store-only, never probes the harness (spec `docs/specs/2026-09-13-statusline-design.md`).
 
 All agent rows are derived live from herdr on each call. Relevo holds no truth herdr already
 has, except bindings and the round log, so `status` cannot disagree with reality.
@@ -322,21 +322,21 @@ has, except bindings and the round log, so `status` cannot disagree with reality
 | Builder wedged (`working` forever) | `round_timeout_ms` elapses -> `needs_you` + notification. Nothing killed. |
 | herdr reports `unknown` | Treated as "keep waiting", **never** as done (herdr documents that `unknown` does not prove completion). After a grace period -> `needs_you`. Most likely with `abuilder`; see prerequisites. |
 | `agent_prompt_stalled` | Retry once, then stop and flag. Never blind-refire — a double-submitted plan means two builders' worth of edits. |
-| Planner session ends (`/clear`, compaction, pane closed) | Binding -> `orphaned`, reports queue on disk. `relevo bind --resume <name>` adopts it into a new planner and hands over the round log. |
+| MasterMind session ends (`/clear`, compaction, pane closed) | Binding -> `orphaned`, reports queue on disk. `relevo bind --resume <name>` adopts it into a new MasterMind and hands over the round log. |
 | relayd restart | Rebuilds from `bind.json` + `log.jsonl` + live herdr state. A pending record is written *before* a prompt is sent and cleared on confirmation; on restart, re-deliver only if the target is idle **and** the log shows no confirmation. Bias toward under-delivering. |
 | Second bind on the same cwd | **Refused**, naming the binding that owns it. For genuine parallelism, `herdr worktree create` yields a different cwd and the check passes with no special code path. |
-| Human camps in the planner pane | Delivery stays `held`; notification escalates. Human says "go" and the planner runs `relevo pull`, receiving the payload as tool output rather than as injected keystrokes. After `--held-grace` of screen quiet the daemon injects anyway. |
+| Human camps in the MasterMind pane | Delivery stays `held`; notification escalates. Human says "go" and the MasterMind runs `relevo pull`, receiving the payload as tool output rather than as injected keystrokes. After `--held-grace` of screen quiet the daemon injects anyway. |
 | Builder gone for 30s, or its provider gated mid-round | The daemon switches to the next ungated candidate in `policy.json` order, bounded by `max_switches`; see `docs/specs/2026-09-11-builder-switching-design.md`. |
 
 ## Decisions and rationale
 
 | Fork | Chosen | Why |
 | --- | --- | --- |
-| Who drives the loop | Planner delegates and ends its turn; daemon relays | Keeps judgement in the model the human already talks to, keeps the human able to interject, keeps the daemon dumb enough to trust |
+| Who drives the loop | MasterMind delegates and ends its turn; daemon relays | Keeps judgement in the model the human already talks to, keeps the human able to interject, keeps the daemon dumb enough to trust |
 | Builder session lifetime | Persistent per binding | Matches the manual workflow; follow-ups stay short because the builder remembers what it wrote. Reset comes free via rebinding to a new pane |
 | Handoff channel | Files | herdr documents that alternate-screen output is unrecoverable by `agent read`; scraping is a labelled last resort only |
 | Delivery while focused | Hold + notify, inject when unfocused | The only rule that cannot eat a half-typed message; full autonomy resumes the moment the human looks away |
-| Builder selection | Human, in plain English to the planner | Preserves existing cost/model control; the token names exactly what starts, so the log and `status` show it without a lookup |
+| Builder selection | Human, in plain English to the MasterMind | Preserves existing cost/model control; the token names exactly what starts, so the log and `status` show it without a lookup |
 | Concurrent loops on one tree | Refuse the second bind | The one failure mode that destroys work rather than stalling |
 
 relevo enforces one writer per working tree only for bindings: `Bind` refuses a
@@ -360,7 +360,7 @@ after the foreign rows saying that no foreign rows does not mean the tree is
 clear. The per-harness record is `harness.Harness.SubAgents`.
 
 An agent is foreign when no binding references it, not merely when it is not
-this binding's builder -- a second binding's planner may legitimately share a
+this binding's builder -- a second binding's MasterMind may legitimately share a
 tree, and relevo knows about it. Agents in subdirectories of the tree count;
 agents in parent directories do not.
 
@@ -378,7 +378,7 @@ drift. A round diff is recorded when a round closes; drift is recorded when the
 next one opens, and is keyed to that opening round.
 
 **A commit is not drift.** relevo snapshots working-tree *content* (`add -A` into
-a temporary index), so a planner committing, amending, or rebasing the builder's
+a temporary index), so a MasterMind committing, amending, or rebasing the builder's
 work changes nothing relevo can see. A merge that brings in new content, a
 checkout, or a builder that kept editing after it reported all do register.
 
@@ -388,7 +388,7 @@ misread a quiet send.
 **relevo reports drift; it does not attribute it.** Drift never changes a
 binding's state, never notifies, and never fires a hook. relevo cannot observe
 *who* wrote -- `herdr agent list` can say which agents were in the tree (that is
-the foreign-agent feature), and joining the two is the planner's judgement, not
+the foreign-agent feature), and joining the two is the MasterMind's judgement, not
 relevo's.
 
 One honest gap: a round that produced no baseline also records no drift origin,
@@ -405,7 +405,7 @@ so the next send is silent. It self-heals after one round.
 
 - Auto-worktree creation for parallel loops.
 - Relevo-side summarisation or context compaction.
-- Any planner-side intelligence in the daemon.
+- Any MasterMind-side intelligence in the daemon.
 - Cross-machine relaying (herdr `--remote` exists; not needed yet).
 - A TUI in the original scope: `relevo status` / `relevo watch` were enough. Superseded by
   [`docs/specs/2026-09-08-relevo-tui-design.md`](specs/2026-09-08-relevo-tui-design.md), which

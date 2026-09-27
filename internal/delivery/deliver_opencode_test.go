@@ -62,7 +62,7 @@ func writeOpencodeServiceFile(t *testing.T, dir, url, password string, pid int) 
 	return p
 }
 
-func opencodePlanner(sessionID string) store.Endpoint {
+func opencodeMasterMind(sessionID string) store.Endpoint {
 	return store.Endpoint{Kind: "opencode", SessionID: sessionID, PaneID: "w2:p3"}
 }
 
@@ -98,8 +98,8 @@ func TestOpencodeDeliverHappyPath(t *testing.T) {
 		Alive:      aliveAlways,
 	}
 
-	payload := "relevo: round 1 · to planner · about runner \"w\" (not the human)\n\nThe runner finished round 1. Report: /x/001-report.md"
-	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), payload, "/x/001-report.md", time.Time{})
+	payload := "relevo: round 1 · to MasterMind · about runner \"w\" (not the human)\n\nThe runner finished round 1. Report: /x/001-report.md"
+	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), payload, "/x/001-report.md", time.Time{})
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestOpencodeDeliverSilentTwoHundred(t *testing.T) {
 		Alive:      aliveAlways,
 	}
 
-	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/001-report.md", time.Time{})
+	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/001-report.md", time.Time{})
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestOpencodeDeliverIdempotentSkipsPost(t *testing.T) {
 		Alive:      aliveAlways,
 	}
 
-	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/001-report.md", time.Time{})
+	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/001-report.md", time.Time{})
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -221,15 +221,15 @@ func TestOpencodeDeliverNotMineCases(t *testing.T) {
 	stateFile := writeOpencodeServiceFile(t, dir, "http://127.0.0.1:1", "pw", 1)
 
 	cases := []struct {
-		name    string
-		planner store.Endpoint
-		noExec  bool
-		reason  string
+		name       string
+		mastermind store.Endpoint
+		noExec     bool
+		reason     string
 	}{
-		{name: "claude planner", planner: store.Endpoint{Kind: "claude", SessionID: "ses_abc123"}, reason: ""},
-		{name: "empty session id", planner: store.Endpoint{Kind: "opencode", SessionID: ""}, reason: "no opencode session id"},
-		{name: "malformed session id", planner: store.Endpoint{Kind: "opencode", SessionID: "ses_bad!id"}, reason: "no opencode session id"},
-		{name: "nil Exec", planner: store.Endpoint{Kind: "opencode", SessionID: "ses_abc123"}, noExec: true, reason: "no sqlite3"},
+		{name: "claude mastermind", mastermind: store.Endpoint{Kind: "claude", SessionID: "ses_abc123"}, reason: ""},
+		{name: "empty session id", mastermind: store.Endpoint{Kind: "opencode", SessionID: ""}, reason: "no opencode session id"},
+		{name: "malformed session id", mastermind: store.Endpoint{Kind: "opencode", SessionID: "ses_bad!id"}, reason: "no opencode session id"},
+		{name: "nil Exec", mastermind: store.Endpoint{Kind: "opencode", SessionID: "ses_abc123"}, noExec: true, reason: "no sqlite3"},
 	}
 
 	for _, tc := range cases {
@@ -239,7 +239,7 @@ func TestOpencodeDeliverNotMineCases(t *testing.T) {
 				d.Exec = &fakeSqliteExec{}
 			}
 
-			out, reason, err := d.Deliver(context.Background(), tc.planner, "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
+			out, reason, err := d.Deliver(context.Background(), tc.mastermind, "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
 			if err != nil {
 				t.Fatalf("Deliver: %v", err)
 			}
@@ -285,7 +285,7 @@ func TestOpencodeDeliverUnavailableCases(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := &OpencodeDeliverer{StateFiles: tc.stateFiles, DBPath: filepath.Join(t.TempDir(), "opencode.db"), Exec: tc.exec, Alive: tc.alive}
-			out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
+			out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
 			if err != nil {
 				t.Fatalf("Deliver: %v", err)
 			}
@@ -317,7 +317,7 @@ func TestOpencodeDeliverFallsBackAfterFallbackAfter(t *testing.T) {
 		Now:        func() time.Time { return now },
 	}
 
-	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", queuedAt)
+	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", queuedAt)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 	}
 
 	payload := "relevo: round 1\n\nbody"
-	endpoint := opencodePlanner("ses_abc123")
+	endpoint := opencodeMasterMind("ses_abc123")
 
 	// 1. call Deliver three times with the same payload and queuedAt, with now = queuedAt+31s, +32s and +33s
 	for _, sec := range []time.Duration{31 * time.Second, 32 * time.Second, 33 * time.Second} {
@@ -426,7 +426,7 @@ func TestOpencodeDeliverPasswordNeverLeaks(t *testing.T) {
 		Alive:      aliveAlways,
 	}
 
-	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
+	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
 	if out != OutcomeUnavailable {
 		t.Fatalf("out = %v, want OutcomeUnavailable (500 from server)", out)
 	}
@@ -487,7 +487,7 @@ func newOpencodeStateFiles(t *testing.T) *opencodeStateFiles {
 // returns its outcome and reason.
 func opencodeDeliverOnce(t *testing.T, d *OpencodeDeliverer) (Outcome, string) {
 	t.Helper()
-	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
+	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -629,7 +629,7 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 // opencodeDeliverWant runs one Deliver and asserts its outcome and reason.
 func opencodeDeliverWant(t *testing.T, d *OpencodeDeliverer, payload, ref string, queuedAt time.Time, want Outcome, wantReason string) {
 	t.Helper()
-	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), payload, ref, queuedAt)
+	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), payload, ref, queuedAt)
 	if err != nil {
 		t.Fatalf("Deliver(%s): %v", ref, err)
 	}
@@ -676,7 +676,7 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 		Alive:      aliveAlways,
 		Now:        func() time.Time { return curTime },
 	}
-	payload1 := "relevo: round 1 · to planner · payload 1\n\nbody 1"
+	payload1 := "relevo: round 1 · to MasterMind · payload 1\n\nbody 1"
 
 	// The same payload five times POSTs once: the recorded post is the
 	// answer while the session has not taken the turn.
@@ -702,7 +702,7 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 
 	// A second payload, with its own origin, POSTs once on its own.
 	curTime = curTime.Add(2 * time.Second)
-	payload2 := "relevo: round 1 · to planner · payload 2\n\nbody 2"
+	payload2 := "relevo: round 1 · to MasterMind · payload 2\n\nbody 2"
 	opencodeDeliverWant(t, d, payload2, "/x/002-report.md", startTime, OutcomeUnavailable, "posted but not seen in the session")
 	if got := opencodePosts(&mu, &posts); got != 2 {
 		t.Fatalf("after payload 2, got %d POSTs, want 2", got)

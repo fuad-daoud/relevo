@@ -162,20 +162,20 @@ func newShowLiveStore(t *testing.T) *store.Store {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
-	write(s.PlanPath("fixture", 1), "# Round 1 plan\n")
+	write(s.PromptPath("fixture", 1), "# Round 1 plan\n")
 	write(s.ReportPath("fixture", 1), "# Round 1 report\n")
 	write(s.DiffPath("fixture", 1), "diff --git a/x b/x\n")
-	write(s.PlanPath("fixture", 2), "# Round 2 plan\n")
+	write(s.PromptPath("fixture", 2), "# Round 2 plan\n")
 	write(s.ReportPath("fixture", 2), "# Round 2 report\n")
 	write(s.BuilderLogPath("fixture", 2), "round 2 builder log line 1\nround 2 builder log line 2\n")
-	write(s.PlanPath("fixture", 3), "# Round 3 plan\n")
+	write(s.PromptPath("fixture", 3), "# Round 3 plan\n")
 
 	entries := []store.LogEntry{
-		{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 10, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
-		{TS: time.Date(2026, 9, 10, 10, 1, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 10, 10, 1, 1, 0, time.UTC), Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "halted"},
-		{TS: time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC), Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+		{TS: time.Date(2026, 9, 10, 10, 1, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 1, 1, 0, time.UTC), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Outcome: "halted"},
+		{TS: time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC), Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
 	}
 	for _, e := range entries {
 		if err := s.AppendLog("fixture", e); err != nil {
@@ -189,7 +189,7 @@ func TestShowLiveDefaultsToNewestCompletedPlan(t *testing.T) {
 	t.Parallel()
 
 	rt := Runtime{Store: newShowLiveStore(t)}
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -293,17 +293,17 @@ func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := os.WriteFile(s.PlanPath("idle", 3), []byte("# Round 3 plan\n"), 0o644); err != nil {
+	if err := os.WriteFile(s.PromptPath("idle", 3), []byte("# Round 3 plan\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
 
 	entries := []store.LogEntry{
-		{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 10, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
-		{TS: time.Date(2026, 9, 10, 10, 1, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 10, 10, 1, 1, 0, time.UTC), Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
-		{TS: time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC), Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 10, 10, 2, 1, 0, time.UTC), Round: 3, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+		{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+		{TS: time.Date(2026, 9, 10, 10, 1, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 1, 1, 0, time.UTC), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+		{TS: time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC), Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 2, 1, 0, time.UTC), Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
 	}
 	for _, e := range entries {
 		if err := s.AppendLog("idle", e); err != nil {
@@ -312,7 +312,7 @@ func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
 	}
 
 	rt := Runtime{Store: s}
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "idle", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "idle", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -337,16 +337,16 @@ func TestShowLiveNoCompletedRound(t *testing.T) {
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := os.WriteFile(s.PlanPath("openonly", 1), []byte("# plan\n"), 0o644); err != nil {
+	if err := os.WriteFile(s.PromptPath("openonly", 1), []byte("# plan\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
-	entry := store.LogEntry{TS: time.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true}
+	entry := store.LogEntry{TS: time.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true}
 	if err := s.AppendLog("openonly", entry); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
 	rt := Runtime{Store: s}
-	_, err := Show(context.Background(), rt, ShowOptions{Name: "openonly", Section: ShowPlan})
+	_, err := Show(context.Background(), rt, ShowOptions{Name: "openonly", Section: ShowPrompt})
 	if !errors.Is(err, ErrNoCompletedRound) {
 		t.Errorf("err = %v, want ErrNoCompletedRound", err)
 	}
@@ -358,7 +358,7 @@ func TestShowDBFallsBackWhenNotLive(t *testing.T) {
 	d := seedShowDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestShowDBSkipsOpenRoundForNewestCompleted(t *testing.T) {
 	seedRoundMirror(t, d, dir)
 
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "openhead", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "openhead", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -482,7 +482,7 @@ func TestShowDBArchivedHeaderFacts(t *testing.T) {
 	d := seedShowArchiveDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -500,7 +500,7 @@ func TestShowRoundOutOfRange(t *testing.T) {
 	d := seedShowDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
-	_, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 99, Section: ShowPlan})
+	_, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 99, Section: ShowPrompt})
 	if err == nil {
 		t.Fatal("Show: want an error for a round out of range")
 	}
@@ -515,7 +515,7 @@ func TestShowUnknownBinding(t *testing.T) {
 
 	rt := Runtime{Store: store.New(t.TempDir())}
 
-	_, err := Show(context.Background(), rt, ShowOptions{Name: "nope", Section: ShowPlan})
+	_, err := Show(context.Background(), rt, ShowOptions{Name: "nope", Section: ShowPrompt})
 	if err == nil {
 		t.Fatal("Show: want an error for an unknown binding")
 	}
@@ -551,7 +551,7 @@ func TestShowArchivedReadsSealedRoundFiles(t *testing.T) {
 		want    string
 		missing bool
 	}{
-		{name: "plan round 1", round: 1, section: ShowPlan, want: fixture("001-plan.md")},
+		{name: "plan round 1", round: 1, section: ShowPrompt, want: fixture("001-plan.md")},
 		{name: "report round 2", round: 2, section: ShowReport, want: fixture("002-report.md")},
 		{name: "diff round 1", round: 1, section: ShowDiff, want: fixture("001-diff.patch")},
 		{name: "drift round 2", round: 2, section: ShowDrift, want: fixture("002-drift.patch")},
@@ -645,7 +645,7 @@ func TestShowArchivedDefaultsToNewestCompletedRound(t *testing.T) {
 	s := archiveShowFixture(t, nil)
 	rt := Runtime{Store: s}
 
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -758,7 +758,7 @@ func seedRoundMirror(t *testing.T, d *db.DB, dir string) {
 	}
 
 	roundFiles := []struct{ base, kind string }{
-		{"%03d-plan.md", db.ArtifactPlan},
+		{"%03d-plan.md", db.ArtifactPrompt},
 		{"%03d-report.md", db.ArtifactReport},
 		{"%03d-diff.patch", db.ArtifactDiff},
 		{"%03d-drift.patch", db.ArtifactDrift},
@@ -831,7 +831,7 @@ func TestShowTranscriptRendersTheStreamWithoutALog(t *testing.T) {
 		if err := s.Save(b); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
-		entry := store.LogEntry{TS: time.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true}
+		entry := store.LogEntry{TS: time.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true}
 		if err := s.AppendLog("fixture", entry); err != nil {
 			t.Fatalf("AppendLog: %v", err)
 		}

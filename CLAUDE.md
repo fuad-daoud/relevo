@@ -1,6 +1,6 @@
 # relevo
 
-relevo automates the plan/report handoff between two AI coding agents: a planner
+relevo automates the plan/report handoff between two AI coding agents: a MasterMind
 hands work to a builder, and relevo moves the files between them. Builders are
 headless or remote processes; relevo no longer integrates with herdr.
 
@@ -8,8 +8,8 @@ headless or remote processes; relevo no longer integrates with herdr.
 
 The dispatch protocol -- `relevo send` not in-session subagents, headless by
 default, one harness many worktrees, `relevo gate` on a usage limit,
-stop rather than improvise -- is in the shipped `architect` definition
-(`internal/harness/agents/architect.*.md`, "Handing off"), not here. What
+stop rather than improvise -- is in the injected relevo guide
+(`internal/mastermind/guide.md`), not here. What
 follows is what is specific to this machine and this repo.
 
 - Candidates, actors and policy live in relevo.db; `relevo config` shows and

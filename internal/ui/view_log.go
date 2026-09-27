@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/stats"
+	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 )
 
@@ -166,8 +167,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 			roundNum = *e.Round
 		}
 
-		switch e.Kind {
-		case "plan":
+		if store.IsPromptKind(store.Kind(e.Kind)) {
 			var parts []string
 			if pickNote, ok := picks[k]; ok {
 				if m := pickRe.FindStringSubmatch(pickNote); m != nil {
@@ -193,7 +193,10 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				Style:   accentStyle,
 				Detail:  strings.ReplaceAll(strings.Join(parts, " · "), "\n", " · "),
 			})
+			continue
+		}
 
+		switch e.Kind {
 		case "report":
 			var ej struct {
 				Outcome  string `json:"outcome"`

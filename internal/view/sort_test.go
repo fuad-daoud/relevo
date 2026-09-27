@@ -114,7 +114,7 @@ func TestSortRowsOwnerFirst(t *testing.T) {
 }
 
 // TestSortRowsOwnerEmptyLabelsPinsLegacyOrder: with every OwnerLabel empty
-// (a planner) SortRows must return exactly what it always returned. The
+// (a mastermind) SortRows must return exactly what it always returned. The
 // expected orders below are read from the existing tests' expectations, not
 // from the new implementation.
 func TestSortRowsOwnerEmptyLabelsPinsLegacyOrder(t *testing.T) {

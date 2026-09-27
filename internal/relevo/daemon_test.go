@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -42,12 +42,12 @@ func TestTickReconcilesAndPersists(t *testing.T) {
 	if b.Round != 2 {
 		t.Errorf("tick must persist the advanced round, got %d", b.Round)
 	}
-	// #303 deleted the pane injection; the report is queued for the planner
+	// #303 deleted the pane injection; the report is queued for the mastermind
 	// and, with no live channel claim and no deliverer, stays pending for
 	// `relevo wait`.
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
-		t.Fatalf("the closed round's report must be queued for the planner: found=%v err=%v", found, err)
+		t.Fatalf("the closed round's report must be queued for the mastermind: found=%v err=%v", found, err)
 	}
 	if pending.Kind != store.KindReport {
 		t.Errorf("pending kind = %s, want report", pending.Kind)
@@ -91,21 +91,21 @@ func TestTickSkipsDoneBindings(t *testing.T) {
 	}
 }
 
-// TestDaemonBackfillsPlannerID is the plan's required case for §5.6 (last
-// paragraph): a tick back-fills PlannerID from (Planner.Kind,
-// Planner.SessionID) when the registry knows that session, and leaves it
+// TestDaemonBackfillsMasterMindID is the plan's required case for §5.6 (last
+// paragraph): a tick back-fills MasterMindID from (MasterMind.Kind,
+// MasterMind.SessionID) when the registry knows that session, and leaves it
 // empty when it does not.
-func TestDaemonBackfillsPlannerID(t *testing.T) {
+func TestDaemonBackfillsMasterMindID(t *testing.T) {
 	t.Parallel()
 
-	// A binding written before PlannerID existed: its planner endpoint names
-	// the session, and PlannerID is empty.
+	// A binding written before MasterMindID existed: its mastermind endpoint names
+	// the session, and MasterMindID is empty.
 	legacy := func(t *testing.T, rt Runtime, session string) store.Binding {
 		t.Helper()
 		b := store.Binding{
 			Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive,
-			Planner: store.Endpoint{Kind: "claude", SessionID: session},
-			Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+			MasterMind: store.Endpoint{Kind: "claude", SessionID: session},
+			Builder:    store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
 		}
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatalf("seed legacy binding: %v", err)
@@ -122,13 +122,13 @@ func TestDaemonBackfillsPlannerID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got.PlannerID != testPlannerID {
-		t.Errorf("PlannerID = %q, want the record's %q", got.PlannerID, testPlannerID)
+	if got.MasterMindID != testMasterMindID {
+		t.Errorf("MasterMindID = %q, want the record's %q", got.MasterMindID, testMasterMindID)
 	}
 
-	// A miss does nothing: no record for this session, no PlannerID.
+	// A miss does nothing: no record for this session, no MasterMindID.
 	rt2 := newRuntime(t)
-	rt2.Planners = testPlanners(t)
+	rt2.MasterMinds = testMasterMinds(t)
 	b2 := legacy(t, rt2, "sess-nobody")
 	if err := NewDaemon(rt2, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("Tick (miss): %v", err)
@@ -137,8 +137,8 @@ func TestDaemonBackfillsPlannerID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load (miss): %v", err)
 	}
-	if got2.PlannerID != "" {
-		t.Errorf("a miss must leave PlannerID empty, got %q", got2.PlannerID)
+	if got2.MasterMindID != "" {
+		t.Errorf("a miss must leave MasterMindID empty, got %q", got2.MasterMindID)
 	}
 }
 
@@ -326,7 +326,7 @@ func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
 	if b.Round != 2 {
 		t.Errorf("tick must persist the advanced round, got %d", b.Round)
 	}
-	if _, found, err := rt.Store.PendingForPlanner("webshop"); err != nil || !found {
+	if _, found, err := rt.Store.PendingForMasterMind("webshop"); err != nil || !found {
 		t.Errorf("the closed round's report must be queued: found=%v err=%v", found, err)
 	}
 }
@@ -335,7 +335,7 @@ func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
 // syncPaneMetadata and notifyFinished after the binding loop (#129, #182).
 // The finished-toast decision itself is covered by finished_test.go; here
 // only that Tick wires both into the pass, using a binding with a closed
-// round, no pending payload, and an idle planner so the toast fires within
+// round, no pending payload, and an idle mastermind so the toast fires within
 // this one tick.
 // TestTickIngestsLiveBindings guards the daemon's end-of-tick ingest hook
 // (docs/specs/2026-09-20-persistence-design.md §5.5): with a db configured,
@@ -621,7 +621,7 @@ func TestTickSurvivesAPanickingReconcile(t *testing.T) {
 	// A second, healthy binding on the same store, reconciled by the same
 	// tick. Its own working tree, since a tree carries one binding.
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "other", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo-other",
+		Name: "other", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo-other",
 	}); err != nil {
 		t.Fatalf("Bind other: %v", err)
 	}
@@ -811,12 +811,12 @@ func countFDsOn(t *testing.T, path string) int {
 }
 
 // TestBackfillLeavesDoneBindingsAlone pins the DONE guard in
-// backfillPlannerID: a finished binding is history, and a tick must not
-// rewrite it even when its planner session now has a record.
+// backfillMasterMindID: a finished binding is history, and a tick must not
+// rewrite it even when its mastermind session now has a record.
 func TestBackfillLeavesDoneBindingsAlone(t *testing.T) {
 	t.Parallel()
 
-	reg, _ := testPlannerRegistry(t, planner.Record{
+	reg, _ := testMasterMindRegistry(t, mastermind.Record{
 		ID:          "pl_aaaaaaaacccc",
 		Name:        "architect-1",
 		HarnessKind: "claude",
@@ -824,26 +824,26 @@ func TestBackfillLeavesDoneBindingsAlone(t *testing.T) {
 		CWD:         "/repo",
 	})
 	b := store.Binding{Name: "old", State: store.StateDone}
-	b.Planner.Kind, b.Planner.SessionID = "claude", "sess-done"
+	b.MasterMind.Kind, b.MasterMind.SessionID = "claude", "sess-done"
 
-	if got := backfillPlannerID(Runtime{Planners: reg}, b); got.PlannerID != "" {
-		t.Errorf("DONE binding back-filled with %q; history must not be rewritten", got.PlannerID)
+	if got := backfillMasterMindID(Runtime{MasterMinds: reg}, b); got.MasterMindID != "" {
+		t.Errorf("DONE binding back-filled with %q; history must not be rewritten", got.MasterMindID)
 	}
 	b.State = store.StateActive
-	if got := backfillPlannerID(Runtime{Planners: reg}, b); got.PlannerID != "pl_aaaaaaaacccc" {
-		t.Errorf("ACTIVE binding PlannerID = %q, want pl_aaaaaaaacccc", got.PlannerID)
+	if got := backfillMasterMindID(Runtime{MasterMinds: reg}, b); got.MasterMindID != "pl_aaaaaaaacccc" {
+		t.Errorf("ACTIVE binding MasterMindID = %q, want pl_aaaaaaaacccc", got.MasterMindID)
 	}
 }
 
-// TestBackfillLeavesPlannerlessBindingsAlone pins the Planner.SessionID guard
-// in backfillPlannerID: a non-DONE binding with no id and an empty
-// Planner.SessionID -- the shape a remote binding written before the add
+// TestBackfillLeavesMasterMindlessBindingsAlone pins the MasterMind.SessionID guard
+// in backfillMasterMindID: a non-DONE binding with no id and an empty
+// MasterMind.SessionID -- the shape a remote binding written before the add
 // fix has -- names no session for the registry to look up, so a tick leaves it
-// exactly as it was. relevo never guesses a planner for it.
-func TestBackfillLeavesPlannerlessBindingsAlone(t *testing.T) {
+// exactly as it was. relevo never guesses a mastermind for it.
+func TestBackfillLeavesMasterMindlessBindingsAlone(t *testing.T) {
 	t.Parallel()
 
-	reg, _ := testPlannerRegistry(t, planner.Record{
+	reg, _ := testMasterMindRegistry(t, mastermind.Record{
 		ID:          "pl_aaaaaaaacccc",
 		Name:        "architect-1",
 		HarnessKind: "claude",
@@ -852,8 +852,8 @@ func TestBackfillLeavesPlannerlessBindingsAlone(t *testing.T) {
 	})
 
 	b := store.Binding{Name: "api", State: store.StateActive}
-	if got := backfillPlannerID(Runtime{Planners: reg}, b); got.PlannerID != "" {
-		t.Errorf("plannerless binding back-filled with %q; nothing names its planner", got.PlannerID)
+	if got := backfillMasterMindID(Runtime{MasterMinds: reg}, b); got.MasterMindID != "" {
+		t.Errorf("mastermindless binding back-filled with %q; nothing names its mastermind", got.MasterMindID)
 	}
 }
 
@@ -871,9 +871,9 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 
 	b := store.Binding{
 		Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive,
-		Planner: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
-		Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
-		Format:  store.BindingFormat + 1,
+		MasterMind: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
+		Builder:    store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		Format:     store.BindingFormat + 1,
 	}
 	if err := os.MkdirAll(rt.Store.Dir(b.Name), 0o755); err != nil {
 		t.Fatal(err)
@@ -908,9 +908,9 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 	}
 }
 
-// TestPlannerPruneDue pins §4.4's once-an-hour decision, pure so it needs no
+// TestMasterMindPruneDue pins §4.4's once-an-hour decision, pure so it needs no
 // daemon.
-func TestPlannerPruneDue(t *testing.T) {
+func TestMasterMindPruneDue(t *testing.T) {
 	t.Parallel()
 
 	now := time.Unix(1757000000, 0).UTC()
@@ -929,17 +929,17 @@ func TestPlannerPruneDue(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := plannerPruneDue(c.last, c.ok, c.now); got != c.want {
-				t.Errorf("plannerPruneDue = %v, want %v", got, c.want)
+			if got := mastermindPruneDue(c.last, c.ok, c.now); got != c.want {
+				t.Errorf("mastermindPruneDue = %v, want %v", got, c.want)
 			}
 		})
 	}
 }
 
-// TestPrunePlannersForgetsAndStamps pins the daemon's own prune (§4.4): a gone
+// TestPruneMasterMindsForgetsAndStamps pins the daemon's own prune (§4.4): a gone
 // record no binding names is forgotten, a live one survives, and the run is
 // stamped in the store database's kv row planner.pruned_at.
-func TestPrunePlannersForgetsAndStamps(t *testing.T) {
+func TestPruneMasterMindsForgetsAndStamps(t *testing.T) {
 	t.Parallel()
 
 	st := store.New(t.TempDir())
@@ -948,10 +948,10 @@ func TestPrunePlannersForgetsAndStamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store db: %v", err)
 	}
-	reg := &planner.DBRegistry{KV: db.TxKV{DB: d}, Root: st.PlannersDir(), Now: func() time.Time { return now }}
+	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Root: st.MasterMindsDir(), Now: func() time.Time { return now }}
 
-	mk := func(id, name, session string, host int) planner.Record {
-		rec, err := reg.Create(planner.Record{
+	mk := func(id, name, session string, host int) mastermind.Record {
+		rec, err := reg.Create(mastermind.Record{
 			ID: id, Name: name, HarnessKind: "claude", SessionID: session,
 			HostPID: host, HostStartedAt: int64(host) * 10, CWD: "/tmp/x",
 			CreatedAt: now, SeenAt: now,
@@ -965,9 +965,9 @@ func TestPrunePlannersForgetsAndStamps(t *testing.T) {
 	gone := mk("pl_bbbbbbbbbbbb", "beta", "sess-b", 222)
 
 	rt := Runtime{
-		Store:    st,
-		Planners: reg,
-		Now:      func() time.Time { return now },
+		Store:       st,
+		MasterMinds: reg,
+		Now:         func() time.Time { return now },
 		ProcStart: func(pid int) (int64, error) {
 			if pid == live.HostPID {
 				return live.HostStartedAt, nil
@@ -976,9 +976,9 @@ func TestPrunePlannersForgetsAndStamps(t *testing.T) {
 		},
 	}
 
-	NewDaemon(rt, time.Second).prunePlanners()
+	NewDaemon(rt, time.Second).pruneMasterMinds()
 
-	if _, err := reg.Get(gone.ID); !errors.Is(err, planner.ErrNotFound) {
+	if _, err := reg.Get(gone.ID); !errors.Is(err, mastermind.ErrNotFound) {
 		t.Errorf("gone record %s is still present: err = %v", gone.ID, err)
 	}
 	if _, err := reg.Get(live.ID); err != nil {
@@ -989,9 +989,9 @@ func TestPrunePlannersForgetsAndStamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store DB: %v", err)
 	}
-	last, ok, err := plannerLastPruned(kv)
+	last, ok, err := mastermindLastPruned(kv)
 	if err != nil {
-		t.Fatalf("plannerLastPruned: %v", err)
+		t.Fatalf("mastermindLastPruned: %v", err)
 	}
 	if !ok || !last.Equal(now) {
 		t.Errorf("planner.pruned_at = (%v, %v), want (%v, true)", last, ok, now)

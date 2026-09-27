@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-var statsTables = []string{"repo", "planner", "binding", "round", "event", "artifact", "transcript", "ingest_cursor"}
+var statsTables = []string{"repo", "mastermind", "binding", "round", "event", "artifact", "transcript", "ingest_cursor"}
 
 // Stats summarises row counts per table, the db's on-disk size, its schema
 // version and the newest round's started_at.

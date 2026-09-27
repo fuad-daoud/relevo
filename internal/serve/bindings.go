@@ -569,7 +569,7 @@ func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), req.Subject, availability.ClearedByPlanner)
+	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), req.Subject, availability.ClearedByMasterMind)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
 		return

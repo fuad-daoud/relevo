@@ -76,7 +76,7 @@ func bodyOf(t tab, c tabContent, headless bool) string {
 	if c.empty != "" {
 		return st.Render(c.empty) // prose, NOT styled as an error
 	}
-	if t == tabPlan || t == tabReport {
+	if t == tabPrompt || t == tabReport {
 		return renderMarkdown(c.body)
 	}
 	if t == tabDiff {

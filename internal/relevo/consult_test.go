@@ -280,7 +280,7 @@ func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
 	if !strings.Contains(string(body), "FINDINGS BODY") {
 		t.Errorf("findings = %q, want it to contain the final message", body)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("findings were not queued: found=%v err=%v", found, err)
 	}

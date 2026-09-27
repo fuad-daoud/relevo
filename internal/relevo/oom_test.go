@@ -143,7 +143,7 @@ func TestAdmitOOMQueuedAdmitsOldest(t *testing.T) {
 	bindAndOOMQueue := func(name string, queuedAt time.Time) {
 		t.Helper()
 		if _, err := Bind(context.Background(), rt, BindOptions{
-			Name: name, Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo-" + name,
+			Name: name, Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo-" + name,
 		}); err != nil {
 			t.Fatalf("Bind %s: %v", name, err)
 		}
@@ -205,7 +205,7 @@ func TestAdmitOOMQueuedWaitsForLowerRunning(t *testing.T) {
 
 	// Create one oom-queued binding with Running=2.
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "shop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo-shop",
+		Name: "shop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo-shop",
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}

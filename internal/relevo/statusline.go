@@ -7,10 +7,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// PlannerStatus filters stored bindings to one planner id and builds rows
+// MasterMindStatus filters stored bindings to one mastermind id and builds rows
 // through buildReport from the store alone.
-func PlannerStatus(ctx context.Context, rt Runtime, plannerID string) (view.Report, error) {
-	if plannerID == "" {
+func MasterMindStatus(ctx context.Context, rt Runtime, mastermindID string) (view.Report, error) {
+	if mastermindID == "" {
 		return view.Report{}, nil
 	}
 	bindings, err := rt.Store.List()
@@ -19,7 +19,7 @@ func PlannerStatus(ctx context.Context, rt Runtime, plannerID string) (view.Repo
 	}
 	var kept []store.Binding
 	for _, b := range bindings {
-		if b.PlannerID == plannerID && b.State != store.StateDone {
+		if b.MasterMindID == mastermindID && b.State != store.StateDone {
 			kept = append(kept, b)
 		}
 	}

@@ -141,7 +141,7 @@ func gateClear(subject string) error {
 		return err
 	}
 
-	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), subject, availability.ClearedByPlanner)
+	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), subject, availability.ClearedByMasterMind)
 	if err != nil {
 		return err
 	}

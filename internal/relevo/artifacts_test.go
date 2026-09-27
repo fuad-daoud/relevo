@@ -28,8 +28,8 @@ func seedArtifactRound(t *testing.T, name string) *store.Store {
 		t.Fatalf("Save: %v", err)
 	}
 	for _, e := range []store.LogEntry{
-		{TS: time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 26, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true},
+		{TS: time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 26, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
 	} {
 		if err := st.AppendLog(name, e); err != nil {
 			t.Fatalf("AppendLog: %v", err)
@@ -45,13 +45,13 @@ func seedArtifactRound(t *testing.T, name string) *store.Store {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
-	write("summary.md", "# the summary\n")
+	write("findings.md", "# the findings\n")
 	write("site/index.html", "<html>\n")
 	return st
 }
 
-// TestRoundArtifactsLiveAndSealed: a reader round with summary.md and
-// site/index.html is listed with summary first, both while on disk and after
+// TestRoundArtifactsLiveAndSealed: a reader round with findings.md and
+// site/index.html is listed with findings.md first, both while on disk and after
 // SealRound, and ReadArtifact returns the bytes both ways. ReadArtifact with
 // ".." is refused.
 func TestRoundArtifactsLiveAndSealed(t *testing.T) {
@@ -73,18 +73,18 @@ func TestRoundArtifactsLiveAndSealed(t *testing.T) {
 
 	check := func(t *testing.T, live bool) {
 		t.Helper()
-		files, err := RoundArtifacts(rt, name, round, actor)
+		files, err := RoundArtifacts(rt, name, round, actor, "findings.md")
 		if err != nil {
 			t.Fatalf("RoundArtifacts: %v", err)
 		}
 		if len(files) != 2 {
 			t.Fatalf("RoundArtifacts = %+v, want 2 files", files)
 		}
-		if files[0].Rel != "summary.md" || files[1].Rel != "site/index.html" {
-			t.Errorf("Rel order = %q, %q, want summary.md first then site/index.html", files[0].Rel, files[1].Rel)
+		if files[0].Rel != "findings.md" || files[1].Rel != "site/index.html" {
+			t.Errorf("Rel order = %q, %q, want findings.md first then site/index.html", files[0].Rel, files[1].Rel)
 		}
-		if files[0].Size != int64(len("# the summary\n")) {
-			t.Errorf("summary size = %d, want %d", files[0].Size, len("# the summary\n"))
+		if files[0].Size != int64(len("# the findings\n")) {
+			t.Errorf("output size = %d, want %d", files[0].Size, len("# the findings\n"))
 		}
 		if !live && files[0].MTime.IsZero() {
 			t.Error("a sealed file has a zero MTime, want the row's stamp")
@@ -94,9 +94,9 @@ func TestRoundArtifactsLiveAndSealed(t *testing.T) {
 		if err != nil || string(got) != "<html>\n" {
 			t.Errorf("ReadArtifact(site/index.html) = %q (err %v), want %q", got, err, "<html>\n")
 		}
-		got, err = ReadArtifact(rt, name, round, actor, "summary.md")
-		if err != nil || string(got) != "# the summary\n" {
-			t.Errorf("ReadArtifact(summary.md) = %q (err %v), want the summary", got, err)
+		got, err = ReadArtifact(rt, name, round, actor, "findings.md")
+		if err != nil || string(got) != "# the findings\n" {
+			t.Errorf("ReadArtifact(findings.md) = %q (err %v), want the findings", got, err)
 		}
 
 		// ".." is never a listed Rel, and never reads the escape file.
@@ -127,11 +127,11 @@ func TestRoundArtifactsLiveAndSealed(t *testing.T) {
 	t.Run("sealed", func(t *testing.T) { check(t, false) })
 }
 
-// TestShowSummaryAndArtifacts: the --summary and --artifacts sections and
+// TestShowOutputAndArtifacts: the --output and --artifacts sections and
 // --artifact <rel>, on a live and a sealed reader round, plus the JSON; a
-// writer round answers Missing for --summary and --artifacts. --report on a
+// writer round answers Missing for --output and --artifacts. --report on a
 // reader shows the summary (reportPathFor), not a duplicated path.
-func TestShowSummaryAndArtifacts(t *testing.T) {
+func TestShowOutputAndArtifacts(t *testing.T) {
 	t.Parallel()
 
 	st := seedArtifactRound(t, "reader")
@@ -148,8 +148,8 @@ func TestShowSummaryAndArtifacts(t *testing.T) {
 		t.Fatalf("Save(writer): %v", err)
 	}
 	for _, e := range []store.LogEntry{
-		{TS: time.Date(2026, 9, 26, 11, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 26, 11, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true},
+		{TS: time.Date(2026, 9, 26, 11, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 26, 11, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
 	} {
 		if err := st.AppendLog("writer", e); err != nil {
 			t.Fatalf("AppendLog(writer): %v", err)
@@ -159,12 +159,12 @@ func TestShowSummaryAndArtifacts(t *testing.T) {
 	readerSections := func(t *testing.T) {
 		t.Helper()
 
-		res, err := Show(ctx, rt, ShowOptions{Name: name, Round: round, Section: ShowSummary})
+		res, err := Show(ctx, rt, ShowOptions{Name: name, Round: round, Section: ShowOutput})
 		if err != nil {
-			t.Fatalf("Show(--summary): %v", err)
+			t.Fatalf("Show(--output): %v", err)
 		}
-		if res.Missing || res.Text != "# the summary\n" {
-			t.Errorf("--summary = %q (missing %v), want the summary", res.Text, res.Missing)
+		if res.Missing || res.Text != "# the findings\n" {
+			t.Errorf("--output = %q (missing %v), want the findings", res.Text, res.Missing)
 		}
 
 		res, err = Show(ctx, rt, ShowOptions{Name: name, Round: round, Section: ShowArtifacts})
@@ -174,15 +174,15 @@ func TestShowSummaryAndArtifacts(t *testing.T) {
 		if res.Missing || len(res.Artifacts) != 2 {
 			t.Fatalf("--artifacts = %+v (missing %v), want 2 files", res.Artifacts, res.Missing)
 		}
-		if res.Artifacts[0].Rel != "summary.md" || res.Artifacts[1].Rel != "site/index.html" {
-			t.Errorf("--artifacts order = %q, %q, want summary.md first", res.Artifacts[0].Rel, res.Artifacts[1].Rel)
+		if res.Artifacts[0].Rel != "findings.md" || res.Artifacts[1].Rel != "site/index.html" {
+			t.Errorf("--artifacts order = %q, %q, want findings.md first", res.Artifacts[0].Rel, res.Artifacts[1].Rel)
 		}
 
 		raw, err := json.Marshal(res)
 		if err != nil {
 			t.Fatalf("marshal ShowResult: %v", err)
 		}
-		for _, want := range []string{`"rel":"summary.md"`, `"size":`, `"mtime":"`} {
+		for _, want := range []string{`"rel":"findings.md"`, `"size":`, `"mtime":"`} {
 			if !strings.Contains(string(raw), want) {
 				t.Errorf("ShowResult JSON is missing %s:\n%s", want, raw)
 			}
@@ -196,14 +196,14 @@ func TestShowSummaryAndArtifacts(t *testing.T) {
 			t.Errorf("--artifact = %q, want the raw bytes %q", res.Text, "<html>\n")
 		}
 
-		// --report on a reader is its summary (reportPathFor), read through
-		// the artifact helper rather than a second path.
+		// --report on a reader is its output file (reportPathFor), read
+		// through the artifact helper rather than a second path.
 		res, err = Show(ctx, rt, ShowOptions{Name: name, Round: round, Section: ShowReport})
 		if err != nil {
 			t.Fatalf("Show(--report): %v", err)
 		}
-		if res.Missing || res.Text != "# the summary\n" {
-			t.Errorf("--report on a reader = %q (missing %v), want the summary", res.Text, res.Missing)
+		if res.Missing || res.Text != "# the findings\n" {
+			t.Errorf("--report on a reader = %q (missing %v), want the findings", res.Text, res.Missing)
 		}
 	}
 
@@ -220,7 +220,7 @@ func TestShowSummaryAndArtifacts(t *testing.T) {
 	t.Run("sealed", func(t *testing.T) { readerSections(t) })
 
 	t.Run("writer answers Missing", func(t *testing.T) {
-		for _, section := range []ShowSection{ShowSummary, ShowArtifacts} {
+		for _, section := range []ShowSection{ShowOutput, ShowArtifacts} {
 			res, err := Show(ctx, rt, ShowOptions{Name: "writer", Round: 1, Section: section})
 			if err != nil {
 				t.Fatalf("Show(writer --%s): %v", section, err)
@@ -278,8 +278,8 @@ func TestArtifactsOverTheCapHoldTheSeal(t *testing.T) {
 	}
 	// The close still wrote the summary and queued the report: nothing is
 	// dropped.
-	if _, err := os.Stat(filepath.Join(dir, "summary.md")); err != nil {
-		t.Errorf("summary.md was not written at the close: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "findings.md")); err != nil {
+		t.Errorf("findings.md was not written at the close: %v", err)
 	}
 	if e := reportEntryFor(t, rt, "reader-bind", 1); e.Path == "" {
 		t.Error("no report entry was queued at the close")
@@ -310,5 +310,41 @@ func TestArtifactsOverTheCapHoldTheSeal(t *testing.T) {
 	sealed, err := rt.Store.ReadFile(filepath.Join(dir, "big.bin"))
 	if err != nil || !bytes.Equal(sealed, big) {
 		t.Errorf("sealed artifact = %d bytes (err %v), want the %d written", len(sealed), err, len(big))
+	}
+}
+
+// TestOutputFallsBackToSummaryMd pins the pre-rename read fallback: a round
+// whose artifact directory holds only summary.md answers --output with it.
+func TestOutputFallsBackToSummaryMd(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := store.Binding{Name: "legacy", CWD: "/repo", Round: 2, State: store.StateActive, Shape: store.ShapeReader, Role: "reviewer"}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for _, e := range []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.Kind("plan"), Confirmed: true},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
+	} {
+		if err := st.AppendLog("legacy", e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+	dir := st.ArtifactDir("legacy", 1, "reviewer")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "summary.md"), []byte("# the old summary\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := Runtime{Store: st}
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "legacy", Round: 1, Section: ShowOutput})
+	if err != nil {
+		t.Fatalf("Show(--output): %v", err)
+	}
+	if res.Missing || res.Text != "# the old summary\n" {
+		t.Errorf("--output = %q (missing %v), want the pre-rename summary.md", res.Text, res.Missing)
 	}
 }

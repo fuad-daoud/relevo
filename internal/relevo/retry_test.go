@@ -26,13 +26,13 @@ func TestRetryPlanReadsSealed(t *testing.T) {
 	// finished, so both are sealable (store.Sealable).
 	b := store.Binding{
 		Name: "webshop", CWD: "/repo/webshop", Round: 3, State: store.StateDone,
-		PlannerID: "pl_aaaaaaaabbbb",
+		MasterMindID: "pl_aaaaaaaabbbb",
 	}
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	plan := []byte("# Round 1 plan\n\nDo the thing.\n")
-	if err := os.WriteFile(st.PlanPath("webshop", 1), plan, 0o644); err != nil {
+	if err := os.WriteFile(st.PromptPath("webshop", 1), plan, 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
 
@@ -42,7 +42,7 @@ func TestRetryPlanReadsSealed(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("sealRounds: %v", err)
 	}
-	if _, err := os.Stat(st.PlanPath("webshop", 1)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(st.PromptPath("webshop", 1)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the plan is still on disk after the seal (err %v)", err)
 	}
 

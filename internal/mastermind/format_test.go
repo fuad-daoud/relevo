@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 import (
 	"bytes"
@@ -17,15 +17,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// update rewrites the golden file, but only when PlannerFormat was bumped.
-var update = flag.Bool("update", false, "rewrite testdata/record-shape.golden when PlannerFormat was bumped")
+// update rewrites the golden file, but only when MasterMindFormat was bumped.
+var update = flag.Bool("update", false, "rewrite testdata/record-shape.golden when MasterMindFormat was bumped")
 
 const recordGoldenPath = "testdata/record-shape.golden"
 
 const (
-	recordShapeMsg   = "planner.Record's JSON shape changed: bump planner.PlannerFormat, then run go test ./internal/planner -run TestRecordShapeMatchesFormat -update"
-	recordRefusalMsg = "bump planner.PlannerFormat first; an older relevo would erase the new fields"
-	recordStaleMsg   = "planner.Record's golden format line is stale; run go test ./internal/planner -run TestRecordShapeMatchesFormat -update"
+	recordShapeMsg   = "mastermind.Record's JSON shape changed: bump mastermind.MasterMindFormat, then run go test ./internal/mastermind -run TestRecordShapeMatchesFormat -update"
+	recordRefusalMsg = "bump mastermind.MasterMindFormat first; an older relevo would erase the new fields"
+	recordStaleMsg   = "mastermind.Record's golden format line is stale; run go test ./internal/mastermind -run TestRecordShapeMatchesFormat -update"
 )
 
 type recordGolden struct {
@@ -124,11 +124,11 @@ func TestRecordShapeMatchesFormat(t *testing.T) {
 	g := readRecordGolden(t)
 	keys := jsonshape.Keys(reflect.TypeOf(Record{}))
 
-	if msg := checkRecordShape(g, PlannerFormat, keys, *update); msg != "" {
+	if msg := checkRecordShape(g, MasterMindFormat, keys, *update); msg != "" {
 		t.Fatal(msg)
 	}
-	if got := readRecordGolden(t); got.format != PlannerFormat {
-		t.Errorf("golden format = %d, want PlannerFormat %d", got.format, PlannerFormat)
+	if got := readRecordGolden(t); got.format != MasterMindFormat {
+		t.Errorf("golden format = %d, want MasterMindFormat %d", got.format, MasterMindFormat)
 	}
 }
 
@@ -146,17 +146,17 @@ func TestRecordShapeFailurePath(t *testing.T) {
 	if slices.Equal(g.keys, keys) {
 		t.Fatal("an extra field must change the key paths")
 	}
-	if msg := checkRecordShape(g, PlannerFormat, keys, false); msg != recordShapeMsg {
+	if msg := checkRecordShape(g, MasterMindFormat, keys, false); msg != recordShapeMsg {
 		t.Errorf("mismatch message = %q, want %q", msg, recordShapeMsg)
 	}
-	if msg := checkRecordShape(g, PlannerFormat, keys, true); msg != recordRefusalMsg {
+	if msg := checkRecordShape(g, MasterMindFormat, keys, true); msg != recordRefusalMsg {
 		t.Errorf("-update without a bump = %q, want %q", msg, recordRefusalMsg)
 	}
 }
 
 func TestStoredFormat(t *testing.T) {
-	if got := storedFormat(PlannerFormat); got != 0 {
-		t.Errorf("storedFormat(%d) = %d, want 0: format 1 is absent on disk", PlannerFormat, got)
+	if got := storedFormat(MasterMindFormat); got != 0 {
+		t.Errorf("storedFormat(%d) = %d, want 0: format 1 is absent on disk", MasterMindFormat, got)
 	}
 	if got := storedFormat(2); got != 2 {
 		t.Errorf("storedFormat(2) = %d, want 2", got)
@@ -168,7 +168,7 @@ func TestStoredFormat(t *testing.T) {
 func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 	reg := testRegistry(t)
 	rec := record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-1", 0)
-	rec.Format = PlannerFormat + 1
+	rec.Format = MasterMindFormat + 1
 
 	raw, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
@@ -182,8 +182,8 @@ func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Format != PlannerFormat+1 {
-		t.Fatalf("loaded Format = %d, want %d", got.Format, PlannerFormat+1)
+	if got.Format != MasterMindFormat+1 {
+		t.Fatalf("loaded Format = %d, want %d", got.Format, MasterMindFormat+1)
 	}
 
 	_, err = reg.SetHost(rec.ID, 42, 7)
@@ -194,10 +194,10 @@ func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 	if !errors.Is(err, store.ErrNewerFormatSentinel) {
 		t.Errorf("errors.Is(%v, ErrNewerFormatSentinel) = false, want true", err)
 	}
-	if newer.Kind != "planner record" || newer.Name != rec.Name || newer.Have != PlannerFormat+1 || newer.Know != PlannerFormat {
+	if newer.Kind != "mastermind record" || newer.Name != rec.Name || newer.Have != MasterMindFormat+1 || newer.Know != MasterMindFormat {
 		t.Errorf("ErrNewerFormat = %+v", newer)
 	}
-	wantText := `planner record "alpha" was written by a newer relevo (format 2; this relevo knows 1): upgrade relevo; a planner session reconnects relevo mcp with /mcp`
+	wantText := `mastermind record "alpha" was written by a newer relevo (format 2; this relevo knows 1): upgrade relevo; a mastermind session reconnects relevo mcp with /mcp`
 	if err.Error() != wantText {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}

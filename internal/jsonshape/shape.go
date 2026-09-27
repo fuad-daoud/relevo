@@ -1,5 +1,5 @@
 // Package jsonshape derives the JSON key paths a Go struct encodes to. The
-// format numbers in internal/store and internal/planner guard the shape those
+// format numbers in internal/store and internal/mastermind guard the shape those
 // paths describe: a new field is a shape change these paths' golden tests catch.
 package jsonshape
 

@@ -205,7 +205,7 @@ func TestSendStaleBuilderNoCandidateRefuses(t *testing.T) {
 		t.Fatalf("ReadLog: %v", err)
 	}
 	for _, e := range entries {
-		if e.Kind == store.KindPlan {
+		if e.Kind == store.KindPrompt {
 			t.Fatalf("Send wrote a plan entry despite the refusal: %+v", e)
 		}
 	}
@@ -220,7 +220,7 @@ func TestAdmitStaleBuilderSwitches(t *testing.T) {
 	rt.Candidates = candidateSet(t, testTwoProviderJSON)
 	rt.Policy = orderOf("builder", "agy/other/m", testClaudeRef, testOpencodeRef)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "agy/other/m", PlannerID: testPlannerName, CWD: "/repo", Headless: true,
+		Name: "webshop", Candidate: "agy/other/m", MasterMindID: testMasterMindName, CWD: "/repo", Headless: true,
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}

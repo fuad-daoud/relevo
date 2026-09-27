@@ -235,7 +235,7 @@ func TestGCAbandonedArchivesOnlyIdleOld(t *testing.T) {
 	rt := ownerRuntime(t, s, id)
 	if err := rt.Store.AppendLog("old-running", store.LogEntry{
 		Round:     1,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 		Direction: store.DirToBuilder,
 		TS:        now.Add(-48 * time.Hour),
 	}); err != nil {
@@ -315,7 +315,7 @@ func TestAdminOwnerRuntime(t *testing.T) {
 		saveOwnerBinding(t, s, o.id, o.name)
 		rt := ownerRuntime(t, s, o.id)
 		if err := rt.Store.AppendLog(o.name, store.LogEntry{
-			Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -371,7 +371,7 @@ func TestAdminUnbindRefusesRunningUnlessForce(t *testing.T) {
 	rt := ownerRuntime(t, s, id)
 	if err := rt.Store.AppendLog("running", store.LogEntry{
 		Round:     1,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 		Direction: store.DirToBuilder,
 		TS:        now,
 	}); err != nil {
@@ -522,7 +522,7 @@ func TestAdminGatesAvailableUnavailable(t *testing.T) {
 }
 
 // TestAdminAvailableRecordsServerClear: the server host's own clear is recorded
-// as the server's, not a planner's.
+// as the server's, not a mastermind's.
 func TestAdminAvailableRecordsServerClear(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()

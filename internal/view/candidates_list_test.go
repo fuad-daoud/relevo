@@ -131,7 +131,7 @@ func TestCandidateRoles(t *testing.T) {
 	}
 }
 
-// TestFormatCandidatesHasNoEscapes pins round 3 F1: a planner reads `relevo
+// TestFormatCandidatesHasNoEscapes pins round 3 F1: a mastermind reads `relevo
 // config` through a pipe, so the candidates block must be plain text -- no SGR
 // sequence anywhere in it.
 func TestFormatCandidatesHasNoEscapes(t *testing.T) {

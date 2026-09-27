@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 import (
 	"errors"
@@ -55,7 +55,7 @@ var resolveOrderCases = []struct {
 		name: "flag beats env, host and session",
 		in: ResolveInput{
 			Flag:      "beta",
-			Env:       envFunc(withEnv(claudeEnv(101, "sess-a"), "RELEVO_PLANNER", "alpha")),
+			Env:       envFunc(withEnv(claudeEnv(101, "sess-a"), "RELEVO_MASTERMIND", "alpha")),
 			PPID:      101,
 			ProcStart: procStartAt(1010),
 		},
@@ -89,7 +89,7 @@ var resolveOrderCases = []struct {
 	{
 		name: "env beats host and session",
 		in: ResolveInput{
-			Env:       envFunc(withEnv(claudeEnv(101, "sess-a"), "RELEVO_PLANNER", "beta")),
+			Env:       envFunc(withEnv(claudeEnv(101, "sess-a"), "RELEVO_MASTERMIND", "beta")),
 			PPID:      101,
 			ProcStart: procStartAt(1010),
 		},
@@ -99,7 +99,7 @@ var resolveOrderCases = []struct {
 	{
 		name: "env by id",
 		in: ResolveInput{
-			Env:       envFunc(withEnv(claudeEnv(0, ""), "RELEVO_PLANNER", "pl_aaaaaaaaaaaa")),
+			Env:       envFunc(withEnv(claudeEnv(0, ""), "RELEVO_MASTERMIND", "pl_aaaaaaaaaaaa")),
 			PPID:      999,
 			ProcStart: procStartAt(0),
 		},
@@ -161,7 +161,7 @@ var resolveOrderCases = []struct {
 
 // TestResolveOrder is the whole precedence rule in one table: flag > env >
 // host > session, a host whose ProcStart fails falling through to session,
-// and a flag matching nothing being ErrUnknownPlanner.
+// and a flag matching nothing being ErrUnknownMasterMind.
 func TestResolveOrder(t *testing.T) {
 	reg := testRegistry(t)
 	mustCreate(t, reg, record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-a", 101))
@@ -190,25 +190,25 @@ func TestResolveOrder(t *testing.T) {
 		PPID:      101,
 		ProcStart: procStartAt(1010),
 	})
-	var unknown ErrUnknownPlanner
+	var unknown ErrUnknownMasterMind
 	if !errors.As(err, &unknown) || unknown.Ref != "nope" {
-		t.Errorf("unknown flag = %v, want ErrUnknownPlanner{Ref: nope}", err)
+		t.Errorf("unknown flag = %v, want ErrUnknownMasterMind{Ref: nope}", err)
 	}
-	if errors.Is(err, ErrNoPlanner) {
-		t.Errorf("unknown flag reported ErrNoPlanner; an unknown ref is the other error")
+	if errors.Is(err, ErrNoMasterMind) {
+		t.Errorf("unknown flag reported ErrNoMasterMind; an unknown ref is the other error")
 	}
 
 	_, _, err = Resolve(reg, ResolveInput{
-		Env:       envFunc(withEnv(claudeEnv(0, ""), "RELEVO_PLANNER", "nope")),
+		Env:       envFunc(withEnv(claudeEnv(0, ""), "RELEVO_MASTERMIND", "nope")),
 		PPID:      999,
 		ProcStart: procStartAt(0),
 	})
 	if !errors.As(err, &unknown) || unknown.Ref != "nope" {
-		t.Errorf("unknown env = %v, want ErrUnknownPlanner{Ref: nope}", err)
+		t.Errorf("unknown env = %v, want ErrUnknownMasterMind{Ref: nope}", err)
 	}
 
-	if _, _, err := Resolve(reg, ResolveInput{Env: envFunc(map[string]string{}), PPID: 999}); !errors.Is(err, ErrNoPlanner) {
-		t.Errorf("no detection = %v, want ErrNoPlanner", err)
+	if _, _, err := Resolve(reg, ResolveInput{Env: envFunc(map[string]string{}), PPID: 999}); !errors.Is(err, ErrNoMasterMind) {
+		t.Errorf("no detection = %v, want ErrNoMasterMind", err)
 	}
 
 	rec, err := reg.Get("pl_bbbbbbbbbbbb")
@@ -221,7 +221,7 @@ func TestResolveOrder(t *testing.T) {
 }
 
 // TestResolveNeverCreates pins "Resolve never registers": an empty registry
-// resolves nothing, says so with ErrNoPlanner, and leaves no row behind.
+// resolves nothing, says so with ErrNoMasterMind, and leaves no row behind.
 func TestResolveNeverCreates(t *testing.T) {
 	reg := testRegistry(t)
 
@@ -231,15 +231,15 @@ func TestResolveNeverCreates(t *testing.T) {
 		ProcStart: procStartAt(1010),
 		Now:       testNow,
 	}
-	if _, _, err := Resolve(reg, in); !errors.Is(err, ErrNoPlanner) {
-		t.Fatalf("Resolve on an empty registry = %v, want ErrNoPlanner", err)
+	if _, _, err := Resolve(reg, in); !errors.Is(err, ErrNoMasterMind) {
+		t.Fatalf("Resolve on an empty registry = %v, want ErrNoMasterMind", err)
 	}
 
-	if _, _, err := Resolve(reg, ResolveInput{Flag: "ghost", Env: in.Env, PPID: in.PPID, Now: testNow}); !errors.Is(err, ErrUnknownPlanner{Ref: "ghost"}) {
-		t.Fatalf("Resolve with an unknown flag = %v, want ErrUnknownPlanner", err)
+	if _, _, err := Resolve(reg, ResolveInput{Flag: "ghost", Env: in.Env, PPID: in.PPID, Now: testNow}); !errors.Is(err, ErrUnknownMasterMind{Ref: "ghost"}) {
+		t.Fatalf("Resolve with an unknown flag = %v, want ErrUnknownMasterMind", err)
 	}
 
-	keys, err := reg.KV.KVKeys(plannerKeyPrefix)
+	keys, err := reg.KV.KVKeys(mastermindKeyPrefix)
 	if err != nil {
 		t.Fatalf("KVKeys: %v", err)
 	}
@@ -379,19 +379,19 @@ func TestResolveOpencodeSession(t *testing.T) {
 	t.Run("finder returns an id with a record -> that record, ResolutionSession", func(t *testing.T) {
 		checkResolveOpencodeMatched(t, reg, ocRec)
 	})
-	t.Run("id without a record -> errors.As ErrUnregisteredSession AND errors.Is ErrNoPlanner", func(t *testing.T) {
+	t.Run("id without a record -> errors.As ErrUnregisteredSession AND errors.Is ErrNoMasterMind", func(t *testing.T) {
 		checkResolveOpencodeUnregistered(t, reg, opencodeEnv)
 	})
-	t.Run("finder returns ErrNoOpencodeSession -> ErrNoPlanner", func(t *testing.T) {
+	t.Run("finder returns ErrNoOpencodeSession -> ErrNoMasterMind", func(t *testing.T) {
 		checkResolveOpencodeNoMatch(t, reg, opencodeEnv)
 	})
 	t.Run("finder returns ambiguous -> that error", func(t *testing.T) {
 		checkResolveOpencodeAmbiguous(t, reg, opencodeEnv)
 	})
-	t.Run("nil finder or CWD \"\" -> ErrNoPlanner without calling it", func(t *testing.T) {
+	t.Run("nil finder or CWD \"\" -> ErrNoMasterMind without calling it", func(t *testing.T) {
 		checkResolveOpencodeNilOrEmptyCWD(t, reg, opencodeEnv)
 	})
-	t.Run("RELEVO_PLANNER set -> env wins and the finder is never called", func(t *testing.T) {
+	t.Run("RELEVO_MASTERMIND set -> env wins and the finder is never called", func(t *testing.T) {
 		checkResolveOpencodeEnvWins(t, reg, ocRec)
 	})
 }
@@ -434,8 +434,8 @@ func checkResolveOpencodeUnregistered(t *testing.T, reg Registry, env func(strin
 	if unreg.Kind != "opencode" || unreg.SessionID != "ses_unregistered" {
 		t.Errorf("unreg = %+v, want opencode/ses_unregistered", unreg)
 	}
-	if !errors.Is(err, ErrNoPlanner) {
-		t.Errorf("err = %v, want errors.Is ErrNoPlanner", err)
+	if !errors.Is(err, ErrNoMasterMind) {
+		t.Errorf("err = %v, want errors.Is ErrNoMasterMind", err)
 	}
 }
 
@@ -449,8 +449,8 @@ func checkResolveOpencodeNoMatch(t *testing.T, reg Registry, env func(string) st
 		},
 		Now: testNow,
 	})
-	if !errors.Is(err, ErrNoPlanner) {
-		t.Fatalf("err = %v, want ErrNoPlanner", err)
+	if !errors.Is(err, ErrNoMasterMind) {
+		t.Fatalf("err = %v, want ErrNoMasterMind", err)
 	}
 }
 
@@ -479,13 +479,13 @@ func checkResolveOpencodeNilOrEmptyCWD(t *testing.T, reg Registry, env func(stri
 	}
 
 	_, _, err := Resolve(reg, ResolveInput{Env: env, CWD: "/repo", Now: testNow})
-	if !errors.Is(err, ErrNoPlanner) {
-		t.Fatalf("nil finder: err = %v, want ErrNoPlanner", err)
+	if !errors.Is(err, ErrNoMasterMind) {
+		t.Fatalf("nil finder: err = %v, want ErrNoMasterMind", err)
 	}
 
 	_, _, err = Resolve(reg, ResolveInput{Env: env, CWD: "", OpencodeSession: finder, Now: testNow})
-	if !errors.Is(err, ErrNoPlanner) {
-		t.Fatalf("empty CWD: err = %v, want ErrNoPlanner", err)
+	if !errors.Is(err, ErrNoMasterMind) {
+		t.Fatalf("empty CWD: err = %v, want ErrNoMasterMind", err)
 	}
 	if called {
 		t.Fatal("finder was called when CWD was empty")
@@ -502,8 +502,8 @@ func checkResolveOpencodeEnvWins(t *testing.T, reg Registry, ocRec Record) {
 
 	rec, res, err := Resolve(reg, ResolveInput{
 		Env: envFunc(map[string]string{
-			"RELEVO_HARNESS": "opencode",
-			"RELEVO_PLANNER": ocRec.ID,
+			"RELEVO_HARNESS":    "opencode",
+			"RELEVO_MASTERMIND": ocRec.ID,
 		}),
 		CWD:             "/repo",
 		OpencodeSession: finder,
@@ -519,6 +519,6 @@ func checkResolveOpencodeEnvWins(t *testing.T, reg Registry, ocRec Record) {
 		t.Errorf("res = %q, want %q", res, ResolutionEnv)
 	}
 	if called {
-		t.Fatal("finder was called even though RELEVO_PLANNER was set")
+		t.Fatal("finder was called even though RELEVO_MASTERMIND was set")
 	}
 }

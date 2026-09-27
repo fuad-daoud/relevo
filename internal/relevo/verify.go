@@ -13,7 +13,7 @@ import (
 // yolo is deliberate and it is why verify is not an ordinary `relevo ask`:
 // the consult runs in a throwaway worktree at the builder's HEAD that relevo
 // created for it and removes afterwards, so letting it execute tests there
-// costs nothing the builder or the planner owns. A review that cannot run
+// costs nothing the builder or the mastermind owns. A review that cannot run
 // anything is not the review this feature promises. The role definition
 // still tells it not to edit; relevo cannot observe writes.
 //

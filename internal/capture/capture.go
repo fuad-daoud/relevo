@@ -70,7 +70,7 @@ func brief(err error) string {
 }
 
 // commitClause renders the commit facts for a diff note (forLine false) or
-// the planner's Diff: line (forLine true), or "" when there is nothing to
+// the mastermind's Diff: line (forLine true), or "" when there is nothing to
 // say: unknown facts with no reason.
 func commitClause(facts CommitResult, branch string, forLine bool) string {
 	if !facts.Known {
@@ -272,7 +272,7 @@ func CommitFacts(ctx context.Context, d Deps, b store.Binding) CommitResult {
 	return CommitResult{Known: true, Commits: n, Dirty: dirty}
 }
 
-// showCommand renders the planner-facing command that prints one round's
+// showCommand renders the mastermind-facing command that prints one round's
 // artifact, so a line names the durable command instead of the patch's path:
 // a closed round's files may be sealed into the database.
 func showCommand(name string, round int, section string) string {
@@ -280,7 +280,7 @@ func showCommand(name string, round int, section string) string {
 }
 
 // DiffLine renders the report-payload Diff: line from a fresh diff result, or
-// "" when the result says nothing worth telling the planner (no git, or not a
+// "" when the result says nothing worth telling the mastermind (no git, or not a
 // repository). The commit facts follow " -- " unless the diff is empty. branch
 // names the binding's branch in the clause, or is "" for a tree relevo did not
 // create.
@@ -332,7 +332,7 @@ func DiffLineFromNote(note string, commits int, tree, branch string) string {
 		return "Diff: no file changes"
 	case base == "unavailable":
 		// Matches DiffLine's own !Available && Reason == "" case: nothing
-		// worth telling the planner.
+		// worth telling the mastermind.
 		return ""
 	case strings.HasPrefix(base, "unavailable: "):
 		base = fmt.Sprintf("unavailable (%s)", strings.TrimPrefix(base, "unavailable: "))
@@ -352,7 +352,7 @@ func DiffLineFromNote(note string, commits int, tree, branch string) string {
 var pathsClauseRe = regexp.MustCompile(`paths: report (\d+), diff (\d+)`)
 
 // PathsLine renders the report-payload line for a changed_paths mismatch, so
-// the planner reading the payload sees the same counts the KindDiff note's
+// the mastermind reading the payload sees the same counts the KindDiff note's
 // clause carries. report is the number of paths the report listed, diff the
 // number of files the diff touched. Pure.
 func PathsLine(report, diff int) string {

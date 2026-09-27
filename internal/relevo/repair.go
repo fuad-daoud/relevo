@@ -88,7 +88,7 @@ func repairPlan(b store.Binding, failedRound int, planPath, gateLogPath string, 
 
 // startRepairRound stages and hands over round failedRound+1 after a failing
 // gate (#132 part 2). It is called on the tick that closed round failedRound,
-// after the report has been queued to the planner, with the binding already
+// after the report has been queued to the mastermind, with the binding already
 // advanced (`b.Round == failedRound+1`, RoundStartedAt zero).
 //
 // Two bounds end the loop with NEEDS YOU instead of another repair: the
@@ -112,8 +112,8 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	b.LastGateSig = sig
 	b.RepairCount++
 
-	text := repairPlan(b, failedRound, rt.Store.PlanPath(b.Name, failedRound), rec.LogPath, tailLines(rt.Store.ReadFile, rec.LogPath, repairTailLines))
-	planPath := rt.Store.PlanPath(b.Name, b.Round)
+	text := repairPlan(b, failedRound, rt.Store.PromptPath(b.Name, failedRound), rec.LogPath, tailLines(rt.Store.ReadFile, rec.LogPath, repairTailLines))
+	planPath := rt.Store.PromptPath(b.Name, b.Round)
 	if err := os.WriteFile(planPath, []byte(text), 0o644); err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not stage its plan: %v", b.Name, b.Round, err))
 	}
@@ -143,7 +143,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		TS:        rt.Now().UTC(),
 		Round:     b.Round,
 		Direction: store.DirToBuilder,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 		Path:      planPath,
 		Confirmed: true,
 		Tier:      string(effectiveTier(b)),

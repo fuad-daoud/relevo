@@ -27,7 +27,7 @@ const (
 	DefaultFallbackAfter   = 30 * time.Second
 )
 
-// OpencodeDeliverer is the PlannerDeliverer for opencode planners
+// OpencodeDeliverer is the MasterMindDeliverer for opencode masterminds
 // (docs/specs/2026-09-22-opencode-delivery-design.md): it POSTs the
 // payload to opencode's own HTTP API and confirms delivery by reading the
 // session back out of opencode's sqlite db, because a 2xx from the wrong
@@ -114,18 +114,18 @@ func (d *OpencodeDeliverer) fallbackAfter() time.Duration {
 	return DefaultFallbackAfter
 }
 
-// Deliver implements PlannerDeliverer for opencode planners.
-func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payload, path string, queuedAt time.Time) (Outcome, string, error) {
-	if planner.Kind != "opencode" {
+// Deliver implements MasterMindDeliverer for opencode masterminds.
+func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, payload, path string, queuedAt time.Time) (Outcome, string, error) {
+	if mastermind.Kind != "opencode" {
 		return OutcomeNotMine, "", nil
 	}
 	if d.Exec == nil {
 		return OutcomeNotMine, "no sqlite3", nil
 	}
-	if !validSessionID(planner.SessionID) {
+	if !validSessionID(mastermind.SessionID) {
 		return OutcomeNotMine, "no opencode session id", nil
 	}
-	if out, reason, gave := d.pastFallback(planner.SessionID, payload, queuedAt); gave {
+	if out, reason, gave := d.pastFallback(mastermind.SessionID, payload, queuedAt); gave {
 		return out, reason, nil
 	}
 
@@ -152,7 +152,7 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 
 	// Already there? A previous tick may have delivered and crashed before
 	// confirming. Check first, so a retry never double-posts.
-	alreadySeen, err := d.seen(ctx, planner.SessionID, origin)
+	alreadySeen, err := d.seen(ctx, mastermind.SessionID, origin)
 	if err != nil {
 		return OutcomeUnavailable, "sqlite3: " + firstErrorLine(err), nil
 	}
@@ -160,11 +160,11 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 		return OutcomeDelivered, "already present", nil
 	}
 
-	if d.hasPosted(planner.SessionID, origin) {
+	if d.hasPosted(mastermind.SessionID, origin) {
 		return OutcomeUnavailable, "posted but not seen in the session", nil
 	}
 
-	req, err := d.buildRequest(ctx, svc, planner.SessionID, payload)
+	req, err := d.buildRequest(ctx, svc, mastermind.SessionID, payload)
 	if err != nil {
 		return OutcomeNotMine, "", fmt.Errorf("build opencode request: %w", err)
 	}
@@ -179,12 +179,12 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 		return OutcomeUnavailable, fmt.Sprintf("post: %d", resp.StatusCode), nil
 	}
 
-	d.recordPosted(planner.SessionID, origin, d.now())
+	d.recordPosted(mastermind.SessionID, origin, d.now())
 
 	// 200 means admitted, not delivered: confirm by reading the
 	// session back, polling briefly since the owning process's event bus
 	// takes a moment to record the turn.
-	return d.confirm(ctx, planner.SessionID, origin)
+	return d.confirm(ctx, mastermind.SessionID, origin)
 }
 
 // pastFallback reports whether the payload has waited past the fallback
@@ -240,7 +240,7 @@ func readOpencodeService(path string) (opencodeService, error) {
 
 // loopbackOpencodeURL reports whether raw is a http://127.0.0.1[:port] or
 // http://localhost[:port] origin. relevo refuses anything else outright: it
-// would be sending a planner's report, which can contain source, to
+// would be sending a mastermind's report, which can contain source, to
 // whatever host the file names.
 func loopbackOpencodeURL(raw string) bool {
 	u, err := url.Parse(raw)

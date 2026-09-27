@@ -18,7 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -28,19 +28,19 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// addRemotePlanner is the planner registry the hand-built Runtimes in this
-// file need: `add --server` resolves the caller's planner before it contacts
-// the server (the fix that gives a remote binding its PlannerID), so an Add
-// with Server set and no registry is the hard ErrNoPlannerSession. It holds
+// addRemoteMasterMind is the mastermind registry the hand-built Runtimes in this
+// file need: `add --server` resolves the caller's mastermind before it contacts
+// the server (the fix that gives a remote binding its MasterMindID), so an Add
+// with Server set and no registry is the hard ErrNoMasterMindSession. It holds
 // the same record newRuntime seeds, on its own temp dir, and exports it as
-// $RELEVO_PLANNER the way a real planner session does, so the Runtime below
-// resolves it without a --planner flag.
-func addRemotePlanner(t *testing.T) *planner.DBRegistry {
+// $RELEVO_MASTERMIND the way a real mastermind session does, so the Runtime below
+// resolves it without a --mastermind flag.
+func addRemoteMasterMind(t *testing.T) *mastermind.DBRegistry {
 	t.Helper()
-	t.Setenv("RELEVO_PLANNER", testPlannerName)
-	reg, _ := testPlannerRegistry(t, planner.Record{
-		ID:          testPlannerID,
-		Name:        testPlannerName,
+	t.Setenv("RELEVO_MASTERMIND", testMasterMindName)
+	reg, _ := testMasterMindRegistry(t, mastermind.Record{
+		ID:          testMasterMindID,
+		Name:        testMasterMindName,
 		HarnessKind: "claude",
 		SessionID:   "sess-architect",
 		CWD:         "/repo",
@@ -538,11 +538,11 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	_ = origCreateBranch
 	// We wrap CreateBranch call via the custom tracker
 	rt := Runtime{
-		Store:    st,
-		Planners: addRemotePlanner(t),
-		Git:      fg,
-		Remote:   fr,
-		Now:      time.Now,
+		Store:       st,
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         fg,
+		Remote:      fr,
+		Now:         time.Now,
 	}
 
 	opts := AddOptions{
@@ -585,13 +585,13 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	}
 }
 
-// TestAddRemoteRecordsPlanner pins the fix: `add --server` resolves the
-// caller's planner before it contacts the server, and records it on the
-// client-side binding exactly as the local path does -- PlannerID is the
-// record's id, Planner carries the record's kind and session. Before the fix
-// the binding was written with PlannerID "" and a zero planner, so
-// planner-filtered status hid it and the channel route could not key on it.
-func TestAddRemoteRecordsPlanner(t *testing.T) {
+// TestAddRemoteRecordsMasterMind pins the fix: `add --server` resolves the
+// caller's mastermind before it contacts the server, and records it on the
+// client-side binding exactly as the local path does -- MasterMindID is the
+// record's id, MasterMind carries the record's kind and session. Before the fix
+// the binding was written with MasterMindID "" and a zero mastermind, so
+// mastermind-filtered status hid it and the channel route could not key on it.
+func TestAddRemoteRecordsMasterMind(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -608,44 +608,44 @@ func TestAddRemoteRecordsPlanner(t *testing.T) {
 	}
 
 	res, err := Add(ctx, rt, AddOptions{
-		Name:      "api",
-		Server:    "zen",
-		Repo:      "/fake/repo",
-		PlannerID: testPlannerName,
+		Name:         "api",
+		Server:       "zen",
+		Repo:         "/fake/repo",
+		MasterMindID: testMasterMindName,
 	})
 	if err != nil {
 		t.Fatalf("Add --server: %v", err)
 	}
-	if res.Binding.PlannerID != testPlannerID {
-		t.Errorf("res.Binding.PlannerID = %q, want %q", res.Binding.PlannerID, testPlannerID)
+	if res.Binding.MasterMindID != testMasterMindID {
+		t.Errorf("res.Binding.MasterMindID = %q, want %q", res.Binding.MasterMindID, testMasterMindID)
 	}
 
 	stored, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if stored.PlannerID != testPlannerID {
-		t.Errorf("stored PlannerID = %q, want the record's %q", stored.PlannerID, testPlannerID)
+	if stored.MasterMindID != testMasterMindID {
+		t.Errorf("stored MasterMindID = %q, want the record's %q", stored.MasterMindID, testMasterMindID)
 	}
-	if stored.Planner.Kind != "claude" {
-		t.Errorf("stored Planner.Kind = %q, want claude", stored.Planner.Kind)
+	if stored.MasterMind.Kind != "claude" {
+		t.Errorf("stored MasterMind.Kind = %q, want claude", stored.MasterMind.Kind)
 	}
-	if stored.Planner.SessionID != "sess-architect" {
-		t.Errorf("stored Planner.SessionID = %q, want sess-architect", stored.Planner.SessionID)
+	if stored.MasterMind.SessionID != "sess-architect" {
+		t.Errorf("stored MasterMind.SessionID = %q, want sess-architect", stored.MasterMind.SessionID)
 	}
 }
 
-// TestAddRemoteNoPlannerIsHardError pins §4.3 for the remote path: with
-// nothing resolving -- no --planner, no $RELEVO_PLANNER, no host and no
+// TestAddRemoteNoMasterMindIsHardError pins §4.3 for the remote path: with
+// nothing resolving -- no --mastermind, no $RELEVO_MASTERMIND, no host and no
 // detectable session -- `add --server` fails with exactly the local path's
-// no-planner text, before any binding is created on the server.
-func TestAddRemoteNoPlannerIsHardError(t *testing.T) {
-	t.Setenv("RELEVO_PLANNER", "")
+// no-mastermind text, before any binding is created on the server.
+func TestAddRemoteNoMasterMindIsHardError(t *testing.T) {
+	t.Setenv("RELEVO_MASTERMIND", "")
 	t.Setenv("CLAUDECODE", "")
 
 	ctx := context.Background()
 	rt := newRuntime(t)
-	rt.Planners = testPlanners(t)
+	rt.MasterMinds = testMasterMinds(t)
 	rt.Git = &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",
@@ -660,10 +660,10 @@ func TestAddRemoteNoPlannerIsHardError(t *testing.T) {
 
 	_, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
 	if err == nil {
-		t.Fatal("Add --server with no resolvable planner must fail")
+		t.Fatal("Add --server with no resolvable mastermind must fail")
 	}
-	if err.Error() != ErrNoPlannerSession.Error() {
-		t.Errorf("err = %q, want exactly %q", err.Error(), ErrNoPlannerSession.Error())
+	if err.Error() != ErrNoMasterMindSession.Error() {
+		t.Errorf("err = %q, want exactly %q", err.Error(), ErrNoMasterMindSession.Error())
 	}
 	for _, c := range fr.calls {
 		if strings.HasPrefix(c, "CreateBinding") {
@@ -672,12 +672,12 @@ func TestAddRemoteNoPlannerIsHardError(t *testing.T) {
 	}
 }
 
-// TestStatusShowsRemoteBindingForItsPlanner pins the status half of the fix:
-// the remote binding's row carries the client planner's id, which is the field
-// cmd/relevo's filterReportPlanner keys on, so a planner-filtered `relevo
-// status` keeps it. Before the fix the row's PlannerID was "" and the filter
+// TestStatusShowsRemoteBindingForItsMasterMind pins the status half of the fix:
+// the remote binding's row carries the client mastermind's id, which is the field
+// cmd/relevo's filterReportMasterMind keys on, so a mastermind-filtered `relevo
+// status` keeps it. Before the fix the row's MasterMindID was "" and the filter
 // dropped it.
-func TestStatusShowsRemoteBindingForItsPlanner(t *testing.T) {
+func TestStatusShowsRemoteBindingForItsMasterMind(t *testing.T) {
 	ctx := context.Background()
 	rt := newRuntime(t)
 	rt.Git = &fakeGit{
@@ -692,10 +692,10 @@ func TestStatusShowsRemoteBindingForItsPlanner(t *testing.T) {
 	}
 
 	if _, err := Add(ctx, rt, AddOptions{
-		Name:      "api",
-		Server:    "zen",
-		Repo:      "/fake/repo",
-		PlannerID: testPlannerName,
+		Name:         "api",
+		Server:       "zen",
+		Repo:         "/fake/repo",
+		MasterMindID: testMasterMindName,
 	}); err != nil {
 		t.Fatalf("Add --server: %v", err)
 	}
@@ -705,21 +705,21 @@ func TestStatusShowsRemoteBindingForItsPlanner(t *testing.T) {
 		t.Fatalf("Status: %v", err)
 	}
 
-	// The filter the CLI applies keeps every row whose PlannerID is the
-	// calling planner's; the remote binding must survive it.
+	// The filter the CLI applies keeps every row whose MasterMindID is the
+	// calling mastermind's; the remote binding must survive it.
 	kept := 0
 	var keptName string
 	for _, b := range rep.Bindings {
-		if b.Name == "api" && b.PlannerID != testPlannerID {
-			t.Fatalf("remote row PlannerID = %q, want %q", b.PlannerID, testPlannerID)
+		if b.Name == "api" && b.MasterMindID != testMasterMindID {
+			t.Fatalf("remote row MasterMindID = %q, want %q", b.MasterMindID, testMasterMindID)
 		}
-		if b.PlannerID == testPlannerID {
+		if b.MasterMindID == testMasterMindID {
 			kept++
 			keptName = b.Name
 		}
 	}
 	if kept != 1 || keptName != "api" {
-		t.Fatalf("planner-filtered rows = %d (%q), want just the remote binding api", kept, keptName)
+		t.Fatalf("mastermind-filtered rows = %d (%q), want just the remote binding api", kept, keptName)
 	}
 }
 
@@ -739,7 +739,7 @@ func TestAddRemoteTierPreTierServerRefused(t *testing.T) {
 			Candidate: "claude/anthropic/haiku",
 		},
 	}
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 	_, err := Add(ctx, rt, AddOptions{
 		Name:   "api",
@@ -776,7 +776,7 @@ func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
 			Tier:      "edit",
 		},
 	}
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 	res, err := Add(ctx, rt, AddOptions{
 		Name:   "api",
@@ -818,7 +818,7 @@ func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
 			Candidate: "claude/anthropic/haiku",
 		},
 	}
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 	if _, err := Add(ctx, rt, AddOptions{
 		Name:   "api",
@@ -849,7 +849,7 @@ func TestAddRemoteRolePreRolesServerRefused(t *testing.T) {
 		rootCommitSHA: "2222222222222222222222222222222222222222",
 	}
 	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{}} // Features nil: a server without roles
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 	_, err := Add(ctx, rt, AddOptions{
 		Name:   "api",
@@ -894,7 +894,7 @@ func TestAddRemoteRoleWiresRequest(t *testing.T) {
 		},
 	}
 	rt := Runtime{
-		Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t),
+		Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t),
 		Registry: rolesFileRegistry(t, candidateSet(t, testCandidatesJSON), policy.Policy{}, map[string]roles.Row{
 			"builder": {Candidates: []string{testClaudeRef}},
 		}),
@@ -951,7 +951,7 @@ func TestCreateBindingRequestCarriesTheActor(t *testing.T) {
 					Candidate: "claude/anthropic/haiku",
 				},
 			}
-			rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+			rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 			if _, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo", Role: tc.role}); err != nil {
 				t.Fatalf("Add: %v", err)
@@ -981,7 +981,7 @@ func TestAddRemoteBuilderUnchanged(t *testing.T) {
 			Candidate: "claude/anthropic/haiku",
 		},
 	}
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 	res, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
 	if err != nil {
@@ -1013,7 +1013,7 @@ func TestAddRemoteSendsGitAuthor(t *testing.T) {
 			Candidate: "claude/anthropic/haiku",
 		},
 	}
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 	if _, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"}); err != nil {
 		t.Fatalf("Add failed: %v", err)
@@ -1047,7 +1047,7 @@ func TestAddRemoteRefusesWithoutGitIdentity(t *testing.T) {
 			Candidate: "claude/anthropic/haiku",
 		},
 	}
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 	_, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
 	if !errors.Is(err, ErrNoGitIdentity) {
@@ -1085,11 +1085,11 @@ func TestAddRemoteTwicePerRepo(t *testing.T) {
 		},
 	}
 	rt := Runtime{
-		Store:    st,
-		Planners: addRemotePlanner(t),
-		Git:      fg,
-		Remote:   fr,
-		Now:      time.Now,
+		Store:       st,
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         fg,
+		Remote:      fr,
+		Now:         time.Now,
 	}
 
 	if _, err := Add(ctx, rt, AddOptions{Name: "e2e2", Server: "zen", Repo: "/fake/repo"}); err != nil {
@@ -1104,11 +1104,11 @@ func TestAddRemoteRefusesCWD(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	rt := Runtime{
-		Store:    st,
-		Planners: addRemotePlanner(t),
-		Git:      &fakeGit{},
-		Remote:   &fakeRemote{},
-		Now:      time.Now,
+		Store:       st,
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         &fakeGit{},
+		Remote:      &fakeRemote{},
+		Now:         time.Now,
 	}
 
 	opts := AddOptions{
@@ -1141,11 +1141,11 @@ func TestAddRemoteServerConflict(t *testing.T) {
 		},
 	}
 	rt := Runtime{
-		Store:    st,
-		Planners: addRemotePlanner(t),
-		Git:      fg,
-		Remote:   fr,
-		Now:      time.Now,
+		Store:       st,
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         fg,
+		Remote:      fr,
+		Now:         time.Now,
 	}
 
 	opts := AddOptions{
@@ -1185,11 +1185,11 @@ func TestAddRemoteCleansUpServerOnSaveFailure(t *testing.T) {
 		},
 	}
 	rt := Runtime{
-		Store:    st,
-		Planners: addRemotePlanner(t),
-		Git:      fg,
-		Remote:   fr,
-		Now:      time.Now,
+		Store:       st,
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         fg,
+		Remote:      fr,
+		Now:         time.Now,
 	}
 
 	opts := AddOptions{
@@ -1222,11 +1222,11 @@ func TestAddRemoteBranchExistsUnbindsServer(t *testing.T) {
 		},
 	}
 	rt := Runtime{
-		Store:    st,
-		Planners: addRemotePlanner(t),
-		Git:      fg,
-		Remote:   fr,
-		Now:      time.Now,
+		Store:       st,
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         fg,
+		Remote:      fr,
+		Now:         time.Now,
 	}
 
 	opts := AddOptions{
@@ -1267,7 +1267,7 @@ func TestAddRemoteExistingBranch(t *testing.T) {
 			rootCommitSHA: "2222222222222222222222222222222222222222",
 		}
 		fr := &fakeRemote{createBindingResp: remote.BindingView{Name: "x"}}
-		rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+		rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 		got, err := Add(ctx, rt, AddOptions{
 			Name: "x", Branch: "feature/x", Server: "zen", Repo: "/fake/repo",
@@ -1301,7 +1301,7 @@ func TestAddRemoteExistingBranch(t *testing.T) {
 			rootCommitSHA: "2222222222222222222222222222222222222222",
 		}
 		fr := &fakeRemote{createBindingResp: remote.BindingView{Name: "x"}}
-		rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+		rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 		// Same provocation as TestAddRemoteCleansUpLocalBranchOnSaveFailure:
 		// the lock file exists, then the state root goes read-only, so the
@@ -1365,11 +1365,11 @@ func TestAddRemoteCleansUpLocalBranchOnSaveFailure(t *testing.T) {
 	}
 
 	rt := Runtime{
-		Store:    st,
-		Planners: addRemotePlanner(t),
-		Git:      fg,
-		Remote:   fr,
-		Now:      time.Now,
+		Store:       st,
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         fg,
+		Remote:      fr,
+		Now:         time.Now,
 	}
 
 	opts := AddOptions{
@@ -1465,8 +1465,8 @@ func TestSendRemoteRecordsOnlyOnSuccess(t *testing.T) {
 	}
 
 	// No plan file written
-	if _, err := os.Stat(st.PlanPath("api", 1)); !os.IsNotExist(err) {
-		t.Fatalf("PlanPath exists after failure: %v", err)
+	if _, err := os.Stat(st.PromptPath("api", 1)); !os.IsNotExist(err) {
+		t.Fatalf("PromptPath exists after failure: %v", err)
 	}
 
 	// No log entry written
@@ -1550,8 +1550,8 @@ func TestSendRemoteRoundStartedIsSuccess(t *testing.T) {
 	}
 
 	// Plan file written
-	if _, err := os.Stat(st.PlanPath("api", 1)); err != nil {
-		t.Fatalf("PlanPath missing: %v", err)
+	if _, err := os.Stat(st.PromptPath("api", 1)); err != nil {
+		t.Fatalf("PromptPath missing: %v", err)
 	}
 
 	// Log entry written
@@ -1611,8 +1611,8 @@ func TestSendRemoteHaltedIsAnError(t *testing.T) {
 				t.Errorf("Send error = %q, want it to contain %q", err.Error(), want)
 			}
 		}
-		if _, statErr := os.Stat(st.PlanPath("api", 1)); !os.IsNotExist(statErr) {
-			t.Errorf("PlanPath exists after failure: stat err = %v", statErr)
+		if _, statErr := os.Stat(st.PromptPath("api", 1)); !os.IsNotExist(statErr) {
+			t.Errorf("PromptPath exists after failure: stat err = %v", statErr)
 		}
 		entries, _ := st.ReadLog("api")
 		if len(entries) != 0 {
@@ -2043,18 +2043,18 @@ func TestSendRemoteSetsLastShipped(t *testing.T) {
 	}
 }
 
-// remoteBinding is a minimal active remote binding, round 1, planner
-// pointed at plannerAgent()'s pane so deliverAndSettle's FindAgent succeeds
+// remoteBinding is a minimal active remote binding, round 1, mastermind
+// pointed at mastermindAgent()'s pane so deliverAndSettle's FindAgent succeeds
 // and does not turn the binding orphaned.
 func remoteBinding(server string) store.Binding {
 	return store.Binding{
-		Name:    "api",
-		CWD:     "/fake/repo",
-		Repo:    "/fake/repo",
-		Branch:  "relevo/api",
-		Round:   1,
-		State:   store.StateActive,
-		Planner: store.Endpoint{PaneID: "w2:p3"},
+		Name:       "api",
+		CWD:        "/fake/repo",
+		Repo:       "/fake/repo",
+		Branch:     "relevo/api",
+		Round:      1,
+		State:      store.StateActive,
+		MasterMind: store.Endpoint{PaneID: "w2:p3"},
 		Builder: store.Endpoint{
 			Mode:   store.ModeRemote,
 			Server: server,
@@ -2078,14 +2078,14 @@ func remoteBinding(server string) store.Binding {
 // TestSyncRemoteCollectsClosedRoundWithoutDelivery checks that SyncRemote
 // (the read path `relevo status`/`pull`/`wait` share, spec §2.2) collects a
 // closed round -- the report entry lands, pending -- without ever
-// delivering it to a planner pane.
+// delivering it to a mastermind pane.
 // TestSyncRemoteSkipsDoneAndLocal checks that SyncRemote never touches the
 // network for a binding it should not sync: one already DONE, and one that
 // is not a remote binding at all.
 // newRemoteClientRepo creates a client-side repo (what a remote binding's
 // Repo points at day to day) with one commit and a "relevo/<name>" branch ref
 // at that commit -- not checked out, matching the ordinary case where the
-// planner's own repo sits on its own branch.
+// mastermind's own repo sits on its own branch.
 func newRemoteClientRepo(t *testing.T, name string) (dir, headSHA string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -2140,7 +2140,7 @@ func newRoundResultBundle(t *testing.T, ctx context.Context, g *git.Client, base
 // ships always names refs/heads/relevo/<name> (handleRoundBundle snapshots
 // refs/heads/<server branch>, and the server's branch is relevo/<name>).
 // Catch-up must allow the server's ref through Absorb, then fast-forward the
-// adopted branch to it, so the planner's own branch is the one carrying the
+// adopted branch to it, so the mastermind's own branch is the one carrying the
 // round's result.
 // TestCatchUpKeepsServerUsage checks that catch-up keeps the usage the
 // server measured and shipped with the round (#216): the client's report
@@ -2302,7 +2302,7 @@ func TestGCRemoteOnlyWhenDone(t *testing.T) {
 	fr := &fakeRemote{}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	results, err := GC(ctx, rt, GCOptions{AllPlanners: true})
+	results, err := GC(ctx, rt, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -2329,7 +2329,7 @@ func TestForwardUnavailable(t *testing.T) {
 	if err := st.Save(openB); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2390,7 +2390,7 @@ func TestForwardUnavailableSendsTheServerTokenForTheSameName(t *testing.T) {
 	if err := st.Save(openB); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2439,7 +2439,7 @@ func TestForwardUnavailableSendsTheServerTokenForARenamedProvider(t *testing.T) 
 	if err := st.Save(openB); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2489,7 +2489,7 @@ func TestForwardUnavailableReportsOneLinePerServerWhenNothingMatches(t *testing.
 		if err := st.Save(b); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+		if err := st.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -2625,7 +2625,7 @@ func TestForwardAvailablePostsToEveryServerOnce(t *testing.T) {
 	if err := st.Save(openA); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("open-alpha", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("open-alpha", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3590,7 +3590,7 @@ func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -3630,7 +3630,7 @@ func TestReconcileRemoteUnreachablePastBudgetHalts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -3831,12 +3831,12 @@ func TestReconcileRemote404Halts(t *testing.T) {
 // TestSyncRemoteCollectsClosedRoundWithoutDelivery checks that SyncRemote
 // (the read path `relevo status`/`pull`/`wait` share, spec §2.2) collects a
 // closed round -- the report entry lands, pending -- without ever
-// delivering it to a planner pane.
+// delivering it to a mastermind pane.
 
 // TestSyncRemoteCollectsClosedRoundWithoutDelivery checks that SyncRemote
 // (the read path `relevo status`/`pull`/`wait` share, spec §2.2) collects a
 // closed round -- the report entry lands, pending -- without ever
-// delivering it to a planner pane.
+// delivering it to a mastermind pane.
 func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
 	t.Parallel()
 
@@ -3915,7 +3915,7 @@ func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
 
 	local := store.Binding{
 		Name: "local", CWD: "/fake/repo", State: store.StateActive,
-		Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+		MasterMind: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
 	}
 	if err := st.Save(local); err != nil {
 		t.Fatal(err)
@@ -4080,7 +4080,7 @@ func TestCatchUpStoppedNoReport(t *testing.T) {
 		t.Errorf("Round = %d, want 2: the round closed", got.Round)
 	}
 
-	pending, found, err := st.PendingForPlanner("api")
+	pending, found, err := st.PendingForMasterMind("api")
 	if err != nil || !found {
 		t.Fatalf("report must be pending: found=%v err=%v", found, err)
 	}
@@ -4130,7 +4130,7 @@ func TestCatchUpStoppedWithReport(t *testing.T) {
 		t.Fatalf("SyncRemote: %v", err)
 	}
 
-	pending, found, err := st.PendingForPlanner("api")
+	pending, found, err := st.PendingForMasterMind("api")
 	if err != nil || !found {
 		t.Fatalf("report must be pending: found=%v err=%v", found, err)
 	}
@@ -4189,7 +4189,7 @@ func TestCatchUpStoppedDirtyNote(t *testing.T) {
 		t.Fatalf("SyncRemote: %v", err)
 	}
 
-	pending, found, err := st.PendingForPlanner("api")
+	pending, found, err := st.PendingForMasterMind("api")
 	if err != nil || !found {
 		t.Fatalf("report must be pending: found=%v err=%v", found, err)
 	}
@@ -4204,7 +4204,7 @@ func TestCatchUpStoppedDirtyNote(t *testing.T) {
 // newRemoteClientRepo creates a client-side repo (what a remote binding's
 // Repo points at day to day) with one commit and a "relevo/<name>" branch ref
 // at that commit -- not checked out, matching the ordinary case where the
-// planner's own repo sits on its own branch.
+// mastermind's own repo sits on its own branch.
 
 func TestCatchUpOrderAndIdempotence(t *testing.T) {
 	t.Parallel()
@@ -4376,7 +4376,7 @@ func TestObserveRemoteIdleCatchUpRecoversLostReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+	if !HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
 		t.Fatalf("no round 1 report entry after the Idle catch-up: %+v", entries)
 	}
 	got, err := st.Load("api")
@@ -4400,7 +4400,7 @@ func TestObserveRemoteIdleWithReportDoesNotCatchUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.AppendLog("api", store.LogEntry{
-		Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
+		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -4711,7 +4711,7 @@ func TestCatchUpAppendsPathsLineFromView(t *testing.T) {
 // ships always names refs/heads/relevo/<name> (handleRoundBundle snapshots
 // refs/heads/<server branch>, and the server's branch is relevo/<name>).
 // Catch-up must allow the server's ref through Absorb, then fast-forward the
-// adopted branch to it, so the planner's own branch is the one carrying the
+// adopted branch to it, so the mastermind's own branch is the one carrying the
 // round's result.
 
 // TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch fix
@@ -4720,7 +4720,7 @@ func TestCatchUpAppendsPathsLineFromView(t *testing.T) {
 // ships always names refs/heads/relevo/<name> (handleRoundBundle snapshots
 // refs/heads/<server branch>, and the server's branch is relevo/<name>).
 // Catch-up must allow the server's ref through Absorb, then fast-forward the
-// adopted branch to it, so the planner's own branch is the one carrying the
+// adopted branch to it, so the mastermind's own branch is the one carrying the
 // round's result.
 func TestCatchUpAdoptedBranchAbsorbsServerRef(t *testing.T) {
 	t.Parallel()
@@ -5514,7 +5514,7 @@ func TestResumeRemoteRefusesRebind(t *testing.T) {
 	rt.Now = func() time.Time { return baseTime }
 
 	_, _, err := BindResolved(ctx, rt, BindOptions{
-		Name: "api", Resume: true, Rebind: true, PlannerID: testPlannerName, CWD: "/fake/repo",
+		Name: "api", Resume: true, Rebind: true, MasterMindID: testMasterMindName, CWD: "/fake/repo",
 	})
 	if err == nil || !strings.Contains(err.Error(), "cannot change a remote builder; unbind and add") {
 		t.Fatalf("BindResolved err = %v, want the remote-rebind refusal", err)
@@ -5607,7 +5607,7 @@ func TestSendRemoteBuilderChangesCandidate(t *testing.T) {
 	}
 	planIdx := -1
 	for i, e := range entries {
-		if e.Round == 1 && e.Kind == store.KindPlan {
+		if e.Round == 1 && e.Kind == store.KindPrompt {
 			planIdx = i
 			break
 		}
@@ -5668,7 +5668,7 @@ func TestSendRemoteBuilderPreBuilderServerRefused(t *testing.T) {
 	if len(ft.snapshotCalls) != 0 {
 		t.Errorf("a snapshot was taken before the refusal: %+v", ft.snapshotCalls)
 	}
-	if _, statErr := os.Stat(st.PlanPath("api", 1)); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(st.PromptPath("api", 1)); !os.IsNotExist(statErr) {
 		t.Errorf("a plan was staged: %v", statErr)
 	}
 }
@@ -5685,7 +5685,7 @@ func TestSendRemoteBuilderRefusedWhileRoundOpen(t *testing.T) {
 	}
 	rt, st, _ := remoteBuilderRT(t, fr)
 	if err := st.AppendLog("api", store.LogEntry{
-		TS: time.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		TS: time.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -5726,11 +5726,11 @@ func TestAddRemoteMatchesCandidateByName(t *testing.T) {
 		createBindingResp: remote.BindingView{Name: "api", Candidate: "claude/anthropic/haiku"},
 	}
 	rt := Runtime{
-		Store:    st,
-		Planners: addRemotePlanner(t),
-		Git:      fg,
-		Remote:   fr,
-		Now:      time.Now,
+		Store:       st,
+		MasterMinds: addRemoteMasterMind(t),
+		Git:         fg,
+		Remote:      fr,
+		Now:         time.Now,
 	}
 
 	if _, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo", Candidate: "haiku"}); err != nil {
@@ -5879,7 +5879,7 @@ func TestCatchUpAckFailureLeavesTheReportUnqueued(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
 		t.Fatalf("report queued despite the ack failure: %+v", entries)
 	}
 	got, err := st.Load("api")
@@ -5973,7 +5973,7 @@ func TestCatchUpSettleSkipsAChangedBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
 		t.Fatalf("report queued for a binding that moved on: %+v", entries)
 	}
 }

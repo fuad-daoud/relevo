@@ -49,9 +49,9 @@ func TestWaitingLine(t *testing.T) {
 	t.Run("orphaned with a zero Since has no age", func(t *testing.T) {
 		w := Waiting{
 			Name: "old", Round: 3, Cause: "orphaned",
-			Line: "planner pane is gone", Hint: "relevo bind --resume --name old",
+			Line: "mastermind pane is gone", Hint: "relevo bind --resume --name old",
 		}
-		want := "waiting on you: old round 3 orphaned -- planner pane is gone  (relevo bind --resume --name old)"
+		want := "waiting on you: old round 3 orphaned -- mastermind pane is gone  (relevo bind --resume --name old)"
 		if got := WaitingLine(w, now); got != want {
 			t.Errorf("WaitingLine =\n%q\nwant\n%q", got, want)
 		}
@@ -79,7 +79,7 @@ func TestWaitingOn(t *testing.T) {
 		ts := time.Unix(1757000000, 0).UTC()
 		b := store.Binding{Name: "api", Round: 4, State: store.StateNeedsYou}
 		entries := []store.LogEntry{
-			{Round: 4, Direction: store.DirToPlanner, Kind: store.KindQuestion, TS: ts, Path: "/x/api/004-question.md"},
+			{Round: 4, Direction: store.DirToMasterMind, Kind: store.KindQuestion, TS: ts, Path: "/x/api/004-question.md"},
 		}
 		q := mapQuestion(map[string]string{"api:4": "Do you want to proceed?"})
 
@@ -99,7 +99,7 @@ func TestWaitingOn(t *testing.T) {
 			Halt: "round 4 has run past 2h0m0s", HaltAt: ts.Add(time.Hour),
 		}
 		entries := []store.LogEntry{
-			{Round: 4, Direction: store.DirToPlanner, Kind: store.KindQuestion, TS: ts, Path: "/x/api/004-question.md"},
+			{Round: 4, Direction: store.DirToMasterMind, Kind: store.KindQuestion, TS: ts, Path: "/x/api/004-question.md"},
 		}
 		q := mapQuestion(map[string]string{"api:4": "Do you want to proceed?"})
 
@@ -166,7 +166,7 @@ func TestWaitingOnBrokenAndCaps(t *testing.T) {
 		ts := time.Unix(1757000000, 0).UTC()
 		b := store.Binding{Name: "api", Round: 4, State: store.StateNeedsYou}
 		entries := []store.LogEntry{
-			{Round: 4, Direction: store.DirToPlanner, Kind: store.KindQuestion, TS: ts, Path: "/x/api/004-question.md"},
+			{Round: 4, Direction: store.DirToMasterMind, Kind: store.KindQuestion, TS: ts, Path: "/x/api/004-question.md"},
 		}
 		q := mapQuestion(map[string]string{"api:4": strings.Repeat("x", 200)})
 
@@ -184,7 +184,7 @@ func TestWaitingOnBrokenAndCaps(t *testing.T) {
 		ts := time.Unix(1757000000, 0).UTC()
 		b := store.Binding{Name: "api", Round: 4, State: store.StateNeedsYou}
 		entries := []store.LogEntry{
-			{Round: 4, Direction: store.DirToPlanner, Kind: store.KindQuestion, TS: ts, Path: "/x/api/004-question.md"},
+			{Round: 4, Direction: store.DirToMasterMind, Kind: store.KindQuestion, TS: ts, Path: "/x/api/004-question.md"},
 		}
 		q := mapQuestion(map[string]string{"api:4": "\n\n  second  \n"})
 
@@ -201,7 +201,7 @@ func TestWaitingOnBrokenAndCaps(t *testing.T) {
 		ts := time.Unix(1757000000, 0).UTC()
 		b := store.Binding{Name: "api", Round: 4, State: store.StateNeedsYou}
 		entries := []store.LogEntry{
-			{Round: 4, Direction: store.DirToPlanner, Kind: store.KindQuestion, TS: ts, Path: "/x/api/001-question.md"},
+			{Round: 4, Direction: store.DirToMasterMind, Kind: store.KindQuestion, TS: ts, Path: "/x/api/001-question.md"},
 		}
 
 		w, ok := WaitingOn(b, entries, mapQuestion(nil))

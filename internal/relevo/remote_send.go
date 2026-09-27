@@ -139,7 +139,7 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 
 	// UNDER the lock:
 	// 4. reload b; if b.Round != the round sent -> error "round advanced during send; run relevo status" (nothing recorded)
-	// 5. write PlanPath(name, round) = planBody; AppendLog plan to_builder; b.RoundStartedAt = now;
+	// 5. write PromptPath(name, round) = planBody; AppendLog plan to_builder; b.RoundStartedAt = now;
 	// b.State = active; b.Halt = ""; b.Builder.LastShipped = snap.Heads["refs/relevo/<name>/out"];
 	// b.Builder.RemoteStatus = string(view.RoundState); Save.
 	var sendRound int
@@ -175,7 +175,7 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 			cur.Builder.Kind = kind
 		}
 
-		planPath := rt.Store.PlanPath(name, cur.Round)
+		planPath := rt.Store.PromptPath(name, cur.Round)
 		if err := os.WriteFile(planPath, planBody, 0o644); err != nil {
 			return fmt.Errorf("write plan %s: %w", planPath, err)
 		}
@@ -184,7 +184,7 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 			TS:        now.UTC(),
 			Round:     cur.Round,
 			Direction: store.DirToBuilder,
-			Kind:      store.KindPlan,
+			Kind:      store.KindPrompt,
 			Path:      planPath,
 			Confirmed: true,
 		}); err != nil {

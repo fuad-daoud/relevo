@@ -13,7 +13,7 @@ import (
 // which every push path also carries as metadata.
 const MaxPushBytes = 64 << 10
 
-// showCommand renders the planner-facing command that prints one round's
+// showCommand renders the mastermind-facing command that prints one round's
 // artifact. name is the binding, round the round the artifact belongs to, and
 // section show's own flag that reads it. A closed round's files may be sealed
 // into the database, so the command is the durable way to name them rather
@@ -67,7 +67,7 @@ func LogRef(name string, e store.LogEntry) string {
 // PushText returns the text a push path should carry for e: the stored
 // Payload (origin line included) for every kind that needs no file, and
 // Payload + blank line + the file's contents for the kinds whose Path
-// names a text artifact the planner would otherwise have to open. name is
+// names a text artifact the mastermind would otherwise have to open. name is
 // the binding the entry belongs to, threaded so a truncated text can name
 // the `relevo show` command that prints the whole thing.
 //
@@ -98,7 +98,7 @@ func PushText(e store.LogEntry, name string, read func(string) ([]byte, error)) 
 }
 
 // expandablePushKind reports whether e.Kind is a kind PushText expands.
-// KindDiff and KindDrift are patches the planner reads with `relevo show`;
+// KindDiff and KindDrift are patches the mastermind reads with `relevo show`;
 // every other kind's payload is already its whole text.
 func expandablePushKind(k store.Kind) bool {
 	switch k {

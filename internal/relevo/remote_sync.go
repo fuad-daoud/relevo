@@ -225,8 +225,8 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 
 		entries, rerr := tx.ReadLog(name)
 		roundOpen := rerr == nil &&
-			HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
-			!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+			HasPromptEntry(entries, b.Round) &&
+			!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
 
 		dur := now.Sub(b.RemoteUnreachableSince).Truncate(time.Second)
 		if roundOpen && now.Sub(b.RemoteUnreachableSince) > roundBudget(b)+unreachableGrace {
@@ -287,7 +287,7 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		}
 		b.Builder.Kind = kind
 		if err := tx.AppendLog(name, store.LogEntry{
-			TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindSwitch,
+			TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch,
 			Note:      fmt.Sprintf("switched on %s: %s -> %s", server, prev, view.Candidate),
 			Confirmed: true,
 		}); err != nil {
@@ -352,7 +352,7 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		// idempotent on the server, so catching up again is safe.
 		entries, rerr := tx.ReadLog(name)
 		if rerr == nil && view.ClosedRound >= b.Round &&
-			!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
+			!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport) {
 			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
 				next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
 				f.Settle = a

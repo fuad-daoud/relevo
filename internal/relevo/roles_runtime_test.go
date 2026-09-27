@@ -222,7 +222,7 @@ func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 	fr := newFakeRunner()
 	rt.Runner = fr
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "custom-builder", Candidate: testClaudeRef, PlannerID: testPlannerName,
+		Name: "custom-builder", Candidate: testClaudeRef, MasterMindID: testMasterMindName,
 		CWD: "/custom-repo", Headless: true,
 	})
 	if err != nil {
@@ -242,7 +242,7 @@ func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 	fr2 := newFakeRunner()
 	rt.Runner = fr2
 	b2, err := Bind(context.Background(), rt, BindOptions{
-		Name: "shipped-builder", Candidate: testOpencodeRef, PlannerID: testPlannerName,
+		Name: "shipped-builder", Candidate: testOpencodeRef, MasterMindID: testMasterMindName,
 		CWD: "/shipped-repo", Headless: true,
 	})
 	if err != nil {

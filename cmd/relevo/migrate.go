@@ -261,8 +261,8 @@ func printNextSteps() {
 	fmt.Println("next steps:")
 	fmt.Println("  relevo doctor")
 	fmt.Println("  relevo config agents")
-	fmt.Println("  reinstall the planner plugin as relevo (README: Upgrading from relay)") // name-guard: legacy
-	fmt.Println("  restart planner sessions")
+	fmt.Println("  reinstall the mastermind plugin as relevo (README: Upgrading from relay)") // name-guard: legacy
+	fmt.Println("  restart mastermind sessions")
 }
 
 // printSwapRecovery says what remains after the data moved but the client

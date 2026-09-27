@@ -3,7 +3,7 @@
    7 live   1 needs you   2 working   4 idle   27 done                                             sort attention · refreshed 0s ago
                                                                                                                                     
  ╭─ spool-db  round 1 · quiet 17s · 5m ───────────────────────────────────────────────────────────────────────────────────────────╮ 
- │  planner architect-2  ·  gemini-3.8-flash-high  ·  plan                                                                        │ 
+ │  MasterMind architect-2  ·  gemini-3.8-flash-high  ·  plan                                                                     │ 
  │                                                                                                                                │ 
  │    enter  open round       x  stop       g  gate       o  shell                                                                │ 
  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
@@ -11,7 +11,7 @@
      needs you   1    a buil│                                                                          │                            
    ●  fix-433             r2│ Stop spool-db round 1?                                                   │                            
         ╰ “Should the dedupe│                                                                          │                            
-                            │ planner architect-2 is waiting on this round                             │                            
+                            │ MasterMind architect-2 is waiting on this round                          │                            
      working   2    a round │ builder on gemini-3.8-flash-high · working · quiet 17s · plan            │                            
  ▍ ●  spool-db            r1│                                                                          │                            
    ●  tok-seg             r1│  y  stop the round       n  cancel      any other key cancels            │                            

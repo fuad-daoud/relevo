@@ -1141,7 +1141,7 @@ func TestRoundStartAbsorbsAndChecksOut(t *testing.T) {
 	if err != nil || !ok || wtHead != env.headSHA {
 		t.Fatalf("worktree HEAD = (%q, %v, %v), want %q", wtHead, ok, err, env.headSHA)
 	}
-	planContent, err := os.ReadFile(rt.Store.PlanPath("api", 1))
+	planContent, err := os.ReadFile(rt.Store.PromptPath("api", 1))
 	if err != nil || string(planContent) != "# Round 1 Plan\nDo stuff" {
 		t.Fatalf("plan content: got (%q, %v)", string(planContent), err)
 	}
@@ -1488,7 +1488,7 @@ func TestRoundStartWithABrokenRunnerAcceptsThenHaltsAsync(t *testing.T) {
 	}
 	sawPlan := false
 	for _, e := range entries {
-		if e.Round == 1 && e.Kind == store.KindPlan {
+		if e.Round == 1 && e.Kind == store.KindPrompt {
 			sawPlan = true
 		}
 	}

@@ -14,8 +14,8 @@ import (
 func TestAppendAndReadLog(t *testing.T) {
 	s, name := seedBinding(t)
 
-	first := LogEntry{TS: time.Now().UTC(), Round: 1, Direction: DirToBuilder, Kind: KindPlan, Path: "/x/001-plan.md", Confirmed: true}
-	second := LogEntry{TS: time.Now().UTC(), Round: 1, Direction: DirToPlanner, Kind: KindReport, Path: "/x/001-report.md", Payload: "report ready"}
+	first := LogEntry{TS: time.Now().UTC(), Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Path: "/x/001-plan.md", Confirmed: true}
+	second := LogEntry{TS: time.Now().UTC(), Round: 1, Direction: DirToMasterMind, Kind: KindReport, Path: "/x/001-report.md", Payload: "report ready"}
 
 	for _, e := range []LogEntry{first, second} {
 		if err := s.AppendLog(name, e); err != nil {
@@ -30,14 +30,14 @@ func TestAppendAndReadLog(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d entries, want 2", len(got))
 	}
-	if got[0].Kind != KindPlan || got[1].Direction != DirToPlanner {
+	if got[0].Kind != KindPrompt || got[1].Direction != DirToMasterMind {
 		t.Errorf("entries out of order or mistyped: %+v", got)
 	}
 }
 
 func TestPendingOnEmptyLogIsNotAnError(t *testing.T) {
 	s, name := seedBinding(t)
-	if _, found, err := s.PendingForPlanner(name); err != nil || found {
+	if _, found, err := s.PendingForMasterMind(name); err != nil || found {
 		t.Fatalf("found=%v err=%v, want false/nil", found, err)
 	}
 }
@@ -57,7 +57,7 @@ func TestReadLogOnNeverWrittenLogIsNilNil(t *testing.T) {
 func TestReadLogRefusesOversizedLogInsteadOfTruncating(t *testing.T) {
 	s, name := seedBinding(t)
 
-	entry := LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "x", Confirmed: true}
+	entry := LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x", Confirmed: true}
 	raw, err := json.Marshal(entry)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -91,8 +91,8 @@ func TestSaveWithLogWritesBindingAndEntriesTogether(t *testing.T) {
 	}
 	b.State = StateNeedsYou
 
-	e1 := LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true}
-	e2 := LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "done"}
+	e1 := LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true}
+	e2 := LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "done"}
 
 	if err := s.WithLock(func(tx *Tx) error {
 		return tx.SaveWithLog(b, e1, e2)
@@ -115,7 +115,7 @@ func TestSaveWithLogWritesBindingAndEntriesTogether(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("got %d entries, want 2", len(entries))
 	}
-	if entries[0].Kind != KindPlan || entries[1].Kind != KindReport {
+	if entries[0].Kind != KindPrompt || entries[1].Kind != KindReport {
 		t.Errorf("entries out of order: %+v", entries)
 	}
 	if entries[0].Seq != 1 || entries[1].Seq != 2 {
@@ -136,7 +136,7 @@ func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 
 	// Seed the log with entries below the cap, written through log.jsonl so
 	// importPresent adopts them.
-	entry := LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "x", Confirmed: true}
+	entry := LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x", Confirmed: true}
 	raw, err := json.Marshal(entry)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -166,8 +166,8 @@ func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 
 	err = s.WithLock(func(tx *Tx) error {
 		return tx.SaveWithLog(b,
-			LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true},
-			LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true})
+			LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true},
+			LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true})
 	})
 	if err == nil {
 		t.Fatal("SaveWithLog: got nil error, want a cap failure")
@@ -192,7 +192,7 @@ func TestAppendLogTakesLockOnlyOnce(t *testing.T) {
 	s, name := seedBinding(t)
 
 	err := s.WithLock(func(tx *Tx) error {
-		return tx.AppendLog(name, LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true})
+		return tx.AppendLog(name, LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true})
 	})
 	if err != nil {
 		t.Fatalf("WithLock append: %v", err)
@@ -208,7 +208,7 @@ func TestAppendLogTakesLockOnlyOnce(t *testing.T) {
 }
 
 func TestKindExitIsDistinct(t *testing.T) {
-	kinds := []Kind{KindPlan, KindReport, KindQuestion, KindAnswer, KindDiff, KindDrift, KindFork, KindPick, KindSwitch, KindAsk, KindFindings, KindExit}
+	kinds := []Kind{KindPrompt, KindReport, KindQuestion, KindAnswer, KindDiff, KindDrift, KindFork, KindPick, KindSwitch, KindAsk, KindFindings, KindExit}
 	seen := map[Kind]bool{}
 	for _, k := range kinds {
 		if seen[k] {
@@ -267,12 +267,12 @@ func TestLogSeqNumbering(t *testing.T) {
 		{
 			name: "append assigns consecutive seqs",
 			appends: []LogEntry{
-				{Round: 1, Direction: DirToBuilder, Kind: KindPlan},
-				{Round: 1, Direction: DirToBuilder, Kind: KindPlan},
-				{Round: 1, Direction: DirToBuilder, Kind: KindPlan},
+				{Round: 1, Direction: DirToBuilder, Kind: KindPrompt},
+				{Round: 1, Direction: DirToBuilder, Kind: KindPrompt},
+				{Round: 1, Direction: DirToBuilder, Kind: KindPrompt},
 				// A caller-supplied Seq is overwritten: appendLog owns the
 				// numbering.
-				{Seq: 99, Round: 1, Direction: DirToBuilder, Kind: KindPlan},
+				{Seq: 99, Round: 1, Direction: DirToBuilder, Kind: KindPrompt},
 			},
 			want: []int{1, 2, 3, 4},
 		},
@@ -284,7 +284,7 @@ func TestLogSeqNumbering(t *testing.T) {
 					t.Fatalf("seed pre-Seq log: %v", err)
 				}
 			},
-			appends: []LogEntry{{Round: 2, Direction: DirToPlanner, Kind: KindReport}},
+			appends: []LogEntry{{Round: 2, Direction: DirToMasterMind, Kind: KindReport}},
 			want:    []int{1, 2, 3, 4},
 		},
 	}
@@ -320,7 +320,7 @@ func TestReadLogAfter(t *testing.T) {
 	s, name := seedBinding(t)
 
 	for i := 1; i <= 3; i++ {
-		if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan}); err != nil {
+		if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPrompt}); err != nil {
 			t.Fatalf("AppendLog %d: %v", i, err)
 		}
 	}
@@ -349,12 +349,12 @@ func TestReadLogAfter(t *testing.T) {
 func TestLogEntryUsageRoundTrip(t *testing.T) {
 	s, name := seedBinding(t)
 	with := LogEntry{
-		TS: time.Unix(1, 0).UTC(), Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "p",
+		TS: time.Unix(1, 0).UTC(), Round: 3, Direction: DirToMasterMind, Kind: KindReport, Payload: "p",
 		Usage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 4200,
 			Tokens: usage.Tokens{In: 1, CacheRead: 2, CacheWrite: 3, Out: 4},
 			Cost:   usage.Cost{USD: 0.5, Basis: usage.Measured}, Samples: 1},
 	}
-	without := LogEntry{TS: time.Unix(2, 0).UTC(), Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "q"}
+	without := LogEntry{TS: time.Unix(2, 0).UTC(), Round: 3, Direction: DirToMasterMind, Kind: KindReport, Payload: "q"}
 	if err := s.AppendLog(name, with); err != nil {
 		t.Fatal(err)
 	}
@@ -377,15 +377,15 @@ func TestLogEntryUsageRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPendingForPlannerReturnsArrivalOrder pins oldest-first delivery: a
+// TestPendingForMasterMindReturnsArrivalOrder pins oldest-first delivery: a
 // report queued before a question and a drift note must be delivered first.
-func TestPendingForPlannerReturnsArrivalOrder(t *testing.T) {
+func TestPendingForMasterMindReturnsArrivalOrder(t *testing.T) {
 	s, name := seedBinding(t)
 
 	for _, e := range []LogEntry{
-		{Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "report r3"},
-		{Round: 3, Direction: DirToPlanner, Kind: KindQuestion, Payload: "question r3"},
-		{Round: 3, Direction: DirToPlanner, Kind: KindDrift, Payload: "drift r3"},
+		{Round: 3, Direction: DirToMasterMind, Kind: KindReport, Payload: "report r3"},
+		{Round: 3, Direction: DirToMasterMind, Kind: KindQuestion, Payload: "question r3"},
+		{Round: 3, Direction: DirToMasterMind, Kind: KindDrift, Payload: "drift r3"},
 	} {
 		if err := s.AppendLog(name, e); err != nil {
 			t.Fatalf("AppendLog: %v", err)
@@ -398,11 +398,11 @@ func TestPendingForPlannerReturnsArrivalOrder(t *testing.T) {
 		var ok bool
 		err := s.WithLock(func(tx *Tx) error {
 			var err error
-			got, idx, ok, err = tx.PendingForPlanner(name)
+			got, idx, ok, err = tx.PendingForMasterMind(name)
 			return err
 		})
 		if err != nil || !ok {
-			t.Fatalf("delivery %d: PendingForPlanner ok=%v err=%v", i, ok, err)
+			t.Fatalf("delivery %d: PendingForMasterMind ok=%v err=%v", i, ok, err)
 		}
 		if got.Payload != w {
 			t.Fatalf("delivery %d = %q, want %q", i, got.Payload, w)
@@ -412,20 +412,20 @@ func TestPendingForPlannerReturnsArrivalOrder(t *testing.T) {
 		}
 	}
 
-	if _, found, err := s.PendingForPlanner(name); err != nil || found {
+	if _, found, err := s.PendingForMasterMind(name); err != nil || found {
 		t.Fatalf("queue not drained: found=%v err=%v", found, err)
 	}
 }
 
-func TestPendingForPlannerThrough(t *testing.T) {
+func TestPendingForMasterMindThrough(t *testing.T) {
 	s, name := seedBinding(t)
 
 	for _, e := range []LogEntry{
-		{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "report r1"},
-		{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Payload: "plan r1", Confirmed: true},
-		{Round: 2, Direction: DirToPlanner, Kind: KindReport, Payload: "report r2"},
-		{Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "report r3"},
-		{Round: 1, Direction: DirToPlanner, Kind: KindQuestion, Payload: "question r1", Confirmed: true},
+		{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "report r1"},
+		{Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Payload: "plan r1", Confirmed: true},
+		{Round: 2, Direction: DirToMasterMind, Kind: KindReport, Payload: "report r2"},
+		{Round: 3, Direction: DirToMasterMind, Kind: KindReport, Payload: "report r3"},
+		{Round: 1, Direction: DirToMasterMind, Kind: KindQuestion, Payload: "question r1", Confirmed: true},
 	} {
 		if err := s.AppendLog(name, e); err != nil {
 			t.Fatalf("AppendLog: %v", err)
@@ -437,10 +437,10 @@ func TestPendingForPlannerThrough(t *testing.T) {
 		var got []PendingEntry
 		if err := s.WithLock(func(tx *Tx) error {
 			var err error
-			got, err = tx.PendingForPlannerThrough(name, round)
+			got, err = tx.PendingForMasterMindThrough(name, round)
 			return err
 		}); err != nil {
-			t.Fatalf("PendingForPlannerThrough(%d): %v", round, err)
+			t.Fatalf("PendingForMasterMindThrough(%d): %v", round, err)
 		}
 		return got
 	}
@@ -471,9 +471,9 @@ func TestConfirmIndexConfirmsOnlyTheNamedEntry(t *testing.T) {
 	s, name := seedBinding(t)
 
 	for _, e := range []LogEntry{
-		{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true},
-		{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "first"},
-		{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "second"},
+		{Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true},
+		{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "first"},
+		{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "second"},
 	} {
 		if err := s.AppendLog(name, e); err != nil {
 			t.Fatalf("AppendLog: %v", err)
@@ -504,7 +504,7 @@ func TestConfirmIndexConfirmsOnlyTheNamedEntry(t *testing.T) {
 
 func TestConfirmIndexClearsPending(t *testing.T) {
 	s, name := seedBinding(t)
-	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "x"}); err != nil {
+	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x"}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
@@ -512,14 +512,14 @@ func TestConfirmIndexClearsPending(t *testing.T) {
 		t.Fatalf("ConfirmIndex: %v", err)
 	}
 
-	if _, found, err := s.PendingForPlanner(name); err != nil || found {
+	if _, found, err := s.PendingForMasterMind(name); err != nil || found {
 		t.Fatalf("still pending after confirm: found=%v err=%v", found, err)
 	}
 }
 
 func TestConfirmIndexRejectsAnIndexOutsideTheLog(t *testing.T) {
 	s, name := seedBinding(t)
-	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "x"}); err != nil {
+	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x"}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 

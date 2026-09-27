@@ -94,7 +94,7 @@ func reportMissingForRound(rt Runtime, name string, round int) bool {
 	if err != nil {
 		return false
 	}
-	return !HasEntry(entries, round, store.DirToPlanner, store.KindReport)
+	return !HasEntry(entries, round, store.DirToMasterMind, store.KindReport)
 }
 
 // fetchLogMirror is the network half of the DB-branch builder-log mirror: it

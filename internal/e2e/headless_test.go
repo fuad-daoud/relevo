@@ -12,15 +12,15 @@ package e2e
 //	   the done marker;
 //	2  isolated state under t.TempDir(), a throwaway repo, and a
 //	   candidates.json and policy.json naming the fake harness;
-//	3  the plugin's SessionStart hook registers the planner and exports
-//	   RELEVO_PLANNER into $CLAUDE_ENV_FILE;
-//	4  a channel-mode relevo mcp claims that planner over a pipe pair;
+//	3  the plugin's SessionStart hook registers the mastermind and exports
+//	   RELEVO_MASTERMIND into $CLAUDE_ENV_FILE;
+//	4  a channel-mode relevo mcp claims that mastermind over a pipe pair;
 //	5  add, send, the daemon closes the round, and the report arrives as a
 //	   kind="report" channel notification;
 //	6  pull and done;
-//	7  the hook fires again for /clear: same planner id, moved session;
+//	7  the hook fires again for /clear: same mastermind id, moved session;
 //	8  a tools-mode relevo mcp sends round two, and its result carries the
-//	   background wait the planner runs for its report.
+//	   background wait the mastermind runs for its report.
 //
 // Every wait is bounded and fails with the thing it was waiting for named, so
 // a broken step fails the test instead of hanging it.
@@ -43,8 +43,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/mcp"
-	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -59,8 +59,8 @@ const (
 	fakeReportText = "fake-harness-report: this round was handled by the fake claude on PATH"
 
 	// The three harness sessions the scenario registers: the startup session,
-	// the session /clear moves the same planner to, and the tools-mode
-	// planner's own session.
+	// the session /clear moves the same mastermind to, and the tools-mode
+	// mastermind's own session.
 	sessionStartup = "e2e-session-startup"
 	sessionClear   = "e2e-session-after-clear"
 	sessionTools   = "e2e-session-tools"
@@ -73,7 +73,7 @@ const (
 	mcpDeadline    = 10 * time.Second
 
 	// The two bindings the scenario creates: one delivered by the channel,
-	// one by the tools-mode planner's background wait.
+	// one by the tools-mode mastermind's background wait.
 	channelBinding = "e2e-round"
 	toolsBinding   = "e2e-tools"
 )
@@ -91,7 +91,7 @@ func TestHeadlessE2E(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
-	// The hook, relevo mcp and every planner verb detect a Claude Code session
+	// The hook, relevo mcp and every mastermind verb detect a Claude Code session
 	// from the environment (§1.1); this process plays that session.
 	t.Setenv("CLAUDECODE", "1")
 
@@ -104,22 +104,22 @@ func TestHeadlessE2E(t *testing.T) {
 	rt, reg := newHeadlessRuntime(t, root, configDir)
 	repo := newRepo(t)
 
-	// -- 3. Planner registration, the way the SessionStart hook does it -----
+	// -- 3. MasterMind registration, the way the SessionStart hook does it -----
 	// $CLAUDE_ENV_FILE is the temp file the hook appends its export to.
 	envFile := filepath.Join(home, "claude-env.sh")
 	t.Setenv("CLAUDE_ENV_FILE", envFile)
-	first := runPlannerHook(t, reg, rt.Now, hookPayload(t, planner.SourceStartup, sessionStartup, repo))
-	if got := readFile(t, envFile); !strings.Contains(got, "export RELEVO_PLANNER="+first.ID) {
-		t.Fatalf("$CLAUDE_ENV_FILE after the startup hook = %q, want it to carry %q", got, "export RELEVO_PLANNER="+first.ID)
+	first := runMasterMindHook(t, reg, rt.Now, hookPayload(t, mastermind.SourceStartup, sessionStartup, repo))
+	if got := readFile(t, envFile); !strings.Contains(got, "export RELEVO_MASTERMIND="+first.ID) {
+		t.Fatalf("$CLAUDE_ENV_FILE after the startup hook = %q, want it to carry %q", got, "export RELEVO_MASTERMIND="+first.ID)
 	}
 	// §3.4: that export is how every later verb in the session finds its
-	// planner, so the rest of the scenario runs with it set.
-	t.Setenv("RELEVO_PLANNER", first.ID)
+	// mastermind, so the rest of the scenario runs with it set.
+	t.Setenv("RELEVO_MASTERMIND", first.ID)
 
 	// -- 4. The channel -----------------------------------------------------
 	channel := startChannel(t, ctx, rt, first.ID, 50*time.Millisecond)
 	if !claimExists(t, rt, first.ID) {
-		t.Fatalf("relevo mcp wrote no live channel claim for planner %s", first.ID)
+		t.Fatalf("relevo mcp wrote no live channel claim for mastermind %s", first.ID)
 	}
 
 	// The channel's poll loop and any builder a failing step left behind are
@@ -188,38 +188,38 @@ func TestHeadlessE2E(t *testing.T) {
 		t.Fatalf("binding %s state after done = %q, want %q", channelBinding, b.State, store.StateDone)
 	}
 
-	// -- 7. /clear: same planner, new session -------------------------------
-	afterClear := runPlannerHook(t, reg, rt.Now, hookPayload(t, planner.SourceClear, sessionClear, repo))
+	// -- 7. /clear: same mastermind, new session -------------------------------
+	afterClear := runMasterMindHook(t, reg, rt.Now, hookPayload(t, mastermind.SourceClear, sessionClear, repo))
 	if afterClear.ID != first.ID {
-		t.Fatalf("planner id after /clear = %s, want the same record %s", afterClear.ID, first.ID)
+		t.Fatalf("mastermind id after /clear = %s, want the same record %s", afterClear.ID, first.ID)
 	}
 	moved := recordByID(t, reg, first.ID)
 	if moved.SessionID != sessionClear {
-		t.Fatalf("planner %s current session = %q, want %q", first.ID, moved.SessionID, sessionClear)
+		t.Fatalf("mastermind %s current session = %q, want %q", first.ID, moved.SessionID, sessionClear)
 	}
 	if !hasSession(moved, sessionStartup) {
-		t.Fatalf("planner %s sessions = %+v, want the startup session %q kept", first.ID, moved.Sessions, sessionStartup)
+		t.Fatalf("mastermind %s sessions = %+v, want the startup session %q kept", first.ID, moved.Sessions, sessionStartup)
 	}
 
 	// -- 8. Tools mode (revised D6) -----------------------------------------
-	// A second relevo mcp, in tools mode, for a second planner session -- what
+	// A second relevo mcp, in tools mode, for a second mastermind session -- what
 	// a second `relevo mcp` in a second session is. The channel-mode server for
-	// the first planner stays live, which is what makes 8.4's "nothing was
+	// the first mastermind stays live, which is what makes 8.4's "nothing was
 	// written to a channel mailbox for that binding" a real check: a channel
-	// drains only its own planner's bindings (delivery.Drain), so the tools-mode
-	// binding's report can only reach the planner through pull.
-	second, _, err := planner.Init(reg, planner.InitInput{
+	// drains only its own mastermind's bindings (delivery.Drain), so the tools-mode
+	// binding's report can only reach the mastermind through pull.
+	second, _, err := mastermind.Init(reg, mastermind.InitInput{
 		Kind: "claude", SessionID: sessionTools, CWD: repo, Now: rt.Now(),
 	})
 	if err != nil {
-		t.Fatalf("register the tools-mode planner: %v", err)
+		t.Fatalf("register the tools-mode mastermind: %v", err)
 	}
 	if second.ID == first.ID {
-		t.Fatalf("the tools-mode registration reused planner %s", first.ID)
+		t.Fatalf("the tools-mode registration reused mastermind %s", first.ID)
 	}
 	tools := startMCP(t, ctx, rt, mcp.ModeTools, second.ID)
 
-	if _, err := relevo.Add(ctx, rt, relevo.AddOptions{Name: toolsBinding, Repo: repo, PlannerID: second.ID}); err != nil {
+	if _, err := relevo.Add(ctx, rt, relevo.AddOptions{Name: toolsBinding, Repo: repo, MasterMindID: second.ID}); err != nil {
 		t.Fatalf("relevo.Add(%s): %v", toolsBinding, err)
 	}
 	toolsPlan := writePlan(t, "tools.md", "# Round two\n\nOne line of work.\n")
@@ -261,7 +261,7 @@ func TestHeadlessE2E(t *testing.T) {
 	output := waited.res.Line + "\n" + waited.res.Payload
 
 	// 8.4: the output names the fake report -- relevo wait prints the entry's
-	// payload and the report's text (PushText), so the planner needs no
+	// payload and the report's text (PushText), so the mastermind needs no
 	// second read; the payload names the `relevo show` command that prints
 	// the round's report (§4.2) -- and the report's own text is on disk at
 	// the path that command reads.
@@ -350,8 +350,11 @@ fi
 worktree=$(printf '%s\n' "$prompt" | awk '/^Your working tree is: /{ sub(/^Your working tree is: /, ""); print; exit }')
 plan=$(printf '%s\n' "$prompt" | awk '/^Read: /{ sub(/^Read: /, ""); print; exit }')
 report=$(printf '%s\n' "$prompt" | awk '/^When you are done, write your report to: /{ sub(/^When you are done, write your report to: /, ""); print; exit }')
-artifact=$(printf '%s\n' "$prompt" | awk '/^Write every file you produce into this directory/{ sub(/^[^:]*: /, ""); print; exit }')
+artifact=$(printf '%s\n' "$prompt" | awk '/^Your final message is your /{ sub(/^.*: it is saved as /, ""); sub(/\.$/, ""); print; exit }')
 marker=$(printf '%s\n' "$prompt" | awk '/create this empty file: /{ sub(/.*create this empty file: /, ""); print; exit }')
+if [ -n "$artifact" ]; then
+	artifact=$(dirname "$artifact")
+fi
 
 if [ -z "$worktree" ] || [ -z "$plan" ] || [ -z "$marker" ]; then
 	echo "fake-claude: the prompt is missing a path" >&2
@@ -359,7 +362,7 @@ if [ -z "$worktree" ] || [ -z "$plan" ] || [ -z "$marker" ]; then
 	exit 2
 fi
 if [ -z "$report" ] && [ -z "$artifact" ]; then
-	echo "fake-claude: the prompt names neither a report nor an artifact directory" >&2
+	echo "fake-claude: the prompt names neither a report nor an output file" >&2
 	exit 2
 fi
 if [ ! -s "$plan" ]; then
@@ -407,7 +410,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"f
 
 // --- runtime, config and hook helpers ---------------------------------------
 
-// writeCandidatesAndPolicy writes the two config files a planner uses, naming
+// writeCandidatesAndPolicy writes the two config files a mastermind uses, naming
 // the fake harness: one claude candidate that serves the builder role, and a
 // policy that orders it.
 func writeCandidatesAndPolicy(t *testing.T, configDir string) {
@@ -428,7 +431,7 @@ func writeCandidatesAndPolicy(t *testing.T, configDir string) {
 // the same store root, config resolution and claim store cmd/relevo's
 // newRuntime builds, with a real process Runner (the fake harness is a real
 // executable on PATH) and no remote client, database or release fetcher.
-func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *planner.DBRegistry) {
+func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *mastermind.DBRegistry) {
 	t.Helper()
 
 	candidates, err := candidate.Load(filepath.Join(configDir, "candidates.json"))
@@ -444,33 +447,33 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 
 	// Gates live in the store root's database, as buildRuntime wires them
-	// (P3b plan §4.5); the planner records and the channel claims live in the
+	// (P3b plan §4.5); the mastermind records and the channel claims live in the
 	// same database (P3b round 2 §4.1, §4.2).
 	mdb, err := st.DB()
 	if err != nil {
 		t.Fatalf("open store db: %v", err)
 	}
-	reg := &planner.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now, Root: st.PlannersDir()}
+	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now, Root: st.MasterMindsDir()}
 
 	rt := relevo.Runtime{
-		Git:        gitClient,
-		Runner:     proc.New(),
-		Store:      st,
-		Candidates: candidates,
-		Gates:      mdb,
-		GatesDir:   root,
-		Latency:    mdb,
-		Policy:     pol,
-		Now:        time.Now,
-		Channels:   &delivery.KVClaims{KV: db.TxKV{DB: mdb}, Root: st.ChannelsDir()},
-		Planners:   reg,
-		ProcStart:  procStartUnix,
+		Git:         gitClient,
+		Runner:      proc.New(),
+		Store:       st,
+		Candidates:  candidates,
+		Gates:       mdb,
+		GatesDir:    root,
+		Latency:     mdb,
+		Policy:      pol,
+		Now:         time.Now,
+		Channels:    &delivery.KVClaims{KV: db.TxKV{DB: mdb}, Root: st.ChannelsDir()},
+		MasterMinds: reg,
+		ProcStart:   procStartUnix,
 	}
 	return rt, reg
 }
 
 // procStartUnix reads a process's start time in Unix seconds, the pid-reuse
-// defence planner.Resolve's host step needs -- cmd/relevo's own wiring.
+// defence mastermind.Resolve's host step needs -- cmd/relevo's own wiring.
 func procStartUnix(pid int) (int64, error) {
 	started, err := proc.StartTime(context.Background(), pid)
 	if err != nil {
@@ -495,20 +498,20 @@ func hookPayload(t *testing.T, source, session, cwd string) string {
 	return string(raw)
 }
 
-// runPlannerHook runs the hook's work in-process: it parses the SessionStart
-// payload, calls planner.Init with this process as the host (the hook's parent
+// runMasterMindHook runs the hook's work in-process: it parses the SessionStart
+// payload, calls mastermind.Init with this process as the host (the hook's parent
 // IS the Claude Code process, §1.1), and appends the export line to
-// $CLAUDE_ENV_FILE exactly as cmd/relevo's plannerInitHook does. cmd/relevo's
+// $CLAUDE_ENV_FILE exactly as cmd/relevo's mastermindInitHook does. cmd/relevo's
 // command function itself is package main and cannot be called from here; this
-// is the same sequence through the same planner package.
-func runPlannerHook(t *testing.T, reg *planner.DBRegistry, now func() time.Time, raw string) planner.Record {
+// is the same sequence through the same mastermind package.
+func runMasterMindHook(t *testing.T, reg *mastermind.DBRegistry, now func() time.Time, raw string) mastermind.Record {
 	t.Helper()
 
-	in, err := planner.ParseHookInput(strings.NewReader(raw))
+	in, err := mastermind.ParseHookInput(strings.NewReader(raw))
 	if err != nil {
 		t.Fatalf("ParseHookInput(%s): %v", raw, err)
 	}
-	rec, _, err := planner.Init(reg, planner.InitInput{
+	rec, _, err := mastermind.Init(reg, mastermind.InitInput{
 		Kind:           "claude",
 		SessionID:      in.SessionID,
 		TranscriptPath: in.TranscriptPath,
@@ -517,19 +520,19 @@ func runPlannerHook(t *testing.T, reg *planner.DBRegistry, now func() time.Time,
 		Now:            now(),
 	})
 	if err != nil {
-		t.Fatalf("planner.Init(%s): %v", in.SessionID, err)
+		t.Fatalf("mastermind.Init(%s): %v", in.SessionID, err)
 	}
 
 	envFile := os.Getenv("CLAUDE_ENV_FILE")
 	if envFile == "" {
-		t.Fatal("$CLAUDE_ENV_FILE is not set: the hook has nowhere to export RELEVO_PLANNER")
+		t.Fatal("$CLAUDE_ENV_FILE is not set: the hook has nowhere to export RELEVO_MASTERMIND")
 	}
 	f, err := os.OpenFile(envFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatalf("open $CLAUDE_ENV_FILE: %v", err)
 	}
 	defer f.Close()
-	if _, err := io.WriteString(f, planner.EnvLine(rec.ID)); err != nil {
+	if _, err := io.WriteString(f, mastermind.EnvLine(rec.ID)); err != nil {
 		t.Fatalf("append $CLAUDE_ENV_FILE: %v", err)
 	}
 	return rec
@@ -559,13 +562,13 @@ type mcpClient struct {
 
 // startMCP starts one relevo mcp server in-process over a pipe pair and runs the
 // stdio handshake with it: initialize, then notifications/initialized.
-func startMCP(t *testing.T, ctx context.Context, rt relevo.Runtime, mode mcp.Mode, plannerID string) *mcpClient {
+func startMCP(t *testing.T, ctx context.Context, rt relevo.Runtime, mode mcp.Mode, mastermindID string) *mcpClient {
 	t.Helper()
 
 	srvIn, clientWrite := io.Pipe() // the test writes; the server reads
 	clientRead, srvOut := io.Pipe() // the server writes; the test reads
 	srv := &mcp.Server{
-		Verbs:   &mcp.RelevoVerbs{RT: rt, Planner: plannerID},
+		Verbs:   &mcp.RelevoVerbs{RT: rt, MasterMind: mastermindID},
 		Version: "e2e-test",
 		Mode:    mode,
 		Log:     io.Discard,
@@ -592,26 +595,26 @@ func startMCP(t *testing.T, ctx context.Context, rt relevo.Runtime, mode mcp.Mod
 // startChannel starts a channel-mode relevo mcp and, in cmd/relevo's order, makes
 // the two moves the command wires from the server's OnInitialized callback: it
 // writes the claim, then polls -- re-reading, refreshing the claim and draining
-// the planner's mailbox every interval (cmd/relevo's pollMCPChannel).
-func startChannel(t *testing.T, ctx context.Context, rt relevo.Runtime, plannerID string, interval time.Duration) *mcpClient {
+// the mastermind's mailbox every interval (cmd/relevo's pollMCPChannel).
+func startChannel(t *testing.T, ctx context.Context, rt relevo.Runtime, mastermindID string, interval time.Duration) *mcpClient {
 	t.Helper()
 
-	c := startMCP(t, ctx, rt, mcp.ModeChannel, plannerID)
+	c := startMCP(t, ctx, rt, mcp.ModeChannel, mastermindID)
 
 	now := rt.Now()
 	claim := delivery.Claim{
-		Planner:   plannerID,
-		PID:       os.Getpid(),
-		HostPID:   os.Getpid(),
-		StartedAt: now,
-		SeenAt:    now,
-		Version:   "e2e-test",
+		MasterMind: mastermindID,
+		PID:        os.Getpid(),
+		HostPID:    os.Getpid(),
+		StartedAt:  now,
+		SeenAt:     now,
+		Version:    "e2e-test",
 	}
 	if err := rt.Channels.Write(claim, now); err != nil {
-		t.Fatalf("write channel claim for planner %s: %v", plannerID, err)
+		t.Fatalf("write channel claim for mastermind %s: %v", mastermindID, err)
 	}
 
-	st := &delivery.DrainState{Planner: plannerID}
+	st := &delivery.DrainState{MasterMind: mastermindID}
 	pollCtx, stopPoll := context.WithCancel(ctx)
 	stopped := make(chan struct{})
 	go func() {
@@ -627,7 +630,7 @@ func startChannel(t *testing.T, ctx context.Context, rt relevo.Runtime, plannerI
 				if err := rt.Channels.Write(claim, claim.SeenAt); err != nil {
 					return
 				}
-				if _, err := delivery.Drain(pollCtx, delivery.Deps{Store: rt.Store, Now: rt.Now, Channels: rt.Channels, Deliverers: rt.Deliverers, Planners: rt.Planners}, st, c.srv); err != nil {
+				if _, err := delivery.Drain(pollCtx, delivery.Deps{Store: rt.Store, Now: rt.Now, Channels: rt.Channels, Deliverers: rt.Deliverers, MasterMinds: rt.MasterMinds}, st, c.srv); err != nil {
 					return
 				}
 			}
@@ -641,7 +644,7 @@ func startChannel(t *testing.T, ctx context.Context, rt relevo.Runtime, plannerI
 		select {
 		case <-stopped:
 		case <-time.After(5 * time.Second):
-			t.Errorf("the channel poll loop for planner %s did not stop within 5s", plannerID)
+			t.Errorf("the channel poll loop for mastermind %s did not stop within 5s", mastermindID)
 		}
 	})
 	return c
@@ -940,7 +943,7 @@ func reportEntry(t *testing.T, rt relevo.Runtime, name string, round int) (store
 	var found store.LogEntry
 	ok := false
 	for _, e := range entries {
-		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindReport {
 			found, ok = e, true
 		}
 	}
@@ -964,18 +967,18 @@ func loadBinding(t *testing.T, rt relevo.Runtime, name string) store.Binding {
 	return b
 }
 
-// recordByID loads one planner record, failing the test when it cannot.
-func recordByID(t *testing.T, reg *planner.DBRegistry, id string) planner.Record {
+// recordByID loads one mastermind record, failing the test when it cannot.
+func recordByID(t *testing.T, reg *mastermind.DBRegistry, id string) mastermind.Record {
 	t.Helper()
 	rec, err := reg.Get(id)
 	if err != nil {
-		t.Fatalf("load planner %s: %v", id, err)
+		t.Fatalf("load mastermind %s: %v", id, err)
 	}
 	return rec
 }
 
 // hasSession reports whether a record's history names that session.
-func hasSession(rec planner.Record, session string) bool {
+func hasSession(rec mastermind.Record, session string) bool {
 	for _, s := range rec.Sessions {
 		if s.SessionID == session {
 			return true
@@ -984,13 +987,13 @@ func hasSession(rec planner.Record, session string) bool {
 	return false
 }
 
-// claimExists reports whether relevo mcp's claim for one planner is live in
+// claimExists reports whether relevo mcp's claim for one mastermind is live in
 // the runtime's claim store.
-func claimExists(t *testing.T, rt relevo.Runtime, plannerID string) bool {
+func claimExists(t *testing.T, rt relevo.Runtime, mastermindID string) bool {
 	t.Helper()
-	c, err := rt.Channels.Live(plannerID, rt.Now())
+	c, err := rt.Channels.Live(mastermindID, rt.Now())
 	if err != nil {
-		t.Fatalf("Live(%s): %v", plannerID, err)
+		t.Fatalf("Live(%s): %v", mastermindID, err)
 	}
 	return c != nil
 }

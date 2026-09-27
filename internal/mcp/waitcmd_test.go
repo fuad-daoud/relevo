@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -112,7 +113,14 @@ func TestMCPInstructionsDependOnMode(t *testing.T) {
 		}
 	}
 	if strings.Contains(tools, "this pane") || strings.Contains(channel, "this pane") {
-		t.Error(`instructions must say "this planner", not "this pane"`)
+		t.Error(`instructions must say "this mastermind", not "this pane"`)
+	}
+	for _, tt := range []struct {
+		name, text string
+	}{{"channel", channel}, {"tools", tools}} {
+		if !strings.HasSuffix(tt.text, mastermind.Guide()) {
+			t.Errorf("%s instructions do not end with the guide", tt.name)
+		}
 	}
 
 	// initialize serves the mode's text when no override is set.

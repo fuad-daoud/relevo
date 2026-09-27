@@ -103,7 +103,7 @@ func bindingArg(nameFlag string, positional []string) (string, error) {
 
 // resolveBinding names the binding a command should act on: the one given by
 // --name or as a positional, else the binding that owns the current directory,
-// so the planner rarely has to name it at all.
+// so the mastermind rarely has to name it at all.
 //
 // The positional form is not decoration. Before #50 these commands read --name
 // only and dropped a positional on the floor, which from a bound directory sent

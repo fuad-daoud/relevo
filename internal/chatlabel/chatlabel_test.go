@@ -179,12 +179,12 @@ func (f *fakeExec) Run(_ context.Context, bin string, args ...string) ([]byte, e
 }
 
 func TestResolveOpencode(t *testing.T) {
-	fake := &fakeExec{out: []byte("Planner round 2\n")}
+	fake := &fakeExec{out: []byte("MasterMind round 2\n")}
 	res := Resolver{Exec: fake, OpencodeDB: "/tmp/opencode.db"}
 
 	label := res.Resolve(context.Background(), "opencode", "ses_abc123", "")
-	if label.Text != "Planner round 2" {
-		t.Errorf("Text = %q, want %q", label.Text, "Planner round 2")
+	if label.Text != "MasterMind round 2" {
+		t.Errorf("Text = %q, want %q", label.Text, "MasterMind round 2")
 	}
 	if label.Link != "" {
 		t.Errorf("Link = %q, want empty", label.Link)

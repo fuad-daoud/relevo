@@ -43,7 +43,7 @@ func (c *countingSecrets) SecretPut(name string, value []byte, now time.Time) er
 }
 
 // TestValidConversationID pins relevo's own copy of the agy conversation id
-// rule. planner.Detect carries the same pattern for the environment it reads.
+// rule. mastermind.Detect carries the same pattern for the environment it reads.
 func TestValidConversationID(t *testing.T) {
 	t.Parallel()
 
@@ -292,12 +292,12 @@ func TestReadAgyCredsMissingSecretIsNotExist(t *testing.T) {
 }
 
 // TestAgyCredsImportAdoptsFiles is the pre-database import: a present
-// planners/.agy/<conversation>.json is put to the secret agy/<conversation>
+// masterminds/.agy/<conversation>.json is put to the secret agy/<conversation>
 // and removed, and the emptied .agy directory goes with it.
 func TestAgyCredsImportAdoptsFiles(t *testing.T) {
 	t.Parallel()
 
-	dir := filepath.Join(t.TempDir(), "planners", ".agy")
+	dir := filepath.Join(t.TempDir(), "masterminds", ".agy")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}

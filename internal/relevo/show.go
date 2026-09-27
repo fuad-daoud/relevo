@@ -16,7 +16,7 @@ import (
 
 // ErrNoCompletedRound is Show's error when no --round is given and every
 // round of the binding is still open.
-var ErrNoCompletedRound = errors.New("no completed round yet; --round N to read an open round's plan")
+var ErrNoCompletedRound = errors.New("no completed round yet; --round N to read an open round's prompt")
 
 // ErrNoFindings is Show's error when --findings <id> without --round finds no
 // round holding that consult's findings.
@@ -26,7 +26,7 @@ var ErrNoFindings = errors.New("no findings for that consult")
 type ShowSection string
 
 const (
-	ShowPlan       ShowSection = "plan"
+	ShowPrompt     ShowSection = "prompt"
 	ShowReport     ShowSection = "report"
 	ShowDiff       ShowSection = "diff"
 	ShowDrift      ShowSection = "drift"
@@ -34,14 +34,14 @@ const (
 	ShowTranscript ShowSection = "transcript"
 	ShowGate       ShowSection = "gate"
 	ShowFindings   ShowSection = "findings"
-	ShowSummary    ShowSection = "summary"
+	ShowOutput     ShowSection = "output"
 	ShowArtifacts  ShowSection = "artifacts"
 )
 
 // ValidShowSection reports whether s is one of the ShowSection values.
 func ValidShowSection(s ShowSection) bool {
 	switch s {
-	case ShowPlan, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate, ShowFindings, ShowSummary, ShowArtifacts:
+	case ShowPrompt, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate, ShowFindings, ShowOutput, ShowArtifacts:
 		return true
 	}
 	return false
@@ -80,7 +80,7 @@ type ShowResult struct {
 	// Events is filled for Section log: one entry per event, in order.
 	Events []store.LogEntry
 	// Artifacts is filled for Section artifacts: the round's artifact files,
-	// summary.md first, then by rel.
+	// output first, then summary.md, then by rel.
 	Artifacts []ArtifactFile `json:"artifacts,omitempty"`
 }
 
@@ -205,15 +205,15 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 		return ShowResult{}, err
 	}
 
-	// Rounds is the highest round number with a plan log entry, not
+	// Rounds is the highest round number with a prompt log entry, not
 	// b.Round: b.Round is the *next* round once a round has closed
 	// (finishRound does Round++), so it overcounts by one for an idle
 	// binding and undercounts nothing for one mid-round -- the round in
-	// flight has already logged its plan entry.
+	// flight has already logged its prompt entry.
 	rounds := 0
 	completed := 0
 	for _, e := range entries {
-		if e.Kind == store.KindPlan && e.Round > rounds {
+		if store.IsPromptKind(e.Kind) && e.Round > rounds {
 			rounds = e.Round
 		}
 		if e.Kind == store.KindReport && e.Round > completed {
@@ -257,7 +257,7 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 	readBytes := func(path string) ([]byte, bool, error) {
 		return readBytesMissing(rt.Store.ReadFile, path)
 	}
-	if err := showSections(rt, b.Name, round, bindingRole(b), b.Shape, entries, b.Builder, read, readBytes, opts, &res); err != nil {
+	if err := showSections(rt, b.Name, round, bindingRole(b), b.Shape, OutputFile(rt, b), entries, b.Builder, read, readBytes, opts, &res); err != nil {
 		return ShowResult{}, err
 	}
 	return res, nil
@@ -266,24 +266,27 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 // showSections resolves opts.Section into res for one round of name: the
 // section switch showLive and showArchived share. actor and shape name the
 // binding's actor and shape, which a reader's report and its artifact
-// sections need (the artifact directory is NNN-<actor>/). entries is the
-// binding's whole log, which ShowLog filters by round; read yields one round
-// file's bytes, reporting missing rather than an error when the file is
-// absent. live is the round's endpoint, which ShowTranscript needs to render
-// the stream with the endpoint's own segments and kind; readBytes is read's
-// contract for RoundTranscript.
-func showSections(rt Runtime, name string, round int, actor, shape string, entries []store.LogEntry, live store.Endpoint, read func(path string) (text string, missing bool, err error), readBytes func(path string) ([]byte, bool, error), opts ShowOptions, res *ShowResult) error {
+// sections need (the artifact directory is NNN-<actor>/); output is the
+// reader's resolved output rel (OutputFile), which its report and output
+// sections read.
+// entries is the binding's whole log, which ShowLog filters by round; read
+// yields one round file's bytes, reporting missing rather than an error when
+// the file is absent. live is the round's endpoint, which ShowTranscript needs
+// to render the stream with the endpoint's own segments and kind; readBytes is
+// read's contract for RoundTranscript.
+func showSections(rt Runtime, name string, round int, actor, shape, output string, entries []store.LogEntry, live store.Endpoint, read func(path string) (text string, missing bool, err error), readBytes func(path string) ([]byte, bool, error), opts ShowOptions, res *ShowResult) error {
 	var err error
 	switch opts.Section {
-	case ShowPlan:
-		res.Text, res.Missing, err = read(rt.Store.PlanPath(name, round))
+	case ShowPrompt:
+		res.Text, res.Missing, err = read(rt.Store.PromptPath(name, round))
 	case ShowReport:
 		// reportPathFor: a reader's report is its artifact directory's
-		// summary.md, read through the artifact helper so a live, sealed or
-		// archived round all answer; a writer's is the flat NNN-report.md.
+		// output file, read through the artifact helper so a live, sealed
+		// or archived round all answer; a writer's is the flat
+		// NNN-report.md.
 		if shape == store.ShapeReader {
 			var text []byte
-			text, err = readSummary(rt, name, round, actor)
+			text, err = readOutput(rt, name, round, actor, output)
 			if err == nil {
 				if text == nil {
 					res.Missing = true
@@ -298,9 +301,9 @@ func showSections(rt Runtime, name string, round int, actor, shape string, entri
 		res.Text, res.Missing, err = read(rt.Store.DiffPath(name, round))
 	case ShowDrift:
 		res.Text, res.Missing, err = read(rt.Store.DriftPath(name, round))
-	case ShowSummary:
+	case ShowOutput:
 		var text []byte
-		text, err = readSummary(rt, name, round, actor)
+		text, err = readOutput(rt, name, round, actor, output)
 		if err == nil {
 			if text == nil {
 				res.Missing = true
@@ -318,7 +321,7 @@ func showSections(rt Runtime, name string, round int, actor, shape string, entri
 				res.Text = string(data)
 			}
 		} else {
-			res.Artifacts, err = RoundArtifacts(rt, name, round, actor)
+			res.Artifacts, err = RoundArtifacts(rt, name, round, actor, output)
 			if err == nil {
 				res.Missing = len(res.Artifacts) == 0
 			}
@@ -368,12 +371,12 @@ func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowR
 	}
 
 	// Rounds and completed follow showLive's rules: the highest round with
-	// a plan entry, and the highest with a report entry, falling back to
+	// a prompt entry, and the highest with a report entry, falling back to
 	// ab.Binding.Round - 1 when no report entry exists.
 	rounds := 0
 	completed := 0
 	for _, e := range entries {
-		if e.Kind == store.KindPlan && e.Round > rounds {
+		if store.IsPromptKind(e.Kind) && e.Round > rounds {
 			rounds = e.Round
 		}
 		if e.Kind == store.KindReport && e.Round > completed {
@@ -425,7 +428,7 @@ func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowR
 	readBytes := func(path string) ([]byte, bool, error) {
 		return rt.Store.ArchivedFile(ab.RecordID, filepath.Base(path))
 	}
-	if err := showSections(rt, ab.Binding.Name, round, bindingRole(ab.Binding), ab.Binding.Shape, entries, ab.Binding.Builder, read, readBytes, opts, &res); err != nil {
+	if err := showSections(rt, ab.Binding.Name, round, bindingRole(ab.Binding), ab.Binding.Shape, OutputFile(rt, ab.Binding), entries, ab.Binding.Builder, read, readBytes, opts, &res); err != nil {
 		return ShowResult{}, err
 	}
 	return res, nil
@@ -481,7 +484,7 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 	}
 
 	switch opts.Section {
-	case ShowPlan, ShowReport, ShowDiff, ShowDrift:
+	case ShowPrompt, ShowReport, ShowDiff, ShowDrift:
 		var a db.Artifact
 		var found bool
 		a, found, err = rt.DB.Artifact(target.ID, string(opts.Section))
@@ -515,7 +518,7 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 			res.Text = strings.Join(lines, "\n")
 			res.Missing = len(recs) == 0
 		}
-	case ShowGate, ShowFindings, ShowSummary, ShowArtifacts:
+	case ShowGate, ShowFindings, ShowOutput, ShowArtifacts:
 		// A gate log and a consult's findings are round files, not ingest
 		// artifacts, so an archived (database-only) binding has no row to
 		// read them from: report Missing rather than an empty section. The

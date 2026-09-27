@@ -41,7 +41,7 @@ const redactedToken = "<redacted>"
 
 // AgyCreds is one agy conversation's captured agentapi credentials, stored as
 // the secret `agy/<conversation_id>` in the machine database. The conversation
-// id is the secret's name and the key, not the planner record's id: Deliver
+// id is the secret's name and the key, not the mastermind record's id: Deliver
 // receives only an Endpoint, whose Kind and SessionID are the agy conversation.
 type AgyCreds struct {
 	ConversationID string    `json:"conversation_id"`
@@ -63,7 +63,7 @@ func (c AgyCreds) String() string {
 func (c AgyCreds) GoString() string { return c.String() }
 
 // conversationIDRe is relevo's own copy of the agy conversation id rule: a
-// lower-case 8-4-4-4-12 hex UUID. planner.Detect carries the same pattern for
+// lower-case 8-4-4-4-12 hex UUID. mastermind.Detect carries the same pattern for
 // the environment it reads; both are pinned by tests.
 var conversationIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -72,7 +72,7 @@ func validConversationID(conv string) bool { return conversationIDRe.MatchString
 
 // loopbackAgyAddress reports whether addr is a host:port whose host is
 // localhost or 127.0.0.1 and whose port is numeric. relevo refuses anything
-// else: it would be sending a planner's report, which can contain source, to
+// else: it would be sending a mastermind's report, which can contain source, to
 // whatever host the value names.
 func loopbackAgyAddress(addr string) bool {
 	host, port, err := net.SplitHostPort(addr)
@@ -126,9 +126,9 @@ func AgyEnvPresent(env func(string) string) bool { return agyEnvValid(env) }
 // CaptureAgyCreds persists the calling agy session's agentapi credentials as
 // the secret agy/<conversation_id> and reports whether it wrote. Running inside
 // agy is the only place the address and token exist, so every verb calls this
-// once before dispatch: an agy planner runs relevo constantly (send, wait,
+// once before dispatch: an agy mastermind runs relevo constantly (send, wait,
 // pull, status), and the secret is therefore fresh after every agy restart as
-// soon as the planner next touches relevo.
+// soon as the mastermind next touches relevo.
 //
 // It writes nothing and returns false, nil unless a valid conversation id, a
 // loopback address and a non-empty, whitespace-free token are all present, and

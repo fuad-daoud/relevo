@@ -22,12 +22,14 @@ func roundFacts(events []store.LogEntry, n int) db.Round {
 		if !haveEarliest || e.TS.Before(earliest) {
 			earliest, haveEarliest = e.TS, true
 		}
-		switch e.Kind {
-		case store.KindPlan:
+		if store.IsPromptKind(e.Kind) {
 			if !havePlanTS || e.TS.Before(planTS) {
 				planTS, havePlanTS = e.TS, true
 			}
 			applyPlanTier(&r, e)
+			continue
+		}
+		switch e.Kind {
 		case store.KindDiff:
 			applyDiff(&r, e)
 		case store.KindReport:

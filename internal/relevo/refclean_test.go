@@ -253,12 +253,12 @@ func TestSweepRefs(t *testing.T) {
 
 	// Save a live binding api in StateDone
 	b := store.Binding{
-		Name:    "api",
-		CWD:     "/repo",
-		Planner: store.Endpoint{PaneID: "w1:p1"},
-		Builder: store.Endpoint{PaneID: "w1:p2"},
-		Round:   1,
-		State:   store.StateDone,
+		Name:       "api",
+		CWD:        "/repo",
+		MasterMind: store.Endpoint{PaneID: "w1:p1"},
+		Builder:    store.Endpoint{PaneID: "w1:p2"},
+		Round:      1,
+		State:      store.StateDone,
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save api: %v", err)
@@ -344,21 +344,21 @@ func TestGCDeletesPushedRelevoBranch(t *testing.T) {
 	rt.Git = fg
 
 	b := store.Binding{
-		Name:     "web",
-		Repo:     "/repo",
-		CWD:      wt,
-		Worktree: wt,
-		Branch:   "relevo/web",
-		State:    store.StateDone,
-		Round:    1,
-		Planner:  store.Endpoint{PaneID: "w1:p1"},
-		Builder:  store.Endpoint{PaneID: "w1:p2"},
+		Name:       "web",
+		Repo:       "/repo",
+		CWD:        wt,
+		Worktree:   wt,
+		Branch:     "relevo/web",
+		State:      store.StateDone,
+		Round:      1,
+		MasterMind: store.Endpoint{PaneID: "w1:p1"},
+		Builder:    store.Endpoint{PaneID: "w1:p2"},
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{AllPlanners: true})
+	res, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -388,21 +388,21 @@ func TestGCKeepsUnpushedBranch(t *testing.T) {
 	rt.Git = fg
 
 	b := store.Binding{
-		Name:     "web",
-		Repo:     "/repo",
-		CWD:      wt,
-		Worktree: wt,
-		Branch:   "relevo/web",
-		State:    store.StateDone,
-		Round:    1,
-		Planner:  store.Endpoint{PaneID: "w1:p1"},
-		Builder:  store.Endpoint{PaneID: "w1:p2"},
+		Name:       "web",
+		Repo:       "/repo",
+		CWD:        wt,
+		Worktree:   wt,
+		Branch:     "relevo/web",
+		State:      store.StateDone,
+		Round:      1,
+		MasterMind: store.Endpoint{PaneID: "w1:p1"},
+		Builder:    store.Endpoint{PaneID: "w1:p2"},
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{AllPlanners: true})
+	res, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -432,21 +432,21 @@ func TestGCKeptWorktreeTouchesNoRef(t *testing.T) {
 	rt.Git = fg
 
 	b := store.Binding{
-		Name:     "web",
-		Repo:     "/repo",
-		CWD:      wt,
-		Worktree: wt,
-		Branch:   "relevo/web",
-		State:    store.StateDone,
-		Round:    1,
-		Planner:  store.Endpoint{PaneID: "w1:p1"},
-		Builder:  store.Endpoint{PaneID: "w1:p2"},
+		Name:       "web",
+		Repo:       "/repo",
+		CWD:        wt,
+		Worktree:   wt,
+		Branch:     "relevo/web",
+		State:      store.StateDone,
+		Round:      1,
+		MasterMind: store.Endpoint{PaneID: "w1:p1"},
+		Builder:    store.Endpoint{PaneID: "w1:p2"},
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{AllPlanners: true})
+	res, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -477,21 +477,21 @@ func TestGCDryRunDeletesNoRef(t *testing.T) {
 	rt.Git = fg
 
 	b := store.Binding{
-		Name:     "web",
-		Repo:     "/repo",
-		CWD:      wt,
-		Worktree: wt,
-		Branch:   "relevo/web",
-		State:    store.StateDone,
-		Round:    1,
-		Planner:  store.Endpoint{PaneID: "w1:p1"},
-		Builder:  store.Endpoint{PaneID: "w1:p2"},
+		Name:       "web",
+		Repo:       "/repo",
+		CWD:        wt,
+		Worktree:   wt,
+		Branch:     "relevo/web",
+		State:      store.StateDone,
+		Round:      1,
+		MasterMind: store.Endpoint{PaneID: "w1:p1"},
+		Builder:    store.Endpoint{PaneID: "w1:p2"},
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{DryRun: true, AllPlanners: true})
+	res, err := GC(context.Background(), rt, GCOptions{DryRun: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}

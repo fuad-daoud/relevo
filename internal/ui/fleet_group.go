@@ -95,7 +95,7 @@ var groupMetas = map[fleetGroup]groupMeta{
 // the same rule as the status line.
 func shownRound(b view.BindingStatus) int {
 	if b.LastPayload != nil &&
-		b.LastPayload.Direction == store.DirToPlanner &&
+		b.LastPayload.Direction == store.DirToMasterMind &&
 		(b.LastPayload.Kind == store.KindReport || b.LastPayload.Kind == store.KindQuestion) {
 		return b.LastPayload.Round
 	}

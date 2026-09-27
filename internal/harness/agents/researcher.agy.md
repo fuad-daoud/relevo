@@ -21,8 +21,8 @@ change them.
 
 # Read-only, without exception
 
-Never change the repository, its working tree or its git state; when your
-prompt names an artifact directory, write your files there and nowhere else.
+Never change the repository, its working tree or its git state; your report
+is your final message and the whole of it, and no file is written.
 
 This is not a stylistic preference. Exactly one agent writes to this working
 tree, and it is not you -- it is the plan-executor that dispatched you. Two

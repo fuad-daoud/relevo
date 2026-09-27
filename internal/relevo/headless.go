@@ -549,7 +549,7 @@ func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload stri
 	return store.LogEntry{
 		TS:        now,
 		Round:     round,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindExit,
 		Path:      logPath,
 		Note:      fmt.Sprintf("builder exited (code %s) without a report%s", codeText, suffix),
@@ -601,8 +601,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if err != nil {
 		return b, err
 	}
-	roundOpen := HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
-		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+	roundOpen := HasPromptEntry(entries, b.Round) &&
+		!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
 
 	if !roundOpen {
 		// Idle is normal (spec §5.1): between rounds there is no process.
@@ -746,7 +746,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// omission noted (spec §4.4).
 	reportPath, serr := writeReaderSummary(rt, b)
 	if serr != nil {
-		slog.Warn("reader summary not written", "binding", b.Name, "round", b.Round, "err", serr)
+		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 	}
 	if _, err := os.Stat(reportPath); err == nil {
 		_, m, _, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, availability.LimitScanLines), false)
@@ -861,7 +861,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			b = abandonSession(b)
 			b.Builder = clearProcess(b.Builder)
 			if err := tx.AppendLog(b.Name, store.LogEntry{
-				TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindQueue, Confirmed: true,
+				TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true,
 				Note: "re-queued (builder lost to a restart)",
 			}); err != nil {
 				return b, err
@@ -879,7 +879,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 				"lost to a daemon restart; candidate "+b.BuilderCandidate+" is no longer configured", false, false)
 		}
 
-		text := composePrompt(rt, b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
+		text := composePrompt(rt, b, rt.Store.PromptPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
 			"\n\n" + interruptedNote(rt.StartedAt)
 		keep := b.RoundStartedAt
 		// Read the round's session before anything clears it (#370): the
@@ -929,7 +929,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// time than it had.
 		b.RoundStartedAt = keep
 		if err := tx.AppendLog(b.Name, store.LogEntry{
-			TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindSwitch, Confirmed: true,
+			TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch, Confirmed: true,
 			Usage: prior,
 			Note: fmt.Sprintf("%s builder (lost to a daemon restart at %s): picked %s for builder: same candidate, not counted",
 				how, rt.StartedAt.UTC().Format(time.RFC3339), b.BuilderCandidate),
@@ -1082,7 +1082,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// The gate result -> report queued -> verify consult started ->
 	// delivery (#144), exactly as the pane path orders it: the reviewer
 	// sees the gate's output, so it starts after the gate and before the
-	// planner is told.
+	// mastermind is told.
 	if wantVerify && next.Shape != store.ShapeReader {
 		gateLogPath := ""
 		if rec != nil {

@@ -10,20 +10,20 @@ import (
 )
 
 // fakeClaimStore is the map-backed ClaimStore the plan asks for: a claim
-// present for a planner id means live, absent means not.
+// present for a mastermind id means live, absent means not.
 type fakeClaimStore map[string]*Claim
 
-func (f fakeClaimStore) Live(planner string, now time.Time) (*Claim, error) {
-	return f[planner], nil
+func (f fakeClaimStore) Live(mastermind string, now time.Time) (*Claim, error) {
+	return f[mastermind], nil
 }
 
 func (f fakeClaimStore) Write(c Claim, now time.Time) error {
-	f[c.Planner] = &c
+	f[c.MasterMind] = &c
 	return nil
 }
 
-func (f fakeClaimStore) Remove(planner string, pid int) error {
-	delete(f, planner)
+func (f fakeClaimStore) Remove(mastermind string, pid int) error {
+	delete(f, mastermind)
 	return nil
 }
 
@@ -37,25 +37,25 @@ func routeRuntime(t *testing.T) Deps {
 	}
 }
 
-// seedPending saves an active binding and one unconfirmed planner-bound
+// seedPending saves an active binding and one unconfirmed mastermind-bound
 // entry, which is exactly what DeliverPending and Pull work on.
-func seedPending(t *testing.T, rt Deps, name, plannerID, kind string) store.Binding {
+func seedPending(t *testing.T, rt Deps, name, mastermindID, kind string) store.Binding {
 	t.Helper()
 	b := store.Binding{
-		Name:      name,
-		CWD:       "/repo/" + name,
-		Round:     1,
-		State:     store.StateActive,
-		Planner:   store.Endpoint{Kind: kind, SessionID: "sess"},
-		PlannerID: plannerID,
-		Builder:   store.Endpoint{Mode: store.ModeHeadless},
+		Name:         name,
+		CWD:          "/repo/" + name,
+		Round:        1,
+		State:        store.StateActive,
+		MasterMind:   store.Endpoint{Kind: kind, SessionID: "sess"},
+		MasterMindID: mastermindID,
+		Builder:      store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		if err := tx.Save(b); err != nil {
 			return err
 		}
 		return Queue(context.Background(), rt, tx, name, store.LogEntry{
-			Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 			Payload: "round 1 report", Path: "/tmp/report.md",
 		})
 	}); err != nil {
@@ -83,7 +83,7 @@ func deliverOnce(t *testing.T, rt Deps, b store.Binding) (store.Binding, Deliver
 }
 
 // notMineDeliverer is OutcomeNotMine: a deliverer that refuses this
-// planner. Its payload must stay pending -- there is no pane to fall through
+// mastermind. Its payload must stay pending -- there is no pane to fall through
 // to any more.
 type notMineDeliverer struct{}
 
@@ -92,8 +92,8 @@ func (notMineDeliverer) Deliver(context.Context, store.Endpoint, string, string,
 }
 
 // TestDeliverPendingNoRouteStaysPendingAsPull is the plan's required case:
-// with no live claim and no deliverer for the planner's kind, the entry
-// stays pending with route=pull. For a Claude Code planner in tools mode
+// with no live claim and no deliverer for the mastermind's kind, the entry
+// stays pending with route=pull. For a Claude Code mastermind in tools mode
 // that is the normal path, not a fault (D6).
 func TestDeliverPendingNoRouteStaysPendingAsPull(t *testing.T) {
 	t.Parallel()
@@ -112,7 +112,7 @@ func TestDeliverPendingNoRouteStaysPendingAsPull(t *testing.T) {
 	if !strings.Contains(got.Reason, "awaiting pull") {
 		t.Errorf("Reason = %q, want it to name the awaiting-pull route", got.Reason)
 	}
-	if _, found, err := rt.Store.PendingForPlanner("webshop"); err != nil || !found {
+	if _, found, err := rt.Store.PendingForMasterMind("webshop"); err != nil || !found {
 		t.Errorf("the entry must stay pending (found=%v err=%v)", found, err)
 	}
 }
@@ -125,7 +125,7 @@ func TestDeliverPendingDelivererNotMineStaysPending(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Deliverers = map[string]PlannerDeliverer{"claude": notMineDeliverer{}}
+	rt.Deliverers = map[string]MasterMindDeliverer{"claude": notMineDeliverer{}}
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
 	_, got := deliverOnce(t, rt, b)
@@ -139,20 +139,20 @@ func TestDeliverPendingDelivererNotMineStaysPending(t *testing.T) {
 	if got.Reason != "not mine to deliver" {
 		t.Errorf("Reason = %q, want the deliverer's own reason", got.Reason)
 	}
-	if _, found, err := rt.Store.PendingForPlanner("webshop"); err != nil || !found {
+	if _, found, err := rt.Store.PendingForMasterMind("webshop"); err != nil || !found {
 		t.Errorf("the entry must stay pending (found=%v err=%v)", found, err)
 	}
 }
 
-// TestDeliverPendingChannelByPlannerID keeps the surviving channel route:
-// with a live claim for the binding's planner id, DeliverPending hands the
+// TestDeliverPendingChannelByMasterMindID keeps the surviving channel route:
+// with a live claim for the binding's mastermind id, DeliverPending hands the
 // entry to the channel -- it stays pending for the claim holder's own poll,
 // which is what pushes and confirms it with route=channel.
-func TestDeliverPendingChannelByPlannerID(t *testing.T) {
+func TestDeliverPendingChannelByMasterMindID(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{"pl_aaaaaaaabbbb": &Claim{Planner: "pl_aaaaaaaabbbb", PID: 1}}
+	rt.Channels = fakeClaimStore{"pl_aaaaaaaabbbb": &Claim{MasterMind: "pl_aaaaaaaabbbb", PID: 1}}
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
 	_, got := deliverOnce(t, rt, b)
@@ -163,7 +163,7 @@ func TestDeliverPendingChannelByPlannerID(t *testing.T) {
 	if got.Delivered {
 		t.Error("the channel's own drain confirms the entry; DeliverPending must not")
 	}
-	if _, found, err := rt.Store.PendingForPlanner("webshop"); err != nil || !found {
+	if _, found, err := rt.Store.PendingForMasterMind("webshop"); err != nil || !found {
 		t.Errorf("the entry must stay pending for the channel reader (found=%v err=%v)", found, err)
 	}
 }
@@ -175,7 +175,7 @@ func TestDeliverPendingMarksDeliveredByDeliverer(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Deliverers = map[string]PlannerDeliverer{"claude": deliveredDeliverer{}}
+	rt.Deliverers = map[string]MasterMindDeliverer{"claude": deliveredDeliverer{}}
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
 	_, got := deliverOnce(t, rt, b)
@@ -183,7 +183,7 @@ func TestDeliverPendingMarksDeliveredByDeliverer(t *testing.T) {
 	if !got.Delivered || got.Route != "deliverer:claude" {
 		t.Fatalf("Delivery = %+v, want delivered by deliverer:claude", got)
 	}
-	if _, found, err := rt.Store.PendingForPlanner("webshop"); err != nil || found {
+	if _, found, err := rt.Store.PendingForMasterMind("webshop"); err != nil || found {
 		t.Errorf("a delivered entry must be confirmed (found=%v err=%v)", found, err)
 	}
 }
@@ -203,7 +203,7 @@ func TestDeliverPendingWithNothingPendingIsNoop(t *testing.T) {
 	rt := routeRuntime(t)
 	b := store.Binding{
 		Name: "webshop", CWD: "/repo/webshop", Round: 1, State: store.StateActive,
-		Planner: store.Endpoint{Kind: "claude"}, PlannerID: "pl_aaaaaaaabbbb",
+		MasterMind: store.Endpoint{Kind: "claude"}, MasterMindID: "pl_aaaaaaaabbbb",
 	}
 
 	_, got := deliverOnce(t, rt, b)
@@ -213,7 +213,7 @@ func TestDeliverPendingWithNothingPendingIsNoop(t *testing.T) {
 	}
 }
 
-// stubDeliverer is the PlannerDeliverer test double deliver_test.go controls
+// stubDeliverer is the MasterMindDeliverer test double deliver_test.go controls
 // directly, so DeliverPending's consult step can be exercised without a
 // real opencode service.
 type stubDeliverer struct {
@@ -229,7 +229,7 @@ func (s *stubDeliverer) Deliver(_ context.Context, _ store.Endpoint, _, _ string
 }
 
 // TestDeliverConsultsDelivererForMatchingKind proves DeliverPending routes a
-// matching planner's payload through rt.Deliverers exactly once: the stub
+// matching mastermind's payload through rt.Deliverers exactly once: the stub
 // reports OutcomeDelivered, the entry is confirmed, and nothing else is
 // consulted. There is no pane, so the assertion is the deliverer's own call
 // count plus the confirmed entry.
@@ -239,7 +239,7 @@ func TestDeliverConsultsDelivererForMatchingKind(t *testing.T) {
 	rt := routeRuntime(t)
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "opencode")
 	stub := &stubDeliverer{outcome: OutcomeDelivered, reason: "already present"}
-	rt.Deliverers = map[string]PlannerDeliverer{"opencode": stub}
+	rt.Deliverers = map[string]MasterMindDeliverer{"opencode": stub}
 
 	next, got := deliverOnce(t, rt, b)
 	if !got.Delivered || got.Reason != "already present" {
@@ -248,10 +248,10 @@ func TestDeliverConsultsDelivererForMatchingKind(t *testing.T) {
 	if stub.calls != 1 {
 		t.Fatalf("deliverer calls = %d, want 1", stub.calls)
 	}
-	if _, pending, err := rt.Store.PendingForPlanner(b.Name); err != nil || pending {
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || pending {
 		t.Errorf("an OutcomeDelivered outcome must confirm the log entry: pending=%v err=%v", pending, err)
 	}
-	if next.PlannerScreen != "" {
+	if next.MasterMindScreen != "" {
 		t.Errorf("a deliverer-routed delivery must leave the deleted fingerprint state empty, got %+v", next)
 	}
 }
@@ -274,13 +274,13 @@ func TestDeliverNilDeliverersBehavesAsToday(t *testing.T) {
 	if got.Route != "pull" {
 		t.Errorf("Route = %q, want pull", got.Route)
 	}
-	if _, pending, err := rt.Store.PendingForPlanner(b.Name); err != nil || !pending {
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || !pending {
 		t.Errorf("the payload must stay pending: pending=%v err=%v", pending, err)
 	}
 }
 
 // TestDeliverYieldsToLiveClaim is the daemon-guard test the plan requires:
-// a live claim on the planner's id must produce an all-false Delivery, with
+// a live claim on the mastermind's id must produce an all-false Delivery, with
 // zero prompts, zero notifies, the entry still pending, and the
 // binding's State left untouched. Commenting out the guard in DeliverPending
 // makes this fail on the route (verified by hand per the plan's step
@@ -289,8 +289,8 @@ func TestDeliverYieldsToLiveClaim(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	b := seedPending(t, rt, "webshop", testClaimPlanner, "claude")
-	rt.Channels = fakeClaimStore{b.PlannerID: &Claim{Planner: b.PlannerID, PID: 1, SeenAt: rt.Now()}}
+	b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+	rt.Channels = fakeClaimStore{b.MasterMindID: &Claim{MasterMind: b.MasterMindID, PID: 1, SeenAt: rt.Now()}}
 	wantState := b.State
 
 	next, got := deliverOnce(t, rt, b)
@@ -303,21 +303,21 @@ func TestDeliverYieldsToLiveClaim(t *testing.T) {
 	if next.State != wantState {
 		t.Errorf("State = %q, want unchanged %q", next.State, wantState)
 	}
-	if _, pending, err := rt.Store.PendingForPlanner(b.Name); err != nil || !pending {
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || !pending {
 		t.Errorf("the entry must stay pending: pending=%v err=%v", pending, err)
 	}
 }
 
 // TestDeliverIgnoresStaleClaim proves the guard is inert when the claim
-// store answers "not live" (or knows nothing about the planner): delivery
+// store answers "not live" (or knows nothing about the mastermind): delivery
 // falls through to the pull route exactly as it did before the channel
 // existed.
 func TestDeliverIgnoresStaleClaim(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	b := seedPending(t, rt, "webshop", testClaimPlanner, "claude")
-	rt.Channels = fakeClaimStore{} // no entry for this planner: Live returns nil, nil
+	b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+	rt.Channels = fakeClaimStore{} // no entry for this mastermind: Live returns nil, nil
 
 	_, got := deliverOnce(t, rt, b)
 	if got.Delivered {
@@ -326,7 +326,7 @@ func TestDeliverIgnoresStaleClaim(t *testing.T) {
 	if got.Route != "pull" {
 		t.Fatalf("Route = %q, want the pull route", got.Route)
 	}
-	if _, pending, err := rt.Store.PendingForPlanner(b.Name); err != nil || !pending {
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || !pending {
 		t.Errorf("the entry must stay pending for pull: pending=%v err=%v", pending, err)
 	}
 }

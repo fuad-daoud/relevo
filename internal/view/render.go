@@ -10,13 +10,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// plannerNameOrID is the planner a status row names: the record name when it
+// mastermindNameOrID is the mastermind a status row names: the record name when it
 // has one, else the id, else "".
-func plannerNameOrID(b BindingStatus) string {
-	if b.PlannerName != "" {
-		return b.PlannerName
+func mastermindNameOrID(b BindingStatus) string {
+	if b.MasterMindName != "" {
+		return b.MasterMindName
 	}
-	return b.PlannerID
+	return b.MasterMindID
 }
 
 // RenderStatus formats a Report for a terminal.
@@ -60,11 +60,11 @@ func RenderStatus(r Report) string {
 	return sb.String()
 }
 
-// writeBindingRow renders one binding's block: the round line, the planner
+// writeBindingRow renders one binding's block: the round line, the mastermind
 // line, the runner line and the trailer lines.
 func writeBindingRow(sb *strings.Builder, b BindingStatus) {
 	writeRoundLine(sb, b)
-	writePlannerLine(sb, b)
+	writeMasterMindLine(sb, b)
 	writeBuilderLine(sb, b)
 	writeRowTrailer(sb, b)
 }
@@ -114,14 +114,14 @@ func writeRoundLine(sb *strings.Builder, b BindingStatus) {
 	fmt.Fprint(sb, "\n")
 }
 
-// writePlannerLine renders the planner line, including the planner's chat
+// writeMasterMindLine renders the mastermind line, including the mastermind's chat
 // label when cmd/relevo filled it. An empty label leaves the line
 // byte-identical to the line that existed before these fields.
-func writePlannerLine(sb *strings.Builder, b BindingStatus) {
-	fmt.Fprintf(sb, "  planner  %-14s %-8s route %s",
-		plannerNameOrID(b), b.PlannerKind, b.PlannerRoute)
-	if b.PlannerChatLabel != "" || b.PlannerChatLink != "" {
-		lbl := chatlabel.Label{Text: b.PlannerChatLabel, Link: b.PlannerChatLink}
+func writeMasterMindLine(sb *strings.Builder, b BindingStatus) {
+	fmt.Fprintf(sb, "  MasterMind  %-14s %-8s route %s",
+		mastermindNameOrID(b), b.MasterMindKind, b.MasterMindRoute)
+	if b.MasterMindChatLabel != "" || b.MasterMindChatLink != "" {
+		lbl := chatlabel.Label{Text: b.MasterMindChatLabel, Link: b.MasterMindChatLink}
 		fmt.Fprintf(sb, " · %s", lbl.String())
 	}
 	fmt.Fprint(sb, "\n")
@@ -190,7 +190,7 @@ func writeRowTrailer(sb *strings.Builder, b BindingStatus) {
 		fmt.Fprintf(sb, "  spend    %s\n", usage.SpendLine(*b.Spend))
 	}
 	if b.Pending != nil {
-		fmt.Fprintf(sb, "  pending  %s round %d -> planner\n\n", b.Pending.Kind, b.Pending.Round)
+		fmt.Fprintf(sb, "  pending  %s round %d -> mastermind\n\n", b.Pending.Kind, b.Pending.Round)
 	} else {
 		fmt.Fprint(sb, "  pending  --\n\n")
 	}

@@ -2,6 +2,6 @@
   "name": "relevo",
   "owner": {"name": "Fuad Daoud"},
   "plugins": [
-    {"name": "relevo", "source": "./claude-plugin", "description": "Planner/builder handoff: builder reports and NEEDS YOU pushed into this session; status/send/done as tools", "version": "0.14.0"}
+    {"name": "relevo", "source": "./claude-plugin", "description": "MasterMind/builder handoff: builder reports and NEEDS YOU pushed into this session; status/send/done as tools", "version": "0.14.0"}
   ]
 }

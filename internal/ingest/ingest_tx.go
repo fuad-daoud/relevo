@@ -34,18 +34,18 @@ func (r *ingestRun) upsertRepo(tx *db.Tx) (*string, error) {
 	return &id, nil
 }
 
-func (r *ingestRun) upsertPlanner(tx *db.Tx) (*string, error) {
-	if r.b.Planner.SessionID == "" {
+func (r *ingestRun) upsertMasterMind(tx *db.Tx) (*string, error) {
+	if r.b.MasterMind.SessionID == "" {
 		return nil, nil
 	}
-	id, err := tx.UpsertPlanner(db.Planner{
-		ID:                r.b.PlannerID,
-		HarnessKind:       r.b.Planner.Kind,
-		SessionID:         r.b.Planner.SessionID,
-		TranscriptLocator: nonEmptyPtr(r.b.Planner.TranscriptLocator),
+	id, err := tx.UpsertMasterMind(db.MasterMind{
+		ID:                r.b.MasterMindID,
+		HarnessKind:       r.b.MasterMind.Kind,
+		SessionID:         r.b.MasterMind.SessionID,
+		TranscriptLocator: nonEmptyPtr(r.b.MasterMind.TranscriptLocator),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("upsert planner: %w", err)
+		return nil, fmt.Errorf("upsert mastermind: %w", err)
 	}
 	return &id, nil
 }
@@ -92,7 +92,7 @@ func builderModeOf(b store.Binding) string {
 
 // upsertBinding writes the binding row. An archived binding's CWD is always gone,
 // so b.Repo is its only path to a repo row.
-func (r *ingestRun) upsertBinding(tx *db.Tx, repoID, plannerID *string, log logRead) (string, error) {
+func (r *ingestRun) upsertBinding(tx *db.Tx, repoID, mastermindID *string, log logRead) (string, error) {
 	createdAt := r.b.CreatedAt
 	if createdAt.IsZero() {
 		if len(log.entries) > 0 {
@@ -131,7 +131,7 @@ func (r *ingestRun) upsertBinding(tx *db.Tx, repoID, plannerID *string, log logR
 	bindingID, err := tx.UpsertBinding(db.Binding{
 		Name:                r.b.Name,
 		RepoID:              repoID,
-		PlannerID:           plannerID,
+		MasterMindID:        mastermindID,
 		Feature:             nonEmptyPtr(r.b.Feature),
 		ForkedFromBindingID: forkedFromBindingID,
 		ForkedFromRound:     forkedFromRound,
@@ -284,38 +284,39 @@ func (r *ingestRun) upsertRound(tx *db.Tx, bindingID string, n int, all []store.
 	return roundID, nil
 }
 
-// appendPlannerTranscript reads a live planner's own transcript past its cursor.
-func (r *ingestRun) appendPlannerTranscript(tx *db.Tx, plannerID *string) error {
-	if plannerID == nil || r.kind != "live" || r.locator == "" {
+// appendMasterMindTranscript reads a live mastermind's own transcript past its cursor.
+func (r *ingestRun) appendMasterMindTranscript(tx *db.Tx, mastermindID *string) error {
+	if mastermindID == nil || r.kind != "live" || r.locator == "" {
 		return nil
 	}
 	if _, err := os.Stat(r.locator); err != nil {
 		return nil
 	}
 
+	// why: the ingest cursor's "planner::" prefix is state already written.
 	key := "planner::" + r.locator
 	cur, found, err := tx.Cursor(key)
 	if err != nil {
-		return fmt.Errorf("planner transcript cursor: %w", err)
+		return fmt.Errorf("mastermind transcript cursor: %w", err)
 	}
 	opener := func() (io.ReadCloser, error) { return os.Open(r.locator) }
 	lines, startSeq, next, reset, err := readAppendOnly(opener, key, cur, found)
 	if err != nil {
-		return fmt.Errorf("read planner transcript: %w", err)
+		return fmt.Errorf("read mastermind transcript: %w", err)
 	}
 	if reset {
-		r.logger.Info("ingest: cursor reset", "binding", r.b.Name, "member", "planner transcript")
+		r.logger.Info("ingest: cursor reset", "binding", r.b.Name, "member", "mastermind transcript")
 	}
 	if len(lines) > 0 {
-		recs := plannerTranscriptRecords(r.b.Planner.Kind, lines, startSeq)
-		added, err := tx.AppendTranscript(db.OwnerPlanner, *plannerID, recs)
+		recs := mastermindTranscriptRecords(r.b.MasterMind.Kind, lines, startSeq)
+		added, err := tx.AppendTranscript(db.OwnerMasterMind, *mastermindID, recs)
 		if err != nil {
-			return fmt.Errorf("append planner transcript: %w", err)
+			return fmt.Errorf("append mastermind transcript: %w", err)
 		}
 		r.stats.TranscriptRecords += added
 	}
 	if err := tx.SaveCursor(next); err != nil {
-		return fmt.Errorf("save planner transcript cursor: %w", err)
+		return fmt.Errorf("save mastermind transcript cursor: %w", err)
 	}
 	return nil
 }

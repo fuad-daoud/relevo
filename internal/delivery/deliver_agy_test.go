@@ -26,7 +26,7 @@ const (
 // agyTestOrigin and agyTestPayload are shaped like what Queue writes and
 // Deliver reads: the origin line, a blank line, the report.
 const (
-	agyTestOrigin  = `relevo: round 1 · to planner · about runner "w" (not the human)`
+	agyTestOrigin  = `relevo: round 1 · to MasterMind · about runner "w" (not the human)`
 	agyTestPayload = agyTestOrigin + "\n\nThe runner finished round 1. Report: /x/001-report.md"
 )
 
@@ -211,7 +211,7 @@ func TestAgyDeliverBadConversationID(t *testing.T) {
 	if out != OutcomeNotMine {
 		t.Errorf("outcome = %v, want OutcomeNotMine", out)
 	}
-	if want := "agy planner session is not a conversation id; run relevo planner init inside agy"; reason != want {
+	if want := "agy mastermind session is not a conversation id; run relevo mastermind init inside agy"; reason != want {
 		t.Errorf("reason = %q, want %q", reason, want)
 	}
 	if fake.calls != 0 {
@@ -595,24 +595,24 @@ func TestDeliverPendingAgyDeliversViaDeliverer(t *testing.T) {
 	rt := Deps{
 		Store:      store.New(t.TempDir()),
 		Now:        time.Now,
-		Deliverers: map[string]PlannerDeliverer{"agy": d},
+		Deliverers: map[string]MasterMindDeliverer{"agy": d},
 	}
 
 	b := store.Binding{
-		Name:      "webshop",
-		CWD:       "/repo/webshop",
-		Round:     1,
-		State:     store.StateActive,
-		Planner:   store.Endpoint{Kind: "agy", SessionID: agyTestConv},
-		PlannerID: "pl_aaaaaaaabbbb",
-		Builder:   store.Endpoint{Mode: store.ModeHeadless},
+		Name:         "webshop",
+		CWD:          "/repo/webshop",
+		Round:        1,
+		State:        store.StateActive,
+		MasterMind:   store.Endpoint{Kind: "agy", SessionID: agyTestConv},
+		MasterMindID: "pl_aaaaaaaabbbb",
+		Builder:      store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		if err := tx.Save(b); err != nil {
 			return err
 		}
 		return Queue(context.Background(), rt, tx, b.Name, store.LogEntry{
-			Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 			Payload: "round 1 report", Path: "/tmp/report.md",
 		})
 	}); err != nil {
@@ -633,7 +633,7 @@ func TestDeliverPendingAgyDeliversViaDeliverer(t *testing.T) {
 	}
 	confirmed := false
 	for _, e := range entries {
-		if e.Direction == store.DirToPlanner && e.Confirmed {
+		if e.Direction == store.DirToMasterMind && e.Confirmed {
 			confirmed = true
 			if e.Route != "deliverer:agy" {
 				t.Errorf("confirmed entry route = %q, want deliverer:agy", e.Route)
@@ -641,6 +641,6 @@ func TestDeliverPendingAgyDeliversViaDeliverer(t *testing.T) {
 		}
 	}
 	if !confirmed {
-		t.Error("the planner-bound log entry was not confirmed")
+		t.Error("the mastermind-bound log entry was not confirmed")
 	}
 }

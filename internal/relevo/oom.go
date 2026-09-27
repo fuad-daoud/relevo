@@ -105,7 +105,7 @@ func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err := tx.AppendLog(b.Name, store.LogEntry{
 		TS:        now,
 		Round:     b.Round,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindQueue,
 		Confirmed: true,
 		Note:      note,

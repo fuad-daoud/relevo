@@ -7,7 +7,7 @@ import (
 )
 
 // artifactClause returns the artifact line of a round's close payload.
-// For a reader it is "<Label>: relevo show <name> --round <n> --summary".
+// For a reader it is "<Label>: relevo show <name> --round <n> --output".
 // For a writer it is "Report: relevo show <name> --round <n> --report".
 // The literal word "Report" is used for the writer, not the writer agent's
 // output label, so the bytes cannot drift if a custom writer names it
@@ -18,7 +18,7 @@ func artifactClause(shape, output, name string, round int) string {
 		if label == "" {
 			label = defaultOutput
 		}
-		return fmt.Sprintf("%s: %s", titleFirst(label), showCommand(name, round, "summary"))
+		return fmt.Sprintf("%s: %s", titleFirst(label), showCommand(name, round, "output"))
 	}
 	return "Report: " + showCommand(name, round, "report")
 }

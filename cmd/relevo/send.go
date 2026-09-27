@@ -22,6 +22,7 @@ type sendFlagValues struct {
 	regate    *int
 	verify    *bool
 	noVerify  *bool
+	force     *bool
 }
 
 // sendFlagSet defines send's flags on fs and returns the values they parse
@@ -37,6 +38,7 @@ func sendFlagSet(fs *flag.FlagSet) *sendFlagValues {
 	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	v.verify = fs.Bool("verify", false, "run a read-only reviewer in a throwaway worktree when the round closes")
 	v.noVerify = fs.Bool("no-verify", false, "do not run a reviewer when the round closes (default: config policy verify.default)")
+	v.force = fs.Bool("force", false, "send a planner actor's seed even when it is over the 4 KiB cap")
 	return v
 }
 
@@ -46,6 +48,7 @@ func cmdSend(args []string) error {
 	file, name, tier, candidate := v.file, v.name, v.tier, v.candidate
 	allowYolo, dryRun, regate := v.allowYolo, v.dryRun, v.regate
 	verify, noVerify := v.verify, v.noVerify
+	force := v.force
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -85,6 +88,7 @@ func cmdSend(args []string) error {
 		Builder:   *candidate,
 		Regate:    regateOpt,
 		Verify:    verifyOpt,
+		Force:     *force,
 	}
 
 	if *dryRun {

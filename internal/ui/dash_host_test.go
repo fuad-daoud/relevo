@@ -29,7 +29,7 @@ func dashHostModel(t *testing.T, width, height int, opts Options, rows ...view.B
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st, DB: d}
 	opts.Interval = time.Second
-	m := newModel(context.Background(), plannerSource{rt}, opts)
+	m := newModel(context.Background(), mastermindSource{rt}, opts)
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -110,7 +110,7 @@ func TestJumpFromDashPushesLiveRound(t *testing.T) {
 // relevo.Bindings and pushes an archived round view.
 func TestJumpFromDashArchivedUsesDatabase(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Second})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
@@ -146,7 +146,7 @@ func TestOptionsStartRounds(t *testing.T) {
 	}
 	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}}, Options{Interval: time.Second, Start: "rounds"})
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}}, Options{Interval: time.Second, Start: "rounds"})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
@@ -167,7 +167,7 @@ func TestOptionsStartRounds(t *testing.T) {
 // database leaves the fleet and notices.
 func TestOptionsStartRoundsWithoutDBNotices(t *testing.T) {
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Start: "rounds"})
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Start: "rounds"})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)

@@ -1,6 +1,6 @@
 ---
-description: Show a round's plan, report, diff, drift, log or transcript
-argument-hint: "[<binding>] [--round N] [--diff|--drift|--log|--report|--plan|--transcript]"
+description: Show a round's prompt, report, diff, drift, log or transcript
+argument-hint: "[<binding>] [--round N] [--diff|--drift|--log|--report|--prompt|--transcript]"
 allowed-tools: Bash(relevo:*)
 ---
 

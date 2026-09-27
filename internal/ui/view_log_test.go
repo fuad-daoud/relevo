@@ -74,6 +74,21 @@ func TestLogFoldsSend(t *testing.T) {
 	}
 }
 
+// TestLogRowOfBothPromptKindsReadsSent pins the cockpit's event word for a
+// prompt row in either stored spelling: the legacy one already written and the
+// one new entries carry.
+func TestLogRowOfBothPromptKindsReadsSent(t *testing.T) {
+	now := time.Date(2026, 9, 25, 18, 33, 0, 0, time.UTC)
+	for _, kind := range []string{"prompt", "plan"} {
+		entries := buildLogEntries([]db.EventLogRow{
+			{TS: now, Seq: 1, Kind: kind, BindingName: "atlas"},
+		}, availability.History{}, nil, nil, time.Time{}, nil)
+		if len(entries) != 1 || entries[0].Word != "sent" {
+			t.Errorf("row of kind %q = %+v, want one entry with Word \"sent\"", kind, entries)
+		}
+	}
+}
+
 func TestLogFoldsReport(t *testing.T) {
 	now := time.Date(2026, 9, 25, 19, 4, 0, 0, time.UTC)
 	roundID := "r1"

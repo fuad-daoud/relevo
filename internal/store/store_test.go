@@ -198,7 +198,7 @@ func TestPathShapes(t *testing.T) {
 	for _, tc := range []struct {
 		name, got, want string
 	}{
-		{"PlanPath", s.PlanPath("webshop", 3), "/state/webshop/003-plan.md"},
+		{"PromptPath", s.PromptPath("webshop", 3), "/state/webshop/003-prompt.md"},
 		{"ReportPath", s.ReportPath("webshop", 12), "/state/webshop/012-report.md"},
 		{"DonePath", s.DonePath("webshop", 7), "/state/webshop/007-done"},
 		{"DiffPath", s.DiffPath("ai", 2), "/state/ai/002-diff.patch"},
@@ -360,7 +360,7 @@ func TestReadsDoNotWaitForTheStateLock(t *testing.T) {
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	entry := LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindPlan, Payload: "hello"}
+	entry := LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindPrompt, Payload: "hello"}
 	if err := s.AppendLog("frozen", entry); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}

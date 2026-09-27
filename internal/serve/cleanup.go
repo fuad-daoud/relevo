@@ -15,7 +15,7 @@ import (
 
 // settledGrace is how long a DONE binding the owner never acked is left alone
 // before the server collects it: an unacked result is no proof the client
-// absorbed it, and seven days is longer than any live planner reads it.
+// absorbed it, and seven days is longer than any live mastermind reads it.
 const settledGrace = 7 * 24 * time.Hour
 
 // ackedGrace is how long an all-acked DONE binding stays before it is collected:

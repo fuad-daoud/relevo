@@ -1,12 +1,12 @@
 {
   "tools": [
     {
-      "description": "One binding, or every binding on this planner, or (all: true) every binding relevo knows about. Calls relevo.Status.",
+      "description": "One binding, or every binding on this MasterMind, or (all: true) every binding relevo knows about. Calls relevo.Status.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "all": {
-            "description": "include every binding relevo knows about, not just this planner's",
+            "description": "include every binding relevo knows about, not just this MasterMind's",
             "type": "boolean"
           },
           "name": {

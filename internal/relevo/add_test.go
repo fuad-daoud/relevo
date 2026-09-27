@@ -14,7 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// addRepo makes a directory to stand in for the planner's repository.
+// addRepo makes a directory to stand in for the mastermind's repository.
 func addRepo(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "repo")
@@ -48,7 +48,7 @@ func TestAddRecordsBaseRef(t *testing.T) {
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -87,7 +87,7 @@ func TestAddRecordsNoBaseRefWithoutBranch(t *testing.T) {
 	rt := newTestRuntime(t, fg)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: addRepo(t),
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -114,7 +114,7 @@ func TestAddRecordsRepoFromCWDNotWorktree(t *testing.T) {
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -141,7 +141,7 @@ func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -208,7 +208,7 @@ func TestAddRefusesAnAmbiguousCandidateBeforeCuttingAWorktree(t *testing.T) {
 	rt := newTestRuntime(t, fg)
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: "", PlannerID: testPlannerName, Repo: addRepo(t),
+		Name: "frontend", Candidate: "", MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if !errors.Is(err, ErrAmbiguousCandidate) {
 		t.Fatalf("want ErrAmbiguousCandidate, got %v", err)
@@ -226,7 +226,7 @@ func TestAddResolvesTheOnlyBuilderCandidate(t *testing.T) {
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
 
 	res, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: "", PlannerID: testPlannerName, Repo: addRepo(t),
+		Name: "frontend", Candidate: "", MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -244,13 +244,13 @@ func TestAddRefusesADuplicateName(t *testing.T) {
 	repo := addRepo(t)
 
 	if _, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
 	}); err != nil {
 		t.Fatalf("first Add: %v", err)
 	}
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err == nil {
 		t.Fatal("a name already in use must be refused")
@@ -269,7 +269,7 @@ func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: name, Candidate: testAgyRef, PlannerID: testPlannerName, Repo: addRepo(t),
+		Name: name, Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if len(fg.addWorktreeCalls) != 0 {
 		t.Errorf("a refused name must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
@@ -294,7 +294,7 @@ func TestAddBindsAPreparedDirectoryWithCWD(t *testing.T) {
 	prepared := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "legacy", Candidate: testAgyRef, PlannerID: testPlannerName,
+		Name: "legacy", Candidate: testAgyRef, MasterMindID: testMasterMindName,
 		Repo: addRepo(t), CWD: prepared,
 	})
 	if err != nil {
@@ -329,7 +329,7 @@ func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
 	}
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName,
 		Repo: addRepo(t), CWD: prepared,
 	})
 	if !errors.Is(err, store.ErrCWDTaken) {
@@ -357,7 +357,7 @@ func TestAddRollbackDeletesTheBranchItCreated(t *testing.T) {
 	}
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName,
 		Repo: addRepo(t),
 	})
 	if !errors.Is(err, store.ErrCWDTaken) {
@@ -379,7 +379,7 @@ func TestAddHeadlessCutsTheWorktreeAndSpawnsNothing(t *testing.T) {
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo, Headless: true,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo, Headless: true,
 	})
 	if err != nil {
 		t.Fatalf("Add --headless: %v", err)
@@ -417,7 +417,7 @@ func TestAddBranchLocalChecksOutWithoutCutting(t *testing.T) {
 
 	got, err := Add(context.Background(), rt, AddOptions{
 		Name: "api-auth", Branch: "feature/api-auth", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: repo,
+		MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add --branch: %v", err)
@@ -468,7 +468,7 @@ func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
 
 	got, err := Add(context.Background(), rt, AddOptions{
 		Name: "x", Branch: "feature/x", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: repo,
+		MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add --branch: %v", err)
@@ -502,7 +502,7 @@ func TestAddBranchMissingRefuses(t *testing.T) {
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "x", Branch: "feature/x", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: addRepo(t),
+		MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err == nil || !strings.Contains(err.Error(), "not found locally or on origin") {
 		t.Fatalf("got %v, want a 'not found locally or on origin' refusal", err)
@@ -530,7 +530,7 @@ func TestAddBranchCheckedOutRefuses(t *testing.T) {
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "x", Branch: "feature/x", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: addRepo(t),
+		MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err == nil || !strings.Contains(err.Error(), "checked out in another worktree") {
 		t.Fatalf("got %v, want a 'checked out in another worktree' refusal", err)
@@ -563,7 +563,7 @@ func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "other", Branch: "feature/x", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: repo,
+		MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err == nil || !strings.Contains(err.Error(), "incumbent") {
 		t.Fatalf("a branch driven by a live binding must refuse, got %v", err)
@@ -580,7 +580,7 @@ func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
 	}
 	got, err := Add(context.Background(), rt, AddOptions{
 		Name: "other", Branch: "feature/x", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: repo,
+		MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("a DONE binding must not block: %v", err)
@@ -600,7 +600,7 @@ func TestAddBranchWithCwdRefused(t *testing.T) {
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "x", Branch: "feature/x", CWD: addRepo(t), Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: addRepo(t),
+		MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err == nil || !strings.Contains(err.Error(), "exclusive") {
 		t.Fatalf("got %v, want an 'exclusive' refusal", err)
@@ -660,7 +660,7 @@ func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
 		repo := addRepo(t)
 		if _, err := Add(ctx, rt, AddOptions{
 			Name: "api-auth", Branch: "feature/api-auth", Candidate: testAgyRef,
-			PlannerID: testPlannerName, Repo: repo,
+			MasterMindID: testMasterMindName, Repo: repo,
 		}); err != nil {
 			t.Fatalf("Add --branch: %v", err)
 		}
@@ -700,7 +700,7 @@ func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
 		if _, err := Done(ctx, rt, "api-auth"); err != nil {
 			t.Fatalf("Done: %v", err)
 		}
-		if _, err := GC(ctx, rt, GCOptions{AllPlanners: true}); err != nil {
+		if _, err := GC(ctx, rt, GCOptions{AllMasterMinds: true}); err != nil {
 			t.Fatalf("GC: %v", err)
 		}
 		if len(fg.deleteBranchCalls) != 0 {
@@ -722,7 +722,7 @@ func TestAddRefusesUnsupportedTierBeforeWorktree(t *testing.T) {
 	repo := addRepo(t)
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testOpencodeRef, PlannerID: testPlannerName, Repo: repo, Tier: "read",
+		Name: "frontend", Candidate: testOpencodeRef, MasterMindID: testMasterMindName, Repo: repo, Tier: "read",
 	})
 	if !errors.Is(err, harness.ErrTierUnsupported) {
 		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)

@@ -15,7 +15,7 @@ import (
 // vi, split with strings.Fields, path last. It mirrors runEditor
 // (cmd/relevo/config.go:445) but returns the *exec.Cmd without running it, so
 // the cockpit can hand it to tea.ExecProcess and suspend while it runs.
-func (a *plannerActions) AgentEditor(path string) (*exec.Cmd, error) {
+func (a *mastermindActions) AgentEditor(path string) (*exec.Cmd, error) {
 	editor := os.Getenv("VISUAL")
 	if editor == "" {
 		editor = os.Getenv("EDITOR")
@@ -31,7 +31,7 @@ func (a *plannerActions) AgentEditor(path string) (*exec.Cmd, error) {
 // kind "pager" is $PAGER, else less -R; kind "browser" is xdg-open on Linux
 // and open on macOS; anything else is the user's editor, through AgentEditor.
 // Like AgentEditor it never runs anything.
-func (a *plannerActions) OpenArtifact(path, kind string) (*exec.Cmd, error) {
+func (a *mastermindActions) OpenArtifact(path, kind string) (*exec.Cmd, error) {
 	switch kind {
 	case "pager":
 		pager := os.Getenv("PAGER")

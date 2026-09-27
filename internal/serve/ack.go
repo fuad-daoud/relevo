@@ -10,7 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// settleServed confirms every unconfirmed planner-bound log entry for name
+// settleServed confirms every unconfirmed mastermind-bound log entry for name
 // whose round is at most upTo, using route "ack". The caller MUST hold the store
 // lock: ConfirmIndex's indices are stable only while nothing appends. upTo <= 0
 // is a no-op.
@@ -26,7 +26,7 @@ func settleServed(tx *store.Tx, name string, upTo int) (int, error) {
 
 	n := 0
 	for i, e := range entries {
-		if e.Direction != store.DirToPlanner || e.Confirmed || e.Round > upTo {
+		if e.Direction != store.DirToMasterMind || e.Confirmed || e.Round > upTo {
 			continue
 		}
 		if err := tx.ConfirmIndex(name, i, "ack"); err != nil {
@@ -38,7 +38,7 @@ func settleServed(tx *store.Tx, name string, upTo int) (int, error) {
 }
 
 // settleAllServed backfills the ack older servers never wrote: for every owner
-// it settles each served binding's planner-bound entries up to the round the
+// it settles each served binding's mastermind-bound entries up to the round the
 // owner acked -- or, for a DONE binding, the daemon's last closed round,
 // whichever is further. A per-owner failure is logged and the walk continues;
 // a missing bindings dir is nil.

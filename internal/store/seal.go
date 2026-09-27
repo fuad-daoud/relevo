@@ -187,7 +187,7 @@ func (s *Store) RoundsOnDisk(name string) ([]int, error) {
 // round must be closed (round < b.Round) and nothing that still reads its
 // files may be in flight. The blockers are the stream drain still owning the
 // round, an unfinished consult of it, a gate run for it, and the binding's
-// latest closed round (b.Round-1) while the binding is not DONE -- the planner
+// latest closed round (b.Round-1) while the binding is not DONE -- the mastermind
 // was handed that round's report path, and a repair round's plan points at its
 // plan and gate log.
 //

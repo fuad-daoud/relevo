@@ -38,8 +38,8 @@ func TestForkStateCopiesRoundFilesAndLog(t *testing.T) {
 	checkCopiedLog(t, s, dstName, dstDir)
 
 	wantFiles := []string{
-		"001-custom.artifact", "001-diff.patch", "001-plan.md", "001-question.md", "001-report.md",
-		"002-custom.artifact", "002-diff.patch", "002-plan.md", "002-question.md", "002-report.md",
+		"001-custom.artifact", "001-diff.patch", "001-prompt.md", "001-question.md", "001-report.md",
+		"002-custom.artifact", "002-diff.patch", "002-prompt.md", "002-question.md", "002-report.md",
 	}
 	dstFiles, err := s.RoundFiles(dstName)
 	if err != nil {
@@ -74,7 +74,7 @@ func seedForkSource(t *testing.T, s *Store, srcName string, rounds int) {
 	srcDir := s.Dir(srcName)
 	for r := 1; r <= rounds; r++ {
 		files := map[string]string{
-			s.PlanPath(srcName, r):     fmt.Sprintf("plan content for round %d", r),
+			s.PromptPath(srcName, r):   fmt.Sprintf("plan content for round %d", r),
 			s.ReportPath(srcName, r):   fmt.Sprintf("report content for round %d", r),
 			s.QuestionPath(srcName, r): fmt.Sprintf("question content for round %d", r),
 			s.DiffPath(srcName, r):     fmt.Sprintf("diff content for round %d", r),
@@ -88,9 +88,9 @@ func seedForkSource(t *testing.T, s *Store, srcName string, rounds int) {
 
 		deliveryTime := time.Now().UTC().Add(-time.Hour)
 		for _, e := range []LogEntry{
-			{Round: r, Direction: DirToBuilder, Kind: KindPlan, Path: s.PlanPath(srcName, r), Confirmed: true},
-			{Round: r, Direction: DirToPlanner, Kind: KindReport, Path: s.ReportPath(srcName, r), DeliveredAt: &deliveryTime},
-			{Round: r, Direction: DirToPlanner, Kind: KindQuestion},
+			{Round: r, Direction: DirToBuilder, Kind: KindPrompt, Path: s.PromptPath(srcName, r), Confirmed: true},
+			{Round: r, Direction: DirToMasterMind, Kind: KindReport, Path: s.ReportPath(srcName, r), DeliveredAt: &deliveryTime},
+			{Round: r, Direction: DirToMasterMind, Kind: KindQuestion},
 		} {
 			if err := s.AppendLog(srcName, e); err != nil {
 				t.Fatalf("AppendLog: %v", err)
@@ -152,7 +152,7 @@ func checkCopiedLog(t *testing.T, s *Store, dstName, dstDir string) {
 			t.Errorf("entry %d Path = %q, want a path in %s", i, e.Path, dstDir)
 		}
 	}
-	if got, want := dstLog[0].Path, s.PlanPath(dstName, 1); got != want {
+	if got, want := dstLog[0].Path, s.PromptPath(dstName, 1); got != want {
 		t.Errorf("first copied entry Path = %q, want %q", got, want)
 	}
 }
@@ -266,7 +266,7 @@ func TestForkStateMidCopyFailureLeavesNoDst(t *testing.T) {
 			name: "unreadable file",
 			corrupt: func(t *testing.T, s *Store, srcName string) {
 				t.Helper()
-				if err := os.WriteFile(s.PlanPath(srcName, 1), []byte("plan 1"), bindingFileMode); err != nil {
+				if err := os.WriteFile(s.PromptPath(srcName, 1), []byte("plan 1"), bindingFileMode); err != nil {
 					t.Fatalf("WriteFile: %v", err)
 				}
 				unreadable := s.ReportPath(srcName, 1)
@@ -337,7 +337,7 @@ func TestForkWritesNoFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RoundFiles dst: %v", err)
 	}
-	want := []string{"001-plan.md", "001-report.md", "002-plan.md", "002-report.md"}
+	want := []string{"001-prompt.md", "001-report.md", "002-prompt.md", "002-report.md"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("RoundFiles(dst) = %v, want %v", names, want)
 	}
@@ -366,11 +366,11 @@ func seedSealedForkSource(t *testing.T, s *Store, srcName string) (onDisk, seale
 	}
 
 	onDisk = map[string]string{
-		s.PlanPath(srcName, 1):   "round 1 plan",
+		s.PromptPath(srcName, 1): "round 1 plan",
 		s.ReportPath(srcName, 1): "round 1 report",
 	}
 	sealed = map[string]string{
-		s.PlanPath(srcName, 2):   "round 2 plan",
+		s.PromptPath(srcName, 2): "round 2 plan",
 		s.ReportPath(srcName, 2): "round 2 report",
 	}
 	for _, files := range []map[string]string{onDisk, sealed} {

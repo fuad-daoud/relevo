@@ -123,7 +123,7 @@ func warnOnce(binding, reason, msg string, args ...any) {
 }
 
 // Reconcile advances one binding: its consults, then its builder's round
-// (headless process or remote poll), and finally any pending planner payload.
+// (headless process or remote poll), and finally any pending mastermind payload.
 //
 // Reconcile does NOT persist anything: it returns the binding and the caller
 // must `tx.Save` it before releasing the lock. Everything it calls takes the
@@ -163,7 +163,7 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	// Consults reconcile before the builder is located, and before the DONE
 	// gate below, because they are orthogonal to both: a reviewer reading a
 	// diff has no stake in whether the builder's pane still exists, nor in
-	// whether the planner has already called the work done. Reconcile returns
+	// whether the mastermind has already called the work done. Reconcile returns
 	// early when the binding is done, when the builder is gone (below), and on
 	// the round-cap halt, and none of those should stop a consult finishing.
 	//
@@ -342,7 +342,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	reportPath, serr := writeReaderSummary(rt, b)
 	if serr != nil {
-		slog.Warn("reader summary not written", "binding", b.Name, "round", b.Round, "err", serr)
+		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 	}
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
@@ -371,7 +371,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// and it is the path the report entry records. A writer's report is the
 	// flat NNN-report.md the caller computed.
 	if p, err := writeReaderSummary(rt, b); err != nil {
-		slog.Warn("reader summary not written", "binding", b.Name, "round", b.Round, "err", err)
+		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", err)
 	} else {
 		path = p
 	}
@@ -406,7 +406,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		outcome = tail.Status
 	} else if reject != "" {
 		// A fence was present but unreadable: keep unstructured, but say why
-		// so the planner does not treat this as "the builder omitted the block".
+		// so the mastermind does not treat this as "the builder omitted the block".
 		note = joinNotes(note, reject)
 	}
 	sc := scanForInjection(ctx, rt, "report", b, body)
@@ -448,7 +448,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	payload = pFirst + pRest
 
 	closed := ""
-	if b.Shape != store.ShapeReader && !HasEntry(entries, b.Round, store.DirToPlanner, store.KindDiff) {
+	if b.Shape != store.ShapeReader && !HasEntry(entries, b.Round, store.DirToMasterMind, store.KindDiff) {
 		d := captureDeps(rt)
 		result := capture.RoundDiff(ctx, d, tx, b)
 		facts := capture.CommitFacts(ctx, d, b)
@@ -465,7 +465,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		diffEntry := store.LogEntry{
 			TS:        rt.Now().UTC(),
 			Round:     b.Round,
-			Direction: store.DirToPlanner,
+			Direction: store.DirToMasterMind,
 			Kind:      store.KindDiff,
 			Path:      result.Path,
 			Note:      diffNote,
@@ -521,7 +521,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 	entry := store.LogEntry{
 		TS: now, Round: b.Round,
-		Direction: store.DirToPlanner, Kind: store.KindReport,
+		Direction: store.DirToMasterMind, Kind: store.KindReport,
 		Path: path, Payload: payload, Note: note,
 		Usage:        entryUsage,
 		PriorTokens:  reportPrior,
@@ -541,14 +541,14 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		return b, err
 	}
 
-	// Strip the relevo block from a reader's summary.md. The parse above is
-	// the only reader of the block, and the file the planner reads must not
+	// Strip the relevo block from a reader's output file. The parse above is
+	// the only reader of the block, and the file the mastermind reads must not
 	// carry it. Stripping here, after the entry is queued, means the outcome
 	// survives a close that fails later and is retried on the next tick.
 	if b.Shape == store.ShapeReader {
 		if stripped := reporttail.StripTail(body); !bytes.Equal(stripped, body) {
 			if err := os.WriteFile(path, stripped, 0o644); err != nil {
-				slog.Warn("reader summary not stripped", "binding", b.Name, "round", b.Round, "err", err)
+				slog.Warn("reader output not stripped", "binding", b.Name, "round", b.Round, "err", err)
 			}
 		}
 	}
@@ -556,7 +556,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if stopped {
 		// Filed under the round that was stopped: b.Round advances below.
 		if err := tx.AppendLog(b.Name, store.LogEntry{
-			TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToPlanner,
+			TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind,
 			Kind: store.KindStop, Note: "stopped/graceful", Confirmed: true,
 		}); err != nil {
 			return b, err
@@ -568,7 +568,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 	// The new round has not been sent yet, so it has no deadline: leaving the
 	// old round's start in place would time the next round out against a clock
-	// that started before the planner had even seen this report. Send stamps a
+	// that started before the mastermind had even seen this report. Send stamps a
 	// fresh RoundStartedAt when it hands the round over.
 	b.RoundStartedAt = time.Time{}
 
@@ -632,7 +632,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 // `relevo wait` or the channel's own poll delivers it later (#303 §5.4).
 func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	if b.Owner != "" {
-		// Owned by a remote client: there is no planner. Payloads stay
+		// Owned by a remote client: there is no mastermind. Payloads stay
 		// queued; the owner reads them over the wire (remote-builders spec §6.2).
 		return b, nil
 	}

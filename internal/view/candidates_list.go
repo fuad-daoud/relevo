@@ -21,9 +21,9 @@ func FormatCandidates(set *candidate.Set, gates []availability.Gate) string {
 // candidates`: one line per token, sorted, with the roles it serves and any
 // extra args in brackets, and -- when gated -- a trailing note naming why and
 // until when. A token with successful probes in lat also carries its p50 time
-// to first output, so the planner can see what a candidate costs to start. It
+// to first output, so the mastermind can see what a candidate costs to start. It
 // is a listing, not a check -- zero candidates prints the same sentence the
-// bind refusal uses, so the planner learns the file name once.
+// bind refusal uses, so the mastermind learns the file name once.
 func FormatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat map[string]availability.Summary) string {
 	return formatCandidatesLatency(set, gates, lat, func(c candidate.Candidate) string {
 		return strings.Join(c.Roles, ", ")

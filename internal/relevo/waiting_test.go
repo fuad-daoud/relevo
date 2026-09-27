@@ -44,7 +44,7 @@ func TestWaitingOnYou(t *testing.T) {
 		t.Fatalf("write question: %v", err)
 	}
 	if err := rt.Store.AppendLog("a", store.LogEntry{
-		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToPlanner, Kind: store.KindQuestion,
+		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindQuestion,
 		Path: qPath, Payload: "Builder is blocked at a dialog.",
 	}); err != nil {
 		t.Fatalf("AppendLog a: %v", err)

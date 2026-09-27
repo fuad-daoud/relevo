@@ -81,11 +81,11 @@ func TestReconcileStopsAtRoundCap(t *testing.T) {
 	}
 }
 
-// TestReconcileTimeoutNotifiesOnceInEveryPlannerState is the regression test
+// TestReconcileTimeoutNotifiesOnceInEveryMasterMindState is the regression test
 // for the halt storm: at a 2s poll, a halt that re-records is a notification
 // every couple of seconds, forever, on a live desktop. Five ticks against a
 // timed-out binding must leave exactly one halt recorded for the round.
-func TestReconcileTimeoutNotifiesOnceInEveryPlannerState(t *testing.T) {
+func TestReconcileTimeoutNotifiesOnceInEveryMasterMindState(t *testing.T) {
 	t.Parallel()
 
 	rt, b := timedOutBinding(t)
@@ -127,8 +127,8 @@ func TestReconcileTimeoutNotifiesAgainInALaterRound(t *testing.T) {
 	b.RoundTimeoutMS = int((30 * time.Minute).Milliseconds())
 	b.RoundStartedAt = baseTime.Add(-31 * time.Minute)
 	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
-		TS: baseTime, Round: b.Round, Direction: store.DirToBuilder, Kind: store.KindPlan,
-		Path: rt.Store.PlanPath(b.Name, b.Round), Confirmed: true,
+		TS: baseTime, Round: b.Round, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+		Path: rt.Store.PromptPath(b.Name, b.Round), Confirmed: true,
 	}); err != nil {
 		t.Fatalf("seed round %d plan: %v", b.Round, err)
 	}

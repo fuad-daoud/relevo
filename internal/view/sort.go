@@ -3,7 +3,7 @@ package view
 import "sort"
 
 // attentionRank orders display states for a human: what needs a decision
-// first, what is waiting on the planner next, then what is working, then
+// first, what is waiting on the mastermind next, then what is working, then
 // what is finished. Unknown states (none today) sort after DONE.
 var attentionRank = map[string]int{
 	"NEEDS YOU": 0,
@@ -25,7 +25,7 @@ func rankOf(display string) int {
 // the serve ui. Then attention groups by display state -- NEEDS YOU, HELD,
 // ACTIVE, DONE -- and within a group puts the most recent Last.TS first (a
 // nil Last last), name as the tiebreak; name is the order Status has
-// always returned. With every label empty (a planner) the output is
+// always returned. With every label empty (a mastermind) the output is
 // exactly what the pre-owner implementation returned. Stable; never
 // mutates its input.
 func SortRows(rows []BindingStatus, attention bool) []BindingStatus {

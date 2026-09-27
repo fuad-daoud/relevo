@@ -26,13 +26,13 @@ type GitFacts interface {
 type SessionLocator func(kind, sessionID string) (path string, ok bool)
 
 // Deps are Ingest's optional collaborators. The zero value is usable: no repo is
-// resolved, no planner transcript is located, Now is time.Now and Logger is
+// resolved, no mastermind transcript is located, Now is time.Now and Logger is
 // slog.Default().
 type Deps struct {
 	// Git resolves a live binding's repo identity when bind.json carries no
 	// RepoRef. Nil means never resolve.
 	Git GitFacts
-	// Sessions locates a planner's own transcript file when bind.json carries
+	// Sessions locates a mastermind's own transcript file when bind.json carries
 	// no locator. Nil means never locate.
 	Sessions SessionLocator
 	Now      func() time.Time
@@ -165,7 +165,7 @@ func memberSet(src Source) (map[string]bool, error) {
 	return members, nil
 }
 
-// resolveRefs resolves git facts and the planner transcript locator before the
+// resolveRefs resolves git facts and the mastermind transcript locator before the
 // write transaction opens: repoRefFromGit shells out to git and Sessions searches
 // the disk, and holding the write lock across either starves every other writer.
 func resolveRefs(ctx context.Context, deps Deps, b store.Binding, kind string) (*store.RepoRef, string) {
@@ -176,9 +176,9 @@ func resolveRefs(ctx context.Context, deps Deps, b store.Binding, kind string) (
 			ref = repoRefFromGit(ctx, deps.Git, b.Repo)
 		}
 	}
-	locator := b.Planner.TranscriptLocator
-	if locator == "" && deps.Sessions != nil && b.Planner.SessionID != "" && kind == "live" {
-		if p, ok := deps.Sessions(b.Planner.Kind, b.Planner.SessionID); ok {
+	locator := b.MasterMind.TranscriptLocator
+	if locator == "" && deps.Sessions != nil && b.MasterMind.SessionID != "" && kind == "live" {
+		if p, ok := deps.Sessions(b.MasterMind.Kind, b.MasterMind.SessionID); ok {
 			locator = p
 		}
 	}
@@ -203,7 +203,7 @@ func (r *ingestRun) run(tx *db.Tx) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	plannerID, err := r.upsertPlanner(tx)
+	mastermindID, err := r.upsertMasterMind(tx)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -211,7 +211,7 @@ func (r *ingestRun) run(tx *db.Tx) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	bindingID, err := r.upsertBinding(tx, repoID, plannerID, log)
+	bindingID, err := r.upsertBinding(tx, repoID, mastermindID, log)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -226,7 +226,7 @@ func (r *ingestRun) run(tx *db.Tx) (Stats, error) {
 	if err := linkEventsToRounds(tx, bindingID, roundIDs); err != nil {
 		return Stats{}, fmt.Errorf("link events to rounds: %w", err)
 	}
-	if err := r.appendPlannerTranscript(tx, plannerID); err != nil {
+	if err := r.appendMasterMindTranscript(tx, mastermindID); err != nil {
 		return Stats{}, err
 	}
 

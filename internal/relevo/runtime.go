@@ -1,6 +1,6 @@
 // Package relevo implements the handoff policy: which text moves between a
-// planner and a builder, when, and when to stop. It holds no intelligence --
-// every judgement stays with the planner agent.
+// mastermind and a builder, when, and when to stop. It holds no intelligence --
+// every judgement stays with the mastermind agent.
 package relevo
 
 import (
@@ -21,7 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/ingest"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -155,7 +155,7 @@ type Runtime struct {
 	// only for a runtime built by newRuntimePeek, which opens no database.
 	Config *config.Store
 
-	// Policy is ~/.config/relevo/policy.json: the planner's candidate order
+	// Policy is ~/.config/relevo/policy.json: the mastermind's candidate order
 	// per role (#61 step 2). The zero value means nothing is ordered, so
 	// tests that do not set it behave as a machine with no policy file.
 	Policy policy.Policy
@@ -180,8 +180,8 @@ type Runtime struct {
 	Usage usage.Reader
 
 	// Sessions locates a session record so a round's transcript can be
-	// recorded (#184). plannerLocator (bind.go) also calls it at bind time
-	// to fill Planner.TranscriptLocator (#172), the same file path, for the
+	// recorded (#184). mastermindLocator (bind.go) also calls it at bind time
+	// to fill MasterMind.TranscriptLocator (#172), the same file path, for the
 	// coming history database.
 	Sessions SessionLocator
 
@@ -247,21 +247,21 @@ type Runtime struct {
 	// owners.
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)
 
-	// Channels arbitrates a planner's mailbox between the daemon and a live
-	// `relevo mcp` channel (docs/specs/2026-09-21-planner-channel-design.md).
+	// Channels arbitrates a mastermind's mailbox between the daemon and a live
+	// `relevo mcp` channel (docs/specs/2026-09-21-mastermind-channel-design.md).
 	// Nil means no claims exist, so DeliverPending leaves the entry pending
 	// for `relevo wait`; cmd/relevo wires delivery.KVClaims.
 	Channels delivery.ClaimStore
 
-	// Planners is the planner registry (#303 step 1a). bind, add, fork and
-	// ask resolve their planner through it, and the daemon back-fills a
-	// binding written before PlannerID existed. Nil means no registry is
+	// MasterMinds is the mastermind registry (#303 step 1a). bind, add, fork and
+	// ask resolve their mastermind through it, and the daemon back-fills a
+	// binding written before MasterMindID existed. Nil means no registry is
 	// configured -- tests, and any embedded caller that predates it -- and
-	// resolution then fails with ErrNoPlanner.
-	Planners planner.Registry
+	// resolution then fails with ErrNoMasterMind.
+	MasterMinds mastermind.Registry
 
 	// ProcStart reads a process's start time in Unix seconds, the pid-reuse
-	// defence planner.Resolve's host step needs. Nil means the host step
+	// defence mastermind.Resolve's host step needs. Nil means the host step
 	// cannot run, and resolution falls through to the session.
 	ProcStart func(pid int) (int64, error)
 
@@ -269,10 +269,10 @@ type Runtime struct {
 	// Nil when sqlite3 is not on PATH or not configured.
 	OpencodeSession func(cwd string, now time.Time) (string, error)
 
-	// Deliverers routes a planner-bound payload to that planner kind's own
+	// Deliverers routes a mastermind-bound payload to that mastermind kind's own
 	// push path (docs/specs/2026-09-22-opencode-delivery-design.md). A kind
 	// with no entry, and a nil map, leave the entry pending for `relevo wait`.
-	Deliverers map[string]delivery.PlannerDeliverer
+	Deliverers map[string]delivery.MasterMindDeliverer
 
 	// SessionReaper deletes harness sessions relevo abandoned, so a harness
 	// that resumes its own sessions cannot restart a round relevo wrote off.
@@ -391,11 +391,11 @@ func consultDeps(rt Runtime) consult.Deps {
 // since the assignment is between identical interface types.
 func deliveryDeps(rt Runtime) delivery.Deps {
 	return delivery.Deps{
-		Store:      rt.Store,
-		Now:        rt.Now,
-		Channels:   rt.Channels,
-		Deliverers: rt.Deliverers,
-		Planners:   rt.Planners,
+		Store:       rt.Store,
+		Now:         rt.Now,
+		Channels:    rt.Channels,
+		Deliverers:  rt.Deliverers,
+		MasterMinds: rt.MasterMinds,
 	}
 }
 

@@ -196,7 +196,7 @@ func TestCodexExitIsNotNudged(t *testing.T) {
 	rt.Candidates = candidateSet(t, codexCandidatesJSON)
 	rt.Runner = fr
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "codex/openai/gpt-5.6-terra", PlannerID: testPlannerName,
+		Name: "webshop", Candidate: "codex/openai/gpt-5.6-terra", MasterMindID: testMasterMindName,
 		CWD: "/repo", Headless: true, Tier: "edit",
 	}); err != nil {
 		t.Fatalf("Bind --headless: %v", err)
@@ -258,7 +258,7 @@ func TestResendAllowsAnotherNudge(t *testing.T) {
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		return tx.AppendLog("webshop", store.LogEntry{
 			TS: rt.Now().UTC(), Round: 1, Direction: store.DirToBuilder,
-			Kind: store.KindPlan, Confirmed: true, Note: "resend",
+			Kind: store.KindPrompt, Confirmed: true, Note: "resend",
 		})
 	}); err != nil {
 		t.Fatalf("append resend plan: %v", err)
@@ -300,7 +300,7 @@ func TestLimitExitIsGatedNotNudged(t *testing.T) {
 	rt.Candidates = candidateSet(t, testTwoProviderJSON)
 	rt.Policy = orderOf("builder", testClaudeRef, otherRef)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testClaudeRef, PlannerID: testPlannerName,
+		Name: "webshop", Candidate: testClaudeRef, MasterMindID: testMasterMindName,
 		CWD: "/repo", Headless: true, Tier: "edit",
 	}); err != nil {
 		t.Fatalf("Bind --headless: %v", err)

@@ -15,7 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/doctor"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -233,18 +233,18 @@ func policyExample(role string, serving []string) string {
 	return string(b)
 }
 
-// stalePlannerAge is how old a planner record's seen_at must be before the
+// staleMasterMindAge is how old a mastermind record's seen_at must be before the
 // stale-record note names it (§4.8, row 5).
-const stalePlannerAge = 7 * 24 * time.Hour
+const staleMasterMindAge = 7 * 24 * time.Hour
 
-// plannerCheckInput gathers §4.8's planner-row facts: which planners exist,
+// mastermindCheckInput gathers §4.8's mastermind-row facts: which masterminds exist,
 // whether this process runs inside Claude Code, and whether the resolved
-// planner has a live channel claim. Every read is best-effort -- a fact relevo
+// mastermind has a live channel claim. Every read is best-effort -- a fact relevo
 // cannot establish reads as absent, and the checks say "not checked" rather
 // than guessing. Home comes from $HOME so the row reads the same directory
 // cmd/relevo's TestMain isolated.
-func plannerCheckInput(rt relevo.Runtime, kinds []string) doctor.PlannerCheckInput {
-	in := doctor.PlannerCheckInput{Home: os.Getenv("HOME"), Running: buildVersion()}
+func mastermindCheckInput(rt relevo.Runtime, kinds []string) doctor.MasterMindCheckInput {
+	in := doctor.MasterMindCheckInput{Home: os.Getenv("HOME"), Running: buildVersion()}
 	if wd, err := os.Getwd(); err == nil {
 		in.Repo = wd
 	}
@@ -254,9 +254,9 @@ func plannerCheckInput(rt relevo.Runtime, kinds []string) doctor.PlannerCheckInp
 		}
 	}
 
-	records := []planner.Record{}
-	if rt.Planners != nil {
-		if recs, err := rt.Planners.List(); err == nil {
+	records := []mastermind.Record{}
+	if rt.MasterMinds != nil {
+		if recs, err := rt.MasterMinds.List(); err == nil {
 			records = recs
 		}
 	}
@@ -265,14 +265,14 @@ func plannerCheckInput(rt relevo.Runtime, kinds []string) doctor.PlannerCheckInp
 	if rt.Store != nil {
 		if bindings, err := rt.Store.List(); err == nil {
 			for _, b := range bindings {
-				if b.State != store.StateDone && b.PlannerID != "" {
-					live[b.PlannerID] = true
+				if b.State != store.StateDone && b.MasterMindID != "" {
+					live[b.MasterMindID] = true
 				}
 			}
 		}
 	}
 
-	cutoff := rt.Now().Add(-stalePlannerAge)
+	cutoff := rt.Now().Add(-staleMasterMindAge)
 	for _, rec := range records {
 		if rec.HarnessKind == "claude" {
 			in.Claude = true
@@ -282,11 +282,11 @@ func plannerCheckInput(rt relevo.Runtime, kinds []string) doctor.PlannerCheckInp
 		}
 	}
 
-	if ident, ok := planner.Detect(os.Getenv, os.Getppid()); ok && ident.Kind == "claude" {
+	if ident, ok := mastermind.Detect(os.Getenv, os.Getppid()); ok && ident.Kind == "claude" {
 		in.Detected = true
 		in.MCPChild = HasMCPChild(hostChildProcesses(ident.HostPID))
-		if rt.Planners != nil {
-			rec, _, err := planner.Resolve(rt.Planners, planner.ResolveInput{
+		if rt.MasterMinds != nil {
+			rec, _, err := mastermind.Resolve(rt.MasterMinds, mastermind.ResolveInput{
 				Env:       os.Getenv,
 				PPID:      os.Getppid(),
 				ProcStart: rt.ProcStart,
@@ -294,8 +294,8 @@ func plannerCheckInput(rt relevo.Runtime, kinds []string) doctor.PlannerCheckInp
 			})
 			if err == nil {
 				in.Resolved = &rec
-				// #386: the planner's chat label, read here so the row can
-				// name the planner as the harness does. An empty label
+				// #386: the mastermind's chat label, read here so the row can
+				// name the mastermind as the harness does. An empty label
 				// leaves the detail byte-identical.
 				if lbl := chatResolver().Resolve(context.Background(), rec.HarnessKind, rec.SessionID, rec.TranscriptLocator); lbl != (chatlabel.Label{}) {
 					in.Chat = lbl.String()

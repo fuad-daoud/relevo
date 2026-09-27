@@ -44,16 +44,16 @@ func filterReport(rep view.Report, name string) (view.Report, error) {
 	return view.Report{}, fmt.Errorf("no binding named %q", name)
 }
 
-// filterReportPlanner narrows a status report to one planner's bindings. It
+// filterReportMasterMind narrows a status report to one mastermind's bindings. It
 // is a pure function so the rule is testable without a harness. An empty
-// planner id keeps every row, which is what a runtime with no registry gets.
-func filterReportPlanner(rep view.Report, plannerID string) view.Report {
-	if plannerID == "" {
+// mastermind id keeps every row, which is what a runtime with no registry gets.
+func filterReportMasterMind(rep view.Report, mastermindID string) view.Report {
+	if mastermindID == "" {
 		return rep
 	}
 	kept := rep.Bindings[:0:0]
 	for _, b := range rep.Bindings {
-		if b.PlannerID == plannerID {
+		if b.MasterMindID == mastermindID {
 			kept = append(kept, b)
 		}
 	}
@@ -66,13 +66,13 @@ func cmdStatus(args []string) error {
 	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo unbind --done clears them)")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	name := fs.String("name", "", "show only this binding (default: all)")
-	line := fs.Bool("line", false, "this planner's builders, one row each, for Claude Code's statusLine setting; with --json, output as JSON")
+	line := fs.Bool("line", false, "this mastermind's builders, one row each, for Claude Code's statusLine setting; with --json, output as JSON")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	// --line is today's statusline: one row per builder of the calling
-	// planner, so it takes no binding and no other output mode (§4.5).
+	// mastermind, so it takes no binding and no other output mode (§4.5).
 	if *line {
 		if *all || *name != "" || len(fs.Args()) > 0 {
 			fmt.Fprintln(os.Stderr, "relevo: --line cannot be combined with --all/--name")
@@ -100,12 +100,12 @@ func cmdStatus(args []string) error {
 		return err
 	}
 
-	// §3.3: a bare `relevo status` shows the calling planner's bindings. A
-	// session with no planner -- no registry, no match -- keeps the old
+	// §3.3: a bare `relevo status` shows the calling mastermind's bindings. A
+	// session with no mastermind -- no registry, no match -- keeps the old
 	// behaviour and lists everything.
 	if target == "" {
-		if rec, ok := plannerFilter(rt); ok {
-			rep = filterReportPlanner(rep, rec.ID)
+		if rec, ok := mastermindFilter(rt); ok {
+			rep = filterReportMasterMind(rep, rec.ID)
 		}
 	}
 
@@ -115,10 +115,10 @@ func cmdStatus(args []string) error {
 	}
 	rep = scopeReport(rep, target, *all)
 
-	// #386: the planner's chat label is computed here, in the command a
+	// #386: the mastermind's chat label is computed here, in the command a
 	// person ran, and only printed. internal/relevo.Status leaves it empty,
 	// so no label is ever computed on, or sent to, a server.
-	annotatePlannerChat(rt, &rep, chatResolver())
+	annotateMasterMindChat(rt, &rep, chatResolver())
 
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -160,7 +160,7 @@ func cmdStatus(args []string) error {
 
 // runStatusline is statusline's body (the old cmdStatusline), now reached
 // through `status --line` (§4.5): the same output, COLUMNS,
-// RELEVO_STATUSLINE_MARGIN and planner filtering. With asJSON, it prints
+// RELEVO_STATUSLINE_MARGIN and mastermind filtering. With asJSON, it prints
 // StatusLineDoc as JSON.
 func runStatusline(asJSON bool) error {
 	if fi, err := os.Stdin.Stat(); err != nil || view.ShouldDrainStdin(fi.Mode()) {
@@ -177,19 +177,19 @@ func runStatusline(asJSON bool) error {
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
 			return nil
 		}
-		// §3.3: the row set is the calling planner's bindings. A session with no
-		// planner renders nothing, the same as no planner did
+		// §3.3: the row set is the calling mastermind's bindings. A session with no
+		// mastermind renders nothing, the same as no mastermind did
 		// before #303.
-		rec, ok := plannerFilter(rt)
+		rec, ok := mastermindFilter(rt)
 		if !ok {
 			return nil
 		}
-		// #386: the first line names the planner, so each terminal shows which
-		// planner it is. It is printed before PlannerStatus and survives a
-		// PlannerStatus failure: the line is the planner's identity, not a
+		// #386: the first line names the mastermind, so each terminal shows which
+		// mastermind it is. It is printed before MasterMindStatus and survives a
+		// MasterMindStatus failure: the line is the mastermind's identity, not a
 		// binding row.
-		fmt.Print(view.RenderPlannerLine(rec.Name, columns))
-		rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
+		fmt.Print(view.RenderMasterMindLine(rec.Name, columns))
+		rep, err := relevo.MasterMindStatus(context.Background(), rt, rec.ID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
 			return nil
@@ -205,12 +205,12 @@ func runStatusline(asJSON bool) error {
 		fmt.Println(string(data))
 		return nil
 	}
-	rec, ok := plannerFilter(rt)
+	rec, ok := mastermindFilter(rt)
 	now := rt.Now().UTC()
 	doc := view.StatusLineDoc{Now: now, Rows: []view.StatusLineRow{}}
 	if ok {
-		doc.Planner = &view.StatusLinePlanner{ID: rec.ID, Name: rec.Name}
-		rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
+		doc.MasterMind = &view.StatusLineMasterMind{ID: rec.ID, Name: rec.Name}
+		rep, err := relevo.MasterMindStatus(context.Background(), rt, rec.ID)
 		if err == nil {
 			doc.Rows = view.StatusLineRows(rep, rt.Now())
 		} else {

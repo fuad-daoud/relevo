@@ -92,9 +92,9 @@ func TestActorShape(t *testing.T) {
 
 // TestBindUnknownRoleRefused pins #382 §6: an unknown role is refused before
 // any candidate resolution or launch. The plan asked for this through the
-// cmd/relevo CLI, but cmdBind resolves this session's planner (in BindResolved)
-// before create runs actorShape, so a CLI run without a planner stops on
-// ErrNoPlannerSession -- the role refusal is only reachable through
+// cmd/relevo CLI, but cmdBind resolves this session's mastermind (in BindResolved)
+// before create runs actorShape, so a CLI run without a mastermind stops on
+// ErrNoMasterMindSession -- the role refusal is only reachable through
 // relevo.Bind, which is what this test drives (the plan's §7 test 3 fallback).
 func TestBindUnknownRoleRefused(t *testing.T) {
 	t.Parallel()
@@ -106,7 +106,7 @@ func TestBindUnknownRoleRefused(t *testing.T) {
 
 	_, err := Bind(context.Background(), rt, BindOptions{
 		Name: "n", Role: "nope", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/nope-repo",
+		MasterMindID: testMasterMindName, CWD: "/nope-repo",
 	})
 	if err == nil {
 		t.Fatal("Bind(--actor nope) = nil, want an error")
@@ -132,7 +132,7 @@ func TestBindCustomWriterLaunchesItsDefinition(t *testing.T) {
 	rt.Runner = fr
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name: "ui-bound", Role: "ui-builder", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/ui-repo", Headless: true,
+		MasterMindID: testMasterMindName, CWD: "/ui-repo", Headless: true,
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -170,7 +170,7 @@ func TestBindCustomWriterPicksFromItsList(t *testing.T) {
 	})
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "picked", Role: "ui-builder", PlannerID: testPlannerName, CWD: "/picked-repo",
+		Name: "picked", Role: "ui-builder", MasterMindID: testMasterMindName, CWD: "/picked-repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -188,7 +188,7 @@ func TestBindAReaderRecordsItsShape(t *testing.T) {
 	rt := newRuntime(t)
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name: "reader-bind", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/reader-repo",
+		MasterMindID: testMasterMindName, CWD: "/reader-repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind(--actor reviewer): %v", err)
@@ -213,14 +213,14 @@ func TestReaderSharesAWritersTree(t *testing.T) {
 
 	rt := newRuntime(t)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "writer", Candidate: testClaudeRef, PlannerID: testPlannerName, CWD: "/shared-tree",
+		Name: "writer", Candidate: testClaudeRef, MasterMindID: testMasterMindName, CWD: "/shared-tree",
 	}); err != nil {
 		t.Fatalf("bind writer: %v", err)
 	}
 
 	reader, err := Bind(context.Background(), rt, BindOptions{
 		Name: "reviewer-bind", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/shared-tree",
+		MasterMindID: testMasterMindName, CWD: "/shared-tree",
 	})
 	if err != nil {
 		t.Fatalf("bind a reader on a writer's tree: %v", err)
@@ -230,7 +230,7 @@ func TestReaderSharesAWritersTree(t *testing.T) {
 	}
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "writer2", Candidate: testClaudeRef, PlannerID: testPlannerName, CWD: "/shared-tree",
+		Name: "writer2", Candidate: testClaudeRef, MasterMindID: testMasterMindName, CWD: "/shared-tree",
 	}); !errors.Is(err, store.ErrCWDTaken) {
 		t.Fatalf("second writer err = %v, want ErrCWDTaken", err)
 	}
@@ -248,7 +248,7 @@ func TestReaderRefusesGateRegateAndVerify(t *testing.T) {
 
 	_, err := Bind(context.Background(), rt, BindOptions{
 		Name: "rev-gate", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/rev-gate", Gate: "make check",
+		MasterMindID: testMasterMindName, CWD: "/rev-gate", Gate: "make check",
 	})
 	if err == nil || !strings.Contains(err.Error(), "--gate") || !strings.Contains(err.Error(), "a reader round has no check") {
 		t.Fatalf("Bind(--gate on a reader) = %v, want the --gate refusal", err)
@@ -256,7 +256,7 @@ func TestReaderRefusesGateRegateAndVerify(t *testing.T) {
 
 	_, err = Bind(context.Background(), rt, BindOptions{
 		Name: "rev-regate", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/rev-regate", Regate: ptr(3),
+		MasterMindID: testMasterMindName, CWD: "/rev-regate", Regate: ptr(3),
 	})
 	if err == nil || !strings.Contains(err.Error(), "--regate") || !strings.Contains(err.Error(), "a reader round has no check") {
 		t.Fatalf("Bind(--regate on a reader) = %v, want the --regate refusal", err)
@@ -264,7 +264,7 @@ func TestReaderRefusesGateRegateAndVerify(t *testing.T) {
 
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name: "rev-plain", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/rev-plain",
+		MasterMindID: testMasterMindName, CWD: "/rev-plain",
 	})
 	if err != nil {
 		t.Fatalf("Bind(a plain reader): %v", err)
@@ -297,7 +297,7 @@ func TestRemoteReaderIsRefusedLocally(t *testing.T) {
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "remote-reader", Role: "reviewer", Server: "s",
-		PlannerID: testPlannerName, Repo: "/repo",
+		MasterMindID: testMasterMindName, Repo: "/repo",
 	})
 	if err == nil || !strings.Contains(err.Error(), "reader actors run locally only; bind without --server") {
 		t.Fatalf("Add(--server --actor reviewer) = %v, want the local-only refusal", err)
@@ -337,7 +337,7 @@ func TestGateFollowsRole(t *testing.T) {
 		t.Helper()
 		b, err := Bind(context.Background(), rt, BindOptions{
 			Name: name, Role: role, Candidate: testClaudeRef,
-			PlannerID: testPlannerName, CWD: "/" + name, Gate: gate,
+			MasterMindID: testMasterMindName, CWD: "/" + name, Gate: gate,
 		})
 		if err != nil {
 			t.Fatalf("Bind(%s, role %q): %v", name, role, err)
@@ -382,7 +382,7 @@ func TestSwitchPicksFromRoleList(t *testing.T) {
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Role: "ui-builder", Candidate: "claude/p1/b",
-		PlannerID: testPlannerName, CWD: "/repo", Headless: true,
+		MasterMindID: testMasterMindName, CWD: "/repo", Headless: true,
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 	rt.Runner = fr
 
 	if err := rt.Store.Save(store.Binding{
-		Name: "gone-bind", CWD: "/gone-repo", PlannerID: testPlannerID,
+		Name: "gone-bind", CWD: "/gone-repo", MasterMindID: testMasterMindID,
 		BuilderCandidate: testClaudeRef, Role: "gone",
 		Round: 1, State: store.StateActive,
 	}); err != nil {
@@ -472,7 +472,7 @@ func TestAddCustomRoleOnServerRefused(t *testing.T) {
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "remote-ui", Role: "ui-builder", Server: "s",
-		PlannerID: testPlannerName, Repo: "/repo",
+		MasterMindID: testMasterMindName, Repo: "/repo",
 	})
 	if err == nil {
 		t.Fatal("Add(--server with a custom role) = nil, want the upgrade-it error")

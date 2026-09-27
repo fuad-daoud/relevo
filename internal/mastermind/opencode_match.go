@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 import (
 	"errors"
@@ -36,7 +36,7 @@ type ErrAmbiguousOpencodeSession struct {
 }
 
 func (e ErrAmbiguousOpencodeSession) Error() string {
-	return fmt.Sprintf("two OpenCode sessions are active in %s: %s; pass --planner", e.Dir, strings.Join(e.Titles, ", "))
+	return fmt.Sprintf("two OpenCode sessions are active in %s: %s; pass --mastermind", e.Dir, strings.Join(e.Titles, ", "))
 }
 
 func (e ErrAmbiguousOpencodeSession) Is(target error) bool {

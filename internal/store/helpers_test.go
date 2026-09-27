@@ -15,7 +15,7 @@ func newBinding(name, cwd string) Binding {
 	return Binding{
 		Name:             name,
 		CWD:              cwd,
-		Planner:          Endpoint{PaneID: "w2:p3", SessionID: "abc", Kind: "claude"},
+		MasterMind:       Endpoint{PaneID: "w2:p3", SessionID: "abc", Kind: "claude"},
 		Builder:          Endpoint{AgentName: name + "-builder", PaneID: "w2:p4", Kind: "opencode"},
 		BuilderCandidate: "builder",
 		Round:            1,

@@ -1,7 +1,7 @@
 {
   "name": "relevo",
   "displayName": "relevo",
-  "description": "Planner/runner handoff: runner reports and NEEDS YOU pushed into this session; status/send/done as tools",
+  "description": "MasterMind/runner handoff: runner reports and NEEDS YOU pushed into this session; status/send/done as tools",
   "version": "0.14.0",
   "author": {"name": "Fuad Daoud"},
   "repository": "https://github.com/fuad-daoud/relevo",

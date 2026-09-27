@@ -18,7 +18,7 @@ func TestRenderStatusShowsDetailLine(t *testing.T) {
 		Name: "doctor", CWD: "/repo", Round: 3,
 		Display:          "NEEDS YOU",
 		BuilderCandidate: testAgyRef,
-		PlannerKind:      "claude", BuilderKind: "agy", BuilderStatus: "gone",
+		MasterMindKind:   "claude", BuilderKind: "agy", BuilderStatus: "gone",
 		Detail: "round 2 report delivered; nothing outstanding -- unless you want another round",
 	}}})
 
@@ -35,41 +35,41 @@ func TestRenderStatusShowsDetailLine(t *testing.T) {
 	}
 }
 
-// TestRenderStatusPlannerChat is the status surface: a row whose planner
+// TestRenderStatusMasterMindChat is the status surface: a row whose mastermind
 // carries a chat label and a link shows them after its route, and a row that
 // carries neither is byte-identical to the line before these fields existed.
-func TestRenderStatusPlannerChat(t *testing.T) {
+func TestRenderStatusMasterMindChat(t *testing.T) {
 	t.Parallel()
 
 	out := RenderStatus(Report{Bindings: []BindingStatus{
 		{
 			Name: "one", CWD: "/a", Round: 1, Display: "ACTIVE",
-			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "pull",
-			PlannerChatLabel: `"fix the flake"`, PlannerChatLink: "https://claude.ai/code/session_01TEST",
+			MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "pull",
+			MasterMindChatLabel: `"fix the flake"`, MasterMindChatLink: "https://claude.ai/code/session_01TEST",
 		},
 		{
 			Name: "two", CWD: "/b", Round: 1, Display: "ACTIVE",
-			PlannerName: "architect-2", PlannerKind: "claude", PlannerRoute: "pull",
+			MasterMindName: "architect-2", MasterMindKind: "claude", MasterMindRoute: "pull",
 		},
 	}})
 
-	var plannerLines []string
+	var mastermindLines []string
 	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "  planner  ") {
-			plannerLines = append(plannerLines, line)
+		if strings.HasPrefix(line, "  MasterMind  ") {
+			mastermindLines = append(mastermindLines, line)
 		}
 	}
-	if len(plannerLines) != 2 {
-		t.Fatalf("got %d planner lines, want 2:\n%s", len(plannerLines), out)
+	if len(mastermindLines) != 2 {
+		t.Fatalf("got %d mastermind lines, want 2:\n%s", len(mastermindLines), out)
 	}
 
 	wantFirst := `route pull · "fix the flake" · https://claude.ai/code/session_01TEST`
-	if !strings.HasSuffix(plannerLines[0], wantFirst) {
-		t.Errorf("planner line %q does not end with %q", plannerLines[0], wantFirst)
+	if !strings.HasSuffix(mastermindLines[0], wantFirst) {
+		t.Errorf("mastermind line %q does not end with %q", mastermindLines[0], wantFirst)
 	}
 	// Row two has neither field set, so nothing follows its route.
-	if !strings.HasSuffix(plannerLines[1], "route pull") {
-		t.Errorf("planner line %q does not end with %q", plannerLines[1], "route pull")
+	if !strings.HasSuffix(mastermindLines[1], "route pull") {
+		t.Errorf("mastermind line %q does not end with %q", mastermindLines[1], "route pull")
 	}
 }
 func TestRenderStatusOmitsEmptyDetail(t *testing.T) {
@@ -77,7 +77,7 @@ func TestRenderStatusOmitsEmptyDetail(t *testing.T) {
 
 	out := RenderStatus(Report{Bindings: []BindingStatus{{
 		Name: "ok", CWD: "/repo", Round: 1, Display: "ACTIVE",
-		PlannerKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
+		MasterMindKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
 		BuilderCandidate: testAgyRef,
 	}}})
 
@@ -194,7 +194,7 @@ func TestRenderStatusGatedBlock(t *testing.T) {
 	r := Report{
 		Bindings: []BindingStatus{{
 			Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
-			PlannerKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
+			MasterMindKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
 			BuilderCandidate: testAgyRef,
 		}},
 		Gated: []availability.Gate{
@@ -245,7 +245,7 @@ func TestRenderStatusNoGatesIsUnchanged(t *testing.T) {
 	r := Report{
 		Bindings: []BindingStatus{{
 			Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
-			PlannerKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
+			MasterMindKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
 			BuilderCandidate: testAgyRef,
 		}},
 		Gated: nil,
@@ -275,7 +275,7 @@ func TestBindingStatusKey(t *testing.T) {
 	t.Parallel()
 
 	if got := (BindingStatus{Name: "api"}).Key(); got != "api" {
-		t.Errorf("planner key = %q, want api", got)
+		t.Errorf("mastermind key = %q, want api", got)
 	}
 	if got := (BindingStatus{Name: "api", Owner: "SHA256:abc"}).Key(); got != "SHA256:abc/api" {
 		t.Errorf("server key = %q, want SHA256:abc/api", got)
@@ -383,7 +383,7 @@ func TestRenderStatusOutcome(t *testing.T) {
 				{
 					Name: "b1", Round: 1, State: "active", Display: "ACTIVE",
 					Last: &LastEvent{
-						TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+						TS: ts, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 						Note: "noreport", Outcome: "halted",
 					},
 				},
@@ -403,7 +403,7 @@ func TestRenderStatusOutcome(t *testing.T) {
 				{
 					Name: "b1", Round: 1, State: "active", Display: "ACTIVE",
 					Last: &LastEvent{
-						TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+						TS: ts, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 						Outcome: "done",
 					},
 				},
@@ -444,7 +444,7 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 		},
 		wantStart: rfT0,
 		wantEnd:   time.Time{},
@@ -453,8 +453,8 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1, report r1 with usage",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT1, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: rfU1},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT1, Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: rfU1},
 		},
 		wantStart: rfT0,
 		wantEnd:   rfT1,
@@ -463,9 +463,9 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1, report r1 (usage U1), plan r2",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT1, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: rfU1},
-			{TS: rfT2, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT1, Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: rfU1},
+			{TS: rfT2, Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 		},
 		wantStart: rfT2,
 		wantEnd:   time.Time{},
@@ -474,9 +474,9 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r2, later plan r2 (nudge or switch), report r2",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT1, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT2, Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: rfU1},
+			{TS: rfT0, Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT1, Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT2, Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: rfU1},
 		},
 		wantStart: rfT0,
 		wantEnd:   rfT2,
@@ -485,10 +485,10 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1, report r1 (U1), plan r2, report r2 with nil usage",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT1, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: rfU1},
-			{TS: rfT2, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT3, Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: nil},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT1, Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: rfU1},
+			{TS: rfT2, Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT3, Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: nil},
 		},
 		wantStart: rfT2,
 		wantEnd:   rfT3,
@@ -497,9 +497,9 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1, findings entry with usage, question and answer entries",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT1, Round: 1, Kind: store.KindFindings, Direction: store.DirToPlanner, Usage: rfU1},
-			{TS: rfT2, Round: 1, Kind: store.KindQuestion, Direction: store.DirToPlanner},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT1, Round: 1, Kind: store.KindFindings, Direction: store.DirToMasterMind, Usage: rfU1},
+			{TS: rfT2, Round: 1, Kind: store.KindQuestion, Direction: store.DirToMasterMind},
 			{TS: rfT3, Round: 1, Kind: store.KindAnswer, Direction: store.DirToBuilder},
 		},
 		wantStart: rfT0,
@@ -509,9 +509,9 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1, plan r2, late report r1 with usage",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT1, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT2, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: rfU1},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT1, Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT2, Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: rfU1},
 		},
 		wantStart: rfT1,
 		wantEnd:   time.Time{},
@@ -689,7 +689,7 @@ func TestPriorTokensOf(t *testing.T) {
 		{
 			name:    "no switches",
 			round:   1,
-			entries: []store.LogEntry{{Round: 1, Kind: store.KindPlan}},
+			entries: []store.LogEntry{{Round: 1, Kind: store.KindPrompt}},
 			want:    usage.Tokens{},
 		},
 		{
@@ -715,7 +715,7 @@ func TestPriorTokensOf(t *testing.T) {
 			round: 1,
 			entries: []store.LogEntry{
 				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}}},
-				{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, PriorTokens: &usage.Tokens{In: 400, Out: 150}},
+				{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, PriorTokens: &usage.Tokens{In: 400, Out: 150}},
 			},
 			want: usage.Tokens{In: 500, Out: 200},
 		},

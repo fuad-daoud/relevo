@@ -63,7 +63,7 @@ func lastReportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool)
 	var last store.LogEntry
 	found := false
 	for _, e := range entries {
-		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindReport {
 			last, found = e, true
 		}
 	}
@@ -71,13 +71,13 @@ func lastReportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool)
 }
 
 // DefaultWaitRound is the round `relevo wait` waits on when --round is not
-// given: the highest round among to_builder/plan entries (a nudge is not a
-// send, so entries noted nudgeNote are excluded, as HasEntry excludes them);
-// b.Round when there is none (spec §4.5, decision 7).
+// given: the highest round among to_builder/prompt entries (a nudge is not a
+// send, so entries noted nudgeNote are excluded, as HasPromptEntry excludes
+// them); b.Round when there is none (spec §4.5, decision 7).
 func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 	round := 0
 	for _, e := range entries {
-		if e.Direction == store.DirToBuilder && e.Kind == store.KindPlan && e.Note != nudgeNote && e.Round > round {
+		if e.Direction == store.DirToBuilder && store.IsPromptKind(e.Kind) && e.Note != nudgeNote && e.Round > round {
 			round = e.Round
 		}
 	}
@@ -95,7 +95,7 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 	if e, ok := lastReportEntry(entries, round); ok {
 		code := WaitClosed
 		// a marked round that halted is 5, not 0; an unmarked round that halted is
-		// also 5 -- the planner has to read why either way.
+		// also 5 -- the mastermind has to read why either way.
 		if e.Outcome == reporttail.OutcomeHalted || e.Outcome == reporttail.OutcomeBlocked {
 			code = WaitHalted
 		} else if e.Note != "" {
@@ -117,9 +117,9 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 	}
 
 	// Nothing in flight: the round was never sent, so no later poll can see
-	// it close. A nudge is not a send, so HasEntry excludes it, as
+	// it close. A nudge is not a send, so HasPromptEntry excludes it, as
 	// DefaultWaitRound does.
-	if !HasEntry(entries, round, store.DirToBuilder, store.KindPlan) {
+	if !HasPromptEntry(entries, round) {
 		return WaitResult{
 			Code: WaitNotStarted,
 			Line: fmt.Sprintf("round %d was never sent to %s's runner", round, b.Name),
@@ -149,7 +149,7 @@ func waitDeliverable(code int) bool {
 // Wait polls the store until one of opts.Names closes its
 // round, needs a human, or is gone, or opts.Timeout elapses, per spec §4.7.
 // On an exit that delivers (every code but WaitTimeout and WaitGone) it then
-// prints the binding's oldest pending payload for the planner (§4.1): the
+// prints the binding's oldest pending payload for the mastermind (§4.1): the
 // returned WaitResult carries the text in Payload and marks the entry
 // delivered with route "wait", unless opts.Peek suppresses that. A delivery
 // failure is returned in DeliverErr and never changes Code (§6).

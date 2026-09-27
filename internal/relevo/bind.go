@@ -12,7 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -24,31 +24,31 @@ import (
 // `relevo done` the binding first.
 var ErrBuilderAlive = errors.New("builder is still alive; rebinding would abandon it")
 
-// ErrNoPlannerSession is planner.ErrNoPlanner as bind, add, fork and ask
+// ErrNoMasterMindSession is mastermind.ErrNoMasterMind as bind, add, fork and ask
 // surface it (#303 §4.3): a hard error, printed by the CLI with relevo's own
 // prefix and exit 1, whose text is the fix.
-var ErrNoPlannerSession = errors.New(`no relevo planner for this session. Run "relevo planner init" once here, or enable the relevo plugin (relevo doctor).`)
+var ErrNoMasterMindSession = errors.New(`no relevo MasterMind for this session. Run "relevo mastermind init" once here, or enable the relevo plugin (relevo doctor).`)
 
 // ErrGitRequired reports a bind that needs a worktree with no git available.
 var ErrGitRequired = errors.New("relevo bind needs git; pass --cwd to bind a tree yourself")
 
-// resolveVerbPlanner is how bind, add, fork and ask get their planner (§4.3):
-// flag > env > host > session, through the registry Runtime.Planners names.
-// ref is the caller's --planner value; "" resolves from the environment, the
+// resolveVerbMasterMind is how bind, add, fork and ask get their mastermind (§4.3):
+// flag > env > host > session, through the registry Runtime.MasterMinds names.
+// ref is the caller's --mastermind value; "" resolves from the environment, the
 // caller's parent process and its harness session, in that order.
 //
-// planner.ErrNoPlanner becomes ErrNoPlannerSession, and so does a Runtime with
-// no registry configured: nothing derives a planner from a pane any more.
-func resolveVerbPlanner(rt Runtime, ref string) (planner.Record, bool, error) {
-	if rt.Planners == nil {
-		return planner.Record{}, false, ErrNoPlannerSession
+// mastermind.ErrNoMasterMind becomes ErrNoMasterMindSession, and so does a Runtime with
+// no registry configured: nothing derives a mastermind from a pane any more.
+func resolveVerbMasterMind(rt Runtime, ref string) (mastermind.Record, bool, error) {
+	if rt.MasterMinds == nil {
+		return mastermind.Record{}, false, ErrNoMasterMindSession
 	}
 	var now time.Time
 	if rt.Now != nil {
 		now = rt.Now()
 	}
 	cwd, _ := os.Getwd()
-	rec, _, err := planner.Resolve(rt.Planners, planner.ResolveInput{
+	rec, _, err := mastermind.Resolve(rt.MasterMinds, mastermind.ResolveInput{
 		Flag:            ref,
 		Env:             os.Getenv,
 		PPID:            os.Getppid(),
@@ -61,30 +61,30 @@ func resolveVerbPlanner(rt Runtime, ref string) (planner.Record, bool, error) {
 	case err == nil:
 		return rec, true, nil
 	default:
-		var unreg planner.ErrUnregisteredSession
+		var unreg mastermind.ErrUnregisteredSession
 		if errors.As(err, &unreg) && unreg.Kind == "opencode" {
-			rec, _, initErr := planner.Init(rt.Planners, planner.InitInput{
+			rec, _, initErr := mastermind.Init(rt.MasterMinds, mastermind.InitInput{
 				Kind:      "opencode",
 				SessionID: unreg.SessionID,
 				CWD:       cwd,
 				Now:       now,
 			})
 			if initErr != nil {
-				return planner.Record{}, false, initErr
+				return mastermind.Record{}, false, initErr
 			}
 			return rec, true, nil
 		}
-		if errors.Is(err, planner.ErrNoPlanner) {
-			return planner.Record{}, false, ErrNoPlannerSession
+		if errors.Is(err, mastermind.ErrNoMasterMind) {
+			return mastermind.Record{}, false, ErrNoMasterMindSession
 		}
-		return planner.Record{}, false, err
+		return mastermind.Record{}, false, err
 	}
 }
 
-// recordEndpoint is the planner endpoint a resolved record supplies (§3.2):
-// its kind, session and transcript locator. Planner.PaneID is written by
+// recordEndpoint is the mastermind endpoint a resolved record supplies (§3.2):
+// its kind, session and transcript locator. MasterMind.PaneID is written by
 // nothing since #303; it stays a field only so an older bind.json loads.
-func recordEndpoint(rec planner.Record) store.Endpoint {
+func recordEndpoint(rec mastermind.Record) store.Endpoint {
 	return store.Endpoint{
 		Kind:              rec.HarnessKind,
 		SessionID:         rec.SessionID,
@@ -98,17 +98,17 @@ type BindOptions struct {
 	// Candidate is a harness/provider/model token; empty means resolve by role
 	// through resolveCandidate, except in resume, where empty means "not rebinding".
 	Candidate string
-	// PlannerID is the caller's --planner value when it has one, and the
-	// resolved record's id afterwards: bind sets Binding.PlannerID from it.
-	// Empty means "resolve this session's planner" (§4.3).
-	PlannerID string
-	CWD       string
-	Resume    bool
+	// MasterMindID is the caller's --mastermind value when it has one, and the
+	// resolved record's id afterwards: bind sets Binding.MasterMindID from it.
+	// Empty means "resolve this session's mastermind" (§4.3).
+	MasterMindID string
+	CWD          string
+	Resume       bool
 
 	// Rebind, with Resume, replaces a builder that is gone by resolving a
 	// candidate through policy.json order and the ledger, exactly as a
 	// fresh bind with Candidate empty does (#92). Without it, an empty
-	// Candidate on resume means "planner-only: touch no builder". Ignored
+	// Candidate on resume means "mastermind-only: touch no builder". Ignored
 	// when Candidate is set.
 	Rebind bool
 
@@ -152,11 +152,11 @@ type BindOptions struct {
 	Role string
 }
 
-// BindResolved ties the calling planner to a builder over one working tree.
+// BindResolved ties the calling mastermind to a builder over one working tree.
 // The second return is how the builder was chosen, zero when a pane was
 // adopted.
 func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, Resolution, error) {
-	rec, haveRec, err := resolveVerbPlanner(rt, opts.PlannerID)
+	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
@@ -165,19 +165,19 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 	}
 
 	if !haveRec {
-		return store.Binding{}, Resolution{}, ErrNoPlannerSession
+		return store.Binding{}, Resolution{}, ErrNoMasterMindSession
 	}
-	opts.PlannerID = rec.ID
-	plannerEP := recordEndpoint(rec)
-	if plannerEP.TranscriptLocator == "" {
-		plannerEP.TranscriptLocator = plannerLocator(rt, plannerEP.Kind, plannerEP.SessionID)
+	opts.MasterMindID = rec.ID
+	mastermindEP := recordEndpoint(rec)
+	if mastermindEP.TranscriptLocator == "" {
+		mastermindEP.TranscriptLocator = mastermindLocator(rt, mastermindEP.Kind, mastermindEP.SessionID)
 	}
 
 	if opts.Resume {
-		return resume(ctx, rt, opts, plannerEP)
+		return resume(ctx, rt, opts, mastermindEP)
 	}
 
-	return create(ctx, rt, opts, plannerEP)
+	return create(ctx, rt, opts, mastermindEP)
 }
 
 // Bind is BindResolved without the resolution, for the callers that only
@@ -188,7 +188,7 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 	return b, err
 }
 
-// resume re-points an existing binding at the calling planner, and -- when
+// resume re-points an existing binding at the calling mastermind, and -- when
 // the caller supplied a builder, or asked for one with Rebind -- at a new builder as well.
 //
 // Preconditions:  the binding exists. When a builder is supplied, the binding's
@@ -198,9 +198,9 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 //	A headless binding's builder is a process; it is alive when
 //	the Runner says so.
 //
-// Postconditions: Planner points at the caller. A rebind of a DONE binding is
+// Postconditions: MasterMind points at the caller. A rebind of a DONE binding is
 //
-//	refused. A planner-only resume of one is allowed, and
+//	refused. A mastermind-only resume of one is allowed, and
 //	reactivates it, exactly as before this feature existed. When
 //	a builder was supplied: Builder is the new endpoint with its
 //	session id recorded, State is Active,
@@ -214,7 +214,7 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 //
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrRunnerUnavailable; a wrapped
 // git or remote error.
-func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.Endpoint) (store.Binding, Resolution, error) {
+func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint) (store.Binding, Resolution, error) {
 	if opts.Feature != "" {
 		if err := store.ValidFeature(opts.Feature); err != nil {
 			return store.Binding{}, Resolution{}, err
@@ -230,7 +230,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 	// creation (like a headless binding's), so none of the pane/worktree
 	// logic below applies to it. §4.6.
 	if b.Builder.Remote() {
-		return resumeRemote(ctx, rt, opts, plannerEP, b)
+		return resumeRemote(ctx, rt, opts, mastermindEP, b)
 	}
 
 	var res Resolution
@@ -341,16 +341,16 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 		// RepoRef and Feature are deliberately left untouched here (beyond
 		// the explicit Feature override below): a resume re-points endpoints,
 		// it does not rediscover facts a fresh bind already captured. The
-		// planner transcript locator is the one exception: the endpoint
-		// plannerEP carries the record's, so a live agent's absent field
+		// mastermind transcript locator is the one exception: the endpoint
+		// mastermindEP carries the record's, so a live agent's absent field
 		// cannot wipe a locator the binding already had.
-		oldTranscriptLocator := b.Planner.TranscriptLocator
-		b.Planner = plannerEP
+		oldTranscriptLocator := b.MasterMind.TranscriptLocator
+		b.MasterMind = mastermindEP
 		if oldTranscriptLocator != "" {
-			b.Planner.TranscriptLocator = oldTranscriptLocator
+			b.MasterMind.TranscriptLocator = oldTranscriptLocator
 		}
-		if opts.PlannerID != "" {
-			b.PlannerID = opts.PlannerID
+		if opts.MasterMindID != "" {
+			b.MasterMindID = opts.MasterMindID
 		}
 		if opts.Feature != "" {
 			b.Feature = opts.Feature
@@ -406,7 +406,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 		if wasPaused {
 			if err := tx.AppendLog(opts.Name, store.LogEntry{
 				Round:     b.Round,
-				Direction: store.DirToPlanner,
+				Direction: store.DirToMasterMind,
 				Kind:      store.KindResume,
 				Confirmed: true,
 				Note:      "resumed",
@@ -428,13 +428,13 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 // resumeRemote is resume's remote-binding path (§4.6). A remote binding's
 // mode is fixed at creation, so this never adopts a pane or spawns one: it
 // only forwards to the server and, once the server agrees, repoints the
-// planner and reactivates the binding locally.
+// mastermind and reactivates the binding locally.
 //
 // Errors: "cannot change a remote builder; unbind and add" when the caller
 // asked to change the builder (--rebind, --candidate, or
 // --headless); ErrRemoteUnavailable; a wrapped server error; a wrapped git
 // error; or a message naming the binding when its branch is gone.
-func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.Endpoint, b store.Binding) (store.Binding, Resolution, error) {
+func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, b store.Binding) (store.Binding, Resolution, error) {
 	if opts.Rebind || opts.Candidate != "" || opts.Headless {
 		return store.Binding{}, Resolution{}, errors.New("cannot change a remote builder; unbind and add")
 	}
@@ -470,9 +470,9 @@ func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, plannerEP s
 		if err != nil {
 			return err
 		}
-		cur.Planner = plannerEP
-		if opts.PlannerID != "" {
-			cur.PlannerID = opts.PlannerID
+		cur.MasterMind = mastermindEP
+		if opts.MasterMindID != "" {
+			cur.MasterMindID = opts.MasterMindID
 		}
 		cur.State = store.StateActive
 		if err := tx.Save(cur); err != nil {
@@ -515,7 +515,7 @@ func resolveRegate(regate *int, pol policy.Policy) int {
 	return pol.GateRegate()
 }
 
-func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.Endpoint) (store.Binding, Resolution, error) {
+func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint) (store.Binding, Resolution, error) {
 	shape, err := actorShape(rt.RoleRegistry(), opts.Role)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
@@ -599,8 +599,8 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 	b := store.Binding{
 		Name:             name,
 		CWD:              opts.CWD,
-		Planner:          plannerEP,
-		PlannerID:        opts.PlannerID,
+		MasterMind:       mastermindEP,
+		MasterMindID:     opts.MasterMindID,
 		Builder:          builder,
 		BuilderCandidate: res.Token(),
 		Round:            1,
@@ -773,7 +773,7 @@ type UnbindResult struct {
 //
 // When archive is set the binding's record is archived rather than deleted,
 // which frees the name for a fresh bind while its log and every round file
-// survive as rows — the record of what the planner actually told the builder.
+// survive as rows — the record of what the mastermind actually told the builder.
 // If relevo created a git worktree for this binding, Unbind removes it provided
 // it is clean, never removing the branch.
 func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindResult, error) {

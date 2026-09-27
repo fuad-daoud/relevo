@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 import "time"
 
@@ -7,7 +7,7 @@ import "time"
 // still in use.
 //
 // procStart is RecordState's injected process read. bindings reports how many
-// non-DONE bindings name a planner id; nil counts nothing. A record that is
+// non-DONE bindings name a mastermind id; nil counts nothing. A record that is
 // live, an explicit registration, or named by a non-DONE binding is left
 // alone.
 //
@@ -38,7 +38,7 @@ func Prune(reg Registry, procStart func(pid int) (int64, error), bindings func(i
 	return forgotten, nil
 }
 
-// OpencodeIdleTTL is how long an explicit opencode planner record may go
+// OpencodeIdleTTL is how long an explicit opencode mastermind record may go
 // unseen before the daemon forgets it (no binding may name it).
 const OpencodeIdleTTL = 7 * 24 * time.Hour
 

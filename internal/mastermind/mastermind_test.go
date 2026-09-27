@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 import (
 	"bytes"
@@ -37,7 +37,7 @@ func testRegistryOn(t *testing.T, d *db.DB) *DBRegistry {
 	return &DBRegistry{
 		KV:   db.TxKV{DB: d},
 		Now:  func() time.Time { return testNow },
-		Root: filepath.Join(t.TempDir(), "planners"),
+		Root: filepath.Join(t.TempDir(), "masterminds"),
 	}
 }
 
@@ -58,7 +58,7 @@ func record(id, name, kind, session string, host int) Record {
 		SessionID:     session,
 		HostPID:       host,
 		HostStartedAt: int64(host) * 10,
-		CWD:           "/tmp/relevo-planner-test",
+		CWD:           "/tmp/relevo-mastermind-test",
 		CreatedAt:     testNow,
 		SeenAt:        testNow,
 	}
@@ -68,8 +68,8 @@ func TestNewIDShape(t *testing.T) {
 	// A pinned reader makes the id exactly predictable.
 	if got, err := NewID(bytes.NewReader(make([]byte, 8))); err != nil {
 		t.Fatalf("NewID: %v", err)
-	} else if got != "pl_aaaaaaaaaaaa" {
-		t.Errorf("NewID(zero reader) = %q, want %q", got, "pl_aaaaaaaaaaaa")
+	} else if got != "mm_aaaaaaaaaaaa" {
+		t.Errorf("NewID(zero reader) = %q, want %q", got, "mm_aaaaaaaaaaaa")
 	}
 
 	seen := make(map[string]bool, 64)
@@ -81,11 +81,11 @@ func TestNewIDShape(t *testing.T) {
 		if err := ValidID(id); err != nil {
 			t.Fatalf("NewID produced %q: %v", id, err)
 		}
-		if !strings.HasPrefix(id, "pl_") {
-			t.Fatalf("NewID produced %q, want the pl_ prefix", id)
+		if !strings.HasPrefix(id, "mm_") {
+			t.Fatalf("NewID produced %q, want the mm_ prefix", id)
 		}
-		if len(id) != len("pl_")+idChars {
-			t.Fatalf("NewID produced %q, want %d characters", id, len("pl_")+idChars)
+		if len(id) != len("mm_")+idChars {
+			t.Fatalf("NewID produced %q, want %d characters", id, len("mm_")+idChars)
 		}
 		if seen[id] {
 			t.Fatalf("NewID repeated %q", id)
@@ -137,20 +137,38 @@ func TestValidName(t *testing.T) {
 		}
 	}
 
-	if err := ValidID("pl_aaaaaaaaaaaa"); err != nil {
+	if err := ValidID("mm_aaaaaaaaaaaa"); err != nil {
 		t.Errorf("ValidID(valid) = %v, want nil", err)
 	}
-	for _, id := range []string{"pl_AAAAAAAAAAAA", "pl_aaaaaaaaaaa", "pl_aaaaaaaaaaaaa", "aaaaaaaaaaaa", "pl_aaaaaaaaaab1"} {
+	for _, id := range []string{"mm_AAAAAAAAAAAA", "mm_aaaaaaaaaaa", "mm_aaaaaaaaaaaaa", "aaaaaaaaaaaa", "mm_aaaaaaaaaab1"} {
 		if err := ValidID(id); err == nil {
 			t.Errorf("ValidID(%q) = nil, want an error", id)
 		}
 	}
 }
 
-// TestValidIDAcceptsLegacyULID pins both id shapes: the `pl_` ids NewID
-// mints, and a legacy ULID.
-func TestValidIDAcceptsLegacyULID(t *testing.T) {
+// TestNewIDMintsMm pins D4: every new id is `mm_` plus 12 lowercase base32
+// characters.
+func TestNewIDMintsMm(t *testing.T) {
+	id, err := NewID(bytes.NewReader(make([]byte, 8)))
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	if id != "mm_aaaaaaaaaaaa" {
+		t.Errorf("NewID(zero reader) = %q, want mm_aaaaaaaaaaaa", id)
+	}
+	if !strings.HasPrefix(id, "mm_") {
+		t.Errorf("NewID = %q, want the mm_ prefix", id)
+	}
+}
+
+// TestValidIDAcceptsLegacyPlAndULID pins every id shape: the `mm_` ids NewID
+// mints, the historical `pl_` shape still in a real relevo.db, and a legacy
+// ULID.
+func TestValidIDAcceptsLegacyPlAndULID(t *testing.T) {
 	valid := []string{
+		"mm_aaaaaaaaaaaa",
+		"mm_zzzzzzzzzzzz",
 		"pl_aaaaaaaaaaaa",
 		"pl_zzzzzzzzzzzz",
 		"01M3252956S27X5G5MPVM77PJ7",
@@ -171,6 +189,7 @@ func TestValidIDAcceptsLegacyULID(t *testing.T) {
 		"01M3252956O27X5G5MPVM77PJ7",  // O
 		"01M3252956U27X5G5MPVM77PJ7",  // U
 		"pl_aaaaaaaaaaa",              // pl_ plus 11 characters
+		"mm_aaaaaaaaaaa",              // mm_ plus 11 characters
 	}
 	for _, id := range invalid {
 		err := ValidID(id)
@@ -181,6 +200,31 @@ func TestValidIDAcceptsLegacyULID(t *testing.T) {
 		if !errors.Is(err, ErrInvalid) {
 			t.Errorf("ValidID(%q) = %v, want ErrInvalid", id, err)
 		}
+	}
+}
+
+// TestEnvLineNamesMasterMind pins D5: the line init --hook appends to
+// $CLAUDE_ENV_FILE writes the new env name.
+func TestEnvLineNamesMasterMind(t *testing.T) {
+	if got, want := EnvLine("mm_aaaaaaaaaaaa"), "export RELEVO_MASTERMIND=mm_aaaaaaaaaaaa\n"; got != want {
+		t.Errorf("EnvLine = %q, want %q", got, want)
+	}
+}
+
+// TestResolveFallsBackToLegacyEnvVar pins the env fallback: the export line
+// already in a live session's $CLAUDE_ENV_FILE is state already written, so
+// Resolve still reads RELEVO_PLANNER after RELEVO_MASTERMIND.
+func TestResolveFallsBackToLegacyEnvVar(t *testing.T) {
+	reg := testRegistry(t)
+	mustCreate(t, reg, record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-a", 101))
+
+	env := envFunc(withEnv(withEnv(claudeEnv(0, ""), "RELEVO_MASTERMIND", ""), "RELEVO_PLANNER", "pl_aaaaaaaaaaaa"))
+	rec, res, err := Resolve(reg, ResolveInput{Env: env, PPID: 999, ProcStart: procStartAt(0)})
+	if err != nil {
+		t.Fatalf("Resolve with RELEVO_PLANNER: %v", err)
+	}
+	if rec.ID != "pl_aaaaaaaaaaaa" || res != ResolutionEnv {
+		t.Errorf("Resolve = %s (%s) %q, want pl_aaaaaaaaaaaa (env)", rec.ID, rec.Name, res)
 	}
 }
 
@@ -232,8 +276,8 @@ func wantHookJSON(t *testing.T, context string) string {
 func TestHookOutputExactJSON(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 
-	sentence := "You are relevo planner architect-1 (pl_aaaaaaaaaaaa). RELEVO_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner."
-	want := wantHookJSON(t, sentence+"\n\n"+handoffRules)
+	sentence := "You are relevo MasterMind architect-1 (pl_aaaaaaaaaaaa). RELEVO_MASTERMIND is set in your shell; pass --mastermind architect-1 only to act as another MasterMind."
+	want := wantHookJSON(t, sentence+"\n\n"+Guide())
 	if got := string(HookOutput(rec)); got != want {
 		t.Errorf("HookOutput:\n got %s\nwant %s", got, want)
 	}
@@ -243,7 +287,7 @@ func TestHookOutputExactJSON(t *testing.T) {
 		t.Errorf("HookNote:\n got %s\nwant %s", got, wantNote)
 	}
 
-	if got := EnvLine("pl_aaaaaaaaaaaa"); got != "export RELEVO_PLANNER=pl_aaaaaaaaaaaa\n" {
+	if got := EnvLine("pl_aaaaaaaaaaaa"); got != "export RELEVO_MASTERMIND=pl_aaaaaaaaaaaa\n" {
 		t.Errorf("EnvLine = %q", got)
 	}
 }
@@ -252,8 +296,8 @@ func TestHookOutputExactJSON(t *testing.T) {
 func TestHookOutputNoEnvExactJSON(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 
-	sentence := "You are relevo planner architect-1 (pl_aaaaaaaaaaaa). RELEVO_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner."
-	want := wantHookJSON(t, sentence+" "+noEnvNote+"\n\n"+handoffRules)
+	sentence := "You are relevo MasterMind architect-1 (pl_aaaaaaaaaaaa). RELEVO_MASTERMIND is set in your shell; pass --mastermind architect-1 only to act as another MasterMind."
+	want := wantHookJSON(t, sentence+" "+noEnvNote+"\n\n"+Guide())
 	if got := string(HookOutputNoEnv(rec)); got != want {
 		t.Errorf("HookOutputNoEnv:\n got %s\nwant %s", got, want)
 	}
@@ -325,9 +369,9 @@ func TestRecordValidate(t *testing.T) {
 	}
 }
 
-func TestErrUnknownPlannerNamesTheRef(t *testing.T) {
-	var target ErrUnknownPlanner
-	err := error(ErrUnknownPlanner{Ref: "beta"})
+func TestErrUnknownMasterMindNamesTheRef(t *testing.T) {
+	var target ErrUnknownMasterMind
+	err := error(ErrUnknownMasterMind{Ref: "beta"})
 	if !errors.As(err, &target) {
 		t.Fatalf("errors.As failed for %v", err)
 	}
@@ -339,7 +383,7 @@ func TestErrUnknownPlannerNamesTheRef(t *testing.T) {
 	}
 }
 
-// TestListReadsEveryRecord pins one planner/<id> row per record, sorted by
+// TestListReadsEveryRecord pins one mastermind/<id> row per record, sorted by
 // name.
 func TestListReadsEveryRecord(t *testing.T) {
 	reg := testRegistry(t)

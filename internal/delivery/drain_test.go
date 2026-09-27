@@ -42,13 +42,13 @@ func (f *fakePusher) Push(_ context.Context, content string, meta map[string]str
 func saveDrainBinding(t *testing.T, s *store.Store, name, pane string, state store.State) store.Binding {
 	t.Helper()
 	b := store.Binding{
-		Name:      name,
-		CWD:       "/repo/" + name,
-		Planner:   store.Endpoint{PaneID: pane},
-		PlannerID: testClaimPlanner,
-		Builder:   store.Endpoint{PaneID: "b:1"},
-		Round:     1,
-		State:     state,
+		Name:         name,
+		CWD:          "/repo/" + name,
+		MasterMind:   store.Endpoint{PaneID: pane},
+		MasterMindID: testClaimMasterMind,
+		Builder:      store.Endpoint{PaneID: "b:1"},
+		Round:        1,
+		State:        state,
 	}
 	if err := s.Save(b); err != nil {
 		t.Fatalf("save binding %q: %v", name, err)
@@ -58,38 +58,38 @@ func saveDrainBinding(t *testing.T, s *store.Store, name, pane string, state sto
 
 func queueDrainEntry(t *testing.T, s *store.Store, name string, round int, kind store.Kind, path, payload string) {
 	t.Helper()
-	entry := store.LogEntry{Round: round, Direction: store.DirToPlanner, Kind: kind, Path: path, Payload: payload}
+	entry := store.LogEntry{Round: round, Direction: store.DirToMasterMind, Kind: kind, Path: path, Payload: payload}
 	if err := s.WithLock(func(tx *store.Tx) error { return tx.AppendLog(name, entry) }); err != nil {
 		t.Fatalf("append log for %q: %v", name, err)
 	}
 }
 
-func TestDrainRequiresPlanner(t *testing.T) {
+func TestDrainRequiresMasterMind(t *testing.T) {
 	t.Parallel()
 
 	rt := Deps{Store: store.New(t.TempDir())}
 	if _, err := Drain(context.Background(), rt, &DrainState{}, &fakePusher{}); err == nil {
-		t.Fatal("Drain with an empty Planner must error")
+		t.Fatal("Drain with an empty MasterMind must error")
 	}
 }
 
-// TestDrainFiltersByPlannerID is the required case: Drain
-// pushes only the bindings whose PlannerID is the one it drains. The two
-// bindings here share a pane, so only the planner id can tell them apart.
-func TestDrainFiltersByPlannerID(t *testing.T) {
+// TestDrainFiltersByMasterMindID is the required case: Drain
+// pushes only the bindings whose MasterMindID is the one it drains. The two
+// bindings here share a pane, so only the mastermind id can tell them apart.
+func TestDrainFiltersByMasterMindID(t *testing.T) {
 	t.Parallel()
 
 	s := store.New(t.TempDir())
 	rt := Deps{Store: s}
 	mine := saveDrainBinding(t, s, "mine", "w2:p3", store.StateActive)
 	other := store.Binding{
-		Name:      "other",
-		CWD:       "/repo/other",
-		Planner:   store.Endpoint{PaneID: "w2:p3"},
-		PlannerID: otherClaimPlanner,
-		Builder:   store.Endpoint{PaneID: "b:1"},
-		Round:     1,
-		State:     store.StateActive,
+		Name:         "other",
+		CWD:          "/repo/other",
+		MasterMind:   store.Endpoint{PaneID: "w2:p3"},
+		MasterMindID: otherClaimMasterMind,
+		Builder:      store.Endpoint{PaneID: "b:1"},
+		Round:        1,
+		State:        store.StateActive,
 	}
 	if err := s.Save(other); err != nil {
 		t.Fatalf("save other: %v", err)
@@ -99,7 +99,7 @@ func TestDrainFiltersByPlannerID(t *testing.T) {
 	queueDrainEntry(t, s, "other", 1, store.KindReport, "", "other body")
 
 	pusher := &fakePusher{}
-	res, err := Drain(context.Background(), rt, &DrainState{Planner: mine.PlannerID}, pusher)
+	res, err := Drain(context.Background(), rt, &DrainState{MasterMind: mine.MasterMindID}, pusher)
 	if err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
@@ -109,8 +109,8 @@ func TestDrainFiltersByPlannerID(t *testing.T) {
 	if len(pusher.pushes) != 1 || pusher.pushes[0].meta["binding"] != "mine" {
 		t.Fatalf("pushes = %+v, want only mine's", pusher.pushes)
 	}
-	if _, pending, err := s.PendingForPlanner("other"); err != nil || !pending {
-		t.Errorf("the other planner's entry must stay pending: pending=%v err=%v", pending, err)
+	if _, pending, err := s.PendingForMasterMind("other"); err != nil || !pending {
+		t.Errorf("the other mastermind's entry must stay pending: pending=%v err=%v", pending, err)
 	}
 }
 
@@ -123,7 +123,7 @@ func TestDrainPushesThenConfirms(t *testing.T) {
 	saveDrainBinding(t, s, "judge", pane, store.StateActive)
 	queueDrainEntry(t, s, "judge", 3, store.KindReport, "/x/003-report.md", "the report body")
 
-	st := &DrainState{Planner: testClaimPlanner}
+	st := &DrainState{MasterMind: testClaimMasterMind}
 	pusher := &fakePusher{}
 
 	res, err := Drain(context.Background(), rt, st, pusher)
@@ -146,7 +146,7 @@ func TestDrainPushesThenConfirms(t *testing.T) {
 		t.Errorf("meta = %+v, want %+v", got.meta, want)
 	}
 
-	if _, pending, err := s.PendingForPlanner("judge"); err != nil || pending {
+	if _, pending, err := s.PendingForMasterMind("judge"); err != nil || pending {
 		t.Errorf("a pushed entry must be confirmed: pending=%v err=%v", pending, err)
 	}
 }
@@ -168,7 +168,7 @@ func TestDrainPushesExpandedReportText(t *testing.T) {
 	}
 	queueDrainEntry(t, s, "judge", 3, store.KindReport, reportPath, "The runner finished round 3. Report: "+reportPath)
 
-	st := &DrainState{Planner: testClaimPlanner}
+	st := &DrainState{MasterMind: testClaimMasterMind}
 	pusher := &fakePusher{}
 
 	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
@@ -194,7 +194,7 @@ func TestDrainOmitsShowMetaWhenEntryHasNone(t *testing.T) {
 	saveDrainBinding(t, s, "judge", pane, store.StateActive)
 	queueDrainEntry(t, s, "judge", 1, store.KindAnswer, "", "an answer, no file")
 
-	st := &DrainState{Planner: testClaimPlanner}
+	st := &DrainState{MasterMind: testClaimMasterMind}
 	pusher := &fakePusher{}
 	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
 		t.Fatalf("Drain: %v", err)
@@ -213,7 +213,7 @@ func TestDrainPushFailureLeavesPendingThenRetries(t *testing.T) {
 	saveDrainBinding(t, s, "judge", pane, store.StateActive)
 	queueDrainEntry(t, s, "judge", 1, store.KindReport, "", "payload one")
 
-	st := &DrainState{Planner: testClaimPlanner}
+	st := &DrainState{MasterMind: testClaimMasterMind}
 	pusher := &fakePusher{failCalls: 1}
 
 	res, err := Drain(context.Background(), rt, st, pusher)
@@ -223,7 +223,7 @@ func TestDrainPushFailureLeavesPendingThenRetries(t *testing.T) {
 	if res.Pushed != 0 || len(res.Failed) != 1 || res.Failed[0] != "judge" {
 		t.Fatalf("first poll result = %+v, want Pushed 0, Failed [judge]", res)
 	}
-	if _, pending, err := s.PendingForPlanner("judge"); err != nil || !pending {
+	if _, pending, err := s.PendingForMasterMind("judge"); err != nil || !pending {
 		t.Errorf("a failed push must leave the entry pending: pending=%v err=%v", pending, err)
 	}
 
@@ -234,12 +234,12 @@ func TestDrainPushFailureLeavesPendingThenRetries(t *testing.T) {
 	if res.Pushed != 1 {
 		t.Fatalf("second poll result = %+v, want Pushed 1", res)
 	}
-	if _, pending, err := s.PendingForPlanner("judge"); err != nil || pending {
+	if _, pending, err := s.PendingForMasterMind("judge"); err != nil || pending {
 		t.Errorf("the retried push must confirm: pending=%v err=%v", pending, err)
 	}
 }
 
-func TestDrainSkipsOtherPlannersAndOwnedBindings(t *testing.T) {
+func TestDrainSkipsOtherMasterMindsAndOwnedBindings(t *testing.T) {
 	t.Parallel()
 
 	s := store.New(t.TempDir())
@@ -247,20 +247,20 @@ func TestDrainSkipsOtherPlannersAndOwnedBindings(t *testing.T) {
 	pane := "w2:p3"
 	saveDrainBinding(t, s, "mine", pane, store.StateActive)
 
-	// Another planner's binding, even on this same pane.
+	// Another mastermind's binding, even on this same pane.
 	other := store.Binding{
-		Name: "other-planner", CWD: "/repo/other-planner",
-		Planner: store.Endpoint{PaneID: pane}, PlannerID: otherClaimPlanner,
+		Name: "other-mastermind", CWD: "/repo/other-mastermind",
+		MasterMind: store.Endpoint{PaneID: pane}, MasterMindID: otherClaimMasterMind,
 		Round: 1, State: store.StateActive,
 	}
 	if err := s.Save(other); err != nil {
-		t.Fatalf("save other-planner binding: %v", err)
+		t.Fatalf("save other-mastermind binding: %v", err)
 	}
 
-	// This planner's binding, but owned by a remote client.
+	// This mastermind's binding, but owned by a remote client.
 	owned := store.Binding{
 		Name: "owned", CWD: "/repo/owned",
-		Planner: store.Endpoint{PaneID: pane}, PlannerID: testClaimPlanner, Owner: "client-1",
+		MasterMind: store.Endpoint{PaneID: pane}, MasterMindID: testClaimMasterMind, Owner: "client-1",
 		Round: 1, State: store.StateActive,
 	}
 	if err := s.Save(owned); err != nil {
@@ -268,17 +268,17 @@ func TestDrainSkipsOtherPlannersAndOwnedBindings(t *testing.T) {
 	}
 
 	queueDrainEntry(t, s, "mine", 1, store.KindReport, "", "payload")
-	queueDrainEntry(t, s, "other-planner", 1, store.KindReport, "", "payload")
+	queueDrainEntry(t, s, "other-mastermind", 1, store.KindReport, "", "payload")
 	queueDrainEntry(t, s, "owned", 1, store.KindReport, "", "payload")
 
-	st := &DrainState{Planner: testClaimPlanner}
+	st := &DrainState{MasterMind: testClaimMasterMind}
 	pusher := &fakePusher{}
 	res, err := Drain(context.Background(), rt, st, pusher)
 	if err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
 	if res.Pushed != 1 {
-		t.Fatalf("Pushed = %d, want 1 (only this planner's binding, not owned)", res.Pushed)
+		t.Fatalf("Pushed = %d, want 1 (only this mastermind's binding, not owned)", res.Pushed)
 	}
 	if len(pusher.pushes) != 1 || pusher.pushes[0].meta["binding"] != "mine" {
 		t.Fatalf("pushes = %+v, want only 'mine'", pusher.pushes)
@@ -296,7 +296,7 @@ func TestDrainStateEdges(t *testing.T) {
 	pane := "w2:p3"
 
 	b := saveDrainBinding(t, s, "judge", pane, store.StateActive)
-	st := &DrainState{Planner: testClaimPlanner}
+	st := &DrainState{MasterMind: testClaimMasterMind}
 	pusher := &fakePusher{}
 
 	// First sight in "active" (not a channel state): nothing pushed.
@@ -368,7 +368,7 @@ func TestDrainDropsGoneBindingsFromMemory(t *testing.T) {
 	pane := "w2:p3"
 	saveDrainBinding(t, s, "judge", pane, store.StateNeedsYou)
 
-	st := &DrainState{Planner: testClaimPlanner}
+	st := &DrainState{MasterMind: testClaimMasterMind}
 	pusher := &fakePusher{}
 	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
 		t.Fatalf("Drain: %v", err)

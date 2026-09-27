@@ -64,10 +64,21 @@ func applyBuilder(b store.Binding, res Resolution, reg *roles.Registry, pol poli
 	return b, nil
 }
 
-// roundOpenIn reports whether the binding's round is open: a plan entry for
+// roundOpenIn reports whether the binding's round is open: a prompt entry for
 // the round with no report entry. It is the --candidate refusal's own copy of
 // the condition reconcile and Send check inline.
 func roundOpenIn(entries []store.LogEntry, round int) bool {
-	return HasEntry(entries, round, store.DirToBuilder, store.KindPlan) &&
-		!HasEntry(entries, round, store.DirToPlanner, store.KindReport)
+	return HasPromptEntry(entries, round) &&
+		!HasEntry(entries, round, store.DirToMasterMind, store.KindReport)
+}
+
+// HasPromptEntry reports whether the log holds a to-builder prompt entry of
+// round, in either kind spelling, with HasEntry's shape and nudge exclusion.
+func HasPromptEntry(entries []store.LogEntry, round int) bool {
+	for _, e := range entries {
+		if e.Round == round && e.Direction == store.DirToBuilder && store.IsPromptKind(e.Kind) && e.Note != nudgeNote {
+			return true
+		}
+	}
+	return false
 }

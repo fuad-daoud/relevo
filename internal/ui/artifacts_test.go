@@ -55,11 +55,11 @@ func readerRoundRow(name, actor string) view.BindingStatus {
 		Role:             actor,
 		BuilderCandidate: "opencode/gpt-5.6-terra", BuilderName: "gpt-5.6-terra",
 		BuilderKind: "opencode", BuilderStatus: "idle",
-		PlannerName: "architect-5",
-		RoundEnd:    railNow.Add(-9 * time.Minute),
+		MasterMindName: "architect-5",
+		RoundEnd:       railNow.Add(-9 * time.Minute),
 		LastPayload: &view.LastEvent{
 			TS: railNow.Add(-9 * time.Minute), Round: 1,
-			Direction: store.DirToPlanner, Kind: store.KindReport,
+			Direction: store.DirToMasterMind, Kind: store.KindReport,
 		},
 		LastUsage: &usage.Usage{
 			Harness: "opencode", Provider: "cline-pass", Model: "gpt-5.6-terra",
@@ -83,7 +83,7 @@ func TestReaderRoundTabs(t *testing.T) {
 		t.Fatal("the seeded reader binding did not read as a reader round")
 	}
 	plain := stripANSI(rv.pane.tabsRow())
-	for _, want := range []string{"plan", "artifacts", "log", "transcript"} {
+	for _, want := range []string{"prompt", "artifacts", "log", "transcript"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("reader tabs missing %q: %q", want, plain)
 		}
@@ -104,7 +104,7 @@ func TestReaderRoundTabs(t *testing.T) {
 		t.Fatal("a writer binding read as a reader round")
 	}
 	wplain := stripANSI(wv.pane.tabsRow())
-	for _, want := range []string{"plan", "report", "transcript", "diff", "log"} {
+	for _, want := range []string{"prompt", "report", "transcript", "diff", "log"} {
 		if !strings.Contains(wplain, want) {
 			t.Errorf("writer tabs missing %q: %q", want, wplain)
 		}
@@ -144,7 +144,7 @@ func TestArtifactsEnterOpensByKind(t *testing.T) {
 	}, railNow)
 
 	fa := &fakeActions{}
-	env := testEnv(plannerSource{relevo.Runtime{Store: st}},
+	env := testEnv(mastermindSource{relevo.Runtime{Store: st}},
 		view.Report{Bindings: []view.BindingStatus{readerRoundRow("review-568", "reviewer")}}, 140, 40)
 	env.Actions = fa
 
@@ -195,7 +195,7 @@ func TestArtifactsTabReadsSealedFiles(t *testing.T) {
 	}
 
 	msg := fetchArtifacts(context.Background(),
-		plannerSource{relevo.Runtime{Store: st}}, "review-568", 1, 0)().(tabMsg)
+		mastermindSource{relevo.Runtime{Store: st}}, "review-568", 1, 0)().(tabMsg)
 	if msg.content.err != nil {
 		t.Fatalf("fetchArtifacts after the seal: %v", msg.content.err)
 	}
@@ -223,11 +223,11 @@ func writerIdleRoundModel(t *testing.T, width, height int) Model {
 	row := view.BindingStatus{
 		Name: name, Round: 1, PlanRound: 1, Display: "ACTIVE",
 		BuilderStatus: "idle", BuilderName: "gpt-5.6-terra",
-		PlannerName: "architect-5",
-		RoundEnd:    railNow.Add(-9 * time.Minute),
+		MasterMindName: "architect-5",
+		RoundEnd:       railNow.Add(-9 * time.Minute),
 		LastPayload: &view.LastEvent{
 			TS: railNow.Add(-9 * time.Minute), Round: 1,
-			Direction: store.DirToPlanner, Kind: store.KindReport,
+			Direction: store.DirToMasterMind, Kind: store.KindReport,
 		},
 	}
 	m := goldenActionModelWithStore(t, width, height, &fakeActions{},
@@ -254,5 +254,24 @@ func TestReaderHeaderSharesTheWriterLayout(t *testing.T) {
 	}
 	if !strings.HasPrefix(writerLine, cell) {
 		t.Errorf("writer line 3 does not start with the state-and-time cell\ncell: %q\ngot:  %q", cell, writerLine)
+	}
+}
+
+// TestArtifactCaptionMarksTheOutputAndSummaryMd pins the caption rule: the
+// actor's output file and the pre-rename summary.md are the actor's final
+// message; any other rel is only its name.
+func TestArtifactCaptionMarksTheOutputAndSummaryMd(t *testing.T) {
+	cases := []struct {
+		rel, output, actor, want string
+	}{
+		{"findings.md", "findings.md", "reviewer", "findings.md · the reviewer's final message"},
+		{"summary.md", "findings.md", "reviewer", "summary.md · the reviewer's final message"},
+		{"site/index.html", "findings.md", "reviewer", "site/index.html"},
+	}
+	for _, tc := range cases {
+		c := tabContent{artifactRel: tc.rel, artifactOutput: tc.output, artifactActor: tc.actor}
+		if got := artifactCaption(c); got != tc.want {
+			t.Errorf("artifactCaption(%s) = %q, want %q", tc.rel, got, tc.want)
+		}
 	}
 }

@@ -62,7 +62,7 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 
 	L := storedConfig(t)
 	if L.Candidates.Len() != 3 {
-		t.Errorf("stored candidates = %v, want the one builder and two planner candidates", L.Candidates.Refs())
+		t.Errorf("stored candidates = %v, want the one builder and two mastermind candidates", L.Candidates.Refs())
 	}
 	// R5: the candidates carry no roles/tier, the policy only max_tier, and a
 	// builder actor over the candidates' names is what says who serves what.

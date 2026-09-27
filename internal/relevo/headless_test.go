@@ -146,12 +146,12 @@ func TestStartRoundPassesStateDir(t *testing.T) {
 	rt.Runner = fr
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name:      "codex-binding",
-		Candidate: "codex/openai/gpt-5.6-terra",
-		PlannerID: testPlannerName,
-		CWD:       "/repo",
-		Headless:  true,
-		Tier:      "edit",
+		Name:         "codex-binding",
+		Candidate:    "codex/openai/gpt-5.6-terra",
+		MasterMindID: testMasterMindName,
+		CWD:          "/repo",
+		Headless:     true,
+		Tier:         "edit",
 	})
 	if err != nil {
 		t.Fatalf("Bind --headless: %v", err)
@@ -522,7 +522,7 @@ func TestSendHeadlessWithoutRunnerStagesNothing(t *testing.T) {
 		t.Fatalf("Send err = %v, want ErrRunnerUnavailable", err)
 	}
 
-	if _, statErr := os.Stat(rt.Store.PlanPath("webshop", 1)); statErr == nil {
+	if _, statErr := os.Stat(rt.Store.PromptPath("webshop", 1)); statErr == nil {
 		t.Error("no plan may be staged when there is no runner")
 	}
 	nAfter, err := rt.Store.ReadLog("webshop")
@@ -557,7 +557,7 @@ func TestSendHeadlessRefusesWhileThePreviousProcessIsAlive(t *testing.T) {
 	if len(fr.specs) != 1 {
 		t.Errorf("a refused send must start nothing: specs = %d", len(fr.specs))
 	}
-	plan, _ := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	plan, _ := os.ReadFile(rt.Store.PromptPath("webshop", 1))
 	if string(plan) != "round one" {
 		t.Errorf("a refused send must not restage the plan: %q", plan)
 	}
@@ -613,11 +613,11 @@ func TestSendHeadlessStartFailureGoesNeedsYou(t *testing.T) {
 	}
 	entries, _ := rt.Store.ReadLog("webshop")
 	for _, e := range entries {
-		if e.Kind == store.KindPlan {
+		if e.Kind == store.KindPrompt {
 			t.Errorf("no plan entry may be logged for a round that never started: %+v", e)
 		}
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 1)); err != nil {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 1)); err != nil {
 		t.Errorf("the plan stays staged so the human can retry: %v", err)
 	}
 }
@@ -1278,7 +1278,7 @@ func TestReconcileHeadlessReportWinsEvenIfTheProcessExitedNonZero(t *testing.T) 
 		t.Fatal(err)
 	}
 	got, err := reconcile(t, rt, b)
-	pending, found, perr := rt.Store.PendingForPlanner("webshop")
+	pending, found, perr := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || got.Round != 2 || len(exits(t, rt)) != 0 || len(fr.specs) != 1 || perr != nil || !found {
 		t.Fatalf("round=%d exits=%d specs=%d err=%v found=%v; want the report to finish the round with no exit entry and no switch", got.Round, len(exits(t, rt)), len(fr.specs), err, found)
 	}
@@ -1317,9 +1317,9 @@ func TestHeadlessMarkerWrittenBetweenChecksClosesMarked(t *testing.T) {
 	if got.Round != 2 {
 		t.Errorf("round = %d, want 2 (the marker closed the round)", got.Round)
 	}
-	pending, found, perr := rt.Store.PendingForPlanner("webshop")
+	pending, found, perr := rt.Store.PendingForMasterMind("webshop")
 	if perr != nil || !found {
-		t.Fatalf("PendingForPlanner: found=%v err=%v", found, perr)
+		t.Fatalf("PendingForMasterMind: found=%v err=%v", found, perr)
 	}
 	if pending.Note != "" {
 		t.Errorf("note = %q, want empty (closed by marker, not unmarked)", pending.Note)
@@ -1347,9 +1347,9 @@ func TestHeadlessExitWithReportNoMarkerStillUnmarked(t *testing.T) {
 	if got.Round != 2 {
 		t.Errorf("round = %d, want 2", got.Round)
 	}
-	pending, found, perr := rt.Store.PendingForPlanner("webshop")
+	pending, found, perr := rt.Store.PendingForMasterMind("webshop")
 	if perr != nil || !found {
-		t.Fatalf("PendingForPlanner: found=%v err=%v", found, perr)
+		t.Fatalf("PendingForMasterMind: found=%v err=%v", found, perr)
 	}
 	if pending.Note != "unmarked" {
 		t.Errorf("note = %q, want unmarked", pending.Note)
@@ -1488,7 +1488,7 @@ func TestReconcileHeadlessExitWithoutReportLogsAndSwitches(t *testing.T) {
 	if !strings.Contains(ex[0].Payload, "boom: out of tokens") || ex[0].Path != logPath {
 		t.Errorf("payload/path = %q / %q, want the log tail and the log path", ex[0].Payload, ex[0].Path)
 	}
-	if !ex[0].Confirmed || ex[0].Direction != store.DirToPlanner || ex[0].Round != 1 {
+	if !ex[0].Confirmed || ex[0].Direction != store.DirToMasterMind || ex[0].Round != 1 {
 		t.Errorf("exit entry shape = %+v", ex[0])
 	}
 	// Then the switch, exactly as "gone" does today.
@@ -1931,7 +1931,7 @@ func TestReconcileHeadlessLostToDaemonRestartCodexFallsBackFresh(t *testing.T) {
 	rt.Candidates = candidateSet(t, codexCandidatesJSON)
 	rt.Runner = fr
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "codex/openai/gpt-5.6-terra", PlannerID: testPlannerName,
+		Name: "webshop", Candidate: "codex/openai/gpt-5.6-terra", MasterMindID: testMasterMindName,
 		CWD: "/repo", Headless: true, Tier: "edit",
 	}); err != nil {
 		t.Fatalf("Bind --headless: %v", err)
@@ -2152,9 +2152,9 @@ func TestReconcileHeadlessExitWithReportOnLimitGatesAndClosesUnmarked(t *testing
 	if _, err := reconcile(t, at(rt, time.Minute), b); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
-		t.Fatalf("PendingForPlanner: found=%v err=%v", found, err)
+		t.Fatalf("PendingForMasterMind: found=%v err=%v", found, err)
 	}
 	if pending.Note != "unmarked" {
 		t.Errorf("note = %q, want unmarked", pending.Note)
@@ -2235,7 +2235,7 @@ func TestReconcileHeadlessOpenRoundWithNoProcessIsLeftAlone(t *testing.T) {
 	// Stage a plan entry by hand so the round reads as open the way a
 	// half-started round would; the failed Send logged none.
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("webshop", store.LogEntry{TS: rt.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: rt.Store.PlanPath("webshop", 1), Confirmed: true})
+		return tx.AppendLog("webshop", store.LogEntry{TS: rt.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: rt.Store.PromptPath("webshop", 1), Confirmed: true})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -2286,7 +2286,7 @@ func TestDoneRecordsTheStop(t *testing.T) {
 			t.Fatalf("stop entries = %+v, want exactly one", st)
 		}
 		if st[0].Note != "stopped/done" || st[0].Kind != store.KindStop || !st[0].Confirmed ||
-			st[0].Direction != store.DirToPlanner || st[0].Round != 1 {
+			st[0].Direction != store.DirToMasterMind || st[0].Round != 1 {
 			t.Errorf("stop entry = %+v, want a confirmed stopped/done KindStop on round 1", st[0])
 		}
 	})
@@ -2555,7 +2555,7 @@ func TestReconcileHeadlessAliveWithReportButNoMarkerWaits(t *testing.T) {
 	if got.Round != 1 || got.Builder.PID != b.Builder.PID {
 		t.Errorf("round=%d pid=%d, want round 1 and the same pid: the process is still running", got.Round, got.Builder.PID)
 	}
-	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
+	if _, pending, _ := rt.Store.PendingForMasterMind("webshop"); pending {
 		t.Error("nothing is queued while the process runs without a marker")
 	}
 	if len(fr.kills) != 0 || len(exits(t, rt)) != 0 {
@@ -2584,7 +2584,7 @@ func TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked(t *testing.T
 	if got.Round != 2 || got.Builder.PID != 0 || got.Builder.LogPath != "" {
 		t.Errorf("round=%d builder=%+v, want round 2 with process fields cleared", got.Round, got.Builder)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -2623,7 +2623,7 @@ func TestReconcileHeadlessMarkerClosesAndClearsTheHandle(t *testing.T) {
 	if !got.Builder.Headless() || got.Builder.AgentName != "webshop-builder" {
 		t.Errorf("identity must survive: %+v", got.Builder)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found || pending.Note != "" {
 		t.Errorf("want a normal report queued: found=%v note=%q err=%v", found, pending.Note, err)
 	}
@@ -2769,7 +2769,7 @@ func TestHeadlessMarkerCloseEscapedNote(t *testing.T) {
 	if got.Round != 2 {
 		t.Errorf("round = %d, want 2: an escape note still closes the round", got.Round)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -2865,11 +2865,11 @@ func TestReconcileHeadlessExitPermissionBlockedHalts(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Runner = fr
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name:      "webshop",
-		Candidate: testClaudeRef,
-		PlannerID: testPlannerName,
-		CWD:       "/repo",
-		Headless:  true,
+		Name:         "webshop",
+		Candidate:    testClaudeRef,
+		MasterMindID: testMasterMindName,
+		CWD:          "/repo",
+		Headless:     true,
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -3032,8 +3032,8 @@ func TestRegateHeadlessStartsRepairProcess(t *testing.T) {
 		t.Fatalf("specs = %d, want one more than %d: the repair round is a fresh process", len(fr.specs), before)
 	}
 	last := fr.specs[len(fr.specs)-1]
-	if !strings.Contains(strings.Join(last.Argv, " "), "002-plan.md") {
-		t.Errorf("repair process prompt does not name 002-plan.md: %v", last.Argv)
+	if !strings.Contains(strings.Join(last.Argv, " "), "002-prompt.md") {
+		t.Errorf("repair process prompt does not name 002-prompt.md: %v", last.Argv)
 	}
 	if got.Builder.PID == 0 {
 		t.Error("the repair round's process must be recorded on the binding")
@@ -3103,7 +3103,7 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 		t.Fatalf("specs = %+v, want one Start", fr.specs)
 	}
 	spec := fr.specs[0]
-	planPath := rt.Store.PlanPath("webshop", 1)
+	planPath := rt.Store.PromptPath("webshop", 1)
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	donePath := rt.Store.DonePath("webshop", 1)
 	b, _ := rt.Store.Load("webshop")
@@ -3125,7 +3125,7 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 	entries, _ := rt.Store.ReadLog("webshop")
 	var plans int
 	for _, e := range entries {
-		if e.Kind == store.KindPlan && e.Round == 1 && e.Path == planPath {
+		if e.Kind == store.KindPrompt && e.Round == 1 && e.Path == planPath {
 			plans++
 		}
 	}
@@ -3169,7 +3169,7 @@ func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
 		t.Errorf("switch entries = %+v, want one naming %s", sw, testClaudeRef)
 	}
 	// The prompt handed to the new process is the same round's prompt.
-	if !strings.Contains(fr.specs[1].Argv[2], rt.Store.PlanPath("webshop", 1)) {
+	if !strings.Contains(fr.specs[1].Argv[2], rt.Store.PromptPath("webshop", 1)) {
 		t.Errorf("new process prompt lacks the round's plan path: %q", fr.specs[1].Argv[2])
 	}
 }
@@ -3505,7 +3505,7 @@ func TestReconcileHeadlessRoundExclusionThenAllGatedHalts(t *testing.T) {
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo", Headless: true,
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo", Headless: true,
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}

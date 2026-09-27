@@ -30,7 +30,7 @@ func paneModel(t *testing.T, b view.BindingStatus, active tab) roundPane {
 func TestPaneHeadRows(t *testing.T) {
 	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
+		MasterMindID: "mastermind-9f2", MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "channel",
 		BuilderKind: "agy", BuilderStatus: "blocked", Consults: 2,
 		Branch: "relevo/webshop", Dirty: true,
 		LastClose: &view.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
@@ -148,7 +148,7 @@ func TestRoundContextByGroup(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := paneModel(t, tc.b, tabPlan)
+			p := paneModel(t, tc.b, tabPrompt)
 			rv := roundView{pane: p, actions: true}
 			env := testEnv(p.src, view.Report{Bindings: []view.BindingStatus{tc.b}}, p.width, p.rows)
 			left, _ := rv.Context(env)
@@ -185,7 +185,7 @@ func TestRoundContextByGroup(t *testing.T) {
 }
 
 func TestRoundTokensLineHist(t *testing.T) {
-	p := paneModel(t, view.BindingStatus{Name: "archived-binding"}, tabPlan)
+	p := paneModel(t, view.BindingStatus{Name: "archived-binding"}, tabPrompt)
 	p.detail.live = false
 	p.detail.round = 2
 	p.detail.rounds = 5
@@ -200,9 +200,9 @@ func TestRoundHeadRowsMatchView(t *testing.T) {
 	for _, h := range []int{12, 18, 40} {
 		t.Run(fmt.Sprintf("height-%d", h), func(t *testing.T) {
 			b := view.BindingStatus{Name: "srv", Round: 1, Display: "ACTIVE", BuilderStatus: "working"}
-			p := paneModel(t, b, tabPlan)
+			p := paneModel(t, b, tabPrompt)
 			p.rows = h
-			p.detail.cache[tabPlan] = tabContent{loaded: true, body: "VP_TEST_LINE_1\nVP_TEST_LINE_2\nVP_TEST_LINE_3"}
+			p.detail.cache[tabPrompt] = tabContent{loaded: true, body: "VP_TEST_LINE_1\nVP_TEST_LINE_2\nVP_TEST_LINE_3"}
 			p.fillViewport()
 
 			if p.viewportHeight() != p.rows-p.headRows() {
@@ -277,7 +277,7 @@ func TestRoundNoRawToken(t *testing.T) {
 		BuilderCandidate: "opencode-1",
 		Headless:         &view.HeadlessInfo{PID: 1234, StartedAt: railNow.Add(-5 * time.Minute)},
 	}
-	p := paneModel(t, b, tabPlan)
+	p := paneModel(t, b, tabPrompt)
 	rv := roundView{pane: p, actions: true}
 	env := testEnv(p.src, view.Report{Bindings: []view.BindingStatus{b}}, p.width, p.rows)
 	view := rv.Body(env, 140, 40)
@@ -291,10 +291,10 @@ func TestRoundNoRawToken(t *testing.T) {
 
 func TestSourceLineOmitsTimeWhenUnknown(t *testing.T) {
 	b := view.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
-	p := paneModel(t, b, tabPlan)
-	p.detail.cache[tabPlan] = tabContent{loaded: true, body: "x", round: 2}
-	if got := stripANSI(p.sourceLine()); got != "plan r2" {
-		t.Errorf("plan source = %q, want %q", got, "plan r2")
+	p := paneModel(t, b, tabPrompt)
+	p.detail.cache[tabPrompt] = tabContent{loaded: true, body: "x", round: 2}
+	if got := stripANSI(p.sourceLine()); got != "prompt r2" {
+		t.Errorf("prompt source = %q, want %q", got, "prompt r2")
 	}
 	p.detail.active = tabReport
 	p.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2}
@@ -551,7 +551,7 @@ func TestRoundTokensLineCostWord(t *testing.T) {
 			Note:     "no price for google/gemini-3.8-flash-high; stream still open; timed out",
 		},
 	}
-	pUnknown := paneModel(t, bUnknown, tabPlan)
+	pUnknown := paneModel(t, bUnknown, tabPrompt)
 	tlUnknown := stripANSI(pUnknown.tokensLine(&bUnknown))
 	if !strings.Contains(tlUnknown, "no price") {
 		t.Errorf("tokensLine missing 'no price': %q", tlUnknown)
@@ -572,7 +572,7 @@ func TestRoundTokensLineCostWord(t *testing.T) {
 			Cost:     usage.Cost{Basis: usage.Measured, USD: 0.12},
 		},
 	}
-	pMeasured := paneModel(t, bMeasured, tabPlan)
+	pMeasured := paneModel(t, bMeasured, tabPrompt)
 	tlMeasured := stripANSI(pMeasured.tokensLine(&bMeasured))
 	if !strings.Contains(tlMeasured, "$0.12") {
 		t.Errorf("tokensLine missing '$0.12': %q", tlMeasured)
@@ -595,7 +595,7 @@ func TestRoundsOfIdleAfterReport(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	rep := view.Report{Bindings: []view.BindingStatus{b}}
-	env := testEnv(plannerSource{rt}, rep, 140, 40)
+	env := testEnv(mastermindSource{rt}, rep, 140, 40)
 
 	v, _ := newRoundView(env, b.Name, 0)
 	rv := v.(roundView)
@@ -639,7 +639,7 @@ func TestRoundsOfWorking(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	rep := view.Report{Bindings: []view.BindingStatus{b}}
-	env := testEnv(plannerSource{rt}, rep, 140, 40)
+	env := testEnv(mastermindSource{rt}, rep, 140, 40)
 
 	v, _ := newRoundView(env, b.Name, 0)
 	rv := v.(roundView)
@@ -655,16 +655,16 @@ func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	b := view.BindingStatus{
-		Name:          "narrow-b",
-		Round:         1,
-		PlanRound:     1,
-		Display:       "ACTIVE",
-		BuilderStatus: "working",
-		BuilderName:   "gemini-3.8-flash-high",
-		PlannerName:   "architect-2",
-		Branch:        "relevo/spool-db",
-		RoundStart:    railNow.Add(-5 * time.Minute),
-		Dirty:         true,
+		Name:           "narrow-b",
+		Round:          1,
+		PlanRound:      1,
+		Display:        "ACTIVE",
+		BuilderStatus:  "working",
+		BuilderName:    "gemini-3.8-flash-high",
+		MasterMindName: "architect-2",
+		Branch:         "relevo/spool-db",
+		RoundStart:     railNow.Add(-5 * time.Minute),
+		Dirty:          true,
 	}
 	if err := st.Save(store.Binding{Name: b.Name, CWD: "/repo/" + b.Name, Round: 1, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -673,7 +673,7 @@ func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 
 	widths := []int{132, 100, 80, 60}
 	for _, w := range widths {
-		env := testEnv(plannerSource{rt}, rep, w, 30)
+		env := testEnv(mastermindSource{rt}, rep, w, 30)
 		v, _ := newRoundView(env, b.Name, 0)
 		rv := v.(roundView)
 		left, _ := rv.Context(env)
@@ -687,7 +687,7 @@ func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 			t.Errorf("width %d: missing age '5m': %q", w, plain)
 		}
 
-		// The stripped left never ends inside a word of the branch or planner.
+		// The stripped left never ends inside a word of the branch or mastermind.
 		// Each part is either whole or absent.
 		if strings.Contains(plain, "relevo/spool-db") {
 			// whole
@@ -698,7 +698,7 @@ func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 		if strings.Contains(plain, "architect-2") {
 			// whole
 		} else if strings.Contains(plain, "architect") {
-			t.Errorf("width %d: planner partially present in %q", w, plain)
+			t.Errorf("width %d: mastermind partially present in %q", w, plain)
 		}
 
 		if strings.Contains(plain, "gemini-3.8-flash-high") {

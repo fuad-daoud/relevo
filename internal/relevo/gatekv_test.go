@@ -9,7 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
 
 // testGateKV returns a real t.TempDir() database for a Runtime's Gates or
@@ -65,13 +65,13 @@ func testClaims(t *testing.T) (*delivery.KVClaims, *db.DB, string) {
 	return &delivery.KVClaims{KV: db.TxKV{DB: d}, Root: dir, Alive: alwaysAlive}, d, dir
 }
 
-// testPlanners returns a planner registry over a fresh temp database.
-func testPlanners(t *testing.T) *planner.DBRegistry {
+// testMasterMinds returns a mastermind registry over a fresh temp database.
+func testMasterMinds(t *testing.T) *mastermind.DBRegistry {
 	t.Helper()
-	return &planner.DBRegistry{
+	return &mastermind.DBRegistry{
 		KV:   db.TxKV{DB: testSecretDB(t)},
 		Now:  time.Now,
-		Root: filepath.Join(t.TempDir(), "planners"),
+		Root: filepath.Join(t.TempDir(), "masterminds"),
 	}
 }
 
