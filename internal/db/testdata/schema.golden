@@ -301,4 +301,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 )
 
-schema_versions have=8 know=8
+schema_versions have=9 know=9

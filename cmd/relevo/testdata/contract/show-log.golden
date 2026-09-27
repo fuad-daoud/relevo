@@ -14,7 +14,7 @@
       "ts": "<TIME>",
       "round": 1,
       "direction": "to_runner",
-      "kind": "plan",
+      "kind": "prompt",
       "confirmed": true
     },
     {

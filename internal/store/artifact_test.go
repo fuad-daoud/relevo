@@ -22,8 +22,8 @@ func TestSealRoundSealsAnArtifactDirAndRemovesIt(t *testing.T) {
 	}
 
 	files := map[string]string{
-		s.ReportPath("webshop", 4):                                                   "flat report\n",
-		s.SummaryPath("webshop", 4, "reviewer"):                                      "summary\n",
+		s.ReportPath("webshop", 4): "flat report\n",
+		filepath.Join(s.ArtifactDir("webshop", 4, "reviewer"), "summary.md"):         "summary\n",
 		filepath.Join(s.ArtifactDir("webshop", 4, "reviewer"), "site", "index.html"): "<html>\n",
 	}
 	for path, body := range files {
@@ -216,7 +216,7 @@ func TestRoundsOnDiskCountsAnArtifactDir(t *testing.T) {
 	if err := os.MkdirAll(dir, bindingDirMode); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	if err := os.WriteFile(s.SummaryPath("webshop", 5, "reviewer"), []byte("summary\n"), bindingFileMode); err != nil {
+	if err := os.WriteFile(filepath.Join(s.ArtifactDir("webshop", 5, "reviewer"), "summary.md"), []byte("summary\n"), bindingFileMode); err != nil {
 		t.Fatalf("write summary: %v", err)
 	}
 	if err := os.MkdirAll(s.ArtifactDir("webshop", 6, "reviewer"), bindingDirMode); err != nil {
@@ -267,7 +267,7 @@ func TestPutRoundFileNestedPath(t *testing.T) {
 		round int
 		path  string
 	}{
-		{"a mismatched NNN", 4, s.SummaryPath("webshop", 3, "reviewer")},
+		{"a mismatched NNN", 4, filepath.Join(s.ArtifactDir("webshop", 3, "reviewer"), "summary.md")},
 		{"a path with ..", 4, s.Dir("webshop") + "/004-reviewer/../004-secret.md"},
 		{"a first segment that is not NNN-", 4, filepath.Join(s.Dir("webshop"), "notes", "x.md")},
 	}
@@ -304,12 +304,12 @@ func TestForkCopiesNestedFiles(t *testing.T) {
 	}
 
 	files := map[string]string{
-		s.PlanPath(srcName, 1):                "round 1 plan",
-		s.PlanPath(srcName, 2):                "round 2 plan",
-		s.PlanPath(srcName, 3):                "round 3 plan",
-		s.SummaryPath(srcName, 2, "reviewer"): "round 2 summary",
+		s.PromptPath(srcName, 1): "round 1 plan",
+		s.PromptPath(srcName, 2): "round 2 plan",
+		s.PromptPath(srcName, 3): "round 3 plan",
+		filepath.Join(s.ArtifactDir(srcName, 2, "reviewer"), "summary.md"):         "round 2 summary",
 		filepath.Join(s.ArtifactDir(srcName, 2, "reviewer"), "site", "index.html"): "round 2 html",
-		s.SummaryPath(srcName, 3, "reviewer"):                                      "round 3 summary",
+		filepath.Join(s.ArtifactDir(srcName, 3, "reviewer"), "summary.md"):         "round 3 summary",
 	}
 	for path, body := range files {
 		if err := os.MkdirAll(filepath.Dir(path), bindingDirMode); err != nil {
@@ -334,8 +334,8 @@ func TestForkCopiesNestedFiles(t *testing.T) {
 		t.Fatalf("RoundFiles dst: %v", err)
 	}
 	want := []string{
-		"001-plan.md",
-		"002-plan.md",
+		"001-prompt.md",
+		"002-prompt.md",
 		"002-reviewer/site/index.html",
 		"002-reviewer/summary.md",
 	}

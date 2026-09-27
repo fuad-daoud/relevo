@@ -332,7 +332,7 @@ func goldenArchivedRoundModel(t *testing.T, width, height int) Model {
 	h := histRows()[0]
 	v, _ := newHistRoundView(m.env(), h, 0)
 	m.stack = append(m.stack, v)
-	res, _ = m.Update(tabMsg{name: h.Name, round: 3, t: tabPlan, content: tabContent{loaded: true, round: 3, body: "# Round 3 plan\n\nDo the thing.\n"}})
+	res, _ = m.Update(tabMsg{name: h.Name, round: 3, t: tabPrompt, content: tabContent{loaded: true, round: 3, body: "# Round 3 plan\n\nDo the thing.\n"}})
 	return res.(Model)
 }
 
@@ -364,7 +364,8 @@ func padBytes(s string, n int) string {
 }
 
 // roundReaderArtifactsModel pushes the round view for a closed reader round
-// with its artifacts tab open and the cursor on summary.md (round 5b).
+// with its artifacts tab open and the cursor on the reviewer's output file
+// (round 5b).
 func roundReaderArtifactsModel(t *testing.T, width, height int) Model {
 	t.Helper()
 	const (
@@ -394,7 +395,7 @@ func seedPlanFixture(t *testing.T, st *store.Store, name string, round int, ts t
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	p := st.PlanPath(name, round)
+	p := st.PromptPath(name, round)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +403,7 @@ func seedPlanFixture(t *testing.T, st *store.Store, name string, round int, ts t
 		t.Fatal(err)
 	}
 	if err := st.AppendLog(name, store.LogEntry{
-		TS: ts, Round: round, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: p,
+		TS: ts, Round: round, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: p,
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}

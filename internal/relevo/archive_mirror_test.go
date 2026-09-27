@@ -27,7 +27,7 @@ func TestMirrorArchivedFeedsOnce(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	if err := rt.Store.AppendLog("webshop", store.LogEntry{
-		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}

@@ -28,13 +28,13 @@ func nudgePrompt(reportPath, donePath string) string {
 }
 
 // nudgedSincePlan reports whether a nudge switch entry already follows the
-// latest plan sent for round: a plan is nudged once, and a resend of the same
-// round (a newer plan entry) allows another. A round with no plan entry in
-// entries has not had one.
+// latest prompt sent for round: a prompt is nudged once, and a resend of the
+// same round (a newer prompt entry) allows another. A round with no prompt
+// entry in entries has not had one.
 func nudgedSincePlan(entries []store.LogEntry, round int) bool {
 	plan := -1
 	for i, e := range entries {
-		if e.Round == round && e.Direction == store.DirToBuilder && e.Kind == store.KindPlan {
+		if e.Round == round && e.Direction == store.DirToBuilder && store.IsPromptKind(e.Kind) {
 			plan = i
 		}
 	}

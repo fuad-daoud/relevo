@@ -197,10 +197,10 @@ A `switch` entry is relevo -> log only: the builder was replaced mid-round, and 
 ```
 mastermind writes ./plan.md, then runs:  relevo send --file ./plan.md
 
-relevo: assign round N, copy to <state>/NNN-plan.md
+relevo: assign round N, copy to <state>/NNN-prompt.md
        herdr agent prompt <builder> "
          Round N from the mastermind.
-         Read:  <state>/NNN-plan.md
+         Read:  <state>/NNN-prompt.md
          When you are done, write your report to: <state>/NNN-report.md
          Then, as the very last thing you do -- after every edit, test and
          commit -- create this empty file: <state>/NNN-done

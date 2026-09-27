@@ -115,7 +115,7 @@ type BindingStatus struct {
 	// harness's record on this call. nil when no round is open or nothing is
 	// readable yet. Never recorded, never summed into Spend.
 	LiveUsage *usage.Usage `json:"live_usage,omitempty"`
-	// RoundStart is the TS of the earliest KindPlan + DirToBuilder entry whose
+	// RoundStart is the TS of the earliest prompt + DirToBuilder entry whose
 	// Round equals the round of the newest such entry. Zero when the log has no
 	// such entry.
 	RoundStart time.Time `json:"round_start,omitzero"`
@@ -344,15 +344,17 @@ func QueueText(q *store.QueueFacts, server string, now time.Time) string {
 }
 
 // IsPayloadKind reports whether k is one of the four kinds that cross
-// between mastermind and builder (plan, report, question, answer) -- the ones
+// between mastermind and builder (prompt, report, question, answer) -- the ones
 // LastPayload tracks, as opposed to relevo's own bookkeeping kinds.
 func IsPayloadKind(k store.Kind) bool {
-	switch k {
-	case store.KindPlan, store.KindReport, store.KindQuestion, store.KindAnswer:
+	if store.IsPromptKind(k) {
 		return true
-	default:
-		return false
 	}
+	switch k {
+	case store.KindReport, store.KindQuestion, store.KindAnswer:
+		return true
+	}
+	return false
 }
 
 // PriorTokensOf returns the sum of tokens from earlier segments in the given
@@ -385,7 +387,7 @@ func RoundFacts(entries []store.LogEntry) (start, end time.Time, u *usage.Usage)
 	hasPlan := false
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
-		if e.Kind == store.KindPlan && e.Direction == store.DirToBuilder {
+		if store.IsPromptKind(e.Kind) && e.Direction == store.DirToBuilder {
 			targetRound = e.Round
 			hasPlan = true
 			break
@@ -397,7 +399,7 @@ func RoundFacts(entries []store.LogEntry) (start, end time.Time, u *usage.Usage)
 
 	for i := 0; i < len(entries); i++ {
 		e := entries[i]
-		if e.Kind == store.KindPlan && e.Direction == store.DirToBuilder && e.Round == targetRound {
+		if store.IsPromptKind(e.Kind) && e.Direction == store.DirToBuilder && e.Round == targetRound {
 			start = e.TS
 			break
 		}

@@ -19,7 +19,7 @@ import (
 const readerCloseFinal = "The review is done.\n\n```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: [index.html]\ncommands_run: []\nnot_done: []\n```\n"
 
 // readerCloseSummary is readerCloseFinal with the relevo block stripped: what
-// summary.md must hold after the close, so the mastermind receives no stray block.
+// findings.md must hold after the close, so the mastermind receives no stray block.
 const readerCloseSummary = "The review is done.\n"
 
 // bindReader binds a reviewer on repo and sends it a plan, so round 1 is open
@@ -115,7 +115,7 @@ func exitReaderRunner(t *testing.T, rt Runtime, b store.Binding) {
 }
 
 // TestReaderCloseWritesSummaryFromTheFinalMessage closes a reader round whose
-// runner has exited and checks that summary.md holds the runner's final
+// runner has exited and checks that findings.md holds the runner's final
 // message, that the report entry points at it, that its tail parses, and that
 // no diff was taken.
 func TestReaderCloseWritesSummaryFromTheFinalMessage(t *testing.T) {
@@ -131,18 +131,18 @@ func TestReaderCloseWritesSummaryFromTheFinalMessage(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	summary := rt.Store.SummaryPath("reader-bind", 1, "reviewer")
-	got, err := os.ReadFile(summary)
+	output := rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings")
+	got, err := os.ReadFile(output)
 	if err != nil {
-		t.Fatalf("summary.md was not written: %v", err)
+		t.Fatalf("findings.md was not written: %v", err)
 	}
 	if string(got) != readerCloseSummary {
-		t.Errorf("summary.md = %q, want the stripped summary %q", got, readerCloseSummary)
+		t.Errorf("findings.md = %q, want the stripped summary %q", got, readerCloseSummary)
 	}
 
 	e := reportEntryFor(t, rt, "reader-bind", 1)
-	if e.Path != summary {
-		t.Errorf("report entry Path = %q, want the summary path %q", e.Path, summary)
+	if e.Path != output {
+		t.Errorf("report entry Path = %q, want the summary path %q", e.Path, output)
 	}
 	if _, ok, _ := reporttail.ParseWithReason([]byte(got)); ok {
 		t.Errorf("the saved summary still carries a parseable relevo block:\n%s", got)
@@ -150,7 +150,10 @@ func TestReaderCloseWritesSummaryFromTheFinalMessage(t *testing.T) {
 	if e.Outcome != reporttail.OutcomeDone {
 		t.Errorf("entry.Outcome = %q, want %q", e.Outcome, reporttail.OutcomeDone)
 	}
-	if !strings.Contains(e.Payload, "The runner finished round 1. Findings: relevo show reader-bind --round 1 --summary") {
+	if _, err := os.Stat(filepath.Join(rt.Store.ArtifactDir("reader-bind", 1, "reviewer"), "summary.md")); !os.IsNotExist(err) {
+		t.Errorf("a close must not write summary.md any more: stat = %v", err)
+	}
+	if !strings.Contains(e.Payload, "The runner finished round 1. Findings: relevo show reader-bind --round 1 --output") {
 		t.Errorf("payload does not contain the expected reader close line:\n%s", e.Payload)
 	}
 	if strings.Contains(e.Payload, "--report") {
@@ -170,12 +173,12 @@ func TestReaderCloseKeepsARunnerWrittenSummary(t *testing.T) {
 
 	repo := readerRepo(t)
 	rt, b := bindReader(t, repo)
-	summary := rt.Store.SummaryPath("reader-bind", 1, "reviewer")
-	if err := os.MkdirAll(filepath.Dir(summary), 0o755); err != nil {
+	output := rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings")
+	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	const own = "# The runner's own summary\n"
-	if err := os.WriteFile(summary, []byte(own), 0o644); err != nil {
+	if err := os.WriteFile(output, []byte(own), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
@@ -186,15 +189,15 @@ func TestReaderCloseKeepsARunnerWrittenSummary(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	got, err := os.ReadFile(summary)
+	got, err := os.ReadFile(output)
 	if err != nil {
-		t.Fatalf("read summary.md: %v", err)
+		t.Fatalf("read findings.md: %v", err)
 	}
 	if string(got) != own {
-		t.Errorf("summary.md = %q, want the runner's own %q", got, own)
+		t.Errorf("findings.md = %q, want the runner's own %q", got, own)
 	}
-	if e := reportEntryFor(t, rt, "reader-bind", 1); e.Path != summary {
-		t.Errorf("report entry Path = %q, want the summary path %q", e.Path, summary)
+	if e := reportEntryFor(t, rt, "reader-bind", 1); e.Path != output {
+		t.Errorf("report entry Path = %q, want the summary path %q", e.Path, output)
 	}
 }
 
@@ -206,12 +209,12 @@ func TestReaderCloseStripsARunnerWrittenSummaryWithABlock(t *testing.T) {
 
 	repo := readerRepo(t)
 	rt, b := bindReader(t, repo)
-	summary := rt.Store.SummaryPath("reader-bind", 1, "reviewer")
-	if err := os.MkdirAll(filepath.Dir(summary), 0o755); err != nil {
+	output := rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings")
+	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	const ownWithBlock = "# Runner summary.\n\n```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n```\n"
-	if err := os.WriteFile(summary, []byte(ownWithBlock), 0o644); err != nil {
+	if err := os.WriteFile(output, []byte(ownWithBlock), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
@@ -222,13 +225,13 @@ func TestReaderCloseStripsARunnerWrittenSummaryWithABlock(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	got, err := os.ReadFile(summary)
+	got, err := os.ReadFile(output)
 	if err != nil {
-		t.Fatalf("read summary.md: %v", err)
+		t.Fatalf("read findings.md: %v", err)
 	}
 	const wantStripped = "# Runner summary.\n"
 	if string(got) != wantStripped {
-		t.Errorf("summary.md = %q, want the stripped bytes %q", got, wantStripped)
+		t.Errorf("findings.md = %q, want the stripped bytes %q", got, wantStripped)
 	}
 	e := reportEntryFor(t, rt, "reader-bind", 1)
 	if e.Outcome != reporttail.OutcomeDone {
@@ -238,7 +241,7 @@ func TestReaderCloseStripsARunnerWrittenSummaryWithABlock(t *testing.T) {
 
 // TestReaderCloseKeepsTheHaltedStatusOutOfTheSummary checks that a halted
 // reader round's status is preserved in the entry's Outcome/HaltedAt and the
-// payload annotation, while the summary.md file has no relevo block.
+// payload annotation, while the findings.md file has no relevo block.
 func TestReaderCloseKeepsTheHaltedStatusOutOfTheSummary(t *testing.T) {
 	t.Parallel()
 
@@ -253,10 +256,10 @@ func TestReaderCloseKeepsTheHaltedStatusOutOfTheSummary(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	summary := rt.Store.SummaryPath("reader-bind", 1, "reviewer")
-	got, err := os.ReadFile(summary)
+	output := rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings")
+	got, err := os.ReadFile(output)
 	if err != nil {
-		t.Fatalf("read summary.md: %v", err)
+		t.Fatalf("read findings.md: %v", err)
 	}
 	if _, ok, _ := reporttail.ParseWithReason(got); ok {
 		t.Errorf("the saved summary still carries a parseable relevo block:\n%s", got)
@@ -367,9 +370,9 @@ func TestSweepScratchKeepsOpenReaderRounds(t *testing.T) {
 		}
 	}
 	seedLog(t, rt, "open-reader",
-		store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
+		store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
 	seedLog(t, rt, "closed-reader",
-		store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 		store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport})
 
 	for _, name := range []string{"open-reader", "closed-reader", "ghost"} {
@@ -409,7 +412,7 @@ func TestSweepKeepsTheCurrentRoundsScratchBeforeItOpens(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	seedLog(t, rt, "reader-bind",
-		store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 		store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport})
 
 	for _, round := range []int{1, 2} {
@@ -461,7 +464,7 @@ func TestReaderRoundIsNotAnEscape(t *testing.T) {
 // end of its stream. While its runner is alive the round stays open even though
 // the marker is present, and the next tick -- after the runner has exited and
 // the stream carries the final message -- closes it with that message as
-// summary.md.
+// findings.md.
 func TestReaderRoundWaitsForExitAfterMarker(t *testing.T) {
 	t.Parallel()
 
@@ -477,8 +480,8 @@ func TestReaderRoundWaitsForExitAfterMarker(t *testing.T) {
 	if open.Round != 1 {
 		t.Fatalf("round = %d with a live runner after its marker, want the round still open on round 1", open.Round)
 	}
-	if _, err := os.Stat(rt.Store.SummaryPath("reader-bind", 1, "reviewer")); !os.IsNotExist(err) {
-		t.Errorf("summary.md was written while the runner was still alive: %v", err)
+	if _, err := os.Stat(rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings")); !os.IsNotExist(err) {
+		t.Errorf("findings.md was written while the runner was still alive: %v", err)
 	}
 
 	exitReaderRunner(t, rt, open)
@@ -489,12 +492,12 @@ func TestReaderRoundWaitsForExitAfterMarker(t *testing.T) {
 	if closed.Round != 2 {
 		t.Fatalf("round = %d after the runner exited, want the round closed", closed.Round)
 	}
-	got, err := os.ReadFile(rt.Store.SummaryPath("reader-bind", 1, "reviewer"))
+	got, err := os.ReadFile(rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings"))
 	if err != nil {
-		t.Fatalf("summary.md was not written: %v", err)
+		t.Fatalf("findings.md was not written: %v", err)
 	}
 	if string(got) != readerCloseSummary {
-		t.Errorf("summary.md = %q, want the stripped summary %q", got, readerCloseSummary)
+		t.Errorf("findings.md = %q, want the stripped summary %q", got, readerCloseSummary)
 	}
 }
 

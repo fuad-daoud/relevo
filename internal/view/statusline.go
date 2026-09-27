@@ -161,11 +161,12 @@ func RenderMasterMindLine(name string, columns int) string {
 // because a delivered report states those in its status column instead.
 func phase(b BindingStatus) string {
 	if b.LastPayload == nil {
-		return "no plan yet"
+		return "no prompt yet"
+	}
+	if store.IsPromptKind(b.LastPayload.Kind) {
+		return "prompt sent"
 	}
 	switch b.LastPayload.Kind {
-	case store.KindPlan:
-		return "plan sent"
 	case store.KindReport:
 		return "report in"
 	case store.KindQuestion:

@@ -277,7 +277,7 @@ func seedShowSectionsFixture(t *testing.T) (name string, roots []string) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	if err := os.WriteFile(s.PlanPath(name, 1), []byte("# plan body\n"), 0o644); err != nil {
+	if err := os.WriteFile(s.PromptPath(name, 1), []byte("# plan body\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
 	if err := os.WriteFile(s.ReportPath(name, 1), []byte("# report body\n"), 0o644); err != nil {
@@ -300,7 +300,7 @@ func seedShowSectionsFixture(t *testing.T) (name string, roots []string) {
 
 	fixedTS := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
 	for i, e := range []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Note: "round one"},
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindDiff, Confirmed: true, Note: "1 file, +1 -0"},
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindDrift, Confirmed: true, Note: "1 file, +1 -1"},
@@ -321,7 +321,7 @@ func TestContractShow(t *testing.T) {
 		golden string
 		args   []string
 	}{
-		{"show-plan", []string{"show", name, "--round", "1", "--plan", "--json"}},
+		{"show-prompt", []string{"show", name, "--round", "1", "--prompt", "--json"}},
 		{"show-report", []string{"show", name, "--round", "1", "--report", "--json"}},
 		{"show-diff", []string{"show", name, "--round", "1", "--diff", "--json"}},
 		{"show-drift", []string{"show", name, "--round", "1", "--drift", "--json"}},
@@ -562,7 +562,7 @@ func TestContractWaitExitCodes(t *testing.T) {
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: "halted"},
 	})
 	seedWaitBinding(t, "wait-timeout", store.Binding{Round: 1, State: store.StateActive}, []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 	})
 
 	for _, c := range []struct {

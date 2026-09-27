@@ -522,7 +522,7 @@ func TestSendHeadlessWithoutRunnerStagesNothing(t *testing.T) {
 		t.Fatalf("Send err = %v, want ErrRunnerUnavailable", err)
 	}
 
-	if _, statErr := os.Stat(rt.Store.PlanPath("webshop", 1)); statErr == nil {
+	if _, statErr := os.Stat(rt.Store.PromptPath("webshop", 1)); statErr == nil {
 		t.Error("no plan may be staged when there is no runner")
 	}
 	nAfter, err := rt.Store.ReadLog("webshop")
@@ -557,7 +557,7 @@ func TestSendHeadlessRefusesWhileThePreviousProcessIsAlive(t *testing.T) {
 	if len(fr.specs) != 1 {
 		t.Errorf("a refused send must start nothing: specs = %d", len(fr.specs))
 	}
-	plan, _ := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	plan, _ := os.ReadFile(rt.Store.PromptPath("webshop", 1))
 	if string(plan) != "round one" {
 		t.Errorf("a refused send must not restage the plan: %q", plan)
 	}
@@ -613,11 +613,11 @@ func TestSendHeadlessStartFailureGoesNeedsYou(t *testing.T) {
 	}
 	entries, _ := rt.Store.ReadLog("webshop")
 	for _, e := range entries {
-		if e.Kind == store.KindPlan {
+		if e.Kind == store.KindPrompt {
 			t.Errorf("no plan entry may be logged for a round that never started: %+v", e)
 		}
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 1)); err != nil {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 1)); err != nil {
 		t.Errorf("the plan stays staged so the human can retry: %v", err)
 	}
 }
@@ -2235,7 +2235,7 @@ func TestReconcileHeadlessOpenRoundWithNoProcessIsLeftAlone(t *testing.T) {
 	// Stage a plan entry by hand so the round reads as open the way a
 	// half-started round would; the failed Send logged none.
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("webshop", store.LogEntry{TS: rt.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: rt.Store.PlanPath("webshop", 1), Confirmed: true})
+		return tx.AppendLog("webshop", store.LogEntry{TS: rt.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: rt.Store.PromptPath("webshop", 1), Confirmed: true})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -3032,8 +3032,8 @@ func TestRegateHeadlessStartsRepairProcess(t *testing.T) {
 		t.Fatalf("specs = %d, want one more than %d: the repair round is a fresh process", len(fr.specs), before)
 	}
 	last := fr.specs[len(fr.specs)-1]
-	if !strings.Contains(strings.Join(last.Argv, " "), "002-plan.md") {
-		t.Errorf("repair process prompt does not name 002-plan.md: %v", last.Argv)
+	if !strings.Contains(strings.Join(last.Argv, " "), "002-prompt.md") {
+		t.Errorf("repair process prompt does not name 002-prompt.md: %v", last.Argv)
 	}
 	if got.Builder.PID == 0 {
 		t.Error("the repair round's process must be recorded on the binding")
@@ -3103,7 +3103,7 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 		t.Fatalf("specs = %+v, want one Start", fr.specs)
 	}
 	spec := fr.specs[0]
-	planPath := rt.Store.PlanPath("webshop", 1)
+	planPath := rt.Store.PromptPath("webshop", 1)
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	donePath := rt.Store.DonePath("webshop", 1)
 	b, _ := rt.Store.Load("webshop")
@@ -3125,7 +3125,7 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 	entries, _ := rt.Store.ReadLog("webshop")
 	var plans int
 	for _, e := range entries {
-		if e.Kind == store.KindPlan && e.Round == 1 && e.Path == planPath {
+		if e.Kind == store.KindPrompt && e.Round == 1 && e.Path == planPath {
 			plans++
 		}
 	}
@@ -3169,7 +3169,7 @@ func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
 		t.Errorf("switch entries = %+v, want one naming %s", sw, testClaudeRef)
 	}
 	// The prompt handed to the new process is the same round's prompt.
-	if !strings.Contains(fr.specs[1].Argv[2], rt.Store.PlanPath("webshop", 1)) {
+	if !strings.Contains(fr.specs[1].Argv[2], rt.Store.PromptPath("webshop", 1)) {
 		t.Errorf("new process prompt lacks the round's plan path: %q", fr.specs[1].Argv[2])
 	}
 }

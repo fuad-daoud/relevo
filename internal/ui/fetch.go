@@ -18,7 +18,7 @@ import (
 type tab int
 
 const (
-	tabPlan tab = iota
+	tabPrompt tab = iota
 	tabReport
 	tabTerminal
 	tabDiff
@@ -28,14 +28,14 @@ const (
 )
 
 // tabTitles indexes by tab and is used by both the tab bar and the tests.
-var tabTitles = [tabCount]string{"plan", "report", "transcript", "diff", "log", "artifacts"}
+var tabTitles = [tabCount]string{"prompt", "report", "transcript", "diff", "log", "artifacts"}
 
 // writerTabs is the tab bar a writer round draws: today's tabs, unchanged.
-var writerTabs = []tab{tabPlan, tabReport, tabTerminal, tabDiff, tabLog}
+var writerTabs = []tab{tabPrompt, tabReport, tabTerminal, tabDiff, tabLog}
 
 // readerTabs is the tab bar a reader round draws (round 5b): no report and
 // no diff, and the artifacts tab instead.
-var readerTabs = []tab{tabPlan, tabArtifacts, tabLog, tabTerminal}
+var readerTabs = []tab{tabPrompt, tabArtifacts, tabLog, tabTerminal}
 
 // tabContent is one tab's rendered body plus why it might be empty.
 //
@@ -61,13 +61,15 @@ type tabContent struct {
 
 	// The artifacts tab (round 5b): the files RoundArtifacts listed for
 	// the round, in its order; artifactRel the selected file, artifactBody
-	// its raw bytes, artifactActor the binding's actor (whose final message
-	// summary.md is) and artifactErr a failed read of the selected file.
-	artifacts     []relevo.ArtifactFile
-	artifactRel   string
-	artifactBody  string
-	artifactActor string
-	artifactErr   error
+	// its raw bytes, artifactActor the binding's actor and artifactOutput
+	// the actor's output rel (whose file, or summary.md, is the final
+	// message), and artifactErr a failed read of the selected file.
+	artifacts      []relevo.ArtifactFile
+	artifactRel    string
+	artifactBody   string
+	artifactActor  string
+	artifactOutput string
+	artifactErr    error
 }
 
 // headlessLogLines caps how much of a round log the terminal tab holds:
@@ -112,17 +114,17 @@ func fetchStatus(ctx context.Context, src Source) tea.Cmd {
 	}
 }
 
-// fetchPlan reads round's plan file. It is small enough not to need
+// fetchPrompt reads round's prompt file. It is small enough not to need
 // capture.ReadDiff's stored-patch indirection: the file is either there or it
 // is not.
-func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
+func fetchPrompt(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
 		rt, name, ok := src.Runtime(key)
 		if !ok {
 			return tabMsg{
 				name:  key,
 				round: round,
-				t:     tabPlan,
+				t:     tabPrompt,
 				content: tabContent{
 					loaded: true,
 					round:  round,
@@ -134,7 +136,7 @@ func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 			return tabMsg{
 				name:  key,
 				round: round,
-				t:     tabPlan,
+				t:     tabPrompt,
 				content: tabContent{
 					loaded: true,
 					round:  round,
@@ -142,24 +144,24 @@ func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 				},
 			}
 		}
-		data, err := rt.Store.ReadFile(rt.Store.PlanPath(name, round))
+		data, err := rt.Store.ReadFile(rt.Store.PromptPath(name, round))
 		if err != nil {
 			if os.IsNotExist(err) {
 				return tabMsg{
 					name:  key,
 					round: round,
-					t:     tabPlan,
+					t:     tabPrompt,
 					content: tabContent{
 						loaded: true,
 						round:  round,
-						empty:  fmt.Sprintf("no plan for round %d", round),
+						empty:  fmt.Sprintf("no prompt for round %d", round),
 					},
 				}
 			}
 			return tabMsg{
 				name:  key,
 				round: round,
-				t:     tabPlan,
+				t:     tabPrompt,
 				content: tabContent{
 					loaded: true,
 					round:  round,
@@ -168,14 +170,14 @@ func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 			}
 		}
 
-		// The plan tab's time is when the plan was sent, from the log entry
-		// that recorded it. A log read failure or a missing entry leaves the
-		// time unknown; it never fails the tab.
+		// The prompt tab's time is when the prompt was sent, from the log
+		// entry that recorded it. A log read failure or a missing entry
+		// leaves the time unknown; it never fails the tab.
 		var at time.Time
 		if entries, lerr := rt.Store.ReadLog(name); lerr == nil {
 			for i := len(entries) - 1; i >= 0; i-- {
 				e := entries[i]
-				if e.Round == round && e.Direction == store.DirToBuilder && e.Kind == store.KindPlan {
+				if e.Round == round && e.Direction == store.DirToBuilder && store.IsPromptKind(e.Kind) {
 					at = e.TS
 					break
 				}
@@ -185,7 +187,7 @@ func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 		return tabMsg{
 			name:  key,
 			round: round,
-			t:     tabPlan,
+			t:     tabPrompt,
 			content: tabContent{
 				loaded: true,
 				at:     at,
@@ -687,7 +689,8 @@ func fetchArtifacts(ctx context.Context, src Source, key string, round, sel int)
 			}
 		}
 		actor := relevo.BindingRole(b)
-		files, err := relevo.RoundArtifacts(rt, name, round, actor)
+		output := relevo.OutputFile(rt, b)
+		files, err := relevo.RoundArtifacts(rt, name, round, actor, output)
 		if err != nil {
 			return tabMsg{
 				name:  key,
@@ -717,12 +720,13 @@ func fetchArtifacts(ctx context.Context, src Source, key string, round, sel int)
 			sel = 0
 		}
 		content := tabContent{
-			loaded:        true,
-			round:         round,
-			at:            time.Now(),
-			artifacts:     files,
-			artifactRel:   files[sel].Rel,
-			artifactActor: actor,
+			loaded:         true,
+			round:          round,
+			at:             time.Now(),
+			artifacts:      files,
+			artifactRel:    files[sel].Rel,
+			artifactActor:  actor,
+			artifactOutput: output,
 		}
 		data, rerr := relevo.ReadArtifact(rt, name, round, actor, files[sel].Rel)
 		if rerr != nil {
@@ -738,8 +742,8 @@ func fetchArtifacts(ctx context.Context, src Source, key string, round, sel int)
 // it -- terminal -> transcript, everything else its own name (§5.8).
 func sectionForTab(t tab) relevo.ShowSection {
 	switch t {
-	case tabPlan:
-		return relevo.ShowPlan
+	case tabPrompt:
+		return relevo.ShowPrompt
 	case tabReport:
 		return relevo.ShowReport
 	case tabTerminal:
@@ -751,7 +755,7 @@ func sectionForTab(t tab) relevo.ShowSection {
 	case tabArtifacts:
 		return relevo.ShowArtifacts
 	default:
-		return relevo.ShowPlan
+		return relevo.ShowPrompt
 	}
 }
 
@@ -759,8 +763,8 @@ func sectionForTab(t tab) relevo.ShowSection {
 // the ui tab a reply routes to rather than the relevo.ShowSection it read.
 func tabForSection(s relevo.ShowSection) tab {
 	switch s {
-	case relevo.ShowPlan:
-		return tabPlan
+	case relevo.ShowPrompt:
+		return tabPrompt
 	case relevo.ShowReport:
 		return tabReport
 	case relevo.ShowTranscript:
@@ -772,7 +776,7 @@ func tabForSection(s relevo.ShowSection) tab {
 	case relevo.ShowArtifacts:
 		return tabArtifacts
 	default:
-		return tabPlan
+		return tabPrompt
 	}
 }
 
@@ -787,7 +791,7 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 		res, err := relevo.Show(ctx, rt, relevo.ShowOptions{Name: name, Round: round, Section: section})
 		if err != nil {
 			content := tabContent{loaded: true, round: round, err: err}
-			if t != tabPlan && t != tabReport {
+			if t != tabPrompt && t != tabReport {
 				content.at = time.Now()
 			}
 			return tabMsg{name: name, round: round, t: t, content: content}
@@ -796,7 +800,7 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 		// Show carries no event time for a plan or report section, so those
 		// source lines stay timeless rather than claiming the read time.
 		content := tabContent{loaded: true, round: round}
-		if t != tabPlan && t != tabReport {
+		if t != tabPrompt && t != tabReport {
 			content.at = time.Now()
 		}
 		switch {
@@ -840,8 +844,8 @@ func fetchFor(ctx context.Context, src Source, t tab, key string, round, lines, 
 		return fetchShow(ctx, src.Base(), key, round, sectionForTab(t))
 	}
 	switch t {
-	case tabPlan:
-		return fetchPlan(ctx, src, key, round)
+	case tabPrompt:
+		return fetchPrompt(ctx, src, key, round)
 	case tabReport:
 		return fetchReport(ctx, src, key, round)
 	case tabTerminal:

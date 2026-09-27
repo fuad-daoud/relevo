@@ -258,7 +258,7 @@ func TestResendAllowsAnotherNudge(t *testing.T) {
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		return tx.AppendLog("webshop", store.LogEntry{
 			TS: rt.Now().UTC(), Round: 1, Direction: store.DirToBuilder,
-			Kind: store.KindPlan, Confirmed: true, Note: "resend",
+			Kind: store.KindPrompt, Confirmed: true, Note: "resend",
 		})
 	}); err != nil {
 		t.Fatalf("append resend plan: %v", err)

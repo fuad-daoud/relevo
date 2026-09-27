@@ -342,7 +342,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	reportPath, serr := writeReaderSummary(rt, b)
 	if serr != nil {
-		slog.Warn("reader summary not written", "binding", b.Name, "round", b.Round, "err", serr)
+		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 	}
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
@@ -371,7 +371,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// and it is the path the report entry records. A writer's report is the
 	// flat NNN-report.md the caller computed.
 	if p, err := writeReaderSummary(rt, b); err != nil {
-		slog.Warn("reader summary not written", "binding", b.Name, "round", b.Round, "err", err)
+		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", err)
 	} else {
 		path = p
 	}
@@ -541,14 +541,14 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		return b, err
 	}
 
-	// Strip the relevo block from a reader's summary.md. The parse above is
+	// Strip the relevo block from a reader's output file. The parse above is
 	// the only reader of the block, and the file the mastermind reads must not
 	// carry it. Stripping here, after the entry is queued, means the outcome
 	// survives a close that fails later and is retried on the next tick.
 	if b.Shape == store.ShapeReader {
 		if stripped := reporttail.StripTail(body); !bytes.Equal(stripped, body) {
 			if err := os.WriteFile(path, stripped, 0o644); err != nil {
-				slog.Warn("reader summary not stripped", "binding", b.Name, "round", b.Round, "err", err)
+				slog.Warn("reader output not stripped", "binding", b.Name, "round", b.Round, "err", err)
 			}
 		}
 	}

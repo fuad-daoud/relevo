@@ -214,7 +214,7 @@ func ValidOutcome(s string) bool {
 }
 
 const (
-	ArtifactPlan     = "plan"
+	ArtifactPrompt   = "prompt"
 	ArtifactReport   = "report"
 	ArtifactDiff     = "diff"
 	ArtifactDrift    = "drift"
@@ -227,7 +227,7 @@ const (
 
 func ValidArtifactKind(s string) bool {
 	switch s {
-	case ArtifactPlan, ArtifactReport, ArtifactDiff, ArtifactDrift, ArtifactGateLog,
+	case ArtifactPrompt, ArtifactReport, ArtifactDiff, ArtifactDrift, ArtifactGateLog,
 		ArtifactQuestion, ArtifactAnswer, ArtifactAsk, ArtifactFindings:
 		return true
 	}

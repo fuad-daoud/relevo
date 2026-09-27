@@ -10,7 +10,7 @@ func TestOriginLine(t *testing.T) {
 	t.Parallel()
 
 	t.Run("to runner byte-exact", func(t *testing.T) {
-		got := OriginLine("b1", 2, store.DirToBuilder, store.KindPlan)
+		got := OriginLine("b1", 2, store.DirToBuilder, store.KindPrompt)
 		want := `relevo: round 2 · to runner "b1" · from the MasterMind (not the human)`
 		if got != want {
 			t.Fatalf("got %q, want %q", got, want)

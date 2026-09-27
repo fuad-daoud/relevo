@@ -2,13 +2,13 @@ package e2e
 
 // TestHeadlessE2EReaderRound is the reader round end to end: a reviewer
 // binding shares a writer's tree, runs in a throwaway scratch copy, fills its
-// artifact directory, closes on its marker with a summary.md relevo took from
+// artifact directory, closes on its marker with a findings.md relevo took from
 // its final message, and leaves the writer's tree byte-for-byte as it was.
 //
 // The fake `claude` on PATH branches on the reader prompt: when it names an
-// artifact directory it writes index.html and style.css there, edits a file in
-// its throwaway tree, creates the marker, then prints a final result ending in
-// a relevo block and exits. No network, no real harness.
+// output file it writes index.html and style.css into its directory, edits a
+// file in its throwaway tree, creates the marker, then prints a final result
+// ending in a relevo block and exits. No network, no real harness.
 
 import (
 	"context"
@@ -32,7 +32,8 @@ const (
 )
 
 // fakeReaderFinal is the final message the fake harness prints for a reader
-// round: the text relevo records as summary.md, ending in a relevo block.
+// round: the text relevo records as the reviewer's output file, ending in a
+// relevo block.
 const fakeReaderFinal = "# Reader summary\n\n" +
 	"index.html and style.css are in the artifact directory.\n\n" +
 	"```relevo\n" +
@@ -43,8 +44,9 @@ const fakeReaderFinal = "# Reader summary\n\n" +
 	"not_done: []\n" +
 	"```\n"
 
-// fakeReaderSummary is fakeReaderFinal minus its relevo block: what summary.md
-// must hold after the close, so no stray block reaches the mastermind.
+// fakeReaderSummary is fakeReaderFinal minus its relevo block: what the
+// reviewer's findings.md must hold after the close, so no stray block reaches
+// the mastermind.
 const fakeReaderSummary = "# Reader summary\n\n" +
 	"index.html and style.css are in the artifact directory.\n"
 
@@ -126,9 +128,9 @@ func TestHeadlessE2EReaderRound(t *testing.T) {
 	}
 
 	artifact := rt.Store.ArtifactDir(readerBinding, 1, "reviewer")
-	summary := rt.Store.SummaryPath(readerBinding, 1, "reviewer")
+	output := rt.Store.OutputPath(readerBinding, 1, "reviewer", "findings")
 	for _, path := range []string{
-		summary,
+		output,
 		filepath.Join(artifact, "index.html"),
 		filepath.Join(artifact, "style.css"),
 	} {
@@ -136,17 +138,17 @@ func TestHeadlessE2EReaderRound(t *testing.T) {
 			t.Fatalf("%s does not exist after the reader round closed: %v", path, err)
 		}
 	}
-	if got := readFile(t, summary); got != fakeReaderSummary {
-		t.Fatalf("summary.md does not equal the final message with its block stripped:\ngot:\n%q\nwant:\n%q", got, fakeReaderSummary)
+	if got := readFile(t, output); got != fakeReaderSummary {
+		t.Fatalf("findings.md does not equal the final message with its block stripped:\ngot:\n%q\nwant:\n%q", got, fakeReaderSummary)
 	}
 	if entry.Outcome != "done" {
 		t.Errorf("report entry Outcome = %q, want %q", entry.Outcome, "done")
 	}
-	if !strings.Contains(entry.Payload, "Findings: relevo show e2e-reader --round 1 --summary") {
+	if !strings.Contains(entry.Payload, "Findings: relevo show e2e-reader --round 1 --output") {
 		t.Errorf("report payload does not name the reader summary:\n%s", entry.Payload)
 	}
-	if entry.Path != summary {
-		t.Fatalf("report entry Path = %q, want the summary path %s", entry.Path, summary)
+	if entry.Path != output {
+		t.Fatalf("report entry Path = %q, want the output path %s", entry.Path, output)
 	}
 
 	// The writer's tree is exactly as it was: the reader's edit lives only in
@@ -175,17 +177,17 @@ func TestHeadlessE2EReaderRound(t *testing.T) {
 	for _, want := range []string{
 		"001-reviewer/index.html",
 		"001-reviewer/style.css",
-		"001-reviewer/summary.md",
+		"001-reviewer/findings.md",
 	} {
 		if !contains(names, want) {
 			t.Errorf("sealed round files %v do not hold %s", names, want)
 		}
 	}
-	body, err := rt.Store.ReadFile(summary)
+	body, err := rt.Store.ReadFile(output)
 	if err != nil {
-		t.Fatalf("the sealed summary.md is not readable: %v", err)
+		t.Fatalf("the sealed findings.md is not readable: %v", err)
 	}
 	if !strings.Contains(string(body), "index.html and style.css") {
-		t.Errorf("the sealed summary.md does not carry the final message:\n%s", body)
+		t.Errorf("the sealed findings.md does not carry the final message:\n%s", body)
 	}
 }

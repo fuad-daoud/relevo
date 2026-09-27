@@ -601,7 +601,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if err != nil {
 		return b, err
 	}
-	roundOpen := HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
+	roundOpen := HasPromptEntry(entries, b.Round) &&
 		!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
 
 	if !roundOpen {
@@ -746,7 +746,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// omission noted (spec §4.4).
 	reportPath, serr := writeReaderSummary(rt, b)
 	if serr != nil {
-		slog.Warn("reader summary not written", "binding", b.Name, "round", b.Round, "err", serr)
+		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 	}
 	if _, err := os.Stat(reportPath); err == nil {
 		_, m, _, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, availability.LimitScanLines), false)
@@ -879,7 +879,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 				"lost to a daemon restart; candidate "+b.BuilderCandidate+" is no longer configured", false, false)
 		}
 
-		text := composePrompt(rt, b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
+		text := composePrompt(rt, b, rt.Store.PromptPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
 			"\n\n" + interruptedNote(rt.StartedAt)
 		keep := b.RoundStartedAt
 		// Read the round's session before anything clears it (#370): the

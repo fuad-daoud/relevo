@@ -1753,7 +1753,7 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 	if got.Round != 2 {
 		t.Fatalf("Round = %d, want 2", got.Round)
 	}
-	planPath := rt.Store.PlanPath("webshop", 2)
+	planPath := rt.Store.PromptPath("webshop", 2)
 	body, err := os.ReadFile(planPath)
 	if err != nil {
 		t.Fatalf("round 2 plan must exist: %v", err)
@@ -1762,8 +1762,8 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 		t.Errorf("round 2 plan does not name the failed check:\n%s", body)
 	}
 
-	if !anySpecArgv(fr, "002-plan.md") {
-		t.Errorf("no process was handed round 2's repair plan (002-plan.md)")
+	if !anySpecArgv(fr, "002-prompt.md") {
+		t.Errorf("no process was handed round 2's repair plan (002-prompt.md)")
 	}
 
 	entries, err := rt.Store.ReadLog("webshop")
@@ -1772,7 +1772,7 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 	}
 	var repairEntry *store.LogEntry
 	for i := range entries {
-		if entries[i].Round == 2 && entries[i].Direction == store.DirToBuilder && entries[i].Kind == store.KindPlan {
+		if entries[i].Round == 2 && entries[i].Direction == store.DirToBuilder && entries[i].Kind == store.KindPrompt {
 			repairEntry = &entries[i]
 		}
 	}
@@ -1819,8 +1819,8 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 	if got.State != store.StateActive || got.RepairCount != 1 {
 		t.Fatalf("after the first failure: state=%q repairs=%d, want active/1", got.State, got.RepairCount)
 	}
-	if !anySpecArgv(fr, "002-plan.md") {
-		t.Fatalf("no process was handed round 2's repair plan (002-plan.md)")
+	if !anySpecArgv(fr, "002-prompt.md") {
+		t.Fatalf("no process was handed round 2's repair plan (002-prompt.md)")
 	}
 
 	// Round 2's gate fails with different content, so the stall bound cannot
@@ -1833,10 +1833,10 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 	if !strings.Contains(got.Halt, "after 1 repair") {
 		t.Errorf("Halt = %q, want it to mention \"after 1 repair\"", got.Halt)
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 3)); err == nil {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 3)); err == nil {
 		t.Error("no round-3 plan may be staged once the budget is spent")
 	}
-	if anySpecArgv(fr, "003-plan.md") {
+	if anySpecArgv(fr, "003-prompt.md") {
 		t.Error("no round-3 hand-off may happen once the budget is spent")
 	}
 }
@@ -1955,7 +1955,7 @@ func TestNoRegateUnchanged(t *testing.T) {
 	if got.RepairCount != 0 || got.LastGateSig != "" {
 		t.Errorf("repair bookkeeping moved with regate 0: repairs=%d sig=%q", got.RepairCount, got.LastGateSig)
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 2)); err == nil {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 2)); err == nil {
 		t.Error("no round-2 plan may be staged when regate is 0")
 	}
 	if got := len(runnerOf(t, rt).specs); got != 1 {

@@ -71,13 +71,13 @@ func lastReportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool)
 }
 
 // DefaultWaitRound is the round `relevo wait` waits on when --round is not
-// given: the highest round among to_builder/plan entries (a nudge is not a
-// send, so entries noted nudgeNote are excluded, as HasEntry excludes them);
-// b.Round when there is none (spec §4.5, decision 7).
+// given: the highest round among to_builder/prompt entries (a nudge is not a
+// send, so entries noted nudgeNote are excluded, as HasPromptEntry excludes
+// them); b.Round when there is none (spec §4.5, decision 7).
 func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 	round := 0
 	for _, e := range entries {
-		if e.Direction == store.DirToBuilder && e.Kind == store.KindPlan && e.Note != nudgeNote && e.Round > round {
+		if e.Direction == store.DirToBuilder && store.IsPromptKind(e.Kind) && e.Note != nudgeNote && e.Round > round {
 			round = e.Round
 		}
 	}
@@ -117,9 +117,9 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 	}
 
 	// Nothing in flight: the round was never sent, so no later poll can see
-	// it close. A nudge is not a send, so HasEntry excludes it, as
+	// it close. A nudge is not a send, so HasPromptEntry excludes it, as
 	// DefaultWaitRound does.
-	if !HasEntry(entries, round, store.DirToBuilder, store.KindPlan) {
+	if !HasPromptEntry(entries, round) {
 		return WaitResult{
 			Code: WaitNotStarted,
 			Line: fmt.Sprintf("round %d was never sent to %s's runner", round, b.Name),

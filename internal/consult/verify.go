@@ -237,7 +237,7 @@ func (v verifyStart) launch(wt, diff, gateLog string) (store.Binding, error) {
 	id := newID(v.d)
 	askPath := v.d.Store.AskPath(v.b.Name, v.round, id)
 	question := verifyQuestion(v.b.Name, v.round,
-		v.d.Store.PlanPath(v.b.Name, v.round), v.d.Store.ReportPath(v.b.Name, v.round), diff, gateLog)
+		v.d.Store.PromptPath(v.b.Name, v.round), v.d.Store.ReportPath(v.b.Name, v.round), diff, gateLog)
 	render := func(ref string) string { return fmt.Sprintf(headlessPrompt, ref) }
 	prompt, inline := inlinePrompt(render, []byte(question))
 	if err := stageVerifyQuestion(v.tx, v.b.Name, v.round, askPath, question, inline); err != nil {

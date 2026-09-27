@@ -16,11 +16,11 @@ func TestArchiveSealsAndFreesTheName(t *testing.T) {
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	entry := LogEntry{TS: time.Unix(1, 0).UTC(), Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true}
+	entry := LogEntry{TS: time.Unix(1, 0).UTC(), Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true}
 	if err := s.AppendLog("webshop", entry); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
-	if err := os.WriteFile(s.PlanPath("webshop", 1), []byte("round 1 plan\n"), 0o644); err != nil {
+	if err := os.WriteFile(s.PromptPath("webshop", 1), []byte("round 1 plan\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
 
@@ -57,12 +57,12 @@ func TestArchiveSealsAndFreesTheName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ArchivedLog: %v", err)
 	}
-	if len(events) != 1 || events[0].Kind != KindPlan || events[0].Seq != 1 {
+	if len(events) != 1 || events[0].Kind != KindPrompt || events[0].Seq != 1 {
 		t.Errorf("ArchivedLog = %+v, want the one plan entry", events)
 	}
 
 	// The round file survives as a sealed row, readable on the old path.
-	body, err := s.ReadFile(s.PlanPath("webshop", 1))
+	body, err := s.ReadFile(s.PromptPath("webshop", 1))
 	if err != nil || string(body) != "round 1 plan\n" {
 		t.Errorf("ReadFile(plan) = %q, %v; want the sealed plan", body, err)
 	}
@@ -99,8 +99,8 @@ func TestListArchivedImportsAndRemovesATarball(t *testing.T) {
 	}
 
 	events, err := s.ArchivedLog(a.RecordID)
-	if err != nil || len(events) != 1 || events[0].Kind != KindPlan {
-		t.Errorf("ArchivedLog = %+v, %v; want the tarball's one plan entry", events, err)
+	if err != nil || len(events) != 1 || !IsPromptKind(events[0].Kind) {
+		t.Errorf("ArchivedLog = %+v, %v; want the tarball's one prompt entry", events, err)
 	}
 	if body, err := s.ReadFile(filepath.Join(s.Dir("webshop"), "001-plan.md")); err != nil || string(body) != "round 1 plan\n" {
 		t.Errorf("ReadFile(001-plan.md) = %q, %v; want the imported member", body, err)
@@ -225,7 +225,7 @@ func TestReadFileResolvesTheMostRecentlyArchivedRecord(t *testing.T) {
 		if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
-		if err := os.WriteFile(s.PlanPath("webshop", 1), []byte(round+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(s.PromptPath("webshop", 1), []byte(round+"\n"), 0o644); err != nil {
 			t.Fatalf("write plan: %v", err)
 		}
 		if _, err := s.Archive("webshop"); err != nil {
@@ -233,7 +233,7 @@ func TestReadFileResolvesTheMostRecentlyArchivedRecord(t *testing.T) {
 		}
 	}
 
-	body, err := s.ReadFile(s.PlanPath("webshop", 1))
+	body, err := s.ReadFile(s.PromptPath("webshop", 1))
 	if err != nil || string(body) != "second\n" {
 		t.Errorf("ReadFile = %q, %v; want the newest archived record's plan", body, err)
 	}

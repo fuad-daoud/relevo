@@ -9,7 +9,7 @@ import (
 
 // TestArtifactClause pins the artifact clause of a close payload: a writer
 // always gets the literal word "Report" with --report, a reader gets its
-// agent's output label (title-cased) with --summary, and an empty label falls
+// agent's output label (title-cased) with --output, and an empty label falls
 // back to "Notes".
 func TestArtifactClause(t *testing.T) {
 	t.Parallel()
@@ -29,12 +29,12 @@ func TestArtifactClause(t *testing.T) {
 		{
 			name:  "reader names its agent's output label",
 			shape: store.ShapeReader, output: "plan", bind: "architect-bind",
-			want: "Plan: relevo show architect-bind --round 3 --summary",
+			want: "Plan: relevo show architect-bind --round 3 --output",
 		},
 		{
 			name:  "reader with no output label names notes",
 			shape: store.ShapeReader, output: "", bind: "architect-bind",
-			want: "Notes: relevo show architect-bind --round 3 --summary",
+			want: "Notes: relevo show architect-bind --round 3 --output",
 		},
 	}
 
@@ -63,11 +63,11 @@ func TestCloseClauseResolvesTheActorLabel(t *testing.T) {
 	}{
 		{
 			name: "reviewer names findings", role: "reviewer", shape: store.ShapeReader,
-			want: "Findings: relevo show reader-bind --round 1 --summary",
+			want: "Findings: relevo show reader-bind --round 1 --output",
 		},
 		{
 			name: "researcher names notes", role: "researcher", shape: store.ShapeReader,
-			want: "Notes: relevo show reader-bind --round 1 --summary",
+			want: "Notes: relevo show reader-bind --round 1 --output",
 		},
 		{
 			name: "writer keeps the report word", role: "", shape: store.ShapeWriter,
@@ -75,7 +75,7 @@ func TestCloseClauseResolvesTheActorLabel(t *testing.T) {
 		},
 		{
 			name: "unknown reader role falls back to notes", role: "mystery", shape: store.ShapeReader,
-			want: "Notes: relevo show reader-bind --round 1 --summary",
+			want: "Notes: relevo show reader-bind --round 1 --output",
 		},
 	}
 
@@ -104,14 +104,14 @@ func TestCatchUpPayloadNamesTheReaderSummary(t *testing.T) {
 	clause := closeClause(rt, b, view.ClosedRound)
 
 	payload, _ := catchUpPayload(b, view, true, clause)
-	want := "The runner finished round 1 on zen. Findings: relevo show reader-bind --round 1 --summary"
+	want := "The runner finished round 1 on zen. Findings: relevo show reader-bind --round 1 --output"
 	if payload != want {
 		t.Errorf("finished payload = %q, want %q", payload, want)
 	}
 
 	view.Stopped = "killed"
 	payload, _ = catchUpPayload(b, view, true, clause)
-	want = "The runner was stopped (killed) for round 1 on zen. Findings: relevo show reader-bind --round 1 --summary"
+	want = "The runner was stopped (killed) for round 1 on zen. Findings: relevo show reader-bind --round 1 --output"
 	if payload != want {
 		t.Errorf("stopped payload = %q, want %q", payload, want)
 	}

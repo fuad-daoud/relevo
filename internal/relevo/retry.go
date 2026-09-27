@@ -14,7 +14,7 @@ import (
 // A round with no plan recorded is not a retry: it is an error naming the
 // round, so the caller can say so without stopping anything.
 func RetryPlan(rt Runtime, name string, round int) ([]byte, error) {
-	plan, err := rt.Store.ReadFile(rt.Store.PlanPath(name, round))
+	plan, err := rt.Store.ReadFile(rt.Store.PromptPath(name, round))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("no plan recorded for %s round %d", name, round)

@@ -205,7 +205,7 @@ func TestSendStaleBuilderNoCandidateRefuses(t *testing.T) {
 		t.Fatalf("ReadLog: %v", err)
 	}
 	for _, e := range entries {
-		if e.Kind == store.KindPlan {
+		if e.Kind == store.KindPrompt {
 			t.Fatalf("Send wrote a plan entry despite the refusal: %+v", e)
 		}
 	}

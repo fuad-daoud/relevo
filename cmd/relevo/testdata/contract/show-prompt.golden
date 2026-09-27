@@ -5,7 +5,7 @@
   "Live": true,
   "Archived": false,
   "ArchivedAt": "<TIME>",
-  "Section": "plan",
+  "Section": "prompt",
   "Text": "# plan body\n",
   "Missing": false,
   "Events": null

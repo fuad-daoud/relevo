@@ -52,27 +52,27 @@ not_done: []            # adjacent work you deliberately left
 Reply here with only the report path.`
 
 // readerPrompt is a reader round's handoff template (A5 R4a): the reader works
-// in a throwaway scratch copy, writes only into its artifact directory, and its
-// final message is the actor's output label, saved as that directory's
-// summary.md. The first line is exactly `Your working tree is: ` because the
-// e2e fake parses it, as it does for builderPrompt.
+// in a throwaway scratch copy and its final message is the actor's output
+// label, saved as that label's file in the round's artifact directory. relevo
+// writes nothing on the reader's behalf: it saves the final message itself. The
+// first line is exactly `Your working tree is: ` because the e2e fake parses it,
+// as it does for builderPrompt.
 //
-// It is a format string: scratch tree, b.CWD, plan path, artifact dir, output
-// label, summary path, done marker.
+// It is a format string: scratch tree, b.CWD, prompt path, output label, output
+// path, done marker.
 const readerPrompt = `Your working tree is: %s
 It is a throwaway copy of %s for this round: read anything in it, run
 anything read-only, change nothing you need to keep -- it is discarded when
 the round ends, and nothing in it is ever committed.
 
 Read: %s
-Write every file you produce into this directory (create it): %s
 Your final message is your %s: it is saved as %s.
 End that final message with this block, filled in honestly:
 
 ` + "```relevo" + `
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
-changed_paths: []       # files you wrote into the artifact directory
+changed_paths: []       # files you changed in the throwaway tree
 commands_run: []        # commands you ran
 not_done: []            # what you deliberately left
 ` + "```" + `
@@ -129,8 +129,8 @@ type preflight struct {
 	// non-empty, pick is non-nil.
 	staleToken string
 
-	planPath, reportPath, donePath string
-	prompt                         string // composePrompt(...) -- computed, never sent
+	promptPath, reportPath, donePath string
+	prompt                           string // composePrompt(...) -- computed, never sent
 
 	remoteSHA string // remote: the resolved branch tip, for the dry run's Where
 	// remoteBuilder is the value Send hands sendRemote for a remote binding:
@@ -164,7 +164,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// on binding state.
 	body, err := os.ReadFile(file)
 	if err != nil {
-		return preflight{}, fmt.Errorf("read plan %s: %w", file, err)
+		return preflight{}, fmt.Errorf("read prompt %s: %w", file, err)
 	}
 
 	var tier harness.Tier
@@ -264,14 +264,14 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		tier = effectiveTier(b)
 	}
 
-	planPath := rt.Store.PlanPath(name, b.Round)
+	promptPath := rt.Store.PromptPath(name, b.Round)
 	reportPath := rt.Store.ReportPath(name, b.Round)
 	donePath := rt.Store.DonePath(name, b.Round)
-	prompt := composePrompt(rt, b, planPath, reportPath, donePath)
+	prompt := composePrompt(rt, b, promptPath, reportPath, donePath)
 
 	pf := preflight{
 		b: b, body: body, tier: tier,
-		planPath: planPath, reportPath: reportPath, donePath: donePath,
+		promptPath: promptPath, reportPath: reportPath, donePath: donePath,
 		prompt: prompt, pick: pick, staleToken: staleToken,
 		remoteBuilder: remoteBuilder,
 	}
@@ -481,7 +481,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			return err
 		}
 
-		planPath := rt.Store.PlanPath(name, b.Round)
+		planPath := rt.Store.PromptPath(name, b.Round)
 		reportPath := rt.Store.ReportPath(name, b.Round)
 		donePath := rt.Store.DonePath(name, b.Round)
 		if err := os.WriteFile(planPath, pf.body, 0o644); err != nil {
@@ -565,7 +565,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 		entry := store.LogEntry{
 			TS: rt.Now().UTC(), Round: b.Round,
-			Direction: store.DirToBuilder, Kind: store.KindPlan,
+			Direction: store.DirToBuilder, Kind: store.KindPrompt,
 			Path: planPath, Confirmed: true, Late: late,
 			Tier: string(effectiveTier(b)),
 		}
@@ -682,9 +682,9 @@ type DryRun struct {
 	CandidateName string   `json:"candidate_name,omitempty"`
 	Where         string   `json:"where"`               // headless: the harness binary + first arg; remote: "server contabo, branch relevo/x @ <sha12>; server not contacted"
 	GateNote      string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "agents missing: ...; the daemon would switch after start"
-	PlanPath      string   `json:"plan_path"`
-	PlanFrom      string   `json:"plan_from"`
-	PlanBytes     int64    `json:"plan_bytes"`
+	PromptPath    string   `json:"prompt_path"`
+	PromptFrom    string   `json:"prompt_from"`
+	PromptBytes   int64    `json:"prompt_bytes"`
 	ReportPath    string   `json:"report_path"`
 	DonePath      string   `json:"done_path"`
 	Tier          string   `json:"tier"`
@@ -703,18 +703,18 @@ func SendDryRun(ctx context.Context, rt Runtime, name, file string, opts SendOpt
 	}
 
 	d := DryRun{
-		Name:       pf.b.Name,
-		Round:      pf.b.Round,
-		Mode:       dryRunMode(pf.b),
-		Candidate:  pf.b.BuilderCandidate,
-		Where:      dryRunWhere(pf),
-		PlanPath:   pf.planPath,
-		PlanFrom:   absoluteOr(file),
-		PlanBytes:  int64(len(pf.body)),
-		ReportPath: pf.reportPath,
-		DonePath:   pf.donePath,
-		Tier:       string(pf.tier),
-		PromptHead: promptHead(pf.prompt),
+		Name:        pf.b.Name,
+		Round:       pf.b.Round,
+		Mode:        dryRunMode(pf.b),
+		Candidate:   pf.b.BuilderCandidate,
+		Where:       dryRunWhere(pf),
+		PromptPath:  pf.promptPath,
+		PromptFrom:  absoluteOr(file),
+		PromptBytes: int64(len(pf.body)),
+		ReportPath:  pf.reportPath,
+		DonePath:    pf.donePath,
+		Tier:        string(pf.tier),
+		PromptHead:  promptHead(pf.prompt),
 	}
 	// A1 §4.4, round 3 F3: CandidateName is set only when the set holds the
 	// token; otherwise the text falls back to printing Candidate.
@@ -795,23 +795,24 @@ func absoluteOr(path string) string {
 // naming the round and actor, followed by a blank line and the handoff text
 // (#139). rt is needed to name a reader's scratch tree, artifact dir and output
 // label.
-func composePrompt(rt Runtime, b store.Binding, planPath, reportPath, donePath string) string {
-	origin := delivery.OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPlan)
+func composePrompt(rt Runtime, b store.Binding, promptPath, reportPath, donePath string) string {
+	origin := delivery.OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPrompt)
 	if b.Shape == store.ShapeReader {
-		return origin + "\n\n" + readerPromptFor(rt, b, planPath, donePath)
+		return origin + "\n\n" + readerPromptFor(rt, b, promptPath, donePath)
 	}
-	body := fmt.Sprintf(builderPrompt, b.CWD, planPath, reportPath, donePath)
+	body := fmt.Sprintf(builderPrompt, b.CWD, promptPath, reportPath, donePath)
 	return origin + "\n\n" + body
 }
 
-// readerPromptFor renders readerPrompt for one reader round. The artifact dir
-// is the actor's round directory; the output label is the actor's resolved
-// agent definition's label (ActorOutput), which defaults to "notes" when
-// nothing names one. The definition falls back to the actor name when the
-// role's spec cannot be resolved, so a shipped actor still gets its own label.
-func readerPromptFor(rt Runtime, b store.Binding, planPath, donePath string) string {
+// readerPromptFor renders readerPrompt for one reader round. The output label
+// is the actor's resolved agent definition's label (ActorOutput), which
+// defaults to "notes" when nothing names one. The definition falls back to the
+// actor name when the role's spec cannot be resolved, so a shipped actor still
+// gets its own label. The saved path is the output path reportPathFor records,
+// so the prompt and the close cannot drift.
+func readerPromptFor(rt Runtime, b store.Binding, promptPath, donePath string) string {
 	actor := bindingRole(b)
-	artifactDir := rt.Store.ArtifactDir(b.Name, b.Round, actor)
-	return fmt.Sprintf(readerPrompt, roundTree(rt, b), b.CWD, planPath, artifactDir,
-		readerOutputLabel(rt, b), artifactDir+"/summary.md", donePath)
+	label := readerOutputLabel(rt, b)
+	outputPath := rt.Store.OutputPath(b.Name, b.Round, actor, label)
+	return fmt.Sprintf(readerPrompt, roundTree(rt, b), b.CWD, promptPath, label, outputPath, donePath)
 }

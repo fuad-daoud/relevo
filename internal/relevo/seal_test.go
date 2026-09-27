@@ -77,7 +77,7 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("second Tick: %v", err)
 	}
-	for _, base := range []string{"001-report.md", "001-plan.md"} {
+	for _, base := range []string{"001-report.md", "001-prompt.md"} {
 		if _, err := os.Stat(filepath.Join(rt.Store.Dir("webshop"), base)); err != nil {
 			t.Errorf("%s was deleted while it is still the latest closed round (D2): %v", base, err)
 		}
@@ -98,7 +98,7 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("third Tick: %v", err)
 	}
-	for _, base := range []string{"001-plan.md", "001-report.md", "001-diff.patch", "001-builder.log", "001-done"} {
+	for _, base := range []string{"001-prompt.md", "001-report.md", "001-diff.patch", "001-builder.log", "001-done"} {
 		if _, err := os.Stat(filepath.Join(rt.Store.Dir("webshop"), base)); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("%s is still on disk after the seal", base)
 		}

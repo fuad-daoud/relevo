@@ -95,14 +95,14 @@ func TestIngestFixtureLiveRounds(t *testing.T) {
 
 	// Plain round-file artifacts are not mirrored: plan/report/diff/drift are
 	// absent for every round.
-	assertArtifact(t, d, rounds[0].ID, db.ArtifactPlan, false)
+	assertArtifact(t, d, rounds[0].ID, db.ArtifactPrompt, false)
 	assertArtifact(t, d, rounds[0].ID, db.ArtifactReport, false)
 	assertArtifact(t, d, rounds[0].ID, db.ArtifactDiff, false)
 	assertArtifact(t, d, rounds[0].ID, db.ArtifactGateLog, false)
-	assertArtifact(t, d, rounds[1].ID, db.ArtifactPlan, false)
+	assertArtifact(t, d, rounds[1].ID, db.ArtifactPrompt, false)
 	assertArtifact(t, d, rounds[1].ID, db.ArtifactReport, false)
 	assertArtifact(t, d, rounds[1].ID, db.ArtifactDrift, false)
-	assertArtifact(t, d, rounds[2].ID, db.ArtifactPlan, false)
+	assertArtifact(t, d, rounds[2].ID, db.ArtifactPrompt, false)
 	assertArtifact(t, d, rounds[2].ID, db.ArtifactReport, false)
 
 	for _, rd := range rounds {
@@ -228,7 +228,7 @@ func roundsEqual(lr, ar db.Round) bool {
 
 func compareArtifacts(t *testing.T, liveDB, archiveDB *db.DB, lr, ar db.Round) {
 	t.Helper()
-	for _, kind := range []string{db.ArtifactPlan, db.ArtifactReport, db.ArtifactDiff, db.ArtifactDrift} {
+	for _, kind := range []string{db.ArtifactPrompt, db.ArtifactReport, db.ArtifactDiff, db.ArtifactDrift} {
 		la, lfound, _ := liveDB.Artifact(lr.ID, kind)
 		aa, afound, _ := archiveDB.Artifact(ar.ID, kind)
 		if lfound != afound {
@@ -538,7 +538,7 @@ func TestIngestWritesNoRoundFileMirror(t *testing.T) {
 	}
 
 	nonAnswerKinds := []string{
-		db.ArtifactPlan, db.ArtifactReport, db.ArtifactDiff, db.ArtifactDrift,
+		db.ArtifactPrompt, db.ArtifactReport, db.ArtifactDiff, db.ArtifactDrift,
 		db.ArtifactGateLog, db.ArtifactQuestion, db.ArtifactAsk, db.ArtifactFindings,
 	}
 	answers := 0
@@ -658,7 +658,7 @@ func TestUpsertAnswerIfChanged(t *testing.T) {
 func TestLogEntryToEventOptionalFields(t *testing.T) {
 	delivered := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	ev := logEntryToEvent("b1", 7, `{"round":1}`, store.LogEntry{
-		TS: dedupeAt, Kind: store.KindPlan, Note: "n", Path: "/p",
+		TS: dedupeAt, Kind: store.KindPrompt, Note: "n", Path: "/p",
 		Confirmed: true, Late: true, DeliveredAt: &delivered, Flagged: 3, FlaggedBy: "someone",
 	})
 	if ev.BindingID != "b1" || ev.Seq != 7 || ev.EntryJSON != `{"round":1}` {

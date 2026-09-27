@@ -19,7 +19,7 @@ func TestRoundFactsFromFixtureRound1(t *testing.T) {
 
 	events := []store.LogEntry{
 		{TS: ts("2026-09-10T10:00:00Z"), Round: 1, Kind: store.KindPick},
-		{TS: ts("2026-09-10T10:00:01Z"), Round: 1, Kind: store.KindPlan, Tier: "high"},
+		{TS: ts("2026-09-10T10:00:01Z"), Round: 1, Kind: store.KindPrompt, Tier: "high"},
 		{TS: ts("2026-09-10T10:00:02Z"), Round: 1, Kind: store.KindDiff, Commits: 2, Tree: "clean"},
 		{
 			TS: ts("2026-09-10T10:00:03Z"), Round: 1, Kind: store.KindReport, Outcome: "done",
@@ -32,7 +32,7 @@ func TestRoundFactsFromFixtureRound1(t *testing.T) {
 			},
 		},
 		// Round 2's entries must not leak into round 1's facts.
-		{TS: ts("2026-09-10T10:01:00Z"), Round: 2, Kind: store.KindPlan, Tier: "low"},
+		{TS: ts("2026-09-10T10:01:00Z"), Round: 2, Kind: store.KindPrompt, Tier: "low"},
 	}
 
 	r := roundFacts(events, 1)

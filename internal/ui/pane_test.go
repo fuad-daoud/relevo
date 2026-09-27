@@ -148,7 +148,7 @@ func TestRoundContextByGroup(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := paneModel(t, tc.b, tabPlan)
+			p := paneModel(t, tc.b, tabPrompt)
 			rv := roundView{pane: p, actions: true}
 			env := testEnv(p.src, view.Report{Bindings: []view.BindingStatus{tc.b}}, p.width, p.rows)
 			left, _ := rv.Context(env)
@@ -185,7 +185,7 @@ func TestRoundContextByGroup(t *testing.T) {
 }
 
 func TestRoundTokensLineHist(t *testing.T) {
-	p := paneModel(t, view.BindingStatus{Name: "archived-binding"}, tabPlan)
+	p := paneModel(t, view.BindingStatus{Name: "archived-binding"}, tabPrompt)
 	p.detail.live = false
 	p.detail.round = 2
 	p.detail.rounds = 5
@@ -200,9 +200,9 @@ func TestRoundHeadRowsMatchView(t *testing.T) {
 	for _, h := range []int{12, 18, 40} {
 		t.Run(fmt.Sprintf("height-%d", h), func(t *testing.T) {
 			b := view.BindingStatus{Name: "srv", Round: 1, Display: "ACTIVE", BuilderStatus: "working"}
-			p := paneModel(t, b, tabPlan)
+			p := paneModel(t, b, tabPrompt)
 			p.rows = h
-			p.detail.cache[tabPlan] = tabContent{loaded: true, body: "VP_TEST_LINE_1\nVP_TEST_LINE_2\nVP_TEST_LINE_3"}
+			p.detail.cache[tabPrompt] = tabContent{loaded: true, body: "VP_TEST_LINE_1\nVP_TEST_LINE_2\nVP_TEST_LINE_3"}
 			p.fillViewport()
 
 			if p.viewportHeight() != p.rows-p.headRows() {
@@ -277,7 +277,7 @@ func TestRoundNoRawToken(t *testing.T) {
 		BuilderCandidate: "opencode-1",
 		Headless:         &view.HeadlessInfo{PID: 1234, StartedAt: railNow.Add(-5 * time.Minute)},
 	}
-	p := paneModel(t, b, tabPlan)
+	p := paneModel(t, b, tabPrompt)
 	rv := roundView{pane: p, actions: true}
 	env := testEnv(p.src, view.Report{Bindings: []view.BindingStatus{b}}, p.width, p.rows)
 	view := rv.Body(env, 140, 40)
@@ -291,10 +291,10 @@ func TestRoundNoRawToken(t *testing.T) {
 
 func TestSourceLineOmitsTimeWhenUnknown(t *testing.T) {
 	b := view.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
-	p := paneModel(t, b, tabPlan)
-	p.detail.cache[tabPlan] = tabContent{loaded: true, body: "x", round: 2}
-	if got := stripANSI(p.sourceLine()); got != "plan r2" {
-		t.Errorf("plan source = %q, want %q", got, "plan r2")
+	p := paneModel(t, b, tabPrompt)
+	p.detail.cache[tabPrompt] = tabContent{loaded: true, body: "x", round: 2}
+	if got := stripANSI(p.sourceLine()); got != "prompt r2" {
+		t.Errorf("prompt source = %q, want %q", got, "prompt r2")
 	}
 	p.detail.active = tabReport
 	p.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2}
@@ -551,7 +551,7 @@ func TestRoundTokensLineCostWord(t *testing.T) {
 			Note:     "no price for google/gemini-3.8-flash-high; stream still open; timed out",
 		},
 	}
-	pUnknown := paneModel(t, bUnknown, tabPlan)
+	pUnknown := paneModel(t, bUnknown, tabPrompt)
 	tlUnknown := stripANSI(pUnknown.tokensLine(&bUnknown))
 	if !strings.Contains(tlUnknown, "no price") {
 		t.Errorf("tokensLine missing 'no price': %q", tlUnknown)
@@ -572,7 +572,7 @@ func TestRoundTokensLineCostWord(t *testing.T) {
 			Cost:     usage.Cost{Basis: usage.Measured, USD: 0.12},
 		},
 	}
-	pMeasured := paneModel(t, bMeasured, tabPlan)
+	pMeasured := paneModel(t, bMeasured, tabPrompt)
 	tlMeasured := stripANSI(pMeasured.tokensLine(&bMeasured))
 	if !strings.Contains(tlMeasured, "$0.12") {
 		t.Errorf("tokensLine missing '$0.12': %q", tlMeasured)

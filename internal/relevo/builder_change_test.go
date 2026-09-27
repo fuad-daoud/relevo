@@ -168,7 +168,7 @@ func TestApplyBuilderTierAboveCapRefused(t *testing.T) {
 func TestRoundOpenIn(t *testing.T) {
 	t.Parallel()
 
-	plan := store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}
+	plan := store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}
 	report := store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport}
 
 	tests := []struct {
@@ -178,9 +178,10 @@ func TestRoundOpenIn(t *testing.T) {
 	}{
 		{"no entries", nil, false},
 		{"plan only", []store.LogEntry{plan}, true},
+		{"legacy plan only", []store.LogEntry{{Round: 1, Direction: store.DirToBuilder, Kind: store.Kind("plan")}}, true},
 		{"report only", []store.LogEntry{report}, false},
 		{"plan and report", []store.LogEntry{plan, report}, false},
-		{"another round's plan", []store.LogEntry{{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan}}, false},
+		{"another round's plan", []store.LogEntry{{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

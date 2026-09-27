@@ -26,10 +26,10 @@ func newTestBinding(name string) store.Binding {
 }
 
 func TestTabOrderStartsWithPlan(t *testing.T) {
-	if tabPlan != 0 {
-		t.Fatalf("tabPlan = %d, want 0 (first in the tab order)", tabPlan)
+	if tabPrompt != 0 {
+		t.Fatalf("tabPrompt = %d, want 0 (first in the tab order)", tabPrompt)
 	}
-	wantOrder := [tabCount]string{"plan", "report", "transcript", "diff", "log", "artifacts"}
+	wantOrder := [tabCount]string{"prompt", "report", "transcript", "diff", "log", "artifacts"}
 	if tabTitles != wantOrder {
 		t.Fatalf("tabTitles = %v, want %v", tabTitles, wantOrder)
 	}
@@ -44,7 +44,7 @@ func TestFetchPlanLive(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	planPath := st.PlanPath(name, 1)
+	planPath := st.PromptPath(name, 1)
 	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestFetchPlanLive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := fetchPlan(context.Background(), mastermindSource{rt}, name, 1)
+	cmd := fetchPrompt(context.Background(), mastermindSource{rt}, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -64,8 +64,8 @@ func TestFetchPlanLive(t *testing.T) {
 	if tMsg.content.body != "# Round 1 plan\n" {
 		t.Fatalf("body = %q, want the plan file's content", tMsg.content.body)
 	}
-	if tMsg.t != tabPlan {
-		t.Errorf("t = %v, want tabPlan", tMsg.t)
+	if tMsg.t != tabPrompt {
+		t.Errorf("t = %v, want tabPrompt", tMsg.t)
 	}
 	if tMsg.round != 1 {
 		t.Errorf("round = %d, want 1", tMsg.round)
@@ -83,7 +83,7 @@ func TestFetchPlanTimeIsWhenThePlanWasSent(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	planPath := st.PlanPath(name, 2)
+	planPath := st.PromptPath(name, 2)
 	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -92,12 +92,12 @@ func TestFetchPlanTimeIsWhenThePlanWasSent(t *testing.T) {
 	}
 	sent := time.Date(2026, 9, 8, 12, 0, 0, 0, time.Local)
 	if err := st.AppendLog(name, store.LogEntry{
-		TS: sent, Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: planPath,
+		TS: sent, Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: planPath,
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	tMsg := fetchPlan(context.Background(), mastermindSource{rt}, name, 2)().(tabMsg)
+	tMsg := fetchPrompt(context.Background(), mastermindSource{rt}, name, 2)().(tabMsg)
 	if tMsg.content.err != nil {
 		t.Fatalf("unexpected error: %v", tMsg.content.err)
 	}
@@ -320,7 +320,7 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 		TS:        now,
 		Round:     1,
 		Direction: store.DirToBuilder,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 		Path:      "/path/plan1.md",
 		Note:      "started",
 	}
@@ -340,7 +340,7 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	want := "2026-09-08 12:00:00  round 1   to_runner  plan      /path/plan1.md started\n" +
+	want := "2026-09-08 12:00:00  round 1   to_runner  prompt    /path/plan1.md started\n" +
 		"2026-09-08 12:02:00  round 1   to_planner report    /path/report1.md finished\n"
 
 	cmd := fetchLog(context.Background(), mastermindSource{rt}, name, 1)
@@ -370,8 +370,8 @@ func TestFetchLogFiltersRound(t *testing.T) {
 	}
 	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.Local)
 	entries := []store.LogEntry{
-		{TS: now, Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: "/p1.md"},
-		{TS: now.Add(time.Minute), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: "/p2.md"},
+		{TS: now, Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: "/p1.md"},
+		{TS: now.Add(time.Minute), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: "/p2.md"},
 	}
 	for _, e := range entries {
 		if err := st.AppendLog(name, e); err != nil {
@@ -401,7 +401,7 @@ func TestFetchForRouting(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	for _, tab := range []tab{tabPlan, tabReport, tabTerminal, tabDiff, tabLog, tabArtifacts} {
+	for _, tab := range []tab{tabPrompt, tabReport, tabTerminal, tabDiff, tabLog, tabArtifacts} {
 		cmd := fetchFor(context.Background(), mastermindSource{rt}, tab, name, 1, 24, 0, true)
 		if cmd == nil {
 			t.Fatalf("fetchFor returned nil for tab %v", tab)

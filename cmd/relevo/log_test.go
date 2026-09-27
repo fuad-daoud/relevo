@@ -27,7 +27,7 @@ func seedLogStore(t *testing.T, name string, state store.State, n int) *store.St
 		t.Fatalf("Save: %v", err)
 	}
 	for i := 0; i < n; i++ {
-		if err := s.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true}); err != nil {
+		if err := s.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true}); err != nil {
 			t.Fatalf("AppendLog: %v", err)
 		}
 	}

@@ -52,7 +52,7 @@ func TestSendDeferQueues(t *testing.T) {
 	}
 	var planCount int
 	for _, e := range entries {
-		if e.Kind == store.KindPlan {
+		if e.Kind == store.KindPrompt {
 			planCount++
 		}
 	}

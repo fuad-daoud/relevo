@@ -1465,8 +1465,8 @@ func TestSendRemoteRecordsOnlyOnSuccess(t *testing.T) {
 	}
 
 	// No plan file written
-	if _, err := os.Stat(st.PlanPath("api", 1)); !os.IsNotExist(err) {
-		t.Fatalf("PlanPath exists after failure: %v", err)
+	if _, err := os.Stat(st.PromptPath("api", 1)); !os.IsNotExist(err) {
+		t.Fatalf("PromptPath exists after failure: %v", err)
 	}
 
 	// No log entry written
@@ -1550,8 +1550,8 @@ func TestSendRemoteRoundStartedIsSuccess(t *testing.T) {
 	}
 
 	// Plan file written
-	if _, err := os.Stat(st.PlanPath("api", 1)); err != nil {
-		t.Fatalf("PlanPath missing: %v", err)
+	if _, err := os.Stat(st.PromptPath("api", 1)); err != nil {
+		t.Fatalf("PromptPath missing: %v", err)
 	}
 
 	// Log entry written
@@ -1611,8 +1611,8 @@ func TestSendRemoteHaltedIsAnError(t *testing.T) {
 				t.Errorf("Send error = %q, want it to contain %q", err.Error(), want)
 			}
 		}
-		if _, statErr := os.Stat(st.PlanPath("api", 1)); !os.IsNotExist(statErr) {
-			t.Errorf("PlanPath exists after failure: stat err = %v", statErr)
+		if _, statErr := os.Stat(st.PromptPath("api", 1)); !os.IsNotExist(statErr) {
+			t.Errorf("PromptPath exists after failure: stat err = %v", statErr)
 		}
 		entries, _ := st.ReadLog("api")
 		if len(entries) != 0 {
@@ -2329,7 +2329,7 @@ func TestForwardUnavailable(t *testing.T) {
 	if err := st.Save(openB); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2390,7 +2390,7 @@ func TestForwardUnavailableSendsTheServerTokenForTheSameName(t *testing.T) {
 	if err := st.Save(openB); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2439,7 +2439,7 @@ func TestForwardUnavailableSendsTheServerTokenForARenamedProvider(t *testing.T) 
 	if err := st.Save(openB); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2489,7 +2489,7 @@ func TestForwardUnavailableReportsOneLinePerServerWhenNothingMatches(t *testing.
 		if err := st.Save(b); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+		if err := st.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -2625,7 +2625,7 @@ func TestForwardAvailablePostsToEveryServerOnce(t *testing.T) {
 	if err := st.Save(openA); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("open-alpha", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("open-alpha", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3590,7 +3590,7 @@ func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -3630,7 +3630,7 @@ func TestReconcileRemoteUnreachablePastBudgetHalts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -5607,7 +5607,7 @@ func TestSendRemoteBuilderChangesCandidate(t *testing.T) {
 	}
 	planIdx := -1
 	for i, e := range entries {
-		if e.Round == 1 && e.Kind == store.KindPlan {
+		if e.Round == 1 && e.Kind == store.KindPrompt {
 			planIdx = i
 			break
 		}
@@ -5668,7 +5668,7 @@ func TestSendRemoteBuilderPreBuilderServerRefused(t *testing.T) {
 	if len(ft.snapshotCalls) != 0 {
 		t.Errorf("a snapshot was taken before the refusal: %+v", ft.snapshotCalls)
 	}
-	if _, statErr := os.Stat(st.PlanPath("api", 1)); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(st.PromptPath("api", 1)); !os.IsNotExist(statErr) {
 		t.Errorf("a plan was staged: %v", statErr)
 	}
 }
@@ -5685,7 +5685,7 @@ func TestSendRemoteBuilderRefusedWhileRoundOpen(t *testing.T) {
 	}
 	rt, st, _ := remoteBuilderRT(t, fr)
 	if err := st.AppendLog("api", store.LogEntry{
-		TS: time.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		TS: time.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

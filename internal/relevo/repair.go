@@ -112,8 +112,8 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	b.LastGateSig = sig
 	b.RepairCount++
 
-	text := repairPlan(b, failedRound, rt.Store.PlanPath(b.Name, failedRound), rec.LogPath, tailLines(rt.Store.ReadFile, rec.LogPath, repairTailLines))
-	planPath := rt.Store.PlanPath(b.Name, b.Round)
+	text := repairPlan(b, failedRound, rt.Store.PromptPath(b.Name, failedRound), rec.LogPath, tailLines(rt.Store.ReadFile, rec.LogPath, repairTailLines))
+	planPath := rt.Store.PromptPath(b.Name, b.Round)
 	if err := os.WriteFile(planPath, []byte(text), 0o644); err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not stage its plan: %v", b.Name, b.Round, err))
 	}
@@ -143,7 +143,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		TS:        rt.Now().UTC(),
 		Round:     b.Round,
 		Direction: store.DirToBuilder,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 		Path:      planPath,
 		Confirmed: true,
 		Tier:      string(effectiveTier(b)),

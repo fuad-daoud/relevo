@@ -219,7 +219,7 @@ func TestGCArchivesByDefault(t *testing.T) {
 	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 	if err := rt.Store.AppendLog("finished", store.LogEntry{
-		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestGCArchivesByDefault(t *testing.T) {
 		t.Fatalf("ListArchived = %+v, want the archived binding", archived)
 	}
 	events, err := rt.Store.ArchivedLog(archived[0].RecordID)
-	if err != nil || len(events) != 1 || events[0].Kind != store.KindPlan {
+	if err != nil || len(events) != 1 || events[0].Kind != store.KindPrompt {
 		t.Errorf("ArchivedLog = %+v, %v; want the plan entry the archive kept", events, err)
 	}
 }

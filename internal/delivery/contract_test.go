@@ -73,10 +73,10 @@ func TestContractPushText(t *testing.T) {
 			store.LogEntry{Kind: store.KindEdge, Round: 1, Path: "/x/001-edge.md", Payload: "origin: webshop round 1"},
 		},
 		{
-			// KindPlan is not expandable: PushText must return the payload
+			// KindPrompt is not expandable: PushText must return the payload
 			// unchanged and ok=false, even though Path is set.
 			"plan-not-expanded",
-			store.LogEntry{Kind: store.KindPlan, Round: 1, Path: "/x/001-plan.md", Payload: "origin: webshop round 1"},
+			store.LogEntry{Kind: store.KindPrompt, Round: 1, Path: "/x/001-plan.md", Payload: "origin: webshop round 1"},
 		},
 	}
 

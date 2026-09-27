@@ -28,7 +28,7 @@ func TestSettleServedConfirmsUpToRound(t *testing.T) {
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r1"},
 		{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r2"},
 		{Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r3"},
-		{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Payload: "plan"},
+		{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Payload: "plan"},
 	} {
 		if err := st.AppendLog(name, e); err != nil {
 			t.Fatalf("append: %v", err)
@@ -153,7 +153,7 @@ func TestDoneSettlesClosedRounds(t *testing.T) {
 	}
 	for _, e := range []store.LogEntry{
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r1"},
-		{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
 		{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r2"},
 	} {
 		if err := rt.Store.AppendLog("api", e); err != nil {

@@ -26,7 +26,7 @@ import (
 // sameSavedPlan reports whether planText is byte-identical to the plan saved for
 // round; an unreadable plan is not the same plan.
 func sameSavedPlan(rt relevo.Runtime, name string, round int, planText string) bool {
-	saved, err := os.ReadFile(rt.Store.PlanPath(name, round))
+	saved, err := os.ReadFile(rt.Store.PromptPath(name, round))
 	if err != nil {
 		return false
 	}

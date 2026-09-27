@@ -13,7 +13,7 @@ import (
 )
 
 // TestShowSectionFlagsConflict pins `relevo show`'s section-flag rules:
-// none given defaults to plan, exactly one wins, more than one is a usage
+// none given defaults to prompt, exactly one wins, more than one is a usage
 // error. showSectionFlags is a pure function, so this never executes the
 // subcommand -- CI launches no harness.
 func TestShowSectionFlagsConflict(t *testing.T) {
@@ -21,8 +21,8 @@ func TestShowSectionFlagsConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no flags: err = %v, want nil", err)
 	}
-	if section != relevo.ShowPlan {
-		t.Errorf("no flags: section = %q, want %q (default)", section, relevo.ShowPlan)
+	if section != relevo.ShowPrompt {
+		t.Errorf("no flags: section = %q, want %q (default)", section, relevo.ShowPrompt)
 	}
 
 	section, err = showSectionFlags(showSectionArgs{report: true})
@@ -33,8 +33,20 @@ func TestShowSectionFlagsConflict(t *testing.T) {
 		t.Errorf("--report: section = %q, want %q", section, relevo.ShowReport)
 	}
 
-	if _, err := showSectionFlags(showSectionArgs{plan: true, report: true}); err == nil {
-		t.Error("--plan --report: err = nil, want a usage error (more than one section)")
+	if _, err := showSectionFlags(showSectionArgs{prompt: true, report: true}); err == nil {
+		t.Error("--prompt --report: err = nil, want a usage error (more than one section)")
+	}
+}
+
+// TestShowRetiredFlagsAreUnknown pins that a retired section spelling is the
+// flag package's own error, before any runtime is built: --plan is no longer
+// registered. It fails at the parse, so no harness is reached.
+func TestShowRetiredFlagsAreUnknown(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"show", "api", "--round", "1", "--plan"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Errorf("show --plan: err = %v, want \"flag provided but not defined\"", err)
 	}
 }
 
@@ -57,7 +69,7 @@ func seedShowDiffStore(t *testing.T, name string) (*store.Store, relevo.Runtime)
 		t.Fatalf("write diff: %v", err)
 	}
 	for _, e := range []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindDiff, Note: "1 file, +1 -0", Confirmed: true},
 	} {
 		if err := s.AppendLog(name, e); err != nil {
@@ -106,7 +118,7 @@ func TestShowAbsorbedFlagCombinations(t *testing.T) {
 	for _, args := range [][]string{
 		{"show", "api", "--stat"},
 		{"show", "api", "--anchors"},
-		{"show", "api", "--plan", "--stat"},
+		{"show", "api", "--prompt", "--stat"},
 		{"show", "api", "--follow"},
 		{"show", "api", "--after", "2"},
 	} {
@@ -138,13 +150,13 @@ func TestShowSectionFlagsGateAndFindings(t *testing.T) {
 }
 
 // TestShowSectionFlagsSummaryAndArtifacts pins §2's two new sections in the
-// pure resolver: --summary and --artifacts each name one, a non-empty
+// pure resolver: --output and --artifacts each name one, a non-empty
 // --artifact rel names the artifacts section too, and either with --report is
 // a usage error.
 func TestShowSectionFlagsSummaryAndArtifacts(t *testing.T) {
-	section, err := showSectionFlags(showSectionArgs{summary: true})
-	if err != nil || section != relevo.ShowSummary {
-		t.Errorf("--summary: section = %q err = %v, want %q", section, err, relevo.ShowSummary)
+	section, err := showSectionFlags(showSectionArgs{output: true})
+	if err != nil || section != relevo.ShowOutput {
+		t.Errorf("--output: section = %q err = %v, want %q", section, err, relevo.ShowOutput)
 	}
 
 	section, err = showSectionFlags(showSectionArgs{artifacts: true})
@@ -157,8 +169,8 @@ func TestShowSectionFlagsSummaryAndArtifacts(t *testing.T) {
 		t.Errorf("--artifact: section = %q err = %v, want %q", section, err, relevo.ShowArtifacts)
 	}
 
-	if _, err := showSectionFlags(showSectionArgs{report: true, summary: true}); err == nil {
-		t.Error("--report --summary: err = nil, want a usage error (more than one section)")
+	if _, err := showSectionFlags(showSectionArgs{report: true, output: true}); err == nil {
+		t.Error("--report --output: err = nil, want a usage error (more than one section)")
 	}
 	if _, err := showSectionFlags(showSectionArgs{report: true, artifacts: true}); err == nil {
 		t.Error("--report --artifacts: err = nil, want a usage error (more than one section)")
@@ -178,7 +190,7 @@ func TestShowGateAndFindings(t *testing.T) {
 	if err := s.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 2, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := s.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true}); err != nil {
+	if err := s.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
@@ -211,12 +223,12 @@ func TestShowGateAndFindings(t *testing.T) {
 	}
 }
 
-// TestShowSummaryArtifactsCLI pins §2's new output: --summary prints the
-// round's summary.md, --artifacts one line per file (summary.md first),
+// TestShowOutputArtifactsCLI pins §2's new output: --output prints the
+// round's output file, --artifacts one line per file (the output first),
 // --artifact <rel> the file's raw bytes with nothing added, --json the
 // rel/size/mtime fields, and a writer round answers Missing. It is store-only
 // -- no harness and no network.
-func TestShowSummaryArtifactsCLI(t *testing.T) {
+func TestShowOutputArtifactsCLI(t *testing.T) {
 	const name = "showsummary"
 	root, err := store.DefaultRoot()
 	if err != nil {
@@ -230,7 +242,7 @@ func TestShowSummaryArtifactsCLI(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	for _, e := range []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
 	} {
 		if err := s.AppendLog(name, e); err != nil {
@@ -250,9 +262,9 @@ func TestShowSummaryArtifactsCLI(t *testing.T) {
 		t.Fatalf("write site: %v", err)
 	}
 
-	got, _, err := captureOutput(t, func() error { return run([]string{"show", name, "--round", "1", "--summary"}) })
+	got, _, err := captureOutput(t, func() error { return run([]string{"show", name, "--round", "1", "--output"}) })
 	if err != nil || string(got) != summary {
-		t.Errorf("show --summary = %q (err %v), want %q", got, err, summary)
+		t.Errorf("show --output = %q (err %v), want %q", got, err, summary)
 	}
 
 	got, _, err = captureOutput(t, func() error { return run([]string{"show", name, "--round", "1", "--artifacts"}) })
@@ -289,15 +301,15 @@ func TestShowSummaryArtifactsCLI(t *testing.T) {
 		t.Fatalf("Save(writer): %v", err)
 	}
 	for _, e := range []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
 	} {
 		if err := s.AppendLog(writer, e); err != nil {
 			t.Fatalf("AppendLog(writer): %v", err)
 		}
 	}
-	got, _, err = captureOutput(t, func() error { return run([]string{"show", writer, "--round", "1", "--summary"}) })
-	if err != nil || string(got) != "no summary for round 1\n" {
-		t.Errorf("show --summary on a writer = %q (err %v), want %q", got, err, "no summary for round 1\n")
+	got, _, err = captureOutput(t, func() error { return run([]string{"show", writer, "--round", "1", "--output"}) })
+	if err != nil || string(got) != "no output for round 1\n" {
+		t.Errorf("show --output on a writer = %q (err %v), want %q", got, err, "no output for round 1\n")
 	}
 }

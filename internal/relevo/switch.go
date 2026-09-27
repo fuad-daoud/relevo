@@ -171,7 +171,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		return b, err
 	}
 
-	text := composePrompt(rt, b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
+	text := composePrompt(rt, b, rt.Store.PromptPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 	started, err := startRound(ctx, rt, tx, b, text)
 	if err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(

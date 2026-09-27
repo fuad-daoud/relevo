@@ -36,7 +36,7 @@ const (
 type Kind string
 
 const (
-	KindPlan     Kind = "plan"
+	KindPrompt   Kind = "prompt"
 	KindReport   Kind = "report"
 	KindQuestion Kind = "question"
 	KindAnswer   Kind = "answer"
@@ -57,6 +57,16 @@ const (
 	KindQueue    Kind = "queue"
 	KindRetired  Kind = "retired"
 )
+
+// kindPlanLegacy is the kind a round's prompt carried before the rename: it is
+// state already written, matched through IsPromptKind and never written again.
+const kindPlanLegacy Kind = "plan"
+
+// IsPromptKind reports whether k is a round's prompt in either spelling: the
+// value new entries write and the value already written.
+func IsPromptKind(k Kind) bool {
+	return k == KindPrompt || k == kindPlanLegacy
+}
 
 // LogEntry is one relayed message. An unconfirmed DirToMasterMind entry is also
 // relevo's pending-delivery record, which makes a crash mid-delivery

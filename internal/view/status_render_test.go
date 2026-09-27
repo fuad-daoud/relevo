@@ -444,7 +444,7 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 		},
 		wantStart: rfT0,
 		wantEnd:   time.Time{},
@@ -453,7 +453,7 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1, report r1 with usage",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 			{TS: rfT1, Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: rfU1},
 		},
 		wantStart: rfT0,
@@ -463,9 +463,9 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1, report r1 (usage U1), plan r2",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 			{TS: rfT1, Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: rfU1},
-			{TS: rfT2, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT2, Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 		},
 		wantStart: rfT2,
 		wantEnd:   time.Time{},
@@ -474,8 +474,8 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r2, later plan r2 (nudge or switch), report r2",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT1, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT0, Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT1, Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 			{TS: rfT2, Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: rfU1},
 		},
 		wantStart: rfT0,
@@ -485,9 +485,9 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1, report r1 (U1), plan r2, report r2 with nil usage",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 			{TS: rfT1, Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: rfU1},
-			{TS: rfT2, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT2, Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 			{TS: rfT3, Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: nil},
 		},
 		wantStart: rfT2,
@@ -497,7 +497,7 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1, findings entry with usage, question and answer entries",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 			{TS: rfT1, Round: 1, Kind: store.KindFindings, Direction: store.DirToMasterMind, Usage: rfU1},
 			{TS: rfT2, Round: 1, Kind: store.KindQuestion, Direction: store.DirToMasterMind},
 			{TS: rfT3, Round: 1, Kind: store.KindAnswer, Direction: store.DirToBuilder},
@@ -509,8 +509,8 @@ var roundFactsCases = []struct {
 	{
 		name: "plan r1, plan r2, late report r1 with usage",
 		entries: []store.LogEntry{
-			{TS: rfT0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			{TS: rfT1, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			{TS: rfT0, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
+			{TS: rfT1, Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 			{TS: rfT2, Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: rfU1},
 		},
 		wantStart: rfT1,
@@ -689,7 +689,7 @@ func TestPriorTokensOf(t *testing.T) {
 		{
 			name:    "no switches",
 			round:   1,
-			entries: []store.LogEntry{{Round: 1, Kind: store.KindPlan}},
+			entries: []store.LogEntry{{Round: 1, Kind: store.KindPrompt}},
 			want:    usage.Tokens{},
 		},
 		{

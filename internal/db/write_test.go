@@ -309,7 +309,7 @@ func TestUpsertArtifactByKind(t *testing.T) {
 		t.Fatalf("UpsertRound: %v", err)
 	}
 
-	a := Artifact{RoundID: roundID, Kind: ArtifactPlan, Text: "plan v1", Bytes: 7, SHA256: "aaa", CapturedAt: time.Now()}
+	a := Artifact{RoundID: roundID, Kind: ArtifactPrompt, Text: "plan v1", Bytes: 7, SHA256: "aaa", CapturedAt: time.Now()}
 	if err := d.UpsertArtifact(a); err != nil {
 		t.Fatalf("UpsertArtifact (1st): %v", err)
 	}
@@ -319,7 +319,7 @@ func TestUpsertArtifactByKind(t *testing.T) {
 		t.Fatalf("UpsertArtifact (2nd): %v", err)
 	}
 
-	got, ok, err := d.Artifact(roundID, ArtifactPlan)
+	got, ok, err := d.Artifact(roundID, ArtifactPrompt)
 	if err != nil {
 		t.Fatalf("Artifact: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestDeleteArtifactRemovesOnlyTheNamedRow(t *testing.T) {
 	if err := d.UpsertArtifact(report); err != nil {
 		t.Fatalf("UpsertArtifact(report): %v", err)
 	}
-	plan := Artifact{RoundID: roundID, Kind: ArtifactPlan, Text: "plan\n", Bytes: 5, SHA256: "bb", CapturedAt: time.Now()}
+	plan := Artifact{RoundID: roundID, Kind: ArtifactPrompt, Text: "plan\n", Bytes: 5, SHA256: "bb", CapturedAt: time.Now()}
 	if err := d.UpsertArtifact(plan); err != nil {
 		t.Fatalf("UpsertArtifact(plan): %v", err)
 	}
@@ -428,7 +428,7 @@ func TestDeleteArtifactRemovesOnlyTheNamedRow(t *testing.T) {
 	if _, ok, err := d.Artifact(roundID, ArtifactReport); err != nil || ok {
 		t.Errorf("Artifact(report) after delete = (ok %v, err %v), want (false, nil)", ok, err)
 	}
-	if _, ok, err := d.Artifact(roundID, ArtifactPlan); err != nil || !ok {
+	if _, ok, err := d.Artifact(roundID, ArtifactPrompt); err != nil || !ok {
 		t.Errorf("Artifact(plan) after deleting the report = (ok %v, err %v), want (true, nil)", ok, err)
 	}
 

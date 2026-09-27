@@ -235,7 +235,7 @@ func TestGCAbandonedArchivesOnlyIdleOld(t *testing.T) {
 	rt := ownerRuntime(t, s, id)
 	if err := rt.Store.AppendLog("old-running", store.LogEntry{
 		Round:     1,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 		Direction: store.DirToBuilder,
 		TS:        now.Add(-48 * time.Hour),
 	}); err != nil {
@@ -371,7 +371,7 @@ func TestAdminUnbindRefusesRunningUnlessForce(t *testing.T) {
 	rt := ownerRuntime(t, s, id)
 	if err := rt.Store.AppendLog("running", store.LogEntry{
 		Round:     1,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 		Direction: store.DirToBuilder,
 		TS:        now,
 	}); err != nil {

@@ -54,7 +54,7 @@ func TestSendLogsThePlan(t *testing.T) {
 		t.Fatalf("ReadLog: %v", err)
 	}
 	// seedBound's underlying Bind already wrote the builder bind's pick entry.
-	if len(entries) != 2 || entries[0].Kind != store.KindPick || entries[1].Kind != store.KindPlan || entries[1].Direction != store.DirToBuilder {
+	if len(entries) != 2 || entries[0].Kind != store.KindPick || entries[1].Kind != store.KindPrompt || entries[1].Direction != store.DirToBuilder {
 		t.Fatalf("log = %+v", entries)
 	}
 	if !entries[1].Confirmed {
@@ -139,12 +139,12 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 	}
 
 	// Verify plan was still copied and logged
-	copied, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	copied, err := os.ReadFile(rt.Store.PromptPath("webshop", 1))
 	if err != nil || string(copied) != "# test plan" {
 		t.Fatalf("plan file error: %v, content: %q", err, string(copied))
 	}
 	log, err := rt.Store.ReadLog("webshop")
-	if err != nil || len(log) == 0 || log[len(log)-1].Kind != store.KindPlan {
+	if err != nil || len(log) == 0 || log[len(log)-1].Kind != store.KindPrompt {
 		t.Fatalf("expected plan log entry, got %v, err: %v", log, err)
 	}
 }
@@ -387,7 +387,7 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	b := store.Binding{Name: "webshop", CWD: "/repo/webshop", Round: 3}
 	got := composePrompt(Runtime{}, b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
 
-	wantOrigin := delivery.OriginLine("webshop", 3, store.DirToBuilder, store.KindPlan)
+	wantOrigin := delivery.OriginLine("webshop", 3, store.DirToBuilder, store.KindPrompt)
 	firstLine := strings.SplitN(got, "\n", 2)[0]
 	if firstLine != wantOrigin {
 		t.Errorf("first line = %q, want origin line %q", firstLine, wantOrigin)
@@ -410,6 +410,27 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "Reply here with only the report path.") {
 		t.Errorf("prompt must end with the reply instruction, got:\n%s", got)
+	}
+}
+
+// TestComposePromptReaderNamesTheOutputFile pins the reader handoff: it names
+// the actor's output file and carries no artifact-directory sentence, because
+// the actor writes nothing relevo reads.
+func TestComposePromptReaderNamesTheOutputFile(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	rt := Runtime{Store: st}
+	b := store.Binding{Name: "reader-bind", CWD: "/repo", Round: 1, Shape: store.ShapeReader, Role: "reviewer"}
+
+	got := composePrompt(rt, b, "/s/001-prompt.md", "/s/001-report.md", "/s/001-done")
+
+	if strings.Contains(got, "Write every file you produce") {
+		t.Errorf("reader prompt still asks the runner to write an artifact directory:\n%s", got)
+	}
+	output := st.OutputPath("reader-bind", 1, "reviewer", "findings")
+	if !strings.Contains(got, "Your final message is your findings: it is saved as "+output+".") {
+		t.Errorf("reader prompt must name the output file %s:\n%s", output, got)
 	}
 }
 
@@ -469,7 +490,7 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 	}
 	var planEntry *store.LogEntry
 	for i := range entries {
-		if entries[i].Round == 1 && entries[i].Kind == store.KindPlan {
+		if entries[i].Round == 1 && entries[i].Kind == store.KindPrompt {
 			planEntry = &entries[i]
 			break
 		}
@@ -556,7 +577,7 @@ func TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn(t *testing.T) {
 		t.Fatalf("ReadLog: %v", err)
 	}
 	for _, e := range entries {
-		if e.Kind == store.KindPlan && e.Round == 1 {
+		if e.Kind == store.KindPrompt && e.Round == 1 {
 			t.Errorf("log has a plan entry for round 1, want none: %+v", e)
 		}
 	}
@@ -592,7 +613,7 @@ func TestSendRefusesWhileTheRoundsScopeIsActive(t *testing.T) {
 	if after.State == store.StateNeedsYou {
 		t.Errorf("State = %q, want not NEEDS YOU", after.State)
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", b.Round)); !os.IsNotExist(err) {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", b.Round)); !os.IsNotExist(err) {
 		t.Errorf("plan file for round %d exists, want none (err=%v)", b.Round, err)
 	}
 }
@@ -671,7 +692,7 @@ func TestSendReapsAnEarlierRoundsScopeBeforeItStarts(t *testing.T) {
 	if len(fr.specs) != 2 {
 		t.Errorf("specs = %d, want 2: one new process for round 2", len(fr.specs))
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", b.Round)); err != nil {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", b.Round)); err != nil {
 		t.Errorf("plan for round %d: %v, want it to exist", b.Round, err)
 	}
 }
@@ -693,7 +714,7 @@ func TestSendRefusesWhenAnEarlierRoundsScopeCannotBeEnded(t *testing.T) {
 	if len(fr.specs) != 1 {
 		t.Errorf("Start was called %d times, want 1 (the setup's)", len(fr.specs))
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", b.Round)); !os.IsNotExist(err) {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", b.Round)); !os.IsNotExist(err) {
 		t.Errorf("plan file for round %d exists, want none (err=%v)", b.Round, err)
 	}
 }
@@ -727,7 +748,7 @@ func TestSendRefusesAScopeItsRunnerCannotEnd(t *testing.T) {
 	if len(fr.specs) != 1 {
 		t.Errorf("Start was called %d times, want 1 (the setup's)", len(fr.specs))
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", b.Round)); !os.IsNotExist(err) {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", b.Round)); !os.IsNotExist(err) {
 		t.Errorf("plan file for round %d exists, want none (err=%v)", b.Round, err)
 	}
 }
@@ -774,7 +795,7 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	}
 	var planEntry *store.LogEntry
 	for i := range entries {
-		if entries[i].Round == 1 && entries[i].Kind == store.KindPlan {
+		if entries[i].Round == 1 && entries[i].Kind == store.KindPrompt {
 			planEntry = &entries[i]
 			break
 		}
@@ -790,7 +811,7 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	if len(fr.specs) != 1 {
 		t.Fatalf("got %d specs, want 1", len(fr.specs))
 	}
-	planPath := rt.Store.PlanPath("webshop", 1)
+	planPath := rt.Store.PromptPath("webshop", 1)
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	donePath := rt.Store.DonePath("webshop", 1)
 	b, _ := rt.Store.Load("webshop")
@@ -953,7 +974,7 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadLog: %v", err)
 			}
-			planPath := rtDry.Store.PlanPath(nameDry, 1)
+			planPath := rtDry.Store.PromptPath(nameDry, 1)
 			_, statBefore := os.Stat(planPath)
 			planExisted := statBefore == nil
 			specsBefore := 0
@@ -1004,9 +1025,9 @@ func TestRenderDryRunShape(t *testing.T) {
 		Candidate:     "agy/google/gemini-3.8-flash-high",
 		CandidateName: "gemini-3.8-flash-high",
 		Where:         "/usr/bin/agy -p",
-		PlanPath:      "/home/p/.local/state/relevo/api-auth/005-plan.md",
-		PlanFrom:      "./plan.md",
-		PlanBytes:     4198,
+		PromptPath:    "/home/p/.local/state/relevo/api-auth/005-prompt.md",
+		PromptFrom:    "./plan.md",
+		PromptBytes:   4198,
 		ReportPath:    "/home/p/.local/state/relevo/api-auth/005-report.md",
 		DonePath:      "/home/p/.local/state/relevo/api-auth/005-done",
 		Tier:          "yolo",
@@ -1019,10 +1040,10 @@ func TestRenderDryRunShape(t *testing.T) {
   runner    headless gemini-3.8-flash-high
   where     /usr/bin/agy -p
   tier      yolo
-  plan      /home/p/.local/state/relevo/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
+  prompt    /home/p/.local/state/relevo/api-auth/005-prompt.md  (staged from ./plan.md, 4.1 KiB)
   report    /home/p/.local/state/relevo/api-auth/005-report.md
   marker    /home/p/.local/state/relevo/api-auth/005-done
-  prompt    relevo: round 5 · to runner "api-auth" · from the MasterMind (not the human)
+  head      relevo: round 5 · to runner "api-auth" · from the MasterMind (not the human)
             Your working tree is: /home/p/.worktrees/api-auth
 `
 	got := RenderDryRun(d)
@@ -1032,7 +1053,7 @@ func TestRenderDryRunShape(t *testing.T) {
 
 	// The seven labelled lines appear in this order.
 	at := -1
-	for _, label := range []string{"runner", "where", "tier", "plan", "report", "marker", "prompt"} {
+	for _, label := range []string{"runner", "where", "tier", "prompt", "report", "marker", "head"} {
 		i := strings.Index(got, "  "+label+" ")
 		if i < 0 {
 			t.Fatalf("no %q line in:\n%s", label, got)
@@ -1147,7 +1168,7 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 	}
 	planIdx := -1
 	for i, e := range entries {
-		if e.Round == 1 && e.Kind == store.KindPlan {
+		if e.Round == 1 && e.Kind == store.KindPrompt {
 			planIdx = i
 			break
 		}
@@ -1204,7 +1225,7 @@ func TestSendRecordsPickAndPlanInOrderInOneWrite(t *testing.T) {
 	}
 	planIdx := -1
 	for i, e := range entries {
-		if e.Round == b.Round && e.Kind == store.KindPlan {
+		if e.Round == b.Round && e.Kind == store.KindPrompt {
 			planIdx = i
 			break
 		}
@@ -1240,7 +1261,7 @@ func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
-	planPath := rt.Store.PlanPath("webshop", 1)
+	planPath := rt.Store.PromptPath("webshop", 1)
 	beforePlan, err := os.ReadFile(planPath)
 	if err != nil {
 		t.Fatalf("read staged plan: %v", err)
@@ -1296,7 +1317,7 @@ func TestSendRefusedWhileDoneMarkerNotIngested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
-	planPath := rt.Store.PlanPath("webshop", 1)
+	planPath := rt.Store.PromptPath("webshop", 1)
 	beforePlan, err := os.ReadFile(planPath)
 	if err != nil {
 		t.Fatalf("read staged plan: %v", err)
@@ -1353,7 +1374,7 @@ func TestSendRefusedWhileReportNotIngested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
-	planPath := rt.Store.PlanPath("webshop", 1)
+	planPath := rt.Store.PromptPath("webshop", 1)
 	beforePlan, err := os.ReadFile(planPath)
 	if err != nil {
 		t.Fatalf("read staged plan: %v", err)
@@ -1442,7 +1463,7 @@ func TestSendProceedsOnceRoundClosed(t *testing.T) {
 	if err := rt.Store.Save(got); err != nil {
 		t.Fatalf("save the closed binding: %v", err)
 	}
-	beforePlan, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	beforePlan, err := os.ReadFile(rt.Store.PromptPath("webshop", 1))
 	if err != nil {
 		t.Fatalf("read round-1 plan: %v", err)
 	}
@@ -1454,10 +1475,10 @@ func TestSendProceedsOnceRoundClosed(t *testing.T) {
 	if res.Round != 2 {
 		t.Errorf("Round = %d, want 2", res.Round)
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 2)); err != nil {
-		t.Errorf("plan not staged at 002-plan.md: %v", err)
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 2)); err != nil {
+		t.Errorf("plan not staged at 002-prompt.md: %v", err)
 	}
-	afterPlan, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	afterPlan, err := os.ReadFile(rt.Store.PromptPath("webshop", 1))
 	if err != nil || string(afterPlan) != string(beforePlan) {
 		t.Errorf("round-1 plan changed: got (%q, %v), want %q", string(afterPlan), err, string(beforePlan))
 	}
@@ -1562,7 +1583,7 @@ func TestSendDryRunBuilderMakesNoWrites(t *testing.T) {
 	if len(after) != len(before) {
 		t.Errorf("log grew from %d to %d entries; a dry run writes nothing", len(before), len(after))
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 1)); !os.IsNotExist(err) {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 1)); !os.IsNotExist(err) {
 		t.Errorf("a dry run staged a plan: %v", err)
 	}
 }
@@ -1596,7 +1617,7 @@ func TestSendBuilderSameCandidateIsPlainSend(t *testing.T) {
 		if e.Round == 1 && e.Kind == store.KindPick {
 			picks++
 		}
-		if e.Round == 1 && e.Kind == store.KindPlan {
+		if e.Round == 1 && e.Kind == store.KindPrompt {
 			plan = true
 		}
 	}

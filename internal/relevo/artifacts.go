@@ -28,19 +28,20 @@ type ArtifactFile struct {
 }
 
 // RoundArtifacts lists round's artifact files for binding name, live (on disk)
-// or sealed (round_file), sorted with summary.md first, then by Rel. A live
-// binding is listed through Store.RoundFiles, which sees the files still on
-// disk and the live record's sealed rows; a binding that is not live is listed
-// from the newest archived record's sealed rows, the way Show's archived path
-// reads a flat name.
-func RoundArtifacts(rt Runtime, name string, round int, actor string) ([]ArtifactFile, error) {
-	return roundArtifacts(rt.Store, name, round, actor)
+// or sealed (round_file), sorted with output first, then summary.md, then by
+// Rel. output is the reader's output rel (e.g. "findings.md"), or "" when the
+// caller only needs a total. A live binding is listed through
+// Store.RoundFiles, which sees the files still on disk and the live record's
+// sealed rows; a binding that is not live is listed from the newest archived
+// record's sealed rows, the way Show's archived path reads a flat name.
+func RoundArtifacts(rt Runtime, name string, round int, actor, output string) ([]ArtifactFile, error) {
+	return roundArtifacts(rt.Store, name, round, actor, output)
 }
 
 // roundArtifacts is RoundArtifacts without the Runtime, so a caller that
 // already holds a *store.Store (the daemon's seal pass) can list the same
 // files.
-func roundArtifacts(st *store.Store, name string, round int, actor string) ([]ArtifactFile, error) {
+func roundArtifacts(st *store.Store, name string, round int, actor, output string) ([]ArtifactFile, error) {
 	rels, err := artifactRels(st, name, round, actor)
 	if err != nil {
 		return nil, err
@@ -57,7 +58,7 @@ func roundArtifacts(st *store.Store, name string, round int, actor string) ([]Ar
 		}
 		out = append(out, ArtifactFile{Rel: rel, Size: size, MTime: mtime})
 	}
-	sortArtifacts(out)
+	sortArtifacts(out, output)
 	return out, nil
 }
 
@@ -68,7 +69,7 @@ func ReadArtifact(rt Runtime, name string, round int, actor, rel string) ([]byte
 	if rel == "" || containsDotDotRel(rel) {
 		return nil, fmt.Errorf("artifact %q: %w", rel, ErrNoArtifact)
 	}
-	files, err := RoundArtifacts(rt, name, round, actor)
+	files, err := RoundArtifacts(rt, name, round, actor, "")
 	if err != nil {
 		return nil, err
 	}
@@ -86,17 +87,32 @@ func ReadArtifact(rt Runtime, name string, round int, actor, rel string) ([]byte
 	return rt.Store.ReadFile(path)
 }
 
-// readSummary returns the round's summary.md bytes, or nil when it has none:
-// the artifact directory's final message, read through the artifact helper so
-// a live, sealed or archived round all answer.
-func readSummary(rt Runtime, name string, round int, actor string) ([]byte, error) {
-	files, err := RoundArtifacts(rt, name, round, actor)
+// OutputFile is the rel a reader round's final message is saved under: the
+// actor's resolved output label plus ".md". Exported for the ui's artifacts
+// caption.
+func OutputFile(rt Runtime, b store.Binding) string {
+	return readerOutputLabel(rt, b) + ".md"
+}
+
+// readOutput returns the round's output bytes: the output rel when the listing
+// holds it, else the pre-rename summary.md, else nil. Read through the artifact
+// helper, so a live, sealed or archived round all answer.
+func readOutput(rt Runtime, name string, round int, actor, output string) ([]byte, error) {
+	files, err := RoundArtifacts(rt, name, round, actor, output)
 	if err != nil {
 		return nil, err
 	}
-	for _, f := range files {
-		if f.Rel == "summary.md" {
-			return ReadArtifact(rt, name, round, actor, "summary.md")
+	has := func(rel string) bool {
+		for _, f := range files {
+			if f.Rel == rel {
+				return true
+			}
+		}
+		return false
+	}
+	for _, rel := range []string{output, "summary.md"} {
+		if rel != "" && has(rel) {
+			return ReadArtifact(rt, name, round, actor, rel)
 		}
 	}
 	return nil, nil
@@ -150,11 +166,24 @@ func artifactRels(st *store.Store, name string, round int, actor string) ([]stri
 	return out, nil
 }
 
-// sortArtifacts sorts files with summary.md first, then by Rel.
-func sortArtifacts(files []ArtifactFile) {
+// sortArtifacts sorts files with output first, then summary.md, then by Rel.
+// output == "" puts summary.md first as before, because a caller that passes
+// none only wants a total.
+func sortArtifacts(files []ArtifactFile, output string) {
+	rank := func(rel string) int {
+		switch {
+		case output != "" && rel == output:
+			return 0
+		case rel == "summary.md":
+			return 1
+		default:
+			return 2
+		}
+	}
 	sort.Slice(files, func(i, j int) bool {
-		if (files[i].Rel == "summary.md") != (files[j].Rel == "summary.md") {
-			return files[i].Rel == "summary.md"
+		ri, rj := rank(files[i].Rel), rank(files[j].Rel)
+		if ri != rj {
+			return ri < rj
 		}
 		return files[i].Rel < files[j].Rel
 	})
@@ -176,7 +205,7 @@ func containsDotDotRel(rel string) bool {
 // artifactDirSize returns the total size in bytes of round's artifact files
 // for b's actor, live or sealed.
 func artifactDirSize(st *store.Store, b store.Binding, round int) (int64, error) {
-	files, err := roundArtifacts(st, b.Name, round, bindingRole(b))
+	files, err := roundArtifacts(st, b.Name, round, bindingRole(b), "")
 	if err != nil {
 		return 0, err
 	}

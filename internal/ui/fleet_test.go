@@ -426,7 +426,7 @@ func TestFleetWorkingRowShowsTheRoundInFlight(t *testing.T) {
 		LastPayload: &view.LastEvent{
 			Round:     3,
 			Direction: store.DirToBuilder,
-			Kind:      store.KindPlan,
+			Kind:      store.KindPrompt,
 		},
 	}
 	if got := stripANSI(rowNow(b, railNow)); !strings.HasPrefix(got, "r3 · ") {

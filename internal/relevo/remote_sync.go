@@ -225,7 +225,7 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 
 		entries, rerr := tx.ReadLog(name)
 		roundOpen := rerr == nil &&
-			HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
+			HasPromptEntry(entries, b.Round) &&
 			!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
 
 		dur := now.Sub(b.RemoteUnreachableSince).Truncate(time.Second)

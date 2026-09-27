@@ -273,7 +273,7 @@ func runBind(f bindFlags) error {
 		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
 			"hand it the round with:\n"+
 			"  relevo send --name %s --file %s\n",
-			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
+			b.Name, builderDesc, b.Round, b.Name, rt.Store.PromptPath(b.Name, b.Round))
 		noteRegateNoGate(b)
 		notePick(rt, roleName, res)
 		warnWaitingOnYou(rt, b.Name)

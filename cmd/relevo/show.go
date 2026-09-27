@@ -17,7 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-const showUsage = `usage: relevo show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript|--gate|--findings ID|--summary|--artifacts|--artifact REL] [--json]
+const showUsage = `usage: relevo show <name> [--round N] [--prompt|--report|--diff|--drift|--log|--transcript|--gate|--findings ID|--output|--artifacts|--artifact REL] [--json]
        relevo show <name> --diff|--drift [--stat] [--anchors]
        relevo show <name> --log [--follow] [--after N]
        relevo show <name> --owner <label|id> [--log] [--state DIR]`
@@ -38,15 +38,15 @@ func flagGiven(fs *flag.FlagSet, name string) bool {
 // It is a struct rather than a parameter list because the count has outgrown
 // a readable argument list.
 type showSectionArgs struct {
-	plan, report, diff, drift bool
-	log, transcript, gate     bool
-	summary, artifacts        bool
-	findingsID                string
-	artifactRel               string
+	prompt, report, diff, drift bool
+	log, transcript, gate       bool
+	output, artifacts           bool
+	findingsID                  string
+	artifactRel                 string
 }
 
 // showSectionFlags counts how many section flags are set and resolves the
-// one section they name, defaulting to plan when none is given. It is a
+// one section they name, defaulting to prompt when none is given. It is a
 // pure function so a cmd/relevo test can pin "more than one is a usage
 // error" without executing the subcommand. findingsID is `--findings`'s
 // value: a non-empty id names the findings section. A non-empty artifactRel
@@ -56,7 +56,7 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 		on      bool
 		section relevo.ShowSection
 	}{
-		{a.plan, relevo.ShowPlan},
+		{a.prompt, relevo.ShowPrompt},
 		{a.report, relevo.ShowReport},
 		{a.diff, relevo.ShowDiff},
 		{a.drift, relevo.ShowDrift},
@@ -64,7 +64,7 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 		{a.transcript, relevo.ShowTranscript},
 		{a.gate, relevo.ShowGate},
 		{a.findingsID != "", relevo.ShowFindings},
-		{a.summary, relevo.ShowSummary},
+		{a.output, relevo.ShowOutput},
 		{a.artifacts || a.artifactRel != "", relevo.ShowArtifacts},
 	}
 	var chosen relevo.ShowSection
@@ -77,11 +77,11 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 	}
 	switch n {
 	case 0:
-		return relevo.ShowPlan, nil
+		return relevo.ShowPrompt, nil
 	case 1:
 		return chosen, nil
 	default:
-		return "", fmt.Errorf("only one of --plan, --report, --diff, --drift, --log, --transcript, --gate, --findings, --summary, --artifacts may be given")
+		return "", fmt.Errorf("only one of --prompt, --report, --diff, --drift, --log, --transcript, --gate, --findings, --output, --artifacts may be given")
 	}
 }
 
@@ -93,14 +93,14 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	round := fs.Int("round", 0, "the round to read; 0 = the newest completed round")
-	plan := fs.Bool("plan", false, "show the plan (default)")
+	prompt := fs.Bool("prompt", false, "show the prompt (default)")
 	report := fs.Bool("report", false, "show the report")
 	diff := fs.Bool("diff", false, "show the round's captured diff")
 	drift := fs.Bool("drift", false, "show the round's drift patch")
 	logSection := fs.Bool("log", false, "show the round's log entries")
 	transcript := fs.Bool("transcript", false, "show the round's builder transcript")
 	gateSection := fs.Bool("gate", false, "show the round's gate log")
-	summary := fs.Bool("summary", false, "show the round's summary.md")
+	output := fs.Bool("output", false, "show the round's output file (a reader's <label>.md)")
 	artifacts := fs.Bool("artifacts", false, "show the round's artifact files")
 	artifact := fs.String("artifact", "", "show one artifact's bytes, raw: --artifact <rel>")
 	findings := fs.String("findings", "", "show a consult's findings: --findings <id>")
@@ -133,9 +133,9 @@ func cmdShow(args []string) error {
 	}
 
 	section, serr := showSectionFlags(showSectionArgs{
-		plan: *plan, report: *report, diff: *diff, drift: *drift,
+		prompt: *prompt, report: *report, diff: *diff, drift: *drift,
 		log: *logSection, transcript: *transcript, gate: *gateSection,
-		summary: *summary, artifacts: *artifacts,
+		output: *output, artifacts: *artifacts,
 		findingsID: *findings, artifactRel: *artifact,
 	})
 	if serr != nil {

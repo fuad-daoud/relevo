@@ -241,7 +241,7 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	stoppedRound := b.Round
 	reportPath, serr := writeReaderSummary(rt, b)
 	if serr != nil {
-		slog.Warn("reader summary not written", "binding", b.Name, "round", stoppedRound, "err", serr)
+		slog.Warn("reader output not written", "binding", b.Name, "round", stoppedRound, "err", serr)
 	}
 
 	entries, err := tx.ReadLog(b.Name)

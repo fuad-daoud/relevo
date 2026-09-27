@@ -1105,8 +1105,8 @@ func TestStatusLastPayloadSkipsBookkeepingKinds(t *testing.T) {
 	if got.Last == nil || got.Last.Kind != store.KindDrift {
 		t.Fatalf("Last = %+v, want KindDrift", got.Last)
 	}
-	if got.LastPayload == nil || got.LastPayload.Kind != store.KindPlan {
-		t.Fatalf("LastPayload = %+v, want KindPlan", got.LastPayload)
+	if got.LastPayload == nil || got.LastPayload.Kind != store.KindPrompt {
+		t.Fatalf("LastPayload = %+v, want KindPrompt", got.LastPayload)
 	}
 
 	// Log now reads: plan, drift, diff, report (with a note).
@@ -1359,7 +1359,7 @@ func TestStatusReportsLastSeq(t *testing.T) {
 	}
 	for i := 0; i < 3; i++ {
 		if err := rt.Store.AppendLog(withLog.Name, store.LogEntry{
-			TS: rt.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+			TS: rt.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 		}); err != nil {
 			t.Fatalf("AppendLog: %v", err)
 		}
@@ -1602,7 +1602,7 @@ func TestSpendIncludesSwitchSegments(t *testing.T) {
 	}
 
 	entries := []store.LogEntry{
-		{TS: baseTime, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+		{TS: baseTime, Round: 1, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 		{
 			TS: baseTime.Add(1 * time.Minute), Round: 1, Kind: store.KindSwitch, Direction: store.DirToMasterMind,
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}, Cost: usage.Cost{USD: 1.0, Basis: usage.Measured}},
@@ -1611,7 +1611,7 @@ func TestSpendIncludesSwitchSegments(t *testing.T) {
 			TS: baseTime.Add(2 * time.Minute), Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind,
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 100}, Cost: usage.Cost{USD: 2.0, Basis: usage.Measured}},
 		},
-		{TS: baseTime.Add(3 * time.Minute), Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+		{TS: baseTime.Add(3 * time.Minute), Round: 2, Kind: store.KindPrompt, Direction: store.DirToBuilder},
 		{
 			TS: baseTime.Add(4 * time.Minute), Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind,
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 150}, Cost: usage.Cost{USD: 3.0, Basis: usage.Measured}},

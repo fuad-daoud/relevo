@@ -104,8 +104,8 @@ func TestStopPayload(t *testing.T) {
 		{
 			name: "reader, report on disk", how: "killed", round: 1,
 			reportPath: "/s/reports/001.md", haveReport: true,
-			clause:      "Findings: relevo show reader-bind --round 1 --summary",
-			wantPayload: "The runner was stopped (killed) for round 1. Findings: relevo show reader-bind --round 1 --summary",
+			clause:      "Findings: relevo show reader-bind --round 1 --output",
+			wantPayload: "The runner was stopped (killed) for round 1. Findings: relevo show reader-bind --round 1 --output",
 			wantNote:    "stopped",
 		},
 		{
@@ -400,7 +400,7 @@ func ownedStopFixture(t *testing.T, fr *fakeRunner, queued bool) (Runtime, store
 		t.Fatal(err)
 	}
 	if err := st.AppendLog("api", store.LogEntry{
-		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

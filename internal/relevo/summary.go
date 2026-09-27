@@ -11,20 +11,22 @@ import (
 )
 
 // reportPathFor is where a closing round's report is recorded: a reader's
-// artifact-directory summary.md, a writer's flat NNN-report.md.
+// artifact-directory output file, a writer's flat NNN-report.md.
 func reportPathFor(rt Runtime, b store.Binding) string {
 	if b.Shape == store.ShapeReader {
-		return rt.Store.SummaryPath(b.Name, b.Round, bindingRole(b))
+		return rt.Store.OutputPath(b.Name, b.Round, bindingRole(b), readerOutputLabel(rt, b))
 	}
 	return rt.Store.ReportPath(b.Name, b.Round)
 }
 
 // writeReaderSummary records a reader round's report. A reader's final message
-// is its summary.md: when the runner did not write one itself, it is written
-// here from the stream's last assistant text, rendered with the harness kind of
-// the last segment that ran, which a mid-round switch can change. An empty
-// final message writes nothing, so the round closes without a report exactly as
-// a writer that wrote none. A writer is untouched: it writes its own report.
+// is its output file (<label>.md): when the runner did not write one itself, it
+// is written here from the stream's last assistant text, rendered with the
+// harness kind of the last segment that ran, which a mid-round switch can
+// change. A runner that wrote only summary.md does not keep it as the report:
+// the old file stays an extra artifact. An empty final message writes nothing,
+// so the round closes without a report exactly as a writer that wrote none. A
+// writer is untouched: it writes its own report.
 //
 // The path a close should record is returned either way, so a caller can stat
 // what it is about to queue. An error is the write's own; the callers log it

@@ -70,6 +70,39 @@ func TestDedupeMirrorKeepsAnswerArtifacts(t *testing.T) {
 	}
 }
 
+// TestDedupeMirrorDeletesIdenticalPromptUnderEitherFileName pins the prompt
+// artifact's dual base: a prompt row is a duplicate when the record's round
+// file carries the new name or the pre-rename one.
+func TestDedupeMirrorDeletesIdenticalPromptUnderEitherFileName(t *testing.T) {
+	d := openTestDB(t)
+	const name = "webshop"
+	bindingID := seedMirrorBinding(t, d, name)
+	recordID := seedRecordAt(t, d, name, "claude", dedupeAt)
+
+	bodyNew := "003-prompt.md: the round's input\n"
+	round3 := seedMirrorRound(t, d, bindingID, 3)
+	putRoundFile(t, d, recordID, "003-prompt.md", 3, bodyNew)
+	newName := putArtifact(t, d, round3, db.ArtifactPrompt, bodyNew)
+
+	bodyOld := "004-plan.md: the round's input\n"
+	round4 := seedMirrorRound(t, d, bindingID, 4)
+	putRoundFile(t, d, recordID, "004-plan.md", 4, bodyOld)
+	oldName := putArtifact(t, d, round4, db.ArtifactPrompt, bodyOld)
+
+	plan := mustPlan(t, d)
+
+	if plan.stats.ArtifactsDeleted != 2 || plan.stats.ArtifactsKept != 0 {
+		t.Errorf("deleted/kept = %d/%d, want 2/0", plan.stats.ArtifactsDeleted, plan.stats.ArtifactsKept)
+	}
+	deleted := map[string]bool{}
+	for _, id := range plan.artifactIDs {
+		deleted[id] = true
+	}
+	if !deleted[newName.ID] || !deleted[oldName.ID] {
+		t.Errorf("artifactIDs = %v, want both %s and %s", plan.artifactIDs, newName.ID, oldName.ID)
+	}
+}
+
 func TestDedupeMirrorKeepsEveryRowOfAnUnmappedBinding(t *testing.T) {
 	d := openTestDB(t)
 	const name = "webshop"

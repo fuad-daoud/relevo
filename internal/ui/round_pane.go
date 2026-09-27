@@ -417,11 +417,11 @@ func (p roundPane) sourceLine() string {
 	}
 	var s string
 	switch p.detail.active {
-	case tabPlan:
+	case tabPrompt:
 		if c.at.IsZero() {
-			s = fmt.Sprintf("plan r%d", c.round)
+			s = fmt.Sprintf("prompt r%d", c.round)
 		} else {
-			s = fmt.Sprintf("plan r%d · %s", c.round, c.at.Local().Format("15:04"))
+			s = fmt.Sprintf("prompt r%d · %s", c.round, c.at.Local().Format("15:04"))
 		}
 	case tabReport:
 		if c.at.IsZero() {
@@ -473,7 +473,7 @@ func (p roundPane) sourceLine() string {
 		// The viewport carries the prose; the source line says only where
 		// it looked.
 		switch p.detail.active {
-		case tabPlan:
+		case tabPrompt:
 			s = fmt.Sprintf("round %d", p.detail.round)
 		case tabReport:
 			s = "report"

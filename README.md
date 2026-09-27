@@ -291,10 +291,10 @@ label follows the mastermind's name in `relevo status` and `relevo doctor`.
     builder   headless agy/google/gemini-3.8-flash-high
     where     /usr/bin/agy -p
     tier      yolo
-    plan      /home/me/.local/state/relevo/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
+    prompt    /home/me/.local/state/relevo/api-auth/005-prompt.md  (staged from ./plan.md, 4.1 KiB)
     report    /home/me/.local/state/relevo/api-auth/005-report.md
     marker    /home/me/.local/state/relevo/api-auth/005-done
-    prompt    relevo: round 5 · to builder "api-auth" · from the mastermind (not the human)
+    head      relevo: round 5 · to builder "api-auth" · from the mastermind (not the human)
               Your working tree is: /home/me/.worktrees/api-auth
   ```
 - `relevo show NAME --diff [--round R] [--stat] [--drift] [--anchors]` — print a round's
@@ -325,8 +325,8 @@ label follows the mastermind's name in `relevo status` and `relevo doctor`.
   ```
 - `relevo history [--here] [--binding B] [--mastermind P] [--since D] [--limit N] [-q "<query>"] [--json] [--rows]` —
   round history as a JSON array across every binding relevo has ever recorded, live or archived, newest first. `-q` filters with the query language. See "The database" below.
-- `relevo show <name> [--round N] [--plan|--report|--diff [--stat|--anchors]|--drift|--log [--follow --after N]|--transcript|--gate|--findings <id>] [--json]` —
-  one round's plan, report, diff, drift, log, transcript, gate log or a consult's findings: from a live binding's open round files, or, for anything sealed or archived, from the database. See "The database" below.
+- `relevo show <name> [--round N] [--prompt|--report|--diff [--stat|--anchors]|--drift|--log [--follow --after N]|--transcript|--gate|--findings <id>|--output] [--json]` —
+  one round's prompt, report, diff, drift, log, transcript, gate log, output file or a consult's findings: from a live binding's open round files, or, for anything sealed or archived, from the database. See "The database" below.
 - `relevo wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D] [--peek]` — block
   until the round closes or the binding needs you, reading relevo's own state only.
   Exit 0: closed on the marker, stdout is the report path. 2: closed
@@ -894,12 +894,12 @@ which stops the round and drops the binding.
 
 A binding's live state is a record in the database, not a directory of files.
 While a round is open that round's files sit in `$XDG_STATE_HOME/relevo/<name>/`
-(defaulting to `~/.local/state/relevo/<name>/`) -- its plan, report,
+(defaulting to `~/.local/state/relevo/<name>/`) -- its prompt, report,
 patch (`NNN-diff.patch`), captured dialog and builder stream -- and when the
 round closes relevo seals them into the database and removes them.
 
 `unread`/`●new` comes from the binding record's `viewed_at` stamp (#143):
-`relevo show` (`--plan`, `--diff`, `--log`) each stamps it after a successful
+`relevo show` (`--prompt`, `--diff`, `--log`) each stamps it after a successful
 print of a live binding, and `status` compares the binding's newest report
 against it. `relevo ui` never writes it directly -- it stamps through the same
 call `show` uses, keeping `ui` itself read-only. `relevo done` stops relaying and, when the binding's worktree is clean and
@@ -1071,7 +1071,7 @@ $ relevo history --by day --since 14d
 
 ### relevo show
 
-`relevo show` prints one round's plan, report, diff, drift, log or
+`relevo show` prints one round's prompt, report, diff, drift, log or
 transcript. A live binding is read straight from its files, exactly as
 today; anything not live -- an archived binding, or one this machine's
 database otherwise knows about -- is read from the database instead, so a
@@ -1079,8 +1079,8 @@ round from months ago renders the same way a live one does.
 
 ```
 relevo show <name> [--round N]                      the round to read; default: the newest completed one
-                   [--plan|--report|--diff|--drift|--log|--transcript]
-                                                     which section; default: --plan; only one may be given
+                   [--prompt|--report|--diff|--drift|--log|--transcript|--output]
+                                                     which section; default: --prompt; only one may be given
                    [--json]                         the ShowResult as JSON (Events included for --log)
 ```
 
@@ -1422,9 +1422,12 @@ shape is refused when the config loads.
 
 - A new **reader** actor runs as a binding's actor too: `relevo bind
   --worktree --actor <name>` or `relevo bind --actor <name>`, then `relevo
-  send` hands it a plan. Its round writes `NNN-<actor>/summary.md` and any
-  files it produced. A new **writer** actor runs a round the same way. Every
-  round of that binding runs it.
+  send` hands it a plan. Its round writes `NNN-<actor>/<label>.md` -- the
+  actor's resolved output label (`plan.md` for the architect, `findings.md`
+  for the reviewer, `notes.md` for the researcher) -- and any files it
+  produced, and the mastermind reads it with `relevo show <name> --output`. A
+  new **writer** actor runs a round the same way. Every round of that binding
+  runs it.
 
 With `relevo bind --worktree --server S --actor <r>`, the server resolves `<r>`
 against **its own** actors section, and your local sections do not travel. A
@@ -1762,8 +1765,10 @@ so a remote headless binding gets repair rounds too.
 A **reader** actor is a binding, exactly as a writer is, but its round reads
 and reports: relevo runs one headless process, it never edits the shared tree,
 and its output lands in the round's artifact directory. That output is
-`NNN-<actor>/summary.md` -- the reader's final message -- plus any files it
-produced.
+`NNN-<actor>/<label>.md` -- the reader's final message -- named after the
+actor's resolved output label (`plan.md` for the architect, `findings.md` for
+the reviewer, `notes.md` for the researcher), plus any files it produced. A
+round from before the rename answers `summary.md`, its old fallback name.
 
 The mastermind runs, from its own session:
 
@@ -1773,9 +1778,9 @@ relevo send --name webshop --file q.md
 ```
 
 relevo stages `q.md` as the round's plan and runs the reader headless; its
-**final message** becomes the round's report at `NNN-<actor>/summary.md` and is
-queued to the mastermind like any report. `relevo show <name> --summary` prints
-the summary, `relevo show <name> --artifacts` lists the round's other files,
+**final message** becomes the round's report at `NNN-<actor>/<label>.md` and is
+queued to the mastermind like any report. `relevo show <name> --output` prints
+the output file, `relevo show <name> --artifacts` lists the round's other files,
 and the cockpit's artifacts tab shows both.
 
 A bound reader round is the only way to get a reader's answer: the old
@@ -1827,14 +1832,14 @@ its plan back from the round's summary.
 ```
 relevo bind --actor lite-planner --name plan-x
 relevo send --name plan-x --file task.md
-relevo show plan-x --summary                                  # or the cockpit's artifacts tab
-relevo send --name <builder> --file <the summary path>
+relevo show plan-x --output                                   # or the cockpit's artifacts tab
+relevo send --name <builder> --file <the output path>
 ```
 
-The plan is the reader round's summary, `NNN-lite-planner/summary.md`. Review
-it with `relevo show plan-x --summary` (or the cockpit's artifacts tab), then
-hand that summary path to a builder with `relevo send --name <builder> --file
-<the summary path>`. Reviewing is a human (or planner-session) step: relevo
+The plan is the reader round's output, `NNN-lite-planner/plan.md`. Review
+it with `relevo show plan-x --output` (or the cockpit's artifacts tab), then
+hand that output path to a builder with `relevo send --name <builder> --file
+<the output path>`. Reviewing is a human (or planner-session) step: relevo
 sends nothing automatically.
 
 ### Round usage
@@ -2197,7 +2202,7 @@ mastermind name. Install it once per machine:
 The plugin also carries two slash commands over relevo's read verbs:
 
 - `/relevo:status [--name <binding>] [--all]` -- the bindings, round and state.
-- `/relevo:show [<binding>] [--round N] [--diff|--drift|--log|--report|--plan|--transcript]` -- one round's plan, report, diff, drift, log or transcript, already fetched.
+- `/relevo:show [<binding>] [--round N] [--diff|--drift|--log|--report|--prompt|--transcript]` -- one round's prompt, report, diff, drift, log or transcript, already fetched.
 
 Then launch Claude Code normally:
 

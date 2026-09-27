@@ -46,13 +46,13 @@ func TestLogLineLateSuffix(t *testing.T) {
 	t.Parallel()
 
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
-	base := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: "/p/004-report.md", Note: "nudge"}
+	base := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: "/p/004-report.md", Note: "nudge"}
 	notLate := base
 	notLate.Late = false
 	late := base
 	late.Late = true
 
-	wantNotLate := ts.Local().Format("2006-01-02 15:04:05") + "  round 4   to_runner  plan      /p/004-report.md nudge"
+	wantNotLate := ts.Local().Format("2006-01-02 15:04:05") + "  round 4   to_runner  prompt    /p/004-report.md nudge"
 	if got := LogLine(notLate); got != wantNotLate {
 		t.Errorf("\n got  %q\n want %q", got, wantNotLate)
 	}
@@ -134,7 +134,7 @@ func TestLogLineTierOnPlanOnly(t *testing.T) {
 		TS:        ts,
 		Round:     1,
 		Direction: store.DirToBuilder,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 		Path:      "/p/001-plan.md",
 		Tier:      "edit",
 	}

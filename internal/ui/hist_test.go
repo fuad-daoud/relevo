@@ -117,8 +117,8 @@ func TestPointAtArchivedRowLoadsPlanFromDB(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", cmd())
 	}
-	if tMsg.t != tabPlan {
-		t.Errorf("t = %v, want tabPlan (the default active tab)", tMsg.t)
+	if tMsg.t != tabPrompt {
+		t.Errorf("t = %v, want tabPrompt (the default active tab)", tMsg.t)
 	}
 	if tMsg.content.err != nil {
 		t.Fatalf("unexpected error: %v", tMsg.content.err)
@@ -324,7 +324,7 @@ func seedRoundMirror(t *testing.T, d *db.DB, dir string) {
 	}
 
 	roundFiles := []struct{ base, kind string }{
-		{"%03d-plan.md", db.ArtifactPlan},
+		{"%03d-plan.md", db.ArtifactPrompt},
 		{"%03d-report.md", db.ArtifactReport},
 		{"%03d-diff.patch", db.ArtifactDiff},
 		{"%03d-drift.patch", db.ArtifactDrift},

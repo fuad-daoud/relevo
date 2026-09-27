@@ -28,7 +28,7 @@ func TestDefaultWaitRound(t *testing.T) {
 	t.Run("an open round's plan entry is the default", func(t *testing.T) {
 		b := store.Binding{Round: 3}
 		entries := []store.LogEntry{
-			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan},
+			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 		}
 		if got := DefaultWaitRound(b, entries); got != 3 {
 			t.Errorf("DefaultWaitRound = %d, want 3", got)
@@ -38,7 +38,7 @@ func TestDefaultWaitRound(t *testing.T) {
 	t.Run("after a close, the newest planned round wins over b.Round", func(t *testing.T) {
 		b := store.Binding{Round: 4}
 		entries := []store.LogEntry{
-			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan},
+			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 			{Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport},
 		}
 		if got := DefaultWaitRound(b, entries); got != 3 {
@@ -46,12 +46,22 @@ func TestDefaultWaitRound(t *testing.T) {
 		}
 	})
 
+	t.Run("a legacy plan entry still names the round", func(t *testing.T) {
+		b := store.Binding{Round: 4}
+		entries := []store.LogEntry{
+			{Round: 2, Direction: store.DirToBuilder, Kind: store.Kind("plan")},
+		}
+		if got := DefaultWaitRound(b, entries); got != 2 {
+			t.Errorf("DefaultWaitRound = %d, want 2 (the legacy plan entry counts)", got)
+		}
+	})
+
 	t.Run("a nudge is not a send", func(t *testing.T) {
 		b := store.Binding{Round: 4}
 		entries := []store.LogEntry{
-			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan},
+			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 			{Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport},
-			{Round: 4, Direction: store.DirToBuilder, Kind: store.KindPlan, Note: nudgeNote},
+			{Round: 4, Direction: store.DirToBuilder, Kind: store.KindPrompt, Note: nudgeNote},
 		}
 		if got := DefaultWaitRound(b, entries); got != 3 {
 			t.Errorf("DefaultWaitRound = %d, want 3 (the round-4 entry is a nudge, not a send)", got)
@@ -195,11 +205,22 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("active with an open, sent round and no report is not done", func(t *testing.T) {
 		b := store.Binding{Round: 1, State: store.StateActive}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+			{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		if got.Done {
 			t.Errorf("WaitOutcome = %+v, want Done == false", got)
+		}
+	})
+
+	t.Run("active with a legacy plan entry is still open, not never-sent", func(t *testing.T) {
+		b := store.Binding{Round: 1, State: store.StateActive}
+		entries := []store.LogEntry{
+			{Round: 1, Direction: store.DirToBuilder, Kind: store.Kind("plan")},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		if got.Done || got.Code == WaitNotStarted {
+			t.Errorf("WaitOutcome = %+v, want the legacy round read as open", got)
 		}
 	})
 
@@ -254,8 +275,8 @@ func manualSent(t *testing.T, rt Runtime, name, cwd string) store.Binding {
 		t.Fatalf("Save %s: %v", name, err)
 	}
 	if err := rt.Store.AppendLog(name, store.LogEntry{
-		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan,
-		Path: rt.Store.PlanPath(name, 1), Confirmed: true,
+		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+		Path: rt.Store.PromptPath(name, 1), Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog %s: %v", name, err)
 	}
@@ -575,9 +596,9 @@ func seedTwoRounds(t *testing.T, rt Runtime) (round1Path, round2Path string) {
 			return err
 		}
 		for _, e := range []store.LogEntry{
-			{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: rt.Store.PlanPath("webshop", 1), Confirmed: true},
+			{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: rt.Store.PromptPath("webshop", 1), Confirmed: true},
 			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "round 1 report", Path: round1Path, Confirmed: false},
-			{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: rt.Store.PlanPath("webshop", 2), Confirmed: true},
+			{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: rt.Store.PromptPath("webshop", 2), Confirmed: true},
 			{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "round 2 report", Path: round2Path, Confirmed: false},
 		} {
 			if err := tx.AppendLog("webshop", e); err != nil {

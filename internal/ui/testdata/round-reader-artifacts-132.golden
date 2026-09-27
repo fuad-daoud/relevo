@@ -3,32 +3,32 @@
     idle    reported 9m  ·  2 artifacts  ·  12.4k  ·  repository unchanged      reviewer on gpt-5.6-terra  ·  reader  ·  architect-5
    tokens in 212k · cache 1.9M (90%) · out 18k · $0.42                                                                              
                                                                                                                                     
-   plan     artifacts 2     log     transcript                                                            round   [   r1 of 1   ]   
+   prompt     artifacts 2     log     transcript                                                          round   [   r1 of 1   ]   
                                                                                                                                     
      FILE                          SIZE    WRITTEN   OPENS IN                                                                       
-     summary.md                    1.1k    14:00     pager                                                                          
      findings.md                   11.3k   14:00     pager                                                                          
+     summary.md                    1.1k    14:00     pager                                                                          
                                                                                                                                     
-     summary.md · the reviewer's final message                                                                                      
-     Review of round 1                                                                                                              
+     findings.md · the reviewer's final message                                                                                     
+     findings                                                                                                                       
                                                                                                                                     
-     The diff is small and the tests pass: go test ./... is green.                                                                  
-     Nothing in the scratch worktree is worth flagging.                                                                             
+     • nothing to flag                                                                                                              
+     • the artifact directory survives the seal                                                                                     
                                                                                                                                     
-     Notes                                                                                                                          
+     findings                                                                                                                       
                                                                                                                                     
-     • the worktree is thrown away at close                                                                                         
-     • the repository is left as it was                                                                                             
+     • nothing to flag                                                                                                              
+     • the artifact directory survives the seal                                                                                     
                                                                                                                                     
+     findings                                                                                                                       
                                                                                                                                     
+     • nothing to flag                                                                                                              
+     • the artifact directory survives the seal                                                                                     
                                                                                                                                     
+     findings                                                                                                                       
                                                                                                                                     
-                                                                                                                                    
-                                                                                                                                    
-                                                                                                                                    
-                                                                                                                                    
-                                                                                                                                    
-                                                                                                                                    
+     • nothing to flag                                                                                                              
+     • the artifact directory survives the seal                                                                                     
                                                                                                                                     
 
  enter  open file      tab  next tab      [ ]  round      ↑↓  move      :  command      ?  all keys      esc  back                  

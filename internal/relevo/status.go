@@ -194,7 +194,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 		return view.BindingStatus{}, err
 	}
 	for _, e := range entries {
-		if e.Kind == store.KindPlan && e.Round > row.PlanRound {
+		if store.IsPromptKind(e.Kind) && e.Round > row.PlanRound {
 			row.PlanRound = e.Round
 		}
 	}

@@ -34,7 +34,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 		}
 		b = loaded
 
-		prompt := composePrompt(rt, b, rt.Store.PlanPath(name, b.Round), rt.Store.ReportPath(name, b.Round), rt.Store.DonePath(name, b.Round))
+		prompt := composePrompt(rt, b, rt.Store.PromptPath(name, b.Round), rt.Store.ReportPath(name, b.Round), rt.Store.DonePath(name, b.Round))
 
 		// Add the oom note because the worktree may hold partial work.
 		if b.OOMRequeue != nil {

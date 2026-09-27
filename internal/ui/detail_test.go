@@ -37,10 +37,10 @@ func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
 	if rv.pane.detail.name != name {
 		t.Fatalf("expected detail.name %s, got %s", name, rv.pane.detail.name)
 	}
-	if rv.pane.detail.active != tabPlan {
-		t.Fatalf("expected active tabPlan, got %v", rv.pane.detail.active)
+	if rv.pane.detail.active != tabPrompt {
+		t.Fatalf("expected active tabPrompt, got %v", rv.pane.detail.active)
 	}
-	if !rv.pane.detail.cache[tabPlan].loaded {
+	if !rv.pane.detail.cache[tabPrompt].loaded {
 		t.Fatal("the plan tab's reply must have landed")
 	}
 }
@@ -346,7 +346,7 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 		key string
 		t   tab
 	}{
-		{"1", tabPlan},
+		{"1", tabPrompt},
 		{"2", tabReport},
 		{"3", tabTerminal},
 		{"4", tabDiff},

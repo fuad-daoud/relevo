@@ -116,16 +116,17 @@ func artifactsBody(c tabContent) string {
 	return b.String()
 }
 
-// artifactCaption is the faint line between the table and the file: summary.md
-// is the actor's final message, every other file is just its rel.
+// artifactCaption is the faint line between the table and the file: the
+// actor's output file, and the pre-rename summary.md, are the actor's final
+// message; every other file is just its rel.
 func artifactCaption(c tabContent) string {
-	if c.artifactRel != "summary.md" {
+	if c.artifactRel != c.artifactOutput && c.artifactRel != "summary.md" {
 		return sanitizeText(c.artifactRel)
 	}
 	if c.artifactActor == "" {
-		return "summary.md · the final message"
+		return sanitizeText(c.artifactRel) + " · the final message"
 	}
-	return "summary.md · the " + sanitizeText(c.artifactActor) + "'s final message"
+	return sanitizeText(c.artifactRel) + " · the " + sanitizeText(c.artifactActor) + "'s final message"
 }
 
 // artifactFileBody renders the selected file: markdown through the cockpit's

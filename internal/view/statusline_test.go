@@ -146,7 +146,7 @@ var waitingFallthroughCases = []struct {
 			LastPayload:      nil,
 		},
 		expectMid:    "r1 · builder on agy",
-		expectStatus: "no plan yet",
+		expectStatus: "no prompt yet",
 		expectRight:  "--",
 	},
 	{
@@ -156,10 +156,10 @@ var waitingFallthroughCases = []struct {
 			Round:            1,
 			Display:          "ACTIVE",
 			BuilderCandidate: "",
-			LastPayload:      &LastEvent{Kind: store.KindPlan},
+			LastPayload:      &LastEvent{Kind: store.KindPrompt},
 		},
 		expectMid:    "r1 · builder",
-		expectStatus: "plan sent",
+		expectStatus: "prompt sent",
 		noSeparator:  true,
 	},
 	{
@@ -169,10 +169,10 @@ var waitingFallthroughCases = []struct {
 			Round:            1,
 			Display:          "ACTIVE",
 			BuilderCandidate: "agy",
-			LastPayload:      &LastEvent{Kind: store.KindPlan},
+			LastPayload:      &LastEvent{Kind: store.KindPrompt},
 		},
 		expectMid:    "r1 · builder on agy",
-		expectStatus: "plan sent",
+		expectStatus: "prompt sent",
 	},
 }
 
@@ -220,7 +220,7 @@ func TestRenderStatusLineIgnoresBookkeepingLast(t *testing.T) {
 			BuilderCandidate: "agy",
 			RoundStart:       now.Add(-12 * time.Minute),
 			Last:             &LastEvent{Kind: store.KindDrift, TS: now.Add(-1 * time.Second)},
-			LastPayload:      &LastEvent{Kind: store.KindPlan, TS: now.Add(-12 * time.Minute)},
+			LastPayload:      &LastEvent{Kind: store.KindPrompt, TS: now.Add(-12 * time.Minute)},
 		},
 	}}
 
@@ -230,8 +230,8 @@ func TestRenderStatusLineIgnoresBookkeepingLast(t *testing.T) {
 		t.Fatalf("got %d lines, want 1", len(lines))
 	}
 	plain := stripSGR(lines[0])
-	if !strings.Contains(plain, "plan sent") {
-		t.Errorf("line %q does not contain %q", plain, "plan sent")
+	if !strings.Contains(plain, "prompt sent") {
+		t.Errorf("line %q does not contain %q", plain, "prompt sent")
 	}
 	if strings.Contains(plain, "drift") {
 		t.Errorf("line %q must not mention drift: %q", plain, plain)
@@ -257,7 +257,7 @@ func TestRenderStatusLineLiveSegment(t *testing.T) {
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
 		BuilderName:      "glm-5.3-flash",
 		RoundStart:       baseTime.Add(-12 * time.Minute),
-		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPrompt, Direction: store.DirToBuilder},
 		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash",
 			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
 	}
@@ -265,7 +265,7 @@ func TestRenderStatusLineLiveSegment(t *testing.T) {
 	if !strings.Contains(plain, "builder on glm-5.3-flash · 41k tok") {
 		t.Errorf("no live tokens segment: %q", plain)
 	}
-	if !strings.Contains(plain, "plan sent") {
+	if !strings.Contains(plain, "prompt sent") {
 		t.Errorf("the row's phase must show in its status column: %q", plain)
 	}
 	if strings.Contains(plain, "$") {
@@ -316,7 +316,7 @@ func TestRenderStatusLineLiveWinsOverSpend(t *testing.T) {
 		Display:          "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
 		RoundStart:       baseTime.Add(-12 * time.Minute),
-		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPrompt, Direction: store.DirToBuilder},
 		Spend:            &usage.Spend{Rounds: 3, Measured: 1.51, Tokens: usage.Tokens{In: 2_100_000}},
 		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash",
 			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
@@ -345,7 +345,7 @@ func TestRenderStatusLineNarrowDropsUsageFirst(t *testing.T) {
 		Display:          "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
 		RoundStart:       baseTime.Add(-12 * time.Minute),
-		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPrompt, Direction: store.DirToBuilder},
 		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash",
 			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
 	}
@@ -459,15 +459,15 @@ var rowStatusCases = []struct {
 	wantReason string
 }{
 	{
-		name: "plan sent",
+		name: "prompt sent",
 		binding: BindingStatus{
 			Name:             "api",
 			Round:            1,
 			Display:          "ACTIVE",
 			BuilderCandidate: "agy",
-			LastPayload:      &LastEvent{Kind: store.KindPlan, Direction: store.DirToBuilder, TS: rsNow.Add(-2 * time.Minute)},
+			LastPayload:      &LastEvent{Kind: store.KindPrompt, Direction: store.DirToBuilder, TS: rsNow.Add(-2 * time.Minute)},
 		},
-		wantStatus: "plan sent",
+		wantStatus: "prompt sent",
 		wantTone:   "phase",
 	},
 	{
@@ -477,7 +477,7 @@ var rowStatusCases = []struct {
 			Round:   1,
 			Display: "ACTIVE",
 		},
-		wantStatus: "no plan yet",
+		wantStatus: "no prompt yet",
 		wantTone:   "phase",
 	},
 	{
@@ -646,7 +646,7 @@ func TestRenderStatusLineOneStatusClockLast(t *testing.T) {
 			Display:          "ACTIVE",
 			BuilderCandidate: "agy/google/gemini-3.8-flash-high",
 			RoundStart:       now.Add(-7 * time.Minute),
-			LastPayload:      &LastEvent{TS: now.Add(-7 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+			LastPayload:      &LastEvent{TS: now.Add(-7 * time.Minute), Kind: store.KindPrompt, Direction: store.DirToBuilder},
 		},
 		{
 			Name:             "leaves1",
@@ -714,7 +714,7 @@ func statuslineFixture(now time.Time) Report {
 				RoundStart:       now.Add(-12 * time.Minute),
 				LastPayload: &LastEvent{
 					TS:        now.Add(-12 * time.Minute),
-					Kind:      store.KindPlan,
+					Kind:      store.KindPrompt,
 					Direction: store.DirToBuilder,
 				},
 			},
@@ -727,7 +727,7 @@ func statuslineFixture(now time.Time) Report {
 				RoundStart:       now.Add(-4 * time.Minute),
 				LastPayload: &LastEvent{
 					TS:   now.Add(-4 * time.Minute),
-					Kind: store.KindPlan,
+					Kind: store.KindPrompt,
 				},
 			},
 			{
@@ -765,7 +765,7 @@ func TestRenderStatusLineAt80(t *testing.T) {
 	if !strings.HasPrefix(plain0, "○ api     r3 · builder on agy") {
 		t.Errorf("line 0 prefix mismatch: %q", plain0)
 	}
-	if !strings.HasSuffix(plain0, "plan sent  12m") {
+	if !strings.HasSuffix(plain0, "prompt sent  12m") {
 		t.Errorf("line 0 suffix mismatch: %q", plain0)
 	}
 	if strings.Contains(plain0, "ACTIVE") {
@@ -773,10 +773,10 @@ func TestRenderStatusLineAt80(t *testing.T) {
 	}
 
 	plain1 := stripSGR(lines[1])
-	if !strings.HasPrefix(plain1, "● client  r1 · builder on glm-5.3-flash · plan sent") {
+	if !strings.HasPrefix(plain1, "● client  r1 · builder on glm-5.3-flash · prompt sent") {
 		t.Errorf("line 1 prefix mismatch: %q", plain1)
 	}
-	if !strings.HasSuffix(plain1, "NEEDS YOU   4m") {
+	if !strings.HasSuffix(plain1, "NEEDS YOU     4m") {
 		t.Errorf("line 1 suffix mismatch: %q", plain1)
 	}
 
@@ -784,7 +784,7 @@ func TestRenderStatusLineAt80(t *testing.T) {
 	if !strings.HasPrefix(plain2, "○ docs    r2 · builder on agy") {
 		t.Errorf("line 2 prefix mismatch: %q", plain2)
 	}
-	if !strings.HasSuffix(plain2, "PAUSED     23s") {
+	if !strings.HasSuffix(plain2, "PAUSED       23s") {
 		t.Errorf("line 2 suffix mismatch: %q", plain2)
 	}
 }
@@ -808,7 +808,7 @@ func TestRenderStatusLineTruncatesAt40(t *testing.T) {
 		t.Errorf("line 2 expected to contain '…': %q", plain2)
 	}
 
-	suffixes := []string{"plan sent  12m", "NEEDS YOU   4m", "PAUSED     23s"}
+	suffixes := []string{"prompt sent  12m", "NEEDS YOU     4m", "PAUSED       23s"}
 	for i, line := range lines {
 		plain := stripSGR(line)
 		if !strings.HasSuffix(plain, suffixes[i]) {
@@ -836,7 +836,7 @@ func TestRenderStatusLineUnpaddedWhenTooNarrow(t *testing.T) {
 		t.Fatalf("got %d lines, want 3", len(lines))
 	}
 	plain0 := stripSGR(lines[0])
-	want := "○ api  r3 · builder on agy · plan sent · 12m"
+	want := "○ api  r3 · builder on agy · prompt sent · 12m"
 	if plain0 != want {
 		t.Errorf("line 0 = %q, want %q", plain0, want)
 	}
@@ -864,7 +864,7 @@ func TestRenderStatusLineColours(t *testing.T) {
 	if !strings.Contains(lines[1], "\x1b[1;38;5;214m●\x1b[0m") {
 		t.Errorf("line 1 missing needs you dot: %q", lines[1])
 	}
-	if !strings.Contains(lines[1], "\x1b[1;38;5;214mNEEDS YOU\x1b[0m") {
+	if !strings.Contains(lines[1], "\x1b[1;38;5;214mNEEDS YOU  \x1b[0m") {
 		t.Errorf("line 1 missing needs you display colour: %q", lines[1])
 	}
 
@@ -924,7 +924,7 @@ func TestRenderStatusLineRemoteServer(t *testing.T) {
 		BuilderName:      "glm-5.3-flash",
 		Server:           "contabo",
 		RoundStart:       baseTime.Add(-10 * time.Minute),
-		LastPayload:      &LastEvent{TS: baseTime.Add(-10 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		LastPayload:      &LastEvent{TS: baseTime.Add(-10 * time.Minute), Kind: store.KindPrompt, Direction: store.DirToBuilder},
 	}
 	out := RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120)
 	plain := stripSGR(splitLines(out)[0])
@@ -952,7 +952,7 @@ func TestRenderStatusLineOnFallback(t *testing.T) {
 		Round:            1,
 		Display:          "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
-		LastPayload:      &LastEvent{TS: baseTime.Add(-10 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		LastPayload:      &LastEvent{TS: baseTime.Add(-10 * time.Minute), Kind: store.KindPrompt, Direction: store.DirToBuilder},
 	}
 	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
 	if !strings.Contains(plain, "r1 · builder on opencode") {
@@ -1081,7 +1081,7 @@ func TestStatusLineRowsTokens(t *testing.T) {
 			Display:          "ACTIVE",
 			BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
 			RoundStart:       now.Add(-12 * time.Minute),
-			LastPayload:      &LastEvent{TS: now.Add(-12 * time.Minute), Kind: store.KindPlan},
+			LastPayload:      &LastEvent{TS: now.Add(-12 * time.Minute), Kind: store.KindPrompt},
 			LiveUsage: &usage.Usage{
 				Tokens:  usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000},
 				Samples: 1,
@@ -1171,8 +1171,8 @@ func TestStatusLineRowsRemote(t *testing.T) {
 		if rows[0].LastTS != "" {
 			t.Errorf("LastTS = %q, want empty", rows[0].LastTS)
 		}
-		if rows[0].Status != "no plan yet" || rows[0].Tone != "phase" {
-			t.Errorf("Status/Tone = %q/%q, want 'no plan yet'/'phase'", rows[0].Status, rows[0].Tone)
+		if rows[0].Status != "no prompt yet" || rows[0].Tone != "phase" {
+			t.Errorf("Status/Tone = %q/%q, want 'no prompt yet'/'phase'", rows[0].Status, rows[0].Tone)
 		}
 	})
 
@@ -1407,7 +1407,7 @@ func TestStatusLineRowsNeedsYou(t *testing.T) {
 			Display: "NEEDS YOU",
 			LastPayload: &LastEvent{
 				Round:     2,
-				Kind:      store.KindPlan,
+				Kind:      store.KindPrompt,
 				Direction: store.DirToBuilder,
 			},
 		}
@@ -1433,7 +1433,7 @@ func TestStatusLineRowsNeedsYou(t *testing.T) {
 			Display: "ACTIVE",
 			LastPayload: &LastEvent{
 				Round:     1,
-				Kind:      store.KindPlan,
+				Kind:      store.KindPrompt,
 				Direction: store.DirToBuilder,
 			},
 		}
@@ -1464,7 +1464,7 @@ var srrRep = Report{Bindings: []BindingStatus{
 		Display:          "ACTIVE",
 		BuilderCandidate: "agy",
 		RoundStart:       srrNow.Add(-3 * time.Minute),
-		LastPayload:      &LastEvent{TS: srrNow.Add(-3 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		LastPayload:      &LastEvent{TS: srrNow.Add(-3 * time.Minute), Kind: store.KindPrompt, Direction: store.DirToBuilder},
 	},
 	{
 		Name:             "delivered",
@@ -1491,7 +1491,7 @@ var srrRep = Report{Bindings: []BindingStatus{
 		Display:          "NEEDS YOU",
 		BuilderCandidate: "agy",
 		RoundStart:       srrNow.Add(-2 * time.Minute),
-		LastPayload:      &LastEvent{TS: srrNow.Add(-2 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		LastPayload:      &LastEvent{TS: srrNow.Add(-2 * time.Minute), Kind: store.KindPrompt, Direction: store.DirToBuilder},
 	},
 	{
 		Name:             "paused",
@@ -1548,6 +1548,22 @@ func TestRenderStatusLineSharesTheRowRule(t *testing.T) {
 		}
 		if !strings.HasPrefix(plain, tc.dot+" ") {
 			t.Errorf("line %d %q does not start with the %s dot", tc.i, plain, tc.dot)
+		}
+	}
+}
+
+// TestPhaseReadsBothPromptSpellings pins the phase word for a prompt payload in
+// either stored spelling, and "no prompt yet" when there is no payload.
+func TestPhaseReadsBothPromptSpellings(t *testing.T) {
+	t.Parallel()
+
+	if got := phase(BindingStatus{}); got != "no prompt yet" {
+		t.Errorf("phase(no payload) = %q, want \"no prompt yet\"", got)
+	}
+	for _, kind := range []store.Kind{store.KindPrompt, store.Kind("plan")} {
+		got := phase(BindingStatus{LastPayload: &LastEvent{Kind: kind}})
+		if got != "prompt sent" {
+			t.Errorf("phase(%q) = %q, want \"prompt sent\"", kind, got)
 		}
 	}
 }

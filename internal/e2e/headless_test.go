@@ -350,8 +350,11 @@ fi
 worktree=$(printf '%s\n' "$prompt" | awk '/^Your working tree is: /{ sub(/^Your working tree is: /, ""); print; exit }')
 plan=$(printf '%s\n' "$prompt" | awk '/^Read: /{ sub(/^Read: /, ""); print; exit }')
 report=$(printf '%s\n' "$prompt" | awk '/^When you are done, write your report to: /{ sub(/^When you are done, write your report to: /, ""); print; exit }')
-artifact=$(printf '%s\n' "$prompt" | awk '/^Write every file you produce into this directory/{ sub(/^[^:]*: /, ""); print; exit }')
+artifact=$(printf '%s\n' "$prompt" | awk '/^Your final message is your /{ sub(/^.*: it is saved as /, ""); sub(/\.$/, ""); print; exit }')
 marker=$(printf '%s\n' "$prompt" | awk '/create this empty file: /{ sub(/.*create this empty file: /, ""); print; exit }')
+if [ -n "$artifact" ]; then
+	artifact=$(dirname "$artifact")
+fi
 
 if [ -z "$worktree" ] || [ -z "$plan" ] || [ -z "$marker" ]; then
 	echo "fake-claude: the prompt is missing a path" >&2
@@ -359,7 +362,7 @@ if [ -z "$worktree" ] || [ -z "$plan" ] || [ -z "$marker" ]; then
 	exit 2
 fi
 if [ -z "$report" ] && [ -z "$artifact" ]; then
-	echo "fake-claude: the prompt names neither a report nor an artifact directory" >&2
+	echo "fake-claude: the prompt names neither a report nor an output file" >&2
 	exit 2
 fi
 if [ ! -s "$plan" ]; then

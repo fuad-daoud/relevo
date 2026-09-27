@@ -254,7 +254,7 @@ func TestRoundsAscending(t *testing.T) {
 
 func TestArtifactMissingIsFalse(t *testing.T) {
 	s := seedDB(t)
-	_, ok, err := s.d.Artifact("nonexistent-round", ArtifactPlan)
+	_, ok, err := s.d.Artifact("nonexistent-round", ArtifactPrompt)
 	if err != nil {
 		t.Fatalf("Artifact: %v", err)
 	}

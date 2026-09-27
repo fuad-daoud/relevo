@@ -203,7 +203,7 @@ func TestRoundStateOf(t *testing.T) {
 		Round: 1,
 	}
 	entries2 := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 	}
 	if got := RoundStateOf(b2, entries2); got != remote.RoundRunning {
 		t.Fatalf("arm 2 (running): got %v, want %v", got, remote.RoundRunning)
@@ -220,7 +220,7 @@ func TestRoundStateOf(t *testing.T) {
 	}
 	// Entries has both plan and report for round 1
 	entries3 := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport},
 	}
 	if got := RoundStateOf(b3, entries3); got != remote.RoundClosed {
@@ -251,7 +251,7 @@ func TestRoundStateOfQueued(t *testing.T) {
 	t.Parallel()
 
 	entries := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 	}
 
 	queued := store.Binding{
@@ -773,7 +773,7 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 	if err := st.AppendLog("api", store.LogEntry{
 		Round:     1,
 		Direction: store.DirToBuilder,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -840,7 +840,7 @@ func ownedExitFixture(t *testing.T) (Runtime, store.Binding, *fakeRunner, string
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 	fr.script(1234, false)
