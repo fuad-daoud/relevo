@@ -22,14 +22,14 @@ type LimitMatch struct {
 	Parsed bool      // Until came from Line, not from the fallback
 }
 
-// durationRe matches "resets in 2h48m52s", "try again in 5 min", "retry after
-// 30s" and captures the duration component run.
-var durationRe = regexp.MustCompile(`(?i)(?:resets?|try again|retry)\s+(?:in|after)\s+~?((?:\d+\s*(?:hours?|hr|h|minutes?|min|m|seconds?|sec|s)\s*)+)`)
+// durationRe matches "resets in 2h48m52s", "try again in 5 min", "resets in
+// 1d 5h", "retry after 30s" and captures the duration component run.
+var durationRe = regexp.MustCompile(`(?i)(?:resets?|try again|retry)\s+(?:in|after)\s+~?((?:\d+\s*(?:days?|d|hours?|hr|h|minutes?|min|m|seconds?|sec|s)\s*)+)`)
 
 // durationComponentRe pulls one "<number><unit>" component at a time out of the
-// captured run above. Units are checked by first letter (h/m/s), so the
+// captured run above. Units are checked by first letter (h/m/s/d), so the
 // alternation only needs to avoid a short form swallowing a longer one.
-var durationComponentRe = regexp.MustCompile(`(?i)(\d+)\s*(hours?|hr|h|minutes?|min|m|seconds?|sec|s)`)
+var durationComponentRe = regexp.MustCompile(`(?i)(\d+)\s*(days?|d|hours?|hr|h|minutes?|min|m|seconds?|sec|s)`)
 
 // clockRe matches "resets 7pm", "resets at 23:30", "resets ~00:26".
 var clockRe = regexp.MustCompile(`(?i)resets?\s+(?:at\s+)?~?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?`)
@@ -133,13 +133,28 @@ func parseDurationReset(line string, now time.Time) (time.Time, bool) {
 		if err != nil {
 			continue
 		}
-		switch unit := strings.ToLower(c[2]); unit[0] {
+		var unit time.Duration
+		switch u := strings.ToLower(c[2]); u[0] {
+		case 'd':
+			unit = 24 * time.Hour
 		case 'h':
-			d += time.Duration(n) * time.Hour
+			unit = time.Hour
 		case 'm':
-			d += time.Duration(n) * time.Minute
+			unit = time.Minute
 		case 's':
-			d += time.Duration(n) * time.Second
+			unit = time.Second
+		default:
+			continue
+		}
+		// Refuse a count no window could accept before multiplying it: a
+		// large number wraps int64 nanoseconds into a small value that
+		// could land inside the window and gate on a nonsense reset.
+		if n > int(limitWindowDated/unit) {
+			return time.Time{}, false
+		}
+		d += time.Duration(n) * unit
+		if d > limitWindowDated {
+			return time.Time{}, false
 		}
 	}
 	return windowedReset(now.Add(d), now, limitWindowShort)

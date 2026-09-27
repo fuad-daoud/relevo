@@ -614,6 +614,145 @@ func TestSendWithScopesOffNeverProbesAScope(t *testing.T) {
 	}
 }
 
+// closeWebshopRoundOne reconciles webshop's round 1 on its marker and report
+// and persists the result, so a later Send sees round 2. Reconcile itself does
+// not save -- the daemon's tick does -- so a test must.
+func closeWebshopRoundOne(t *testing.T, rt Runtime, b store.Binding) store.Binding {
+	t.Helper()
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the close", got.Round)
+	}
+	if err := rt.Store.Save(got); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+// roundTwoWithActivePreviousScope closes round 1 on its marker and report, so
+// the binding is at round 2, then turns scopes on and scripts round 1's unit
+// active: the state the send-time guard exists for. It returns the runtime, the
+// round-2 binding and round 1's unit base name.
+func roundTwoWithActivePreviousScope(t *testing.T, fr *fakeRunner) (Runtime, store.Binding, string) {
+	t.Helper()
+	rt, b := sentHeadless(t, fr)
+	got := closeWebshopRoundOne(t, rt, b)
+	rt.Scope = &spawn.ScopeSpec{}
+	unit := scopeUnitNameFor(scopeRound, got.Owner, got.Name, 1, "")
+	fr.scopeActive = map[string]bool{unit: true}
+	return rt, got, unit
+}
+
+// TestSendReapsAnEarlierRoundsScopeBeforeItStarts pins the send-time guard's
+// first half: the round before the one being sent still holds a scope, so Send
+// ends it before staging round 2 and then starts the new process.
+func TestSendReapsAnEarlierRoundsScopeBeforeItStarts(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b, unit := roundTwoWithActivePreviousScope(t, fr)
+	if len(fr.specs) != 1 {
+		t.Fatalf("setup started %d processes, want 1", len(fr.specs))
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "round two"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(fr.scopeStops) != 1 || fr.scopeStops[0] != unit {
+		t.Errorf("scopeStops = %v, want [%s]", fr.scopeStops, unit)
+	}
+	if len(fr.specs) != 2 {
+		t.Errorf("specs = %d, want 2: one new process for round 2", len(fr.specs))
+	}
+	if _, err := os.Stat(rt.Store.PlanPath("webshop", b.Round)); err != nil {
+		t.Errorf("plan for round %d: %v, want it to exist", b.Round, err)
+	}
+}
+
+// TestSendRefusesWhenAnEarlierRoundsScopeCannotBeEnded pins the refusal: when
+// the previous round's scope will not end, Send refuses with ErrScopeActive
+// before it stages anything, so no plan file and no NEEDS YOU are left behind.
+func TestSendRefusesWhenAnEarlierRoundsScopeCannotBeEnded(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b, _ := roundTwoWithActivePreviousScope(t, fr)
+	fr.scopeStopErr = errors.New("systemctl: stop failed")
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "round two"), SendOptions{})
+	if !errors.Is(err, ErrScopeActive) {
+		t.Fatalf("Send = %v, want errors.Is(..., ErrScopeActive)", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("Start was called %d times, want 1 (the setup's)", len(fr.specs))
+	}
+	if _, err := os.Stat(rt.Store.PlanPath("webshop", b.Round)); !os.IsNotExist(err) {
+		t.Errorf("plan file for round %d exists, want none (err=%v)", b.Round, err)
+	}
+}
+
+// proberOnlyRunner is a Runner that can see a scope but not end one: it embeds
+// spawn.Runner for the method set and adds only ScopeActive, so a type
+// assertion to spawn.ScopeStopper must fail.
+type proberOnlyRunner struct {
+	spawn.Runner
+	active map[string]bool
+}
+
+func (r proberOnlyRunner) ScopeActive(_ context.Context, unit string) (bool, error) {
+	return r.active[unit], nil
+}
+
+// TestSendRefusesAScopeItsRunnerCannotEnd pins the missing-stopper case: a
+// runner that can see the previous round's loaded scope but cannot end it
+// refuses the send rather than start a second builder beside it.
+func TestSendRefusesAScopeItsRunnerCannotEnd(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b, unit := roundTwoWithActivePreviousScope(t, fr)
+	rt.Runner = proberOnlyRunner{active: map[string]bool{unit: true}}
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "round two"), SendOptions{})
+	if !errors.Is(err, ErrScopeActive) {
+		t.Fatalf("Send = %v, want errors.Is(..., ErrScopeActive)", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("Start was called %d times, want 1 (the setup's)", len(fr.specs))
+	}
+	if _, err := os.Stat(rt.Store.PlanPath("webshop", b.Round)); !os.IsNotExist(err) {
+		t.Errorf("plan file for round %d exists, want none (err=%v)", b.Round, err)
+	}
+}
+
+// TestSendWithScopesOffNeverProbesAnEarlierRoundsScope pins the earlier-round
+// guard's precondition: with rt.Scope nil, a round-2 send never asks about
+// round 1's scope and proceeds normally.
+func TestSendWithScopesOffNeverProbesAnEarlierRoundsScope(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	closeWebshopRoundOne(t, rt, b)
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "round two"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(fr.scopeQueries) != 0 {
+		t.Errorf("scopeQueries = %v, want none (rt.Scope is nil)", fr.scopeQueries)
+	}
+	if len(fr.scopeStops) != 0 {
+		t.Errorf("scopeStops = %v, want none (rt.Scope is nil)", fr.scopeStops)
+	}
+}
+
 func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	t.Parallel()
 

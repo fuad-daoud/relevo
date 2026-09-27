@@ -163,6 +163,12 @@ var knownHarnesses = map[string]Harness{
 			`(?i)quota (exceeded|reached)`,
 			`(?i)insufficient (credits|quota)`,
 			`(?i)RESOURCE_EXHAUSTED`,
+			// These key on the HTTP status opencode writes into the message and
+			// on the two provider sentences, because the structured error.type
+			// and status fields never reach the rendered log the scan reads.
+			`(?i)error 429`,
+			`(?i)requires more credits`,
+			`(?i)reached your .* limit`,
 		},
 		DenialPatterns: []string{
 			`(?i)permission.*(denied|rejected)`,

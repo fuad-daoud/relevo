@@ -18,7 +18,56 @@ import (
 func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView) (store.Binding, error) {
 	cf := fetchCatchUp(ctx, rt, b, view)
 	defer cf.release()
-	return applyCatchUp(ctx, rt, tx, b, view, cf)
+	next, a, err := applyCatchUp(ctx, rt, tx, b, view, cf)
+	if a != nil {
+		return settleCatchUpInline(ctx, rt, tx, next, a)
+	}
+	return next, err
+}
+
+// catchUpAck is a catch-up the apply half installed whose ack has not left yet.
+// The ack runs outside the state lock; only a successful one unblocks the
+// report entry.
+type catchUpAck struct {
+	Server       string             // b.Builder.Server at the apply
+	Name         string             // b.Name at the apply
+	Round        int                // view.ClosedRound: the round to ack and to file the report under
+	BindingRound int                // b.Round at the apply: guards the report against a binding that moved on
+	View         remote.BindingView // the closed-round facts the report entry is built from
+	HaveReport   bool               // a report temp was renamed into place
+	HaveDiff     bool               // the diff body was stored
+}
+
+// matches reports whether b is still the binding the ack was for: same name,
+// same round, still remote, and in a known live state. A false answer means the
+// report is not queued; the pass that moved the binding owns it.
+func (a *catchUpAck) matches(b store.Binding) bool {
+	return b.Name == a.Name &&
+		b.Round == a.BindingRound &&
+		b.Builder.Remote() &&
+		b.State != store.StateDone &&
+		b.State != store.StatePaused &&
+		store.KnownState(b.State)
+}
+
+// ackCatchUp acks a collected round outside the state lock. A failure is the
+// same retry as before: warned here, no report queued, the still-closed round
+// re-collected by the next pass.
+func ackCatchUp(ctx context.Context, rt Runtime, a *catchUpAck) error {
+	if _, err := rt.Remote.Ack(ctx, a.Server, a.Name, a.Round); err != nil {
+		slog.Warn("ack failed", "server", a.Server, "name", a.Name, "round", a.Round, "err", err)
+		return err
+	}
+	return nil
+}
+
+// settleCatchUpInline finishes a catch-up for a caller that still holds the
+// lock: today's one-pass behaviour, for the inline paths.
+func settleCatchUpInline(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a *catchUpAck) (store.Binding, error) {
+	if err := ackCatchUp(ctx, rt, a); err != nil {
+		return b, nil
+	}
+	return applyCatchUpReport(ctx, rt, tx, b, a)
 }
 
 // applyCatchUpFiles renames the fetched report, log and stream temps into
@@ -85,28 +134,11 @@ func applyCatchUpAbsorb(ctx context.Context, rt Runtime, b store.Binding, cf *ca
 	return b, false, nil
 }
 
-// applyCatchUpSettle carries out the apply half's last steps: it records the
-// absorbed result, acks the round, and queues the report entry. A failed ack
-// leaves the round for the next tick exactly as before.
-func applyCatchUpSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, error) {
-	n := view.ClosedRound
-	server, name := b.Builder.Server, b.Name
-
-	b.Builder.LastKnown = view.ResultCommit
-	b.RemoteAbsorbFailures = 0
-
-	if _, err := rt.Remote.Ack(ctx, server, name, n); err != nil {
-		slog.Warn("ack failed", "server", server, "name", name, "round", n, "err", err)
-		return b, nil
-	}
-	return applyCatchUpReport(ctx, rt, tx, b, view, cf)
-}
-
 // applyCatchUpReport queues the round's report entry: the client's own diff
 // entry from the server's facts first, then the payload, the stop entry and
 // the idle status, in the order the inline catch-up used.
-func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, error) {
-	n := view.ClosedRound
+func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a *catchUpAck) (store.Binding, error) {
+	n := a.View.ClosedRound
 	name := b.Name
 
 	entries, err := tx.ReadLog(name)
@@ -115,14 +147,14 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	}
 	// The server already recorded a diff entry at close; writing the client's
 	// own from the view's facts makes queueReport skip its own capture.
-	if view.DiffNote != "" && !HasEntry(entries, n, store.DirToPlanner, store.KindDiff) {
+	if a.View.DiffNote != "" && !HasEntry(entries, n, store.DirToPlanner, store.KindDiff) {
 		diffPath := ""
-		if cf.Diff != nil {
+		if a.HaveDiff {
 			diffPath = rt.Store.DiffPath(name, n)
 		}
 		diffEntry := store.LogEntry{
 			TS: rt.Now().UTC(), Round: n, Direction: store.DirToPlanner, Kind: store.KindDiff,
-			Path: diffPath, Note: view.DiffNote, Commits: view.DiffCommits, Tree: view.DiffTree, Confirmed: true,
+			Path: diffPath, Note: a.View.DiffNote, Commits: a.View.DiffCommits, Tree: a.View.DiffTree, Confirmed: true,
 		}
 		if err := tx.AppendLog(name, diffEntry); err != nil {
 			return b, err
@@ -130,22 +162,22 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		entries = append(entries, diffEntry)
 	}
 
-	payload, note := catchUpPayload(b, view, cf.ReportTemp != "")
-	var u *usage.Usage = view.Usage
+	payload, note := catchUpPayload(b, a.View, a.HaveReport)
+	var u *usage.Usage = a.View.Usage
 	if u == nil {
 		// A pre-usage server ships no figure: record honestly that the server
 		// sent none rather than reading a record the client does not have.
 		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
 	}
-	next, err := queueReport(ctx, rt, tx, b, entries, rt.Store.ReportPath(name, n), payload, note, nil, u, view.Rusage, view.PriorTokens)
+	next, err := queueReport(ctx, rt, tx, b, entries, rt.Store.ReportPath(name, n), payload, note, nil, u, a.View.Rusage, a.View.PriorTokens)
 	if err != nil {
 		return b, err
 	}
-	if view.Stopped != "" {
+	if a.View.Stopped != "" {
 		// After queueReport, so the entry is filed under the stopped round.
 		if err := tx.AppendLog(name, store.LogEntry{
 			TS: rt.Now().UTC(), Round: n, Direction: store.DirToPlanner,
-			Kind: store.KindStop, Note: "stopped/" + view.Stopped, Confirmed: true,
+			Kind: store.KindStop, Note: "stopped/" + a.View.Stopped, Confirmed: true,
 		}); err != nil {
 			return next, err
 		}

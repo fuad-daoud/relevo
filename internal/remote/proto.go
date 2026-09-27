@@ -134,9 +134,9 @@ type BindingView struct {
 	ResultCommit  string     `json:"result_commit,omitempty"`
 	DirtyCommit   string     `json:"dirty_commit,omitempty"`
 	ReportOutcome string     `json:"report_outcome,omitempty"` // reporttail.Tail.Status or "unstructured"
-	// Stopped is how the closed round (ClosedRound) was stopped: "killed"
-	// or "dequeued". It is "" when that round closed any other way, on a
-	// pre-stop server, or when ClosedRound is 0.
+	// Stopped is how the closed round (ClosedRound) was stopped: "killed",
+	// "reaped", "gone" or "dequeued". It is "" when that round closed any
+	// other way, on a pre-stop server, or when ClosedRound is 0.
 	Stopped string `json:"stopped,omitempty"`
 	// DiffNote, DiffCommits and DiffTree are the closed round's diff facts,
 	// from the newest KindDiff entry for Serve.ClosedRound -- the same facts

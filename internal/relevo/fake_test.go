@@ -657,6 +657,13 @@ type fakeRunner struct {
 	// in order, so a test can prove that no probe ran.
 	scopeResults       map[string]string
 	scopeResultQueries []string
+
+	// scopeStops records every unit StopScope was asked to end, in order, so
+	// a test can prove that a scope was reaped -- or that none was.
+	scopeStops []string
+	// scopeStopErr, when set, is what StopScope returns, so a test can pin
+	// the refusal when a scope cannot be ended.
+	scopeStopErr error
 }
 
 func newFakeRunner() *fakeRunner {
@@ -748,6 +755,18 @@ func (f *fakeRunner) ScopeResult(_ context.Context, unit string) (string, error)
 	return f.scopeResults[unit], nil
 }
 
+// StopScope implements ScopeStopper: it records every unit it is asked to end
+// and, unless a test scripted an error, clears that unit's active flag so a
+// later probe sees it gone.
+func (f *fakeRunner) StopScope(_ context.Context, unit string) error {
+	f.scopeStops = append(f.scopeStops, unit)
+	if f.scopeStopErr != nil {
+		return f.scopeStopErr
+	}
+	delete(f.scopeActive, unit)
+	return nil
+}
+
 // fakeUsage scripts what the usage reader returns and records the Source
 // it was asked for.
 type fakeUsage struct {
@@ -779,6 +798,7 @@ func TestFakeRunnerScriptsAliveAndRecordsKills(t *testing.T) {
 
 	f := newFakeRunner()
 	var _ spawn.Runner = f
+	var _ spawn.ScopeStopper = (*fakeRunner)(nil)
 
 	h, err := f.Start(context.Background(), spawn.ProcSpec{Dir: "/tree", Argv: []string{"agy", "-p", "x"}, LogPath: "/state/x/001-builder.log"})
 	if err != nil {

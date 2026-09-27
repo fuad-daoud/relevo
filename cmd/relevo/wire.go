@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,7 +22,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -332,7 +332,7 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 	}
 	dispatcher := newHooksDispatcher(hooksCfg, pol)
 
-	remoteClient, transport, err := newRemoteClient(L.Servers, L.ClientKey, gitClient)
+	remoteClient, err := newRemoteClient(L.Servers, L.ClientKey)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
@@ -346,26 +346,28 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 	}
 
 	rt := relevo.Runtime{
-		Git:             gitClient,
-		Runner:          proc.New(),
-		Store:           st,
-		Candidates:      L.Candidates,
-		Gates:           gates,
-		GatesDir:        gatesDir,
-		Latency:         gates,
-		Policy:          pol,
-		Registry:        L.Registry,
-		ConfigWarnings:  configWarnings,
-		Scope:           scopeFromPolicy(pol.ScopeFor(false)),
-		Classify:        cls,
-		Usage:           reader,
-		Sessions:        relevo.HomeSessionLocator(home),
-		Prices:          prices,
-		Fetcher:         release.NewHTTPFetcher(release.Source(), 5*time.Second),
-		Now:             time.Now,
-		Hooks:           dispatcher,
-		Remote:          remoteClient,
-		Transport:       transport,
+		Git:            gitClient,
+		Runner:         proc.New(),
+		Store:          st,
+		Candidates:     L.Candidates,
+		Gates:          gates,
+		GatesDir:       gatesDir,
+		Latency:        gates,
+		Policy:         pol,
+		Registry:       L.Registry,
+		ConfigWarnings: configWarnings,
+		Scope:          scopeFromPolicy(pol.ScopeFor(false)),
+		Classify:       cls,
+		Usage:          reader,
+		Sessions:       relevo.HomeSessionLocator(home),
+		Prices:         prices,
+		Fetcher:        release.NewHTTPFetcher(release.Source(), 5*time.Second),
+		Now:            time.Now,
+		Hooks:          dispatcher,
+		Remote:         remoteClient,
+		// The transport depends only on the git client, not the servers
+		// section, so a server added while the daemon runs needs no rebuild.
+		Transport:       remote.NewBundleTransport(gitClient, ""),
 		Roles:           harness.OSRoleChecker(),
 		Channels:        claims,
 		ProcStart:       procStartUnix,
@@ -399,26 +401,19 @@ func procStartUnix(pid int) (int64, error) {
 	return started.Unix(), nil
 }
 
-// newRemoteClient wires Runtime.Remote and Runtime.Transport (§4.7): both nil
-// when the servers section is absent or empty. Servers without a client key
-// are not fatal -- every remote path already reports ErrRemoteUnavailable on a
-// nil Runtime.Remote -- but it prints once, since a configured server the
-// client cannot reach is a setup mistake worth naming immediately rather
-// than only when a remote command is next run.
-func newRemoteClient(servers remote.Servers, key []byte, gitClient *git.Client) (relevo.RemoteClient, remote.TreeTransport, error) {
-	if len(servers) == 0 {
-		return nil, nil, nil
+// newRemoteClient wires Runtime.Remote through the one rule that turns a
+// servers section and a stored key into a client: nil when the section is
+// absent or empty. Servers without a client key are not fatal -- every remote
+// path already reports ErrRemoteUnavailable on a nil Runtime.Remote -- but the
+// fix prints once, since a configured server this client cannot reach is a
+// setup mistake worth naming immediately rather than only when a remote
+// command is next run. The daemon's config reload builds its client through
+// the same rule.
+func newRemoteClient(servers remote.Servers, key []byte) (relevo.RemoteClient, error) {
+	remoteClient, err := relevo.NewRemoteClient(servers, key)
+	if errors.Is(err, relevo.ErrNoClientKey) {
+		fmt.Fprintln(os.Stderr, "relevo: "+err.Error())
+		return nil, nil
 	}
-
-	if len(key) == 0 {
-		fmt.Fprintln(os.Stderr, "relevo: servers configured but no client key; run relevo config server key")
-		return nil, nil, nil
-	}
-
-	kp, err := remote.ParsePrivate(key)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return client.New(servers, kp, time.Now), remote.NewBundleTransport(gitClient, ""), nil
+	return remoteClient, err
 }

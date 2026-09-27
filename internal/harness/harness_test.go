@@ -757,6 +757,9 @@ var harnessTableExpected = map[string]Harness{
 			`(?i)quota (exceeded|reached)`,
 			`(?i)insufficient (credits|quota)`,
 			`(?i)RESOURCE_EXHAUSTED`,
+			`(?i)error 429`,
+			`(?i)requires more credits`,
+			`(?i)reached your .* limit`,
 		},
 		DenialPatterns: []string{
 			`(?i)permission.*(denied|rejected)`,

@@ -255,13 +255,14 @@ func TestRenderStatusLineLiveSegment(t *testing.T) {
 		Round:            1,
 		Display:          "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		BuilderName:      "glm-5.3-flash",
 		RoundStart:       baseTime.Add(-12 * time.Minute),
 		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
 		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash",
 			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
 	}
 	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
-	if !strings.Contains(plain, "builder on opencode · 41k tok") {
+	if !strings.Contains(plain, "builder on glm-5.3-flash · 41k tok") {
 		t.Errorf("no live tokens segment: %q", plain)
 	}
 	if !strings.Contains(plain, "plan sent") {
@@ -722,6 +723,7 @@ func statuslineFixture(now time.Time) Report {
 				Round:            1,
 				Display:          "NEEDS YOU",
 				BuilderCandidate: "opencode/openrouter/z-ai/glm-5.3-flash",
+				BuilderName:      "glm-5.3-flash",
 				RoundStart:       now.Add(-4 * time.Minute),
 				LastPayload: &LastEvent{
 					TS:   now.Add(-4 * time.Minute),
@@ -771,7 +773,7 @@ func TestRenderStatusLineAt80(t *testing.T) {
 	}
 
 	plain1 := stripSGR(lines[1])
-	if !strings.HasPrefix(plain1, "● client  r1 · builder on opencode · plan sent") {
+	if !strings.HasPrefix(plain1, "● client  r1 · builder on glm-5.3-flash · plan sent") {
 		t.Errorf("line 1 prefix mismatch: %q", plain1)
 	}
 	if !strings.HasSuffix(plain1, "NEEDS YOU   4m") {
@@ -919,21 +921,55 @@ func TestRenderStatusLineRemoteServer(t *testing.T) {
 		Round:            1,
 		Display:          "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		BuilderName:      "glm-5.3-flash",
 		Server:           "contabo",
 		RoundStart:       baseTime.Add(-10 * time.Minute),
 		LastPayload:      &LastEvent{TS: baseTime.Add(-10 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
 	}
 	out := RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120)
 	plain := stripSGR(splitLines(out)[0])
-	if !strings.Contains(plain, "r1 · builder on opencode@contabo") {
-		t.Errorf("expected opencode@contabo, got: %q", plain)
+	if !strings.Contains(plain, "r1 · builder on glm-5.3-flash@contabo") {
+		t.Errorf("expected glm-5.3-flash@contabo, got: %q", plain)
 	}
 
 	b.Server = ""
 	outLocal := RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120)
 	plainLocal := stripSGR(splitLines(outLocal)[0])
-	if !strings.Contains(plainLocal, "r1 · builder on opencode") {
-		t.Errorf("expected opencode, got: %q", plainLocal)
+	if !strings.Contains(plainLocal, "r1 · builder on glm-5.3-flash") {
+		t.Errorf("expected glm-5.3-flash, got: %q", plainLocal)
+	}
+}
+
+// TestRenderStatusLineOnFallback pins the middle's " on " segment: it names
+// the candidate's short name when the row carries one, falls back to the
+// harness when the set no longer holds the token, and disappears entirely
+// when the row has no candidate.
+func TestRenderStatusLineOnFallback(t *testing.T) {
+	t.Parallel()
+
+	b := BindingStatus{
+		Name:             "api",
+		Round:            1,
+		Display:          "ACTIVE",
+		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		LastPayload:      &LastEvent{TS: baseTime.Add(-10 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+	}
+	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
+	if !strings.Contains(plain, "r1 · builder on opencode") {
+		t.Errorf("a retired token must fall back to the harness: %q", plain)
+	}
+
+	b.Server = "contabo"
+	plain = stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
+	if !strings.Contains(plain, "r1 · builder on opencode@contabo") {
+		t.Errorf("a retired token on a remote runner must name the server: %q", plain)
+	}
+
+	b.Server = ""
+	b.BuilderCandidate = ""
+	plain = stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
+	if strings.Contains(plain, " on ") {
+		t.Errorf("a row with no candidate must not name what it runs on: %q", plain)
 	}
 }
 
@@ -1140,6 +1176,57 @@ func TestStatusLineRowsRemote(t *testing.T) {
 		}
 	})
 
+}
+
+// TestStatusLineRowOn pins row.On: the candidate's short name when the set
+// holds the token, its harness when it does not, the server suffix for a
+// remote runner, and empty when the row has no candidate at all.
+func TestStatusLineRowOn(t *testing.T) {
+	t.Parallel()
+
+	now := baseTime
+	tests := []struct {
+		name string
+		b    BindingStatus
+		want string
+	}{
+		{
+			name: "named local",
+			b:    BindingStatus{BuilderCandidate: "opencode/cline-pass/glm-5.3-flash", BuilderName: "glm-5.3-flash"},
+			want: "glm-5.3-flash",
+		},
+		{
+			name: "named remote",
+			b:    BindingStatus{BuilderCandidate: "opencode/cline-pass/glm-5.3-flash", BuilderName: "glm-5.3-flash", Server: "contabo"},
+			want: "glm-5.3-flash@contabo",
+		},
+		{
+			name: "retired token",
+			b:    BindingStatus{BuilderCandidate: "opencode/cline-pass/glm-5.3-flash"},
+			want: "opencode",
+		},
+		{
+			name: "no candidate",
+			b:    BindingStatus{},
+			want: "",
+		},
+		{
+			name: "no candidate on a server",
+			b:    BindingStatus{Server: "contabo"},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows := StatusLineRows(Report{Bindings: []BindingStatus{tt.b}}, now)
+			if len(rows) != 1 {
+				t.Fatalf("len(rows) = %d, want 1", len(rows))
+			}
+			if rows[0].On != tt.want {
+				t.Errorf("On = %q, want %q", rows[0].On, tt.want)
+			}
+		})
+	}
 }
 
 func TestStatusLineRowsEmptyDoc(t *testing.T) {

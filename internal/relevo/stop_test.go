@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -82,6 +83,12 @@ func TestStopPayload(t *testing.T) {
 			name: "no report", how: "killed", round: 2,
 			reportPath: "/s/reports/002.md", haveReport: false,
 			wantPayload: "The runner was stopped (killed) for round 2; no report was written.",
+			wantNote:    "noreport stopped",
+		},
+		{
+			name: "reaped, no report", how: "reaped", round: 2,
+			reportPath: "/s/reports/002.md", haveReport: false,
+			wantPayload: "The runner was stopped (reaped) for round 2; no report was written.",
 			wantNote:    "noreport stopped",
 		},
 		{
@@ -196,6 +203,138 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 	})
 }
 
+// deadRunner loads webshop and clears its recorded process, so a Stop sees a
+// round whose runner has already gone.
+func deadRunner(t *testing.T, rt Runtime) {
+	t.Helper()
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Builder = clearProcess(b.Builder)
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestStopReapsTheScopeWhenTheRunnerIsGone pins the reaped action: the runner
+// is already gone, so there is no process to kill, but its scope is still
+// loaded and is ended. The close says reaped and records stopped/reaped.
+func TestStopReapsTheScopeWhenTheRunnerIsGone(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{}
+	deadRunner(t, rt)
+	unit := scopeUnitName(b)
+	fr.scopeActive = map[string]bool{unit: true}
+
+	res, err := Stop(context.Background(), rt, "webshop", StopOptions{})
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if res.Action != "reaped" {
+		t.Errorf("Action = %q, want reaped", res.Action)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("kills = %+v, want none: the runner was already gone", fr.kills)
+	}
+	if len(fr.scopeStops) != 1 || fr.scopeStops[0] != unit {
+		t.Errorf("scopeStops = %v, want [%s]", fr.scopeStops, unit)
+	}
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 2 {
+		t.Errorf("Round = %d, want 2: the round closed", got.Round)
+	}
+	if stops := stopEntries(t, rt, "webshop"); len(stops) != 1 || stops[0].Note != "stopped/reaped" {
+		t.Errorf("stop entries = %+v, want one stopped/reaped", stops)
+	}
+}
+
+// TestStopReportsGoneWhenNothingIsLeftToStop pins the gone action: no live
+// process and no loaded scope means nothing was stopped and the close says so.
+func TestStopReportsGoneWhenNothingIsLeftToStop(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{}
+	deadRunner(t, rt)
+
+	res, err := Stop(context.Background(), rt, "webshop", StopOptions{})
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if res.Action != "gone" {
+		t.Errorf("Action = %q, want gone", res.Action)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("kills = %+v, want none", fr.kills)
+	}
+	if len(fr.scopeStops) != 0 {
+		t.Errorf("scopeStops = %v, want none", fr.scopeStops)
+	}
+	if stops := stopEntries(t, rt, "webshop"); len(stops) != 1 || stops[0].Note != "stopped/gone" {
+		t.Errorf("stop entries = %+v, want one stopped/gone", stops)
+	}
+}
+
+// TestStopKillsTheProcessAndReapsTheScope pins the combined action: a live
+// process is signalled and the scope a straggler may still hold is ended, and
+// the close still says killed.
+func TestStopKillsTheProcessAndReapsTheScope(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{}
+	h := handleOf(b.Builder)
+	unit := scopeUnitName(b)
+	fr.scopeActive = map[string]bool{unit: true}
+
+	res, err := Stop(context.Background(), rt, "webshop", StopOptions{})
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if res.Action != "killed" {
+		t.Errorf("Action = %q, want killed", res.Action)
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != h {
+		t.Errorf("kills = %+v, want the round's handle %+v", fr.kills, h)
+	}
+	if len(fr.scopeStops) != 1 || fr.scopeStops[0] != unit {
+		t.Errorf("scopeStops = %v, want [%s]", fr.scopeStops, unit)
+	}
+}
+
+// TestStopWithScopesOffNeverProbesAScope pins the fallback: with rt.Scope nil,
+// Stop asks the runner about no scope at all.
+func TestStopWithScopesOffNeverProbesAScope(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, fr)
+	deadRunner(t, rt)
+
+	res, err := Stop(context.Background(), rt, "webshop", StopOptions{})
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if res.Action != "gone" {
+		t.Errorf("Action = %q, want gone", res.Action)
+	}
+	if len(fr.scopeQueries) != 0 {
+		t.Errorf("scopeQueries = %v, want none (rt.Scope is nil)", fr.scopeQueries)
+	}
+	if len(fr.scopeStops) != 0 {
+		t.Errorf("scopeStops = %v, want none (rt.Scope is nil)", fr.scopeStops)
+	}
+}
+
 // ownedStopFixture is a served (owned) binding with a bare repo and a
 // worktree on relevo/api -- the shape the closeServedRound tests build -- plus
 // a plan entry for round 1 so RoundStateOf reports it running (or queued when
@@ -239,6 +378,9 @@ func ownedStopFixture(t *testing.T, fr *fakeRunner, queued bool) (Runtime, store
 		b.RoundStartedAt = baseTime
 		b.Builder.PID = 4242
 		b.Builder.StartedAt = baseTime.Unix()
+		// The fixture is a running round, so the runner must report its
+		// recorded process alive: Stop now signals only a live process.
+		fr.script(4242, true)
 	}
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)

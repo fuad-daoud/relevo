@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -474,6 +473,14 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			b.RoundTier = opts.Tier
 		}
 
+		// The round before this one must not still hold a scope: a supervisor
+		// that died before its own reap leaves one behind, and the new round
+		// would then run beside it. Nothing is staged yet, so a refusal here
+		// leaves no plan file and no NEEDS YOU.
+		if err := endEarlierRoundScope(ctx, rt, b); err != nil {
+			return err
+		}
+
 		planPath := rt.Store.PlanPath(name, b.Round)
 		reportPath := rt.Store.ReportPath(name, b.Round)
 		donePath := rt.Store.DonePath(name, b.Round)
@@ -494,19 +501,10 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			// failed (#445). Refuse before spawning a second one; nothing is
 			// saved and the staged plan is removed, like the tier-unsupported
 			// branch below.
-			if rt.Scope != nil {
-				if p, ok := rt.Runner.(spawn.ScopeProber); ok {
-					unit := scopeUnitName(b)
-					active, perr := p.ScopeActive(ctx, unit)
-					if perr != nil {
-						slog.Debug("scope probe", "unit", unit, "err", perr)
-					}
-					if active {
-						_ = os.Remove(planPath)
-						return fmt.Errorf("binding %q round %d: scope %s.scope is still running -- a builder for this round is already alive (an earlier send may have started it); inspect it with systemctl --user status %s.scope, and relevo stop %s ends it: %w",
-							name, b.Round, unit, unit, name, ErrScopeActive)
-					}
-				}
+			if unit := scopeUnitName(b); scopeRunning(ctx, rt, unit) {
+				_ = os.Remove(planPath)
+				return fmt.Errorf("binding %q round %d: scope %s.scope is still running -- a builder for this round is already alive (an earlier send may have started it); inspect it with systemctl --user status %s.scope, and relevo stop %s ends it: %w",
+					name, b.Round, unit, unit, name, ErrScopeActive)
 			}
 			// A reader round runs in a throwaway scratch worktree, never in
 			// b.CWD (A5 §2, D6). Create it from the round's captured baseline

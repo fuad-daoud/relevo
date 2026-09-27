@@ -119,9 +119,9 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		}
 	}
 	// stopped is how the closed round was stopped: the newest KindStop entry
-	// for ClosedRound whose note names one ("stopped/killed" or
-	// "stopped/dequeued"). A close any other way writes no such entry, and
-	// the field stays "" (#344).
+	// for ClosedRound whose note names one ("stopped/killed",
+	// "stopped/reaped", "stopped/gone" or "stopped/dequeued"). A close any
+	// other way writes no such entry, and the field stays "" (#344).
 	var stopped string
 	if b.Serve != nil && b.Serve.ClosedRound > 0 {
 		for i := len(entries) - 1; i >= 0; i-- {

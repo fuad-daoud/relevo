@@ -182,6 +182,16 @@ func TestScopeActive(t *testing.T) {
 	})
 }
 
+// stubLog reads a stub's argv log, failing the test when it cannot.
+func stubLog(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 // TestProbeStubs puts a fake systemd-run on PATH so the probes never call the
 // real one (CI has no systemd): an accepting stub, and refusals reproducing
 // the stderr line systemd-run prints.
