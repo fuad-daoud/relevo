@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -346,7 +347,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-			fmt.Sprintf("The runner finished round %d. Report: %s", b.Round, showCommand(b.Name, b.Round, "report"))+gateSuffix, joinNotes("", note), rec, nil, nil, nil)
+			fmt.Sprintf("The runner finished round %d. %s", b.Round, closeClause(rt, b, b.Round))+gateSuffix, joinNotes("", note), rec, nil, nil, nil)
 		if err != nil {
 			return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 		}
@@ -538,6 +539,18 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	entry.BuilderSession = builderSessionOf(b)
 	if err := delivery.Queue(ctx, deliveryDeps(rt), tx, b.Name, entry); err != nil {
 		return b, err
+	}
+
+	// Strip the relevo block from a reader's summary.md. The parse above is
+	// the only reader of the block, and the file the planner reads must not
+	// carry it. Stripping here, after the entry is queued, means the outcome
+	// survives a close that fails later and is retried on the next tick.
+	if b.Shape == store.ShapeReader {
+		if stripped := reporttail.StripTail(body); !bytes.Equal(stripped, body) {
+			if err := os.WriteFile(path, stripped, 0o644); err != nil {
+				slog.Warn("reader summary not stripped", "binding", b.Name, "round", b.Round, "err", err)
+			}
+		}
 	}
 
 	if stopped {

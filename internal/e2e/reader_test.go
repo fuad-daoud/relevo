@@ -43,6 +43,11 @@ const fakeReaderFinal = "# Reader summary\n\n" +
 	"not_done: []\n" +
 	"```\n"
 
+// fakeReaderSummary is fakeReaderFinal minus its relevo block: what summary.md
+// must hold after the close, so no stray block reaches the planner.
+const fakeReaderSummary = "# Reader summary\n\n" +
+	"index.html and style.css are in the artifact directory.\n"
+
 // fakeReaderStreamLine is the one claude stream-json line the fake harness
 // prints for a reader round, carrying fakeReaderFinal as its result text.
 func fakeReaderStreamLine(t *testing.T) string {
@@ -131,8 +136,14 @@ func TestHeadlessE2EReaderRound(t *testing.T) {
 			t.Fatalf("%s does not exist after the reader round closed: %v", path, err)
 		}
 	}
-	if got := readFile(t, summary); got != fakeReaderFinal {
-		t.Fatalf("summary.md does not equal the final message:\ngot:\n%q\nwant:\n%q", got, fakeReaderFinal)
+	if got := readFile(t, summary); got != fakeReaderSummary {
+		t.Fatalf("summary.md does not equal the final message with its block stripped:\ngot:\n%q\nwant:\n%q", got, fakeReaderSummary)
+	}
+	if entry.Outcome != "done" {
+		t.Errorf("report entry Outcome = %q, want %q", entry.Outcome, "done")
+	}
+	if !strings.Contains(entry.Payload, "Findings: relevo show e2e-reader --round 1 --summary") {
+		t.Errorf("report payload does not name the reader summary:\n%s", entry.Payload)
 	}
 	if entry.Path != summary {
 		t.Fatalf("report entry Path = %q, want the summary path %s", entry.Path, summary)

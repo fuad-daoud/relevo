@@ -753,8 +753,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 		slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
 		payload := fmt.Sprintf(
-			"Builder exited (code %s) after writing its report but never confirmed completion (no %s). Report: %s.",
-			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), showCommand(b.Name, b.Round, "report"))
+			"Builder exited (code %s) after writing its report but never confirmed completion (no %s). %s.",
+			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), closeClause(rt, b, b.Round))
 		if m.Line != "" {
 			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, availability.GateTimeText(m.Until))
 		}

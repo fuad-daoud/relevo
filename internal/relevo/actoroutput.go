@@ -3,6 +3,7 @@ package relevo
 import (
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // defaultOutput words a reader's prompt when its agent names no output label.
@@ -37,4 +38,17 @@ func actorOutput(rt Runtime, actor, definition string) string {
 		return ActorOutput(nil, nil, actor, definition)
 	}
 	return ActorOutput(loaded.Actors, loaded.Agents, actor, definition)
+}
+
+// readerOutputLabel is the output label of the agent a binding's actor plays:
+// the agent definition when the role's spec resolves, else the actor name.
+// The prompt that words the reader's artifact directory and the close line
+// that names the artifact both call this, so the two labels cannot drift.
+func readerOutputLabel(rt Runtime, b store.Binding) string {
+	actor := bindingRole(b)
+	definition := actor
+	if spec, err := bindingSpec(rt, b, b.Builder.Kind); err == nil {
+		definition = spec.Definition
+	}
+	return actorOutput(rt, actor, definition)
 }
