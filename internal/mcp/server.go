@@ -39,6 +39,10 @@ type Server struct {
 	Version string // serverInfo.version
 	// Mode picks the instructions text when Instructions is empty.
 	Mode Mode
+	// Kind is the harness this server runs under: "" is Claude Code, and
+	// "opencode" selects the opencode instructions and drops the wait command
+	// a tools-mode send would otherwise carry.
+	Kind string
 	// Instructions overrides the mode's text when non-empty; tests use it.
 	Instructions string
 	Log          io.Writer // stderr; nil -> discard
@@ -177,7 +181,7 @@ func (s *Server) handleLine(ctx context.Context, line []byte) {
 func (s *Server) initializeResult() map[string]any {
 	instructions := s.Instructions
 	if instructions == "" {
-		instructions = InstructionsFor(s.Mode)
+		instructions = InstructionsFor(s.Mode, s.Kind)
 	}
 	return map[string]any{
 		"protocolVersion": ProtocolVersion,
@@ -196,6 +200,15 @@ func (s *Server) initializeResult() map[string]any {
 type toolCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	// Meta carries the calling harness session. opencode sends
+	// _meta.sessionID on every call (docs.opencode mcp-servers#context), which
+	// is how one server resolves several sessions.
+	Meta callMeta `json:"_meta"`
+}
+
+// callMeta is the request metadata relevo reads. Other keys are ignored.
+type callMeta struct {
+	SessionID string `json:"sessionID"`
 }
 
 func (s *Server) handleToolsCall(ctx context.Context, req Request) {
@@ -205,7 +218,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req Request) {
 		return
 	}
 
-	result, rpcErr := s.callTool(ctx, params.Name, params.Arguments)
+	result, rpcErr := s.callTool(ctx, params.Name, params.Arguments, params.Meta.SessionID)
 	if rpcErr != nil {
 		s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: rpcErr})
 		return
@@ -226,14 +239,14 @@ func (s *Server) withNotice(r ToolResult) ToolResult {
 	return r
 }
 
-func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage) (ToolResult, *RPCError) {
+func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage, session string) (ToolResult, *RPCError) {
 	switch name {
 	case "status":
 		var a StatusArgs
 		if err := decodeArgs(raw, &a); err != nil {
 			return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 		}
-		res, err := s.Verbs.Status(ctx, a)
+		res, err := s.Verbs.Status(ctx, session, a)
 		return toolResultFrom(res, err)
 
 	case "send":
@@ -244,14 +257,15 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage)
 		if err := validateSendArgs(a); err != nil {
 			return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 		}
-		res, err := s.Verbs.Send(ctx, a)
+		res, err := s.Verbs.Send(ctx, session, a)
 		out, rpcErr := toolResultFrom(res, err)
 		if rpcErr != nil || err != nil || a.DryRun {
 			return out, rpcErr
 		}
-		// Tools mode gets no push, so the result ends with the background
-		// wait to start; channel mode already gets the event.
-		if s.Mode == ModeTools {
+		// Claude's tools mode gets no push, so the result ends with the
+		// background wait to start; channel mode already gets the event, and
+		// an opencode mastermind gets the report as a new turn.
+		if s.Mode == ModeTools && s.Kind != "opencode" {
 			return appendWaitCommand(out, a.Name, budgetOf(res)), nil
 		}
 		return out, nil
@@ -264,7 +278,7 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage)
 		if err := validateDoneArgs(a); err != nil {
 			return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 		}
-		res, err := s.Verbs.Done(ctx, a)
+		res, err := s.Verbs.Done(ctx, session, a)
 		return toolResultFrom(res, err)
 
 	default:

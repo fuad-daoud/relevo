@@ -176,6 +176,18 @@ The shipped plugin gains two changes:
   <id>` and uses the answer: `enabled` carries the record's id and name (the
   guide created it), `ask` and `disabled` register nothing. The old
   unconditional `mastermind init` call is gone.
+- **Tools (`server.ts`, at setup).** It reads the location's answer with
+  `relevo mastermind guide --json --cwd <location>` and, for `enabled`, registers
+  `relevo mcp --kind opencode` through `ctx.mcp.transform`
+  (`codemode: false`), so the session gets `relevo_status` / `relevo_send` /
+  `relevo_done` and the opencode instruction prelude. `ask` and `no` register
+  nothing, and a consent change applies at the next plugin load, like every
+  transform.
+- **`relevo mcp --kind opencode`** serves tools only (no Claude channel) and
+  resolves each tool call's MasterMind from `_meta.sessionID`, which opencode
+  sends with every call; the Claude path keeps its startup resolution. The
+  opencode prelude says reports arrive as new turns, so no background wait is
+  started and a `send` result carries none.
 
 ### 6.3 agy and other harnesses
 
@@ -204,6 +216,9 @@ participate in consent until a hook exists.
   git repo (no harness, no network); `enable`/`disable` write the answer;
   `guide --json` states; doctor's row text. TestMain already isolates HOME,
   XDG roots and `RELEVO_*`.
+- **`internal/mcp`**: a `tools/call`'s `_meta.sessionID` reaches the verbs; the
+  opencode prelude and its use by initialize; an opencode `send` carries no
+  wait line; the per-session resolver's filter and error.
 - **opencode**: no CI coverage (no opencode in CI). A manual probe per
   `docs/specs/2026-09-24-opencode-tui-probe.md`: with `yes`, the first model
   call carries the guide in its system text; with `unset`, the ask-note; with
@@ -212,11 +227,7 @@ participate in consent until a hook exists.
 
 ## 9. Out of scope (later rounds)
 
-- MCP registration from the opencode plugin (`ctx.mcp.transform`) so opencode
-  gets the `status`/`send`/`done` tools, and resolving the MasterMind from the
-  MCP call's `_meta.sessionID`; per-harness `internal/mcp/instructions.go`
-  wording.
 - A TUI dialog for the ask (the model-ask ships first).
 - Per-harness answers, "ask me again" reset, and a repo picker in the cockpit.
 - Deleting records on `disable --repo`; `forget` stays the explicit cleanup.
-- agy injection; agy has no hook to hang it on.
+- agy injection and agy tools; agy has no hook to hang them on.

@@ -37,6 +37,7 @@ func cmdMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	mastermindFlag := fs.String("mastermind", "", "mastermind id or name (default: $RELEVO_MASTERMIND, else this session's host)")
 	modeFlag := fs.String("mode", "auto", "channel|tools|auto (default: detected from the parent process's argv)")
+	kindFlag := fs.String("kind", "", "harness kind this server runs under: opencode resolves the MasterMind per tool call, tools only")
 	interval := fs.Duration("interval", time.Second, "poll interval in channel mode (floored at 200ms)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -46,7 +47,13 @@ func cmdMCP(args []string) error {
 		*interval = minMCPInterval
 	}
 
-	mode, err := resolveMCPMode(*modeFlag)
+	kind, err := mcpResolveKind(*kindFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", err)
+		return exitCodeErr{code: 2}
+	}
+
+	mode, err := mcpResolveMode(kind, *modeFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", err)
 		return exitCodeErr{code: 2}
@@ -59,42 +66,50 @@ func cmdMCP(args []string) error {
 
 	// §4.5: resolve this mastermind, retrying while the hook may still be
 	// running. A bad --mastermind value is not a race: it is reported at once.
+	// An opencode server has no identity to resolve here: its calls name their
+	// session, and each tool call resolves then.
 	var (
 		rec     mastermind.Record
 		haveRec bool
 	)
-	deadline := time.Now().Add(mcpResolveTimeout)
-	for {
-		r, _, rerr := resolveMCPMasterMind(rt, *mastermindFlag)
-		if rerr == nil {
-			rec, haveRec = r, true
-			break
+	if kind != "opencode" {
+		deadline := time.Now().Add(mcpResolveTimeout)
+		for {
+			r, _, rerr := resolveMCPMasterMind(rt, *mastermindFlag)
+			if rerr == nil {
+				rec, haveRec = r, true
+				break
+			}
+			if !errors.Is(rerr, mastermind.ErrNoMasterMind) {
+				fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", rerr)
+				return exitCodeErr{code: 2}
+			}
+			if !time.Now().Before(deadline) {
+				break
+			}
+			time.Sleep(mcpResolveRetry)
 		}
-		if !errors.Is(rerr, mastermind.ErrNoMasterMind) {
-			fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", rerr)
-			return exitCodeErr{code: 2}
-		}
-		if !time.Now().Before(deadline) {
-			break
-		}
-		time.Sleep(mcpResolveRetry)
 	}
 
 	version := buildVersion()
-	if haveRec {
+	switch {
+	case haveRec:
 		fmt.Fprintf(os.Stderr, "relevo mcp: mastermind %s (%s) mode %s\n", rec.Name, rec.ID, mcpModeWord(mode))
-	} else {
+	case kind == "opencode":
+		fmt.Fprintln(os.Stderr, "relevo mcp: opencode tools server; each tool call resolves its MasterMind")
+	default:
 		// No registration and no host match: the verbs still serve, so a
 		// mastermind whose hook never ran can still use the tools.
 		fmt.Fprintln(os.Stderr, `relevo mcp: no relevo mastermind for this session; tools-only (run "relevo mastermind init")`)
 	}
 
 	srv := &mcp.Server{
-		Verbs:   &mcp.RelevoVerbs{RT: rt, MasterMind: rec.ID},
+		Verbs:   mcpVerbs(rt, kind, rec.ID),
 		Version: version,
 		// The mode is known before initialize is answered, so the model is
 		// told from its first turn which delivery it should expect (#303 §4.5).
 		Mode: mode,
+		Kind: kind,
 		Log:  os.Stderr,
 		// §4.10: this server runs for the session's whole life, so when the
 		// daemon has re-exec'd onto a newer relevo it says so on every tool
@@ -146,7 +161,7 @@ func resolveMCPMasterMind(rt relevo.Runtime, flagVal string) (mastermind.Record,
 	})
 }
 
-// resolveMCPMode turns --mode into an mcp.Mode: "channel" and "tools" are
+// mcpResolveMode turns --mode into an mcp.Mode: "channel" and "tools" are
 // literal, "auto" reads the parent process's argv and falls back to
 // ModeTools (with a reason) when it cannot (spec §7).
 func resolveMCPMode(flagVal string) (mcp.Mode, error) {
@@ -164,6 +179,60 @@ func resolveMCPMode(flagVal string) (mcp.Mode, error) {
 		return mcp.DetectMode(argv), nil
 	default:
 		return mcp.ModeTools, fmt.Errorf("--mode must be channel, tools, or auto, got %q", flagVal)
+	}
+}
+
+// mcpResolveKind validates --kind: the empty kind is Claude Code, resolved once
+// at startup; opencode resolves each tool call from its session.
+func mcpResolveKind(kind string) (string, error) {
+	switch kind {
+	case "", "opencode":
+		return kind, nil
+	default:
+		return "", fmt.Errorf("--kind must be empty or opencode, got %q", kind)
+	}
+}
+
+// mcpResolveMode picks the mode for the kind: opencode has no Claude channel,
+// so its server always serves tools and an explicit --mode channel is refused
+// rather than ignored.
+func mcpResolveMode(kind, flagVal string) (mcp.Mode, error) {
+	if kind == "opencode" {
+		if flagVal == "channel" {
+			return mcp.ModeTools, fmt.Errorf("--kind opencode has no channel mode")
+		}
+		return mcp.ModeTools, nil
+	}
+	return resolveMCPMode(flagVal)
+}
+
+// mcpVerbs builds the tool verbs: an opencode server resolves the calling
+// session per call, a Claude one uses the mastermind resolved at startup.
+func mcpVerbs(rt relevo.Runtime, kind, masterMindID string) *mcp.RelevoVerbs {
+	v := &mcp.RelevoVerbs{RT: rt, MasterMind: masterMindID}
+	if kind == "opencode" {
+		v.ResolveSession = opencodeSessionMasterMind(rt)
+	}
+	return v
+}
+
+// opencodeSessionMasterMind maps one tool call's session to the record the
+// plugin created for it. The not-found text is actionable: an unanswered
+// repository is the reason a tool call usually arrives without a record.
+func opencodeSessionMasterMind(rt relevo.Runtime) func(session string) (string, error) {
+	if rt.MasterMinds == nil {
+		return nil
+	}
+	return func(session string) (string, error) {
+		rec, err := rt.MasterMinds.BySession("opencode", session)
+		switch {
+		case err == nil:
+			return rec.ID, nil
+		case errors.Is(err, mastermind.ErrNotFound):
+			return "", fmt.Errorf("no relevo MasterMind for opencode session %s: answer relevo's consent question in the repository, then run relevo mastermind enable --repo", session)
+		default:
+			return "", err
+		}
 	}
 }
 

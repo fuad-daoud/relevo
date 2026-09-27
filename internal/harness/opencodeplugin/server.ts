@@ -79,6 +79,38 @@ async function guideFor(sessionID: string): Promise<{ text: string } | null> {
   return guide;
 }
 
+// registerTools gives an enabled location relevo's MCP tools. The guide
+// command answers whether this repository consented; ask and no register
+// nothing, so a repository that never opted in never sees the tools.
+async function registerTools(api: any): Promise<void> {
+  if (!api?.mcp || typeof api.mcp.transform !== "function") return;
+  const dir = api.location?.directory;
+  if (!dir) return;
+
+  const res = await spawnRelevo(["mastermind", "guide", "--json", "--cwd", dir]);
+  if (!res.ok) return;
+  let guide: any = null;
+  try {
+    guide = JSON.parse(res.stdout);
+  } catch {
+    return;
+  }
+  if (guide?.state !== "enabled") return;
+
+  try {
+    await api.mcp.transform((editor: any) => {
+      editor.set("relevo", {
+        type: "local",
+        command: ["relevo", "mcp", "--kind", "opencode"],
+        // Three tools read better than a Code Mode group.
+        codemode: false,
+      });
+    });
+  } catch (err) {
+    console.error("relevo: mcp transform failed:", err);
+  }
+}
+
 const setup = async (api: any) => {
   if (api?.shell && typeof api.shell.hook === "function") {
     api.shell.hook("create.before", (spec: any) => {
@@ -97,6 +129,8 @@ const setup = async (api: any) => {
       }
     });
   }
+
+  await registerTools(api);
 };
 
 export default {
