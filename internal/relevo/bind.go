@@ -807,7 +807,7 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 	// a builder still writing would dirty the worktree relevo is about to
 	// judge clean or not. A failed stop is reported, never fatal -- the
 	// unbind is the human's decision and it proceeds.
-	if pid, err := stopProcess(ctx, rt, b.Builder, "unbind"); err != nil {
+	if pid, err := stopProcess(ctx, rt, b, "unbind"); err != nil {
 		res.ProcessErr = fmt.Sprintf("pid %d: %v", pid, err)
 	} else if pid != 0 {
 		res.ProcessStopped = pid

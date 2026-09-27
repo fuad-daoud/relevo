@@ -132,14 +132,16 @@ type ProcHandle struct {
 // time matches within one second -- a reused pid is false, and a missing
 // pid is (false, nil), not an error. ExitCode reports the code the runner's
 // supervisor left as the stream's last line (the caller passes the stream path),
-// ok false when there is none (the process is still running, or was killed
-// before it could write one). Kill stops the process group, escalating after a
-// grace; not alive is nil.
+// ok false when there is none (the process is still running, was killed before
+// it could write one, or a kill was recorded for this handle). Kill stops the
+// process group, escalating after a grace; not alive is nil. A kill is recorded
+// against the stream so a trailer written after the signal is never read as
+// that process's code.
 type Runner interface {
 	Start(ctx context.Context, spec ProcSpec) (ProcHandle, error)
 	Alive(ctx context.Context, h ProcHandle) (bool, error)
 	ExitCode(ctx context.Context, h ProcHandle, logPath string) (code int, ok bool)
-	Kill(ctx context.Context, h ProcHandle) error
+	Kill(ctx context.Context, h ProcHandle, streamPath string) error
 	// Rusage reports the rusage trailer the supervisor left as the stream's
 	// second-to-last line; ok false when absent (plain spawn, killed
 	// supervisor, still running).

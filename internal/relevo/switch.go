@@ -121,7 +121,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// started (#99): the planner gated the provider while the round's
 		// process was still running.
 		if b.Builder.PID != 0 && rt.Runner != nil {
-			if err := rt.Runner.Kill(ctx, handleOf(b.Builder)); err != nil {
+			if err := rt.Runner.Kill(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); err != nil {
 				return haltBinding(ctx, rt, b, fmt.Sprintf(
 					"%s: builder %s; could not stop its process %d to replace it: %v",
 					b.Name, reason, b.Builder.PID, err))

@@ -43,7 +43,7 @@ func (stubRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
 func (stubRunner) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath string) (int, bool) {
 	return 0, false
 }
-func (stubRunner) Kill(ctx context.Context, h spawn.ProcHandle) error { return nil }
+func (stubRunner) Kill(ctx context.Context, h spawn.ProcHandle, _ string) error { return nil }
 func (stubRunner) Rusage(context.Context, spawn.ProcHandle, string) (spawn.ProcRusage, bool) {
 	return spawn.ProcRusage{}, false
 }

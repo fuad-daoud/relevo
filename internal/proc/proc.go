@@ -338,8 +338,12 @@ func (r *Runner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
 
 // ExitCode reads the trailer the supervisor appended, if it is the stream's last
 // line; a stream written before the rename ends in legacy.ExitTrailer instead
-// and reads the same way. The handle is unused: the stream is the record.
-func (r *Runner) ExitCode(_ context.Context, _ spawn.ProcHandle, logPath string) (int, bool) {
+// and reads the same way. A kill recorded for this handle returns ok=false
+// regardless of what the stream ends with.
+func (r *Runner) ExitCode(_ context.Context, h spawn.ProcHandle, logPath string) (int, bool) {
+	if killRecorded(h, logPath) {
+		return 0, false
+	}
 	line, ok := lastLine(logPath)
 	if !ok {
 		return 0, false
@@ -361,14 +365,18 @@ func (r *Runner) ExitCode(_ context.Context, _ spawn.ProcHandle, logPath string)
 // Kill sends SIGTERM to the supervisor's process group -- the supervisor and the
 // builder under it -- waits up to the grace for Alive to turn false, then
 // SIGKILLs the group. Alive's start-time check runs first, so a reused pid is
-// never signalled.
-func (r *Runner) Kill(ctx context.Context, h spawn.ProcHandle) error {
+// never signalled. The record precedes the signal, because a reader only ever
+// reads a dead handle, so the record is in place before the process could die.
+func (r *Runner) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string) error {
 	alive, err := r.Alive(ctx, h)
 	if err != nil {
 		return err
 	}
 	if !alive {
 		return nil
+	}
+	if err := recordKill(h, streamPath); err != nil {
+		return err
 	}
 	if err := syscall.Kill(-h.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("proc: SIGTERM %d: %w", h.PID, err)

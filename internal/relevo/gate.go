@@ -66,7 +66,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 
 	if alive {
 		if elapsed >= gateTimeoutFor(b, rt.Policy) {
-			if err := rt.Runner.Kill(ctx, h); err != nil {
+			if err := rt.Runner.Kill(ctx, h, log); err != nil {
 				slog.Warn("gate timeout kill failed", "binding", b.Name, "pid", b.GateRun.PID, "err", err)
 			}
 			rec := &store.GateRecord{Command: b.GateRun.Command, Result: "timeout", DurationMS: elapsed.Milliseconds(), LogPath: log}

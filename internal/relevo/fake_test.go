@@ -621,9 +621,10 @@ func withClock(rt Runtime, c *fakeClock) Runtime {
 // unscripted pid is alive until killed), and reports the exit code a test
 // set with exit(). Nothing here runs a process.
 type fakeRunner struct {
-	specs   []spawn.ProcSpec
-	handles []spawn.ProcHandle
-	kills   []spawn.ProcHandle
+	specs       []spawn.ProcSpec
+	handles     []spawn.ProcHandle
+	kills       []spawn.ProcHandle
+	killStreams []string
 
 	startErr error
 	aliveErr error
@@ -726,11 +727,12 @@ func (f *fakeRunner) ExitCode(_ context.Context, h spawn.ProcHandle, path string
 	return code, ok
 }
 
-func (f *fakeRunner) Kill(_ context.Context, h spawn.ProcHandle) error {
+func (f *fakeRunner) Kill(_ context.Context, h spawn.ProcHandle, streamPath string) error {
 	if f.killErr != nil {
 		return f.killErr
 	}
 	f.kills = append(f.kills, h)
+	f.killStreams = append(f.killStreams, streamPath)
 	f.alive[h.PID] = []bool{false}
 	return nil
 }
@@ -838,11 +840,14 @@ func TestFakeRunnerScriptsAliveAndRecordsKills(t *testing.T) {
 	if h2.PID == h.PID {
 		t.Fatal("two Starts returned the same pid")
 	}
-	if err := f.Kill(context.Background(), h2); err != nil {
+	if err := f.Kill(context.Background(), h2, "/state/webshop/002-builder.jsonl"); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}
 	if len(f.kills) != 1 || f.kills[0] != h2 {
 		t.Errorf("kills = %+v, want [h2]", f.kills)
+	}
+	if len(f.killStreams) != 1 || f.killStreams[0] != "/state/webshop/002-builder.jsonl" {
+		t.Errorf("killStreams = %+v, want [\"/state/webshop/002-builder.jsonl\"]", f.killStreams)
 	}
 	if alive, _ := f.Alive(context.Background(), h2); alive {
 		t.Error("a killed handle must read as not alive")
