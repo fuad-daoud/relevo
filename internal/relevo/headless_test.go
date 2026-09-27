@@ -2632,6 +2632,117 @@ func TestReconcileHeadlessMarkerClosesAndClearsTheHandle(t *testing.T) {
 	}
 }
 
+// TestReconcileHeadlessReapsTheRoundsScopeWhenTheRunnerExited pins the exit
+// route: a runner that is gone leaves its scope behind, so the daemon ends it
+// before the exited region relaunches, switches or nudges under the same unit
+// name.
+func TestReconcileHeadlessReapsTheRoundsScopeWhenTheRunnerExited(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{}
+	unit := scopeUnitName(b)
+	fr.scopeActive = map[string]bool{unit: true}
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.scopeStops) != 1 || fr.scopeStops[0] != unit {
+		t.Errorf("scopeStops = %v, want [%s]", fr.scopeStops, unit)
+	}
+	if got.Round != 2 {
+		t.Errorf("Round = %d, want 2: the round closed", got.Round)
+	}
+	if got.Builder.PID != 0 {
+		t.Errorf("Builder.PID = %d, want 0", got.Builder.PID)
+	}
+}
+
+// TestReconcileHeadlessReapsTheRoundsScopeOnAMarkerCloseWithADeadRunner pins
+// the marker route: a builder that wrote its marker and then died still holds
+// its scope, so the close ends it.
+func TestReconcileHeadlessReapsTheRoundsScopeOnAMarkerCloseWithADeadRunner(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{}
+	unit := scopeUnitName(b)
+	fr.scopeActive = map[string]bool{unit: true}
+	fr.script(b.Builder.PID, false)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.scopeStops) != 1 || fr.scopeStops[0] != unit {
+		t.Errorf("scopeStops = %v, want [%s]", fr.scopeStops, unit)
+	}
+	if got.Round != 2 || got.Builder.PID != 0 {
+		t.Errorf("round=%d pid=%d, want round 2 with the pid cleared", got.Round, got.Builder.PID)
+	}
+}
+
+// TestReconcileHeadlessMarkerCloseWithALiveRunnerReapsNothing pins the
+// liveness guard: a live runner reaps its own scope on exit, so the daemon
+// leaves it alone.
+func TestReconcileHeadlessMarkerCloseWithALiveRunnerReapsNothing(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{}
+	unit := scopeUnitName(b)
+	fr.scopeActive = map[string]bool{unit: true}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.scopeStops) != 0 {
+		t.Errorf("scopeStops = %v, want none: the live runner reaps its own scope", fr.scopeStops)
+	}
+}
+
+// TestReconcileWithScopesOffNeverProbesAScope pins the fallback: a scopes-off
+// runtime never asks the runner about a scope, on the exit route or the marker
+// route.
+func TestReconcileWithScopesOffNeverProbesAScope(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.scopeQueries) != 0 {
+		t.Errorf("scopeQueries = %v, want none (rt.Scope is nil)", fr.scopeQueries)
+	}
+	if len(fr.scopeStops) != 0 {
+		t.Errorf("scopeStops = %v, want none (rt.Scope is nil)", fr.scopeStops)
+	}
+}
+
 // escapeFixture seeds webshop headless with a Repo and a fake Git configured
 // so a round that leaves the worktree's tree unchanged while the repo is
 // dirty is detected as a worktree escape (#192): fg.snapshotTreeID is

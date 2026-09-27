@@ -293,7 +293,7 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 	pre := d.prefetchRemote(ctx, name)
 	defer pre.release()
 
-	return d.rt.Store.WithLock(func(tx *store.Tx) error {
+	err = d.rt.Store.WithLock(func(tx *store.Tx) error {
 		loaded, err := tx.Load(name)
 		if errors.Is(err, store.ErrNotFound) {
 			// A `relevo unbind` landed between the caller's binding list and
@@ -336,6 +336,13 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 
 		return tx.Save(next)
 	})
+	if err != nil {
+		return err
+	}
+	if pre != nil && pre.Settle != nil {
+		return settleCatchUp(ctx, d.rt, pre.Settle, true)
+	}
+	return nil
 }
 
 // prefetchRemote reads what a remote binding's next reconcile needs from the

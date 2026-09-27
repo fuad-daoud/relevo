@@ -43,7 +43,7 @@ func cmdGate(args []string) error {
        relevo gate --serve [--state DIR] [<token> [--for D] [--reason S] | --clear <provider|token>]`
 
 	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
-	forFlag := fs.String("for", "", "how long to gate the provider (Go duration, e.g. 2h); omit to leave it gated until `relevo gate --clear`")
+	forFlag := fs.String("for", "", "how long to gate the provider, as a Go `duration` (e.g. 2h); omit to leave it gated until relevo gate --clear")
 	reason := fs.String("reason", "", "why, for the record")
 	clear := fs.String("clear", "", "clear a recorded rate limit: --clear <provider|token>")
 	serveFlag := fs.Bool("serve", false, "act on the local serve daemon's gates instead of this machine's")

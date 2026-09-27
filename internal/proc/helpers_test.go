@@ -50,6 +50,43 @@ func writeStub(t *testing.T, dir, script string) {
 	}
 }
 
+// writeSystemctlStub puts a fake systemctl on dir, for a test to prepend to
+// PATH, and returns its state, argv-log and stubborn paths. The state file is
+// "active" or "inactive": show answers from it, stop fails while it is
+// inactive, and stop or kill flips it to inactive unless the stubborn file
+// exists. Every argv it receives is appended to the log. The stub uses shell
+// builtins only, so PATH may be the stub's own directory alone. No real unit is
+// ever touched.
+func writeSystemctlStub(t *testing.T, dir, state string) (statePath, logPath, stubbornPath string) {
+	t.Helper()
+	statePath = filepath.Join(dir, "systemctl-state")
+	logPath = filepath.Join(dir, "systemctl-argv.log")
+	stubbornPath = filepath.Join(dir, "systemctl-stubborn")
+	if err := os.WriteFile(statePath, []byte(state+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+echo "$@" >> "` + logPath + `"
+state=""
+read -r state < "` + statePath + `"
+case "$1 $2" in
+"--user show") printf '%s\n' "$state";;
+"--user stop")
+  [ "$state" = inactive ] && exit 1
+  [ -e "` + stubbornPath + `" ] || echo inactive > "` + statePath + `"
+  ;;
+"--user kill")
+  [ -e "` + stubbornPath + `" ] || echo inactive > "` + statePath + `"
+  ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return statePath, logPath, stubbornPath
+}
+
 // unsetGoMaxProcs removes any inherited GOMAXPROCS for the test's duration.
 func unsetGoMaxProcs(t *testing.T) {
 	t.Helper()

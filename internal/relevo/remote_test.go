@@ -173,7 +173,11 @@ func (f *fakeRemote) RoundBundle(ctx context.Context, server, name string, round
 }
 
 func (f *fakeRemote) Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error) {
-	f.calls = append(f.calls, fmt.Sprintf("Ack:%s:%s:%d", server, name, round))
+	call := fmt.Sprintf("Ack:%s:%s:%d", server, name, round)
+	if f.beforeCall != nil {
+		f.beforeCall(call)
+	}
+	f.calls = append(f.calls, call)
 	return f.ackResp, f.ackErr
 }
 
@@ -2337,7 +2341,9 @@ func TestForwardUnavailable(t *testing.T) {
 	}
 	// No plan entry for idle-remote's round: its round is not open.
 
-	fr := &fakeRemote{}
+	fr := &fakeRemote{
+		candidatesResp: remote.CandidatesResponse{Candidates: []remote.CandidateView{{Token: "some-token"}}},
+	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
 	lines := ForwardUnavailable(ctx, rt, "some-token", "hit a limit")
@@ -2358,6 +2364,245 @@ func TestForwardUnavailable(t *testing.T) {
 	}
 	if !strings.Contains(target, "open-remote") {
 		t.Fatalf("the one call = %q, want it naming open-remote", target)
+	}
+}
+
+// forwardClientCandidatesJSON is one candidate named test-model-1 under a
+// provider the servers in the forward tests below do not use: the same name
+// and model as the server's, on another machine's quota group.
+const forwardClientCandidatesJSON = `[
+  {"harness":"opencode","provider":"laptop-group","model":"test-model-1","roles":["builder"]}
+]`
+
+// TestForwardUnavailableSendsTheServerTokenForTheSameName: the two machines
+// name the same candidate but the server lists it under another provider. The
+// server's own token is what travels, and the mapping is announced rather than
+// silent.
+func TestForwardUnavailableSendsTheServerTokenForTheSameName(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+
+	openB := remoteBinding("zen")
+	openB.Name = "open-remote"
+	openB.CWD = "/fake/open-remote"
+	if err := st.Save(openB); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		candidatesResp: remote.CandidatesResponse{Candidates: []remote.CandidateView{
+			{Token: "opencode/server-group/test-model-1", Name: "test-model-1"},
+		}},
+	}
+	rt := Runtime{
+		Store:      st,
+		Remote:     fr,
+		Candidates: candidateSet(t, forwardClientCandidatesJSON),
+		Now:        func() time.Time { return baseTime },
+	}
+
+	lines := ForwardUnavailable(ctx, rt, "test-model-1", "hit a limit")
+	want := []string{"zen: gated opencode/server-group/test-model-1 for opencode/laptop-group/test-model-1"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("lines = %v, want %v", lines, want)
+	}
+
+	var unavailable []string
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Unavailable:") {
+			unavailable = append(unavailable, c)
+		}
+	}
+	if !slices.Equal(unavailable, []string{"Unavailable:zen:open-remote:opencode/server-group/test-model-1"}) {
+		t.Fatalf("Unavailable calls = %v, want exactly one for the server token", unavailable)
+	}
+}
+
+// TestForwardUnavailableSendsTheServerTokenForARenamedProvider: the server
+// predates CandidateView.Name and sends only tokens. The provider renamed
+// between the two machines is still matched from the harness and model in the
+// token itself.
+func TestForwardUnavailableSendsTheServerTokenForARenamedProvider(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+
+	openB := remoteBinding("zen")
+	openB.Name = "open-remote"
+	openB.CWD = "/fake/open-remote"
+	if err := st.Save(openB); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		candidatesResp: remote.CandidatesResponse{Candidates: []remote.CandidateView{
+			{Token: "opencode/server-group/test-model-1"},
+		}},
+	}
+	rt := Runtime{
+		Store:      st,
+		Remote:     fr,
+		Candidates: candidateSet(t, forwardClientCandidatesJSON),
+		Now:        func() time.Time { return baseTime },
+	}
+
+	lines := ForwardUnavailable(ctx, rt, "test-model-1", "hit a limit")
+	want := []string{"zen: gated opencode/server-group/test-model-1 for opencode/laptop-group/test-model-1"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("lines = %v, want %v", lines, want)
+	}
+
+	var unavailable []string
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Unavailable:") {
+			unavailable = append(unavailable, c)
+		}
+	}
+	if !slices.Equal(unavailable, []string{"Unavailable:zen:open-remote:opencode/server-group/test-model-1"}) {
+		t.Fatalf("Unavailable calls = %v, want exactly one for the server token", unavailable)
+	}
+}
+
+// TestForwardUnavailableReportsOneLinePerServerWhenNothingMatches: two open
+// bindings on one server, and the server lists no candidate the client's
+// candidate maps to. One line names the mismatch -- the token, its provider
+// and the server's candidates -- and nothing is posted.
+func TestForwardUnavailableReportsOneLinePerServerWhenNothingMatches(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+
+	for _, name := range []string{"open-one", "open-two"} {
+		b := remoteBinding("zen")
+		b.Name = name
+		b.CWD = "/fake/" + name
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fr := &fakeRemote{
+		candidatesResp: remote.CandidatesResponse{Candidates: []remote.CandidateView{
+			{Token: "opencode/other-group/other-model", Name: "other-model"},
+		}},
+	}
+	rt := Runtime{
+		Store:      st,
+		Remote:     fr,
+		Candidates: candidateSet(t, forwardClientCandidatesJSON),
+		Now:        func() time.Time { return baseTime },
+	}
+
+	lines := ForwardUnavailable(ctx, rt, "test-model-1", "hit a limit")
+	if len(lines) != 1 {
+		t.Fatalf("lines = %v, want exactly one line for the one server", lines)
+	}
+	for _, want := range []string{"opencode/laptop-group/test-model-1", "laptop-group", "other-model"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("line = %q, want it naming %q", lines[0], want)
+		}
+	}
+
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Unavailable:") {
+			t.Errorf("Unavailable was called with no match: %v", fr.calls)
+		}
+	}
+}
+
+// TestServerCandidateMatchesInOrder pins each rule of serverCandidate in order:
+// exact token; same provider+model; same provider, another model; same name
+// under another provider; an unnamed view with the same harness+model (pre-Name
+// server); a named view with the same harness+model but different name (must not
+// match); and no common element.
+func TestServerCandidateMatchesInOrder(t *testing.T) {
+	t.Parallel()
+
+	views := []remote.CandidateView{
+		{Token: "opencode/same-group/same-model", Name: "same-model"},
+		{Token: "opencode/same-group/other-model", Name: "other-model"},
+		{Token: "opencode/other-group/name-match-model", Name: "my-name"},
+		{Token: "opencode/another-group/harness-model", Name: ""},
+		{Token: "opencode/yet-another-group/harness-model", Name: "different-name"},
+	}
+
+	tests := []struct {
+		name      string
+		token     string
+		candName  string
+		wantToken string
+		wantOK    bool
+	}{
+		{
+			name:      "rule 1: exact token",
+			token:     "opencode/same-group/same-model",
+			wantToken: "opencode/same-group/same-model",
+			wantOK:    true,
+		},
+		{
+			name:      "rule 2a: same provider and same model",
+			token:     "opencode/same-group/same-model",
+			wantToken: "opencode/same-group/same-model",
+			wantOK:    true,
+		},
+		{
+			name:      "rule 2b: same provider, another model",
+			token:     "opencode/same-group/unknown-model",
+			wantToken: "opencode/same-group/same-model",
+			wantOK:    true,
+		},
+		{
+			name:      "rule 3: same name under another provider",
+			token:     "claude/laptop-group/name-match-model",
+			candName:  "my-name",
+			wantToken: "opencode/other-group/name-match-model",
+			wantOK:    true,
+		},
+		{
+			name:      "rule 4: unnamed view with same harness and model",
+			token:     "opencode/renamed-group/harness-model",
+			candName:  "",
+			wantToken: "opencode/another-group/harness-model",
+			wantOK:    true,
+		},
+		{
+			name:      "rule 4: named view with same harness+model but different name must not match over unnamed",
+			token:     "opencode/renamed-group/harness-model",
+			candName:  "other-name",
+			wantToken: "opencode/another-group/harness-model",
+			wantOK:    true,
+		},
+		{
+			name:     "nothing in common",
+			token:    "agy/unknown-group/unknown-model",
+			candName: "",
+			wantOK:   false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := serverCandidate(views, tc.token, tc.candName)
+			if ok != tc.wantOK {
+				t.Fatalf("serverCandidate ok = %v, want %v (got token %q)", ok, tc.wantOK, got)
+			}
+			if ok && got != tc.wantToken {
+				t.Errorf("serverCandidate = %q, want %q", got, tc.wantToken)
+			}
+		})
 	}
 }
 
@@ -5536,4 +5781,199 @@ func TestForwardAvailableResolvesNameToToken(t *testing.T) {
 		}
 	}
 	t.Errorf("calls = %v, want one Available:alpha:%s", fr.calls, testClaudeRef)
+}
+
+// TestForwardAvailableSendsTheServerTokenForTheSameName is the clear mirror of
+// TestForwardUnavailableSendsTheServerTokenForTheSameName: the server's own
+// token reaches Available, so the server's ledger clears the provider it gates.
+func TestForwardAvailableSendsTheServerTokenForTheSameName(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+
+	b := remoteBinding("zen")
+	b.Name = "open-remote"
+	b.CWD = "/fake/open-remote"
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		candidatesResp: remote.CandidatesResponse{Candidates: []remote.CandidateView{
+			{Token: "opencode/server-group/test-model-1", Name: "test-model-1"},
+		}},
+	}
+	rt := Runtime{
+		Store:      st,
+		Remote:     fr,
+		Candidates: candidateSet(t, forwardClientCandidatesJSON),
+		Now:        func() time.Time { return baseTime },
+	}
+
+	lines := ForwardAvailable(ctx, rt, "test-model-1")
+	if len(lines) != 1 {
+		t.Fatalf("lines = %v, want one line for the one server", lines)
+	}
+
+	var available []string
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Available:") {
+			available = append(available, c)
+		}
+	}
+	if !slices.Equal(available, []string{"Available:zen:opencode/server-group/test-model-1"}) {
+		t.Fatalf("Available calls = %v, want exactly one for the server token", available)
+	}
+}
+
+// TestReconcileRemoteUnknownServerIsNotRunning pins both halves of the
+// unknown-server classification: the status stops claiming a running round,
+// and a config mistake never halts a round that may be fine on the server.
+func TestReconcileRemoteUnknownServerIsNotRunning(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Builder.RemoteStatus = string(remote.RoundRunning)
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: client.ErrUnknownServer}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Fatalf("state = %s, want active: an unknown server must not halt the round", got.State)
+	}
+	if got.Builder.RemoteStatus != "unknown server" {
+		t.Fatalf("RemoteStatus = %q, want the unknown-server status", got.Builder.RemoteStatus)
+	}
+}
+
+// TestCatchUpAckFailureLeavesTheReportUnqueued pins that the report waits for
+// the ack: a failed ack leaves the absorbed bookkeeping committed but queues
+// nothing, and the next pass re-collects the still-closed round and retries.
+func TestCatchUpAckFailureLeavesTheReportUnqueued(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := roundClosedRemote()
+	fr.roundBundleResp = nil
+	fr.ackErr = errors.New("boom")
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if err := NewDaemon(rt, time.Second).Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+		t.Fatalf("report queued despite the ack failure: %+v", entries)
+	}
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 1 {
+		t.Errorf("Round = %d after the failed ack, want 1", got.Round)
+	}
+	if got.Builder.LastKnown != "c0ffee" {
+		t.Errorf("LastKnown = %q, want the committed result commit", got.Builder.LastKnown)
+	}
+	if n := countCalls(fr, "Ack:"); n != 1 {
+		t.Errorf("Ack calls = %d, want 1", n)
+	}
+
+	fr.ackErr = nil
+	if err := NewDaemon(rt, time.Second).Tick(ctx); err != nil {
+		t.Fatalf("Tick (retry): %v", err)
+	}
+
+	entries, err = st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reports := 0
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reports++
+		}
+	}
+	if reports != 1 {
+		t.Errorf("report entries = %d, want exactly 1 after the retry", reports)
+	}
+	got, err = st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 2 {
+		t.Errorf("Round = %d after the retry, want 2", got.Round)
+	}
+	if n := countCalls(fr, "Ack:"); n != 2 {
+		t.Errorf("Ack calls = %d, want 2", n)
+	}
+}
+
+// TestCatchUpSettleSkipsAChangedBinding pins the phase-B guard: a binding that
+// moved on between the ack and the report keeps its new state and gets no
+// report entry. The downloaded report file stays in place; the Idle recovery
+// collects a live binding on its next pass.
+func TestCatchUpSettleSkipsAChangedBinding(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := roundClosedRemote()
+	fr.roundBundleResp = nil
+	fr.beforeCall = func(call string) {
+		if !strings.HasPrefix(call, "Ack:") {
+			return
+		}
+		cur, err := st.Load("api")
+		if err != nil {
+			t.Fatalf("load during ack: %v", err)
+		}
+		cur.State = store.StateDone
+		if err := st.Save(cur); err != nil {
+			t.Fatalf("mark done during ack: %v", err)
+		}
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := SyncRemote(ctx, rt); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.StateDone {
+		t.Fatalf("state = %s, want done: a binding that moved on must keep its state", got.State)
+	}
+	if got.Round != 1 {
+		t.Errorf("Round = %d, want 1", got.Round)
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+		t.Fatalf("report queued for a binding that moved on: %+v", entries)
+	}
 }

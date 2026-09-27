@@ -79,12 +79,17 @@ trap 'rm -rf "$work" 2>/dev/null || :' EXIT
 # shellcheck disable=SC2086 # word splitting is the point: one pattern per word
 split=$(for pat in $split_pkgs; do go list "$pat"; done)
 
+# The resolved paths reach awk through a file, never through -v: with two split
+# packages the list holds a newline, and while GNU awk accepts a newline inside
+# a -v assignment, the BSD awk on macOS rejects it. The file lives under $work,
+# which the EXIT trap removes.
+printf '%s\n' "$split" > "$work/split.txt"
+
 # Whole packages: go list ./... minus the split ones, in go list order.
-go list ./... | awk -v sp="$split" -v idx="$index" -v total="$total" '
+go list ./... | awk -v skip_file="$work/split.txt" -v idx="$index" -v total="$total" '
 	BEGIN {
-		n = split(sp, s, "\n")
-		for (i = 1; i <= n; i++) {
-			if (s[i] != "") skip[s[i]] = 1
+		while ((getline line < skip_file) > 0) {
+			if (line != "") skip[line] = 1
 		}
 	}
 	!($0 in skip) {

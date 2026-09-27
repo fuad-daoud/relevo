@@ -29,6 +29,11 @@ type remoteFetch struct {
 	Legacy  bool               // the round's log is the legacy file form: apply runs the legacy mirror inline
 	Drift   []byte             // nil: nothing fetched
 	CatchUp *catchUpFetch      // nil: no catch-up was fetched
+	// Settle is what the apply half still owes once the lock is released: the
+	// closed round's ack, which must not run under the lock, and the report the
+	// ack gates. The apply half writes it; the caller that held the lock runs it
+	// (settleCatchUp, or settleCatchUpInline when it still holds the lock).
+	Settle *catchUpAck
 }
 
 // release drops the catch-up's unrenamed temp files, if the fetch made one.
@@ -566,19 +571,30 @@ func fetchCatchUpBundle(ctx context.Context, rt Runtime, b store.Binding, view r
 
 // applyCatchUp installs a fetched catch-up under tx in the order the inline
 // catch-up ran: abort, a missing report's halt, the downloaded files, the
-// absorb outcome, then the ack and the report's log entry.
-func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, error) {
+// absorb outcome, then the settle the caller owes once it gives the lock up.
+func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, *catchUpAck, error) {
 	if cf.Abort {
-		return b, nil
+		return b, nil, nil
 	}
 	if cf.ReportMissing && view.Stopped == "" {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s closed round %d without a report file", b.Name, b.Builder.Server, view.ClosedRound))
+		next, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s closed round %d without a report file", b.Name, b.Builder.Server, view.ClosedRound))
+		return next, nil, err
 	}
 	if !applyCatchUpFiles(rt, tx, b, view, cf) {
-		return b, nil
+		return b, nil, nil
 	}
 	if next, stop, err := applyCatchUpAbsorb(ctx, rt, b, cf); stop {
-		return next, err
+		return next, nil, err
 	}
-	return applyCatchUpSettle(ctx, rt, tx, b, view, cf)
+	b.Builder.LastKnown = view.ResultCommit
+	b.RemoteAbsorbFailures = 0
+	return b, &catchUpAck{
+		Server:       b.Builder.Server,
+		Name:         b.Name,
+		Round:        view.ClosedRound,
+		BindingRound: b.Round,
+		View:         view,
+		HaveReport:   cf.ReportTemp != "",
+		HaveDiff:     cf.Diff != nil,
+	}, nil
 }
