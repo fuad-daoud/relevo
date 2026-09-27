@@ -1,6 +1,8 @@
 package mcp
 
-// InstructionsChannel is the model-facing text for channel mode: events
+import "github.com/fuad-daoud/relevo/internal/mastermind"
+
+// InstructionsChannel is the model-facing prelude for channel mode: events
 // arrive as <channel source="relevo"> blocks, and the model acts on each.
 const InstructionsChannel = `relevo is handing you round events over this channel instead of
 typing them into your input box. A <channel source="relevo" ...> block can
@@ -36,7 +38,7 @@ Every other relevo verb -- bind, show, wait, gate, config, and the rest --
 is not a tool here; run it with Bash.
 `
 
-// InstructionsTools is the model-facing text for tools mode: nothing is
+// InstructionsTools is the model-facing prelude for tools mode: nothing is
 // pushed, so the model runs a background wait after every send.
 const InstructionsTools = `relevo is running in tools mode: no events arrive on their own. Everything
 relevo tells you arrives as the output of a command you started.
@@ -84,10 +86,12 @@ Every other relevo verb -- bind, show, wait, gate, config, and the rest --
 is not a tool here; run it with Bash.
 `
 
-// InstructionsFor picks the text for mode.
+// InstructionsFor picks the mode's prelude and appends the shared guide: the
+// guide is the last thing either mode's model reads.
 func InstructionsFor(mode Mode) string {
+	prelude := InstructionsTools
 	if mode == ModeChannel {
-		return InstructionsChannel
+		prelude = InstructionsChannel
 	}
-	return InstructionsTools
+	return prelude + "\n" + mastermind.Guide()
 }

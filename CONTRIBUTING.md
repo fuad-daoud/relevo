@@ -6,9 +6,9 @@ change is in scope.
 
 ## What relevo is, and is not
 
-relevo moves files between a mastermind and a builder and reports what each round
+relevo moves files between a MasterMind and a builder and reports what each round
 did. It makes no judgements: whether a report is good, whether a question needs
-a human, whether the work is done — all of that stays with the mastermind (or the
+a human, whether the work is done — all of that stays with the MasterMind (or the
 person at the keyboard). Changes that ask relevo to decide something on the
 human's behalf are almost always out of scope, however convenient they look.
 

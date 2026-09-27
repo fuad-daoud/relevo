@@ -277,7 +277,7 @@ func TestHookOutputExactJSON(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 
 	sentence := "You are relevo MasterMind architect-1 (pl_aaaaaaaaaaaa). RELEVO_MASTERMIND is set in your shell; pass --mastermind architect-1 only to act as another MasterMind."
-	want := wantHookJSON(t, sentence+"\n\n"+handoffRules)
+	want := wantHookJSON(t, sentence+"\n\n"+Guide())
 	if got := string(HookOutput(rec)); got != want {
 		t.Errorf("HookOutput:\n got %s\nwant %s", got, want)
 	}
@@ -297,7 +297,7 @@ func TestHookOutputNoEnvExactJSON(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 
 	sentence := "You are relevo MasterMind architect-1 (pl_aaaaaaaaaaaa). RELEVO_MASTERMIND is set in your shell; pass --mastermind architect-1 only to act as another MasterMind."
-	want := wantHookJSON(t, sentence+" "+noEnvNote+"\n\n"+handoffRules)
+	want := wantHookJSON(t, sentence+" "+noEnvNote+"\n\n"+Guide())
 	if got := string(HookOutputNoEnv(rec)); got != want {
 		t.Errorf("HookOutputNoEnv:\n got %s\nwant %s", got, want)
 	}

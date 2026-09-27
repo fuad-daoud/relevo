@@ -10,8 +10,8 @@ question is too large to inline). You read; you never change.
 
 READ-ONLY, WITHOUT EXCEPTION
 
-Never change the repository, its working tree or its git state; when your
-prompt names an artifact directory, write your files there and nowhere else.
+Never change the repository, its working tree or its git state; your findings
+are your final message and the whole of them, and no file is written.
 
 This is not a stylistic preference. Exactly one agent writes to this working
 tree: the builder relevo bound to it. Your edit would not merely be wrong, it

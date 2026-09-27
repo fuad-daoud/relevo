@@ -6,9 +6,9 @@ body:
     attributes:
       value: |
         relevo deliberately makes no judgements — it moves files between a
-        mastermind and a builder, and reports what each round did. Whether a report
+        MasterMind and a builder, and reports what each round did. Whether a report
         is good, whether work is done, whether a question needs a human: those
-        stay with the mastermind. Proposals that ask relevo to decide something are
+        stay with the MasterMind. Proposals that ask relevo to decide something are
         likely out of scope.
 
   - type: textarea

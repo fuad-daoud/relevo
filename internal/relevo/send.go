@@ -18,6 +18,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// plannerAgent is the definition whose actor answers with a plan.
+const plannerAgent = "architect"
+
+// seedMaxBytes caps a planner actor's send: a planner's input is a seed; it
+// reads the code itself.
+const seedMaxBytes = 4 << 10
+
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
 // file rather than something relevo reads off the terminal. The marker is the
@@ -109,6 +116,9 @@ type SendOptions struct {
 	// active -- but does not spawn a builder; the caller (serve.admit or
 	// relevo.Admit) starts it later (#285, server only).
 	Defer bool
+	// Force sends a planner actor's seed even when it is over seedMaxBytes: a
+	// planner's input is a seed, and forcing is the explicit escape.
+	Force bool
 }
 
 // preflight is everything Send checks before it takes the state lock and
@@ -264,6 +274,13 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		tier = effectiveTier(b)
 	}
 
+	// A planner actor answers with a plan, so its prompt is a seed: cap it
+	// here, in the read-only preflight, so a --dry-run refuses identically
+	// and a refusal writes nothing. --force is the explicit escape.
+	if !opts.Force && len(body) > seedMaxBytes && actorRunsPlanner(rt, b) {
+		return preflight{}, fmt.Errorf("binding %q: the seed is %d bytes; a planner actor takes at most %d bytes -- pass --force to send it anyway", name, len(body), seedMaxBytes)
+	}
+
 	promptPath := rt.Store.PromptPath(name, b.Round)
 	reportPath := rt.Store.ReportPath(name, b.Round)
 	donePath := rt.Store.DonePath(name, b.Round)
@@ -361,6 +378,15 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	}
 
 	return pf, nil
+}
+
+// actorRunsPlanner reports whether b's actor resolves to the planner
+// definition: the actor whose prompt is a seed. A role that no longer
+// resolves is not this check's business: the existing error surfaces where it
+// does today.
+func actorRunsPlanner(rt Runtime, b store.Binding) bool {
+	spec, err := bindingSpec(rt, b, b.Builder.Kind)
+	return err == nil && spec.Definition == plannerAgent
 }
 
 // sendAfterSpawn is a test seam: nil in production. When non-nil, Send calls

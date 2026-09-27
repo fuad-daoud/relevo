@@ -74,17 +74,21 @@ func hookContext(r Record) string {
 
 const noEnvNote = "RELEVO_MASTERMIND could not be exported ($CLAUDE_ENV_FILE is unset); relevo resolves this session through its host process."
 
-//go:embed handoff.md
-var handoffRules string
+//go:embed guide.md
+var guide string
+
+// Guide is the shared guide text: the hook injects it, and internal/mcp
+// appends it to both mode texts.
+func Guide() string { return guide }
 
 // HookOutput is what `relevo mastermind init --hook claude` prints on success.
 func HookOutput(r Record) []byte {
-	return encodeHookContext(hookContext(r) + "\n\n" + handoffRules)
+	return encodeHookContext(hookContext(r) + "\n\n" + Guide())
 }
 
 // HookOutputNoEnv is HookOutput plus the export-failure note.
 func HookOutputNoEnv(r Record) []byte {
-	return encodeHookContext(hookContext(r) + " " + noEnvNote + "\n\n" + handoffRules)
+	return encodeHookContext(hookContext(r) + " " + noEnvNote + "\n\n" + Guide())
 }
 
 // HookNote is the same envelope carrying a failure note, so a failed init

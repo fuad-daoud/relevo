@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -1626,5 +1627,132 @@ func TestSendBuilderSameCandidateIsPlainSend(t *testing.T) {
 	}
 	if !plan {
 		t.Error("no plan entry: the send did not proceed normally")
+	}
+}
+
+// plannerSeedRows is the file registry the seed-cap cases run on: the builder
+// and reviewer rows, beside a `planner` reader row that runs the architect
+// definition.
+func plannerSeedRows() map[string]roles.Row {
+	return map[string]roles.Row{
+		"builder":  {Candidates: []string{testClaudeRef}},
+		"reviewer": {Candidates: []string{testClaudeRef}},
+		"planner": {
+			Shape:       ptr("reader"),
+			Candidates:  []string{testClaudeRef},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "architect"}},
+		},
+	}
+}
+
+// plannerSeedRuntime binds one actor (name, role) on a real repo, with a file
+// registry that resolves `planner` to the architect definition.
+func plannerSeedRuntime(t *testing.T, name, role string) Runtime {
+	t.Helper()
+	repo := readerRepo(t)
+	rt := newRuntime(t)
+	rt.Git = git.NewClient("git", 0, 0)
+	rt.Runner = newFakeRunner()
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, plannerSeedRows())
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: name, Role: role, Candidate: testClaudeRef,
+		MasterMindID: testMasterMindName, CWD: repo,
+	}); err != nil {
+		t.Fatalf("Bind(%s, %q): %v", name, role, err)
+	}
+	return rt
+}
+
+// TestPlannerSeedCapRefusesOverCap pins §4.3: a seed over 4 KiB to a planner
+// actor is refused in the preflight, naming the size and --force, and writes
+// nothing.
+func TestPlannerSeedCapRefusesOverCap(t *testing.T) {
+	t.Parallel()
+
+	rt := plannerSeedRuntime(t, "planner-bind", "planner")
+	before, err := rt.Store.ReadLog("planner-bind")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+
+	_, err = Send(context.Background(), rt, "planner-bind", writePlan(t, strings.Repeat("x", 4097)), SendOptions{})
+	if err == nil {
+		t.Fatal("Send(4097 bytes to a planner) = nil, want the cap refusal")
+	}
+	for _, want := range []string{"4097", "--force"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not name %q", err, want)
+		}
+	}
+	if _, statErr := os.Stat(rt.Store.PromptPath("planner-bind", 1)); !os.IsNotExist(statErr) {
+		t.Errorf("refusal wrote a prompt file: %v", statErr)
+	}
+	after, err := rt.Store.ReadLog("planner-bind")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("refusal wrote a log entry: %d -> %d", len(before), len(after))
+	}
+	b, err := rt.Store.Load("planner-bind")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.Round != 1 {
+		t.Errorf("refusal advanced the round to %d, want 1", b.Round)
+	}
+}
+
+// TestPlannerSeedCapForceSends: --force spends the cap and the round proceeds.
+func TestPlannerSeedCapForceSends(t *testing.T) {
+	t.Parallel()
+
+	rt := plannerSeedRuntime(t, "planner-bind", "planner")
+	if _, err := Send(context.Background(), rt, "planner-bind", writePlan(t, strings.Repeat("x", 4097)), SendOptions{Force: true}); err != nil {
+		t.Fatalf("Send(4097 bytes, --force): %v", err)
+	}
+}
+
+// TestPlannerSeedCapAtCapSends: 4096 bytes is not over the cap.
+func TestPlannerSeedCapAtCapSends(t *testing.T) {
+	t.Parallel()
+
+	rt := plannerSeedRuntime(t, "planner-bind", "planner")
+	if _, err := Send(context.Background(), rt, "planner-bind", writePlan(t, strings.Repeat("x", 4096)), SendOptions{}); err != nil {
+		t.Fatalf("Send(4096 bytes): %v", err)
+	}
+}
+
+// TestPlannerSeedCapSkipsOtherActors: the cap is the planner actor's alone, so
+// a reviewer and a builder take a 5000-byte prompt.
+func TestPlannerSeedCapSkipsOtherActors(t *testing.T) {
+	t.Parallel()
+
+	big := strings.Repeat("x", 5000)
+	reviewer := plannerSeedRuntime(t, "reviewer-bind", "reviewer")
+	if _, err := Send(context.Background(), reviewer, "reviewer-bind", writePlan(t, big), SendOptions{}); err != nil {
+		t.Fatalf("Send(5000 bytes to a reviewer): %v", err)
+	}
+	builder := plannerSeedRuntime(t, "builder-bind", "")
+	if _, err := Send(context.Background(), builder, "builder-bind", writePlan(t, big), SendOptions{}); err != nil {
+		t.Fatalf("Send(5000 bytes to a builder): %v", err)
+	}
+}
+
+// TestPlannerSeedCapDryRunRefuses: the check lives in the read-only preflight,
+// so a dry run refuses with identically no state change.
+func TestPlannerSeedCapDryRunRefuses(t *testing.T) {
+	t.Parallel()
+
+	rt := plannerSeedRuntime(t, "planner-bind", "planner")
+	big := writePlan(t, strings.Repeat("x", 4097))
+
+	_, dryErr := SendDryRun(context.Background(), rt, "planner-bind", big, SendOptions{})
+	if dryErr == nil {
+		t.Fatal("SendDryRun(4097 bytes to a planner) = nil, want the cap refusal")
+	}
+	_, sendErr := Send(context.Background(), rt, "planner-bind", big, SendOptions{})
+	if sendErr == nil || sendErr.Error() != dryErr.Error() {
+		t.Errorf("SendDryRun refusal %q, Send refusal %q; want the same", dryErr, sendErr)
 	}
 }

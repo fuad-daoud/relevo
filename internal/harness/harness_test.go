@@ -176,7 +176,7 @@ func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
 		} else if !strings.Contains(string(doc), "name: architect") {
 			t.Errorf("%s architect definition does not carry name: architect", h.Kind)
 		}
-		if !strings.Contains(string(doc), "Ordered Implementation Steps") {
+		if !strings.Contains(string(doc), "one-line ordered steps") {
 			t.Errorf("%s architect definition lacks the plan output structure", h.Kind)
 		}
 		if h.Kind == "agy" && !strings.Contains(string(doc), "model: inherit") {
@@ -188,7 +188,7 @@ func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
 	}
 }
 
-func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
+func TestArchitectPlannerContractIsSharedAcrossKinds(t *testing.T) {
 	bodies := map[string]string{}
 	for _, h := range All() {
 		doc, err := AgentDoc("architect", h.Kind)
@@ -196,12 +196,12 @@ func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
 			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
 		}
 		body := definitionBody(t, h.Kind, string(doc))
-		for _, want := range []string{"## Handing off", "relevo send", "RELEVO_MASTERMIND", "relevo gate"} {
+		for _, want := range []string{"a small seed", "Your final message is the plan", "never edit the repository", "one-line ordered steps", "a strong builder owns the how"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s architect body lacks %q", h.Kind, want)
 			}
 		}
-		for _, banned := range []string{"Agent tool", "slash command"} {
+		for _, banned := range []string{"## Handing off", "relevo bind", "relevo send", "relevo wait", "RELEVO_MASTERMIND", "Agent tool", "slash command"} {
 			if strings.Contains(body, banned) {
 				t.Errorf("%s architect body is not harness-neutral: contains %q", h.Kind, banned)
 			}
@@ -216,7 +216,7 @@ func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
 	}
 }
 
-func TestArchitectCarriesLatencyGuidance(t *testing.T) {
+func TestArchitectCarriesRoundTripGuidance(t *testing.T) {
 	for _, h := range All() {
 		doc, err := AgentDoc("architect", h.Kind)
 		if err != nil {
@@ -224,18 +224,40 @@ func TestArchitectCarriesLatencyGuidance(t *testing.T) {
 		}
 		body := definitionBody(t, h.Kind, string(doc))
 		for _, want := range []string{
-			"### 8. Working Efficiently",
-			"## Writing for the Builder's Round Trips",
-			"Fence every deletion",
-			"Script the mechanical work",
-			"8. Does the plan carry a Working Efficiently section",
+			"## Working efficiently",
+			"Hand over locations, not searches",
+			"one edit call",
+			"run the full check once",
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s architect body lacks %q", h.Kind, want)
 			}
 		}
-		if i, j := strings.Index(body, "### 8. Working Efficiently"), strings.Index(body, "## Quality Standards"); i < 0 || j < 0 || i > j {
-			t.Errorf("%s architect body: Working Efficiently at %d, Quality Standards at %d; want the section before the heading", h.Kind, i, j)
+		if i, j := strings.Index(body, "## Working efficiently"), strings.Index(body, "## Halt rather than improvise"); i < 0 || j < 0 || i > j {
+			t.Errorf("%s architect body: Working efficiently at %d, Halt rather than improvise at %d; want the section before the heading", h.Kind, i, j)
+		}
+	}
+}
+
+// TestReaderDefinitionsWriteNoFile pins the reader contract: no shipped
+// researcher or reviewer definition asks its runner to write into an artifact
+// directory; the answer is the final message and no file is written.
+func TestReaderDefinitionsWriteNoFile(t *testing.T) {
+	for _, role := range []string{"researcher", "reviewer"} {
+		for _, h := range All() {
+			doc, err := AgentDoc(role, h.Kind)
+			if err != nil {
+				t.Fatalf("AgentDoc(%s, %s): %v", role, h.Kind, err)
+			}
+			body := string(doc)
+			if strings.Contains(body, "artifact directory") {
+				t.Errorf("%s.%s still names an artifact directory", role, h.Kind)
+			}
+			for _, want := range []string{"your final message and the whole of", "no file is written"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("%s.%s lacks the final-message sentence: %q", role, h.Kind, want)
+				}
+			}
 		}
 	}
 }
