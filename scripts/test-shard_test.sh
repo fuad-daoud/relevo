@@ -87,6 +87,111 @@ for total in 1 2 3 4; do
 	fi
 done
 
+# BSD awk rejects a newline inside a -v assignment, where GNU awk accepts it, so
+# a shard script that hands awk its newline-separated list through -v passes on
+# Linux and fails on macOS. No BSD awk exists here, so the shim below stands in
+# for one: it rejects exactly that argument shape and passes the rest to the
+# real awk. Every run in this block goes through it.
+mkdir -p "$work/bin"
+real_awk=$(command -v awk)
+export real_awk
+cat > "$work/bin/awk" <<'SH'
+#!/bin/sh
+# A stand-in for BSD awk: a newline inside a -v value is an error there.
+nl='
+'
+prev=
+for arg in "$@"; do
+	if [ "$prev" = "-v" ]; then
+		case $arg in
+		*"$nl"*) echo "awk: newline in string $arg" >&2; exit 2 ;;
+		esac
+	fi
+	case $arg in
+	-v?*=*)
+		case ${arg#-v} in
+		*"$nl"*) echo "awk: newline in string $arg" >&2; exit 2 ;;
+		esac
+		;;
+	esac
+	prev=$arg
+done
+exec "$real_awk" "$@"
+SH
+chmod +x "$work/bin/awk"
+
+# The shim must reject a newline in a -v value, or the cases below would pass
+# under the very construct they exist to catch.
+if PATH="$work/bin:$PATH" awk -v x="$(printf 'a\nb')" 'BEGIN { print 1 }' </dev/null >/dev/null 2>&1; then
+	echo "FAIL: the BSD-awk shim accepted a newline in -v, so it pins nothing"
+	fail=1
+fi
+
+# SPLIT_PKGS naming two packages is the shape the default list takes once a
+# second package joins it. dry_run_split runs --dry-run with both split, under
+# the shim.
+dry_run_split() {
+	status=0
+	(cd "$repo" && PATH="$work/bin:$PATH" \
+		SPLIT_PKGS="./internal/relevo ./internal/delivery" \
+		sh "$here/test-shard.sh" --dry-run "$1" "$2") > "$work/out" 2>&1 || status=$?
+}
+
+# TOTAL=1 is the two-package assignment the shards below are compared against.
+dry_run_split 0 1
+if [ "$status" -ne 0 ]; then
+	echo "FAIL: SPLIT_PKGS naming two packages, TOTAL=1 exits $status, want 0"
+	fail=1
+else
+	LC_ALL=C sort -u "$work/out" > "$work/two-all.txt"
+	# Each split package must contribute `test` lines rather than a whole `pkg`
+	# line: the exit status alone would also hold for a run that skipped nothing.
+	for dir in internal/relevo internal/delivery; do
+		if grep -q "^pkg .*/$dir\$" "$work/two-all.txt"; then
+			echo "FAIL: split package $dir is assigned whole, not split"
+			fail=1
+		fi
+		if ! grep -q "^test .*/$dir " "$work/two-all.txt"; then
+			echo "FAIL: split package $dir contributes no tests"
+			fail=1
+		fi
+	done
+fi
+
+# TOTAL=3 is the shape CI runs, and two split packages make it the first case
+# with more than one split file.
+: > "$work/two-union.txt"
+bad=0
+index=0
+while [ "$index" -lt 3 ]; do
+	dry_run_split "$index" 3
+	if [ "$status" -ne 0 ]; then
+		echo "FAIL: SPLIT_PKGS naming two packages, TOTAL=3 INDEX=$index exits $status, want 0"
+		fail=1
+		bad=1
+	else
+		cat "$work/out" >> "$work/two-union.txt"
+	fi
+	index=$((index + 1))
+done
+
+# A shard that never reached awk says nothing about the assignment, so the
+# partition checks are meaningless when one failed above.
+if [ "$bad" -eq 0 ]; then
+	dupes=$(LC_ALL=C sort "$work/two-union.txt" | uniq -d)
+	if [ -n "$dupes" ]; then
+		echo "FAIL: SPLIT_PKGS naming two packages, TOTAL=3 shards overlap:"
+		printf '%s\n' "$dupes"
+		fail=1
+	fi
+
+	LC_ALL=C sort -u "$work/two-union.txt" > "$work/two-union.sorted"
+	if ! cmp -s "$work/two-union.sorted" "$work/two-all.txt"; then
+		echo "FAIL: SPLIT_PKGS naming two packages, TOTAL=3 shards do not cover the TOTAL=1 assignment"
+		fail=1
+	fi
+fi
+
 # Bad usage: no arguments, INDEX == TOTAL, and a negative INDEX.
 check_usage
 check_usage 3 3

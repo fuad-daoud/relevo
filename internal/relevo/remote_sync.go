@@ -166,7 +166,7 @@ func liveFactsOf(v *remote.LiveView) *store.LiveFacts {
 	}
 }
 
-func applyRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, f remoteFetch) (store.Binding, bool, error) {
+func applyRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, f *remoteFetch) (store.Binding, bool, error) {
 	if rt.Remote == nil {
 		slog.Warn("remote client not configured", "binding", b.Name)
 		return b, false, nil
@@ -180,8 +180,9 @@ func applyRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 // applyRemoteErr classifies a failed fetch exactly as the inline observe did:
 // a revoked key halts at once, every other 401 gets its grace, a 404 or a
-// round unreachable past its budget halts, and anything else only updates the
-// reported status.
+// round unreachable past its budget halts, a server this machine's config does
+// not name only updates the reported status -- the round may be running fine
+// there -- and anything else does the same.
 func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, err error, now time.Time) (store.Binding, bool, error) {
 	server := b.Builder.Server
 	name := b.Name
@@ -242,6 +243,13 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		b.Builder.RemoteStatus = "cert"
 		return b, false, nil
 	}
+	if errors.Is(err, client.ErrUnknownServer) {
+		b.Builder.RemoteStatus = "unknown server"
+		warnOnce(name, "unknown-server",
+			name+": server "+server+" is not in this machine's config; run relevo config server list",
+			"server", server, "binding", name)
+		return b, false, nil
+	}
 	slog.Warn("remote get binding failed", "server", server, "binding", name, "err", err)
 	return b, false, nil
 }
@@ -250,7 +258,7 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 // the state-dependent facts, then either mirrors the running round or hands a
 // closed one to catchUp. deliver reports whether a payload waits for
 // deliverAndSettle.
-func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, f remoteFetch, now time.Time) (store.Binding, bool, error) {
+func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, f *remoteFetch, now time.Time) (store.Binding, bool, error) {
 	server := b.Builder.Server
 	name := b.Name
 	view := f.View
@@ -326,7 +334,8 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 	case remote.RoundClosed:
 		if view.ClosedRound >= b.Round {
 			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
-				next, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
+				next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
+				f.Settle = a
 				return next, true, err
 			}
 			next, err := catchUp(ctx, rt, tx, b, view)
@@ -345,7 +354,8 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		if rerr == nil && view.ClosedRound >= b.Round &&
 			!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
 			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
-				next, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
+				next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
+				f.Settle = a
 				return next, true, err
 			}
 			next, err := catchUp(ctx, rt, tx, b, view)
@@ -362,7 +372,12 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 // lock the caller already holds. The daemon and SyncRemote fetch before their
 // lock and apply through applyRemote; this stays for the one-off stop path.
 func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, bool, error) {
-	return applyRemote(ctx, rt, tx, b, fetchRemote(ctx, rt, b))
+	f := fetchRemote(ctx, rt, b)
+	next, deliver, err := applyRemote(ctx, rt, tx, b, &f)
+	if f.Settle != nil {
+		next, err = settleCatchUpInline(ctx, rt, tx, next, f.Settle)
+	}
+	return next, deliver, err
 }
 
 // reconcileRemote is the daemon tick's entry point for a remote binding: it
@@ -384,12 +399,53 @@ func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		slog.Debug("remote fetch discarded: binding changed", "binding", b.Name)
 		return b, nil
 	default:
-		next, deliver, err = applyRemote(ctx, rt, tx, b, *pre)
+		next, deliver, err = applyRemote(ctx, rt, tx, b, pre)
 	}
 	if err != nil || !deliver {
 		return next, err
 	}
+	if pre != nil && pre.Settle != nil {
+		return next, nil
+	}
 	return deliverAndSettle(ctx, rt, tx, next)
+}
+
+// settleCatchUp finishes a catch-up after the lock was released: the ack, then
+// the report under a fresh lock, guarded against a binding that moved on.
+// reconcile is true for the daemon's tick, which also delivers the queued
+// payload and emits the tick's mutation events; the read verbs collect
+// without either.
+func settleCatchUp(ctx context.Context, rt Runtime, a *catchUpAck, reconcile bool) error {
+	if err := ackCatchUp(ctx, rt, a); err != nil {
+		return nil
+	}
+	return rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load(a.Name)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !a.matches(cur) {
+			return nil
+		}
+		next, err := applyCatchUpReport(ctx, rt, tx, cur, a)
+		if err != nil {
+			return err
+		}
+		if reconcile {
+			next, err = deliverAndSettle(ctx, rt, tx, next)
+			if err != nil {
+				return err
+			}
+			emitMutations(ctx, rt, cur, next)
+		}
+		if store.SameBinding(next, cur) {
+			return nil
+		}
+		return tx.Save(next)
+	})
 }
 
 // SyncRemote runs one read-only observe pass over every remote binding that
@@ -436,7 +492,7 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 			if !f.matches(fresh) {
 				return nil
 			}
-			next, _, err := applyRemote(ctx, rt, tx, fresh, f)
+			next, _, err := applyRemote(ctx, rt, tx, fresh, &f)
 			if err != nil {
 				return err
 			}
@@ -447,6 +503,9 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 			return tx.Save(next)
 		})
 		f.release()
+		if err == nil && f.Settle != nil {
+			err = settleCatchUp(ctx, rt, f.Settle, false)
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}

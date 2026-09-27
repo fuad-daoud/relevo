@@ -546,7 +546,7 @@ export default {
         const sw = stateWord(row);
         const title = `${name} · r${round}${sw.word ? ` · ${sw.word}` : ""}`;
         // The title already carries the name, the round and the status, so the hint says who is working and why it needs you.
-        const who = rowActor(row) + " on " + (row.harness || "opencode");
+        const who = rowActor(row) + " on " + (row.on || row.harness || "opencode");
         const reason = typeof row.status === "string" ? row.reason : row.waiting;
         const placeholder = who + (reason ? " · " + reason : "");
 
@@ -717,7 +717,7 @@ export default {
               const clockText = row.clock || "--";
               const statusRoom = Math.max(0, 37 - row.name.length - clockText.length - 3);
               const lineB = ellipsize(
-                `  r${displayRound} · ${rowActor(row)} on ${row.harness || "opencode"}` +
+                `  r${displayRound} · ${rowActor(row)} on ${row.on || row.harness || "opencode"}` +
                   (row.reason ? ` · ${row.reason}` : "") +
                   (row.tokens ? ` · ${row.tokens}` : ""),
                 37,
@@ -957,7 +957,7 @@ export default {
               const isSelected = (store.fleetSelected ?? 0) === i;
               const sw = stateWord(row);
               const actor = rowActor(row);
-              const model = parseModel(row.candidate);
+              const model = row.on || parseModel(row.candidate);
               const displayRound = row.report_round || row.round;
               const status = sw.word || "ACTIVE";
 
@@ -1545,7 +1545,7 @@ export default {
         const tabContent = showCache.get(cacheKey) || "";
 
         const actor = rowActor(row);
-        const model = parseModel(row.candidate);
+        const model = row.on || parseModel(row.candidate);
         // §4.1: one rule for the header's word and its colour.
         const sw = stateWord(row);
         const display = sw.word;

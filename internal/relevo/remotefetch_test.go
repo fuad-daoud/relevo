@@ -514,3 +514,112 @@ func TestTickCatchUpMissingReportHalts(t *testing.T) {
 		t.Errorf("Halt = %q, want the existing reportless-close text", got.Halt)
 	}
 }
+
+// TestTickAcksWithoutTheStateLock pins the round-close ack as a call outside
+// the state lock: it runs after the apply committed its bookkeeping, the
+// report is queued afterwards, and no download temp survives.
+func TestTickAcksWithoutTheStateLock(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := roundClosedRemote()
+	fr.roundBundleResp = nil
+	fr.beforeCall = func(call string) {
+		if !strings.HasPrefix(call, "Ack:") {
+			return
+		}
+		got, err := st.Load("api")
+		if err != nil {
+			t.Fatalf("load during ack: %v", err)
+		}
+		if got.Builder.LastKnown != "c0ffee" {
+			t.Errorf("LastKnown during ack = %q, want the committed result commit", got.Builder.LastKnown)
+		}
+		if !lockFreeWithin(t, st, 2*time.Second) {
+			t.Errorf("%s ran while the state lock was held", call)
+		}
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if err := NewDaemon(rt, time.Second).Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+		t.Fatalf("no round 1 report entry: %+v", entries)
+	}
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 2 {
+		t.Errorf("Round = %d, want 2", got.Round)
+	}
+	if n := countCalls(fr, "Ack:"); n != 1 {
+		t.Errorf("Ack calls = %d, want 1", n)
+	}
+	assertNoFetchTemps(t, st, "api", 1)
+}
+
+// TestSyncRemoteAcksWithoutTheStateLock pins the same property on the
+// no-daemon read path, which reaches the ack through a different call site:
+// the ack runs with the state lock free, after the apply committed, and the
+// report is queued afterwards.
+func TestSyncRemoteAcksWithoutTheStateLock(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := roundClosedRemote()
+	fr.roundBundleResp = nil
+	fr.beforeCall = func(call string) {
+		if !strings.HasPrefix(call, "Ack:") {
+			return
+		}
+		got, err := st.Load("api")
+		if err != nil {
+			t.Fatalf("load during ack: %v", err)
+		}
+		if got.Builder.LastKnown != "c0ffee" {
+			t.Errorf("LastKnown during ack = %q, want the committed result commit", got.Builder.LastKnown)
+		}
+		if !lockFreeWithin(t, st, 2*time.Second) {
+			t.Errorf("%s ran while the state lock was held", call)
+		}
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	synced, err := SyncRemote(ctx, rt)
+	if err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+	if synced != 1 {
+		t.Errorf("synced = %d, want 1", synced)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+		t.Fatalf("no round 1 report entry: %+v", entries)
+	}
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 2 {
+		t.Errorf("Round = %d, want 2", got.Round)
+	}
+	if n := countCalls(fr, "Ack:"); n != 1 {
+		t.Errorf("Ack calls = %d, want 1", n)
+	}
+	assertNoFetchTemps(t, st, "api", 1)
+}

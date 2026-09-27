@@ -66,6 +66,27 @@ var parseResetCases = []struct {
 		ok:   true,
 	},
 	{
+		name: "weekly limit resets in a day and hours",
+		line: "Error 429: You have reached your weekly ExamplePass limit. The limit resets in 1d 5h, please try again later.",
+		want: parseResetNow.Add(29 * time.Hour),
+		ok:   true,
+	},
+	{
+		name: "day component past the short window",
+		line: "try again in 8d",
+		ok:   false,
+	},
+	{
+		name: "day count that would overflow the duration",
+		line: "The limit resets in 123456789012345d.",
+		ok:   false,
+	},
+	{
+		name: "hour count that would overflow the duration",
+		line: "resets in 99999999999999h",
+		ok:   false,
+	},
+	{
 		name: "try again in minutes",
 		line: "try again in 5 min",
 		want: parseResetNow.Add(5 * time.Minute),
@@ -204,6 +225,21 @@ func codexPatterns(t *testing.T) []*regexp.Regexp {
 	return patterns
 }
 
+// opencodePatterns is the opencode kind's shipped limit patterns, compiled the
+// same way agyPatterns builds agy's.
+func opencodePatterns(t *testing.T) []*regexp.Regexp {
+	t.Helper()
+	h, ok := harness.Lookup("opencode")
+	if !ok {
+		t.Fatal(`harness.Lookup("opencode") not found`)
+	}
+	patterns := make([]*regexp.Regexp, 0, len(h.LimitPatterns))
+	for _, p := range h.LimitPatterns {
+		patterns = append(patterns, regexp.MustCompile(p))
+	}
+	return patterns
+}
+
 // TestAgyLimitDetectedInRenderedStream: the
 // 7 real agy ERROR results render with their result.error line, and a scan of
 // those rendered lines finds the 5 real limits and neither of the 2
@@ -227,6 +263,61 @@ func TestAgyLimitDetectedInRenderedStream(t *testing.T) {
 		_, ok := MatchLimit(rendered, patterns, now, 0)
 		if want := i < 5; ok != want {
 			t.Errorf("line %d: rendered stream matches = %v, want %v; rendered:\n%s", i+1, ok, want, rendered)
+		}
+	}
+}
+
+// TestOpencodeLimitDetectedInRenderedStream: the two real provider failures --
+// a weekly 429 and an out-of-credits 402 -- render with their error.message
+// line, and a scan of the rendered stream finds both, while a provider error
+// that is not a limit renders and matches nothing. The first row's exact
+// rendered text is pinned so a renderer change fails here instead of silently
+// dropping the signal. The fixture lives in the transcript package and is read
+// by relative path, so both packages scan the same bytes.
+func TestOpencodeLimitDetectedInRenderedStream(t *testing.T) {
+	t.Parallel()
+
+	now := testNow()
+	const fallback = time.Hour
+	raw, err := os.ReadFile(filepath.Join("..", "transcript", "testdata", "opencode-errors", "results.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("fixture has %d lines, want 3", len(lines))
+	}
+	patterns := opencodePatterns(t)
+	want := []struct {
+		ok     bool
+		parsed bool
+		until  time.Time
+	}{
+		{true, true, now.Add(23 * time.Minute)},
+		{true, false, now.Add(fallback)},
+		{false, false, time.Time{}},
+	}
+	for i, line := range lines {
+		rendered := strings.Join(transcript.Render("opencode", []byte(line)), "\n")
+		if i == 0 {
+			const wantRendered = "  ⎿ error: Error 429: You have reached your weekly ExamplePass limit. The limit resets in 23m, please try again later."
+			if rendered != wantRendered {
+				t.Errorf("row 1 rendered = %q, want %q", rendered, wantRendered)
+			}
+		}
+		m, ok := MatchLimit(rendered, patterns, now, fallback)
+		if ok != want[i].ok {
+			t.Errorf("row %d: matches = %v, want %v; rendered:\n%s", i+1, ok, want[i].ok, rendered)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if m.Parsed != want[i].parsed {
+			t.Errorf("row %d: Parsed = %v, want %v", i+1, m.Parsed, want[i].parsed)
+		}
+		if !m.Until.Equal(want[i].until) {
+			t.Errorf("row %d: Until = %v, want %v", i+1, m.Until, want[i].until)
 		}
 	}
 }

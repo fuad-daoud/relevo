@@ -158,6 +158,20 @@ type ScopeProber interface {
 	ScopeActive(ctx context.Context, unit string) (bool, error)
 }
 
+// ScopeStopper is the optional half of a Runner that can end a systemd scope
+// and everything still in it. Callers type-assert Runtime.Runner to it; a
+// Runner that lacks it can see a scope but not end one.
+type ScopeStopper interface {
+	// StopScope ends the scope unit <unit>.scope and every process still in
+	// its cgroup, so a straggler a harness abandoned cannot hold the unit
+	// open. It signals first and kills after the runner's own grace, and
+	// returns only once the unit is gone; an error means it may still be
+	// there. unit is the base name scopeUnitName returns (no ".scope"). A
+	// unit that is not loaded, and a host with no systemctl, are not errors:
+	// there is nothing to end.
+	StopScope(ctx context.Context, unit string) error
+}
+
 // ScopeResultProber is the optional half of a Runner that can report the
 // final systemd Result of a scope unit. Callers type-assert Runtime.Runner
 // to it; a Runner that lacks it, or whose probe errors, is treated as

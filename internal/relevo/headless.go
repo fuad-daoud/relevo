@@ -710,6 +710,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return deliverAndSettle(ctx, rt, tx, next)
 	}
 
+	// The runner exited, so whatever the round's scope still holds is an
+	// abandoned straggler: end it before anything below relaunches, switches
+	// or nudges under the same unit name. Best effort -- the round's close
+	// must not fail because a scope would not die.
+	endRoundScope(ctx, rt, b, b.Round)
+
 	// Exited. The exit code is read once, from the stream's trailer.
 	codeText := "unknown"
 	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), rt.Store.BuilderStreamPath(b.Name, b.Round)); ok {
@@ -1063,6 +1069,13 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		next = closeServedRound(ctx, rt, next)
 	}
 	next.Builder = clearProcess(next.Builder)
+	// A runner that wrote its marker and then died inside the same tick is
+	// gone; end its scope now, best effort. A live runner is left alone:
+	// its own supervisor reaps the scope as it exits. The scope check leads,
+	// so a scopes-off close pays for no liveness read.
+	if rt.Scope != nil && !roundRunnerAlive(ctx, rt, b) {
+		endRoundScope(ctx, rt, b, closedRound)
+	}
 	next.StalledSince = time.Time{}
 	// The gate result -> report queued -> verify consult started ->
 	// delivery (#144), exactly as the pane path orders it: the reviewer
