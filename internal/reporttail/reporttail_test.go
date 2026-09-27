@@ -524,3 +524,86 @@ func TestParseReportTailChangedPathsSet(t *testing.T) {
 		})
 	}
 }
+
+// stripTailCase is one body StripTail is pinned against; want "" means the
+// result must be nil.
+type stripTailCase struct {
+	name string
+	body string
+	want string
+}
+
+// stripTailCases returns the bodies TestStripTailRemovesTheTrailingBlock pins.
+func stripTailCases() []stripTailCase {
+	block := "```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n```\n"
+	return []stripTailCase{
+		{
+			name: "no fence – identical",
+			body: "Some prose with no block.\n",
+			want: "Some prose with no block.\n",
+		},
+		{
+			name: "well-formed trailing block",
+			body: "The review is done.\n\n" + block,
+			want: "The review is done.\n",
+		},
+		{
+			name: "block-only body",
+			body: block,
+			want: "",
+		},
+		{
+			name: "prose after closing fence – identical",
+			body: "Prose before.\n\n" + block + "\nMore prose after.\n",
+			want: "Prose before.\n\n" + block + "\nMore prose after.\n",
+		},
+		{
+			name: "unclosed fence – cut to end",
+			body: "Before.\n\n```relevo\nstatus: done\n",
+			want: "Before.\n",
+		},
+		{
+			name: "two blocks – only the last goes",
+			body: "First.\n\n```relevo\nstatus: halted\nhalted_at: \"s1\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n```\n\nSecond.\n\n" + block,
+			want: "First.\n\n```relevo\nstatus: halted\nhalted_at: \"s1\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n```\n\nSecond.\n",
+		},
+		{
+			name: "extra blank lines before fence – dropped",
+			body: "Prose.\n\n\n\n" + block,
+			want: "Prose.\n",
+		},
+		{
+			name: "CRLF body – kept part is LF",
+			body: "Line one.\r\nLine two.\r\n\r\n" + block,
+			want: "Line one.\nLine two.\n",
+		},
+	}
+}
+
+func TestStripTailRemovesTheTrailingBlock(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range stripTailCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			got := StripTail([]byte(tc.body))
+			if tc.want == "" {
+				if got != nil {
+					t.Errorf("StripTail(%q) = %q, want nil", tc.body, got)
+				}
+				return
+			}
+			if string(got) != tc.want {
+				t.Errorf("StripTail(%q)\ngot:  %q\nwant: %q", tc.body, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("empty body", func(t *testing.T) {
+		if got := StripTail(nil); got != nil {
+			t.Errorf("StripTail(nil) = %q, want nil", got)
+		}
+		if got := StripTail([]byte{}); got != nil {
+			t.Errorf("StripTail([]byte{}) = %q, want nil", got)
+		}
+	})
+}

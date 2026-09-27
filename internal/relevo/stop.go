@@ -219,11 +219,12 @@ func stopOpenRound(ctx context.Context, rt Runtime, b store.Binding) (killed, re
 
 // stopPayload is the report payload and note a stopped close writes, local or
 // remote. how names the close ("killed", "reaped", "gone" or "dequeued"),
-// where is "" for a local stop and " on <server>" for a remote one, and
-// haveReport says whether a report file was on disk. Pure.
-func stopPayload(how, name string, round int, where string, haveReport bool) (payload, note string) {
+// where is "" for a local stop and " on <server>" for a remote one,
+// haveReport says whether a report file was on disk, and clause is the
+// artifact clause closeClause resolved for the close's binding. Pure.
+func stopPayload(how, name string, round int, where string, haveReport bool, clause string) (payload, note string) {
 	if haveReport {
-		return fmt.Sprintf("The runner was stopped (%s) for round %d%s. Report: %s", how, round, where, showCommand(name, round, "report")), "stopped"
+		return fmt.Sprintf("The runner was stopped (%s) for round %d%s. %s", how, round, where, clause), "stopped"
 	}
 	return fmt.Sprintf("The runner was stopped (%s) for round %d%s; no report was written.", how, round, where), "noreport stopped"
 }
@@ -252,7 +253,7 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	if _, err := os.Stat(reportPath); err == nil {
 		haveReport = true
 	}
-	payload, note := stopPayload(how, b.Name, stoppedRound, "", haveReport)
+	payload, note := stopPayload(how, b.Name, stoppedRound, "", haveReport, closeClause(rt, b, stoppedRound))
 
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil)
 	if err != nil {

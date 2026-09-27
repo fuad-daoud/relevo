@@ -808,10 +808,6 @@ func composePrompt(rt Runtime, b store.Binding, planPath, reportPath, donePath s
 func readerPromptFor(rt Runtime, b store.Binding, planPath, donePath string) string {
 	actor := bindingRole(b)
 	artifactDir := rt.Store.ArtifactDir(b.Name, b.Round, actor)
-	definition := actor
-	if spec, err := bindingSpec(rt, b, b.Builder.Kind); err == nil {
-		definition = spec.Definition
-	}
 	return fmt.Sprintf(readerPrompt, roundTree(rt, b), b.CWD, planPath, artifactDir,
-		actorOutput(rt, actor, definition), artifactDir+"/summary.md", donePath)
+		readerOutputLabel(rt, b), artifactDir+"/summary.md", donePath)
 }

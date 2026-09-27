@@ -221,6 +221,37 @@ func SplitFenceLines(body []byte) []string {
 	return lines
 }
 
+// StripTail returns body without its trailing relevo block. Pure; no I/O;
+// total. The block is located with the same parser the round close uses, so
+// "the block" means exactly what the close's outcome parse means by it.
+//
+//   - empty body → nil.
+//   - no ```relevo fence → body byte-identical.
+//   - last fence is followed by prose (FindRelevoBlock reason "tail: prose
+//     after closing fence") → body byte-identical; cutting it would eat prose.
+//   - otherwise (well-formed block or unclosed fence): lines before the
+//     opening fence with trailing blank lines dropped, joined with "\n" and
+//     terminated by exactly one "\n"; an empty slice returns nil.
+func StripTail(body []byte) []byte {
+	if len(body) == 0 {
+		return nil
+	}
+	lines := SplitFenceLines(body)
+	openIdx, _, reason := FindRelevoBlock(lines)
+	if openIdx < 0 || reason == "tail: prose after closing fence" {
+		return body
+	}
+	kept := lines[:openIdx]
+	// Drop trailing blank lines.
+	for len(kept) > 0 && strings.TrimSpace(kept[len(kept)-1]) == "" {
+		kept = kept[:len(kept)-1]
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return []byte(strings.Join(kept, "\n") + "\n")
+}
+
 func listOf(tail Tail, key string) []string {
 	switch key {
 	case "changed_paths":

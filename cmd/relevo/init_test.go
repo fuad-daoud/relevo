@@ -164,8 +164,8 @@ func TestInitClaudeOnlyNotesMissingBuilder(t *testing.T) {
 	if !strings.Contains(out, "builder: none") {
 		t.Errorf("output does not contain %q:\n%s", "builder: none", out)
 	}
-	if !strings.Contains(out, "note: no builder candidate") {
-		t.Errorf("output does not contain %q:\n%s", "note: no builder candidate", out)
+	if want := `note: no builder candidate (claude only plans); add one from a builder harness (agy, codex, opencode): relevo config set actors.builder.candidates '["<name>"]'`; !strings.Contains(out, want) {
+		t.Errorf("output does not contain %q:\n%s", want, out)
 	}
 }
 

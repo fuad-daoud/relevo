@@ -18,6 +18,10 @@ import (
 // summary ending in a relevo block, so a close can tail-parse it.
 const readerCloseFinal = "The review is done.\n\n```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: [index.html]\ncommands_run: []\nnot_done: []\n```\n"
 
+// readerCloseSummary is readerCloseFinal with the relevo block stripped: what
+// summary.md must hold after the close, so the planner receives no stray block.
+const readerCloseSummary = "The review is done.\n"
+
 // bindReader binds a reviewer on repo and sends it a plan, so round 1 is open
 // in a scratch worktree. It returns the runtime and the stored binding.
 func bindReader(t *testing.T, repo string) (Runtime, store.Binding) {
@@ -132,16 +136,25 @@ func TestReaderCloseWritesSummaryFromTheFinalMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("summary.md was not written: %v", err)
 	}
-	if string(got) != readerCloseFinal {
-		t.Errorf("summary.md = %q, want the final message %q", got, readerCloseFinal)
+	if string(got) != readerCloseSummary {
+		t.Errorf("summary.md = %q, want the stripped summary %q", got, readerCloseSummary)
 	}
 
 	e := reportEntryFor(t, rt, "reader-bind", 1)
 	if e.Path != summary {
 		t.Errorf("report entry Path = %q, want the summary path %q", e.Path, summary)
 	}
-	if _, ok, _ := reporttail.ParseWithReason([]byte(got)); !ok {
-		t.Errorf("the summary's relevo block did not parse:\n%s", got)
+	if _, ok, _ := reporttail.ParseWithReason([]byte(got)); ok {
+		t.Errorf("the saved summary still carries a parseable relevo block:\n%s", got)
+	}
+	if e.Outcome != reporttail.OutcomeDone {
+		t.Errorf("entry.Outcome = %q, want %q", e.Outcome, reporttail.OutcomeDone)
+	}
+	if !strings.Contains(e.Payload, "The runner finished round 1. Findings: relevo show reader-bind --round 1 --summary") {
+		t.Errorf("payload does not contain the expected reader close line:\n%s", e.Payload)
+	}
+	if strings.Contains(e.Payload, "--report") {
+		t.Errorf("reader payload contains --report:\n%s", e.Payload)
 	}
 
 	entries, _ := rt.Store.ReadLog("reader-bind")
@@ -182,6 +195,87 @@ func TestReaderCloseKeepsARunnerWrittenSummary(t *testing.T) {
 	}
 	if e := reportEntryFor(t, rt, "reader-bind", 1); e.Path != summary {
 		t.Errorf("report entry Path = %q, want the summary path %q", e.Path, summary)
+	}
+}
+
+// TestReaderCloseStripsARunnerWrittenSummaryWithABlock checks that when the
+// runner writes its own summary and that summary ends in a relevo block, the
+// block is stripped just like the final-message case.
+func TestReaderCloseStripsARunnerWrittenSummaryWithABlock(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	summary := rt.Store.SummaryPath("reader-bind", 1, "reviewer")
+	if err := os.MkdirAll(filepath.Dir(summary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const ownWithBlock = "# Runner summary.\n\n```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n```\n"
+	if err := os.WriteFile(summary, []byte(ownWithBlock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
+	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	got, err := os.ReadFile(summary)
+	if err != nil {
+		t.Fatalf("read summary.md: %v", err)
+	}
+	const wantStripped = "# Runner summary.\n"
+	if string(got) != wantStripped {
+		t.Errorf("summary.md = %q, want the stripped bytes %q", got, wantStripped)
+	}
+	e := reportEntryFor(t, rt, "reader-bind", 1)
+	if e.Outcome != reporttail.OutcomeDone {
+		t.Errorf("entry.Outcome = %q, want %q", e.Outcome, reporttail.OutcomeDone)
+	}
+}
+
+// TestReaderCloseKeepsTheHaltedStatusOutOfTheSummary checks that a halted
+// reader round's status is preserved in the entry's Outcome/HaltedAt and the
+// payload annotation, while the summary.md file has no relevo block.
+func TestReaderCloseKeepsTheHaltedStatusOutOfTheSummary(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	const haltedFinal = "Partial review.\n\n```relevo\nstatus: halted\nhalted_at: \"step 2\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n```\n"
+	writeReaderStream(t, rt, "reader-bind", 1, haltedFinal)
+	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	summary := rt.Store.SummaryPath("reader-bind", 1, "reviewer")
+	got, err := os.ReadFile(summary)
+	if err != nil {
+		t.Fatalf("read summary.md: %v", err)
+	}
+	if _, ok, _ := reporttail.ParseWithReason(got); ok {
+		t.Errorf("the saved summary still carries a parseable relevo block:\n%s", got)
+	}
+
+	e := reportEntryFor(t, rt, "reader-bind", 1)
+	if e.Outcome != reporttail.OutcomeHalted {
+		t.Errorf("entry.Outcome = %q, want %q", e.Outcome, reporttail.OutcomeHalted)
+	}
+	if e.HaltedAt != "step 2" {
+		t.Errorf("entry.HaltedAt = %q, want \"step 2\"", e.HaltedAt)
+	}
+	if !strings.Contains(e.Payload, "The runner finished round 1 -- halted at \"step 2\".") {
+		t.Errorf("payload does not contain the halted annotation:\n%s", e.Payload)
+	}
+
+	entries, _ := rt.Store.ReadLog("reader-bind")
+	if got := WaitOutcome(b, entries, 1, func(string, int) string { return "" }); got.Code != WaitHalted {
+		t.Errorf("WaitOutcome code = %d, want WaitHalted (%d)", got.Code, WaitHalted)
 	}
 }
 
@@ -399,8 +493,8 @@ func TestReaderRoundWaitsForExitAfterMarker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("summary.md was not written: %v", err)
 	}
-	if string(got) != readerCloseFinal {
-		t.Errorf("summary.md = %q, want the final message %q", got, readerCloseFinal)
+	if string(got) != readerCloseSummary {
+		t.Errorf("summary.md = %q, want the stripped summary %q", got, readerCloseSummary)
 	}
 }
 
