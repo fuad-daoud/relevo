@@ -155,7 +155,7 @@ func builderTail(rt Runtime, b store.Binding, n int) string {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
 		return logTail(b.Builder.LogPath, n)
 	}
-	return streamTail(rt.Store.BuilderStreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, 0)
+	return streamTail(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, 0)
 }
 
 // currentBuilderTail is builderTail limited to what the current builder
@@ -172,7 +172,7 @@ func currentBuilderTail(rt Runtime, b store.Binding, n int) string {
 	if b.Builder.StreamRound == b.Round {
 		from = b.Builder.StreamStart
 	}
-	return streamTail(rt.Store.BuilderStreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
+	return streamTail(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
 }
 
 // roundSegments is the segment list of one round: the live endpoint's own
@@ -213,16 +213,18 @@ func RoundTranscript(st *store.Store, name string, round int, live store.Endpoin
 	} else if ok {
 		return data, filepath.Base(logPath), true, nil
 	}
-	streamPath := st.BuilderStreamPath(name, round)
-	data, ok, rerr := read(streamPath)
-	if rerr != nil {
-		return nil, "", false, rerr
+	for _, streamPath := range []string{st.RunnerStreamPath(name, round), st.BuilderStreamPath(name, round)} {
+		data, ok, rerr := read(streamPath)
+		if rerr != nil {
+			return nil, "", false, rerr
+		}
+		if !ok {
+			continue
+		}
+		segs := roundSegments(live, round, read, st.BuilderSegmentsPath(name, round))
+		return renderStream(data, segs, live.Kind), filepath.Base(streamPath) + " (rendered)", true, nil
 	}
-	if !ok {
-		return nil, "", false, nil
-	}
-	segs := roundSegments(live, round, read, st.BuilderSegmentsPath(name, round))
-	return renderStream(data, segs, live.Kind), filepath.Base(streamPath) + " (rendered)", true, nil
+	return nil, "", false, nil
 }
 
 // readBytesMissing adapts a bytes reader (Store.ReadFile, a test's own) to

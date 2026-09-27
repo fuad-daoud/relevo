@@ -593,7 +593,7 @@ A builder is a process relevo runs, one fresh process per round; each
 `relevo send` starts the harness's non-interactive form -- `agy -p …`,
 `claude -p …`, `opencode run …` -- in the binding's tree with the round's
 prompt, writes the harness's output -- stdout and stderr both -- to
-`~/.local/state/relevo/<name>/NNN-builder.jsonl` beside the round's plan and
+`~/.local/state/relevo/<name>/NNN-runner.jsonl` beside the round's plan and
 report, and returns.
 Those are the round's **open-round files**, in the binding's directory under
 the state root. When the round closes, relevo seals them into the database in
@@ -693,7 +693,7 @@ done`, `relevo unbind`, or `relevo stop`.
 
 The signals are the working tree (its fingerprint is `HEAD` plus `git status
 --porcelain`, hashed -- no diff, no snapshot) and the builder's output: the
-builder's stream file (`NNN-builder.jsonl`) mtime. Each signal keeps the time it last changed, and the daemon samples at
+builder's stream file (`NNN-runner.jsonl`) mtime. Each signal keeps the time it last changed, and the daemon samples at
 most once every `progress_interval_ms` (default thirty seconds).
 
 - **`stalled <age>`** -- no signal has moved for `stall_after_ms` (default
@@ -796,7 +796,7 @@ check out something else, then `relevo wait`.
 `relevo send` also ships your repository's tags as data beside the bundle, and
 the server sets each one whose commit it already has, so a tagged server
 worktree can `git describe --tags`. Catch-up fetches the builder's own stream
-file (`NNN-builder.jsonl`) alongside the report, diff and log, so a remote
+file (`NNN-runner.jsonl`) alongside the report, diff and log, so a remote
 round's failure carries its detail to the client.
 
 What is refused: `--cwd` cannot be combined with `--server` (a remote binding

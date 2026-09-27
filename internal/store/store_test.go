@@ -205,6 +205,7 @@ func TestPathShapes(t *testing.T) {
 		{"QuestionPath", s.QuestionPath("ai", 2), "/state/ai/002-question.md"},
 		{"DriftPath", s.DriftPath("webshop", 5), "/state/webshop/005-drift.patch"},
 		{"BuilderLogPath", s.BuilderLogPath("webshop", 3), "/state/webshop/003-builder.log"},
+		{"RunnerStreamPath", s.RunnerStreamPath("webshop", 3), "/state/webshop/003-runner.jsonl"},
 		{"BuilderStreamPath", s.BuilderStreamPath("webshop", 3), "/state/webshop/003-builder.jsonl"},
 		{"AskPath", s.AskPath("webshop", 3, "7f2a3c1d"), "/state/webshop/003-7f2a3c1d-ask.md"},
 		{"FindingsPath", s.FindingsPath("webshop", 12, "7f2a3c1d"), "/state/webshop/012-7f2a3c1d-findings.md"},
@@ -222,6 +223,7 @@ func TestPathShapes(t *testing.T) {
 		path string
 	}{
 		{"builder log", s.BuilderLogPath("webshop", 12)},
+		{"runner stream", s.RunnerStreamPath("webshop", 12)},
 		{"builder stream", s.BuilderStreamPath("webshop", 12)},
 		{"consult stream", s.ConsultStreamPath("webshop", 12, "7f2a3c1d")},
 	} {

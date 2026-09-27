@@ -234,14 +234,13 @@ func (p *dedupePlan) removeTranscript(ownerID string, rows int, byStreamLines bo
 // builder log verbatim (relevo migrate never rewrote .log files, so no rename
 // rewrite is tried). A missing stream is not fatal. rows must be non-empty.
 func streamLinesCover(d *db.DB, record db.Record, rd db.Round, rows []db.TranscriptRecord, renames []legacy.Prefix) (covered bool, renamed int, err error) {
-	streamBase := builderStreamPathBase(rd.Number)
-	body, _, found, err := d.RoundFileGet(record.ID, streamBase)
+	streamName, streamBody, found, err := sealedStream(d, record, rd.Number)
 	if err != nil {
-		return false, 0, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, streamBase, err)
+		return false, 0, err
 	}
 	var stream map[string]bool
 	if found {
-		stream, err = lineSet(record, streamBase, body)
+		stream, err = lineSet(record, streamName, streamBody)
 		if err != nil {
 			return false, 0, err
 		}
@@ -321,8 +320,33 @@ func builderLogPathBase(round int) string {
 	return filepath.Base(memberStore.BuilderLogPath("x", round))
 }
 
+// runnerStreamPathBase is the round_file name a round sealed after the rename
+// carries.
+func runnerStreamPathBase(round int) string {
+	return filepath.Base(memberStore.RunnerStreamPath("x", round))
+}
+
+// builderStreamPathBase is the pre-rename stream name: a round sealed before
+// the rename carries it, and a reader must still find it.
 func builderStreamPathBase(round int) string {
 	return filepath.Base(memberStore.BuilderStreamPath("x", round))
+}
+
+// sealedStream reads one round's sealed stream row under whichever name it was
+// sealed with: the current name first, then the pre-rename name. It reports the
+// name it was found under so callers can label the round file. A miss on both
+// names is found=false with a nil error; a read error is returned wrapped.
+func sealedStream(d *db.DB, record db.Record, round int) (name string, body []byte, found bool, err error) {
+	for _, base := range []string{runnerStreamPathBase(round), builderStreamPathBase(round)} {
+		body, _, found, err = d.RoundFileGet(record.ID, base)
+		if err != nil {
+			return "", nil, false, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, base, err)
+		}
+		if found {
+			return base, body, true, nil
+		}
+	}
+	return "", nil, false, nil
 }
 
 // deriveTranscripts re-derives a mirror round's transcript rows from the record's
@@ -331,15 +355,14 @@ func builderStreamPathBase(round int) string {
 func deriveTranscripts(d *db.DB, record db.Record, rd db.Round) ([][]db.TranscriptRecord, error) {
 	var out [][]db.TranscriptRecord
 
-	streamBase := builderStreamPathBase(rd.Number)
-	body, _, found, err := d.RoundFileGet(record.ID, streamBase)
+	streamName, streamBody, found, err := sealedStream(d, record, rd.Number)
 	if err != nil {
-		return nil, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, streamBase, err)
+		return nil, err
 	}
 	if found {
-		lines, lerr := roundFileLines(streamBase, body)
+		lines, lerr := roundFileLines(streamName, streamBody)
 		if lerr != nil {
-			return nil, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, streamBase, lerr)
+			return nil, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, streamName, lerr)
 		}
 		kinds := transcriptKinds(record, rd)
 		out = make([][]db.TranscriptRecord, 0, len(kinds)+1)
@@ -350,7 +373,7 @@ func deriveTranscripts(d *db.DB, record db.Record, rd db.Round) ([][]db.Transcri
 	}
 
 	logBase := builderLogPathBase(rd.Number)
-	body, _, found, err = d.RoundFileGet(record.ID, logBase)
+	body, _, found, err := d.RoundFileGet(record.ID, logBase)
 	if err != nil {
 		return nil, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, logBase, err)
 	}

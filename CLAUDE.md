@@ -26,8 +26,9 @@ follows is what is specific to this machine and this repo.
   bind --resume` restores a released worktree; rebind a DONE binding only
   after that restore.
 - A headless round's output is its stream
-  `~/.local/state/relevo/<name>/NNN-builder.jsonl` (stderr included; sealed into the
+  `~/.local/state/relevo/<name>/NNN-runner.jsonl` (stderr included; sealed into the
   database after the round). Read it rendered with `relevo show <name> --round N --transcript`.
+  A round from before the stream rename is `NNN-builder.jsonl`, which readers fall back to.
   Rounds from before builder-log round 2 (#478) also have `NNN-builder.log`.
 - When a builder reports a usage limit mid-round, `relevo gate <token>` is
   enough: the daemon switches and resends. Do not rebind by hand unless

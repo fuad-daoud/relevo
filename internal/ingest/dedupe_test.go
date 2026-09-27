@@ -125,7 +125,7 @@ func TestDedupeMirrorPlansTranscriptByDerivationOrByStreamLines(t *testing.T) {
 	// Altered rendered text: exact re-derivation fails, the stream-lines proof
 	// still vouches for it.
 	round4 := seedMirrorRound(t, d, bindingID, 4)
-	putRoundFile(t, d, recordID, "004-builder.jsonl", 4, raw)
+	putRoundFile(t, d, recordID, "004-runner.jsonl", 4, raw)
 	altered, _ := streamTranscriptRecords("claude", lines, 0)
 	altered[1].Rendered = "tampered"
 	appendTranscript(t, d, db.OwnerRound, round4, altered)
@@ -151,6 +151,32 @@ func TestDedupeMirrorPlansTranscriptByDerivationOrByStreamLines(t *testing.T) {
 	wantOwners := []string{round3, round4}
 	if !reflect.DeepEqual(plan.transcriptOwners, wantOwners) {
 		t.Errorf("transcriptOwners = %v, want %v", plan.transcriptOwners, wantOwners)
+	}
+}
+
+// TestStreamLinesCoverReadsThePreRenameStream: a round sealed under the
+// pre-rename stream name still proves its rows through streamLinesCover.
+func TestStreamLinesCoverReadsThePreRenameStream(t *testing.T) {
+	d := openTestDB(t)
+	const name = "webshop"
+	seedMirrorBinding(t, d, name)
+	recordID := seedRecordAt(t, d, name, "claude", dedupeAt)
+
+	line := `{"ts":"2026-09-01T10:00:00Z","type":"assistant","message":{"content":"hi"}}`
+	putRoundFile(t, d, recordID, "003-builder.jsonl", 3, line+"\n")
+
+	record, ok, err := d.RecordGet("", name)
+	if err != nil || !ok {
+		t.Fatalf("RecordGet = (ok %v, err %v), want the record", ok, err)
+	}
+	covered, renamed, err := streamLinesCover(d, record, db.Round{Number: 3}, []db.TranscriptRecord{
+		{Seq: 0, RecordJSON: line, Rendered: "hi"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("streamLinesCover: %v", err)
+	}
+	if !covered || renamed != 0 {
+		t.Errorf("covered/renamed = %v/%d, want true/0", covered, renamed)
 	}
 }
 
@@ -338,7 +364,7 @@ func TestDedupeMirrorNeverPlansPlannerTranscript(t *testing.T) {
 
 	line := `{"ts":"2026-09-01T10:00:00Z","type":"assistant","message":{"content":"hi"}}`
 	round3 := seedMirrorRound(t, d, bindingID, 3)
-	putRoundFile(t, d, recordID, "003-builder.jsonl", 3, line+"\n")
+	putRoundFile(t, d, recordID, "003-runner.jsonl", 3, line+"\n")
 	roundRecs, _ := streamTranscriptRecords("claude", [][]byte{[]byte(line)}, 0)
 	appendTranscript(t, d, db.OwnerRound, round3, roundRecs)
 

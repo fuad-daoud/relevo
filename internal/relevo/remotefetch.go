@@ -491,7 +491,7 @@ func fetchCatchUpStream(ctx context.Context, rt Runtime, b store.Binding, view r
 		cf.release()
 		return false
 	default:
-		path := rt.Store.BuilderStreamPath(name, n)
+		path := rt.Store.StreamPath(name, n)
 		cf.StreamTemp, err = downloadTemp(path, rc)
 		if err != nil {
 			slog.Warn("write stream failed", "path", path, "err", err)

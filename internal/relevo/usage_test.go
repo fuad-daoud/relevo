@@ -132,7 +132,7 @@ func TestRoundSourceHeadlessAndPlan(t *testing.T) {
 	b.Builder.Mode = store.ModeHeadless
 	b.Worktree = "/wt"
 	src := roundSource(rt, b, baseTime, baseTime.Add(time.Minute))
-	if src.Mode != usage.ModeHeadless || src.StreamPath != rt.Store.BuilderStreamPath(b.Name, b.Round) {
+	if src.Mode != usage.ModeHeadless || src.StreamPath != rt.Store.RunnerStreamPath(b.Name, b.Round) {
 		t.Errorf("headless source = %+v", src)
 	}
 	if src.Worktree != "/wt" {

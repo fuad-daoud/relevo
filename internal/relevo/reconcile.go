@@ -508,7 +508,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// only, since a pane round has no supervisor (#244, #216).
 	entryRusage := rusage
 	if entryRusage == nil && rt.Runner != nil && b.Builder.Headless() {
-		if r, ok := rt.Runner.Rusage(ctx, handleOf(b.Builder), rt.Store.BuilderStreamPath(b.Name, b.Round)); ok {
+		if r, ok := rt.Runner.Rusage(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); ok {
 			entryRusage = &store.Rusage{CPUMS: r.CPUMS, PeakMemBytes: r.PeakMemBytes}
 		}
 	}

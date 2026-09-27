@@ -601,7 +601,7 @@ func TestFetchTerminalHeadlessRendersTheStream(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	streamPath := st.BuilderStreamPath("webshop", 2)
+	streamPath := st.RunnerStreamPath("webshop", 2)
 	if err := os.WriteFile(streamPath, []byte(stream), 0o644); err != nil {
 		t.Fatalf("write stream: %v", err)
 	}
@@ -616,8 +616,8 @@ func TestFetchTerminalHeadlessRendersTheStream(t *testing.T) {
 	if !msg.content.transcript {
 		t.Error("transcript = false, want true for a rendered stream")
 	}
-	if msg.content.logName != "002-builder.jsonl (rendered)" {
-		t.Errorf("logName = %q, want 002-builder.jsonl (rendered)", msg.content.logName)
+	if msg.content.logName != "002-runner.jsonl (rendered)" {
+		t.Errorf("logName = %q, want 002-runner.jsonl (rendered)", msg.content.logName)
 	}
 
 	// LogPath equal to the round's stream path (2b): still the stream.
@@ -629,7 +629,7 @@ func TestFetchTerminalHeadlessRendersTheStream(t *testing.T) {
 	if msg.content.err != nil || msg.content.empty != "" {
 		t.Fatalf("2b shape: content = %+v, want the rendered stream", msg.content)
 	}
-	if msg.content.body != "stream line one\nstream line two" || msg.content.logName != "002-builder.jsonl (rendered)" {
+	if msg.content.body != "stream line one\nstream line two" || msg.content.logName != "002-runner.jsonl (rendered)" {
 		t.Errorf("2b shape: body = %q, logName = %q, want the rendered stream", msg.content.body, msg.content.logName)
 	}
 
@@ -652,5 +652,39 @@ func TestFetchTerminalHeadlessRendersTheStream(t *testing.T) {
 	}
 	if msg.content.logName != "002-builder.log" {
 		t.Errorf("rule 1: logName = %q, want 002-builder.log", msg.content.logName)
+	}
+}
+
+// A round whose stream is only NNN-builder.jsonl still renders, and the tab
+// labels it under the name it was read from.
+func TestFetchTerminalRendersThePreRenameStream(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+
+	stream := "stream line one\nstream line two\n"
+	b := newTestBinding("webshop") // Round 2
+	b.Builder = store.Endpoint{
+		AgentName:   "webshop-builder",
+		Kind:        "agy",
+		Mode:        store.ModeHeadless,
+		PID:         4242,
+		StreamRound: 2,
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.WriteFile(st.BuilderStreamPath("webshop", 2), []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+
+	msg := fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
+	if msg.content.err != nil || msg.content.empty != "" {
+		t.Fatalf("content = %+v, want the rendered stream", msg.content)
+	}
+	if msg.content.body != "stream line one\nstream line two" {
+		t.Errorf("body = %q, want the rendered stream", msg.content.body)
+	}
+	if msg.content.logName != "002-builder.jsonl (rendered)" {
+		t.Errorf("logName = %q, want 002-builder.jsonl (rendered)", msg.content.logName)
 	}
 }

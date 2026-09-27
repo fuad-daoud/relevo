@@ -38,7 +38,7 @@ func writeReaderSummary(rt Runtime, b store.Binding) (string, error) {
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
 	}
-	stream, _ := rt.Store.ReadFile(rt.Store.BuilderStreamPath(b.Name, b.Round))
+	stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
 	text := transcript.FinalText(lastStreamKind(b), stream)
 	if text == "" {
 		return path, nil

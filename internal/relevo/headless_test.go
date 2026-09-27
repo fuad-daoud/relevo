@@ -197,7 +197,7 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	spec := fr.specs[0]
 	// A new round has no builder.log: stderr joins the stream, so the spec's
 	// LogPath is the stream path itself (builder-log spec §4.4).
-	wantStream := rt.Store.BuilderStreamPath("webshop", 1)
+	wantStream := rt.Store.RunnerStreamPath("webshop", 1)
 	if spec.Dir != "/repo" || spec.LogPath != wantStream || spec.StreamPath != wantStream {
 		t.Errorf("spec Dir/LogPath/StreamPath = %q/%q/%q, want /repo/%q/%q", spec.Dir, spec.LogPath, spec.StreamPath, wantStream, wantStream)
 	}
@@ -254,7 +254,7 @@ func TestStartRoundOnALaterRoundMovesTheCursor(t *testing.T) {
 	if got.Builder.StreamRound != 2 || got.Builder.StreamOffset != 0 {
 		t.Errorf("cursor = round %d offset %d; want 2, 0", got.Builder.StreamRound, got.Builder.StreamOffset)
 	}
-	if fr.specs[0].StreamPath != rt.Store.BuilderStreamPath("webshop", 2) {
+	if fr.specs[0].StreamPath != rt.Store.RunnerStreamPath("webshop", 2) {
 		t.Errorf("StreamPath = %q, want round 2's", fr.specs[0].StreamPath)
 	}
 }
@@ -270,8 +270,8 @@ func TestReconcileHeadlessExitReadsTheTrailerFromTheStream(t *testing.T) {
 	if _, err := reconcile(t, at(rt, time.Minute), b); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if len(fr.exitPaths) == 0 || fr.exitPaths[0] != rt.Store.BuilderStreamPath("webshop", 1) {
-		t.Errorf("ExitCode was asked about %v; want the round-1 stream %s", fr.exitPaths, rt.Store.BuilderStreamPath("webshop", 1))
+	if len(fr.exitPaths) == 0 || fr.exitPaths[0] != rt.Store.RunnerStreamPath("webshop", 1) {
+		t.Errorf("ExitCode was asked about %v; want the round-1 stream %s", fr.exitPaths, rt.Store.RunnerStreamPath("webshop", 1))
 	}
 }
 
@@ -696,7 +696,7 @@ func TestClearProcessKeepsIdentity(t *testing.T) {
 
 func streamWrite(t *testing.T, rt Runtime, raw string) {
 	t.Helper()
-	p := rt.Store.BuilderStreamPath("webshop", 1)
+	p := rt.Store.RunnerStreamPath("webshop", 1)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1365,7 +1365,7 @@ func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
 	now := baseTime.Add(10 * time.Minute)
 	rt = at(rt, 10*time.Minute)
 	b.RoundStartedAt = now.Add(-30 * time.Minute)
-	stream := rt.Store.BuilderStreamPath(b.Name, b.Round)
+	stream := rt.Store.RunnerStreamPath(b.Name, b.Round)
 	if err := os.WriteFile(stream, []byte("line\n"), 0o644); err != nil {
 		t.Fatalf("write stream: %v", err)
 	}
@@ -3111,7 +3111,7 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 	if spec.Argv[2] != wantPrompt {
 		t.Errorf("prompt handed to the process:\n%q\nwant the composePrompt:\n%q", spec.Argv[2], wantPrompt)
 	}
-	if want := rt.Store.BuilderStreamPath("webshop", 1); spec.Dir != "/repo" || spec.LogPath != want {
+	if want := rt.Store.RunnerStreamPath("webshop", 1); spec.Dir != "/repo" || spec.LogPath != want {
 		t.Errorf("spec = %+v", spec)
 	}
 
@@ -3153,7 +3153,7 @@ func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
 	if !got.Builder.Headless() || got.Builder.PID != fr.handles[1].PID || got.Builder.PID == oldPID {
 		t.Errorf("new endpoint = %+v, want headless with the new pid %d", got.Builder, fr.handles[1].PID)
 	}
-	if got.Builder.LogPath != rt.Store.BuilderStreamPath("webshop", 1) {
+	if got.Builder.LogPath != rt.Store.RunnerStreamPath("webshop", 1) {
 		t.Errorf("LogPath = %q, want round 1's stream", got.Builder.LogPath)
 	}
 	if got.BuilderCandidate != testClaudeRef || got.RoundSwitches != 1 || got.Round != 1 || got.State != store.StateActive {
@@ -3285,7 +3285,7 @@ func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
 			rt = at(rt, 10*time.Minute)
 			b.RoundStartedAt = now.Add(-30 * time.Minute)
 
-			stream := rt.Store.BuilderStreamPath(b.Name, b.Round)
+			stream := rt.Store.RunnerStreamPath(b.Name, b.Round)
 			if err := os.WriteFile(stream, []byte("{\"a\":1}\n{\"b\":2}\n"), 0o644); err != nil {
 				t.Fatalf("write stream: %v", err)
 			}
@@ -3668,7 +3668,7 @@ func TestStartProcessSetsStreamStart(t *testing.T) {
 	}
 
 	// 2. A stream file of N bytes exists before spawn -> StreamStart == N
-	streamPath := rt.Store.BuilderStreamPath("webshop", 1)
+	streamPath := rt.Store.RunnerStreamPath("webshop", 1)
 	if err := os.MkdirAll(filepath.Dir(streamPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -3806,7 +3806,7 @@ func TestStartProcessAppendsSegments(t *testing.T) {
 	// 2. N bytes on the stream, then a second spawn in the same round with a
 	// different kind: two segments, the second at N.
 	first := []byte(`{"event":"init","init":{}}` + "\n")
-	streamPath := rt.Store.BuilderStreamPath("webshop", 1)
+	streamPath := rt.Store.RunnerStreamPath("webshop", 1)
 	if err := os.MkdirAll(filepath.Dir(streamPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -3924,7 +3924,7 @@ func TestStatusExitCodeReadsTheStream(t *testing.T) {
 	if _, err := Status(context.Background(), rt); err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	want := rt.Store.BuilderStreamPath("webshop", 1)
+	want := rt.Store.RunnerStreamPath("webshop", 1)
 	if len(fr.exitPaths) == 0 || fr.exitPaths[0] != want {
 		t.Errorf("ExitCode was asked about %v, want the round's stream %s", fr.exitPaths, want)
 	}
@@ -3950,7 +3950,7 @@ func TestStartProcessSendsStderrToTheStream(t *testing.T) {
 		t.Fatalf("specs = %+v, want one Start", fr.specs)
 	}
 	spec := fr.specs[0]
-	want := rt.Store.BuilderStreamPath("webshop", 1)
+	want := rt.Store.RunnerStreamPath("webshop", 1)
 	if spec.LogPath != want || spec.StreamPath != want {
 		t.Errorf("spec LogPath/StreamPath = %q/%q, want %q", spec.LogPath, spec.StreamPath, want)
 	}
@@ -3982,6 +3982,42 @@ func TestStartProcessKeepsALegacyRoundsLog(t *testing.T) {
 	}
 	if fr.specs[0].LogPath != legacy || got.Builder.LogPath != legacy {
 		t.Errorf("spec/endpoint LogPath = %q/%q, want the legacy log %q", fr.specs[0].LogPath, got.Builder.LogPath, legacy)
+	}
+}
+
+// A round in flight across the rename keeps appending to the stream it
+// already has: startProcess resolves the file the round owns, so no round
+// ever ends up with two stream files.
+func TestStartRoundKeepsWritingAPreRenameRoundStream(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, fr)
+	pre := []byte(`{"event":"init"}` + "\n")
+	stream := rt.Store.BuilderStreamPath(b.Name, b.Round)
+	if err := os.MkdirAll(filepath.Dir(stream), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stream, pre, 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+
+	got, err := startRound(context.Background(), rt, nil, b, "the prompt")
+	if err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	spec := fr.specs[0]
+	if spec.StreamPath != stream || spec.LogPath != stream {
+		t.Errorf("spec LogPath/StreamPath = %q/%q, want the pre-rename stream %q", spec.LogPath, spec.StreamPath, stream)
+	}
+	if got.Builder.LogPath != stream {
+		t.Errorf("b.Builder.LogPath = %q, want the pre-rename stream %q", got.Builder.LogPath, stream)
+	}
+	if got.Builder.StreamStart != int64(len(pre)) {
+		t.Errorf("StreamStart = %d, want %d", got.Builder.StreamStart, len(pre))
 	}
 }
 

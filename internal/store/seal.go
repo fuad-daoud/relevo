@@ -229,7 +229,7 @@ func (s *Store) StreamDrained(b Binding, round int) bool {
 	if round != b.Builder.StreamRound {
 		return true
 	}
-	path := s.BuilderStreamPath(b.Name, round)
+	path := s.StreamPath(b.Name, round)
 	info, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return true

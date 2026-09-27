@@ -244,7 +244,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 0
 		b.Builder.StreamSegments = nil
 	}
-	if fi, err := os.Stat(rt.Store.BuilderStreamPath(b.Name, b.Round)); err == nil {
+	if fi, err := os.Stat(rt.Store.StreamPath(b.Name, b.Round)); err == nil {
 		b.Builder.StreamStart = fi.Size()
 	} else {
 		b.Builder.StreamStart = 0
@@ -279,7 +279,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	// (#420): LogPath == StreamPath for a new round. A round that already had
 	// a NNN-builder.log when the process started -- history, or a round in
 	// flight across the upgrade -- keeps writing stderr to that log instead.
-	logPath := rt.Store.BuilderStreamPath(b.Name, b.Round)
+	logPath := rt.Store.StreamPath(b.Name, b.Round)
 	if legacyLog(rt, b.Name, b.Round) {
 		logPath = rt.Store.BuilderLogPath(b.Name, b.Round)
 	}
@@ -300,7 +300,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		Dir: roundTree(rt, b), Argv: argv,
 		Env:        builderEnv(b),
 		LogPath:    logPath,
-		StreamPath: rt.Store.BuilderStreamPath(b.Name, b.Round),
+		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}
 	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), cpuPinText(b))
 	h, err := rt.Runner.Start(ctx, spec)
@@ -420,7 +420,7 @@ func drainStream(rt Runtime, b store.Binding) store.Binding {
 	}
 	b.Builder.StreamOffset = drainFile(
 		logPath,
-		rt.Store.BuilderStreamPath(b.Name, round),
+		rt.Store.StreamPath(b.Name, round),
 		b.Builder.StreamOffset,
 		func(off int64, line []byte) []string {
 			kind := segmentKind(b.Builder.StreamSegments, off, b.Builder.Kind)
@@ -564,7 +564,7 @@ func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload stri
 // yet counts from its start, and a stream that never appears for stall_after_ms
 // on a live process is exactly a stall.
 func streamLastActivity(rt Runtime, b store.Binding) time.Time {
-	st, err := os.Stat(rt.Store.BuilderStreamPath(b.Name, b.Round))
+	st, err := os.Stat(rt.Store.StreamPath(b.Name, b.Round))
 	if err != nil {
 		return b.RoundStartedAt
 	}
@@ -718,7 +718,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 	// Exited. The exit code is read once, from the stream's trailer.
 	codeText := "unknown"
-	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), rt.Store.BuilderStreamPath(b.Name, b.Round)); ok {
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); ok {
 		codeText = strconv.Itoa(code)
 	}
 
@@ -1192,7 +1192,7 @@ func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *
 		}
 		return "working", info
 	}
-	if code, ok := rt.Runner.ExitCode(ctx, handleOf(e), rt.Store.BuilderStreamPath(b.Name, b.Round)); ok {
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(e), rt.Store.StreamPath(b.Name, b.Round)); ok {
 		info.ExitCode = strconv.Itoa(code)
 		return "exited " + info.ExitCode, info
 	}

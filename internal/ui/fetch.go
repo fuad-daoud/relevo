@@ -416,7 +416,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 			// log which is not its round's stream reads that file, exactly
 			// as before. In 2b LogPath becomes the stream path itself, so
 			// this branch stops applying and rule 2 renders the stream.
-			if b.Builder.LogPath != "" && b.Builder.LogPath != rt.Store.BuilderStreamPath(name, b.Builder.StreamRound) {
+			if b.Builder.LogPath != "" && b.Builder.LogPath != rt.Store.StreamPath(name, b.Builder.StreamRound) {
 				if msg, ok := logTab(key, name, rt.Store.ReadFile, b.Builder.LogPath); ok {
 					msg.round = round
 					return msg
@@ -450,7 +450,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 				content: tabContent{
 					loaded: true,
 					at:     time.Now(),
-					empty:  "log not written yet: " + rt.Store.BuilderStreamPath(name, r),
+					empty:  "log not written yet: " + rt.Store.StreamPath(name, r),
 				},
 			}
 		}

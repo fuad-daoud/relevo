@@ -103,7 +103,7 @@ func applyCatchUpFiles(rt Runtime, tx *store.Tx, b store.Binding, view remote.Bi
 			return false
 		}
 	}
-	streamPath := rt.Store.BuilderStreamPath(name, n)
+	streamPath := rt.Store.StreamPath(name, n)
 	if cf.StreamTemp != "" {
 		if err := os.Rename(cf.StreamTemp, streamPath); err != nil {
 			slog.Warn("write stream failed", "path", streamPath, "err", err)

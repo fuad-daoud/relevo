@@ -115,7 +115,7 @@ func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
 	now := baseTime.Add(10 * time.Minute)
 	rt = at(rt, 10*time.Minute)
 	b.RoundStartedAt = now.Add(-30 * time.Minute)
-	stream := rt.Store.BuilderStreamPath(b.Name, b.Round)
+	stream := rt.Store.RunnerStreamPath(b.Name, b.Round)
 	if err := os.WriteFile(stream, []byte("line\n"), 0o644); err != nil {
 		t.Fatalf("write stream: %v", err)
 	}

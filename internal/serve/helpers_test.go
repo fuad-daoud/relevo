@@ -300,7 +300,7 @@ type fakeStreamUsage struct {
 
 func (f *fakeStreamUsage) Read(ctx context.Context, src usage.Source) ([]usage.Sample, string) {
 	f.sources = append(f.sources, src)
-	if src.Mode == usage.ModeHeadless && strings.HasSuffix(src.StreamPath, "001-builder.jsonl") {
+	if src.Mode == usage.ModeHeadless && strings.HasSuffix(src.StreamPath, "001-runner.jsonl") {
 		return f.samples, f.note
 	}
 	return nil, "not the round's stream"

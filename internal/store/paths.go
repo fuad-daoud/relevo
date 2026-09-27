@@ -142,11 +142,36 @@ func (s *Store) BuilderLogPath(name string, round int) string {
 	return s.roundFile(name, round, "builder", ".log")
 }
 
-// BuilderStreamPath is the harness's streamed JSON, one event per line, plus
-// the supervisor's relevo-exit trailer. relevo renders it into the log for
-// humans and never reads it for meaning.
+// RunnerStreamPath is the harness's streamed JSON, one event per line, plus
+// the supervisor's relevo-exit trailer, for rounds started after the rename.
+// New rounds always write to this name. Postcondition: always ends NNN-runner.jsonl.
+func (s *Store) RunnerStreamPath(name string, round int) string {
+	return s.roundFile(name, round, "runner", ".jsonl")
+}
+
+// BuilderStreamPath is the pre-rename stream name that rounds started before
+// the rename carry on disk or as sealed round_file rows. Frozen: nothing new
+// may call this to write or open a stream unless it has already resolved to
+// this name via StreamPath.
 func (s *Store) BuilderStreamPath(name string, round int) string {
 	return s.roundFile(name, round, "builder", ".jsonl")
+}
+
+// StreamPath returns the path of a round's stream file: the new name when that
+// file exists (on disk or as a sealed row), the old name when only that exists,
+// or the new name when neither exists (the name a fresh round starts on).
+// Total: errors and misses are both treated as not-found; the resolver never
+// returns an error.
+func (s *Store) StreamPath(name string, round int) string {
+	newPath := s.RunnerStreamPath(name, round)
+	if _, _, ok, _ := s.StatFile(newPath); ok {
+		return newPath
+	}
+	oldPath := s.BuilderStreamPath(name, round)
+	if _, _, ok, _ := s.StatFile(oldPath); ok {
+		return oldPath
+	}
+	return newPath
 }
 
 // BuilderSegmentsPath is the round's []StreamSegment as JSON, written straight

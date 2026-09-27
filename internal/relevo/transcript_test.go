@@ -91,7 +91,7 @@ func TestRenderStreamMatchesTheDrain(t *testing.T) {
 	// Prefix stability: complete lines appended after the partial one extend
 	// the old rendering, never rewrite it.
 	streamWrite(t, rt, jsonlLine(t, "claude.jsonl", 9))
-	full, err := os.ReadFile(rt.Store.BuilderStreamPath("webshop", 1))
+	full, err := os.ReadFile(rt.Store.RunnerStreamPath("webshop", 1))
 	if err != nil {
 		t.Fatalf("read stream: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestRoundTranscript(t *testing.T) {
 		if err := os.WriteFile(logPath, []byte("the log\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(s.BuilderStreamPath("webshop", 1), []byte(stream), 0o644); err != nil {
+		if err := os.WriteFile(s.RunnerStreamPath("webshop", 1), []byte(stream), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		text, source, found, err := RoundTranscript(s, "webshop", 1, store.Endpoint{}, transcriptRead(s))
@@ -276,7 +276,7 @@ func TestRoundTranscript(t *testing.T) {
 
 	t.Run("stream plus a segments row", func(t *testing.T) {
 		s := transcriptStore(t)
-		if err := os.WriteFile(s.BuilderStreamPath("webshop", 1), []byte(stream), 0o644); err != nil {
+		if err := os.WriteFile(s.RunnerStreamPath("webshop", 1), []byte(stream), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		body, err := json.Marshal(segs)
@@ -295,14 +295,14 @@ func TestRoundTranscript(t *testing.T) {
 		if want := renderStream([]byte(stream), segs, ""); !bytes.Equal(text, want) {
 			t.Errorf("text = %q, want the row-rendered stream %q", text, want)
 		}
-		if source != "001-builder.jsonl (rendered)" {
-			t.Errorf("source = %q, want 001-builder.jsonl (rendered)", source)
+		if source != "001-runner.jsonl (rendered)" {
+			t.Errorf("source = %q, want 001-runner.jsonl (rendered)", source)
 		}
 	})
 
 	t.Run("live endpoint segments when there is no row", func(t *testing.T) {
 		s := transcriptStore(t)
-		if err := os.WriteFile(s.BuilderStreamPath("webshop", 1), []byte(stream), 0o644); err != nil {
+		if err := os.WriteFile(s.RunnerStreamPath("webshop", 1), []byte(stream), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		live := store.Endpoint{StreamRound: 1, Kind: "claude", StreamSegments: segs}
@@ -317,7 +317,7 @@ func TestRoundTranscript(t *testing.T) {
 
 	t.Run("no row and no live segments uses the fallback kind", func(t *testing.T) {
 		s := transcriptStore(t)
-		if err := os.WriteFile(s.BuilderStreamPath("webshop", 1), []byte(stream), 0o644); err != nil {
+		if err := os.WriteFile(s.RunnerStreamPath("webshop", 1), []byte(stream), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		live := store.Endpoint{Kind: "agy"}
@@ -360,6 +360,23 @@ func TestRoundTranscript(t *testing.T) {
 		}
 		if want := renderStream([]byte(stream), segs, "claude"); !bytes.Equal(text, want) {
 			t.Errorf("text = %q, want the sealed rendering %q", text, want)
+		}
+		if source != "001-builder.jsonl (rendered)" {
+			t.Errorf("source = %q, want 001-builder.jsonl (rendered)", source)
+		}
+	})
+
+	t.Run("the pre-rename stream name", func(t *testing.T) {
+		s := transcriptStore(t)
+		if err := os.WriteFile(s.BuilderStreamPath("webshop", 1), []byte(stream), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		text, source, found, err := RoundTranscript(s, "webshop", 1, store.Endpoint{Kind: "claude"}, transcriptRead(s))
+		if err != nil || !found {
+			t.Fatalf("found = %v, err = %v, want found", found, err)
+		}
+		if want := renderStream([]byte(stream), nil, "claude"); !bytes.Equal(text, want) {
+			t.Errorf("text = %q, want the pre-rename rendering %q", text, want)
 		}
 		if source != "001-builder.jsonl (rendered)" {
 			t.Errorf("source = %q, want 001-builder.jsonl (rendered)", source)
@@ -467,7 +484,7 @@ func TestRoundTranscriptOfASealedSwitchedRound(t *testing.T) {
 	agy := jsonlLine(t, "agy.jsonl", 5)
 	claude := jsonlLine(t, "claude.jsonl", 5)
 	stream := agy + claude
-	if err := os.WriteFile(s.BuilderStreamPath("webshop", 2), []byte(stream), 0o644); err != nil {
+	if err := os.WriteFile(s.RunnerStreamPath("webshop", 2), []byte(stream), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rowSegs := []store.StreamSegment{{Start: 0, Kind: "agy"}, {Start: int64(len(agy)), Kind: "claude"}}

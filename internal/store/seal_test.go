@@ -85,6 +85,15 @@ func TestSealableTable(t *testing.T) {
 	}
 }
 
+// streamPathForCase is the stream name a TestStreamDrained case writes under:
+// the pre-rename name for a legacy case, the current name otherwise.
+func streamPathForCase(s *Store, b Binding, drained int, legacy bool) string {
+	if legacy {
+		return s.BuilderStreamPath(b.Name, drained)
+	}
+	return s.RunnerStreamPath(b.Name, drained)
+}
+
 // TestStreamDrained pins the drain test Sealable's stream blocker takes:
 // each case supplies the stream's bytes, the cursor and the file's age.
 func TestStreamDrained(t *testing.T) {
@@ -99,22 +108,25 @@ func TestStreamDrained(t *testing.T) {
 
 	cases := []struct {
 		name   string
+		legacy bool // true: write file under the old name (BuilderStreamPath)
 		round  int
 		body   string // "" leaves no stream file
 		offset func(string) int64
 		age    time.Duration
 		want   bool
 	}{
-		{"a missing stream is drained", drained, "", nil, 0, true},
-		{"another round is vacuously drained", drained - 1, relevoOnly, nil, 0, true},
-		{"the cursor is inside the payload", drained, relevoOnly, func(string) int64 { return 1 }, 0, false},
-		{"the cursor is at the stream's size", drained, relevoOnly, func(s string) int64 { return int64(len(s)) }, 0, true},
-		{"no trailer, cursor at EOF", drained, "still flushing\n", func(s string) int64 { return int64(len(s)) }, 0, false},
-		{"a legacy trailer with only trailer bytes left", drained, legacyTrailer, atLegacyRusage, 0, true},
-		{"a legacy trailer with payload bytes left", drained, legacyTrailer, nil, 0, false},
-		{"a just-written stream with the trailer", drained, legacyTrailer, atEndOfPayload, 0, false},
-		{"a stale stream with the trailer", drained, legacyTrailer, atEndOfPayload, staleStreamAfter + time.Minute, true},
-		{"a stale stream with no trailer", drained, payload + "\n", nil, staleStreamAfter + time.Minute, false},
+		{"a missing stream is drained", false, drained, "", nil, 0, true},
+		{"another round is vacuously drained", false, drained - 1, relevoOnly, nil, 0, true},
+		{"the cursor is inside the payload", false, drained, relevoOnly, func(string) int64 { return 1 }, 0, false},
+		{"the cursor is at the stream's size", false, drained, relevoOnly, func(s string) int64 { return int64(len(s)) }, 0, true},
+		{"no trailer, cursor at EOF", false, drained, "still flushing\n", func(s string) int64 { return int64(len(s)) }, 0, false},
+		{"a legacy trailer with only trailer bytes left", false, drained, legacyTrailer, atLegacyRusage, 0, true},
+		{"a legacy trailer with payload bytes left", false, drained, legacyTrailer, nil, 0, false},
+		{"a just-written stream with the trailer", false, drained, legacyTrailer, atEndOfPayload, 0, false},
+		{"a stale stream with the trailer", false, drained, legacyTrailer, atEndOfPayload, staleStreamAfter + time.Minute, true},
+		{"a stale stream with no trailer", false, drained, payload + "\n", nil, staleStreamAfter + time.Minute, false},
+		{"a pre-rename stream, cursor inside the payload", true, drained, relevoOnly, func(string) int64 { return 1 }, 0, false},
+		{"a pre-rename stream with the trailer", true, drained, relevoOnly, func(s string) int64 { return int64(len(s)) }, 0, true},
 	}
 
 	for _, tc := range cases {
@@ -128,7 +140,7 @@ func TestStreamDrained(t *testing.T) {
 			}
 
 			if tc.body != "" {
-				path := s.BuilderStreamPath(b.Name, drained)
+				path := streamPathForCase(s, b, drained, tc.legacy)
 				if err := os.WriteFile(path, []byte(tc.body), bindingFileMode); err != nil {
 					t.Fatalf("write stream: %v", err)
 				}

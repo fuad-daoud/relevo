@@ -1585,7 +1585,7 @@ func TestRoundCloseServesFiles(t *testing.T) {
 
 	streamText := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n" +
 		`{"type":"error","message":"Unexpected server error"}` + "\n"
-	if err := os.WriteFile(rt.Store.BuilderStreamPath("api", 1), []byte(streamText), 0o644); err != nil {
+	if err := os.WriteFile(rt.Store.RunnerStreamPath("api", 1), []byte(streamText), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	finishRound(t, env, rt, "api", 1)
@@ -1699,7 +1699,7 @@ func TestRoundCloseRecordsStreamUsage(t *testing.T) {
 
 	asked := false
 	for _, src := range fu.sources {
-		if src.Mode == usage.ModeHeadless && strings.HasSuffix(src.StreamPath, "001-builder.jsonl") {
+		if src.Mode == usage.ModeHeadless && strings.HasSuffix(src.StreamPath, "001-runner.jsonl") {
 			asked = true
 		}
 	}
@@ -2422,6 +2422,42 @@ func TestRoundFileLogFrom(t *testing.T) {
 	}
 }
 
+// TestRoundFileStreamServesAPreRenameRound: a round whose stream is only
+// NNN-builder.jsonl still answers kind "stream" with the raw file and kind
+// "log" with the rendered file, resolved through the store and RoundTranscript.
+func TestRoundFileStreamServesAPreRenameRound(t *testing.T) {
+	env := setupTestEnv(t)
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")
+	requireCreated(t, resp, body, "api")
+
+	rt := env.runtime(t)
+	// The fake round start wrote its own stream at the new name; drop it so the
+	// round has the pre-rename file only.
+	if err := os.Remove(rt.Store.RunnerStreamPath("api", 1)); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove new-name stream: %v", err)
+	}
+	stream := "stream line 1\nstream line 2\n"
+	if err := os.WriteFile(rt.Store.BuilderStreamPath("api", 1), []byte(stream), 0o644); err != nil {
+		t.Fatalf("write pre-rename stream: %v", err)
+	}
+	finishRound(t, env, rt, "api", 1)
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/stream", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if string(body) != stream {
+		t.Fatalf("stream body = %q, want the pre-rename stream %q", string(body), stream)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if string(body) != stream {
+		t.Fatalf("log body = %q, want the rendered pre-rename stream %q", string(body), stream)
+	}
+	if got := resp.Header.Get(remote.HeaderFileSize); got != strconv.Itoa(len(stream)) {
+		t.Fatalf("X-Relevo-Size = %q, want %d", got, len(stream))
+	}
+}
+
 func totalLen(env *testEnv, t *testing.T) int {
 	t.Helper()
 	data, err := os.ReadFile(env.runtime(t).Store.BuilderLogPath("api", 1))
@@ -2439,7 +2475,7 @@ func TestRoundFileLogRendersTheStream(t *testing.T) {
 	requireCreated(t, resp, body, "api")
 
 	rt := env.runtime(t)
-	streamPath := rt.Store.BuilderStreamPath("api", 1)
+	streamPath := rt.Store.RunnerStreamPath("api", 1)
 	stream := "stream line 1\nstream line 2\n"
 	if err := os.WriteFile(streamPath, []byte(stream), 0o644); err != nil {
 		t.Fatalf("write stream: %v", err)

@@ -57,7 +57,7 @@ func writeReaderStream(t *testing.T, rt Runtime, name string, round int, text st
 	if err != nil {
 		t.Fatalf("encode stream: %v", err)
 	}
-	path := rt.Store.BuilderStreamPath(name, round)
+	path := rt.Store.RunnerStreamPath(name, round)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}

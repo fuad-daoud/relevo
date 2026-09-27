@@ -22,7 +22,7 @@ func roundFilePath(rt relevo.Runtime, name string, n int, kind string) (string, 
 	case "log":
 		return rt.Store.BuilderLogPath(name, n), true
 	case "stream":
-		return rt.Store.BuilderStreamPath(name, n), true
+		return rt.Store.StreamPath(name, n), true
 	case "plan":
 		return rt.Store.PlanPath(name, n), true
 	case "drift":
