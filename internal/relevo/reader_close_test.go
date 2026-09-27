@@ -19,7 +19,7 @@ import (
 const readerCloseFinal = "The review is done.\n\n```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: [index.html]\ncommands_run: []\nnot_done: []\n```\n"
 
 // readerCloseSummary is readerCloseFinal with the relevo block stripped: what
-// summary.md must hold after the close, so the planner receives no stray block.
+// summary.md must hold after the close, so the mastermind receives no stray block.
 const readerCloseSummary = "The review is done.\n"
 
 // bindReader binds a reviewer on repo and sends it a plan, so round 1 is open
@@ -31,7 +31,7 @@ func bindReader(t *testing.T, repo string) (Runtime, store.Binding) {
 	rt.Runner = newFakeRunner()
 	if _, err := Bind(context.Background(), rt, BindOptions{
 		Name: "reader-bind", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: repo,
+		MasterMindID: testMasterMindName, CWD: repo,
 	}); err != nil {
 		t.Fatalf("Bind(reader): %v", err)
 	}
@@ -76,7 +76,7 @@ func reportEntryFor(t *testing.T, rt Runtime, name string, round int) store.LogE
 	var found store.LogEntry
 	ok := false
 	for _, e := range entries {
-		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindReport {
 			found, ok = e, true
 		}
 	}
@@ -158,7 +158,7 @@ func TestReaderCloseWritesSummaryFromTheFinalMessage(t *testing.T) {
 	}
 
 	entries, _ := rt.Store.ReadLog("reader-bind")
-	if HasEntry(entries, 1, store.DirToPlanner, store.KindDiff) {
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindDiff) {
 		t.Error("a reader round captured a diff")
 	}
 }
@@ -370,7 +370,7 @@ func TestSweepScratchKeepsOpenReaderRounds(t *testing.T) {
 		store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
 	seedLog(t, rt, "closed-reader",
 		store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
-		store.LogEntry{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport})
+		store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport})
 
 	for _, name := range []string{"open-reader", "closed-reader", "ghost"} {
 		if _, err := CreateScratch(ctx, rt, store.Binding{Name: name, CWD: repo}, 1); err != nil {
@@ -410,7 +410,7 @@ func TestSweepKeepsTheCurrentRoundsScratchBeforeItOpens(t *testing.T) {
 	}
 	seedLog(t, rt, "reader-bind",
 		store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
-		store.LogEntry{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport})
+		store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport})
 
 	for _, round := range []int{1, 2} {
 		if _, err := CreateScratch(ctx, rt, store.Binding{Name: "reader-bind", CWD: repo}, round); err != nil {

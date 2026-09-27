@@ -14,7 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -176,29 +176,29 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 	stRoot := t.TempDir()
 	st := store.New(stRoot)
 
-	// The machine database: the planner records live in it (P3b round 2
+	// The machine database: the mastermind records live in it (P3b round 2
 	// §4.1), so it is opened before the record is created below.
 	mdb, err := st.DB()
 	if err != nil {
 		t.Fatalf("open store db: %v", err)
 	}
 
-	// `relevo bind --server` resolves the caller's planner before it contacts
+	// `relevo bind --server` resolves the caller's mastermind before it contacts
 	// the server and records it on the client binding. Export one the way a
-	// real planner session does, so the client runtime resolves a record
-	// instead of failing the add with ErrNoPlannerSession.
-	reg := &planner.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now, Root: st.PlannersDir()}
-	prec, err := reg.Create(planner.Record{
+	// real mastermind session does, so the client runtime resolves a record
+	// instead of failing the add with ErrNoMasterMindSession.
+	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now, Root: st.MasterMindsDir()}
+	prec, err := reg.Create(mastermind.Record{
 		ID:          "pl_eeeeeeeeeeee",
-		Name:        "e2e-planner",
+		Name:        "e2e-mastermind",
 		HarnessKind: "claude",
 		SessionID:   "sess-e2e",
 		CWD:         "/repo",
 	})
 	if err != nil {
-		t.Fatalf("create planner record: %v", err)
+		t.Fatalf("create mastermind record: %v", err)
 	}
-	t.Setenv("RELEVO_PLANNER", prec.Name)
+	t.Setenv("RELEVO_MASTERMIND", prec.Name)
 
 	candDir := t.TempDir()
 	candPath := filepath.Join(candDir, "candidates.json")
@@ -212,16 +212,16 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 	}
 
 	rt := relevo.Runtime{
-		Git:        gitClient,
-		Store:      st,
-		Candidates: cSet,
-		Planners:   reg,
-		Gates:      mdb,
-		GatesDir:   stRoot,
-		Latency:    mdb,
-		Now:        time.Now,
-		Remote:     client.New(servers, kp, time.Now),
-		Transport:  remote.NewBundleTransport(gitClient, t.TempDir()),
+		Git:         gitClient,
+		Store:       st,
+		Candidates:  cSet,
+		MasterMinds: reg,
+		Gates:       mdb,
+		GatesDir:    stRoot,
+		Latency:     mdb,
+		Now:         time.Now,
+		Remote:      client.New(servers, kp, time.Now),
+		Transport:   remote.NewBundleTransport(gitClient, t.TempDir()),
 	}
 
 	return rt, kp
@@ -343,7 +343,7 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 		return false
 	})
 
-	// Assert: the round's report waits as exactly one pending planner entry
+	// Assert: the round's report waits as exactly one pending mastermind entry
 	// whose payload contains Report: and Diff: 1 file and 1 commit on
 	// relevo/api; the client repo's relevo/api is one commit ahead of init with
 	// hello.txt; the server view (via rt.Remote.GetBinding) has acked_round
@@ -480,7 +480,7 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 		return false
 	})
 
-	// exactly one pending report for the planner, acked_round == 1
+	// exactly one pending report for the mastermind, acked_round == 1
 	if pending, _ := pendingReports(t, rt, "api"); pending != 1 {
 		t.Fatalf("step 3: pending reports = %d, want 1", pending)
 	}
@@ -645,7 +645,7 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 		t.Fatalf("step 3: state = %q; a read-only sync must not change it", cb.State)
 	}
 
-	// then one daemon Tick leaves it pending: this planner has no channel
+	// then one daemon Tick leaves it pending: this mastermind has no channel
 	// and no deliverer, so the entry waits for `relevo wait` (route=pull).
 	clientDaemon := relevo.NewDaemon(rt, time.Second)
 	if err := clientDaemon.Tick(ctx); err != nil {
@@ -731,7 +731,7 @@ func TestRemoteRoundTicksWithoutEscapeWarning(t *testing.T) {
 	}
 }
 
-// pendingReports counts a binding's unconfirmed planner-bound report entries
+// pendingReports counts a binding's unconfirmed mastermind-bound report entries
 // -- the mailbox no route has taken yet (#303 §5.4) -- and returns the newest
 // one's payload. The pane prompt these tests used to assert on is gone: a
 // report now waits as a pending entry for the channel, a deliverer or
@@ -745,7 +745,7 @@ func pendingReports(t *testing.T, rt relevo.Runtime, name string) (int, string) 
 	n := 0
 	payload := ""
 	for _, e := range entries {
-		if e.Direction == store.DirToPlanner && e.Kind == store.KindReport && !e.Confirmed {
+		if e.Direction == store.DirToMasterMind && e.Kind == store.KindReport && !e.Confirmed {
 			n++
 			payload = e.Payload
 		}

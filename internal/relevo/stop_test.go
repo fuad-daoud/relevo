@@ -179,7 +179,7 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 			t.Errorf("Builder.PID = %d, want 0 after the process was stopped", got.Builder.PID)
 		}
 
-		pending, found, err := rt.Store.PendingForPlanner("webshop")
+		pending, found, err := rt.Store.PendingForMasterMind("webshop")
 		if err != nil || !found {
 			t.Fatalf("report must be queued: found=%v err=%v", found, err)
 		}
@@ -204,7 +204,7 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 			t.Fatalf("Stop: %v", err)
 		}
 
-		pending, found, err := rt.Store.PendingForPlanner("webshop")
+		pending, found, err := rt.Store.PendingForMasterMind("webshop")
 		if err != nil || !found {
 			t.Fatalf("report must be queued: found=%v err=%v", found, err)
 		}
@@ -599,7 +599,7 @@ func TestStopRemoteKillsAndCollects(t *testing.T) {
 		t.Errorf("state = %s, want active: a stopped close must not halt", got.State)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("api")
+	pending, found, err := rt.Store.PendingForMasterMind("api")
 	if err != nil || !found {
 		t.Fatalf("report must be pending: found=%v err=%v", found, err)
 	}

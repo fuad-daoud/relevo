@@ -8,7 +8,7 @@ import (
 )
 
 // TestLoadLegacyStates pins the states this version deleted still loading:
-// "held" (a payload in flight) and "orphaned" (the planner's session gone)
+// "held" (a payload in flight) and "orphaned" (the mastermind's session gone)
 // read back as active, while a state the version does know is not rewritten.
 func TestLoadLegacyStates(t *testing.T) {
 	s := New(t.TempDir())

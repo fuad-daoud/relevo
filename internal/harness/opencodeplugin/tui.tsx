@@ -5,7 +5,7 @@ import { useTerminalDimensions } from "@opentui/solid";
 
 // Module state: persists across setup calls within the same process
 let started = false;
-const plannerBySession = new Map<string, { id: string; name: string } | "pending" | "error">();
+const mastermindBySession = new Map<string, { id: string; name: string } | "pending" | "error">();
 let currentDoc: any = null;
 let currentDocAt = 0;
 const prevRows = new Map<string, any>();
@@ -89,11 +89,11 @@ function updateStore(channel?: string, sig?: string) {
 // Subprocess execution: 10s timeout, Bun.spawn with node execFile fallback
 async function spawnRelevo(
   argv: string[],
-  envPlannerID?: string,
+  envMasterMindID?: string,
 ): Promise<{ ok: boolean; code: number; stdout: string; stderr: string; enoent?: boolean }> {
   const env: Record<string, string> = { ...(process.env as Record<string, string>) };
-  if (envPlannerID) {
-    env.RELEVO_PLANNER = envPlannerID;
+  if (envMasterMindID) {
+    env.RELEVO_MASTERMIND = envMasterMindID;
   }
   if (typeof Bun !== "undefined") {
     try {
@@ -132,37 +132,37 @@ async function spawnRelevo(
   }
 }
 
-function ensurePlanner(api: any, sessionID: string) {
+function ensureMasterMind(api: any, sessionID: string) {
   if (!sessionID) return;
   const info = api.data?.session?.get?.(sessionID);
   if (info?.parentId || info?.parentID || info?.parent_id) return;
-  if (plannerBySession.has(sessionID)) return;
+  if (mastermindBySession.has(sessionID)) return;
 
-  plannerBySession.set(sessionID, "pending");
-  spawnRelevo(["planner", "init", "--kind", "opencode", "--session", sessionID])
+  mastermindBySession.set(sessionID, "pending");
+  spawnRelevo(["mastermind", "init", "--kind", "opencode", "--session", sessionID])
     .then((res) => {
       if (res.enoent) notFound = true;
       if (!res.ok) {
-        plannerBySession.set(sessionID, "error");
+        mastermindBySession.set(sessionID, "error");
         updateStore();
         void pollStatus(api);
         return;
       }
-      const matchID = res.stdout.match(/export RELEVO_PLANNER=([a-z0-9_]+)/);
-      const matchName = res.stdout.match(/planner\s+([^\s(]+)\s+\((pl_[a-z0-9]+)\)/);
+      const matchID = res.stdout.match(/export RELEVO_MASTERMIND=([a-z0-9_]+)/);
+      const matchName = res.stdout.match(/MasterMind\s+([^\s(]+)\s+\(((?:mm|pl)_[a-z0-9]+)\)/);
       if (matchID) {
         const id = matchID[1];
         const name = matchName ? matchName[1] : id;
-        plannerBySession.set(sessionID, { id, name });
+        mastermindBySession.set(sessionID, { id, name });
       } else {
-        plannerBySession.set(sessionID, "error");
+        mastermindBySession.set(sessionID, "error");
       }
       updateStore();
       void pollStatus(api);
     })
     .catch((err) => {
       if (err?.code === "ENOENT") notFound = true;
-      plannerBySession.set(sessionID, "error");
+      mastermindBySession.set(sessionID, "error");
       updateStore();
       void pollStatus(api);
     });
@@ -177,16 +177,16 @@ async function pollStatus(api: any) {
   const isSlotRecent = Date.now() - Math.max(lastSlotRenderAt, currentDocAt) < 10000;
   const isRelevoRoute = currentRoute === "relevo" || currentRoute === "relevo.binding";
   if (!isSlotRecent && !isRelevoRoute) return;
-  // Before registration resolves there is no planner id to poll with; the
+  // Before registration resolves there is no mastermind id to poll with; the
   // resolution handler polls as soon as it knows.
-  if (plannerBySession.get(currentSessionID) === "pending" && !isRelevoRoute) return;
+  if (mastermindBySession.get(currentSessionID) === "pending" && !isRelevoRoute) return;
 
   inFlight = true;
-  const plannerEntry = plannerBySession.get(currentSessionID);
-  const plannerID = plannerEntry && typeof plannerEntry === "object" ? plannerEntry.id : undefined;
+  const mastermindEntry = mastermindBySession.get(currentSessionID);
+  const mastermindID = mastermindEntry && typeof mastermindEntry === "object" ? mastermindEntry.id : undefined;
 
   try {
-    const res = await spawnRelevo(["status", "--line", "--json"], plannerID);
+    const res = await spawnRelevo(["status", "--line", "--json"], mastermindID);
     if (res.enoent) notFound = true;
     if (res.ok) {
       try {
@@ -406,11 +406,11 @@ async function fetchShow(name: string, round?: number, tab = "report", force = f
   }
   inflightFetches.add(fetcher);
   try {
-    const plannerEntry = plannerBySession.get(currentSessionID);
-    const plannerID = plannerEntry && typeof plannerEntry === "object" ? plannerEntry.id : undefined;
+    const mastermindEntry = mastermindBySession.get(currentSessionID);
+    const mastermindID = mastermindEntry && typeof mastermindEntry === "object" ? mastermindEntry.id : undefined;
     const argv = ["show", name, "--json", `--${tab}`];
     if (r > 0) argv.push("--round", String(r));
-    const res = await spawnRelevo(argv, plannerID);
+    const res = await spawnRelevo(argv, mastermindID);
     if (res.ok) {
       try {
         const data = JSON.parse(res.stdout);
@@ -436,8 +436,8 @@ async function fetchShow(name: string, round?: number, tab = "report", force = f
   }
 }
 
-async function fetchHistory(name?: string, plannerSes?: string): Promise<any[]> {
-  const key = name ? `b:${name}` : `p:${plannerSes}`;
+async function fetchHistory(name?: string, mastermindSes?: string): Promise<any[]> {
+  const key = name ? `b:${name}` : `p:${mastermindSes}`;
   const fetcher = `history:${key}`;
   const cached = historyCache.get(key);
   if (cached) return cached;
@@ -447,8 +447,8 @@ async function fetchHistory(name?: string, plannerSes?: string): Promise<any[]> 
     const argv = ["history", "--json"];
     if (name) {
       argv.push("--binding", name, "--limit", "20");
-    } else if (plannerSes) {
-      argv.push("--planner", plannerSes, "--limit", "8");
+    } else if (mastermindSes) {
+      argv.push("--mastermind", mastermindSes, "--limit", "8");
     }
     const res = await spawnRelevo(argv);
     if (res.ok) {
@@ -556,7 +556,7 @@ export default {
             title,
             placeholder,
             options: [
-              { title: "Tell the planner…", value: "tell" },
+              { title: "Tell the MasterMind…", value: "tell" },
               { title: "Send plan file…", value: "send" },
               { title: "Stop the round", value: "stop" },
               { title: "Mark done", value: "done" },
@@ -572,7 +572,7 @@ export default {
         if (choice === "tell") {
           // Never triggered by the smoke run.
           const text = await api.ui.dialog.prompt({
-            title: `Tell the planner · ${name}`,
+            title: `Tell the MasterMind · ${name}`,
             placeholder: "message",
           });
           if (text) {
@@ -583,7 +583,7 @@ export default {
             api.ui.toast.show({
               variant: "info",
               title: "relevo",
-              message: "sent to the planner",
+              message: "sent to the MasterMind",
               duration: 4000,
             });
           }
@@ -646,7 +646,7 @@ export default {
         lastSlotRenderAt = Date.now();
         if (props?.sessionID) {
           currentSessionID = String(props.sessionID);
-          ensurePlanner(api, currentSessionID);
+          ensureMasterMind(api, currentSessionID);
         }
 
         const warningColor = paint(api, "text.feedback.warning.base");
@@ -655,8 +655,8 @@ export default {
         const infoColor = paint(api, "text.feedback.info.base") || mutedColor;
         const baseColor = paint(api, "text.base");
 
-        const plannerEntry = plannerBySession.get(currentSessionID);
-        let plannerHeader = "";
+        const mastermindEntry = mastermindBySession.get(currentSessionID);
+        let mastermindHeader = "";
         let isError = false;
 
         if (notFound) {
@@ -667,17 +667,17 @@ export default {
           );
         }
 
-        if (plannerEntry === "pending") {
-          plannerHeader = "relevo · registering…";
-        } else if (plannerEntry === "error" || (currentDoc && currentDoc.planner === null)) {
-          plannerHeader = "relevo: not a planner (see relevo doctor)";
+        if (mastermindEntry === "pending") {
+          mastermindHeader = "relevo · registering…";
+        } else if (mastermindEntry === "error" || (currentDoc && currentDoc.mastermind === null)) {
+          mastermindHeader = "relevo: not a MasterMind (see relevo doctor)";
           isError = true;
-        } else if (plannerEntry && typeof plannerEntry === "object") {
-          plannerHeader = `relevo · ${plannerEntry.name}`;
-        } else if (currentDoc?.planner?.name) {
-          plannerHeader = `relevo · ${currentDoc.planner.name}`;
+        } else if (mastermindEntry && typeof mastermindEntry === "object") {
+          mastermindHeader = `relevo · ${mastermindEntry.name}`;
+        } else if (currentDoc?.mastermind?.name) {
+          mastermindHeader = `relevo · ${currentDoc.mastermind.name}`;
         } else {
-          plannerHeader = "relevo · registering…";
+          mastermindHeader = "relevo · registering…";
         }
 
         const rows: any[] = currentDoc?.rows || [];
@@ -687,14 +687,14 @@ export default {
         return (
           <box flexDirection="column">
             {isError ? (
-              <text fg={mutedColor}>{ellipsize(plannerHeader, 37)}</text>
+              <text fg={mutedColor}>{ellipsize(mastermindHeader, 37)}</text>
             ) : (
               <box flexDirection="row">
                 <text>
                   <b>relevo</b>
                 </text>
                 <text fg={mutedColor}>
-                  {plannerHeader.startsWith("relevo") ? ellipsize(plannerHeader.slice(6), 30) : ""}
+                  {mastermindHeader.startsWith("relevo") ? ellipsize(mastermindHeader.slice(6), 30) : ""}
                 </text>
               </box>
             )}
@@ -865,8 +865,8 @@ export default {
         const interactiveColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || warningColor;
 
         const rows: any[] = currentDoc?.rows || [];
-        const plannerEntry = plannerBySession.get(currentSessionID);
-        const plannerName = (plannerEntry && typeof plannerEntry === "object" ? plannerEntry.name : null) || currentDoc?.planner?.name || "";
+        const mastermindEntry = mastermindBySession.get(currentSessionID);
+        const mastermindName = (mastermindEntry && typeof mastermindEntry === "object" ? mastermindEntry.name : null) || currentDoc?.mastermind?.name || "";
         const needYouCount = rows.filter((r) => r.needs_you).length;
         const totalCount = rows.length;
 
@@ -936,15 +936,15 @@ export default {
               </text>
               <text fg={needYouCount > 0 ? warningColor : mutedColor}>
                 <b>
-                  {plannerName
-                    ? `● ${needYouCount} need you · planner ${plannerName}`
+                  {mastermindName
+                    ? `● ${needYouCount} need you · mastermind ${mastermindName}`
                     : `● ${needYouCount} need you`}
                 </b>
               </text>
             </box>
 
             <text fg={mutedColor}>
-              {`${totalCount} bindings · ${needYouCount} need you · this planner only`}
+              {`${totalCount} bindings · ${needYouCount} need you · this mastermind only`}
             </text>
 
             <box marginTop={1}>

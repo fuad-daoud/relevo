@@ -83,6 +83,7 @@ func knownKind(k Kind) bool {
 // knownSource reports whether s is a source this binary reads from the ledger
 // file.
 func knownSource(s string) bool {
+	// why: "planner" is ClearedByMasterMind's value, state already written.
 	return s == "relevo" || s == "planner"
 }
 
@@ -235,7 +236,7 @@ type Gate struct {
 	Until   time.Time // zero = until cleared
 	Note    string
 	Source  string
-	Binding string // Entry.Binding; "" for planner entries
+	Binding string // Entry.Binding; "" for mastermind entries
 	// Role scopes this gate to one role: non-empty means it applies
 	// only to that role, "" means every role -- which covers every gate read
 	// from the ledger file and every gate Gated produces. Only

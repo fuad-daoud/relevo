@@ -25,9 +25,9 @@ func TestSettleServedConfirmsUpToRound(t *testing.T) {
 	}
 
 	for _, e := range []store.LogEntry{
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r1"},
-		{Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r2"},
-		{Round: 3, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r3"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r1"},
+		{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r2"},
+		{Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r3"},
 		{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Payload: "plan"},
 	} {
 		if err := st.AppendLog(name, e); err != nil {
@@ -112,7 +112,7 @@ func TestAckRoundSettlesPending(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("api")
+	pending, found, err := rt.Store.PendingForMasterMind("api")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestAckRoundSettlesPending(t *testing.T) {
 		t.Fatalf("ack status = %d, want 200; body: %s", resp.StatusCode, string(body))
 	}
 
-	pending, found, err = rt.Store.PendingForPlanner("api")
+	pending, found, err = rt.Store.PendingForMasterMind("api")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,16 +152,16 @@ func TestDoneSettlesClosedRounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range []store.LogEntry{
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r1"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r1"},
 		{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r2"},
+		{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r2"},
 	} {
 		if err := rt.Store.AppendLog("api", e); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if _, found, err := rt.Store.PendingForPlanner("api"); err != nil {
+	if _, found, err := rt.Store.PendingForMasterMind("api"); err != nil {
 		t.Fatal(err)
 	} else if !found {
 		t.Fatal("expected a pending report before done")
@@ -172,7 +172,7 @@ func TestDoneSettlesClosedRounds(t *testing.T) {
 		t.Fatalf("done status = %d, want 200; body: %s", resp.StatusCode, string(body))
 	}
 
-	if e, found, err := rt.Store.PendingForPlanner("api"); err != nil {
+	if e, found, err := rt.Store.PendingForMasterMind("api"); err != nil {
 		t.Fatal(err)
 	} else if found {
 		t.Fatalf("pending report round %d remains after done", e.Round)
@@ -221,12 +221,12 @@ func TestSettleAllServedBackfills(t *testing.T) {
 			t.Fatalf("save binding for owner %d: %v", i, err)
 		}
 		if err := rt.Store.AppendLog("api", store.LogEntry{
-			Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r1",
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r1",
 		}); err != nil {
 			t.Fatalf("append log for owner %d: %v", i, err)
 		}
 
-		if _, found, err := rt.Store.PendingForPlanner("api"); err != nil {
+		if _, found, err := rt.Store.PendingForMasterMind("api"); err != nil {
 			t.Fatal(err)
 		} else if !found {
 			t.Fatalf("owner %d: expected a pending report before settleAllServed", i)
@@ -239,7 +239,7 @@ func TestSettleAllServedBackfills(t *testing.T) {
 	}
 
 	for i, st := range stores {
-		if e, found, err := st.PendingForPlanner("api"); err != nil {
+		if e, found, err := st.PendingForMasterMind("api"); err != nil {
 			t.Fatal(err)
 		} else if found {
 			t.Fatalf("owner %d: pending report round %d remains after settleAllServed", i, e.Round)

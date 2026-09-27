@@ -72,7 +72,7 @@ func TestPrefsOldDocumentStillLoads(t *testing.T) {
 }
 
 func TestApplyPrefs(t *testing.T) {
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{}}, Options{})
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{}}, Options{})
 	m = m.applyPrefs(prefs{Sort: "name"})
 	fv, ok := m.stack[0].(fleetView)
 	if !ok {
@@ -98,7 +98,7 @@ func TestPrefsDashboardRoundTrip(t *testing.T) {
 		t.Errorf("round trip: %+v, want %+v", got, want)
 	}
 
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{}}, Options{})
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{}}, Options{})
 	m = m.applyPrefs(want)
 	if m.prefs.Dashboard != "harness:agy since:30d" {
 		t.Errorf("applyPrefs: dashboard = %q", m.prefs.Dashboard)

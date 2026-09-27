@@ -16,7 +16,7 @@ const (
 	StateActive   State = "active"    // someone is working
 	StateNeedsYou State = "needs_you" // stalled on a human decision
 	StateBroken   State = "broken"    // the builder process is gone
-	StateDone     State = "done"      // planner declared the work verified
+	StateDone     State = "done"      // mastermind declared the work verified
 	// StatePaused is the state between ACTIVE and DONE: worktree released,
 	// branch and log kept, restored by `relevo bind --resume`.
 	StatePaused State = "paused"

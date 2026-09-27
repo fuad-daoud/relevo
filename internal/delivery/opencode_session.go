@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -21,7 +21,7 @@ type OpencodeSessionFinder struct {
 // Find queries OpenCode's SQLite database for session records and returns the matching session id.
 func (f OpencodeSessionFinder) Find(cwd string, now time.Time) (string, error) {
 	if f.Exec == nil {
-		return "", fmt.Errorf("%w: nil exec", planner.ErrNoOpencodeSession)
+		return "", fmt.Errorf("%w: nil exec", mastermind.ErrNoOpencodeSession)
 	}
 	timeout := f.Timeout
 	if timeout <= 0 {
@@ -32,10 +32,10 @@ func (f OpencodeSessionFinder) Find(cwd string, now time.Time) (string, error) {
 
 	sessions, err := f.sessions(ctx)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s", planner.ErrNoOpencodeSession, err.Error())
+		return "", fmt.Errorf("%w: %s", mastermind.ErrNoOpencodeSession, err.Error())
 	}
 
-	return planner.MatchOpencodeSession(cwd, sessions, now)
+	return mastermind.MatchOpencodeSession(cwd, sessions, now)
 }
 
 // sessions reads OpenCode's session records: OpenCode 2.0.14 keeps its
@@ -43,13 +43,13 @@ func (f OpencodeSessionFinder) Find(cwd string, now time.Time) (string, error) {
 // union keeps a legacy row only when session_v2 has no row with the same id, so
 // an id never appears twice. A database with only one of the two tables, or one
 // without session_message, still works.
-func (f OpencodeSessionFinder) sessions(ctx context.Context) ([]planner.OpencodeSession, error) {
+func (f OpencodeSessionFinder) sessions(ctx context.Context) ([]mastermind.OpencodeSession, error) {
 	tables, err := f.tableSet(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	var sessions []planner.OpencodeSession
+	var sessions []mastermind.OpencodeSession
 	if tables["session_v2"] {
 		rows, err := f.readSessions(ctx, opencodeV2SessionQuery(tables["session_message"]))
 		if err != nil {
@@ -96,7 +96,7 @@ func (f OpencodeSessionFinder) tableSet(ctx context.Context) (map[string]bool, e
 }
 
 // readSessions runs one session query and decodes its json rows.
-func (f OpencodeSessionFinder) readSessions(ctx context.Context, query string) ([]planner.OpencodeSession, error) {
+func (f OpencodeSessionFinder) readSessions(ctx context.Context, query string) ([]mastermind.OpencodeSession, error) {
 	out, err := f.Exec.Run(ctx, "sqlite3", "-readonly", "-json", f.DBPath, query)
 	if err != nil {
 		return nil, err
@@ -119,13 +119,13 @@ func (f OpencodeSessionFinder) readSessions(ctx context.Context, query string) (
 		return nil, err
 	}
 
-	sessions := make([]planner.OpencodeSession, 0, len(rows))
+	sessions := make([]mastermind.OpencodeSession, 0, len(rows))
 	for _, r := range rows {
 		var parentID string
 		if r.ParentID != nil {
 			parentID = *r.ParentID
 		}
-		sessions = append(sessions, planner.OpencodeSession{
+		sessions = append(sessions, mastermind.OpencodeSession{
 			ID:        r.ID,
 			Directory: r.Directory,
 			ParentID:  parentID,

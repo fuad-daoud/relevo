@@ -49,7 +49,7 @@ func hasTabMsg(batch []tea.Cmd) bool {
 func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = true
 
@@ -69,7 +69,7 @@ func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = false
 
@@ -99,7 +99,7 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 	rv.pane.detail.active = tabTerminal
 	rv.pane.tabInFlight = true
 
-	next, cmd := rv.Update(tickMsg(time.Now()), testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+	next, cmd := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	_ = next
 	if cmd != nil {
 		if hasTabMsg(extractBatch(cmd)) {
@@ -111,7 +111,7 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 func TestStatusMsgErrorPreservesReport(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	initialReport := view.Report{
 		Bindings: []view.BindingStatus{
@@ -139,7 +139,7 @@ func TestStatusMsgErrorPreservesReport(t *testing.T) {
 func TestStatusMsgSuccessClearsError(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	m.err = errors.New("transient error")
 	m.statusInFlight = true
@@ -196,7 +196,7 @@ func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 func TestWindowSizeMsgSetsReady(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	m.ready = false
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
@@ -313,7 +313,7 @@ func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 	rv.pane.detail.lastLogTS = ts
 	rv.pane.tabInFlight = true
 
-	next, cmd := rv.Update(statusMsg{report: rep}, testEnv(plannerSource{rt}, rep, 140, 40))
+	next, cmd := rv.Update(statusMsg{report: rep}, testEnv(mastermindSource{rt}, rep, 140, 40))
 	got := next.(roundView)
 	if cmd != nil {
 		t.Error("maybeInvalidate must issue no fetch while tabInFlight is set")
@@ -335,13 +335,13 @@ func TestRoundPaneIssuesOneFetchAtATime(t *testing.T) {
 	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.tabInFlight = false
 
-	_, cmd1 := rv.Update(tickMsg(time.Now()), testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+	_, cmd1 := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	if cmd1 == nil {
 		t.Fatal("first tick must return non-nil cmd")
 	}
 	// The tick set tabInFlight; a second tick must issue nothing.
 	rv.pane.tabInFlight = true
-	_, cmd2 := rv.Update(tickMsg(time.Now()), testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+	_, cmd2 := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	if cmd2 != nil {
 		t.Fatal("second tick while tabInFlight is set must return nil cmd")
 	}
@@ -350,7 +350,7 @@ func TestRoundPaneIssuesOneFetchAtATime(t *testing.T) {
 func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	if !m.statusInFlight {
 		t.Fatal("newModel must initialize statusInFlight = true to guard the Init fetch")
@@ -369,7 +369,7 @@ func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 func TestLoadingThenEmptyFleet(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = res.(Model)
 
@@ -450,11 +450,11 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 		t.Fatalf("after \"]\" three times: round = %d, want 3 (the open round)", rv.pane.detail.round)
 	}
 
-	reportMsg := fetchReport(context.Background(), plannerSource{rt}, name, rv.pane.detail.round)().(tabMsg)
+	reportMsg := fetchReport(context.Background(), mastermindSource{rt}, name, rv.pane.detail.round)().(tabMsg)
 	if want := "round 3 is open; report arrives when it closes"; reportMsg.content.empty != want {
 		t.Errorf("report empty = %q, want %q", reportMsg.content.empty, want)
 	}
-	diffMsg := fetchDiff(context.Background(), plannerSource{rt}, name, rv.pane.detail.round)().(tabMsg)
+	diffMsg := fetchDiff(context.Background(), mastermindSource{rt}, name, rv.pane.detail.round)().(tabMsg)
 	if want := "diff is captured when round 3 closes"; diffMsg.content.empty != want {
 		t.Errorf("diff empty = %q, want %q", diffMsg.content.empty, want)
 	}

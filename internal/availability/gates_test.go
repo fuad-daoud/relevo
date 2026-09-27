@@ -111,7 +111,7 @@ func TestUnavailableRecordsTheProvider(t *testing.T) {
 		t.Errorf("Note = %q, want %q", e.Note, "5h window")
 	}
 	if e.Source != "planner" {
-		t.Errorf("Source = %q, want planner", e.Source)
+		t.Errorf("Source = %q, want mastermind", e.Source)
 	}
 	if e.Binding != "" {
 		t.Errorf("Binding = %q, want empty", e.Binding)
@@ -167,7 +167,7 @@ func TestAvailableByTokenAndByProvider(t *testing.T) {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
-	provider, removed, err := Available(d, "test", ClearedByPlanner)
+	provider, removed, err := Available(d, "test", ClearedByMasterMind)
 	if err != nil {
 		t.Fatalf("Available: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestAvailableByTokenAndByProvider(t *testing.T) {
 		t.Errorf("got %d ledger entries, want 0", len(l.Entries))
 	}
 
-	provider, removed, err = Available(d, testClaudeRef, ClearedByPlanner)
+	provider, removed, err = Available(d, testClaudeRef, ClearedByMasterMind)
 	if err != nil {
 		t.Fatalf("Available: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestAvailableLeavesSpawnFailures(t *testing.T) {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
-	_, removed, err := Available(d, "test", ClearedByPlanner)
+	_, removed, err := Available(d, "test", ClearedByMasterMind)
 	if err != nil {
 		t.Fatalf("Available: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestAvailableRecordsClear(t *testing.T) {
 
 	d.Now = func() time.Time { return baseTime.Add(5 * time.Hour) }
 
-	provider, removed, err := Available(d, "test", ClearedByPlanner)
+	provider, removed, err := Available(d, "test", ClearedByMasterMind)
 	if err != nil {
 		t.Fatalf("Available: %v", err)
 	}
@@ -601,8 +601,8 @@ func TestAvailableRecordsClear(t *testing.T) {
 	if ev.Provider != "test" {
 		t.Errorf("provider = %q, want test", ev.Provider)
 	}
-	if ev.Source != ClearedByPlanner {
-		t.Errorf("source = %q, want %q", ev.Source, ClearedByPlanner)
+	if ev.Source != ClearedByMasterMind {
+		t.Errorf("source = %q, want %q", ev.Source, ClearedByMasterMind)
 	}
 	if !ev.Since.Equal(baseTime) {
 		t.Errorf("Since = %v, want %v", ev.Since, baseTime)
@@ -619,7 +619,7 @@ func TestAvailableNothingClearedRecordsNothing(t *testing.T) {
 
 	d := testDeps(t)
 
-	provider, removed, err := Available(d, "test", ClearedByPlanner)
+	provider, removed, err := Available(d, "test", ClearedByMasterMind)
 	if err != nil {
 		t.Fatalf("Available: %v", err)
 	}
@@ -650,7 +650,7 @@ func TestAvailableRefusesUnknownWritesNothing(t *testing.T) {
 	beforeLedger := kvRowBytes(t, d, "ledger")
 	beforeHistory := kvRowBytes(t, d, "availability")
 
-	if _, _, err := Available(d, "tset", ClearedByPlanner); !errors.Is(err, ErrUnknownProvider) {
+	if _, _, err := Available(d, "tset", ClearedByMasterMind); !errors.Is(err, ErrUnknownProvider) {
 		t.Fatalf("Available(tset) err = %v, want ErrUnknownProvider", err)
 	}
 

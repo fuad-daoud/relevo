@@ -34,7 +34,7 @@ func storedFormat(n int) int {
 	return n
 }
 
-// ErrNewerFormat reports a binding or planner record written by a relevo that
+// ErrNewerFormat reports a binding or mastermind record written by a relevo that
 // knows a newer format; writing it back would erase fields this relevo does
 // not understand, so callers refuse instead.
 type ErrNewerFormat struct {
@@ -47,7 +47,7 @@ type ErrNewerFormat struct {
 var ErrNewerFormatSentinel = errors.New("relevo: newer format")
 
 func (e *ErrNewerFormat) Error() string {
-	return fmt.Sprintf("%s %q was written by a newer relevo (format %d; this relevo knows %d): upgrade relevo; a planner session reconnects relevo mcp with /mcp",
+	return fmt.Sprintf("%s %q was written by a newer relevo (format %d; this relevo knows %d): upgrade relevo; a mastermind session reconnects relevo mcp with /mcp",
 		e.Kind, e.Name, e.Have, e.Know)
 }
 

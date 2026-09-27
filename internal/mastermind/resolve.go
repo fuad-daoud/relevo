@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ErrUnregisteredSession reports a detected session that has no planner
+// ErrUnregisteredSession reports a detected session that has no mastermind
 // record in the registry.
 type ErrUnregisteredSession struct {
 	Kind      string
@@ -14,11 +14,11 @@ type ErrUnregisteredSession struct {
 }
 
 func (e ErrUnregisteredSession) Error() string {
-	return fmt.Sprintf("no relevo planner for %s session %s", e.Kind, e.SessionID)
+	return fmt.Sprintf("no relevo mastermind for %s session %s", e.Kind, e.SessionID)
 }
 
 func (e ErrUnregisteredSession) Is(target error) bool {
-	return target == ErrNoPlanner
+	return target == ErrNoMasterMind
 }
 
 // Resolution says which step of Resolve's order produced a record.
@@ -34,7 +34,7 @@ const (
 // ResolveInput is everything Resolve may look at. Nothing is read from the
 // process itself.
 type ResolveInput struct {
-	// Flag is --planner's value, empty when it was not given.
+	// Flag is --mastermind's value, empty when it was not given.
 	Flag string
 	// Env is os.Getenv in production. Nil reads as "no environment".
 	Env func(string) string
@@ -52,9 +52,9 @@ type ResolveInput struct {
 	OpencodeSession func(cwd string, now time.Time) (string, error)
 }
 
-// Resolve is how every verb except `init` gets its planner: flag > env > host
+// Resolve is how every verb except `init` gets its mastermind: flag > env > host
 // > session, first hit wins. It never creates a record; a missing hook is
-// loud (ErrNoPlanner) rather than a silently unnamed planner.
+// loud (ErrNoMasterMind) rather than a silently unnamed mastermind.
 func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 	env := in.Env
 	if env == nil {
@@ -69,12 +69,10 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 		return hit(reg, rec, ResolutionFlag, in.Now)
 	}
 
-	if v := env("RELEVO_PLANNER"); v != "" {
-		rec, err := lookupRef(reg, v)
-		if err != nil {
-			return Record{}, "", err
-		}
-		return hit(reg, rec, ResolutionEnv, in.Now)
+	if rec, res, ok, err := resolveFromEnv(reg, env, in.Now); err != nil {
+		return Record{}, "", err
+	} else if ok {
+		return rec, res, nil
 	}
 
 	ident, detected := Detect(env, in.PPID)
@@ -123,7 +121,30 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 		}
 	}
 
-	return Record{}, "", ErrNoPlanner
+	return Record{}, "", ErrNoMasterMind
+}
+
+// resolveFromEnv is Resolve's env step: $RELEVO_MASTERMIND first, then the
+// historical $RELEVO_PLANNER, because the export line already in a live
+// session's $CLAUDE_ENV_FILE is state already written (D5). ok is false when
+// neither variable names anything, in which case the caller keeps looking.
+func resolveFromEnv(reg Registry, env func(string) string, now time.Time) (Record, Resolution, bool, error) {
+	for _, name := range []string{"RELEVO_MASTERMIND", "RELEVO_PLANNER"} {
+		ref := env(name)
+		if ref == "" {
+			continue
+		}
+		rec, err := lookupRef(reg, ref)
+		if err != nil {
+			return Record{}, "", false, err
+		}
+		rec, res, err := hit(reg, rec, ResolutionEnv, now)
+		if err != nil {
+			return Record{}, "", false, err
+		}
+		return rec, res, true, nil
+	}
+	return Record{}, "", false, nil
 }
 
 // lookupRef resolves ref as an id when it has that shape, else as a name.
@@ -140,7 +161,7 @@ func lookupRef(reg Registry, ref string) (Record, error) {
 	if !errors.Is(err, ErrNotFound) {
 		return Record{}, err
 	}
-	return Record{}, ErrUnknownPlanner{Ref: ref}
+	return Record{}, ErrUnknownMasterMind{Ref: ref}
 }
 
 // hit refreshes seen_at and reports how the record was found; Touch's error

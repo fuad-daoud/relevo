@@ -30,7 +30,7 @@ func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "initial report"}
 	rv.pane.tabInFlight = false
 
-	next, cmd := rv.Update(statusMsg{report: rep}, testEnv(plannerSource{rt}, rep, 140, 40))
+	next, cmd := rv.Update(statusMsg{report: rep}, testEnv(mastermindSource{rt}, rep, 140, 40))
 	got := next.(roundView)
 
 	if cmd != nil {
@@ -67,7 +67,7 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 	newRep := view.Report{Bindings: []view.BindingStatus{
 		{Name: name, Round: 4, Display: "ACTIVE", Last: &view.LastEvent{TS: newTS, Round: 4}},
 	}}
-	next, cmd := rv.Update(statusMsg{report: newRep}, testEnv(plannerSource{rt}, newRep, 140, 40))
+	next, cmd := rv.Update(statusMsg{report: newRep}, testEnv(mastermindSource{rt}, newRep, 140, 40))
 	got := next.(roundView)
 
 	for _, tb := range []tab{tabReport, tabDiff, tabLog} {
@@ -98,7 +98,7 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 	rep2 := view.Report{Bindings: []view.BindingStatus{
 		{Name: name, Round: 4, PlanRound: 4, Display: "ACTIVE", Last: &view.LastEvent{TS: newTS.Add(10 * time.Second), Round: 4}},
 	}}
-	next2, _ := got.Update(statusMsg{report: rep2}, testEnv(plannerSource{rt}, rep2, 140, 40))
+	next2, _ := got.Update(statusMsg{report: rep2}, testEnv(mastermindSource{rt}, rep2, 140, 40))
 	got2 := next2.(roundView)
 	if got2.pane.detail.round != 4 {
 		t.Errorf("expected detail.round to update to 4, got %d", got2.pane.detail.round)
@@ -124,7 +124,7 @@ func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 	rv.pane.detail.vp.SetContent(strings.Repeat("line\n", 100))
 	rv.pane.detail.vp.YOffset = 33
 
-	next, _ := rv.Update(statusMsg{report: rep}, testEnv(plannerSource{rt}, rep, 140, 40))
+	next, _ := rv.Update(statusMsg{report: rep}, testEnv(mastermindSource{rt}, rep, 140, 40))
 	got := next.(roundView)
 
 	if got.pane.detail.vp.YOffset != 33 {
@@ -146,7 +146,7 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 	rv.pane.detail.vp = viewport.New(80, 20)
 	rv.pane.tabInFlight = false
 
-	next, cmd := rv.Update(tickMsg(time.Now()), testEnv(plannerSource{rt}, rep, 140, 40))
+	next, cmd := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rep, 140, 40))
 	rv = next.(roundView)
 	if cmd == nil {
 		t.Fatal("terminal tab must issue a fetch on every tick while visible")
@@ -159,7 +159,7 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 	rv.pane.detail.active = tabReport
 	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "report"}
 	rv.pane.tabInFlight = false
-	_, cmd2 := rv.Update(tickMsg(time.Now()), testEnv(plannerSource{rt}, rep, 140, 40))
+	_, cmd2 := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rep, 140, 40))
 	if cmd2 != nil {
 		if _, ok := cmd2().(tabMsg); ok {
 			t.Error("file-backed cached tab must NOT issue fetch on tick")

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
 
 // cliExec is usage.Exec over the real sqlite3 binary, so a test can query a
@@ -101,7 +101,7 @@ func TestOpencodeSessionFinder(t *testing.T) {
 			DBPath: "/dummy/opencode.db",
 		}
 		_, err := finder.Find("/path/to/project", now)
-		if !errors.Is(err, planner.ErrNoOpencodeSession) {
+		if !errors.Is(err, mastermind.ErrNoOpencodeSession) {
 			t.Errorf("Find on empty output: err = %v, want errors.Is ErrNoOpencodeSession", err)
 		}
 	})
@@ -112,7 +112,7 @@ func TestOpencodeSessionFinder(t *testing.T) {
 			DBPath: "/dummy/opencode.db",
 		}
 		_, err := finder.Find("/path/to/project", now)
-		if !errors.Is(err, planner.ErrNoOpencodeSession) {
+		if !errors.Is(err, mastermind.ErrNoOpencodeSession) {
 			t.Errorf("Find on exec error: err = %v, want errors.Is ErrNoOpencodeSession", err)
 		}
 	})
@@ -123,7 +123,7 @@ func TestOpencodeSessionFinder(t *testing.T) {
 			DBPath: "/dummy/opencode.db",
 		}
 		_, err := finder.Find("/path/to/project", now)
-		if !errors.Is(err, planner.ErrNoOpencodeSession) {
+		if !errors.Is(err, mastermind.ErrNoOpencodeSession) {
 			t.Errorf("Find on decode error: err = %v, want errors.Is ErrNoOpencodeSession", err)
 		}
 	})
@@ -137,7 +137,7 @@ const (
 )
 
 // v2Sessions returns the sessions a finder reads from db.
-func v2Sessions(t *testing.T, db string) []planner.OpencodeSession {
+func v2Sessions(t *testing.T, db string) []mastermind.OpencodeSession {
 	t.Helper()
 	sessions, err := OpencodeSessionFinder{Exec: cliExec{}, DBPath: db}.sessions(context.Background())
 	if err != nil {
@@ -212,12 +212,12 @@ func TestOpencodeSessionFinderV2(t *testing.T) {
 // checkV2UnionSessions asserts the union's two rows when both tables exist:
 // the legacy-only id survives and the v2 row's activity is its latest message
 // time.
-func checkV2UnionSessions(t *testing.T, sessions []planner.OpencodeSession, recent time.Time) {
+func checkV2UnionSessions(t *testing.T, sessions []mastermind.OpencodeSession, recent time.Time) {
 	t.Helper()
 	if len(sessions) != 2 {
 		t.Fatalf("sessions = %+v, want exactly 2 (the legacy id in session_v2 must not duplicate)", sessions)
 	}
-	byID := map[string]planner.OpencodeSession{}
+	byID := map[string]mastermind.OpencodeSession{}
 	for _, s := range sessions {
 		byID[s.ID] = s
 	}

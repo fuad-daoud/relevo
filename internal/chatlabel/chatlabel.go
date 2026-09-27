@@ -1,4 +1,4 @@
-// Package chatlabel turns a planner record's harness kind, session id and
+// Package chatlabel turns a mastermind record's harness kind, session id and
 // transcript locator into the harness's own human-facing name for that
 // session. Nothing here errors, writes relevo state, or is logged.
 package chatlabel

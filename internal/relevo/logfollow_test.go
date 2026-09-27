@@ -61,7 +61,7 @@ func TestFollowLogEmitsNewEntriesThenStopsOnDone(t *testing.T) {
 	// sees the third entry, and the closing entry must come out before the
 	// loop returns.
 	if err := rt.Store.AppendLog(name, store.LogEntry{
-		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
+		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog third: %v", err)
 	}

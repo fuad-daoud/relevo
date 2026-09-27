@@ -1,6 +1,6 @@
 # relevo
 
-relevo automates the plan/report handoff between two AI coding agents: a planner
+relevo automates the plan/report handoff between two AI coding agents: a mastermind
 hands work to a builder, and relevo moves the files between them. Builders are
 headless or remote processes; relevo no longer integrates with herdr.
 

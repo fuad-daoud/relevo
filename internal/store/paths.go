@@ -285,12 +285,13 @@ func (s *Store) DBPath() string { return filepath.Join(s.root, "relevo.db") }
 // rows; the claim import reads them from it and removes it.
 func (s *Store) ChannelsDir() string { return filepath.Join(s.root, "channels") }
 
-// PlannersDir is where planner records lived before they became kv rows.
-func (s *Store) PlannersDir() string { return filepath.Join(s.root, "planners") }
+// MasterMindsDir is where mastermind records lived before they became kv rows.
+// The path keeps the historical "planners" name: it is state already written.
+func (s *Store) MasterMindsDir() string { return filepath.Join(s.root, "planners") }
 
 // AgyCredsDir is where captured agy credentials lived before they became
 // secrets. Dot-prefixed so a directory scan never reads it as a record.
-func (s *Store) AgyCredsDir() string { return filepath.Join(s.PlannersDir(), ".agy") }
+func (s *Store) AgyCredsDir() string { return filepath.Join(s.MasterMindsDir(), ".agy") }
 
 // WorktreeDir is dot-prefixed, which is what keeps list() from walking into it
 // and trying to read a working tree as a binding.

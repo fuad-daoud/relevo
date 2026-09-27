@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 // Pins handoff.md against every shipped architect copy's "Handing off"
 // section, without touching those copies.
@@ -61,7 +61,7 @@ func TestHandoffRulesMatchShippedArchitectCopies(t *testing.T) {
 }
 
 // TestHookOutputCarriesHandoffRules pins that additionalContext starts with
-// the planner sentence and ends with the handoff rules.
+// the mastermind sentence and ends with the handoff rules.
 func TestHookOutputCarriesHandoffRules(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 

@@ -23,7 +23,7 @@ func TestIngestFixtureLive(t *testing.T) {
 	}
 
 	// The fixture's log carries no answer entry, so Artifacts is 0 and no
-	// planner transcript is located, so TranscriptRecords is 0.
+	// mastermind transcript is located, so TranscriptRecords is 0.
 	wantStats := Stats{Bindings: 1, Rounds: 3, Events: 9}
 	if stats != wantStats {
 		t.Errorf("Stats = %+v, want %+v", stats, wantStats)
@@ -33,7 +33,7 @@ func TestIngestFixtureLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Stats: %v", err)
 	}
-	wantRows := map[string]int{"repo": 1, "planner": 1, "binding": 1, "round": 3, "event": 9, "artifact": 0, "transcript": 0}
+	wantRows := map[string]int{"repo": 1, "mastermind": 1, "binding": 1, "round": 3, "event": 9, "artifact": 0, "transcript": 0}
 	for tbl, want := range wantRows {
 		if dbStats.Rows[tbl] != want {
 			t.Errorf("Rows[%s] = %d, want %d", tbl, dbStats.Rows[tbl], want)
@@ -53,8 +53,8 @@ func TestIngestFixtureLive(t *testing.T) {
 	if b.IngestSource != "live" {
 		t.Errorf("IngestSource = %q, want live", b.IngestSource)
 	}
-	if b.PlannerID == nil {
-		t.Error("PlannerID is nil, want a planner row")
+	if b.MasterMindID == nil {
+		t.Error("MasterMindID is nil, want a mastermind row")
 	}
 }
 
@@ -454,7 +454,7 @@ func TestIngestResolvesRepoWhenMissing(t *testing.T) {
 	}
 }
 
-func TestIngestPlannerTranscript(t *testing.T) {
+func TestIngestMasterMindTranscript(t *testing.T) {
 	d := openTestDB(t)
 
 	sessionPath := filepath.Join(t.TempDir(), "S1.jsonl")
@@ -474,10 +474,10 @@ func TestIngestPlannerTranscript(t *testing.T) {
 	}
 
 	b := mustBinding(t, d, "fixture")
-	if b.PlannerID == nil {
-		t.Fatal("PlannerID is nil")
+	if b.MasterMindID == nil {
+		t.Fatal("MasterMindID is nil")
 	}
-	recs, err := d.Transcript(db.OwnerPlanner, *b.PlannerID, 0, 0)
+	recs, err := d.Transcript(db.OwnerMasterMind, *b.MasterMindID, 0, 0)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestIngestPlannerTranscript(t *testing.T) {
 }
 
 // TestIngestResolvesGitAndSessionsOutsideTheTransaction pins that the git facts and
-// the planner-session lookup run before Ingest opens its write transaction, so
+// the mastermind-session lookup run before Ingest opens its write transaction, so
 // neither holds the db's write lock while it shells out to git or searches the disk.
 func TestIngestResolvesGitAndSessionsOutsideTheTransaction(t *testing.T) {
 	d := openTestDB(t)
@@ -571,16 +571,16 @@ func TestIngestWritesNoRoundFileMirror(t *testing.T) {
 	if dbStats.Rows["artifact"] != answers {
 		t.Errorf("artifact rows = %d, want %d (one per answer artifact)", dbStats.Rows["artifact"], answers)
 	}
-	plannerRows := 0
-	if b.PlannerID != nil {
-		recs, err := d.Transcript(db.OwnerPlanner, *b.PlannerID, 0, 0)
+	mastermindRows := 0
+	if b.MasterMindID != nil {
+		recs, err := d.Transcript(db.OwnerMasterMind, *b.MasterMindID, 0, 0)
 		if err != nil {
-			t.Fatalf("Transcript(planner): %v", err)
+			t.Fatalf("Transcript(mastermind): %v", err)
 		}
-		plannerRows = len(recs)
+		mastermindRows = len(recs)
 	}
-	if dbStats.Rows["transcript"] != plannerRows {
-		t.Errorf("transcript rows = %d, want %d (planner-owned only)", dbStats.Rows["transcript"], plannerRows)
+	if dbStats.Rows["transcript"] != mastermindRows {
+		t.Errorf("transcript rows = %d, want %d (mastermind-owned only)", dbStats.Rows["transcript"], mastermindRows)
 	}
 }
 
@@ -695,7 +695,7 @@ func writePickFixture(t *testing.T, b store.Binding, note string) string {
 	entry := store.LogEntry{
 		TS:        time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC),
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindPick,
 		Confirmed: true,
 		Note:      note,

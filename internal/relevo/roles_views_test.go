@@ -327,12 +327,12 @@ func statusRowForTest(t *testing.T, rt Runtime, b store.Binding) view.BindingSta
 // customBuilderBinding is an ACTIVE binding whose builder kind is claude.
 func customBuilderBinding(name string) store.Binding {
 	return store.Binding{
-		Name:    name,
-		CWD:     "/repo",
-		Planner: store.Endpoint{PaneID: "w2:p3"},
-		Builder: store.Endpoint{Kind: "claude", AgentName: name},
-		Round:   1,
-		State:   store.StateActive,
+		Name:       name,
+		CWD:        "/repo",
+		MasterMind: store.Endpoint{PaneID: "w2:p3"},
+		Builder:    store.Endpoint{Kind: "claude", AgentName: name},
+		Round:      1,
+		State:      store.StateActive,
 	}
 }
 

@@ -220,7 +220,7 @@ func TestAdmitStaleBuilderSwitches(t *testing.T) {
 	rt.Candidates = candidateSet(t, testTwoProviderJSON)
 	rt.Policy = orderOf("builder", "agy/other/m", testClaudeRef, testOpencodeRef)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "agy/other/m", PlannerID: testPlannerName, CWD: "/repo", Headless: true,
+		Name: "webshop", Candidate: "agy/other/m", MasterMindID: testMasterMindName, CWD: "/repo", Headless: true,
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}

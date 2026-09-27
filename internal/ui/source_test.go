@@ -25,13 +25,13 @@ func serverTestDB(t *testing.T) *db.DB {
 	return d
 }
 
-// TestPlannerSourceResolvesEveryKey: a planner source answers every key
+// TestMasterMindSourceResolvesEveryKey: a mastermind source answers every key
 // with the one runtime and the key itself -- there is no branch on a
-// planner.
-func TestPlannerSourceResolvesEveryKey(t *testing.T) {
+// mastermind.
+func TestMasterMindSourceResolvesEveryKey(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	src := plannerSource{rt: rt}
+	src := mastermindSource{rt: rt}
 
 	if _, err := src.Status(context.Background()); err != nil {
 		t.Fatalf("Status: %v", err)
@@ -39,7 +39,7 @@ func TestPlannerSourceResolvesEveryKey(t *testing.T) {
 	for _, key := range []string{"api", "SHA256:VLERFMZnvN5H…/api"} {
 		got, name, ok := src.Runtime(key)
 		if !ok {
-			t.Errorf("planner must resolve %q", key)
+			t.Errorf("mastermind must resolve %q", key)
 			continue
 		}
 		if name != key {
@@ -105,13 +105,13 @@ func TestServerSourceRuntimeRefusesBadKeys(t *testing.T) {
 	}
 }
 
-// TestPlannerSourceBaseIsRuntime pins the contract: on a planner Base is
-// the runtime itself, so scope all reads the planner's own database (§2).
-func TestPlannerSourceBaseIsRuntime(t *testing.T) {
+// TestMasterMindSourceBaseIsRuntime pins the contract: on a mastermind Base is
+// the runtime itself, so scope all reads the mastermind's own database (§2).
+func TestMasterMindSourceBaseIsRuntime(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 
-	if base := (plannerSource{rt: rt}).Base(); base.Store != rt.Store {
+	if base := (mastermindSource{rt: rt}).Base(); base.Store != rt.Store {
 		t.Fatalf("Base().Store != the runtime's store")
 	}
 }

@@ -83,7 +83,7 @@ func tenBindings(t *testing.T, height, count int) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
 	m = res.(Model)
@@ -189,7 +189,7 @@ func TestFleetRewindowsWhenBindingRemoved(t *testing.T) {
 func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 
 	initial := view.Report{Bindings: []view.BindingStatus{
@@ -222,7 +222,7 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 
 	res, _ := m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{
@@ -253,7 +253,7 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 func TestEmptyBindingsList(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = res.(Model)
@@ -278,7 +278,7 @@ func TestEmptyBindingsList(t *testing.T) {
 func TestQuitFromList(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
@@ -318,7 +318,7 @@ func TestFleetThreeStates(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = res.(Model)
@@ -369,7 +369,7 @@ func TestRenderErrorAndErrorBlock(t *testing.T) {
 
 	// 1. A three-line error renders as three lines, none wider than width.
 	threeLineErr := errors.New("error line one\nerror line two\nerror line three")
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
 	m = res.(Model)

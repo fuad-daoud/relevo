@@ -28,13 +28,13 @@ Act on the wait's output after every wait exit except WaitTimeout.
     report; nothing is owed.
 
 A report or a needs_you for a binding you did not personally send still
-belongs to you -- every binding on this planner is yours. Do not ignore a
+belongs to you -- every binding on this MasterMind is yours. Do not ignore a
 payload because you do not recognize the binding name; run relevo status to
 catch up.
 
 Three verbs are tools here, callable directly instead of through the shell:
 
-  - status(name?, all?): one binding, or every binding on this planner, or
+  - status(name?, all?): one binding, or every binding on this MasterMind, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
     runner a new round.

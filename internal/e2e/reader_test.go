@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -44,7 +44,7 @@ const fakeReaderFinal = "# Reader summary\n\n" +
 	"```\n"
 
 // fakeReaderSummary is fakeReaderFinal minus its relevo block: what summary.md
-// must hold after the close, so no stray block reaches the planner.
+// must hold after the close, so no stray block reaches the mastermind.
 const fakeReaderSummary = "# Reader summary\n\n" +
 	"index.html and style.css are in the artifact directory.\n"
 
@@ -85,21 +85,21 @@ func TestHeadlessE2EReaderRound(t *testing.T) {
 	beforeStatus := runGit(t, repo, "status", "--porcelain")
 	beforeReadme := readFile(t, filepath.Join(repo, "README.md"))
 
-	rec, _, err := planner.Init(reg, planner.InitInput{
-		Kind: "claude", SessionID: "e2e-reader-planner", CWD: repo, Now: rt.Now(),
+	rec, _, err := mastermind.Init(reg, mastermind.InitInput{
+		Kind: "claude", SessionID: "e2e-reader-mastermind", CWD: repo, Now: rt.Now(),
 	})
 	if err != nil {
-		t.Fatalf("register the planner: %v", err)
+		t.Fatalf("register the mastermind: %v", err)
 	}
 
 	// A writer binding owns the tree; a reviewer binding shares it.
 	if _, err := relevo.Bind(ctx, rt, relevo.BindOptions{
-		Name: writerBinding, CWD: repo, PlannerID: rec.ID,
+		Name: writerBinding, CWD: repo, MasterMindID: rec.ID,
 	}); err != nil {
 		t.Fatalf("bind the writer: %v", err)
 	}
 	if _, err := relevo.Bind(ctx, rt, relevo.BindOptions{
-		Name: readerBinding, Role: "reviewer", CWD: repo, PlannerID: rec.ID,
+		Name: readerBinding, Role: "reviewer", CWD: repo, MasterMindID: rec.ID,
 	}); err != nil {
 		t.Fatalf("bind the reviewer: %v", err)
 	}

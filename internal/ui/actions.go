@@ -16,7 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -33,7 +33,7 @@ type Actions interface {
 	Shell(key string) (*exec.Cmd, error) // a shell in the binding's tree
 
 	// Round 2: the acts that need a file (send, retry), a new binding
-	// (bind), or the human planner's pending report (pull, via the fleet
+	// (bind), or the human mastermind's pending report (pull, via the fleet
 	// row's report-ready state, §4.5).
 	Send(ctx context.Context, key, planFile string) Result
 	Bind(ctx context.Context, in BindInput) Result
@@ -82,10 +82,10 @@ type Result struct {
 	Refresh bool
 }
 
-// plannerActions is the real Actions: a thin adapter over internal/relevo.
+// mastermindActions is the real Actions: a thin adapter over internal/relevo.
 // repo is os.Getwd() at start, or "" when not inside a git repo (round 2's
-// bind refuses then); you is the human planner's id, from ensureYou.
-type plannerActions struct {
+// bind refuses then); you is the human mastermind's id, from ensureYou.
+type mastermindActions struct {
 	live  *liveRuntime
 	repo  string
 	you   string
@@ -94,21 +94,21 @@ type plannerActions struct {
 
 // runtime is the shared holder's current snapshot, so a write and a render
 // never disagree about the configured candidates, actors or policy.
-func (a *plannerActions) runtime() relevo.Runtime {
+func (a *mastermindActions) runtime() relevo.Runtime {
 	return a.live.Get()
 }
 
 // resolve maps a row key to the runtime that owns it and the bare binding
-// name inside that runtime's store. `relevo ui` is welded to one planner
+// name inside that runtime's store. `relevo ui` is welded to one mastermind
 // runtime, so every key resolves to it under its own name (§4.2).
-func (a *plannerActions) resolve(key string) (relevo.Runtime, string, bool) {
+func (a *mastermindActions) resolve(key string) (relevo.Runtime, string, bool) {
 	return a.runtime(), key, true
 }
 
 // Stop ends the binding's open round (§4.2). Nothing to stop is an answer,
 // not a failure: the text says so and Err stays nil, exactly as
 // `relevo stop` prints it (cmd/relevo/main.go cmdStop).
-func (a *plannerActions) Stop(ctx context.Context, key string) Result {
+func (a *mastermindActions) Stop(ctx context.Context, key string) Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
 		return Result{Err: errors.New("unknown binding")}
@@ -125,7 +125,7 @@ func (a *plannerActions) Stop(ctx context.Context, key string) Result {
 
 // Done marks the binding done. On ErrStopFailed the CLI prints the text and
 // still returns the error, so both come back (§4.2).
-func (a *plannerActions) Done(ctx context.Context, key string) Result {
+func (a *mastermindActions) Done(ctx context.Context, key string) Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
 		return Result{Err: errors.New("unknown binding")}
@@ -143,7 +143,7 @@ func (a *plannerActions) Done(ctx context.Context, key string) Result {
 
 // Unbind archives the binding: the cockpit's unbind always passes archive
 // true, so the round log survives (§4.2).
-func (a *plannerActions) Unbind(ctx context.Context, key string) Result {
+func (a *mastermindActions) Unbind(ctx context.Context, key string) Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
 		return Result{Err: errors.New("unknown binding")}
@@ -159,7 +159,7 @@ func (a *plannerActions) Unbind(ctx context.Context, key string) Result {
 // text `relevo gate <token>` prints (cmd/relevo/main.go gateUnavailable).
 // subject is a candidate name or canonical token; forDur 0 means "until
 // cleared" (§4.2, §4.3).
-func (a *plannerActions) Gate(ctx context.Context, subject string, forDur time.Duration, reason string) Result {
+func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur time.Duration, reason string) Result {
 	rt, _, ok := a.resolve(subject)
 	if !ok {
 		return Result{Err: errors.New("unknown binding")}
@@ -199,13 +199,13 @@ func (a *plannerActions) Gate(ctx context.Context, subject string, forDur time.D
 // Ungate clears every rate-limit gate on subject's provider and forwards the
 // clear, the same text `relevo gate --clear` prints (cmd/relevo/main.go
 // gateClear). An ungate is never destructive, so it has no confirm (§4.3).
-func (a *plannerActions) Ungate(ctx context.Context, subject string) Result {
+func (a *mastermindActions) Ungate(ctx context.Context, subject string) Result {
 	rt, _, ok := a.resolve(subject)
 	if !ok {
 		return Result{Err: errors.New("unknown binding")}
 	}
 
-	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), subject, availability.ClearedByPlanner)
+	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), subject, availability.ClearedByMasterMind)
 	if err != nil {
 		return Result{Err: err, Refresh: true}
 	}
@@ -223,7 +223,7 @@ func (a *plannerActions) Ungate(ctx context.Context, subject string) Result {
 
 // Shell is a shell in the binding's own tree: its worktree when relevo made
 // one, else its recorded CWD. A remote binding has no local tree (§4.2).
-func (a *plannerActions) Shell(key string) (*exec.Cmd, error) {
+func (a *mastermindActions) Shell(key string) (*exec.Cmd, error) {
 	rt, name, ok := a.resolve(key)
 	if !ok {
 		return nil, errors.New("unknown binding")
@@ -248,17 +248,17 @@ func (a *plannerActions) Shell(key string) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// ensureYou returns the human planner's id, creating the record on first use
-// (§4.1, spec §6.3). It is idempotent -- planner.Init looks the record up by
+// ensureYou returns the human mastermind's id, creating the record on first use
+// (§4.1, spec §6.3). It is idempotent -- mastermind.Init looks the record up by
 // (kind, session) before it creates anything -- and is only called by an
 // action that needs an owner, so a read-only session never creates it. The
-// record is never pruned, because HostPID is 0 (internal/planner/prune.go).
+// record is never pruned, because HostPID is 0 (internal/mastermind/prune.go).
 func ensureYou(rt relevo.Runtime) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	rec, _, err := planner.Init(rt.Planners, planner.InitInput{
+	rec, _, err := mastermind.Init(rt.MasterMinds, mastermind.InitInput{
 		Kind:      "human",
 		SessionID: "tui",
 		CWD:       home,
@@ -274,7 +274,7 @@ func ensureYou(rt relevo.Runtime) (string, error) {
 // Send files planFile as the binding's next round, the same call `relevo send`
 // makes (§4.5). The text is the pick line, the drift line when there is one,
 // then the round that was filed.
-func (a *plannerActions) Send(ctx context.Context, key, planFile string) Result {
+func (a *mastermindActions) Send(ctx context.Context, key, planFile string) Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
 		return Result{Err: errors.New("unknown binding")}
@@ -300,11 +300,11 @@ func sendText(name string, res relevo.SendResult) string {
 	return strings.Join(lines, "\n")
 }
 
-// Bind adds a binding of this repo for the human planner (§4.5): the same
+// Bind adds a binding of this repo for the human mastermind (§4.5): the same
 // relevo.Add the `relevo bind` verb calls, with `you` as the owner. The text
 // is `added <name>: builder <candidate> on <tree>`, then the gated note and
 // the pick note, as runAdd prints them (cmd/relevo/main.go:1509-1604).
-func (a *plannerActions) Bind(ctx context.Context, in BindInput) Result {
+func (a *mastermindActions) Bind(ctx context.Context, in BindInput) Result {
 	if a.repo == "" {
 		return Result{Err: errors.New("start relevo ui inside a git repository to bind")}
 	}
@@ -313,11 +313,11 @@ func (a *plannerActions) Bind(ctx context.Context, in BindInput) Result {
 		return Result{Err: err, Refresh: true}
 	}
 	res, err := relevo.Add(ctx, a.runtime(), relevo.AddOptions{
-		Name:      in.Name,
-		Candidate: in.Candidate,
-		PlannerID: you,
-		Repo:      a.repo,
-		Feature:   in.Feature,
+		Name:         in.Name,
+		Candidate:    in.Candidate,
+		MasterMindID: you,
+		Repo:         a.repo,
+		Feature:      in.Feature,
 	})
 	if err != nil {
 		return Result{Err: err, Refresh: true}
@@ -352,7 +352,7 @@ func bindPickNote(rt relevo.Runtime, res relevo.Resolution) string {
 // round if there is one (and resend that round), else resend the newest round
 // with a recorded plan; then Send the plan bytes with the candidate, which
 // persists as the binding's builder from that round on.
-func (a *plannerActions) Retry(ctx context.Context, key, candidate string) Result {
+func (a *mastermindActions) Retry(ctx context.Context, key, candidate string) Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
 		return Result{Err: errors.New("unknown binding")}
@@ -429,9 +429,9 @@ func plannedRound(base string) (int, bool) {
 	return n, true
 }
 
-// Pull takes the human planner's pending payload for key, delivered with the
+// Pull takes the human mastermind's pending payload for key, delivered with the
 // TUI's own route: the cockpit shows it in the round view's report tab.
-func (a *plannerActions) Pull(ctx context.Context, key string) (string, bool, error) {
+func (a *mastermindActions) Pull(ctx context.Context, key string) (string, bool, error) {
 	rt, name, ok := a.resolve(key)
 	if !ok {
 		return "", false, errors.New("unknown binding")
@@ -442,7 +442,7 @@ func (a *plannerActions) Pull(ctx context.Context, key string) (string, bool, er
 // Candidates is a role's candidate names in the role's order (§4.5): what the
 // bind and retry prompts cycle through. A role the registry does not know has
 // none.
-func (a *plannerActions) Candidates(role string) []string {
+func (a *mastermindActions) Candidates(role string) []string {
 	r, ok := a.runtime().RoleRegistry().Role(role)
 	if !ok {
 		return nil
@@ -456,7 +456,7 @@ func (a *plannerActions) Candidates(role string) []string {
 
 // ConfigDoc is the stored config, freshly read through the store (§4.2). A
 // runtime with no config store cannot answer.
-func (a *plannerActions) ConfigDoc() (relevo.ConfigDoc, error) {
+func (a *mastermindActions) ConfigDoc() (relevo.ConfigDoc, error) {
 	if a.runtime().Config == nil {
 		return relevo.ConfigDoc{}, errors.New("no config store")
 	}
@@ -467,7 +467,7 @@ func (a *plannerActions) ConfigDoc() (relevo.ConfigDoc, error) {
 // the store (§4.2): the sections ConfigWatcher.Refresh would replace. An error
 // from the write is a failure; a failed reload after a successful write is not,
 // because the write already happened, so the text says so.
-func (a *plannerActions) ApplyConfig(ctx context.Context, e relevo.ConfigEdit) Result {
+func (a *mastermindActions) ApplyConfig(ctx context.Context, e relevo.ConfigEdit) Result {
 	if a.runtime().Config == nil {
 		return Result{Err: errors.New("no config store")}
 	}
@@ -483,7 +483,7 @@ func (a *plannerActions) ApplyConfig(ctx context.Context, e relevo.ConfigEdit) R
 // Probe spawns one candidate's harness headless and measures it (§4.2), the
 // same relevo.Probe `relevo probe <token>` runs. The result is one formatted
 // line; a sample carrying an error is that error.
-func (a *plannerActions) Probe(ctx context.Context, name string) Result {
+func (a *mastermindActions) Probe(ctx context.Context, name string) Result {
 	if a.probe == nil {
 		return Result{Err: errors.New("probing needs relevo ui")}
 	}
@@ -506,7 +506,7 @@ func (a *plannerActions) Probe(ctx context.Context, name string) Result {
 // binary is installed, in harness.All() order: the same dry run `relevo config
 // agents --agent <agent> --dry-run` prints. A source custom agent is rendered
 // from the live config; a native or unknown name has none.
-func (a *plannerActions) AgentFiles(agent string) ([]harness.AgentFile, error) {
+func (a *mastermindActions) AgentFiles(agent string) ([]harness.AgentFile, error) {
 	env, err := relevo.AgentInstallEnv()
 	if err != nil {
 		return nil, err
@@ -522,7 +522,7 @@ func (a *plannerActions) AgentFiles(agent string) ([]harness.AgentFile, error) {
 // relevo renders or ships: a source custom agent resets through
 // relevo.ResetCustomAgentFile, everything else through harness.ResetAgentFile.
 // Its text is `reset <kind>'s <agent>`; Refresh re-reads the view's rows.
-func (a *plannerActions) ResetAgentFile(ctx context.Context, kind, agent string) Result {
+func (a *mastermindActions) ResetAgentFile(ctx context.Context, kind, agent string) Result {
 	env, err := relevo.AgentInstallEnv()
 	if err != nil {
 		return Result{Err: err}
@@ -555,7 +555,7 @@ type stderrMsg struct{ line string }
 // actionMsg arrives (§4.3).
 type workingMsg struct{ verb, key string }
 
-// pullMsg is what a Pull in flight returns: the report the human planner was
+// pullMsg is what a Pull in flight returns: the report the human mastermind was
 // waiting for, or why there is none (§4.5).
 type pullMsg struct {
 	key  string
@@ -564,7 +564,7 @@ type pullMsg struct {
 	err  error
 }
 
-// pullCmd takes the human planner's pending report off the update loop.
+// pullCmd takes the human mastermind's pending report off the update loop.
 func pullCmd(ctx context.Context, a Actions, key string) tea.Cmd {
 	return func() tea.Msg {
 		text, ok, err := a.Pull(ctx, key)

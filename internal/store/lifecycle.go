@@ -354,7 +354,7 @@ func decodeBinding(raw []byte, name string) (Binding, error) {
 		return Binding{}, &ErrNewerFormat{Kind: "binding", Name: name, Have: b.Format, Know: BindingFormat}
 	}
 
-	// "held" was a delivery in flight and "orphaned" meant the planner's
+	// "held" was a delivery in flight and "orphaned" meant the mastermind's
 	// session had gone; both are simply active again now.
 	switch b.State {
 	case "held", "orphaned":

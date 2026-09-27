@@ -42,7 +42,7 @@ type EnvExec interface {
 	Run(ctx context.Context, extraEnv []string, bin string, args ...string) ([]byte, error)
 }
 
-// AgyDeliverer is the PlannerDeliverer for agy planners: it wakes an
+// AgyDeliverer is the MasterMindDeliverer for agy masterminds: it wakes an
 // idle agy session by dropping the payload in that conversation's agentapi
 // inbox, and it confirms the receipt by finding the message read back out of
 // agy's own state directory.
@@ -120,24 +120,24 @@ func (d *AgyDeliverer) home() (string, error) {
 	return filepath.Join(dir, ".gemini", "antigravity-cli"), nil
 }
 
-// Deliver implements PlannerDeliverer for agy planners.
+// Deliver implements MasterMindDeliverer for agy masterminds.
 //
 // It never sends a payload twice: the inbox is scanned before every send, so a
 // retry after a crash between sending and confirming finds the message and
 // reports its state instead. It never puts a credential in the reason: the
 // token passes only through the extraEnv of one exec, and any text that came
 // back from agy is redacted before it becomes a reason.
-func (d *AgyDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payload, ref string, queuedAt time.Time) (Outcome, string, error) {
-	if planner.Kind != "agy" {
+func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, payload, ref string, queuedAt time.Time) (Outcome, string, error) {
+	if mastermind.Kind != "agy" {
 		return OutcomeNotMine, "", nil
 	}
 	if d.Exec == nil || d.Creds == nil {
 		return OutcomeNotMine, "no exec", nil
 	}
 
-	conv := planner.SessionID
+	conv := mastermind.SessionID
 	if !validConversationID(conv) {
-		return OutcomeNotMine, "agy planner session is not a conversation id; run relevo planner init inside agy", nil
+		return OutcomeNotMine, "agy mastermind session is not a conversation id; run relevo mastermind init inside agy", nil
 	}
 	if out, reason, gave := d.pastFallback(conv, payload, queuedAt); gave {
 		return out, reason, nil
@@ -327,7 +327,7 @@ func agyTitle(origin string) string {
 
 // agyOversizeContent is what replaces a payload too long for one argv element:
 // the origin line, how big the report was, and where to read it. It keeps the
-// planner's wake-up meaningful -- the title and the first line still identify
+// mastermind's wake-up meaningful -- the title and the first line still identify
 // the round -- without an argv the kernel would refuse. ref is the
 // `relevo show …` command that prints the full text, or ""
 // when the entry names no show section.

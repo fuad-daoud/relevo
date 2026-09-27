@@ -247,21 +247,21 @@ func (p promptBox) keys() []KeyHelp {
 	return keys
 }
 
-// plannerConfirmLine names the planner a confirm affects, when that planner
+// mastermindConfirmLine names the mastermind a confirm affects, when that mastermind
 // is neither the human at the cockpit nor empty (§4.3). wait is the phrase
 // that follows the name.
-func plannerConfirmLine(b view.BindingStatus, wait string) string {
-	if b.PlannerName == "" || b.PlannerName == "you" {
+func mastermindConfirmLine(b view.BindingStatus, wait string) string {
+	if b.MasterMindName == "" || b.MasterMindName == "you" {
 		return ""
 	}
-	return "planner " + b.PlannerName + " " + wait
+	return "MasterMind " + b.MasterMindName + " " + wait
 }
 
 // stopConfirmLines is x's confirm body: who else is affected, what is being
 // stopped, and the keys. Pure, so it is tested directly (§4.3, §5).
 func stopConfirmLines(b view.BindingStatus, now time.Time) []string {
 	var lines []string
-	if l := plannerConfirmLine(b, "is waiting on this round"); l != "" {
+	if l := mastermindConfirmLine(b, "is waiting on this round"); l != "" {
 		lines = append(lines, l)
 	}
 	lines = append(lines, joinFacts(actorCell(b)+" on "+candidateText(b), nowCell(b, now), spendCell(b)))
@@ -271,7 +271,7 @@ func stopConfirmLines(b view.BindingStatus, now time.Time) []string {
 // doneConfirmLines is D's confirm body (§4.3).
 func doneConfirmLines(b view.BindingStatus) []string {
 	var lines []string
-	if l := plannerConfirmLine(b, "owns this binding"); l != "" {
+	if l := mastermindConfirmLine(b, "owns this binding"); l != "" {
 		lines = append(lines, l)
 	}
 	return lines
@@ -280,7 +280,7 @@ func doneConfirmLines(b view.BindingStatus) []string {
 // unbindConfirmLines is u's confirm body (§4.3).
 func unbindConfirmLines(b view.BindingStatus) []string {
 	var lines []string
-	if l := plannerConfirmLine(b, "owns this binding"); l != "" {
+	if l := mastermindConfirmLine(b, "owns this binding"); l != "" {
 		lines = append(lines, l)
 	}
 	return lines
@@ -462,7 +462,7 @@ func sendConfirmTitle(b view.BindingStatus, file string) string {
 // sendConfirmLines names who else is affected, then the keys (§4.3, §4.5).
 func sendConfirmLines(b view.BindingStatus) []string {
 	var lines []string
-	if l := plannerConfirmLine(b, "is waiting on this round"); l != "" {
+	if l := mastermindConfirmLine(b, "is waiting on this round"); l != "" {
 		lines = append(lines, l)
 	}
 	return lines
@@ -686,7 +686,7 @@ func retryConfirmTitle(b view.BindingStatus, candidate string) string {
 // the binding's builder, then the keys (§4.5).
 func retryConfirmLines(b view.BindingStatus, candidate string) []string {
 	var lines []string
-	if l := plannerConfirmLine(b, "is waiting on this round"); l != "" {
+	if l := mastermindConfirmLine(b, "is waiting on this round"); l != "" {
 		lines = append(lines, l)
 	}
 	lines = append(lines, "the binding keeps "+candidate+" for later rounds")

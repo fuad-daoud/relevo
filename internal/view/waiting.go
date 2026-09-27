@@ -54,7 +54,7 @@ func capLine(s string, n int) string {
 // exists. It returns the entry itself, because WaitingOn needs its TS and Path.
 func questionEntry(entries []store.LogEntry, round int) (store.LogEntry, bool) {
 	for _, e := range entries {
-		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindQuestion && e.Note != nudgeNote {
+		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindQuestion && e.Note != nudgeNote {
 			return e, true
 		}
 	}

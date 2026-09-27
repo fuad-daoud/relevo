@@ -86,11 +86,11 @@ func DriftSummary(res DriftResult) string {
 }
 
 // DriftLine renders the stdout line for drift detected between rounds, or ""
-// when there is nothing worth telling the planner (no git, not a repository,
+// when there is nothing worth telling the mastermind (no git, not a repository,
 // or an empty Stat).
 //
 // round is the opening round; the prose names round-1, the round that closed,
-// and points the planner at `relevo show <name> --round <round> --drift`
+// and points the mastermind at `relevo show <name> --round <round> --drift`
 // instead of the patch's path.
 func DriftLine(res DriftResult, name string, round int) string {
 	if !res.Available {

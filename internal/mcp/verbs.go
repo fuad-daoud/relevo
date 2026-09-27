@@ -17,13 +17,13 @@ type Verbs interface {
 	Done(ctx context.Context, a DoneArgs) (any, error)
 }
 
-// RelevoVerbs adapts internal/relevo's functions to Verbs, resolved against one planner.
+// RelevoVerbs adapts internal/relevo's functions to Verbs, resolved against one mastermind.
 type RelevoVerbs struct {
-	RT      relevo.Runtime
-	Planner string
+	RT         relevo.Runtime
+	MasterMind string
 }
 
-// Status filters relevo.Status to this planner's bindings (unless a.All), narrowed to a.Name.
+// Status filters relevo.Status to this mastermind's bindings (unless a.All), narrowed to a.Name.
 func (v *RelevoVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
 	rep, err := relevo.Status(ctx, v.RT)
 	if err != nil {
@@ -33,7 +33,7 @@ func (v *RelevoVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
 	if !a.All {
 		kept := rep.Bindings[:0:0]
 		for _, b := range rep.Bindings {
-			if b.PlannerID == v.Planner {
+			if b.MasterMindID == v.MasterMind {
 				kept = append(kept, b)
 			}
 		}

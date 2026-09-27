@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 import (
 	"encoding/json"
@@ -244,9 +244,9 @@ type failPutKV struct{ db.DBTxKV }
 func (failPutKV) KVPut(string, []byte) error { return errors.New("put failed") }
 
 // TestRegistryImportAdoptsRecordFiles pins the import: a present
-// planners/<id>.json is put to planner/<id> and removed, with it.
+// masterminds/<id>.json is put to mastermind/<id> and removed, with it.
 func TestRegistryImportAdoptsRecordFiles(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "planners")
+	root := filepath.Join(t.TempDir(), "masterminds")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestRegistryImportAdoptsRecordFiles(t *testing.T) {
 		t.Errorf("the lock file is still there: %v", err)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		t.Errorf("the emptied planners directory is still there: %v", err)
+		t.Errorf("the emptied masterminds directory is still there: %v", err)
 	}
 
 	rec, err := reg.Get("pl_aaaaaaaaaaaa")
@@ -295,7 +295,7 @@ func TestRegistryImportAdoptsRecordFiles(t *testing.T) {
 // TestRegistryImportMalformedFileFailsLoudly pins the corrupt-file rule: a
 // record file that is not valid JSON fails the import and stays put.
 func TestRegistryImportMalformedFileFailsLoudly(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "planners")
+	root := filepath.Join(t.TempDir(), "masterminds")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestRegistryImportMalformedFileFailsLoudly(t *testing.T) {
 // TestRegistryImportFailedPutKeepsFile pins the import's order: the file
 // must still be there when the put fails.
 func TestRegistryImportFailedPutKeepsFile(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "planners")
+	root := filepath.Join(t.TempDir(), "masterminds")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}

@@ -418,7 +418,7 @@ func (r *Runner) Rusage(_ context.Context, _ spawn.ProcHandle, streamPath string
 var errNoProcess = errors.New("proc: no such process")
 
 // StartTime reports when a process started, via the same `ps -o lstart=` read
-// psInfo uses. `relevo planner init` needs it to defend a planner record against
+// psInfo uses. `relevo mastermind init` needs it to defend a mastermind record against
 // pid reuse, as a binding's endpoint does. A missing pid is an error, not the
 // zero time: the caller decides what a host it cannot measure means.
 func StartTime(ctx context.Context, pid int) (time.Time, error) {

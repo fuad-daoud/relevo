@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
 )
 
@@ -19,7 +19,7 @@ const (
 	claudePluginStateRel  = ".claude/plugins/installed_plugins.json"
 	claudePluginName      = "relevo@relevo"
 	claudeHooksRel        = "hooks/hooks.json"
-	pluginHookInitCommand = "planner init"
+	pluginHookInitCommand = "mastermind init"
 	pluginHookEvent       = "SessionStart"
 )
 
@@ -49,27 +49,27 @@ func HasMCPChild(children []ChildProcess) bool {
 	return false
 }
 
-// PlannerCheckInput is everything the planner rows need that doctor.Run
+// MasterMindCheckInput is everything the mastermind rows need that doctor.Run
 // cannot read itself. cmd/relevo gathers it; the rules live here.
-type PlannerCheckInput struct {
-	Claude bool   // a claude candidate or planner record exists; gates the plugin rows
+type MasterMindCheckInput struct {
+	Claude bool   // a claude candidate or mastermind record exists; gates the plugin rows
 	Home   string // $HOME, so a test can point it at a temp dir
 	Repo   string // the repository `relevo doctor` runs in
 
-	Detected  bool            // planner.Detect: relevo runs inside a Claude Code session
-	Resolved  *planner.Record // the planner Resolve found; nil on a miss
-	Chat      string          // the resolved planner's chatlabel, "" when Resolved is nil
-	ClaimLive bool            // a live channel claim exists for Resolved
-	MCPChild  bool            // a `relevo mcp` process is a child of the planner's host; false is FAIL
+	Detected  bool               // mastermind.Detect: relevo runs inside a Claude Code session
+	Resolved  *mastermind.Record // the mastermind Resolve found; nil on a miss
+	Chat      string             // the resolved mastermind's chatlabel, "" when Resolved is nil
+	ClaimLive bool               // a live channel claim exists for Resolved
+	MCPChild  bool               // a `relevo mcp` process is a child of the mastermind's host; false is FAIL
 
-	Stale   []string // planner records seen over 7 days ago with no live binding
+	Stale   []string // mastermind records seen over 7 days ago with no live binding
 	Running string   // relevo's own version, compared with the installed plugin's; "" skips it
 }
 
-// PlannerChecks reports the plugin rows for Claude Code, the installed
-// plugin's SessionStart hook, this session's planner, and the stale-record
+// MasterMindChecks reports the plugin rows for Claude Code, the installed
+// plugin's SessionStart hook, this session's mastermind, and the stale-record
 // note. Leaving every field zero reports nothing.
-func PlannerChecks(in PlannerCheckInput) []Check {
+func MasterMindChecks(in MasterMindCheckInput) []Check {
 	var checks []Check
 
 	if in.Claude {
@@ -79,57 +79,57 @@ func PlannerChecks(in PlannerCheckInput) []Check {
 	}
 
 	if in.Detected {
-		checks = append(checks, plannerSessionCheck(in))
+		checks = append(checks, mastermindSessionCheck(in))
 	}
 
 	if len(in.Stale) > 0 {
 		checks = append(checks, Check{
-			Name:     "planners",
+			Name:     "MasterMinds",
 			Severity: SevInfo,
 			Detail:   fmt.Sprintf("seen over 7 days ago and no live binding: %s", strings.Join(in.Stale, ", ")),
-			Fix:      "relevo planner forget <id|name>",
+			Fix:      "relevo mastermind forget <id|name>",
 		})
 	}
 
 	return checks
 }
 
-// plannerSessionCheck is the planner row for a detected Claude Code session:
+// mastermindSessionCheck is the mastermind row for a detected Claude Code session:
 // FAIL when Resolve missed or no relevo mcp child reaches the channel, INFO
 // while push is unavailable (tools mode), OK once the channel claim is live.
-func plannerSessionCheck(in PlannerCheckInput) Check {
+func mastermindSessionCheck(in MasterMindCheckInput) Check {
 	switch {
 	case in.Resolved == nil:
 		return Check{
-			Name:     "planner",
+			Name:     "MasterMind",
 			Severity: SevFail,
-			Detail:   "no relevo planner resolved for this Claude Code session",
-			Fix:      "relevo planner init (or enable the relevo plugin so its SessionStart hook runs)",
+			Detail:   "no relevo MasterMind resolved for this Claude Code session",
+			Fix:      "relevo mastermind init (or enable the relevo plugin so its SessionStart hook runs)",
 		}
 	case !in.MCPChild:
 		return Check{
-			Name:     "planner",
+			Name:     "MasterMind",
 			Severity: SevFail,
-			Detail:   fmt.Sprintf("planner %s: no relevo mcp process is a child of its host process; reports never arrive", plannerRef(in.Resolved, in.Chat)),
+			Detail:   fmt.Sprintf("MasterMind %s: no relevo mcp process is a child of its host process; reports never arrive", mastermindRef(in.Resolved, in.Chat)),
 			Fix:      "enable the relevo plugin so relevo mcp starts with the session (relevo doctor)",
 		}
 	case !in.ClaimLive:
 		return Check{
-			Name:     "planner",
+			Name:     "MasterMind",
 			Severity: SevInfo,
-			Detail:   fmt.Sprintf("planner %s: tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`", plannerRef(in.Resolved, in.Chat)),
+			Detail:   fmt.Sprintf("MasterMind %s: tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`", mastermindRef(in.Resolved, in.Chat)),
 		}
 	default:
 		return Check{
-			Name:     "planner",
+			Name:     "MasterMind",
 			Severity: SevOK,
-			Detail:   fmt.Sprintf("%s; channel claim live", plannerRef(in.Resolved, in.Chat)),
+			Detail:   fmt.Sprintf("%s; channel claim live", mastermindRef(in.Resolved, in.Chat)),
 		}
 	}
 }
 
-// plannerRef renders "name (id)", with the chat label appended when non-empty.
-func plannerRef(rec *planner.Record, chat string) string {
+// mastermindRef renders "name (id)", with the chat label appended when non-empty.
+func mastermindRef(rec *mastermind.Record, chat string) string {
 	if chat == "" {
 		return rec.Name + " (" + rec.ID + ")"
 	}
@@ -173,7 +173,7 @@ func pluginEnabled(raw []byte) bool {
 }
 
 // pluginHookCheck is the second plugin row: FAIL when the installed plugin
-// has no SessionStart hook running `relevo planner init`. Anything relevo
+// has no SessionStart hook running `relevo mastermind init`. Anything relevo
 // cannot establish reads `not checked` (OK), never FAIL.
 func pluginHookCheck(home string) Check {
 	raw, err := os.ReadFile(filepath.Join(home, claudePluginStateRel))
@@ -193,7 +193,7 @@ func pluginHookCheck(home string) Check {
 			continue
 		}
 		checked = true
-		if hookRunsPlannerInit(hooks) {
+		if hookRunsMasterMindInit(hooks) {
 			return Check{Name: "plugin hook", Severity: SevOK, Detail: dir + ": " + pluginHookEvent + " runs relevo " + pluginHookInitCommand}
 		}
 	}
@@ -284,30 +284,30 @@ func installedPluginDirs(raw []byte) []string {
 	return out
 }
 
-// hookRunsPlannerInit reports whether a hooks.json has a SessionStart entry
-// whose command runs `relevo planner init`.
-func hookRunsPlannerInit(raw []byte) bool {
+// hookRunsMasterMindInit reports whether a hooks.json has a SessionStart entry
+// whose command runs `relevo mastermind init`.
+func hookRunsMasterMindInit(raw []byte) bool {
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return false
 	}
-	return hasSessionStartPlannerInit(v)
+	return hasSessionStartMasterMindInit(v)
 }
 
-func hasSessionStartPlannerInit(v any) bool {
+func hasSessionStartMasterMindInit(v any) bool {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
 			if k == pluginHookEvent && jsonContains(val, pluginHookInitCommand) {
 				return true
 			}
-			if hasSessionStartPlannerInit(val) {
+			if hasSessionStartMasterMindInit(val) {
 				return true
 			}
 		}
 	case []any:
 		for _, e := range t {
-			if hasSessionStartPlannerInit(e) {
+			if hasSessionStartMasterMindInit(e) {
 				return true
 			}
 		}

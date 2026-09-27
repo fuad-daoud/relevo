@@ -73,10 +73,10 @@ func logOnlyTranscriptRecords(lines [][]byte, startSeq int) []db.TranscriptRecor
 	return recs
 }
 
-// plannerTranscriptRecords turns a planner harness's own session-record lines
+// mastermindTranscriptRecords turns a mastermind harness's own session-record lines
 // into TranscriptRecord rows, rendered with transcript.RenderRecord. Rendered is
 // often "" for a record RenderRecord recognises but has nothing to show for.
-func plannerTranscriptRecords(kind string, lines [][]byte, startSeq int) []db.TranscriptRecord {
+func mastermindTranscriptRecords(kind string, lines [][]byte, startSeq int) []db.TranscriptRecord {
 	recs := make([]db.TranscriptRecord, 0, len(lines))
 	for i, line := range lines {
 		recs = append(recs, db.TranscriptRecord{

@@ -12,7 +12,7 @@ import (
 )
 
 // Pull is pullPending for the cockpit: the round view calls it with route
-// "tui" when it opens a binding whose report is ready for the human planner,
+// "tui" when it opens a binding whose report is ready for the human mastermind,
 // so the text it returns is shown and the entry is marked delivered to the TUI
 // rather than to `relevo wait`.
 func Pull(ctx context.Context, st *store.Store, name, route string) (text string, found bool, err error) {
@@ -48,7 +48,7 @@ func retryBusy(ctx context.Context, delays []time.Duration, sleep func(time.Dura
 // pullPending returns the oldest pending entry's text for name and marks it
 // delivered with route, WITHOUT pushing anything. It is what the removed pull
 // verb did, and the helper `relevo wait` calls once its round has ended: the
-// CLI prints the result to stdout and the planner reads it as tool output.
+// CLI prints the result to stdout and the mastermind reads it as tool output.
 //
 // The text is PushText(entry, name, st.ReadFile): the stored payload (origin
 // line first) plus a blank line plus the report file's text, capped at
@@ -64,7 +64,7 @@ func pullPending(ctx context.Context, st *store.Store, name, route string) (text
 	// this very payload right now, and only one of us may claim it.
 	err = retryBusy(ctx, busyRetryDelays, nil, func() error {
 		return st.WithLock(func(tx *store.Tx) error {
-			pending, idx, ok, err := tx.PendingForPlanner(name)
+			pending, idx, ok, err := tx.PendingForMasterMind(name)
 			if err != nil {
 				return err
 			}
@@ -93,7 +93,7 @@ func pullPending(ctx context.Context, st *store.Store, name, route string) (text
 	return text, true, nil
 }
 
-// PullPendingThrough returns the text for every pending planner payload of name
+// PullPendingThrough returns the text for every pending mastermind payload of name
 // whose round is at most round -- every round when round <= 0 -- and marks each
 // delivered with route, WITHOUT pushing anything. The waited round's text is
 // last; every earlier one is prefixed with a header naming its round, so an
@@ -109,7 +109,7 @@ func PullPendingThrough(ctx context.Context, st *store.Store, name, route string
 
 	err = retryBusy(ctx, busyRetryDelays, nil, func() error {
 		return st.WithLock(func(tx *store.Tx) error {
-			entries, err := tx.PendingForPlannerThrough(name, round)
+			entries, err := tx.PendingForMasterMindThrough(name, round)
 			if err != nil {
 				return err
 			}

@@ -27,7 +27,7 @@ func seedReadVerbStore(t *testing.T) (*store.Store, relevo.Runtime, []store.LogE
 	}
 	for _, e := range []store.LogEntry{
 		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Note: "round one"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Note: "round one"},
 	} {
 		if err := s.AppendLog("api", e); err != nil {
 			t.Fatalf("AppendLog: %v", err)

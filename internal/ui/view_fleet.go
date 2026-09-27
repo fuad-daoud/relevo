@@ -45,10 +45,10 @@ func ago(since, now time.Time) string {
 }
 
 // reportReady is the fleet's rule for a report waiting on the human at this
-// cockpit (§4.5): the binding's planner is `you`, and a payload is pending for
+// cockpit (§4.5): the binding's mastermind is `you`, and a payload is pending for
 // it. Such a row's NOW cell says so, and opening it pulls the report.
 func reportReady(b view.BindingStatus) bool {
-	return b.PlannerName == "you" && b.Pending != nil
+	return b.MasterMindName == "you" && b.Pending != nil
 }
 
 // whatAge is a row's NOW cell: what the binding is on, and for how long,
@@ -191,11 +191,11 @@ func (f fleetView) activeFilter() string {
 }
 
 // fleetRowMatches reports whether text is a case-insensitive substring of any
-// of the row's shown fields: its key, actor, candidate, planner, repo or
+// of the row's shown fields: its key, actor, candidate, mastermind, repo or
 // state (A4).
 func fleetRowMatches(b view.BindingStatus, text string) bool {
 	q := strings.ToLower(text)
-	for _, s := range []string{b.Key(), actorCell(b), candidateText(b), b.PlannerName, b.CWD, b.Display} {
+	for _, s := range []string{b.Key(), actorCell(b), candidateText(b), b.MasterMindName, b.CWD, b.Display} {
 		if strings.Contains(strings.ToLower(s), q) {
 			return true
 		}
@@ -536,11 +536,11 @@ func spendCell(b view.BindingStatus) string {
 	return spendText(*b.Spend)
 }
 
-func plannerCell(b view.BindingStatus) string {
-	if b.PlannerName == "" {
+func mastermindCell(b view.BindingStatus) string {
+	if b.MasterMindName == "" {
 		return "-"
 	}
-	return b.PlannerName
+	return b.MasterMindName
 }
 
 func repoCell(b view.BindingStatus) string {
@@ -563,7 +563,7 @@ func pad(s string, width int) string {
 }
 
 // fleetRowPlan computes which optional columns fit at width (§2.3 narrow rule).
-func fleetRowPlan(width int) (candidate, spend, planner bool) {
+func fleetRowPlan(width int) (candidate, spend, mastermind bool) {
 	if width >= 94 {
 		return true, true, true
 	}
@@ -613,7 +613,7 @@ func fleetRowLine(b view.BindingStatus, g fleetGroup, selected bool, now time.Ti
 		line += mutedStyle.Render(candText)
 	}
 	if plan {
-		planText := pad(clipName(plannerCell(b), 14), 14)
+		planText := pad(clipName(mastermindCell(b), 14), 14)
 		line += faintStyle.Render(planText)
 	}
 	if spend {
@@ -682,11 +682,11 @@ func (f fleetView) cardLines(env Env, b view.BindingStatus, width int) []string 
 
 	// Meta line
 	var metaParts []string
-	plannerName := plannerCell(b)
+	mastermindName := mastermindCell(b)
 	if g == groupNeedsYou {
-		metaParts = append(metaParts, mutedStyle.Render("planner ")+warnStyle.Render(plannerName))
+		metaParts = append(metaParts, mutedStyle.Render("MasterMind ")+warnStyle.Render(mastermindName))
 	} else {
-		metaParts = append(metaParts, mutedStyle.Render("planner "+plannerName))
+		metaParts = append(metaParts, mutedStyle.Render("MasterMind "+mastermindName))
 	}
 	metaParts = append(metaParts, mutedStyle.Render(candidateText(b)))
 	branch := b.Branch

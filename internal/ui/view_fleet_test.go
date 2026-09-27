@@ -148,7 +148,7 @@ func TestFleetBodyHeader(t *testing.T) {
 func TestFleetHeaderSurvivesNarrowing(t *testing.T) {
 	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working",
-		BuilderCandidate: "cline/deepseek", PlannerName: "architect-1",
+		BuilderCandidate: "cline/deepseek", MasterMindName: "architect-1",
 		Spend: &usage.Spend{Measured: 1.23},
 	}
 	line := stripANSI(fleetRowLine(b, groupWorking, false, railNow, 80))
@@ -272,12 +272,12 @@ func TestFleetFilter(t *testing.T) {
 }
 
 // TestFleetFilterMatchesEveryShownField pins A4's field list: key, actor,
-// candidate, planner, repo and state all match, case-insensitively.
+// candidate, mastermind, repo and state all match, case-insensitively.
 func TestFleetFilterMatchesEveryShownField(t *testing.T) {
 	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "PAUSED", Role: "reviewer",
 		BuilderCandidate: "cline-pass/deepseek-v4.1-flash#high",
-		PlannerName:      "architect-1", CWD: "/home/x/relevo",
+		MasterMindName:   "architect-1", CWD: "/home/x/relevo",
 	}
 	for _, q := range []string{"WEBSHOP", "reviewer", "deepseek", "architect-1", "relevo", "paused"} {
 		if !fleetRowMatches(b, q) {
@@ -289,13 +289,13 @@ func TestFleetFilterMatchesEveryShownField(t *testing.T) {
 	}
 }
 
-// TestFleetColumnsAndNarrowDropOrder pins D4: the new drop order planner first,
+// TestFleetColumnsAndNarrowDropOrder pins D4: the new drop order mastermind first,
 // then spend, then candidate.
 func TestFleetColumnsAndNarrowDropOrder(t *testing.T) {
 	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working",
 		BuilderCandidate: "cline-pass/deepseek-v4.1-flash#high",
-		PlannerName:      "architect-1",
+		MasterMindName:   "architect-1",
 		Spend:            &usage.Spend{Measured: 1.23},
 	}
 	cases := []struct {
@@ -317,7 +317,7 @@ func TestFleetColumnsAndNarrowDropOrder(t *testing.T) {
 		}
 		line := stripANSI(fleetRowLine(b, groupWorking, false, railNow, tc.width))
 		if got := strings.Contains(line, "architect-1"); got != tc.wantPlan {
-			t.Errorf("width %d: planner present = %v, want %v: %s", tc.width, got, tc.wantPlan, line)
+			t.Errorf("width %d: mastermind present = %v, want %v: %s", tc.width, got, tc.wantPlan, line)
 		}
 		if got := strings.Contains(line, "$1.23"); got != tc.wantSpend {
 			t.Errorf("width %d: spend present = %v, want %v: %s", tc.width, got, tc.wantSpend, line)

@@ -69,5 +69,5 @@ func applyBuilder(b store.Binding, res Resolution, reg *roles.Registry, pol poli
 // the condition reconcile and Send check inline.
 func roundOpenIn(entries []store.LogEntry, round int) bool {
 	return HasEntry(entries, round, store.DirToBuilder, store.KindPlan) &&
-		!HasEntry(entries, round, store.DirToPlanner, store.KindReport)
+		!HasEntry(entries, round, store.DirToMasterMind, store.KindReport)
 }

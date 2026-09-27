@@ -115,7 +115,7 @@ func captureAgyEnv() {
 		return
 	}
 	secrets := db.SecretStore{DB: d}
-	// The credentials were files under planners/.agy before this round: a file
+	// The credentials were files under masterminds/.agy before this round: a file
 	// that is present is imported, then removed (§4.3).
 	_ = delivery.ImportAgyCreds(secrets, st.AgyCredsDir())
 	_, _ = delivery.CaptureAgyCreds(os.Getenv, secrets, time.Now().UTC())
@@ -124,12 +124,12 @@ func captureAgyEnv() {
 // newDeliverers builds Runtime.Deliverers: the agy deliverer always, and an
 // OpencodeDeliverer keyed by "opencode" when sqlite3 is on PATH
 // (docs/specs/2026-09-22-opencode-delivery-design.md). No sqlite3 means the
-// opencode deliverer could never confirm a delivery, so an opencode planner's
+// opencode deliverer could never confirm a delivery, so an opencode mastermind's
 // reports stay pending for the background wait. agy needs no external tool: it reads
 // the captured credential secret from the machine database and runs agy
 // itself, and reports its own failure as OutcomeUnavailable.
-func newDeliverers() map[string]delivery.PlannerDeliverer {
-	deliverers := map[string]delivery.PlannerDeliverer{}
+func newDeliverers() map[string]delivery.MasterMindDeliverer {
+	deliverers := map[string]delivery.MasterMindDeliverer{}
 	// store.DefaultRoot has already succeeded once in newRuntime; the guard is
 	// only for the shape of the function, and a root relevo cannot resolve means
 	// every verb has failed long before a delivery is attempted.
@@ -306,7 +306,7 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 	// Gates, availability and latency live in the store root's database; the
 	// legacy directory holding ledger.json/availability.json/history.json is
 	// the store root too, so LoadKV imports them on first read (P3b plan §4.5).
-	// The channel claims, the planner registry and the hooks run log live in
+	// The channel claims, the mastermind registry and the hooks run log live in
 	// the same database (P3b round 2 §4.1-§4.4), so `relevo daemon --preflight`
 	// and `--check`, which pass openGates false, open no database at all.
 	var (
@@ -378,19 +378,19 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 	// The registry needs the runtime's own store and clock, so it is wired
 	// here rather than in the literal above. A runtime with no database open
 	// (preflight, check) keeps a nil registry, which every caller already
-	// treats as "no planners".
+	// treats as "no masterminds".
 	if openGates {
-		reg, rerr := plannerRegistry(rt)
+		reg, rerr := mastermindRegistry(rt)
 		if rerr != nil {
 			return relevo.Runtime{}, rerr
 		}
-		rt.Planners = reg
+		rt.MasterMinds = reg
 	}
 	return rt, nil
 }
 
 // procStartUnix reads a process's start time in Unix seconds, the pid-reuse
-// defence planner.Resolve's host step and relevo mcp's claim need. A read
+// defence mastermind.Resolve's host step and relevo mcp's claim need. A read
 // failure is returned, not swallowed: Resolve treats the error as "the host
 // step cannot run" and falls through to the session.
 func procStartUnix(pid int) (int64, error) {

@@ -165,7 +165,7 @@ func cpuPtrText(p *int) string {
 func bindSecond(t *testing.T, rt Runtime) store.Binding {
 	t.Helper()
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "second", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo2",
+		Name: "second", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo2",
 	}); err != nil {
 		t.Fatalf("Bind second: %v", err)
 	}

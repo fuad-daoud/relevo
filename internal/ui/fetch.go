@@ -234,7 +234,7 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 			if e.Round != round {
 				continue
 			}
-			if e.Direction == store.DirToPlanner &&
+			if e.Direction == store.DirToMasterMind &&
 				(e.Kind == store.KindReport || e.Kind == store.KindQuestion || e.Kind == store.KindFindings) {
 				if e.Payload == "" {
 					return tabMsg{
@@ -828,7 +828,7 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 // visibleTabFetch share one mapping instead of two switches that can drift.
 // live is false for a hist row's detail (#172, §5.8): every tab goes
 // through fetchShow instead of live's own fetchers. A hist row's key is
-// its bare name (hist rows are planner-only; the server never has them),
+// its bare name (hist rows are mastermind-only; the server never has them),
 // read through src.Base(). sel is the artifacts tab's cursor, ignored by
 // every other tab.
 //

@@ -160,9 +160,9 @@ func TestSendRefusesPaused(t *testing.T) {
 
 	b := store.Binding{
 		Name: "webshop", CWD: "/repo", Worktree: "/wt/webshop", Branch: "relevo/webshop",
-		Planner: store.Endpoint{SessionID: "sess-architect", Kind: "claude"},
-		Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
-		Round:   2, State: store.StatePaused,
+		MasterMind: store.Endpoint{SessionID: "sess-architect", Kind: "claude"},
+		Builder:    store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		Round:      2, State: store.StatePaused,
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save paused: %v", err)
@@ -265,8 +265,8 @@ func TestSendChangedTreeBetweenRounds(t *testing.T) {
 	if !de.Confirmed {
 		t.Error("drift entry must have Confirmed == true")
 	}
-	if de.Direction != store.DirToPlanner {
-		t.Errorf("drift entry Direction = %v, want DirToPlanner", de.Direction)
+	if de.Direction != store.DirToMasterMind {
+		t.Errorf("drift entry Direction = %v, want DirToMasterMind", de.Direction)
 	}
 	if de.Path == "" {
 		t.Fatal("drift entry Path is empty")
@@ -283,7 +283,7 @@ func TestSendChangedTreeBetweenRounds(t *testing.T) {
 
 // TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport asserts that
 // an unconsumed pending report is still returned by Pull after a Send with drift.
-// An unconfirmed drift entry would shadow the report in pendingForPlanner.
+// An unconfirmed drift entry would shadow the report in pendingForMasterMind.
 func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
 	t.Parallel()
 
@@ -422,11 +422,11 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
 	rt.Runner = fr
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name:      "webshop",
-		Candidate: "agy/test/m",
-		PlannerID: testPlannerName,
-		CWD:       "/repo",
-		Headless:  true,
+		Name:         "webshop",
+		Candidate:    "agy/test/m",
+		MasterMindID: testMasterMindName,
+		CWD:          "/repo",
+		Headless:     true,
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -1011,7 +1011,7 @@ func TestRenderDryRunShape(t *testing.T) {
 		DonePath:      "/home/p/.local/state/relevo/api-auth/005-done",
 		Tier:          "yolo",
 		PromptHead: []string{
-			`relevo: round 5 · to runner "api-auth" · from the planner (not the human)`,
+			`relevo: round 5 · to runner "api-auth" · from the MasterMind (not the human)`,
 			"Your working tree is: /home/p/.worktrees/api-auth",
 		},
 	}
@@ -1022,7 +1022,7 @@ func TestRenderDryRunShape(t *testing.T) {
   plan      /home/p/.local/state/relevo/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
   report    /home/p/.local/state/relevo/api-auth/005-report.md
   marker    /home/p/.local/state/relevo/api-auth/005-done
-  prompt    relevo: round 5 · to runner "api-auth" · from the planner (not the human)
+  prompt    relevo: round 5 · to runner "api-auth" · from the MasterMind (not the human)
             Your working tree is: /home/p/.worktrees/api-auth
 `
 	got := RenderDryRun(d)
@@ -1092,11 +1092,11 @@ func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
 	rt := newRuntime(t)
 	rt.Runner = fr
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name:      "webshop",
-		Candidate: testAgyRef,
-		PlannerID: testPlannerName,
-		CWD:       "/repo",
-		Headless:  true,
+		Name:         "webshop",
+		Candidate:    testAgyRef,
+		MasterMindID: testMasterMindName,
+		CWD:          "/repo",
+		Headless:     true,
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -1155,7 +1155,7 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 	if planIdx < 1 {
 		t.Fatalf("plan entry not found after a bind pick: %+v", entries)
 	}
-	if prev := entries[planIdx-1]; prev.Kind != store.KindPick || prev.Direction != store.DirToPlanner || !strings.Contains(prev.Note, testClaudeRef) {
+	if prev := entries[planIdx-1]; prev.Kind != store.KindPick || prev.Direction != store.DirToMasterMind || !strings.Contains(prev.Note, testClaudeRef) {
 		t.Errorf("entry before the plan = %+v, want a pick naming %s", prev, testClaudeRef)
 	}
 

@@ -158,7 +158,7 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 
 	t.Run("rounds without a DB", func(t *testing.T) {
 		st := store.New(t.TempDir())
-		noDB := testEnv(plannerSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)
+		noDB := testEnv(mastermindSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)
 		msg, ok := execLine("rounds", noDB, p)().(noticeMsg)
 		if !ok {
 			t.Fatalf("rounds without a DB must notice, got %T", execLine("rounds", noDB, p)())
@@ -186,7 +186,7 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 // database is a notice (§5.4).
 func TestOpenRoundNotFound(t *testing.T) {
 	st := store.New(t.TempDir())
-	env := testEnv(plannerSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)
+	env := testEnv(mastermindSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)
 	msg, ok := openRound(env, dashJump("ghost", "h1", 1))().(noticeMsg)
 	if !ok {
 		t.Fatalf("openRound must notice, got %T", openRound(env, dashJump("ghost", "h1", 1))())
@@ -200,7 +200,7 @@ func TestOpenRoundNotFound(t *testing.T) {
 func TestOpenRoundLive(t *testing.T) {
 	st := store.New(t.TempDir())
 	rep := view.Report{Bindings: []view.BindingStatus{{Name: "persist", Round: 3, Display: "ACTIVE"}}}
-	env := testEnv(plannerSource{relevo.Runtime{Store: st}}, rep, 140, 40)
+	env := testEnv(mastermindSource{relevo.Runtime{Store: st}}, rep, 140, 40)
 	msg, ok := openRound(env, dashJump("persist", "b1", 2))().(roundOpenMsg)
 	if !ok {
 		t.Fatalf("openRound must return roundOpenMsg, got %T", openRound(env, dashJump("persist", "b1", 2))())

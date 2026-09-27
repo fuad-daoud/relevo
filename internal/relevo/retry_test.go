@@ -26,7 +26,7 @@ func TestRetryPlanReadsSealed(t *testing.T) {
 	// finished, so both are sealable (store.Sealable).
 	b := store.Binding{
 		Name: "webshop", CWD: "/repo/webshop", Round: 3, State: store.StateDone,
-		PlannerID: "pl_aaaaaaaabbbb",
+		MasterMindID: "pl_aaaaaaaabbbb",
 	}
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)

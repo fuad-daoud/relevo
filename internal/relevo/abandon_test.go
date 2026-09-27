@@ -58,7 +58,7 @@ func opencodeSent(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	rt := newRuntime(t)
 	rt.Runner = fr
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -83,7 +83,7 @@ func opencodeIdle(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	rt := newRuntime(t)
 	rt.Runner = fr
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -440,7 +440,7 @@ func switchableOpencode(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	rt.Candidates = candidateSet(t, testTwoProviderJSON)
 	rt.Policy = orderOf("builder", testOpencodeRef, testClaudeRef, "agy/other/m")
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}

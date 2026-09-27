@@ -394,7 +394,7 @@ func cmdDoctor(args []string) error {
 	rep.Checks = append(rep.Checks, roleSourceChecks(rt.RoleRegistry(), rt.Candidates, rt.Policy)...)
 	// #382 §5.4: a binding whose role roles.json no longer defines fails at
 	// round start, so doctor names it. A store error skips the rows silently,
-	// as plannerCheckInput treats its own store read.
+	// as mastermindCheckInput treats its own store read.
 	if bindings, err := rt.Store.List(); err == nil {
 		rep.Checks = append(rep.Checks, doctor.BindingRoleChecks(bindings, func(r string) bool {
 			_, ok := rt.RoleRegistry().Role(r)
@@ -412,7 +412,7 @@ func cmdDoctor(args []string) error {
 		}
 	}
 
-	rep.Checks = append(rep.Checks, doctor.PlannerChecks(plannerCheckInput(rt, kinds))...)
+	rep.Checks = append(rep.Checks, doctor.MasterMindChecks(mastermindCheckInput(rt, kinds))...)
 
 	// The hooks row: how many runs the machine database's run log holds, how
 	// many failed in the last day and what the last failure was (P3b round 2

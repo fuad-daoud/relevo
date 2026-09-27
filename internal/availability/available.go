@@ -15,8 +15,8 @@ var ErrUnknownProvider = errors.New("unknown provider")
 
 // Who cleared a gate, as recorded in the history event's Source.
 const (
-	ClearedByPlanner = "planner" // relevo gate --clear, local or forwarded over POST /v1/available
-	ClearedByServer  = "server"  // relevo serve available on the server host
+	ClearedByMasterMind = "planner" // relevo gate --clear, local or forwarded over POST /v1/available; the value is state already written
+	ClearedByServer     = "server"  // relevo serve available on the server host
 )
 
 // ResolveClearSubject decides what `relevo gate --clear <subject>` clears, and

@@ -1,6 +1,6 @@
 // Package view renders a binding's state for a human and holds the plain
 // types that carry it. The code that computes that state -- probes, live
-// usage, git numstat, planner routing -- stays in relevo and fills them.
+// usage, git numstat, mastermind routing -- stays in relevo and fills them.
 package view
 
 import (
@@ -23,7 +23,7 @@ const AgentUnknown = "unknown"
 // LiveDiff is the live "+N/-M in F" a status row shows while a round is
 // open: dir's working tree against the round's baseline tree, no patch body,
 // just the numstat. Shared marks a --cwd binding, whose worktree is the
-// planner's own tree rather than one relevo created.
+// mastermind's own tree rather than one relevo created.
 type LiveDiff struct {
 	Files   int  `json:"files"`
 	Added   int  `json:"added"`
@@ -51,28 +51,28 @@ type BindingStatus struct {
 	// Role is the actor the runner plays; always present, "builder" when the
 	// binding stores the empty (builder) one.
 	Role string `json:"actor"`
-	// PlannerID and PlannerName name the relevo planner record this binding
+	// MasterMindID and MasterMindName name the relevo mastermind record this binding
 	// belongs to.
-	PlannerID   string `json:"planner_id,omitempty"`
-	PlannerName string `json:"planner_name,omitempty"`
-	// PlannerChatLabel and PlannerChatLink are the harness's own name for the
-	// planner's session: Label.Text and Label.Link. Only cmd/relevo fills
+	MasterMindID   string `json:"mastermind_id,omitempty"`
+	MasterMindName string `json:"mastermind_name,omitempty"`
+	// MasterMindChatLabel and MasterMindChatLink are the harness's own name for the
+	// mastermind's session: Label.Text and Label.Link. Only cmd/relevo fills
 	// them, inside the command a person ran, and only to print them; Status
 	// itself leaves them empty, so no label is ever computed on, or sent to,
 	// a server. They are never stored or logged.
-	PlannerChatLabel string `json:"planner_chat_label,omitempty"`
-	PlannerChatLink  string `json:"planner_chat_link,omitempty"`
-	PlannerKind      string `json:"planner_kind"`
-	// PlannerRoute is how a pending report reaches this binding planner:
+	MasterMindChatLabel string `json:"mastermind_chat_label,omitempty"`
+	MasterMindChatLink  string `json:"mastermind_chat_link,omitempty"`
+	MasterMindKind      string `json:"mastermind_kind"`
+	// MasterMindRoute is how a pending report reaches this binding mastermind:
 	// "channel", "deliverer" or "pull". "pull" is a route, not a fault: it is
-	// the background wait's `relevo wait`, which is how a Claude Code planner
+	// the background wait's `relevo wait`, which is how a Claude Code mastermind
 	// in tools mode gets its report.
-	PlannerRoute string `json:"planner_route"`
-	// PlannerRouteLive reports whether that route can push right now: a live
+	MasterMindRoute string `json:"mastermind_route"`
+	// MasterMindRouteLive reports whether that route can push right now: a live
 	// channel claim, or a configured deliverer. A pull route is never live,
 	// because the daemon cannot see whether a background wait is running.
-	PlannerRouteLive bool   `json:"planner_route_live"`
-	BuilderKind      string `json:"harness"`
+	MasterMindRouteLive bool   `json:"mastermind_route_live"`
+	BuilderKind         string `json:"harness"`
 	// BuilderDefinition is the builder's resolved agent definition on this
 	// binding's builder kind, set only when it is custom: a shipped
 	// definition leaves the field empty and omitted, so today's JSON is
@@ -96,7 +96,7 @@ type BindingStatus struct {
 	// No omitempty: a consumer reads 0 as "nothing yet".
 	LastSeq int `json:"last_seq"`
 	// LastPayload is the most recent plan/report/question/answer entry --
-	// the four kinds that cross between planner and builder -- as opposed to
+	// the four kinds that cross between mastermind and builder -- as opposed to
 	// Last, which is the most recent entry of any kind including relevo's own
 	// bookkeeping (drift, pick, switch, exit, diff). Nil when the log has
 	// none.
@@ -119,7 +119,7 @@ type BindingStatus struct {
 	// Round equals the round of the newest such entry. Zero when the log has no
 	// such entry.
 	RoundStart time.Time `json:"round_start,omitzero"`
-	// RoundEnd is the TS of the newest KindReport + DirToPlanner entry with that
+	// RoundEnd is the TS of the newest KindReport + DirToMasterMind entry with that
 	// same Round and TS >= RoundStart. Zero when none (the round is open).
 	RoundEnd time.Time `json:"round_end,omitzero"`
 	// RoundUsage is a copy of the Usage on the entry that set RoundEnd. Nil when
@@ -190,20 +190,20 @@ type BindingStatus struct {
 	// No omitempty: a consumer reads false as "seen".
 	Unread bool `json:"unread"`
 	// Owner is the client this row belongs to on a serve box: the client's
-	// "SHA256:<base64>" fingerprint. Empty on a planner, where every row
+	// "SHA256:<base64>" fingerprint. Empty on a mastermind, where every row
 	// belongs to the one runtime the UI is welded to.
 	Owner string `json:"owner,omitempty"`
 	// OwnerLabel is Owner rendered for a human: Clients.LabelOf, or
-	// ShortOwner(Owner) when that client has no label. Empty on a planner
+	// ShortOwner(Owner) when that client has no label. Empty on a mastermind
 	// row. Renderers key new behaviour on OwnerLabel != "" only.
 	OwnerLabel string `json:"owner_label,omitempty"`
 	// Queued is a served row's place in the server's builder queue:
 	// nil unless the round is queued. Set only by internal/serve's
-	// AdminStatus/FlatStatus; always nil from a planner's own Status.
+	// AdminStatus/FlatStatus; always nil from a mastermind's own Status.
 	Queued *remote.QueueView `json:"queued,omitempty"`
 }
 
-// Key is the UI's row identity. A planner row keys by Name; a server row
+// Key is the UI's row identity. A mastermind row keys by Name; a server row
 // keys by owner/name, because two clients may share a binding name.
 func (b BindingStatus) Key() string {
 	if b.Owner == "" {
@@ -243,7 +243,7 @@ type LastEvent struct {
 	Direction store.Direction `json:"direction"`
 	Kind      store.Kind      `json:"kind"`
 	// Note is the entry's note, when it has one. A nudge is a plan entry to
-	// the builder and a scrape is a report entry to the planner, so without
+	// the builder and a scrape is a report entry to the mastermind, so without
 	// it the last line after either reads exactly like the ordinary case.
 	Note    string `json:"note,omitempty"`
 	Outcome string `json:"outcome,omitempty"`
@@ -258,7 +258,7 @@ type CloseInfo struct {
 	Tree    string `json:"tree"`
 }
 
-// PendingInfo describes a payload waiting on the planner.
+// PendingInfo describes a payload waiting on the mastermind.
 type PendingInfo struct {
 	Round int        `json:"round"`
 	Kind  store.Kind `json:"kind"`
@@ -344,7 +344,7 @@ func QueueText(q *store.QueueFacts, server string, now time.Time) string {
 }
 
 // IsPayloadKind reports whether k is one of the four kinds that cross
-// between planner and builder (plan, report, question, answer) -- the ones
+// between mastermind and builder (plan, report, question, answer) -- the ones
 // LastPayload tracks, as opposed to relevo's own bookkeeping kinds.
 func IsPayloadKind(k store.Kind) bool {
 	switch k {
@@ -368,7 +368,7 @@ func PriorTokensOf(entries []store.LogEntry, round int) usage.Tokens {
 		if e.Kind == store.KindSwitch && e.Usage != nil {
 			total = total.Add(e.Usage.Tokens)
 		}
-		if e.Kind == store.KindReport && e.Direction == store.DirToPlanner && e.PriorTokens != nil {
+		if e.Kind == store.KindReport && e.Direction == store.DirToMasterMind && e.PriorTokens != nil {
 			reportPrior = e.PriorTokens
 		}
 	}
@@ -405,7 +405,7 @@ func RoundFacts(entries []store.LogEntry) (start, end time.Time, u *usage.Usage)
 
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
-		if e.Kind == store.KindReport && e.Direction == store.DirToPlanner && e.Round == targetRound && !e.TS.Before(start) {
+		if e.Kind == store.KindReport && e.Direction == store.DirToMasterMind && e.Round == targetRound && !e.TS.Before(start) {
 			end = e.TS
 			if e.Usage != nil {
 				copyU := *e.Usage

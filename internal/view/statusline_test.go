@@ -64,28 +64,28 @@ func TestRenderStatusLineEmpty(t *testing.T) {
 	}
 }
 
-// TestRenderPlannerLine is the statusline surface: the first line names the
-// planner, an empty name renders nothing, and a narrow terminal cuts the
+// TestRenderMasterMindLine is the statusline surface: the first line names the
+// mastermind, an empty name renders nothing, and a narrow terminal cuts the
 // visible text to the column budget.
-func TestRenderPlannerLine(t *testing.T) {
+func TestRenderMasterMindLine(t *testing.T) {
 	t.Parallel()
 
-	got := RenderPlannerLine("architect-14", 80)
-	if !strings.Contains(got, "planner architect-14") {
-		t.Errorf("RenderPlannerLine(%q, 80) = %q, want it to contain %q", "architect-14", got, "planner architect-14")
+	got := RenderMasterMindLine("architect-14", 80)
+	if !strings.Contains(got, "MasterMind architect-14") {
+		t.Errorf("RenderMasterMindLine(%q, 80) = %q, want it to contain %q", "architect-14", got, "MasterMind architect-14")
 	}
 	if !strings.HasSuffix(got, "\n") {
-		t.Errorf("RenderPlannerLine(%q, 80) = %q, want it to end in a newline", "architect-14", got)
+		t.Errorf("RenderMasterMindLine(%q, 80) = %q, want it to end in a newline", "architect-14", got)
 	}
 
-	if got := RenderPlannerLine("", 80); got != "" {
-		t.Errorf("RenderPlannerLine(%q, 80) = %q, want empty", "", got)
+	if got := RenderMasterMindLine("", 80); got != "" {
+		t.Errorf("RenderMasterMindLine(%q, 80) = %q, want empty", "", got)
 	}
 
-	narrow := RenderPlannerLine("architect-14", 10)
+	narrow := RenderMasterMindLine("architect-14", 10)
 	visible := strings.TrimSuffix(stripSGR(narrow), "\n")
 	if w := utf8.RuneCountInString(visible); w > 10 {
-		t.Errorf("RenderPlannerLine(%q, 10) visible text is %d runes, want at most 10: %q", "architect-14", w, visible)
+		t.Errorf("RenderMasterMindLine(%q, 10) visible text is %d runes, want at most 10: %q", "architect-14", w, visible)
 	}
 }
 
@@ -291,7 +291,7 @@ func TestRenderStatusLineClosedRoundTokens(t *testing.T) {
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
 		RoundStart:       baseTime.Add(-12 * time.Minute),
 		RoundEnd:         baseTime.Add(-2 * time.Minute),
-		LastPayload:      &LastEvent{TS: baseTime.Add(-2 * time.Minute), Kind: store.KindReport, Direction: store.DirToPlanner},
+		LastPayload:      &LastEvent{TS: baseTime.Add(-2 * time.Minute), Kind: store.KindReport, Direction: store.DirToMasterMind},
 		RoundUsage:       &usage.Usage{Tokens: usage.Tokens{In: 2_100_000}},
 		Spend:            &usage.Spend{Rounds: 2, Measured: 1.51, Tokens: usage.Tokens{In: 9_000_000}},
 	}
@@ -487,7 +487,7 @@ var rowStatusCases = []struct {
 			Round:            1,
 			Display:          "ACTIVE",
 			BuilderCandidate: "agy",
-			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Round: 1, TS: rsNow.Add(-2 * time.Minute)},
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, Round: 1, TS: rsNow.Add(-2 * time.Minute)},
 		},
 		wantStatus: "REPORT IN",
 		wantTone:   "report",
@@ -499,7 +499,7 @@ var rowStatusCases = []struct {
 			Round:            1,
 			Display:          "ACTIVE",
 			BuilderCandidate: "agy",
-			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Note: "unmarked", Outcome: "halted", TS: rsNow.Add(-2 * time.Minute)},
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, Note: "unmarked", Outcome: "halted", TS: rsNow.Add(-2 * time.Minute)},
 		},
 		wantStatus: "REPORT IN · unmarked · halted",
 		wantTone:   "report",
@@ -511,7 +511,7 @@ var rowStatusCases = []struct {
 			Round:            1,
 			Display:          "ACTIVE",
 			BuilderCandidate: "agy",
-			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Outcome: "done", TS: rsNow.Add(-2 * time.Minute)},
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, Outcome: "done", TS: rsNow.Add(-2 * time.Minute)},
 		},
 		wantStatus: "REPORT IN",
 		wantTone:   "report",
@@ -523,7 +523,7 @@ var rowStatusCases = []struct {
 			Round:            1,
 			Display:          "ACTIVE",
 			BuilderCandidate: "agy",
-			LastPayload:      &LastEvent{Kind: store.KindQuestion, Direction: store.DirToPlanner, TS: rsNow.Add(-2 * time.Minute)},
+			LastPayload:      &LastEvent{Kind: store.KindQuestion, Direction: store.DirToMasterMind, TS: rsNow.Add(-2 * time.Minute)},
 		},
 		wantStatus: "QUESTION IN",
 		wantTone:   "report",
@@ -531,14 +531,14 @@ var rowStatusCases = []struct {
 	{
 		name: "report still in flight on a live deliverer route",
 		binding: BindingStatus{
-			Name:             "api",
-			Round:            1,
-			Display:          "ACTIVE",
-			BuilderCandidate: "agy",
-			PlannerRoute:     "deliverer",
-			PlannerRouteLive: true,
-			Pending:          &PendingInfo{Round: 1, Kind: store.KindReport},
-			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, TS: rsNow.Add(-5 * time.Second)},
+			Name:                "api",
+			Round:               1,
+			Display:             "ACTIVE",
+			BuilderCandidate:    "agy",
+			MasterMindRoute:     "deliverer",
+			MasterMindRouteLive: true,
+			Pending:             &PendingInfo{Round: 1, Kind: store.KindReport},
+			LastPayload:         &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, TS: rsNow.Add(-5 * time.Second)},
 		},
 		wantStatus: "report in",
 		wantTone:   "phase",
@@ -546,14 +546,14 @@ var rowStatusCases = []struct {
 	{
 		name: "stalled report",
 		binding: BindingStatus{
-			Name:             "api",
-			Round:            1,
-			Display:          "ACTIVE",
-			BuilderCandidate: "agy",
-			PlannerRoute:     "deliverer",
-			PlannerRouteLive: true,
-			Pending:          &PendingInfo{Round: 1, Kind: store.KindReport},
-			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, TS: rsNow.Add(-2 * time.Minute)},
+			Name:                "api",
+			Round:               1,
+			Display:             "ACTIVE",
+			BuilderCandidate:    "agy",
+			MasterMindRoute:     "deliverer",
+			MasterMindRouteLive: true,
+			Pending:             &PendingInfo{Round: 1, Kind: store.KindReport},
+			LastPayload:         &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, TS: rsNow.Add(-2 * time.Minute)},
 		},
 		wantStatus: "NEEDS YOU",
 		wantTone:   "needs",
@@ -641,7 +641,7 @@ func TestRenderStatusLineOneStatusClockLast(t *testing.T) {
 	now := baseTime
 	rep := Report{Bindings: []BindingStatus{
 		{
-			Name:             "planner-policy",
+			Name:             "mastermind-policy",
 			Round:            1,
 			Display:          "ACTIVE",
 			BuilderCandidate: "agy/google/gemini-3.8-flash-high",
@@ -655,7 +655,7 @@ func TestRenderStatusLineOneStatusClockLast(t *testing.T) {
 			BuilderCandidate: "agy/google/gemini-3.8-flash-high",
 			RoundStart:       now.Add(-33 * time.Minute),
 			RoundEnd:         now.Add(-31 * time.Minute),
-			LastPayload:      &LastEvent{TS: now.Add(-31 * time.Minute), Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner},
+			LastPayload:      &LastEvent{TS: now.Add(-31 * time.Minute), Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind},
 		},
 		{
 			Name:             "proc",
@@ -664,7 +664,7 @@ func TestRenderStatusLineOneStatusClockLast(t *testing.T) {
 			BuilderCandidate: "agy/google/gemini-3.8-flash-high",
 			RoundStart:       now.Add(-21 * time.Minute),
 			RoundEnd:         now.Add(-20 * time.Minute),
-			LastPayload:      &LastEvent{TS: now.Add(-20 * time.Minute), Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Outcome: "halted"},
+			LastPayload:      &LastEvent{TS: now.Add(-20 * time.Minute), Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Outcome: "halted"},
 		},
 	}}
 
@@ -740,7 +740,7 @@ func statuslineFixture(now time.Time) Report {
 				LastPayload: &LastEvent{
 					TS:        now.Add(-23 * time.Second),
 					Kind:      store.KindReport,
-					Direction: store.DirToPlanner,
+					Direction: store.DirToMasterMind,
 				},
 			},
 		},
@@ -1030,7 +1030,7 @@ func TestStatusLineRows(t *testing.T) {
 				Note: "halted",
 				TS:   now.Add(-2 * time.Minute),
 			},
-			PlannerRoute: "deliverer",
+			MasterMindRoute: "deliverer",
 		}
 		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
 		if len(rows) != 1 {
@@ -1240,17 +1240,17 @@ func TestStatusLineRowsEmptyDoc(t *testing.T) {
 			t.Fatal("StatusLineRows returned nil slice, want non-nil empty slice")
 		}
 		doc := StatusLineDoc{
-			Planner: nil,
-			Now:     now.UTC(),
-			Rows:    rows,
+			MasterMind: nil,
+			Now:        now.UTC(),
+			Rows:       rows,
 		}
 		data, err := json.Marshal(doc)
 		if err != nil {
 			t.Fatalf("json.Marshal: %v", err)
 		}
 		s := string(data)
-		if !strings.Contains(s, `"planner":null`) {
-			t.Errorf("json %q does not contain '\"planner\":null'", s)
+		if !strings.Contains(s, `"mastermind":null`) {
+			t.Errorf("json %q does not contain '\"mastermind\":null'", s)
 		}
 		if !strings.Contains(s, `"rows":[]`) {
 			t.Errorf("json %q does not contain '\"rows\":[]'", s)
@@ -1272,7 +1272,7 @@ func TestStatusLineRowsPending(t *testing.T) {
 			LastPayload: &LastEvent{
 				Round:     3,
 				Kind:      store.KindReport,
-				Direction: store.DirToPlanner,
+				Direction: store.DirToMasterMind,
 			},
 		}
 		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
@@ -1301,16 +1301,16 @@ func TestStatusLineRowsPending(t *testing.T) {
 
 	t.Run("pending report, deliverer live, 5s old -> needs_you false, report_in false", func(t *testing.T) {
 		b := BindingStatus{
-			Name:             "worker",
-			Round:            4,
-			Display:          "ACTIVE",
-			PlannerRoute:     "deliverer",
-			PlannerRouteLive: true,
-			Pending:          &PendingInfo{Round: 3, Kind: store.KindReport},
+			Name:                "worker",
+			Round:               4,
+			Display:             "ACTIVE",
+			MasterMindRoute:     "deliverer",
+			MasterMindRouteLive: true,
+			Pending:             &PendingInfo{Round: 3, Kind: store.KindReport},
 			LastPayload: &LastEvent{
 				Round:     3,
 				Kind:      store.KindReport,
-				Direction: store.DirToPlanner,
+				Direction: store.DirToMasterMind,
 				TS:        now.Add(-5 * time.Second),
 			},
 		}
@@ -1335,16 +1335,16 @@ func TestStatusLineRowsStalled(t *testing.T) {
 
 	t.Run("pending report, deliverer live, 61s old -> needs_you true", func(t *testing.T) {
 		b := BindingStatus{
-			Name:             "worker",
-			Round:            4,
-			Display:          "ACTIVE",
-			PlannerRoute:     "deliverer",
-			PlannerRouteLive: true,
-			Pending:          &PendingInfo{Round: 3, Kind: store.KindReport},
+			Name:                "worker",
+			Round:               4,
+			Display:             "ACTIVE",
+			MasterMindRoute:     "deliverer",
+			MasterMindRouteLive: true,
+			Pending:             &PendingInfo{Round: 3, Kind: store.KindReport},
 			LastPayload: &LastEvent{
 				Round:     3,
 				Kind:      store.KindReport,
-				Direction: store.DirToPlanner,
+				Direction: store.DirToMasterMind,
 				TS:        now.Add(-61 * time.Second),
 			},
 		}
@@ -1369,15 +1369,15 @@ func TestStatusLineRowsPull(t *testing.T) {
 
 	t.Run("pending report, route pull -> needs_you true at once", func(t *testing.T) {
 		b := BindingStatus{
-			Name:         "worker",
-			Round:        4,
-			Display:      "ACTIVE",
-			PlannerRoute: "pull",
-			Pending:      &PendingInfo{Round: 3, Kind: store.KindReport},
+			Name:            "worker",
+			Round:           4,
+			Display:         "ACTIVE",
+			MasterMindRoute: "pull",
+			Pending:         &PendingInfo{Round: 3, Kind: store.KindReport},
 			LastPayload: &LastEvent{
 				Round:     3,
 				Kind:      store.KindReport,
-				Direction: store.DirToPlanner,
+				Direction: store.DirToMasterMind,
 				TS:        now,
 			},
 		}
@@ -1419,7 +1419,7 @@ func TestStatusLineRowsNeedsYou(t *testing.T) {
 			t.Errorf("NeedsYou = %v, want true", rows[0].NeedsYou)
 		}
 		if rows[0].ReportIn {
-			t.Errorf("ReportIn = %v, want false (no to-planner payload)", rows[0].ReportIn)
+			t.Errorf("ReportIn = %v, want false (no to-mastermind payload)", rows[0].ReportIn)
 		}
 		if rows[0].ReportRound != 0 {
 			t.Errorf("ReportRound = %d, want 0", rows[0].ReportRound)
@@ -1472,18 +1472,18 @@ var srrRep = Report{Bindings: []BindingStatus{
 		Display:          "ACTIVE",
 		BuilderCandidate: "agy",
 		RoundStart:       srrNow.Add(-4 * time.Minute),
-		LastPayload:      &LastEvent{TS: srrNow.Add(-4 * time.Minute), Round: 4, Kind: store.KindReport, Direction: store.DirToPlanner},
+		LastPayload:      &LastEvent{TS: srrNow.Add(-4 * time.Minute), Round: 4, Kind: store.KindReport, Direction: store.DirToMasterMind},
 	},
 	{
-		Name:             "stalled",
-		Round:            7,
-		Display:          "ACTIVE",
-		BuilderCandidate: "agy",
-		PlannerRoute:     "deliverer",
-		PlannerRouteLive: true,
-		Pending:          &PendingInfo{Round: 6, Kind: store.KindReport},
-		RoundStart:       srrNow.Add(-7 * time.Minute),
-		LastPayload:      &LastEvent{TS: srrNow.Add(-2 * time.Minute), Round: 6, Kind: store.KindReport, Direction: store.DirToPlanner},
+		Name:                "stalled",
+		Round:               7,
+		Display:             "ACTIVE",
+		BuilderCandidate:    "agy",
+		MasterMindRoute:     "deliverer",
+		MasterMindRouteLive: true,
+		Pending:             &PendingInfo{Round: 6, Kind: store.KindReport},
+		RoundStart:          srrNow.Add(-7 * time.Minute),
+		LastPayload:         &LastEvent{TS: srrNow.Add(-2 * time.Minute), Round: 6, Kind: store.KindReport, Direction: store.DirToMasterMind},
 	},
 	{
 		Name:             "stuck",
@@ -1499,7 +1499,7 @@ var srrRep = Report{Bindings: []BindingStatus{
 		Display:          "PAUSED",
 		BuilderCandidate: "agy",
 		RoundStart:       srrNow.Add(-6 * time.Minute),
-		LastPayload:      &LastEvent{TS: srrNow.Add(-1 * time.Minute), Round: 5, Kind: store.KindReport, Direction: store.DirToPlanner},
+		LastPayload:      &LastEvent{TS: srrNow.Add(-1 * time.Minute), Round: 5, Kind: store.KindReport, Direction: store.DirToMasterMind},
 	},
 }}
 var srrCases = []struct {

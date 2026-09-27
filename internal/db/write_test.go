@@ -70,25 +70,25 @@ func TestUpsertRepoFillsMissingKey(t *testing.T) {
 	}
 }
 
-func TestUpsertPlannerUpdatesLastSeen(t *testing.T) {
+func TestUpsertMasterMindUpdatesLastSeen(t *testing.T) {
 	d := openTestDB(t)
 	t1 := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	t2 := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
 
-	id1, err := d.UpsertPlanner(Planner{HarnessKind: "claude", SessionID: "sess-1", FirstSeen: t1, LastSeen: t1})
+	id1, err := d.UpsertMasterMind(MasterMind{HarnessKind: "claude", SessionID: "sess-1", FirstSeen: t1, LastSeen: t1})
 	if err != nil {
-		t.Fatalf("UpsertPlanner (1st): %v", err)
+		t.Fatalf("UpsertMasterMind (1st): %v", err)
 	}
-	id2, err := d.UpsertPlanner(Planner{HarnessKind: "claude", SessionID: "sess-1", FirstSeen: t2, LastSeen: t2})
+	id2, err := d.UpsertMasterMind(MasterMind{HarnessKind: "claude", SessionID: "sess-1", FirstSeen: t2, LastSeen: t2})
 	if err != nil {
-		t.Fatalf("UpsertPlanner (2nd): %v", err)
+		t.Fatalf("UpsertMasterMind (2nd): %v", err)
 	}
 	if id1 != id2 {
 		t.Fatalf("ids differ: %q != %q", id1, id2)
 	}
 
 	var gotLastSeen string
-	if err := d.sqlDB.QueryRow(`SELECT last_seen FROM planner WHERE id = ?`, id1).Scan(&gotLastSeen); err != nil {
+	if err := d.sqlDB.QueryRow(`SELECT last_seen FROM mastermind WHERE id = ?`, id1).Scan(&gotLastSeen); err != nil {
 		t.Fatalf("select last_seen: %v", err)
 	}
 	if gotLastSeen != formatTime(t2) {
@@ -96,11 +96,11 @@ func TestUpsertPlannerUpdatesLastSeen(t *testing.T) {
 	}
 
 	var count int
-	if err := d.sqlDB.QueryRow(`SELECT COUNT(*) FROM planner`).Scan(&count); err != nil {
-		t.Fatalf("count planner: %v", err)
+	if err := d.sqlDB.QueryRow(`SELECT COUNT(*) FROM mastermind`).Scan(&count); err != nil {
+		t.Fatalf("count mastermind: %v", err)
 	}
 	if count != 1 {
-		t.Errorf("planner has %d rows, want 1", count)
+		t.Errorf("mastermind has %d rows, want 1", count)
 	}
 }
 
@@ -203,7 +203,7 @@ func TestAppendEventsIgnoresKnownSeq(t *testing.T) {
 	}
 
 	mkEvent := func(seq int) Event {
-		return Event{BindingID: bindingID, Seq: seq, TS: time.Now(), Kind: "send", Direction: "planner_to_builder", EntryJSON: "{}"}
+		return Event{BindingID: bindingID, Seq: seq, TS: time.Now(), Kind: "send", Direction: "mastermind_to_builder", EntryJSON: "{}"}
 	}
 
 	added, err := d.AppendEvents(bindingID, []Event{mkEvent(1), mkEvent(2), mkEvent(3)})
@@ -243,7 +243,7 @@ func TestLinkEventsSetsRoundID(t *testing.T) {
 	}
 
 	mkEvent := func(seq int) Event {
-		return Event{BindingID: bindingID, Seq: seq, TS: time.Now(), Kind: "send", Direction: "planner_to_builder", EntryJSON: "{}"}
+		return Event{BindingID: bindingID, Seq: seq, TS: time.Now(), Kind: "send", Direction: "mastermind_to_builder", EntryJSON: "{}"}
 	}
 	if _, err := d.AppendEvents(bindingID, []Event{mkEvent(1), mkEvent(2), mkEvent(3)}); err != nil {
 		t.Fatalf("AppendEvents: %v", err)
@@ -346,7 +346,7 @@ func TestAppendTranscriptIgnoresKnownSeq(t *testing.T) {
 		return TranscriptRecord{Seq: seq, RecordJSON: "{}", Rendered: "line"}
 	}
 
-	added, err := d.AppendTranscript(OwnerPlanner, "sess-1", []TranscriptRecord{mkRecord(0), mkRecord(1)})
+	added, err := d.AppendTranscript(OwnerMasterMind, "sess-1", []TranscriptRecord{mkRecord(0), mkRecord(1)})
 	if err != nil {
 		t.Fatalf("AppendTranscript (1st): %v", err)
 	}
@@ -354,7 +354,7 @@ func TestAppendTranscriptIgnoresKnownSeq(t *testing.T) {
 		t.Fatalf("added = %d, want 2", added)
 	}
 
-	added, err = d.AppendTranscript(OwnerPlanner, "sess-1", []TranscriptRecord{mkRecord(0), mkRecord(1), mkRecord(2)})
+	added, err = d.AppendTranscript(OwnerMasterMind, "sess-1", []TranscriptRecord{mkRecord(0), mkRecord(1), mkRecord(2)})
 	if err != nil {
 		t.Fatalf("AppendTranscript (2nd): %v", err)
 	}
@@ -437,10 +437,10 @@ func TestDeleteArtifactRemovesOnlyTheNamedRow(t *testing.T) {
 	}
 }
 
-// TestDeleteRoundTranscriptLeavesPlannerRows pins that only round-owned rows
-// go: a planner-owned row with the same owner id survives because the owner
+// TestDeleteRoundTranscriptLeavesMasterMindRows pins that only round-owned rows
+// go: a mastermind-owned row with the same owner id survives because the owner
 // kind is hard-coded, never taken from the caller.
-func TestDeleteRoundTranscriptLeavesPlannerRows(t *testing.T) {
+func TestDeleteRoundTranscriptLeavesMasterMindRows(t *testing.T) {
 	d := openTestDB(t)
 	const ownerID = "owner-shared-by-both-kinds"
 	recs := []TranscriptRecord{
@@ -451,8 +451,8 @@ func TestDeleteRoundTranscriptLeavesPlannerRows(t *testing.T) {
 	if _, err := d.AppendTranscript(OwnerRound, ownerID, recs); err != nil {
 		t.Fatalf("AppendTranscript(round): %v", err)
 	}
-	if _, err := d.AppendTranscript(OwnerPlanner, ownerID, recs); err != nil {
-		t.Fatalf("AppendTranscript(planner): %v", err)
+	if _, err := d.AppendTranscript(OwnerMasterMind, ownerID, recs); err != nil {
+		t.Fatalf("AppendTranscript(mastermind): %v", err)
 	}
 
 	var n int64
@@ -475,12 +475,12 @@ func TestDeleteRoundTranscriptLeavesPlannerRows(t *testing.T) {
 		t.Errorf("round transcript has %d rows after the delete, want 0", len(roundRows))
 	}
 
-	plannerRows, err := d.Transcript(OwnerPlanner, ownerID, 0, 0)
+	mastermindRows, err := d.Transcript(OwnerMasterMind, ownerID, 0, 0)
 	if err != nil {
-		t.Fatalf("Transcript(planner): %v", err)
+		t.Fatalf("Transcript(mastermind): %v", err)
 	}
-	if len(plannerRows) != len(recs) {
-		t.Errorf("planner transcript has %d rows, want %d (it must be untouched)", len(plannerRows), len(recs))
+	if len(mastermindRows) != len(recs) {
+		t.Errorf("mastermind transcript has %d rows, want %d (it must be untouched)", len(mastermindRows), len(recs))
 	}
 }
 

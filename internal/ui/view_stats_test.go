@@ -119,7 +119,7 @@ func statsTwentyCandidates() stats.Report {
 // statsTestEnv is a view Env with a store but no database.
 func statsTestEnv(t *testing.T, width, height int) Env {
 	t.Helper()
-	return testEnv(plannerSource{relevo.Runtime{Store: store.New(t.TempDir())}}, view.Report{}, width, height)
+	return testEnv(mastermindSource{relevo.Runtime{Store: store.New(t.TempDir())}}, view.Report{}, width, height)
 }
 
 // statsKey builds a rune key.
@@ -137,7 +137,7 @@ func statsShell(t *testing.T, width, height int, window string) Model {
 	}
 	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}},
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
 		Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -521,7 +521,7 @@ func TestStatsRefreshThrottle(t *testing.T) {
 	sv := statsTestView("30d")
 	sv.fetchedAt = railNow
 
-	soon := testEnv(plannerSource{relevo.Runtime{Store: store.New(t.TempDir())}}, view.Report{}, 160, 40)
+	soon := testEnv(mastermindSource{relevo.Runtime{Store: store.New(t.TempDir())}}, view.Report{}, 160, 40)
 	soon.Now = railNow.Add(10 * time.Second)
 	next, cmd := sv.Update(tickMsg(soon.Now), soon)
 	if cmd != nil {
@@ -1735,7 +1735,7 @@ func TestStatsCandidatesTabDetail(t *testing.T) {
 // a registry, so the detail block's roles read from the registry (§2.2).
 func statsRolesEnv(t *testing.T, set *candidate.Set, reg *roles.Registry) Env {
 	t.Helper()
-	return testEnv(plannerSource{relevo.Runtime{
+	return testEnv(mastermindSource{relevo.Runtime{
 		Store: store.New(t.TempDir()), Candidates: set, Registry: reg,
 	}}, view.Report{}, 132, 40)
 }

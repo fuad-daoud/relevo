@@ -4,11 +4,11 @@ CREATE UNIQUE INDEX artifact_round_kind_consult_uidx ON artifact(round_id, kind,
 index binding_feature_idx binding
 CREATE INDEX binding_feature_idx ON binding(feature)
 
+index binding_mastermind_id_idx binding
+CREATE INDEX binding_mastermind_id_idx ON binding(mastermind_id)
+
 index binding_name_created_at_uidx binding
 CREATE UNIQUE INDEX binding_name_created_at_uidx ON binding(name, created_at)
-
-index binding_planner_id_idx binding
-CREATE INDEX binding_planner_id_idx ON binding(planner_id)
 
 index binding_record_owner_name_uidx binding_record
 CREATE UNIQUE INDEX binding_record_owner_name_uidx
@@ -23,8 +23,8 @@ CREATE INDEX event_binding_round_seq_idx ON event(binding_id, round_id, seq)
 index event_binding_seq_uidx event
 CREATE UNIQUE INDEX event_binding_seq_uidx ON event(binding_id, seq)
 
-index planner_harness_session_uidx planner
-CREATE UNIQUE INDEX planner_harness_session_uidx ON planner(harness_kind, session_id)
+index mastermind_harness_session_uidx mastermind
+CREATE UNIQUE INDEX mastermind_harness_session_uidx ON mastermind(harness_kind, session_id)
 
 index repo_common_dir_uidx repo
 CREATE UNIQUE INDEX repo_common_dir_uidx ON repo(common_dir) WHERE common_dir IS NOT NULL
@@ -65,7 +65,7 @@ index sqlite_autoindex_ingest_cursor_1 ingest_cursor
 index sqlite_autoindex_kv_1 kv
 
 
-index sqlite_autoindex_planner_1 planner
+index sqlite_autoindex_mastermind_1 mastermind
 
 
 index sqlite_autoindex_repo_1 repo
@@ -103,7 +103,7 @@ CREATE TABLE binding (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     repo_id TEXT REFERENCES repo(id),
-    planner_id TEXT REFERENCES planner(id),
+    mastermind_id TEXT REFERENCES "mastermind"(id),
     feature TEXT,
     forked_from_binding_id TEXT REFERENCES binding(id),
     forked_from_round INTEGER,
@@ -220,8 +220,8 @@ CREATE TABLE kv (
     updated_at TEXT NOT NULL
 )
 
-table planner planner
-CREATE TABLE planner (
+table mastermind mastermind
+CREATE TABLE "mastermind" (
     id TEXT PRIMARY KEY,
     harness_kind TEXT NOT NULL,
     session_id TEXT NOT NULL,
@@ -301,4 +301,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 )
 
-schema_versions have=7 know=7
+schema_versions have=8 know=8

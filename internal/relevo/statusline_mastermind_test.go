@@ -7,14 +7,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-func setupPlannerStatusStore(t *testing.T) Runtime {
+func setupMasterMindStatusStore(t *testing.T) Runtime {
 	t.Helper()
 	rt := newRuntime(t)
 	bindings := []store.Binding{
 		{
 			Name:             "zeta",
 			CWD:              "/a",
-			PlannerID:        testClaimPlanner,
+			MasterMindID:     testClaimMasterMind,
 			Builder:          store.Endpoint{Kind: "agy"},
 			BuilderCandidate: testAgyRef,
 			Round:            1,
@@ -23,7 +23,7 @@ func setupPlannerStatusStore(t *testing.T) Runtime {
 		{
 			Name:             "alpha",
 			CWD:              "/b",
-			PlannerID:        testClaimPlanner,
+			MasterMindID:     testClaimMasterMind,
 			Builder:          store.Endpoint{Kind: "agy"},
 			BuilderCandidate: testAgyRef,
 			Round:            1,
@@ -32,7 +32,7 @@ func setupPlannerStatusStore(t *testing.T) Runtime {
 		{
 			Name:             "other",
 			CWD:              "/c",
-			PlannerID:        otherClaimPlanner,
+			MasterMindID:     otherClaimMasterMind,
 			Builder:          store.Endpoint{Kind: "agy"},
 			BuilderCandidate: testAgyRef,
 			Round:            1,
@@ -41,7 +41,7 @@ func setupPlannerStatusStore(t *testing.T) Runtime {
 		{
 			Name:             "finished",
 			CWD:              "/d",
-			PlannerID:        testClaimPlanner,
+			MasterMindID:     testClaimMasterMind,
 			Builder:          store.Endpoint{Kind: "agy"},
 			BuilderCandidate: testAgyRef,
 			Round:            1,
@@ -56,13 +56,13 @@ func setupPlannerStatusStore(t *testing.T) Runtime {
 	return rt
 }
 
-func TestPlannerStatusFiltersToOnePlanner(t *testing.T) {
-	rt := setupPlannerStatusStore(t)
+func TestMasterMindStatusFiltersToOneMasterMind(t *testing.T) {
+	rt := setupMasterMindStatusStore(t)
 	ctx := context.Background()
 
-	rep, err := PlannerStatus(ctx, rt, testClaimPlanner)
+	rep, err := MasterMindStatus(ctx, rt, testClaimMasterMind)
 	if err != nil {
-		t.Fatalf("PlannerStatus: %v", err)
+		t.Fatalf("MasterMindStatus: %v", err)
 	}
 	if len(rep.Bindings) != 2 {
 		t.Fatalf("got %d bindings, want 2", len(rep.Bindings))
@@ -71,27 +71,27 @@ func TestPlannerStatusFiltersToOnePlanner(t *testing.T) {
 		t.Errorf("got bindings [%s, %s], want [alpha, zeta]", rep.Bindings[0].Name, rep.Bindings[1].Name)
 	}
 	for i, b := range rep.Bindings {
-		if b.PlannerID != testClaimPlanner {
-			t.Errorf("row %d PlannerID = %q, want %q", i, b.PlannerID, testClaimPlanner)
+		if b.MasterMindID != testClaimMasterMind {
+			t.Errorf("row %d MasterMindID = %q, want %q", i, b.MasterMindID, testClaimMasterMind)
 		}
 	}
 
-	repOther, err := PlannerStatus(ctx, rt, otherClaimPlanner)
+	repOther, err := MasterMindStatus(ctx, rt, otherClaimMasterMind)
 	if err != nil {
-		t.Fatalf("PlannerStatus(other): %v", err)
+		t.Fatalf("MasterMindStatus(other): %v", err)
 	}
 	if len(repOther.Bindings) != 1 || repOther.Bindings[0].Name != "other" {
-		t.Errorf("got %d bindings for the other planner, want only 'other'", len(repOther.Bindings))
+		t.Errorf("got %d bindings for the other mastermind, want only 'other'", len(repOther.Bindings))
 	}
 }
 
-func TestPlannerStatusEmptyPlannerIsEmpty(t *testing.T) {
-	rt := setupPlannerStatusStore(t)
+func TestMasterMindStatusEmptyMasterMindIsEmpty(t *testing.T) {
+	rt := setupMasterMindStatusStore(t)
 	ctx := context.Background()
 
-	rep, err := PlannerStatus(ctx, rt, "")
+	rep, err := MasterMindStatus(ctx, rt, "")
 	if err != nil {
-		t.Fatalf("PlannerStatus: %v", err)
+		t.Fatalf("MasterMindStatus: %v", err)
 	}
 	if len(rep.Bindings) != 0 {
 		t.Errorf("got %d bindings, want 0", len(rep.Bindings))

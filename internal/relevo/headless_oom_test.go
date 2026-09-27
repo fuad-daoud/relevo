@@ -115,7 +115,7 @@ func TestOOMKilledOpenCodeSessionIsAbandoned(t *testing.T) {
 	// opencode is the one harness relevo can delete sessions for, so it is the
 	// only kind for which abandonSession records an entry.
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}

@@ -261,7 +261,7 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	}
 
 	if err := tx.AppendLog(b.Name, store.LogEntry{
-		TS: rt.Now().UTC(), Round: stoppedRound, Direction: store.DirToPlanner,
+		TS: rt.Now().UTC(), Round: stoppedRound, Direction: store.DirToMasterMind,
 		Kind: store.KindStop, Note: "stopped/" + how, Confirmed: true,
 	}); err != nil {
 		return next, err

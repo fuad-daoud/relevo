@@ -51,7 +51,7 @@ func TestBindPicksFirstUngatedInOrder(t *testing.T) {
 	untilText := availability.GateUntilText(baseTime.Add(availability.SpawnFailedCooldown))
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: "", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -68,7 +68,7 @@ func TestBindPicksFirstUngatedInOrder(t *testing.T) {
 		t.Fatalf("picks = %+v, want 1", got)
 	}
 	p := got[0]
-	if !p.Confirmed || p.Direction != store.DirToPlanner || p.Round != 1 {
+	if !p.Confirmed || p.Direction != store.DirToMasterMind || p.Round != 1 {
 		t.Errorf("pick entry = %+v", p)
 	}
 	wantNote := "picked claude/test/m for builder: order #2; skipped agy/test/m (spawn failed " + untilText + ")"
@@ -86,7 +86,7 @@ func TestBindResolvedReturnsTheResolution(t *testing.T) {
 	availability.RecordSpawnFailure(AvailabilityDeps(rt), testAgyRef, "earlier", errors.New("agent start: exit 1"))
 
 	_, res, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: "", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
@@ -115,7 +115,7 @@ func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
 	}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: "", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if !errors.Is(err, ErrAllGated) {
 		t.Fatalf("err = %v, want ErrAllGated", err)
@@ -134,7 +134,7 @@ func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
 	untilText := availability.GateUntilText(baseTime.Add(availability.SpawnFailedCooldown))
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -168,7 +168,7 @@ func TestResumeRebindLogsPickAtCurrentRound(t *testing.T) {
 	before := picks(t, rt, "webshop")
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo", Resume: true,
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo", Resume: true,
 	})
 	if err != nil {
 		t.Fatalf("Bind resume: %v", err)
@@ -195,7 +195,7 @@ func TestAddLogsPick(t *testing.T) {
 	rt.Policy = orderOf("builder", testAgyRef)
 
 	res, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: "", PlannerID: testPlannerName, Repo: addRepo(t),
+		Name: "frontend", Candidate: "", MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)

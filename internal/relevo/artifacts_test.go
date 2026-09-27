@@ -29,7 +29,7 @@ func seedArtifactRound(t *testing.T, name string) *store.Store {
 	}
 	for _, e := range []store.LogEntry{
 		{TS: time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 26, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true},
+		{TS: time.Date(2026, 9, 26, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
 	} {
 		if err := st.AppendLog(name, e); err != nil {
 			t.Fatalf("AppendLog: %v", err)
@@ -149,7 +149,7 @@ func TestShowSummaryAndArtifacts(t *testing.T) {
 	}
 	for _, e := range []store.LogEntry{
 		{TS: time.Date(2026, 9, 26, 11, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 26, 11, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true},
+		{TS: time.Date(2026, 9, 26, 11, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
 	} {
 		if err := st.AppendLog("writer", e); err != nil {
 			t.Fatalf("AppendLog(writer): %v", err)

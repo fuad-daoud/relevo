@@ -58,7 +58,7 @@ func seedShowDiffStore(t *testing.T, name string) (*store.Store, relevo.Runtime)
 	}
 	for _, e := range []store.LogEntry{
 		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindDiff, Note: "1 file, +1 -0", Confirmed: true},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindDiff, Note: "1 file, +1 -0", Confirmed: true},
 	} {
 		if err := s.AppendLog(name, e); err != nil {
 			t.Fatalf("AppendLog: %v", err)
@@ -231,7 +231,7 @@ func TestShowSummaryArtifactsCLI(t *testing.T) {
 	}
 	for _, e := range []store.LogEntry{
 		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
 	} {
 		if err := s.AppendLog(name, e); err != nil {
 			t.Fatalf("AppendLog: %v", err)
@@ -290,7 +290,7 @@ func TestShowSummaryArtifactsCLI(t *testing.T) {
 	}
 	for _, e := range []store.LogEntry{
 		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
 	} {
 		if err := s.AppendLog(writer, e); err != nil {
 			t.Fatalf("AppendLog(writer): %v", err)

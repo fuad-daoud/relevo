@@ -53,11 +53,11 @@ func roundExclusionGates(b store.Binding) []availability.Gate {
 
 // switchEntry is the log record of one builder switch: why the switch
 // happened, and what ExplainResolution says about the pick that replaced
-// the builder (spec §3.3, §4.4). Always Confirmed and DirToPlanner, the same
+// the builder (spec §3.3, §4.4). Always Confirmed and DirToMasterMind, the same
 // reasoning as pickEntry: a switch is never a pending payload.
 func switchEntry(now time.Time, round int, reason string, res Resolution, u *usage.Usage) store.LogEntry {
 	return store.LogEntry{
-		TS: now.UTC(), Round: round, Direction: store.DirToPlanner,
+		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
 		Kind: store.KindSwitch, Confirmed: true,
 		Usage: u,
 		Note:  "switched builder (" + reason + "): " + ExplainResolution("builder", res),
@@ -118,7 +118,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	if closeOld {
 		// The one place besides done/unbind where relevo stops a process it
-		// started (#99): the planner gated the provider while the round's
+		// started (#99): the mastermind gated the provider while the round's
 		// process was still running.
 		if b.Builder.PID != 0 && rt.Runner != nil {
 			if err := rt.Runner.Kill(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); err != nil {

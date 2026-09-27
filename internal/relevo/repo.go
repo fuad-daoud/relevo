@@ -27,10 +27,10 @@ func captureRepo(ctx context.Context, rt Runtime, cwd string) *store.RepoRef {
 	}
 }
 
-// plannerLocator resolves the harness transcript file path for a session, so
-// Bind/Add/Fork can fill Planner.TranscriptLocator. "" when rt.Sessions is
+// mastermindLocator resolves the harness transcript file path for a session, so
+// Bind/Add/Fork can fill MasterMind.TranscriptLocator. "" when rt.Sessions is
 // nil or it cannot resolve one.
-func plannerLocator(rt Runtime, kind, sessionID string) string {
+func mastermindLocator(rt Runtime, kind, sessionID string) string {
 	if rt.Sessions == nil {
 		return ""
 	}

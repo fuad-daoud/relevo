@@ -10,10 +10,10 @@ fi
 cmd="${1:-}"
 
 case "$cmd" in
-  planner)
+  mastermind)
     if [ "${2:-}" = "init" ]; then
-      echo "planner oc-smoke (pl_smoke000001) created"
-      echo "export RELEVO_PLANNER=pl_smoke000001"
+      echo "MasterMind oc-smoke (mm_smoke000001) created"
+      echo "export RELEVO_MASTERMIND=mm_smoke000001"
       exit 0
     fi
     ;;

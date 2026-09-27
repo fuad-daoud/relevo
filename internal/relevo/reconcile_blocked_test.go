@@ -81,11 +81,11 @@ func TestReconcileStopsAtRoundCap(t *testing.T) {
 	}
 }
 
-// TestReconcileTimeoutNotifiesOnceInEveryPlannerState is the regression test
+// TestReconcileTimeoutNotifiesOnceInEveryMasterMindState is the regression test
 // for the halt storm: at a 2s poll, a halt that re-records is a notification
 // every couple of seconds, forever, on a live desktop. Five ticks against a
 // timed-out binding must leave exactly one halt recorded for the round.
-func TestReconcileTimeoutNotifiesOnceInEveryPlannerState(t *testing.T) {
+func TestReconcileTimeoutNotifiesOnceInEveryMasterMindState(t *testing.T) {
 	t.Parallel()
 
 	rt, b := timedOutBinding(t)

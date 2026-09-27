@@ -79,7 +79,7 @@ func dedupeRoundFileBase(kind string, number int) string {
 // binding's artifact row is a duplicate when the record's round file for it exists,
 // holds the same byte count and hashes to the artifact's own sha256. Its
 // transcript is a duplicate when re-deriving it reproduces every row exactly, or
-// every row is covered by the record's sealed lines (streamLinesCover). Planner
+// every row is covered by the record's sealed lines (streamLinesCover). MasterMind
 // transcripts are never examined.
 //
 // renames are the substitutions a cutover applied to the sealed stream files, so a

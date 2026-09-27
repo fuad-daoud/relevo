@@ -245,7 +245,7 @@ func TestSaveRefusesANewerFormat(t *testing.T) {
 	if newer.Kind != "binding" || newer.Name != b.Name || newer.Have != BindingFormat+1 || newer.Know != BindingFormat {
 		t.Errorf("ErrNewerFormat = %+v", newer)
 	}
-	wantText := fmt.Sprintf(`binding "webshop" was written by a newer relevo (format %d; this relevo knows %d): upgrade relevo; a planner session reconnects relevo mcp with /mcp`, BindingFormat+1, BindingFormat)
+	wantText := fmt.Sprintf(`binding "webshop" was written by a newer relevo (format %d; this relevo knows %d): upgrade relevo; a mastermind session reconnects relevo mcp with /mcp`, BindingFormat+1, BindingFormat)
 	if err.Error() != wantText {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}

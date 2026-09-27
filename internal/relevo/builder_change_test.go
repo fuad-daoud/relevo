@@ -169,7 +169,7 @@ func TestRoundOpenIn(t *testing.T) {
 	t.Parallel()
 
 	plan := store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}
-	report := store.LogEntry{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport}
+	report := store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport}
 
 	tests := []struct {
 		name    string

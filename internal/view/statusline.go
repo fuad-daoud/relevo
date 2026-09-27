@@ -140,16 +140,16 @@ func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns in
 	return dotColoured + " " + pad(row.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + right + "\n"
 }
 
-// RenderPlannerLine is the statusline's first line: the planner's own name,
-// dim, so each terminal shows which planner it is. An empty name renders
+// RenderMasterMindLine is the statusline's first line: the mastermind's own name,
+// dim, so each terminal shows which mastermind it is. An empty name renders
 // nothing -- a session relevo did not identify keeps the statusline it had.
 // When columns > 0 and the line would overflow it, the visible text is cut
 // with the same truncate the binding rows use, before the colour codes wrap it.
-func RenderPlannerLine(name string, columns int) string {
+func RenderMasterMindLine(name string, columns int) string {
 	if name == "" {
 		return ""
 	}
-	text := "planner " + name
+	text := "MasterMind " + name
 	if columns > 0 && utf8.RuneCountInString(text) > columns {
 		text = truncate(text, columns)
 	}
@@ -321,8 +321,8 @@ func ShouldDrainStdin(mode os.FileMode) bool {
 	return mode&os.ModeCharDevice == 0
 }
 
-// StatusLinePlanner is the planner identification in StatusLineDoc.
-type StatusLinePlanner struct {
+// StatusLineMasterMind is the mastermind identification in StatusLineDoc.
+type StatusLineMasterMind struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
@@ -333,9 +333,9 @@ type StatusLineRow struct {
 	Round    int    `json:"round"`
 	Display  string `json:"display"`
 	NeedsYou bool   `json:"needs_you"`
-	// ReportIn is true when the newest to-planner report/question has been
-	// delivered: it is a to-planner payload and nothing is pending on the
-	// planner. A delivered report is handled, so the consumer shows REPORT IN
+	// ReportIn is true when the newest to-mastermind report/question has been
+	// delivered: it is a to-mastermind payload and nothing is pending on the
+	// mastermind. A delivered report is handled, so the consumer shows REPORT IN
 	// rather than NEEDS YOU.
 	ReportIn    bool   `json:"report_in"`
 	ReportRound int    `json:"report_round,omitempty"`
@@ -365,9 +365,9 @@ type StatusLineRow struct {
 
 // StatusLineDoc is the top-level document emitted by relevo status --line --json.
 type StatusLineDoc struct {
-	Planner *StatusLinePlanner `json:"planner"`
-	Now     time.Time          `json:"now"`
-	Rows    []StatusLineRow    `json:"rows"`
+	MasterMind *StatusLineMasterMind `json:"mastermind"`
+	Now        time.Time             `json:"now"`
+	Rows       []StatusLineRow       `json:"rows"`
 }
 
 // StatusLineRows produces one StatusLineRow per r.Bindings entry, in order.
@@ -402,23 +402,23 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 			lastTS = b.LastPayload.TS.UTC().Format(time.RFC3339)
 		}
 	}
-	toPlannerPayload := b.LastPayload != nil &&
-		b.LastPayload.Direction == store.DirToPlanner &&
+	toMasterMindPayload := b.LastPayload != nil &&
+		b.LastPayload.Direction == store.DirToMasterMind &&
 		(b.LastPayload.Kind == store.KindReport || b.LastPayload.Kind == store.KindQuestion)
 
-	// A payload still waiting on the planner is only a fault when relevo
+	// A payload still waiting on the mastermind is only a fault when relevo
 	// cannot push it (pull, or no live route) or it has waited longer than
 	// PendingNeedsYouAfter; a push in flight must not flash NEEDS YOU.
 	pending := b.Pending != nil
-	stalled := pending && (b.PlannerRoute == "pull" || !b.PlannerRouteLive ||
+	stalled := pending && (b.MasterMindRoute == "pull" || !b.MasterMindRouteLive ||
 		(b.LastPayload != nil && now.Sub(b.LastPayload.TS) > PendingNeedsYouAfter))
 
 	needsYou := b.Display == "NEEDS YOU" || stalled
 	reportRound := 0
-	if toPlannerPayload {
+	if toMasterMindPayload {
 		reportRound = b.LastPayload.Round
 	}
-	reportIn := toPlannerPayload && !pending
+	reportIn := toMasterMindPayload && !pending
 	actor := b.Role
 	if actor == "" {
 		actor = "builder"
@@ -445,7 +445,7 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		Tokens:      roundTokens(b),
 		LastKind:    lastKind,
 		LastTS:      lastTS,
-		Route:       b.PlannerRoute,
+		Route:       b.MasterMindRoute,
 		Actor:       actor,
 		Status:      status,
 		Tone:        tone,

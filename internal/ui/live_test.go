@@ -91,7 +91,7 @@ func TestApplyConfigIsSeenThroughTheSource(t *testing.T) {
 	ctx := context.Background()
 	st, d := liveStore(t)
 	live := newLiveRuntime(liveRuntimeIn(t, st, d))
-	a := &plannerActions{live: live}
+	a := &mastermindActions{live: live}
 	src := liveSource{live}
 
 	doc, err := relevo.LoadConfigDoc(st)
@@ -116,7 +116,7 @@ func TestRollbackIsSeenThroughTheSource(t *testing.T) {
 	st, d := liveStore(t)
 	addStoredCandidate(t, st, liveNewInput)
 	live := newLiveRuntime(liveRuntimeIn(t, st, d))
-	a := &plannerActions{live: live}
+	a := &mastermindActions{live: live}
 	src := liveSource{live}
 
 	if _, ok := src.Base().Candidates.NameFor(liveNewToken); !ok {

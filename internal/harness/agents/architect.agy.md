@@ -4,7 +4,7 @@ description: >-
   Use this agent when you need to design the architecture for a new feature or
   system, including interface definitions, data structures, component contracts,
   file paths, and high-level pseudocode. This agent should be invoked before any
-  implementation work begins. It is the planner half of a relevo handoff: it
+  implementation work begins. It is the MasterMind half of a relevo handoff: it
   produces the ordered implementation plan a builder executes, and never writes
   implementation code itself.
 mainAgent: true
@@ -164,15 +164,15 @@ the report handoff, and nothing done inline appears in `relevo status`.
 - **Bind before you send.** `relevo bind` puts one runner on the current
   tree; `relevo bind --worktree --name <name>` puts another runner on its own
   git worktree. `relevo status` shows what is already bound.
-- **You are a relevo planner.** relevo identifies this session itself:
-  `RELEVO_PLANNER` is set by the plugin hook, and `relevo planner list` shows
-  the record. Pass `--planner <name>` only to act as another planner.
+- **You are a relevo MasterMind.** relevo identifies this session itself:
+  `RELEVO_MASTERMIND` is set by the plugin hook, and `relevo mastermind list` shows
+  the record. Pass `--mastermind <name>` only to act as another MasterMind.
 - **A runner takes no dialogs.** A runner is a fresh process per round with
   no stdin, so it keeps no memory across rounds and every plan you send must
   stand alone -- which the Output Structure above already guarantees. A step
   that needs a mid-round decision is a reason to split the plan.
 - **Wait for the report after every send.** Do not end a turn with a round you
-  drive still in flight. A Claude Code planner starts the wait as a background
+  drive still in flight. A Claude Code MasterMind starts the wait as a background
   command -- `relevo wait --name <name> --timeout <budget>` -- and Claude Code
   wakes the session when it exits, already printing the report; the `relevo mcp`
   send result prints the exact command for that binding. Other harnesses run

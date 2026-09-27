@@ -1,4 +1,4 @@
-// Command relevo automates plan and report handoff between a planner agent and
+// Command relevo automates plan and report handoff between a mastermind agent and
 // a headless builder process.
 package main
 
@@ -33,29 +33,29 @@ var version = ""
 var distribution = ""
 
 const usage = `relevo automates the plan/report handoff between two AI coding agent
-processes: a planner hands work to a runner, and relevo moves
+processes: a MasterMind hands work to a runner, and relevo moves
 the files between them.
 
 Usage:
   relevo <command> [flags]
 
 Commands:
-  bind      bind this planner pane to a runner over the current working tree [--tier]
+  bind      bind this MasterMind pane to a runner over the current working tree [--tier]
               (--role is now --actor)
               --worktree | --cwd DIR | --branch B | --server S
-                        attach another runner to this planner, on its own worktree or tree
+                        attach another runner to this MasterMind, on its own worktree or tree
   send      stage a plan file as the current round and start the runner [--tier] [--dry-run] [--verify|--no-verify]
   status    one row per binding: round, state, live pane status, what is pending [--all] [--line]
-  history   round history as JSON [--here] [--binding B] [--planner P] [--since D] [--limit N] [-q QUERY] [--json]
+  history   round history as JSON [--here] [--binding B] [--mastermind P] [--since D] [--limit N] [-q QUERY] [--json]
   show      one round's plan, report, diff, drift, gate, findings, log or transcript, live or archived [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]
   wait      block until a round closes or needs you, then print the pending report; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout [--peek]
   ui [:view [args]]  the cockpit: :fleet, :rounds [query], :round <binding> [N]
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   stop      kill the runner process and close its round without a report unless one is already on disk
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
-              --done clears every binding the planner marked DONE [--delete] [--dry-run]
+              --done clears every binding the MasterMind marked DONE [--delete] [--dry-run]
   daemon    run the long-running reconciler
-  mcp       run an MCP server over stdio for a Claude Code planner pane: status/send/done
+  mcp       run an MCP server over stdio for a Claude Code MasterMind pane: status/send/done
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
@@ -70,7 +70,7 @@ Commands:
             this machine's remote-builder identity and server list
   config secret set|rm|list
             store or forget the typesafe and client.key secrets
-  planner      register this planner (or re-attach an existing one), and list, rename or forget records
+  mastermind  register this MasterMind (or re-attach an existing one), and list, rename or forget records
   gate      list this machine's active gates; gate a provider: relevo gate <token> [--for D] [--reason S];
             clear one: relevo gate --clear <provider|token>; relevo gate --serve [--state DIR] acts on the
             local serve daemon's gates instead
@@ -150,7 +150,7 @@ func run(args []string) error {
 	}
 
 	// Every verb captures the calling agy session's agentapi credentials
-	// (#349): an agy planner runs relevo constantly (send, wait, pull,
+	// (#349): an agy mastermind runs relevo constantly (send, wait, pull,
 	// status), and whichever verb it happens to run after an agy restart is
 	// the one that refreshes the session's agentapi credentials.
 	captureAgyEnv()
@@ -197,8 +197,8 @@ func run(args []string) error {
 		return cmdMigrate(args[1:])
 	case "config":
 		return cmdConfig(args[1:])
-	case "planner":
-		return cmdPlanner(args[1:])
+	case "mastermind":
+		return cmdMasterMind(args[1:])
 	case "gate":
 		return cmdGate(args[1:])
 	case "serve":
@@ -242,6 +242,10 @@ var removedVerbs = map[string]string{
 	"tab":         "relevo history --tab",
 	"stats":       "relevo history --stats",
 	"db":          "relevo doctor (the database row)",
+
+	// The rename (D5): the verb is `relevo mastermind` now, and the old
+	// spelling exits 2 through this map exactly like every other removed verb.
+	"planner": "relevo mastermind",
 }
 
 // userConfigRoot resolves $XDG_CONFIG_HOME, falling back to ~/.config.

@@ -139,7 +139,7 @@ func reconcileExited(ctx context.Context, d Deps, tx *store.Tx, b store.Binding,
 	return finishConsult(ctx, d, tx, b, i, store.ConsultDone, "")
 }
 
-// finishConsult queues one planner-bound entry and marks the record terminal.
+// finishConsult queues one mastermind-bound entry and marks the record terminal.
 // Queue rather than a direct append is what makes consults inherit the
 // anti-clobber rule, held notifications and `relevo wait` without new delivery
 // code.
@@ -149,7 +149,7 @@ func finishConsult(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, i
 	entry := store.LogEntry{
 		TS:        d.Now().UTC(),
 		Round:     c.Round,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindFindings,
 		Note:      note,
 		Usage:     d.Usage(ctx, b, c, d.Now().UTC()),
@@ -160,7 +160,7 @@ func finishConsult(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, i
 		entry.Payload = fmt.Sprintf("Findings from %s consult %s: %s", c.Role, c.ID, delivery.FindingsCommand(b.Name, c.Round, c.ID))
 	} else {
 		// No Path: a silent consult wrote no file, and pointing at one that
-		// does not exist would send the planner to read nothing. The note is
+		// does not exist would send the mastermind to read nothing. The note is
 		// arbitrary text, so trim one trailing period: the payload supplies
 		// its own, and a doubled period reads as a typo.
 		entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s.",

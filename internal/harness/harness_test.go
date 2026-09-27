@@ -196,7 +196,7 @@ func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
 			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
 		}
 		body := definitionBody(t, h.Kind, string(doc))
-		for _, want := range []string{"## Handing off", "relevo send", "RELEVO_PLANNER", "relevo gate"} {
+		for _, want := range []string{"## Handing off", "relevo send", "RELEVO_MASTERMIND", "relevo gate"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s architect body lacks %q", h.Kind, want)
 			}

@@ -3,7 +3,7 @@
    7 live   1 needs you   2 working   4 idle   27 done                                             sort attention · refreshed 0s ago
                                                                                                                                     
  ╭─ spool-db  round 1 · quiet 17s · 5m ───────────────────────────────────────────────────────────────────────────────────────────╮ 
- │  planner architect-2  ·  gemini-3.8-flash-high  ·  plan                                                                        │ 
+ │  MasterMind architect-2  ·  gemini-3.8-flash-high  ·  plan                                                                     │ 
  │                                                                                                                                │ 
  │    enter  open round       x  stop       g  gate       o  shell                                                                │ 
  ╰──────────────────────────╭─ retry on… ──────────────────────────────────────────────────────────────╮──────────────────────────╯ 

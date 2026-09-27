@@ -170,7 +170,7 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 			continue
 		}
 		if HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
-			!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
+			!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport) {
 			open = append(open, b)
 		}
 	}

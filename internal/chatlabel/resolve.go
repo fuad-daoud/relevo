@@ -6,7 +6,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// Resolver builds a Label for a planner record. A zero Resolver answers with empty labels.
+// Resolver builds a Label for a mastermind record. A zero Resolver answers with empty labels.
 type Resolver struct {
 	Exec       usage.Exec // nil -> opencode labels are empty
 	OpencodeDB string     // "" -> opencode labels are empty

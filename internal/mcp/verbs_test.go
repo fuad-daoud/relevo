@@ -26,10 +26,10 @@ func testGateKV(t *testing.T) *db.DB {
 	return d
 }
 
-// mcpTestPlannerA and mcpTestPlannerB are valid planner ids; the status filter keys on them.
+// mcpTestMasterMindA and mcpTestMasterMindB are valid mastermind ids; the status filter keys on them.
 const (
-	mcpTestPlannerA = "pl_aaaaaaaabbbb"
-	mcpTestPlannerB = "pl_ccccccccdddd"
+	mcpTestMasterMindA = "pl_aaaaaaaabbbb"
+	mcpTestMasterMindB = "pl_ccccccccdddd"
 )
 
 // stubRunner implements spawn.Runner with no-op stubs: a headless binding's
@@ -77,18 +77,18 @@ func saveVerbBinding(t *testing.T, s *store.Store, b store.Binding) {
 	}
 }
 
-func TestRelevoVerbsStatusFiltersByPlannerThenName(t *testing.T) {
+func TestRelevoVerbsStatusFiltersByMasterMindThenName(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relevo.Runtime{
 		Store: s,
 		Now:   func() time.Time { return time.Unix(0, 0) },
 	}
 
-	saveVerbBinding(t, s, store.Binding{Name: "mine-a", CWD: "/repo/mine-a", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerA, Round: 1, State: store.StateActive})
-	saveVerbBinding(t, s, store.Binding{Name: "mine-done", CWD: "/repo/mine-done", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerA, Round: 1, State: store.StateDone})
-	saveVerbBinding(t, s, store.Binding{Name: "other", CWD: "/repo/other", Planner: store.Endpoint{PaneID: "w9:p9"}, PlannerID: mcpTestPlannerB, Round: 1, State: store.StateActive})
+	saveVerbBinding(t, s, store.Binding{Name: "mine-a", CWD: "/repo/mine-a", MasterMind: store.Endpoint{PaneID: "w2:p3"}, MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
+	saveVerbBinding(t, s, store.Binding{Name: "mine-done", CWD: "/repo/mine-done", MasterMind: store.Endpoint{PaneID: "w2:p3"}, MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateDone})
+	saveVerbBinding(t, s, store.Binding{Name: "other", CWD: "/repo/other", MasterMind: store.Endpoint{PaneID: "w9:p9"}, MasterMindID: mcpTestMasterMindB, Round: 1, State: store.StateActive})
 
-	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
 
 	res, err := v.Status(context.Background(), StatusArgs{})
 	if err != nil {
@@ -99,7 +99,7 @@ func TestRelevoVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 		t.Fatalf("result = %#v, want view.Report", res)
 	}
 	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine-a" {
-		t.Fatalf("default status = %+v, want only mine-a (this planner, DONE hidden)", rep.Bindings)
+		t.Fatalf("default status = %+v, want only mine-a (this mastermind, DONE hidden)", rep.Bindings)
 	}
 
 	res, err = v.Status(context.Background(), StatusArgs{All: true})
@@ -121,32 +121,32 @@ func TestRelevoVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	}
 
 	if _, err := v.Status(context.Background(), StatusArgs{Name: "other"}); err == nil {
-		t.Fatal("Status naming a binding on a different planner must error")
+		t.Fatal("Status naming a binding on a different mastermind must error")
 	}
 }
 
-// TestMCPStatusFiltersByPlanner: the two bindings here share a pane, so only the planner id tells them apart.
-func TestMCPStatusFiltersByPlanner(t *testing.T) {
+// TestMCPStatusFiltersByMasterMind: the two bindings here share a pane, so only the mastermind id tells them apart.
+func TestMCPStatusFiltersByMasterMind(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relevo.Runtime{
 		Store: s,
 		Now:   func() time.Time { return time.Unix(0, 0) },
 	}
 
-	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerA, Round: 1, State: store.StateActive})
-	saveVerbBinding(t, s, store.Binding{Name: "cousin", CWD: "/repo/cousin", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerB, Round: 1, State: store.StateActive})
+	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", MasterMind: store.Endpoint{PaneID: "w2:p3"}, MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
+	saveVerbBinding(t, s, store.Binding{Name: "cousin", CWD: "/repo/cousin", MasterMind: store.Endpoint{PaneID: "w2:p3"}, MasterMindID: mcpTestMasterMindB, Round: 1, State: store.StateActive})
 
-	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
 	res, err := v.Status(context.Background(), StatusArgs{})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
 	rep := res.(view.Report)
 	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine" {
-		t.Fatalf("status = %+v, want only mine (the same pane's cousin is another planner)", rep.Bindings)
+		t.Fatalf("status = %+v, want only mine (the same pane's cousin is another mastermind)", rep.Bindings)
 	}
-	if rep.Bindings[0].PlannerID != mcpTestPlannerA {
-		t.Errorf("row PlannerID = %q, want %q", rep.Bindings[0].PlannerID, mcpTestPlannerA)
+	if rep.Bindings[0].MasterMindID != mcpTestMasterMindA {
+		t.Errorf("row MasterMindID = %q, want %q", rep.Bindings[0].MasterMindID, mcpTestMasterMindA)
 	}
 }
 
@@ -165,12 +165,12 @@ func newHeadlessSendFixture(t *testing.T) (*RelevoVerbs, string) {
 	}
 	saveVerbBinding(t, s, store.Binding{
 		Name: "webshop", CWD: "/repo",
-		Planner:          store.Endpoint{PaneID: "w2:p3"},
+		MasterMind:       store.Endpoint{PaneID: "w2:p3"},
 		Builder:          store.Endpoint{Mode: store.ModeHeadless},
 		BuilderCandidate: "agy/test/m",
 		Round:            1, State: store.StateActive,
 	})
-	return &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}, writeTempPlan(t, "# do the thing")
+	return &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}, writeTempPlan(t, "# do the thing")
 }
 
 // TestRelevoVerbsSendHeadless covers both of Send's headless paths, replacing
@@ -219,12 +219,12 @@ func TestRelevoVerbsDoneForwardsAndReportsText(t *testing.T) {
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	saveVerbBinding(t, s, store.Binding{
 		Name: "webshop", CWD: "/repo",
-		Planner: store.Endpoint{PaneID: "w2:p3"},
-		Builder: store.Endpoint{Mode: store.ModeHeadless},
-		Round:   1, State: store.StateActive,
+		MasterMind: store.Endpoint{PaneID: "w2:p3"},
+		Builder:    store.Endpoint{Mode: store.ModeHeadless},
+		Round:      1, State: store.StateActive,
 	})
 
-	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
 	res, err := v.Done(context.Background(), DoneArgs{Name: "webshop"})
 	if err != nil {
 		t.Fatalf("Done: %v", err)
@@ -249,7 +249,7 @@ func TestRelevoVerbsDoneForwardsAndReportsText(t *testing.T) {
 func TestRelevoVerbsDoneErrorPropagates(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
-	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
 
 	if _, err := v.Done(context.Background(), DoneArgs{Name: "nonexistent"}); err == nil {
 		t.Fatal("Done on a binding that does not exist must error")

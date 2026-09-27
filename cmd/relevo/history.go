@@ -38,7 +38,7 @@ func historyJSONRows(rows []db.RoundRow, set *candidate.Set) []historyJSONRow {
 	return out
 }
 
-const historyUsage = `usage: relevo history [--here] [--binding <name>] [--planner <session>]
+const historyUsage = `usage: relevo history [--here] [--binding <name>] [--mastermind <session>]
                      [--since <window>] [--limit <n>] [-q "<query>"] [--json] [--rows]`
 
 // groupJSON shapes the groups `--json --by` prints: their Rows are blanked
@@ -64,7 +64,7 @@ func cmdHistory(args []string) error {
 	fs := flag.NewFlagSet("history", flag.ContinueOnError)
 	here := fs.Bool("here", false, "filter to the repo the current directory belongs to")
 	binding := fs.String("binding", "", "filter to this binding name")
-	planner := fs.String("planner", "", "filter to this planner session id")
+	mastermind := fs.String("mastermind", "", "filter to this mastermind session id")
 	since := fs.String("since", "", "only rounds started after this: 24h, 7d, or YYYY-MM-DD")
 	limit := fs.Int("limit", 200, "max rows to print; 0 = all")
 	_ = fs.Bool("json", false, "machine-readable output: a JSON array of RoundRow")
@@ -95,12 +95,12 @@ func cmdHistory(args []string) error {
 	rt.DB = d
 
 	opts := relevo.HistoryOptions{
-		Binding: *binding,
-		Planner: *planner,
-		Names:   rt.Candidates,
-		Since:   *since,
-		Limit:   *limit,
-		Query:   *query,
+		Binding:    *binding,
+		MasterMind: *mastermind,
+		Names:      rt.Candidates,
+		Since:      *since,
+		Limit:      *limit,
+		Query:      *query,
 	}
 	if *here {
 		cwd, cerr := os.Getwd()

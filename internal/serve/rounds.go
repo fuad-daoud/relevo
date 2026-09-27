@@ -318,7 +318,7 @@ func (s *Server) recordRoundAccepted(r *http.Request, rt relevo.Runtime, name st
 		slog.Warn("census failed at round accept", "binding", name, "err", censusErr)
 	}
 	if err := rt.Store.AppendLog(name, store.LogEntry{
-		TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindQueue, Confirmed: true,
+		TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true,
 		Note: fmt.Sprintf("queued (%d/%d builders busy)", acceptCensus.Running, s.cap()),
 	}); err != nil {
 		slog.Warn("append queue entry failed", "binding", name, "err", err)

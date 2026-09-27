@@ -7,37 +7,37 @@ import (
 	"fmt"
 )
 
-// PlannerBySession returns the planner row for one (harness_kind, session_id),
-// false when there is none; `relevo planner init` reuses that row's id. An
-// error here is not a missing planner, so the two outcomes are reported apart.
-func (d *DB) PlannerBySession(kind, session string) (Planner, bool, error) {
-	return plannerBySession(context.Background(), d.sqlDB, kind, session)
+// MasterMindBySession returns the mastermind row for one (harness_kind, session_id),
+// false when there is none; `relevo mastermind init` reuses that row's id. An
+// error here is not a missing mastermind, so the two outcomes are reported apart.
+func (d *DB) MasterMindBySession(kind, session string) (MasterMind, bool, error) {
+	return mastermindBySession(context.Background(), d.sqlDB, kind, session)
 }
 
-func plannerBySession(ctx context.Context, q queryer, kind, session string) (Planner, bool, error) {
+func mastermindBySession(ctx context.Context, q queryer, kind, session string) (MasterMind, bool, error) {
 	var (
-		p         Planner
+		p         MasterMind
 		locator   sql.Null[string]
 		firstSeen string
 		lastSeen  string
 	)
 	err := q.QueryRowContext(ctx,
 		`SELECT id, harness_kind, session_id, transcript_locator, first_seen, last_seen
-		   FROM planner WHERE harness_kind = ? AND session_id = ?`,
+		   FROM mastermind WHERE harness_kind = ? AND session_id = ?`,
 		kind, session).Scan(&p.ID, &p.HarnessKind, &p.SessionID, &locator, &firstSeen, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Planner{}, false, nil
+		return MasterMind{}, false, nil
 	}
 	if err != nil {
-		return Planner{}, false, fmt.Errorf("db: planner by session: %w", err)
+		return MasterMind{}, false, fmt.Errorf("db: mastermind by session: %w", err)
 	}
 
 	p.TranscriptLocator = ptrIfValid(locator)
 	if p.FirstSeen, err = parseTime(firstSeen); err != nil {
-		return Planner{}, false, fmt.Errorf("db: planner by session: parse first_seen: %w", err)
+		return MasterMind{}, false, fmt.Errorf("db: mastermind by session: parse first_seen: %w", err)
 	}
 	if p.LastSeen, err = parseTime(lastSeen); err != nil {
-		return Planner{}, false, fmt.Errorf("db: planner by session: parse last_seen: %w", err)
+		return MasterMind{}, false, fmt.Errorf("db: mastermind by session: parse last_seen: %w", err)
 	}
 	return p, true, nil
 }

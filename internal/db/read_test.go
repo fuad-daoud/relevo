@@ -23,7 +23,7 @@ func TestQueryFilters(t *testing.T) {
 		{"repo matches common_dir", Filter{Repo: "/home/x/a/.git"}, a1a2, 0},
 		{"feature", Filter{Feature: "checkout"}, []pair{{"webshop", 1}, {"webshop", 2}}, 0},
 		{"binding name", Filter{Binding: "docs"}, []pair{{"docs", 1}, {"docs", 2}}, 0},
-		{"planner session", Filter{Planner: "sess-1"}, nil, 6},
+		{"mastermind session", Filter{MasterMind: "sess-1"}, nil, 6},
 		{"harness", Filter{Harness: "opencode"}, api, 0},
 		{"provider", Filter{Provider: "openrouter"}, api, 0},
 		{"model", Filter{Model: "glm"}, api, 0},
@@ -269,11 +269,11 @@ func TestTranscriptPaging(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		recs = append(recs, TranscriptRecord{Seq: i, RecordJSON: "{}", Rendered: "line"})
 	}
-	if _, err := d.AppendTranscript(OwnerPlanner, "sess-1", recs); err != nil {
+	if _, err := d.AppendTranscript(OwnerMasterMind, "sess-1", recs); err != nil {
 		t.Fatalf("AppendTranscript: %v", err)
 	}
 
-	got, err := d.Transcript(OwnerPlanner, "sess-1", 2, 2)
+	got, err := d.Transcript(OwnerMasterMind, "sess-1", 2, 2)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}
@@ -301,8 +301,8 @@ func TestEventsRoundZeroIsAll(t *testing.T) {
 	}
 
 	evs := []Event{
-		{BindingID: bindingID, RoundID: &round1ID, Seq: 1, TS: time.Now(), Kind: "send", Direction: "planner_to_builder", EntryJSON: "{}"},
-		{BindingID: bindingID, RoundID: &round2ID, Seq: 2, TS: time.Now(), Kind: "send", Direction: "planner_to_builder", EntryJSON: "{}"},
+		{BindingID: bindingID, RoundID: &round1ID, Seq: 1, TS: time.Now(), Kind: "send", Direction: "mastermind_to_builder", EntryJSON: "{}"},
+		{BindingID: bindingID, RoundID: &round2ID, Seq: 2, TS: time.Now(), Kind: "send", Direction: "mastermind_to_builder", EntryJSON: "{}"},
 	}
 	if _, err := d.AppendEvents(bindingID, evs); err != nil {
 		t.Fatalf("AppendEvents: %v", err)
@@ -432,14 +432,14 @@ func seedRecentEvents(t *testing.T, d *DB) time.Time {
 	}
 
 	evs1 := []Event{
-		{BindingID: binding1ID, RoundID: &round1ID, Seq: 1, TS: now.Add(-20 * time.Minute), Kind: "plan", Direction: "planner_to_builder", EntryJSON: "{}"},
+		{BindingID: binding1ID, RoundID: &round1ID, Seq: 1, TS: now.Add(-20 * time.Minute), Kind: "plan", Direction: "mastermind_to_builder", EntryJSON: "{}"},
 		{BindingID: binding1ID, RoundID: &round1ID, Seq: 2, TS: now.Add(-10 * time.Minute), Kind: "report", Direction: "builder_to_planner", EntryJSON: `{"outcome":"done"}`},
 	}
 	if _, err := d.AppendEvents(binding1ID, evs1); err != nil {
 		t.Fatalf("AppendEvents 1: %v", err)
 	}
 	evs2 := []Event{
-		{BindingID: binding2ID, RoundID: &round2ID, Seq: 1, TS: now.Add(-5 * time.Minute), Kind: "plan", Direction: "planner_to_builder", EntryJSON: "{}"},
+		{BindingID: binding2ID, RoundID: &round2ID, Seq: 1, TS: now.Add(-5 * time.Minute), Kind: "plan", Direction: "mastermind_to_builder", EntryJSON: "{}"},
 		{BindingID: binding2ID, RoundID: &round2ID, Seq: 2, TS: now.Add(-2 * time.Minute), Kind: "switch", Direction: "system", EntryJSON: "{}"},
 	}
 	if _, err := d.AppendEvents(binding2ID, evs2); err != nil {

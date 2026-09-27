@@ -26,7 +26,7 @@ import (
 //
 // It opens by naming the working tree and a halt rule (#192): a headless
 // agy builder has been observed to run its shell somewhere else and execute
-// a round against the planner's main checkout instead of its own worktree.
+// a round against the mastermind's main checkout instead of its own worktree.
 // Telling the builder which tree is its own, and to check with `git status`
 // before doing anything else, is relevo's second line of defence alongside
 // pinning the process's workspace with --add-dir.
@@ -103,7 +103,7 @@ type SendOptions struct {
 	Regate *int
 	// Verify marks the round for a read-only reviewer at round close (#144).
 	// nil takes policy.json verify.default, so a plain send honours the
-	// planner's configured default and --verify/--no-verify overrides it.
+	// mastermind's configured default and --verify/--no-verify overrides it.
 	Verify *bool
 	// Defer stages the round -- plan written, log entry appended, State ==
 	// active -- but does not spawn a builder; the caller (serve.admit or
@@ -368,7 +368,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 // from that point. It exists only so a test can inject a post-spawn failure.
 var sendAfterSpawn func(name string) error
 
-// Send copies the planner's plan into relevo state and hands it to the builder
+// Send copies the mastermind's plan into relevo state and hands it to the builder
 // as the prompt of a fresh process started in the binding's tree (#99). It
 // returns a SendResult describing the round and any between-rounds drift.
 //
@@ -577,7 +577,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			if (res.Available && !res.Stat.Empty()) || res.Reason != "" {
 				driftEntry := store.LogEntry{
 					TS: rt.Now().UTC(), Round: b.Round,
-					Direction: store.DirToPlanner, Kind: store.KindDrift,
+					Direction: store.DirToMasterMind, Kind: store.KindDrift,
 					Path: res.Path, Note: capture.DriftSummary(res),
 					Confirmed: true,
 				}
@@ -651,7 +651,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			// The process is running but the send could not record it: stop
 			// it, and say so in its log, before returning (#436). The binding
 			// and its log entries are one transaction, so nothing of this
-			// round was recorded: the previous state stands and the planner
+			// round was recorded: the previous state stands and the mastermind
 			// may resend.
 			stream := ""
 			if round > 0 {

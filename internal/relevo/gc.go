@@ -17,19 +17,19 @@ type GCOptions struct {
 	Delete bool
 	// DryRun reports what would happen and changes nothing.
 	DryRun bool
-	// PlannerID clears only DONE bindings whose Binding.PlannerID equals this.
-	// It must be non-empty unless AllPlanners is set (#482).
-	PlannerID string
-	// AllPlanners clears every DONE binding regardless of planner, including
-	// bindings with an empty PlannerID. It is mutually exclusive with a
-	// non-empty PlannerID (#482).
-	AllPlanners bool
+	// MasterMindID clears only DONE bindings whose Binding.MasterMindID equals this.
+	// It must be non-empty unless AllMasterMinds is set (#482).
+	MasterMindID string
+	// AllMasterMinds clears every DONE binding regardless of mastermind, including
+	// bindings with an empty MasterMindID. It is mutually exclusive with a
+	// non-empty MasterMindID (#482).
+	AllMasterMinds bool
 }
 
-// ErrGCNoScope reports that GC was called with neither a PlannerID nor
-// AllPlanners set, so no caller can get "everything" by leaving the scope
+// ErrGCNoScope reports that GC was called with neither a MasterMindID nor
+// AllMasterMinds set, so no caller can get "everything" by leaving the scope
 // empty (#482).
-var ErrGCNoScope = errors.New("gc needs a planner id or AllPlanners")
+var ErrGCNoScope = errors.New("gc needs a mastermind id or AllMasterMinds")
 
 // GCResult is one binding gc considered.
 type GCResult struct {
@@ -43,20 +43,20 @@ type GCResult struct {
 	KeptReason      string       `json:"kept_reason,omitempty"`
 	WorktreeGone    string       `json:"worktree_gone,omitempty"` // recorded worktree whose directory no longer exists
 	Refs            []RefOutcome `json:"refs,omitempty"`
-	// PlannerID is the binding's PlannerID, verbatim, which may be "" (#482).
-	PlannerID string `json:"planner_id,omitempty"`
+	// MasterMindID is the binding's MasterMindID, verbatim, which may be "" (#482).
+	MasterMindID string `json:"mastermind_id,omitempty"`
 }
 
-// GC clears away every binding the calling planner has marked done, or, with
-// opts.AllPlanners, every planner's. Only StateDone is touched: a broken or
+// GC clears away every binding the calling mastermind has marked done, or, with
+// opts.AllMasterMinds, every mastermind's. Only StateDone is touched: a broken or
 // orphaned binding still needs a human, and removing it would throw away the
 // state that explains why.
 //
-// Exactly one of opts.PlannerID and opts.AllPlanners must be set (#482): GC
+// Exactly one of opts.MasterMindID and opts.AllMasterMinds must be set (#482): GC
 // refuses to run with neither, so no caller can get "everything" by leaving
 // the scope empty, and refuses with both, since they are exclusive. A
-// binding with an empty PlannerID (written before #303) belongs to no
-// planner, and is cleared only by AllPlanners.
+// binding with an empty MasterMindID (written before #303) belongs to no
+// mastermind, and is cleared only by AllMasterMinds.
 //
 // By default, finished bindings are archived rather than deleted; passing
 // opts.Delete removes them entirely.
@@ -69,10 +69,10 @@ type GCResult struct {
 // done, or resumed, between the scan and the removal.
 func GC(ctx context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
 	switch {
-	case opts.PlannerID == "" && !opts.AllPlanners:
+	case opts.MasterMindID == "" && !opts.AllMasterMinds:
 		return nil, ErrGCNoScope
-	case opts.PlannerID != "" && opts.AllPlanners:
-		return nil, fmt.Errorf("%w: PlannerID and AllPlanners are exclusive", ErrGCNoScope)
+	case opts.MasterMindID != "" && opts.AllMasterMinds:
+		return nil, fmt.Errorf("%w: MasterMindID and AllMasterMinds are exclusive", ErrGCNoScope)
 	}
 
 	var out []GCResult
@@ -87,11 +87,11 @@ func GC(ctx context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
 			if b.State != store.StateDone {
 				continue
 			}
-			if !opts.AllPlanners && b.PlannerID != opts.PlannerID {
+			if !opts.AllMasterMinds && b.MasterMindID != opts.MasterMindID {
 				continue
 			}
 
-			res := GCResult{Name: b.Name, CWD: b.CWD, Rounds: b.Round, PlannerID: b.PlannerID}
+			res := GCResult{Name: b.Name, CWD: b.CWD, Rounds: b.Round, MasterMindID: b.MasterMindID}
 
 			outcome := worktreeTeardown(ctx, rt, b, opts.DryRun)
 			res.WorktreeRemoved = outcome.Removed

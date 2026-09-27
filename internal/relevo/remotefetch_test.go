@@ -366,7 +366,7 @@ func TestTickCatchesUpWithoutTheStateLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+	if !HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
 		t.Fatalf("no round 1 report entry: %+v", entries)
 	}
 	got, err := st.Load("api")
@@ -430,7 +430,7 @@ func TestCatchUpDiscardedWhenDoneMidFetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
 		t.Fatalf("a report entry exists for a discarded fetch: %+v", entries)
 	}
 	if n := countCalls(fr, "Ack:"); n != 0 {
@@ -471,7 +471,7 @@ func TestCatchUpFetchAbortLeavesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
 		t.Fatalf("a report entry exists for an aborted fetch: %+v", entries)
 	}
 	if n := countCalls(fr, "Ack:"); n != 0 {
@@ -551,7 +551,7 @@ func TestTickAcksWithoutTheStateLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+	if !HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
 		t.Fatalf("no round 1 report entry: %+v", entries)
 	}
 	got, err := st.Load("api")
@@ -608,7 +608,7 @@ func TestSyncRemoteAcksWithoutTheStateLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+	if !HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
 		t.Fatalf("no round 1 report entry: %+v", entries)
 	}
 	got, err := st.Load("api")

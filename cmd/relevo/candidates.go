@@ -14,7 +14,7 @@ import (
 )
 
 // notePick prints why relevo chose the candidate it spawned. Silent for
-// an explicit token (the planner already knows) and for adoption
+// an explicit token (the mastermind already knows) and for adoption
 // (nothing was chosen); the gated note, if any, is printed separately.
 // A1 §4.4: the line names the candidate by its short name.
 func notePick(rt relevo.Runtime, role string, res relevo.Resolution) {

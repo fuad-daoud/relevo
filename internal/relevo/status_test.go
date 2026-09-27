@@ -117,9 +117,9 @@ func seedUsageLog(t *testing.T) (Runtime, store.Binding) {
 			Tokens: usage.Tokens{In: 100, Out: 10}, Cost: usage.Cost{USD: usd, Basis: basis}, Samples: 1}
 	}
 	entries := []store.LogEntry{
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r1", Confirmed: true, Usage: mk(0.10, usage.Measured)},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindFindings, Payload: "f1", Confirmed: true, Usage: mk(0.02, usage.Estimated)},
-		{Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r2", Confirmed: true, Usage: mk(0.30, usage.Measured)},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r1", Confirmed: true, Usage: mk(0.10, usage.Measured)},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindFindings, Payload: "f1", Confirmed: true, Usage: mk(0.02, usage.Estimated)},
+		{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r2", Confirmed: true, Usage: mk(0.30, usage.Measured)},
 	}
 	for _, e := range entries {
 		if err := rt.Store.AppendLog(b.Name, e); err != nil {
@@ -242,7 +242,7 @@ func seedClosedRound(t *testing.T, tree string, commits int) (Runtime, store.Bin
 	t.Helper()
 	rt, b := sentBinding(t)
 	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
-		Round: 1, Direction: store.DirToPlanner, Kind: store.KindDiff, Confirmed: true,
+		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindDiff, Confirmed: true,
 		Commits: commits, Tree: tree,
 	}); err != nil {
 		t.Fatalf("AppendLog diff: %v", err)
@@ -465,7 +465,7 @@ func TestStatusRowWaiting(t *testing.T) {
 		t.Fatalf("write question: %v", err)
 	}
 	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
-		TS: rt.Now().UTC(), Round: 2, Direction: store.DirToPlanner, Kind: store.KindQuestion,
+		TS: rt.Now().UTC(), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindQuestion,
 		Path: qPath,
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
@@ -511,9 +511,9 @@ func TestDisplayStatePaused(t *testing.T) {
 	rt := newRuntime(t)
 	if err := rt.Store.Save(store.Binding{
 		Name: "parked", CWD: "/repo-parked",
-		Planner: store.Endpoint{PaneID: "w2:p3"},
-		Builder: store.Endpoint{Kind: "agy"},
-		Round:   3, State: store.StatePaused,
+		MasterMind: store.Endpoint{PaneID: "w2:p3"},
+		Builder:    store.Endpoint{Kind: "agy"},
+		Round:      3, State: store.StatePaused,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +545,7 @@ func TestStatusLabelsStalledExploringStale(t *testing.T) {
 	pane := store.Binding{
 		Name: "pane", CWD: "/repo-pane", State: store.StateActive, Round: 4,
 		RoundStartedAt: now.Add(-time.Hour),
-		Planner:        store.Endpoint{Kind: "claude", PaneID: "w2:p3"},
+		MasterMind:     store.Endpoint{Kind: "claude", PaneID: "w2:p3"},
 		Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless, PID: 48211,
 			StartedAt: now.Add(-time.Hour).Unix()},
 		StalledSince: paneAt,
@@ -558,7 +558,7 @@ func TestStatusLabelsStalledExploringStale(t *testing.T) {
 	headless := store.Binding{
 		Name: "headless", CWD: "/repo-headless", State: store.StateActive, Round: 2,
 		RoundStartedAt: now.Add(-time.Hour),
-		Planner:        store.Endpoint{Kind: "claude", PaneID: "w2:p3"},
+		MasterMind:     store.Endpoint{Kind: "claude", PaneID: "w2:p3"},
 		Builder: store.Endpoint{Kind: "opencode", Mode: store.ModeHeadless, PID: 48211,
 			StartedAt: now.Add(-time.Hour).Unix()},
 		ExploringSince: exploreAt,
@@ -567,7 +567,7 @@ func TestStatusLabelsStalledExploringStale(t *testing.T) {
 	stale := store.Binding{
 		Name: "stale", CWD: "/repo-stale", State: store.StateNeedsYou, Round: 1,
 		RoundStartedAt: now.Add(-time.Hour),
-		Planner:        store.Endpoint{Kind: "claude", PaneID: "w2:p3"},
+		MasterMind:     store.Endpoint{Kind: "claude", PaneID: "w2:p3"},
 		Builder:        store.Endpoint{Kind: "agy", PaneID: "w2:p9"},
 		StaleSince:     staleAt,
 	}
@@ -789,7 +789,7 @@ func TestStatusLiveDiffWhileRoundOpen(t *testing.T) {
 		Name: "shared", CWD: "/repo-shared", State: store.StateActive, Round: 2,
 		RoundStartedAt:    baseTime,
 		RoundBaselineTree: "tree-shared",
-		// Worktree left empty: a --cwd binding shares the planner's own tree.
+		// Worktree left empty: a --cwd binding shares the mastermind's own tree.
 	}
 	closedRound := store.Binding{
 		Name: "closed", CWD: "/repo-closed", State: store.StateActive, Round: 2,
@@ -914,7 +914,7 @@ func TestStatusUnreadUntilViewed(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
-		TS: baseTime, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
+		TS: baseTime, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog 1: %v", err)
 	}
@@ -949,7 +949,7 @@ func TestStatusUnreadUntilViewed(t *testing.T) {
 	}
 
 	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
-		TS: baseTime.Add(2 * time.Minute), Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
+		TS: baseTime.Add(2 * time.Minute), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog 2: %v", err)
 	}
@@ -967,7 +967,7 @@ func TestStatusDetailsBrokenBinding(t *testing.T) {
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	// The builder is gone; only the planner is live.
+	// The builder is gone; only the mastermind is live.
 
 	rep, err := Status(context.Background(), rt)
 	if err != nil {
@@ -1092,7 +1092,7 @@ func TestStatusLastPayloadSkipsBookkeepingKinds(t *testing.T) {
 
 	// Log now reads: plan (from sentBinding), then drift.
 	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
-		Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindDrift,
+		Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindDrift,
 	}); err != nil {
 		t.Fatalf("AppendLog drift: %v", err)
 	}
@@ -1111,12 +1111,12 @@ func TestStatusLastPayloadSkipsBookkeepingKinds(t *testing.T) {
 
 	// Log now reads: plan, drift, diff, report (with a note).
 	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
-		Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindDiff,
+		Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindDiff,
 	}); err != nil {
 		t.Fatalf("AppendLog diff: %v", err)
 	}
 	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
-		Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindReport, Note: "unmarked",
+		Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindReport, Note: "unmarked",
 	}); err != nil {
 		t.Fatalf("AppendLog report: %v", err)
 	}
@@ -1604,16 +1604,16 @@ func TestSpendIncludesSwitchSegments(t *testing.T) {
 	entries := []store.LogEntry{
 		{TS: baseTime, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
 		{
-			TS: baseTime.Add(1 * time.Minute), Round: 1, Kind: store.KindSwitch, Direction: store.DirToPlanner,
+			TS: baseTime.Add(1 * time.Minute), Round: 1, Kind: store.KindSwitch, Direction: store.DirToMasterMind,
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}, Cost: usage.Cost{USD: 1.0, Basis: usage.Measured}},
 		},
 		{
-			TS: baseTime.Add(2 * time.Minute), Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner,
+			TS: baseTime.Add(2 * time.Minute), Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind,
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 100}, Cost: usage.Cost{USD: 2.0, Basis: usage.Measured}},
 		},
 		{TS: baseTime.Add(3 * time.Minute), Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
 		{
-			TS: baseTime.Add(4 * time.Minute), Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner,
+			TS: baseTime.Add(4 * time.Minute), Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind,
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 150}, Cost: usage.Cost{USD: 3.0, Basis: usage.Measured}},
 		},
 	}

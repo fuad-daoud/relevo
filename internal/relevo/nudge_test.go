@@ -196,7 +196,7 @@ func TestCodexExitIsNotNudged(t *testing.T) {
 	rt.Candidates = candidateSet(t, codexCandidatesJSON)
 	rt.Runner = fr
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "codex/openai/gpt-5.6-terra", PlannerID: testPlannerName,
+		Name: "webshop", Candidate: "codex/openai/gpt-5.6-terra", MasterMindID: testMasterMindName,
 		CWD: "/repo", Headless: true, Tier: "edit",
 	}); err != nil {
 		t.Fatalf("Bind --headless: %v", err)
@@ -300,7 +300,7 @@ func TestLimitExitIsGatedNotNudged(t *testing.T) {
 	rt.Candidates = candidateSet(t, testTwoProviderJSON)
 	rt.Policy = orderOf("builder", testClaudeRef, otherRef)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testClaudeRef, PlannerID: testPlannerName,
+		Name: "webshop", Candidate: testClaudeRef, MasterMindID: testMasterMindName,
 		CWD: "/repo", Headless: true, Tier: "edit",
 	}); err != nil {
 		t.Fatalf("Bind --headless: %v", err)

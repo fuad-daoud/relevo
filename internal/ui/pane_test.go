@@ -30,7 +30,7 @@ func paneModel(t *testing.T, b view.BindingStatus, active tab) roundPane {
 func TestPaneHeadRows(t *testing.T) {
 	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
+		MasterMindID: "mastermind-9f2", MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "channel",
 		BuilderKind: "agy", BuilderStatus: "blocked", Consults: 2,
 		Branch: "relevo/webshop", Dirty: true,
 		LastClose: &view.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
@@ -595,7 +595,7 @@ func TestRoundsOfIdleAfterReport(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	rep := view.Report{Bindings: []view.BindingStatus{b}}
-	env := testEnv(plannerSource{rt}, rep, 140, 40)
+	env := testEnv(mastermindSource{rt}, rep, 140, 40)
 
 	v, _ := newRoundView(env, b.Name, 0)
 	rv := v.(roundView)
@@ -639,7 +639,7 @@ func TestRoundsOfWorking(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	rep := view.Report{Bindings: []view.BindingStatus{b}}
-	env := testEnv(plannerSource{rt}, rep, 140, 40)
+	env := testEnv(mastermindSource{rt}, rep, 140, 40)
 
 	v, _ := newRoundView(env, b.Name, 0)
 	rv := v.(roundView)
@@ -655,16 +655,16 @@ func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	b := view.BindingStatus{
-		Name:          "narrow-b",
-		Round:         1,
-		PlanRound:     1,
-		Display:       "ACTIVE",
-		BuilderStatus: "working",
-		BuilderName:   "gemini-3.8-flash-high",
-		PlannerName:   "architect-2",
-		Branch:        "relevo/spool-db",
-		RoundStart:    railNow.Add(-5 * time.Minute),
-		Dirty:         true,
+		Name:           "narrow-b",
+		Round:          1,
+		PlanRound:      1,
+		Display:        "ACTIVE",
+		BuilderStatus:  "working",
+		BuilderName:    "gemini-3.8-flash-high",
+		MasterMindName: "architect-2",
+		Branch:         "relevo/spool-db",
+		RoundStart:     railNow.Add(-5 * time.Minute),
+		Dirty:          true,
 	}
 	if err := st.Save(store.Binding{Name: b.Name, CWD: "/repo/" + b.Name, Round: 1, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -673,7 +673,7 @@ func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 
 	widths := []int{132, 100, 80, 60}
 	for _, w := range widths {
-		env := testEnv(plannerSource{rt}, rep, w, 30)
+		env := testEnv(mastermindSource{rt}, rep, w, 30)
 		v, _ := newRoundView(env, b.Name, 0)
 		rv := v.(roundView)
 		left, _ := rv.Context(env)
@@ -687,7 +687,7 @@ func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 			t.Errorf("width %d: missing age '5m': %q", w, plain)
 		}
 
-		// The stripped left never ends inside a word of the branch or planner.
+		// The stripped left never ends inside a word of the branch or mastermind.
 		// Each part is either whole or absent.
 		if strings.Contains(plain, "relevo/spool-db") {
 			// whole
@@ -698,7 +698,7 @@ func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 		if strings.Contains(plain, "architect-2") {
 			// whole
 		} else if strings.Contains(plain, "architect") {
-			t.Errorf("width %d: planner partially present in %q", w, plain)
+			t.Errorf("width %d: mastermind partially present in %q", w, plain)
 		}
 
 		if strings.Contains(plain, "gemini-3.8-flash-high") {

@@ -23,7 +23,7 @@ func RoundStateOf(b store.Binding, entries []store.LogEntry) remote.RoundState {
 		return remote.RoundNeedsYou
 	}
 	open := HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
-		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+		!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
 	if open && !b.QueuedAt.IsZero() {
 		return remote.RoundQueued
 	}

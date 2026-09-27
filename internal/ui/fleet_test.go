@@ -178,7 +178,7 @@ func TestFleetRowDropOrder(t *testing.T) {
 		Display:          "ACTIVE",
 		BuilderStatus:    "working",
 		BuilderCandidate: "cline/deepseek",
-		PlannerName:      "architect-1",
+		MasterMindName:   "architect-1",
 		Spend:            &usage.Spend{Measured: 0.05},
 	}
 	for _, w := range []int{132, 90, 70, 50} {
@@ -194,7 +194,7 @@ func TestFleetRowDropOrder(t *testing.T) {
 
 func TestHeaderShowsVersionNotGates(t *testing.T) {
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{
 		Interval: time.Second,
 		Version:  "v0.13.0-28-gb66c6fc",
 	})
@@ -247,7 +247,7 @@ func TestGatedLineOneProviderLatestUntil(t *testing.T) {
 
 func TestHelpListsHelpKeys(t *testing.T) {
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{
 		Interval: time.Second,
 		Actions:  &fakeActions{},
 	})
@@ -396,7 +396,7 @@ func TestFleetReportedRowShowsTheRoundThatReported(t *testing.T) {
 		BuilderStatus: "idle",
 		LastPayload: &view.LastEvent{
 			Round:     2,
-			Direction: store.DirToPlanner,
+			Direction: store.DirToMasterMind,
 			Kind:      store.KindReport,
 			TS:        now.Add(-2 * time.Minute),
 		},

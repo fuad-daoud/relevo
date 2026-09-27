@@ -33,7 +33,7 @@ var ErrAllGated = errors.New("every candidate serving the actor is gated")
 type How string
 
 const (
-	// HowExplicit means the token was named by the planner (or inherited by
+	// HowExplicit means the token was named by the mastermind (or inherited by
 	// fork); gates were not consulted for the decision.
 	HowExplicit How = "explicit"
 	// HowSole means the candidate was the only one serving the role, and it
@@ -414,7 +414,7 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 
 // ExplainResolution is the one line that says what was picked and why.
 // The pick log entry, the stderr line after a spawn, and `relevo config`
-// all render from it, so a pick the planner reads in `relevo log` is
+// all render from it, so a pick the mastermind reads in `relevo log` is
 // word-for-word what bind printed (spec §1 principle 1). It names every
 // candidate by its token: stored notes and their parsers are unchanged by A1.
 func ExplainResolution(role string, res Resolution) string {
@@ -430,12 +430,12 @@ func PickText(role string, res Resolution, set *candidate.Set) string {
 }
 
 // pickEntry is the log record of one resolution. Confirmed and bound for
-// the planner so it is never mistaken for an undelivered payload; the
+// the mastermind so it is never mistaken for an undelivered payload; the
 // note is ExplainResolution, so `relevo log` reads exactly what bind
 // printed (spec §3.2, §4.4).
 func pickEntry(now time.Time, round int, role string, res Resolution) store.LogEntry {
 	return store.LogEntry{
-		TS: now.UTC(), Round: round, Direction: store.DirToPlanner,
+		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
 		Kind: store.KindPick, Confirmed: true, Note: ExplainResolution(role, res),
 	}
 }

@@ -13,7 +13,7 @@ func TestLogLineWithoutUsageIsTodaysFormat(t *testing.T) {
 	t.Parallel()
 
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
-	e := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/p/004-report.md", Note: "scraped"}
+	e := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/p/004-report.md", Note: "scraped"}
 	want := ts.Local().Format("2006-01-02 15:04:05") + "  round 4   to_planner report    /p/004-report.md scraped"
 	if got := LogLine(e); got != want {
 		t.Errorf("\n got  %q\n want %q", got, want)
@@ -26,7 +26,7 @@ func TestLogLineWithoutUsageIsTodaysFormat(t *testing.T) {
 func TestLogLineWithUsageAddsSecondLine(t *testing.T) {
 	t.Parallel()
 
-	e := store.LogEntry{TS: time.Now(), Round: 4, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/p/004-report.md",
+	e := store.LogEntry{TS: time.Now(), Round: 4, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/p/004-report.md",
 		Usage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 60_000,
 			Tokens: usage.Tokens{In: 100, Out: 10}, Cost: usage.Cost{USD: 0.5, Basis: usage.Measured}, Samples: 1}}
 	got := LogLine(e)
@@ -74,7 +74,7 @@ func TestLogLineOutcomeAndFlagged(t *testing.T) {
 	e := store.LogEntry{
 		TS:        ts,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Path:      "/p/001-report.md",
 		Note:      "noreport",
@@ -96,7 +96,7 @@ func TestLogLineClassify(t *testing.T) {
 	e := store.LogEntry{
 		TS:        ts,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Path:      "/p/001-report.md",
 		Flagged:   3,
@@ -113,7 +113,7 @@ func TestLogLineClassify(t *testing.T) {
 	eTimeout := store.LogEntry{
 		TS:        ts,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Path:      "/p/001-report.md",
 		Flagged:   3,
@@ -146,7 +146,7 @@ func TestLogLineTierOnPlanOnly(t *testing.T) {
 	report := store.LogEntry{
 		TS:        ts,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Path:      "/p/001-report.md",
 		Tier:      "edit",
@@ -164,7 +164,7 @@ func TestLogLineGateSuffix(t *testing.T) {
 
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	withGate := store.LogEntry{
-		TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		TS: ts, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 		Path: "/p/001-report.md", Gate: &store.GateRecord{Result: "fail"},
 	}
 	got := LogLine(withGate)
@@ -188,7 +188,7 @@ func TestLogLineSessionSuffix(t *testing.T) {
 
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	withSession := store.LogEntry{
-		TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		TS: ts, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 		Path:           "/p/001-report.md",
 		BuilderSession: &store.BuilderSession{Kind: "claude", ID: "0123456789abcdef"},
 	}

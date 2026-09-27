@@ -356,7 +356,7 @@ func TestDedupeMirrorAcceptsALogDerivedTranscriptWhenAStreamExists(t *testing.T)
 	}
 }
 
-func TestDedupeMirrorNeverPlansPlannerTranscript(t *testing.T) {
+func TestDedupeMirrorNeverPlansMasterMindTranscript(t *testing.T) {
 	d := openTestDB(t)
 	const name = "webshop"
 	bindingID := seedMirrorBinding(t, d, name)
@@ -368,8 +368,8 @@ func TestDedupeMirrorNeverPlansPlannerTranscript(t *testing.T) {
 	roundRecs, _ := streamTranscriptRecords("claude", [][]byte{[]byte(line)}, 0)
 	appendTranscript(t, d, db.OwnerRound, round3, roundRecs)
 
-	appendTranscript(t, d, db.OwnerPlanner, round3, []db.TranscriptRecord{
-		{Seq: 0, RecordJSON: line, Rendered: "the planner's own line"},
+	appendTranscript(t, d, db.OwnerMasterMind, round3, []db.TranscriptRecord{
+		{Seq: 0, RecordJSON: line, Rendered: "the mastermind's own line"},
 	})
 
 	plan := mustPlan(t, d)
@@ -384,12 +384,12 @@ func TestDedupeMirrorNeverPlansPlannerTranscript(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("DeleteRoundTranscript: %v", err)
 	}
-	plannerRows, err := d.Transcript(db.OwnerPlanner, round3, 0, 0)
+	mastermindRows, err := d.Transcript(db.OwnerMasterMind, round3, 0, 0)
 	if err != nil {
-		t.Fatalf("Transcript(planner): %v", err)
+		t.Fatalf("Transcript(mastermind): %v", err)
 	}
-	if len(plannerRows) != 1 {
-		t.Errorf("planner transcript has %d rows after the round's delete, want 1", len(plannerRows))
+	if len(mastermindRows) != 1 {
+		t.Errorf("mastermind transcript has %d rows after the round's delete, want 1", len(mastermindRows))
 	}
 }
 
@@ -495,12 +495,12 @@ func TestDedupeMirrorOnceDeletesBacksUpAndRecordsKV(t *testing.T) {
 	if len(roundRows) != 0 {
 		t.Errorf("round transcript has %d rows after the run, want 0", len(roundRows))
 	}
-	plannerRows, err := d.Transcript(db.OwnerPlanner, round3, 0, 0)
+	mastermindRows, err := d.Transcript(db.OwnerMasterMind, round3, 0, 0)
 	if err != nil {
-		t.Fatalf("Transcript(planner): %v", err)
+		t.Fatalf("Transcript(mastermind): %v", err)
 	}
-	if len(plannerRows) != 1 {
-		t.Errorf("planner transcript has %d rows after the run, want 1", len(plannerRows))
+	if len(mastermindRows) != 1 {
+		t.Errorf("mastermind transcript has %d rows after the run, want 1", len(mastermindRows))
 	}
 
 	stored, ok, err := d.KVGet(dedupeKVKey)

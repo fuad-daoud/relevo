@@ -55,11 +55,11 @@ func readerRoundRow(name, actor string) view.BindingStatus {
 		Role:             actor,
 		BuilderCandidate: "opencode/gpt-5.6-terra", BuilderName: "gpt-5.6-terra",
 		BuilderKind: "opencode", BuilderStatus: "idle",
-		PlannerName: "architect-5",
-		RoundEnd:    railNow.Add(-9 * time.Minute),
+		MasterMindName: "architect-5",
+		RoundEnd:       railNow.Add(-9 * time.Minute),
 		LastPayload: &view.LastEvent{
 			TS: railNow.Add(-9 * time.Minute), Round: 1,
-			Direction: store.DirToPlanner, Kind: store.KindReport,
+			Direction: store.DirToMasterMind, Kind: store.KindReport,
 		},
 		LastUsage: &usage.Usage{
 			Harness: "opencode", Provider: "cline-pass", Model: "gpt-5.6-terra",
@@ -144,7 +144,7 @@ func TestArtifactsEnterOpensByKind(t *testing.T) {
 	}, railNow)
 
 	fa := &fakeActions{}
-	env := testEnv(plannerSource{relevo.Runtime{Store: st}},
+	env := testEnv(mastermindSource{relevo.Runtime{Store: st}},
 		view.Report{Bindings: []view.BindingStatus{readerRoundRow("review-568", "reviewer")}}, 140, 40)
 	env.Actions = fa
 
@@ -195,7 +195,7 @@ func TestArtifactsTabReadsSealedFiles(t *testing.T) {
 	}
 
 	msg := fetchArtifacts(context.Background(),
-		plannerSource{relevo.Runtime{Store: st}}, "review-568", 1, 0)().(tabMsg)
+		mastermindSource{relevo.Runtime{Store: st}}, "review-568", 1, 0)().(tabMsg)
 	if msg.content.err != nil {
 		t.Fatalf("fetchArtifacts after the seal: %v", msg.content.err)
 	}
@@ -223,11 +223,11 @@ func writerIdleRoundModel(t *testing.T, width, height int) Model {
 	row := view.BindingStatus{
 		Name: name, Round: 1, PlanRound: 1, Display: "ACTIVE",
 		BuilderStatus: "idle", BuilderName: "gpt-5.6-terra",
-		PlannerName: "architect-5",
-		RoundEnd:    railNow.Add(-9 * time.Minute),
+		MasterMindName: "architect-5",
+		RoundEnd:       railNow.Add(-9 * time.Minute),
 		LastPayload: &view.LastEvent{
 			TS: railNow.Add(-9 * time.Minute), Round: 1,
-			Direction: store.DirToPlanner, Kind: store.KindReport,
+			Direction: store.DirToMasterMind, Kind: store.KindReport,
 		},
 	}
 	m := goldenActionModelWithStore(t, width, height, &fakeActions{},

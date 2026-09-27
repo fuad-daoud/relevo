@@ -92,7 +92,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 		b.RoundStartedAt = rt.Now()
 		b.QueuedAt = time.Time{}
 		if err := tx.AppendLog(name, store.LogEntry{
-			TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindQueue, Confirmed: true,
+			TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true,
 			Note: note,
 		}); err != nil {
 			return err

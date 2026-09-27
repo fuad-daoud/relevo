@@ -199,7 +199,7 @@ func sortPairs(ps []pair) {
 }
 
 // seeded is the fixture seedDB builds: two repos, three bindings (webshop and
-// api on repo A -- api archived; docs on repo B), one planner, and six rounds
+// api on repo A -- api archived; docs on repo B), one mastermind, and six rounds
 // spanning harnesses, outcomes, gate results, cost bases and two dates.
 type seeded struct {
 	d          *DB
@@ -225,22 +225,22 @@ func seedDB(t *testing.T) seeded {
 	})
 	repoBID := upsertRepo(t, d, Repo{OriginURL: ptr("https://example.test/b.git"), FirstSeen: day1})
 
-	plannerID, err := d.UpsertPlanner(Planner{HarnessKind: "claude", SessionID: "sess-1", FirstSeen: day1, LastSeen: day2})
+	mastermindID, err := d.UpsertMasterMind(MasterMind{HarnessKind: "claude", SessionID: "sess-1", FirstSeen: day1, LastSeen: day2})
 	if err != nil {
-		t.Fatalf("UpsertPlanner: %v", err)
+		t.Fatalf("UpsertMasterMind: %v", err)
 	}
 
 	webshopID := upsertBinding(t, d, Binding{
-		Name: "webshop", RepoID: &repoAID, PlannerID: &plannerID, Feature: ptr("checkout"),
+		Name: "webshop", RepoID: &repoAID, MasterMindID: &mastermindID, Feature: ptr("checkout"),
 		CWD: "/home/x/webshop", BuilderMode: "headless", CreatedAt: day1, IngestSource: IngestLive,
 	})
 	apiID := upsertBinding(t, d, Binding{
-		Name: "api", RepoID: &repoAID, PlannerID: &plannerID,
+		Name: "api", RepoID: &repoAID, MasterMindID: &mastermindID,
 		CWD: "/home/x/api", BuilderMode: "headless", CreatedAt: day1,
 		ArchivedAt: ptr(day2), ArchivePath: ptr("/archive/api.tar.gz"), IngestSource: IngestArchive,
 	})
 	docsID := upsertBinding(t, d, Binding{
-		Name: "docs", RepoID: &repoBID, PlannerID: &plannerID, FinalState: ptr("needs_you"),
+		Name: "docs", RepoID: &repoBID, MasterMindID: &mastermindID, FinalState: ptr("needs_you"),
 		CWD: "/home/x/docs", BuilderMode: "pane", CreatedAt: day1, IngestSource: IngestLive,
 	})
 

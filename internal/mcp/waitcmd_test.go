@@ -112,7 +112,7 @@ func TestMCPInstructionsDependOnMode(t *testing.T) {
 		}
 	}
 	if strings.Contains(tools, "this pane") || strings.Contains(channel, "this pane") {
-		t.Error(`instructions must say "this planner", not "this pane"`)
+		t.Error(`instructions must say "this mastermind", not "this pane"`)
 	}
 
 	// initialize serves the mode's text when no override is set.

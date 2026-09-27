@@ -18,7 +18,7 @@ import (
 // relevo's state always resolves through (CLAUDE.md, #42), and its database is
 // opened here because internal/harness cannot import internal/store. It moved
 // here from cmd/relevo/agent.go in round 5: internal/ui cannot import package
-// main, and the cockpit's plannerActions needs the same env.
+// main, and the cockpit's mastermindActions needs the same env.
 func AgentInstallEnv() (harness.InstallEnv, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {

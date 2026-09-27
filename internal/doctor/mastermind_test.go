@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
 
 func writeDoctorFile(t *testing.T, path, body string) {
@@ -25,7 +25,7 @@ func TestDoctorPluginRow(t *testing.T) {
 	t.Run("user settings enable it", func(t *testing.T) {
 		home := t.TempDir()
 		writeDoctorFile(t, filepath.Join(home, ".claude", "settings.json"), enabled)
-		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
 		c := findCheck(Report{Checks: checks}, "", "plugin")
 		if c == nil {
 			t.Fatal("the plugin row must be present when a claude candidate exists")
@@ -38,7 +38,7 @@ func TestDoctorPluginRow(t *testing.T) {
 	t.Run("project settings enable it", func(t *testing.T) {
 		repo := t.TempDir()
 		writeDoctorFile(t, filepath.Join(repo, ".claude", "settings.json"), enabled)
-		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: t.TempDir(), Repo: repo})
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: t.TempDir(), Repo: repo})
 		c := findCheck(Report{Checks: checks}, "", "plugin")
 		if c == nil || c.Severity != SevOK {
 			t.Fatalf("plugin row = %+v, want ok from the project's settings", c)
@@ -46,7 +46,7 @@ func TestDoctorPluginRow(t *testing.T) {
 	})
 
 	t.Run("neither settings file enables it", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: t.TempDir(), Repo: t.TempDir()})
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: t.TempDir(), Repo: t.TempDir()})
 		c := findCheck(Report{Checks: checks}, "", "plugin")
 		if c == nil {
 			t.Fatal("the plugin row must be present when a claude candidate exists")
@@ -62,14 +62,14 @@ func TestDoctorPluginRow(t *testing.T) {
 	t.Run("disabled is not enabled", func(t *testing.T) {
 		home := t.TempDir()
 		writeDoctorFile(t, filepath.Join(home, ".claude", "settings.json"), `{"enabledPlugins":{"relevo@relevo":false}}`)
-		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
 		if c := findCheck(Report{Checks: checks}, "", "plugin"); c == nil || c.Severity != SevFail {
 			t.Fatalf("plugin row = %+v, want FAIL for relevo@relevo: false", c)
 		}
 	})
 
 	t.Run("no claude candidate", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Claude: false, Home: t.TempDir(), Repo: t.TempDir()})
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: false, Home: t.TempDir(), Repo: t.TempDir()})
 		if c := findCheck(Report{Checks: checks}, "", "plugin"); c != nil {
 			t.Errorf("no claude candidate must leave the plugin row out, got %+v", c)
 		}
@@ -79,43 +79,43 @@ func TestDoctorPluginRow(t *testing.T) {
 	})
 }
 
-func TestDoctorPlannerRow(t *testing.T) {
-	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
+func TestDoctorMasterMindRow(t *testing.T) {
+	rec := &mastermind.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
 
 	t.Run("resolved with a live claim", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, MCPChild: true, ClaimLive: true})
-		c := findCheck(Report{Checks: checks}, "", "planner")
+		checks := MasterMindChecks(MasterMindCheckInput{Detected: true, Resolved: rec, MCPChild: true, ClaimLive: true})
+		c := findCheck(Report{Checks: checks}, "", "MasterMind")
 		if c == nil || c.Severity != SevOK {
-			t.Fatalf("planner row = %+v, want ok", c)
+			t.Fatalf("mastermind row = %+v, want ok", c)
 		}
 	})
 
 	t.Run("resolve missed", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Detected: true})
-		c := findCheck(Report{Checks: checks}, "", "planner")
+		checks := MasterMindChecks(MasterMindCheckInput{Detected: true})
+		c := findCheck(Report{Checks: checks}, "", "MasterMind")
 		if c == nil || c.Severity != SevFail {
-			t.Fatalf("planner row = %+v, want FAIL when Resolve missed", c)
+			t.Fatalf("mastermind row = %+v, want FAIL when Resolve missed", c)
 		}
 	})
 
 	t.Run("no live claim", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, MCPChild: true})
-		c := findCheck(Report{Checks: checks}, "", "planner")
+		checks := MasterMindChecks(MasterMindCheckInput{Detected: true, Resolved: rec, MCPChild: true})
+		c := findCheck(Report{Checks: checks}, "", "MasterMind")
 		if c == nil || c.Severity != SevInfo {
-			t.Fatalf("planner row = %+v, want INFO without a live claim (tools mode is not a fault)", c)
+			t.Fatalf("mastermind row = %+v, want INFO without a live claim (tools mode is not a fault)", c)
 		}
 	})
 
 	t.Run("not inside Claude Code", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Detected: false, Resolved: rec, ClaimLive: true})
-		if c := findCheck(Report{Checks: checks}, "", "planner"); c != nil {
-			t.Errorf("the planner row exists only when Detect says claude, got %+v", c)
+		checks := MasterMindChecks(MasterMindCheckInput{Detected: false, Resolved: rec, ClaimLive: true})
+		if c := findCheck(Report{Checks: checks}, "", "MasterMind"); c != nil {
+			t.Errorf("the mastermind row exists only when Detect says claude, got %+v", c)
 		}
 	})
 
 	t.Run("stale records are an info row", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Stale: []string{"old-1", "old-2"}})
-		c := findCheck(Report{Checks: checks}, "", "planners")
+		checks := MasterMindChecks(MasterMindCheckInput{Stale: []string{"old-1", "old-2"}})
+		c := findCheck(Report{Checks: checks}, "", "MasterMinds")
 		if c == nil || c.Severity != SevInfo {
 			t.Fatalf("stale row = %+v, want an info row", c)
 		}
@@ -125,40 +125,40 @@ func TestDoctorPlannerRow(t *testing.T) {
 	})
 
 	t.Run("no stale records means no row", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{})
-		if c := findCheck(Report{Checks: checks}, "", "planners"); c != nil {
+		checks := MasterMindChecks(MasterMindCheckInput{})
+		if c := findCheck(Report{Checks: checks}, "", "MasterMinds"); c != nil {
 			t.Errorf("no stale records must leave the row out, got %+v", c)
 		}
 	})
 }
 
-func TestPlannerRowNamesChat(t *testing.T) {
-	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
+func TestMasterMindRowNamesChat(t *testing.T) {
+	rec := &mastermind.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
 
-	t.Run("chat follows the planner's name", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{
+	t.Run("chat follows the mastermind's name", func(t *testing.T) {
+		checks := MasterMindChecks(MasterMindCheckInput{
 			Detected: true, Resolved: rec, MCPChild: true, ClaimLive: false,
-			Chat: "relevo-planner · https://claude.ai/code/session_01TEST",
+			Chat: "relevo-mastermind · https://claude.ai/code/session_01TEST",
 		})
-		c := findCheck(Report{Checks: checks}, "", "planner")
+		c := findCheck(Report{Checks: checks}, "", "MasterMind")
 		if c == nil {
-			t.Fatal("the planner row is missing")
+			t.Fatal("the mastermind row is missing")
 		}
-		want := "planner architect-1 (pl_aaaaaaaabbbb) · relevo-planner · https://claude.ai/code/session_01TEST: tools mode"
+		want := "MasterMind architect-1 (pl_aaaaaaaabbbb) · relevo-mastermind · https://claude.ai/code/session_01TEST: tools mode"
 		if !strings.Contains(c.Detail, want) {
-			t.Errorf("planner row detail %q does not contain %q", c.Detail, want)
+			t.Errorf("mastermind row detail %q does not contain %q", c.Detail, want)
 		}
 	})
 
 	t.Run("empty chat is byte-identical", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, MCPChild: true, ClaimLive: false})
-		c := findCheck(Report{Checks: checks}, "", "planner")
+		checks := MasterMindChecks(MasterMindCheckInput{Detected: true, Resolved: rec, MCPChild: true, ClaimLive: false})
+		c := findCheck(Report{Checks: checks}, "", "MasterMind")
 		if c == nil {
-			t.Fatal("the planner row is missing")
+			t.Fatal("the mastermind row is missing")
 		}
-		want := "planner architect-1 (pl_aaaaaaaabbbb): tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`"
+		want := "MasterMind architect-1 (pl_aaaaaaaabbbb): tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`"
 		if c.Detail != want {
-			t.Errorf("planner row detail = %q, want %q", c.Detail, want)
+			t.Errorf("mastermind row detail = %q, want %q", c.Detail, want)
 		}
 	})
 }
@@ -166,7 +166,7 @@ func TestPlannerRowNamesChat(t *testing.T) {
 // TestDoctorPluginHookRow pins the "not checked, never FAIL" rule.
 func TestDoctorPluginHookRow(t *testing.T) {
 	t.Run("no installed_plugins.json", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: t.TempDir(), Repo: t.TempDir()})
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: t.TempDir(), Repo: t.TempDir()})
 		c := findCheck(Report{Checks: checks}, "", "plugin hook")
 		if c == nil || c.Severity != SevOK {
 			t.Fatalf("plugin hook row = %+v, want ok (not checked)", c)
@@ -179,8 +179,8 @@ func TestDoctorPluginHookRow(t *testing.T) {
 		writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
 			`{"plugins":{"relevo@relevo":[{"installPath":"`+dir+`"}]}}`)
 		writeDoctorFile(t, filepath.Join(dir, "hooks", "hooks.json"),
-			`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"relevo planner init --hook claude"}]}]}}`)
-		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
+			`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"relevo mastermind init --hook claude"}]}]}}`)
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
 		c := findCheck(Report{Checks: checks}, "", "plugin hook")
 		if c == nil || c.Severity != SevOK {
 			t.Fatalf("plugin hook row = %+v, want ok", c)
@@ -194,7 +194,7 @@ func TestDoctorPluginHookRow(t *testing.T) {
 			`{"plugins":{"relevo@relevo":[{"installPath":"`+dir+`"}]}}`)
 		writeDoctorFile(t, filepath.Join(dir, "hooks", "hooks.json"),
 			`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"relevo doctor"}]}]}}`)
-		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
 		c := findCheck(Report{Checks: checks}, "", "plugin hook")
 		if c == nil || c.Severity != SevFail {
 			t.Fatalf("plugin hook row = %+v, want FAIL", c)
@@ -202,40 +202,40 @@ func TestDoctorPluginHookRow(t *testing.T) {
 	})
 }
 
-// TestDoctorPlannerRowNoClaimIsInfo pins that a Claude Code planner with no
+// TestDoctorMasterMindRowNoClaimIsInfo pins that a Claude Code mastermind with no
 // live channel claim is INFO, never FAIL: tools mode gets reports by
 // background wait.
-func TestDoctorPlannerRowNoClaimIsInfo(t *testing.T) {
-	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
-	checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, MCPChild: true})
+func TestDoctorMasterMindRowNoClaimIsInfo(t *testing.T) {
+	rec := &mastermind.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
+	checks := MasterMindChecks(MasterMindCheckInput{Detected: true, Resolved: rec, MCPChild: true})
 
-	c := findCheck(Report{Checks: checks}, "", "planner")
+	c := findCheck(Report{Checks: checks}, "", "MasterMind")
 	if c == nil {
-		t.Fatal("the planner row is missing")
+		t.Fatal("the mastermind row is missing")
 	}
 	if c.Severity != SevInfo {
-		t.Fatalf("planner row = %v (%s), want INFO", c.Severity, c.Detail)
+		t.Fatalf("mastermind row = %v (%s), want INFO", c.Severity, c.Detail)
 	}
 	for _, want := range []string{"background wait", "dangerously-load-development-channels plugin:relevo@relevo", "allowedChannelPlugins"} {
 		if !strings.Contains(c.Detail, want) {
-			t.Errorf("planner row detail %q must name %q", c.Detail, want)
+			t.Errorf("mastermind row detail %q must name %q", c.Detail, want)
 		}
 	}
 }
 
-func TestDoctorPlannerRowNoMCPChildFails(t *testing.T) {
-	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
-	checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, ClaimLive: true})
+func TestDoctorMasterMindRowNoMCPChildFails(t *testing.T) {
+	rec := &mastermind.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
+	checks := MasterMindChecks(MasterMindCheckInput{Detected: true, Resolved: rec, ClaimLive: true})
 
-	c := findCheck(Report{Checks: checks}, "", "planner")
+	c := findCheck(Report{Checks: checks}, "", "MasterMind")
 	if c == nil {
-		t.Fatal("the planner row is missing")
+		t.Fatal("the mastermind row is missing")
 	}
 	if c.Severity != SevFail {
-		t.Fatalf("planner row = %v (%s), want FAIL with no relevo mcp child", c.Severity, c.Detail)
+		t.Fatalf("mastermind row = %v (%s), want FAIL with no relevo mcp child", c.Severity, c.Detail)
 	}
 	if c.Fix == "" {
-		t.Error("the failing planner row must carry the fix")
+		t.Error("the failing mastermind row must carry the fix")
 	}
 }
 
@@ -246,7 +246,7 @@ func TestHasMCPChild(t *testing.T) {
 		want     bool
 	}{
 		{"relevo mcp child", []ChildProcess{{PID: 2, Args: []string{"/usr/local/bin/relevo", "mcp"}}}, true},
-		{"relevo mcp with flags", []ChildProcess{{PID: 2, Args: []string{"relevo", "--planner", "x", "mcp"}}}, true},
+		{"relevo mcp with flags", []ChildProcess{{PID: 2, Args: []string{"relevo", "--mastermind", "x", "mcp"}}}, true},
 		{"another binary", []ChildProcess{{PID: 2, Args: []string{"relevo-wrapper", "mcp"}}}, false},
 		{"relevo another verb", []ChildProcess{{PID: 2, Args: []string{"relevo", "status"}}}, false},
 		{"no children", nil, false},
@@ -289,7 +289,7 @@ func TestDoctorPluginVersionRow(t *testing.T) {
 			if tc.body != "" {
 				writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"), tc.body)
 			}
-			checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: home, Repo: t.TempDir(), Running: tc.running})
+			checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: home, Repo: t.TempDir(), Running: tc.running})
 			c := findCheck(Report{Checks: checks}, "", "plugin version")
 			if c == nil {
 				t.Fatal("the plugin version row must be present when a claude candidate exists")
@@ -309,7 +309,7 @@ func TestDoctorPluginVersionRow(t *testing.T) {
 	t.Run("no claude candidate means no row", func(t *testing.T) {
 		home := t.TempDir()
 		writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"), state("0.8.0"))
-		checks := PlannerChecks(PlannerCheckInput{Claude: false, Home: home, Repo: t.TempDir(), Running: "v0.8.0"})
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: false, Home: home, Repo: t.TempDir(), Running: "v0.8.0"})
 		if c := findCheck(Report{Checks: checks}, "", "plugin version"); c != nil {
 			t.Errorf("no claude candidate must leave the plugin version row out, got %+v", c)
 		}

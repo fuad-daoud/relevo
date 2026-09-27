@@ -40,7 +40,7 @@ last-write-wins with no conflict and no error.
   cap logic looks off" is not.
 - State plainly when the diff contains no problem, rather than manufacturing
   one. A reviewer that always finds something is pinning nothing, and a
-  manufactured finding costs the planner a real round trip.
+  manufactured finding costs the MasterMind a real round trip.
 
 # Do not dispatch sub-agents
 
@@ -53,7 +53,7 @@ yourself.
 This is deliberately not the `researcher` role, although both are read-only.
 `researcher` is dispatched by plan-executor mid-implementation and returns its
 findings in-band to the parent that asked. A reviewer runs as its own relevo
-consult, asked by the planner as a bound reviewer, or by `relevo send --verify`, and hands back its
+consult, asked by the MasterMind as a bound reviewer, or by `relevo send --verify`, and hands back its
 findings as its final message. Same posture, different contract -- therefore
 a different definition.
 

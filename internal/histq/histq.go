@@ -259,8 +259,8 @@ func (q *Query) applyPlainKey(key, value string) bool {
 		q.Filter.Repo = value
 	case "feature":
 		q.Filter.Feature = value
-	case "planner":
-		q.Filter.Planner = value
+	case "mastermind":
+		q.Filter.MasterMind = value
 	case "harness":
 		q.Filter.Harness = value
 	case "provider":
@@ -388,7 +388,7 @@ func (q Query) String() string {
 	add("binding", q.Filter.Binding)
 	add("repo", q.Filter.Repo)
 	add("feature", q.Filter.Feature)
-	add("planner", q.Filter.Planner)
+	add("mastermind", q.Filter.MasterMind)
 	add("harness", q.Filter.Harness)
 	add("provider", q.Filter.Provider)
 	add("model", q.Filter.Model)

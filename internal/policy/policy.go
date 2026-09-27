@@ -1,4 +1,4 @@
-// Package policy loads policy.json: where the planner tells relevo how to
+// Package policy loads policy.json: where the mastermind tells relevo how to
 // choose among candidates and tunes the daemon's knobs.
 package policy
 
@@ -9,7 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// Policy is the planner's candidate preferences and daemon tuning, loaded
+// Policy is the mastermind's candidate preferences and daemon tuning, loaded
 // from policy.json.
 type Policy struct {
 	// Order maps a role to its preferred candidate tokens, most preferred

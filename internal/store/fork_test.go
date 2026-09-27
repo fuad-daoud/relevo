@@ -89,8 +89,8 @@ func seedForkSource(t *testing.T, s *Store, srcName string, rounds int) {
 		deliveryTime := time.Now().UTC().Add(-time.Hour)
 		for _, e := range []LogEntry{
 			{Round: r, Direction: DirToBuilder, Kind: KindPlan, Path: s.PlanPath(srcName, r), Confirmed: true},
-			{Round: r, Direction: DirToPlanner, Kind: KindReport, Path: s.ReportPath(srcName, r), DeliveredAt: &deliveryTime},
-			{Round: r, Direction: DirToPlanner, Kind: KindQuestion},
+			{Round: r, Direction: DirToMasterMind, Kind: KindReport, Path: s.ReportPath(srcName, r), DeliveredAt: &deliveryTime},
+			{Round: r, Direction: DirToMasterMind, Kind: KindQuestion},
 		} {
 			if err := s.AppendLog(srcName, e); err != nil {
 				t.Fatalf("AppendLog: %v", err)

@@ -16,11 +16,11 @@ import (
 type AddOptions struct {
 	Name      string // name for the new binding; required, must be free
 	Candidate string // candidate harness/provider/model token; empty means resolve by role through resolveCandidate
-	// PlannerID is the caller's --planner value when it has one, and the
+	// MasterMindID is the caller's --mastermind value when it has one, and the
 	// resolved record's id afterwards. Empty means "resolve this session's
-	// planner" (§4.3).
-	PlannerID string
-	Repo      string // the repository the worktree is cut from; the caller's cwd
+	// mastermind" (§4.3).
+	MasterMindID string
+	Repo         string // the repository the worktree is cut from; the caller's cwd
 
 	// CWD binds the peer to a directory the human already prepared instead of
 	// creating a worktree. It is the escape hatch for a non-git tree; relevo
@@ -84,11 +84,11 @@ type AddResult struct {
 	Resolution Resolution
 }
 
-// Add attaches an additional builder to the calling planner, on its own tree.
+// Add attaches an additional builder to the calling mastermind, on its own tree.
 //
-// Preconditions:  a relevo planner resolves for the caller (--planner,
+// Preconditions:  a relevo mastermind resolves for the caller (--mastermind,
 //
-//	$RELEVO_PLANNER, the host process, or the session); opts.Name is valid
+//	$RELEVO_MASTERMIND, the host process, or the session); opts.Name is valid
 //	and unused; opts.Candidate is resolvable to builder; opts.Repo is a git
 //	repository unless opts.CWD is given.
 //
@@ -102,12 +102,12 @@ type AddResult struct {
 //
 //	or a wrapped git failure.
 func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
-	// Resolve the caller's planner before the --server branch. A remote
-	// binding is the calling planner's, exactly like a local one: its id and
+	// Resolve the caller's mastermind before the --server branch. A remote
+	// binding is the calling mastermind's, exactly like a local one: its id and
 	// session go into the client-side record addRemote writes. Only the
-	// server-side binding stays planner-less -- nothing about the planner
+	// server-side binding stays mastermind-less -- nothing about the mastermind
 	// crosses the wire (§4.4).
-	rec, haveRec, err := resolveVerbPlanner(rt, opts.PlannerID)
+	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
 	if err != nil {
 		return AddResult{}, err
 	}
@@ -174,12 +174,12 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 
 	if !haveRec {
-		return AddResult{}, ErrNoPlannerSession
+		return AddResult{}, ErrNoMasterMindSession
 	}
-	opts.PlannerID = rec.ID
-	plannerEP := recordEndpoint(rec)
-	if plannerEP.TranscriptLocator == "" {
-		plannerEP.TranscriptLocator = plannerLocator(rt, plannerEP.Kind, plannerEP.SessionID)
+	opts.MasterMindID = rec.ID
+	mastermindEP := recordEndpoint(rec)
+	if mastermindEP.TranscriptLocator == "" {
+		mastermindEP.TranscriptLocator = mastermindLocator(rt, mastermindEP.Kind, mastermindEP.SessionID)
 	}
 
 	if _, err := rt.Store.Load(opts.Name); err == nil {
@@ -315,14 +315,14 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 
 	bindOpts := BindOptions{
-		Name:      opts.Name,
-		Candidate: c.Ref().String(),
-		PlannerID: opts.PlannerID,
-		CWD:       cwd,
-		Headless:  opts.Headless,
-		Tier:      string(tier),
-		AllowYolo: opts.AllowYolo,
-		Role:      normRole(opts.Role),
+		Name:         opts.Name,
+		Candidate:    c.Ref().String(),
+		MasterMindID: opts.MasterMindID,
+		CWD:          cwd,
+		Headless:     opts.Headless,
+		Tier:         string(tier),
+		AllowYolo:    opts.AllowYolo,
+		Role:         normRole(opts.Role),
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
@@ -341,8 +341,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	b := store.Binding{
 		Name:             opts.Name,
 		CWD:              cwd,
-		Planner:          plannerEP,
-		PlannerID:        opts.PlannerID,
+		MasterMind:       mastermindEP,
+		MasterMindID:     opts.MasterMindID,
 		Builder:          builder,
 		BuilderCandidate: c.Ref().String(),
 		Round:            1,

@@ -14,25 +14,25 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// plannerRoute decides how a pending report reaches a binding planner:
+// mastermindRoute decides how a pending report reaches a binding mastermind:
 // the live channel claim first, then the configured
-// deliverer for the planner kind, else "pull".
+// deliverer for the mastermind kind, else "pull".
 //
 // live reports whether that route can push right now. A pull route is never
 // live: the daemon cannot see whether the background wait's `relevo wait` is
 // running, which is exactly why pull is a route and not a fault.
-func plannerRoute(rt Runtime, b store.Binding) (route string, live bool) {
-	if rt.Channels != nil && b.PlannerID != "" {
+func mastermindRoute(rt Runtime, b store.Binding) (route string, live bool) {
+	if rt.Channels != nil && b.MasterMindID != "" {
 		now := time.Now()
 		if rt.Now != nil {
 			now = rt.Now()
 		}
-		if c, err := rt.Channels.Live(b.PlannerID, now); err == nil && c != nil {
+		if c, err := rt.Channels.Live(b.MasterMindID, now); err == nil && c != nil {
 			return "channel", true
 		}
 	}
-	if b.Planner.Kind != "" {
-		if _, ok := rt.Deliverers[b.Planner.Kind]; ok {
+	if b.MasterMind.Kind != "" {
+		if _, ok := rt.Deliverers[b.MasterMind.Kind]; ok {
 			return "deliverer", true
 		}
 	}
@@ -40,7 +40,7 @@ func plannerRoute(rt Runtime, b store.Binding) (route string, live bool) {
 }
 
 // Status builds every row from the store and what relevo can determine
-// locally: the planner record, a live channel claim and the configured
+// locally: the mastermind record, a live channel claim and the configured
 // deliverers. Only store failures fail the call.
 func Status(ctx context.Context, rt Runtime) (view.Report, error) {
 	bindings, err := rt.Store.List()
@@ -87,8 +87,8 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 		Consults:         consult.Running(b),
 		Switches:         b.RoundSwitches,
 		Branch:           b.Branch,
-		PlannerKind:      b.Planner.Kind,
-		PlannerID:        b.PlannerID,
+		MasterMindKind:   b.MasterMind.Kind,
+		MasterMindID:     b.MasterMindID,
 		BuilderKind:      b.Builder.Kind, BuilderStatus: view.AgentUnknown,
 	}
 
@@ -111,14 +111,14 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 		}
 	}
 
-	row.PlannerRoute, row.PlannerRouteLive = plannerRoute(rt, b)
+	row.MasterMindRoute, row.MasterMindRouteLive = mastermindRoute(rt, b)
 
-	// PlannerName is the record's name, so `status --json` and a status row
-	// can say "planner architect-1" without a second lookup by the reader.
+	// MasterMindName is the record's name, so `status --json` and a status row
+	// can say "mastermind architect-1" without a second lookup by the reader.
 	// A Runtime with no registry (tests) or a forgotten record leaves it "".
-	if b.PlannerID != "" && rt.Planners != nil {
-		if rec, err := rt.Planners.Get(b.PlannerID); err == nil {
-			row.PlannerName = rec.Name
+	if b.MasterMindID != "" && rt.MasterMinds != nil {
+		if rec, err := rt.MasterMinds.Get(b.MasterMindID); err == nil {
+			row.MasterMindName = rec.Name
 		}
 	}
 
@@ -306,7 +306,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 		break
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner(b.Name)
+	pending, found, err := rt.Store.PendingForMasterMind(b.Name)
 	if err != nil {
 		return view.BindingStatus{}, err
 	}

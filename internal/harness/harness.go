@@ -87,7 +87,7 @@ type Harness struct {
 	// Roles are the definitions relevo ships for this kind, ordered with
 	// plan-executor first so doctor reports the role the loop depends on
 	// before the rest. A row need not back a roleTable entry: architect is the
-	// planner's definition, shipped but never launched by relevo.
+	// mastermind's definition, shipped but never launched by relevo.
 	Roles []Role
 	// MinVersion is the semver floor doctor holds the binary to; "" means
 	// unchecked.

@@ -23,7 +23,7 @@ const VerifyRole = "verify"
 
 // Verdict values parseVerdict returns and store.Verdict.Verdict carries. The
 // third is not a judgement: the findings carried no readable block, and the
-// planner reads the prose.
+// mastermind reads the prose.
 const (
 	verdictAccepted     = "accepted"
 	verdictRejected     = "rejected"

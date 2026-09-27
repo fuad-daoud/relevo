@@ -29,7 +29,7 @@ type Options struct {
 	Notice string
 
 	// PipeHint is the full refusal line RunSource prints when stdout is
-	// not a terminal -- not a suffix. "" keeps the planner's own text,
+	// not a terminal -- not a suffix. "" keeps the mastermind's own text,
 	// which names `relevo status`.
 	PipeHint string
 
@@ -39,7 +39,7 @@ type Options struct {
 
 	// Actions is the cockpit's write seam (§1, §4.2). Nil hides every
 	// action key and makes one do nothing when pressed: `relevo serve ui`
-	// passes none, and `relevo ui` gets the planner adapter Run builds.
+	// passes none, and `relevo ui` gets the mastermind adapter Run builds.
 	Actions Actions
 
 	// ProbeExec is what Actions.Probe runs a candidate's harness through
@@ -61,7 +61,7 @@ var stdoutStat = os.Stdout.Stat
 
 // Run renders relevo's state until the user quits or ctx is cancelled.
 // It never mutates state on its own: every write goes through Actions, which
-// Run fills with the real planner adapter when the caller passed none (§1).
+// Run fills with the real mastermind adapter when the caller passed none (§1).
 //
 // Preconditions:  stdout is a character device; rt.Store non-nil.
 // Postconditions: the terminal is restored, including on panic.
@@ -75,7 +75,7 @@ func Run(ctx context.Context, rt relevo.Runtime, opts Options) error {
 	}
 	live := newLiveRuntime(rt)
 	if opts.Actions == nil {
-		opts.Actions = &plannerActions{live: live, repo: repoRoot(ctx, rt), probe: opts.ProbeExec}
+		opts.Actions = &mastermindActions{live: live, repo: repoRoot(ctx, rt), probe: opts.ProbeExec}
 	}
 	return RunSource(ctx, liveSource{live}, opts)
 }

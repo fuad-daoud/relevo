@@ -549,7 +549,7 @@ func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload stri
 	return store.LogEntry{
 		TS:        now,
 		Round:     round,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindExit,
 		Path:      logPath,
 		Note:      fmt.Sprintf("builder exited (code %s) without a report%s", codeText, suffix),
@@ -602,7 +602,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return b, err
 	}
 	roundOpen := HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
-		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+		!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
 
 	if !roundOpen {
 		// Idle is normal (spec §5.1): between rounds there is no process.
@@ -861,7 +861,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			b = abandonSession(b)
 			b.Builder = clearProcess(b.Builder)
 			if err := tx.AppendLog(b.Name, store.LogEntry{
-				TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindQueue, Confirmed: true,
+				TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true,
 				Note: "re-queued (builder lost to a restart)",
 			}); err != nil {
 				return b, err
@@ -929,7 +929,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// time than it had.
 		b.RoundStartedAt = keep
 		if err := tx.AppendLog(b.Name, store.LogEntry{
-			TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindSwitch, Confirmed: true,
+			TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch, Confirmed: true,
 			Usage: prior,
 			Note: fmt.Sprintf("%s builder (lost to a daemon restart at %s): picked %s for builder: same candidate, not counted",
 				how, rt.StartedAt.UTC().Format(time.RFC3339), b.BuilderCandidate),
@@ -1082,7 +1082,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// The gate result -> report queued -> verify consult started ->
 	// delivery (#144), exactly as the pane path orders it: the reviewer
 	// sees the gate's output, so it starts after the gate and before the
-	// planner is told.
+	// mastermind is told.
 	if wantVerify && next.Shape != store.ShapeReader {
 		gateLogPath := ""
 		if rec != nil {

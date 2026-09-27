@@ -1,7 +1,7 @@
-// Package planner owns relevo's planner identity: the records saying which
-// harness process and session a planner is, and the rules that mint,
+// Package mastermind owns relevo's mastermind identity: the records saying which
+// harness process and session a mastermind is, and the rules that mint,
 // validate and resolve them.
-package planner
+package mastermind
 
 import (
 	"encoding/base32"
@@ -15,28 +15,28 @@ import (
 
 // The sentinel errors every caller switches on.
 var (
-	ErrNotFound     = errors.New("planner not found")
-	ErrNameTaken    = errors.New("planner name taken")
-	ErrSessionTaken = errors.New("planner session taken")
-	ErrHostTaken    = errors.New("planner host taken")
-	ErrInUse        = errors.New("planner in use")
-	ErrInvalid      = errors.New("invalid planner")
-	// ErrNoPlanner's text is its own fix.
-	ErrNoPlanner = errors.New("no relevo planner for this session: is the relevo plugin enabled (`relevo doctor`)? Or run `relevo planner init`")
+	ErrNotFound     = errors.New("mastermind not found")
+	ErrNameTaken    = errors.New("mastermind name taken")
+	ErrSessionTaken = errors.New("mastermind session taken")
+	ErrHostTaken    = errors.New("mastermind host taken")
+	ErrInUse        = errors.New("mastermind in use")
+	ErrInvalid      = errors.New("invalid mastermind")
+	// ErrNoMasterMind's text is its own fix.
+	ErrNoMasterMind = errors.New("no relevo MasterMind for this session: is the relevo plugin enabled (relevo doctor)? Or run relevo mastermind init")
 )
 
-// ErrUnknownPlanner reports a --planner or $RELEVO_PLANNER value that
+// ErrUnknownMasterMind reports a --mastermind or $RELEVO_MASTERMIND value that
 // matches no record, unlike resolving nothing.
-type ErrUnknownPlanner struct {
+type ErrUnknownMasterMind struct {
 	Ref string
 }
 
-func (e ErrUnknownPlanner) Error() string {
-	return fmt.Sprintf("unknown planner %q: no planner record has that id or name", e.Ref)
+func (e ErrUnknownMasterMind) Error() string {
+	return fmt.Sprintf("unknown mastermind %q: no mastermind record has that id or name", e.Ref)
 }
 
-// SessionRef is one earlier session of a planner, kept so history joins
-// after the planner moves on. To is when the move happened; From is when
+// SessionRef is one earlier session of a mastermind, kept so history joins
+// after the mastermind moves on. To is when the move happened; From is when
 // that session began.
 type SessionRef struct {
 	SessionID string    `json:"session_id"`
@@ -44,7 +44,7 @@ type SessionRef struct {
 	To        time.Time `json:"to"`
 }
 
-// Record is one relevo planner: the identity every binding, claim and db row
+// Record is one relevo mastermind: the identity every binding, claim and db row
 // keys on.
 type Record struct {
 	// Format is the on-disk format this record was written at; write
@@ -71,8 +71,11 @@ const MaxNameLen = 32
 const MaxSessions = 20
 
 var (
-	idRe = regexp.MustCompile(`^pl_[a-z2-7]{12}$`)
-	// legacyIDRe is the shape of every planner id already in a real
+	idRe = regexp.MustCompile(`^mm_[a-z2-7]{12}$`)
+	// legacyPlRe is the `pl_` shape NewID minted before the rename: ids already
+	// written keep their spelling (state already written).
+	legacyPlRe = regexp.MustCompile(`^pl_[a-z2-7]{12}$`)
+	// legacyIDRe is the shape of every mastermind id already in a real
 	// relevo.db: a 26-character Crockford base32 ULID (no I, L, O or U).
 	legacyIDRe        = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 	nameRe            = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
@@ -86,22 +89,23 @@ var base32Lower = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPad
 
 const idChars = 12
 
-// NewID mints a planner id: `pl_` plus 12 lowercase base32 characters drawn
+// NewID mints a mastermind id: `mm_` plus 12 lowercase base32 characters drawn
 // from rand (crypto/rand in production; a test pins the reader).
 func NewID(rand io.Reader) (string, error) {
 	// 12 base32 characters carry 60 bits, so 8 bytes is enough to draw them from.
 	var buf [8]byte
 	if _, err := io.ReadFull(rand, buf[:]); err != nil {
-		return "", fmt.Errorf("planner: mint id: %w", err)
+		return "", fmt.Errorf("mastermind: mint id: %w", err)
 	}
-	return "pl_" + base32Lower.EncodeToString(buf[:])[:idChars], nil
+	return "mm_" + base32Lower.EncodeToString(buf[:])[:idChars], nil
 }
 
-// ValidID reports whether id names a planner record: the `pl_` shape NewID
-// mints, or a legacy ULID.
+// ValidID reports whether id names a mastermind record: the `mm_` shape NewID
+// mints, the historical `pl_` shape it minted before the rename, or a legacy
+// ULID. New records mint `mm_`; existing ones keep their ids (D4).
 func ValidID(id string) error {
-	if !idRe.MatchString(id) && !legacyIDRe.MatchString(id) {
-		return fmt.Errorf("planner id %q must be pl_ followed by 12 characters of [a-z2-7], or a 26-character Crockford base32 ULID: %w", id, ErrInvalid)
+	if !idRe.MatchString(id) && !legacyPlRe.MatchString(id) && !legacyIDRe.MatchString(id) {
+		return fmt.Errorf("mastermind id %q must be mm_ followed by 12 characters of [a-z2-7], the historical pl_ shape, or a 26-character Crockford base32 ULID: %w", id, ErrInvalid)
 	}
 	return nil
 }
@@ -109,7 +113,7 @@ func ValidID(id string) error {
 // ValidName reports whether name has the shape [a-z][a-z0-9-]{0,31}.
 func ValidName(name string) error {
 	if !nameRe.MatchString(name) {
-		return fmt.Errorf("planner name %q must match [a-z][a-z0-9-]{0,31}: %w", name, ErrInvalid)
+		return fmt.Errorf("mastermind name %q must match [a-z][a-z0-9-]{0,31}: %w", name, ErrInvalid)
 	}
 	return nil
 }
@@ -148,28 +152,28 @@ func (r Record) Validate() error {
 		return err
 	}
 	if r.HarnessKind == "" {
-		return fmt.Errorf("planner: harness_kind is required: %w", ErrInvalid)
+		return fmt.Errorf("mastermind: harness_kind is required: %w", ErrInvalid)
 	}
 	if r.SessionID == "" {
-		return fmt.Errorf("planner: session_id is required: %w", ErrInvalid)
+		return fmt.Errorf("mastermind: session_id is required: %w", ErrInvalid)
 	}
 	if r.HarnessKind == "opencode" && !opencodeSessionRe.MatchString(r.SessionID) {
-		return fmt.Errorf("planner: opencode session_id %q must match ^ses_[A-Za-z0-9]+$: %w", r.SessionID, ErrInvalid)
+		return fmt.Errorf("mastermind: opencode session_id %q must match ^ses_[A-Za-z0-9]+$: %w", r.SessionID, ErrInvalid)
 	}
 	if r.CWD == "" || !filepath.IsAbs(r.CWD) {
-		return fmt.Errorf("planner: cwd %q must be an absolute path: %w", r.CWD, ErrInvalid)
+		return fmt.Errorf("mastermind: cwd %q must be an absolute path: %w", r.CWD, ErrInvalid)
 	}
 	if r.CreatedAt.IsZero() {
-		return fmt.Errorf("planner: created_at is required: %w", ErrInvalid)
+		return fmt.Errorf("mastermind: created_at is required: %w", ErrInvalid)
 	}
 	if r.SeenAt.IsZero() {
-		return fmt.Errorf("planner: seen_at is required: %w", ErrInvalid)
+		return fmt.Errorf("mastermind: seen_at is required: %w", ErrInvalid)
 	}
 	if r.HostPID < 0 {
-		return fmt.Errorf("planner: host_pid %d must be >= 0: %w", r.HostPID, ErrInvalid)
+		return fmt.Errorf("mastermind: host_pid %d must be >= 0: %w", r.HostPID, ErrInvalid)
 	}
 	if r.HostPID == 0 && r.HostStartedAt != 0 {
-		return fmt.Errorf("planner: host_started_at must be 0 when host_pid is 0: %w", ErrInvalid)
+		return fmt.Errorf("mastermind: host_started_at must be 0 when host_pid is 0: %w", ErrInvalid)
 	}
 	return nil
 }

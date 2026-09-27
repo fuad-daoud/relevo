@@ -221,9 +221,9 @@ assert() {
 
 echo "=== Running Assertions ==="
 
-# 1. log has planner init --kind opencode --session <that session id>
-assert 1 "log has planner init --kind opencode --session $SESSION_ID" \
-  grep -q "planner init --kind opencode --session $SESSION_ID" "$LOG"
+# 1. log has mastermind init --kind opencode --session <that session id>
+assert 1 "log has mastermind init --kind opencode --session $SESSION_ID" \
+  grep -q "mastermind init --kind opencode --session $SESSION_ID" "$LOG"
 
 # 2. 01-session shows relevo · oc-smoke, webshop, NEEDS YOU
 check_assertion_2() {
@@ -268,9 +268,9 @@ check_assertion_7() {
 }
 assert 7 "log has show webshop … --report and 05-binding-report draws it" check_assertion_7
 
-# 8. 06-dialog shows tell the planner (or, with the fallback, Tell the planner…)
-assert 8 "06-dialog shows tell the planner" \
-  grep -qi "tell the planner" "$OUT/06-dialog.txt"
+# 8. 06-dialog shows tell the mastermind (or, with the fallback, Tell the mastermind…)
+assert 8 "06-dialog shows tell the mastermind" \
+  grep -qi "tell the mastermind" "$OUT/06-dialog.txt"
 
 # 9. log has done webshop after step 08
 assert 9 "log has done webshop after step 08" \
@@ -283,7 +283,7 @@ assert 10 "10-palette lists Open relevo" \
 # 11. no line in the log starts with anything but a relevo verb (sanity)
 check_assertion_11() {
   local bad_lines
-  bad_lines="$(grep -vE "^(planner|status|history|show|send|stop|done|gate)\b" "$LOG" | grep -v "^$" || true)"
+  bad_lines="$(grep -vE "^(mastermind|status|history|show|send|stop|done|gate)\b" "$LOG" | grep -v "^$" || true)"
   [ -z "$bad_lines" ]
 }
 assert 11 "no line in fake log starts with anything but a relevo verb" check_assertion_11
@@ -625,14 +625,14 @@ check_assertion_44() {
 }
 assert 44 "06-dialog contains webshop · r3 · NEEDS YOU and does not contain needs you ·" check_assertion_44
 
-# 45. (F7) The fake log has at least 2 lines starting history --json --planner,
+# 45. (F7) The fake log has at least 2 lines starting history --json --mastermind,
 #     because status-2 changes rows and the recent list refetches.
 check_assertion_45() {
   local count
-  count="$(grep -cE "^history --json --planner" "$LOG" || true)"
+  count="$(grep -cE "^history --json --mastermind" "$LOG" || true)"
   [ "$count" -ge 2 ]
 }
-assert 45 "fake log has at least 2 lines starting history --json --planner" check_assertion_45
+assert 45 "fake log has at least 2 lines starting history --json --mastermind" check_assertion_45
 
 # 46. (F8) 03-fleet.txt's recent list contains the local time of
 #     2026-09-24T20:00:00Z, computed in the script with

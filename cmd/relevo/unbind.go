@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/pick"
-	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -18,26 +18,26 @@ func cmdUnbind(args []string) error {
 	name := fs.String("name", "", "binding to unbind")
 	archive := fs.Bool("archive", false, "move the binding aside instead of deleting it, keeping its round log")
 	pickFlag := fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
-	done := fs.Bool("done", false, "clear the DONE bindings of the calling planner (--all-planners: of every planner)")
+	done := fs.Bool("done", false, "clear the DONE bindings of the calling mastermind (--all-masterminds: of every mastermind)")
 	delete := fs.Bool("delete", false, "with --done: remove each finished binding's directory instead of archiving it")
 	dryRun := fs.Bool("dry-run", false, "with --done or --sweep: list what would be cleared, change nothing")
 	sweep := fs.Bool("sweep", false, "delete relevo/<name> branches and refs/relevo/<name>/* refs of bindings that no longer exist, once they are on a remote-tracking ref")
-	plannerRef := fs.String("planner", "", "with --done: clear this planner's DONE bindings (id or name; default: $RELEVO_PLANNER, else this session's host)")
-	allPlanners := fs.Bool("all-planners", false, "with --done: clear every planner's DONE bindings, including ones with no planner")
+	mastermindRef := fs.String("mastermind", "", "with --done: clear this mastermind's DONE bindings (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
+	allMasterMinds := fs.Bool("all-masterminds", false, "with --done: clear every mastermind's DONE bindings, including ones with no mastermind")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	if *sweep {
-		if *done || *delete || *archive || *pickFlag || *name != "" || len(fs.Args()) > 0 || *plannerRef != "" || *allPlanners {
+		if *done || *delete || *archive || *pickFlag || *name != "" || len(fs.Args()) > 0 || *mastermindRef != "" || *allMasterMinds {
 			fmt.Fprintln(os.Stderr, "relevo: --sweep takes no binding and no other flag except --dry-run")
 			return exitCodeErr{code: 2}
 		}
 		return runSweep(*dryRun)
 	}
 
-	if (*plannerRef != "" || *allPlanners) && !*done {
-		fmt.Fprintln(os.Stderr, "relevo: --planner and --all-planners go with --done")
+	if (*mastermindRef != "" || *allMasterMinds) && !*done {
+		fmt.Fprintln(os.Stderr, "relevo: --mastermind and --all-masterminds go with --done")
 		return exitCodeErr{code: 2}
 	}
 
@@ -48,7 +48,7 @@ func cmdUnbind(args []string) error {
 			fmt.Fprintln(os.Stderr, "relevo: --done clears DONE bindings; do not also name one or pass --pick")
 			return exitCodeErr{code: 2}
 		}
-		return runGC(*delete, *dryRun, *plannerRef, *allPlanners)
+		return runGC(*delete, *dryRun, *mastermindRef, *allMasterMinds)
 	}
 
 	if *pickFlag {
@@ -124,15 +124,15 @@ func runSweep(dryRun bool) error {
 }
 
 // runGC is gc's body (the old cmdGC), now reached through `unbind --done`
-// (§4.3). It clears the calling planner's DONE bindings, or, with
-// --all-planners, every planner's (#482).
-func runGC(delete, dryRun bool, plannerRef string, all bool) error {
+// (§4.3). It clears the calling mastermind's DONE bindings, or, with
+// --all-masterminds, every mastermind's (#482).
+func runGC(delete, dryRun bool, mastermindRef string, all bool) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
 
-	opts, err := gcScope(plannerRef, all, gcResolver(rt))
+	opts, err := gcScope(mastermindRef, all, gcResolver(rt))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return exitCodeErr{code: 2}
@@ -146,10 +146,10 @@ func runGC(delete, dryRun bool, plannerRef string, all bool) error {
 	}
 
 	if len(done) == 0 {
-		if opts.AllPlanners {
+		if opts.AllMasterMinds {
 			fmt.Println("no finished bindings to clear")
 		} else {
-			fmt.Printf("no finished bindings to clear for planner %s\n", plannerLabel(rt, opts.PlannerID))
+			fmt.Printf("no finished bindings to clear for mastermind %s\n", mastermindLabel(rt, opts.MasterMindID))
 		}
 		return nil
 	}
@@ -159,13 +159,13 @@ func runGC(delete, dryRun bool, plannerRef string, all bool) error {
 		if l, ok := labels[id]; ok {
 			return l
 		}
-		l := plannerLabel(rt, id)
+		l := mastermindLabel(rt, id)
 		labels[id] = l
 		return l
 	}
 
 	for _, r := range done {
-		lbl := label(r.PlannerID)
+		lbl := label(r.MasterMindID)
 		switch {
 		case dryRun:
 			wtMsg := ""
@@ -217,19 +217,19 @@ func runGC(delete, dryRun bool, plannerRef string, all bool) error {
 }
 
 // gcResolver is gcScope's production resolve function: the same input
-// plannerFilter (planner.go:517) builds, plus Flag, closed over rt. It never
-// calls planner.Init: unbind --done never registers a planner (#482).
-func gcResolver(rt relevo.Runtime) func(ref string) (planner.Record, error) {
-	return func(ref string) (planner.Record, error) {
-		if rt.Planners == nil {
-			return planner.Record{}, errors.New("no planner registry")
+// mastermindFilter (mastermind.go:517) builds, plus Flag, closed over rt. It never
+// calls mastermind.Init: unbind --done never registers a mastermind (#482).
+func gcResolver(rt relevo.Runtime) func(ref string) (mastermind.Record, error) {
+	return func(ref string) (mastermind.Record, error) {
+		if rt.MasterMinds == nil {
+			return mastermind.Record{}, errors.New("no mastermind registry")
 		}
 		var now time.Time
 		if rt.Now != nil {
 			now = rt.Now()
 		}
 		cwd, _ := os.Getwd()
-		rec, _, err := planner.Resolve(rt.Planners, planner.ResolveInput{
+		rec, _, err := mastermind.Resolve(rt.MasterMinds, mastermind.ResolveInput{
 			Flag:            ref,
 			Env:             os.Getenv,
 			PPID:            os.Getppid(),
@@ -242,14 +242,14 @@ func gcResolver(rt relevo.Runtime) func(ref string) (planner.Record, error) {
 	}
 }
 
-// plannerLabel is a GC result line's planner field (#482): "(none)" for "",
+// mastermindLabel is a GC result line's mastermind field (#482): "(none)" for "",
 // the record's Name when the registry has it, else the id itself.
-func plannerLabel(rt relevo.Runtime, id string) string {
+func mastermindLabel(rt relevo.Runtime, id string) string {
 	if id == "" {
 		return "(none)"
 	}
-	if rt.Planners != nil {
-		if rec, err := rt.Planners.Get(id); err == nil {
+	if rt.MasterMinds != nil {
+		if rec, err := rt.MasterMinds.Get(id); err == nil {
 			return rec.Name
 		}
 	}

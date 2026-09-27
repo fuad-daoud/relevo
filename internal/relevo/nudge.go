@@ -81,7 +81,7 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	next.RoundStartedAt = keep
 	next.State = store.StateActive
 	if err := tx.AppendLog(b.Name, store.LogEntry{
-		TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindSwitch, Confirmed: true,
+		TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch, Confirmed: true,
 		Usage: prior,
 		Note: fmt.Sprintf("%s (ended its turn without a report): resumed session %s of %s: same candidate, not counted",
 			nudgeNotePrefix, sess, b.BuilderCandidate),

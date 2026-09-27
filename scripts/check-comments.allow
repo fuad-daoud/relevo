@@ -28,8 +28,8 @@ cmd/relevo/mcp_notice_test.go
 cmd/relevo/migrate.go
 cmd/relevo/migrate_test.go
 cmd/relevo/owner_reads_test.go
-cmd/relevo/planner.go
-cmd/relevo/planner_test.go
+cmd/relevo/mastermind.go
+cmd/relevo/mastermind_test.go
 cmd/relevo/read_verbs_test.go
 cmd/relevo/rename.go
 cmd/relevo/restart_notice.go

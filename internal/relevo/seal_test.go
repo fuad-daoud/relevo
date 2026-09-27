@@ -23,7 +23,7 @@ import (
 // TestClosedRoundSealsOnceTheNextRoundCloses is the P3c seal's end-to-end
 // contract (§4.3, §4.4): the tick that closes round 1 leaves its files alone,
 // and they stay on disk while round 1 is the binding's latest closed round --
-// the planner and a repair round still read them (D2/A1). Once the round after
+// the mastermind and a repair round still read them (D2/A1). Once the round after
 // it closes, the following tick moves them into the store's database and
 // deletes them -- and every reader that used to open them still returns the
 // same content: Show, ReadDiff, Pull's PushText, ingest's StoreSource, a fork
@@ -73,7 +73,7 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	}
 
 	// Tick 2 keeps round 1 on disk: it is now the binding's latest closed
-	// round, and the planner and a repair round still read its files (D2/A1).
+	// round, and the mastermind and a repair round still read its files (D2/A1).
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("second Tick: %v", err)
 	}

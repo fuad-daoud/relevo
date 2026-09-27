@@ -14,7 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/ingest"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -27,13 +27,14 @@ const minInterval = 500 * time.Millisecond
 // an hour, not once a tick.
 const releaseRetryAfter = time.Hour
 
-// plannerPruneInterval is how often the daemon prunes dead planner records
+// mastermindPruneInterval is how often the daemon prunes dead mastermind records
 // (§4.4): at most once an hour, so a busy tick pays one kv read.
-const plannerPruneInterval = time.Hour
+const mastermindPruneInterval = time.Hour
 
-// plannerPrunedAtKey is the store database's kv row naming the last prune
-// (§4.4).
-const plannerPrunedAtKey = "planner.pruned_at"
+// mastermindPrunedAtKey is the store database's kv row naming the last prune
+// (§4.4). Its value is the historical "planner.pruned_at": state already
+// written.
+const mastermindPrunedAtKey = "planner.pruned_at"
 
 // ErrReexec reports that Run stopped because a new relevo binary is ready and
 // the caller should exec into it (#371). It is not a failure: the process
@@ -42,7 +43,7 @@ var ErrReexec = errors.New("relevo daemon: re-exec onto a new binary")
 
 // Daemon ticks on its interval and advances every binding. It is the only
 // reason relevo needs a background process: the inbound leg happens after the
-// planner's turn has ended, when no model is running to notice.
+// mastermind's turn has ended, when no model is running to notice.
 type Daemon struct {
 	rt       Runtime
 	interval time.Duration
@@ -143,10 +144,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		d.rt = d.refresh(d.rt)
 	}
 
-	// §4.4: the daemon prunes dead planner records itself, once an hour. It
+	// §4.4: the daemon prunes dead mastermind records itself, once an hour. It
 	// runs before the no-bindings early return: a machine whose sessions have
 	// all ended is exactly the one left carrying stale records.
-	d.safely("planner prune", func() { d.prunePlanners() })
+	d.safely("mastermind prune", func() { d.pruneMasterMinds() })
 	// A reader round's scratch worktree is throwaway: leftovers from a crash
 	// go away here, before the no-bindings early return, because a machine
 	// whose readers are all gone is exactly the one left carrying them.
@@ -322,7 +323,7 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 		// fail the tick.
 		sealRounds(d.rt.Store, tx, loaded, d.rt.Policy.ArtifactMaxBytes())
 
-		fresh := backfillPlannerID(d.rt, loaded)
+		fresh := backfillMasterMindID(d.rt, loaded)
 
 		next, err := reconcileWith(ctx, d.rt, tx, fresh, pre)
 		if err != nil {
@@ -517,24 +518,24 @@ func (d *Daemon) safely(phase string, f func()) {
 	f()
 }
 
-// backfillPlannerID is §5.6's upgrade path (#303 §5.6, last paragraph): a
-// binding written before Binding.PlannerID existed has no id, but its
-// Planner.SessionID still names the harness session the planner registered
+// backfillMasterMindID is §5.6's upgrade path (#303 §5.6, last paragraph): a
+// binding written before Binding.MasterMindID existed has no id, but its
+// MasterMind.SessionID still names the harness session the mastermind registered
 // with. When the registry knows that (kind, session), the record's id is set
 // on the binding, under the lock tickOne already holds, so the channel lookup,
-// the forget guard and the status row all key on the planner. A miss, a DONE
+// the forget guard and the status row all key on the mastermind. A miss, a DONE
 // binding, an empty session and a Runtime with no registry all leave the
 // binding exactly as it was.
-func backfillPlannerID(rt Runtime, b store.Binding) store.Binding {
-	if b.PlannerID != "" || b.State == store.StateDone || b.Planner.SessionID == "" || rt.Planners == nil {
+func backfillMasterMindID(rt Runtime, b store.Binding) store.Binding {
+	if b.MasterMindID != "" || b.State == store.StateDone || b.MasterMind.SessionID == "" || rt.MasterMinds == nil {
 		return b
 	}
-	rec, err := rt.Planners.BySession(b.Planner.Kind, b.Planner.SessionID)
+	rec, err := rt.MasterMinds.BySession(b.MasterMind.Kind, b.MasterMind.SessionID)
 	if err != nil {
 		return b
 	}
-	b.PlannerID = rec.ID
-	slog.Debug("planner backfilled", "binding", b.Name, "planner", rec.ID)
+	b.MasterMindID = rec.ID
+	slog.Debug("mastermind backfilled", "binding", b.Name, "mastermind", rec.ID)
 	return b
 }
 
@@ -563,35 +564,35 @@ func ingestLiveBindings(ctx context.Context, rt Runtime, bindings []store.Bindin
 	}
 }
 
-// plannerPrunedAt is the kv row planner.pruned_at's document: when the daemon
-// last ran planner.Prune (§4.4).
-type plannerPrunedAt struct {
+// mastermindPrunedAt is the kv row planner.pruned_at's document: when the daemon
+// last ran mastermind.Prune (§4.4).
+type mastermindPrunedAt struct {
 	At time.Time `json:"pruned_at"`
 }
 
-// plannerPruneDue reports whether a prune last run at last (ok false when it
+// mastermindPruneDue reports whether a prune last run at last (ok false when it
 // never ran) is due again at now: the once-an-hour decision, pure so a test
 // can pin it without a daemon (§4.4).
-func plannerPruneDue(last time.Time, ok bool, now time.Time) bool {
+func mastermindPruneDue(last time.Time, ok bool, now time.Time) bool {
 	if !ok {
 		return true
 	}
-	return !now.Before(last.Add(plannerPruneInterval))
+	return !now.Before(last.Add(mastermindPruneInterval))
 }
 
-// prunePlanners forgets every planner record that is gone and that no non-DONE
-// binding names (planner.Prune), at most once an hour (§4.4). The last run is
+// pruneMasterMinds forgets every mastermind record that is gone and that no non-DONE
+// binding names (mastermind.Prune), at most once an hour (§4.4). The last run is
 // the store database's kv row planner.pruned_at; each forgotten record is
 // logged once. A Runtime with no registry, no usable database or a store whose
 // database will not open prunes nothing and logs why.
-func (d *Daemon) prunePlanners() {
+func (d *Daemon) pruneMasterMinds() {
 	rt := d.rt
-	if rt.Planners == nil || rt.Store == nil {
+	if rt.MasterMinds == nil || rt.Store == nil {
 		return
 	}
 	kv, err := rt.Store.DB()
 	if err != nil {
-		slog.Warn("planner prune: open store db", "err", err)
+		slog.Warn("mastermind prune: open store db", "err", err)
 		return
 	}
 
@@ -600,79 +601,79 @@ func (d *Daemon) prunePlanners() {
 		now = rt.Now
 	}
 
-	last, ok, err := plannerLastPruned(kv)
+	last, ok, err := mastermindLastPruned(kv)
 	if err != nil {
-		slog.Warn("planner prune: read last run", "err", err)
+		slog.Warn("mastermind prune: read last run", "err", err)
 		return
 	}
-	if !plannerPruneDue(last, ok, now()) {
-		return
-	}
-
-	counts, err := bindingPlannerCounts(rt.Store)
-	if err != nil {
-		slog.Warn("planner prune: list bindings", "err", err)
+	if !mastermindPruneDue(last, ok, now()) {
 		return
 	}
 
-	forgotten, err := planner.Prune(rt.Planners, rt.ProcStart, func(id string) int { return counts[id] }, false)
+	counts, err := bindingMasterMindCounts(rt.Store)
 	if err != nil {
-		slog.Warn("planner prune: forget", "err", err)
+		slog.Warn("mastermind prune: list bindings", "err", err)
+		return
+	}
+
+	forgotten, err := mastermind.Prune(rt.MasterMinds, rt.ProcStart, func(id string) int { return counts[id] }, false)
+	if err != nil {
+		slog.Warn("mastermind prune: forget", "err", err)
 	}
 	for _, rec := range forgotten {
-		slog.Info("forgot dead planner", "planner", rec.Name, "id", rec.ID)
+		slog.Info("forgot dead mastermind", "mastermind", rec.Name, "id", rec.ID)
 	}
 
-	idle, err := planner.PruneIdle(rt.Planners, func(id string) int { return counts[id] }, now(), false)
+	idle, err := mastermind.PruneIdle(rt.MasterMinds, func(id string) int { return counts[id] }, now(), false)
 	if err != nil {
-		slog.Warn("planner prune: idle", "err", err)
+		slog.Warn("mastermind prune: idle", "err", err)
 	}
 	for _, rec := range idle {
-		slog.Info("forgot idle planner", "planner", rec.Name, "id", rec.ID)
+		slog.Info("forgot idle mastermind", "mastermind", rec.Name, "id", rec.ID)
 	}
 
-	if err := recordPlannerPruned(kv, now()); err != nil {
-		slog.Warn("planner prune: record last run", "err", err)
+	if err := recordMasterMindPruned(kv, now()); err != nil {
+		slog.Warn("mastermind prune: record last run", "err", err)
 	}
 }
 
-// plannerLastPruned reads planner.pruned_at, reporting ok false when the row
+// mastermindLastPruned reads planner.pruned_at, reporting ok false when the row
 // is absent (never pruned) or the database predates the kv table.
-func plannerLastPruned(kv db.KV) (last time.Time, ok bool, err error) {
-	raw, ok, err := kv.KVGet(plannerPrunedAtKey)
+func mastermindLastPruned(kv db.KV) (last time.Time, ok bool, err error) {
+	raw, ok, err := kv.KVGet(mastermindPrunedAtKey)
 	if err != nil || !ok {
 		return time.Time{}, false, err
 	}
-	var v plannerPrunedAt
+	var v mastermindPrunedAt
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return time.Time{}, false, err
 	}
 	return v.At, true, nil
 }
 
-// recordPlannerPruned writes planner.pruned_at after a prune attempt.
-func recordPlannerPruned(kv db.KV, at time.Time) error {
-	raw, err := json.Marshal(plannerPrunedAt{At: at.UTC()})
+// recordMasterMindPruned writes planner.pruned_at after a prune attempt.
+func recordMasterMindPruned(kv db.KV, at time.Time) error {
+	raw, err := json.Marshal(mastermindPrunedAt{At: at.UTC()})
 	if err != nil {
 		return err
 	}
-	return kv.KVPut(plannerPrunedAtKey, raw)
+	return kv.KVPut(mastermindPrunedAtKey, raw)
 }
 
-// bindingPlannerCounts counts, per planner id, the bindings that are not DONE
-// and name that planner: the in-use guard planner.Prune needs (§4.4). It is
-// the same walk cmd/relevo's plannerBindingCounts does; the daemon cannot call
+// bindingMasterMindCounts counts, per mastermind id, the bindings that are not DONE
+// and name that mastermind: the in-use guard mastermind.Prune needs (§4.4). It is
+// the same walk cmd/relevo's mastermindBindingCounts does; the daemon cannot call
 // that one (it lives in package main). An unreadable store is an error, never
 // an empty map.
-func bindingPlannerCounts(st *store.Store) (map[string]int, error) {
+func bindingMasterMindCounts(st *store.Store) (map[string]int, error) {
 	bindings, err := st.List()
 	if err != nil {
 		return nil, err
 	}
 	counts := make(map[string]int)
 	for _, b := range bindings {
-		if b.State != store.StateDone && b.PlannerID != "" {
-			counts[b.PlannerID]++
+		if b.State != store.StateDone && b.MasterMindID != "" {
+			counts[b.MasterMindID]++
 		}
 	}
 	return counts, nil

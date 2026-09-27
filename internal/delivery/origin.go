@@ -11,12 +11,12 @@ import (
 // Pure; no trailing newline.
 func OriginLine(name string, round int, dir store.Direction, kind store.Kind) string {
 	if dir == store.DirToBuilder {
-		return fmt.Sprintf("relevo: round %d · to runner %q · from the planner (not the human)", round, name)
+		return fmt.Sprintf("relevo: round %d · to runner %q · from the MasterMind (not the human)", round, name)
 	}
 	if kind == store.KindFindings {
-		return fmt.Sprintf("relevo: consult · to planner · about runner %q (not the human)", name)
+		return fmt.Sprintf("relevo: consult · to MasterMind · about runner %q (not the human)", name)
 	}
-	return fmt.Sprintf("relevo: round %d · to planner · about runner %q (not the human)", round, name)
+	return fmt.Sprintf("relevo: round %d · to MasterMind · about runner %q (not the human)", round, name)
 }
 
 // WithOrigin prepends the origin line separated by a blank line, unless payload

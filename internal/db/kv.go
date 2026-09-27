@@ -151,7 +151,7 @@ type KVTx interface {
 	KVKeys(prefix string) ([]string, error)
 }
 
-// DBTxKV is the transactional kv surface the planner registry and the channel
+// DBTxKV is the transactional kv surface the mastermind registry and the channel
 // claims need: the four kv calls plus Tx to run a read-modify-write atomically.
 type DBTxKV interface {
 	KVTx

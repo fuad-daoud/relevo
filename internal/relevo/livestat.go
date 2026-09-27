@@ -63,7 +63,7 @@ func liveStat(ctx context.Context, rt Runtime, b store.Binding) *view.LiveDiff {
 		Added:   stat.Insertions,
 		Removed: stat.Deletions,
 		// A --cwd binding has no worktree of its own (#143 design question
-		// 1): its "live" diff is against the planner's own tree, shared
+		// 1): its "live" diff is against the mastermind's own tree, shared
 		// with whatever else is running there.
 		Shared: b.Worktree == "",
 	}

@@ -43,7 +43,7 @@ type Server struct {
 	Instructions string
 	Log          io.Writer // stderr; nil -> discard
 	// Notice, when set and non-empty, appends one more text block to every
-	// tools/call result: how a planner session hears the daemon moved on to
+	// tools/call result: how a mastermind session hears the daemon moved on to
 	// a newer relevo.
 	Notice func() string
 	// OnInitialized fires once, after notifications/initialized.

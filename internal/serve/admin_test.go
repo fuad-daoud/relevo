@@ -315,7 +315,7 @@ func TestAdminOwnerRuntime(t *testing.T) {
 		saveOwnerBinding(t, s, o.id, o.name)
 		rt := ownerRuntime(t, s, o.id)
 		if err := rt.Store.AppendLog(o.name, store.LogEntry{
-			Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -522,7 +522,7 @@ func TestAdminGatesAvailableUnavailable(t *testing.T) {
 }
 
 // TestAdminAvailableRecordsServerClear: the server host's own clear is recorded
-// as the server's, not a planner's.
+// as the server's, not a mastermind's.
 func TestAdminAvailableRecordsServerClear(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()

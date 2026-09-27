@@ -92,10 +92,10 @@ func Tools() []ToolSpec {
 	return []ToolSpec{
 		{
 			Name:        "status",
-			Description: "One binding, or every binding on this planner, or (all: true) every binding relevo knows about. Calls relevo.Status.",
+			Description: "One binding, or every binding on this MasterMind, or (all: true) every binding relevo knows about. Calls relevo.Status.",
 			InputSchema: schemaObject(nil, map[string]any{
 				"name": map[string]any{"type": "string", "description": "show only this binding"},
-				"all":  map[string]any{"type": "boolean", "description": "include every binding relevo knows about, not just this planner's"},
+				"all":  map[string]any{"type": "boolean", "description": "include every binding relevo knows about, not just this MasterMind's"},
 			}),
 		},
 		{

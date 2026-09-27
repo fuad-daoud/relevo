@@ -56,7 +56,7 @@ func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 	rv.pane.tabInFlight = false
 	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "x"}
 
-	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	got := next.(roundView)
 	if got.pane.detail.active != tabDiff {
 		t.Fatalf("expected active tabDiff, got %v", got.pane.detail.active)
@@ -202,7 +202,7 @@ func TestPanicOnShrinkingContent(t *testing.T) {
 		},
 	})
 
-	view := rv.Body(testEnv(plannerSource{rt}, rv.pane.report, 80, 24), 80, 20)
+	view := rv.Body(testEnv(mastermindSource{rt}, rv.pane.report, 80, 24), 80, 20)
 	if view == "" {
 		t.Fatal("expected non-empty view")
 	}
@@ -224,7 +224,7 @@ func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 	rv.pane.detail.cache[tabDiff] = tabContent{}
 	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
-	if view := rv.Body(testEnv(plannerSource{rt}, rv.pane.report, 80, 24), 80, 20); view == "" {
+	if view := rv.Body(testEnv(mastermindSource{rt}, rv.pane.report, 80, 24), 80, 20); view == "" {
 		t.Fatal("expected non-empty view")
 	}
 }
@@ -278,7 +278,7 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 	newRep := view.Report{Bindings: []view.BindingStatus{
 		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &view.LastEvent{TS: ts.Add(5 * time.Second), Round: 3}},
 	}}
-	next, _ := rv.Update(statusMsg{report: newRep}, testEnv(plannerSource{rt}, newRep, 140, 40))
+	next, _ := rv.Update(statusMsg{report: newRep}, testEnv(mastermindSource{rt}, newRep, 140, 40))
 	got := next.(roundView)
 
 	if got.pane.detail.scroll[tabDiff] != 0 || got.pane.detail.scroll[tabReport] != 0 || got.pane.detail.scroll[tabLog] != 0 {
@@ -314,7 +314,7 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 			rv.pane.detail.active = tabReport
 			rv.pane.tabInFlight = false
 
-			next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.key)}, testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+			next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.key)}, testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 			got := next.(roundView)
 			if cmd == nil {
 				t.Fatalf("%s: expected non-nil cmd from switchTab", tc.name)
@@ -355,7 +355,7 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 	for _, tk := range tabKeys {
 		rv.pane.detail.cache[tk.t] = tabContent{}
 		rv.pane.tabInFlight = false
-		next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tk.key)}, testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+		next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tk.key)}, testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 		rv = next.(roundView)
 		if cmd == nil {
 			t.Fatalf("tab %v: expected non-nil cmd from switchTab", tk.t)

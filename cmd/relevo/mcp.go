@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/mcp"
-	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -21,21 +21,21 @@ import (
 const minMCPInterval = 200 * time.Millisecond
 
 // relevo mcp starts beside the plugin's SessionStart hook (§5.2), which may
-// still be running when the server comes up, so ErrNoPlanner is retried for
+// still be running when the server comes up, so ErrNoMasterMind is retried for
 // up to mcpResolveTimeout before the server falls back to tools-only.
 const (
 	mcpResolveTimeout = 10 * time.Second
 	mcpResolveRetry   = 500 * time.Millisecond
 )
 
-// cmdMCP runs relevo mcp: an MCP server over stdio a Claude Code planner
-// spawns from its plugin manifest (docs/specs/2026-09-21-planner-channel-design.md,
+// cmdMCP runs relevo mcp: an MCP server over stdio a Claude Code mastermind
+// spawns from its plugin manifest (docs/specs/2026-09-21-mastermind-channel-design.md,
 // #303 §4.5). In channel mode it also
-// claims its planner and drains its mailbox; in tools mode it only serves
+// claims its mastermind and drains its mailbox; in tools mode it only serves
 // the verbs as tools.
 func cmdMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	plannerFlag := fs.String("planner", "", "planner id or name (default: $RELEVO_PLANNER, else this session's host)")
+	mastermindFlag := fs.String("mastermind", "", "mastermind id or name (default: $RELEVO_MASTERMIND, else this session's host)")
 	modeFlag := fs.String("mode", "auto", "channel|tools|auto (default: detected from the parent process's argv)")
 	interval := fs.Duration("interval", time.Second, "poll interval in channel mode (floored at 200ms)")
 	if err := parseFlags(fs, args); err != nil {
@@ -57,20 +57,20 @@ func cmdMCP(args []string) error {
 		return err
 	}
 
-	// §4.5: resolve this planner, retrying while the hook may still be
-	// running. A bad --planner value is not a race: it is reported at once.
+	// §4.5: resolve this mastermind, retrying while the hook may still be
+	// running. A bad --mastermind value is not a race: it is reported at once.
 	var (
-		rec     planner.Record
+		rec     mastermind.Record
 		haveRec bool
 	)
 	deadline := time.Now().Add(mcpResolveTimeout)
 	for {
-		r, _, rerr := resolveMCPPlanner(rt, *plannerFlag)
+		r, _, rerr := resolveMCPMasterMind(rt, *mastermindFlag)
 		if rerr == nil {
 			rec, haveRec = r, true
 			break
 		}
-		if !errors.Is(rerr, planner.ErrNoPlanner) {
+		if !errors.Is(rerr, mastermind.ErrNoMasterMind) {
 			fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", rerr)
 			return exitCodeErr{code: 2}
 		}
@@ -82,15 +82,15 @@ func cmdMCP(args []string) error {
 
 	version := buildVersion()
 	if haveRec {
-		fmt.Fprintf(os.Stderr, "relevo mcp: planner %s (%s) mode %s\n", rec.Name, rec.ID, mcpModeWord(mode))
+		fmt.Fprintf(os.Stderr, "relevo mcp: mastermind %s (%s) mode %s\n", rec.Name, rec.ID, mcpModeWord(mode))
 	} else {
 		// No registration and no host match: the verbs still serve, so a
-		// planner whose hook never ran can still use the tools.
-		fmt.Fprintln(os.Stderr, `relevo mcp: no relevo planner for this session; tools-only (run "relevo planner init")`)
+		// mastermind whose hook never ran can still use the tools.
+		fmt.Fprintln(os.Stderr, `relevo mcp: no relevo mastermind for this session; tools-only (run "relevo mastermind init")`)
 	}
 
 	srv := &mcp.Server{
-		Verbs:   &mcp.RelevoVerbs{RT: rt, Planner: rec.ID},
+		Verbs:   &mcp.RelevoVerbs{RT: rt, MasterMind: rec.ID},
 		Version: version,
 		// The mode is known before initialize is answered, so the model is
 		// told from its first turn which delivery it should expect (#303 §4.5).
@@ -98,7 +98,7 @@ func cmdMCP(args []string) error {
 		Log:  os.Stderr,
 		// §4.10: this server runs for the session's whole life, so when the
 		// daemon has re-exec'd onto a newer relevo it says so on every tool
-		// result and the planner reconnects (/mcp). The read is cached for
+		// result and the mastermind reconnects (/mcp). The read is cached for
 		// 30 s and a read error is no notice at all.
 		Notice: cachedString(mcpNoticeTTL, time.Now, func() string {
 			info, ok, err := rt.Store.ReadDaemonInfo()
@@ -130,14 +130,14 @@ func cmdMCP(args []string) error {
 	return nil
 }
 
-// resolveMCPPlanner is planner.Resolve as relevo mcp calls it: --planner,
-// $RELEVO_PLANNER, the parent Claude process, then the session (§4.5).
-func resolveMCPPlanner(rt relevo.Runtime, flagVal string) (planner.Record, planner.Resolution, error) {
+// resolveMCPMasterMind is mastermind.Resolve as relevo mcp calls it: --mastermind,
+// $RELEVO_MASTERMIND, the parent Claude process, then the session (§4.5).
+func resolveMCPMasterMind(rt relevo.Runtime, flagVal string) (mastermind.Record, mastermind.Resolution, error) {
 	var now time.Time
 	if rt.Now != nil {
 		now = rt.Now()
 	}
-	return planner.Resolve(rt.Planners, planner.ResolveInput{
+	return mastermind.Resolve(rt.MasterMinds, mastermind.ResolveInput{
 		Flag:      flagVal,
 		Env:       os.Getenv,
 		PPID:      os.Getppid(),
@@ -176,9 +176,9 @@ func mcpModeWord(m mcp.Mode) string {
 
 // startMCPChannel writes this process's initial claim and, on success, starts
 // the poll loop. A refused claim (ErrClaimHeld) exits the process: Claude Code
-// shows the server as failed and the planner keeps pane delivery, exactly as if
+// shows the server as failed and the mastermind keeps pane delivery, exactly as if
 // relevo mcp had never started (spec §3.2, §6).
-func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec planner.Record, version string, p delivery.Pusher, interval time.Duration) {
+func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec mastermind.Record, version string, p delivery.Pusher, interval time.Duration) {
 	if rt.Channels == nil {
 		fmt.Fprintln(os.Stderr, "relevo mcp: no claim store configured; running tools-only")
 		return
@@ -188,10 +188,10 @@ func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec planner.Record,
 	cwd, _ := os.Getwd()
 	host := os.Getppid()
 	claim := delivery.Claim{
-		Planner:       rec.ID,
+		MasterMind:    rec.ID,
 		PID:           os.Getpid(),
 		HostPID:       host,
-		HostStartedAt: plannerHostStart(host),
+		HostStartedAt: mastermindHostStart(host),
 		StartedAt:     now,
 		SeenAt:        now,
 		CWD:           cwd,
@@ -208,13 +208,13 @@ func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec planner.Record,
 	go pollMCPChannel(ctx, rt, rec.ID, claim, p, interval)
 }
 
-// pollMCPChannel is relevo mcp's channel-mode poll loop: re-read the planner
-// record, refresh the claim, then drain that planner's mailbox (spec §3.4,
+// pollMCPChannel is relevo mcp's channel-mode poll loop: re-read the mastermind
+// record, refresh the claim, then drain that mastermind's mailbox (spec §3.4,
 // #303 §4.5). It never exits on a drain error -- only a stolen claim
 // (ErrClaimHeld on refresh) or a forgotten record stops it, leaving the
 // tools still serving.
-func pollMCPChannel(ctx context.Context, rt relevo.Runtime, plannerID string, claim delivery.Claim, p delivery.Pusher, interval time.Duration) {
-	st := &delivery.DrainState{Planner: plannerID}
+func pollMCPChannel(ctx context.Context, rt relevo.Runtime, mastermindID string, claim delivery.Claim, p delivery.Pusher, interval time.Duration) {
+	st := &delivery.DrainState{MasterMind: mastermindID}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -224,11 +224,11 @@ func pollMCPChannel(ctx context.Context, rt relevo.Runtime, plannerID string, cl
 			return
 		case <-ticker.C:
 			// §4.5: the record is re-read by id every poll, so a rename or a
-			// session move a later `relevo planner init --hook` makes (after
+			// session move a later `relevo mastermind init --hook` makes (after
 			// /clear) is picked up without a restart. A record that is gone
 			// ends the channel; the tools keep serving.
-			if _, err := rt.Planners.Get(plannerID); err != nil {
-				fmt.Fprintf(os.Stderr, "relevo mcp: planner %s is gone; channel stopped\n", plannerID)
+			if _, err := rt.MasterMinds.Get(mastermindID); err != nil {
+				fmt.Fprintf(os.Stderr, "relevo mcp: mastermind %s is gone; channel stopped\n", mastermindID)
 				return
 			}
 
@@ -241,7 +241,7 @@ func pollMCPChannel(ctx context.Context, rt relevo.Runtime, plannerID string, cl
 				continue
 			}
 
-			res, err := delivery.Drain(ctx, delivery.Deps{Store: rt.Store, Now: rt.Now, Channels: rt.Channels, Deliverers: rt.Deliverers, Planners: rt.Planners}, st, p)
+			res, err := delivery.Drain(ctx, delivery.Deps{Store: rt.Store, Now: rt.Now, Channels: rt.Channels, Deliverers: rt.Deliverers, MasterMinds: rt.MasterMinds}, st, p)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "relevo mcp: drain: %v\n", err)
 				continue

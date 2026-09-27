@@ -10,20 +10,20 @@ import (
 )
 
 // fakeClaimStore is the map-backed ClaimStore the route tests use: a claim
-// present for a planner id means live, absent means not.
+// present for a mastermind id means live, absent means not.
 type fakeClaimStore map[string]*delivery.Claim
 
-func (f fakeClaimStore) Live(planner string, now time.Time) (*delivery.Claim, error) {
-	return f[planner], nil
+func (f fakeClaimStore) Live(mastermind string, now time.Time) (*delivery.Claim, error) {
+	return f[mastermind], nil
 }
 
 func (f fakeClaimStore) Write(c delivery.Claim, now time.Time) error {
-	f[c.Planner] = &c
+	f[c.MasterMind] = &c
 	return nil
 }
 
-func (f fakeClaimStore) Remove(planner string, pid int) error {
-	delete(f, planner)
+func (f fakeClaimStore) Remove(mastermind string, pid int) error {
+	delete(f, mastermind)
 	return nil
 }
 
@@ -37,25 +37,25 @@ func routeRuntime(t *testing.T) Runtime {
 	}
 }
 
-// seedPending saves an active binding and one unconfirmed planner-bound
+// seedPending saves an active binding and one unconfirmed mastermind-bound
 // entry, which is exactly what delivery.DeliverPending and Pull work on.
-func seedPending(t *testing.T, rt Runtime, name, plannerID, kind string) store.Binding {
+func seedPending(t *testing.T, rt Runtime, name, mastermindID, kind string) store.Binding {
 	t.Helper()
 	b := store.Binding{
-		Name:      name,
-		CWD:       "/repo/" + name,
-		Round:     1,
-		State:     store.StateActive,
-		Planner:   store.Endpoint{Kind: kind, SessionID: "sess"},
-		PlannerID: plannerID,
-		Builder:   store.Endpoint{Mode: store.ModeHeadless},
+		Name:         name,
+		CWD:          "/repo/" + name,
+		Round:        1,
+		State:        store.StateActive,
+		MasterMind:   store.Endpoint{Kind: kind, SessionID: "sess"},
+		MasterMindID: mastermindID,
+		Builder:      store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		if err := tx.Save(b); err != nil {
 			return err
 		}
 		return delivery.Queue(context.Background(), deliveryDeps(rt), tx, name, store.LogEntry{
-			Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 			Payload: "round 1 report", Path: "/tmp/report.md",
 		})
 	}); err != nil {
@@ -64,13 +64,13 @@ func seedPending(t *testing.T, rt Runtime, name, plannerID, kind string) store.B
 	return b
 }
 
-// testClaimPlanner is a valid planner id (pl_ plus 12 characters of
+// testClaimMasterMind is a valid mastermind id (pl_ plus 12 characters of
 // [a-z2-7]), the shape the claim store keys on.
-const testClaimPlanner = "pl_aaaaaaaabbbb"
+const testClaimMasterMind = "pl_aaaaaaaabbbb"
 
-// otherClaimPlanner is a second valid id, for the "a different planner's
+// otherClaimMasterMind is a second valid id, for the "a different mastermind's
 // claim is not this one's" cases.
-const otherClaimPlanner = "pl_ccccccccdddd"
+const otherClaimMasterMind = "pl_ccccccccdddd"
 
 // alwaysAlive reports every pid as live, so a claim's fake pid does not
 // depend on which pids exist on the test machine.

@@ -774,7 +774,7 @@ func TestUsageChecks(t *testing.T) {
 			t.Errorf("want a warn row for sqlite3: %+v", rep.Checks)
 		}
 		if !strings.Contains(c.Detail, "background wait") {
-			t.Errorf("Detail = %q, want it to say an opencode planner's reports wait for the background wait", c.Detail)
+			t.Errorf("Detail = %q, want it to say an opencode mastermind's reports wait for the background wait", c.Detail)
 		}
 		if strings.Contains(c.Detail, "pane") {
 			t.Errorf("Detail = %q, want it to name no pane", c.Detail)

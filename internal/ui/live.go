@@ -9,7 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// liveRuntime is the one runtime a planner cockpit reads: the fleet refresh
+// liveRuntime is the one runtime a mastermind cockpit reads: the fleet refresh
 // and every write go through it, so a config change made in one view, or in
 // another terminal, reaches every view without a restart.
 type liveRuntime struct {
@@ -99,8 +99,8 @@ func (s liveSource) Base() relevo.Runtime {
 	return s.live.Get()
 }
 
-// MarkViewed writes through to the planner's own store, key being the row's
-// bare binding name; errors are dropped as on plannerSource.
+// MarkViewed writes through to the mastermind's own store, key being the row's
+// bare binding name; errors are dropped as on mastermindSource.
 func (s liveSource) MarkViewed(key string) {
 	_ = s.live.Get().Store.MarkViewed(key, time.Now())
 }

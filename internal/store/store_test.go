@@ -360,7 +360,7 @@ func TestReadsDoNotWaitForTheStateLock(t *testing.T) {
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	entry := LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindPlan, Payload: "hello"}
+	entry := LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindPlan, Payload: "hello"}
 	if err := s.AppendLog("frozen", entry); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}

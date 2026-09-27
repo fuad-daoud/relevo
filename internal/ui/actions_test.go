@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -216,7 +216,7 @@ func key(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []run
 func actionModel(t *testing.T, a Actions, rows ...view.BindingStatus) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a})
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
@@ -236,7 +236,7 @@ func goldenActionModel(t *testing.T, width, height int, a Actions, rep view.Repo
 // plan tab reads its body and sent time from a seeded store can supply it.
 func goldenActionModelWithStore(t *testing.T, width, height int, a Actions, rep view.Report, st *store.Store) Model {
 	t.Helper()
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a, Version: "v0.13.0-28-gb66c6fc"})
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a, Version: "v0.13.0-28-gb66c6fc"})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -299,19 +299,19 @@ func TestStopKeyConfirmsThenCalls(t *testing.T) {
 	}
 }
 
-func TestConfirmNamesTheOwningPlanner(t *testing.T) {
-	owned := view.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE", PlannerName: "architect-1"}
+func TestConfirmNamesTheOwningMasterMind(t *testing.T) {
+	owned := view.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE", MasterMindName: "architect-1"}
 	yours := owned
-	yours.PlannerName = "you"
+	yours.MasterMindName = "you"
 
-	if got := strings.Join(stopConfirmLines(owned, railNow), "\n"); !strings.Contains(got, "planner architect-1 is waiting on this round") {
-		t.Errorf("stop confirm must name the waiting planner:\n%s", got)
+	if got := strings.Join(stopConfirmLines(owned, railNow), "\n"); !strings.Contains(got, "MasterMind architect-1 is waiting on this round") {
+		t.Errorf("stop confirm must name the waiting mastermind:\n%s", got)
 	}
-	if got := strings.Join(doneConfirmLines(owned), "\n"); !strings.Contains(got, "planner architect-1 owns this binding") {
-		t.Errorf("done confirm must name the owning planner:\n%s", got)
+	if got := strings.Join(doneConfirmLines(owned), "\n"); !strings.Contains(got, "MasterMind architect-1 owns this binding") {
+		t.Errorf("done confirm must name the owning mastermind:\n%s", got)
 	}
-	if got := strings.Join(unbindConfirmLines(owned), "\n"); !strings.Contains(got, "planner architect-1 owns this binding") {
-		t.Errorf("unbind confirm must name the owning planner:\n%s", got)
+	if got := strings.Join(unbindConfirmLines(owned), "\n"); !strings.Contains(got, "MasterMind architect-1 owns this binding") {
+		t.Errorf("unbind confirm must name the owning mastermind:\n%s", got)
 	}
 
 	for _, got := range []string{
@@ -320,8 +320,8 @@ func TestConfirmNamesTheOwningPlanner(t *testing.T) {
 		strings.Join(unbindConfirmLines(yours), "\n"),
 		strings.Join(stopConfirmLines(view.BindingStatus{}, railNow), "\n"),
 	} {
-		if strings.Contains(got, "planner ") {
-			t.Errorf("no planner line for you or an empty planner:\n%s", got)
+		if strings.Contains(got, "MasterMind ") {
+			t.Errorf("no mastermind line for you or an empty mastermind:\n%s", got)
 		}
 	}
 }
@@ -582,12 +582,12 @@ func TestEnsureYouIdempotent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	reg := &planner.DBRegistry{
+	reg := &mastermind.DBRegistry{
 		KV:   db.TxKV{DB: d},
 		Now:  func() time.Time { return railNow },
-		Root: filepath.Join(t.TempDir(), "planners"),
+		Root: filepath.Join(t.TempDir(), "masterminds"),
 	}
-	rt := relevo.Runtime{Planners: reg, Now: func() time.Time { return railNow }}
+	rt := relevo.Runtime{MasterMinds: reg, Now: func() time.Time { return railNow }}
 
 	first, err := ensureYou(rt)
 	if err != nil {
@@ -606,10 +606,10 @@ func TestEnsureYouIdempotent(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	if len(recs) != 1 {
-		t.Fatalf("%d planner records, want 1", len(recs))
+		t.Fatalf("%d mastermind records, want 1", len(recs))
 	}
 	if recs[0].HarnessKind != "human" || recs[0].Name != "you" || recs[0].SessionID != "tui" {
-		t.Errorf("record = %+v, want the human tui planner named you", recs[0])
+		t.Errorf("record = %+v, want the human tui mastermind named you", recs[0])
 	}
 }
 
@@ -778,8 +778,8 @@ func TestRetryConfirmText(t *testing.T) {
 	if got := strings.Join(retryConfirmLines(open, "haiku"), "\n"); !strings.Contains(got, "the binding keeps haiku for later rounds") {
 		t.Errorf("retry confirm must say the builder change persists:\n%s", got)
 	}
-	if got := strings.Join(retryConfirmLines(open, "haiku"), "\n"); strings.Contains(got, "planner ") {
-		t.Errorf("no planner line for a planner-less row:\n%s", got)
+	if got := strings.Join(retryConfirmLines(open, "haiku"), "\n"); strings.Contains(got, "MasterMind ") {
+		t.Errorf("no mastermind line for a mastermind-less row:\n%s", got)
 	}
 }
 
@@ -825,7 +825,7 @@ func TestRetryKeyCarriesTheChosenCandidate(t *testing.T) {
 func TestReportReadyRowAndPull(t *testing.T) {
 	fa := &fakeActions{pullText: "round 3 report\n\nall good\n", pullOK: true}
 	b := view.BindingStatus{
-		Name: "atlas", Round: 3, Display: "ACTIVE", PlannerName: "you",
+		Name: "atlas", Round: 3, Display: "ACTIVE", MasterMindName: "you",
 		Last:    &view.LastEvent{TS: railNow.Add(-3 * time.Minute), Round: 3, Kind: store.KindReport},
 		Pending: &view.PendingInfo{Round: 3, Kind: store.KindReport},
 	}
@@ -844,7 +844,7 @@ func TestReportReadyRowAndPull(t *testing.T) {
 	m = pointer(t, m, "atlas")
 
 	if !reportReady(m.report.Bindings[0]) {
-		t.Fatal("a you-planner row with a pending payload is report ready")
+		t.Fatal("a you-mastermind row with a pending payload is report ready")
 	}
 	if got := nowCell(m.report.Bindings[0], railNow); got != "report ready · 3m" {
 		t.Errorf("NOW cell = %q, want report ready · 3m", got)

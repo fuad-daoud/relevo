@@ -147,13 +147,13 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	}
 	// The server already recorded a diff entry at close; writing the client's
 	// own from the view's facts makes queueReport skip its own capture.
-	if a.View.DiffNote != "" && !HasEntry(entries, n, store.DirToPlanner, store.KindDiff) {
+	if a.View.DiffNote != "" && !HasEntry(entries, n, store.DirToMasterMind, store.KindDiff) {
 		diffPath := ""
 		if a.HaveDiff {
 			diffPath = rt.Store.DiffPath(name, n)
 		}
 		diffEntry := store.LogEntry{
-			TS: rt.Now().UTC(), Round: n, Direction: store.DirToPlanner, Kind: store.KindDiff,
+			TS: rt.Now().UTC(), Round: n, Direction: store.DirToMasterMind, Kind: store.KindDiff,
 			Path: diffPath, Note: a.View.DiffNote, Commits: a.View.DiffCommits, Tree: a.View.DiffTree, Confirmed: true,
 		}
 		if err := tx.AppendLog(name, diffEntry); err != nil {
@@ -176,7 +176,7 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	if a.View.Stopped != "" {
 		// After queueReport, so the entry is filed under the stopped round.
 		if err := tx.AppendLog(name, store.LogEntry{
-			TS: rt.Now().UTC(), Round: n, Direction: store.DirToPlanner,
+			TS: rt.Now().UTC(), Round: n, Direction: store.DirToMasterMind,
 			Kind: store.KindStop, Note: "stopped/" + a.View.Stopped, Confirmed: true,
 		}); err != nil {
 			return next, err
@@ -189,7 +189,7 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	return next, nil
 }
 
-// catchUpPayload builds the planner payload and note for a collected round:
+// catchUpPayload builds the mastermind payload and note for a collected round:
 // the stopped form when the server stopped it, else the finished form naming
 // the artifact, both carrying the diff's summary lines. clause is the artifact
 // clause closeClause resolved for the binding; the caller resolves it, so this

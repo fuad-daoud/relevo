@@ -21,7 +21,7 @@ import (
 func splitModel(t *testing.T, width, height int, rows ...view.BindingStatus) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -42,14 +42,14 @@ func testEnv(src Source, rep view.Report, width, height int) Env {
 // newTestRound builds a round view over key with no live rows beyond ret.
 func newTestRound(t *testing.T, rt relevo.Runtime, rep view.Report, key string, round int) roundView {
 	t.Helper()
-	v, _ := newRoundView(testEnv(plannerSource{rt}, rep, 140, 40), key, round)
+	v, _ := newRoundView(testEnv(mastermindSource{rt}, rep, 140, 40), key, round)
 	return v.(roundView)
 }
 
 // newTestHistRound builds a hist round view over h.
 func newTestHistRound(t *testing.T, rt relevo.Runtime, h relevo.HistoryBinding, round int) roundView {
 	t.Helper()
-	v, _ := newHistRoundView(testEnv(plannerSource{rt}, view.Report{}, 140, 40), h, round)
+	v, _ := newHistRoundView(testEnv(mastermindSource{rt}, view.Report{}, 140, 40), h, round)
 	return v.(roundView)
 }
 
@@ -81,13 +81,13 @@ func drain(t *testing.T, m Model, cmds ...tea.Cmd) Model {
 
 // roundKey sends one key through a round view's Update.
 func roundKey(rv roundView, k tea.KeyMsg) roundView {
-	next, _ := rv.Update(k, testEnv(plannerSource{relevo.Runtime{}}, rv.pane.report, rv.pane.width, rv.pane.rows+4))
+	next, _ := rv.Update(k, testEnv(mastermindSource{relevo.Runtime{}}, rv.pane.report, rv.pane.width, rv.pane.rows+4))
 	return next.(roundView)
 }
 
 // roundMsg sends one message through a round view's Update.
 func roundMsg(rv roundView, msg tea.Msg) roundView {
-	next, _ := rv.Update(msg, testEnv(plannerSource{relevo.Runtime{}}, rv.pane.report, rv.pane.width, rv.pane.rows+4))
+	next, _ := rv.Update(msg, testEnv(mastermindSource{relevo.Runtime{}}, rv.pane.report, rv.pane.width, rv.pane.rows+4))
 	return next.(roundView)
 }
 
@@ -307,9 +307,9 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	}
 }
 
-// TestPaneHeadShowsClientLine: an owner-labelled row's planner line is
-// TestContextShowsClientLine: an owner-labelled row's planner line is
-// replaced by the client line; a planner row keeps the planner line.
+// TestPaneHeadShowsClientLine: an owner-labelled row's mastermind line is
+// TestContextShowsClientLine: an owner-labelled row's mastermind line is
+// replaced by the client line; a mastermind row keeps the mastermind line.
 func TestContextShowsClientLine(t *testing.T) {
 	id := "SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"
 
@@ -325,25 +325,25 @@ func TestContextShowsClientLine(t *testing.T) {
 	if !strings.Contains(ctx, "client zen") {
 		t.Errorf("no client line:\n%s", ctx)
 	}
-	if strings.Contains(ctx, "planner") {
-		t.Errorf("the planner line must be replaced:\n%s", ctx)
+	if strings.Contains(ctx, "mastermind") {
+		t.Errorf("the mastermind line must be replaced:\n%s", ctx)
 	}
 
-	planner := view.BindingStatus{
+	mastermind := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
 		BuilderKind: "agy", BuilderStatus: "blocked",
-		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
+		MasterMindID: "mastermind-9f2", MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "channel",
 	}
-	p = paneModel(t, planner, tabReport)
+	p = paneModel(t, mastermind, tabReport)
 	rv = roundView{pane: p}
-	env = testEnv(p.src, view.Report{Bindings: []view.BindingStatus{planner}}, p.width, p.rows)
+	env = testEnv(p.src, view.Report{Bindings: []view.BindingStatus{mastermind}}, p.width, p.rows)
 	ctxLeft, _ = rv.Context(env)
 	ctx = stripANSI(ctxLeft)
 	if !strings.Contains(ctx, "architect-1") {
-		t.Errorf("planner row must keep its planner line:\n%s", ctx)
+		t.Errorf("mastermind row must keep its mastermind line:\n%s", ctx)
 	}
 	if strings.Contains(ctx, "client") {
-		t.Errorf("planner row must not show a client line:\n%s", ctx)
+		t.Errorf("mastermind row must not show a client line:\n%s", ctx)
 	}
 }
 

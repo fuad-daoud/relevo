@@ -88,7 +88,7 @@ func repairPlan(b store.Binding, failedRound int, planPath, gateLogPath string, 
 
 // startRepairRound stages and hands over round failedRound+1 after a failing
 // gate (#132 part 2). It is called on the tick that closed round failedRound,
-// after the report has been queued to the planner, with the binding already
+// after the report has been queued to the mastermind, with the binding already
 // advanced (`b.Round == failedRound+1`, RoundStartedAt zero).
 //
 // Two bounds end the loop with NEEDS YOU instead of another repair: the

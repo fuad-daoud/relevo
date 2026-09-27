@@ -45,7 +45,7 @@ func TestReaderRoundRunsInItsScratch(t *testing.T) {
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
 		Name: "reader-bind", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: repo,
+		MasterMindID: testMasterMindName, CWD: repo,
 	}); err != nil {
 		t.Fatalf("Bind(reader): %v", err)
 	}
@@ -95,7 +95,7 @@ func TestReaderScratchFailureDoesNotStartTheRound(t *testing.T) {
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
 		Name: "reader-bind", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/reader-repo",
+		MasterMindID: testMasterMindName, CWD: "/reader-repo",
 	}); err != nil {
 		t.Fatalf("Bind(reader): %v", err)
 	}
@@ -145,7 +145,7 @@ func TestReaderRelaunchReusesTheScratch(t *testing.T) {
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
 		Name: "reader-bind", Role: "reviewer", Candidate: "claude/p1/b",
-		PlannerID: testPlannerName, CWD: repo,
+		MasterMindID: testMasterMindName, CWD: repo,
 	}); err != nil {
 		t.Fatalf("Bind(reader): %v", err)
 	}
@@ -201,7 +201,7 @@ func TestWriterRoundStillRunsInCWD(t *testing.T) {
 	rt.Runner = fr
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	}); err != nil {
 		t.Fatalf("Bind(writer): %v", err)
 	}
@@ -228,7 +228,7 @@ func TestReaderTierAtLeastEdit(t *testing.T) {
 	rt := newRuntime(t)
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name: "reader-tier", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/reader-tier",
+		MasterMindID: testMasterMindName, CWD: "/reader-tier",
 	})
 	if err != nil {
 		t.Fatalf("Bind(reader): %v", err)
@@ -241,7 +241,7 @@ func TestReaderTierAtLeastEdit(t *testing.T) {
 	low.Policy.MaxTier = string(harness.TierRead)
 	_, err = Bind(context.Background(), low, BindOptions{
 		Name: "reader-low", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/reader-low",
+		MasterMindID: testMasterMindName, CWD: "/reader-low",
 	})
 	want := "a reader actor needs tier edit; max_tier is read"
 	if err == nil || !strings.Contains(err.Error(), want) {
@@ -257,7 +257,7 @@ func TestReaderTierAtLeastEdit(t *testing.T) {
 
 	oc, err := Bind(context.Background(), openReader(t), BindOptions{
 		Name: "reader-oc", Role: "reviewer", Candidate: testOpencodeRef,
-		PlannerID: testPlannerName, CWD: "/reader-oc", AllowYolo: true,
+		MasterMindID: testMasterMindName, CWD: "/reader-oc", AllowYolo: true,
 	})
 	if err != nil {
 		t.Fatalf("Bind(opencode reader, --allow-yolo): %v", err)
@@ -268,7 +268,7 @@ func TestReaderTierAtLeastEdit(t *testing.T) {
 
 	_, err = Bind(context.Background(), openReader(t), BindOptions{
 		Name: "reader-oc2", Role: "reviewer", Candidate: testOpencodeRef,
-		PlannerID: testPlannerName, CWD: "/reader-oc2",
+		MasterMindID: testMasterMindName, CWD: "/reader-oc2",
 	})
 	if !errors.Is(err, ErrTierAboveMax) {
 		t.Errorf("opencode reader without --allow-yolo err = %v, want ErrTierAboveMax", err)

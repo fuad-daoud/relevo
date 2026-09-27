@@ -467,7 +467,7 @@ func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 			{Name: name, Round: 1, Display: "ACTIVE", BuilderStatus: "working"},
 		},
 	}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Second})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Second})
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	res, _ = m.Update(statusMsg{report: rep})

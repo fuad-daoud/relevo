@@ -18,7 +18,7 @@ type Repo struct {
 	FirstSeen time.Time
 }
 
-type Planner struct {
+type MasterMind struct {
 	ID                string
 	HarnessKind       string
 	SessionID         string
@@ -31,7 +31,7 @@ type Binding struct {
 	ID                  string
 	Name                string
 	RepoID              *string
-	PlannerID           *string
+	MasterMindID        *string
 	Feature             *string
 	ForkedFromBindingID *string
 	ForkedFromRound     *int
@@ -124,7 +124,7 @@ type Artifact struct {
 	CapturedAt time.Time
 }
 
-// TranscriptRecord is one record of a round's builder stream or a planner's
+// TranscriptRecord is one record of a round's builder stream or a mastermind's
 // session, copied verbatim (RecordJSON) alongside its rendered line.
 type TranscriptRecord struct {
 	ID         string
@@ -147,7 +147,7 @@ type Cursor struct {
 // Filter is the shared query contract: the zero value of every field means
 // "no constraint" on that field.
 type Filter struct {
-	Repo, Here, Feature, Binding, Planner                string
+	Repo, Here, Feature, Binding, MasterMind             string
 	Harness, Provider, Model, Candidate                  string
 	Outcome, ReportOutcome, State, GateResult, CostBasis string
 	Round                                                int
@@ -235,13 +235,15 @@ func ValidArtifactKind(s string) bool {
 }
 
 const (
-	OwnerRound   = "round"
-	OwnerPlanner = "planner"
+	OwnerRound = "round"
+	// OwnerMasterMind keeps the historical "planner" value: transcript
+	// owner_kind is state already written.
+	OwnerMasterMind = "planner"
 )
 
 func ValidOwnerKind(s string) bool {
 	switch s {
-	case OwnerRound, OwnerPlanner:
+	case OwnerRound, OwnerMasterMind:
 		return true
 	}
 	return false

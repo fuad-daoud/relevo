@@ -21,7 +21,7 @@ func ownerTabEntry() store.LogEntry {
 	return store.LogEntry{
 		TS:        at,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Confirmed: true,
 		Usage: &usagepkg.Usage{

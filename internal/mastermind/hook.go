@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 import (
 	"crypto/rand"
@@ -36,13 +36,13 @@ const (
 func ParseHookInput(r io.Reader) (HookInput, error) {
 	var in HookInput
 	if err := json.NewDecoder(r).Decode(&in); err != nil {
-		return HookInput{}, fmt.Errorf("planner: read hook payload: %w", err)
+		return HookInput{}, fmt.Errorf("mastermind: read hook payload: %w", err)
 	}
 	if in.SessionID == "" {
-		return HookInput{}, fmt.Errorf("planner: hook payload: session_id is required: %w", ErrInvalid)
+		return HookInput{}, fmt.Errorf("mastermind: hook payload: session_id is required: %w", ErrInvalid)
 	}
 	if in.CWD == "" {
-		return HookInput{}, fmt.Errorf("planner: hook payload: cwd is required: %w", ErrInvalid)
+		return HookInput{}, fmt.Errorf("mastermind: hook payload: cwd is required: %w", ErrInvalid)
 	}
 
 	switch in.Source {
@@ -65,19 +65,19 @@ type hookEnvelope struct {
 
 const hookEventName = "SessionStart"
 
-// hookContext is the sentence naming the planner, carried by both answers.
+// hookContext is the sentence naming the MasterMind, carried by both answers.
 func hookContext(r Record) string {
 	return fmt.Sprintf(
-		"You are relevo planner %s (%s). RELEVO_PLANNER is set in your shell; pass --planner %s only to act as another planner.",
+		"You are relevo MasterMind %s (%s). RELEVO_MASTERMIND is set in your shell; pass --mastermind %s only to act as another MasterMind.",
 		r.Name, r.ID, r.Name)
 }
 
-const noEnvNote = "RELEVO_PLANNER could not be exported ($CLAUDE_ENV_FILE is unset); relevo resolves this session through its host process."
+const noEnvNote = "RELEVO_MASTERMIND could not be exported ($CLAUDE_ENV_FILE is unset); relevo resolves this session through its host process."
 
 //go:embed handoff.md
 var handoffRules string
 
-// HookOutput is what `relevo planner init --hook claude` prints on success.
+// HookOutput is what `relevo mastermind init --hook claude` prints on success.
 func HookOutput(r Record) []byte {
 	return encodeHookContext(hookContext(r) + "\n\n" + handoffRules)
 }
@@ -103,7 +103,7 @@ func encodeHookContext(context string) []byte {
 }
 
 // EnvLine is the line `init --hook` appends to $CLAUDE_ENV_FILE.
-func EnvLine(id string) string { return "export RELEVO_PLANNER=" + id + "\n" }
+func EnvLine(id string) string { return "export RELEVO_MASTERMIND=" + id + "\n" }
 
 // InitResult is which outcome Init reached.
 type InitResult string
@@ -114,7 +114,7 @@ const (
 	InitMoved      InitResult = "moved"
 )
 
-// InitInput is everything `relevo planner init` knows when it registers.
+// InitInput is everything `relevo mastermind init` knows when it registers.
 type InitInput struct {
 	Kind           string
 	SessionID      string
@@ -219,7 +219,7 @@ func findCaller(reg regOps, in InitInput) (Record, bool, error) {
 			return rec, true, nil
 		case errors.Is(err, ErrNotFound):
 		default:
-			return Record{}, false, fmt.Errorf("planner: init: by host: %w", err)
+			return Record{}, false, fmt.Errorf("mastermind: init: by host: %w", err)
 		}
 	}
 
@@ -230,7 +230,7 @@ func findCaller(reg regOps, in InitInput) (Record, bool, error) {
 	case errors.Is(err, ErrNotFound):
 		return Record{}, false, nil
 	default:
-		return Record{}, false, fmt.Errorf("planner: init: by session: %w", err)
+		return Record{}, false, fmt.Errorf("mastermind: init: by session: %w", err)
 	}
 }
 

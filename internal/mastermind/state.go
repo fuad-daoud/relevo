@@ -1,6 +1,6 @@
-package planner
+package mastermind
 
-// State is a planner record's host state: the `state` column `relevo planner
+// State is a mastermind record's host state: the `state` column `relevo mastermind
 // list` renders. It is derived, never stored.
 type State string
 

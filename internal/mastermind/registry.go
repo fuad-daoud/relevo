@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 import (
 	"encoding/json"
@@ -15,10 +15,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// plannerKeyPrefix is the kv prefix every record's row shares.
-const plannerKeyPrefix = "planner/"
+// mastermindKeyPrefix is the kv prefix every record's row shares. Migration
+// 008 rewrites the historical "planner/" rows to this prefix.
+const mastermindKeyPrefix = "mastermind/"
 
-func registryKey(id string) string { return plannerKeyPrefix + id }
+func registryKey(id string) string { return mastermindKeyPrefix + id }
 
 // lockFileName is the pre-database registry's lock file, removed by the
 // import.
@@ -27,7 +28,7 @@ const lockFileName = ".lock"
 // seenRefreshInterval is how stale seen_at must be before Touch rewrites it.
 const seenRefreshInterval = time.Minute
 
-// Registry owns the planner records.
+// Registry owns the mastermind records.
 type Registry interface {
 	Get(id string) (Record, error)
 	ByName(name string) (Record, error)
@@ -54,7 +55,7 @@ type DBRegistry struct {
 	// time.Now; tests pin it.
 	Now func() time.Time
 
-	// Root is the pre-database planners directory the import reads once.
+	// Root is the pre-database masterminds directory the import reads once.
 	// "" imports nothing.
 	Root string
 
@@ -72,7 +73,7 @@ func (r *DBRegistry) now() time.Time {
 }
 
 // ensureImported adopts the pre-database record files once per registry: each
-// <Root>/*.json is put to planner/<id> and removed, then the lock file and an
+// <Root>/*.json is put to mastermind/<id> and removed, then the lock file and an
 // emptied directory go too. A malformed file fails loudly and stays put; a
 // missing Root is a no-op.
 func (r *DBRegistry) ensureImported() error {
@@ -89,7 +90,7 @@ func (r *DBRegistry) importFiles() error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("planner: read registry root: %w", err)
+		return fmt.Errorf("mastermind: read registry root: %w", err)
 	}
 
 	for _, e := range entries {
@@ -147,7 +148,7 @@ func (o kvOps) touchForced(id string, now time.Time) (Record, error) {
 func decodeRecord(key string, raw []byte) (Record, error) {
 	var rec Record
 	if err := json.Unmarshal(raw, &rec); err != nil {
-		return Record{}, fmt.Errorf("planner: decode %s: %w", key, err)
+		return Record{}, fmt.Errorf("mastermind: decode %s: %w", key, err)
 	}
 	return rec, nil
 }
@@ -166,7 +167,7 @@ func (r *DBRegistry) getFrom(kv db.KVTx, id string) (Record, error) {
 	}
 	raw, ok, err := kv.KVGet(registryKey(id))
 	if err != nil {
-		return Record{}, fmt.Errorf("planner: read %s: %w", registryKey(id), err)
+		return Record{}, fmt.Errorf("mastermind: read %s: %w", registryKey(id), err)
 	}
 	if !ok {
 		return Record{}, fmt.Errorf("%s: %w", id, ErrNotFound)
@@ -249,16 +250,16 @@ func (r *DBRegistry) List() ([]Record, error) {
 }
 
 func (r *DBRegistry) listFrom(kv db.KVTx) ([]Record, error) {
-	keys, err := kv.KVKeys(plannerKeyPrefix)
+	keys, err := kv.KVKeys(mastermindKeyPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("planner: list records: %w", err)
+		return nil, fmt.Errorf("mastermind: list records: %w", err)
 	}
 
 	records := make([]Record, 0, len(keys))
 	for _, key := range keys {
 		raw, ok, gerr := kv.KVGet(key)
 		if gerr != nil {
-			return nil, fmt.Errorf("planner: read %s: %w", key, gerr)
+			return nil, fmt.Errorf("mastermind: read %s: %w", key, gerr)
 		}
 		if !ok {
 			continue
@@ -308,13 +309,13 @@ func (r *DBRegistry) createIn(kv db.KVTx, rec Record) (Record, error) {
 	for _, other := range records {
 		switch {
 		case other.ID == rec.ID:
-			return Record{}, fmt.Errorf("planner: id %s already exists: %w", rec.ID, ErrInvalid)
+			return Record{}, fmt.Errorf("mastermind: id %s already exists: %w", rec.ID, ErrInvalid)
 		case other.Name == rec.Name:
-			return Record{}, fmt.Errorf("planner: name %s: %w", rec.Name, ErrNameTaken)
+			return Record{}, fmt.Errorf("mastermind: name %s: %w", rec.Name, ErrNameTaken)
 		case other.HarnessKind == rec.HarnessKind && other.SessionID == rec.SessionID:
-			return Record{}, fmt.Errorf("planner: session %s/%s: %w", rec.HarnessKind, rec.SessionID, ErrSessionTaken)
+			return Record{}, fmt.Errorf("mastermind: session %s/%s: %w", rec.HarnessKind, rec.SessionID, ErrSessionTaken)
 		case rec.HostPID > 0 && other.HostPID == rec.HostPID && other.HostStartedAt == rec.HostStartedAt:
-			return Record{}, fmt.Errorf("planner: host %d@%d: %w", rec.HostPID, rec.HostStartedAt, ErrHostTaken)
+			return Record{}, fmt.Errorf("mastermind: host %d@%d: %w", rec.HostPID, rec.HostStartedAt, ErrHostTaken)
 		}
 	}
 
@@ -357,7 +358,7 @@ func (r *DBRegistry) moveSessionIn(kv db.KVTx, id, sessionID, transcript string,
 			continue
 		}
 		if other.HarnessKind == rec.HarnessKind && other.SessionID == sessionID {
-			return Record{}, fmt.Errorf("planner: session %s/%s: %w", rec.HarnessKind, sessionID, ErrSessionTaken)
+			return Record{}, fmt.Errorf("mastermind: session %s/%s: %w", rec.HarnessKind, sessionID, ErrSessionTaken)
 		}
 	}
 
@@ -404,7 +405,7 @@ func (r *DBRegistry) setHostIn(kv db.KVTx, id string, pid int, startedAt int64) 
 		return Record{}, err
 	}
 	if pid < 0 {
-		return Record{}, fmt.Errorf("planner: host_pid %d must be >= 0: %w", pid, ErrInvalid)
+		return Record{}, fmt.Errorf("mastermind: host_pid %d must be >= 0: %w", pid, ErrInvalid)
 	}
 	if pid == 0 {
 		startedAt = 0
@@ -420,7 +421,7 @@ func (r *DBRegistry) setHostIn(kv db.KVTx, id string, pid int, startedAt int64) 
 				continue
 			}
 			if other.HostPID == pid && other.HostStartedAt == startedAt {
-				return Record{}, fmt.Errorf("planner: host %d@%d: %w", pid, startedAt, ErrHostTaken)
+				return Record{}, fmt.Errorf("mastermind: host %d@%d: %w", pid, startedAt, ErrHostTaken)
 			}
 		}
 	}
@@ -465,7 +466,7 @@ func (r *DBRegistry) renameIn(kv db.KVTx, id, name string) (Record, error) {
 	}
 	for _, other := range records {
 		if other.ID != rec.ID && other.Name == name {
-			return Record{}, fmt.Errorf("planner: name %s: %w", name, ErrNameTaken)
+			return Record{}, fmt.Errorf("mastermind: name %s: %w", name, ErrNameTaken)
 		}
 	}
 
@@ -531,10 +532,10 @@ func (r *DBRegistry) forgetIn(kv db.KVTx, id string, inUse func(id string) bool)
 		return err
 	}
 	if inUse != nil && inUse(rec.ID) {
-		return fmt.Errorf("planner %s (%s) is named by a binding that is not done: %w", rec.Name, rec.ID, ErrInUse)
+		return fmt.Errorf("mastermind %s (%s) is named by a binding that is not done: %w", rec.Name, rec.ID, ErrInUse)
 	}
 	if err := kv.KVDelete(registryKey(rec.ID)); err != nil {
-		return fmt.Errorf("planner: remove %s: %w", rec.ID, err)
+		return fmt.Errorf("mastermind: remove %s: %w", rec.ID, err)
 	}
 	return nil
 }
@@ -543,17 +544,17 @@ func (r *DBRegistry) forgetIn(kv db.KVTx, id string, inUse func(id string) bool)
 func (r *DBRegistry) writeIn(kv db.KVTx, rec Record) error {
 	// A record written by a newer relevo is read-only: its rewrite would
 	// erase fields this relevo does not know.
-	if rec.Format > PlannerFormat {
-		return &store.ErrNewerFormat{Kind: "planner record", Name: rec.Name, Have: rec.Format, Know: PlannerFormat}
+	if rec.Format > MasterMindFormat {
+		return &store.ErrNewerFormat{Kind: "mastermind record", Name: rec.Name, Have: rec.Format, Know: MasterMindFormat}
 	}
-	rec.Format = storedFormat(PlannerFormat)
+	rec.Format = storedFormat(MasterMindFormat)
 
 	raw, err := json.Marshal(rec)
 	if err != nil {
-		return fmt.Errorf("planner: marshal %s: %w", rec.ID, err)
+		return fmt.Errorf("mastermind: marshal %s: %w", rec.ID, err)
 	}
 	if err := kv.KVPut(registryKey(rec.ID), raw); err != nil {
-		return fmt.Errorf("planner: write %s: %w", rec.ID, err)
+		return fmt.Errorf("mastermind: write %s: %w", rec.ID, err)
 	}
 	return nil
 }

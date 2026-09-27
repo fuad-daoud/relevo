@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -77,9 +77,9 @@ var (
 	// ulidPattern matches a bare 26-char Crockford ULID: relevo's own ids
 	// (round ids, binding record ids, ...) that carry no "pl_" prefix.
 	ulidPattern = regexp.MustCompile(`\b[0-9A-HJKMNP-TV-Z]{26}\b`)
-	// plannerIDPattern matches relevo's "pl_" planner ids, minted separately
+	// mastermindIDPattern matches relevo's "pl_" mastermind ids, minted separately
 	// from the bare ULIDs above.
-	plannerIDPattern = regexp.MustCompile(`\bpl_[0-9A-Za-z]+\b`)
+	mastermindIDPattern = regexp.MustCompile(`\bpl_[0-9A-Za-z]+\b`)
 )
 
 // normalize replaces volatile substrings of b with fixed placeholders, so a
@@ -105,7 +105,7 @@ func normalize(b []byte, roots ...string) []byte {
 	if v := buildVersion(); v != "" {
 		s = strings.ReplaceAll(s, v, "<VERSION>")
 	}
-	s = plannerIDPattern.ReplaceAllString(s, "<PLANNER>")
+	s = mastermindIDPattern.ReplaceAllString(s, "<PLANNER>")
 	s = ulidPattern.ReplaceAllString(s, "<ID>")
 	s = rfc3339Pattern.ReplaceAllString(s, "<TIME>")
 
@@ -118,15 +118,15 @@ func normalize(b []byte, roots ...string) []byte {
 // ---------------------------------------------------------------------
 
 // statusFixture is what seedStatusFixture built, so each subtest can
-// normalize with the same roots and (for the statusline) planner id.
+// normalize with the same roots and (for the statusline) mastermind id.
 type statusFixture struct {
-	roots     []string
-	plannerID string
+	roots        []string
+	mastermindID string
 }
 
 // seedStatusFixture seeds one store with three bindings: "webshop" (ACTIVE,
 // round 2, with round 1's report still pending delivery, owned by a
-// registered planner so the statusline has a row), "archived" (DONE, no planner) and
+// registered mastermind so the statusline has a row), "archived" (DONE, no mastermind) and
 // "hosted" (a remote-server binding, no server actually contacted -- rt.Remote
 // stays nil, so relevo never dials out). Every CWD lives under the store's own
 // root, so normalizing that one root cleans every path in the output. No
@@ -144,27 +144,27 @@ func seedStatusFixture(t *testing.T) statusFixture {
 	}
 	s := store.New(root)
 
-	reg := plannerRegistryAt(t, stateHome)
-	rec, err := reg.Create(planner.Record{
+	reg := mastermindRegistryAt(t, stateHome)
+	rec, err := reg.Create(mastermind.Record{
 		ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess-fixture",
-		CWD: filepath.Join(root, "planner"),
+		CWD: filepath.Join(root, "mastermind"),
 	})
 	if err != nil {
-		t.Fatalf("planner Create: %v", err)
+		t.Fatalf("mastermind Create: %v", err)
 	}
 
 	fixedTS := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
 
 	if err := s.Save(store.Binding{
 		Name: "webshop", CWD: filepath.Join(root, "work", "webshop"),
-		Round: 2, State: store.StateActive, PlannerID: rec.ID,
+		Round: 2, State: store.StateActive, MasterMindID: rec.ID,
 	}); err != nil {
 		t.Fatalf("Save webshop: %v", err)
 	}
-	// Confirmed: false is what makes this the pending report PendingForPlanner
-	// finds: the oldest undelivered planner payload.
+	// Confirmed: false is what makes this the pending report PendingForMasterMind
+	// finds: the oldest undelivered mastermind payload.
 	if err := s.AppendLog("webshop", store.LogEntry{
-		TS: fixedTS, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		TS: fixedTS, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 		Path: "/x/001-report.md",
 	}); err != nil {
 		t.Fatalf("AppendLog webshop: %v", err)
@@ -185,7 +185,7 @@ func seedStatusFixture(t *testing.T) statusFixture {
 		t.Fatalf("Save hosted: %v", err)
 	}
 
-	return statusFixture{roots: []string{root}, plannerID: rec.ID}
+	return statusFixture{roots: []string{root}, mastermindID: rec.ID}
 }
 
 func TestContractStatus(t *testing.T) {
@@ -231,7 +231,7 @@ func TestStatusDocumentAlwaysNamesTheActor(t *testing.T) {
 
 func TestContractStatusLine(t *testing.T) {
 	fx := seedStatusFixture(t)
-	t.Setenv("RELEVO_PLANNER", fx.plannerID)
+	t.Setenv("RELEVO_MASTERMIND", fx.mastermindID)
 
 	for _, c := range []struct {
 		golden string
@@ -301,9 +301,9 @@ func seedShowSectionsFixture(t *testing.T) (name string, roots []string) {
 	fixedTS := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
 	for i, e := range []store.LogEntry{
 		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Note: "round one"},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindDiff, Confirmed: true, Note: "1 file, +1 -0"},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindDrift, Confirmed: true, Note: "1 file, +1 -1"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Note: "round one"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindDiff, Confirmed: true, Note: "1 file, +1 -0"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindDrift, Confirmed: true, Note: "1 file, +1 -1"},
 	} {
 		e.TS = fixedTS.Add(time.Duration(i) * time.Minute)
 		if err := s.AppendLog(name, e); err != nil {
@@ -347,7 +347,7 @@ func TestContractShow(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------
-// C4: relevo history --json, --binding, --planner, --limit 1, -q 'outcome:done'.
+// C4: relevo history --json, --binding, --mastermind, --limit 1, -q 'outcome:done'.
 // ---------------------------------------------------------------------
 
 func strPtr(s string) *string { return &s }
@@ -376,18 +376,18 @@ func seedHistoryFixture(t *testing.T) {
 
 	t0 := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
 
-	// UpsertBinding's planner_id column references planner(id), so the
-	// planner row must exist first.
-	if _, err := d.UpsertPlanner(db.Planner{
+	// UpsertBinding's mastermind_id column references mastermind(id), so the
+	// mastermind row must exist first.
+	if _, err := d.UpsertMasterMind(db.MasterMind{
 		ID: "pl_fixturehistory", HarnessKind: "claude", SessionID: "sess-fixturehistory",
 		FirstSeen: t0, LastSeen: t0,
 	}); err != nil {
-		t.Fatalf("UpsertPlanner: %v", err)
+		t.Fatalf("UpsertMasterMind: %v", err)
 	}
 
 	alphaID, err := d.UpsertBinding(db.Binding{
 		Name: "hist-alpha", CWD: "/repo/hist-alpha", BuilderMode: "headless",
-		PlannerID: strPtr("pl_fixturehistory"), CreatedAt: t0, IngestSource: db.IngestLive,
+		MasterMindID: strPtr("pl_fixturehistory"), CreatedAt: t0, IngestSource: db.IngestLive,
 	})
 	if err != nil {
 		t.Fatalf("UpsertBinding hist-alpha: %v", err)
@@ -429,11 +429,11 @@ func TestContractHistory(t *testing.T) {
 		args   []string
 	}{
 		{"history-binding", []string{"history", "--json", "--binding", "hist-alpha"}},
-		// --planner matches db's planner.session_id, not the planner's own
-		// id (internal/db/read.go: "planner_id IN (SELECT id FROM planner
+		// --mastermind matches db's mastermind.session_id, not the mastermind's own
+		// id (internal/db/read.go: "mastermind_id IN (SELECT id FROM mastermind
 		// WHERE session_id = ?)"), hence the session id here rather than
 		// "pl_fixturehistory".
-		{"history-planner", []string{"history", "--json", "--planner", "sess-fixturehistory"}},
+		{"history-mastermind", []string{"history", "--json", "--mastermind", "sess-fixturehistory"}},
 		{"history-limit", []string{"history", "--json", "--limit", "1"}},
 		// "reported" is a valid db.Round.Outcome that both fixture bindings
 		// carry a round for (hist-alpha/1, hist-beta/2), so the query
@@ -472,24 +472,24 @@ func TestContractHistory(t *testing.T) {
 // status/show/history above.
 // ---------------------------------------------------------------------
 
-func TestContractPlannerList(t *testing.T) {
+func TestContractMasterMindList(t *testing.T) {
 	stateHome := filepath.Join(t.TempDir(), "state")
 	t.Setenv("XDG_STATE_HOME", stateHome)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 
-	reg := plannerRegistryAt(t, stateHome)
-	if _, err := reg.Create(planner.Record{
+	reg := mastermindRegistryAt(t, stateHome)
+	if _, err := reg.Create(mastermind.Record{
 		ID: "pl_ccccccccdddd", Name: "architect-1", HarnessKind: "claude", SessionID: "sess-fixture",
 		CWD: "/repo/architect-1",
 	}); err != nil {
-		t.Fatalf("planner Create: %v", err)
+		t.Fatalf("mastermind Create: %v", err)
 	}
 
-	stdout, stderr, err := captureOutput(t, func() error { return run([]string{"planner", "list", "--json"}) })
+	stdout, stderr, err := captureOutput(t, func() error { return run([]string{"mastermind", "list", "--json"}) })
 	if err != nil {
-		t.Fatalf("planner list --json: %v (stderr: %s)", err, stderr)
+		t.Fatalf("mastermind list --json: %v (stderr: %s)", err, stderr)
 	}
-	assertGolden(t, "planner-list", normalize(stdout))
+	assertGolden(t, "mastermind-list", normalize(stdout))
 }
 
 func TestContractConfigLog(t *testing.T) {
@@ -548,10 +548,10 @@ func TestContractWaitExitCodes(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", stateHome)
 
 	seedWaitBinding(t, "wait-closed", store.Binding{Round: 1, State: store.StateActive}, []store.LogEntry{
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md"},
 	})
 	seedWaitBinding(t, "wait-unmarked", store.Binding{Round: 1, State: store.StateActive}, []store.LogEntry{
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: "unmarked"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "unmarked"},
 	})
 	seedWaitBinding(t, "wait-needsyou", store.Binding{
 		Round: 1, State: store.StateNeedsYou,
@@ -559,7 +559,7 @@ func TestContractWaitExitCodes(t *testing.T) {
 	}, nil)
 	seedWaitBinding(t, "wait-gone", store.Binding{Round: 1, State: store.StateDone}, nil)
 	seedWaitBinding(t, "wait-halted", store.Binding{Round: 1, State: store.StateActive}, []store.LogEntry{
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: "halted"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: "halted"},
 	})
 	seedWaitBinding(t, "wait-timeout", store.Binding{Round: 1, State: store.StateActive}, []store.LogEntry{
 		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
@@ -691,7 +691,7 @@ func c12Sources(t *testing.T) []string {
 // c12FlagSets maps a verb to a function that installs its flags on a fresh
 // FlagSet, for every verb whose flags a test can reach today (found by
 // grepping cmd/relevo/*.go for `func \w+FlagSet\(`). show, status, history,
-// wait, gate, config and planner build their flags inline in their cmd
+// wait, gate, config and mastermind build their flags inline in their cmd
 // function, so only the verb itself is checked for them below.
 func c12FlagSets() map[string]func(*flag.FlagSet) {
 	return map[string]func(*flag.FlagSet){

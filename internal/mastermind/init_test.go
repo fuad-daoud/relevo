@@ -1,4 +1,4 @@
-package planner
+package mastermind
 
 import (
 	"errors"
@@ -12,7 +12,7 @@ func initAt(host int, session string, now time.Time) InitInput {
 	return InitInput{
 		Kind:          "claude",
 		SessionID:     session,
-		CWD:           "/tmp/relevo-planner-test",
+		CWD:           "/tmp/relevo-mastermind-test",
 		Agent:         "architect",
 		HostPID:       host,
 		HostStartedAt: int64(host) * 10,
@@ -21,7 +21,7 @@ func initAt(host int, session string, now time.Time) InitInput {
 }
 
 // TestInitCreatesThenReattachesSameHost is the /clear case: the same host
-// process keeps its planner id across a new session id.
+// process keeps its mastermind id across a new session id.
 func TestInitCreatesThenReattachesSameHost(t *testing.T) {
 	reg := testRegistry(t)
 
@@ -154,7 +154,7 @@ func TestInitExplicitRegistrationHasNoHost(t *testing.T) {
 	in := InitInput{
 		Kind:      "opencode",
 		SessionID: "ses_abc123",
-		CWD:       "/tmp/relevo-planner-test",
+		CWD:       "/tmp/relevo-mastermind-test",
 		Now:       testNow,
 	}
 	first, res, err := Init(reg, in)
