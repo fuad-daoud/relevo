@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -153,6 +154,9 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 
 		if len(fr.kills) != 1 || fr.kills[0] != h {
 			t.Fatalf("kills = %+v, want the round's process %+v", fr.kills, h)
+		}
+		if want := []string{rt.Store.StreamPath("webshop", b.Round)}; !reflect.DeepEqual(fr.killStreams, want) {
+			t.Errorf("killStreams = %+v, want %+v", fr.killStreams, want)
 		}
 		if len(fr.specs) != 1 {
 			t.Errorf("specs = %d, want 1: a stop must not start a replacement", len(fr.specs))

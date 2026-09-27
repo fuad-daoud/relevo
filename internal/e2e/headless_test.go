@@ -895,7 +895,7 @@ func stopRecordedBuilders(t *testing.T, rt relevo.Runtime, names ...string) {
 			continue
 		}
 		h := spawn.ProcHandle{PID: b.Builder.PID, StartedAt: time.Unix(b.Builder.StartedAt, 0)}
-		if err := rt.Runner.Kill(context.Background(), h); err != nil {
+		if err := rt.Runner.Kill(context.Background(), h, rt.Store.StreamPath(name, b.Round)); err != nil {
 			t.Logf("cleanup: killing %s's builder pid %d: %v", name, b.Builder.PID, err)
 		}
 	}

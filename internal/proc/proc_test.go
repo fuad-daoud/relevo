@@ -140,7 +140,7 @@ func TestStartedProcessIsInItsOwnGroupAndKillReturnsWithinGrace(t *testing.T) {
 	}
 
 	began := time.Now()
-	if err := r.Kill(context.Background(), h); err != nil {
+	if err := r.Kill(context.Background(), h, stream); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}
 	if took := time.Since(began); took > r.KillGrace+2*time.Second {
@@ -154,12 +154,13 @@ func TestStartedProcessIsInItsOwnGroupAndKillReturnsWithinGrace(t *testing.T) {
 		t.Error("a killed supervisor writes no trailer; ExitCode must be ok=false")
 	}
 	// Kill on a dead handle is a no-op.
-	if err := r.Kill(context.Background(), h); err != nil {
+	if err := r.Kill(context.Background(), h, stream); err != nil {
 		t.Errorf("second Kill: %v", err)
 	}
 }
 
-// The trailer race is timing-dependent, so repeat it.
+// The kill record, not the trap, is what makes ok=false hold on a platform
+// where a shell defers its trap. Repeat because timing matters.
 func TestKilledSupervisorNeverWritesTheTrailer(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		r := New()
@@ -167,7 +168,7 @@ func TestKilledSupervisorNeverWritesTheTrailer(t *testing.T) {
 		h, _, stream := start(t, r, "sleep", "60")
 		t.Cleanup(func() { _ = syscall.Kill(-h.PID, syscall.SIGKILL) })
 
-		if err := r.Kill(context.Background(), h); err != nil {
+		if err := r.Kill(context.Background(), h, stream); err != nil {
 			t.Fatalf("iteration %d: Kill: %v", i, err)
 		}
 		if _, ok := r.ExitCode(context.Background(), h, stream); ok {

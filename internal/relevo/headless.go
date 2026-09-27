@@ -611,7 +611,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// nobody is watching.
 		if b.Builder.PID != 0 {
 			if rt.Runner != nil {
-				if err := rt.Runner.Kill(ctx, handleOf(b.Builder)); err != nil {
+				// No round is open, nothing reads this handle's exit, and
+				// b.Round may be 0.
+				if err := rt.Runner.Kill(ctx, handleOf(b.Builder), ""); err != nil {
 					slog.Warn("stray headless process not killed", "binding", b.Name, "pid", b.Builder.PID, "err", err)
 				} else {
 					slog.Warn("killed stray headless process", "binding", b.Name, "pid", b.Builder.PID)
@@ -1022,7 +1024,7 @@ func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (held,
 	if rt.Now().Sub(fi.ModTime()) < readerFinalMessageGrace {
 		return true, false, nil
 	}
-	if _, err := stopProcess(ctx, rt, b.Builder, "stop"); err != nil {
+	if _, err := stopProcess(ctx, rt, b, "stop"); err != nil {
 		return false, false, err
 	}
 	return false, true, nil
@@ -1138,20 +1140,20 @@ var ErrStopFailed = errors.New("could not stop the builder process")
 
 // stopProcess kills a headless endpoint's live process, if it has one. It
 // returns the pid it addressed -- 0 when there was nothing to stop -- and
-// Kill's error. A pane endpoint, or a headless one between rounds, is a
-// no-op. Runner nil with a pid recorded is an error: relevo cannot say the
+// Kill's error. A binding with no headless process, or one between rounds, is
+// a no-op. Runner nil with a pid recorded is an error: relevo cannot say the
 // process is stopped.
-func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint, why string) (int, error) {
-	if !e.Headless() || e.PID == 0 {
+func stopProcess(ctx context.Context, rt Runtime, b store.Binding, why string) (int, error) {
+	if !b.Builder.Headless() || b.Builder.PID == 0 {
 		return 0, nil
 	}
 	if rt.Runner == nil {
-		return e.PID, spawn.ErrRunnerUnavailable
+		return b.Builder.PID, spawn.ErrRunnerUnavailable
 	}
-	if err := rt.Runner.Kill(ctx, handleOf(e)); err != nil {
-		return e.PID, err
+	if err := rt.Runner.Kill(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); err != nil {
+		return b.Builder.PID, err
 	}
-	return e.PID, nil
+	return b.Builder.PID, nil
 }
 
 // statusTailLines is how much of the log `relevo status` shows under a

@@ -31,7 +31,7 @@ func (aliveRunner) ExitCode(context.Context, spawn.ProcHandle, string) (int, boo
 	return 0, false
 }
 
-func (aliveRunner) Kill(context.Context, spawn.ProcHandle) error { return nil }
+func (aliveRunner) Kill(context.Context, spawn.ProcHandle, string) error { return nil }
 
 func (aliveRunner) Rusage(context.Context, spawn.ProcHandle, string) (spawn.ProcRusage, bool) {
 	return spawn.ProcRusage{}, false

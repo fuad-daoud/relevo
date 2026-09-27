@@ -34,7 +34,7 @@ func (r *Runner) ExitCode(context.Context, spawn.ProcHandle, string) (int, bool)
 	return 0, false
 }
 
-func (r *Runner) Kill(context.Context, spawn.ProcHandle) error {
+func (r *Runner) Kill(context.Context, spawn.ProcHandle, string) error {
 	return spawn.ErrRunnerUnavailable
 }
 

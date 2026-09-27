@@ -204,7 +204,7 @@ func stopOpenRound(ctx context.Context, rt Runtime, b store.Binding) (killed, re
 			return false, false, fmt.Errorf("binding %q: check previous process %d: %w", b.Name, b.Builder.PID, err)
 		}
 		if alive {
-			if _, err := stopProcess(ctx, rt, b.Builder, "stop"); err != nil {
+			if _, err := stopProcess(ctx, rt, b, "stop"); err != nil {
 				return false, false, err
 			}
 			killed = true

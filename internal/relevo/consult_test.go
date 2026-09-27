@@ -342,6 +342,9 @@ func TestHeadlessConsultTimesOut(t *testing.T) {
 	if len(fr.kills) != 1 {
 		t.Fatalf("kills = %d, want 1", len(fr.kills))
 	}
+	if len(fr.killStreams) < 1 || fr.killStreams[0] != c.Endpoint.LogPath {
+		t.Errorf("killStreams[0] = %q, want %q", fr.killStreams, c.Endpoint.LogPath)
+	}
 	if b.Consults[0].State != store.ConsultSilent {
 		t.Fatalf("state = %q, want silent", b.Consults[0].State)
 	}

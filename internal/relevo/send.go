@@ -653,7 +653,11 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			// and its log entries are one transaction, so nothing of this
 			// round was recorded: the previous state stands and the planner
 			// may resend.
-			kerr := rt.Runner.Kill(context.WithoutCancel(ctx), *spawned)
+			stream := ""
+			if round > 0 {
+				stream = rt.Store.StreamPath(name, round)
+			}
+			kerr := rt.Runner.Kill(context.WithoutCancel(ctx), *spawned, stream)
 			if kerr != nil {
 				return SendResult{}, fmt.Errorf("%w; and stopping the builder it started (pid %d) failed: %v", err, spawned.PID, kerr)
 			}

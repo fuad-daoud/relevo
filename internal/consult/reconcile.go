@@ -103,7 +103,7 @@ func reconcileLive(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, i
 		return b, nil
 	}
 
-	if err := d.Runner.Kill(ctx, handleOf(c.Endpoint)); err != nil {
+	if err := d.Runner.Kill(ctx, handleOf(c.Endpoint), c.Endpoint.LogPath); err != nil {
 		slog.Warn("headless consult not killed",
 			"binding", b.Name, "consult", c.ID, "pid", c.Endpoint.PID, "err", err)
 	}

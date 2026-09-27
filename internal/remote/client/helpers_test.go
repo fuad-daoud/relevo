@@ -90,7 +90,7 @@ func (r *scriptRunner) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath
 	return 0, true
 }
 
-func (r *scriptRunner) Kill(ctx context.Context, h spawn.ProcHandle) error {
+func (r *scriptRunner) Kill(ctx context.Context, h spawn.ProcHandle, _ string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.alive = false
