@@ -286,3 +286,16 @@ func TestPlanNoneIsAnError(t *testing.T) {
 		t.Fatalf("Plan error = %q, want it to mention %q", err, "no harness binaries")
 	}
 }
+
+// TestBuilderKindsListsBuilderHarnessesInOrder pins the fixed order and per-call freshness of the builder harness list.
+func TestBuilderKindsListsBuilderHarnessesInOrder(t *testing.T) {
+	want := []string{"agy", "codex", "opencode"}
+	if got := BuilderKinds(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuilderKinds() = %v, want %v", got, want)
+	}
+	got := BuilderKinds()
+	got[0] = "mutated"
+	if again := BuilderKinds(); !reflect.DeepEqual(again, want) {
+		t.Errorf("BuilderKinds() after mutating a previous result = %v, want %v (fresh slice)", again, want)
+	}
+}
