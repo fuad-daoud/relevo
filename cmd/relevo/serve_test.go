@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func TestServeUsageOnNoArgs(t *testing.T) {
@@ -400,4 +403,218 @@ func TestServeFlagAfterPositionalIsHonoured(t *testing.T) {
 	if !strings.Contains(runErr.Error(), dir) {
 		t.Errorf("error = %q, want it to contain %q", runErr, dir)
 	}
+}
+
+// runServeInit runs `relevo serve init` with args and returns its stdout. It
+// is fixture-only: init spawns nothing and reaches nothing but the state
+// directory and the machine database.
+func runServeInit(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	stdout, _, err := captureOutput(t, func() error {
+		return run(append([]string{"serve", "init"}, args...))
+	})
+	return string(stdout), err
+}
+
+// serveSecret reads a secret from the machine database the serve verbs use.
+func serveSecret(t *testing.T, name string) []byte {
+	t.Helper()
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	d, err := openDB(filepath.Join(root, "relevo.db"))
+	if err != nil {
+		t.Fatalf("openDB: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	val, ok, err := d.SecretGet(name)
+	if err != nil {
+		t.Fatalf("SecretGet(%s): %v", name, err)
+	}
+	if !ok {
+		t.Fatalf("secret %s is missing", name)
+	}
+	return val
+}
+
+// TestServeInitFreshLeavesARoot pins case 1 of the plan: a fresh run (no TLS
+// secrets, no root) creates <state>/serve/bindings before the secrets and
+// prints the fingerprint line, exit 0. Fixture-only: local key generation,
+// no harness, no network, no server.
+func TestServeInitFreshLeavesARoot(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	stdout, err := runServeInit(t, "--state", state)
+	if err != nil {
+		t.Fatalf("runServeInit: %v", err)
+	}
+	first := strings.SplitN(stdout, "\n", 2)[0]
+	if !regexp.MustCompile(`^fingerprint sha256:[0-9a-f]{64}$`).MatchString(first) {
+		t.Errorf("stdout first line = %q, want %q", first, "fingerprint sha256:<64 hex>")
+	}
+
+	info, err := os.Stat(filepath.Join(state, "serve", "bindings"))
+	if err != nil {
+		t.Fatalf("stat <state>/serve/bindings: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("<state>/serve/bindings is not a directory")
+	}
+	if len(serveSecret(t, "serve.tls.key")) == 0 {
+		t.Error("machine DB is missing serve.tls.key")
+	}
+	if len(serveSecret(t, "serve.tls.cert")) == 0 {
+		t.Error("machine DB is missing serve.tls.cert")
+	}
+}
+
+// TestServeInitRepairsAMissingRoot pins case 2 of the plan (the laptop's
+// case): with the TLS identity present and the root removed, the next run
+// leaves the identity untouched, recreates <root>/bindings, and prints
+// `already initialised; fingerprint <fp1>`.
+func TestServeInitRepairsAMissingRoot(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	first, err := runServeInit(t, "--state", state)
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	fp1 := strings.TrimPrefix(strings.SplitN(first, "\n", 2)[0], "fingerprint ")
+	keyBefore := serveSecret(t, "serve.tls.key")
+	certBefore := serveSecret(t, "serve.tls.cert")
+
+	if err := os.RemoveAll(filepath.Join(state, "serve")); err != nil {
+		t.Fatalf("RemoveAll <state>/serve: %v", err)
+	}
+
+	stdout, err := runServeInit(t, "--state", state)
+	if err != nil {
+		t.Fatalf("repair run: %v", err)
+	}
+	if !strings.HasPrefix(stdout, "already initialised; fingerprint "+fp1+"\n") {
+		t.Errorf("repair run stdout = %q, want already initialised with %s", stdout, fp1)
+	}
+
+	info, err := os.Stat(filepath.Join(state, "serve", "bindings"))
+	if err != nil {
+		t.Fatalf("stat bindings after repair: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("bindings is not a directory after repair")
+	}
+	if got := serveSecret(t, "serve.tls.key"); !bytes.Equal(got, keyBefore) {
+		t.Error("key bytes changed on the repair run")
+	}
+	if got := serveSecret(t, "serve.tls.cert"); !bytes.Equal(got, certBefore) {
+		t.Error("cert bytes changed on the repair run")
+	}
+}
+
+// TestServeInitSecondRunChangesNothing pins case 3 of the plan: with the root
+// present, the second run exits 0 with the same line, and a sentinel inside
+// bindings and the key/cert bytes are unchanged.
+func TestServeInitSecondRunChangesNothing(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	first, err := runServeInit(t, "--state", state)
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	fp := strings.TrimPrefix(strings.SplitN(first, "\n", 2)[0], "fingerprint ")
+
+	sentinel := filepath.Join(state, "serve", "bindings", "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	keyBefore := serveSecret(t, "serve.tls.key")
+	certBefore := serveSecret(t, "serve.tls.cert")
+
+	stdout, err := runServeInit(t, "--state", state)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if !strings.HasPrefix(stdout, "already initialised; fingerprint "+fp+"\n") {
+		t.Errorf("second run stdout = %q, want already initialised with %s", stdout, fp)
+	}
+	got, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("read sentinel: %v", err)
+	}
+	if string(got) != "keep me\n" {
+		t.Errorf("sentinel = %q, want it untouched", got)
+	}
+	if got := serveSecret(t, "serve.tls.key"); !bytes.Equal(got, keyBefore) {
+		t.Error("key bytes changed on the second run")
+	}
+	if got := serveSecret(t, "serve.tls.cert"); !bytes.Equal(got, certBefore) {
+		t.Error("cert bytes changed on the second run")
+	}
+}
+
+// TestServeInitRootFailureIsAnError pins case 4 of the plan: a root that
+// cannot be created makes cmdServeInit return before InitTLS, with no success
+// line and -- on the fresh path -- no secrets written.
+func TestServeInitRootFailureIsAnError(t *testing.T) {
+	t.Run("fresh", func(t *testing.T) {
+		state := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+		// A regular file where the root must be: MkdirAll(<state>/serve/bindings) fails.
+		if err := os.WriteFile(filepath.Join(state, "serve"), []byte("not a dir\n"), 0o644); err != nil {
+			t.Fatalf("write file at root: %v", err)
+		}
+
+		stdout, err := runServeInit(t, "--state", state)
+		if err == nil {
+			t.Fatal("runServeInit = nil, want an error when the root cannot be created")
+		}
+		if strings.Contains(stdout, "fingerprint") {
+			t.Errorf("stdout = %q, want no success line", stdout)
+		}
+
+		root, err := store.DefaultRoot()
+		if err != nil {
+			t.Fatalf("DefaultRoot: %v", err)
+		}
+		d, err := openDB(filepath.Join(root, "relevo.db"))
+		if err != nil {
+			t.Fatalf("openDB: %v", err)
+		}
+		defer func() { _ = d.Close() }()
+		if _, ok, err := d.SecretGet("serve.tls.key"); err != nil {
+			t.Fatalf("SecretGet(serve.tls.key): %v", err)
+		} else if ok {
+			t.Error("fresh failure run wrote serve.tls.key")
+		}
+	})
+
+	t.Run("already initialised", func(t *testing.T) {
+		state := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+		if _, err := runServeInit(t, "--state", state); err != nil {
+			t.Fatalf("seed run: %v", err)
+		}
+		// Replace <root>/bindings (a directory) with a regular file.
+		bindings := filepath.Join(state, "serve", "bindings")
+		if err := os.RemoveAll(bindings); err != nil {
+			t.Fatalf("RemoveAll bindings: %v", err)
+		}
+		if err := os.WriteFile(bindings, []byte("not a dir\n"), 0o644); err != nil {
+			t.Fatalf("write file at bindings: %v", err)
+		}
+
+		stdout, err := runServeInit(t, "--state", state)
+		if err == nil {
+			t.Fatal("runServeInit = nil, want an error when bindings cannot be created")
+		}
+		if strings.Contains(stdout, "already initialised") {
+			t.Errorf("stdout = %q, want no success line", stdout)
+		}
+	})
 }

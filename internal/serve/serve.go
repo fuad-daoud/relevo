@@ -78,6 +78,14 @@ type Server struct {
 	tickFn func(context.Context) error
 }
 
+// EnsureStateRoot creates the state root's bindings directory, the directory
+// the doctor's serve/state check probes. MkdirAll also creates the root itself
+// and repairs a bindings directory that was removed; it is idempotent and
+// returns the raw error, as New does.
+func EnsureStateRoot(root string) error {
+	return os.MkdirAll(filepath.Join(root, "bindings"), 0o755)
+}
+
 func New(cfg Config) (*Server, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now

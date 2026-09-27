@@ -38,6 +38,10 @@ func cmdServeInit(args []string) error {
 		return err
 	}
 
+	if err := serve.EnsureStateRoot(root); err != nil {
+		return err
+	}
+
 	d, _, err := openMachineDB()
 	if err != nil {
 		return err
