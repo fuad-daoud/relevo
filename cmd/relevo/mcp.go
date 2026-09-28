@@ -103,8 +103,14 @@ func cmdMCP(args []string) error {
 		fmt.Fprintln(os.Stderr, `relevo mcp: no relevo mastermind for this session; tools-only (run "relevo mastermind init")`)
 	}
 
+	verbs, err := mcpVerbs(rt, kind, rec.ID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", err)
+		return exitCodeErr{code: 2}
+	}
+
 	srv := &mcp.Server{
-		Verbs:   mcpVerbs(rt, kind, rec.ID),
+		Verbs:   verbs,
 		Version: version,
 		// The mode is known before initialize is answered, so the model is
 		// told from its first turn which delivery it should expect (#303 §4.5).
@@ -207,21 +213,29 @@ func mcpResolveMode(kind, flagVal string) (mcp.Mode, error) {
 }
 
 // mcpVerbs builds the tool verbs: an opencode server resolves the calling
-// session per call, a Claude one uses the mastermind resolved at startup.
-func mcpVerbs(rt relevo.Runtime, kind, masterMindID string) *mcp.RelevoVerbs {
+// session per call, a Claude one uses the mastermind resolved at startup. An
+// opencode server with no mastermind registry is refused rather than served
+// with a resolver that could never resolve a session.
+func mcpVerbs(rt relevo.Runtime, kind, masterMindID string) (*mcp.RelevoVerbs, error) {
 	v := &mcp.RelevoVerbs{RT: rt, MasterMind: masterMindID}
 	if kind == "opencode" {
-		v.ResolveSession = opencodeSessionMasterMind(rt)
+		resolve, err := opencodeSessionMasterMind(rt)
+		if err != nil {
+			return nil, err
+		}
+		v.ResolveSession = resolve
 	}
-	return v
+	return v, nil
 }
 
 // opencodeSessionMasterMind maps one tool call's session to the record the
 // plugin created for it. The not-found text is actionable: an unanswered
-// repository is the reason a tool call usually arrives without a record.
-func opencodeSessionMasterMind(rt relevo.Runtime) func(session string) (string, error) {
+// repository is the reason a tool call usually arrives without a record. A nil
+// registry is an error: the server cannot resolve any session, so it must not
+// start.
+func opencodeSessionMasterMind(rt relevo.Runtime) (func(session string) (string, error), error) {
 	if rt.MasterMinds == nil {
-		return nil
+		return nil, errors.New("opencode tools server has no mastermind registry; cannot resolve tool-call sessions")
 	}
 	return func(session string) (string, error) {
 		rec, err := rt.MasterMinds.BySession("opencode", session)
@@ -233,7 +247,7 @@ func opencodeSessionMasterMind(rt relevo.Runtime) func(session string) (string, 
 		default:
 			return "", err
 		}
-	}
+	}, nil
 }
 
 func mcpModeWord(m mcp.Mode) string {
