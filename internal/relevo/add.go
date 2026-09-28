@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -90,6 +92,25 @@ type AddResult struct {
 	Resolution Resolution
 }
 
+// requireRemoteReaders refuses a reader bind against a server that does not
+// advertise remote.FeatureReaders. The server is the side that runs the
+// reader, so a server without the feature would run it as a writer: the
+// client refuses before creating anything, and the message keeps the old
+// local-only wording and names the server.
+func requireRemoteReaders(ctx context.Context, rt Runtime, server string) error {
+	if rt.Remote == nil {
+		return ErrRemoteUnavailable
+	}
+	who, err := rt.Remote.WhoAmI(ctx, server)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(who.Features, remote.FeatureReaders) {
+		return fmt.Errorf("reader actors run locally only; bind without --server (server %s predates remote readers; upgrade it)", server)
+	}
+	return nil
+}
+
 // Add attaches an additional builder to the calling mastermind, on its own tree.
 //
 // Preconditions:  a relevo mastermind resolves for the caller (--mastermind,
@@ -127,12 +148,26 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		opts.Ticket = ticket
 	}
 	if opts.Server != "" {
-		// A reader is local-only in A5 §2: a reader's tree is the caller's own
-		// (it may share a writer's), so a server has nothing to run. Refuse
-		// here, before any server contact. A role this client's registry does
-		// not know is left to the server's own check.
+		// A reader runs on the server too (#607): the server cuts the round's
+		// scratch worktree and serves the closed round's artifacts, so a
+		// reader bind needs a server that advertises remote.FeatureReaders.
+		// A server that predates it would run the reader as a writer and
+		// touch the served tree, so the refusal here is feature-gated. A role
+		// this client's registry does not know is left to the server's own
+		// check.
 		if shape, rerr := actorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
-			return AddResult{}, errors.New("reader actors run locally only; bind without --server")
+			if err := requireRemoteReaders(ctx, rt, opts.Server); err != nil {
+				return AddResult{}, err
+			}
+			// A reader round has no check, so the writer-only knobs are
+			// refused here too, naming the flag, exactly as the local path
+			// below does.
+			if opts.Gate != "" {
+				return AddResult{}, errors.New("--gate: a reader round has no check")
+			}
+			if opts.Regate != nil {
+				return AddResult{}, errors.New("--regate: a reader round has no check")
+			}
 		}
 		return addRemote(ctx, rt, opts, rec, haveRec)
 	}

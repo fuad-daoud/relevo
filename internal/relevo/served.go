@@ -158,6 +158,7 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		DirtyCommit:    dirtyCommit,
 		ReportOutcome:  reportOutcome,
 		Stopped:        stopped,
+		Shape:          b.Shape,
 		DiffNote:       diffNote,
 		DiffCommits:    diffCommits,
 		DiffTree:       diffTree,

@@ -9,6 +9,7 @@
   "dirty_commit": "4444555566667777888899990000111122223333",
   "report_outcome": "completed",
   "stopped": "killed",
+  "shape": "reader",
   "diff_note": "refactored remote wire",
   "diff_commits": 2,
   "diff_tree": "5555666677778888999900001111222233334444",

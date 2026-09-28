@@ -325,7 +325,7 @@ func TestRoundCloseReleasesCore(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil)
+		next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil, "")
 		if err != nil {
 			return err
 		}

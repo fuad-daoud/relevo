@@ -81,7 +81,7 @@ func filledWhoAmI() WhoAmI {
 		Label:         "test-client",
 		ServerVersion: 1,
 		Transports:    []string{"git-bundle"},
-		Features:      []string{"tier", "queue", "stop"},
+		Features:      []string{"tier", "queue", "stop", "readers"},
 		BuilderTier:   "edit",
 		MaxTier:       "yolo",
 		Builders:      &builders,
@@ -109,6 +109,22 @@ func filledCreateBindingRequest() CreateBindingRequest {
 		Feature:        "auth",
 		Ticket:         "o/r#607",
 		Author:         &author,
+	}
+}
+
+func filledArtifactFile() ArtifactFile {
+	return ArtifactFile{
+		Rel:   "site/index.html",
+		Size:  1024,
+		MTime: fixedTime,
+	}
+}
+
+func filledArtifactList() ArtifactList {
+	return ArtifactList{
+		Actor:  "reviewer",
+		Output: "findings.md",
+		Files:  []ArtifactFile{filledArtifactFile()},
 	}
 }
 
@@ -209,6 +225,7 @@ func filledBindingView() BindingView {
 		DirtyCommit:    "4444555566667777888899990000111122223333",
 		ReportOutcome:  "completed",
 		Stopped:        "killed",
+		Shape:          "reader",
 		DiffNote:       "refactored remote wire",
 		DiffCommits:    2,
 		DiffTree:       "5555666677778888999900001111222233334444",
@@ -284,6 +301,8 @@ var protoCases = []protoTypeCase{
 	{"GitIdentity", filledGitIdentity(), func() any { return new(GitIdentity) }},
 	{"CreateBindingRequest", filledCreateBindingRequest(), func() any { return new(CreateBindingRequest) }},
 	{"TagRef", filledTagRef(), func() any { return new(TagRef) }},
+	{"ArtifactFile", filledArtifactFile(), func() any { return new(ArtifactFile) }},
+	{"ArtifactList", filledArtifactList(), func() any { return new(ArtifactList) }},
 	{"BindingView", filledBindingView(), func() any { return new(BindingView) }},
 	{"QueueView", filledQueueView(), func() any { return new(QueueView) }},
 	{"DiffStat", filledDiffStat(), func() any { return new(DiffStat) }},

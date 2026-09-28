@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -126,6 +127,73 @@ func TestCreateStartFilesBundleAck(t *testing.T) {
 	}
 	if ackView.AckedRound != 1 {
 		t.Fatalf("ackView.AckedRound = %d, want 1", ackView.AckedRound)
+	}
+}
+
+// TestReaderArtifactsRoundTrip pins the reader transport: the listing decodes,
+// a nested rel downloads byte-for-byte, and an unlisted rel surfaces the
+// server's 404 as *client.HTTPError.
+func TestReaderArtifactsRoundTrip(t *testing.T) {
+	cl, fix := startTestServer(t)
+	ctx := context.Background()
+	_, headSHA, repoID := initClientRepo(t, fix.gitClient)
+
+	view, err := cl.CreateBinding(ctx, "zen", remote.CreateBindingRequest{Name: "review", RepoID: repoID, BaseCommit: headSHA, Role: "reviewer"})
+	if err != nil {
+		t.Fatalf("CreateBinding: %v", err)
+	}
+	if view.Shape != store.ShapeReader {
+		t.Fatalf("Shape = %q, want %q", view.Shape, store.ShapeReader)
+	}
+
+	st, b := serverBinding(t, fix, "review")
+	dir := st.ArtifactDir("review", 1, "reviewer")
+	if err := os.MkdirAll(filepath.Join(dir, "site"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "site", "index.html"), []byte("<html>hi</html>\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st.OutputPath("review", 1, "reviewer", "findings"), []byte("the findings\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b.Serve.ClosedRound = 1
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := cl.RoundArtifacts(ctx, "zen", "review", 1)
+	if err != nil {
+		t.Fatalf("RoundArtifacts: %v", err)
+	}
+	if list.Actor != "reviewer" || list.Output != "findings.md" {
+		t.Fatalf("list = %+v, want actor reviewer and output findings.md", list)
+	}
+	var rels []string
+	for _, f := range list.Files {
+		rels = append(rels, f.Rel)
+	}
+	if !slices.Equal(rels, []string{"findings.md", "site/index.html"}) {
+		t.Fatalf("rels = %v, want the output first then the nested rel", rels)
+	}
+
+	rc, err := cl.RoundArtifact(ctx, "zen", "review", 1, "site/index.html")
+	if err != nil {
+		t.Fatalf("RoundArtifact: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read artifact: %v", err)
+	}
+	if string(got) != "<html>hi</html>\n" {
+		t.Fatalf("nested artifact = %q", got)
+	}
+
+	_, err = cl.RoundArtifact(ctx, "zen", "review", 1, "nope.txt")
+	var httpErr *client.HTTPError
+	if !errors.As(err, &httpErr) || httpErr.Status != http.StatusNotFound {
+		t.Fatalf("unlisted rel err = %v, want *HTTPError 404", err)
 	}
 }
 

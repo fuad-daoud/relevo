@@ -75,6 +75,12 @@ type fakeRemote struct {
 	roundFileFromCalls  []int64
 	roundBundleResp     io.ReadCloser
 	roundBundleErr      error
+	roundArtifactsResp  remote.ArtifactList
+	roundArtifactsErr   error
+	roundArtifactsFunc  func(ctx context.Context, server, name string, round int) (remote.ArtifactList, error)
+	roundArtifactResp   io.ReadCloser
+	roundArtifactErr    error
+	roundArtifactFunc   func(ctx context.Context, server, name string, round int, rel string) (io.ReadCloser, error)
 	roundFileFunc       func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
 	roundBundleFunc     func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
 	ackResp             remote.BindingView
@@ -158,6 +164,30 @@ func (f *fakeRemote) RoundFileFrom(ctx context.Context, server, name string, rou
 		return f.roundFileFromResp, f.roundFileFromRange, f.roundFileFromErr
 	}
 	return f.roundFileResp, remote.FileRange{}, f.roundFileErr
+}
+
+func (f *fakeRemote) RoundArtifacts(ctx context.Context, server, name string, round int) (remote.ArtifactList, error) {
+	call := fmt.Sprintf("RoundArtifacts:%s:%s:%d", server, name, round)
+	if f.beforeCall != nil {
+		f.beforeCall(call)
+	}
+	f.calls = append(f.calls, call)
+	if f.roundArtifactsFunc != nil {
+		return f.roundArtifactsFunc(ctx, server, name, round)
+	}
+	return f.roundArtifactsResp, f.roundArtifactsErr
+}
+
+func (f *fakeRemote) RoundArtifact(ctx context.Context, server, name string, round int, rel string) (io.ReadCloser, error) {
+	call := fmt.Sprintf("RoundArtifact:%s:%s:%d:%s", server, name, round, rel)
+	if f.beforeCall != nil {
+		f.beforeCall(call)
+	}
+	f.calls = append(f.calls, call)
+	if f.roundArtifactFunc != nil {
+		return f.roundArtifactFunc(ctx, server, name, round, rel)
+	}
+	return f.roundArtifactResp, f.roundArtifactErr
 }
 
 func (f *fakeRemote) RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
@@ -992,6 +1022,81 @@ func TestAddRemoteBuilderUnchanged(t *testing.T) {
 	}
 	if res.Binding.Role != "builder" {
 		t.Fatalf("res.Binding.Role = %q, want builder", res.Binding.Role)
+	}
+}
+
+// readerAddRuntime is the client runtime the reader-add tests share: a client
+// registry that knows reviewer as a reader, and the mastermind an add needs.
+func readerAddRuntime(t *testing.T, fr *fakeRemote) (Runtime, *store.Store) {
+	t.Helper()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	rt := Runtime{
+		Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t),
+		Registry: rolesFileRegistry(t, candidateSet(t, testCandidatesJSON), policy.Policy{}, map[string]roles.Row{
+			"builder": {Candidates: []string{testClaudeRef}},
+		}),
+	}
+	return rt, st
+}
+
+// TestAddRemoteReaderRefusedWithoutFeature pins #607: a reader bind against a
+// server that does not advertise remote.FeatureReaders is refused before any
+// create call, naming the server.
+func TestAddRemoteReaderRefusedWithoutFeature(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureRoles}}}
+	rt, _ := readerAddRuntime(t, fr)
+
+	_, err := Add(ctx, rt, AddOptions{Name: "review", Server: "zen", Repo: "/fake/repo", Role: "reviewer"})
+	if err == nil {
+		t.Fatal("Add(reader without the feature) = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "reader actors run locally only; bind without --server") ||
+		!strings.Contains(err.Error(), "predates remote readers") {
+		t.Fatalf("err = %q, want the reader refusal naming the server", err.Error())
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateBinding") {
+			t.Fatalf("calls = %v, want no CreateBinding", fr.calls)
+		}
+	}
+}
+
+// TestAddRemoteReaderRecordsShape pins #607: a reader bind against a server
+// that advertises remote.FeatureReaders saves the reader shape locally, so
+// the close, the report path and `show --output` treat it as a reader.
+func TestAddRemoteReaderRecordsShape(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureReaders, remote.FeatureRoles}},
+		createBindingResp: remote.BindingView{
+			Name:      "review",
+			Candidate: testClaudeRef,
+			Shape:     store.ShapeReader,
+		},
+	}
+	rt, st := readerAddRuntime(t, fr)
+
+	res, err := Add(ctx, rt, AddOptions{Name: "review", Server: "zen", Repo: "/fake/repo", Role: "reviewer"})
+	if err != nil {
+		t.Fatalf("Add(reader): %v", err)
+	}
+	if fr.createBindingReq.Role != "reviewer" {
+		t.Fatalf("CreateBindingRequest.Role = %q, want reviewer", fr.createBindingReq.Role)
+	}
+	if res.Binding.Shape != store.ShapeReader {
+		t.Fatalf("res.Binding.Shape = %q, want %q", res.Binding.Shape, store.ShapeReader)
+	}
+	stored, err := st.Load("review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Shape != store.ShapeReader || stored.Role != "reviewer" {
+		t.Fatalf("stored = (%q, %q), want (reader, reviewer)", stored.Shape, stored.Role)
 	}
 }
 

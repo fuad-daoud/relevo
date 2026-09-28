@@ -419,6 +419,10 @@ type RemoteClient interface {
 	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error)
 	RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
 	RoundFileFrom(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error)
+	// RoundArtifacts and RoundArtifact read a closed reader round's artifacts;
+	// a server that does not advertise remote.FeatureReaders answers 404.
+	RoundArtifacts(ctx context.Context, server, name string, round int) (remote.ArtifactList, error)
+	RoundArtifact(ctx context.Context, server, name string, round int, rel string) (io.ReadCloser, error)
 	RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
 	Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error)
 	Unavailable(ctx context.Context, server, name, token, reason string) error

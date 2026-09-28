@@ -8,12 +8,10 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -270,20 +268,23 @@ func applyDrift(rt Runtime, tx *store.Tx, name string, round int, data []byte) {
 }
 
 // catchUpFetch is the round-close download a fetch made without the lock: the
-// report, diff, log and stream files, and the bundle's outcome. The apply half
-// installs it under the lock with the steps the inline catch-up used to run.
+// report, diff, log and stream files -- a reader's artifacts in place of the
+// report and diff -- and the bundle's outcome. The apply half installs it
+// under the lock with the steps the inline catch-up used to run.
 type catchUpFetch struct {
-	Round         int    // view.ClosedRound
-	Abort         bool   // a non-404 read failed: the apply returns b unchanged (retry next tick)
-	ReportMissing bool   // RoundFile(report) answered 404
-	ReportTemp    string // temp file holding the report, "" if none
-	Diff          []byte // nil: none (404, or over cap -- logged at fetch as today)
-	Log           []byte // DB-form log body; nil: none
-	LogTemp       string // legacy-form log in a temp file, "" if none
-	StreamTemp    string // temp file holding the stream, "" if none
-	CheckedOut    bool   // absorb or adopted-branch update hit "checked out": quiet retry
-	AbsorbErr     error  // other absorb / UpdateRef failure: apply counts it (halt at 10)
-	Fatal         error  // RefSHA failure after absorb: apply returns it as today
+	Round         int               // view.ClosedRound
+	Abort         bool              // a non-404 read failed: the apply returns b unchanged (retry next tick)
+	ReportMissing bool              // RoundFile(report), or the listing's output, was absent
+	ReportTemp    string            // temp file holding the report or the reader's output, "" if none
+	Diff          []byte            // nil: none (404, or over cap -- logged at fetch as today)
+	Artifacts     []fetchedArtifact // reader artifacts awaiting the apply's rename
+	ArtifactCap   string            // non-empty: the listing was over the cap; the apply halts
+	Log           []byte            // DB-form log body; nil: none
+	LogTemp       string            // legacy-form log in a temp file, "" if none
+	StreamTemp    string            // temp file holding the stream, "" if none
+	CheckedOut    bool              // absorb or adopted-branch update hit "checked out": quiet retry
+	AbsorbErr     error             // other absorb / UpdateRef failure: apply counts it (halt at 10)
+	Fatal         error             // RefSHA failure after absorb: apply returns it as today
 }
 
 // release removes the fetch's temp files that no rename consumed. It is
@@ -298,43 +299,11 @@ func (cf *catchUpFetch) release() {
 			_ = os.Remove(path)
 		}
 	}
-}
-
-// is404 reports whether err is the server's answer that a round file does not
-// exist, which every read in the catch-up takes as "nothing to fetch".
-func is404(err error) bool {
-	var httpErr *client.HTTPError
-	return errors.As(err, &httpErr) && httpErr.Status == 404
-}
-
-// downloadTemp writes r into a new temp file beside final and returns its
-// path, leaving the rename into place to the apply half. A discarded fetch
-// removes it, so the final name never holds a file the apply did not accept.
-func downloadTemp(final string, r io.ReadCloser) (string, error) {
-	defer r.Close()
-	dir := filepath.Dir(final)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+	for _, a := range cf.Artifacts {
+		if a.Temp != "" {
+			_ = os.Remove(a.Temp)
+		}
 	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(final)+".fetch.*")
-	if err != nil {
-		return "", err
-	}
-	tmpName := tmp.Name()
-	if _, err := io.Copy(tmp, r); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return "", err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return "", err
-	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		_ = os.Remove(tmpName)
-		return "", err
-	}
-	return tmpName, nil
 }
 
 // checkedOut reports whether err is git's refusal to touch a branch that is
@@ -364,10 +333,20 @@ func fetchCatchUp(ctx context.Context, rt Runtime, b store.Binding, view remote.
 	return cf
 }
 
-// fetchCatchUpFiles downloads the round's report, diff, log and stream. It
-// reports whether the fetch should go on: false when a non-404 read failed
-// (Abort set, temps dropped) or when a missing report means the apply halts.
+// fetchCatchUpFiles downloads the round's report, diff, log and stream -- a
+// reader's artifacts instead of the report and diff. It reports whether the
+// fetch should go on: false when a non-404 read failed (Abort set, temps
+// dropped) or when a missing report means the apply halts.
 func fetchCatchUpFiles(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch) bool {
+	// A reader round has no report file and no diff: the round's output and
+	// every other file come from the artifact routes instead.
+	if b.Shape == store.ShapeReader {
+		if !fetchCatchUpArtifacts(ctx, rt, b, view, cf) ||
+			!fetchCatchUpLog(ctx, rt, b, view, cf) {
+			return false
+		}
+		return fetchCatchUpStream(ctx, rt, b, view, cf)
+	}
 	if !fetchCatchUpReport(ctx, rt, b, view, cf) ||
 		!fetchCatchUpDiff(ctx, rt, b, view, cf) ||
 		!fetchCatchUpLog(ctx, rt, b, view, cf) {
@@ -575,6 +554,12 @@ func fetchCatchUpBundle(ctx context.Context, rt Runtime, b store.Binding, view r
 func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, *catchUpAck, error) {
 	if cf.Abort {
 		return b, nil, nil
+	}
+	// A reader's listing was over the cap: nothing was downloaded, so the
+	// round asks for a human exactly as the client-side close does.
+	if cf.ArtifactCap != "" {
+		next, err := haltBinding(ctx, rt, b, cf.ArtifactCap)
+		return next, nil, err
 	}
 	if cf.ReportMissing && view.Stopped == "" {
 		next, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s closed round %d without a report file", b.Name, b.Builder.Server, view.ClosedRound))

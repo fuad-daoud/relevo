@@ -325,6 +325,10 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		// against its own actors, and the mirror records it so
 		// `relevo status` shows it (#382 §5.3).
 		Role: wireRole,
+		// The server's Shape decides how the round runs: "reader" for a
+		// reader binding, and "" from a server that predates the field, i.e.
+		// a writer.
+		Shape: view.Shape,
 		// rt.Git is guaranteed non-nil here (checked at the top of
 		// addRemote), and opts.Repo is the client's local checkout the
 		// branch and bundle are cut from -- the same "parent repo" concept
