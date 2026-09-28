@@ -72,6 +72,22 @@ func TestDiagnoseBuilderDerivesBothFacts(t *testing.T) {
 	}
 }
 
+// TestDiagnoseBuilderReadsTheShape pins that reader-ness comes from the
+// stored shape alone: an empty shape is a writer, exactly as it always was.
+func TestDiagnoseBuilderReadsTheShape(t *testing.T) {
+	t.Parallel()
+
+	if got := DiagnoseBuilder(store.Binding{Shape: store.ShapeReader}); !got.Reader {
+		t.Error("a reader binding must diagnose as a reader")
+	}
+	if got := DiagnoseBuilder(store.Binding{Shape: store.ShapeWriter}); got.Reader {
+		t.Error("a writer binding must not diagnose as a reader")
+	}
+	if got := DiagnoseBuilder(store.Binding{}); got.Reader {
+		t.Error("an empty shape is a writer and must not diagnose as a reader")
+	}
+}
+
 func TestBuilderDiagnosisDetail(t *testing.T) {
 	t.Parallel()
 
@@ -92,6 +108,12 @@ func TestBuilderDiagnosisDetail(t *testing.T) {
 			d:     BuilderDiagnosis{},
 			round: 3,
 			want:  "round 2 report delivered; nothing outstanding -- unless you want another round",
+		},
+		{
+			name:  "reader output delivered",
+			d:     BuilderDiagnosis{Reader: true},
+			round: 3,
+			want:  "round 2 output delivered; nothing outstanding -- unless you want another round",
 		},
 		{
 			name:  "never sent",

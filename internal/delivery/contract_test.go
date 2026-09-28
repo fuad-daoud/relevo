@@ -81,7 +81,7 @@ func TestContractPushText(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		text, ok := PushText(c.e, "webshop", read)
+		text, ok := PushText(c.e, store.Binding{Name: "webshop"}, read)
 		got := fmt.Sprintf("ok=%v\n%s", ok, text)
 		assertGolden(t, "push-"+c.name, []byte(got))
 	}

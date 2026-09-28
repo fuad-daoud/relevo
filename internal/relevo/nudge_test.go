@@ -77,6 +77,64 @@ func TestExitZeroWithoutReportResumesSessionOnce(t *testing.T) {
 	}
 }
 
+// switchNotes returns the notes of one binding's switch entries, so a test
+// whose binding is not switch_test.go's "webshop" can read them.
+func switchNotes(t *testing.T, rt Runtime, name string) []string {
+	t.Helper()
+	entries, err := rt.Store.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog(%s): %v", name, err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Kind == store.KindSwitch {
+			out = append(out, e.Note)
+		}
+	}
+	return out
+}
+
+// TestReaderNudgeNoteSaysWithoutAnOutput pins the reader arm of the nudge's
+// switch note: a reader writes no report, so its note takes the neutral
+// sentence word, while the writer's note keeps "without a report" (asserted by
+// TestExitZeroWithoutReportResumesSessionOnce's fixture, which is a writer).
+func TestReaderNudgeNoteSaysWithoutAnOutput(t *testing.T) {
+	t.Parallel()
+
+	rt, b := bindReader(t, readerRepo(t))
+	rt.Policy = orderOf("reviewer", testClaudeRef, testAgyRef)
+	fr, ok := rt.Runner.(*fakeRunner)
+	if !ok {
+		t.Fatalf("Runtime.Runner = %T, want *fakeRunner", rt.Runner)
+	}
+	b.Builder.StreamSessionID = "S1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+	if err := os.WriteFile(b.Builder.LogPath, []byte("starting\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := reconcile(t, at(rt, time.Minute), b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.specs) != 2 {
+		t.Fatalf("specs = %d, want 2 (the resume): a reader that ends its turn is nudged too", len(fr.specs))
+	}
+	sw := switchNotes(t, rt, "reader-bind")
+	if len(sw) != 1 || !strings.HasPrefix(sw[0], nudgeNotePrefix) {
+		t.Fatalf("switch notes = %+v, want one starting %q", sw, nudgeNotePrefix)
+	}
+	if !strings.Contains(sw[0], "(ended its turn without an output)") {
+		t.Errorf("switch note = %q, want it to carry %q", sw[0], "(ended its turn without an output)")
+	}
+	if strings.Contains(sw[0], "without a report") {
+		t.Errorf("switch note = %q: a reader's note must not say %q", sw[0], "without a report")
+	}
+}
+
 func TestSecondExitAfterNudgeSwitchesAsBefore(t *testing.T) {
 	t.Parallel()
 

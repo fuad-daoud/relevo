@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -67,6 +68,10 @@ func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
 				t.Errorf("spec.Env = %v, want it to contain %q", specs[0].Env, want)
 			}
 		}
+		want := append(append([]string{}, authorEnv...), "RELEVO_RUNNER=api")
+		if !reflect.DeepEqual(specs[0].Env, want) {
+			t.Errorf("spec.Env = %v, want exactly %v", specs[0].Env, want)
+		}
 	})
 
 	t.Run("no author", func(t *testing.T) {
@@ -78,8 +83,8 @@ func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
 		if len(specs) == 0 {
 			t.Fatal("round started no process")
 		}
-		if len(specs[0].Env) != 0 {
-			t.Errorf("spec.Env = %v, want nil or empty for a binding with no author", specs[0].Env)
+		if want := []string{"RELEVO_RUNNER=api"}; !reflect.DeepEqual(specs[0].Env, want) {
+			t.Errorf("spec.Env = %v, want exactly %v for a binding with no author", specs[0].Env, want)
 		}
 	})
 }

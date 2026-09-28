@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -30,14 +31,14 @@ import (
 // round's process is still running (headless spec §5.2). One process per
 // round is the model; two at once in one tree would race each other's
 // edits.
-var ErrBuilderBusy = errors.New("builder's previous process is still running; wait for its report, or relevo done")
+var ErrBuilderBusy = errors.New("the previous process is still running; wait for the round to close, or relevo done")
 
 // ErrReportPending reports a send refused because the current round already
 // has its completion marker or report on disk, but the daemon has not yet
 // ingested the close. The round is over: restaging its plan and starting a
 // second builder would make the daemon close on the stale marker and deliver
 // the old report. The caller retries once the report is delivered.
-var ErrReportPending = errors.New("the round's report is on disk but not yet delivered; relevo wait delivers it, then send the next plan")
+var ErrReportPending = errors.New("the round's output is on disk but not yet delivered; relevo wait delivers it, then send the next round")
 
 // ErrScopeActive reports a send refused because this round's systemd scope
 // unit is still loaded: a builder for the round is already alive, most
@@ -169,6 +170,16 @@ func builderEnv(b store.Binding) []string {
 	}
 }
 
+// roundEnv is the environment a round's process runs with: builderEnv's git
+// identity plus the marker naming the binding this process is a runner for. A
+// harness session relevo spawns for a round must not read itself as a
+// MasterMind or planner, so the marker is what its consent hooks go silent on.
+// The spawn appends the marker after the deny filter, so a stale RELEVO_RUNNER
+// in the daemon's own environment cannot shadow it. Pure.
+func roundEnv(b store.Binding) []string {
+	return append(builderEnv(b), mastermind.RunnerEnv+"="+b.Name)
+}
+
 // startRound starts the round's process for a headless binding and records
 // its handle on the endpoint (headless spec §4.3). The caller holds the
 // state lock, has staged the plan, and saves what comes back.
@@ -298,7 +309,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	}
 	spec := spawn.ProcSpec{
 		Dir: roundTree(rt, b), Argv: argv,
-		Env:        builderEnv(b),
+		Env:        roundEnv(b),
 		LogPath:    logPath,
 		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}
@@ -544,15 +555,16 @@ func clearProcess(e store.Endpoint) store.Endpoint {
 // codeText is the exit code, or "unknown" when the supervisor's trailer is
 // missing (killed, or the log unreadable). payload is the builder's last
 // logTailLines of evidence, computed by the caller with builderTail, for the
-// human; relevo reads nothing out of it.
-func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload string) store.LogEntry {
+// human; relevo reads nothing out of it. shape picks the word for the missing
+// artifact: a reader's is an output.
+func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload, shape string) store.LogEntry {
 	return store.LogEntry{
 		TS:        now,
 		Round:     round,
 		Direction: store.DirToMasterMind,
 		Kind:      store.KindExit,
 		Path:      logPath,
-		Note:      fmt.Sprintf("builder exited (code %s) without a report%s", codeText, suffix),
+		Note:      fmt.Sprintf("builder exited (code %s) %s%s", codeText, withoutArtifact(shape), suffix),
 		Payload:   payload,
 		Confirmed: true,
 	}
@@ -755,8 +767,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 		slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
 		payload := fmt.Sprintf(
-			"Builder exited (code %s) after writing its report but never confirmed completion (no %s). %s.",
-			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), closeClause(rt, b, b.Round))
+			"Builder exited (code %s) after writing its %s but never confirmed completion (no %s). %s.",
+			codeText, artifactNoun(rt, b), filepath.Base(rt.Store.DonePath(b.Name, b.Round)), closeClause(rt, b, b.Round))
 		if m.Line != "" {
 			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, availability.GateTimeText(m.Until))
 		}
@@ -801,7 +813,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		suffix += "; killed by systemd-oomd (host out of memory)"
 	}
 
-	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix, builderTail(rt, b, logTailLines))); err != nil {
+	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix, builderTail(rt, b, logTailLines), b.Shape)); err != nil {
 		return b, err
 	}
 	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
@@ -954,8 +966,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 	if isDenial {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
-			"%s: builder exited (code %s) without a report after a permission denial (%q); not switched -- re-send with a higher tier (relevo send --name %s --file <plan> --tier edit|yolo [--allow-yolo]) or extend the harness's allow list; log: %s",
-			b.Name, codeText, denialLine, b.Name, showCommand(b.Name, b.Round, "log")))
+			"%s: builder exited (code %s) %s after a permission denial (%q); not switched -- re-send with a higher tier (relevo send --name %s --file <plan> --tier edit|yolo [--allow-yolo]) or extend the harness's allow list; log: %s",
+			b.Name, codeText, withoutArtifact(b.Shape), denialLine, b.Name, showCommand(b.Name, b.Round, "log")))
 	}
 
 	// A builder that ended its turn cleanly without a report has left a
@@ -969,14 +981,14 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	if !switchable {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) without a report; see %s", b.Name, codeText, showCommand(b.Name, b.Round, "log")))
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) %s; see %s", b.Name, codeText, withoutArtifact(b.Shape), showCommand(b.Name, b.Round, "log")))
 	}
 	// The exclusion is appended to the b that switchBuilder receives so the
 	// replacement inherits it and the field is persisted with the switch
 	// (#191): a headless builder that exited without a report is excluded
 	// from the pick for the rest of this round.
 	b.RoundExcluded = appendUnique(b.RoundExcluded, b.BuilderCandidate)
-	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false, true)
+	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) %s", codeText, withoutArtifact(b.Shape)), false, true)
 }
 
 // readerFinalMessageGrace is how long a reader round whose marker is present

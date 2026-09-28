@@ -35,8 +35,15 @@ func TestMCPResolveKindAndMode(t *testing.T) {
 }
 
 // TestOpencodeSessionMasterMind pins the per-call resolver: a known session
-// yields its record's id, and a missing record's error names the fix.
+// yields its record's id, a missing record's error names the fix, and a nil
+// registry is refused instead of silently yielding no resolver.
 func TestOpencodeSessionMasterMind(t *testing.T) {
+	if resolve, err := opencodeSessionMasterMind(relevo.Runtime{}); err == nil {
+		t.Errorf("opencodeSessionMasterMind(nil registry) error = %v, want an error", err)
+	} else if resolve != nil {
+		t.Error("a nil registry must not yield a resolver")
+	}
+
 	reg := mastermindRegistryAt(t, t.TempDir())
 	rec, err := reg.Create(mastermind.Record{
 		ID: "mm_aaaaaaaaaaaa", Name: "opencode-1", HarnessKind: "opencode",
@@ -46,7 +53,10 @@ func TestOpencodeSessionMasterMind(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	resolve := opencodeSessionMasterMind(relevo.Runtime{MasterMinds: reg})
+	resolve, err := opencodeSessionMasterMind(relevo.Runtime{MasterMinds: reg})
+	if err != nil {
+		t.Fatalf("opencodeSessionMasterMind: %v", err)
+	}
 	if resolve == nil {
 		t.Fatal("a registry must yield a resolver")
 	}
@@ -58,5 +68,31 @@ func TestOpencodeSessionMasterMind(t *testing.T) {
 	_, err = resolve("ses_other")
 	if err == nil || !strings.Contains(err.Error(), "relevo mastermind enable --repo") {
 		t.Errorf("resolve(ses_other) error = %v, want it to name the fix", err)
+	}
+}
+
+// TestMCPVerbs pins the startup shape: an opencode server needs a mastermind
+// registry and is refused without one, while a Claude server stays tools-only
+// with no per-call resolver.
+func TestMCPVerbs(t *testing.T) {
+	if _, err := mcpVerbs(relevo.Runtime{}, "opencode", ""); err == nil || !strings.Contains(err.Error(), "no mastermind registry") {
+		t.Errorf("mcpVerbs(opencode, nil registry) error = %v, want it to name the registry", err)
+	}
+
+	reg := mastermindRegistryAt(t, t.TempDir())
+	v, err := mcpVerbs(relevo.Runtime{MasterMinds: reg}, "opencode", "")
+	if err != nil {
+		t.Fatalf("mcpVerbs(opencode, registry) error = %v", err)
+	}
+	if v.ResolveSession == nil {
+		t.Error("an opencode server with a registry must resolve tool-call sessions")
+	}
+
+	v, err = mcpVerbs(relevo.Runtime{}, "", "")
+	if err != nil {
+		t.Fatalf("mcpVerbs(Claude, nil registry) error = %v, want nil (tools-only startup unchanged)", err)
+	}
+	if v.ResolveSession != nil {
+		t.Error("a Claude server must not carry a per-call resolver")
 	}
 }

@@ -50,7 +50,7 @@ func retryBusy(ctx context.Context, delays []time.Duration, sleep func(time.Dura
 // verb did, and the helper `relevo wait` calls once its round has ended: the
 // CLI prints the result to stdout and the mastermind reads it as tool output.
 //
-// The text is PushText(entry, name, st.ReadFile): the stored payload (origin
+// The text is PushText(entry, <name's binding>, st.ReadFile): the stored payload (origin
 // line first) plus a blank line plus the report file's text, capped at
 // MaxPushBytes. found is false when nothing is pending.
 //
@@ -89,7 +89,7 @@ func pullPending(ctx context.Context, st *store.Store, name, route string) (text
 
 	// The file read happens outside the lock: no file I/O under the state
 	// lock.
-	text, _ = PushText(entry, name, st.ReadFile)
+	text, _ = PushText(entry, BindingFor(st, name), st.ReadFile)
 	return text, true, nil
 }
 
@@ -134,18 +134,18 @@ func PullPendingThrough(ctx context.Context, st *store.Store, name, route string
 	// The file reads happen outside the lock: no file I/O under the state
 	// lock, as pullPending does.
 	if len(pending) == 1 {
-		text, _ = PushText(pending[0].Entry, name, st.ReadFile)
+		text, _ = PushText(pending[0].Entry, BindingFor(st, name), st.ReadFile)
 		return text, true, nil
 	}
 
 	var b strings.Builder
 	for _, p := range pending[:len(pending)-1] {
 		fmt.Fprintf(&b, "── round %d: not delivered earlier (%s) ──\n", p.Entry.Round, p.Entry.Path)
-		earlier, _ := PushText(p.Entry, name, st.ReadFile)
+		earlier, _ := PushText(p.Entry, BindingFor(st, name), st.ReadFile)
 		b.WriteString(earlier)
 		b.WriteString("\n\n")
 	}
-	last, _ := PushText(pending[len(pending)-1].Entry, name, st.ReadFile)
+	last, _ := PushText(pending[len(pending)-1].Entry, BindingFor(st, name), st.ReadFile)
 	b.WriteString(last)
 	return b.String(), true, nil
 }

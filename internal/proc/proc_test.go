@@ -447,6 +447,44 @@ func TestStartStripsDeniedEnv(t *testing.T) {
 	}
 }
 
+// TestStartStripsMasterMindIdentityEnv: a child relevo spawns must never
+// inherit a MasterMind or planner identity from the daemon, and a stale
+// runner marker from the parent must not shadow the round's own. The child's
+// environment carries the round's marker exactly once.
+func TestStartStripsMasterMindIdentityEnv(t *testing.T) {
+	t.Setenv("RELEVO_MASTERMIND", "mm-parent")
+	t.Setenv("RELEVO_PLANNER", "planner-parent")
+	t.Setenv("RELEVO_RUNNER", "stale-round")
+	r := New()
+	dir := t.TempDir()
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "env"}, Env: []string{"RELEVO_RUNNER=api"},
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+
+	var markers []string
+	for _, line := range strings.Split(string(data), "\n") {
+		switch name, _, _ := strings.Cut(line, "="); name {
+		case "RELEVO_MASTERMIND", "RELEVO_PLANNER":
+			t.Errorf("child saw %q, want no inherited %s identity", line, name)
+		case "RELEVO_RUNNER":
+			markers = append(markers, line)
+		}
+	}
+	if want := []string{"RELEVO_RUNNER=api"}; !reflect.DeepEqual(markers, want) {
+		t.Errorf("child RELEVO_RUNNER entries = %v, want exactly %v", markers, want)
+	}
+}
+
 // A refused probe falls back rather than failing the Start: the first row's
 // scope is dropped, the second loses only AllowedCPUs.
 func TestStartFallsBackWhenProbeRefused(t *testing.T) {

@@ -46,7 +46,7 @@ func TestOutcomeWord(t *testing.T) {
 		{db.RoundRow{Outcome: db.OutcomeExited}, "exited", m.styles.Danger},
 		{db.RoundRow{Outcome: db.OutcomeHalted}, "halted", m.styles.Warn},
 		{db.RoundRow{Outcome: db.OutcomeSwitched}, "switched", m.styles.Warn},
-		{db.RoundRow{Outcome: db.OutcomeDoneNoReport}, "no report", m.styles.Faint},
+		{db.RoundRow{Outcome: db.OutcomeDoneNoReport}, "no output", m.styles.Faint},
 		{db.RoundRow{Outcome: db.OutcomeReported, ReportOutcome: p("done")}, "done", m.styles.Ok},
 		{db.RoundRow{Outcome: db.OutcomeReported, ReportOutcome: p("halted")}, "halted", m.styles.Warn},
 		{db.RoundRow{Outcome: db.OutcomeReported, ReportOutcome: p("blocked")}, "blocked", m.styles.Warn},

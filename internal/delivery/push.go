@@ -47,29 +47,43 @@ func findingsIDOf(path string) string {
 }
 
 // LogRef renders the `relevo show` command that prints e's full artifact, or
-// "" when e's kind names none (an edge's prompt file has no show section).
-func LogRef(name string, e store.LogEntry) string {
+// "" when e's kind names none (an edge's prompt file has no show section). A
+// reader's report kind is its output section; a writer's is its report.
+func LogRef(b store.Binding, e store.LogEntry) string {
 	switch e.Kind {
 	case store.KindReport:
-		return showCommand(name, e.Round, "report")
+		if b.Shape == store.ShapeReader {
+			return showCommand(b.Name, e.Round, "output")
+		}
+		return showCommand(b.Name, e.Round, "report")
 	case store.KindFindings:
 		if id := findingsIDOf(e.Path); id != "" {
-			return FindingsCommand(name, e.Round, id)
+			return FindingsCommand(b.Name, e.Round, id)
 		}
 	case store.KindDiff:
-		return showCommand(name, e.Round, "diff")
+		return showCommand(b.Name, e.Round, "diff")
 	case store.KindDrift:
-		return showCommand(name, e.Round, "drift")
+		return showCommand(b.Name, e.Round, "drift")
 	}
 	return ""
+}
+
+// BindingFor loads name from st, or answers a name-only binding when the store
+// cannot: the shape only picks a word, so a read failure must not change what a
+// push carries -- an unknown name words as a writer.
+func BindingFor(st *store.Store, name string) store.Binding {
+	if b, err := st.Load(name); err == nil {
+		return b
+	}
+	return store.Binding{Name: name}
 }
 
 // PushText returns the text a push path should carry for e: the stored
 // Payload (origin line included) for every kind that needs no file, and
 // Payload + blank line + the file's contents for the kinds whose Path
-// names a text artifact the mastermind would otherwise have to open. name is
-// the binding the entry belongs to, threaded so a truncated text can name
-// the `relevo show` command that prints the whole thing.
+// names a text artifact the mastermind would otherwise have to open. b is the
+// binding the entry belongs to, threaded so a truncated text can name the
+// `relevo show` command that prints the whole thing.
 //
 // ok reports whether an expansion happened. A read error is not a
 // delivery failure: PushText returns e.Payload and false, because an
@@ -77,7 +91,7 @@ func LogRef(name string, e store.LogEntry) string {
 //
 // The origin line stays the first line of the result in every case;
 // OpencodeDeliverer's confirmation query depends on it.
-func PushText(e store.LogEntry, name string, read func(string) ([]byte, error)) (string, bool) {
+func PushText(e store.LogEntry, b store.Binding, read func(string) ([]byte, error)) (string, bool) {
 	if e.Path == "" || !expandablePushKind(e.Kind) {
 		return e.Payload, false
 	}
@@ -87,7 +101,7 @@ func PushText(e store.LogEntry, name string, read func(string) ([]byte, error)) 
 		return e.Payload, false
 	}
 
-	ref := LogRef(name, e)
+	ref := LogRef(b, e)
 	if ref == "" {
 		// A kind with no show section (an edge's prompt file): fall back to
 		// the path rather than printing an empty reference.

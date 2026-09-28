@@ -17,6 +17,9 @@ type BuilderDiagnosis struct {
 	// RoundOpen reports that a round was handed to the builder and no report
 	// came back, so that round's work is unaccounted for.
 	RoundOpen bool
+	// Reader reports that the binding's actor only leaves artifacts, so the
+	// closed-round sentence names the neutral output word.
+	Reader bool
 }
 
 // DiagnoseBuilder derives the diagnosis for a binding. Pure.
@@ -26,6 +29,7 @@ type BuilderDiagnosis struct {
 func DiagnoseBuilder(b store.Binding) BuilderDiagnosis {
 	return BuilderDiagnosis{
 		RoundOpen: !b.RoundStartedAt.IsZero(),
+		Reader:    b.Shape == store.ShapeReader,
 	}
 }
 
@@ -39,7 +43,11 @@ func (d BuilderDiagnosis) Detail(round int) string {
 	case d.RoundOpen:
 		return fmt.Sprintf("round %d was open -- that work is unaccounted for; rebind and resend the round", round)
 	case round > 1:
-		return fmt.Sprintf("round %d report delivered; nothing outstanding -- unless you want another round", round-1)
+		word := "report"
+		if d.Reader {
+			word = "output"
+		}
+		return fmt.Sprintf("round %d %s delivered; nothing outstanding -- unless you want another round", round-1, word)
 	default:
 		return "no round has been sent yet; nothing outstanding -- unless you want to send one"
 	}
