@@ -556,6 +556,9 @@ func TestAgyDeliverOversizeSendsPointer(t *testing.T) {
 	if !strings.Contains(content, "/x/001-report.md") {
 		t.Errorf("content = %q, want it to name the report path", content)
 	}
+	if !strings.Contains(content, "The output is too long to push") {
+		t.Errorf("content = %q, want the output-oversize sentence", content)
+	}
 	if len(content) >= AgyMaxContent {
 		t.Errorf("content is %d bytes, want under AgyMaxContent (%d)", len(content), AgyMaxContent)
 	}

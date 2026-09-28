@@ -13,7 +13,7 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 - `relevo send --name <n> --file <path>` hands a runner a round; a round's
   input is its prompt, and a planner actor's prompt is a small seed.
 - `relevo wait --name <n> --timeout <budget>` waits for a round: 0 closes with
-  a report, 3 is NEEDS YOU -- ask the human, 4 is DONE.
+  the round's output, 3 is NEEDS YOU -- ask the human, 4 is DONE.
 - `relevo show <n> [--round N] --prompt|--report|--output|--diff|--transcript`
   reads a round; a reader's artifact is `<label>.md`, printed with `--output`.
 

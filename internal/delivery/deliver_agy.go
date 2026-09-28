@@ -333,9 +333,9 @@ func agyTitle(origin string) string {
 // when the entry names no show section.
 func agyOversizeContent(origin string, n int, ref string) string {
 	if ref == "" {
-		return fmt.Sprintf("%s\n\nThe report is too long to push (%d bytes); run relevo wait.", origin, n)
+		return fmt.Sprintf("%s\n\nThe output is too long to push (%d bytes); run relevo wait.", origin, n)
 	}
-	return fmt.Sprintf("%s\n\nThe report is too long to push (%d bytes). Read it: %s", origin, n, ref)
+	return fmt.Sprintf("%s\n\nThe output is too long to push (%d bytes). Read it: %s", origin, n, ref)
 }
 
 // agySendError returns the first line of a JSON error object send-message

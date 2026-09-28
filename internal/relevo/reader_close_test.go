@@ -560,3 +560,65 @@ func TestWriterRoundStillClosesOnMarker(t *testing.T) {
 		t.Fatalf("round = %d with a live runner and a marker, want the writer closed on the marker", got.Round)
 	}
 }
+
+// TestReaderMarkerCloseWithoutOutputSaysOutput closes a reader round whose
+// marker is present and whose stream carried no final message: the close
+// payload names the missing output, not the writer's missing report.
+func TestReaderMarkerCloseWithoutOutputSaysOutput(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got := reportEntryFor(t, rt, "reader-bind", 1)
+	if !strings.Contains(got.Payload, "but wrote no output.") {
+		t.Errorf("reader close payload = %q, want it to contain 'but wrote no output.'", got.Payload)
+	}
+}
+
+// TestReaderSentencesUseTheOutputWord pins the reader arms of the stored
+// sentences this round rewords: the exit note, the missing-artifact clause and
+// the nudge prompt -- while a writer's stay what they were.
+func TestReaderSentencesUseTheOutputWord(t *testing.T) {
+	t.Parallel()
+
+	if got := exitEntry(baseTime, 1, "/x/log", "0", "", "tail", store.ShapeReader).Note; got != "builder exited (code 0) without an output" {
+		t.Errorf("reader exit note = %q", got)
+	}
+	if got := exitEntry(baseTime, 1, "/x/log", "0", "", "tail", store.ShapeWriter).Note; got != "builder exited (code 0) without a report" {
+		t.Errorf("writer exit note = %q", got)
+	}
+	if got := withoutArtifact(store.ShapeReader); got != "without an output" {
+		t.Errorf("withoutArtifact(reader) = %q", got)
+	}
+	if got := outputWord(store.ShapeReader); got != "output" {
+		t.Errorf("outputWord(reader) = %q", got)
+	}
+
+	rt := newRuntime(t)
+	reader := store.Binding{Name: "reader-bind", Role: "reviewer", Shape: store.ShapeReader, Round: 1}
+	if got := artifactNoun(rt, reader); got != "findings" {
+		t.Errorf("artifactNoun(reader) = %q, want findings", got)
+	}
+	prompt := nudgePromptFor(rt, reader)
+	wantPath := rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings")
+	if !strings.Contains(prompt, "before writing your findings") || !strings.Contains(prompt, "write your findings to "+wantPath) {
+		t.Errorf("reader nudge = %q, want the findings label and its output path %s", prompt, wantPath)
+	}
+	if strings.Contains(prompt, rt.Store.ReportPath("reader-bind", 1)) {
+		t.Errorf("reader nudge names the writer's report path: %q", prompt)
+	}
+
+	writer := store.Binding{Name: "webshop", Round: 1}
+	if got := artifactNoun(rt, writer); got != "report" {
+		t.Errorf("artifactNoun(writer) = %q, want report", got)
+	}
+	if got := nudgePromptFor(rt, writer); !strings.Contains(got, "write the report to "+rt.Store.ReportPath("webshop", 1)) {
+		t.Errorf("writer nudge = %q, want the report path", got)
+	}
+}

@@ -156,6 +156,16 @@ func RenderMasterMindLine(name string, columns int) string {
 	return ansiDim + text + ansiReset + "\n"
 }
 
+// rowWord is the word a row uses for a delivered payload that produced an
+// artifact: "artifact" for a reader, "report" for a writer. Shape alone picks
+// it -- never a role name.
+func rowWord(b BindingStatus) string {
+	if b.Shape == store.ShapeReader {
+		return "artifact"
+	}
+	return "report"
+}
+
 // phase is the bare phase of a binding's last payload: the wording the middle
 // segment uses when it has to carry one. It ignores the note and the outcome,
 // because a delivered report states those in its status column instead.
@@ -168,7 +178,7 @@ func phase(b BindingStatus) string {
 	}
 	switch b.LastPayload.Kind {
 	case store.KindReport:
-		return "report in"
+		return rowWord(b) + " in"
 	case store.KindQuestion:
 		return "question in"
 	case store.KindAnswer:
@@ -184,7 +194,7 @@ func waiting(b BindingStatus) string {
 	base := phase(b)
 	if b.LastPayload != nil && b.LastPayload.Kind == store.KindReport {
 		if b.LastPayload.Note != "" {
-			base = fmt.Sprintf("report in (%s)", b.LastPayload.Note)
+			base = fmt.Sprintf("%s in (%s)", rowWord(b), b.LastPayload.Note)
 		}
 		if b.LastPayload.Outcome != "" && b.LastPayload.Outcome != reporttail.OutcomeDone {
 			base += " · " + b.LastPayload.Outcome
@@ -210,7 +220,7 @@ func rowStatus(b BindingStatus, needsYou, reportIn bool) (status, tone string) {
 	if reportIn && b.LastPayload != nil {
 		switch b.LastPayload.Kind {
 		case store.KindReport:
-			status = "REPORT IN"
+			status = strings.ToUpper(rowWord(b)) + " IN"
 			if b.LastPayload.Note != "" {
 				status += " · " + b.LastPayload.Note
 			}
@@ -355,6 +365,9 @@ type StatusLineRow struct {
 	// Actor is who runs the binding: b.Role when it is set, else "builder",
 	// because a builder binding stores an empty role (normRole).
 	Actor string `json:"actor"`
+	// Shape is the actor's shape, carried through from the status row:
+	// store.ShapeReader for a reader, empty for a writer.
+	Shape string `json:"shape,omitempty"`
 	// Status is the row's one status text (rowStatus), so no surface derives
 	// it again; Tone is the colour it takes.
 	Status string `json:"status"`
@@ -448,6 +461,7 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		LastTS:      lastTS,
 		Route:       b.MasterMindRoute,
 		Actor:       actor,
+		Shape:       b.Shape,
 		Status:      status,
 		Tone:        tone,
 		Reason:      reason,

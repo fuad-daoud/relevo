@@ -86,8 +86,8 @@ func DeliverPending(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) 
 
 	kind := b.MasterMind.Kind
 	if del, ok := d.Deliverers[kind]; ok && kind != "" {
-		text, _ := PushText(pending, b.Name, d.Store.ReadFile)
-		out, reason, err := del.Deliver(ctx, b.MasterMind, text, LogRef(b.Name, pending), pending.TS)
+		text, _ := PushText(pending, b, d.Store.ReadFile)
+		out, reason, err := del.Deliver(ctx, b.MasterMind, text, LogRef(b, pending), pending.TS)
 		if err != nil {
 			return b, Delivery{}, fmt.Errorf("deliver to mastermind: %w", err)
 		}

@@ -209,8 +209,8 @@ func TestRemoteReaderCatchUpMissingOutputHalts(t *testing.T) {
 	if got.State != store.StateNeedsYou {
 		t.Fatalf("state = %s, want needs_you", got.State)
 	}
-	if !strings.Contains(got.Halt, "closed round 1 without a report file") {
-		t.Errorf("Halt = %q, want the reportless-close text", got.Halt)
+	if !strings.Contains(got.Halt, "closed round 1 without its findings file") {
+		t.Errorf("Halt = %q, want the reader's missing-output text", got.Halt)
 	}
 }
 

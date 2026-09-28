@@ -51,6 +51,10 @@ type BindingStatus struct {
 	// Role is the actor the runner plays; always present, "builder" when the
 	// binding stores the empty (builder) one.
 	Role string `json:"actor"`
+	// Shape is the actor's shape: store.ShapeReader for a reader, empty for a
+	// writer, so a writer's document keeps every key it always had. A consumer
+	// reads an absent shape as a writer.
+	Shape string `json:"shape,omitempty"`
 	// MasterMindID and MasterMindName name the relevo mastermind record this binding
 	// belongs to.
 	MasterMindID   string `json:"mastermind_id,omitempty"`

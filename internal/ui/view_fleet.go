@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -51,11 +52,21 @@ func reportReady(b view.BindingStatus) bool {
 	return b.MasterMindName == "you" && b.Pending != nil
 }
 
+// artifactWord is the word a cockpit row uses for a delivered artifact:
+// "artifact" for a reader, "report" for a writer. The shape picks it, never a
+// role name.
+func artifactWord(b view.BindingStatus) string {
+	if b.Shape == store.ShapeReader {
+		return "artifact"
+	}
+	return "report"
+}
+
 // whatAge is a row's NOW cell: what the binding is on, and for how long,
 // from the fields Status has today.
 func whatAge(b view.BindingStatus, now time.Time) (what, age string) {
 	if reportReady(b) {
-		what = "report ready"
+		what = artifactWord(b) + " ready"
 		if b.Last != nil {
 			age = ago(b.Last.TS, now)
 		}

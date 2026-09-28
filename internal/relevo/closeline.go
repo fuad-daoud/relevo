@@ -28,6 +28,35 @@ func closeClause(rt Runtime, b store.Binding, round int) string {
 	return artifactClause(b.Shape, readerOutputLabel(rt, b), b.Name, round)
 }
 
+// outputWord is the bare noun a sentence uses for the artifact a round wrote:
+// "output" for a reader, "report" for a writer.
+func outputWord(shape string) string {
+	if shape == store.ShapeReader {
+		return "output"
+	}
+	return "report"
+}
+
+// withoutArtifact is the clause a sentence uses for the artifact that was not
+// written: "without an output" for a reader, "without a report" for a writer.
+// The reader's word is neutral because its output label ("findings") does not
+// agree with the clause.
+func withoutArtifact(shape string) string {
+	if shape == store.ShapeReader {
+		return "without an output"
+	}
+	return "without a report"
+}
+
+// artifactNoun is the noun a stored sentence uses for b's artifact: the
+// reader's resolved output label, or "report" for a writer.
+func artifactNoun(rt Runtime, b store.Binding) string {
+	if b.Shape == store.ShapeReader {
+		return readerOutputLabel(rt, b)
+	}
+	return "report"
+}
+
 // titleFirst upper-cases the first byte of s. The empty string stays empty.
 // Actor names from agentsrc match [a-z][a-z0-9-]{0,23}, so ASCII is enough.
 func titleFirst(s string) string {

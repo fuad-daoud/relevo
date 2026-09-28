@@ -12,11 +12,11 @@ a distraction from your current task, it is the next step of it.
 Event kinds, from the block's kind attribute:
 
   - kind="report": a runner's round closed. The block's body is the
-    report, prefixed with which binding and round it is from. A very large
-    report is cut short, and the block ends with a line naming the
+    output, prefixed with which binding and round it is from. A very large
+    output is cut short, and the block ends with a line naming the
     relevo show command that prints it in full. Run the project's check
     command and compare the diff against the plan before calling done -- do
-    not call done on the report's arrival alone.
+    not call done on the output's arrival alone.
   - kind="state" state="needs_you": a binding is stalled on a human
     decision (a repeated failure, an ambiguous plan). Read the body's
     reason, then run relevo status --name <binding> and decide: gate, or
@@ -51,25 +51,25 @@ turn. The send tool's result carries the exact command; it looks like this:
 
 Run that with the Bash tool's run_in_background, then end your turn. Claude
 Code re-invokes you when the command exits, with its output in the new turn.
-The wait's output is the report text -- the same payload a channel event would
-have carried -- and it marks the entry delivered. An unmarked or halted
-round's report is printed by relevo wait too.
+The wait's output is the round's output text -- the same payload a channel event
+would have carried -- and it marks the entry delivered. An unmarked or halted
+round's output is printed by relevo wait too.
 
 Act on the wait's output after every wait exit except WaitTimeout.
 
-  - Report text: a runner's round closed. Run the project's check command
+  - Output text: a runner's round closed. Run the project's check command
     and compare the diff against the plan before calling done -- do not call
-    done on the report's arrival alone.
+    done on the output's arrival alone.
   - A needs-you outcome: relevo wait's own line gives the reason; run
     relevo status --name <binding> and decide: send the next round,
     gate, or stop.
   - WaitTimeout (the round is still running): run
     relevo status --name <binding>, and start the background wait again if
     the round is still open.
-  - An outcome line with no report text: another route already delivered the
-    report; nothing is owed.
+  - An outcome line with no output text: another route already delivered the
+    output; nothing is owed.
 
-A report or a needs_you for a binding you did not personally send still
+An output or a needs_you for a binding you did not personally send still
 belongs to you -- every binding on this MasterMind is yours. Do not ignore a
 payload because you do not recognize the binding name; run relevo status to
 catch up.
@@ -87,18 +87,18 @@ is not a tool here; run it with Bash.
 `
 
 // InstructionsOpencode is the model-facing prelude for an OpenCode MasterMind.
-// Reports arrive as new turns pushed by relevo's opencode deliverer; there is
+// Outputs arrive as new turns pushed by relevo's opencode deliverer; there is
 // no wait to start, and the tools are the three verbs.
-const InstructionsOpencode = `relevo is running as your tools server. Reports and needs-you payloads arrive
+const InstructionsOpencode = `relevo is running as your tools server. Outputs and needs-you payloads arrive
 as new turns in this session, pushed by relevo itself: after a send, end your
-turn and the report comes on its own. Do not start a wait.
+turn and the output comes on its own. Do not start a wait.
 
-Act on a report as soon as it arrives: run the project's check command and
+Act on an output as soon as it arrives: run the project's check command and
 compare the diff against the plan before calling done -- do not call done on
-the report's arrival alone. A needs-you turn gives the reason; call
+the output's arrival alone. A needs-you turn gives the reason; call
 relevo_status and decide: send the next round, gate, or stop.
 
-A report or a needs_you for a binding you did not personally send still
+An output or a needs_you for a binding you did not personally send still
 belongs to you -- every binding on this MasterMind is yours. Do not ignore a
 turn because you do not recognize the binding name; call relevo_status to
 catch up.

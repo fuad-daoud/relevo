@@ -35,6 +35,9 @@ type StopResult struct {
 	Round  int
 	Action string        // "killed" | "reaped" | "gone" | "dequeued" | "nothing"
 	Grace  time.Duration // always zero since #303; the pane wrap-up is gone
+	// Shape is the stopped binding's shape, so StopText can word the close
+	// without a second store read.
+	Shape string
 }
 
 // stopAction is what a binding's stop bookkeeping implies should happen next.
@@ -116,6 +119,7 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 			}
 
 			out.Round = b.Round
+			out.Shape = b.Shape
 			out.Action = view.Stopped
 			if out.Action == "" {
 				out.Action = "killed"
@@ -135,6 +139,7 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 		}
 
 		out.Round = b.Round
+		out.Shape = b.Shape
 
 		how := ""
 		switch stopDecision(b, rt.Now().UTC()) {
@@ -220,13 +225,14 @@ func stopOpenRound(ctx context.Context, rt Runtime, b store.Binding) (killed, re
 // stopPayload is the report payload and note a stopped close writes, local or
 // remote. how names the close ("killed", "reaped", "gone" or "dequeued"),
 // where is "" for a local stop and " on <server>" for a remote one,
-// haveReport says whether a report file was on disk, and clause is the
-// artifact clause closeClause resolved for the close's binding. Pure.
-func stopPayload(how, name string, round int, where string, haveReport bool, clause string) (payload, note string) {
+// haveReport says whether a report file was on disk, clause is the artifact
+// clause closeClause resolved for the close's binding, and shape picks the
+// noun the missing-artifact arm names. Pure.
+func stopPayload(how, name string, round int, where string, haveReport bool, clause, shape string) (payload, note string) {
 	if haveReport {
 		return fmt.Sprintf("The runner was stopped (%s) for round %d%s. %s", how, round, where, clause), "stopped"
 	}
-	return fmt.Sprintf("The runner was stopped (%s) for round %d%s; no report was written.", how, round, where), "noreport stopped"
+	return fmt.Sprintf("The runner was stopped (%s) for round %d%s; no %s was written.", how, round, where, outputWord(shape)), "noreport stopped"
 }
 
 // closeStopped closes an open round whose builder was stopped (#138): the
@@ -253,7 +259,7 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	if _, err := os.Stat(reportPath); err == nil {
 		haveReport = true
 	}
-	payload, note := stopPayload(how, b.Name, stoppedRound, "", haveReport, closeClause(rt, b, stoppedRound))
+	payload, note := stopPayload(how, b.Name, stoppedRound, "", haveReport, closeClause(rt, b, stoppedRound), b.Shape)
 
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "")
 	if err != nil {
