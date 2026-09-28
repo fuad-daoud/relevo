@@ -42,7 +42,11 @@ type Report struct {
 	Features     []GroupRow // only rows with a Feature; empty when none
 	// NoFeature is the "(none)" bucket; zero when every row has a feature.
 	NoFeature GroupRow
-	Outcomes  Outcomes
+	// Tickets is only rows with a Ticket; empty when none.
+	Tickets []GroupRow
+	// NoTicket is the "(none)" bucket; zero when every row has a ticket.
+	NoTicket GroupRow
+	Outcomes Outcomes
 }
 
 type TokenCounts struct {
@@ -121,6 +125,10 @@ func Build(in Inputs) Report {
 	rep.Features = groupRows(in, rows, featureKey)
 	if none := groupRows(in, rows, noFeatureKey); len(none) > 0 {
 		rep.NoFeature = none[0]
+	}
+	rep.Tickets = groupRows(in, rows, ticketKey)
+	if none := groupRows(in, rows, noTicketKey); len(none) > 0 {
+		rep.NoTicket = none[0]
 	}
 	rep.Outcomes = buildOutcomes(rows)
 	return rep

@@ -20,7 +20,7 @@ func TestBindingZeroValueOmitsOptionalKeys(t *testing.T) {
 	}{
 		{"empty binding", func() Binding { return Binding{} }, []string{"round_closed_tree", "round_switches"}},
 		{"no consults", func() Binding { return newBinding("webshop", "/repo") }, []string{"consults", "consult_cap"}},
-		{"no repo ref or feature", func() Binding { return newBinding("webshop", "/repo") }, []string{"repo_ref", "feature", "transcript_locator"}},
+		{"no repo ref or feature", func() Binding { return newBinding("webshop", "/repo") }, []string{"repo_ref", "feature", "ticket", "transcript_locator"}},
 		{"no commit facts", func() Binding { return Binding{} }, []string{"branch", "base", "round_baseline_head"}},
 		{"no headless endpoint fields", func() Binding {
 			return Binding{Builder: Endpoint{AgentName: "b", PaneID: "w1:p2", Kind: "opencode"}}
@@ -53,6 +53,7 @@ func bindingWithRepoRef() Binding {
 	b := newBinding("webshop", "/repo")
 	b.RepoRef = &RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
 	b.Feature = "auth"
+	b.Ticket = "o/r#607"
 	b.MasterMind.TranscriptLocator = "/home/x/.claude/projects/slug/S.jsonl"
 	return b
 }
@@ -93,7 +94,7 @@ func TestBindingFieldGroupsRoundTrip(t *testing.T) {
 			build: func() Binding { return Binding{Branch: "relevo/api-auth", Base: "c0ffee", RoundBaselineHead: "beef"} },
 			want:  []string{`"branch"`, `"base"`, `"round_baseline_head"`},
 		},
-		{"repo ref, feature and transcript locator", bindingWithRepoRef, []string{`"repo_ref"`, `"feature"`, `"transcript_locator"`}},
+		{"repo ref, feature and transcript locator", bindingWithRepoRef, []string{`"repo_ref"`, `"feature"`, `"ticket"`, `"transcript_locator"`}},
 		{"a consult and its cap", bindingWithConsult, []string{`"consults"`, `"consult_cap"`}},
 	}
 
@@ -238,6 +239,96 @@ func TestValidFeature(t *testing.T) {
 			}
 			if !c.valid && err == nil {
 				t.Errorf("ValidFeature(%q) = nil, want an error", c.in)
+			}
+		})
+	}
+}
+
+func TestValidTicket(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    string
+		valid bool
+	}{
+		{"bare number", "#607", true},
+		{"owner repo number", "o/r#607", true},
+		{"dots underscores dashes", "a.b_c-d/e.f_g-h#1", true},
+		{"nine digits", "#123456789", true},
+		{"empty", "", false},
+		{"no hash", "607", false},
+		{"no number", "o/r#", false},
+		{"leading zero", "#0607", false},
+		{"ten digits", "#1234567890", false},
+		{"non-digit number", "#a1", false},
+		{"repo without owner", "r#607", false},
+		{"spaces in repo", "o/r r#607", false},
+		{"too long number", "#" + strings.Repeat("1", 10), false},
+		{"over 128 bytes", strings.Repeat("a", 100) + "/" + strings.Repeat("b", 100) + "#607", false},
+		{"hash in middle", "#1#2", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := ValidTicket(c.in)
+			if c.valid && err != nil {
+				t.Errorf("ValidTicket(%q) = %v, want nil", c.in, err)
+			}
+			if !c.valid && err == nil {
+				t.Errorf("ValidTicket(%q) = nil, want an error", c.in)
+			}
+		})
+	}
+}
+
+func TestParseTicket(t *testing.T) {
+	cases := []struct {
+		name      string
+		raw       string
+		ownerRepo string
+		want      string
+		wantErr   bool
+	}{
+		{"bare number, no hint", "607", "", "#607", false},
+		{"bare number, hint", "607", "o/r", "o/r#607", false},
+		{"hash number, no hint", "#607", "", "#607", false},
+		{"hash number, hint", "#607", "o/r", "o/r#607", false},
+		{"typed repo", "o/r#607", "", "o/r#607", false},
+		{"typed repo ignores hint", "o/r#607", "other/repo", "o/r#607", false},
+		{
+			name: "issue URL",
+			raw:  "https://github.com/o/r/issues/607",
+			want: "o/r#607",
+		},
+		{
+			name: "issue URL trailing slash",
+			raw:  "https://github.com/o/r/issues/607/",
+			want: "o/r#607",
+		},
+		{
+			name:      "issue URL ignores hint",
+			raw:       "https://github.com/o/r/issues/607",
+			ownerRepo: "other/repo",
+			want:      "o/r#607",
+		},
+		{"leading zero", "#0607", "", "", true},
+		{"empty", "", "o/r", "", true},
+		{"non-numeric", "o/r#abc", "", "", true},
+		{"bad hint", "607", "not-a-repo", "", true},
+		{"bare word", "ticket", "", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ParseTicket(c.raw, c.ownerRepo)
+			if c.wantErr {
+				if err == nil {
+					t.Errorf("ParseTicket(%q, %q) = %q, want an error", c.raw, c.ownerRepo, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseTicket(%q, %q) = %v", c.raw, c.ownerRepo, err)
+			}
+			if got != c.want {
+				t.Errorf("ParseTicket(%q, %q) = %q, want %q", c.raw, c.ownerRepo, got, c.want)
 			}
 		})
 	}

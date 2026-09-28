@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -37,7 +38,7 @@ const newBindingJSON = `{
 
 // TestBindingDecodesFormat6Record pins the lazy decode: a format-6 record with
 // the pre-A4 keys yields the same Go values as one with the new keys, and
-// re-encoding it writes only the new keys, at format 9.
+// re-encoding it writes only the new keys, at the current format.
 func TestBindingDecodesFormat6Record(t *testing.T) {
 	got, want := decodeLegacyAndNewBinding(t)
 	if !reflect.DeepEqual(got, want) {
@@ -84,7 +85,7 @@ func assertBindingReEncodesNewKeys(t *testing.T, got Binding) {
 		t.Fatalf("Save: %v", err)
 	}
 	raw := bindingRecordJSON(t, s, "webshop")
-	for _, wantKey := range []string{`"format":9`, `"shape":"writer"`, `"runner":`, `"candidate":"opencode/openai/gpt-4o"`, `"actor":"designer"`, `"runner_missing_since":`, `"runner_screen":`, `"runner_screen_at":`, `"actor":"reviewer"`} {
+	for _, wantKey := range []string{fmt.Sprintf(`"format":%d`, BindingFormat), `"shape":"writer"`, `"runner":`, `"candidate":"opencode/openai/gpt-4o"`, `"actor":"designer"`, `"runner_missing_since":`, `"runner_screen":`, `"runner_screen_at":`, `"actor":"reviewer"`} {
 		if !bytes.Contains(raw, []byte(wantKey)) {
 			t.Errorf("re-encoded record lacks %s:\n%s", wantKey, raw)
 		}

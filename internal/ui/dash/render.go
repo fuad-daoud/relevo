@@ -623,6 +623,8 @@ func (m Model) groupKeyLabel(key string) string {
 			return "(no repo)"
 		case histq.AxisFeature:
 			return "(no feature)"
+		case histq.AxisTicket:
+			return "(no ticket)"
 		default:
 			return "(none)"
 		}

@@ -131,6 +131,7 @@ func TestGroupAxisKeys(t *testing.T) {
 		{AxisBinding, []string{"api", "infra", "web"}},
 		{AxisRepo, []string{fxRepoAPI, fxRepoWeb}},
 		{AxisFeature, []string{"checkout", "search"}},
+		{AxisTicket, []string{"-", "#42", "o/r#607"}},
 		{AxisCandidate, []string{fxBuilderAgy, fxBuilderClaude, fxBuilderOpencode}},
 		{AxisHarness, []string{"agy", "claude", "opencode"}},
 		{AxisProvider, []string{"antigravity", "anthropic", "openai"}},

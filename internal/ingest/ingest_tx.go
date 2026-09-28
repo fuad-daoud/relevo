@@ -133,6 +133,7 @@ func (r *ingestRun) upsertBinding(tx *db.Tx, repoID, mastermindID *string, log l
 		RepoID:              repoID,
 		MasterMindID:        mastermindID,
 		Feature:             nonEmptyPtr(r.b.Feature),
+		Ticket:              nonEmptyPtr(r.b.Ticket),
 		ForkedFromBindingID: forkedFromBindingID,
 		ForkedFromRound:     forkedFromRound,
 		CWD:                 r.b.CWD,

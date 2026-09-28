@@ -167,6 +167,8 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		RoundCap:       b.RoundCap,
 		RoundTimeoutMS: b.RoundTimeoutMS,
 		Tier:           string(effectiveTier(b)),
+		Feature:        b.Feature,
+		Ticket:         b.Ticket,
 		Usage:          reportUsage,
 		PriorTokens:    priorTokens,
 		Rusage:         reportRusage,

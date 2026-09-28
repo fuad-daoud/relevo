@@ -4,9 +4,12 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 
 ## Using relevo
 
-- `relevo bind [--worktree] --name <n>` starts a fresh runner on the current
-  tree or its own git worktree; `relevo status` shows what is bound and what it
-  is doing.
+- `relevo bind [--worktree] --name <n> --feature <label>|--no-feature
+  [--ticket <ref>]` starts a fresh runner on the current tree or its own git
+  worktree; a fresh bind must name exactly one of `--feature`/`--no-feature`,
+  and `--ticket` names the issue it serves (a number, `#N`, `owner/repo#N` or
+  an issue URL, with or without a feature). `relevo status` shows what is bound
+  and what it is doing.
 - `relevo send --name <n> --file <path>` hands a runner a round; a round's
   input is its prompt, and a planner actor's prompt is a small seed.
 - `relevo wait --name <n> --timeout <budget>` waits for a round: 0 closes with
@@ -30,5 +33,6 @@ This is the guide to relevo, the tool that hands work between you and a runner.
   limit: relevo switches and resends; `relevo gate --clear <provider>` when it
   lifts.
 - `relevo stop <name>` ends an open round.
-- `relevo bind --resume --name <n>` restores a released worktree.
+- `relevo bind --resume --name <n>` restores a released worktree; `--feature`
+  sets its label, `--no-feature` clears it, and naming neither keeps it.
 - A binding that says NEEDS YOU is waiting on a human.

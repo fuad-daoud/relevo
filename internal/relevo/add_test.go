@@ -737,3 +737,33 @@ func TestAddRefusesUnsupportedTierBeforeWorktree(t *testing.T) {
 		t.Errorf("binding must not exist, got %v", err)
 	}
 }
+
+// TestAddStoresTicketWithRepoHint pins #637's local add half: Add parses
+// --ticket once against opts.Repo, so the binding carries the canonical form.
+func TestAddStoresTicketWithRepoHint(t *testing.T) {
+	t.Parallel()
+
+	fg := &fakeGit{headCommitID: "commit-head-123", repoFactsOrigin: "git@github.com:o/r.git"}
+	rt := newTestRuntime(t, fg)
+
+	got, err := Add(context.Background(), rt, AddOptions{
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName,
+		Repo: addRepo(t), Feature: "auth", Ticket: "607",
+	})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if got.Binding.Ticket != "o/r#607" {
+		t.Errorf("Ticket = %q, want o/r#607", got.Binding.Ticket)
+	}
+	if got.Binding.Feature != "auth" {
+		t.Errorf("Feature = %q, want auth", got.Binding.Feature)
+	}
+	stored, err := rt.Store.Load("frontend")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.Ticket != "o/r#607" {
+		t.Errorf("stored Ticket = %q, want o/r#607", stored.Ticket)
+	}
+}

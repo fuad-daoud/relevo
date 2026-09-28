@@ -2517,7 +2517,7 @@ func TestStatsReposNoFeatureRow(t *testing.T) {
 
 	t.Run("last row and detail", func(t *testing.T) {
 		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos}
-		_, features := v.repoTabRows()
+		_, features, _ := v.repoTabRows()
 		if len(features) == 0 || features[len(features)-1].Key != "(none)" {
 			t.Fatalf("features = %+v, want a last (none) row", features)
 		}
@@ -2554,7 +2554,7 @@ func TestStatsReposNoFeatureRow(t *testing.T) {
 		rep2.Features = nil
 		rep2.NoFeature = stats.GroupRow{Key: "(none)", Rounds: 5, Tokens: 500_000}
 		v := statsView{window: "30d", loaded: true, rep: rep2, tab: statsTabRepos}
-		_, features := v.repoTabRows()
+		_, features, _ := v.repoTabRows()
 		if len(features) != 0 {
 			t.Fatalf("features = %+v, want none when Features is empty", features)
 		}
@@ -2782,4 +2782,105 @@ func TestStatsGateReasonHTTPStatus(t *testing.T) {
 			t.Errorf("statsGateReason(%q) = %q, want %q", c.note, got, c.want)
 		}
 	}
+}
+
+// TestStatsReposTicketRows pins #637: a report with Tickets gets a TICKET
+// table under the features one, a last (no ticket) row for the unlabelled
+// bucket, and the three tables share one cursor.
+func TestStatsReposTicketRows(t *testing.T) {
+	rep := statsFixture()
+	rep.Tickets = []stats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
+	rep.NoTicket = stats.GroupRow{Key: "(none)", Rounds: 4, Tokens: 400_000}
+
+	t.Run("table and detail", func(t *testing.T) {
+		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos}
+		repos, features, tickets := v.repoTabRows()
+		if len(tickets) != 2 || tickets[len(tickets)-1].Key != "(none)" {
+			t.Fatalf("tickets = %+v, want o/r#607 then a last (none) row", tickets)
+		}
+		v.focus = 1
+		if v.panelRows() != len(repos)+len(features)+len(tickets) {
+			t.Fatalf("panelRows = %d, want the three tables' rows together", v.panelRows())
+		}
+
+		body := stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60))
+		if !strings.Contains(body, "   TICKET") {
+			t.Errorf("repos tab missing the TICKET header:\n%s", body)
+		}
+		if !strings.Contains(body, "o/r#607") {
+			t.Errorf("repos tab missing the ticket row:\n%s", body)
+		}
+		if !strings.Contains(body, "(no ticket)") {
+			t.Errorf("repos tab missing the (no ticket) row:\n%s", body)
+		}
+
+		// The last row is the (no ticket) bucket, and its detail names it.
+		v.cursor[1] = len(repos) + len(features) + 1
+		lines, sel := v.reposTabLines(statsTestEnv(t, 132, 60), 132)
+		if sel < 0 || sel >= len(lines) {
+			t.Fatalf("sel = %d, want a line in the (no ticket) block", sel)
+		}
+		first := stripANSI(lines[len(lines)-3])
+		if !strings.Contains(first, "(no ticket)") {
+			t.Errorf("(no ticket) detail line 1 = %q, want it to name the bucket\n%s", first, strings.Join(lines, "\n"))
+		}
+	})
+
+	t.Run("enter opens the ticket filter", func(t *testing.T) {
+		m := statsShell(t, 160, 40, "30d")
+		res, _ := m.Update(statsMsg{window: "30d", rep: rep})
+		m = res.(Model)
+		res, _ = m.Update(statsKey('5'))
+		m = res.(Model)
+		// Two repos, the fixture's one feature, then the first ticket row.
+		for i := 0; i < 3; i++ {
+			res, _ = m.Update(statsKey('j'))
+			m = res.(Model)
+		}
+		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = drain(t, res.(Model), cmd)
+		rv, ok := m.top().(roundsView)
+		if !ok {
+			t.Fatalf("enter on the ticket row must push a rounds view, got %T", m.top())
+		}
+		if got, want := rv.dash.QueryText(), `ticket:"o/r#607" since:30d`; got != want {
+			t.Errorf("QueryText = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("no-ticket row notices", func(t *testing.T) {
+		m := statsShell(t, 160, 40, "30d")
+		res, _ := m.Update(statsMsg{window: "30d", rep: rep})
+		m = res.(Model)
+		res, _ = m.Update(statsKey('5'))
+		m = res.(Model)
+		for i := 0; i < 4; i++ {
+			res, _ = m.Update(statsKey('j'))
+			m = res.(Model)
+		}
+		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = drain(t, res.(Model), cmd)
+		if _, ok := m.top().(roundsView); ok {
+			t.Fatal("the (no ticket) row must not push a rounds view")
+		}
+		if !strings.Contains(m.notice, "rounds with no ticket cannot be filtered") {
+			t.Errorf("notice = %q", m.notice)
+		}
+	})
+
+	t.Run("no tickets means no table", func(t *testing.T) {
+		rep2 := statsFixture()
+		v := statsView{window: "30d", loaded: true, rep: rep2, tab: statsTabRepos}
+		_, _, tickets := v.repoTabRows()
+		if len(tickets) != 0 {
+			t.Fatalf("tickets = %+v, want none when Tickets is empty", tickets)
+		}
+		body := stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60))
+		if strings.Contains(body, "TICKET") {
+			t.Errorf("repos tab shows a TICKET header with no tickets:\n%s", body)
+		}
+		if strings.Contains(body, "(no ticket)") {
+			t.Errorf("repos tab shows (no ticket) with no tickets table:\n%s", body)
+		}
+	})
 }

@@ -189,22 +189,22 @@ func TestStoredFormat(t *testing.T) {
 	}
 }
 
-// TestSaveWritesFormat9 pins that every record carries the A5 format, so an
-// older relevo refuses it rather than erasing the shape key.
-func TestSaveWritesFormat9(t *testing.T) {
+// TestSaveWritesCurrentFormat pins that every record carries the current
+// format, so an older relevo refuses it rather than erasing the shape key.
+func TestSaveWritesCurrentFormat(t *testing.T) {
 	s := New(t.TempDir())
 	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	raw := bindingRecordJSON(t, s, "webshop")
-	if !bytes.Contains(raw, []byte(`"format":9`)) {
-		t.Errorf("a binding must carry format 9:\n%s", raw)
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format":%d`, BindingFormat))) {
+		t.Errorf("a binding must carry format %d:\n%s", BindingFormat, raw)
 	}
 }
 
 // TestBindingShapeDefaultsToWriter pins the shape rule: a record with no shape
 // key (format 8 and earlier) decodes as a writer, because a reader could not be
-// bound then, and a record written now names its shape at format 9.
+// bound then, and a record written now names its shape at the current format.
 func TestBindingShapeDefaultsToWriter(t *testing.T) {
 	var old Binding
 	if err := json.Unmarshal([]byte(`{"format":8,"name":"old","cwd":"/repo","actor":"builder"}`), &old); err != nil {
@@ -222,8 +222,8 @@ func TestBindingShapeDefaultsToWriter(t *testing.T) {
 	if !bytes.Contains(raw, []byte(`"shape":"writer"`)) {
 		t.Errorf("a binding must carry shape \"writer\":\n%s", raw)
 	}
-	if !bytes.Contains(raw, []byte(`"format":9`)) {
-		t.Errorf("a binding must carry format 9:\n%s", raw)
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format":%d`, BindingFormat))) {
+		t.Errorf("a binding must carry format %d:\n%s", BindingFormat, raw)
 	}
 }
 

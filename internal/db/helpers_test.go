@@ -232,16 +232,18 @@ func seedDB(t *testing.T) seeded {
 
 	webshopID := upsertBinding(t, d, Binding{
 		Name: "webshop", RepoID: &repoAID, MasterMindID: &mastermindID, Feature: ptr("checkout"),
-		CWD: "/home/x/webshop", BuilderMode: "headless", CreatedAt: day1, IngestSource: IngestLive,
+		Ticket: ptr("o/r#607"),
+		CWD:    "/home/x/webshop", BuilderMode: "headless", CreatedAt: day1, IngestSource: IngestLive,
 	})
 	apiID := upsertBinding(t, d, Binding{
-		Name: "api", RepoID: &repoAID, MasterMindID: &mastermindID,
+		Name: "api", RepoID: &repoAID, MasterMindID: &mastermindID, Ticket: ptr("#607"),
 		CWD: "/home/x/api", BuilderMode: "headless", CreatedAt: day1,
 		ArchivedAt: ptr(day2), ArchivePath: ptr("/archive/api.tar.gz"), IngestSource: IngestArchive,
 	})
 	docsID := upsertBinding(t, d, Binding{
 		Name: "docs", RepoID: &repoBID, MasterMindID: &mastermindID, FinalState: ptr("needs_you"),
-		CWD: "/home/x/docs", BuilderMode: "pane", CreatedAt: day1, IngestSource: IngestLive,
+		Ticket: ptr("#42"),
+		CWD:    "/home/x/docs", BuilderMode: "pane", CreatedAt: day1, IngestSource: IngestLive,
 	})
 
 	for _, r := range seedRounds(webshopID, apiID, docsID, day1, day2) {

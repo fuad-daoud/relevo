@@ -38,8 +38,9 @@ func historyJSONRows(rows []db.RoundRow, set *candidate.Set) []historyJSONRow {
 	return out
 }
 
-const historyUsage = `usage: relevo history [--here] [--binding <name>] [--mastermind <session>]
-                     [--since <window>] [--limit <n>] [-q "<query>"] [--json] [--rows]`
+const historyUsage = `usage: relevo history [--here] [--binding <name>] [--feature <label>] [--ticket <ref>]
+                     [--mastermind <session>] [--since <window>] [--limit <n>] [--by <axis>]
+                     [-q "<query>"] [--json] [--rows]`
 
 // groupJSON shapes the groups `--json --by` prints: their Rows are blanked
 // unless --rows asked for them. A nil list encodes as [], not null.
@@ -64,9 +65,12 @@ func cmdHistory(args []string) error {
 	fs := flag.NewFlagSet("history", flag.ContinueOnError)
 	here := fs.Bool("here", false, "filter to the repo the current directory belongs to")
 	binding := fs.String("binding", "", "filter to this binding name")
+	feature := fs.String("feature", "", "filter to this feature label")
+	ticket := fs.String("ticket", "", "filter by ticket: N or owner/repo#N")
 	mastermind := fs.String("mastermind", "", "filter to this mastermind session id")
 	since := fs.String("since", "", "only rounds started after this: 24h, 7d, or YYYY-MM-DD")
 	limit := fs.Int("limit", 200, "max rows to print; 0 = all")
+	by := fs.String("by", "", "regroup the rows by an axis, e.g. ticket")
 	_ = fs.Bool("json", false, "machine-readable output: a JSON array of RoundRow")
 	query := fs.String("q", "", "a query: harness:agy outcome:halted since:30d cost>1 by:candidate")
 	withRows := fs.Bool("rows", false, "with grouped JSON, include each group's rows")
@@ -96,11 +100,14 @@ func cmdHistory(args []string) error {
 
 	opts := relevo.HistoryOptions{
 		Binding:    *binding,
+		Feature:    *feature,
+		Ticket:     *ticket,
 		MasterMind: *mastermind,
 		Names:      rt.Candidates,
 		Since:      *since,
 		Limit:      *limit,
 		Query:      *query,
+		By:         *by,
 	}
 	if *here {
 		cwd, cerr := os.Getwd()

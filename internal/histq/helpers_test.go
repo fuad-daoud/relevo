@@ -46,7 +46,7 @@ func fixtureAPIRows() []db.RoundRow {
 	return []db.RoundRow{
 		{
 			BindingID: "b1", BindingName: "api",
-			Repo: fxStr(fxRepoAPI), Feature: fxStr("checkout"),
+			Repo: fxStr(fxRepoAPI), Feature: fxStr("checkout"), Ticket: fxStr("o/r#607"),
 			Number: 1, StartedAt: fxDay(20, 9), ClosedAt: fxClosed(20, 9, 10*time.Minute),
 			Outcome:   db.OutcomeReported,
 			Candidate: fxStr(fxBuilderAgy), Harness: fxStr("agy"),
@@ -61,7 +61,7 @@ func fixtureAPIRows() []db.RoundRow {
 		},
 		{
 			BindingID: "b1", BindingName: "api",
-			Repo: fxStr(fxRepoAPI), Feature: fxStr("checkout"),
+			Repo: fxStr(fxRepoAPI), Feature: fxStr("checkout"), Ticket: fxStr("o/r#607"),
 			Number: 2, StartedAt: fxDay(20, 8), ClosedAt: fxClosed(20, 8, 20*time.Minute),
 			Outcome:   db.OutcomeReported,
 			Candidate: fxStr(fxBuilderAgy), Harness: fxStr("agy"),
@@ -93,7 +93,7 @@ func fixtureWebRows() []db.RoundRow {
 	return []db.RoundRow{
 		{
 			BindingID: "b2", BindingName: "web",
-			Repo: fxStr(fxRepoWeb), Feature: fxStr("search"),
+			Repo: fxStr(fxRepoWeb), Feature: fxStr("search"), Ticket: fxStr("#42"),
 			Number: 1, StartedAt: fxDay(19, 9), ClosedAt: fxClosed(19, 9, 40*time.Minute),
 			Outcome:   db.OutcomeReported,
 			Candidate: fxStr(fxBuilderClaude), Harness: fxStr("claude"),
@@ -180,7 +180,7 @@ func fixtureAPIRound4() []db.RoundRow {
 	return []db.RoundRow{
 		{
 			BindingID: "b1", BindingName: "api",
-			Repo: fxStr(fxRepoWeb), Feature: fxStr("search"),
+			Repo: fxStr(fxRepoWeb), Feature: fxStr("search"), Ticket: fxStr("#42"),
 			Number: 4, StartedAt: fxDay(19, 12), ClosedAt: fxClosed(19, 12, 90*time.Minute),
 			Outcome:   db.OutcomeReported,
 			Candidate: fxStr(fxBuilderAgy), Harness: fxStr("agy"),

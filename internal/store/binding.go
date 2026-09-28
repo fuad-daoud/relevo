@@ -242,6 +242,10 @@ type Binding struct {
 
 	Feature string `json:"feature,omitempty"`
 
+	// Ticket is the issue this binding serves, in stored form (#N or
+	// owner/repo#N). A binding may carry a ticket without a feature.
+	Ticket string `json:"ticket,omitempty"`
+
 	// Consults omitempty keeps every bind.json written before consults existed
 	// byte-identical until its first consult.
 	Consults []Consult `json:"consults,omitempty"`

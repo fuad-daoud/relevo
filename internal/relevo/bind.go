@@ -147,9 +147,58 @@ type BindOptions struct {
 	// Feature untouched" rather than clearing it.
 	Feature string
 
+	// NoFeature is the explicit "this is not a feature" mark (#637). A fresh
+	// bind must name exactly one of Feature/NoFeature (RequireFeatureChoice);
+	// on resume, NoFeature clears the binding's stored feature.
+	NoFeature bool
+
+	// Ticket is the issue this binding serves, as typed on --ticket (#637):
+	// a number, #N, owner/repo#N, or a .../issues/N URL. Empty means none. On
+	// resume, empty leaves the binding's ticket untouched; there is no way to
+	// clear one.
+	Ticket string
+
 	// Role is the writer role the new binding runs (#382); "" means builder.
 	// Bind ignores it on resume, because the binding keeps its stored role.
 	Role string
+}
+
+// RequireFeatureChoice is the CLI's exactly-one rule for --feature/--no-feature
+// (#637). A fresh bind must name exactly one; a resume may name none (the
+// binding keeps its feature) but not both. It is a pure function of the flags,
+// so the CLI can refuse before newRuntime and any state, worktree or network
+// work, and the cockpit -- which has no --no-feature concept -- can keep
+// creating unlabelled bindings without going through it.
+func RequireFeatureChoice(feature string, noFeature, resume bool) error {
+	hasFeature := feature != ""
+	if resume {
+		if hasFeature && noFeature {
+			return errFeatureChoice
+		}
+		return nil
+	}
+	if hasFeature == noFeature {
+		return errFeatureChoice
+	}
+	return nil
+}
+
+// errFeatureChoice is the one line RequireFeatureChoice returns.
+var errFeatureChoice = errors.New("choose exactly one of --feature <label> or --no-feature")
+
+// parseTicket turns a raw --ticket value into its stored form (#637), using
+// ref's origin as the repository hint when the value names no repository. An
+// empty raw value parses to "" with no error, so "unset" and "keep" stay
+// distinguishable to the caller.
+func parseTicket(raw string, ref *store.RepoRef) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	hint := ""
+	if ref != nil {
+		hint = git.OwnerRepo(ref.OriginURL)
+	}
+	return store.ParseTicket(raw, hint)
 }
 
 // BindResolved ties the calling mastermind to a builder over one working tree.
@@ -215,12 +264,6 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrRunnerUnavailable; a wrapped
 // git or remote error.
 func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint) (store.Binding, Resolution, error) {
-	if opts.Feature != "" {
-		if err := store.ValidFeature(opts.Feature); err != nil {
-			return store.Binding{}, Resolution{}, err
-		}
-	}
-
 	b, err := rt.Store.Load(opts.Name)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
@@ -231,6 +274,21 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	// logic below applies to it. §4.6.
 	if b.Builder.Remote() {
 		return resumeRemote(ctx, rt, opts, mastermindEP, b)
+	}
+
+	// #637: the label flags are applied after the load, because --ticket's
+	// repository hint is the binding's own recorded origin.
+	if opts.Feature != "" {
+		if err := store.ValidFeature(opts.Feature); err != nil {
+			return store.Binding{}, Resolution{}, err
+		}
+	}
+	ticket := ""
+	if opts.Ticket != "" {
+		ticket, err = parseTicket(opts.Ticket, b.RepoRef)
+		if err != nil {
+			return store.Binding{}, Resolution{}, err
+		}
 	}
 
 	var res Resolution
@@ -339,11 +397,11 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		}
 
 		// RepoRef and Feature are deliberately left untouched here (beyond
-		// the explicit Feature override below): a resume re-points endpoints,
-		// it does not rediscover facts a fresh bind already captured. The
-		// mastermind transcript locator is the one exception: the endpoint
-		// mastermindEP carries the record's, so a live agent's absent field
-		// cannot wipe a locator the binding already had.
+		// the explicit Feature/Ticket overrides below): a resume re-points
+		// endpoints, it does not rediscover facts a fresh bind already
+		// captured. The mastermind transcript locator is the one exception:
+		// the endpoint mastermindEP carries the record's, so a live agent's
+		// absent field cannot wipe a locator the binding already had.
 		oldTranscriptLocator := b.MasterMind.TranscriptLocator
 		b.MasterMind = mastermindEP
 		if oldTranscriptLocator != "" {
@@ -352,8 +410,15 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		if opts.MasterMindID != "" {
 			b.MasterMindID = opts.MasterMindID
 		}
+		// #637: --feature sets, --no-feature clears, neither keeps; --ticket
+		// sets when non-empty, absent keeps.
 		if opts.Feature != "" {
 			b.Feature = opts.Feature
+		} else if opts.NoFeature {
+			b.Feature = ""
+		}
+		if opts.Ticket != "" {
+			b.Ticket = ticket
 		}
 		wasPaused := b.State == store.StatePaused
 		b.State = store.StateActive
@@ -432,11 +497,19 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 //
 // Errors: "cannot change a remote builder; unbind and add" when the caller
 // asked to change the builder (--rebind, --candidate, or
-// --headless); ErrRemoteUnavailable; a wrapped server error; a wrapped git
+// --headless); the label refusal (#637) when --feature, --no-feature or
+// --ticket is set -- no server endpoint could change a stored label, and a
+// mirror-only change would recreate the laptop/server disagreement #637
+// removes; ErrRemoteUnavailable; a wrapped server error; a wrapped git
 // error; or a message naming the binding when its branch is gone.
 func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, b store.Binding) (store.Binding, Resolution, error) {
 	if opts.Rebind || opts.Candidate != "" || opts.Headless {
 		return store.Binding{}, Resolution{}, errors.New("cannot change a remote builder; unbind and add")
+	}
+	// #637: --feature/--no-feature/--ticket have no server endpoint to reach,
+	// so a remote resume refuses them rather than changing only the mirror.
+	if opts.Feature != "" || opts.NoFeature || opts.Ticket != "" {
+		return store.Binding{}, Resolution{}, errors.New("cannot change a remote binding's feature or ticket; unbind and add")
 	}
 	if rt.Remote == nil {
 		return store.Binding{}, Resolution{}, ErrRemoteUnavailable
@@ -596,6 +669,14 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		return store.Binding{}, Resolution{}, err
 	}
 
+	// #637: the ticket is parsed against the binding's own captured origin, so
+	// a typed number becomes owner/repo#N when relevo knows the repo.
+	repoRef := captureRepo(ctx, rt, opts.CWD)
+	ticket, err := parseTicket(opts.Ticket, repoRef)
+	if err != nil {
+		return store.Binding{}, Resolution{}, err
+	}
+
 	b := store.Binding{
 		Name:             name,
 		CWD:              opts.CWD,
@@ -610,8 +691,9 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		Shape:            shape,
 		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
 		Regate:           resolveRegate(opts.Regate, rt.Policy),
-		RepoRef:          captureRepo(ctx, rt, opts.CWD),
+		RepoRef:          repoRef,
 		Feature:          opts.Feature,
+		Ticket:           ticket,
 	}
 	if opts.RoundTimeout > 0 {
 		b.RoundTimeoutMS = int(opts.RoundTimeout / time.Millisecond)

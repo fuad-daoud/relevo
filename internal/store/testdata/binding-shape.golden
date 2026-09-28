@@ -1,4 +1,4 @@
-format 9
+format 10
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
@@ -275,6 +275,7 @@ stalled_since
 state
 stop_grace_ms
 stop_requested_at
+ticket
 tier
 updated_at
 worktree

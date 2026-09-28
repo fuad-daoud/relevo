@@ -423,3 +423,47 @@ func TestParseSinceMovedKeepsRelevoWrapper(t *testing.T) {
 		t.Error("relevo.ErrBadSince is not histq.ErrBadSince; errors.Is across the move would break")
 	}
 }
+
+// TestHistoryOptionsTicketFlagOverridesQuery pins #637: --ticket merges with
+// the -q query like every other flag, with the override note when -q set a
+// different ticket.
+func TestHistoryOptionsTicketFlagOverridesQuery(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	opts := HistoryOptions{Query: "ticket:#1", Ticket: "#607"}
+
+	f, notes, err := opts.Filter(context.Background(), Runtime{}, now)
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if f.Ticket != "#607" {
+		t.Errorf("Ticket = %q, want #607 (the flag wins)", f.Ticket)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("notes = %q, want exactly one", notes)
+	}
+	if want := "note: --ticket overrides ticket:#1 from -q"; notes[0] != want {
+		t.Errorf("note = %q, want %q", notes[0], want)
+	}
+}
+
+// TestHistoryOptionsTicketAloneGivesNoNote is the other half: --ticket with no
+// -q ticket is set silently, as every other flag is.
+func TestHistoryOptionsTicketAloneGivesNoNote(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	opts := HistoryOptions{Ticket: "o/r#607"}
+
+	f, notes, err := opts.Filter(context.Background(), Runtime{}, now)
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if f.Ticket != "o/r#607" {
+		t.Errorf("Ticket = %q, want o/r#607", f.Ticket)
+	}
+	if len(notes) != 0 {
+		t.Errorf("notes = %q, want none", notes)
+	}
+}

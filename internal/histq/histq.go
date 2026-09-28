@@ -51,6 +51,7 @@ const (
 	AxisBinding   Axis = "binding"
 	AxisRepo      Axis = "repo"
 	AxisFeature   Axis = "feature"
+	AxisTicket    Axis = "ticket"
 	AxisCandidate Axis = "candidate"
 	AxisActor     Axis = "actor"
 	AxisHarness   Axis = "harness"
@@ -61,11 +62,11 @@ const (
 )
 
 var axes = []Axis{
-	AxisNone, AxisBinding, AxisRepo, AxisFeature, AxisCandidate, AxisActor,
+	AxisNone, AxisBinding, AxisRepo, AxisFeature, AxisTicket, AxisCandidate, AxisActor,
 	AxisHarness, AxisProvider, AxisModel, AxisDay, AxisOutcome,
 }
 
-// Axes returns the eleven axis names, none first. The caller owns the slice.
+// Axes returns the twelve axis names, none first. The caller owns the slice.
 func Axes() []Axis { return append([]Axis(nil), axes...) }
 
 func ParseAxis(s string) (Axis, bool) {
@@ -259,6 +260,8 @@ func (q *Query) applyPlainKey(key, value string) bool {
 		q.Filter.Repo = value
 	case "feature":
 		q.Filter.Feature = value
+	case "ticket":
+		q.Filter.Ticket = value
 	case "mastermind":
 		q.Filter.MasterMind = value
 	case "harness":
@@ -388,6 +391,7 @@ func (q Query) String() string {
 	add("binding", q.Filter.Binding)
 	add("repo", q.Filter.Repo)
 	add("feature", q.Filter.Feature)
+	add("ticket", q.Filter.Ticket)
 	add("mastermind", q.Filter.MasterMind)
 	add("harness", q.Filter.Harness)
 	add("provider", q.Filter.Provider)

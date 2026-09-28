@@ -430,8 +430,8 @@ func (v statsView) panelRows() int {
 	if v.focus == 0 {
 		return len(v.overviewCandRows(func(s string) string { return s }))
 	}
-	repos, features := v.repoTabRows()
-	return len(repos) + len(features)
+	repos, features, tickets := v.repoTabRows()
+	return len(repos) + len(features) + len(tickets)
 }
 
 // moveCursor moves the focused panel's cursor, clamped to its rows.
@@ -500,7 +500,7 @@ func (v statsView) sinceTerm() string {
 
 // enter opens `:rounds` filtered to the focused panel's selected row (§4.3,
 // §4.4). On the repos tab the cursor indexes one combined list: the repo rows
-// first, then the feature rows.
+// first, then the feature rows, then the ticket rows.
 func (v statsView) enter(env Env) (View, tea.Cmd) {
 	if v.focus == 0 {
 		names := env.Src.Base().Candidates.NameOf
@@ -514,12 +514,19 @@ func (v statsView) enter(env Env) (View, tea.Cmd) {
 		}
 		return v.roundsForCandidate(env, rows[i].Token)
 	}
-	repos, features := v.repoTabRows()
-	if len(repos)+len(features) == 0 {
+	repos, features, tickets := v.repoTabRows()
+	if len(repos)+len(features)+len(tickets) == 0 {
 		return v, nil
 	}
-	i := statsClamp(v.cursor[1], len(repos)+len(features))
-	if i >= len(repos) {
+	i := statsClamp(v.cursor[1], len(repos)+len(features)+len(tickets))
+	switch {
+	case i >= len(repos)+len(features):
+		tKey := tickets[i-len(repos)-len(features)].Key
+		if tKey == "(none)" {
+			return v, notice("rounds with no ticket cannot be filtered")
+		}
+		return v.openRounds(env, `ticket:"`+tKey+`"`+v.sinceTerm())
+	case i >= len(repos):
 		fKey := features[i-len(repos)].Key
 		if fKey == "(none)" {
 			return v, notice("rounds with no feature cannot be filtered")
@@ -1525,6 +1532,15 @@ func shortFeature(key string) string {
 	return key
 }
 
+// shortTicket is a ticket key's display name; the unlabelled "(none)" bucket
+// reads "(no ticket)" (#637).
+func shortTicket(key string) string {
+	if key == "(none)" {
+		return "(no ticket)"
+	}
+	return key
+}
+
 // statsTableColumns lays the two overview tables side by side (§4.5): a
 // three-cell gutter, the left table leftW wide, three cells, then the right
 // table rightW wide, whose last cell is width-4 so the pair ends at width-3.
@@ -2458,18 +2474,23 @@ func statsRepoCellW(nameW int, visible []statsRepoCol) int {
 	return w
 }
 
-// repoTabRows is the repos tab's two tables and the combined cursor list's
+// repoTabRows is the repos tab's three tables and the combined cursor list's
 // order (§4.1): the repos by tokens, then a copy of the features by tokens,
-// with a last (no feature) row for NoFeature when there are features to
-// follow it (§2.3).
-func (v statsView) repoTabRows() (repos, features []stats.GroupRow) {
+// then a copy of the tickets by tokens, with a last (no feature)/(no ticket)
+// row for the unlabelled bucket when there are rows to follow it (§2.3, #637).
+func (v statsView) repoTabRows() (repos, features, tickets []stats.GroupRow) {
 	repos = v.overviewRepoRows()
 	features = append([]stats.GroupRow(nil), v.rep.Features...)
 	sort.SliceStable(features, func(i, j int) bool { return features[i].Tokens > features[j].Tokens })
 	if len(features) > 0 && v.rep.NoFeature.Rounds > 0 {
 		features = append(features, v.rep.NoFeature)
 	}
-	return repos, features
+	tickets = append([]stats.GroupRow(nil), v.rep.Tickets...)
+	sort.SliceStable(tickets, func(i, j int) bool { return tickets[i].Tokens > tickets[j].Tokens })
+	if len(tickets) > 0 && v.rep.NoTicket.Rounds > 0 {
+		tickets = append(tickets, v.rep.NoTicket)
+	}
+	return repos, features, tickets
 }
 
 // statsRepoHead is a repos-table header row (§4.2): the name label clipped to
@@ -2516,14 +2537,27 @@ func statsRepoCell(g stats.GroupRow, head string) string {
 	return "·"
 }
 
+// repoKind names which of the repos tab's three tables a row belongs to, so
+// its display name and its detail tag come from the right vocabulary.
+type repoKind int
+
+const (
+	kindRepo repoKind = iota
+	kindFeature
+	kindTicket
+)
+
 // statsRepoRow is one repos-table row (§4.2): the fitted name, the numbers in
 // muted and the share cell. The selected row is rebuilt as plain text, share
 // included, and rendered once with the band, fitted to the row width so it
 // ends at width-3.
-func statsRepoRow(g stats.GroupRow, feature bool, windowTotal int64, nameW int, visible []statsRepoCol, selected bool) string {
+func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int, visible []statsRepoCol, selected bool) string {
 	name := shortRepo(g.Key)
-	if feature {
+	switch kind {
+	case kindFeature:
 		name = shortFeature(g.Key)
+	case kindTicket:
+		name = shortTicket(g.Key)
 	}
 	key := stats.FitKey(name, nameW, false)
 	cells := statsRepoCells(g, visible)
@@ -2536,12 +2570,12 @@ func statsRepoRow(g stats.GroupRow, feature bool, windowTotal int64, nameW int, 
 }
 
 // reposTabLines is the repos tab (§4.2): the repos table, then the features
-// table (its blank line and header left out when there are no features), two
-// blank lines, and the selected row's detail block. sel is the selected row's
-// line, so the page follows the cursor.
+// table and the tickets table (each one's blank line and header left out when
+// it has no rows), two blank lines, and the selected row's detail block. sel is
+// the selected row's line, so the page follows the cursor.
 func (v statsView) reposTabLines(env Env, width int) ([]string, int) {
-	repos, features := v.repoTabRows()
-	n := len(repos) + len(features)
+	repos, features, tickets := v.repoTabRows()
+	n := len(repos) + len(features) + len(tickets)
 	visible, nameW := statsRepoVisible(width)
 	windowTotal := v.rep.Totals.TokenKinds.Total()
 	cur := 0
@@ -2550,49 +2584,74 @@ func (v statsView) reposTabLines(env Env, width int) ([]string, int) {
 	}
 
 	out := []string{statsRepoHead("REPO", nameW, visible)}
+	sel := -1
 	for i, g := range repos {
-		out = append(out, statsRepoRow(g, false, windowTotal, nameW, visible, i == cur))
+		if i == cur {
+			sel = len(out)
+		}
+		out = append(out, statsRepoRow(g, kindRepo, windowTotal, nameW, visible, i == cur))
 	}
 	if len(features) > 0 {
 		out = append(out, "")
 		out = append(out, statsRepoHead("FEATURE", nameW, visible))
 		for i, g := range features {
-			out = append(out, statsRepoRow(g, true, windowTotal, nameW, visible, len(repos)+i == cur))
+			selected := len(repos)+i == cur
+			if selected {
+				sel = len(out)
+			}
+			out = append(out, statsRepoRow(g, kindFeature, windowTotal, nameW, visible, selected))
+		}
+	}
+	if len(tickets) > 0 {
+		out = append(out, "")
+		out = append(out, statsRepoHead("TICKET", nameW, visible))
+		for i, g := range tickets {
+			selected := len(repos)+len(features)+i == cur
+			if selected {
+				sel = len(out)
+			}
+			out = append(out, statsRepoRow(g, kindTicket, windowTotal, nameW, visible, selected))
 		}
 	}
 	if n == 0 {
 		return out, -1
 	}
 
-	sel := 1 + cur
-	detail, feature := stats.GroupRow{}, false
-	if cur < len(repos) {
+	detail, kind := stats.GroupRow{}, kindRepo
+	switch {
+	case cur < len(repos):
 		detail = repos[cur]
-	} else {
-		sel = len(repos) + 3 + (cur - len(repos))
-		detail, feature = features[cur-len(repos)], true
+	case cur < len(repos)+len(features):
+		detail, kind = features[cur-len(repos)], kindFeature
+	default:
+		detail, kind = tickets[cur-len(repos)-len(features)], kindTicket
 	}
 	out = append(out, "", "")
-	out = append(out, v.statsGroupDetail(env, detail, feature, windowTotal)...)
+	out = append(out, v.statsGroupDetail(env, detail, kind, windowTotal)...)
 	return out, sel
 }
 
 // statsGroupDetail is the selected repos-tab row's detail block (§4.3): the
 // name and its kind, the totals, the outcomes and the top candidates. Each
 // line starts with the three-cell gutter and is cut to width-6.
-func (v statsView) statsGroupDetail(env Env, g stats.GroupRow, feature bool, windowTotal int64) []string {
+func (v statsView) statsGroupDetail(env Env, g stats.GroupRow, kind repoKind, windowTotal int64) []string {
 	w := env.Width - 6
 	if w < 1 {
 		w = 1
 	}
 	name := shortRepo(g.Key)
-	if feature {
+	switch kind {
+	case kindFeature:
 		name = shortFeature(g.Key)
+	case kindTicket:
+		name = shortTicket(g.Key)
 	}
 	first := "   " + faintStyle.Bold(true).Render(name)
 	switch {
-	case feature && g.Key != "(none)":
+	case kind == kindFeature && g.Key != "(none)":
 		first += "   " + mutedStyle.Render("feature")
+	case kind == kindTicket && g.Key != "(none)":
+		first += "   " + mutedStyle.Render("ticket")
 	case g.Key != "(none)":
 		first += "   " + mutedStyle.Render(g.Key)
 	}

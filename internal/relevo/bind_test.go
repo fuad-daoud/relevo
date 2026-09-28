@@ -2082,3 +2082,195 @@ func TestResolveVerbMasterMindRegistersOpencodeSession(t *testing.T) {
 		t.Errorf("second resolveVerbMasterMind ID = %s, want %s", second.ID, rec.ID)
 	}
 }
+
+// TestRequireFeatureChoice pins #637's pure CLI rule: a fresh bind must name
+// exactly one of --feature/--no-feature; a resume may name none, but not both.
+func TestRequireFeatureChoice(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		feature   string
+		noFeature bool
+		resume    bool
+		wantErr   bool
+	}{
+		{"fresh with feature", "auth", false, false, false},
+		{"fresh with no-feature", "", true, false, false},
+		{"fresh with neither", "", false, false, true},
+		{"fresh with both", "auth", true, false, true},
+		{"resume with feature", "auth", false, true, false},
+		{"resume with no-feature", "", true, true, false},
+		{"resume with neither", "", false, true, false},
+		{"resume with both", "auth", true, true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := RequireFeatureChoice(c.feature, c.noFeature, c.resume)
+			if !c.wantErr {
+				if err != nil {
+					t.Fatalf("RequireFeatureChoice(%q, %v, %v) = %v, want nil", c.feature, c.noFeature, c.resume, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("RequireFeatureChoice(%q, %v, %v) = nil, want an error", c.feature, c.noFeature, c.resume)
+			}
+			for _, flag := range []string{"--feature", "--no-feature"} {
+				if !strings.Contains(err.Error(), flag) {
+					t.Errorf("err = %q, want it to name %s", err.Error(), flag)
+				}
+			}
+		})
+	}
+}
+
+// TestBindStoresTicketWithRepoHint pins #637: a fresh bind parses --ticket
+// against the binding's own captured origin, so a bare number becomes
+// owner/repo#N.
+func TestBindStoresTicketWithRepoHint(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Git = &fakeGit{
+		repoFactsOrigin:    "git@github.com:o/r.git",
+		repoFactsCommonDir: "/repo/.git",
+	}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName,
+		CWD: "/repo", NoFeature: true, Ticket: "607",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Ticket != "o/r#607" {
+		t.Errorf("Ticket = %q, want o/r#607", b.Ticket)
+	}
+	if b.Feature != "" {
+		t.Errorf("Feature = %q, want empty: --no-feature stores no label", b.Feature)
+	}
+}
+
+// TestBindStoresBareTicketWithoutRepo pins the other half: with no captured
+// origin, a bare number stores as #N.
+func TestBindStoresBareTicketWithoutRepo(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t) // no Git: captureRepo is nil
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName,
+		CWD: "/repo", NoFeature: true, Ticket: "#42",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Ticket != "#42" {
+		t.Errorf("Ticket = %q, want #42", b.Ticket)
+	}
+}
+
+// TestBindRejectsBadTicketBeforeSpawn pins #637: a malformed --ticket is
+// refused before anything is spawned and no binding is saved.
+func TestBindRejectsBadTicketBeforeSpawn(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName,
+		CWD: "/repo", NoFeature: true, Ticket: "not a ticket",
+	})
+	if err == nil || !strings.Contains(err.Error(), "ticket:") {
+		t.Fatalf("Bind err = %v, want one containing %q", err, "ticket:")
+	}
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a rejected ticket must spawn no process, got %d", got)
+	}
+	if _, loadErr := rt.Store.Load("webshop"); !errors.Is(loadErr, store.ErrNotFound) {
+		t.Errorf("Load err = %v, want store.ErrNotFound: a rejected ticket saves no binding", loadErr)
+	}
+}
+
+// TestResumeAppliesLabelFlags pins #637's resume rule: --feature sets,
+// --no-feature clears, neither keeps; --ticket sets (parsed against the
+// binding's own origin) and absent keeps. A malformed --ticket is refused even
+// though the resume changes nothing else.
+func TestResumeAppliesLabelFlags(t *testing.T) {
+	t.Parallel()
+
+	seed := func(t *testing.T) Runtime {
+		t.Helper()
+		rt := runtimeWithMasterMind(t, "mastermind-sess", "")
+		b := store.Binding{
+			Name:       "webshop",
+			CWD:        "/repo",
+			Round:      3,
+			State:      store.StateBroken,
+			MasterMind: store.Endpoint{Kind: "claude", SessionID: "old-sess"},
+			Builder:    store.Endpoint{AgentName: "webshop-builder", Kind: "opencode", Mode: store.ModeHeadless},
+			RepoRef:    &store.RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"},
+			Feature:    "auth",
+			Ticket:     "o/r#607",
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("seed binding: %v", err)
+		}
+		return rt
+	}
+	resume := func(t *testing.T, rt Runtime, opts BindOptions) store.Binding {
+		t.Helper()
+		opts.Name = "webshop"
+		opts.Resume = true
+		opts.MasterMindID = testMasterMindName
+		opts.CWD = "/repo"
+		got, err := Bind(context.Background(), rt, opts)
+		if err != nil {
+			t.Fatalf("resume Bind: %v", err)
+		}
+		return got
+	}
+
+	t.Run("neither keeps feature and ticket", func(t *testing.T) {
+		got := resume(t, seed(t), BindOptions{})
+		if got.Feature != "auth" || got.Ticket != "o/r#607" {
+			t.Errorf("feature/ticket = %q/%q, want auth and o/r#607 kept", got.Feature, got.Ticket)
+		}
+	})
+
+	t.Run("no-feature clears, ticket keeps", func(t *testing.T) {
+		got := resume(t, seed(t), BindOptions{NoFeature: true})
+		if got.Feature != "" {
+			t.Errorf("Feature = %q, want cleared by --no-feature", got.Feature)
+		}
+		if got.Ticket != "o/r#607" {
+			t.Errorf("Ticket = %q, want kept", got.Ticket)
+		}
+	})
+
+	t.Run("feature sets", func(t *testing.T) {
+		got := resume(t, seed(t), BindOptions{Feature: "checkout"})
+		if got.Feature != "checkout" {
+			t.Errorf("Feature = %q, want checkout", got.Feature)
+		}
+	})
+
+	t.Run("ticket sets with the binding's own repo hint", func(t *testing.T) {
+		got := resume(t, seed(t), BindOptions{Ticket: "42"})
+		if got.Ticket != "o/r#42" {
+			t.Errorf("Ticket = %q, want o/r#42", got.Ticket)
+		}
+	})
+
+	t.Run("a malformed ticket is refused", func(t *testing.T) {
+		rt := seed(t)
+		_, err := Bind(context.Background(), rt, BindOptions{
+			Name: "webshop", Resume: true, MasterMindID: testMasterMindName, CWD: "/repo",
+			Ticket: "not a ticket",
+		})
+		if err == nil || !strings.Contains(err.Error(), "ticket:") {
+			t.Fatalf("resume Bind err = %v, want one containing %q", err, "ticket:")
+		}
+	})
+}

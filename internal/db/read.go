@@ -23,6 +23,7 @@ func queryRounds(ctx context.Context, q queryer, f Filter) ([]RoundRow, error) {
 
 	where, args := roundFilter(f)
 	query := `SELECT round.binding_id, binding.name, repo.origin_url, repo.common_dir, binding.feature,
+			binding.ticket,
 			round.number, round.started_at, round.closed_at, round.outcome,
 			round.candidate, round.harness, round.provider, round.model, round.actor,
 			round.commits, round.tree, round.gate_result, round.cost_usd, round.cost_basis,
@@ -68,6 +69,7 @@ func roundFilter(f Filter) (string, []any) {
 	if f.Feature != "" {
 		add(`binding.feature = ?`, f.Feature)
 	}
+	ticketFilter(f, add)
 	if f.Binding != "" {
 		add(`binding.name = ?`, f.Binding)
 	}
@@ -124,9 +126,44 @@ func roundFilter(f Filter) (string, []any) {
 	return ` WHERE ` + strings.Join(where, " AND "), args
 }
 
+// ticketMatch builds the WHERE clause for Filter.Ticket. A value naming a
+// repository (owner/repo#N) matches the stored form exactly; a bare N or #N
+// matches any stored ticket ending in #N. The number is digits only, so the
+// LIKE pattern takes no wildcard from the value; an unparseable value matches
+// nothing, because no stored ticket equals it.
+func ticketMatch(value string) (string, any) {
+	if n, ok := bareTicketNumber(value); ok {
+		return `binding.ticket LIKE '%#' || ?`, n
+	}
+	return `binding.ticket = ?`, value
+}
+
+// bareTicketNumber returns the digits of a bare "N" or "#N" ticket value.
+func bareTicketNumber(s string) (string, bool) {
+	n := strings.TrimPrefix(s, "#")
+	if n == "" {
+		return "", false
+	}
+	for i := 0; i < len(n); i++ {
+		if n[i] < '0' || n[i] > '9' {
+			return "", false
+		}
+	}
+	return n, true
+}
+
+// ticketFilter adds the ticket clause when one is set.
+func ticketFilter(f Filter, add func(string, ...any)) {
+	if f.Ticket == "" {
+		return
+	}
+	clause, arg := ticketMatch(f.Ticket)
+	add(clause, arg)
+}
+
 func scanRoundRow(s rowScanner) (RoundRow, error) {
 	var row RoundRow
-	var origin, commonDir, feature sql.Null[string]
+	var origin, commonDir, feature, ticket sql.Null[string]
 	var startedAt string
 	var closedAt sql.Null[string]
 	var candidate, harness, provider, model sql.Null[string]
@@ -138,7 +175,7 @@ func scanRoundRow(s rowScanner) (RoundRow, error) {
 	var reportOutcome, mode, server sql.Null[string]
 	var archivedAt sql.Null[string]
 
-	if err := s.Scan(&row.BindingID, &row.BindingName, &origin, &commonDir, &feature,
+	if err := s.Scan(&row.BindingID, &row.BindingName, &origin, &commonDir, &feature, &ticket,
 		&row.Number, &startedAt, &closedAt, &row.Outcome,
 		&candidate, &harness, &provider, &model, &row.Actor,
 		&commits, &tree, &gateResult, &costUSD, &costBasis,
@@ -155,6 +192,7 @@ func scanRoundRow(s rowScanner) (RoundRow, error) {
 	row.StartedAt = st
 	row.Repo = firstValid(origin, commonDir)
 	row.Feature = ptrIfValid(feature)
+	row.Ticket = ptrIfValid(ticket)
 	if row.ClosedAt, err = nullTimeFrom(closedAt); err != nil {
 		return RoundRow{}, fmt.Errorf("parse closed_at: %w", err)
 	}
@@ -192,6 +230,7 @@ func scanRoundRow(s rowScanner) (RoundRow, error) {
 
 // bindingColumns is the column list both binding readers scan.
 const bindingColumns = `binding.id, binding.name, binding.repo_id, binding.mastermind_id, binding.feature,
+	binding.ticket,
 	binding.forked_from_binding_id, binding.forked_from_round, binding.cwd, binding.worktree,
 	binding.branch, binding.base_commit, binding.tier, binding.gate, binding.builder_mode,
 	binding.server, binding.created_at, binding.final_state, binding.archived_at, binding.archive_path,
@@ -201,7 +240,7 @@ const bindingColumns = `binding.id, binding.name, binding.repo_id, binding.maste
 
 func scanBindingRow(s rowScanner) (BindingRow, error) {
 	var br BindingRow
-	var repoID, mastermindID, feature, forkedFromBindingID sql.Null[string]
+	var repoID, mastermindID, feature, ticket, forkedFromBindingID sql.Null[string]
 	var forkedFromRound sql.Null[int64]
 	var worktree, branch, baseCommit, tier, gate, server sql.Null[string]
 	var createdAt string
@@ -209,7 +248,7 @@ func scanBindingRow(s rowScanner) (BindingRow, error) {
 	var originURL, commonDir sql.Null[string]
 	var lastActivity string
 
-	if err := s.Scan(&br.ID, &br.Name, &repoID, &mastermindID, &feature,
+	if err := s.Scan(&br.ID, &br.Name, &repoID, &mastermindID, &feature, &ticket,
 		&forkedFromBindingID, &forkedFromRound, &br.CWD, &worktree,
 		&branch, &baseCommit, &tier, &gate, &br.BuilderMode,
 		&server, &createdAt, &finalState, &archivedAt, &archivePath,
@@ -221,6 +260,7 @@ func scanBindingRow(s rowScanner) (BindingRow, error) {
 	br.RepoID = ptrIfValid(repoID)
 	br.MasterMindID = ptrIfValid(mastermindID)
 	br.Feature = ptrIfValid(feature)
+	br.Ticket = ptrIfValid(ticket)
 	br.ForkedFromBindingID = ptrIfValid(forkedFromBindingID)
 	br.ForkedFromRound = intPtr(forkedFromRound)
 	br.Worktree = ptrIfValid(worktree)
@@ -301,6 +341,7 @@ func bindingFilter(f Filter) (string, []any) {
 	if f.Feature != "" {
 		add(`binding.feature = ?`, f.Feature)
 	}
+	ticketFilter(f, add)
 	if f.Binding != "" {
 		add(`binding.name = ?`, f.Binding)
 	}

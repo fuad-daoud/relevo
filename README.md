@@ -189,9 +189,10 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
 6. Start the daemon (e.g. `relevo daemon &` or `make service`).
 7. Bind your first agent from the MasterMind session:
    ```
-   relevo bind --candidate claude/anthropic/sonnet
+   relevo bind --no-feature --candidate claude/anthropic/sonnet
    ```
-   (or, with one candidate, `relevo bind`).
+   (or, with one candidate, `relevo bind --no-feature`). A fresh `relevo bind`
+   must name exactly one of `--feature <label>` / `--no-feature`.
 
 To install the agent definitions into each harness on `PATH` by hand instead —
 the daemon refreshes unmodified definitions on every start and upgrade, a file
@@ -242,7 +243,7 @@ relevo config init                 # seed candidates, policy and actors, install
 From the MasterMind session, in the repository you want worked on:
 
 ```
-relevo bind --candidate claude/anthropic/sonnet     # start a builder on this tree
+relevo bind --no-feature --candidate claude/anthropic/sonnet     # start a builder on this tree
 relevo send --file plan.md         # hand it the plan; the builder starts working
 relevo status                      # watch the round
 relevo wait                        # block until the round closes; prints the report
@@ -268,14 +269,20 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
 
 ## Command surface
 
-- `relevo bind [--name N] [--candidate CANDIDATE] [--actor R] [--tier T [--allow-yolo]] [--gate CMD|--no-gate] [--regate N] [--resume [--rebind]] [--timeout D] [--feature L] [--mastermind P]`
-  — start a binding between the calling MasterMind and a builder. `--candidate` is
+- `relevo bind [--name N] [--candidate CANDIDATE] [--actor R] [--tier T [--allow-yolo]] [--gate CMD|--no-gate] [--regate N] [--resume [--rebind]] [--timeout D] --feature L|--no-feature [--ticket REF] [--mastermind P]`
+  — start a binding between the calling MasterMind and a builder. A fresh bind
+  must name exactly one of `--feature <label>` (a label grouping it with other
+  bindings) and `--no-feature` (it serves no feature); naming neither or both is
+  refused, exit 2, before any state, worktree or network work. `--ticket REF` is
+  optional and allowed with either: a number, `#N`, `owner/repo#N` or an issue
+  URL, stored as `owner/repo#N` when relevo knows the repository. `--candidate` is
   a candidate token; `--actor R` is the writer actor the binding runs (default
   `builder`). A name that already exists is refused rather than reused:
   only the binding's record would be rewritten, so a fresh round 1 would
   collide with the previous session's round log. `--resume --name N` re-points that
   existing binding's MasterMind side at the calling MasterMind without touching the
-  builder; `relevo unbind N` is the other way out.
+  builder; on a resume `--feature` sets the label, `--no-feature` clears it, and
+  naming neither keeps it, while `--ticket` sets one. `relevo unbind N` is the other way out.
 - `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
   prompt and hand it to the builder as the prompt of a fresh process started in
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
@@ -349,14 +356,14 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   `:round <binding> [N]`. `:fleet` is the root table of bindings; `enter` opens its round
   detail, `esc` goes back, `:` the command line, `?` the key list. `relevo ui :rounds`
   opens the rounds grid directly (`:rounds` reaches it from the fleet).
-- `relevo bind --worktree --name N [--candidate CANDIDATE] [--actor R] [--cwd DIR] [--feature LABEL]` — attach an
+- `relevo bind --worktree --name N --feature L|--no-feature [--ticket REF] [--candidate CANDIDATE] [--actor R] [--cwd DIR]` — attach an
   additional builder to this MasterMind on its own git worktree, starting at
   round 1. This is how one MasterMind drives several builders at once.
   `--actor R` is the writer actor the binding runs (default `builder`).
-  `relevo bind --name N --server S [--base REF]` runs that builder on a
+  `relevo bind --no-feature --name N --server S [--base REF]` runs that builder on a
   configured remote server instead (see "Remote builders: the client" below);
   `--cwd` cannot be combined with `--server`.
-  `relevo bind --branch B` checks an existing branch out into relevo's own
+  `relevo bind --no-feature --branch B` checks an existing branch out into relevo's own
   worktree instead of cutting `relevo/<name>`: a local `B` is used first, and
   `origin/B` is made a local tracking branch only when no local `B` exists
   (a branch on neither is refused). A branch already checked out in another
@@ -563,7 +570,7 @@ query kept. The grammar is exactly `relevo history -q`'s:
 / by:day since:14d
 ```
 
-`b` regroups by the next axis (binding, repo, feature, builder, harness,
+`b` regroups by the next axis (binding, repo, feature, ticket, builder, harness,
 provider, model, day, outcome); groups carry rounds, reported, halted, commits,
 tokens, cost and the last round's date, and `enter` on a group expands its
 rounds beneath it. `s` cycles the sort column for the level under the cursor
@@ -779,7 +786,7 @@ Set up once per machine:
 
 Then, from any repository:
 ```
-relevo bind --name api --server zen        # creates the server binding and
+relevo bind --name api --server zen --no-feature        # creates the server binding and
                                            # the local branch relevo/api, no worktree
 relevo send --name api --file plan.md      # ships plan.md and a bundle of relevo/api
 relevo status                              # round state comes from the server, polled
@@ -828,7 +835,7 @@ fingerprint.
 Each round carries a budget; past it, relevo flags the binding `NEEDS YOU` and
 notifies once. It never kills anything — a builder working a real stage of a
 plan runs for hours, so the budget is a runaway guard, not a progress estimate.
-The default is 24 hours; `relevo bind --timeout 2h` sets it per binding.
+The default is 24 hours; `relevo bind --no-feature --timeout 2h` sets it per binding.
 
 A headless builder that exits without writing its report file still closes the
 round, and relevo delivers its report flagged `unmarked`. Nothing is scraped and
@@ -840,9 +847,9 @@ nothing is guessed.
 attaches more, each on its own git worktree, so they never contend for files:
 
 ```
-relevo bind --candidate claude/anthropic/sonnet --name api
-relevo bind --worktree --name frontend --candidate claude/anthropic/sonnet
-relevo bind --worktree --name backend  --candidate opencode/openrouter/z-ai/glm-5.3-flash
+relevo bind --no-feature --candidate claude/anthropic/sonnet --name api
+relevo bind --worktree --no-feature --name frontend --candidate claude/anthropic/sonnet
+relevo bind --worktree --no-feature --name backend  --candidate opencode/openrouter/z-ai/glm-5.3-flash
 
 relevo send --name frontend --file ui_plan.md
 relevo send --name backend  --file api_plan.md
@@ -863,7 +870,7 @@ decides how many builders it needs, which run in parallel and which wait, and
 integrates the results — relevo only carries plans out and reports back.
 
 Headless builders are the cheap way to run several: no terminal per builder,
-no idle harness holding memory. `relevo bind --worktree --name api` gives a peer its own
+no idle harness holding memory. `relevo bind --worktree --no-feature --name api` gives a peer its own
 worktree and a fresh process per round.
 
 
@@ -945,11 +952,12 @@ or the working index, and they are reclaimed automatically by the repository's
 own `git gc`.
 
 **What a binding records.** Beyond its round history and live state, a fresh
-`bind` fills in four more facts about the binding: which
+`bind` fills in five more facts about the binding: which
 repository it works in (the origin URL, normalised, and the git common
 directory — best-effort, so a directory git can't read leaves this blank
 rather than failing the command), the `--feature` label grouping it with
-other bindings, which
+other bindings (or that it serves none), the `--ticket` issue it serves
+(stored as `#N`, or `owner/repo#N` when the repository is known), which
 binding and round it was forked from, and the MasterMind's own harness
 transcript file path, when relevo can locate one at bind time. None of this
 changes what you see day to day; it exists for `relevo history`, the ui's
@@ -991,24 +999,19 @@ across every binding relevo has ever recorded -- live or archived -- newest
 first.
 
 ```
-relevo history [--here|--repo <url|dir>]   filter to a repo: --here resolves the current directory's
-                                           origin url (or its git common dir with no remote);
-                                           --repo takes either form directly
+relevo history [--here]                    filter to a repo: --here resolves the current directory's
+                                           origin url (or its git common dir with no remote)
               [--feature LABEL]           filter to a --feature label
+              [--ticket REF]              filter by ticket: a bare N or #N matches any stored ticket
+                                           ending in #N, owner/repo#N matches exactly
               [--binding NAME]            filter to one binding name
               [--mastermind SESSION]         filter to one MasterMind session id
-              [--harness K] [--provider P] [--model M]
-                                           filter to the round's builder columns
-              [--candidate TOKEN]         filter to one harness/provider/model token
-              [--outcome O]               filter to one round outcome: reported, halted, exited,
-                                           switched, done_no_report, open
-              [--since D] [--until D]     only rounds started in this window: 24h, 7d, or YYYY-MM-DD
-              [--archived|--live]         archived bindings only, or live bindings only (default: both)
+              [--since D]                 only rounds started after this: 24h, 7d, or YYYY-MM-DD
               [--limit N]                 max rows to print; 0 = all (default 200)
               [--json]                    a JSON array of RoundRow, `[]` when empty
               [-q "<query>"]              filter with the query language below
-              [--by <axis>]               regroup the result: none, binding, repo, feature, builder,
-                                           harness, provider, model, day, outcome
+              [--by <axis>]               regroup the result: none, binding, repo, feature, ticket,
+                                           candidate, actor, harness, provider, model, day, outcome
               [--rows]                    with --json --by, include each group's Rows
 ```
 
@@ -1044,7 +1047,7 @@ query  := token*                              whitespace separated
 token  := key ":" value                       equality; "quoted" for spaces
         | numkey op number                    op in > < >= <= = 
         | word                                case-insensitive substring of binding, repo or feature
-key    := binding repo feature MasterMind harness provider model candidate outcome
+key    := binding repo feature ticket MasterMind harness provider model candidate outcome
           report state gate basis server mode since until archived by
 numkey := cost tokens commits duration round
 values : outcome reported|halted|exited|switched|done_no_report|open
@@ -1054,7 +1057,7 @@ values : outcome reported|halted|exited|switched|done_no_report|open
          mode    pane|headless|remote   (pane: history only)
          archived true|false
          since/until 24h|7d|YYYY-MM-DD
-         by      none|binding|repo|feature|builder|harness|provider|model|day|outcome
+         by      none|binding|repo|feature|ticket|candidate|actor|harness|provider|model|day|outcome
          duration minutes; tokens = in+cache+write+out; cost in USD
 ```
 
@@ -1217,7 +1220,7 @@ Any `extra_args` are appended verbatim after what relevo renders. Because relevo
 
 ### Choosing a candidate
 
-Pass the token to `relevo bind --candidate claude/anthropic/sonnet` and relevo
+Pass the token to `relevo bind --no-feature --candidate claude/anthropic/sonnet` and relevo
 starts exactly that, gated or not (with a `note:` on stderr if it is).
 
 With `--candidate` omitted, relevo decides, by one rule:
@@ -1422,7 +1425,7 @@ An unknown agent, a reader with `check`, or a builtin actor with the wrong
 shape is refused when the config loads.
 
 - A new **reader** actor runs as a binding's actor too: `relevo bind
-  --worktree --actor <name>` or `relevo bind --actor <name>`, then `relevo
+  --worktree --no-feature --actor <name>` or `relevo bind --no-feature --actor <name>`, then `relevo
   send` hands it a plan. Its round writes `NNN-<actor>/<label>.md` -- the
   actor's resolved output label (`plan.md` for the architect, `findings.md`
   for the reviewer, `notes.md` for the researcher) -- and any files it
@@ -1430,7 +1433,7 @@ shape is refused when the config loads.
   new **writer** actor runs a round the same way. Every round of that binding
   runs it.
 
-With `relevo bind --worktree --server S --actor <r>`, the server resolves `<r>`
+With `relevo bind --worktree --no-feature --server S --actor <r>`, the server resolves `<r>`
 against **its own** actors section, and your local sections do not travel. A
 server too old to run custom actors refuses the add.
 
@@ -1587,7 +1590,7 @@ codex does not support the `read` tier: `-s read-only` cannot write the report, 
 Tiers are ordered as `read < edit < yolo`. `harness` is outside this hierarchy and is never compared as above or below other tiers.
 
 `max_tier` in the policy section defines the permission ceiling across all commands, defaulting to `edit`. Any command requesting a tier above `max_tier` (such as `yolo` under default policy) is refused unless:
-- The command includes `--allow-yolo` on the command line (e.g. `relevo bind --tier yolo --allow-yolo` or `relevo send --tier yolo --allow-yolo`), or
+- The command includes `--allow-yolo` on the command line (e.g. `relevo bind --no-feature --tier yolo --allow-yolo` or `relevo send --tier yolo --allow-yolo`), or
 - `max_tier` is explicitly raised to `"yolo"` in the policy section.
 
 `max_tier` cannot be set to `"harness"` because `"harness"` is outside the rank order and does not represent a ceiling.
@@ -1774,7 +1777,7 @@ round from before the rename answers `summary.md`, its old fallback name.
 The MasterMind runs, from its own session:
 
 ```
-relevo bind --actor reviewer --name webshop
+relevo bind --no-feature --actor reviewer --name webshop
 relevo send --name webshop --file q.md
 ```
 
@@ -1831,7 +1834,7 @@ A planner actor is a reader binding too: bind it, send it the task, and read
 its plan back from the round's output.
 
 ```
-relevo bind --actor lite-planner --name plan-x
+relevo bind --no-feature --actor lite-planner --name plan-x
 relevo send --name plan-x --file task.md
 relevo show plan-x --output                                   # or the cockpit's artifacts tab
 relevo send --name <builder> --file <the output path>

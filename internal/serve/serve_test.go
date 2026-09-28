@@ -348,7 +348,7 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles}
+	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels}
 	if !slices.Equal(who.Features, wantFeatures) {
 		t.Fatalf("Features = %v, want %v", who.Features, wantFeatures)
 	}
@@ -725,6 +725,59 @@ func TestCreateBindingTier(t *testing.T) {
 			}
 			if b.Tier != tc.wantTier {
 				t.Fatalf("stored binding Tier = %q, want %q", b.Tier, tc.wantTier)
+			}
+		})
+	}
+}
+
+// TestCreateBindingLabels pins the server half: Feature and Ticket are
+// validated (400 on a malformed one), stored, and echoed in the view.
+func TestCreateBindingLabels(t *testing.T) {
+	cases := []struct {
+		name       string
+		feature    string
+		ticket     string
+		wantStatus int
+	}{
+		{"both labels", "auth", "o/r#607", http.StatusCreated},
+		{"ticket without a feature", "", "#607", http.StatusCreated},
+		{"bad feature", "a/b", "", http.StatusBadRequest},
+		{"bad ticket", "", "not a ticket", http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, kp := newTierTestServer(t, policy.Policy{})
+			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+				Name:       "api",
+				RepoID:     "repo123",
+				BaseCommit: strings.Repeat("a", 40),
+				Role:       "builder",
+				Feature:    tc.feature,
+				Ticket:     tc.ticket,
+			})
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			id := remote.IDOf(kp.Public)
+			if tc.wantStatus != http.StatusCreated {
+				if _, err := testRuntime(t, srv, id).Store.Load("api"); err == nil {
+					t.Fatal("binding was stored despite the refusal")
+				}
+				return
+			}
+			var view remote.BindingView
+			if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+				t.Fatalf("decode view: %v", err)
+			}
+			if view.Feature != tc.feature || view.Ticket != tc.ticket {
+				t.Fatalf("view labels = %q/%q, want %q/%q", view.Feature, view.Ticket, tc.feature, tc.ticket)
+			}
+			b, err := testRuntime(t, srv, id).Store.Load("api")
+			if err != nil {
+				t.Fatalf("Load binding: %v", err)
+			}
+			if b.Feature != tc.feature || b.Ticket != tc.ticket {
+				t.Fatalf("stored labels = %q/%q, want %q/%q", b.Feature, b.Ticket, tc.feature, tc.ticket)
 			}
 		})
 	}

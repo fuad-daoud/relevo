@@ -18,6 +18,8 @@
   "round_cap": 10,
   "round_timeout_ms": 60000,
   "tier": "edit",
+  "feature": "auth",
+  "ticket": "o/r#607",
   "usage": {
     "harness": "opencode",
     "provider": "anthropic",

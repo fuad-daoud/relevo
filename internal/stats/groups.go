@@ -143,6 +143,20 @@ func noFeatureKey(r db.RoundRow) (string, bool) {
 	return "", false
 }
 
+func ticketKey(r db.RoundRow) (string, bool) {
+	if r.Ticket == nil {
+		return "", false
+	}
+	return *r.Ticket, true
+}
+
+func noTicketKey(r db.RoundRow) (string, bool) {
+	if r.Ticket == nil {
+		return "(none)", true
+	}
+	return "", false
+}
+
 func buildOutcomes(rows []db.RoundRow) Outcomes {
 	out := Outcomes{
 		ByRound:  map[string]int{},

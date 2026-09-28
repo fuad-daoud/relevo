@@ -261,3 +261,31 @@ func TestNormalizeOriginURL(t *testing.T) {
 		})
 	}
 }
+
+func TestOwnerRepo(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"https", "https://github.com/o/r", "o/r"},
+		{"http", "http://github.com/o/R", "o/R"},
+		{"ssh normalised to https", NormalizeOriginURL("ssh://git@github.com/o/r.git"), "o/r"},
+		{"scp normalised to https", NormalizeOriginURL("git@github.com:o/r.git"), "o/r"},
+		{"extra path segments take the last two", "https://gitlab.com/group/sub/repo", "sub/repo"},
+		{"trailing slash", "https://github.com/o/r/", "o/r"},
+		{"no host", "https://github.com", ""},
+		{"no path", "https://", ""},
+		{"one path segment", "https://github.com/o", ""},
+		{"local path", "/home/dev/projects/webshop", ""},
+		{"unrecognised string", "not a url", ""},
+		{"missing origin", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := OwnerRepo(tc.in); got != tc.want {
+				t.Errorf("OwnerRepo(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

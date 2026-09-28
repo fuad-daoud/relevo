@@ -388,6 +388,7 @@ func seedHistoryFixture(t *testing.T) {
 	alphaID, err := d.UpsertBinding(db.Binding{
 		Name: "hist-alpha", CWD: "/repo/hist-alpha", BuilderMode: "headless",
 		MasterMindID: strPtr("pl_fixturehistory"), CreatedAt: t0, IngestSource: db.IngestLive,
+		Ticket: strPtr("o/r#607"),
 	})
 	if err != nil {
 		t.Fatalf("UpsertBinding hist-alpha: %v", err)
@@ -403,6 +404,7 @@ func seedHistoryFixture(t *testing.T) {
 	betaID, err := d.UpsertBinding(db.Binding{
 		Name: "hist-beta", CWD: "/repo/hist-beta", BuilderMode: "headless",
 		CreatedAt: t0.Add(5 * time.Minute), IngestSource: db.IngestLive,
+		Ticket: strPtr("#607"),
 	})
 	if err != nil {
 		t.Fatalf("UpsertBinding hist-beta: %v", err)
@@ -439,6 +441,9 @@ func TestContractHistory(t *testing.T) {
 		// carry a round for (hist-alpha/1, hist-beta/2), so the query
 		// matches a non-empty set of rows.
 		{"history-q", []string{"history", "--json", "-q", "outcome:reported"}},
+		// A bare --ticket matches every stored ticket ending in #N, and
+		// --by ticket regroups the matches by their stored form.
+		{"history-ticket", []string{"history", "--json", "--ticket", "#607", "--by", "ticket"}},
 	} {
 		stdout, _, _ := captureOutput(t, func() error { return run(c.args) })
 		assertGolden(t, c.golden, normalize(stdout))

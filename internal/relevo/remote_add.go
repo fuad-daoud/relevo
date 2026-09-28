@@ -195,13 +195,19 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	if actor == "" {
 		actor = "builder"
 	}
-	if opts.Tier != "" || wireRole != "" {
+	if opts.Tier != "" || wireRole != "" || opts.Feature != "" || opts.Ticket != "" {
 		who, err := rt.Remote.WhoAmI(ctx, opts.Server)
 		if err != nil {
 			return AddResult{}, err
 		}
 		if opts.Tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
 			return AddResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, opts.Server)
+		}
+		// #637: a server that does not advertise labels would save the binding
+		// without them, so a client that sets one refuses -- before any branch,
+		// worktree or create call.
+		if (opts.Feature != "" || opts.Ticket != "") && !slices.Contains(who.Features, remote.FeatureLabels) {
+			return AddResult{}, fmt.Errorf("%w: server %s does not carry binding labels (pre-labels server); upgrade it or drop --feature/--ticket", ErrServerPreTier, opts.Server)
 		}
 		// The client's actors never travel (§5.3): the server resolves the
 		// actor against its own. A server too old to do that would ignore the
@@ -223,6 +229,8 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		Candidate:  candidateStr,
 		Tier:       wireTier,
 		Role:       actor,
+		Feature:    opts.Feature,
+		Ticket:     opts.Ticket,
 		Author:     &remote.GitIdentity{Name: authorName, Email: authorEmail},
 	}
 	view, err := rt.Remote.CreateBinding(ctx, opts.Server, createReq)
@@ -323,6 +331,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		// captureRepo uses for the local Add path.
 		RepoRef: captureRepo(ctx, rt, opts.Repo),
 		Feature: opts.Feature,
+		Ticket:  opts.Ticket,
 	}
 	res := Resolution{
 		Candidate: cand,
