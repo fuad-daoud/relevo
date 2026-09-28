@@ -288,7 +288,7 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
   larger one is refused unless `--force`.
   A headless binding whose previous round's process is still running refuses
-  the send; wait for its report or `relevo done` it.
+  the send; wait for the round to close or `relevo done` it.
   `--dry-run` checks every precondition a send would and prints what it would
   do, writing nothing: no prompt staged, no log entry, no process started.
   A precondition that fails is the same error `relevo send` gives, exit
