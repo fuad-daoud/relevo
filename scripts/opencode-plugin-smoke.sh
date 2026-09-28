@@ -58,6 +58,21 @@ capture() {
   tmux capture-pane -t "$SESSION_TMUX" -p -e > "$OUT/$name.ansi" 2>/dev/null || : > "$OUT/$name.ansi"
 }
 
+# Wait for the ledger report-in toast: it lives 6 s and its poll is not at a
+# fixed offset from the navigation above, so capture in short steps and stop at
+# the first frame that carries it.
+wait_toast() {
+  local i=0
+  while [ "$i" -lt 60 ]; do
+    capture "02-after-toast"
+    if grep -q "report in, delivered to chat" "$OUT/02-after-toast.txt"; then
+      return 0
+    fi
+    sleep 0.5
+    i=$((i + 1))
+  done
+}
+
 wait_ready() {
   # The TUI draws a "Loading plugins..." splash while plugins resolve. Wait for
   # that splash to clear *and* for the session view to have real content: an
@@ -98,7 +113,7 @@ capture "01-session"
 # Open ledger's report tab before status-2 (returns Missing: true -> (no report))
 send C-x; sleep 0.4; send o; sleep 0.8
 send Down; sleep 0.3; send Enter; sleep 1.0
-# ledger starts on transcript tab; cycle tab twice to reach report tab (tabs: plan, report, diff, log, transcript)
+# ledger starts on transcript tab; cycle tab twice to reach report tab (tabs: prompt, report, diff, log, transcript)
 send Tab; sleep 0.3; send Tab; sleep 1.0
 capture "01b-ledger-stale"
 send Escape; sleep 0.4
@@ -106,9 +121,7 @@ send Escape; sleep 0.4
 send C-x; sleep 0.4; send o; sleep 0.8
 send Up; sleep 0.3; send Escape; sleep 0.4
 
-# Wait for 3rd poll to fire (count >= 3 -> status-2.json) and capture toast
-sleep 6
-capture "02-after-toast"
+wait_toast
 
 # 03-fleet (C-x o)
 send C-x; sleep 0.4; send o; sleep 1.5
@@ -139,14 +152,14 @@ capture "05b-scrolled"
 sleep 12
 capture "05c-after-polls"
 
-# 05d/05e/05f: transcript, plan as markdown, and stale report refetch
+# 05d/05e/05f: transcript, prompt as markdown, and stale report refetch
 # From report tab (index 1), tab 3 times to transcript tab (index 4)
 send Tab; sleep 0.3; send Tab; sleep 0.3; send Tab; sleep 1.5
 capture "05e-transcript"
 
-# Tab once more to plan tab (index 0)
+# Tab once more to prompt tab (index 0)
 send Tab; sleep 2.5
-capture "05d-plan"
+capture "05d-prompt"
 
 # Round keys: the page is webshop, which opened on r3. ] moves to r4; then [ [
 # moves back to r2 ([ takes the largest round below the current one).
@@ -221,9 +234,9 @@ assert() {
 
 echo "=== Running Assertions ==="
 
-# 1. log has mastermind init --kind opencode --session <that session id>
-assert 1 "log has mastermind init --kind opencode --session $SESSION_ID" \
-  grep -q "mastermind init --kind opencode --session $SESSION_ID" "$LOG"
+# 1. log has mastermind guide --json --kind opencode --session <that session id>
+assert 1 "log has mastermind guide --json --kind opencode --session $SESSION_ID" \
+  grep -q "mastermind guide --json --kind opencode --session $SESSION_ID" "$LOG"
 
 # 2. 01-session shows relevo · oc-smoke, webshop, NEEDS YOU
 check_assertion_2() {
@@ -255,7 +268,7 @@ assert 5 "03-fleet shows relevo › fleet and column header" check_assertion_5
 # 6. 04-binding shows relevo › fleet › webshop and the tab row
 check_assertion_6() {
   grep -q "relevo › fleet › webshop" "$OUT/04-binding.txt" && \
-  grep -q "plan" "$OUT/04-binding.txt" && \
+  grep -q "prompt" "$OUT/04-binding.txt" && \
   grep -q "report" "$OUT/04-binding.txt"
 }
 assert 6 "04-binding shows relevo › fleet › webshop and tab row" check_assertion_6
@@ -400,18 +413,18 @@ check_assertion_24() {
 }
 assert 24 "01-session landing row shows no ACTIVE word" check_assertion_24
 
-# 25. In 05d-plan.ansi, the plan fixture's heading line carries a non-empty
+# 25. In 05d-prompt.ansi, the prompt fixture's heading line carries a non-empty
 #     SGR sequence that differs from the one on a plain paragraph line. The
 #     plain capture shows the heading words without the leading "# ".
 check_assertion_25() {
   local head_sgr body_sgr
-  head_sgr="$(grep -a -m1 "Plan for webshop" "$OUT/05d-plan.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
-  body_sgr="$(grep -a -m1 "Implement cart" "$OUT/05d-plan.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
+  head_sgr="$(grep -a -m1 "Plan for webshop" "$OUT/05d-prompt.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
+  body_sgr="$(grep -a -m1 "Implement cart" "$OUT/05d-prompt.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
   [ -n "$head_sgr" ] && [ -n "$body_sgr" ] && \
   [ "$head_sgr" != "$body_sgr" ] && \
-  grep -qE "^[[:space:]]*Plan for webshop r4" "$OUT/05d-plan.txt"
+  grep -qE "^[[:space:]]*Plan for webshop r4" "$OUT/05d-prompt.txt"
 }
-assert 25 "05d-plan heading carries different SGR sequence from plain body" check_assertion_25
+assert 25 "05d-prompt heading carries different SGR sequence from plain body" check_assertion_25
 
 # 25b. In 05-binding-report.ansi, the report fixture's heading line carries a
 #      non-empty SGR sequence that differs from the one on a plain paragraph
@@ -455,26 +468,26 @@ assert 27 "ledger shows (no report) before status-2 and real report after status
 # 29. The fixture's "## Scope" heading also loses its marker: the plain capture
 #     shows "Scope" on its own and nowhere shows "## Scope".
 check_assertion_29() {
-  grep -qE "^[[:space:]]*Scope([[:space:]]|$)" "$OUT/05d-plan.txt" && \
-  ! grep -qF "## Scope" "$OUT/05d-plan.txt"
+  grep -qE "^[[:space:]]*Scope([[:space:]]|$)" "$OUT/05d-prompt.txt" && \
+  ! grep -qF "## Scope" "$OUT/05d-prompt.txt"
 }
-assert 29 "05d-plan shows the ## heading without its marker" check_assertion_29
+assert 29 "05d-prompt shows the ## heading without its marker" check_assertion_29
 
 # 30. The fixture's "---" line renders as a rule of ─ characters, not as raw
 #     dashes.
 check_assertion_30() {
-  grep -qE "─{3,}" "$OUT/05d-plan.txt" && \
-  ! grep -qE "^[[:space:]]*---[[:space:]]*$" "$OUT/05d-plan.txt"
+  grep -qE "─{3,}" "$OUT/05d-prompt.txt" && \
+  ! grep -qE "^[[:space:]]*---[[:space:]]*$" "$OUT/05d-prompt.txt"
 }
-assert 30 "05d-plan shows the --- line as a ─ rule" check_assertion_30
+assert 30 "05d-prompt shows the --- line as a ─ rule" check_assertion_30
 
 # 31. The fixture's link renders as its text followed by the url in
 #     parentheses; the raw "](url)" marker appears nowhere.
 check_assertion_31() {
-  grep -qF "design notes (https://example.com/design)" "$OUT/05d-plan.txt" && \
-  ! grep -qF "](" "$OUT/05d-plan.txt"
+  grep -qF "design notes (https://example.com/design)" "$OUT/05d-prompt.txt" && \
+  ! grep -qF "](" "$OUT/05d-prompt.txt"
 }
-assert 31 "05d-plan shows the link text then (url) and no ](" check_assertion_31
+assert 31 "05d-prompt shows the link text then (url) and no ](" check_assertion_31
 
 # 32. The ledger report's markdown table renders as a table: a header row, a
 #     ─┼─ separator and a body row, with no raw pipe left.
@@ -509,8 +522,8 @@ assert 34 "05e-transcript styles the builder's markdown text" check_assertion_34
 check_assertion_35() {
   grep -q "webshop › r4" "$OUT/05g-round-next.txt" && \
   grep -q "webshop › r2" "$OUT/05h-round-prev.txt" && \
-  grep -q "show webshop --json --plan --round 4" "$LOG" && \
-  grep -q -- "--plan --round 2" "$LOG"
+  grep -q "show webshop --json --prompt --round 4" "$LOG" && \
+  grep -q -- "--prompt --round 2" "$LOG"
 }
 assert 35 "] and [ switch the round and refetch its body" check_assertion_35
 
@@ -597,17 +610,17 @@ check_assertion_41() {
 }
 assert 41 "05-binding-report round row has no r7 and r1 r2 r3 r4 holds" check_assertion_41
 
-# 42. (F3) 05d-plan.txt has exactly one line made only of ─ and spaces. In
+# 42. (F3) 05d-prompt.txt has exactly one line made only of ─ and spaces. In
 #     05f-ledger-after.txt, the line after the one containing ── relevo is not a
 #     line made only of ─.
 check_assertion_42() {
   local rule_count next_line
-  rule_count="$(grep -cE '^[[:space:]]*─+[[:space:]]*$' "$OUT/05d-plan.txt" || true)"
+  rule_count="$(grep -cE '^[[:space:]]*─+[[:space:]]*$' "$OUT/05d-prompt.txt" || true)"
   [ "$rule_count" -eq 1 ] || return 1
   next_line="$(awk '/── relevo/{getline; print; exit}' "$OUT/05f-ledger-after.txt")"
   ! printf '%s\n' "$next_line" | grep -qE '^[[:space:]]*─+[[:space:]]*$'
 }
-assert 42 "05d-plan has one rule line and relevo rule does not wrap in 05f-ledger-after" check_assertion_42
+assert 42 "05d-prompt has one rule line and relevo rule does not wrap in 05f-ledger-after" check_assertion_42
 
 # 43. (F4) 05f-ledger-after.txt has a line matching commands_run:[[:space:]]*$
 #     (no —) and a line containing - git status.
@@ -654,8 +667,8 @@ assert 47 "fake log has send --name webshop --file a/fleet [plan] a.md" check_as
 #     row) differs from the selected tab in 05j-sent.txt.
 check_assertion_48() {
   local tab_j tab_k
-  tab_j="$(grep -E '\bplan\b.*\breport\b' "$OUT/05j-sent.txt" | grep -oE '\[ [^]]+ \]' | head -1 || true)"
-  tab_k="$(grep -E '\bplan\b.*\breport\b' "$OUT/05k-after-dialog-tab.txt" | grep -oE '\[ [^]]+ \]' | head -1 || true)"
+  tab_j="$(grep -E '\bprompt\b.*\breport\b' "$OUT/05j-sent.txt" | grep -oE '\[ [^]]+ \]' | head -1 || true)"
+  tab_k="$(grep -E '\bprompt\b.*\breport\b' "$OUT/05k-after-dialog-tab.txt" | grep -oE '\[ [^]]+ \]' | head -1 || true)"
   [ -n "$tab_j" ] && [ -n "$tab_k" ] && [ "$tab_j" != "$tab_k" ]
 }
 assert 48 "05k-after-dialog-tab selected tab differs from 05j-sent" check_assertion_48

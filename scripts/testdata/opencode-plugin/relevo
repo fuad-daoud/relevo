@@ -16,6 +16,10 @@ case "$cmd" in
       echo "export RELEVO_MASTERMIND=mm_smoke000001"
       exit 0
     fi
+    if [ "${2:-}" = "guide" ]; then
+      echo '{"state":"disabled","text":"relevo: enabled for this session","id":"mm_smoke000001","name":"oc-smoke"}'
+      exit 0
+    fi
     ;;
   status)
     STATE_DIR="${RELEVO_FAKE_STATE:-/tmp/relevo-fake-state}"
@@ -56,7 +60,7 @@ case "$cmd" in
     NAME="${2:-}"
     for arg in "$@"; do
       case "$arg" in
-        --plan) TAB="plan" ;;
+        --prompt) TAB="prompt" ;;
         --report) TAB="report" ;;
         --diff) TAB="diff" ;;
         --log) TAB="log" ;;

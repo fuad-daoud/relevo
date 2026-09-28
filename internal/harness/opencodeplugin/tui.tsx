@@ -554,7 +554,7 @@ export default {
       initial: {
         rev: 0,
         fleetSelected: 0,
-        bindingTab: "plan",
+        bindingTab: "prompt",
         bindingRound: 0,
         bindingRoundFor: "",
         dialogOpen: false,
@@ -1199,7 +1199,7 @@ export default {
           });
         };
 
-        // §4.4: turn markdown text into styled line boxes. The plan and report
+        // §4.4: turn markdown text into styled line boxes. The prompt and report
         // tabs call it with no `special`; the transcript tab passes
         // transcriptSpecial. A table consumes several lines, so this is an
         // index loop: a line the renderer hides contributes nothing.
@@ -1596,7 +1596,7 @@ export default {
           );
         };
 
-      const tabs = ["plan", "report", "diff", "log", "transcript"];
+      const tabs = ["prompt", "report", "diff", "log", "transcript"];
 
       // view(): everything the render used to compute at its top level, in
       // the same order, including the side effects (currentRoute,
@@ -1629,7 +1629,7 @@ export default {
               : (row.report_round || row.round || 1);
         currentRouteParams = { name, round };
 
-        const currentTab = store.bindingTab || "plan";
+        const currentTab = tabs.includes(store.bindingTab) ? store.bindingTab : "prompt";
 
         // Fetch binding history for round row
         fetchHistory(name, undefined);
@@ -1790,7 +1790,7 @@ export default {
                 <scrollbox flexGrow={1} minHeight={0} focusable focused={!store.dialogOpen} onKeyDown={onKey}>
                   {(() => {
                     const v = view();
-                    return v.currentTab === "plan" || v.currentTab === "report" ? (
+                    return v.currentTab === "prompt" || v.currentTab === "report" ? (
                       v.tabContent ? (
                         <box flexDirection="column">
                           {renderMarkdownLines(v.tabContent)}
