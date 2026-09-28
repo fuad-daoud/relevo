@@ -30,14 +30,14 @@ import (
 // round's process is still running (headless spec §5.2). One process per
 // round is the model; two at once in one tree would race each other's
 // edits.
-var ErrBuilderBusy = errors.New("builder's previous process is still running; wait for its report, or relevo done")
+var ErrBuilderBusy = errors.New("the previous process is still running; wait for the round to close, or relevo done")
 
 // ErrReportPending reports a send refused because the current round already
 // has its completion marker or report on disk, but the daemon has not yet
 // ingested the close. The round is over: restaging its plan and starting a
 // second builder would make the daemon close on the stale marker and deliver
 // the old report. The caller retries once the report is delivered.
-var ErrReportPending = errors.New("the round's report is on disk but not yet delivered; relevo wait delivers it, then send the next plan")
+var ErrReportPending = errors.New("the round's output is on disk but not yet delivered; relevo wait delivers it, then send the next round")
 
 // ErrScopeActive reports a send refused because this round's systemd scope
 // unit is still loaded: a builder for the round is already alive, most
