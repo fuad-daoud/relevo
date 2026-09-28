@@ -7,6 +7,8 @@
   "round_timeout_ms": 60000,
   "tier": "edit",
   "actor": "builder",
+  "feature": "auth",
+  "ticket": "o/r#607",
   "author": {
     "name": "Test Builder",
     "email": "builder@example.com"

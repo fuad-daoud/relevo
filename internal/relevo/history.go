@@ -117,6 +117,9 @@ type HistoryOptions struct {
 	Here                                                                       string
 	Repo                                                                       string
 	Feature, Binding, MasterMind, Harness, Provider, Model, Candidate, Outcome string
+	// Ticket is the --ticket filter (#637): a bare N/#N matches any stored
+	// ticket ending in #N, and owner/repo#N matches exactly (see db.Filter).
+	Ticket string
 	// Since/Until are relevo.ParseSince forms: "", "24h", "7d", "YYYY-MM-DD".
 	Since, Until string
 	// Archived: nil means both; true archived only; false live only.
@@ -181,6 +184,7 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 
 	set("repo", q.Filter.Repo, o.Repo, &f.Repo)
 	set("feature", q.Filter.Feature, o.Feature, &f.Feature)
+	set("ticket", q.Filter.Ticket, o.Ticket, &f.Ticket)
 	set("binding", q.Filter.Binding, o.Binding, &f.Binding)
 	set("mastermind", q.Filter.MasterMind, o.MasterMind, &f.MasterMind)
 	set("harness", q.Filter.Harness, o.Harness, &f.Harness)
@@ -257,7 +261,7 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 	return f, notes, nil
 }
 
-// axisList is histq's ten axes as one comma-separated list, for --by errors.
+// axisList is histq's twelve axes as one comma-separated list, for --by errors.
 func axisList() string {
 	axes := histq.Axes()
 	names := make([]string, len(axes))

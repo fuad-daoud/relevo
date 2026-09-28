@@ -245,11 +245,12 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 	var id string
 	err := t.queryRow(`SELECT id FROM binding WHERE name = ? AND created_at = ?`, b.Name, createdAt).Scan(&id)
 	if err == nil {
-		if _, uerr := t.exec(`UPDATE binding SET repo_id=?, mastermind_id=?, feature=?, forked_from_binding_id=?,
+		if _, uerr := t.exec(`UPDATE binding SET repo_id=?, mastermind_id=?, feature=?, ticket=?, forked_from_binding_id=?,
 				forked_from_round=?, cwd=?, worktree=?, branch=?, base_commit=?, tier=?, gate=?,
 				builder_mode=?, server=?, final_state=?, archived_at=?, archive_path=?, ingest_source=?
 			WHERE id=?`,
 			nullableString(b.RepoID), nullableString(b.MasterMindID), nullableString(b.Feature),
+			nullableString(b.Ticket),
 			nullableString(b.ForkedFromBindingID), nullableInt(b.ForkedFromRound),
 			b.CWD, nullableString(b.Worktree), nullableString(b.Branch), nullableString(b.BaseCommit),
 			nullableString(b.Tier), nullableString(b.Gate), b.BuilderMode, nullableString(b.Server),
@@ -264,11 +265,12 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 	}
 
 	id = NewID()
-	if _, err := t.exec(`INSERT INTO binding (id, name, repo_id, mastermind_id, feature, forked_from_binding_id,
+	if _, err := t.exec(`INSERT INTO binding (id, name, repo_id, mastermind_id, feature, ticket, forked_from_binding_id,
 			forked_from_round, cwd, worktree, branch, base_commit, tier, gate, builder_mode, server,
 			created_at, final_state, archived_at, archive_path, ingest_source)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, b.Name, nullableString(b.RepoID), nullableString(b.MasterMindID), nullableString(b.Feature),
+		nullableString(b.Ticket),
 		nullableString(b.ForkedFromBindingID), nullableInt(b.ForkedFromRound),
 		b.CWD, nullableString(b.Worktree), nullableString(b.Branch), nullableString(b.BaseCommit),
 		nullableString(b.Tier), nullableString(b.Gate), b.BuilderMode, nullableString(b.Server),

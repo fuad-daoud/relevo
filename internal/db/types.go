@@ -33,6 +33,7 @@ type Binding struct {
 	RepoID              *string
 	MasterMindID        *string
 	Feature             *string
+	Ticket              *string
 	ForkedFromBindingID *string
 	ForkedFromRound     *int
 	CWD                 string
@@ -147,7 +148,7 @@ type Cursor struct {
 // Filter is the shared query contract: the zero value of every field means
 // "no constraint" on that field.
 type Filter struct {
-	Repo, Here, Feature, Binding, MasterMind             string
+	Repo, Here, Feature, Ticket, Binding, MasterMind     string
 	Harness, Provider, Model, Candidate                  string
 	Outcome, ReportOutcome, State, GateResult, CostBasis string
 	Round                                                int
@@ -159,7 +160,7 @@ type Filter struct {
 
 type RoundRow struct {
 	BindingID, BindingName                        string
-	Repo, Feature                                 *string
+	Repo, Feature, Ticket                         *string
 	Number                                        int
 	StartedAt                                     time.Time
 	ClosedAt                                      *time.Time

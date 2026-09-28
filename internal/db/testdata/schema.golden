@@ -123,7 +123,7 @@ CREATE TABLE binding (
     archived_at TEXT,
     archive_path TEXT,
     ingest_source TEXT NOT NULL
-)
+, ticket TEXT)
 
 table binding_event binding_event
 CREATE TABLE binding_event (
@@ -315,4 +315,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 )
 
-schema_versions have=11 know=11
+schema_versions have=12 know=12

@@ -67,6 +67,12 @@ type AddOptions struct {
 	// (#172); "" means ungrouped. Validated by store.ValidFeature when set.
 	Feature string
 
+	// Ticket is the issue this binding serves, as typed on --ticket (#637).
+	// Add parses it once against opts.Repo and stores the canonical form; ""
+	// means none. There is no --no-feature: nothing to clear, the mark is
+	// CLI-only and only a fresh bind needs it.
+	Ticket string
+
 	// Role is the writer role the new binding runs (#382); "" means builder.
 	// It must name a writer role in roles.json.
 	Role string
@@ -110,6 +116,15 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
 	if err != nil {
 		return AddResult{}, err
+	}
+	// #637: the ticket is parsed once, before the local/remote split, so the
+	// local literal and addRemote both carry the stored form.
+	if opts.Ticket != "" {
+		ticket, terr := parseTicket(opts.Ticket, captureRepo(ctx, rt, opts.Repo))
+		if terr != nil {
+			return AddResult{}, terr
+		}
+		opts.Ticket = ticket
 	}
 	if opts.Server != "" {
 		// A reader is local-only in A5 §2: a reader's tree is the caller's own
@@ -366,6 +381,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		// checkout, including on the --cwd escape hatch.
 		RepoRef: captureRepo(ctx, rt, opts.Repo),
 		Feature: opts.Feature,
+		Ticket:  opts.Ticket,
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {

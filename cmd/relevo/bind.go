@@ -31,6 +31,8 @@ type bindFlags struct {
 	noGate     bool
 	regate     *int
 	feature    string
+	noFeature  bool
+	ticket     string
 	role       string
 
 	// The placement flags choose add's path.
@@ -89,6 +91,8 @@ type bindFlagValues struct {
 	noGate         *bool
 	regate         *int
 	feature        *string
+	noFeature      *bool
+	ticket         *string
 	actor          *string
 	worktree       *bool
 	cwd            *string
@@ -114,7 +118,9 @@ func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v.gate = fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: config policy gate.default)")
 	v.noGate = fs.Bool("no-gate", false, "opt this binding out of config policy's gate.default")
 	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
-	v.feature = fs.String("feature", "", "label grouping this binding with others")
+	v.feature = fs.String("feature", "", "label grouping this binding with others; a fresh bind needs exactly one of --feature or --no-feature")
+	v.noFeature = fs.Bool("no-feature", false, "record that this binding is not a feature; a fresh bind needs exactly one of --feature or --no-feature")
+	v.ticket = fs.String("ticket", "", "the issue this binding serves: N, #N, owner/repo#N, or a .../issues/N URL (allowed with --no-feature)")
 	v.actor = fs.String("actor", "", "the actor this binding runs (default builder); a reader actor leaves artifacts and never changes the tree")
 	v.worktree = fs.Bool("worktree", false, "attach an additional runner to this mastermind, on its own worktree")
 	v.cwd = fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
@@ -131,6 +137,23 @@ func cmdBind(args []string) error {
 		return err
 	}
 
+	// #637: the label rules are CLI rules, and they are refused on one line
+	// with exit 2 before any runtime, state, worktree or network work -- the
+	// same shape as the route refusal below.
+	if err := relevo.RequireFeatureChoice(*v.feature, *v.noFeature, *v.resume); err != nil {
+		return refuseFlag(err)
+	}
+	if *v.feature != "" {
+		if err := store.ValidFeature(*v.feature); err != nil {
+			return refuseFlag(err)
+		}
+	}
+	if *v.ticket != "" {
+		if _, err := store.ParseTicket(*v.ticket, ""); err != nil {
+			return refuseFlag(err)
+		}
+	}
+
 	regateOpt, err := regateFlag(fs, v.regate)
 	if err != nil {
 		return err
@@ -140,15 +163,15 @@ func cmdBind(args []string) error {
 		name: *v.name, candidate: *v.candidate, mastermind: *v.mastermindFlag,
 		resume: *v.resume, rebind: *v.rebind, timeout: *v.timeout, tier: *v.tier,
 		allowYolo: *v.allowYolo, gate: *v.gate, noGate: *v.noGate, regate: regateOpt,
-		feature: *v.feature, role: *v.actor, worktree: *v.worktree, cwd: *v.cwd,
+		feature: *v.feature, noFeature: *v.noFeature, ticket: *v.ticket,
+		role: *v.actor, worktree: *v.worktree, cwd: *v.cwd,
 		branch: *v.branch, server: *v.server, base: *v.base,
 	}
 
 	route, rerr := bindRouteFor(f)
 	if rerr != nil {
 		// One line, exit 2, before any runtime is built (§4.1).
-		fmt.Fprintf(os.Stderr, "relevo: %v\n", rerr)
-		return fmt.Errorf("%v: %w", rerr, exitCodeErr{code: 2})
+		return refuseFlag(rerr)
 	}
 
 	switch route {
@@ -157,6 +180,13 @@ func cmdBind(args []string) error {
 	default:
 		return runBind(f)
 	}
+}
+
+// refuseFlag prints one line to stderr and returns it wrapped in exit 2,
+// exactly as the route refusal always has; the label rules reuse the shape.
+func refuseFlag(err error) error {
+	fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
+	return fmt.Errorf("%v: %w", err, exitCodeErr{code: 2})
 }
 
 // runBind is bind's own body after parsing: bind the current tree, or resume
@@ -172,13 +202,6 @@ func runBind(f bindFlags) error {
 	}
 	if f.role != "" && f.resume {
 		return fmt.Errorf("relevo bind --resume keeps the binding's actor; drop --actor")
-	}
-
-	if f.feature != "" {
-		if err := store.ValidFeature(f.feature); err != nil {
-			fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
-			return exitCodeErr{code: 2}
-		}
 	}
 
 	rt, err := newRuntime()
@@ -204,6 +227,8 @@ func runBind(f bindFlags) error {
 		NoGate:       f.noGate,
 		Regate:       f.regate,
 		Feature:      f.feature,
+		NoFeature:    f.noFeature,
+		Ticket:       f.ticket,
 		Role:         f.role,
 	}
 	opts.Candidate = f.candidate
@@ -314,12 +339,6 @@ func runAdd(f bindFlags) error {
 		}
 		name = derived
 	}
-	if f.feature != "" {
-		if err := store.ValidFeature(f.feature); err != nil {
-			fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
-			return exitCodeErr{code: 2}
-		}
-	}
 
 	rt, err := newRuntime()
 	if err != nil {
@@ -346,6 +365,7 @@ func runAdd(f bindFlags) error {
 		NoGate:       f.noGate,
 		Regate:       f.regate,
 		Feature:      f.feature,
+		Ticket:       f.ticket,
 		Role:         f.role,
 	})
 	if err != nil {

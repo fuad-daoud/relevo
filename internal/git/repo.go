@@ -139,3 +139,29 @@ func trimRepoPath(p string) string {
 	p = strings.TrimSuffix(p, "/")
 	return p
 }
+
+// OwnerRepo returns "owner/repo" from the last two path segments of a
+// normalised origin URL (as NormalizeOriginURL returns it), and "" for anything
+// that is not a URL with a host and at least two path segments: a local path, a
+// bare host, an empty string.
+func OwnerRepo(normalised string) string {
+	s := strings.TrimSpace(normalised)
+	scheme := strings.Index(s, "://")
+	if scheme < 0 {
+		return ""
+	}
+	rest := s[scheme+3:]
+	slash := strings.Index(rest, "/")
+	if slash < 0 {
+		return ""
+	}
+	segs := strings.Split(strings.Trim(rest[slash+1:], "/"), "/")
+	if len(segs) < 2 {
+		return ""
+	}
+	owner, repo := segs[len(segs)-2], segs[len(segs)-1]
+	if owner == "" || repo == "" {
+		return ""
+	}
+	return owner + "/" + repo
+}

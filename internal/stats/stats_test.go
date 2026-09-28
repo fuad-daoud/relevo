@@ -356,6 +356,16 @@ func TestGroupRows(t *testing.T) {
 			check: checkGroupNoFeature,
 		},
 		{
+			name: "ticket rows and the no-ticket bucket",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Ticket: stStr("o/r#607"), Outcome: db.OutcomeReported},
+				{BindingID: "b2", Ticket: stStr("#607"), Outcome: db.OutcomeReported},
+				{BindingID: "b3", Outcome: db.OutcomeHalted},
+				{BindingID: "b4", Outcome: db.OutcomeHalted},
+			},
+			check: checkGroupTickets,
+		},
+		{
 			name: "bindings, reports, commits and candidates",
 			rows: []db.RoundRow{
 				{BindingID: "b1", Repo: stStr("A"), ReportOutcome: stStr("done"), Commits: stInt(2), Candidate: stStr("A")},
@@ -414,6 +424,26 @@ func checkGroupNoFeature(t *testing.T, rep Report) {
 	}
 	if len(rep.Features) != 1 || rep.Features[0].Key != "f1" {
 		t.Fatalf("Features = %+v, want only f1", rep.Features)
+	}
+}
+
+// checkGroupTickets pins the ticket buckets and the (none) no-ticket group.
+func checkGroupTickets(t *testing.T, rep Report) {
+	byKey := map[string]GroupRow{}
+	for _, g := range rep.Tickets {
+		byKey[g.Key] = g
+	}
+	if len(rep.Tickets) != 2 {
+		t.Fatalf("Tickets = %+v, want o/r#607 and #607", rep.Tickets)
+	}
+	if got := byKey["o/r#607"].Rounds; got != 1 {
+		t.Errorf("o/r#607 Rounds = %d, want 1", got)
+	}
+	if got := byKey["#607"].Rounds; got != 1 {
+		t.Errorf("#607 Rounds = %d, want 1", got)
+	}
+	if rep.NoTicket.Key != "(none)" || rep.NoTicket.Rounds != 2 {
+		t.Fatalf("NoTicket = %+v, want 2 rounds keyed (none)", rep.NoTicket)
 	}
 }
 

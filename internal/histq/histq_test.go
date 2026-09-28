@@ -18,6 +18,7 @@ func TestParseEveryKey(t *testing.T) {
 			eqStr(t, "repo", q.Filter.Repo, "https://github.com/o/r")
 		}},
 		{"feature:checkout", func(t *testing.T, q Query) { eqStr(t, "feature", q.Filter.Feature, "checkout") }},
+		{"ticket:o/r#607", func(t *testing.T, q Query) { eqStr(t, "ticket", q.Filter.Ticket, "o/r#607") }},
 		{"mastermind:sess-1", func(t *testing.T, q Query) { eqStr(t, "mastermind", q.Filter.MasterMind, "sess-1") }},
 		{"harness:agy", func(t *testing.T, q Query) { eqStr(t, "harness", q.Filter.Harness, "agy") }},
 		{"provider:anthropic", func(t *testing.T, q Query) { eqStr(t, "provider", q.Filter.Provider, "anthropic") }},
@@ -96,6 +97,7 @@ func TestParseBy(t *testing.T) {
 		want  Axis
 	}{
 		{"by:candidate", AxisCandidate},
+		{"by:ticket", AxisTicket},
 		{"by:actor", AxisActor},
 		{"by:day", AxisDay},
 		{"by:none", AxisNone},
@@ -184,7 +186,9 @@ func TestStringRoundTrip(t *testing.T) {
 		"harness:agy outcome:halted since:30d",
 		`harness:agy outcome:halted since:30d cost>1 cost>2 auth "api v2" by:candidate`,
 		"report:done state:needs_you gate:pass basis:estimated server:contabo mode:headless round:3 archived:true",
-		"binding:api repo:https://github.com/o/r feature:checkout mastermind:sess-1 provider:anthropic model:sonnet candidate:agy/x/y",
+		"binding:api repo:https://github.com/o/r feature:checkout " +
+			"ticket:o/r#607 " +
+			"mastermind:sess-1 provider:anthropic model:sonnet candidate:agy/x/y",
 		`"api v2" by:day`,
 		"tokens>=1000000 duration<=30 commits<3",
 	}

@@ -138,6 +138,52 @@ func TestUpsertBindingNaturalKey(t *testing.T) {
 	}
 }
 
+// TestUpsertBindingRoundTripsTicket pins that the ticket is written on insert,
+// replaced on update, and carried on the round rows a query returns.
+func TestUpsertBindingRoundTripsTicket(t *testing.T) {
+	d := openTestDB(t)
+	created := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+
+	b := newTestBinding("webshop", created)
+	b.Feature = ptr("auth")
+	b.Ticket = ptr("o/r#607")
+	bindingID, err := d.UpsertBinding(b)
+	if err != nil {
+		t.Fatalf("UpsertBinding: %v", err)
+	}
+
+	got, ok, err := d.Binding("webshop")
+	if err != nil || !ok {
+		t.Fatalf("Binding: ok=%v err=%v", ok, err)
+	}
+	if got.Ticket == nil || *got.Ticket != "o/r#607" {
+		t.Fatalf("inserted ticket = %v, want o/r#607", got.Ticket)
+	}
+
+	if _, err := d.UpsertRound(newTestRound(bindingID, 1, OutcomeOpen)); err != nil {
+		t.Fatalf("UpsertRound: %v", err)
+	}
+	rows, err := d.Query(Filter{Binding: "webshop"})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Ticket == nil || *rows[0].Ticket != "o/r#607" {
+		t.Fatalf("round row ticket = %v, want o/r#607", rows)
+	}
+
+	b.Ticket = ptr("#42")
+	if _, err := d.UpsertBinding(b); err != nil {
+		t.Fatalf("UpsertBinding (update): %v", err)
+	}
+	got, ok, err = d.Binding("webshop")
+	if err != nil || !ok {
+		t.Fatalf("Binding after update: ok=%v err=%v", ok, err)
+	}
+	if got.Ticket == nil || *got.Ticket != "#42" {
+		t.Fatalf("updated ticket = %v, want #42", got.Ticket)
+	}
+}
+
 func TestUpsertRoundReplacesColumns(t *testing.T) {
 	d := openTestDB(t)
 	bindingID, err := d.UpsertBinding(newTestBinding("webshop", time.Now()))

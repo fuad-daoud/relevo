@@ -735,7 +735,7 @@ func TestAddHelp(t *testing.T) {
 
 func TestAddValidation(t *testing.T) {
 	// Missing --name
-	err := run([]string{"bind", "--worktree", "--candidate", "claude/test/m"})
+	err := run([]string{"bind", "--worktree", "--no-feature", "--candidate", "claude/test/m"})
 	if err == nil || !strings.Contains(err.Error(), "--name") {
 		t.Fatalf("expected an error about --name, got %v", err)
 	}
@@ -744,7 +744,7 @@ func TestAddValidation(t *testing.T) {
 // TestAddBranchWithCwdIsRefusedBeforeRuntime pins the flag-pair refusal: it
 // happens in validation, before newRuntime, so it reaches no harness.
 func TestAddBranchWithCwdIsRefusedBeforeRuntime(t *testing.T) {
-	err := run([]string{"bind", "--branch", "x", "--cwd", "/tmp"})
+	err := run([]string{"bind", "--branch", "x", "--cwd", "/tmp", "--no-feature"})
 	if err == nil || !strings.Contains(err.Error(), "exclusive") {
 		t.Fatalf("expected an 'exclusive' refusal, got %v", err)
 	}
@@ -762,7 +762,7 @@ func TestAddBranchDerivesName(t *testing.T) {
 	t.Setenv("RELEVO_MASTERMIND", "")
 	t.Setenv("CLAUDECODE", "")
 
-	err := run([]string{"bind", "--branch", "feature/api-auth"})
+	err := run([]string{"bind", "--branch", "feature/api-auth", "--no-feature"})
 	if err == nil {
 		t.Fatal("add without a relevo mastermind must refuse")
 	}
@@ -1041,7 +1041,7 @@ func TestBindRejectsTabFlag(t *testing.T) {
 // TestBindRebindNeedsResume pins #92: --rebind only means something on a
 // resume. It is refused before newRuntime, so no harness is reached.
 func TestBindRebindNeedsResume(t *testing.T) {
-	err := run([]string{"bind", "--rebind", "--name", "x"})
+	err := run([]string{"bind", "--rebind", "--no-feature", "--name", "x"})
 	if err == nil || !strings.Contains(err.Error(), "--rebind") || !strings.Contains(err.Error(), "--resume") {
 		t.Fatalf("got %v, want an error naming --rebind and --resume", err)
 	}
@@ -1070,6 +1070,88 @@ func TestBindFlagsHaveActorNotRole(t *testing.T) {
 	}
 	if fs.Lookup("role") != nil {
 		t.Error("bind still defines --role; it must be removed, not aliased")
+	}
+}
+
+// TestBindFlagSetDefinesLabels pins #637: a fresh bind needs --no-feature as
+// the alternative to --feature, and --ticket is the new optional issue flag.
+func TestBindFlagSetDefinesLabels(t *testing.T) {
+	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
+	bindFlagSet(fs)
+	for _, name := range []string{"feature", "no-feature", "ticket"} {
+		if fs.Lookup(name) == nil {
+			t.Errorf("bind does not define --%s", name)
+		}
+	}
+}
+
+// TestBindRequiresAFeatureChoice pins #637's exactly-one rule on the CLI: a
+// fresh bind with neither flag, on either route, exits 2 with one stderr line
+// naming both flags, before any runtime is built.
+func TestBindRequiresAFeatureChoice(t *testing.T) {
+	for _, args := range [][]string{
+		{"bind", "--name", "x"},
+		{"bind", "--worktree", "--name", "x"},
+	} {
+		_, stderr, err := captureOutput(t, func() error { return run(args) })
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("%v: run = %v, want exit code 2", args, err)
+			continue
+		}
+		for _, flag := range []string{"--feature", "--no-feature"} {
+			if !strings.Contains(string(stderr), flag) {
+				t.Errorf("%v: stderr = %q, want it to name %s", args, stderr, flag)
+			}
+		}
+	}
+}
+
+// TestBindRejectsBothFeatureFlags pins the other half: both flags together is
+// refused with the same one-line exit 2.
+func TestBindRejectsBothFeatureFlags(t *testing.T) {
+	_, stderr, err := captureOutput(t, func() error {
+		return run([]string{"bind", "--feature", "auth", "--no-feature", "--name", "x"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("run = %v, want exit code 2", err)
+	}
+	for _, flag := range []string{"--feature", "--no-feature"} {
+		if !strings.Contains(string(stderr), flag) {
+			t.Errorf("stderr = %q, want it to name %s", stderr, flag)
+		}
+	}
+}
+
+// TestBindRejectsABadFeatureStillExits2 pins the shared pre-route check the
+// two route-local store.ValidFeature blocks became: a malformed --feature is
+// still one stderr line and exit 2.
+func TestBindRejectsABadFeatureStillExits2(t *testing.T) {
+	_, stderr, err := captureOutput(t, func() error {
+		return run([]string{"bind", "--feature", "a/b", "--name", "x"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("run = %v, want exit code 2", err)
+	}
+	if !strings.Contains(string(stderr), "feature:") {
+		t.Errorf("stderr = %q, want the feature rule's own text", stderr)
+	}
+}
+
+// TestBindRejectsABadTicketExits2 pins #637: a malformed --ticket is refused
+// on the same one-line exit 2, before any runtime.
+func TestBindRejectsABadTicketExits2(t *testing.T) {
+	_, stderr, err := captureOutput(t, func() error {
+		return run([]string{"bind", "--no-feature", "--ticket", "not a ticket", "--name", "x"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("run = %v, want exit code 2", err)
+	}
+	if !strings.Contains(string(stderr), "ticket:") {
+		t.Errorf("stderr = %q, want the ticket rule's own text", stderr)
 	}
 }
 

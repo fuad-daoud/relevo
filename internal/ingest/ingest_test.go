@@ -47,6 +47,9 @@ func TestIngestFixtureLive(t *testing.T) {
 	if !strEq(b.Feature, "auth") {
 		t.Errorf("Feature = %v, want auth", b.Feature)
 	}
+	if !strEq(b.Ticket, "o/r#607") {
+		t.Errorf("Ticket = %v, want o/r#607", b.Ticket)
+	}
 	if !strEq(b.FinalState, "needs_you") {
 		t.Errorf("FinalState = %v, want needs_you", b.FinalState)
 	}
@@ -204,6 +207,9 @@ func compareBindings(t *testing.T, live, arch db.BindingRow) {
 	}
 	if !strPtrEq(live.Feature, arch.Feature) {
 		t.Errorf("Feature live=%v archive=%v", live.Feature, arch.Feature)
+	}
+	if !strPtrEq(live.Ticket, arch.Ticket) {
+		t.Errorf("Ticket live=%v archive=%v", live.Ticket, arch.Ticket)
 	}
 	if !strPtrEq(live.FinalState, arch.FinalState) {
 		t.Errorf("FinalState live=%v archive=%v", live.FinalState, arch.FinalState)
@@ -432,6 +438,9 @@ func TestIngestLegacyBindJSON(t *testing.T) {
 	}
 	if b.Feature != nil {
 		t.Errorf("Feature = %v, want nil", b.Feature)
+	}
+	if b.Ticket != nil {
+		t.Errorf("Ticket = %v, want nil", b.Ticket)
 	}
 	if rounds := mustRounds(t, d, b.ID); len(rounds) != 3 {
 		t.Errorf("len(rounds) = %d, want 3", len(rounds))

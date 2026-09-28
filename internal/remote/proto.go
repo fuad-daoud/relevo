@@ -108,6 +108,11 @@ type CreateBindingRequest struct {
 	RoundTimeoutMS int    `json:"round_timeout_ms,omitempty"`
 	Tier           string `json:"tier,omitempty"`  // "" = server's choice; else harness|read|edit|yolo
 	Role           string `json:"actor,omitempty"` // the actor the runner plays; resolved against the server's own actors
+	// Feature and Ticket are the client binding's labels (#637). Both are
+	// additive: an old server ignores them, and a client setting either
+	// refuses a server that does not advertise remote.FeatureLabels.
+	Feature string `json:"feature,omitempty"`
+	Ticket  string `json:"ticket,omitempty"`
 
 	// Author is the client's git identity; the server runs this binding's
 	// builders as it (#335). nil means an old client that sent none.
@@ -151,6 +156,10 @@ type BindingView struct {
 	RoundCap       int       `json:"round_cap"`
 	RoundTimeoutMS int       `json:"round_timeout_ms"`
 	Tier           string    `json:"tier,omitempty"` // effectiveTier(b) on the server; "" from a pre-tier server
+	// Feature and Ticket are the binding's labels (#637), echoed from the
+	// create request; "" from a pre-labels server or an unlabelled binding.
+	Feature string `json:"feature,omitempty"`
+	Ticket  string `json:"ticket,omitempty"`
 
 	// Usage is the closed round's usage as the server recorded it on its
 	// report entry (usage.Usage is already JSON-tagged; it is the same
@@ -317,6 +326,12 @@ const FeatureIdempotentSend = "idempotent_send"
 // CreateBindingRequest.Author advertises (#335, #373). A client whose server
 // lacks it logs a Warn once per server and continues.
 const FeatureAuthor = "author"
+
+// FeatureLabels is the WhoAmI.Features token a server that honours
+// CreateBindingRequest.Feature and .Ticket advertises (#637). A client setting
+// either refuses a server without it: silently dropping the label on the
+// server is the laptop/server disagreement the labels exist to remove.
+const FeatureLabels = "labels"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

@@ -5977,3 +5977,115 @@ func TestCatchUpSettleSkipsAChangedBinding(t *testing.T) {
 		t.Fatalf("report queued for a binding that moved on: %+v", entries)
 	}
 }
+
+// TestResumeRemoteRefusesLabelFlags pins #637 call 3: no server endpoint could
+// change a stored label, so a remote resume refuses --feature, --no-feature and
+// --ticket rather than changing only the mirror.
+func TestResumeRemoteRefusesLabelFlags(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatalf("save remote binding: %v", err)
+	}
+	rt := newRuntime(t)
+	rt.Store = st
+	rt.Now = func() time.Time { return baseTime }
+
+	for _, opts := range []BindOptions{
+		{Feature: "auth"},
+		{NoFeature: true},
+		{Ticket: "#607"},
+	} {
+		opts.Name = "api"
+		opts.Resume = true
+		opts.MasterMindID = testMasterMindName
+		opts.CWD = "/fake/repo"
+		_, _, err := BindResolved(ctx, rt, opts)
+		if err == nil || !strings.Contains(err.Error(), "cannot change a remote binding's feature or ticket") {
+			t.Fatalf("BindResolved(%+v) err = %v, want the remote label refusal", opts, err)
+		}
+	}
+}
+
+// TestAddRemoteLabelsWiresRequestAndMirror pins #637's remote half: a
+// labels-aware server gets Feature and the canonical Ticket on the
+// CreateBindingRequest, and the local mirror records them.
+func TestAddRemoteLabelsWiresRequestAndMirror(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:       "1111111111111111111111111111111111111111",
+		rootCommitSHA:      "2222222222222222222222222222222222222222",
+		repoFactsOrigin:    "git@github.com:o/r.git",
+		repoFactsCommonDir: "/fake/repo/.git",
+	}
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureLabels}},
+		createBindingResp: remote.BindingView{
+			Name:      "api",
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
+
+	res, err := Add(ctx, rt, AddOptions{
+		Name:    "api",
+		Server:  "zen",
+		Repo:    "/fake/repo",
+		Feature: "auth",
+		Ticket:  "607",
+	})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if fr.createBindingReq.Feature != "auth" {
+		t.Errorf("CreateBindingRequest.Feature = %q, want auth", fr.createBindingReq.Feature)
+	}
+	if fr.createBindingReq.Ticket != "o/r#607" {
+		t.Errorf("CreateBindingRequest.Ticket = %q, want o/r#607", fr.createBindingReq.Ticket)
+	}
+	stored, err := st.Load("api")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.Feature != "auth" || stored.Ticket != "o/r#607" {
+		t.Errorf("mirror feature/ticket = %q/%q, want auth and o/r#607", stored.Feature, stored.Ticket)
+	}
+	if res.Binding.Feature != "auth" || res.Binding.Ticket != "o/r#607" {
+		t.Errorf("result feature/ticket = %q/%q, want auth and o/r#607", res.Binding.Feature, res.Binding.Ticket)
+	}
+}
+
+// TestAddRemoteLabelsPreLabelsServerRefused pins #637 call 4: a server that
+// does not advertise FeatureLabels is refused before any binding is created
+// there, so the label is never silently dropped.
+func TestAddRemoteLabelsPreLabelsServerRefused(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{}} // Features nil: a pre-labels server
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
+
+	_, err := Add(ctx, rt, AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+		Ticket: "#607",
+	})
+	if !errors.Is(err, ErrServerPreTier) {
+		t.Fatalf("Add err = %v, want ErrServerPreTier", err)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateBinding") {
+			t.Fatalf("calls = %v, want no CreateBinding", fr.calls)
+		}
+	}
+	if len(fg.createBranchCalls) != 0 || len(fg.addWorktreeCalls) != 0 {
+		t.Fatalf("git calls = %v / %v, want no branch or worktree", fg.createBranchCalls, fg.addWorktreeCalls)
+	}
+}

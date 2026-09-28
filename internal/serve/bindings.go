@@ -84,6 +84,16 @@ func parseCreateRequest(r *http.Request) (remote.CreateBindingRequest, string) {
 	if req.Author != nil && !validAuthor(*req.Author) {
 		return req, "author: name and email must be 1-256 bytes with no newline, NUL, < or >"
 	}
+	if req.Feature != "" {
+		if err := store.ValidFeature(req.Feature); err != nil {
+			return req, err.Error()
+		}
+	}
+	if req.Ticket != "" {
+		if err := store.ValidTicket(req.Ticket); err != nil {
+			return req, err.Error()
+		}
+	}
 	return req, ""
 }
 
@@ -212,6 +222,8 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		State:            store.StateActive,
 		RoundCap:         req.RoundCap,
 		RoundTimeoutMS:   req.RoundTimeoutMS,
+		Feature:          req.Feature,
+		Ticket:           req.Ticket,
 		Serve: &store.ServeFacts{
 			RepoID:      req.RepoID,
 			BareRepo:    bare,

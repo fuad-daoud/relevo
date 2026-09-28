@@ -106,6 +106,8 @@ func filledCreateBindingRequest() CreateBindingRequest {
 		RoundTimeoutMS: 60000,
 		Tier:           "edit",
 		Role:           "builder",
+		Feature:        "auth",
+		Ticket:         "o/r#607",
 		Author:         &author,
 	}
 }
@@ -216,6 +218,8 @@ func filledBindingView() BindingView {
 		RoundCap:       10,
 		RoundTimeoutMS: 60000,
 		Tier:           "edit",
+		Feature:        "auth",
+		Ticket:         "o/r#607",
 		Usage:          &u,
 		Rusage:         &rusage,
 		PriorTokens:    &prior,
