@@ -17,11 +17,11 @@ const (
 // command that records the answer. The commands it names are the CLI's; a test
 // pins them against a rename.
 const AskNote = `This repository has not answered whether relevo should be its MasterMind.
-Ask the human before doing anything else, offering these three options:
+Before doing anything else, ask the human which of these three options they want:
   relevo mastermind enable          -- this session only
   relevo mastermind enable --repo   -- this repository from now on
   relevo mastermind disable --repo  -- never in this repository
-Then run the command they choose. Do not bind or send until the human answers.`
+Then run the command they choose. Do not act on anything else until they answer.`
 
 // ConsentText is what a session is told for its repo's answer. rec is nil when
 // the repo answered yes but the session has no record yet: the guide goes

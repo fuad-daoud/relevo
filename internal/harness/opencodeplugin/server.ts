@@ -1,10 +1,13 @@
 import { execFile } from "node:child_process";
 
 // Guide text by session: "pending" while the one fetch runs, null after a
-// failed or empty one. The text is fetched once per session and pushed into
-// every primary model request's system instructions, the way the Claude Code
-// hook carries it in additionalContext.
-const guideBySession = new Map<string, { text: string } | null | "pending">();
+// failed or empty one. The text is delivered two ways: prepended once to the
+// session's first user turn, the way Claude Code's additionalContext lands in
+// the conversation, and pushed into every model request's system instructions
+// while the repository is enabled.
+type Guide = { state: string; text: string };
+const guideBySession = new Map<string, Guide | null | "pending">();
+const promptedSessions = new Set<string>();
 
 // spawnRelevo runs one relevo verb, 10s timeout, the same shape the TUI plugin
 // uses. It never throws: a failure is a result.
@@ -46,7 +49,7 @@ function spawnRelevo(argv: string[]): Promise<{ ok: boolean; code: number; stdou
   });
 }
 
-async function fetchGuide(sessionID: string): Promise<{ text: string } | null> {
+async function fetchGuide(sessionID: string): Promise<Guide | null> {
   const res = await spawnRelevo(["mastermind", "guide", "--json", "--kind", "opencode", "--session", sessionID]);
   if (!res.ok) {
     if (!res.enoent) {
@@ -56,20 +59,20 @@ async function fetchGuide(sessionID: string): Promise<{ text: string } | null> {
   }
   try {
     const parsed = JSON.parse(res.stdout);
-    if (parsed && typeof parsed.text === "string") {
-      return { text: parsed.text };
+    if (parsed && typeof parsed.state === "string" && typeof parsed.text === "string") {
+      return { state: parsed.state, text: parsed.text };
     }
   } catch {}
   return null;
 }
 
-async function guideFor(sessionID: string): Promise<{ text: string } | null> {
+async function guideFor(sessionID: string): Promise<Guide | null> {
   const cached = guideBySession.get(sessionID);
   if (cached !== undefined && cached !== "pending") return cached;
   if (cached === "pending") return null;
 
   guideBySession.set(sessionID, "pending");
-  let guide: { text: string } | null = null;
+  let guide: Guide | null = null;
   try {
     guide = await fetchGuide(sessionID);
   } catch (err) {
@@ -121,12 +124,25 @@ const setup = async (api: any) => {
   }
 
   if (api?.session && typeof api.session.hook === "function") {
+    // The session's first user turn carries the text as conversation context,
+    // which is what makes a weak model act on it; later turns rely on the
+    // system part below.
+    await api.session.hook("prompt", async (event: any) => {
+      if (!event?.sessionID || typeof event.prompt?.text !== "string") return;
+      if (promptedSessions.has(event.sessionID)) return;
+      promptedSessions.add(event.sessionID);
+      const guide = await guideFor(event.sessionID);
+      if (guide?.text) {
+        event.prompt.text = guide.text + "\n\n---\n\n" + event.prompt.text;
+      }
+    });
+
     // The context hook runs for the agent loop only; compaction, title and
     // generate have their own hooks, so there is no kind to filter on here.
     await api.session.hook("context", async (event: any) => {
       if (!event?.sessionID || !Array.isArray(event.system)) return;
       const guide = await guideFor(event.sessionID);
-      if (guide?.text) {
+      if (guide?.state === "enabled" && guide.text) {
         event.system.push({ type: "text", text: guide.text });
       }
     });
