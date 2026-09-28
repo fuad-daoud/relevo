@@ -64,15 +64,16 @@ func RestoreText(res Resolution) string {
 
 // StopText is what `relevo stop` says on success: what happened to the round.
 func StopText(name string, res StopResult) string {
+	clause := withoutArtifact(res.Shape)
 	switch res.Action {
 	case "killed":
-		return fmt.Sprintf("%s round %d stopped: process killed; round closed without a report unless one was on disk", name, res.Round)
+		return fmt.Sprintf("%s round %d stopped: process killed; round closed %s unless one was on disk", name, res.Round, clause)
 	case "reaped":
-		return fmt.Sprintf("%s round %d stopped: reaped the round's scope (its runner was already gone); round closed without a report unless one was on disk", name, res.Round)
+		return fmt.Sprintf("%s round %d stopped: reaped the round's scope (its runner was already gone); round closed %s unless one was on disk", name, res.Round, clause)
 	case "gone":
-		return fmt.Sprintf("%s round %d stopped: its runner was already gone and nothing was left running; round closed without a report unless one was on disk", name, res.Round)
+		return fmt.Sprintf("%s round %d stopped: its runner was already gone and nothing was left running; round closed %s unless one was on disk", name, res.Round, clause)
 	case "dequeued":
-		return fmt.Sprintf("%s round %d stopped: dropped from the server queue before it started; round closed without a report", name, res.Round)
+		return fmt.Sprintf("%s round %d stopped: dropped from the server queue before it started; round closed %s", name, res.Round, clause)
 	default:
 		return fmt.Sprintf("%s has no open round; nothing to stop", name)
 	}

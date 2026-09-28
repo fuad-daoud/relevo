@@ -16,7 +16,7 @@
  ▍ ●  spool-db            r1│ Stops round 1, then sends its plan again on the chosen candidate.        │                            
    ●  tok-seg             r1│ The binding stays on it for later rounds.                                │                            
                             │                                                                          │                            
-     idle   4    reported, w│  enter  retry    esc  cancel                                             │                            
+     idle   4    finished, w│  enter  retry    esc  cancel                                             │                            
    ○  oc-tui-a            r6╰──────────────────────────────────────────────────────────────────────────╯                            
    ○  oc-tui-probe        r4 · reported 48m       gemini-3.8-flash-high   architect-3     plan                                      
    ○  rl-tail             r2 · reported 31m       gemini-3.8-flash-high   architect-5     plan                                      

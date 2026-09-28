@@ -124,9 +124,12 @@ type statusFixture struct {
 	mastermindID string
 }
 
-// seedStatusFixture seeds one store with three bindings: "webshop" (ACTIVE,
+// seedStatusFixture seeds one store with four bindings: "webshop" (ACTIVE,
 // round 2, with round 1's report still pending delivery, owned by a
-// registered mastermind so the statusline has a row), "archived" (DONE, no mastermind) and
+// registered mastermind so the statusline has a row), "atlas" (a planner
+// reader on the same mastermind whose confirmed round 1 output is delivered,
+// so its row carries the reader's word and the one shape key a writer omits),
+// "archived" (DONE, no mastermind) and
 // "hosted" (a remote-server binding, no server actually contacted -- rt.Remote
 // stays nil, so relevo never dials out). Every CWD lives under the store's own
 // root, so normalizing that one root cleans every path in the output. No
@@ -168,6 +171,22 @@ func seedStatusFixture(t *testing.T) statusFixture {
 		Path: "/x/001-report.md",
 	}); err != nil {
 		t.Fatalf("AppendLog webshop: %v", err)
+	}
+
+	// Confirmed: true is what makes atlas's report delivered rather than
+	// pending, so its row reads ARTIFACT IN and carries the reader's shape.
+	if err := s.Save(store.Binding{
+		Name: "atlas", CWD: filepath.Join(root, "work", "atlas"),
+		Round: 2, State: store.StateActive, MasterMindID: rec.ID,
+		Role: "planner", Shape: store.ShapeReader,
+	}); err != nil {
+		t.Fatalf("Save atlas: %v", err)
+	}
+	if err := s.AppendLog("atlas", store.LogEntry{
+		TS: fixedTS, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		Path: "/x/001-plan.md", Confirmed: true,
+	}); err != nil {
+		t.Fatalf("AppendLog atlas: %v", err)
 	}
 
 	if err := s.Save(store.Binding{

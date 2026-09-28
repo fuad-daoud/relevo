@@ -301,7 +301,7 @@ async function pollStatus(api: any) {
                 api.ui.toast.show({
                   variant: "info",
                   title: "relevo",
-                  message: `${row.name} r${row.report_round || row.round} report in, delivered to chat`,
+                  message: `${row.name} r${row.report_round || row.round} ${deliveredWord(row, false)}, delivered to chat`,
                   duration: 6000,
                 });
               }
@@ -398,6 +398,15 @@ type StateWord = {
   tone: "needs" | "held" | "quiet" | "report" | "phase" | "none";
 };
 
+// The delivered word a row shows: a reader's payload is an artifact, a
+// writer's (or a row an older document gave no shape for) a report. `upper` is
+// the status column's spelling, the lower one the toast's.
+function deliveredWord(row: any, upper: boolean): string {
+  const reader = row?.shape === "reader";
+  if (upper) return reader ? "ARTIFACT IN" : "REPORT IN";
+  return reader ? "artifact in" : "report in";
+}
+
 // §4.1: one rule for a row's status and its colour, used by the sidebar, the
 // fleet page and the binding header. The document carries one status per row,
 // so no surface derives the phase word (plan sent, report in) again.
@@ -407,7 +416,7 @@ function stateWord(row: any): StateWord {
   if (row?.display && row.display !== "ACTIVE") {
     return { word: row.display, tone: row.display === "HELD" ? "held" : "quiet" };
   }
-  if (row?.report_in) return { word: "REPORT IN", tone: "report" };
+  if (row?.report_in) return { word: deliveredWord(row, true), tone: "report" };
   return { word: "", tone: "none" };
 }
 

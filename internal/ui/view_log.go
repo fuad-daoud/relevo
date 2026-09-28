@@ -24,8 +24,26 @@ var (
 	pickRe       = regexp.MustCompile(`picked (\S+) for builder: order #(\d+)`)
 	exitCodeRe   = regexp.MustCompile(`code (\d+)`)
 	switchRe     = regexp.MustCompile(`^switched builder \((.*?)\): picked (\S+) for builder: order #(\d+)`)
-	switchExitRe = regexp.MustCompile(`exited \(code \d+\) without a report`)
+	switchExitRe = regexp.MustCompile(`exited \(code \d+\) without (?:a report|an output)`)
 )
+
+// shapeOf is a binding's shape as the log view reads it: "" when there is no
+// lookup or the store does not hold the name, which words as a writer.
+func shapeOf(shapes func(string) string, binding string) string {
+	if shapes == nil {
+		return ""
+	}
+	return shapes(binding)
+}
+
+// outputClause words a sentence about the artifact that was not written:
+// "without an output" for a reader, "without a report" for a writer.
+func outputClause(shape string) string {
+	if shape == store.ShapeReader {
+		return "without an output"
+	}
+	return "without a report"
+}
 
 type logEntry struct {
 	At      time.Time
@@ -51,6 +69,9 @@ type logView struct {
 	filter    string
 	input     textinput.Model
 	editing   bool
+	// shapes answers a binding's stored shape, so a row's word can follow it.
+	// nil (and "" for an unknown name) words as a writer.
+	shapes func(binding string) string
 }
 
 type eventLogMsg struct {
@@ -59,6 +80,24 @@ type eventLogMsg struct {
 	revs   []db.RevisionRow
 	err    error
 	at     time.Time
+	shapes func(binding string) string
+}
+
+// bindingShapes is the log view's shape lookup: a closure over the runtime's
+// store that answers a binding's shape, or "" for a name the store no longer
+// holds -- which words as a writer, exactly as today.
+func bindingShapes(rt relevo.Runtime) func(string) string {
+	if rt.Store == nil {
+		return nil
+	}
+	st := rt.Store
+	return func(name string) string {
+		b, err := st.Load(name)
+		if err != nil {
+			return ""
+		}
+		return b.Shape
+	}
 }
 
 func newLogView(env Env) (View, tea.Cmd) {
@@ -101,6 +140,7 @@ func fetchEventLog(ctx context.Context, rt relevo.Runtime, now time.Time) tea.Cm
 			hist:   hist,
 			revs:   revs,
 			at:     now,
+			shapes: bindingShapes(rt),
 		}
 	}
 }
@@ -129,7 +169,7 @@ func shortDurationText(ms int64) string {
 	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 
-func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []db.RevisionRow, actions []actionEntry, since time.Time, name func(token string) string) []logEntry {
+func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []db.RevisionRow, actions []actionEntry, since time.Time, name func(token string) string, shapes func(binding string) string) []logEntry {
 	picks := make(map[foldKey]string)
 	drifts := make(map[foldKey]string)
 	diffs := make(map[foldKey]string)
@@ -166,6 +206,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 		if e.Round != nil {
 			roundNum = *e.Round
 		}
+		shape := shapeOf(shapes, e.BindingName)
 
 		if store.IsPromptKind(store.Kind(e.Kind)) {
 			var parts []string
@@ -217,6 +258,9 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				style = warnStyle
 			default:
 				word = "reported"
+				if shape == store.ShapeReader {
+					word = "artifact"
+				}
 				style = mutedStyle
 			}
 
@@ -262,9 +306,10 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 
 		case "exit":
 			note := derefStr(e.Note)
-			detail := "without a report"
+			clause := outputClause(shape)
+			detail := clause
 			if m := exitCodeRe.FindStringSubmatch(note); m != nil {
-				detail = fmt.Sprintf("without a report (code %s)", m[1])
+				detail = fmt.Sprintf("%s (code %s)", clause, m[1])
 			}
 			out = append(out, logEntry{
 				At:      e.TS,
@@ -286,7 +331,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 					rest := strings.TrimPrefix(why, "rate-limited: ")
 					why = statsGateReason(rest)
 				} else if switchExitRe.MatchString(why) {
-					why = "exited without a report"
+					why = "exited " + outputClause(shape)
 				}
 				detail = fmt.Sprintf("to %s (#%s) · %s", mapName(tok), order, why)
 			} else {
@@ -431,7 +476,7 @@ func (v logView) filteredEntries(env Env) []logEntry {
 	if env.Src != nil && env.Src.Base().Candidates != nil {
 		nameOf = env.Src.Base().Candidates.NameOf
 	}
-	all := buildLogEntries(v.events, v.hist, v.revs, env.ActionLog, since, nameOf)
+	all := buildLogEntries(v.events, v.hist, v.revs, env.ActionLog, since, nameOf, v.shapes)
 	if v.filter == "" {
 		return all
 	}
@@ -465,7 +510,7 @@ func (v logView) Context(env Env) (string, string) {
 	if env.Src != nil && env.Src.Base().Candidates != nil {
 		nameOf = env.Src.Base().Candidates.NameOf
 	}
-	entries := buildLogEntries(v.events, v.hist, v.revs, env.ActionLog, since, nameOf)
+	entries := buildLogEntries(v.events, v.hist, v.revs, env.ActionLog, since, nameOf, v.shapes)
 
 	todayCount := 0
 	counts := make(map[string]int)
@@ -525,6 +570,7 @@ func (v logView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 			v.events = msg.events
 			v.hist = msg.hist
 			v.revs = msg.revs
+			v.shapes = msg.shapes
 			v.loaded = true
 			v.err = nil
 		}

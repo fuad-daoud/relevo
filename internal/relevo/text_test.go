@@ -1,6 +1,10 @@
 package relevo
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/store"
+)
 
 // These pin the exact bytes the CLI prints today (cmd/relevo/main.go before
 // this change), because the picker's result screen and the terminal must
@@ -116,6 +120,10 @@ func TestStopText(t *testing.T) {
 		{"dequeued", StopResult{Round: 3, Action: "dequeued"},
 			"webshop round 3 stopped: dropped from the server queue before it started; round closed without a report"},
 		{"default", StopResult{}, "webshop has no open round; nothing to stop"},
+		{"killed reader", StopResult{Round: 2, Action: "killed", Shape: store.ShapeReader},
+			"webshop round 2 stopped: process killed; round closed without an output unless one was on disk"},
+		{"dequeued reader", StopResult{Round: 3, Action: "dequeued", Shape: store.ShapeReader},
+			"webshop round 3 stopped: dropped from the server queue before it started; round closed without an output"},
 	}
 	for _, c := range cases {
 		if got := StopText("webshop", c.res); got != c.want {

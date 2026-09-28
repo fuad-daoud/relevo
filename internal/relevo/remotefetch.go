@@ -562,7 +562,11 @@ func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		return next, nil, err
 	}
 	if cf.ReportMissing && view.Stopped == "" {
-		next, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s closed round %d without a report file", b.Name, b.Builder.Server, view.ClosedRound))
+		missing := "without a report file"
+		if b.Shape == store.ShapeReader {
+			missing = fmt.Sprintf("without its %s file", readerOutputLabel(rt, b))
+		}
+		next, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s closed round %d %s", b.Name, b.Builder.Server, view.ClosedRound, missing))
 		return next, nil, err
 	}
 	if !applyCatchUpFiles(rt, tx, b, view, cf) {

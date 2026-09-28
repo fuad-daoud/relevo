@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -258,8 +259,9 @@ func TestRelevoVerbsDoneErrorPropagates(t *testing.T) {
 }
 
 // TestRelevoVerbsStatusResolvesSession pins opencode's path: the call's session
-// resolves to that session's mastermind, a resolver error is the tool error,
-// and --all needs no identity at all.
+// resolves to that session's mastermind, a resolver error is the tool error, a
+// resolver that yields "" with a nil error is an error naming the session, and
+// --all needs no identity at all.
 func TestRelevoVerbsStatusResolvesSession(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relevo.Runtime{
@@ -271,10 +273,14 @@ func TestRelevoVerbsStatusResolvesSession(t *testing.T) {
 	saveVerbBinding(t, s, store.Binding{Name: "other", CWD: "/repo/other", MasterMindID: mcpTestMasterMindB, Round: 1, State: store.StateActive})
 
 	v := &RelevoVerbs{RT: rt, ResolveSession: func(session string) (string, error) {
-		if session != "ses_abc" {
+		switch session {
+		case "ses_abc":
+			return mcpTestMasterMindA, nil
+		case "ses_empty":
+			return "", nil
+		default:
 			return "", fmt.Errorf("no relevo MasterMind for opencode session %s", session)
 		}
-		return mcpTestMasterMindA, nil
 	}}
 
 	res, err := v.Status(context.Background(), "ses_abc", StatusArgs{})
@@ -290,7 +296,34 @@ func TestRelevoVerbsStatusResolvesSession(t *testing.T) {
 		t.Fatal("a session with no mastermind must surface the resolver error")
 	}
 
+	if _, err := v.Status(context.Background(), "ses_empty", StatusArgs{}); err == nil || !strings.Contains(err.Error(), "ses_empty") {
+		t.Fatalf("a session resolving to \"\" must error naming it, got %v", err)
+	}
+
 	if _, err := v.Status(context.Background(), "ses_other", StatusArgs{All: true}); err != nil {
 		t.Fatalf("Status --all must not need a session, got %v", err)
+	}
+}
+
+// TestRelevoVerbsStatusWithoutIdentityErrors pins the Claude server with no
+// record and no session: the identity would be "", so status errors naming the
+// fix instead of filtering every binding away, and returns no report. all:true
+// still needs no identity.
+func TestRelevoVerbsStatusWithoutIdentityErrors(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
+
+	v := &RelevoVerbs{RT: rt}
+	res, err := v.Status(context.Background(), "", StatusArgs{})
+	if err == nil || !strings.Contains(err.Error(), "relevo mastermind init") {
+		t.Fatalf("Status error = %v, want it to name relevo mastermind init", err)
+	}
+	if res != nil {
+		t.Errorf("result = %#v, want nil when the identity is empty", res)
+	}
+
+	if _, err := v.Status(context.Background(), "", StatusArgs{All: true}); err != nil {
+		t.Fatalf("Status --all must not need an identity, got %v", err)
 	}
 }

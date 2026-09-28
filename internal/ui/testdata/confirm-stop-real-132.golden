@@ -16,7 +16,7 @@
  ▍ ●  spool-db            r1│                                                                          │                            
    ●  tok-seg             r1│  y  stop the round       n  cancel      any other key cancels            │                            
                             │                                                                          │                            
-     idle   4    reported, w╰──────────────────────────────────────────────────────────────────────────╯                            
+     idle   4    finished, w╰──────────────────────────────────────────────────────────────────────────╯                            
    ○  oc-tui-a            r6 · reported 14m       deepseek-v4.1-flash     architect-3    $0.20                                      
    ○  oc-tui-probe        r4 · reported 48m       gemini-3.8-flash-high   architect-3     plan                                      
    ○  rl-tail             r2 · reported 31m       gemini-3.8-flash-high   architect-5     plan                                      

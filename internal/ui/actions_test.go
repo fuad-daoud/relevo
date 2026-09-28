@@ -822,6 +822,78 @@ func TestRetryKeyCarriesTheChosenCandidate(t *testing.T) {
 	}
 }
 
+// TestPlannedRound pins the two suffixes a round's plan may carry: the current
+// NNN-prompt.md and the legacy NNN-plan.md. Everything else is not a plan.
+func TestPlannedRound(t *testing.T) {
+	cases := []struct {
+		base string
+		want int
+		ok   bool
+	}{
+		{"004-prompt.md", 4, true},
+		{"004-plan.md", 4, true},
+		{"1-prompt.md", 1, true},
+		{"004-report.md", 0, false},
+		{"004-done", 0, false},
+		{"bind.json", 0, false},
+		{"004-plan.txt", 0, false},
+		{"000-prompt.md", 0, false},
+		{"no-round-prompt.md", 0, false},
+		{"004-planner/plan.md", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.base, func(t *testing.T) {
+			got, ok := plannedRound(tc.base)
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("plannedRound(%q) = %d, %v; want %d, %v", tc.base, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// TestLastPlannedRound: the retry scan picks the highest round with a plan on
+// disk, counting the prompt spelling and the legacy one alike.
+func TestLastPlannedRound(t *testing.T) {
+	cases := []struct {
+		name  string
+		files []string
+		want  int
+	}{
+		{
+			name:  "prompt beats an older plan",
+			files: []string{"001-plan.md", "003-prompt.md", "003-done", "002-report.md", "002-planner/plan.md"},
+			want:  3,
+		},
+		{
+			name:  "legacy spelling still answers",
+			files: []string{"001-prompt.md", "002-plan.md"},
+			want:  2,
+		},
+		{
+			name:  "nothing plan-shaped",
+			files: []string{"001-report.md", "bind.json"},
+			want:  0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New(t.TempDir())
+			for _, f := range tc.files {
+				path := filepath.Join(st.Dir("atlas"), filepath.FromSlash(f))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+				}
+				if err := os.WriteFile(path, []byte("x\n"), 0o644); err != nil {
+					t.Fatalf("write %s: %v", path, err)
+				}
+			}
+			if got := lastPlannedRound(relevo.Runtime{Store: st}, "atlas"); got != tc.want {
+				t.Errorf("lastPlannedRound = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestReportReadyRowAndPull(t *testing.T) {
 	fa := &fakeActions{pullText: "round 3 report\n\nall good\n", pullOK: true}
 	b := view.BindingStatus{
@@ -867,6 +939,30 @@ func TestReportReadyRowAndPull(t *testing.T) {
 	}
 	if got := rv.pane.detail.cache[tabReport].body; !strings.Contains(got, "all good") {
 		t.Errorf("report tab body = %q, want the pulled text", got)
+	}
+}
+
+// TestReportReadyReaderRowSaysArtifact pins the fleet NOW cell for a reader
+// round waiting on this cockpit: the row's word follows its shape, so a reader
+// reads "artifact ready" while a writer keeps "report ready".
+func TestReportReadyReaderRowSaysArtifact(t *testing.T) {
+	reader := view.BindingStatus{
+		Name: "atlas", Round: 3, Display: "ACTIVE", MasterMindName: "you",
+		Shape:   store.ShapeReader,
+		Last:    &view.LastEvent{TS: railNow.Add(-3 * time.Minute), Round: 3, Kind: store.KindReport},
+		Pending: &view.PendingInfo{Round: 3, Kind: store.KindReport},
+	}
+	if !reportReady(reader) {
+		t.Fatal("a reader row with a pending payload is report ready")
+	}
+	if got := nowCell(reader, railNow); got != "artifact ready · 3m" {
+		t.Errorf("reader NOW cell = %q, want artifact ready · 3m", got)
+	}
+
+	writer := reader
+	writer.Shape = ""
+	if got := nowCell(writer, railNow); got != "report ready · 3m" {
+		t.Errorf("writer NOW cell = %q, want report ready · 3m", got)
 	}
 }
 

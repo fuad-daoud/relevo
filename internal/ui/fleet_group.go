@@ -62,7 +62,7 @@ var groupMetas = map[fleetGroup]groupMeta{
 	},
 	groupIdle: {
 		label: "idle",
-		hint:  "reported, waiting for the next plan",
+		hint:  "finished, waiting for the next plan",
 		pill:  kbdStyle,
 		dot:   mutedStyle,
 		glyph: "○",
@@ -133,11 +133,14 @@ func rowNow(b view.BindingStatus, now time.Time) string {
 	case groupIdle:
 		var idlePart string
 		if b.LastPayload != nil && b.LastPayload.Kind == store.KindReport {
-			age := ago(b.LastPayload.TS, now)
-			if age != "" {
-				idlePart = "reported " + age
+			word := "reported"
+			if b.Shape == store.ShapeReader {
+				word = "artifact"
+			}
+			if age := ago(b.LastPayload.TS, now); age != "" {
+				idlePart = word + " " + age
 			} else {
-				idlePart = "reported"
+				idlePart = word
 			}
 		} else if b.Last != nil && !b.Last.TS.IsZero() {
 			age := ago(b.Last.TS, now)

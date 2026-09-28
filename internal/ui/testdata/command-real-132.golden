@@ -16,7 +16,7 @@
    ●  spool-db          │   round rl-tail  idle · r2 · gemini-3.8-flash-high                               │                        
    ●  tok-seg           │   round tok-seg  working · r1 · gemini-3.8-flash-high                            │                        
                         │   round oc-tui-a  idle · r6 · deepseek-v4.1-flash                                │                        
-     idle   4    reporte│   round spool-db  working · r1 · gemini-3.8-flash-high                           │                        
+     idle   4    finishe│   round spool-db  working · r1 · gemini-3.8-flash-high                           │                        
    ○  oc-tui-a          │   round oc-tui-probe  idle · r4 · gemini-3.8-flash-high                          │                        
    ○  oc-tui-probe      │ + 33 more match; keep typing                                                     │                        
    ○  rl-tail           │                                              tab complete · enter go · esc close │                        

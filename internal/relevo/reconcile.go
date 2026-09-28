@@ -355,7 +355,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no report.", b.Round)+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "")
+		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no %s.", b.Round, outputWord(b.Shape))+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "")
 	if err != nil {
 		return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 	}

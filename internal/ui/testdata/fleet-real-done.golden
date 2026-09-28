@@ -16,7 +16,7 @@
    ●  spool-db            r1 · quiet 17s · 5m     gemini-3.8-flash-high   architect-2     plan                                      
    ●  tok-seg             r1 · quiet 16s · 6m     gemini-3.8-flash-high   architect-5     plan                                      
                                                                                                                                     
-     idle   4    reported, waiting for the next plan                                                                                
+     idle   4    finished, waiting for the next plan                                                                                
    ○  oc-tui-a            r6 · reported 14m       deepseek-v4.1-flash     architect-3    $0.20                                      
    ○  oc-tui-probe        r4 · reported 48m       gemini-3.8-flash-high   architect-3     plan                                      
    ○  rl-tail             r2 · reported 31m       gemini-3.8-flash-high   architect-5     plan                                      

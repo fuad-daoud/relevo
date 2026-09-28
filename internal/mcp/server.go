@@ -200,15 +200,28 @@ func (s *Server) initializeResult() map[string]any {
 type toolCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
-	// Meta carries the calling harness session. opencode sends
-	// _meta.sessionID on every call (docs.opencode mcp-servers#context), which
-	// is how one server resolves several sessions.
+	// Meta carries the calling harness session. opencode sends it under the
+	// namespaced key ai.opencode/sessionID on every call (docs.opencode
+	// mcp-servers#context), which is how one server resolves several sessions;
+	// a bare sessionID stays the fallback.
 	Meta callMeta `json:"_meta"`
 }
 
 // callMeta is the request metadata relevo reads. Other keys are ignored.
 type callMeta struct {
+	// SessionID is the bare fallback key.
 	SessionID string `json:"sessionID"`
+	// OpenCodeSessionID is the namespaced key opencode 2.0.18 sends.
+	OpenCodeSessionID string `json:"ai.opencode/sessionID"`
+}
+
+// session picks the calling harness session: opencode's namespaced key when it
+// is present, else the bare fallback.
+func (m callMeta) session() string {
+	if m.OpenCodeSessionID != "" {
+		return m.OpenCodeSessionID
+	}
+	return m.SessionID
 }
 
 func (s *Server) handleToolsCall(ctx context.Context, req Request) {
@@ -218,7 +231,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req Request) {
 		return
 	}
 
-	result, rpcErr := s.callTool(ctx, params.Name, params.Arguments, params.Meta.SessionID)
+	result, rpcErr := s.callTool(ctx, params.Name, params.Arguments, params.Meta.session())
 	if rpcErr != nil {
 		s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: rpcErr})
 		return
