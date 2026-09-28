@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,9 +11,10 @@ import (
 )
 
 // Verbs is what a tools/call dispatches to, each returning what the CLI's
-// --json would, or an error the caller turns into an isError result. session
-// is the calling harness session from the call's _meta, "" when the harness
-// sends none; only Status needs it.
+// --json would, or an error the caller turns into an isError result. session is
+// the calling harness session from the call's _meta, opencode's namespaced
+// ai.opencode/sessionID, "" when the harness sends none; only Status resolves
+// it, and send/done address a binding by name.
 type Verbs interface {
 	Status(ctx context.Context, session string, a StatusArgs) (any, error)
 	Send(ctx context.Context, session string, a SendArgs) (any, error)
@@ -22,7 +24,8 @@ type Verbs interface {
 // RelevoVerbs adapts internal/relevo's functions to Verbs. MasterMind is the
 // fallback identity for a harness that carries none per call (Claude Code);
 // ResolveSession, when set, maps a call's harness session to a MasterMind id
-// (opencode sends its session in _meta.sessionID).
+// (opencode sends its session in _meta under ai.opencode/sessionID). Only
+// Status consults either: send and done address a binding by name.
 type RelevoVerbs struct {
 	RT             relevo.Runtime
 	MasterMind     string
@@ -30,10 +33,24 @@ type RelevoVerbs struct {
 }
 
 // masterMindFor is the identity of one call: the session's mastermind when the
-// harness names it, else the process-level fallback.
+// harness names it, else the process-level fallback. An identity that would be
+// "" is an error, never a filter that silently matches nothing.
 func (v *RelevoVerbs) masterMindFor(session string) (string, error) {
-	if v.ResolveSession != nil && session != "" {
-		return v.ResolveSession(session)
+	if v.ResolveSession != nil {
+		if session == "" {
+			return "", errors.New("this call carries no OpenCode session (`_meta ai.opencode/sessionID`); cannot tell which MasterMind it belongs to")
+		}
+		id, err := v.ResolveSession(session)
+		if err != nil {
+			return "", err
+		}
+		if id == "" {
+			return "", fmt.Errorf("opencode session %s resolved to no MasterMind", session)
+		}
+		return id, nil
+	}
+	if v.MasterMind == "" {
+		return "", errors.New(`no relevo MasterMind for this session; run "relevo mastermind init"`)
 	}
 	return v.MasterMind, nil
 }
