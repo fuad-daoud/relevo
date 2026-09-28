@@ -113,11 +113,11 @@ ConsentText(state Consent, rec *Record) string
 
   ```
   This repository has not answered whether relevo should be its MasterMind.
-  Ask the human, then run one of:
+  Ask the human before doing anything else, offering these three options:
     relevo mastermind enable          -- this session only
     relevo mastermind enable --repo   -- this repository from now on
     relevo mastermind disable --repo  -- never in this repository
-  Do not bind or send until the human answers.
+  Then run the command they choose. Do not bind or send until the human answers.
   ```
 
 - `no` -> the empty string.
