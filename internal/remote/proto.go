@@ -128,6 +128,24 @@ type TagRef struct {
 	SHA  string `json:"sha"`  // the COMMIT the tag points at (annotated tags peeled); 40 hex
 }
 
+// ArtifactFile is one file a closed reader round left on the server, as the
+// artifact listing reports it. Rel is relative to the round's artifact
+// directory, uses "/" separators, and never escapes it.
+type ArtifactFile struct {
+	Rel   string    `json:"rel"`
+	Size  int64     `json:"size"`
+	MTime time.Time `json:"mtime"`
+}
+
+// ArtifactList is a closed reader round's artifact listing. Output is the
+// server's own relevo.OutputFile for the round (e.g. "findings.md"); Files are
+// sorted the way relevo.RoundArtifacts sorts them.
+type ArtifactList struct {
+	Actor  string         `json:"actor"`
+	Output string         `json:"output"`
+	Files  []ArtifactFile `json:"files"`
+}
+
 // BindingView is the server's wire representation of a binding's state.
 type BindingView struct {
 	Name          string     `json:"name"`
@@ -143,6 +161,9 @@ type BindingView struct {
 	// "reaped", "gone" or "dequeued". It is "" when that round closed any
 	// other way, on a pre-stop server, or when ClosedRound is 0.
 	Stopped string `json:"stopped,omitempty"`
+	// Shape is the binding's actor shape: "reader" for a reader binding, ""
+	// for a writer -- the default, and what an older server sends.
+	Shape string `json:"shape,omitempty"`
 	// DiffNote, DiffCommits and DiffTree are the closed round's diff facts,
 	// from the newest KindDiff entry for Serve.ClosedRound -- the same facts
 	// DiffSummary wrote to the server's own log at close. Empty/zero on any
@@ -332,6 +353,12 @@ const FeatureAuthor = "author"
 // either refuses a server without it: silently dropping the label on the
 // server is the laptop/server disagreement the labels exist to remove.
 const FeatureLabels = "labels"
+
+// FeatureReaders is the WhoAmI.Features token a server that accepts a reader
+// actor on a remote binding -- and serves the closed reader round's artifacts
+// -- advertises. A client binding a reader refuses a server without it: the
+// server would otherwise run the reader as a writer.
+const FeatureReaders = "readers"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

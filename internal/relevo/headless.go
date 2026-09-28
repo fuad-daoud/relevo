@@ -764,7 +764,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if escapeCheck(ctx, rt, b, true) == EscapeNote {
 			note = joinNotes(note, escapeNote)
 		}
-		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil)
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "")
 		if err != nil {
 			return b, err
 		}

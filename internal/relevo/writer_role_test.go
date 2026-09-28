@@ -282,9 +282,11 @@ func TestReaderRefusesGateRegateAndVerify(t *testing.T) {
 	}
 }
 
-// TestRemoteReaderIsRefusedLocally pins A5 §2's local-only rule: a remote add
-// of a reader is refused before any server contact.
-func TestRemoteReaderIsRefusedLocally(t *testing.T) {
+// TestRemoteReaderRefusedByAPreReadersServer pins #607's client rule: a
+// remote add of a reader is refused, with the old local-only wording, when the
+// server does not advertise remote.FeatureReaders -- after the WhoAmI probe,
+// and before any create call.
+func TestRemoteReaderRefusedByAPreReadersServer(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
@@ -300,10 +302,12 @@ func TestRemoteReaderIsRefusedLocally(t *testing.T) {
 		MasterMindID: testMasterMindName, Repo: "/repo",
 	})
 	if err == nil || !strings.Contains(err.Error(), "reader actors run locally only; bind without --server") {
-		t.Fatalf("Add(--server --actor reviewer) = %v, want the local-only refusal", err)
+		t.Fatalf("Add(--server --actor reviewer) = %v, want the reader refusal", err)
 	}
-	if len(fr.calls) != 0 {
-		t.Errorf("calls = %v, want no server contact", fr.calls)
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateBinding") {
+			t.Errorf("calls = %v, want no CreateBinding", fr.calls)
+		}
 	}
 }
 

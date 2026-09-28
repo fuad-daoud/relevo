@@ -74,6 +74,11 @@ func settleCatchUpInline(ctx context.Context, rt Runtime, tx *store.Tx, b store.
 // place and stores the diff and DB-form log under tx. A failure anywhere logs
 // as the inline write did and leaves the binding for the next tick.
 func applyCatchUpFiles(rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) bool {
+	// A reader has no report or diff: its downloaded artifacts are renamed
+	// into place instead, the output at the path reportPathFor recorded.
+	if b.Shape == store.ShapeReader {
+		return applyCatchUpArtifacts(cf)
+	}
 	n := view.ClosedRound
 	name := b.Name
 	if cf.ReportTemp != "" {
@@ -169,7 +174,7 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		// sent none rather than reading a record the client does not have.
 		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
 	}
-	next, err := queueReport(ctx, rt, tx, b, entries, rt.Store.ReportPath(name, n), payload, note, nil, u, a.View.Rusage, a.View.PriorTokens)
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPathFor(rt, b), payload, note, nil, u, a.View.Rusage, a.View.PriorTokens, a.View.ReportOutcome)
 	if err != nil {
 		return b, err
 	}

@@ -65,6 +65,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/bindings/{name}/resume", s.handleResume)
 	mux.HandleFunc("POST /v1/bindings/{name}/rounds", s.handleStartRound)
 	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/files/{kind}", s.handleRoundFile)
+	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/artifacts", s.handleRoundArtifacts)
+	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/artifacts/{rel...}", s.handleRoundArtifact)
 	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/bundle", s.handleRoundBundle)
 	mux.HandleFunc("POST /v1/bindings/{name}/rounds/{n}/ack", s.handleAckRound)
 	mux.HandleFunc("POST /v1/bindings/{name}/unavailable", s.handleUnavailable)
@@ -104,7 +106,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		Transports:    []string{"git-bundle"},
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders}
 		who.BuilderTier = string(relevo.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()

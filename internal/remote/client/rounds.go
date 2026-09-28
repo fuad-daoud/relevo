@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -190,6 +191,47 @@ func (c *Client) RoundFileFrom(ctx context.Context, server, name string, round i
 		return nil, remote.FileRange{}, err
 	}
 	return res.body, res.fileRange, nil
+}
+
+// escapeRel path-escapes each segment of a slash-separated artifact rel on its
+// own, so the "/" separators survive the round trip and a rel that is one
+// segment stays one segment.
+func escapeRel(rel string) string {
+	parts := strings.Split(rel, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
+}
+
+// RoundArtifacts lists a closed reader round's artifact files.
+func (c *Client) RoundArtifacts(ctx context.Context, server, name string, round int) (remote.ArtifactList, error) {
+	path := fmt.Sprintf("/v1/bindings/%s/rounds/%d/artifacts", url.PathEscape(name), round)
+	return retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (remote.ArtifactList, error) {
+		actx, cancel := context.WithTimeout(ctx, roundFileDeadline)
+		defer cancel()
+		resp, err := c.do(actx, server, "GET", path, nil, nil, "")
+		if err != nil {
+			return remote.ArtifactList{}, err
+		}
+		return decodeJSON[remote.ArtifactList](resp, "decode artifact list")
+	})
+}
+
+// RoundArtifact downloads one artifact, rel exactly as RoundArtifacts listed
+// it. The rel is escaped one segment at a time, so a nested rel keeps its
+// slashes.
+func (c *Client) RoundArtifact(ctx context.Context, server, name string, round int, rel string) (io.ReadCloser, error) {
+	path := fmt.Sprintf("/v1/bindings/%s/rounds/%d/artifacts/%s", url.PathEscape(name), round, escapeRel(rel))
+	return retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (io.ReadCloser, error) {
+		actx, cancel := context.WithTimeout(ctx, roundFileDeadline)
+		resp, err := c.do(actx, server, "GET", path, nil, nil, "")
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		return &deadlineBody{ReadCloser: resp.Body, cancel: cancel}, nil
+	})
 }
 
 // RoundBundle streams a round's git bundle, with (nil, nil) on 204 No Content.

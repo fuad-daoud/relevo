@@ -1,0 +1,11 @@
+{
+  "actor": "reviewer",
+  "output": "findings.md",
+  "files": [
+    {
+      "rel": "site/index.html",
+      "size": 1024,
+      "mtime": "2026-01-02T03:04:05Z"
+    }
+  ]
+}

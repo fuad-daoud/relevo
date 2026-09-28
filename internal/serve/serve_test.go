@@ -348,7 +348,7 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels}
+	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders}
 	if !slices.Equal(who.Features, wantFeatures) {
 		t.Fatalf("Features = %v, want %v", who.Features, wantFeatures)
 	}
@@ -790,11 +790,12 @@ func TestCreateBindingRole(t *testing.T) {
 		wantStatus int
 		wantMsg    string
 		wantCand   string
+		wantShape  string
 		wantNoRepo bool
 	}{
-		{"server role", "ui-builder", http.StatusCreated, "", "claude/anthropic/haiku", false},
-		{"unknown role", "nope", http.StatusBadRequest, `unknown actor "nope"`, "", true},
-		{"reader role", "reviewer", http.StatusBadRequest, "reader actors run locally only; bind without --server", "", false},
+		{"server role", "ui-builder", http.StatusCreated, "", "claude/anthropic/haiku", store.ShapeWriter, false},
+		{"unknown role", "nope", http.StatusBadRequest, `unknown actor "nope"`, "", "", true},
+		{"reader role", "reviewer", http.StatusCreated, "", "", store.ShapeReader, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -816,7 +817,14 @@ func TestCreateBindingRole(t *testing.T) {
 				requireCreateRefused(t, srv, kp, rec, tc.wantMsg, tc.wantNoRepo)
 				return
 			}
-			requireRoleStored(t, srv, kp, tc.role, tc.wantCand)
+			var view remote.BindingView
+			if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+				t.Fatalf("decode view: %v", err)
+			}
+			if view.Shape != tc.wantShape {
+				t.Fatalf("view.Shape = %q, want %q", view.Shape, tc.wantShape)
+			}
+			requireRoleStored(t, srv, kp, tc.role, tc.wantCand, tc.wantShape)
 		})
 	}
 }
@@ -848,7 +856,7 @@ func requireCreateRefused(t *testing.T, srv *Server, kp remote.Keypair, rec *htt
 	}
 }
 
-func requireRoleStored(t *testing.T, srv *Server, kp remote.Keypair, role, wantCand string) {
+func requireRoleStored(t *testing.T, srv *Server, kp remote.Keypair, role, wantCand, wantShape string) {
 	t.Helper()
 	b, err := testRuntime(t, srv, remote.IDOf(kp.Public)).Store.Load("api")
 	if err != nil {
@@ -859,6 +867,9 @@ func requireRoleStored(t *testing.T, srv *Server, kp remote.Keypair, role, wantC
 	}
 	if b.BuilderCandidate != wantCand {
 		t.Fatalf("BuilderCandidate = %q, want %q", b.BuilderCandidate, wantCand)
+	}
+	if b.Shape != wantShape {
+		t.Fatalf("stored binding Shape = %q, want %q", b.Shape, wantShape)
 	}
 }
 

@@ -347,7 +347,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-			fmt.Sprintf("The runner finished round %d. %s", b.Round, closeClause(rt, b, b.Round))+gateSuffix, joinNotes("", note), rec, nil, nil, nil)
+			fmt.Sprintf("The runner finished round %d. %s", b.Round, closeClause(rt, b, b.Round))+gateSuffix, joinNotes("", note), rec, nil, nil, nil, "")
 		if err != nil {
 			return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 		}
@@ -355,14 +355,14 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no report.", b.Round)+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil)
+		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no report.", b.Round)+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "")
 	if err != nil {
 		return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 	}
 	return next, true, false, rec, nil
 }
 
-func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens) (store.Binding, error) {
+func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens, fallbackOutcome string) (store.Binding, error) {
 	// The round this close is closing: the cap check below sizes that round's
 	// artifact directory after b.Round has advanced.
 	closedRound := b.Round
@@ -404,10 +404,18 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	if ok {
 		outcome = tail.Status
-	} else if reject != "" {
-		// A fence was present but unreadable: keep unstructured, but say why
-		// so the mastermind does not treat this as "the builder omitted the block".
-		note = joinNotes(note, reject)
+	} else {
+		if reject != "" {
+			// A fence was present but unreadable: keep unstructured, but say why
+			// so the mastermind does not treat this as "the builder omitted the block".
+			note = joinNotes(note, reject)
+		}
+		// A remote reader's output has its relevo block stripped at the
+		// server's close, so parsing cannot recover the status: the view's
+		// ReportOutcome is the only record of it (#607 seam 3).
+		if fallbackOutcome != "" {
+			outcome = fallbackOutcome
+		}
 	}
 	sc := scanForInjection(ctx, rt, "report", b, body)
 	note = joinNotes(note, sc.Note)

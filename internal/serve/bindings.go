@@ -166,17 +166,14 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		return store.Binding{}, false
 	}
 	role := relevo.NormRole(req.Role)
+	shape := store.ShapeWriter
 	if role != "" {
-		shape, err := relevo.ActorShape(rt, role)
+		s, err := relevo.ActorShape(rt, role)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 			return store.Binding{}, false
 		}
-		// Readers are local-only in A5: the server never runs one.
-		if shape == store.ShapeReader {
-			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "reader actors run locally only; bind without --server")
-			return store.Binding{}, false
-		}
+		shape = s
 	}
 
 	repoRoot, err := s.repoRoot(caller)
@@ -218,6 +215,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		BuilderCandidate: candidateToken,
 		Tier:             string(tier),
 		Role:             role,
+		Shape:            shape,
 		Round:            1,
 		State:            store.StateActive,
 		RoundCap:         req.RoundCap,
