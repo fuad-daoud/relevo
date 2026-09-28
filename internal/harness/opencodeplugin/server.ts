@@ -6,12 +6,14 @@ import { execFile } from "node:child_process";
 // own turn: opencode 2.0.18 does not deliver a prompt hook's mutation, but it
 // does deliver an edited message content, and a weak model reads its own
 // message when it skips a system part.
-type Guide = { state: string; text: string };
+type Guide = { state: string; text: string; id?: string; name?: string };
 const guideBySession = new Map<string, Guide | null | "pending">();
 const guideFetchedAt = new Map<string, number>();
-// guideRecheckMS: an unanswered or refused session re-reads its answer this
-// often, so enabling mid-session takes effect without a restart; an enabled
-// session is cached for its life.
+// lastMasterMind per session, so a status change (enabled, disabled, a new
+// name) is told to the session once instead of only changing its context.
+const lastMasterMind = new Map<string, string>();
+// guideRecheckMS: every session re-reads its answer this often, so enable and
+// disable take effect mid-session without a restart.
 const guideRecheckMS = 5000;
 
 // spawnRelevo runs one relevo verb, 10s timeout, the same shape the TUI plugin
@@ -54,43 +56,48 @@ function spawnRelevo(argv: string[], cwd?: string): Promise<{ ok: boolean; code:
   });
 }
 
-async function fetchGuide(sessionID: string): Promise<Guide | null> {
+// fetchGuide reads the session's answer. "failed" is a read that did not
+// arrive -- never read as a status change; null is a valid empty answer.
+async function fetchGuide(sessionID: string): Promise<Guide | null | "failed"> {
   const res = await spawnRelevo(["mastermind", "guide", "--json", "--kind", "opencode", "--session", sessionID]);
   if (!res.ok) {
     if (!res.enoent) {
       console.error("relevo: mastermind guide failed:", res.stderr.trim() || String(res.code));
     }
-    return null;
+    return "failed";
   }
   try {
     const parsed = JSON.parse(res.stdout);
     if (parsed && typeof parsed.state === "string" && typeof parsed.text === "string") {
-      return { state: parsed.state, text: parsed.text };
+      return { state: parsed.state, text: parsed.text, id: parsed.id, name: parsed.name };
     }
   } catch {}
-  return null;
+  return "failed";
 }
 
 async function guideFor(sessionID: string): Promise<Guide | null> {
   const cached = guideBySession.get(sessionID);
-  if (cached && typeof cached === "object" && cached.state === "enabled") return cached;
   if (cached === "pending") return null;
   if (cached !== undefined && Date.now() - (guideFetchedAt.get(sessionID) ?? 0) < guideRecheckMS) {
-    return cached;
+    return typeof cached === "object" ? cached : null;
   }
 
   // Set pending only for the very first fetch: a re-check keeps its last
   // answer, so the sidebar and the injected text never blank while it runs.
   if (cached === undefined) guideBySession.set(sessionID, "pending");
-  let guide: Guide | null = null;
+  let next: Guide | null | "failed" = "failed";
   try {
-    guide = await fetchGuide(sessionID);
+    next = await fetchGuide(sessionID);
   } catch (err) {
     console.error("relevo: mastermind guide threw:", err);
   }
-  guideBySession.set(sessionID, guide);
   guideFetchedAt.set(sessionID, Date.now());
-  return guide;
+  if (next === "failed") {
+    // A failed read keeps the last answer: it must not read as a status change.
+    return cached && typeof cached === "object" ? cached : null;
+  }
+  guideBySession.set(sessionID, next);
+  return next;
 }
 
 // runEnableCommand runs one of the commands below with the location's cwd and
@@ -196,15 +203,31 @@ const setup = async (api: any) => {
     await api.session.hook("context", async (event: any) => {
       if (!event?.sessionID || !Array.isArray(event.system)) return;
       const guide = await guideFor(event.sessionID);
-      if (!guide?.text) return;
-      event.system.push({ type: "text", text: guide.text });
-      // While consent is unset, carry the question on the user's own turn too:
-      // a weak model can skip a system part, but it reads its own message.
-      if (guide.state === "ask" && Array.isArray(event.messages)) {
+      const now = guide?.id ? `mastermind:${guide.name || guide.id}` : "none";
+      const prev = lastMasterMind.get(event.sessionID);
+      const changed = prev !== undefined && prev !== now;
+      lastMasterMind.set(event.sessionID, now);
+
+      let text = guide?.text || "";
+      if (changed) {
+        // The session is handed its own status change: without this it keeps
+        // acting on the guide (or the tools) it had a moment ago.
+        text =
+          now === "none"
+            ? "Status change: this session is no longer a relevo MasterMind. Stop acting as one: no bind, send, wait, or done."
+            : `Status change: this session is now relevo MasterMind ${now.slice("mastermind:".length)}.\n\n${text}`;
+      }
+      if (!text) return;
+
+      event.system.push({ type: "text", text });
+      // Carry it on the user's own turn too when the answer is open (the ask)
+      // or just changed: a weak model reads its own message when it skips a
+      // system part.
+      if ((guide?.state === "ask" || changed) && Array.isArray(event.messages)) {
         for (let i = event.messages.length - 1; i >= 0; i--) {
           const m = event.messages[i];
           if (m?.role === "user" && Array.isArray(m.content)) {
-            m.content.unshift({ type: "text", text: guide.text });
+            m.content.unshift({ type: "text", text });
             break;
           }
         }

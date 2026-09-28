@@ -145,9 +145,8 @@ function ensureMasterMind(api: any, sessionID: string) {
   if (info?.parentId || info?.parentID || info?.parent_id) return;
 
   const entry = mastermindBySession.get(sessionID);
-  if (entry && typeof entry === "object") return;
   if (entry === "pending") return;
-  if (entry !== undefined && Date.now() - (lastGuideCheck.get(sessionID) ?? 0) < guideRecheckMS) return;
+  if (Date.now() - (lastGuideCheck.get(sessionID) ?? 0) < guideRecheckMS) return;
   lastGuideCheck.set(sessionID, Date.now());
   // Only the first check shows "registering…"; a re-check keeps its last
   // answer until the fresh one arrives.
@@ -187,6 +186,14 @@ function ensureMasterMind(api: any, sessionID: string) {
     });
 }
 
+// consentToast words the palette command's result.
+function consentToast(argv: string[]): string {
+  const enable = argv.includes("enable");
+  const repo = argv.includes("--repo");
+  if (enable) return repo ? "relevo enabled in this repository" : "relevo enabled for this session";
+  return repo ? "relevo disabled in this repository" : "relevo disabled for this session";
+}
+
 // runConsentCommand answers the consent question from the palette: it runs the
 // CLI with the session's own directory, then re-checks the answer so the
 // sidebar moves without a restart.
@@ -204,6 +211,12 @@ function runConsentCommand(api: any, argv: string[]) {
         });
         return;
       }
+      api.ui.toast.show({
+        variant: "info",
+        title: "relevo",
+        message: consentToast(argv),
+        duration: 4000,
+      });
       if (currentSessionID) {
         mastermindBySession.delete(currentSessionID);
         lastGuideCheck.delete(currentSessionID);

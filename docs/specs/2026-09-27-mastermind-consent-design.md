@@ -199,16 +199,20 @@ The shipped plugin gains two changes:
   sends with every call; the Claude path keeps its startup resolution. The
   opencode prelude says reports arrive as new turns, so no background wait is
   started and a `send` result carries none.
-- **Mid-session answers take effect without a restart.** While a session is not
-  enabled the plugin re-reads its answer every 5 s (an enabled session's text
-  is cached for its life), and the TUI re-checks on the same cadence, so the
-  sidebar moves from "not enabled" to the MasterMind name after an answer.
+- **Mid-session answers take effect without a restart, and the session is told.**
+  Every session re-reads its answer every 5 s. When the session's status changes
+  — it becomes a MasterMind, stops being one, or changes name — the next model
+  request carries a one-line status change ("this session is now relevo
+  MasterMind X" / "this session is no longer a relevo MasterMind; stop acting as
+  one") in the same two places as the guide. A failed read keeps the last
+  answer, so it never reads as a status change. The TUI re-checks on the same
+  cadence and returns to "not enabled" when the answer is gone.
   `ctx.command.transform` registers `/relevo-enable`, `/relevo-enable-repo`,
   `/relevo-disable` and `/relevo-disable-repo`, which run the CLI with the
   location's cwd — a human can answer from the command palette without a shell.
   The TUI registers the same four in opencode's `Ctrl+P` palette (its own
-  surface), and the sidebar names the two enable commands while a session has
-  no MasterMind.
+  surface, with a toast on the result), and the sidebar names the two enable
+  commands while a session has no MasterMind.
 
 ### 6.3 agy and other harnesses
 
