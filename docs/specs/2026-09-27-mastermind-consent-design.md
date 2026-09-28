@@ -112,7 +112,7 @@ ConsentText(state Consent, rec *Record) string
 - `unset` -> the ask-note:
 
   ```
-  Before anything else, ask the human whether relevo should be this repository's MasterMind. Offer exactly these three options:
+  Before anything else, ask the human whether relevo should be this repository's MasterMind. If you have an interactive question or choice tool, use it; otherwise ask in text. Offer exactly these three options:
     relevo mastermind enable          -- this session only
     relevo mastermind enable --repo   -- this repository from now on
     relevo mastermind disable --repo  -- never in this repository

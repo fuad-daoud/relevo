@@ -16,7 +16,7 @@ const (
 // the note asks the model to put the question to the human and then run the
 // command that records the answer. The commands it names are the CLI's; a test
 // pins them against a rename.
-const AskNote = `Before anything else, ask the human whether relevo should be this repository's MasterMind. Offer exactly these three options:
+const AskNote = `Before anything else, ask the human whether relevo should be this repository's MasterMind. If you have an interactive question or choice tool, use it; otherwise ask in text. Offer exactly these three options:
   relevo mastermind enable          -- this session only
   relevo mastermind enable --repo   -- this repository from now on
   relevo mastermind disable --repo  -- never in this repository
