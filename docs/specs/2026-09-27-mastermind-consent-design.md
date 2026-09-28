@@ -35,20 +35,38 @@ Consent is a property of the **repository**:
 - `yes` -- register and inject the identity sentence and guide.
 - `no` -- do not register; inject nothing.
 
-The answer lives on the database's `repo` row and is set with:
+The answer lives in two places: the database's `repo` row for the repository,
+and the new `session_consent` table for one session's own answer. A session's
+answer, when it has one, outranks the repository's.
 
 ```
-relevo mastermind enable              # this session only; the repo stays unset
-relevo mastermind enable --repo       # always in this repository
-relevo mastermind disable --repo      # never in this repository
-relevo mastermind reset               # clear the answer; the next session asks
+relevo mastermind enable                       # this session answers yes; the repo stays unset
+relevo mastermind enable --repo                # this repository answers yes; the caller's own answer is cleared
+relevo mastermind enable --kind K --session S  # the same, named by a plugin that knows its session
+relevo mastermind disable                      # this session answers no; the repo stays unset
+relevo mastermind disable --repo               # never in this repository
+relevo mastermind reset [--kind K --session S]  # clear the answers; the next session -- or the next prompt -- asks
 ```
 
-`disable` without `--repo` forgets the current session's record, the same as
-`forget <id|name>`; it writes no repo answer. `disable --kind K --session S`
-names one session explicitly, for a plugin that knows its id. `reset` takes no
-flag: the only answer it touches is the repository's. Precedent: the answer is
-stored in the database, so it survives restarts and syncs nowhere today.
+`enable`/`disable` without `--repo` write the session's own answer whether or
+not the cwd is a git repository, and `enable` still registers the calling
+session. `disable` also forgets the session's record; a session that never had
+one is not an error, so a session that never registered can still say never.
+`ErrInUse` stays an error, and its message says the answer was recorded anyway.
+`disable --kind K --session S` names one session explicitly, for a plugin that
+knows its id.
+
+An `--repo` answer also clears the calling session's own answer when that
+session can be detected or is named with `--kind/--session`: otherwise "never in
+this repository", said from a session that had earlier said "this session only",
+would leave that session enabled.
+
+`reset` clears the repository's answer and the calling session's answer and its
+`told` baseline. Outside a git repository it clears only the session, and it
+errors only when there is neither a repository nor a session to clear.
+
+Precedent: the answers are stored in the database, so they survive restarts and
+sync nowhere today.
 
 ## 3. Decisions
 
@@ -79,6 +97,18 @@ stored in the database, so it survives restarts and syncs nowhere today.
 6. **`enable --repo` registers the calling session too.** Otherwise answering
    "always" would leave the current session unregistered until the next one.
    `enable` alone registers and writes no repo answer.
+7. **The session answer outranks the repository's, and a session `no` hides a
+   record.** The effective answer is the session's own when it has one,
+   otherwise the repository's. A session `no` means no briefing and no
+   registration even where the repository says yes and a record exists; a
+   session `yes` enables, registers and briefs even where the repository is
+   unset or says no. Both answers are read by one timed open, so the hook and
+   the notice agree on what governs a session.
+8. **An `--repo` answer clears the caller's own answer.** Otherwise "never in
+   this repository", said from a session that had earlier said "this session
+   only", would leave that one session enabled. The clear happens when the
+   caller can be detected or is named with `--kind/--session`; a caller relevo
+   cannot identify is left alone rather than guessed at.
 
 ## 4. Data
 
@@ -98,6 +128,34 @@ ALTER TABLE repo ADD COLUMN consent_at TEXT;
   rules; a repo row is created on the first answer, not on the first session.
 - Values are validated in Go (`Consent.Valid`); the column stays free text so
   a newer binary's value survives an older one, per the format rule.
+
+Migration 011 adds the session's own answer and its told baseline:
+
+```sql
+CREATE TABLE IF NOT EXISTS session_consent (
+    harness_kind TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    answer TEXT,
+    answer_at TEXT,
+    told TEXT,
+    told_at TEXT,
+    PRIMARY KEY (harness_kind, session_id)
+);
+```
+
+- `answer` is the session's own `yes`, `no`, or NULL (unset: the repository's
+  answer applies). `answer_at` is when it was written.
+- `told` is the last status token the session was told, and `told_at` when.
+  NULL means nothing has been delivered yet -- a session from before this
+  round, or one whose baseline write failed -- and the next hook read writes
+  the baseline instead of reporting a change.
+- The composite primary key covers the only lookup, `(harness_kind,
+  session_id)`, so no extra index is needed; 003 and 004 set the precedent.
+- It is `CREATE TABLE IF NOT EXISTS` only, in the dialect of 001-010: no
+  `WITHOUT ROWID`, no triggers, no `RETURNING`. Writes are UPDATE-then-INSERT
+  inside one `Tx`, like `SetRepoConsent`; the package uses no `ON CONFLICT`.
+- `BindingFormat` and `mastermind.Record`'s format do not change: the answer and
+  `told` live in their own table, so no stored JSON shape moves.
 
 ## 5. The shared rendering
 
@@ -122,10 +180,20 @@ ConsentText(state Consent, rec *Record) string
   ```
 
 - `no` with no record -> the empty string.
+- A `no` hides any record: the rendering is empty even when a record exists, and
+  the callers do not register. A session's own `no` and a repository's `no` are
+  the same value once precedence has been applied.
 
 The Claude hook wraps this in the `additionalContext` envelope when it is
 non-empty. opencode pushes it into the system instructions, and while the
 answer is unset onto the user's own turn (§6.2).
+
+A **status token** names what the session currently is, so a change can be
+noticed: `none`, `ask`, or `mastermind:<id>:<name>`. A pure `StatusNotice`
+renders the transition: a grant is the identity sentence and the guide, a
+revocation is the "no longer a relevo MasterMind" line, a rename is one line,
+`ask` is the ask-note, and an answered question says not to ask again. A rename
+is therefore a token change, and no change renders nothing.
 
 ## 6. Harness wiring
 
@@ -148,6 +216,28 @@ answer: no silent registration.
 `RELEVO_MASTERMIND` line to `$CLAUDE_ENV_FILE` when it is set, so later Bash
 calls in that session resolve the record without a restart; host-pid
 resolution covers the window before that.
+
+**The session's own answer and `told`.** The hook reads the effective answer for
+the payload's `session_id`: a session `no` answers `{}`, a session `yes`
+registers even in an unset or `no` repository. It then writes the status token
+it just injected (`told`) as the baseline, so the notice below can compare. A
+timed open that failed means no database handle and no write; the notice then
+treats its first read as the baseline.
+
+**`UserPromptSubmit` tells the session at once.** `hooks.json` gains a
+`UserPromptSubmit` entry running `relevo mastermind notice --hook claude`. Each
+hook call is a separate process, so the last token a session was told lives in
+the database's `told` column rather than in memory. The verb works out the
+current token the same way the SessionStart hook does (registering a granted
+session that has no record yet, with `HostPID` from `os.Getppid()`), compares it
+with `told`, and on a change prints an `additionalContext` envelope whose
+`hookEventName` is `UserPromptSubmit`. Otherwise, and on any failure, it prints
+`{}` and exits 0: a notice never blocks a prompt. A NULL `told` is written as
+the baseline and reported as no change.
+
+`$CLAUDE_ENV_FILE` is only guaranteed in SessionStart. When it is absent the
+notice's grant text uses the no-env wording and host-pid resolution covers the
+gap; nothing is printed outside a git repository that has no session answer.
 
 ### 6.2 opencode
 
@@ -213,6 +303,40 @@ The shipped plugin gains two changes:
   The TUI registers the same four in opencode's `Ctrl+P` palette (its own
   surface, with a toast on the result), and the sidebar names the two enable
   commands while a session has no MasterMind.
+- **A poller sends the status change as a turn.** The context hook's status line
+  only reaches a session that asks for context, so a session sitting idle would
+  not hear an enable from another terminal. A new poller watches the sessions
+  the plugin has seen -- the ones whose context event arrived within an idle
+  window -- and on the existing 5 s re-check cadence notices a token change and
+  sends **one** `ctx.session.prompt` whose text is the existing status-change
+  line, prefixed `relevo:`. The window is a named constant because the opencode
+  service is long-lived and hosts many sessions, and each watched session costs
+  one `relevo` spawn per tick; a session idle past the window is told at its next
+  request, as before. A check already in flight is skipped rather than stacked.
+- **`session.prompt`, not `session.synthetic`.** A synthetic item writes no
+  message row and shows nothing in the chat: with `resume:false` it reaches the
+  model only on the session's next run, which is the behaviour A replaces, and
+  `resume:true` on a synthetic item was never probed. The delivery spec already
+  rejected synthetic for anything that must become a turn. `prompt` is the path
+  relevo already relies on and it puts a visible turn in the chat, so the human
+  sees why the model spoke. Body: `{text, delivery: "steer", resume: true}`; the
+  probe confirmed that `steer` on an idle session starts a turn at once, and on
+  a busy one it lands at the next step of the running turn. Both count as "at
+  once", which is all a status line needs.
+- **No hook loop.** The only code that sends a prompt is the poller, and it
+  records the new token in its in-memory map *before* it sends, so the turn its
+  prompt starts reaches the context hook with no change left to report. The
+  context hook never sends a prompt, and the plugin registers no `prompt`/chat
+  hook. A failed send puts the previous token back, so the context hook still
+  delivers the change on the session's next request: the existing behaviour kept
+  as the fallback. `ask` and `disabled` transitions stay silent, as the TUI-side
+  tokens do today.
+- **A palette command checks at once.** After `/relevo-enable`,
+  `/relevo-enable-repo`, `/relevo-disable` or `/relevo-disable-repo` succeeds,
+  the plugin checks that session immediately instead of waiting up to 5 s for
+  the poller's next tick. Both `server.ts` and `tui.tsx` pass `--kind opencode
+  --session <id>` to the `--repo` commands too, so the caller's own answer is
+  cleared as §2 and §3 describe.
 
 ### 6.3 agy and other harnesses
 
@@ -223,8 +347,14 @@ participate in consent until a hook exists.
 ## 7. Surfaces
 
 - `relevo mastermind enable [--repo] [--kind K --session S]`,
-  `disable [--repo] [--kind K --session S]`, `reset`, `guide [--json]`.
-- `relevo mastermind list` gains nothing; the answer is per repo.
+  `disable [--repo] [--kind K --session S]`, `reset [--kind K --session S]`,
+  `guide [--json]`.
+- `relevo mastermind notice --hook claude` is the UserPromptSubmit hook's verb:
+  it prints an `additionalContext` envelope only when the session's status
+  changed since the token it was told. It is not a human surface and is absent
+  from the usage unless the hook flag is given.
+- `relevo mastermind list` gains nothing; the answers are per repository and per
+  session.
 - `relevo doctor` adds one row in the MasterMind group: the current repo's
   answer and the command that changes it
   (`mastermind consent: unset (relevo mastermind enable --repo)`).
@@ -235,13 +365,22 @@ participate in consent until a hook exists.
 - **Pure** in `internal/mastermind`: consent states and rendering (`ConsentText`
   for each state, with and without a record), repo ref equality, the ask-note's
   command list, `guide --json`'s state mapping.
-- **`internal/db`**: migration 010 applies on a v9 database; consent round-trip
+- **`internal/db`**: migration 010 applies on a v9 database; migration 011
+  applies on a v10 database and creates `session_consent`; consent round-trip
   (set, read, overwrite); a repo with only `common_dir` and one with only
-  `origin_url`; NULL read as unset.
+  `origin_url`; NULL read as unset; the session answer and `told` round-trip and
+  clear, and a second apply of either migration is a no-op.
+- **`internal/mastermind`**: the precedence rule for every pair of answers; the
+  status token per answer and record; `StatusNotice` for every transition (no
+  change, a grant, a rename, a revocation, an answered question); the
+  `UserPromptSubmit` envelope carries its own event name.
 - **`cmd/relevo`**: the hook's four branches against a temp XDG root and a temp
-  git repo (no harness, no network); `enable`/`disable` write the answer;
-  `guide --json` states; doctor's row text. TestMain already isolates HOME,
-  XDG roots and `RELEVO_*`.
+  git repo (no harness, no network); a session `no` in a `yes` repo answers `{}`
+  and registers nothing; a session `yes` in an unset repo registers; the `told`
+  baseline is written; `enable`/`disable`/`reset`/`guide` apply session
+  precedence; the notice's no-change, grant, rename, NULL-baseline and
+  broken-payload cases; `guide --json` states; doctor's row text. TestMain
+  already isolates HOME, XDG roots and `RELEVO_*`.
 - **`internal/mcp`**: a `tools/call`'s `_meta.sessionID` reaches the verbs; the
   opencode prelude and its use by initialize; an opencode `send` carries no
   wait line; the per-session resolver's filter and error.
@@ -257,3 +396,7 @@ participate in consent until a hook exists.
 - Per-harness answers and a repo picker in the cockpit.
 - Deleting records on `disable --repo`; `forget` stays the explicit cleanup.
 - agy injection and agy tools; agy has no hook to hang them on.
+- Pruning `session_consent` rows. A row is one (harness_kind, session_id) pair,
+  a few dozen bytes, and a dead session's row is harmless -- worse, deleting it
+  would make the notice re-baseline a session that is still alive. Rows are left
+  until a later round has a reason to collect them.

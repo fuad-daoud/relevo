@@ -100,3 +100,129 @@ func (t *Tx) SetRepoConsent(ref Repo, c Consent, now time.Time) (string, error) 
 	}
 	return id, nil
 }
+
+// SessionConsent reads a session's own answer: ConsentUnset for a session that
+// has not answered, for one relevo has never seen, or for a session with no
+// row at all. The repository's answer is not consulted here.
+func (d *DB) SessionConsent(kind, sessionID string) (Consent, error) {
+	return sessionConsent(context.Background(), d.sqlDB, kind, sessionID)
+}
+
+func sessionConsent(ctx context.Context, q queryer, kind, sessionID string) (Consent, error) {
+	var raw sql.Null[string]
+	err := q.QueryRowContext(ctx,
+		`SELECT answer FROM session_consent WHERE harness_kind = ? AND session_id = ?`, kind, sessionID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ConsentUnset, nil
+	}
+	if err != nil {
+		return ConsentUnset, fmt.Errorf("db: session consent: %w", err)
+	}
+	c := Consent(raw.V) // NULL and '' both read as unset
+	if err := c.Valid(); err != nil {
+		return ConsentUnset, err
+	}
+	return c, nil
+}
+
+// SetSessionConsent stores a session's own answer, creating the row when relevo
+// has not seen the session. ConsentUnset clears the answer. The write is
+// UPDATE-then-INSERT inside one transaction, so two calls serialise.
+func (d *DB) SetSessionConsent(kind, sessionID string, c Consent, now time.Time) error {
+	if err := c.Valid(); err != nil {
+		return err
+	}
+	var answer, at any
+	if c != ConsentUnset {
+		answer, at = string(c), formatTime(now)
+	}
+	return d.Tx(func(t *Tx) error {
+		res, err := t.exec(
+			`UPDATE session_consent SET answer = ?, answer_at = ? WHERE harness_kind = ? AND session_id = ?`,
+			answer, at, kind, sessionID)
+		if err != nil {
+			return fmt.Errorf("db: session consent: %w", mapBusy(err))
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("db: session consent: %w", err)
+		}
+		if n > 0 {
+			return nil
+		}
+		if _, err := t.exec(
+			`INSERT INTO session_consent (harness_kind, session_id, answer, answer_at) VALUES (?, ?, ?, ?)`,
+			kind, sessionID, answer, at); err != nil {
+			return fmt.Errorf("db: session consent: %w", mapBusy(err))
+		}
+		return nil
+	})
+}
+
+// SessionTold reads the status token last delivered to a session. ok is false
+// when no baseline was ever written: a session from before this table existed,
+// or one whose baseline write did not happen.
+func (d *DB) SessionTold(kind, sessionID string) (told string, ok bool, err error) {
+	return sessionTold(context.Background(), d.sqlDB, kind, sessionID)
+}
+
+func sessionTold(ctx context.Context, q queryer, kind, sessionID string) (string, bool, error) {
+	var raw sql.Null[string]
+	err := q.QueryRowContext(ctx,
+		`SELECT told FROM session_consent WHERE harness_kind = ? AND session_id = ?`, kind, sessionID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("db: session told: %w", err)
+	}
+	if !raw.Valid {
+		return "", false, nil
+	}
+	return raw.V, true, nil
+}
+
+// SetSessionTold records the status token a session has just been told,
+// creating the row when relevo has not seen the session. An empty told clears
+// the baseline, so the next read reports "never told".
+func (d *DB) SetSessionTold(kind, sessionID, told string, now time.Time) error {
+	var val, at any
+	if told != "" {
+		val, at = told, formatTime(now)
+	}
+	return d.Tx(func(t *Tx) error {
+		res, err := t.exec(
+			`UPDATE session_consent SET told = ?, told_at = ? WHERE harness_kind = ? AND session_id = ?`,
+			val, at, kind, sessionID)
+		if err != nil {
+			return fmt.Errorf("db: session told: %w", mapBusy(err))
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("db: session told: %w", err)
+		}
+		if n > 0 {
+			return nil
+		}
+		if _, err := t.exec(
+			`INSERT INTO session_consent (harness_kind, session_id, told, told_at) VALUES (?, ?, ?, ?)`,
+			kind, sessionID, val, at); err != nil {
+			return fmt.Errorf("db: session told: %w", mapBusy(err))
+		}
+		return nil
+	})
+}
+
+// ClearSessionConsent forgets a session's own answer and its told baseline in
+// one write, so reset returns the session to the repository's answer and the
+// next status read becomes a fresh baseline.
+func (d *DB) ClearSessionConsent(kind, sessionID string) error {
+	return d.Tx(func(t *Tx) error {
+		if _, err := t.exec(
+			`UPDATE session_consent SET answer = NULL, answer_at = NULL, told = NULL, told_at = NULL WHERE harness_kind = ? AND session_id = ?`,
+			kind, sessionID); err != nil {
+			return fmt.Errorf("db: session consent: %w", mapBusy(err))
+		}
+		return nil
+	})
+}

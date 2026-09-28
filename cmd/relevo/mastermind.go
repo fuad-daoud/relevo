@@ -27,14 +27,15 @@ import (
 // SessionStart hook must never block a session on sqlite.
 const mastermindPriorIDTimeout = 2 * time.Second
 
-// cmdMasterMind dispatches `relevo mastermind init|enable|disable|guide|list|rename|forget`
+// cmdMasterMind dispatches `relevo mastermind init|notice|enable|disable|guide|list|rename|forget`
 // (#303 §4.7, #632). It touches no harness:
 // a mastermind record is relevo's own identity, not a pane.
 func cmdMasterMind(args []string) error {
 	const usage = `usage: relevo mastermind init [--name N] [--kind K --session S] [--hook claude]
+       relevo mastermind notice --hook claude
        relevo mastermind enable [--repo] [--kind K --session S]
        relevo mastermind disable [--repo] [--kind K --session S]
-       relevo mastermind reset
+       relevo mastermind reset [--kind K --session S]
        relevo mastermind guide [--cwd DIR] [--kind K --session S] [--json]
        relevo mastermind list [--json]
        relevo mastermind rename <id|name> <new-name>
@@ -48,6 +49,8 @@ func cmdMasterMind(args []string) error {
 	switch args[0] {
 	case "init":
 		return cmdMasterMindInit(args[1:])
+	case "notice":
+		return cmdMasterMindNotice(args[1:])
 	case "enable":
 		return cmdMasterMindEnable(args[1:])
 	case "disable":
@@ -148,102 +151,6 @@ func cmdMasterMindInit(args []string) error {
 	return nil
 }
 
-// mastermindInitHook runs `relevo mastermind init --hook claude` (§5.1).
-//
-// It never returns an error and never exits non-zero: the hook runs at the
-// start of a Claude Code session, and blocking that session because relevo could
-// not read its own state would be a far worse failure than an unregistered
-// mastermind (§4.4, §6.1). Every failure prints HookNote on stdout -- where the
-// model reads its context -- and the error on stderr for the human.
-func mastermindInitHook(nameFlag string) error {
-	in, err := mastermind.ParseHookInput(os.Stdin)
-	if err != nil {
-		return mastermindInitHookFailure(err)
-	}
-
-	rt, err := newRuntime()
-	if err != nil {
-		return mastermindInitHookFailure(err)
-	}
-
-	// The repo's answer gates the hook before anything is written. A cwd the
-	// hook cannot resolve to a repository is left alone: there is nothing to
-	// remember, so there is nothing to ask.
-	ref := mastermindRepoOf(context.Background(), rt, in.CWD)
-	if !mastermindRepoKnown(ref) {
-		_, _ = os.Stdout.Write(mastermind.HookConsent(""))
-		return nil
-	}
-
-	// One timed open serves both the prior id and the consent read, so the
-	// hook never waits on sqlite. A read that did not arrive reads as unset --
-	// the ask, never a silent registration.
-	d, closeDB := mastermindOpenTimed(rt.Store.DBPath())
-	defer closeDB()
-	consent := mastermind.ConsentUnset
-	if d != nil {
-		if c, err := d.RepoConsent(ref); err == nil {
-			consent = c
-		}
-	}
-	if consent != mastermind.ConsentYes {
-		_, _ = os.Stdout.Write(mastermind.HookConsent(mastermind.ConsentText(consent, nil)))
-		return nil
-	}
-
-	// The hook's parent is the Claude Code process, which is the same pid
-	// CLAUDE_PID names in a Bash tool and `relevo mcp`'s parent (§1.1).
-	host := os.Getppid()
-
-	reg, err := mastermindRegistry(rt)
-	if err != nil {
-		return mastermindInitHookFailure(err)
-	}
-	rec, _, err := mastermind.Init(reg, mastermind.InitInput{
-		Kind:           "claude",
-		SessionID:      in.SessionID,
-		TranscriptPath: in.TranscriptPath,
-		CWD:            in.CWD,
-		Name:           nameFlag,
-		Agent:          os.Getenv("CLAUDE_CODE_AGENT"),
-		HostPID:        host,
-		HostStartedAt:  mastermindHostStart(host),
-		Now:            rt.Now(),
-		PriorID:        mastermindPriorIDFunc(d),
-	})
-	if err != nil {
-		return mastermindInitHookFailure(err)
-	}
-
-	// The export line is how every later Bash call in the session learns its
-	// mastermind (§3.4). Appending, never truncating: Claude Code reads the whole
-	// file, and it may already carry lines from other tools.
-	//
-	// With no $CLAUDE_ENV_FILE there is nowhere to export to, so the answer
-	// says so in additionalContext instead of pretending the export happened
-	// (§3.4): relevo then resolves the session through the host process.
-	out := mastermind.HookOutput(rec)
-	if envFile := os.Getenv("CLAUDE_ENV_FILE"); envFile != "" {
-		if err := appendEnvLine(envFile, mastermind.EnvLine(rec.ID)); err != nil {
-			return mastermindInitHookFailure(err)
-		}
-	} else {
-		out = mastermind.HookOutputNoEnv(rec)
-	}
-
-	_, _ = os.Stdout.Write(out)
-	return nil
-}
-
-// mastermindInitHookFailure reports a hook failure and swallows it: the note goes
-// to stdout as the hook's answer, the error to stderr for the human, and the
-// command still succeeds.
-func mastermindInitHookFailure(err error) error {
-	fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
-	_, _ = os.Stdout.Write(mastermind.HookNote(fmt.Sprintf("relevo mastermind init failed: %v", err)))
-	return nil
-}
-
 // mastermindHostStart reads a host process's start time in Unix seconds, the
 // pid-reuse defence §3.1 gives host_started_at. A failure reports 0 rather than
 // failing the caller: the record is still useful, and §4.3's session step
@@ -259,10 +166,6 @@ func mastermindHostStart(pid int) int64 {
 	return started.Unix()
 }
 
-// mastermindOpenTimed opens relevo.db on a goroutine and gives up after
-// mastermindPriorIDTimeout, so a hook never waits on sqlite. The caller must
-// call the returned close function; a nil *db.DB means the open did not finish
-// in time, and the safe answers (no prior id, unset consent) follow from it.
 func appendEnvLine(path, line string) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {

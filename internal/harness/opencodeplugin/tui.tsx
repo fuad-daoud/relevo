@@ -914,7 +914,7 @@ export default {
                 title: "Enable relevo in this repository",
                 group: "relevo",
                 palette: true,
-                run: () => runConsentCommand(api, ["mastermind", "enable", "--repo"]),
+                run: () => runConsentCommand(api, ["mastermind", "enable", "--repo", "--kind", "opencode", "--session", currentSessionID]),
               },
               {
                 id: "relevo.disable",
@@ -931,7 +931,7 @@ export default {
                 title: "Disable relevo in this repository",
                 group: "relevo",
                 palette: true,
-                run: () => runConsentCommand(api, ["mastermind", "disable", "--repo"]),
+                run: () => runConsentCommand(api, ["mastermind", "disable", "--repo", "--kind", "opencode", "--session", currentSessionID]),
               },
               {
                 id: "relevo.back",

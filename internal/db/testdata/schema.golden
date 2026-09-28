@@ -80,6 +80,9 @@ index sqlite_autoindex_round_file_1 round_file
 index sqlite_autoindex_secret_1 secret
 
 
+index sqlite_autoindex_session_consent_1 session_consent
+
+
 index sqlite_autoindex_transcript_1 transcript
 
 
@@ -290,6 +293,17 @@ CREATE TABLE secret (
     updated_at TEXT NOT NULL
 )
 
+table session_consent session_consent
+CREATE TABLE session_consent (
+    harness_kind TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    answer TEXT,
+    answer_at TEXT,
+    told TEXT,
+    told_at TEXT,
+    PRIMARY KEY (harness_kind, session_id)
+)
+
 table transcript transcript
 CREATE TABLE transcript (
     id TEXT PRIMARY KEY,
@@ -301,4 +315,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 )
 
-schema_versions have=10 know=10
+schema_versions have=11 know=11

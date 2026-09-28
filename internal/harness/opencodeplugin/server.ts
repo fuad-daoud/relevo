@@ -9,12 +9,30 @@ import { execFile } from "node:child_process";
 type Guide = { state: string; text: string; id?: string; name?: string };
 const guideBySession = new Map<string, Guide | null | "pending">();
 const guideFetchedAt = new Map<string, number>();
-// lastMasterMind per session, so a status change (enabled, disabled, a new
-// name) is told to the session once instead of only changing its context.
+// lastMasterMind per session: the status token the session was last told, so a
+// status change (enabled, disabled, a new name) is told to the session once.
 const lastMasterMind = new Map<string, string>();
 // guideRecheckMS: every session re-reads its answer this often, so enable and
-// disable take effect mid-session without a restart.
+// disable take effect mid-session without a restart. The poller runs on the
+// same cadence.
 const guideRecheckMS = 5000;
+// watchedAt: the sessions this plugin has seen, and when their last context
+// event arrived. The opencode service is long-lived and hosts many sessions,
+// and the poller spawns one `relevo` per watched session per tick, so the set
+// stays small: a session that has not asked for context inside watchWindowMS
+// is dropped and keeps the context hook's fallback instead.
+const watchedAt = new Map<string, number>();
+// checking: the sessions whose poller check is still in flight, so one slow
+// `relevo` does not stack a second check behind it.
+const checking = new Set<string>();
+// watchWindowMS: how recently a session must have asked for context to stay
+// watched. A session idle longer than this is told at its next request, which
+// is the context hook's existing behaviour.
+const watchWindowMS = 10 * 60 * 1000;
+// mastermindPrefix is the mastermind status token's prefix, the same
+// "mastermind:<id>:<name>" shape the CLI uses.
+const mastermindPrefix = "mastermind:";
+let pollerStarted = false;
 
 // spawnRelevo runs one relevo verb, 10s timeout, the same shape the TUI plugin
 // uses. It never throws: a failure is a result.
@@ -100,9 +118,133 @@ async function guideFor(sessionID: string): Promise<Guide | null> {
   return next;
 }
 
-// runEnableCommand runs one of the commands below with the location's cwd and
-// clears the guide cache, so the next request re-reads the new answer.
-async function runEnableCommand(dir: string | undefined, argv: string[]): Promise<void> {
+// tokenFor is the session's status token, the same shape the CLI's mastermind
+// package mints: a record names a mastermind, the open question is "ask", and
+// anything else is "none".
+function tokenFor(guide: Guide | null): string {
+  if (guide?.id) return mastermindPrefix + guide.id + ":" + (guide.name || "");
+  return guide?.state === "ask" ? "ask" : "none";
+}
+
+// parseToken splits a mastermind token into its id and name; null for any other
+// token.
+function parseToken(token: string): { id: string; name: string } | null {
+  if (!token.startsWith(mastermindPrefix)) return null;
+  const rest = token.slice(mastermindPrefix.length);
+  const at = rest.indexOf(":");
+  if (at <= 0) return null;
+  return { id: rest.slice(0, at), name: rest.slice(at + 1) };
+}
+
+// statusChangeText is the one-line (or grant) notice for a token change,
+// worded like the CLI's StatusNotice and the status-change line the context
+// hook already injects. It is empty when there is nothing to say.
+function statusChangeText(prev: string, next: string, guide: Guide | null): string {
+  if (prev === next) return "";
+  const p = parseToken(prev);
+  const n = parseToken(next);
+  if (p && n && p.id === n.id && p.name !== n.name) {
+    return `Status change: this session's relevo MasterMind is now named ${n.name}.`;
+  }
+  if (n) {
+    return `Status change: this session is now relevo MasterMind ${n.id}:${n.name}.\n\n${guide?.text || ""}`;
+  }
+  if (p) {
+    return "Status change: this session is no longer a relevo MasterMind. Stop acting as one: no bind, send, wait, or done.";
+  }
+  if (prev === "ask" && next === "none") {
+    return "Status change: the consent question was answered no. Do not ask again; this session is not a relevo MasterMind.";
+  }
+  if (next === "ask") return guide?.text || "";
+  return "";
+}
+
+// sendPrompt delivers one status line as a user turn through the opencode
+// session api. That path is the one relevo's delivery spec proved: it fills the
+// chat with a visible turn the model answers, unlike a synthetic inbox item,
+// which writes no message row. It never throws: a failure is a false result.
+async function sendPrompt(api: any, sessionID: string, text: string): Promise<boolean> {
+  if (typeof api?.session?.prompt !== "function") {
+    console.error("relevo: session.prompt is unavailable; the status change waits for the next request");
+    return false;
+  }
+  try {
+    await api.session.prompt({ sessionID, text, delivery: "steer", resume: true });
+    return true;
+  } catch (err) {
+    console.error("relevo: mastermind prompt failed:", err);
+    return false;
+  }
+}
+
+// checkSession notices one watched session's status change and sends it as a
+// turn. It is the only code that prompts a session: the context hook never
+// does, so the turn this prompt starts reaches that hook with no change left
+// to report -- no loop.
+async function checkSession(api: any, sessionID: string): Promise<void> {
+  const guide = await guideFor(sessionID);
+  const next = tokenFor(guide);
+  const prev = lastMasterMind.get(sessionID);
+  if (prev === undefined) {
+    lastMasterMind.set(sessionID, next);
+    return;
+  }
+  if (prev === next) return;
+
+  // ask and disabled stay silent, as the TUI-side tokens do today: there is
+  // nothing for the model to act on.
+  const actionable = prev.startsWith(mastermindPrefix) || next.startsWith(mastermindPrefix);
+  const text = statusChangeText(prev, next, guide);
+  if (!actionable || !text) {
+    lastMasterMind.set(sessionID, next);
+    return;
+  }
+
+  // Record the new token before sending, so the turn the prompt starts reaches
+  // the context hook with no change left to report.
+  lastMasterMind.set(sessionID, next);
+  if (await sendPrompt(api, sessionID, "relevo: " + text)) return;
+
+  // A failed send puts the previous token back: the context hook still
+  // delivers the change on the session's next request.
+  lastMasterMind.set(sessionID, prev);
+}
+
+// pollWatched checks every watched session once per tick, each in its own
+// spawn, skipping one whose check is still in flight.
+async function pollWatched(api: any): Promise<void> {
+  const now = Date.now();
+  for (const [sessionID, seenAt] of watchedAt) {
+    if (now - seenAt > watchWindowMS) {
+      watchedAt.delete(sessionID);
+      continue;
+    }
+    if (checking.has(sessionID)) continue;
+    checking.add(sessionID);
+    try {
+      await checkSession(api, sessionID);
+    } catch (err) {
+      console.error("relevo: mastermind check failed:", err);
+    } finally {
+      checking.delete(sessionID);
+    }
+  }
+}
+
+// startPoller runs pollWatched on the guide re-check cadence, so a status
+// change reaches an idle session without waiting for its next request.
+function startPoller(api: any): void {
+  if (pollerStarted) return;
+  pollerStarted = true;
+  setInterval(() => {
+    void pollWatched(api);
+  }, guideRecheckMS);
+}
+
+// runEnableCommand runs one of the commands below with the location's cwd,
+// clears the guide cache so the next read re-fetches, and checks the session at
+// once so the answer takes effect without waiting for the poller's tick.
+async function runEnableCommand(api: any, dir: string | undefined, argv: string[], sessionID?: string): Promise<void> {
   const res = await spawnRelevo(argv, dir);
   if (!res.ok) {
     console.error("relevo: " + argv.join(" ") + " failed:", res.stderr.trim() || String(res.code));
@@ -110,6 +252,7 @@ async function runEnableCommand(dir: string | undefined, argv: string[]): Promis
   }
   guideBySession.clear();
   guideFetchedAt.clear();
+  if (sessionID) await checkSession(api, sessionID);
 }
 
 // registerEnableCommands adds /relevo-enable, /relevo-enable-repo and
@@ -126,28 +269,28 @@ async function registerEnableCommands(api: any): Promise<void> {
         name: "relevo-enable",
         description: "Enable relevo as this session's MasterMind",
         execute: async ({ sessionID }: any) => {
-          await runEnableCommand(dir, ["mastermind", "enable", "--kind", "opencode", "--session", String(sessionID)]);
+          await runEnableCommand(api, dir, ["mastermind", "enable", "--kind", "opencode", "--session", String(sessionID)], sessionID ? String(sessionID) : undefined);
         },
       });
       editor.add({
         name: "relevo-enable-repo",
         description: "Enable relevo in this repository from now on",
-        execute: async () => {
-          await runEnableCommand(dir, ["mastermind", "enable", "--repo"]);
+        execute: async ({ sessionID }: any) => {
+          await runEnableCommand(api, dir, ["mastermind", "enable", "--repo", "--kind", "opencode", "--session", String(sessionID)], sessionID ? String(sessionID) : undefined);
         },
       });
       editor.add({
         name: "relevo-disable",
         description: "Forget relevo for this session",
         execute: async ({ sessionID }: any) => {
-          await runEnableCommand(dir, ["mastermind", "disable", "--kind", "opencode", "--session", String(sessionID)]);
+          await runEnableCommand(api, dir, ["mastermind", "disable", "--kind", "opencode", "--session", String(sessionID)], sessionID ? String(sessionID) : undefined);
         },
       });
       editor.add({
         name: "relevo-disable-repo",
         description: "Never let relevo register this repository's sessions",
-        execute: async () => {
-          await runEnableCommand(dir, ["mastermind", "disable", "--repo"]);
+        execute: async ({ sessionID }: any) => {
+          await runEnableCommand(api, dir, ["mastermind", "disable", "--repo", "--kind", "opencode", "--session", String(sessionID)], sessionID ? String(sessionID) : undefined);
         },
       });
     });
@@ -202,8 +345,12 @@ const setup = async (api: any) => {
     // generate have their own hooks, so there is no kind to filter on here.
     await api.session.hook("context", async (event: any) => {
       if (!event?.sessionID || !Array.isArray(event.system)) return;
+      // Remember this session as watched: a status change that arrives while
+      // it is idle is delivered by the poller as a turn.
+      watchedAt.set(event.sessionID, Date.now());
+
       const guide = await guideFor(event.sessionID);
-      const now = guide?.id ? `mastermind:${guide.name || guide.id}` : "none";
+      const now = tokenFor(guide);
       const prev = lastMasterMind.get(event.sessionID);
       const changed = prev !== undefined && prev !== now;
       lastMasterMind.set(event.sessionID, now);
@@ -211,11 +358,10 @@ const setup = async (api: any) => {
       let text = guide?.text || "";
       if (changed) {
         // The session is handed its own status change: without this it keeps
-        // acting on the guide (or the tools) it had a moment ago.
-        text =
-          now === "none"
-            ? "Status change: this session is no longer a relevo MasterMind. Stop acting as one: no bind, send, wait, or done."
-            : `Status change: this session is now relevo MasterMind ${now.slice("mastermind:".length)}.\n\n${text}`;
+        // acting on the guide (or the tools) it had a moment ago. This is the
+        // fallback: a change noticed while the session is idle is sent as a
+        // turn by the poller instead.
+        text = statusChangeText(prev, now, guide) || text;
       }
       if (!text) return;
 
@@ -237,6 +383,7 @@ const setup = async (api: any) => {
 
   await registerEnableCommands(api);
   await registerTools(api);
+  startPoller(api);
 };
 
 export default {

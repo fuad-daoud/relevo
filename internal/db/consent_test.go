@@ -150,3 +150,124 @@ func TestMigration010AddsRepoConsent(t *testing.T) {
 		t.Errorf("schema_version rows for 10 = %d, want 1", rows)
 	}
 }
+
+// TestMigration011AddsSessionConsent pins the upgrade: a v10 database gains the
+// session_consent table at 011, an unseen session reads unset with no told
+// baseline, and a second apply is a no-op.
+func TestMigration011AddsSessionConsent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	sqlDB := rawSQLDB(t, path)
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 10)); err != nil {
+		t.Fatalf("applyMigrations through 010: %v", err)
+	}
+
+	eleven := migrationFilesUpTo(t, 11)
+	if err := applyMigrations(sqlDB, eleven); err != nil {
+		t.Fatalf("applyMigrations 011: %v", err)
+	}
+
+	// An unseen session has no row, which reads as unset with no baseline.
+	var n int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM session_consent WHERE harness_kind = 'claude' AND session_id = 's1'`).Scan(&n); err != nil {
+		t.Fatalf("count session_consent: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("session_consent rows for an unseen session = %d, want 0", n)
+	}
+	if c, err := sessionConsent(context.Background(), sqlDB, "claude", "s1"); err != nil || c != ConsentUnset {
+		t.Errorf("sessionConsent(unseen) = (%q, %v), want unset", c, err)
+	}
+	if told, ok, err := sessionTold(context.Background(), sqlDB, "claude", "s1"); err != nil || ok || told != "" {
+		t.Errorf("sessionTold(unseen) = (%q, %v, %v), want no baseline", told, ok, err)
+	}
+
+	// A second apply of 011 is a no-op: CREATE TABLE IF NOT EXISTS, version
+	// guard and all.
+	if err := applyMigrations(sqlDB, eleven); err != nil {
+		t.Fatalf("second applyMigrations 011: %v", err)
+	}
+	var rows int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM schema_version WHERE version = 11`).Scan(&rows); err != nil {
+		t.Fatalf("count schema_version: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("schema_version rows for 11 = %d, want 1", rows)
+	}
+}
+
+// TestSessionConsentRoundTrip pins the session answer and told writes on an
+// upgraded file: the answer overwrites, told round-trips, and an invalid value
+// is refused.
+func TestSessionConsentRoundTrip(t *testing.T) {
+	d := openTestDB(t)
+
+	if err := d.SetSessionConsent("claude", "s1", ConsentNo, consentNow()); err != nil {
+		t.Fatalf("SetSessionConsent no: %v", err)
+	}
+	if c, err := d.SessionConsent("claude", "s1"); err != nil || c != ConsentNo {
+		t.Errorf("SessionConsent = (%q, %v), want no", c, err)
+	}
+	if err := d.SetSessionConsent("claude", "s1", ConsentYes, consentNow()); err != nil {
+		t.Fatalf("SetSessionConsent yes: %v", err)
+	}
+	if c, err := d.SessionConsent("claude", "s1"); err != nil || c != ConsentYes {
+		t.Errorf("SessionConsent after overwrite = (%q, %v), want yes", c, err)
+	}
+
+	if err := d.SetSessionTold("claude", "s1", "mastermind:mm_aaaaaaaaaaaa:architect-1", consentNow()); err != nil {
+		t.Fatalf("SetSessionTold: %v", err)
+	}
+	told, ok, err := d.SessionTold("claude", "s1")
+	if err != nil || !ok || told != "mastermind:mm_aaaaaaaaaaaa:architect-1" {
+		t.Errorf("SessionTold = (%q, %v, %v), want the stored token", told, ok, err)
+	}
+	// The two columns are independent: the answer survives a told write and the
+	// other way round.
+	if err := d.SetSessionConsent("claude", "s1", ConsentUnset, consentNow()); err != nil {
+		t.Fatalf("SetSessionConsent unset: %v", err)
+	}
+	if c, err := d.SessionConsent("claude", "s1"); err != nil || c != ConsentUnset {
+		t.Errorf("SessionConsent after unset = (%q, %v), want unset", c, err)
+	}
+	if told, ok, err := d.SessionTold("claude", "s1"); err != nil || !ok || told != "mastermind:mm_aaaaaaaaaaaa:architect-1" {
+		t.Errorf("SessionTold after an answer clear = (%q, %v, %v), want it kept", told, ok, err)
+	}
+
+	if err := d.SetSessionConsent("claude", "s1", Consent("maybe"), consentNow()); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("SetSessionConsent(maybe) error = %v, want ErrInvalid", err)
+	}
+}
+
+// TestClearSessionConsent pins reset's write: the session's own answer and its
+// told baseline go together, without disturbing another session.
+func TestClearSessionConsent(t *testing.T) {
+	d := openTestDB(t)
+
+	if err := d.SetSessionConsent("claude", "s1", ConsentNo, consentNow()); err != nil {
+		t.Fatalf("SetSessionConsent s1: %v", err)
+	}
+	if err := d.SetSessionTold("claude", "s1", "ask", consentNow()); err != nil {
+		t.Fatalf("SetSessionTold s1: %v", err)
+	}
+	if err := d.SetSessionConsent("claude", "s2", ConsentNo, consentNow()); err != nil {
+		t.Fatalf("SetSessionConsent s2: %v", err)
+	}
+
+	if err := d.ClearSessionConsent("claude", "s1"); err != nil {
+		t.Fatalf("ClearSessionConsent: %v", err)
+	}
+	if c, err := d.SessionConsent("claude", "s1"); err != nil || c != ConsentUnset {
+		t.Errorf("SessionConsent after clear = (%q, %v), want unset", c, err)
+	}
+	if _, ok, err := d.SessionTold("claude", "s1"); err != nil || ok {
+		t.Errorf("SessionTold after clear = (ok %v, %v), want no baseline", ok, err)
+	}
+	if c, err := d.SessionConsent("claude", "s2"); err != nil || c != ConsentNo {
+		t.Errorf("SessionConsent on the other session = (%q, %v), want no", c, err)
+	}
+
+	// Clearing an unseen session is a no-op, not an error.
+	if err := d.ClearSessionConsent("claude", "s3"); err != nil {
+		t.Errorf("ClearSessionConsent(unseen) = %v, want nil", err)
+	}
+}
