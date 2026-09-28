@@ -453,6 +453,45 @@ func TestStatusRowAlwaysNamesTheActor(t *testing.T) {
 		t.Errorf("row Role = %q, want builder for a stored role of \"\"", row.Role)
 	}
 }
+
+// TestStatusRowCarriesTheShape pins the one additive status field: a reader
+// row names its shape so a consumer can pick the artifact word, while a writer
+// row carries no key at all, so its document is the one it always was.
+func TestStatusRowCarriesTheShape(t *testing.T) {
+	rt, b := sentBinding(t)
+
+	writer, err := statusRow(context.Background(), rt, b)
+	if err != nil {
+		t.Fatalf("statusRow: %v", err)
+	}
+	if writer.Shape != "" {
+		t.Errorf("writer row Shape = %q, want empty", writer.Shape)
+	}
+	rawWriter, err := json.Marshal(writer)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(rawWriter), `"shape"`) {
+		t.Errorf("writer JSON = %s, must carry no shape key", rawWriter)
+	}
+
+	b.Shape = store.ShapeReader
+	reader, err := statusRow(context.Background(), rt, b)
+	if err != nil {
+		t.Fatalf("statusRow: %v", err)
+	}
+	if reader.Shape != store.ShapeReader {
+		t.Errorf("reader row Shape = %q, want %q", reader.Shape, store.ShapeReader)
+	}
+	rawReader, err := json.Marshal(reader)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(rawReader), `"shape":"reader"`) {
+		t.Errorf("reader JSON = %s, want a shape key", rawReader)
+	}
+}
+
 func TestStatusRowWaiting(t *testing.T) {
 	rt, b := sentBinding(t)
 	b.State = store.StateNeedsYou

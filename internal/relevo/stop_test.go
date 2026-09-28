@@ -72,6 +72,7 @@ func TestStopPayload(t *testing.T) {
 		reportPath  string
 		haveReport  bool
 		clause      string
+		shape       string
 		wantPayload string
 		wantNote    string
 	}{
@@ -105,8 +106,16 @@ func TestStopPayload(t *testing.T) {
 			name: "reader, report on disk", how: "killed", round: 1,
 			reportPath: "/s/reports/001.md", haveReport: true,
 			clause:      "Findings: relevo show reader-bind --round 1 --output",
+			shape:       store.ShapeReader,
 			wantPayload: "The runner was stopped (killed) for round 1. Findings: relevo show reader-bind --round 1 --output",
 			wantNote:    "stopped",
+		},
+		{
+			name: "reader, no report", how: "killed", round: 1,
+			reportPath: "/s/reports/001.md", haveReport: false,
+			shape:       store.ShapeReader,
+			wantPayload: "The runner was stopped (killed) for round 1; no output was written.",
+			wantNote:    "noreport stopped",
 		},
 		{
 			name: "remote, no report", how: "dequeued", round: 3, where: " on zen",
@@ -118,7 +127,7 @@ func TestStopPayload(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			payload, note := stopPayload(c.how, "webshop", c.round, c.where, c.haveReport, c.clause)
+			payload, note := stopPayload(c.how, "webshop", c.round, c.where, c.haveReport, c.clause, c.shape)
 			if payload != c.wantPayload {
 				t.Errorf("payload = %q, want %q", payload, c.wantPayload)
 			}

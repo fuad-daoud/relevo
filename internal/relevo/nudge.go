@@ -22,9 +22,26 @@ const nudgeNotePrefix = "nudged builder"
 // the foreground is the whole point.
 const nudgePromptFormat = `You ended your turn before writing the report, and nothing will wake you: this process exits when your turn ends. Finish now, in the foreground: run any pending check to completion and wait for it, write the report to %s, then create %s. Do not start background tasks and do not end your turn before both files exist.`
 
+// readerNudgePromptFormat is nudgePromptFormat for a reader: it names the
+// actor's own output label and the file that label resolves to, because a
+// reader writes no report.
+const readerNudgePromptFormat = `You ended your turn before writing your %[1]s, and nothing will wake you: this process exits when your turn ends. Finish now, in the foreground: run any pending check to completion and wait for it, write your %[1]s to %[2]s, then create %[3]s. Do not start background tasks and do not end your turn before both files exist.`
+
 // nudgePrompt renders nudgePromptFormat for one round's report and done paths.
 func nudgePrompt(reportPath, donePath string) string {
 	return fmt.Sprintf(nudgePromptFormat, reportPath, donePath)
+}
+
+// nudgePromptFor renders the nudge for b: a writer is told its round's report
+// and done paths, a reader its output label and the file that label resolves
+// to.
+func nudgePromptFor(rt Runtime, b store.Binding) string {
+	done := rt.Store.DonePath(b.Name, b.Round)
+	if b.Shape != store.ShapeReader {
+		return nudgePrompt(rt.Store.ReportPath(b.Name, b.Round), done)
+	}
+	label := readerOutputLabel(rt, b)
+	return fmt.Sprintf(readerNudgePromptFormat, label, rt.Store.OutputPath(b.Name, b.Round, bindingRole(b), label), done)
 }
 
 // nudgedSincePlan reports whether a nudge switch entry already follows the
@@ -71,7 +88,7 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	sess := b.Builder.StreamSessionID
 	keep := b.RoundStartedAt
 	prior := peekUsage(ctx, rt, b, now)
-	prompt := nudgePrompt(rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
+	prompt := nudgePromptFor(rt, b)
 	next, err := resumeRound(ctx, rt, tx, b, sess, prompt)
 	if err != nil {
 		slog.Warn("nudge resume failed; falling through to the exit path",

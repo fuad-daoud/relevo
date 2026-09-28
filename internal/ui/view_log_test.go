@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/stats"
+	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/muesli/termenv"
 )
 
@@ -59,7 +60,7 @@ func TestLogFoldsSend(t *testing.T) {
 		return token
 	}
 
-	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, name)
+	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, name, nil)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
@@ -82,7 +83,7 @@ func TestLogRowOfBothPromptKindsReadsSent(t *testing.T) {
 	for _, kind := range []string{"prompt", "plan"} {
 		entries := buildLogEntries([]db.EventLogRow{
 			{TS: now, Seq: 1, Kind: kind, BindingName: "atlas"},
-		}, availability.History{}, nil, nil, time.Time{}, nil)
+		}, availability.History{}, nil, nil, time.Time{}, nil, nil)
 		if len(entries) != 1 || entries[0].Word != "sent" {
 			t.Errorf("row of kind %q = %+v, want one entry with Word \"sent\"", kind, entries)
 		}
@@ -120,7 +121,7 @@ func TestLogFoldsReport(t *testing.T) {
 		},
 	}
 
-	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, nil)
+	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, nil, nil)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
@@ -156,7 +157,7 @@ func TestLogFoldsReport(t *testing.T) {
 			Round:       &roundNum,
 		},
 	}
-	doneEntries := buildLogEntries(doneEvents, availability.History{}, nil, nil, time.Time{}, nil)
+	doneEntries := buildLogEntries(doneEvents, availability.History{}, nil, nil, time.Time{}, nil, nil)
 	if len(doneEntries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(doneEntries))
 	}
@@ -200,7 +201,7 @@ func TestLogSwitchAndExit(t *testing.T) {
 		},
 	}
 
-	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, nil)
+	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, nil, nil)
 	if len(entries) != 2 {
 		t.Fatalf("got %d entries, want 2", len(entries))
 	}
@@ -224,7 +225,7 @@ func TestLogSwitchAndExit(t *testing.T) {
 			Round:       &roundNum,
 		},
 	}
-	rlEntries := buildLogEntries(rateLimitSwitch, availability.History{}, nil, nil, time.Time{}, nil)
+	rlEntries := buildLogEntries(rateLimitSwitch, availability.History{}, nil, nil, time.Time{}, nil, nil)
 	if len(rlEntries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(rlEntries))
 	}
@@ -232,6 +233,66 @@ func TestLogSwitchAndExit(t *testing.T) {
 	wantDetail := fmt.Sprintf("to glm-5.3-flash (#6) · %s", wantReason)
 	if rlEntries[0].Detail != wantDetail {
 		t.Errorf("Detail = %q, want %q", rlEntries[0].Detail, wantDetail)
+	}
+}
+
+// TestLogReaderRowWords pins a reader binding's log rows: its report entry's
+// event cell reads "artifact", its exit note reads "without an output", and a
+// switch whose why names the missing output reads "exited without an output".
+// A writer's row keeps today's words, whether the store names the shape
+// "writer" or does not hold it at all.
+func TestLogReaderRowWords(t *testing.T) {
+	now := time.Date(2026, 9, 25, 18, 26, 0, 0, time.UTC)
+	roundID := "r1"
+	roundNum := 1
+
+	events := []db.EventLogRow{
+		{
+			TS: now.Add(2 * time.Second), Seq: 3, Kind: "report",
+			BindingName: "atlas", RoundID: &roundID, Round: &roundNum,
+		},
+		{
+			TS: now.Add(time.Second), Seq: 2, Kind: "exit",
+			Note:        strPtr("builder exited (code 0) without an output"),
+			BindingName: "atlas", RoundID: &roundID, Round: &roundNum,
+		},
+		{
+			TS: now, Seq: 1, Kind: "switch",
+			Note:        strPtr("switched builder (exited (code 0) without an output): picked glm-5.3-flash for builder: order #6"),
+			BindingName: "atlas", RoundID: &roundID, Round: &roundNum,
+		},
+	}
+
+	readerShapes := func(binding string) string {
+		if binding == "atlas" {
+			return store.ShapeReader
+		}
+		return ""
+	}
+	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, nil, readerShapes)
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3", len(entries))
+	}
+	if entries[0].Word != "artifact" {
+		t.Errorf("reader report word = %q, want artifact", entries[0].Word)
+	}
+	if entries[1].Word != "exited" || entries[1].Detail != "without an output (code 0)" {
+		t.Errorf("reader exit = %+v, want exited / without an output (code 0)", entries[1])
+	}
+	if entries[2].Word != "switched" || !strings.HasSuffix(entries[2].Detail, "exited without an output") {
+		t.Errorf("reader switch = %+v, want a switched row ending in 'exited without an output'", entries[2])
+	}
+
+	writerShapes := func(string) string { return store.ShapeWriter }
+	writer := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, nil, writerShapes)
+	if writer[0].Word != "reported" {
+		t.Errorf("writer report word = %q, want reported", writer[0].Word)
+	}
+	if writer[1].Detail != "without a report (code 0)" {
+		t.Errorf("writer exit detail = %q, want 'without a report (code 0)'", writer[1].Detail)
+	}
+	if !strings.HasSuffix(writer[2].Detail, "exited without a report") {
+		t.Errorf("writer switch detail = %q, want it to end in 'exited without a report'", writer[2].Detail)
 	}
 }
 
@@ -273,7 +334,7 @@ func TestLogGatesRevisionsActions(t *testing.T) {
 		},
 	}
 
-	entries := buildLogEntries(nil, hist, revs, actions, since, nil)
+	entries := buildLogEntries(nil, hist, revs, actions, since, nil, nil)
 	// 3 entries: hist (now), action (now-30m), rev (now-1h). Old hist event dropped.
 	if len(entries) != 3 {
 		t.Fatalf("got %d entries, want 3", len(entries))
@@ -314,7 +375,7 @@ func TestLogNewestFirst(t *testing.T) {
 		{At: now.Add(-1 * time.Minute), Verb: "stop", Text: "stopped"},
 	}
 
-	entries := buildLogEntries(events, hist, revs, actions, since, nil)
+	entries := buildLogEntries(events, hist, revs, actions, since, nil, nil)
 	if len(entries) != 4 {
 		t.Fatalf("got %d entries, want 4", len(entries))
 	}
@@ -552,7 +613,7 @@ func TestLogSwitchRateLimitedReason(t *testing.T) {
 		}
 		return token
 	}
-	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, name)
+	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, name, nil)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
@@ -572,7 +633,7 @@ func TestLogGateRowWithoutReason(t *testing.T) {
 		},
 	}
 
-	entries := buildLogEntries(nil, hist, nil, nil, time.Time{}, nil)
+	entries := buildLogEntries(nil, hist, nil, nil, time.Time{}, nil, nil)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}

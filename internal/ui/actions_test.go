@@ -870,6 +870,30 @@ func TestReportReadyRowAndPull(t *testing.T) {
 	}
 }
 
+// TestReportReadyReaderRowSaysArtifact pins the fleet NOW cell for a reader
+// round waiting on this cockpit: the row's word follows its shape, so a reader
+// reads "artifact ready" while a writer keeps "report ready".
+func TestReportReadyReaderRowSaysArtifact(t *testing.T) {
+	reader := view.BindingStatus{
+		Name: "atlas", Round: 3, Display: "ACTIVE", MasterMindName: "you",
+		Shape:   store.ShapeReader,
+		Last:    &view.LastEvent{TS: railNow.Add(-3 * time.Minute), Round: 3, Kind: store.KindReport},
+		Pending: &view.PendingInfo{Round: 3, Kind: store.KindReport},
+	}
+	if !reportReady(reader) {
+		t.Fatal("a reader row with a pending payload is report ready")
+	}
+	if got := nowCell(reader, railNow); got != "artifact ready · 3m" {
+		t.Errorf("reader NOW cell = %q, want artifact ready · 3m", got)
+	}
+
+	writer := reader
+	writer.Shape = ""
+	if got := nowCell(writer, railNow); got != "report ready · 3m" {
+		t.Errorf("writer NOW cell = %q, want report ready · 3m", got)
+	}
+}
+
 // fixedSource answers every status with the same report and resolves every key
 // to one runtime: a test's refetch after an action must not empty the fleet the
 // row came from.

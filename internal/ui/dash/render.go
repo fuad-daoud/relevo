@@ -81,7 +81,7 @@ func (m Model) outcomeWord(r db.RoundRow) (string, lipgloss.Style) {
 	case db.OutcomeSwitched:
 		return "switched", m.styles.Warn
 	case db.OutcomeDoneNoReport:
-		return "no report", m.styles.Faint
+		return "no output", m.styles.Faint
 	case db.OutcomeReported:
 		if r.ReportOutcome != nil {
 			switch *r.ReportOutcome {

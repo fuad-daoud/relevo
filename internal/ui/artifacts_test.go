@@ -48,11 +48,12 @@ func seedReaderArtifacts(t *testing.T, st *store.Store, name, actor string, roun
 
 // readerRoundRow is the status row a reader round fixture shows: a closed
 // round 1 with the reviewer's report nine minutes old, so its card reads
-// "reported 9m" and its round reads sealed.
+// "artifact 9m" and its round reads sealed.
 func readerRoundRow(name, actor string) view.BindingStatus {
 	return view.BindingStatus{
 		Name: name, Round: 1, PlanRound: 1, Display: "ACTIVE",
 		Role:             actor,
+		Shape:            store.ShapeReader,
 		BuilderCandidate: "opencode/gpt-5.6-terra", BuilderName: "gpt-5.6-terra",
 		BuilderKind: "opencode", BuilderStatus: "idle",
 		MasterMindName: "architect-5",
@@ -210,6 +211,21 @@ func TestArtifactsTabReadsSealedFiles(t *testing.T) {
 	}
 }
 
+// writerIdleRow is the writer status row writerIdleRoundModel shows: a closed
+// round 1 whose report is nine minutes old, so its card reads "reported 9m".
+func writerIdleRow(name string) view.BindingStatus {
+	return view.BindingStatus{
+		Name: name, Round: 1, PlanRound: 1, Display: "ACTIVE",
+		BuilderStatus: "idle", BuilderName: "gpt-5.6-terra",
+		MasterMindName: "architect-5",
+		RoundEnd:       railNow.Add(-9 * time.Minute),
+		LastPayload: &view.LastEvent{
+			TS: railNow.Add(-9 * time.Minute), Round: 1,
+			Direction: store.DirToMasterMind, Kind: store.KindReport,
+		},
+	}
+}
+
 // writerIdleRoundModel pushes a writer round whose state and time read exactly
 // like the reader golden's: idle, nine minutes after a report. It is the
 // writer half of TestReaderHeaderSharesTheWriterLayout.
@@ -220,16 +236,7 @@ func writerIdleRoundModel(t *testing.T, width, height int) Model {
 	if err := st.Save(newTestBinding(name)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	row := view.BindingStatus{
-		Name: name, Round: 1, PlanRound: 1, Display: "ACTIVE",
-		BuilderStatus: "idle", BuilderName: "gpt-5.6-terra",
-		MasterMindName: "architect-5",
-		RoundEnd:       railNow.Add(-9 * time.Minute),
-		LastPayload: &view.LastEvent{
-			TS: railNow.Add(-9 * time.Minute), Round: 1,
-			Direction: store.DirToMasterMind, Kind: store.KindReport,
-		},
-	}
+	row := writerIdleRow(name)
 	m := goldenActionModelWithStore(t, width, height, &fakeActions{},
 		view.Report{Bindings: []view.BindingStatus{row}}, st)
 	m = pointer(t, m, name)
@@ -248,12 +255,18 @@ func TestReaderHeaderSharesTheWriterLayout(t *testing.T) {
 	readerLine := stripANSI(strings.Split(reader.View(), "\n")[2])
 	writerLine := stripANSI(strings.Split(writer.View(), "\n")[2])
 
-	cell := stripANSI(roundStateCell(readerRoundRow("review-568", "reviewer"), railNow))
-	if !strings.HasPrefix(readerLine, cell) {
-		t.Errorf("reader line 3 does not start with the shared state-and-time cell\ncell: %q\ngot:  %q", cell, readerLine)
+	readerCell := stripANSI(roundStateCell(readerRoundRow("review-568", "reviewer"), railNow))
+	writerCell := stripANSI(roundStateCell(writerIdleRow("writer-idle"), railNow))
+	if !strings.HasPrefix(readerLine, readerCell) {
+		t.Errorf("reader line 3 does not start with its state-and-time cell\ncell: %q\ngot:  %q", readerCell, readerLine)
 	}
-	if !strings.HasPrefix(writerLine, cell) {
-		t.Errorf("writer line 3 does not start with the state-and-time cell\ncell: %q\ngot:  %q", cell, writerLine)
+	if !strings.HasPrefix(writerLine, writerCell) {
+		t.Errorf("writer line 3 does not start with its state-and-time cell\ncell: %q\ngot:  %q", writerCell, writerLine)
+	}
+	// Only the row's own word differs (artifact for the reader, report for the
+	// writer): the state-and-time cell's layout is still the shared one.
+	if got := strings.Replace(readerCell, "artifact 9m", "reported 9m", 1); got != writerCell {
+		t.Errorf("reader cell = %q, writer cell = %q, want the shared layout", got, writerCell)
 	}
 }
 

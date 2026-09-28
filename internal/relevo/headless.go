@@ -544,15 +544,16 @@ func clearProcess(e store.Endpoint) store.Endpoint {
 // codeText is the exit code, or "unknown" when the supervisor's trailer is
 // missing (killed, or the log unreadable). payload is the builder's last
 // logTailLines of evidence, computed by the caller with builderTail, for the
-// human; relevo reads nothing out of it.
-func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload string) store.LogEntry {
+// human; relevo reads nothing out of it. shape picks the word for the missing
+// artifact: a reader's is an output.
+func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload, shape string) store.LogEntry {
 	return store.LogEntry{
 		TS:        now,
 		Round:     round,
 		Direction: store.DirToMasterMind,
 		Kind:      store.KindExit,
 		Path:      logPath,
-		Note:      fmt.Sprintf("builder exited (code %s) without a report%s", codeText, suffix),
+		Note:      fmt.Sprintf("builder exited (code %s) %s%s", codeText, withoutArtifact(shape), suffix),
 		Payload:   payload,
 		Confirmed: true,
 	}
@@ -755,8 +756,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 		slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
 		payload := fmt.Sprintf(
-			"Builder exited (code %s) after writing its report but never confirmed completion (no %s). %s.",
-			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), closeClause(rt, b, b.Round))
+			"Builder exited (code %s) after writing its %s but never confirmed completion (no %s). %s.",
+			codeText, artifactNoun(rt, b), filepath.Base(rt.Store.DonePath(b.Name, b.Round)), closeClause(rt, b, b.Round))
 		if m.Line != "" {
 			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, availability.GateTimeText(m.Until))
 		}
@@ -801,7 +802,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		suffix += "; killed by systemd-oomd (host out of memory)"
 	}
 
-	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix, builderTail(rt, b, logTailLines))); err != nil {
+	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix, builderTail(rt, b, logTailLines), b.Shape)); err != nil {
 		return b, err
 	}
 	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
@@ -954,8 +955,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 	if isDenial {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
-			"%s: builder exited (code %s) without a report after a permission denial (%q); not switched -- re-send with a higher tier (relevo send --name %s --file <plan> --tier edit|yolo [--allow-yolo]) or extend the harness's allow list; log: %s",
-			b.Name, codeText, denialLine, b.Name, showCommand(b.Name, b.Round, "log")))
+			"%s: builder exited (code %s) %s after a permission denial (%q); not switched -- re-send with a higher tier (relevo send --name %s --file <plan> --tier edit|yolo [--allow-yolo]) or extend the harness's allow list; log: %s",
+			b.Name, codeText, withoutArtifact(b.Shape), denialLine, b.Name, showCommand(b.Name, b.Round, "log")))
 	}
 
 	// A builder that ended its turn cleanly without a report has left a
@@ -969,14 +970,14 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	if !switchable {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) without a report; see %s", b.Name, codeText, showCommand(b.Name, b.Round, "log")))
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) %s; see %s", b.Name, codeText, withoutArtifact(b.Shape), showCommand(b.Name, b.Round, "log")))
 	}
 	// The exclusion is appended to the b that switchBuilder receives so the
 	// replacement inherits it and the field is persisted with the switch
 	// (#191): a headless builder that exited without a report is excluded
 	// from the pick for the rest of this round.
 	b.RoundExcluded = appendUnique(b.RoundExcluded, b.BuilderCandidate)
-	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false, true)
+	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) %s", codeText, withoutArtifact(b.Shape)), false, true)
 }
 
 // readerFinalMessageGrace is how long a reader round whose marker is present

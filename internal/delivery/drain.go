@@ -123,11 +123,11 @@ func pushPayload(ctx context.Context, d Deps, p Pusher, b store.Binding, entry s
 		"kind":    string(entry.Kind),
 		"seq":     strconv.Itoa(entry.Seq),
 	}
-	if show := LogRef(b.Name, entry); show != "" {
+	if show := LogRef(b, entry); show != "" {
 		meta["show"] = show
 	}
 
-	content, _ := PushText(entry, b.Name, d.Store.ReadFile)
+	content, _ := PushText(entry, b, d.Store.ReadFile)
 	if err := p.Push(ctx, content, meta); err != nil {
 		res.Failed = append(res.Failed, b.Name)
 		slog.Info("channel push failed; entry stays pending", "binding", b.Name, "round", entry.Round, "error", err)

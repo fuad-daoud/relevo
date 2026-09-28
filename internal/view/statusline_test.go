@@ -444,6 +444,62 @@ func TestWaitingReportOutcome(t *testing.T) {
 			t.Errorf("waiting = %q, want 'report in'", got)
 		}
 	})
+
+	t.Run("reader artifact with a note", func(t *testing.T) {
+		b := BindingStatus{
+			Shape: store.ShapeReader,
+			LastPayload: &LastEvent{
+				Kind: store.KindReport,
+				Note: "unmarked",
+			},
+		}
+		if got := waiting(b); got != "artifact in (unmarked)" {
+			t.Errorf("waiting = %q, want 'artifact in (unmarked)'", got)
+		}
+	})
+}
+
+// TestStatusLineRowsReaderShape pins a reader row end to end: the row carries
+// its shape, the artifact word in its status column, and ReportIn/ReportRound
+// from its delivered artifact, while a writer row keeps REPORT IN and no shape.
+func TestStatusLineRowsReaderShape(t *testing.T) {
+	t.Parallel()
+
+	rows := StatusLineRows(Report{Bindings: []BindingStatus{
+		{
+			Name: "atlas", Round: 2, Display: "ACTIVE", Role: "planner", Shape: store.ShapeReader,
+			LastPayload: &LastEvent{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind},
+		},
+		{
+			Name: "webshop", Round: 2, Display: "ACTIVE",
+			LastPayload: &LastEvent{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind},
+		},
+	}}, baseTime)
+
+	if len(rows) != 2 {
+		t.Fatalf("len(rows) = %d, want 2", len(rows))
+	}
+	reader := rows[0]
+	if reader.Shape != store.ShapeReader {
+		t.Errorf("reader Shape = %q, want %q", reader.Shape, store.ShapeReader)
+	}
+	if reader.Status != "ARTIFACT IN" || reader.Tone != "report" {
+		t.Errorf("reader Status/Tone = %q/%q, want 'ARTIFACT IN'/'report'", reader.Status, reader.Tone)
+	}
+	if reader.Waiting != "artifact in" {
+		t.Errorf("reader Waiting = %q, want 'artifact in'", reader.Waiting)
+	}
+	if !reader.ReportIn || reader.ReportRound != 1 {
+		t.Errorf("reader ReportIn/ReportRound = %v/%d, want true/1", reader.ReportIn, reader.ReportRound)
+	}
+
+	writer := rows[1]
+	if writer.Shape != "" {
+		t.Errorf("writer Shape = %q, want empty", writer.Shape)
+	}
+	if writer.Status != "REPORT IN" {
+		t.Errorf("writer Status = %q, want 'REPORT IN'", writer.Status)
+	}
 }
 
 // TestRowStatus pins the one status column: Status and Tone come from one
@@ -515,6 +571,69 @@ var rowStatusCases = []struct {
 		},
 		wantStatus: "REPORT IN",
 		wantTone:   "report",
+	},
+	{
+		name: "delivered reader artifact",
+		binding: BindingStatus{
+			Name:             "atlas",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			Role:             "planner",
+			Shape:            store.ShapeReader,
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, Round: 1, TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "ARTIFACT IN",
+		wantTone:   "report",
+	},
+	{
+		name: "delivered reader artifact with a note and an outcome",
+		binding: BindingStatus{
+			Name:             "atlas",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			Role:             "planner",
+			Shape:            store.ShapeReader,
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, Note: "unmarked", Outcome: "halted", TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "ARTIFACT IN · unmarked · halted",
+		wantTone:   "report",
+	},
+	{
+		name: "reader artifact in flight on a live deliverer route",
+		binding: BindingStatus{
+			Name:                "atlas",
+			Round:               1,
+			Display:             "ACTIVE",
+			BuilderCandidate:    "agy",
+			Role:                "planner",
+			Shape:               store.ShapeReader,
+			MasterMindRoute:     "deliverer",
+			MasterMindRouteLive: true,
+			Pending:             &PendingInfo{Round: 1, Kind: store.KindReport},
+			LastPayload:         &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, TS: rsNow.Add(-5 * time.Second)},
+		},
+		wantStatus: "artifact in",
+		wantTone:   "phase",
+	},
+	{
+		name: "stalled reader artifact",
+		binding: BindingStatus{
+			Name:                "atlas",
+			Round:               1,
+			Display:             "ACTIVE",
+			BuilderCandidate:    "agy",
+			Role:                "planner",
+			Shape:               store.ShapeReader,
+			MasterMindRoute:     "deliverer",
+			MasterMindRouteLive: true,
+			Pending:             &PendingInfo{Round: 1, Kind: store.KindReport},
+			LastPayload:         &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "NEEDS YOU",
+		wantTone:   "needs",
+		wantReason: "artifact in",
 	},
 	{
 		name: "delivered question",

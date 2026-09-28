@@ -203,7 +203,7 @@ func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool, c
 	n := view.ClosedRound
 	server, name := b.Builder.Server, b.Name
 	if view.Stopped != "" {
-		payload, note = stopPayload(view.Stopped, name, n, " on "+server, haveReport, clause)
+		payload, note = stopPayload(view.Stopped, name, n, " on "+server, haveReport, clause, b.Shape)
 	} else {
 		payload = fmt.Sprintf("The runner finished round %d on %s. %s", n, server, clause)
 	}

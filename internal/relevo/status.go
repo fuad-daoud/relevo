@@ -73,6 +73,17 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (vie
 	return rep, nil
 }
 
+// bindingShape is the shape a status row carries: store.ShapeReader for a
+// reader, "" for a writer. A writer's row keeps the document it always had --
+// an absent shape reads as a writer everywhere -- while a reader names itself
+// so the row's word can follow it.
+func bindingShape(b store.Binding) string {
+	if b.Shape == store.ShapeReader {
+		return store.ShapeReader
+	}
+	return ""
+}
+
 // statusRow is read-only, so it reaches the store through the self-locking
 // *store.Store methods directly rather than a *store.Tx: there is no
 // load-modify-save here for WithLock to protect.
@@ -82,6 +93,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 		State: string(b.State), Display: view.DisplayState(b.State),
 		BuilderCandidate: b.BuilderCandidate,
 		Role:             bindingRole(b),
+		Shape:            bindingShape(b),
 		ForkedFrom:       b.ForkedFrom,
 		ForkedAtRound:    b.ForkedAtRound,
 		Consults:         consult.Running(b),
