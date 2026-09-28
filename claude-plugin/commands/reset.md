@@ -1,5 +1,5 @@
 ---
-description: Ask the relevo consent question again in this repository
+description: Ask the relevo consent question again in this repository and this session
 allowed-tools: Bash(relevo:*)
 ---
 

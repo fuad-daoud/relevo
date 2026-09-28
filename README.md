@@ -2209,7 +2209,7 @@ The plugin also carries slash commands over relevo's verbs:
 - `/relevo:enable-repo` -- this repository answers yes from now on.
 - `/relevo:disable` -- this session answers no.
 - `/relevo:disable-repo` -- never in this repository.
-- `/relevo:reset` -- ask the consent question again in this repository.
+- `/relevo:reset` -- ask the consent question again in this repository and this session.
 
 Then launch Claude Code normally:
 
