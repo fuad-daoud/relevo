@@ -248,6 +248,22 @@ func mastermindCheckInput(rt relevo.Runtime, kinds []string) doctor.MasterMindCh
 	if wd, err := os.Getwd(); err == nil {
 		in.Repo = wd
 	}
+	// The repository's consent answer (#632). Each read is best-effort like the
+	// rest of the row: a store or git read that fails leaves the row off.
+	if rt.Git != nil && in.Repo != "" {
+		ref := mastermindRepoOf(context.Background(), rt, in.Repo)
+		in.RepoKnown = mastermindRepoKnown(ref)
+		if rt.Store != nil {
+			if d, err := rt.Store.DB(); err == nil {
+				in.ConsentKnown = true
+				if in.RepoKnown {
+					if c, err := d.RepoConsent(ref); err == nil {
+						in.Consent = c
+					}
+				}
+			}
+		}
+	}
 	for _, k := range kinds {
 		if k == "claude" {
 			in.Claude = true

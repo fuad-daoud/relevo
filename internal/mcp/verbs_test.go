@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -90,7 +91,7 @@ func TestRelevoVerbsStatusFiltersByMasterMindThenName(t *testing.T) {
 
 	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
 
-	res, err := v.Status(context.Background(), StatusArgs{})
+	res, err := v.Status(context.Background(), "", StatusArgs{})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestRelevoVerbsStatusFiltersByMasterMindThenName(t *testing.T) {
 		t.Fatalf("default status = %+v, want only mine-a (this mastermind, DONE hidden)", rep.Bindings)
 	}
 
-	res, err = v.Status(context.Background(), StatusArgs{All: true})
+	res, err = v.Status(context.Background(), "", StatusArgs{All: true})
 	if err != nil {
 		t.Fatalf("Status all: %v", err)
 	}
@@ -111,7 +112,7 @@ func TestRelevoVerbsStatusFiltersByMasterMindThenName(t *testing.T) {
 		t.Fatalf("all status = %d bindings, want 3", len(rep.Bindings))
 	}
 
-	res, err = v.Status(context.Background(), StatusArgs{Name: "mine-done"})
+	res, err = v.Status(context.Background(), "", StatusArgs{Name: "mine-done"})
 	if err != nil {
 		t.Fatalf("Status by name: %v", err)
 	}
@@ -120,7 +121,7 @@ func TestRelevoVerbsStatusFiltersByMasterMindThenName(t *testing.T) {
 		t.Fatalf("status by name = %+v, want only mine-done (DONE included when named)", rep.Bindings)
 	}
 
-	if _, err := v.Status(context.Background(), StatusArgs{Name: "other"}); err == nil {
+	if _, err := v.Status(context.Background(), "", StatusArgs{Name: "other"}); err == nil {
 		t.Fatal("Status naming a binding on a different mastermind must error")
 	}
 }
@@ -137,7 +138,7 @@ func TestMCPStatusFiltersByMasterMind(t *testing.T) {
 	saveVerbBinding(t, s, store.Binding{Name: "cousin", CWD: "/repo/cousin", MasterMind: store.Endpoint{PaneID: "w2:p3"}, MasterMindID: mcpTestMasterMindB, Round: 1, State: store.StateActive})
 
 	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
-	res, err := v.Status(context.Background(), StatusArgs{})
+	res, err := v.Status(context.Background(), "", StatusArgs{})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -178,7 +179,7 @@ func newHeadlessSendFixture(t *testing.T) (*RelevoVerbs, string) {
 func TestRelevoVerbsSendHeadless(t *testing.T) {
 	t.Run("dry run takes relevo.SendDryRun, not a seam", func(t *testing.T) {
 		v, plan := newHeadlessSendFixture(t)
-		res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, DryRun: true})
+		res, err := v.Send(context.Background(), "", SendArgs{Name: "webshop", File: plan, DryRun: true})
 		if err != nil {
 			t.Fatalf("Send dry-run: %v", err)
 		}
@@ -196,7 +197,7 @@ func TestRelevoVerbsSendHeadless(t *testing.T) {
 
 	t.Run("real run takes relevo.Send, not SendDryRun", func(t *testing.T) {
 		v, plan := newHeadlessSendFixture(t)
-		res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan})
+		res, err := v.Send(context.Background(), "", SendArgs{Name: "webshop", File: plan})
 		if err != nil {
 			t.Fatalf("Send: %v", err)
 		}
@@ -225,7 +226,7 @@ func TestRelevoVerbsDoneForwardsAndReportsText(t *testing.T) {
 	})
 
 	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
-	res, err := v.Done(context.Background(), DoneArgs{Name: "webshop"})
+	res, err := v.Done(context.Background(), "", DoneArgs{Name: "webshop"})
 	if err != nil {
 		t.Fatalf("Done: %v", err)
 	}
@@ -251,7 +252,45 @@ func TestRelevoVerbsDoneErrorPropagates(t *testing.T) {
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
 
-	if _, err := v.Done(context.Background(), DoneArgs{Name: "nonexistent"}); err == nil {
+	if _, err := v.Done(context.Background(), "", DoneArgs{Name: "nonexistent"}); err == nil {
 		t.Fatal("Done on a binding that does not exist must error")
+	}
+}
+
+// TestRelevoVerbsStatusResolvesSession pins opencode's path: the call's session
+// resolves to that session's mastermind, a resolver error is the tool error,
+// and --all needs no identity at all.
+func TestRelevoVerbsStatusResolvesSession(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := relevo.Runtime{
+		Store: s,
+		Now:   func() time.Time { return time.Unix(0, 0) },
+	}
+
+	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
+	saveVerbBinding(t, s, store.Binding{Name: "other", CWD: "/repo/other", MasterMindID: mcpTestMasterMindB, Round: 1, State: store.StateActive})
+
+	v := &RelevoVerbs{RT: rt, ResolveSession: func(session string) (string, error) {
+		if session != "ses_abc" {
+			return "", fmt.Errorf("no relevo MasterMind for opencode session %s", session)
+		}
+		return mcpTestMasterMindA, nil
+	}}
+
+	res, err := v.Status(context.Background(), "ses_abc", StatusArgs{})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	rep := res.(view.Report)
+	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine" {
+		t.Fatalf("status = %+v, want only mine (the resolved session's mastermind)", rep.Bindings)
+	}
+
+	if _, err := v.Status(context.Background(), "ses_other", StatusArgs{}); err == nil {
+		t.Fatal("a session with no mastermind must surface the resolver error")
+	}
+
+	if _, err := v.Status(context.Background(), "ses_other", StatusArgs{All: true}); err != nil {
+		t.Fatalf("Status --all must not need a session, got %v", err)
 	}
 }

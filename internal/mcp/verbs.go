@@ -10,30 +10,49 @@ import (
 )
 
 // Verbs is what a tools/call dispatches to, each returning what the CLI's
-// --json would, or an error the caller turns into an isError result.
+// --json would, or an error the caller turns into an isError result. session
+// is the calling harness session from the call's _meta, "" when the harness
+// sends none; only Status needs it.
 type Verbs interface {
-	Status(ctx context.Context, a StatusArgs) (any, error)
-	Send(ctx context.Context, a SendArgs) (any, error)
-	Done(ctx context.Context, a DoneArgs) (any, error)
+	Status(ctx context.Context, session string, a StatusArgs) (any, error)
+	Send(ctx context.Context, session string, a SendArgs) (any, error)
+	Done(ctx context.Context, session string, a DoneArgs) (any, error)
 }
 
-// RelevoVerbs adapts internal/relevo's functions to Verbs, resolved against one mastermind.
+// RelevoVerbs adapts internal/relevo's functions to Verbs. MasterMind is the
+// fallback identity for a harness that carries none per call (Claude Code);
+// ResolveSession, when set, maps a call's harness session to a MasterMind id
+// (opencode sends its session in _meta.sessionID).
 type RelevoVerbs struct {
-	RT         relevo.Runtime
-	MasterMind string
+	RT             relevo.Runtime
+	MasterMind     string
+	ResolveSession func(session string) (string, error)
+}
+
+// masterMindFor is the identity of one call: the session's mastermind when the
+// harness names it, else the process-level fallback.
+func (v *RelevoVerbs) masterMindFor(session string) (string, error) {
+	if v.ResolveSession != nil && session != "" {
+		return v.ResolveSession(session)
+	}
+	return v.MasterMind, nil
 }
 
 // Status filters relevo.Status to this mastermind's bindings (unless a.All), narrowed to a.Name.
-func (v *RelevoVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
+func (v *RelevoVerbs) Status(ctx context.Context, session string, a StatusArgs) (any, error) {
 	rep, err := relevo.Status(ctx, v.RT)
 	if err != nil {
 		return nil, err
 	}
 
 	if !a.All {
+		id, err := v.masterMindFor(session)
+		if err != nil {
+			return nil, err
+		}
 		kept := rep.Bindings[:0:0]
 		for _, b := range rep.Bindings {
-			if b.MasterMindID == v.MasterMind {
+			if b.MasterMindID == id {
 				kept = append(kept, b)
 			}
 		}
@@ -84,7 +103,7 @@ func budgetOf(res any) string {
 }
 
 // Send calls relevo.Send, or relevo.SendDryRun when a.DryRun; AllowYolo is always false.
-func (v *RelevoVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
+func (v *RelevoVerbs) Send(ctx context.Context, _ string, a SendArgs) (any, error) {
 	opts := relevo.SendOptions{
 		Tier:      a.Tier,
 		AllowYolo: false,
@@ -121,7 +140,7 @@ type doneResult struct {
 }
 
 // Done calls relevo.Done and reports relevo.DoneText alongside its result.
-func (v *RelevoVerbs) Done(ctx context.Context, a DoneArgs) (any, error) {
+func (v *RelevoVerbs) Done(ctx context.Context, _ string, a DoneArgs) (any, error) {
 	res, err := relevo.Done(ctx, v.RT, a.Name)
 	if err != nil {
 		return nil, err

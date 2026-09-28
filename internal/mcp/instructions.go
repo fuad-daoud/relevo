@@ -86,11 +86,43 @@ Every other relevo verb -- bind, show, wait, gate, config, and the rest --
 is not a tool here; run it with Bash.
 `
 
-// InstructionsFor picks the mode's prelude and appends the shared guide: the
-// guide is the last thing either mode's model reads.
-func InstructionsFor(mode Mode) string {
+// InstructionsOpencode is the model-facing prelude for an OpenCode MasterMind.
+// Reports arrive as new turns pushed by relevo's opencode deliverer; there is
+// no wait to start, and the tools are the three verbs.
+const InstructionsOpencode = `relevo is running as your tools server. Reports and needs-you payloads arrive
+as new turns in this session, pushed by relevo itself: after a send, end your
+turn and the report comes on its own. Do not start a wait.
+
+Act on a report as soon as it arrives: run the project's check command and
+compare the diff against the plan before calling done -- do not call done on
+the report's arrival alone. A needs-you turn gives the reason; call
+relevo_status and decide: send the next round, gate, or stop.
+
+A report or a needs_you for a binding you did not personally send still
+belongs to you -- every binding on this MasterMind is yours. Do not ignore a
+turn because you do not recognize the binding name; call relevo_status to
+catch up.
+
+Three verbs are tools here, callable directly instead of through the shell:
+
+  - status(name?, all?): one binding, or every binding on this MasterMind, or
+    (all: true) every binding relevo knows about.
+  - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
+    runner a new round.
+  - done(name): mark a binding done once its round is verified.
+
+Every other relevo verb -- bind, show, wait, gate, config, and the rest --
+is not a tool here; run it with the shell.
+`
+
+// InstructionsFor picks the kind's or mode's prelude and appends the shared
+// guide: the guide is the last thing the model reads.
+func InstructionsFor(mode Mode, kind string) string {
 	prelude := InstructionsTools
-	if mode == ModeChannel {
+	switch {
+	case kind == "opencode":
+		prelude = InstructionsOpencode
+	case mode == ModeChannel:
 		prelude = InstructionsChannel
 	}
 	return prelude + "\n" + mastermind.Guide()

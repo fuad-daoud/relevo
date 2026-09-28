@@ -38,6 +38,34 @@ func (f OpencodeSessionFinder) Find(cwd string, now time.Time) (string, error) {
 	return mastermind.MatchOpencodeSession(cwd, sessions, now)
 }
 
+// Directory returns the working directory OpenCode recorded for one session,
+// so a caller that knows only the session id can resolve its repository.
+func (f OpencodeSessionFinder) Directory(sessionID string) (string, error) {
+	if f.Exec == nil {
+		return "", fmt.Errorf("%w: nil exec", mastermind.ErrNoOpencodeSession)
+	}
+	if sessionID == "" {
+		return "", fmt.Errorf("%w: empty session id", mastermind.ErrNoOpencodeSession)
+	}
+	timeout := f.Timeout
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	sessions, err := f.sessions(ctx)
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", mastermind.ErrNoOpencodeSession, err.Error())
+	}
+	for _, s := range sessions {
+		if s.ID == sessionID && s.Directory != "" {
+			return s.Directory, nil
+		}
+	}
+	return "", fmt.Errorf("%w: session %s has no recorded directory", mastermind.ErrNoOpencodeSession, sessionID)
+}
+
 // sessions reads OpenCode's session records: OpenCode 2.0.14 keeps its
 // own in session_v2, and the legacy session table only holds pre-2.0 rows. The
 // union keeps a legacy row only when session_v2 has no row with the same id, so

@@ -55,7 +55,7 @@ func TestRelevoVerbsSendPassesCandidate(t *testing.T) {
 	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
 	plan := writeTempPlan(t, "# do the thing")
 
-	res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, Candidate: "claude/test/m", DryRun: true})
+	res, err := v.Send(context.Background(), "", SendArgs{Name: "webshop", File: plan, Candidate: "claude/test/m", DryRun: true})
 	if err != nil {
 		t.Fatalf("Send dry-run with candidate: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestRelevoVerbsSendPassesCandidate(t *testing.T) {
 	}
 
 	// Control: without a candidate, the binding's own candidate comes back.
-	res, err = v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, DryRun: true})
+	res, err = v.Send(context.Background(), "", SendArgs{Name: "webshop", File: plan, DryRun: true})
 	if err != nil {
 		t.Fatalf("Send dry-run without candidate: %v", err)
 	}

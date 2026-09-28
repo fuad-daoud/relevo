@@ -93,7 +93,7 @@ func TestContractToolResults(t *testing.T) {
 		{
 			"tool-status",
 			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}`,
-			&fakeVerbs{statusFn: func(context.Context, StatusArgs) (any, error) {
+			&fakeVerbs{statusFn: func(context.Context, string, StatusArgs) (any, error) {
 				return map[string]any{
 					"bindings": []map[string]any{
 						{"name": "webshop", "cwd": "/repo/webshop", "round": 2, "state": "active"},
@@ -104,14 +104,14 @@ func TestContractToolResults(t *testing.T) {
 		{
 			"tool-send",
 			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"send","arguments":{"name":"webshop","file":"/tmp/plan.md","dry_run":true}}}`,
-			&fakeVerbs{sendFn: func(context.Context, SendArgs) (any, error) {
+			&fakeVerbs{sendFn: func(context.Context, string, SendArgs) (any, error) {
 				return map[string]any{"dry_run": true, "would_send": true, "round": 2}, nil
 			}},
 		},
 		{
 			"tool-done",
 			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"done","arguments":{"name":"webshop"}}}`,
-			&fakeVerbs{doneFn: func(context.Context, DoneArgs) (any, error) {
+			&fakeVerbs{doneFn: func(context.Context, string, DoneArgs) (any, error) {
 				return map[string]any{"branch": "feature/webshop", "worktree_removed": "/tmp/webshop"}, nil
 			}},
 		},

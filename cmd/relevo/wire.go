@@ -338,11 +338,14 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 	}
 
 	var opencodeSession func(cwd string, now time.Time) (string, error)
+	var opencodeSessionDir func(sessionID string) (string, error)
 	if _, err := exec.LookPath("sqlite3"); err == nil {
-		opencodeSession = delivery.OpencodeSessionFinder{
+		finder := delivery.OpencodeSessionFinder{
 			Exec:   binExec{},
 			DBPath: opencodeDBPath(),
-		}.Find
+		}
+		opencodeSession = finder.Find
+		opencodeSessionDir = finder.Directory
 	}
 
 	rt := relevo.Runtime{
@@ -367,13 +370,14 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 		Remote:         remoteClient,
 		// The transport depends only on the git client, not the servers
 		// section, so a server added while the daemon runs needs no rebuild.
-		Transport:       remote.NewBundleTransport(gitClient, ""),
-		Roles:           harness.OSRoleChecker(),
-		Channels:        claims,
-		ProcStart:       procStartUnix,
-		OpencodeSession: opencodeSession,
-		Deliverers:      newDeliverers(),
-		SessionReaper:   relevo.NewSessionReaper(binExec{}),
+		Transport:          remote.NewBundleTransport(gitClient, ""),
+		Roles:              harness.OSRoleChecker(),
+		Channels:           claims,
+		ProcStart:          procStartUnix,
+		OpencodeSession:    opencodeSession,
+		OpencodeSessionDir: opencodeSessionDir,
+		Deliverers:         newDeliverers(),
+		SessionReaper:      relevo.NewSessionReaper(binExec{}),
 	}
 	// The registry needs the runtime's own store and clock, so it is wired
 	// here rather than in the literal above. A runtime with no database open

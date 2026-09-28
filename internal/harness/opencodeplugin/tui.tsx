@@ -5,7 +5,7 @@ import { useTerminalDimensions } from "@opentui/solid";
 
 // Module state: persists across setup calls within the same process
 let started = false;
-const mastermindBySession = new Map<string, { id: string; name: string } | "pending" | "error">();
+const mastermindBySession = new Map<string, { id: string; name: string } | "pending" | "error" | "ask" | "disabled">();
 let currentDoc: any = null;
 let currentDocAt = 0;
 const prevRows = new Map<string, any>();
@@ -90,6 +90,7 @@ function updateStore(channel?: string, sig?: string) {
 async function spawnRelevo(
   argv: string[],
   envMasterMindID?: string,
+  cwd?: string,
 ): Promise<{ ok: boolean; code: number; stdout: string; stderr: string; enoent?: boolean }> {
   const env: Record<string, string> = { ...(process.env as Record<string, string>) };
   if (envMasterMindID) {
@@ -99,6 +100,7 @@ async function spawnRelevo(
     try {
       const proc = (Bun as any).spawn(["relevo", ...argv], {
         env,
+        cwd,
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -118,7 +120,7 @@ async function spawnRelevo(
     }
   } else {
     return new Promise((resolve) => {
-      execFile("relevo", argv, { env, timeout: 10000 }, (err: any, stdout: any, stderr: any) => {
+      execFile("relevo", argv, { env, timeout: 10000, cwd }, (err: any, stdout: any, stderr: any) => {
         const isEnoent = err?.code === "ENOENT";
         resolve({
           ok: !err,
@@ -132,14 +134,28 @@ async function spawnRelevo(
   }
 }
 
+// lastGuideCheck throttles the re-check for a session that has no MasterMind
+// yet, so enabling from a command or the model shows up without a restart.
+const lastGuideCheck = new Map<string, number>();
+const guideRecheckMS = 5000;
+
 function ensureMasterMind(api: any, sessionID: string) {
   if (!sessionID) return;
   const info = api.data?.session?.get?.(sessionID);
   if (info?.parentId || info?.parentID || info?.parent_id) return;
-  if (mastermindBySession.has(sessionID)) return;
 
-  mastermindBySession.set(sessionID, "pending");
-  spawnRelevo(["mastermind", "init", "--kind", "opencode", "--session", sessionID])
+  const entry = mastermindBySession.get(sessionID);
+  if (entry === "pending") return;
+  if (Date.now() - (lastGuideCheck.get(sessionID) ?? 0) < guideRecheckMS) return;
+  lastGuideCheck.set(sessionID, Date.now());
+  // Only the first check shows "registering…"; a re-check keeps its last
+  // answer until the fresh one arrives.
+  if (entry === undefined) mastermindBySession.set(sessionID, "pending");
+
+  // guide both renders the consent text and, when the repo answered yes or the
+  // session has its own record, registers/reports the MasterMind: an
+  // unanswered or refused repository registers nothing.
+  spawnRelevo(["mastermind", "guide", "--json", "--kind", "opencode", "--session", sessionID])
     .then((res) => {
       if (res.enoent) notFound = true;
       if (!res.ok) {
@@ -148,14 +164,16 @@ function ensureMasterMind(api: any, sessionID: string) {
         void pollStatus(api);
         return;
       }
-      const matchID = res.stdout.match(/export RELEVO_MASTERMIND=([a-z0-9_]+)/);
-      const matchName = res.stdout.match(/MasterMind\s+([^\s(]+)\s+\(((?:mm|pl)_[a-z0-9]+)\)/);
-      if (matchID) {
-        const id = matchID[1];
-        const name = matchName ? matchName[1] : id;
-        mastermindBySession.set(sessionID, { id, name });
+      let guide: any = null;
+      try {
+        guide = JSON.parse(res.stdout);
+      } catch {}
+      if (guide?.id) {
+        mastermindBySession.set(sessionID, { id: guide.id, name: guide.name || guide.id });
+      } else if (guide?.state === "ask") {
+        mastermindBySession.set(sessionID, "ask");
       } else {
-        mastermindBySession.set(sessionID, "error");
+        mastermindBySession.set(sessionID, "disabled");
       }
       updateStore();
       void pollStatus(api);
@@ -166,6 +184,47 @@ function ensureMasterMind(api: any, sessionID: string) {
       updateStore();
       void pollStatus(api);
     });
+}
+
+// consentToast words the palette command's result.
+function consentToast(argv: string[]): string {
+  const enable = argv.includes("enable");
+  const repo = argv.includes("--repo");
+  if (enable) return repo ? "relevo enabled in this repository" : "relevo enabled for this session";
+  return repo ? "relevo disabled in this repository" : "relevo disabled for this session";
+}
+
+// runConsentCommand answers the consent question from the palette: it runs the
+// CLI with the session's own directory, then re-checks the answer so the
+// sidebar moves without a restart.
+function runConsentCommand(api: any, argv: string[]) {
+  const info = currentSessionID ? api.data?.session?.get?.(currentSessionID) : null;
+  const dir = info?.directory || undefined;
+  void spawnRelevo(argv, undefined, dir)
+    .then((res) => {
+      if (!res.ok) {
+        api.ui.toast.show({
+          variant: "warning",
+          title: "relevo",
+          message: (res.stderr || `exit ${res.code}`).trim().slice(0, 200),
+          duration: 6000,
+        });
+        return;
+      }
+      api.ui.toast.show({
+        variant: "info",
+        title: "relevo",
+        message: consentToast(argv),
+        duration: 4000,
+      });
+      if (currentSessionID) {
+        mastermindBySession.delete(currentSessionID);
+        lastGuideCheck.delete(currentSessionID);
+        ensureMasterMind(api, currentSessionID);
+      }
+      updateStore();
+    })
+    .catch(() => {});
 }
 
 async function pollStatus(api: any) {
@@ -657,6 +716,7 @@ export default {
 
         const mastermindEntry = mastermindBySession.get(currentSessionID);
         let mastermindHeader = "";
+        let mastermindHint = "";
         let isError = false;
 
         if (notFound) {
@@ -669,13 +729,19 @@ export default {
 
         if (mastermindEntry === "pending") {
           mastermindHeader = "relevo · registering…";
-        } else if (mastermindEntry === "error" || (currentDoc && currentDoc.mastermind === null)) {
-          mastermindHeader = "relevo: not a MasterMind (see relevo doctor)";
-          isError = true;
         } else if (mastermindEntry && typeof mastermindEntry === "object") {
           mastermindHeader = `relevo · ${mastermindEntry.name}`;
         } else if (currentDoc?.mastermind?.name) {
           mastermindHeader = `relevo · ${currentDoc.mastermind.name}`;
+        } else if (
+          mastermindEntry === "ask" ||
+          mastermindEntry === "disabled" ||
+          mastermindEntry === "error" ||
+          (currentDoc && currentDoc.mastermind === null)
+        ) {
+          mastermindHeader = "relevo: not enabled";
+          mastermindHint = "/relevo-enable · /relevo-enable-repo";
+          isError = true;
         } else {
           mastermindHeader = "relevo · registering…";
         }
@@ -687,7 +753,10 @@ export default {
         return (
           <box flexDirection="column">
             {isError ? (
-              <text fg={mutedColor}>{ellipsize(mastermindHeader, 37)}</text>
+              <box flexDirection="column">
+                <text fg={mutedColor}>{ellipsize(mastermindHeader, 37)}</text>
+                {mastermindHint ? <text fg={mutedColor}>{ellipsize(mastermindHint, 37)}</text> : null}
+              </box>
             ) : (
               <box flexDirection="row">
                 <text>
@@ -829,6 +898,40 @@ export default {
                 run: () => {
                   pollStatus(api);
                 },
+              },
+              {
+                id: "relevo.enable",
+                title: "Enable relevo for this session",
+                group: "relevo",
+                palette: true,
+                run: () => {
+                  if (!currentSessionID) return;
+                  runConsentCommand(api, ["mastermind", "enable", "--kind", "opencode", "--session", currentSessionID]);
+                },
+              },
+              {
+                id: "relevo.enable-repo",
+                title: "Enable relevo in this repository",
+                group: "relevo",
+                palette: true,
+                run: () => runConsentCommand(api, ["mastermind", "enable", "--repo", "--kind", "opencode", "--session", currentSessionID]),
+              },
+              {
+                id: "relevo.disable",
+                title: "Disable relevo for this session",
+                group: "relevo",
+                palette: true,
+                run: () => {
+                  if (!currentSessionID) return;
+                  runConsentCommand(api, ["mastermind", "disable", "--kind", "opencode", "--session", currentSessionID]);
+                },
+              },
+              {
+                id: "relevo.disable-repo",
+                title: "Disable relevo in this repository",
+                group: "relevo",
+                palette: true,
+                run: () => runConsentCommand(api, ["mastermind", "disable", "--repo", "--kind", "opencode", "--session", currentSessionID]),
               },
               {
                 id: "relevo.back",

@@ -63,7 +63,12 @@ type hookEnvelope struct {
 	HookSpecificOutput hookSpecificOutput `json:"hookSpecificOutput"`
 }
 
-const hookEventName = "SessionStart"
+// The hook events relevo answers: Claude Code's session open, and the
+// user-prompt event that carries a mid-session status notice.
+const (
+	HookEventSessionStart     = "SessionStart"
+	HookEventUserPromptSubmit = "UserPromptSubmit"
+)
 
 // hookContext is the sentence naming the MasterMind, carried by both answers.
 func hookContext(r Record) string {
@@ -83,21 +88,28 @@ func Guide() string { return guide }
 
 // HookOutput is what `relevo mastermind init --hook claude` prints on success.
 func HookOutput(r Record) []byte {
-	return encodeHookContext(hookContext(r) + "\n\n" + Guide())
+	return encodeHookContext(HookEventSessionStart, ConsentText(ConsentYes, &r))
 }
 
 // HookOutputNoEnv is HookOutput plus the export-failure note.
 func HookOutputNoEnv(r Record) []byte {
-	return encodeHookContext(hookContext(r) + " " + noEnvNote + "\n\n" + Guide())
+	return encodeHookContext(HookEventSessionStart, NoEnvText(r))
+}
+
+// NoEnvText is HookOutputNoEnv's text without its envelope: the identity
+// sentence, the export-failure note, and the guide. A UserPromptSubmit hook
+// cannot rely on $CLAUDE_ENV_FILE, so its grant notice uses this wording.
+func NoEnvText(r Record) string {
+	return hookContext(r) + " " + noEnvNote + "\n\n" + Guide()
 }
 
 // HookNote is the same envelope carrying a failure note, so a failed init
 // never blocks the session.
-func HookNote(msg string) []byte { return encodeHookContext(msg) }
+func HookNote(msg string) []byte { return encodeHookContext(HookEventSessionStart, msg) }
 
-func encodeHookContext(context string) []byte {
+func encodeHookContext(event, context string) []byte {
 	raw, err := json.Marshal(hookEnvelope{HookSpecificOutput: hookSpecificOutput{
-		HookEventName:     hookEventName,
+		HookEventName:     event,
 		AdditionalContext: context,
 	}})
 	if err != nil {

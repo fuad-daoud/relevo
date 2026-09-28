@@ -11,30 +11,30 @@ import (
 
 // fakeVerbs is a Verbs whose three methods are swappable per test; a nil field returns (nil, nil).
 type fakeVerbs struct {
-	statusFn func(ctx context.Context, a StatusArgs) (any, error)
-	sendFn   func(ctx context.Context, a SendArgs) (any, error)
-	doneFn   func(ctx context.Context, a DoneArgs) (any, error)
+	statusFn func(ctx context.Context, session string, a StatusArgs) (any, error)
+	sendFn   func(ctx context.Context, session string, a SendArgs) (any, error)
+	doneFn   func(ctx context.Context, session string, a DoneArgs) (any, error)
 }
 
-func (f *fakeVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
+func (f *fakeVerbs) Status(ctx context.Context, session string, a StatusArgs) (any, error) {
 	if f.statusFn == nil {
 		return nil, nil
 	}
-	return f.statusFn(ctx, a)
+	return f.statusFn(ctx, session, a)
 }
 
-func (f *fakeVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
+func (f *fakeVerbs) Send(ctx context.Context, session string, a SendArgs) (any, error) {
 	if f.sendFn == nil {
 		return nil, nil
 	}
-	return f.sendFn(ctx, a)
+	return f.sendFn(ctx, session, a)
 }
 
-func (f *fakeVerbs) Done(ctx context.Context, a DoneArgs) (any, error) {
+func (f *fakeVerbs) Done(ctx context.Context, session string, a DoneArgs) (any, error) {
 	if f.doneFn == nil {
 		return nil, nil
 	}
-	return f.doneFn(ctx, a)
+	return f.doneFn(ctx, session, a)
 }
 
 // runServer drives Serve over an in-memory pipe, one line per request, and returns everything it wrote.
@@ -164,7 +164,7 @@ func TestServerToolsListHasThreeToolsInOrderNoAdditionalProperties(t *testing.T)
 
 func TestServerToolsCallDoneErrorBecomesIsError(t *testing.T) {
 	verbs := &fakeVerbs{
-		doneFn: func(ctx context.Context, a DoneArgs) (any, error) {
+		doneFn: func(ctx context.Context, _ string, a DoneArgs) (any, error) {
 			return nil, errors.New("boom")
 		},
 	}
@@ -194,7 +194,7 @@ func TestServerToolsCallDoneErrorBecomesIsError(t *testing.T) {
 
 func TestServerToolsCallDoneSuccess(t *testing.T) {
 	verbs := &fakeVerbs{
-		doneFn: func(ctx context.Context, a DoneArgs) (any, error) {
+		doneFn: func(ctx context.Context, _ string, a DoneArgs) (any, error) {
 			return map[string]any{"ok": true, "name": a.Name}, nil
 		},
 	}
@@ -326,10 +326,10 @@ func TestServerAppendsNoticeToToolResults(t *testing.T) {
 
 	srv := &Server{
 		Verbs: &fakeVerbs{
-			statusFn: func(context.Context, StatusArgs) (any, error) {
+			statusFn: func(context.Context, string, StatusArgs) (any, error) {
 				return map[string]string{"state": "running"}, nil
 			},
-			doneFn: func(context.Context, DoneArgs) (any, error) {
+			doneFn: func(context.Context, string, DoneArgs) (any, error) {
 				return nil, errors.New("no binding")
 			},
 		},
@@ -377,7 +377,7 @@ func TestServerAppendsNoticeToToolResults(t *testing.T) {
 
 func TestServerNoticeNilOrEmptyIsUnchanged(t *testing.T) {
 	verbs := func() Verbs {
-		return &fakeVerbs{statusFn: func(context.Context, StatusArgs) (any, error) {
+		return &fakeVerbs{statusFn: func(context.Context, string, StatusArgs) (any, error) {
 			return map[string]string{"state": "running"}, nil
 		}}
 	}
@@ -402,5 +402,31 @@ func TestServerNoticeNilOrEmptyIsUnchanged(t *testing.T) {
 	content, _ := result["content"].([]any)
 	if len(content) != 1 {
 		t.Errorf("content blocks = %d, want 1: %#v", len(content), content)
+	}
+}
+
+// TestServerPassesCallSessionFromMeta pins the opencode contract: the harness
+// session in a tools/call's _meta.sessionID reaches the verbs, and a call
+// without it passes "".
+func TestServerPassesCallSessionFromMeta(t *testing.T) {
+	var got string
+	verbs := &fakeVerbs{statusFn: func(_ context.Context, session string, _ StatusArgs) (any, error) {
+		got = session
+		return map[string]string{"state": "running"}, nil
+	}}
+
+	runServer(t, verbs, []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":{"sessionID":"ses_abc123"}}}`,
+	})
+	if got != "ses_abc123" {
+		t.Errorf("verb session = %q, want ses_abc123 from _meta", got)
+	}
+
+	got = "unset"
+	runServer(t, verbs, []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}`,
+	})
+	if got != "" {
+		t.Errorf("verb session = %q, want empty without _meta", got)
 	}
 }
