@@ -321,20 +321,28 @@ func cmdMasterMindGuide(args []string) error {
 		}
 	}
 
-	// An enabled opencode session gets its record here, so the identity
-	// sentence names the MasterMind the TUI shows. A registration failure
-	// leaves the text without the sentence rather than failing the session.
+	// The session's own record, when it has one, is reported for every state: a
+	// session that answered for itself (`relevo mastermind enable`) is briefed
+	// whatever the repository says. An enabled repository creates the record
+	// here, so the identity sentence names the MasterMind the TUI shows; a
+	// registration failure leaves the text without the sentence rather than
+	// failing the session.
 	var rec *mastermind.Record
-	if state == db.ConsentYes && *kind == "opencode" && *session != "" {
-		in := mastermind.InitInput{Kind: *kind, SessionID: *session, CWD: cwd, Now: rt.Now()}
-		if d, err := rt.Store.DB(); err == nil {
-			in.PriorID = mastermindPriorIDFunc(d)
-		}
+	if *kind != "" && *session != "" {
 		if reg, err := mastermindRegistry(rt); err == nil {
-			if r, _, err := mastermind.Init(reg, in); err == nil {
+			if r, err := reg.BySession(*kind, *session); err == nil {
 				rec = &r
-			} else {
-				fmt.Fprintf(os.Stderr, "relevo mastermind guide: register %s: %v\n", *session, err)
+			}
+			if state == db.ConsentYes && rec == nil {
+				in := mastermind.InitInput{Kind: *kind, SessionID: *session, CWD: cwd, Now: rt.Now()}
+				if d, err := rt.Store.DB(); err == nil {
+					in.PriorID = mastermindPriorIDFunc(d)
+				}
+				if r, _, err := mastermind.Init(reg, in); err == nil {
+					rec = &r
+				} else {
+					fmt.Fprintf(os.Stderr, "relevo mastermind guide: register %s: %v\n", *session, err)
+				}
 			}
 		}
 	}

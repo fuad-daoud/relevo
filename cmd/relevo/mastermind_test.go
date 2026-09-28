@@ -797,3 +797,42 @@ func TestMasterMindResetClearsConsent(t *testing.T) {
 		t.Errorf("repo consent after reset = %q, want unset", c)
 	}
 }
+
+// TestMasterMindGuideSeesThisSessionsRecord pins the session-only answer: with
+// a record but no repository answer, guide reports ask plus the record, and
+// the text briefs the session instead of asking again.
+func TestMasterMindGuideSeesThisSessionsRecord(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	repo := mastermindConsentRepo(t, state, db.ConsentUnset)
+
+	rec, err := mastermindRegistryAt(t, state).Create(mastermind.Record{
+		ID: "mm_bbbbbbbbbbbb", Name: "opencode-9", HarnessKind: "opencode",
+		SessionID: "ses_g1", CWD: repo,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"mastermind", "guide", "--json", "--cwd", repo, "--kind", "opencode", "--session", "ses_g1"})
+	})
+	if err != nil {
+		t.Fatalf("guide: %v", err)
+	}
+	var out struct {
+		State string `json:"state"`
+		Text  string `json:"text"`
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+	}
+	if err := json.Unmarshal(stdout, &out); err != nil {
+		t.Fatalf("guide --json output %q: %v", stdout, err)
+	}
+	if out.State != "ask" || out.ID != rec.ID || out.Name != rec.Name {
+		t.Errorf("guide = %+v, want ask with the session record", out)
+	}
+	if !strings.HasPrefix(out.Text, "You are relevo MasterMind opencode-9") {
+		t.Errorf("text = %q, want the identity sentence", out.Text)
+	}
+}

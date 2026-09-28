@@ -27,7 +27,16 @@ func TestConsentTextStates(t *testing.T) {
 		t.Errorf("unset text = %q, want the ask-note", got)
 	}
 
-	if got := ConsentText(ConsentNo, &rec); got != "" {
+	// A session with its own record is briefed even when the repo has not
+	// answered: the session answered for itself.
+	if got := ConsentText(ConsentUnset, &rec); !strings.HasPrefix(got, hookContext(rec)) {
+		t.Errorf("unset text with a session record = %q, want the identity sentence", got)
+	}
+	if got := ConsentText(ConsentNo, &rec); !strings.HasPrefix(got, hookContext(rec)) {
+		t.Errorf("no text with a session record = %q, want the identity sentence", got)
+	}
+
+	if got := ConsentText(ConsentNo, nil); got != "" {
 		t.Errorf("no text = %q, want empty", got)
 	}
 }

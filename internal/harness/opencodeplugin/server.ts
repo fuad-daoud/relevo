@@ -8,16 +8,21 @@ import { execFile } from "node:child_process";
 // message when it skips a system part.
 type Guide = { state: string; text: string };
 const guideBySession = new Map<string, Guide | null | "pending">();
+const guideFetchedAt = new Map<string, number>();
+// guideRecheckMS: an unanswered or refused session re-reads its answer this
+// often, so enabling mid-session takes effect without a restart; an enabled
+// session is cached for its life.
+const guideRecheckMS = 5000;
 
 // spawnRelevo runs one relevo verb, 10s timeout, the same shape the TUI plugin
 // uses. It never throws: a failure is a result.
-function spawnRelevo(argv: string[]): Promise<{ ok: boolean; code: number; stdout: string; stderr: string; enoent?: boolean }> {
+function spawnRelevo(argv: string[], cwd?: string): Promise<{ ok: boolean; code: number; stdout: string; stderr: string; enoent?: boolean }> {
   const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 
   if (typeof Bun !== "undefined") {
     return (async () => {
       try {
-        const proc = (Bun as any).spawn(["relevo", ...argv], { env, stdout: "pipe", stderr: "pipe" });
+        const proc = (Bun as any).spawn(["relevo", ...argv], { env, cwd, stdout: "pipe", stderr: "pipe" });
         const timer = setTimeout(() => {
           try {
             proc.kill();
@@ -36,7 +41,7 @@ function spawnRelevo(argv: string[]): Promise<{ ok: boolean; code: number; stdou
   }
 
   return new Promise((resolve) => {
-    execFile("relevo", argv, { env, timeout: 10000 }, (err: any, stdout: any, stderr: any) => {
+    execFile("relevo", argv, { env, timeout: 10000, cwd }, (err: any, stdout: any, stderr: any) => {
       const isEnoent = err?.code === "ENOENT";
       resolve({
         ok: !err,
@@ -68,10 +73,15 @@ async function fetchGuide(sessionID: string): Promise<Guide | null> {
 
 async function guideFor(sessionID: string): Promise<Guide | null> {
   const cached = guideBySession.get(sessionID);
-  if (cached !== undefined && cached !== "pending") return cached;
+  if (cached && typeof cached === "object" && cached.state === "enabled") return cached;
   if (cached === "pending") return null;
+  if (cached !== undefined && Date.now() - (guideFetchedAt.get(sessionID) ?? 0) < guideRecheckMS) {
+    return cached;
+  }
 
-  guideBySession.set(sessionID, "pending");
+  // Set pending only for the very first fetch: a re-check keeps its last
+  // answer, so the sidebar and the injected text never blank while it runs.
+  if (cached === undefined) guideBySession.set(sessionID, "pending");
   let guide: Guide | null = null;
   try {
     guide = await fetchGuide(sessionID);
@@ -79,7 +89,57 @@ async function guideFor(sessionID: string): Promise<Guide | null> {
     console.error("relevo: mastermind guide threw:", err);
   }
   guideBySession.set(sessionID, guide);
+  guideFetchedAt.set(sessionID, Date.now());
   return guide;
+}
+
+// runEnableCommand runs one of the commands below with the location's cwd and
+// clears the guide cache, so the next request re-reads the new answer.
+async function runEnableCommand(dir: string | undefined, argv: string[]): Promise<void> {
+  const res = await spawnRelevo(argv, dir);
+  if (!res.ok) {
+    console.error("relevo: " + argv.join(" ") + " failed:", res.stderr.trim() || String(res.code));
+    return;
+  }
+  guideBySession.clear();
+  guideFetchedAt.clear();
+}
+
+// registerEnableCommands adds /relevo-enable, /relevo-enable-repo and
+// /relevo-disable-repo to the command palette, so a human can answer the
+// consent question without a shell.
+async function registerEnableCommands(api: any): Promise<void> {
+  if (!api?.command || typeof api.command.transform !== "function") return;
+  const dir = api.location?.directory;
+  if (!dir) return;
+
+  try {
+    await api.command.transform((editor: any) => {
+      editor.add({
+        name: "relevo-enable",
+        description: "Enable relevo as this session's MasterMind",
+        execute: async ({ sessionID }: any) => {
+          await runEnableCommand(dir, ["mastermind", "enable", "--kind", "opencode", "--session", String(sessionID)]);
+        },
+      });
+      editor.add({
+        name: "relevo-enable-repo",
+        description: "Enable relevo in this repository from now on",
+        execute: async () => {
+          await runEnableCommand(dir, ["mastermind", "enable", "--repo"]);
+        },
+      });
+      editor.add({
+        name: "relevo-disable-repo",
+        description: "Never let relevo register this repository's sessions",
+        execute: async () => {
+          await runEnableCommand(dir, ["mastermind", "disable", "--repo"]);
+        },
+      });
+    });
+  } catch (err) {
+    console.error("relevo: command transform failed:", err);
+  }
 }
 
 // registerTools gives an enabled location relevo's MCP tools. The guide
@@ -145,6 +205,7 @@ const setup = async (api: any) => {
     });
   }
 
+  await registerEnableCommands(api);
   await registerTools(api);
 };
 

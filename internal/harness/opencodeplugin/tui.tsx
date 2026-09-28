@@ -90,6 +90,7 @@ function updateStore(channel?: string, sig?: string) {
 async function spawnRelevo(
   argv: string[],
   envMasterMindID?: string,
+  cwd?: string,
 ): Promise<{ ok: boolean; code: number; stdout: string; stderr: string; enoent?: boolean }> {
   const env: Record<string, string> = { ...(process.env as Record<string, string>) };
   if (envMasterMindID) {
@@ -99,6 +100,7 @@ async function spawnRelevo(
     try {
       const proc = (Bun as any).spawn(["relevo", ...argv], {
         env,
+        cwd,
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -118,7 +120,7 @@ async function spawnRelevo(
     }
   } else {
     return new Promise((resolve) => {
-      execFile("relevo", argv, { env, timeout: 10000 }, (err: any, stdout: any, stderr: any) => {
+      execFile("relevo", argv, { env, timeout: 10000, cwd }, (err: any, stdout: any, stderr: any) => {
         const isEnoent = err?.code === "ENOENT";
         resolve({
           ok: !err,
@@ -132,15 +134,27 @@ async function spawnRelevo(
   }
 }
 
+// lastGuideCheck throttles the re-check for a session that has no MasterMind
+// yet, so enabling from a command or the model shows up without a restart.
+const lastGuideCheck = new Map<string, number>();
+const guideRecheckMS = 5000;
+
 function ensureMasterMind(api: any, sessionID: string) {
   if (!sessionID) return;
   const info = api.data?.session?.get?.(sessionID);
   if (info?.parentId || info?.parentID || info?.parent_id) return;
-  if (mastermindBySession.has(sessionID)) return;
 
-  mastermindBySession.set(sessionID, "pending");
-  // guide both renders the consent text and, when the repo answered yes,
-  // registers this session, so it replaces the old unconditional init: an
+  const entry = mastermindBySession.get(sessionID);
+  if (entry && typeof entry === "object") return;
+  if (entry === "pending") return;
+  if (entry !== undefined && Date.now() - (lastGuideCheck.get(sessionID) ?? 0) < guideRecheckMS) return;
+  lastGuideCheck.set(sessionID, Date.now());
+  // Only the first check shows "registering…"; a re-check keeps its last
+  // answer until the fresh one arrives.
+  if (entry === undefined) mastermindBySession.set(sessionID, "pending");
+
+  // guide both renders the consent text and, when the repo answered yes or the
+  // session has its own record, registers/reports the MasterMind: an
   // unanswered or refused repository registers nothing.
   spawnRelevo(["mastermind", "guide", "--json", "--kind", "opencode", "--session", sessionID])
     .then((res) => {
@@ -155,7 +169,7 @@ function ensureMasterMind(api: any, sessionID: string) {
       try {
         guide = JSON.parse(res.stdout);
       } catch {}
-      if (guide?.state === "enabled" && guide.id) {
+      if (guide?.id) {
         mastermindBySession.set(sessionID, { id: guide.id, name: guide.name || guide.id });
       } else if (guide?.state === "ask") {
         mastermindBySession.set(sessionID, "ask");
@@ -662,6 +676,7 @@ export default {
 
         const mastermindEntry = mastermindBySession.get(currentSessionID);
         let mastermindHeader = "";
+        let mastermindHint = "";
         let isError = false;
 
         if (notFound) {
@@ -674,13 +689,19 @@ export default {
 
         if (mastermindEntry === "pending") {
           mastermindHeader = "relevo · registering…";
-        } else if (mastermindEntry === "error" || (currentDoc && currentDoc.mastermind === null)) {
-          mastermindHeader = "relevo: not a MasterMind (see relevo doctor)";
-          isError = true;
         } else if (mastermindEntry && typeof mastermindEntry === "object") {
           mastermindHeader = `relevo · ${mastermindEntry.name}`;
         } else if (currentDoc?.mastermind?.name) {
           mastermindHeader = `relevo · ${currentDoc.mastermind.name}`;
+        } else if (
+          mastermindEntry === "ask" ||
+          mastermindEntry === "disabled" ||
+          mastermindEntry === "error" ||
+          (currentDoc && currentDoc.mastermind === null)
+        ) {
+          mastermindHeader = "relevo: not enabled";
+          mastermindHint = "/relevo-enable · /relevo-enable-repo";
+          isError = true;
         } else {
           mastermindHeader = "relevo · registering…";
         }
@@ -692,7 +713,10 @@ export default {
         return (
           <box flexDirection="column">
             {isError ? (
-              <text fg={mutedColor}>{ellipsize(mastermindHeader, 37)}</text>
+              <box flexDirection="column">
+                <text fg={mutedColor}>{ellipsize(mastermindHeader, 37)}</text>
+                {mastermindHint ? <text fg={mutedColor}>{ellipsize(mastermindHint, 37)}</text> : null}
+              </box>
             ) : (
               <box flexDirection="row">
                 <text>

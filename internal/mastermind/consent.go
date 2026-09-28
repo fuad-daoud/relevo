@@ -22,16 +22,17 @@ const AskNote = `Before anything else, ask the human whether relevo should be th
   relevo mastermind disable --repo  -- never in this repository
 Wait for their answer, then run the command they choose. Do not work on anything else first.`
 
-// ConsentText is what a session is told for its repo's answer. rec is nil when
-// the repo answered yes but the session has no record yet: the guide goes
-// alone, and the harness registers before it hands anything off.
+// ConsentText is what a session is told for its repo's answer and record. A
+// session with a record is always briefed, whatever the repo says: an explicit
+// `enable` answered for that session. Without a record, unset asks, yes briefs
+// the guide alone, and no stays silent.
 func ConsentText(state Consent, rec *Record) string {
+	if rec != nil {
+		return hookContext(*rec) + "\n\n" + Guide()
+	}
 	switch state {
 	case ConsentYes:
-		if rec == nil {
-			return Guide()
-		}
-		return hookContext(*rec) + "\n\n" + Guide()
+		return Guide()
 	case ConsentUnset:
 		return AskNote
 	default:

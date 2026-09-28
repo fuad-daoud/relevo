@@ -106,10 +106,11 @@ One function decides what a session is told:
 ConsentText(state Consent, rec *Record) string
 ```
 
-- `yes` + record -> identity sentence + `Guide()` (today's HookOutput body).
-- `yes` + no record -> `Guide()` alone; the harness registers on its own
+- a record -> identity sentence + `Guide()`, whatever the repository's answer:
+  the session answered for itself (`relevo mastermind enable`) or the repo did.
+- `yes` with no record -> `Guide()` alone; the harness registers on its own
   (opencode) or the caller registers first (Claude).
-- `unset` -> the ask-note:
+- `unset` with no record -> the ask-note:
 
   ```
   Before anything else, ask the human whether relevo should be this repository's MasterMind. If you have an interactive question or choice tool, use it; otherwise ask in text. Offer exactly these three options:
@@ -119,10 +120,11 @@ ConsentText(state Consent, rec *Record) string
   Wait for their answer, then run the command they choose. Do not work on anything else first.
   ```
 
-- `no` -> the empty string.
+- `no` with no record -> the empty string.
 
 The Claude hook wraps this in the `additionalContext` envelope when it is
-non-empty. opencode pushes it into the system instructions (§6.2).
+non-empty. opencode pushes it into the system instructions, and while the
+answer is unset onto the user's own turn (§6.2).
 
 ## 6. Harness wiring
 
@@ -156,10 +158,12 @@ relevo mastermind guide [--cwd DIR] [--kind K --session S] [--json]
 
 - Plain output: the consent text (empty for `no`).
 - `--json`: `{"state":"enabled|ask|disabled","text":"...","repo":"...","id":"...","name":"..."}`.
-- On `enabled` with `--kind opencode --session <id>`, it ensures the session's
-  record exists (idempotent `Init`, HostPID 0, as the TUI plugin did before) and
-  reports its id and name, so the identity sentence names the right MasterMind
-  and the TUI needs no separate registration call. Other kinds change nothing.
+- With `--kind opencode --session <id>` it reports the session's own record
+  when one exists, whatever the repository's answer: `relevo mastermind
+  enable` (session-only) answers for that session. When the repo is `enabled`
+  and no record exists yet it creates one (idempotent `Init`, HostPID 0), so
+  the identity sentence names the right MasterMind and the TUI needs no
+  separate registration call. Other kinds change nothing.
 - An internal failure is an error exit; the plugin treats any non-zero as "no
   text" and logs once. The verb never touches the network or a harness.
 
@@ -194,6 +198,14 @@ The shipped plugin gains two changes:
   sends with every call; the Claude path keeps its startup resolution. The
   opencode prelude says reports arrive as new turns, so no background wait is
   started and a `send` result carries none.
+- **Mid-session answers take effect without a restart.** While a session is not
+  enabled the plugin re-reads its answer every 5 s (an enabled session's text
+  is cached for its life), and the TUI re-checks on the same cadence, so the
+  sidebar moves from "not enabled" to the MasterMind name after an answer.
+  `ctx.command.transform` registers `/relevo-enable`, `/relevo-enable-repo` and
+  `/relevo-disable-repo`, which run the CLI with the location's cwd — a human
+  can answer from the command palette without a shell. The sidebar names those
+  two enable commands while a session has no MasterMind.
 
 ### 6.3 agy and other harnesses
 
