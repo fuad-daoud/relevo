@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 
 // Guide text by session: "pending" while the one fetch runs, null after a
-// failed or empty one. The text is pushed into every model request's system
-// instructions, the model-facing channel opencode 2.0.18 delivers (the prompt
-// hook's own text mutation is not delivered; verified by probe).
+// failed or empty one. The text goes into every model request's system
+// instructions, and while consent is unset it is also carried on the user's
+// own turn: opencode 2.0.18 does not deliver a prompt hook's mutation, but it
+// does deliver an edited message content, and a weak model reads its own
+// message when it skips a system part.
 type Guide = { state: string; text: string };
 const guideBySession = new Map<string, Guide | null | "pending">();
 
@@ -127,8 +129,18 @@ const setup = async (api: any) => {
     await api.session.hook("context", async (event: any) => {
       if (!event?.sessionID || !Array.isArray(event.system)) return;
       const guide = await guideFor(event.sessionID);
-      if (guide?.text) {
-        event.system.push({ type: "text", text: guide.text });
+      if (!guide?.text) return;
+      event.system.push({ type: "text", text: guide.text });
+      // While consent is unset, carry the question on the user's own turn too:
+      // a weak model can skip a system part, but it reads its own message.
+      if (guide.state === "ask" && Array.isArray(event.messages)) {
+        for (let i = event.messages.length - 1; i >= 0; i--) {
+          const m = event.messages[i];
+          if (m?.role === "user" && Array.isArray(m.content)) {
+            m.content.unshift({ type: "text", text: guide.text });
+            break;
+          }
+        }
       }
     });
   }

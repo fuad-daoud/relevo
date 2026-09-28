@@ -52,8 +52,8 @@ shipped opencode plugin pushes it into the session's system instructions
      `relevo mastermind guide --json --kind opencode --session <id>`
      (spawn like `tui.tsx`'s `spawnRelevo`, 10 s timeout), cache
      state and text; a failure caches the empty text and logs once to stderr;
-   - on a non-empty cached text, push `{ type: "text", text }` onto
-     `event.system`;
+   - push `{ type: "text", text }` onto `event.system`; while the state is
+     `ask`, also unshift it onto the last user message's `content`;
    - never throw, never await on the model path after the first fetch.
 3. **`tui.tsx`**: replace the unconditional `mastermind init` with
    `relevo mastermind guide --json --kind opencode --session <id>`; on

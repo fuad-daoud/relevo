@@ -166,11 +166,13 @@ relevo mastermind guide [--cwd DIR] [--kind K --session S] [--json]
 The shipped plugin gains two changes:
 
 - **`server.ts`** registers `ctx.session.hook("context", ...)`, the
-  model-facing channel that delivers in opencode 2.0.18 (the `prompt` hook
-  accepts a text mutation but never delivers it; verified by probe). The hook
+  model-facing channel that delivers in opencode 2.0.18 (a `prompt` hook's
+  text mutation is accepted but never delivered; probe-verified). The hook
   runs for the agent loop only — compaction, title and generate have their own
   hooks, and the context event carries no `kind` — and pushes the cached text
-  into `event.system` on every request. The text is fetched once per
+  into `event.system` on every request. While the answer is unset it also
+  prepends the text to the last user message's content: a weak model can skip
+  a system part, but it reads its own message. The text is fetched once per
   `sessionID` (the plugin calls `relevo mastermind guide --json --kind opencode
   --session <id>`; the verb resolves the session's directory from opencode's
   own database, so the plugin passes no cwd) and cached in module state. A
