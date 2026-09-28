@@ -130,6 +130,13 @@ async function registerEnableCommands(api: any): Promise<void> {
         },
       });
       editor.add({
+        name: "relevo-disable",
+        description: "Forget relevo for this session",
+        execute: async ({ sessionID }: any) => {
+          await runEnableCommand(dir, ["mastermind", "disable", "--kind", "opencode", "--session", String(sessionID)]);
+        },
+      });
+      editor.add({
         name: "relevo-disable-repo",
         description: "Never let relevo register this repository's sessions",
         execute: async () => {

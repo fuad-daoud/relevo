@@ -188,6 +188,8 @@ func cmdMasterMindEnable(args []string) error {
 func cmdMasterMindDisable(args []string) error {
 	fs := flag.NewFlagSet("disable", flag.ContinueOnError)
 	repo := fs.Bool("repo", false, "remember no for this repository; without it, forget this session's record")
+	kind := fs.String("kind", "", "harness kind for an explicit session (with --session)")
+	session := fs.String("session", "", "harness session id for an explicit session (with --kind)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -209,9 +211,28 @@ func cmdMasterMindDisable(args []string) error {
 		return nil
 	}
 
-	rec, ok := mastermindFilter(rt)
-	if !ok {
-		return fmt.Errorf("not in a detectable mastermind session: pass --repo to answer for the repository, or run relevo mastermind forget <id|name>")
+	// An explicit (kind, session) names the record a harness cannot detect
+	// itself; a plugin passes it, and the rest falls back to detection.
+	var rec mastermind.Record
+	if *kind != "" || *session != "" {
+		if *kind == "" || *session == "" {
+			return fmt.Errorf("relevo mastermind disable: needs both --kind and --session, or neither")
+		}
+		reg, err := mastermindRegistry(rt)
+		if err != nil {
+			return err
+		}
+		r, err := reg.BySession(*kind, *session)
+		if err != nil {
+			return fmt.Errorf("no relevo MasterMind for %s session %s", *kind, *session)
+		}
+		rec = r
+	} else {
+		var ok bool
+		rec, ok = mastermindFilter(rt)
+		if !ok {
+			return fmt.Errorf("not in a detectable mastermind session: pass --repo to answer for the repository, --kind/--session to name one, or run relevo mastermind forget <id|name>")
+		}
 	}
 	reg, err := mastermindRegistry(rt)
 	if err != nil {

@@ -33,7 +33,7 @@ const mastermindPriorIDTimeout = 2 * time.Second
 func cmdMasterMind(args []string) error {
 	const usage = `usage: relevo mastermind init [--name N] [--kind K --session S] [--hook claude]
        relevo mastermind enable [--repo] [--kind K --session S]
-       relevo mastermind disable [--repo]
+       relevo mastermind disable [--repo] [--kind K --session S]
        relevo mastermind reset
        relevo mastermind guide [--cwd DIR] [--kind K --session S] [--json]
        relevo mastermind list [--json]

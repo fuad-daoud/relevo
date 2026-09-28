@@ -187,6 +187,33 @@ function ensureMasterMind(api: any, sessionID: string) {
     });
 }
 
+// runConsentCommand answers the consent question from the palette: it runs the
+// CLI with the session's own directory, then re-checks the answer so the
+// sidebar moves without a restart.
+function runConsentCommand(api: any, argv: string[]) {
+  const info = currentSessionID ? api.data?.session?.get?.(currentSessionID) : null;
+  const dir = info?.directory || undefined;
+  void spawnRelevo(argv, undefined, dir)
+    .then((res) => {
+      if (!res.ok) {
+        api.ui.toast.show({
+          variant: "warning",
+          title: "relevo",
+          message: (res.stderr || `exit ${res.code}`).trim().slice(0, 200),
+          duration: 6000,
+        });
+        return;
+      }
+      if (currentSessionID) {
+        mastermindBySession.delete(currentSessionID);
+        lastGuideCheck.delete(currentSessionID);
+        ensureMasterMind(api, currentSessionID);
+      }
+      updateStore();
+    })
+    .catch(() => {});
+}
+
 async function pollStatus(api: any) {
   if (inFlight) return;
   // A poll that no longer bumps the store (the data did not change) does not
@@ -858,6 +885,40 @@ export default {
                 run: () => {
                   pollStatus(api);
                 },
+              },
+              {
+                id: "relevo.enable",
+                title: "Enable relevo for this session",
+                group: "relevo",
+                palette: true,
+                run: () => {
+                  if (!currentSessionID) return;
+                  runConsentCommand(api, ["mastermind", "enable", "--kind", "opencode", "--session", currentSessionID]);
+                },
+              },
+              {
+                id: "relevo.enable-repo",
+                title: "Enable relevo in this repository",
+                group: "relevo",
+                palette: true,
+                run: () => runConsentCommand(api, ["mastermind", "enable", "--repo"]),
+              },
+              {
+                id: "relevo.disable",
+                title: "Disable relevo for this session",
+                group: "relevo",
+                palette: true,
+                run: () => {
+                  if (!currentSessionID) return;
+                  runConsentCommand(api, ["mastermind", "disable", "--kind", "opencode", "--session", currentSessionID]);
+                },
+              },
+              {
+                id: "relevo.disable-repo",
+                title: "Disable relevo in this repository",
+                group: "relevo",
+                palette: true,
+                run: () => runConsentCommand(api, ["mastermind", "disable", "--repo"]),
               },
               {
                 id: "relevo.back",

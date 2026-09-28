@@ -45,9 +45,10 @@ relevo mastermind reset               # clear the answer; the next session asks
 ```
 
 `disable` without `--repo` forgets the current session's record, the same as
-`forget <id|name>`; it writes no repo answer. `reset` takes no flag: the only
-answer it touches is the repository's. Precedent: the answer is stored in the
-database, so it survives restarts and syncs nowhere today.
+`forget <id|name>`; it writes no repo answer. `disable --kind K --session S`
+names one session explicitly, for a plugin that knows its id. `reset` takes no
+flag: the only answer it touches is the repository's. Precedent: the answer is
+stored in the database, so it survives restarts and syncs nowhere today.
 
 ## 3. Decisions
 
@@ -202,10 +203,12 @@ The shipped plugin gains two changes:
   enabled the plugin re-reads its answer every 5 s (an enabled session's text
   is cached for its life), and the TUI re-checks on the same cadence, so the
   sidebar moves from "not enabled" to the MasterMind name after an answer.
-  `ctx.command.transform` registers `/relevo-enable`, `/relevo-enable-repo` and
-  `/relevo-disable-repo`, which run the CLI with the location's cwd — a human
-  can answer from the command palette without a shell. The sidebar names those
-  two enable commands while a session has no MasterMind.
+  `ctx.command.transform` registers `/relevo-enable`, `/relevo-enable-repo`,
+  `/relevo-disable` and `/relevo-disable-repo`, which run the CLI with the
+  location's cwd — a human can answer from the command palette without a shell.
+  The TUI registers the same four in opencode's `Ctrl+P` palette (its own
+  surface), and the sidebar names the two enable commands while a session has
+  no MasterMind.
 
 ### 6.3 agy and other harnesses
 
@@ -215,8 +218,8 @@ participate in consent until a hook exists.
 
 ## 7. Surfaces
 
-- `relevo mastermind enable [--repo]`, `disable [--repo]`, `reset`,
-  `guide [--json]`.
+- `relevo mastermind enable [--repo] [--kind K --session S]`,
+  `disable [--repo] [--kind K --session S]`, `reset`, `guide [--json]`.
 - `relevo mastermind list` gains nothing; the answer is per repo.
 - `relevo doctor` adds one row in the MasterMind group: the current repo's
   answer and the command that changes it

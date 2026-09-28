@@ -836,3 +836,38 @@ func TestMasterMindGuideSeesThisSessionsRecord(t *testing.T) {
 		t.Errorf("text = %q, want the identity sentence", out.Text)
 	}
 }
+
+// TestMasterMindDisableBySession pins the explicit pair a plugin passes:
+// (kind, session) names the record to forget without harness detection.
+func TestMasterMindDisableBySession(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	reg := mastermindRegistryAt(t, state)
+	rec, err := reg.Create(mastermind.Record{
+		ID: "mm_cccccccccccc", Name: "opencode-3", HarnessKind: "opencode",
+		SessionID: "ses_d1", CWD: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"mastermind", "disable", "--kind", "opencode", "--session", "ses_d1"})
+	})
+	if err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if !strings.Contains(string(stdout), "forgot") {
+		t.Errorf("disable printed %q, want a confirmation line", stdout)
+	}
+	if _, err := reg.Get(rec.ID); !errors.Is(err, mastermind.ErrNotFound) {
+		t.Errorf("record still there after disable: %v", err)
+	}
+
+	// A pair naming no record is an error, not a silent no-op.
+	if _, _, err := captureOutput(t, func() error {
+		return run([]string{"mastermind", "disable", "--kind", "opencode", "--session", "ses_missing"})
+	}); err == nil {
+		t.Error("disable with an unknown session must error")
+	}
+}
