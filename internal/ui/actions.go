@@ -420,10 +420,15 @@ func lastPlannedRound(rt relevo.Runtime, name string) int {
 	return best
 }
 
-// plannedRound parses a round file's basename, e.g. "004-plan.md".
+// plannedRound parses a round file's basename, e.g. "004-prompt.md"; the
+// legacy "004-plan.md" spelling still answers.
 func plannedRound(base string) (int, bool) {
-	n, err := strconv.Atoi(strings.TrimSuffix(base, "-plan.md"))
-	if err != nil || !strings.HasSuffix(base, "-plan.md") || n < 1 {
+	stem := strings.TrimSuffix(base, "-prompt.md")
+	if stem == base {
+		stem = strings.TrimSuffix(base, "-plan.md")
+	}
+	n, err := strconv.Atoi(stem)
+	if err != nil || stem == base || n < 1 {
 		return 0, false
 	}
 	return n, true
