@@ -288,10 +288,10 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
   larger one is refused unless `--force`.
   A headless binding whose previous round's process is still running refuses
-  the send; wait for its report or `relevo done` it.
+  the send; wait for the round to close or `relevo done` it.
   `--dry-run` checks every precondition a send would and prints what it would
-  do, writing nothing: no plan staged, no log entry, no prompt, no process
-  started. A precondition that fails is the same error `relevo send` gives, exit
+  do, writing nothing: no prompt staged, no log entry, no process started.
+  A precondition that fails is the same error `relevo send` gives, exit
   1, with nothing written. A local binding names the exact command line it
   would run, and a remote one the server and branch without contacting it:
   ```
@@ -342,7 +342,7 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   path or `-`. 3: needs you, stdout is one line saying what it is waiting on. 4:
   the binding is DONE or was unbound. 5: closed, but the builder's report says
   halted or blocked -- read it before sending again; stdout is the report path.
-  6: the round has no plan entry -- it was never sent, so nothing is in flight;
+  6: the round has no prompt entry -- it was never sent, so nothing is in flight;
   stdout says so. 124: `--timeout` (default 10m) elapsed. On every exit but 4 and
   124 the wait then prints a blank line and the oldest pending report's text
   (the report's pointer line, a blank line, then the report itself, capped at
@@ -601,7 +601,7 @@ A builder is a process relevo runs, one fresh process per round; each
 `relevo send` starts the harness's non-interactive form -- `agy -p …`,
 `claude -p …`, `opencode run …` -- in the binding's tree with the round's
 prompt, writes the harness's output -- stdout and stderr both -- to
-`~/.local/state/relevo/<name>/NNN-runner.jsonl` beside the round's plan and
+`~/.local/state/relevo/<name>/NNN-runner.jsonl` beside the round's prompt and
 report, and returns.
 Those are the round's **open-round files**, in the binding's directory under
 the state root. When the round closes, relevo seals them into the database in
@@ -759,7 +759,7 @@ On a fresh server host, the first run looks like:
 On the server machine, the admin runs these on the server host. No `--state` is needed: an admin verb reads the running daemon's root from the database's `serve.daemon` record (an explicit `--state` still wins, and a stale record falls back to the default root with a note):
 
 - `relevo serve status [--json]` prints active bindings across all owners as JSON (top-level keys `builders`, `last_contact` and `owners`), sorted by owner label.
-- `relevo show <name> --owner <label|id>` prints one round's plan, report, diff, drift, log or transcript, with `relevo show`'s flags. Read-only, and it reads live bindings only: a non-live binding reads as "binding not found".
+- `relevo show <name> --owner <label|id>` prints one round's prompt, report, diff, drift, log or transcript, with `relevo show`'s flags. Read-only, and it reads live bindings only: a non-live binding reads as "binding not found".
 - `relevo show <name> --owner <label|id> --log` prints that owner's binding log, with `relevo show --log`'s `--round`, `--after`, `--json` and `--follow`. Read-only: `--owner` is an exact label or an exact client id, and nothing is stamped or created.
 - `relevo serve clients` lists enrolled clients and their revocation status.
 - `relevo serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
@@ -772,7 +772,7 @@ What `relevo serve` does not do: it runs no MasterMind and provides no administr
 A remote binding is an ordinary binding whose builder runs on someone else's
 machine, over a signed, pinned HTTPS connection instead of a local process.
 It has no worktree of its own: `relevo send` ships a bundle of your branch's
-history alongside the plan, and the daemon polls the server for the round's
+history alongside the prompt, and the daemon polls the server for the round's
 state the same way it polls a local builder.
 
 Set up once per machine:
@@ -1156,7 +1156,7 @@ count the cells before Claude Code's `…`:
 
 Each row is `○ name  rN · builder · what relevo is waiting on  …  age · STATE`,
 where `builder` is the harness segment of the candidate token, and `age` is
-time since the last plan, report or question crossed.
+time since the last prompt, report or question crossed.
 
 ## Candidates
 
@@ -1436,12 +1436,12 @@ shape is refused when the config loads.
 
 - A new **reader** actor runs as a binding's actor too: `relevo bind
   --worktree --no-feature --actor <name>` or `relevo bind --no-feature --actor <name>`, then `relevo
-  send` hands it a plan. Its round writes `NNN-<actor>/<label>.md` -- the
-  actor's resolved output label (`plan.md` for the architect, `findings.md`
-  for the reviewer, `notes.md` for the researcher) -- and any files it
-  produced, and the MasterMind reads it with `relevo show <name> --output`. A
-  new **writer** actor runs a round the same way. Every round of that binding
-  runs it.
+  send` hands it the round's prompt. Its round writes `NNN-<actor>/<label>.md`
+  -- the actor's resolved output label (`plan.md` for the architect,
+  `findings.md` for the reviewer, `notes.md` for the researcher) -- and any
+  files it produced, and the MasterMind reads it with
+  `relevo show <name> --output`. A new **writer** actor runs a round the same
+  way. Every round of that binding runs it.
 
 With `relevo bind --worktree --no-feature --server S --actor <r>`, the server resolves `<r>`
 against **its own** actors section, and your local sections do not travel. A
@@ -1460,7 +1460,7 @@ A missing custom definition gates its candidates for that actor only, and
 `relevo doctor` lists it.
 
 **Bring your own agent.** Everything relevo's round protocol needs travels in
-the prompt relevo sends: the working tree and its `git status` check, the plan
+the prompt relevo sends: the working tree and its `git status` check, the prompt
 path, the report path, the done marker and the closing `relevo` block. A custom
 definition only shapes behaviour; `requires` names the definitions your agent
 dispatches to (the shipped builder requires `researcher`).
@@ -1538,7 +1538,7 @@ open, in two cases:
 The daemon resolves `builder` again through the builder actor's candidate list
 and the ledger (an omitted token, so the actor's order applies even to a builder
 you named), starts the pick in the **same** tree, and hands it the **same**
-round's plan. The round number does not change; the round clock
+round's prompt. The round number does not change; the round clock
 restarts. The new builder inherits whatever the old one left in the
 tree. A `switch` entry in the log says what was tried and why:
 
@@ -1666,7 +1666,7 @@ on `bind` falls back to `gate.default`, `""` meaning no gate at all --
 bindings written before this feature have no gate and are unaffected.
 
 The gate's full output -- and the supervisor's exit trailer -- lives at
-`NNN-gate.log` next to the round's plan and report. Its result is one of
+`NNN-gate.log` next to the round's prompt and report. Its result is one of
 `pass`, `fail`, `timeout`, or `error` (the last for a gate that could not
 start, or whose exit code could not be read):
 
@@ -1715,7 +1715,7 @@ the policy section's `tier.reviewer` when set, else the candidate's, else **yolo
 for this consult only, in this tree only. The reviewer's agent definition still
 tells it not to edit; relevo cannot observe writes.
 
-The question names the round's plan, report, diff and gate log, and asks the
+The question names the round's prompt, report, diff and gate log, and asks the
 reviewer to end its findings with exactly this block:
 
 ```
@@ -1752,12 +1752,12 @@ how many repair rounds relevo may open after failing gates; `0` -- the default
 inert, since a binding with no gate never fails one.
 
 When a round closes with `gate=fail` and the budget is not yet spent, relevo
-stages round N+1 in the same tick, after the report has been queued. Its plan
-file is written for the builder rather than by the MasterMind: it names the failed
+stages round N+1 in the same tick, after the report has been queued. Its prompt
+is written for the builder rather than by the MasterMind: it names the failed
 round's acceptance check and the original plan, and carries the last 200
 non-empty lines of `NNN-gate.log`, instructing the builder to fix ONLY what the
 check reports and to halt and report if no code change can fix it. The hand-off
-is exactly a send's -- a fresh builder process -- and the new round's plan
+is exactly a send's -- a fresh builder process -- and the new round's prompt
 entry is logged with `repair k/M`.
 
 Two bounds end the loop with `NEEDS YOU` instead of another repair round:
@@ -1791,8 +1791,8 @@ relevo bind --no-feature --actor reviewer --name webshop
 relevo send --name webshop --file q.md
 ```
 
-relevo stages `q.md` as the round's plan and runs the reader headless; its
-**final message** becomes the round's report at `NNN-<actor>/<label>.md` and is
+relevo stages `q.md` as the round's prompt and runs the reader headless; its
+**final message** becomes the round's output at `NNN-<actor>/<label>.md` and is
 queued to the MasterMind like any report. `relevo show <name> --output` prints
 the output file, `relevo show <name> --artifacts` lists the round's other files,
 and the cockpit's artifacts tab shows both.
@@ -2142,7 +2142,7 @@ so there is no lifecycle hook to install for it.
 
 ### opencode permission allowlist
 
-relevo stages plans and reports under `~/.local/state/relevo/<binding>/`, outside
+relevo stages prompts and reports under `~/.local/state/relevo/<binding>/`, outside
 the repo the builder is working in, so a fresh opencode builder blocks on an
 "Access external directory" dialog on its first round. To skip it entirely, add
 this to `~/.config/opencode/opencode.jsonc`:
@@ -2179,8 +2179,8 @@ baseline. The replacement builder is started with its agent on the launch line,
 like any builder relevo spawns. With `--rebind` the candidate is resolved through
 the builder actor's candidate list and the ledger, and the pick is logged, exactly as a fresh
 bind with `--candidate` omitted. Relevo does not automatically re-send the current
-plan: it prints the `relevo send` command pointing at the staged plan so you can
-hand over the round when ready.
+prompt: it prints the `relevo send` command pointing at the staged prompt so you
+can hand over the round when ready.
 
 If only the MasterMind moved or restarted, `relevo bind --resume --name N` re-points
 the MasterMind without touching the builder. If you want to start over from scratch,
@@ -2189,8 +2189,8 @@ use `relevo unbind N` and bind fresh.
 A headless binding is never `BROKEN` for lack of a process: between rounds
 there is none. If its process died mid-round the daemon already switched or
 halted it (see "Headless builders"). To move a binding to a fresh process by
-hand, `relevo send` the staged plan again once `relevo status` shows the builder
-`exited`.
+hand, `relevo send` the staged prompt again once `relevo status` shows the
+builder `exited`.
 
 ## Platform support
 

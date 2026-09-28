@@ -8,6 +8,10 @@ cell as `age · STATE`.
 (except four additive fields), and the `relevo ui` rail are unchanged.
 **Status:** approved 2026-09-24; plan at `docs/plans/2026-09-24-statusline-redesign.md`.
 
+**Amended 2026-09-28 by `docs/plans/2026-09-27-round-vocabulary.md`:** a
+round's input is now its prompt; the current words are `prompt sent` and
+`no prompt yet`, and the log kind is `prompt`. The sections below stay as
+written.
 ## 1. What was wrong
 
 Observed on a planner with seven bindings:

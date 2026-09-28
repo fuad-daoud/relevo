@@ -16,6 +16,10 @@ there.
 **Amended by:** docs/specs/2026-09-14-statusline-edges-design.md (§3.2, §3.3, §4.4, §5, §6).
 **Status:** draft; plan to follow at `docs/plans/2026-09-13-statusline.md`.
 
+**Amended 2026-09-28 by `docs/plans/2026-09-27-round-vocabulary.md`:** a
+round's input is now its prompt; the current words are `prompt sent` and
+`no prompt yet`, and the log kind is `prompt`. The sections below stay as
+written.
 ## 1. System overview
 
 A planner running in Claude Code learns that a builder reported, stalled or

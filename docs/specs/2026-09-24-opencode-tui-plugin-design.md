@@ -5,6 +5,10 @@ Evidence: `docs/specs/2026-09-24-opencode-tui-probe.md` and
 `docs/specs/probes/2026-09-24-opencode-tui/` (three probe rounds on binding
 `oc-tui-probe`, OpenCode 2.0.14).
 
+**Amended 2026-09-28 by `docs/plans/2026-09-27-round-vocabulary.md`:** a
+round's input is now its prompt; the current words are `prompt sent` and
+`no prompt yet`, and the log kind is `prompt`. The sections below stay as
+written.
 ## 1. Problem
 
 A Claude Code planner sees its builders under the prompt (`relevo status

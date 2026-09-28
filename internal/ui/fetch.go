@@ -49,7 +49,7 @@ type tabContent struct {
 	err    error     // fetch failure, scoped to this tab alone
 	empty  string    // prose explaining expected emptiness
 	round  int       // the round the body belongs to (report, diff); 0 when not round-keyed
-	at     time.Time // the event time for plan and report (zero when unknown), the read time for the others
+	at     time.Time // the event time for prompt and report (zero when unknown), the read time for the others
 
 	// transcript is true when the body is a rendered round log (headless
 	// stream or pane session record, #184): colour markers, show the log
@@ -797,7 +797,7 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 			return tabMsg{name: name, round: round, t: t, content: content}
 		}
 
-		// Show carries no event time for a plan or report section, so those
+		// Show carries no event time for a prompt or report section, so those
 		// source lines stay timeless rather than claiming the read time.
 		content := tabContent{loaded: true, round: round}
 		if t != tabPrompt && t != tabReport {

@@ -184,7 +184,7 @@ round log. See `docs/specs/2026-09-11-policy-order-design.md`.
 
 Today each entry is an `event` row in `relevo.db`, not a line of `log.jsonl`.
 
-`{ ts, round, direction: "to_runner"|"to_planner", kind: "plan"|"report"|"question"|"answer"|"pick"|"switch",
+`{ ts, round, direction: "to_runner"|"to_planner", kind: "prompt"|"report"|"question"|"answer"|"pick"|"switch",
    path, delivered_at, confirmed: bool, note }`
 
 A `pick` entry is relevo -> log only: which candidate a spawn resolved to and why.

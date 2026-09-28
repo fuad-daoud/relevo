@@ -32,7 +32,7 @@ type roundPane struct {
 	tabInFlight bool
 
 	// reader is the row's shape: true for a reader round, whose tabs are
-	// plan, artifacts, log and transcript (round 5b). artifactSel is the
+	// prompt, artifacts, log and transcript (round 5b). artifactSel is the
 	// artifacts tab's cursor, an index into the fetched list, and
 	// baselineHead is the binding's RoundBaselineHead for line 1's scratch
 	// cell.
@@ -47,7 +47,7 @@ type roundPane struct {
 }
 
 // tabs is the tab bar's tabs in the order it draws them: a reader round shows
-// plan, artifacts, log and transcript; a writer round keeps today's plan,
+// prompt, artifacts, log and transcript; a writer round keeps today's prompt,
 // report, transcript, diff and log.
 func (p roundPane) tabs() []tab {
 	if p.reader {
@@ -317,7 +317,7 @@ func (p roundPane) onTab(msg tabMsg) roundPane {
 	if msg.name != p.detail.name {
 		return p
 	}
-	// Every tab is round-keyed now (#183): plan, report, terminal and
+	// Every tab is round-keyed now (#183): prompt, report, terminal and
 	// log all read the specific round fetchFor was called with, the
 	// same way diff always has. A reply for a round that is no longer
 	// the one on screen -- a slow fetch outlived by two presses of "]"
