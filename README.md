@@ -2201,10 +2201,15 @@ MasterMind name. Install it once per machine:
     /plugin marketplace add fuad-daoud/relevo
     /plugin install relevo@relevo
 
-The plugin also carries two slash commands over relevo's read verbs:
+The plugin also carries slash commands over relevo's verbs:
 
 - `/relevo:status [--name <binding>] [--all]` -- the bindings, round and state.
 - `/relevo:show [<binding>] [--round N] [--diff|--drift|--log|--report|--prompt|--transcript]` -- one round's prompt, report, diff, drift, log or transcript, already fetched.
+- `/relevo:enable` -- this session answers the consent question yes.
+- `/relevo:enable-repo` -- this repository answers yes from now on.
+- `/relevo:disable` -- this session answers no.
+- `/relevo:disable-repo` -- never in this repository.
+- `/relevo:reset` -- ask the consent question again in this repository.
 
 Then launch Claude Code normally:
 
