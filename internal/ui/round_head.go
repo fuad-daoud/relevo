@@ -83,7 +83,7 @@ func (p roundPane) tokensParts(b *view.BindingStatus) (string, string) {
 }
 
 // tabsRow renders the pill tabs and the round stepper on the right. A
-// reader round draws its own tabs: plan, artifacts N, log and transcript.
+// reader round draws its own tabs: prompt, artifacts N, log and transcript.
 func (p roundPane) tabsRow() string {
 	tabs := p.tabs()
 	words := make([]string, len(tabs))
