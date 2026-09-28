@@ -657,6 +657,16 @@ What this means in practice:
   service (and, when readable, its session count from opencode.db) whenever
   `~/.config/opencode/service.json` exists. They also pass `--thinking`, so
   the model's reasoning reaches the transcript.
+- **A round's session is a runner, never a MasterMind.** Every process relevo
+  starts for a round carries exactly one `RELEVO_RUNNER=<binding name>` in its
+  environment, and relevo strips its own identity variables
+  (`RELEVO_MASTERMIND`, `RELEVO_PLANNER`, and a stale `RELEVO_RUNNER` inherited
+  from the daemon) from every spawned child. The MasterMind consent hooks read
+  the marker and stay silent for it, so a builder or reader session is never
+  asked the repository consent question, never briefed and never registered as
+  a MasterMind: it is there to do the round's work. The marker reaches every
+  round process -- local and served, a fresh spawn, a resume after a daemon
+  restart, a mid-round switch, a repair round and the admit of a queued round.
 
 **Scopes.** A local headless round runs in its own transient systemd scope
 named `relevo-round-local-<binding>-<round>` (an owned remote binding uses its

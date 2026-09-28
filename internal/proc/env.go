@@ -7,11 +7,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
-// DeniedEnv names the variables relevo never passes to a builder. They are
-// relevo's own secrets, not the harness's, which needs its provider
-// credentials; a user who wants a builder to hold one sets it in the harness's
-// own config.
-var DeniedEnv = []string{"TYPESAFE_API_KEY"}
+// DeniedEnv names the variables relevo never passes to a child it spawns. They
+// are relevo's own -- a secret and its identities -- not the harness's, which
+// needs its provider credentials; a user who wants a builder to hold one sets
+// it in the harness's own config. The identity names are denied so a spawned
+// child cannot inherit a MasterMind, planner or runner it is not: a round's own
+// marker is appended after this filter and therefore survives, while a parent's
+// stale one cannot shadow it.
+var DeniedEnv = []string{"TYPESAFE_API_KEY", "RELEVO_MASTERMIND", "RELEVO_PLANNER", "RELEVO_RUNNER"}
 
 // ChildEnv returns parent with every denied name removed, then extra appended
 // verbatim. A name matches as "NAME=..." or exactly "NAME"; extra is not

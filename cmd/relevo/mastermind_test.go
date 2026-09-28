@@ -1124,6 +1124,129 @@ func TestMasterMindSessionPrecedence(t *testing.T) {
 // empty object, an enable from elsewhere carries the notice with its own event
 // name and updates the baseline, a rename is the rename line, a NULL baseline
 // is written silently, and a broken payload still exits 0 with `{}`.
+// TestMasterMindGuideStaysSilentForARunner: a process relevo started for a
+// round is not a MasterMind session, so the guide neither asks it nor briefs
+// it. Text form prints nothing; JSON answers disabled with no record, in an
+// unset repository and in a yes one alike.
+func TestMasterMindGuideStaysSilentForARunner(t *testing.T) {
+	t.Setenv("RELEVO_RUNNER", "api")
+
+	cases := []struct {
+		name  string
+		state db.Consent
+	}{{"unset repo", db.ConsentUnset}, {"yes repo", db.ConsentYes}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", state)
+			repo := mastermindConsentRepo(t, state, tc.state)
+
+			args := []string{"mastermind", "guide", "--cwd", repo, "--kind", "opencode", "--session", "ses_runner"}
+			stdout, _, err := captureOutput(t, func() error { return run(args) })
+			if err != nil {
+				t.Fatalf("guide = %v, want exit 0", err)
+			}
+			if len(stdout) != 0 {
+				t.Errorf("guide stdout = %q, want nothing", stdout)
+			}
+
+			stdout, _, err = captureOutput(t, func() error { return run(append(args, "--json")) })
+			if err != nil {
+				t.Fatalf("guide --json = %v, want exit 0", err)
+			}
+			if got, want := string(stdout), "{\"state\":\"disabled\",\"text\":\"\"}\n"; got != want {
+				t.Errorf("guide --json stdout = %q, want %q", got, want)
+			}
+			if recs := mastermindRecordsAt(t, state); len(recs) != 0 {
+				t.Errorf("registry holds %d records, want none", len(recs))
+			}
+		})
+	}
+}
+
+// TestMasterMindInitHookStaysSilentForARunner: the SessionStart hook must
+// never hand a round's session a consent question, a briefing or a failure
+// note. A runner gets the empty object for any payload -- malformed included
+// -- and writes no record, no told baseline and nothing to $CLAUDE_ENV_FILE.
+func TestMasterMindInitHookStaysSilentForARunner(t *testing.T) {
+	t.Setenv("RELEVO_RUNNER", "api")
+
+	cases := []struct {
+		name  string
+		state db.Consent
+	}{{"unset repo", db.ConsentUnset}, {"yes repo", db.ConsentYes}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", state)
+			envFile := filepath.Join(t.TempDir(), "claude-env")
+			t.Setenv("CLAUDE_ENV_FILE", envFile)
+			repo := mastermindConsentRepo(t, state, tc.state)
+
+			payload := fmt.Sprintf(`{"hook_event_name":"SessionStart","session_id":"sess_runner","cwd":%q}`, repo)
+			for _, in := range []string{payload, "not json at all"} {
+				stdout, _, err := runWithStdin(t, in, "mastermind", "init", "--hook", "claude")
+				if err != nil {
+					t.Fatalf("init(%q) = %v, want exit 0", in, err)
+				}
+				if got := strings.TrimSpace(string(stdout)); got != "{}" {
+					t.Errorf("init(%q) stdout = %q, want {}", in, got)
+				}
+			}
+			if recs := mastermindRecordsAt(t, state); len(recs) != 0 {
+				t.Errorf("registry holds %d records, want none", len(recs))
+			}
+			if _, ok := mastermindSessionToldAt(t, state, "claude", "sess_runner"); ok {
+				t.Error("a runner must get no told baseline")
+			}
+			if _, err := os.Stat(envFile); !os.IsNotExist(err) {
+				t.Errorf("$CLAUDE_ENV_FILE was written for a runner: stat err = %v", err)
+			}
+		})
+	}
+}
+
+// TestMasterMindNoticeHookStaysSilentForARunner: the UserPromptSubmit hook has
+// nothing to compare and nothing to say for a runner, and must not write the
+// told baseline that would let a later prompt speak. The empty object, no
+// record, no baseline and no $CLAUDE_ENV_FILE write, in an unset and a yes
+// repository.
+func TestMasterMindNoticeHookStaysSilentForARunner(t *testing.T) {
+	t.Setenv("RELEVO_RUNNER", "api")
+
+	cases := []struct {
+		name  string
+		state db.Consent
+	}{{"unset repo", db.ConsentUnset}, {"yes repo", db.ConsentYes}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", state)
+			envFile := filepath.Join(t.TempDir(), "claude-env")
+			t.Setenv("CLAUDE_ENV_FILE", envFile)
+			repo := mastermindConsentRepo(t, state, tc.state)
+
+			payload := fmt.Sprintf(`{"hook_event_name":"UserPromptSubmit","session_id":"sess_runner","cwd":%q}`, repo)
+			stdout, _, err := runWithStdin(t, payload, "mastermind", "notice", "--hook", "claude")
+			if err != nil {
+				t.Fatalf("notice = %v, want exit 0", err)
+			}
+			if got := strings.TrimSpace(string(stdout)); got != "{}" {
+				t.Errorf("notice stdout = %q, want {}", got)
+			}
+			if recs := mastermindRecordsAt(t, state); len(recs) != 0 {
+				t.Errorf("registry holds %d records, want none", len(recs))
+			}
+			if _, ok := mastermindSessionToldAt(t, state, "claude", "sess_runner"); ok {
+				t.Error("a runner must get no told baseline")
+			}
+			if _, err := os.Stat(envFile); !os.IsNotExist(err) {
+				t.Errorf("$CLAUDE_ENV_FILE was written for a runner: stat err = %v", err)
+			}
+		})
+	}
+}
+
 func TestMasterMindNoticeHook(t *testing.T) {
 	runNotice := func(t *testing.T, payload string) hookEnvelope {
 		t.Helper()
