@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// renderMarkdown renders light markdown for plan and report tabs (§2.6).
+// renderMarkdown renders light markdown for prompt and report tabs (§2.6).
 func renderMarkdown(body string) string {
 	if body == "" {
 		return ""
