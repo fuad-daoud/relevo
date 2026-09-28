@@ -166,12 +166,13 @@ relevo mastermind guide [--cwd DIR] [--kind K --session S] [--json]
 
 The shipped plugin gains two changes:
 
-- **`server.ts`** registers `ctx.session.hook("context", ...)`. On
-  `event.kind == "primary"` it pushes the cached text into `event.system` as a
-  text part. The text is fetched once per `sessionID` (the plugin calls
-  `relevo mastermind guide --json --kind opencode --session <id>`; the verb
-  resolves the session's directory from opencode's own database, so the
-  plugin passes no cwd) and cached in module state. A failed fetch caches
+- **`server.ts`** registers `ctx.session.hook("context", ...)`. The hook runs
+  for the agent loop only (compaction, title and generate have their own hooks,
+  and the context event carries no `kind`), and it pushes the cached text into
+  `event.system` as a text part. The text is fetched once per `sessionID` (the
+  plugin calls `relevo mastermind guide --json --kind opencode --session <id>`;
+  the verb resolves the session's directory from opencode's own database, so
+  the plugin passes no cwd) and cached in module state. A failed fetch caches
   "nothing" for that session and logs to stderr; it never throws into the
   model call.
 - **`tui.tsx`** calls `relevo mastermind guide --json --kind opencode --session

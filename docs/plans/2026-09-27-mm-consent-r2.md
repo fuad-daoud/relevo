@@ -44,14 +44,15 @@ shipped opencode plugin pushes it into the session's system instructions
    - a missing repo reads `disabled` with an empty text.
    - Pure tests: state mapping and rendering; cmd tests under TestMain's temp
      root (no harness, no network).
-2. **`server.ts`**: register `ctx.session.hook("context", ...)`;
+2. **`server.ts`**: register `ctx.session.hook("context", ...)`, which runs for
+   the agent loop only and carries no `kind`;
    - per `sessionID`, fetch once with
      `relevo mastermind guide --json --kind opencode --session <id>`
      (spawn like `tui.tsx`'s `spawnRelevo`, 10 s timeout), cache
      `{text}`/`{text:""}`; a failure caches the empty text and logs once to
      stderr;
-   - on `event.kind === "primary"` and a non-empty cached text, push
-     `{ type: "text", text }` onto `event.system`;
+   - on a non-empty cached text, push `{ type: "text", text }` onto
+     `event.system`;
    - never throw, never await on the model path after the first fetch.
 3. **`tui.tsx`**: replace the unconditional `mastermind init` with
    `relevo mastermind guide --json --kind opencode --session <id>`; on

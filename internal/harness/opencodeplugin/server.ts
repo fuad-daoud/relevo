@@ -121,8 +121,10 @@ const setup = async (api: any) => {
   }
 
   if (api?.session && typeof api.session.hook === "function") {
+    // The context hook runs for the agent loop only; compaction, title and
+    // generate have their own hooks, so there is no kind to filter on here.
     await api.session.hook("context", async (event: any) => {
-      if (event?.kind !== "primary" || !event.sessionID || !Array.isArray(event.system)) return;
+      if (!event?.sessionID || !Array.isArray(event.system)) return;
       const guide = await guideFor(event.sessionID);
       if (guide?.text) {
         event.system.push({ type: "text", text: guide.text });
