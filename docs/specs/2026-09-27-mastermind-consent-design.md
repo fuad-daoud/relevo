@@ -112,12 +112,11 @@ ConsentText(state Consent, rec *Record) string
 - `unset` -> the ask-note:
 
   ```
-  This repository has not answered whether relevo should be its MasterMind.
-  Before doing anything else, ask the human which of these three options they want:
+  Before anything else, ask the human whether relevo should be this repository's MasterMind. Offer exactly these three options:
     relevo mastermind enable          -- this session only
     relevo mastermind enable --repo   -- this repository from now on
     relevo mastermind disable --repo  -- never in this repository
-  Then run the command they choose. Do not act on anything else until they answer.
+  Wait for their answer, then run the command they choose. Do not work on anything else first.
   ```
 
 - `no` -> the empty string.
@@ -166,18 +165,17 @@ relevo mastermind guide [--cwd DIR] [--kind K --session S] [--json]
 
 The shipped plugin gains two changes:
 
-- **`server.ts`** registers two session hooks. The `prompt` hook prepends the
-  cached text to the session's first user turn (once per session), the way
-  Claude Code's `additionalContext` lands in the conversation — this is what
-  makes a weak model act on it. The `context` hook runs for the agent loop only
-  (compaction, title and generate have their own hooks, and the context event
-  carries no `kind`) and pushes the text into `event.system` on every request
-  while the repository is enabled. The text is fetched once per `sessionID`
-  (the plugin calls `relevo mastermind guide --json --kind opencode --session
-  <id>`; the verb resolves the session's directory from opencode's own
-  database, so the plugin passes no cwd) and cached in module state. A failed
-  fetch caches "nothing" for that session and logs to stderr; it never throws
-  into the model call.
+- **`server.ts`** registers `ctx.session.hook("context", ...)`, the
+  model-facing channel that delivers in opencode 2.0.18 (the `prompt` hook
+  accepts a text mutation but never delivers it; verified by probe). The hook
+  runs for the agent loop only — compaction, title and generate have their own
+  hooks, and the context event carries no `kind` — and pushes the cached text
+  into `event.system` on every request. The text is fetched once per
+  `sessionID` (the plugin calls `relevo mastermind guide --json --kind opencode
+  --session <id>`; the verb resolves the session's directory from opencode's
+  own database, so the plugin passes no cwd) and cached in module state. A
+  failed fetch caches "nothing" for that session and logs to stderr; it never
+  throws into the model call.
 - **`tui.tsx`** calls `relevo mastermind guide --json --kind opencode --session
   <id>` and uses the answer: `enabled` carries the record's id and name (the
   guide created it), `ask` and `disabled` register nothing. The old
