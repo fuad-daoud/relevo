@@ -391,6 +391,18 @@ func cmdMasterMindGuide(args []string) error {
 		return err
 	}
 
+	// A process relevo started for a round is a runner, not a MasterMind
+	// session: it is never asked, briefed or registered, so the guide answers
+	// and returns before anything opens the database or reads a repository.
+	// The disabled state is the existing non-repository answer, which the
+	// plugin is already silent on.
+	if mastermind.IsRunner(os.Getenv) {
+		if *asJSON {
+			fmt.Println(`{"state":"disabled","text":""}`)
+		}
+		return nil
+	}
+
 	rt, err := newRuntime()
 	if err != nil {
 		return err

@@ -67,6 +67,14 @@ func mastermindToldBaseline(d *db.DB, rt relevo.Runtime, kind, session, token st
 // its context -- and the error on stderr for the human.
 func mastermindInitHook(nameFlag string) error {
 	in, err := mastermind.ParseHookInput(os.Stdin)
+	// A round's harness session is a runner: it must not be asked, briefed or
+	// registered, and must not get the failure note either, so it answers the
+	// empty object for any payload -- malformed included -- before the
+	// parse-error branch and before any state is read.
+	if mastermind.IsRunner(os.Getenv) {
+		_, _ = os.Stdout.Write(mastermind.HookConsent(""))
+		return nil
+	}
 	if err != nil {
 		return mastermindInitHookFailure(err)
 	}
@@ -178,6 +186,13 @@ func cmdMasterMindNotice(args []string) error {
 // stdout and the error on stderr.
 func mastermindNoticeHook() error {
 	in, err := mastermind.ParseHookInput(os.Stdin)
+	// A round's harness session is a runner and must stay silent: no notice,
+	// no failure note, and no told baseline that would let a later prompt
+	// speak. The empty object for any payload, before the parse-error branch.
+	if mastermind.IsRunner(os.Getenv) {
+		_, _ = os.Stdout.Write(mastermind.HookConsentFor(mastermind.HookEventUserPromptSubmit, ""))
+		return nil
+	}
 	if err != nil {
 		return mastermindNoticeFailure(err)
 	}
