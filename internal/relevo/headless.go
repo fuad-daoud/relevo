@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -169,6 +170,16 @@ func builderEnv(b store.Binding) []string {
 	}
 }
 
+// roundEnv is the environment a round's process runs with: builderEnv's git
+// identity plus the marker naming the binding this process is a runner for. A
+// harness session relevo spawns for a round must not read itself as a
+// MasterMind or planner, so the marker is what its consent hooks go silent on.
+// The spawn appends the marker after the deny filter, so a stale RELEVO_RUNNER
+// in the daemon's own environment cannot shadow it. Pure.
+func roundEnv(b store.Binding) []string {
+	return append(builderEnv(b), mastermind.RunnerEnv+"="+b.Name)
+}
+
 // startRound starts the round's process for a headless binding and records
 // its handle on the endpoint (headless spec §4.3). The caller holds the
 // state lock, has staged the plan, and saves what comes back.
@@ -298,7 +309,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	}
 	spec := spawn.ProcSpec{
 		Dir: roundTree(rt, b), Argv: argv,
-		Env:        builderEnv(b),
+		Env:        roundEnv(b),
 		LogPath:    logPath,
 		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}
