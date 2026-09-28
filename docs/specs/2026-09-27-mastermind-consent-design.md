@@ -41,11 +41,13 @@ The answer lives on the database's `repo` row and is set with:
 relevo mastermind enable              # this session only; the repo stays unset
 relevo mastermind enable --repo       # always in this repository
 relevo mastermind disable --repo      # never in this repository
+relevo mastermind reset               # clear the answer; the next session asks
 ```
 
 `disable` without `--repo` forgets the current session's record, the same as
-`forget <id|name>`; it writes no repo answer. Precedent: the answer is stored
-in the database, so it survives restarts and syncs nowhere today.
+`forget <id|name>`; it writes no repo answer. `reset` takes no flag: the only
+answer it touches is the repository's. Precedent: the answer is stored in the
+database, so it survives restarts and syncs nowhere today.
 
 ## 3. Decisions
 
@@ -197,7 +199,8 @@ participate in consent until a hook exists.
 
 ## 7. Surfaces
 
-- `relevo mastermind enable [--repo]`, `disable [--repo]`, `guide [--json]`.
+- `relevo mastermind enable [--repo]`, `disable [--repo]`, `reset`,
+  `guide [--json]`.
 - `relevo mastermind list` gains nothing; the answer is per repo.
 - `relevo doctor` adds one row in the MasterMind group: the current repo's
   answer and the command that changes it
@@ -228,6 +231,6 @@ participate in consent until a hook exists.
 ## 9. Out of scope (later rounds)
 
 - A TUI dialog for the ask (the model-ask ships first).
-- Per-harness answers, "ask me again" reset, and a repo picker in the cockpit.
+- Per-harness answers and a repo picker in the cockpit.
 - Deleting records on `disable --repo`; `forget` stays the explicit cleanup.
 - agy injection and agy tools; agy has no hook to hang them on.

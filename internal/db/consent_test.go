@@ -81,15 +81,31 @@ func TestRepoConsentRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSetRepoConsentRefusesUnset pins that only yes and no are storable: unset
-// is the absence of an answer, not one the CLI writes.
-func TestSetRepoConsentRefusesUnset(t *testing.T) {
+// TestSetRepoConsentClearsUnset pins that unset is storable: reset returns a
+// repo to the ask state, and a refused value writes nothing.
+func TestSetRepoConsentClearsUnset(t *testing.T) {
 	d := openTestDB(t)
-	_, err := d.SetRepoConsent(Repo{CommonDir: ptr("/repo/.git")}, ConsentUnset, consentNow())
-	if !errors.Is(err, ErrInvalid) {
-		t.Fatalf("SetRepoConsent(unset) error = %v, want ErrInvalid", err)
+	ref := Repo{CommonDir: ptr("/repo/.git")}
+
+	if _, err := d.SetRepoConsent(ref, ConsentYes, consentNow()); err != nil {
+		t.Fatalf("SetRepoConsent yes: %v", err)
 	}
-	c, err := d.RepoConsent(Repo{CommonDir: ptr("/repo/.git")})
+	if _, err := d.SetRepoConsent(ref, ConsentUnset, consentNow()); err != nil {
+		t.Fatalf("SetRepoConsent unset: %v", err)
+	}
+	c, err := d.RepoConsent(ref)
+	if err != nil {
+		t.Fatalf("RepoConsent: %v", err)
+	}
+	if c != ConsentUnset {
+		t.Errorf("consent after reset = %q, want unset", c)
+	}
+
+	_, err = d.SetRepoConsent(ref, Consent("maybe"), consentNow())
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("SetRepoConsent(maybe) error = %v, want ErrInvalid", err)
+	}
+	c, err = d.RepoConsent(ref)
 	if err != nil {
 		t.Fatalf("RepoConsent: %v", err)
 	}

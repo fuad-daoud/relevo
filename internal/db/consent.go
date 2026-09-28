@@ -69,8 +69,8 @@ func repoKeys(ref Repo) []repoKey {
 }
 
 // SetRepoConsent stores ref's answer, creating the repo row when relevo has
-// not seen the repo, and returns the row's id. Only yes and no are storable;
-// clearing an answer back to unset is not a thing the CLI does yet.
+// not seen the repo, and returns the row's id. ConsentUnset clears the answer:
+// the next session in the repository asks again.
 func (d *DB) SetRepoConsent(ref Repo, c Consent, now time.Time) (string, error) {
 	var id string
 	err := d.Tx(func(t *Tx) error {
@@ -83,15 +83,19 @@ func (d *DB) SetRepoConsent(ref Repo, c Consent, now time.Time) (string, error) 
 
 // SetRepoConsent is SetRepoConsent inside tx.
 func (t *Tx) SetRepoConsent(ref Repo, c Consent, now time.Time) (string, error) {
-	if c != ConsentYes && c != ConsentNo {
-		return "", fmt.Errorf("db: consent %q is not an answer (want yes or no): %w", c, ErrInvalid)
+	if err := c.Valid(); err != nil {
+		return "", err
 	}
 	id, err := t.UpsertRepo(Repo{OriginURL: ref.OriginURL, CommonDir: ref.CommonDir, FirstSeen: now})
 	if err != nil {
 		return "", err
 	}
+	var answer, at any
+	if c != ConsentUnset {
+		answer, at = string(c), formatTime(now)
+	}
 	if _, err := t.exec(`UPDATE repo SET mastermind_consent = ?, consent_at = ? WHERE id = ?`,
-		string(c), formatTime(now), id); err != nil {
+		answer, at, id); err != nil {
 		return "", fmt.Errorf("db: repo consent: %w", mapBusy(err))
 	}
 	return id, nil

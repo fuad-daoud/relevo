@@ -34,6 +34,7 @@ func cmdMasterMind(args []string) error {
 	const usage = `usage: relevo mastermind init [--name N] [--kind K --session S] [--hook claude]
        relevo mastermind enable [--repo] [--kind K --session S]
        relevo mastermind disable [--repo]
+       relevo mastermind reset
        relevo mastermind guide [--cwd DIR] [--kind K --session S] [--json]
        relevo mastermind list [--json]
        relevo mastermind rename <id|name> <new-name>
@@ -51,6 +52,8 @@ func cmdMasterMind(args []string) error {
 		return cmdMasterMindEnable(args[1:])
 	case "disable":
 		return cmdMasterMindDisable(args[1:])
+	case "reset":
+		return cmdMasterMindReset(args[1:])
 	case "guide":
 		return cmdMasterMindGuide(args[1:])
 	case "list":

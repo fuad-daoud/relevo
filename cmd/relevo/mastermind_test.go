@@ -777,3 +777,23 @@ func TestRemovedPlannerFlagsAreUnknown(t *testing.T) {
 		}
 	}
 }
+
+// TestMasterMindResetClearsConsent pins the third answer: reset returns the
+// repository to unset, so the next session asks again.
+func TestMasterMindResetClearsConsent(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	repo := mastermindConsentRepo(t, state, db.ConsentYes)
+	t.Chdir(repo)
+
+	stdout, _, err := captureOutput(t, func() error { return run([]string{"mastermind", "reset"}) })
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if !strings.Contains(string(stdout), "ask about this repository again") {
+		t.Errorf("reset printed %q, want the ask-again confirmation", stdout)
+	}
+	if c := mastermindRepoConsent(t, state, repo); c != db.ConsentUnset {
+		t.Errorf("repo consent after reset = %q, want unset", c)
+	}
+}

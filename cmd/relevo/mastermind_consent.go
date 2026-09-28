@@ -224,12 +224,38 @@ func cmdMasterMindDisable(args []string) error {
 	return nil
 }
 
+// cmdMasterMindReset clears the current repository's answer, so the next
+// session asks the consent question again.
+func cmdMasterMindReset(args []string) error {
+	fs := flag.NewFlagSet("reset", flag.ContinueOnError)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("usage: relevo mastermind reset")
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve working directory: %w", err)
+	}
+	if err := mastermindWriteConsent(rt, cwd, db.ConsentUnset); err != nil {
+		return err
+	}
+	fmt.Println("relevo will ask about this repository again (relevo mastermind enable --repo to answer yes now)")
+	return nil
+}
+
 // mastermindWriteConsent writes one answer for cwd's repository. A cwd outside
-// a git repository has nothing to remember, so --repo refuses there.
+// a git repository has nothing to remember, so the answer commands refuse.
 func mastermindWriteConsent(rt relevo.Runtime, cwd string, c db.Consent) error {
 	ref := mastermindRepoOf(context.Background(), rt, cwd)
 	if !mastermindRepoKnown(ref) {
-		return fmt.Errorf("relevo mastermind enable|disable --repo: %s is not inside a git repository, so there is nothing to remember", cwd)
+		return fmt.Errorf("relevo mastermind enable|disable|reset: %s is not inside a git repository, so there is no repository answer to change", cwd)
 	}
 	d, err := rt.Store.DB()
 	if err != nil {
