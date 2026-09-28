@@ -95,6 +95,68 @@ func TestBuilderEnv(t *testing.T) {
 	}
 }
 
+// TestRoundEnvMarksTheRunner: every round's process carries exactly one
+// RELEVO_RUNNER entry naming its binding, after the git identity builderEnv
+// already gives it, whatever the round's shape.
+func TestRoundEnvMarksTheRunner(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		b    store.Binding
+		want []string
+	}{
+		{"no author", store.Binding{Name: "api"}, []string{"RELEVO_RUNNER=api"}},
+		{"author", store.Binding{Name: "api", Serve: &store.ServeFacts{
+			AuthorName: "Ada Lovelace", AuthorEmail: "ada@example.com",
+		}}, []string{
+			"GIT_AUTHOR_NAME=Ada Lovelace", "GIT_AUTHOR_EMAIL=ada@example.com",
+			"GIT_COMMITTER_NAME=Ada Lovelace", "GIT_COMMITTER_EMAIL=ada@example.com",
+			"RELEVO_RUNNER=api",
+		}},
+		{"reader shape", store.Binding{Name: "api", Shape: store.ShapeReader}, []string{"RELEVO_RUNNER=api"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := roundEnv(tc.b); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("roundEnv = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStartProcessMarksTheRunner: the spawn itself carries the marker, so a
+// served round, a resume or a switch reaches its harness as a runner.
+func TestStartProcessMarksTheRunner(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	b := store.Binding{
+		Name:  "webshop",
+		Round: 1,
+		CWD:   t.TempDir(),
+		Builder: store.Endpoint{
+			Mode: store.ModeHeadless,
+		},
+	}
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		_, err := startProcess(context.Background(), rt, tx, b, []string{"echo", "hi"}, candidate.Candidate{Harness: "agy"})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("startProcess: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	want := []string{"RELEVO_RUNNER=webshop"}
+	if got := fr.specs[0].Env; !reflect.DeepEqual(got, want) {
+		t.Errorf("spec.Env = %v, want %v", got, want)
+	}
+}
+
 func TestHeadlessLaunchPerKind(t *testing.T) {
 	t.Parallel()
 
