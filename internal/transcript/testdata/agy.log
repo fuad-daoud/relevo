@@ -1,5 +1,5 @@
 ● view_file /etc/hostname
   ⎿ error: permission check failed for read_file "/etc/hostname": user denied permission for read_file(/etc/hostname)
 ● run_command go test -count=1 ./internal/transcript/
-  ⎿ ok: ok  	github.com/fuad-daoud/relevo/internal/transcript	0.003s
+  ⎿ ok: ok      github.com/fuad-daoud/relevo/internal/transcript    0.003s
 denied: read_file (ViewFile)

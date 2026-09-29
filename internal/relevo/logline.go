@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -51,9 +52,9 @@ func LogLine(e store.LogEntry) string {
 		first += fmt.Sprintf(" cpu %s peak %s", shortCPU(e.Rusage.CPUMS), shortBytes(e.Rusage.PeakMemBytes))
 	}
 	if e.Usage == nil {
-		return first
+		return sanitize.Text(first)
 	}
-	return first + "\n" + strings.Repeat(" ", logLineIndent) + "⎿ " + usage.Line(*e.Usage)
+	return sanitize.Text(first + "\n" + strings.Repeat(" ", logLineIndent) + "⎿ " + usage.Line(*e.Usage))
 }
 
 // short8 is the first eight characters of id, for the log line's session=

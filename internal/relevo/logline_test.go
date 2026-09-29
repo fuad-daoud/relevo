@@ -257,3 +257,19 @@ func TestLogLineRusageUsesSecondsResolution(t *testing.T) {
 		t.Errorf("LogLine(%+v) = %q, want it to contain %q", e, got, want)
 	}
 }
+
+// TestLogLineStripsControlBytes pins that a log entry's note cannot smuggle a
+// control sequence into the printed line.
+func TestLogLineStripsControlBytes(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
+	e := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/p/004-report.md", Note: "scraped \x1b[2J"}
+	got := LogLine(e)
+	if strings.ContainsRune(got, '\x1b') {
+		t.Errorf("LogLine = %q, want the control byte replaced", got)
+	}
+	if !strings.Contains(got, "\uFFFD") {
+		t.Errorf("LogLine = %q, want a replacement rune", got)
+	}
+}

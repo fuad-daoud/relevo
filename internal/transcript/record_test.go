@@ -63,3 +63,19 @@ func TestRenderRecord(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderRecordSanitizesControlBytes pins that a session record's own text
+// is sanitised exactly as a stream line's is.
+func TestRenderRecordSanitizesControlBytes(t *testing.T) {
+	line := []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"boom \u001b[2J\u0007"}]}}`)
+	got := RenderRecord("claude", line)
+	if len(got) != 1 {
+		t.Fatalf("RenderRecord = %q, want one line", got)
+	}
+	if strings.ContainsAny(got[0], "\x1b\x07") {
+		t.Errorf("RenderRecord = %q, want no control bytes", got[0])
+	}
+	if !strings.Contains(got[0], "\uFFFD[2J\uFFFD") {
+		t.Errorf("RenderRecord = %q, want the control bytes replaced with U+FFFD", got[0])
+	}
+}

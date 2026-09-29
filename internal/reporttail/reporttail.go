@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
 // Outcome values a trailing block's status may carry.
@@ -71,7 +73,7 @@ func ParseWithReason(report []byte) (Tail, bool, string) {
 		return Tail{}, false, "tail: unknown status"
 	}
 
-	tail.HaltedAt = strings.TrimSpace(UnquoteScalar(haltedAtRaw))
+	tail.HaltedAt = sanitize.Text(strings.TrimSpace(UnquoteScalar(haltedAtRaw)))
 
 	return tail, true, ""
 }

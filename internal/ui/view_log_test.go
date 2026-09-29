@@ -713,3 +713,21 @@ func TestLogViewPageDown(t *testing.T) {
 		t.Errorf("cursor after 2nd pgdown = %d, want %d", v60.cursor, 2*want1)
 	}
 }
+
+// TestLogViewDetailStripsControlBytes pins the one sanitising pass over every
+// entry's Detail at the end of buildLogEntries.
+func TestLogViewDetailStripsControlBytes(t *testing.T) {
+	now := time.Date(2026, 9, 25, 18, 30, 0, 0, time.UTC)
+	actions := []actionEntry{{At: now, Verb: "stop", Text: "stopped \x1b[2J"}}
+
+	entries := buildLogEntries(nil, availability.History{}, nil, actions, time.Time{}, nil, nil)
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if strings.ContainsRune(entries[0].Detail, '\x1b') {
+		t.Errorf("Detail = %q, want the control byte replaced", entries[0].Detail)
+	}
+	if !strings.Contains(entries[0].Detail, "\uFFFD") {
+		t.Errorf("Detail = %q, want a replacement rune", entries[0].Detail)
+	}
+}

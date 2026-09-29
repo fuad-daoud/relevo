@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	diffpatch "github.com/fuad-daoud/relevo/internal/patch"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -305,7 +306,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 		return nil
 	}
 
-	text := res.Text
+	text := sanitize.Text(res.Text)
 	if text != "" && text[len(text)-1] != '\n' {
 		text += "\n"
 	}

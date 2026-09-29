@@ -139,7 +139,7 @@ func TestClaudeTable(t *testing.T) {
 		},
 		"result ok with string content": {
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"     1\t# relevo\n     2\t"}]}}`,
-			[]string{"  ⎿ ok:      1\t# relevo"},
+			[]string{"  ⎿ ok:      1    # relevo"},
 		},
 		"result ok with array content": {
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":[{"type":"text","text":"7c3ca64 docs: x\ne19924c feat: y"}]}]}}`,
@@ -228,7 +228,7 @@ func TestAgyTable(t *testing.T) {
 		},
 		"tool done with crlf output": {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"run_command","tool_info":{"output":"FAIL\tx [setup failed]\r\nmore\r\n"}}}`,
-			[]string{"  ⎿ ok: FAIL\tx [setup failed]"},
+			[]string{"  ⎿ ok: FAIL    x [setup failed]"},
 		},
 		"tool error without message": {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"ERROR","tool_name":"view_file","tool_info":{"error":{"type":"TOOL_ERROR"}}}}`,
@@ -399,5 +399,21 @@ func TestCodexTable(t *testing.T) {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// TestRenderSanitizesControlBytes pins that a control byte in a harness's own
+// text never reaches a rendered line: the shared sanitiser runs on every line
+// Render returns.
+func TestRenderSanitizesControlBytes(t *testing.T) {
+	got := Render("claude", []byte(`{"type":"error","message":"boom \u001b[2J\u0007"}`))
+	if len(got) != 1 {
+		t.Fatalf("Render = %q, want one line", got)
+	}
+	if strings.ContainsAny(got[0], "\x1b\x07") {
+		t.Errorf("Render = %q, want no control bytes", got[0])
+	}
+	if !strings.Contains(got[0], "\uFFFD[2J\uFFFD") {
+		t.Errorf("Render = %q, want the control bytes replaced with U+FFFD", got[0])
 	}
 }

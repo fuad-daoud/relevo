@@ -780,3 +780,21 @@ func requireKeys(t *testing.T, obj any, keys ...string) {
 		}
 	}
 }
+
+// TestRenderGatesSanitizesNote pins that a gate's note is sanitised before it
+// is printed, so a reason stored before the fix cannot draw a control sequence.
+func TestRenderGatesSanitizesNote(t *testing.T) {
+	gates := []availability.Gate{{
+		Token: "claude/t/m",
+		Name:  "m",
+		Kind:  availability.RateLimited,
+		Note:  "quota \x1b[2J",
+	}}
+	out := RenderGates(gates, time.Now())
+	if strings.ContainsRune(out, '\x1b') {
+		t.Errorf("RenderGates = %q, want the control byte replaced", out)
+	}
+	if !strings.Contains(out, "\uFFFD") {
+		t.Errorf("RenderGates = %q, want a replacement rune", out)
+	}
+}

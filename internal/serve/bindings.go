@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -517,52 +516,6 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 
 	entries, _ := rt.Store.ReadLog(name)
 	writeJSON(w, http.StatusOK, s.servedView(rt, b, entries))
-}
-
-func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	caller := callerOf(r)
-	rt, err := s.runtime(caller)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
-		return
-	}
-
-	name := r.PathValue("name")
-	if name != "" {
-		b, _, err := s.loadBinding(caller, name)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-				return
-			}
-			writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
-			return
-		}
-		if !Allowed(caller, "unavailable", b) {
-			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-			return
-		}
-	}
-
-	var req remote.UnavailableRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
-		return
-	}
-	if req.Token == "" {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "token is required")
-		return
-	}
-
-	if _, err := availability.Unavailable(relevo.AvailabilityDeps(rt), req.Token, time.Time{}, req.Reason); err != nil {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
 // handleAvailable lifts the server-wide ledger's rate-limit gate on a subject's

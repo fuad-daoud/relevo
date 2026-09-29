@@ -421,3 +421,20 @@ func TestMatchLimitCapsMatchedLineAt200Runes(t *testing.T) {
 		t.Errorf("len([]rune(Line)) = %d, want 200", n)
 	}
 }
+
+// TestMatchLimitSanitizesMatchedLine pins that the line a match stores is
+// sanitised, so a gate or switch note cannot carry a control sequence.
+func TestMatchLimitSanitizesMatchedLine(t *testing.T) {
+	t.Parallel()
+
+	got, ok := MatchLimit("individual quota reached \x1b[2J", agyPatterns(t), testNow(), time.Hour)
+	if !ok {
+		t.Fatal("MatchLimit ok = false, want true")
+	}
+	if strings.ContainsRune(got.Line, '\x1b') {
+		t.Errorf("Line = %q, want the control byte replaced", got.Line)
+	}
+	if !strings.Contains(got.Line, "\uFFFD") {
+		t.Errorf("Line = %q, want a replacement rune", got.Line)
+	}
+}

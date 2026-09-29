@@ -607,3 +607,19 @@ func TestStripTailRemovesTheTrailingBlock(t *testing.T) {
 		}
 	})
 }
+
+// TestParseWithReasonSanitizesHaltedAt pins that a halted_at value carrying a
+// control byte is stored clean.
+func TestParseWithReasonSanitizesHaltedAt(t *testing.T) {
+	input := "```relevo\nstatus: halted\nhalted_at: \"step \x1b[2J\"\n```\n"
+	tail, ok, reason := ParseWithReason([]byte(input))
+	if !ok {
+		t.Fatalf("ParseWithReason ok = false, reason %q", reason)
+	}
+	if strings.ContainsRune(tail.HaltedAt, '\x1b') {
+		t.Errorf("HaltedAt = %q, want the control byte replaced", tail.HaltedAt)
+	}
+	if !strings.Contains(tail.HaltedAt, "\uFFFD") {
+		t.Errorf("HaltedAt = %q, want a replacement rune", tail.HaltedAt)
+	}
+}
