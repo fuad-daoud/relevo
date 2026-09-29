@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
@@ -315,6 +316,15 @@ func cmdDoctor(args []string) error {
 	// `relevo db stats`. Every open migrates, so there is no separate
 	// migrate row.
 	rep.Checks = insertGlobalCheck(rep.Checks, databaseCheck(rt.Store))
+	// The owner row dials the socket the daemon serves, the way the database
+	// row reads the file: a missing socket warns with the fix, and a socket
+	// that answers names its pid, protocol and open connections.
+	if sock, sockErr := owner.SocketPath(stateRoot); sockErr != nil {
+		rep.Checks = insertGlobalCheck(rep.Checks, ownerCheck(db.OwnerStatus{}, sockErr))
+	} else {
+		status, probeErr := db.ProbeOwner(sock)
+		rep.Checks = insertGlobalCheck(rep.Checks, ownerCheck(status, probeErr))
+	}
 	if storeErr != nil {
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
 			Name:        "bindings",

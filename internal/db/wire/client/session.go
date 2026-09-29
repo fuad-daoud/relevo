@@ -23,6 +23,8 @@ type conn struct {
 	have   int
 	know   int
 	origin string
+	pid    int
+	conns  int
 	dead   bool
 }
 
@@ -67,6 +69,7 @@ func (c *conn) handshake(ctx context.Context) error {
 			return err
 		}
 		c.have, c.know, c.origin = m.SchemaHave, m.SchemaKnow, m.Origin
+		c.pid, c.conns = m.PID, m.Conns
 		return nil
 	case wire.KindRefuse:
 		var r wire.Refusal
@@ -146,6 +149,23 @@ func decodeError(frame []byte) error {
 		return err
 	}
 	return &m
+}
+
+// midRefuse turns a refuse frame received mid-request into the connection's
+// error and retires the connection. A restarting refusal is retryable: the
+// owner guarantees the request never ran, so it wraps driver.ErrBadConn (the
+// refusal stays inspectable through the wrap) and database/sql retries it on a
+// fresh connection. Any other refusal stays a plain error.
+func (c *conn) midRefuse(frame []byte) error {
+	var r wire.Refusal
+	if _, err := wire.Decode(frame, &r); err != nil {
+		return c.connLost(err)
+	}
+	c.dead = true
+	if r.Code == wire.RefuseRestarting {
+		return fmt.Errorf("%w: %w", driver.ErrBadConn, &r)
+	}
+	return &r
 }
 
 func encodeArgs(args []driver.NamedValue) ([]byte, error) {
@@ -256,6 +276,8 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		return wireResult{rows: m.RowsAffected, id: m.LastInsertID}, nil
 	case wire.KindError:
 		return nil, decodeError(frame)
+	case wire.KindRefuse:
+		return nil, c.midRefuse(frame)
 	default:
 		return nil, c.connLost(fmt.Errorf("client: unexpected frame kind %d for exec", kind))
 	}
@@ -299,6 +321,9 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	case wire.KindDone:
 		stop()
 		return &emptyRows{}, nil
+	case wire.KindRefuse:
+		stop()
+		return nil, c.midRefuse(frame)
 	default:
 		stop()
 		return nil, c.connLost(fmt.Errorf("client: unexpected frame kind %d for query", kind))
@@ -383,6 +408,8 @@ func (r *rows) requestNext() error {
 		return nil
 	case wire.KindError:
 		return decodeError(frame)
+	case wire.KindRefuse:
+		return r.c.midRefuse(frame)
 	default:
 		return r.c.connLost(fmt.Errorf("client: unexpected frame kind %d for query", kind))
 	}
@@ -400,6 +427,8 @@ func (r *rows) awaitDone() error {
 		return nil
 	case wire.KindError:
 		return decodeError(frame)
+	case wire.KindRefuse:
+		return r.c.midRefuse(frame)
 	default:
 		return r.c.connLost(fmt.Errorf("client: expected done, got frame kind %d", kind))
 	}

@@ -32,6 +32,8 @@ type info struct {
 	Have   int
 	Know   int
 	Origin string
+	PID    int
+	Conns  int
 }
 
 // Driver opens one wire connection per database/sql pooled connection.
@@ -51,7 +53,7 @@ func Info(ctx context.Context, sock string) (info, error) {
 	if err := c.handshake(ctx); err != nil {
 		return info{}, err
 	}
-	return info{Have: c.have, Know: c.know, Origin: c.origin}, nil
+	return info{Have: c.have, Know: c.know, Origin: c.origin, PID: c.pid, Conns: c.conns}, nil
 }
 
 func dialSock(ctx context.Context, sock string) (net.Conn, error) {

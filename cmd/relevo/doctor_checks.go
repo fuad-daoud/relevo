@@ -14,6 +14,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -56,6 +58,26 @@ func databaseCheck(st *store.Store) doctor.Check {
 	}
 	c.Detail = fmt.Sprintf("%s · %s · schema v%d · %d live, %d archived",
 		path, view.HumanBytes(size), version, live, archived)
+	return c
+}
+
+// ownerCheck is doctor's `owner` row: whether the daemon serves relevo.sock,
+// and what it answers. A refused dial or an absent socket warns with the fix,
+// since a daemon that predates the socket still runs.
+func ownerCheck(status db.OwnerStatus, probeErr error) doctor.Check {
+	c := doctor.Check{Name: "owner", Severity: doctor.SevOK}
+	if probeErr != nil {
+		c.Severity = doctor.SevWarn
+		detail := probeErr.Error()
+		if status.Socket != "" {
+			detail = status.Socket + " · " + detail
+		}
+		c.Detail = detail
+		c.Fix = "start the daemon: relevo daemon"
+		return c
+	}
+	c.Detail = fmt.Sprintf("socket %s · pid %d · protocol %s v%d · %d connections",
+		status.Socket, status.PID, wire.Proto, status.Version, status.Conns)
 	return c
 }
 
