@@ -323,17 +323,36 @@ func checkSpendLocalDays(t *testing.T, rep Report) {
 	}
 }
 
-// TestGroupRows pins the repo and feature buckets, their breakdowns and the
-// feature-less NoFeature group.
+// TestGroupRows pins the repo buckets, their per-repo feature and ticket
+// children, and the per-repo feature-less and ticket-less buckets .
 func TestGroupRows(t *testing.T) {
 	t.Parallel()
+	for _, c := range groupRowCases() {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			c.check(t, Build(Inputs{Rows: c.rows, Landed: c.landed, Until: stNow, Loc: time.UTC}))
+		})
+	}
+}
 
-	cases := []struct {
-		name   string
-		rows   []db.RoundRow
-		landed map[string]bool
-		check  func(t *testing.T, rep Report)
-	}{
+// groupRowCase is one TestGroupRows case.
+type groupRowCase struct {
+	name   string
+	rows   []db.RoundRow
+	landed map[string]bool
+	check  func(t *testing.T, rep Report)
+}
+
+// groupRowCases is TestGroupRows' table: the repo-scoping cases and the
+// breakdown cases a repo row carries.
+func groupRowCases() []groupRowCase {
+	return append(repoScopedRowCases(), breakdownRowCases()...)
+}
+
+// repoScopedRowCases pins the repo buckets, their per-repo children and the
+// per-repo (no feature)/(no ticket) buckets .
+func repoScopedRowCases() []groupRowCase {
+	return []groupRowCase{
 		{
 			name: "rounds per land and an unlanded group",
 			rows: []db.RoundRow{
@@ -347,24 +366,39 @@ func TestGroupRows(t *testing.T) {
 			check:  checkGroupLanded,
 		},
 		{
-			name: "feature-less rows bucket into NoFeature",
+			name: "one label under two repos",
 			rows: []db.RoundRow{
-				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
-				{BindingID: "b2", Repo: stStr("A"), Outcome: db.OutcomeReported},
-				{BindingID: "b3", Repo: stStr("A"), Outcome: db.OutcomeHalted},
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("shared"), InTokens: stI64(10)},
+				{BindingID: "b2", Repo: stStr("A"), Feature: stStr("shared"), InTokens: stI64(5)},
+				{BindingID: "b3", Repo: stStr("B"), Feature: stStr("shared"), InTokens: stI64(100)},
 			},
-			check: checkGroupNoFeature,
+			check: checkGroupLabelAcrossRepos,
 		},
 		{
-			name: "ticket rows and the no-ticket bucket",
+			name: "per-repo (no feature) and (no ticket) numbers",
 			rows: []db.RoundRow{
-				{BindingID: "b1", Ticket: stStr("o/r#607"), Outcome: db.OutcomeReported},
-				{BindingID: "b2", Ticket: stStr("#607"), Outcome: db.OutcomeReported},
-				{BindingID: "b3", Outcome: db.OutcomeHalted},
-				{BindingID: "b4", Outcome: db.OutcomeHalted},
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Ticket: stStr("t1")},
+				{BindingID: "b2", Repo: stStr("A")},
+				{BindingID: "b3", Repo: stStr("A"), Feature: stStr("f1")},
+				{BindingID: "b4", Repo: stStr("B")},
 			},
-			check: checkGroupTickets,
+			check: checkGroupRepoNoneBuckets,
 		},
+		{
+			name: "a repo with no labels expands to nothing",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1")},
+				{BindingID: "b2", Repo: stStr("B")},
+				{BindingID: "b3", Repo: stStr("B")},
+			},
+			check: checkGroupUnlabelledRepo,
+		},
+	}
+}
+
+// breakdownRowCases pins the per-group breakdowns a repo row carries.
+func breakdownRowCases() []groupRowCase {
+	return []groupRowCase{
 		{
 			name: "bindings, reports, commits and candidates",
 			rows: []db.RoundRow{
@@ -376,7 +410,7 @@ func TestGroupRows(t *testing.T) {
 			check: checkGroupBreakdowns,
 		},
 		{
-			name: "tokens per repo and feature",
+			name: "tokens per repo and child",
 			rows: []db.RoundRow{
 				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), InTokens: stI64(10), OutTokens: stI64(5)},
 				{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f1"), CacheTokens: stI64(100)},
@@ -385,12 +419,10 @@ func TestGroupRows(t *testing.T) {
 			},
 			check: checkGroupTokens,
 		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			c.check(t, Build(Inputs{Rows: c.rows, Landed: c.landed, Until: stNow, Loc: time.UTC}))
-		})
+		{
+			name:  "no rows builds no repos",
+			check: checkGroupNoRows,
+		},
 	}
 }
 
@@ -405,45 +437,95 @@ func checkGroupLanded(t *testing.T, rep Report) {
 	if a.RoundsPerLand != 1.5 {
 		t.Errorf("repo A rounds/land = %v, want 1.5 (3 rounds over 2 landed)", a.RoundsPerLand)
 	}
+	if len(a.Features) != 1 || a.Features[0].Key != "f1" || a.Features[0].Rounds != 3 ||
+		a.Features[0].Landed != 2 || a.Features[0].RoundsPerLand != 1.5 {
+		t.Errorf("repo A features = %+v, want f1 with 3 rounds, 2 landed, 1.5 rounds/land", a.Features)
+	}
+	if a.NoFeature.Key != "(none)" || a.NoFeature.Rounds != 1 {
+		t.Errorf("repo A NoFeature = %+v, want the one unlabelled halt", a.NoFeature)
+	}
 	b := rep.Repos[1]
 	if b.Landed != 0 || b.RoundsPerLand != 0 {
 		t.Errorf("repo B = %+v, want 0 landed and 0 rounds/land", b)
 	}
-	if len(rep.Features) != 2 {
-		t.Fatalf("features = %+v, want f1 and f2", rep.Features)
-	}
-	f1 := rep.Features[0]
-	if f1.Key != "f1" || f1.Rounds != 3 || f1.Landed != 2 || f1.RoundsPerLand != 1.5 {
-		t.Errorf("feature f1 = %+v, want 3 rounds, 2 landed, 1.5 rounds/land", f1)
+	if len(b.Features) != 1 || b.Features[0].Key != "f2" {
+		t.Errorf("repo B features = %+v, want f2", b.Features)
 	}
 }
 
-func checkGroupNoFeature(t *testing.T, rep Report) {
-	if rep.NoFeature.Rounds != 2 || rep.NoFeature.Key != "(none)" {
-		t.Fatalf("NoFeature = %+v, want 2 rounds keyed (none)", rep.NoFeature)
+// checkGroupLabelAcrossRepos pins the repo scoping: one label two repos use
+// appears under each with only that repo's rows counted.
+func checkGroupLabelAcrossRepos(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, r := range rep.Repos {
+		byKey[r.Key] = r
 	}
-	if len(rep.Features) != 1 || rep.Features[0].Key != "f1" {
-		t.Fatalf("Features = %+v, want only f1", rep.Features)
+	a := byKey["A"]
+	if len(a.Features) != 1 || a.Features[0].Key != "shared" {
+		t.Fatalf("repo A features = %+v, want one shared label", a.Features)
+	}
+	if a.Features[0].Rounds != 2 || a.Features[0].Tokens != 15 {
+		t.Errorf("A/shared = %+v, want 2 rounds and 15 tokens (its own rows only)", a.Features[0])
+	}
+	b := byKey["B"]
+	if len(b.Features) != 1 || b.Features[0].Key != "shared" {
+		t.Fatalf("repo B features = %+v, want one shared label", b.Features)
+	}
+	if b.Features[0].Rounds != 1 || b.Features[0].Tokens != 100 {
+		t.Errorf("B/shared = %+v, want 1 round and 100 tokens", b.Features[0])
 	}
 }
 
-// checkGroupTickets pins the ticket buckets and the (none) no-ticket group.
-func checkGroupTickets(t *testing.T, rep Report) {
-	byKey := map[string]GroupRow{}
-	for _, g := range rep.Tickets {
-		byKey[g.Key] = g
+// checkGroupRepoNoneBuckets pins the per-repo (no feature) and (no ticket)
+// numbers and the repo's own labelled tickets.
+func checkGroupRepoNoneBuckets(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, r := range rep.Repos {
+		byKey[r.Key] = r
 	}
-	if len(rep.Tickets) != 2 {
-		t.Fatalf("Tickets = %+v, want o/r#607 and #607", rep.Tickets)
+	a := byKey["A"]
+	if a.NoFeature.Key != "(none)" || a.NoFeature.Rounds != 1 {
+		t.Errorf("A NoFeature = %+v, want 1 round keyed (none)", a.NoFeature)
 	}
-	if got := byKey["o/r#607"].Rounds; got != 1 {
-		t.Errorf("o/r#607 Rounds = %d, want 1", got)
+	if a.NoTicket.Key != "(none)" || a.NoTicket.Rounds != 2 {
+		t.Errorf("A NoTicket = %+v, want 2 rounds keyed (none)", a.NoTicket)
 	}
-	if got := byKey["#607"].Rounds; got != 1 {
-		t.Errorf("#607 Rounds = %d, want 1", got)
+	if len(a.Tickets) != 1 || a.Tickets[0].Key != "t1" || a.Tickets[0].Rounds != 1 {
+		t.Errorf("A tickets = %+v, want t1 with 1 round", a.Tickets)
 	}
-	if rep.NoTicket.Key != "(none)" || rep.NoTicket.Rounds != 2 {
-		t.Fatalf("NoTicket = %+v, want 2 rounds keyed (none)", rep.NoTicket)
+	b := byKey["B"]
+	if b.NoFeature.Rounds != 1 || b.NoTicket.Rounds != 1 {
+		t.Errorf("B none buckets = %+v/%+v, want 1 round each", b.NoFeature, b.NoTicket)
+	}
+	if len(b.Features) != 0 || len(b.Tickets) != 0 {
+		t.Errorf("B children = %+v/%+v, want none (no labels)", b.Features, b.Tickets)
+	}
+}
+
+// checkGroupUnlabelledRepo pins the issue's "a repo with nothing to show
+// expands to nothing": no labelled children, the whole count in each (none)
+// bucket.
+func checkGroupUnlabelledRepo(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, r := range rep.Repos {
+		byKey[r.Key] = r
+	}
+	b := byKey["B"]
+	if b.Rounds != 2 {
+		t.Fatalf("repo B = %+v, want 2 rounds", b)
+	}
+	if len(b.Features) != 0 || len(b.Tickets) != 0 {
+		t.Errorf("repo B children = %+v/%+v, want empty", b.Features, b.Tickets)
+	}
+	if b.NoFeature.Rounds != 2 || b.NoTicket.Rounds != 2 {
+		t.Errorf("repo B none buckets = %+v/%+v, want the whole 2 rounds each", b.NoFeature, b.NoTicket)
+	}
+}
+
+// checkGroupNoRows pins that no rows builds no repos.
+func checkGroupNoRows(t *testing.T, rep Report) {
+	if len(rep.Repos) != 0 {
+		t.Errorf("Repos = %+v, want none with no rows", rep.Repos)
 	}
 }
 
@@ -470,7 +552,7 @@ func checkGroupBreakdowns(t *testing.T, rep Report) {
 }
 
 func checkGroupTokens(t *testing.T, rep Report) {
-	byKey := map[string]GroupRow{}
+	byKey := map[string]RepoRow{}
 	for _, g := range rep.Repos {
 		byKey[g.Key] = g
 	}
@@ -483,15 +565,13 @@ func checkGroupTokens(t *testing.T, rep Report) {
 	if got := byKey["(none)"].Tokens; got != 0 {
 		t.Errorf("(none) Tokens = %d, want 0", got)
 	}
-	byFeature := map[string]GroupRow{}
-	for _, g := range rep.Features {
-		byFeature[g.Key] = g
+	a := byKey["A"]
+	if len(a.Features) != 1 || a.Features[0].Key != "f1" || a.Features[0].Tokens != 115 {
+		t.Errorf("A/f1 = %+v, want 115 tokens", a.Features)
 	}
-	if got := byFeature["f1"].Tokens; got != 115 {
-		t.Errorf("feature f1 Tokens = %d, want 115", got)
-	}
-	if got := byFeature["f2"].Tokens; got != 2 {
-		t.Errorf("feature f2 Tokens = %d, want 2", got)
+	b := byKey["B"]
+	if len(b.Features) != 1 || b.Features[0].Key != "f2" || b.Features[0].Tokens != 2 {
+		t.Errorf("B/f2 = %+v, want 2 tokens", b.Features)
 	}
 }
 

@@ -721,6 +721,50 @@ func statsOverviewReport() stats.Report {
 	})
 }
 
+// statsReposExpandedReport is the stats-repos-expanded-132 golden's report: a
+// Build over rows where one feature label and one ticket are used by two repos,
+// so each repo carries its own scoped numbers, plus unlabelled rounds, so the
+// (no feature) and (no ticket) rows show, and a repo with no labels at all.
+func statsReposExpandedReport() stats.Report {
+	s := func(v string) *string { return &v }
+	i64 := func(v int64) *int64 { return &v }
+	at := func(d, h int) time.Time { return time.Date(2026, 9, d, h, 0, 0, 0, time.Local) }
+	relevo := s("https://github.com/fuad-daoud/relevo")
+	money := s("https://github.com/fuad-daoud/money")
+	site := s("https://github.com/fuad-daoud/site")
+	shared := s("cockpit")
+	ticket := s("#665")
+
+	// One round's tokens, so relevo leads the table and its label leads its
+	// feature section.
+	row := func(binding string, repo, feature, tk *string, day int, in, out int64) db.RoundRow {
+		return db.RoundRow{
+			BindingID: binding, BindingName: binding, Repo: repo, Feature: feature, Ticket: tk,
+			StartedAt: at(day, 9), Outcome: db.OutcomeReported,
+			InTokens: i64(in), OutTokens: i64(out),
+		}
+	}
+
+	rows := []db.RoundRow{
+		// The shared label cockpit under relevo, counted on its own.
+		row("b1", relevo, shared, ticket, 10, 900_000, 100_000),
+		row("b1", relevo, shared, nil, 11, 900_000, 100_000),
+		// Relevo's unlabelled round: the (no feature) and (no ticket) rows.
+		row("b2", relevo, nil, nil, 12, 200_000, 20_000),
+		// The same label and ticket under money, counted on its own.
+		row("b3", money, shared, ticket, 13, 300_000, 30_000),
+		row("b4", money, nil, nil, 14, 100_000, 10_000),
+		// A repo with no labels at all: expanding it shows nothing.
+		row("b5", site, nil, nil, 15, 50_000, 5_000),
+	}
+	return stats.Build(stats.Inputs{
+		Rows:  rows,
+		Since: railNow.AddDate(0, 0, -29),
+		Until: railNow,
+		Loc:   time.Local,
+	})
+}
+
 // candKeys sends keys through a candidates golden model one at a time,
 // draining each key's command as the bubbletea loop would.
 func candKeys(t *testing.T, m Model, keys ...tea.KeyMsg) Model {
@@ -962,6 +1006,20 @@ func TestGoldenViews(t *testing.T) {
 			build: func(t *testing.T) Model {
 				m := goldenStatsModel(t, 132, 34, statsOverviewReport())
 				res, _ := m.Update(statsKey('5'))
+				return res.(Model)
+			},
+		},
+		{
+			name: "stats-repos-expanded-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenStatsModel(t, 132, 34, statsReposExpandedReport())
+				res, _ := m.Update(statsKey('5'))
+				m = res.(Model)
+				// space expands the first repo; j lands on its first child, so
+				// the band and the child detail block show.
+				res, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+				m = res.(Model)
+				res, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 				return res.(Model)
 			},
 		},

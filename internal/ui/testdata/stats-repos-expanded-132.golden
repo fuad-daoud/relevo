@@ -3,18 +3,18 @@
     overview     candidates     tokens     reliability     repos                                    window   7d   30d   90d   all   
                                                                                                                                     
    REPO                                                           RNDS  BINDINGS  DONE  HALTED  COMMITS   TOKENS         % TOKENS   
-   fuad-daoud/relevo                                                10         4     0       1        0     9.9M  ▇▇▇▇▇▇      56%   
-   fuad-daoud/money                                                  5         3     0       0        0     5.5M  ▇▇▇         31%   
-   fuad-daoud/site                                                   4         3     0       0        0     2.4M  ▇           13%   
+   fuad-daoud/relevo                                                 3         2     0       0        0     2.2M  ▇▇▇▇▇▇▇▇    82%   
+     cockpit                                                         2         1     0       0        0       2M  ▇▇▇▇▇▇▇     74%   
+     (no feature)                                                    1         1     0       0        0     220k  ▇            8%   
+     #665                                                            1         1     0       0        0       1M  ▇▇▇▇        37%   
+     (no ticket)                                                     2         2     0       0        0     1.2M  ▇▇▇▇        45%   
+   fuad-daoud/money                                                  2         2     0       0        0     440k  ▇▇          16%   
+   fuad-daoud/site                                                   1         1     0       0        0      55k               2%   
                                                                                                                                     
                                                                                                                                     
-   fuad-daoud/relevo   https://github.com/fuad-daoud/relevo                                                                         
-   10 rounds on 4 bindings   9.9M tokens, 56% of the window                                                                         
-   0 done · 1 halted · 0 commits                                                                                                    
-   by candidate: deepseek-v4.1-flash 4 rounds · glm-5.3-flash 3 rounds · kimi-k3 2 rounds                                           
-                                                                                                                                    
-                                                                                                                                    
-                                                                                                                                    
+   cockpit   feature                                                                                                                
+   2 rounds on 1 binding   2M tokens, 74% of the window                                                                             
+   0 done · 0 halted · 0 commits                                                                                                    
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     

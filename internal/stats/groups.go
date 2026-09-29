@@ -19,6 +19,18 @@ type GroupRow struct {
 	ByCandidate            map[string]int // round count per Candidate, nil skipped
 }
 
+// RepoRow is one repo bucket and its children: the repo's own GroupRow,
+// its labelled features and tickets, and the per-repo feature-less and
+// ticket-less buckets. A label two repos use appears under each with only that
+// repo's rows counted.
+type RepoRow struct {
+	GroupRow
+	Features  []GroupRow // only this repo's rows with a Feature
+	NoFeature GroupRow   // this repo's "(none)" feature bucket; zero when every row has a feature
+	Tickets   []GroupRow // only this repo's rows with a Ticket
+	NoTicket  GroupRow   // this repo's "(none)" ticket bucket; zero when every row has a ticket
+}
+
 type Outcomes struct {
 	ByRound  map[string]int // db outcome values: reported, halted, exited, switched, done_no_report, open
 	ByReport map[string]int // done, halted, blocked, deferred, "no outcome" (= unstructured)
@@ -120,6 +132,43 @@ func groupRows(in Inputs, rows []db.RoundRow, key func(db.RoundRow) (string, boo
 		return out[i].Key < out[j].Key
 	})
 	return out
+}
+
+// buildRepos groups the rows by repo and, inside each repo, by feature and by
+// ticket. A repo's children count only its own rows, so a label two repos use
+// appears under each with that repo's numbers . The repos come back in
+// groupRows order: rounds desc, key asc.
+func buildRepos(in Inputs, rows []db.RoundRow) []RepoRow {
+	byRepo := map[string][]db.RoundRow{}
+	for _, r := range rows {
+		k, ok := repoKey(r)
+		if !ok {
+			continue
+		}
+		byRepo[k] = append(byRepo[k], r)
+	}
+	groups := groupRows(in, rows, repoKey)
+	out := make([]RepoRow, 0, len(groups))
+	for _, g := range groups {
+		own := byRepo[g.Key]
+		out = append(out, RepoRow{
+			GroupRow:  g,
+			Features:  groupRows(in, own, featureKey),
+			NoFeature: noneRow(in, own, noFeatureKey),
+			Tickets:   groupRows(in, own, ticketKey),
+			NoTicket:  noneRow(in, own, noTicketKey),
+		})
+	}
+	return out
+}
+
+// noneRow is the single "(none)" bucket over rows, or the zero GroupRow when
+// no row lacks the label.
+func noneRow(in Inputs, rows []db.RoundRow, key func(db.RoundRow) (string, bool)) GroupRow {
+	if g := groupRows(in, rows, key); len(g) > 0 {
+		return g[0]
+	}
+	return GroupRow{}
 }
 
 func repoKey(r db.RoundRow) (string, bool) {

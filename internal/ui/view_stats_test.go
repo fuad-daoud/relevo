@@ -81,12 +81,17 @@ func statsFixture() stats.Report {
 				Since: at(24), Until: at(19).AddDate(0, 1, 0),
 			}},
 		},
-		Repos: []stats.GroupRow{
-			{Key: "https://github.com/fuad-daoud/relevo", Rounds: 5, Halted: 1, Landed: 1, CostUSD: 1.30, Tokens: 2_400_000, RoundsPerLand: 3.0},
-			{Key: "(none)", Rounds: 1, CostUSD: 0.10, Tokens: 100_000},
-		},
-		Features: []stats.GroupRow{
-			{Key: "cockpit", Rounds: 3, CostUSD: 0.90, Tokens: 1_500_000, Landed: 1, RoundsPerLand: 2.0},
+		Repos: []stats.RepoRow{
+			{
+				GroupRow: stats.GroupRow{Key: "https://github.com/fuad-daoud/relevo", Rounds: 5, Halted: 1, Landed: 1, CostUSD: 1.30, Tokens: 2_400_000, RoundsPerLand: 3.0},
+				Features: []stats.GroupRow{
+					{Key: "cockpit", Rounds: 3, CostUSD: 0.90, Tokens: 1_500_000, Landed: 1, RoundsPerLand: 2.0},
+				},
+				NoFeature: stats.GroupRow{Key: "(none)", Rounds: 2, Tokens: 900_000},
+			},
+			{
+				GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, CostUSD: 0.10, Tokens: 100_000},
+			},
 		},
 		Outcomes: stats.Outcomes{
 			ByRound: map[string]int{
@@ -96,6 +101,10 @@ func statsFixture() stats.Report {
 		},
 	}
 }
+
+// statsFixtureRepoKey is the fixture's one labelled repo, the repo the repos
+// tests expand and select.
+const statsFixtureRepoKey = "https://github.com/fuad-daoud/relevo"
 
 // statsTestView is a loaded stats view over the fixture.
 func statsTestView(window string) statsView {
@@ -149,6 +158,25 @@ func statsShell(t *testing.T, width, height int, window string) Model {
 	if _, ok := m.top().(statsView); !ok {
 		t.Fatalf(":stats must replace the stack, top is %T", m.top())
 	}
+	return m
+}
+
+// statsReposShell is statsShell at 160x40 with the report fed and the repos
+// tab open, already expanded on the given repo keys. It lets a test place the
+// cursor on a child row without pressing the expansion keys.
+func statsReposShell(t *testing.T, rep stats.Report, expanded ...string) Model {
+	t.Helper()
+	m := statsShell(t, 160, 40, "30d")
+	res, _ := m.Update(statsMsg{window: "30d", rep: rep})
+	m = res.(Model)
+	res, _ = m.Update(statsKey('5'))
+	m = res.(Model)
+	v := m.top().(statsView)
+	v.expanded = map[string]bool{}
+	for _, k := range expanded {
+		v.expanded[k] = true
+	}
+	m.stack[len(m.stack)-1] = v
 	return m
 }
 
@@ -370,7 +398,7 @@ func TestStatsOverviewColumnsAligned(t *testing.T) {
 	if tokEnd < 0 {
 		t.Fatalf("no TOKENS header:\n%s", body)
 	}
-	rows := append([]stats.GroupRow(nil), rep.Repos...)
+	rows := append([]stats.RepoRow(nil), rep.Repos...)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Tokens > rows[j].Tokens })
 	for i, g := range rows {
 		row := lines[repoHdr+1+i]
@@ -541,8 +569,8 @@ func TestStatsRefreshThrottle(t *testing.T) {
 
 // TestStatsFocusAndCursor ports the old two-panel focus test (S2): the tab bar
 // decides which panel owns ↑↓, and j/k move that panel's cursor within bounds
-// (§4.3, §4.4, §7). The repos cursor now indexes one combined list — the
-// fixture's two repos and its one feature — so j twice reaches index 2.
+// (§4.3, §4.4, §7). The repos cursor walks the visible rows: the fixture's two
+// repo rows while every repo is collapsed.
 func TestStatsFocusAndCursor(t *testing.T) {
 	env := statsTestEnv(t, 100, 30)
 	v := View(statsTestView("30d"))
@@ -553,18 +581,21 @@ func TestStatsFocusAndCursor(t *testing.T) {
 	if got := v.(statsView).focus; got != 1 {
 		t.Fatalf("repos tab: focus = %d, want 1", got)
 	}
-	// Two repos and one feature: j twice reaches the feature row at index 2.
-	for i := 0; i < 2; i++ {
-		next, _ = v.Update(statsKey('j'), env)
-		v = next
+	// Two collapsed repos: j once reaches the second, j again stays there.
+	next, _ = v.Update(statsKey('j'), env)
+	v = next
+	if got := v.(statsView).cursor[1]; got != 1 {
+		t.Errorf("cursor[1] = %d, want 1 (the second repo row)", got)
 	}
-	if got := v.(statsView).cursor[1]; got != 2 {
-		t.Errorf("cursor[1] = %d, want 2 (the feature row)", got)
+	next, _ = v.Update(statsKey('j'), env)
+	v = next
+	if got := v.(statsView).cursor[1]; got != 1 {
+		t.Errorf("cursor[1] = %d, want 1 (clamped at the visible list's end)", got)
 	}
 	next, _ = v.Update(statsKey('k'), env)
 	v = next
-	if got := v.(statsView).cursor[1]; got != 1 {
-		t.Errorf("cursor[1] = %d, want 1", got)
+	if got := v.(statsView).cursor[1]; got != 0 {
+		t.Errorf("cursor[1] = %d, want 0", got)
 	}
 	// The candidates tab focuses the candidates panel: k clamps at 0.
 	next, _ = v.Update(statsKey('2'), env)
@@ -2322,15 +2353,17 @@ func TestStatsTokensEmpty(t *testing.T) {
 	}
 }
 
-// TestStatsReposTabTables pins §4.2's repos tab at 132 columns: no titled
-// rule, no outcomes block, no dollars and no RNDS/LAND column; the repos
-// header names BINDINGS, COMMITS and % TOKENS; the features header begins FEATURE
-// and carries the same column heads at the same columns; the repos sit above
-// the features; and every line stays within w-3.
+// TestStatsReposTabTables pins §4.1's repos tab at 132 columns: one REPO table
+// with one cursor, no FEATURE or TICKET header, no titled rule, no outcomes
+// block, no dollars and no RNDS/LAND column; the header names BINDINGS,
+// COMMITS and % TOKENS; an expanded repo's children sit under it, indented two
+// cells inside the name column, their numbers and share on the repo rows'
+// columns; and every line stays within w-3.
 func TestStatsReposTabTables(t *testing.T) {
 	env := statsTestEnv(t, 132, 40)
 	v := statsTestView("30d")
 	v.tab = statsTabRepos
+	v.expanded = map[string]bool{statsFixtureRepoKey: true}
 
 	body := stripANSI(v.Body(env, 132, 40))
 	for _, gone := range []string{"──", "outcomes", "RNDS/LAND", "$"} {
@@ -2349,32 +2382,91 @@ func TestStatsReposTabTables(t *testing.T) {
 			t.Errorf("repos header = %q, want %s", lines[repoHdr], want)
 		}
 	}
-
-	featHdr := -1
-	for i, l := range lines {
-		if strings.HasPrefix(l, "   FEATURE") {
-			featHdr = i
-			break
+	for _, gone := range []string{"FEATURE", "TICKET"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the repos tab still shows a %s header:\n%s", gone, body)
 		}
 	}
-	if featHdr < 0 {
-		t.Fatalf("no features header:\n%s", body)
-	}
-	if featHdr <= repoHdr {
-		t.Errorf("the features header at line %d must follow the repos header at %d", featHdr, repoHdr)
+
+	// The table is four visible rows: the repo, its feature, its (no feature)
+	// row and the second repo. The child names are indented two cells inside
+	// the name column; the numbers and the share stay on the repo rows'
+	// columns, and the header's own "S" sits over every row's "%".
+	repoRow := repoHdr + 1
+	childRow := repoRow + 1
+	if got, want := statsFirstCol(lines[childRow]), statsFirstCol(lines[repoRow])+2; got != want {
+		t.Errorf("the child name starts at col %d, want %d (two cells inside the name column)\n%q\n%q",
+			got, want, lines[repoRow], lines[childRow])
 	}
 	repoEnd := statsColEnd(lines[repoHdr], "TOKENS")
-	featEnd := statsColEnd(lines[featHdr], "TOKENS")
-	if repoEnd < 0 || repoEnd != featEnd {
-		t.Errorf("TOKENS ends at %d on the repos header and %d on the features one, want the same column\n%q\n%q",
-			repoEnd, featEnd, lines[repoHdr], lines[featHdr])
+	if end := statsColEnd(lines[childRow], "1.5M"); end != repoEnd {
+		t.Errorf("the child's TOKENS ends at %d, want %d (the repo rows' column)\n%q", end, repoEnd, lines[childRow])
 	}
+	statsCheckShareAligned(t, lines, repoHdr, 4)
 
 	for i, line := range lines {
 		if got := len([]rune(strings.TrimRight(line, " "))); got > 132-3 {
 			t.Errorf("line %d trimmed width = %d, want <= %d\n%q", i, got, 132-3, line)
 		}
 	}
+}
+
+// TestStatsRepoChildren pins an expanded repo's children (§4.1): the labelled
+// features by tokens desc, then the (no feature) row when the repo has both a
+// labelled feature and a featureless round, then the labelled tickets and
+// (no ticket) under the same rule; a repo with no labels has no children.
+func TestStatsRepoChildren(t *testing.T) {
+	repo := stats.RepoRow{GroupRow: stats.GroupRow{Key: "r"}}
+
+	t.Run("labelled only", func(t *testing.T) {
+		labelled := repo
+		labelled.Features = []stats.GroupRow{{Key: "small", Tokens: 10}, {Key: "big", Tokens: 100}}
+		// Zero featureless rounds: no (no feature) row even though the bucket
+		// carries tokens.
+		labelled.NoFeature = stats.GroupRow{Key: "(none)", Tokens: 5}
+		got := repoChildren(labelled)
+		if len(got) != 2 {
+			t.Fatalf("children = %+v, want the two labelled features", got)
+		}
+		if got[0].group.Key != "big" || got[1].group.Key != "small" {
+			t.Errorf("children order = %q, %q; want big then small (tokens desc)", got[0].group.Key, got[1].group.Key)
+		}
+		for _, r := range got {
+			if r.kind != kindFeature || r.parent != "r" {
+				t.Errorf("child = %+v, want a feature of repo r", r)
+			}
+		}
+	})
+
+	t.Run("labelled and unlabelled", func(t *testing.T) {
+		mixed := repo
+		mixed.Features = []stats.GroupRow{{Key: "f1", Tokens: 100}}
+		mixed.NoFeature = stats.GroupRow{Key: "(none)", Rounds: 2, Tokens: 50}
+		mixed.Tickets = []stats.GroupRow{{Key: "t1", Tokens: 70}}
+		mixed.NoTicket = stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 5}
+		got := repoChildren(mixed)
+		want := []string{"f1", "(none)", "t1", "(none)"}
+		if len(got) != len(want) {
+			t.Fatalf("children = %+v, want %v", got, want)
+		}
+		for i, key := range want {
+			if got[i].group.Key != key {
+				t.Errorf("child %d = %q, want %q", i, got[i].group.Key, key)
+			}
+		}
+		if got[1].kind != kindFeature || got[3].kind != kindTicket {
+			t.Errorf("kinds = %v, %v; want the (none) buckets to keep their section's kind", got[1].kind, got[3].kind)
+		}
+	})
+
+	t.Run("unlabelled only", func(t *testing.T) {
+		plain := repo
+		plain.NoFeature = stats.GroupRow{Key: "(none)", Rounds: 3, Tokens: 30}
+		plain.NoTicket = stats.GroupRow{Key: "(none)", Rounds: 3, Tokens: 30}
+		if got := repoChildren(plain); len(got) != 0 {
+			t.Errorf("children = %+v, want none: with no labelled feature or ticket there is no section", got)
+		}
+	})
 }
 
 // statsCheckShareAligned asserts that on the line at lines[hdr], the "% TOKENS"
@@ -2407,18 +2499,19 @@ func statsCheckShareAligned(t *testing.T, lines []string, hdr, n int) {
 
 // TestStatsShareHeaderAligned pins round 5's fix: the "% TOKENS" header is
 // right-aligned over its cell, so its final "S" sits over the "%" of every
-// row's percentage. Checked on the repos tab golden model (§4.2, repos then
-// features tables) and on the overview's BUSIEST REPOS table (§4.8), both at
-// 132 columns.
+// row's percentage. Checked on the repos tab's one table (§4.2) expanded so
+// the children are rows too, and on the overview's BUSIEST REPOS table (§4.8),
+// both at 132 columns.
 func TestStatsShareHeaderAligned(t *testing.T) {
 	rep := statsFixture()
-	repos := append([]stats.GroupRow(nil), rep.Repos...)
+	repos := append([]stats.RepoRow(nil), rep.Repos...)
 	sort.SliceStable(repos, func(i, j int) bool { return repos[i].Tokens > repos[j].Tokens })
 
 	t.Run("repos tab", func(t *testing.T) {
 		env := statsTestEnv(t, 132, 40)
 		v := statsTestView("30d")
 		v.tab = statsTabRepos
+		v.expanded = map[string]bool{statsFixtureRepoKey: true}
 		body := stripANSI(v.Body(env, 132, 40))
 		lines := strings.Split(body, "\n")
 
@@ -2426,19 +2519,8 @@ func TestStatsShareHeaderAligned(t *testing.T) {
 		if repoHdr < 0 {
 			t.Fatalf("no repos header:\n%s", body)
 		}
-		statsCheckShareAligned(t, lines, repoHdr, len(repos))
-
-		featHdr := -1
-		for i, l := range lines {
-			if strings.HasPrefix(l, "   FEATURE") {
-				featHdr = i
-				break
-			}
-		}
-		if featHdr < 0 {
-			t.Fatalf("no features header:\n%s", body)
-		}
-		statsCheckShareAligned(t, lines, featHdr, len(rep.Features))
+		// Two repo rows plus the expanded repo's feature and (no feature).
+		statsCheckShareAligned(t, lines, repoHdr, len(repos)+2)
 	})
 
 	t.Run("overview", func(t *testing.T) {
@@ -2457,12 +2539,14 @@ func TestStatsShareHeaderAligned(t *testing.T) {
 
 // TestStatsReposTabDetail pins §4.3: the selected row's detail block names the
 // row and its kind, its round and binding totals with the window share, its
-// outcomes and its top candidates -- and a feature's line 1 ends `feature`.
+// outcomes and its top candidates -- and a feature child's line 1 ends
+// `feature`.
 func TestStatsReposTabDetail(t *testing.T) {
 	env := statsTestEnv(t, 132, 40)
 	rep := statsFixture()
-	rep.Repos[0].ByCandidate = map[string]int{"deepseek-v4.1-flash": 3}
-	v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos}
+	rep.Repos[0].GroupRow.ByCandidate = map[string]int{"deepseek-v4.1-flash": 3}
+	v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos,
+		expanded: map[string]bool{statsFixtureRepoKey: true}}
 
 	body := stripANSI(v.Body(env, 132, 40))
 	for _, want := range []string{"rounds on", "% of the window", "by candidate:", "deepseek-v4.1-flash"} {
@@ -2471,9 +2555,9 @@ func TestStatsReposTabDetail(t *testing.T) {
 		}
 	}
 
-	// The combined list is two repos then the feature: move onto the feature
-	// and check its detail's first line.
-	v.cursor[1] = 2
+	// The repo is row 0 and its feature child row 1: move onto the child and
+	// check its detail's first line.
+	v.cursor[1] = 1
 	lines, sel := v.reposTabLines(env, 132)
 	if sel < 0 || sel >= len(lines) {
 		t.Fatalf("sel = %d, want a line in the feature's block", sel)
@@ -2484,42 +2568,18 @@ func TestStatsReposTabDetail(t *testing.T) {
 	}
 }
 
-// TestStatsReposTabEnterFeature pins §4.4: enter on a feature row opens
-// `:rounds` filtered to that feature, with the window's since term.
-func TestStatsReposTabEnterFeature(t *testing.T) {
-	m := statsShell(t, 160, 40, "30d")
-	res, _ := m.Update(statsMsg{window: "30d", rep: statsFixture()})
-	m = res.(Model)
-	res, _ = m.Update(statsKey('5'))
-	m = res.(Model)
-	// Two repos then the fixture's one feature.
-	for i := 0; i < 2; i++ {
-		res, _ = m.Update(statsKey('j'))
-		m = res.(Model)
-	}
-	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = drain(t, res.(Model), cmd)
-	rv, ok := m.top().(roundsView)
-	if !ok {
-		t.Fatalf("enter on the feature row must push a rounds view, got %T", m.top())
-	}
-	if got, want := rv.dash.QueryText(), `feature:"cockpit" since:30d`; got != want {
-		t.Errorf("QueryText = %q, want %q", got, want)
-	}
-}
-
-// TestStatsReposNoFeatureRow pins §2.3: a report with a NoFeature bucket gets
-// a last features row named (no feature), enter on it notices instead of
-// pushing rounds, and an empty Features drops the row entirely.
+// TestStatsReposNoFeatureRow pins §2.3 at repo scope: a repo with both a
+// labelled feature and a featureless round ends its feature section with a
+// (no feature) row, enter on it notices instead of pushing rounds, and a repo
+// with no labelled features shows neither section, so nothing to show.
 func TestStatsReposNoFeatureRow(t *testing.T) {
-	rep := statsFixture()
-	rep.NoFeature = stats.GroupRow{Key: "(none)", Rounds: 5, Tokens: 500_000}
-
-	t.Run("last row and detail", func(t *testing.T) {
-		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos}
-		_, features, _ := v.repoTabRows()
-		if len(features) == 0 || features[len(features)-1].Key != "(none)" {
-			t.Fatalf("features = %+v, want a last (none) row", features)
+	t.Run("row and detail", func(t *testing.T) {
+		v := statsView{window: "30d", loaded: true, rep: statsFixture(), tab: statsTabRepos,
+			expanded: map[string]bool{statsFixtureRepoKey: true}}
+		children := repoChildren(v.rep.Repos[0])
+		if len(children) == 0 || children[len(children)-1].group.Key != "(none)" ||
+			children[len(children)-1].kind != kindFeature {
+			t.Fatalf("children = %+v, want a last (none) feature row", children)
 		}
 
 		body := stripANSI(v.Body(statsTestEnv(t, 132, 40), 132, 40))
@@ -2529,14 +2589,10 @@ func TestStatsReposNoFeatureRow(t *testing.T) {
 	})
 
 	t.Run("enter notices", func(t *testing.T) {
-		m := statsShell(t, 160, 40, "30d")
-		res, _ := m.Update(statsMsg{window: "30d", rep: rep})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('5'))
-		m = res.(Model)
-		// Two repos, then the fixture's one feature, then (no feature).
-		for i := 0; i < 3; i++ {
-			res, _ = m.Update(statsKey('j'))
+		// The fixture's repo relevo: its feature child then its (no feature).
+		m := statsReposShell(t, statsFixture(), statsFixtureRepoKey)
+		for i := 0; i < 2; i++ {
+			res, _ := m.Update(statsKey('j'))
 			m = res.(Model)
 		}
 		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -2549,21 +2605,20 @@ func TestStatsReposNoFeatureRow(t *testing.T) {
 		}
 	})
 
-	t.Run("no features means no row", func(t *testing.T) {
-		rep2 := statsFixture()
-		rep2.Features = nil
-		rep2.NoFeature = stats.GroupRow{Key: "(none)", Rounds: 5, Tokens: 500_000}
-		v := statsView{window: "30d", loaded: true, rep: rep2, tab: statsTabRepos}
-		_, features, _ := v.repoTabRows()
-		if len(features) != 0 {
-			t.Fatalf("features = %+v, want none when Features is empty", features)
+	t.Run("a repo with no labelled features shows nothing", func(t *testing.T) {
+		rep := statsFixture()
+		rep.Repos[0].Features = nil
+		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos,
+			expanded: map[string]bool{statsFixtureRepoKey: true}}
+		if got := repoChildren(rep.Repos[0]); len(got) != 0 {
+			t.Fatalf("children = %+v, want none when the repo has no labelled feature", got)
 		}
 		body := stripANSI(v.Body(statsTestEnv(t, 132, 40), 132, 40))
 		if strings.Contains(body, "(no feature)") {
-			t.Errorf("repos tab shows (no feature) with no features table:\n%s", body)
+			t.Errorf("repos tab shows (no feature) with no labelled feature:\n%s", body)
 		}
 		if strings.Contains(body, "FEATURE") {
-			t.Errorf("repos tab shows a features header with no features:\n%s", body)
+			t.Errorf("repos tab shows a FEATURE header:\n%s", body)
 		}
 	})
 }
@@ -2784,28 +2839,31 @@ func TestStatsGateReasonHTTPStatus(t *testing.T) {
 	}
 }
 
-// TestStatsReposTicketRows pins #637: a report with Tickets gets a TICKET
-// table under the features one, a last (no ticket) row for the unlabelled
-// bucket, and the three tables share one cursor.
+// TestStatsReposTicketRows pins #637 at repo scope: a repo with both a
+// labelled ticket and an unlabelled round ends its ticket section with a
+// (no ticket) row, the visible rows share one cursor, and a repo with no
+// labelled tickets has no ticket section.
 func TestStatsReposTicketRows(t *testing.T) {
 	rep := statsFixture()
-	rep.Tickets = []stats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
-	rep.NoTicket = stats.GroupRow{Key: "(none)", Rounds: 4, Tokens: 400_000}
+	rep.Repos[0].Tickets = []stats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
+	rep.Repos[0].NoTicket = stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 400_000}
 
-	t.Run("table and detail", func(t *testing.T) {
-		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos}
-		repos, features, tickets := v.repoTabRows()
-		if len(tickets) != 2 || tickets[len(tickets)-1].Key != "(none)" {
-			t.Fatalf("tickets = %+v, want o/r#607 then a last (none) row", tickets)
+	t.Run("rows and detail", func(t *testing.T) {
+		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos,
+			expanded: map[string]bool{statsFixtureRepoKey: true}}
+		children := repoChildren(rep.Repos[0])
+		if len(children) != 4 || children[2].group.Key != "o/r#607" || children[3].group.Key != "(none)" {
+			t.Fatalf("children = %+v, want the feature, (no feature), the ticket and (no ticket)", children)
 		}
 		v.focus = 1
-		if v.panelRows() != len(repos)+len(features)+len(tickets) {
-			t.Fatalf("panelRows = %d, want the three tables' rows together", v.panelRows())
+		// The repo, its four children, then the second repo.
+		if got := v.panelRows(); got != 6 {
+			t.Fatalf("panelRows = %d, want 6 visible rows", got)
 		}
 
 		body := stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60))
-		if !strings.Contains(body, "   TICKET") {
-			t.Errorf("repos tab missing the TICKET header:\n%s", body)
+		if strings.Contains(body, "TICKET") {
+			t.Errorf("repos tab still shows a TICKET header:\n%s", body)
 		}
 		if !strings.Contains(body, "o/r#607") {
 			t.Errorf("repos tab missing the ticket row:\n%s", body)
@@ -2814,8 +2872,8 @@ func TestStatsReposTicketRows(t *testing.T) {
 			t.Errorf("repos tab missing the (no ticket) row:\n%s", body)
 		}
 
-		// The last row is the (no ticket) bucket, and its detail names it.
-		v.cursor[1] = len(repos) + len(features) + 1
+		// The (no ticket) row is the repo's last child, and its detail names it.
+		v.cursor[1] = 4
 		lines, sel := v.reposTabLines(statsTestEnv(t, 132, 60), 132)
 		if sel < 0 || sel >= len(lines) {
 			t.Fatalf("sel = %d, want a line in the (no ticket) block", sel)
@@ -2826,36 +2884,11 @@ func TestStatsReposTicketRows(t *testing.T) {
 		}
 	})
 
-	t.Run("enter opens the ticket filter", func(t *testing.T) {
-		m := statsShell(t, 160, 40, "30d")
-		res, _ := m.Update(statsMsg{window: "30d", rep: rep})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('5'))
-		m = res.(Model)
-		// Two repos, the fixture's one feature, then the first ticket row.
-		for i := 0; i < 3; i++ {
-			res, _ = m.Update(statsKey('j'))
-			m = res.(Model)
-		}
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		rv, ok := m.top().(roundsView)
-		if !ok {
-			t.Fatalf("enter on the ticket row must push a rounds view, got %T", m.top())
-		}
-		if got, want := rv.dash.QueryText(), `ticket:"o/r#607" since:30d`; got != want {
-			t.Errorf("QueryText = %q, want %q", got, want)
-		}
-	})
-
 	t.Run("no-ticket row notices", func(t *testing.T) {
-		m := statsShell(t, 160, 40, "30d")
-		res, _ := m.Update(statsMsg{window: "30d", rep: rep})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('5'))
-		m = res.(Model)
+		// The repo row, its feature, (no feature), the ticket and (no ticket).
+		m := statsReposShell(t, rep, statsFixtureRepoKey)
 		for i := 0; i < 4; i++ {
-			res, _ = m.Update(statsKey('j'))
+			res, _ := m.Update(statsKey('j'))
 			m = res.(Model)
 		}
 		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -2868,19 +2901,237 @@ func TestStatsReposTicketRows(t *testing.T) {
 		}
 	})
 
-	t.Run("no tickets means no table", func(t *testing.T) {
-		rep2 := statsFixture()
-		v := statsView{window: "30d", loaded: true, rep: rep2, tab: statsTabRepos}
-		_, _, tickets := v.repoTabRows()
-		if len(tickets) != 0 {
-			t.Fatalf("tickets = %+v, want none when Tickets is empty", tickets)
+	t.Run("no labelled tickets means no section", func(t *testing.T) {
+		v := statsView{window: "30d", loaded: true, rep: statsFixture(), tab: statsTabRepos,
+			expanded: map[string]bool{statsFixtureRepoKey: true}}
+		if got := repoChildren(v.rep.Repos[0]); len(got) != 2 {
+			t.Fatalf("children = %+v, want only the feature section", got)
 		}
 		body := stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60))
 		if strings.Contains(body, "TICKET") {
-			t.Errorf("repos tab shows a TICKET header with no tickets:\n%s", body)
+			t.Errorf("repos tab shows a TICKET header with no labelled tickets:\n%s", body)
 		}
 		if strings.Contains(body, "(no ticket)") {
-			t.Errorf("repos tab shows (no ticket) with no tickets table:\n%s", body)
+			t.Errorf("repos tab shows (no ticket) with no labelled tickets:\n%s", body)
 		}
 	})
+}
+
+// TestStatsReposExpandKeys pins §4.1's expansion keys: space toggles the repo
+// owning the selected row, → expands it, ← collapses it, several repos may be
+// expanded at once, expanding never moves the cursor, and ← on a child lands
+// the cursor on that repo's row.
+func TestStatsReposExpandKeys(t *testing.T) {
+	env := statsTestEnv(t, 100, 30)
+	// A second labelled repo, so both repos have children to expand.
+	rep := statsFixture()
+	rep.Repos[1].Features = []stats.GroupRow{{Key: "loose", Tokens: 50_000}}
+	rep.Repos[1].NoFeature = stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 50_000}
+	v := View(statsView{window: "30d", loaded: true, rep: rep})
+
+	next, _ := v.Update(statsKey('5'), env)
+	v = next
+
+	// space expands the selected repo in place: the cursor does not move.
+	next, _ = v.Update(tea.KeyMsg{Type: tea.KeySpace}, env)
+	v = next
+	got := v.(statsView)
+	if !got.expanded[statsFixtureRepoKey] {
+		t.Fatalf("space must expand the selected repo: expanded = %v", got.expanded)
+	}
+	if got.cursor[1] != 0 {
+		t.Errorf("expanding must not move the cursor: cursor[1] = %d, want 0", got.cursor[1])
+	}
+	if n := got.panelRows(); n != 4 {
+		t.Errorf("panelRows = %d, want 4 (two repos plus the first repo's two children)", n)
+	}
+
+	// space again collapses it.
+	next, _ = v.Update(tea.KeyMsg{Type: tea.KeySpace}, env)
+	v = next
+	if got := v.(statsView); got.expanded[statsFixtureRepoKey] {
+		t.Errorf("space must collapse the expanded repo: expanded = %v", got.expanded)
+	}
+
+	// → expands, and two repos may be expanded at once.
+	next, _ = v.Update(statsKey('j'), env) // onto the second repo
+	v = next
+	next, _ = v.Update(tea.KeyMsg{Type: tea.KeyRight}, env)
+	v = next
+	next, _ = v.Update(statsKey('k'), env) // back onto the first repo
+	v = next
+	next, _ = v.Update(tea.KeyMsg{Type: tea.KeyRight}, env)
+	v = next
+	got = v.(statsView)
+	if !got.expanded[statsFixtureRepoKey] || !got.expanded["(none)"] {
+		t.Fatalf("→ must expand both repos: expanded = %v", got.expanded)
+	}
+	if n := got.panelRows(); n != 6 {
+		t.Errorf("panelRows = %d, want 6 (two repos, each with two children)", n)
+	}
+
+	// ← collapses the selected repo only.
+	next, _ = v.Update(tea.KeyMsg{Type: tea.KeyLeft}, env)
+	v = next
+	got = v.(statsView)
+	if got.expanded[statsFixtureRepoKey] || !got.expanded["(none)"] {
+		t.Errorf("← must collapse only the selected repo: expanded = %v", got.expanded)
+	}
+
+	// ← on a child lands the cursor on its repo's row.
+	next, _ = v.Update(statsKey('j'), env) // onto the (none) repo
+	v = next
+	next, _ = v.Update(statsKey('j'), env) // onto that repo's first child
+	v = next
+	got = v.(statsView)
+	if got.cursor[1] != 2 {
+		t.Fatalf("cursor[1] = %d, want 2 (the child row)", got.cursor[1])
+	}
+	next, _ = v.Update(tea.KeyMsg{Type: tea.KeyLeft}, env)
+	v = next
+	got = v.(statsView)
+	if got.expanded["(none)"] {
+		t.Errorf("← on a child must collapse its repo: expanded = %v", got.expanded)
+	}
+	if got.cursor[1] != 1 {
+		t.Errorf("← on a child must land the cursor on the repo's row: cursor[1] = %d, want 1", got.cursor[1])
+	}
+}
+
+// TestStatsReposVisibleCursor pins §4.1's cursor: ↑↓ walk only the visible rows
+// and stop at the list's ends, and a collapsed repo's children are unreachable.
+func TestStatsReposVisibleCursor(t *testing.T) {
+	env := statsTestEnv(t, 100, 30)
+	v := View(statsTestView("30d"))
+	next, _ := v.Update(statsKey('5'), env)
+	v = next
+
+	// Collapsed: two repo rows, so ↓ twice stops at 1.
+	for i := 0; i < 2; i++ {
+		next, _ = v.Update(statsKey('j'), env)
+		v = next
+	}
+	if got := v.(statsView).cursor[1]; got != 1 {
+		t.Errorf("collapsed: cursor[1] = %d, want 1", got)
+	}
+
+	// Expanding the first repo makes its two children reachable.
+	next, _ = v.Update(statsKey('k'), env)
+	v = next
+	next, _ = v.Update(tea.KeyMsg{Type: tea.KeyRight}, env)
+	v = next
+	if got := v.(statsView).panelRows(); got != 4 {
+		t.Fatalf("panelRows = %d, want 4", got)
+	}
+	for i := 0; i < 3; i++ {
+		next, _ = v.Update(statsKey('j'), env)
+		v = next
+	}
+	if got := v.(statsView).cursor[1]; got != 3 {
+		t.Errorf("expanded: cursor[1] = %d, want 3 (the last visible row)", got)
+	}
+	for i := 0; i < 5; i++ {
+		next, _ = v.Update(statsKey('j'), env)
+		v = next
+	}
+	if got := v.(statsView).cursor[1]; got != 3 {
+		t.Errorf("expanded: cursor[1] = %d, want 3 (clamped at the visible list's end)", got)
+	}
+
+	// ← on a child collapses its repo, lands the cursor on the repo row, and
+	// the hidden children are unreachable again.
+	next, _ = v.Update(statsKey('k'), env)
+	v = next
+	next, _ = v.Update(statsKey('k'), env)
+	v = next
+	if got := v.(statsView).cursor[1]; got != 1 {
+		t.Fatalf("cursor[1] = %d, want 1 (the feature child)", got)
+	}
+	next, _ = v.Update(tea.KeyMsg{Type: tea.KeyLeft}, env)
+	v = next
+	got := v.(statsView)
+	if got.cursor[1] != 0 || len(got.repoTabRows()) != 2 {
+		t.Errorf("after collapsing: cursor[1] = %d over %d rows, want 0 over 2", got.cursor[1], len(got.repoTabRows()))
+	}
+}
+
+// TestStatsReposExpansionSurvivesRefresh pins §4.1: expansion is view state
+// keyed by repo key, so a fresh statsMsg (a tick, r or w reply) leaves it
+// untouched and the children stay shown.
+func TestStatsReposExpansionSurvivesRefresh(t *testing.T) {
+	m := statsShell(t, 160, 40, "30d")
+	res, _ := m.Update(statsMsg{window: "30d", rep: statsFixture()})
+	m = res.(Model)
+	res, _ = m.Update(statsKey('5'))
+	m = res.(Model)
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = res.(Model)
+
+	res, _ = m.Update(statsMsg{window: "30d", rep: statsFixture()})
+	m = res.(Model)
+	v := m.top().(statsView)
+	if !v.expanded[statsFixtureRepoKey] {
+		t.Fatalf("a fresh statsMsg dropped the expansion: expanded = %v", v.expanded)
+	}
+	if body := stripANSI(m.View()); !strings.Contains(body, "cockpit") {
+		t.Errorf("the expanded repo's child is gone after a refresh:\n%s", body)
+	}
+}
+
+// TestStatsReposChildEnter pins §4.4: enter on a feature child opens `:rounds`
+// scoped to its repo and its label, enter on a ticket child likewise, the
+// (no feature)/(no ticket) rows keep their notices, and a child of the (none)
+// repo notices because no query term means "no repo".
+func TestStatsReposChildEnter(t *testing.T) {
+	cases := []struct {
+		name         string
+		expanded     []string
+		downs        int
+		want         string
+		wantNotice   string
+		labelledNone bool
+	}{
+		{name: "feature child", expanded: []string{statsFixtureRepoKey}, downs: 1,
+			want: `repo:"https://github.com/fuad-daoud/relevo" feature:"cockpit" since:30d`},
+		{name: "ticket child", expanded: []string{statsFixtureRepoKey}, downs: 3,
+			want: `repo:"https://github.com/fuad-daoud/relevo" ticket:"o/r#607" since:30d`},
+		{name: "no feature child", expanded: []string{statsFixtureRepoKey}, downs: 2,
+			wantNotice: "rounds with no feature cannot be filtered"},
+		{name: "child of the (none) repo", expanded: []string{"(none)"}, downs: 2,
+			wantNotice: "rounds with no repo cannot be filtered", labelledNone: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rep := statsFixture()
+			rep.Repos[0].Tickets = []stats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
+			if c.labelledNone {
+				// A label on the (none) repo, so it has a child to select.
+				rep.Repos[1].Features = []stats.GroupRow{{Key: "loose", Rounds: 1, Tokens: 50_000}}
+				rep.Repos[1].NoFeature = stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 50_000}
+			}
+			m := statsReposShell(t, rep, c.expanded...)
+			for i := 0; i < c.downs; i++ {
+				res, _ := m.Update(statsKey('j'))
+				m = res.(Model)
+			}
+			res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = drain(t, res.(Model), cmd)
+			if c.wantNotice != "" {
+				if _, ok := m.top().(roundsView); ok {
+					t.Fatal("this row must not push a rounds view")
+				}
+				if !strings.Contains(m.notice, c.wantNotice) {
+					t.Errorf("notice = %q, want %q", m.notice, c.wantNotice)
+				}
+				return
+			}
+			rv, ok := m.top().(roundsView)
+			if !ok {
+				t.Fatalf("enter on a child must push a rounds view, got %T", m.top())
+			}
+			if got := rv.dash.QueryText(); got != c.want {
+				t.Errorf("QueryText = %q, want %q", got, c.want)
+			}
+		})
+	}
 }
