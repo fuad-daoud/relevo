@@ -63,3 +63,35 @@ func TestEnsureStateRoot(t *testing.T) {
 		}
 	})
 }
+
+// TestEnsureStateRootIsOwnerOnly pins that the root EnsureStateRoot creates is
+// 0700. It compares against a same-umask control directory and skips when the
+// umask leaves the control's owner bits clear, because then 0755 and 0700 are
+// indistinguishable and the assertion could not fail.
+func TestEnsureStateRootIsOwnerOnly(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "serve")
+
+	control := filepath.Join(parent, "control")
+	if err := os.Mkdir(control, 0o755); err != nil {
+		t.Fatalf("mkdir control: %v", err)
+	}
+	controlInfo, err := os.Stat(control)
+	if err != nil {
+		t.Fatalf("stat control: %v", err)
+	}
+	if want := controlInfo.Mode().Perm() & 0o700; want != 0o700 {
+		t.Skipf("umask masks the owner bits (control %o), so 0755 and 0700 are indistinguishable", controlInfo.Mode().Perm())
+	}
+
+	if err := EnsureStateRoot(root); err != nil {
+		t.Fatalf("EnsureStateRoot: %v", err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatalf("stat root: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("state root mode = %o, want 700", got)
+	}
+}

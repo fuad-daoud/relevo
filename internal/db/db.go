@@ -98,6 +98,13 @@ func open(path string, o Options) (_ *DB, err error) {
 	}
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)", path, busy, journalSizeLimit)
 
+	// Create the file ourselves first, so it -- and the -wal and -shm siblings
+	// sqlite derives from its mode -- is owner-only from the instant it exists,
+	// not only after the chmods below.
+	if err = ensurePrivateFile(path); err != nil {
+		return nil, fmt.Errorf("db: open %s: create: %w: %w", path, ErrOpen, err)
+	}
+
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: %w: %w", path, ErrOpen, err)
@@ -190,12 +197,15 @@ func (d *DB) Close() error {
 	return nil
 }
 
-// BackupTo copies the whole database to path with VACUUM INTO. A path that
-// already exists is refused, because VACUUM INTO would overwrite it.
+// BackupTo copies the whole database to path with VACUUM INTO. The target is
+// pre-created owner-only, so the copy never exists world-readable even for the
+// instant before the chmod; a path that already exists is refused, because
+// VACUUM INTO would overwrite it.
 func (d *DB) BackupTo(path string) error {
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("db: backup to %s: file already exists: %w", path, ErrInvalid)
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := createFile(path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("db: backup to %s: file already exists: %w", path, ErrInvalid)
+		}
 		return fmt.Errorf("db: backup to %s: %w", path, mapBusy(err))
 	}
 
@@ -306,6 +316,40 @@ func mapBusy(err error) error {
 		return ErrBusy
 	}
 	return err
+}
+
+// createFileMode is the mode a fresh database or backup target is created
+// with: owner-only, because the database holds secrets. Creating the file first
+// also gives sqlite a mode to derive its -wal and -shm siblings from.
+const createFileMode = 0o600
+
+// createFile creates path owner-only before sqlite sees it. O_EXCL makes a file
+// that appeared meanwhile -- a concurrent first open, or an existing backup
+// target -- an os.ErrExist rather than a clobber; the caller decides what that
+// means. It is a var so a test can record the mode the file is created with,
+// before the post-hoc chmod can mask it.
+var createFile = func(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, createFileMode)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// ensurePrivateFile creates path owner-only when it is absent. A concurrent
+// first open that wins the race is not an error: the other process's file is
+// the database. Any other error is returned.
+func ensurePrivateFile(path string) error {
+	switch _, err := os.Stat(path); {
+	case err == nil:
+		return nil
+	case !errors.Is(err, os.ErrNotExist):
+		return err
+	}
+	if err := createFile(path); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return nil
 }
 
 // chmodPrivate makes path owner-only; the database holds secrets.

@@ -22,7 +22,7 @@ func (s *Store) dbForWrite() (*db.DB, error) {
 		return s.shared, nil
 	}
 	s.dbOnce.Do(func() {
-		if err := os.MkdirAll(s.root, bindingDirMode); err != nil {
+		if err := os.MkdirAll(s.root, stateRootMode); err != nil {
 			s.dbErr = fmt.Errorf("open store db %s: %w", s.DBPath(), err)
 			return
 		}
