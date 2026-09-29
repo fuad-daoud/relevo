@@ -514,7 +514,7 @@ func TestTickRefreshesOncePastTTL(t *testing.T) {
 				t.Errorf("fetch calls = %d, want %d", ff.calls, tc.wantCalls)
 			}
 
-			c, ok, err := release.Load(mdb, "")
+			c, ok, err := release.Load(mdb)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -557,7 +557,7 @@ func TestTickSurvivesFetchError(t *testing.T) {
 			t.Fatalf("open store db: %v", merr)
 		}
 		defer mdb.Close()
-		if _, ok, err := release.Load(mdb, ""); err != nil || ok {
+		if _, ok, err := release.Load(mdb); err != nil || ok {
 			t.Errorf("cache = (_, %v, %v), want no record: a failed fetch saves nothing", ok, err)
 		}
 	})
@@ -583,7 +583,7 @@ func TestTickSurvivesFetchError(t *testing.T) {
 			t.Errorf("Tick = %v, want nil", err)
 		}
 
-		c, ok, err := release.Load(mdb, "")
+		c, ok, err := release.Load(mdb)
 		if err != nil || !ok {
 			t.Fatalf("Load = (%+v, ok %v, %v), want the seeded cache", c, ok, err)
 		}
@@ -736,7 +736,7 @@ func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
 		t.Fatalf("open store db: %v", merr)
 	}
 	defer mdb.Close()
-	cached, ok, err := release.Load(mdb, "")
+	cached, ok, err := release.Load(mdb)
 	if err != nil || !ok {
 		t.Fatalf("release.Load = (ok %v, err %v), want the fetched answer saved", ok, err)
 	}
@@ -942,7 +942,7 @@ func TestPruneMasterMindsForgetsAndStamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store db: %v", err)
 	}
-	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Root: st.MasterMindsDir(), Now: func() time.Time { return now }}
+	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Now: func() time.Time { return now }}
 
 	mk := func(id, name, session string, host int) mastermind.Record {
 		rec, err := reg.Create(mastermind.Record{

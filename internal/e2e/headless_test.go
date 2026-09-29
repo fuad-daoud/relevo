@@ -453,7 +453,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 	if err != nil {
 		t.Fatalf("open store db: %v", err)
 	}
-	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now, Root: st.MasterMindsDir()}
+	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now}
 
 	rt := relevo.Runtime{
 		Git:         gitClient,
@@ -461,11 +461,10 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 		Store:       st,
 		Candidates:  candidates,
 		Gates:       mdb,
-		GatesDir:    root,
 		Latency:     mdb,
 		Policy:      pol,
 		Now:         time.Now,
-		Channels:    &delivery.KVClaims{KV: db.TxKV{DB: mdb}, Root: st.ChannelsDir()},
+		Channels:    &delivery.KVClaims{KV: db.TxKV{DB: mdb}},
 		MasterMinds: reg,
 		ProcStart:   procStartUnix,
 	}

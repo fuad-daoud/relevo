@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -219,7 +218,6 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		d.releaseStore = store.New(root)
 		d.releaseRoot = root
 	}
-	root := d.releaseRoot
 
 	now := time.Now
 	if d.rt.Now != nil {
@@ -243,7 +241,7 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		return
 	}
 
-	cached, ok, err := release.Load(mdb, filepath.Join(root, "release-check.json"))
+	cached, ok, err := release.Load(mdb)
 	if err != nil {
 		slog.Debug("release check: read cache", "err", err)
 		return

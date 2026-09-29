@@ -17,7 +17,7 @@ func UnusedProviderGates(rt Runtime) []view.ProviderGate {
 		return nil
 	}
 
-	l, err := availability.LoadLedger(rt.Gates, availability.LegacyGatesPath(rt.GatesDir, "ledger.json"))
+	l, err := availability.LoadLedger(rt.Gates)
 	if err != nil {
 		return nil
 	}

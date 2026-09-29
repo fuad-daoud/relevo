@@ -27,15 +27,14 @@ func testGateKV(t *testing.T) db.KV {
 // testGates returns a Gates handle and the directory the legacy ledger.json,
 // availability.json and history.json are imported from: the kv row and its
 // legacy path can then be exercised together.
-func testGates(t *testing.T) (db.KV, string) {
+func testGates(t *testing.T) db.KV {
 	t.Helper()
-	dir := t.TempDir()
-	d, err := db.Open(filepath.Join(dir, "relevo.db"))
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	return d, dir
+	return d
 }
 
 // testSecretDB returns a real t.TempDir() database, the machine database the
@@ -54,24 +53,12 @@ func testSecretDB(t *testing.T) *db.DB {
 // testSecrets returns the machine database's secret store.
 func testSecrets(t *testing.T) delivery.SecretStore { return db.SecretStore{DB: testSecretDB(t)} }
 
-// testClaims returns a KVClaims over a fresh temp database, the database it
-// writes to, and the directory a legacy channels/ tree would live in.
-func testClaims(t *testing.T) (*delivery.KVClaims, *db.DB, string) {
-	t.Helper()
-	d := testSecretDB(t)
-	dir := filepath.Join(t.TempDir(), "channels")
-	// alwaysAlive, as the FileClaims fixtures had: a claim's fake pid must not
-	// depend on which pids happen to exist on the machine running the test.
-	return &delivery.KVClaims{KV: db.TxKV{DB: d}, Root: dir, Alive: alwaysAlive}, d, dir
-}
-
 // testMasterMinds returns a mastermind registry over a fresh temp database.
 func testMasterMinds(t *testing.T) *mastermind.DBRegistry {
 	t.Helper()
 	return &mastermind.DBRegistry{
-		KV:   db.TxKV{DB: testSecretDB(t)},
-		Now:  time.Now,
-		Root: filepath.Join(t.TempDir(), "masterminds"),
+		KV:  db.TxKV{DB: testSecretDB(t)},
+		Now: time.Now,
 	}
 }
 
@@ -102,7 +89,7 @@ func (k failPutKV) KVDelete(key string) error { return k.inner.KVDelete(key) }
 // loadLedger reads a runtime's ledger for assertions.
 func loadLedger(t *testing.T, rt Runtime) availability.Ledger {
 	t.Helper()
-	l, err := availability.LoadLedger(rt.Gates, "")
+	l, err := availability.LoadLedger(rt.Gates)
 	if err != nil {
 		t.Fatalf("LoadKV ledger: %v", err)
 	}

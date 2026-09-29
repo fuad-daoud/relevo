@@ -2,8 +2,6 @@ package availability
 
 import (
 	"encoding/json"
-	"errors"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -38,7 +36,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatalf("SaveHistory: %v", err)
 	}
 
-	got, err := loadHistory(kv, "")
+	got, err := loadHistory(kv)
 	if err != nil {
 		t.Fatalf("LoadHistory: %v", err)
 	}
@@ -57,78 +55,10 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLoadKVImportsLegacyHistoryFile pins the pre-rename migration as an
-// import: a history.json file present, and no availability.json, is imported
-// into the kv row and removed.
-func TestLoadKVImportsLegacyHistoryFile(t *testing.T) {
-	kv := testHistoryKV(t)
-	dir := t.TempDir()
-	legacyPath := filepath.Join(dir, "history.json")
-	newPath := filepath.Join(dir, "availability.json")
-
-	doc, err := json.Marshal(History{}.Append(Event{At: historyNow, Kind: RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"}))
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if err := os.WriteFile(legacyPath, doc, 0o644); err != nil {
-		t.Fatalf("WriteFile(legacy): %v", err)
-	}
-
-	got, err := loadHistory(kv, newPath)
-	if err != nil {
-		t.Fatalf("LoadHistory: %v", err)
-	}
-	if len(got.Events) != 1 || got.Events[0].Provider != "anthropic" {
-		t.Fatalf("got %+v, want the legacy event", got.Events)
-	}
-
-	if _, _, err := kv.KVGet("availability"); err != nil {
-		t.Errorf("KVGet after import: %v", err)
-	}
-	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("history.json still exists after migration: err = %v", err)
-	}
-}
-
-// TestLoadKVPrefersRowOverFile: the kv row is the record; a legacy
-// availability.json beside it is ignored and removed, since nothing writes
-// these files any more.
-func TestLoadKVPrefersRowOverFile(t *testing.T) {
-	kv := testHistoryKV(t)
-	dir := t.TempDir()
-	newPath := filepath.Join(dir, "availability.json")
-
-	fresh := History{}.Append(Event{At: historyNow, Kind: RateLimited, Provider: "fresh", Source: "planner"})
-	if err := SaveHistory(kv, fresh); err != nil {
-		t.Fatalf("SaveHistory(fresh): %v", err)
-	}
-
-	doc, err := json.Marshal(History{}.Append(Event{At: historyNow, Kind: RateLimited, Provider: "legacy", Source: "planner"}))
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if err := os.WriteFile(newPath, doc, 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	got, err := loadHistory(kv, newPath)
-	if err != nil {
-		t.Fatalf("LoadHistory: %v", err)
-	}
-	if len(got.Events) != 1 || got.Events[0].Provider != "fresh" {
-		t.Fatalf("got %+v, want the fresh row", got.Events)
-	}
-
-	if _, err := os.Stat(newPath); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("availability.json beside the row was not removed: stat err = %v, want not-exist", err)
-	}
-}
-
 func TestLoadKVMissingPath(t *testing.T) {
 	kv := testHistoryKV(t)
-	path := filepath.Join(t.TempDir(), "missing", "history.json")
 
-	got, err := loadHistory(kv, path)
+	got, err := loadHistory(kv)
 	if err != nil {
 		t.Fatalf("loadHistory(missing): %v", err)
 	}
@@ -246,7 +176,6 @@ func TestSinceOmittedWhenZero(t *testing.T) {
 		t.Errorf("RateLimited event marshalled with a since key: %s", plain)
 	}
 
-	path := filepath.Join(t.TempDir(), "availability.json")
 	kv := testHistoryKV(t)
 	h := History{}.Append(Event{
 		At:       historyNow,
@@ -259,7 +188,7 @@ func TestSinceOmittedWhenZero(t *testing.T) {
 		t.Fatalf("SaveHistory: %v", err)
 	}
 
-	got, err := loadHistory(kv, path)
+	got, err := loadHistory(kv)
 	if err != nil {
 		t.Fatalf("LoadHistory: %v", err)
 	}

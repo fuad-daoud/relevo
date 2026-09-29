@@ -124,7 +124,7 @@ func startTestServer(t *testing.T) (*client.Client, *testServerFixture) {
 	t.Helper()
 	serverRoot := t.TempDir()
 	machineDB := openTestDB(t)
-	fingerprint, cert := initTestTLS(t, serve.SecretStore{DB: machineDB, Root: serverRoot})
+	fingerprint, cert := initTestTLS(t, serve.SecretStore{DB: machineDB})
 	cSet := loadTestCandidates(t)
 	gitClient := git.NewClient("git", 0, 0)
 	runner := newScriptRunner()
@@ -188,7 +188,7 @@ func loadTestCandidates(t *testing.T) *candidate.Set {
 
 func enrollTestClient(t *testing.T, machineDB *db.DB, serverRoot string, kp remote.Keypair) {
 	t.Helper()
-	cls, err := serve.LoadClients(machineDB, filepath.Join(serverRoot, "clients.json"))
+	cls, err := serve.LoadClients(machineDB)
 	if err != nil {
 		t.Fatal(err)
 	}

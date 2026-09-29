@@ -45,7 +45,7 @@ func hooksRunLog(st *store.Store) hooks.RunLog {
 	if err != nil {
 		return nil
 	}
-	return hooks.NewKVLog(db.TxKV{DB: d}, filepath.Dir(st.DBPath()))
+	return hooks.NewKVLog(db.TxKV{DB: d})
 }
 
 // newHooksDispatcher wires the local hooks.d script dispatcher, and, when
@@ -303,17 +303,14 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 	st := store.New(root)
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
 
-	// Gates, availability and latency live in the store root's database; the
-	// legacy directory holding ledger.json/availability.json/history.json is
-	// the store root too, so LoadKV imports them on first read (P3b plan §4.5).
+	// Gates and latency live in the store root's database (P3b plan §4.5).
 	// The channel claims, the mastermind registry and the hooks run log live in
 	// the same database (P3b round 2 §4.1-§4.4), so `relevo daemon --preflight`
 	// and `--check`, which pass openGates false, open no database at all.
 	var (
-		gates    db.KV
-		gatesDir string
-		claims   delivery.ClaimStore
-		runLog   hooks.RunLog
+		gates  db.KV
+		claims delivery.ClaimStore
+		runLog hooks.RunLog
 	)
 	if openGates {
 		d, err := st.DB()
@@ -321,8 +318,7 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 			return relevo.Runtime{}, err
 		}
 		gates = d
-		gatesDir = root
-		claims = &delivery.KVClaims{KV: db.TxKV{DB: d}, Root: st.ChannelsDir()}
+		claims = &delivery.KVClaims{KV: db.TxKV{DB: d}}
 		runLog = hooksRunLog(st)
 	}
 
@@ -354,7 +350,6 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 		Store:          st,
 		Candidates:     L.Candidates,
 		Gates:          gates,
-		GatesDir:       gatesDir,
 		Latency:        gates,
 		Policy:         pol,
 		Registry:       L.Registry,

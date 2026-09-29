@@ -48,12 +48,11 @@ func newRuntime(t *testing.T) Runtime {
 		SessionID:   "sess-architect",
 		CWD:         "/repo",
 	})
-	gates, gatesDir := testGates(t)
+	gates := testGates(t)
 	return Runtime{
 		Store:      store.New(t.TempDir()),
 		Candidates: candidateSet(t, testCandidatesJSON),
 		Gates:      gates,
-		GatesDir:   gatesDir,
 		Latency:    gates,
 		Now:        func() time.Time { return baseTime },
 		// Every local builder is headless since #303, so every Send needs a

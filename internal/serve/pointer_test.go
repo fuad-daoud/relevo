@@ -95,7 +95,7 @@ func TestInitialised(t *testing.T) {
 		{"clients kv row", rootWithClientsRow, true},
 		{"tls key secret", rootWithTLSKey, true},
 		{"bindings directory", rootWithBindingsDir, true},
-		{"legacy clients.json file", rootWithLegacyClients, true},
+		{"a clients.json file alone is not serve state", rootWithLegacyClients, false},
 		{"missing directory", missingRoot, false},
 	}
 	for _, tc := range cases {

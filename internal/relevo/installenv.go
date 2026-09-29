@@ -1,8 +1,6 @@
 package relevo
 
 import (
-	"path/filepath"
-
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -11,8 +9,7 @@ import (
 // AgentInstallEnv is the InstallEnv every agent-definition surface reads and
 // writes through -- `relevo config agents` and the cockpit's `:agents` view
 // alike (cockpit config r5 §3): the OS-backed env with the role manifest in
-// the machine database's kv row "agents-manifest", importing a legacy
-// <state root>/agents-manifest.json on first read (#371 §4.10, P3b plan §4.4).
+// the machine database's kv row "agents-manifest" (#371 §4.10, P3b plan §4.4).
 //
 // The state root is composed here through store.DefaultRoot, the one path
 // relevo's state always resolves through (CLAUDE.md, #42), and its database is
@@ -28,7 +25,7 @@ func AgentInstallEnv() (harness.InstallEnv, error) {
 	if err != nil {
 		return nil, err
 	}
-	return harness.OSInstallEnvKV(d, filepath.Join(root, "agents-manifest.json")), nil
+	return harness.OSInstallEnvKV(d), nil
 }
 
 // MachineConfig opens the config store of the same machine database

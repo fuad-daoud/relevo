@@ -3,10 +3,6 @@ package delivery
 import (
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -67,13 +63,6 @@ type KVClaims struct {
 	// default: syscall.Kill(pid, 0) == nil || the error is EPERM (a
 	// process we cannot signal is still alive).
 	Alive func(pid int) bool
-
-	// Root is the pre-database channels directory (store.ChannelsDir) the
-	// import reads once per store. "" imports nothing.
-	Root string
-
-	importOnce sync.Once
-	importErr  error
 }
 
 var _ ClaimStore = (*KVClaims)(nil)
@@ -83,44 +72,6 @@ func (c *KVClaims) alive(pid int) bool {
 		return c.Alive(pid)
 	}
 	return defaultClaimAlive(pid)
-}
-
-// ensureImported adopts the pre-database claim files once per store: every
-// <Root>/*.json present is put to claim/<name> and removed, then the directory
-// itself goes when it is left empty. It is a no-op with no Root.
-func (c *KVClaims) ensureImported() error {
-	if c.Root == "" {
-		return nil
-	}
-	c.importOnce.Do(func() { c.importErr = c.importFiles() })
-	return c.importErr
-}
-
-func (c *KVClaims) importFiles() error {
-	entries, err := os.ReadDir(c.Root)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	for _, e := range entries {
-		name := e.Name()
-		// Only a *.json file was ever a claim. The base name is the key's
-		// tail, pane-keyed names included -- those old rows are ignored and
-		// never rewritten.
-		if e.IsDir() || filepath.Ext(name) != ".json" {
-			continue
-		}
-		id := strings.TrimSuffix(name, ".json")
-		if _, _, err := db.KVImportFile(c.KV, claimKey(id), filepath.Join(c.Root, name)); err != nil {
-			return err
-		}
-	}
-
-	_ = os.Remove(c.Root)
-	return nil
 }
 
 // Live implements ClaimStore.
@@ -133,9 +84,6 @@ func (c *KVClaims) Live(mastermindID string, now time.Time) (*Claim, error) {
 		// not write it and must not rewrite it; the old row is ignored and
 		// left alone.
 		return nil, nil
-	}
-	if err := c.ensureImported(); err != nil {
-		return nil, err
 	}
 	return c.liveFrom(c.KV, mastermindID, now)
 }
@@ -184,9 +132,6 @@ func (c *KVClaims) Write(claim Claim, now time.Time) error {
 		// new pane-keyed row from ever being written again.
 		return errors.New("claim mastermind must be a mastermind id")
 	}
-	if err := c.ensureImported(); err != nil {
-		return err
-	}
 
 	return c.KV.Tx(func(tx db.KVTx) error {
 		existing, err := c.liveFrom(tx, claim.MasterMind, now)
@@ -213,9 +158,6 @@ func (c *KVClaims) Remove(mastermindID string, pid int) error {
 	}
 	if mastermind.ValidID(mastermindID) != nil {
 		return nil
-	}
-	if err := c.ensureImported(); err != nil {
-		return err
 	}
 
 	raw, ok, err := c.KV.KVGet(claimKey(mastermindID))

@@ -32,7 +32,7 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 	// and leaves the report without ttft values.
 	var lat availability.LatencyHistory
 	if rt.Latency != nil {
-		loaded, lerr := availability.LoadLatency(rt.Latency, availability.LegacyGatesPath(rt.GatesDir, "latency.json"))
+		loaded, lerr := availability.LoadLatency(rt.Latency)
 		if lerr != nil {
 			warnings = append(warnings, "could not read latency: "+lerr.Error())
 		} else {

@@ -80,7 +80,7 @@ func seedServeOwnerState(t *testing.T, label string) (*store.Store, string) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	clients, err := serve.LoadClients(d, filepath.Join(serveRoot, "clients.json"))
+	clients, err := serve.LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}

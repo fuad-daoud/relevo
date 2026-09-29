@@ -272,12 +272,9 @@ func (s *Store) consultFile(name string, round int, id, suffix, ext string) stri
 
 func (s *Store) DBPath() string { return filepath.Join(s.root, "relevo.db") }
 
-// ChannelsDir is where relevo mcp's claim files lived before claims became kv
-// rows; the claim import reads them from it and removes it.
-func (s *Store) ChannelsDir() string { return filepath.Join(s.root, "channels") }
-
-// MasterMindsDir is where mastermind records lived before they became kv rows.
-// The path keeps the historical "planners" name: it is state already written.
+// MasterMindsDir is the parent of AgyCredsDir: <root>/planners, the name
+// mastermind records used before they became kv rows, kept because the agy
+// credentials directory still lives under it.
 func (s *Store) MasterMindsDir() string { return filepath.Join(s.root, "planners") }
 
 // AgyCredsDir is where captured agy credentials lived before they became

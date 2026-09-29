@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -47,7 +46,7 @@ func cmdServeInit(args []string) error {
 		return err
 	}
 	defer func() { _ = d.Close() }()
-	secrets := serve.SecretStore{DB: d, Root: root}
+	secrets := serve.SecretStore{DB: d}
 
 	fp, err := serve.InitTLS(secrets, hosts, time.Now())
 	if errors.Is(err, serve.ErrTLSExists) {
@@ -85,18 +84,13 @@ func cmdServeEnroll(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, err := serveRoot(fs)
-	if err != nil {
-		return err
-	}
-
 	d, _, err := openMachineDB()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = d.Close() }()
 
-	clients, err := serve.LoadClients(d, filepath.Join(root, "clients.json"))
+	clients, err := serve.LoadClients(d)
 	if err != nil {
 		return err
 	}
@@ -126,13 +120,13 @@ func cmdServeClients(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, d, err := adminRoot(fs)
+	_, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = d.Close() }()
 
-	clients, err := serve.LoadClients(d, filepath.Join(root, "clients.json"))
+	clients, err := serve.LoadClients(d)
 	if err != nil {
 		return err
 	}
@@ -158,13 +152,13 @@ func cmdServeRevoke(args []string) error {
 	}
 
 	id := fs.Arg(0)
-	root, d, err := adminRoot(fs)
+	_, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = d.Close() }()
 
-	clients, err := serve.LoadClients(d, filepath.Join(root, "clients.json"))
+	clients, err := serve.LoadClients(d)
 	if err != nil {
 		return err
 	}
@@ -190,13 +184,13 @@ func cmdServeFingerprint(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, d, err := adminRoot(fs)
+	_, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = d.Close() }()
 
-	fp, err := serve.Fingerprint(serve.SecretStore{DB: d, Root: root})
+	fp, err := serve.Fingerprint(serve.SecretStore{DB: d})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo serve fingerprint: %v\n", err)
 		return exitCodeErr{code: 1}
@@ -274,9 +268,8 @@ func cmdServeUI(args []string) error {
 	return ui.RunSource(ctx, ui.ServerSource(srv), ui.Options{
 		Interval: *interval,
 		Prefs: ui.PrefsStore{
-			KV:         srv.DB(),
-			Key:        "serve.ui",
-			LegacyPath: filepath.Join(root, "ui.json"),
+			KV:  srv.DB(),
+			Key: "serve.ui",
 		},
 		PipeHint: "relevo serve ui needs a terminal; use relevo serve status when piping",
 		Version:  buildVersion(),

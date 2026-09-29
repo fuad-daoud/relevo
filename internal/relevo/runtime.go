@@ -131,11 +131,6 @@ type Runtime struct {
 	// with an error.
 	Gates db.KV
 
-	// GatesDir is the legacy directory holding ledger.json, availability.json
-	// and history.json, which LoadKV imports on the first read of their kv
-	// rows. It is normally the store root. "" skips the import.
-	GatesDir string
-
 	// Latency is where the per-candidate latency history lives (#324 part 1;
 	// P3b plan §4.5): time to first output per candidate, recorded by `relevo
 	// config --probe` and read back for the p50 on a plain listing. Nil means
@@ -332,7 +327,6 @@ func AvailabilityDeps(rt Runtime) availability.Deps {
 		Store:        rt.Store,
 		Candidates:   rt.Candidates,
 		Gates:        rt.Gates,
-		GatesDir:     rt.GatesDir,
 		Latency:      rt.Latency,
 		Now:          now,
 		Roles:        rt.Roles,

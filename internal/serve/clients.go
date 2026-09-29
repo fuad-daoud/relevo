@@ -75,16 +75,9 @@ func (c *Clients) warnOnceLocked(err error) {
 	}
 }
 
-// LoadClients returns the client list held in kv's serve.clients row. When the
-// row is absent and legacyPath exists, its document is imported and the file
-// removed; a row that already exists wins.
-func LoadClients(kv db.KV, legacyPath string) (*Clients, error) {
+// LoadClients returns the client list held in kv's serve.clients row.
+func LoadClients(kv db.KV) (*Clients, error) {
 	c := &Clients{kv: kv}
-	if legacyPath != "" {
-		if _, _, err := db.KVImportFile(kv, clientsKVKey, legacyPath); err != nil {
-			return nil, err
-		}
-	}
 	if err := c.refresh(); err != nil {
 		return nil, err
 	}

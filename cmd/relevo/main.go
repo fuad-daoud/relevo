@@ -16,7 +16,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/pick"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
-	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui"
 )
 
@@ -280,11 +279,6 @@ func cmdUI(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	root, err := store.DefaultRoot()
-	if err != nil {
-		return err
-	}
-
 	// Preferences live in the machine database rt.DB holds once openDB
 	// succeeded; a failed open leaves them disabled, as an empty PrefsPath did
 	// (P3b plan §4.4).
@@ -296,9 +290,8 @@ func cmdUI(args []string) error {
 	return ui.Run(ctx, rt, ui.Options{
 		Interval: *interval,
 		Prefs: ui.PrefsStore{
-			KV:         prefsKV,
-			Key:        "ui",
-			LegacyPath: filepath.Join(root, "ui.json"),
+			KV:  prefsKV,
+			Key: "ui",
 		},
 		Notice:    notice,
 		Start:     start,

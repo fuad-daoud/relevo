@@ -1,7 +1,6 @@
 package release
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,32 +18,28 @@ func testKV(t *testing.T) *db.DB {
 	return d
 }
 
-// TestLoadMissingAndMalformed pins that neither a missing nor a corrupt cache
-// is an error: a cache that cannot be read must only fail to inform.
+// TestLoadMissingAndMalformed pins that neither a missing nor an unreadable
+// cache is an error: a cache that cannot be read must only fail to inform.
 func TestLoadMissingAndMalformed(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
 		write   bool
 	}{
-		{name: "missing file"},
-		{name: "empty file", write: true, content: ""},
-		{name: "not json", write: true, content: "{ not json"},
-		{name: "truncated json", write: true, content: `{"latest": "v0.7.0"`},
+		{name: "missing row"},
 		{name: "wrong shape", write: true, content: `{"latest": 7}`},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			kv := testKV(t)
-			path := filepath.Join(t.TempDir(), "release-check.json")
 			if tc.write {
-				if err := os.WriteFile(path, []byte(tc.content), 0o644); err != nil {
-					t.Fatalf("write cache fixture: %v", err)
+				if err := kv.KVPut(cacheKey, []byte(tc.content)); err != nil {
+					t.Fatalf("put cache fixture: %v", err)
 				}
 			}
 
-			c, ok, err := Load(kv, path)
+			c, ok, err := Load(kv)
 			if err != nil {
 				t.Fatalf("Load = error %v, want nil: a corrupt cache must never fail a caller", err)
 			}
@@ -69,7 +64,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got, ok, err := Load(kv, "")
+	got, ok, err := Load(kv)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

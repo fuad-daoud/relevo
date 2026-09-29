@@ -38,9 +38,6 @@ const (
 	// holds it for its entire lifetime: sharing one would block every other
 	// command forever.
 	daemonLockFileName = ".daemon.lock"
-	// daemonInfoFileName is the legacy file the daemon's record was kept in; a
-	// present one is imported on first read.
-	daemonInfoFileName = "daemon.json"
 	lockRetryDelay     = 50 * time.Millisecond
 
 	// lockAcquireLimit must exceed the longest possible hold, or a slow

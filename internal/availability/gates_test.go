@@ -2,8 +2,6 @@ package availability
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +13,7 @@ import (
 // loadLedger reads the runtime's ledger for assertions.
 func loadLedger(t *testing.T, d Deps) Ledger {
 	t.Helper()
-	l, err := LoadLedger(d.Gates, "")
+	l, err := LoadLedger(d.Gates)
 	if err != nil {
 		t.Fatalf("LoadKV ledger: %v", err)
 	}
@@ -25,7 +23,7 @@ func loadLedger(t *testing.T, d Deps) Ledger {
 // loadHistory reads the runtime's history for assertions.
 func readHistory(t *testing.T, d Deps) History {
 	t.Helper()
-	h, err := loadHistory(d.Gates, "")
+	h, err := loadHistory(d.Gates)
 	if err != nil {
 		t.Fatalf("LoadKV history: %v", err)
 	}
@@ -292,8 +290,8 @@ func TestMutateLedgerCarriesUnknownEntries(t *testing.T) {
   {"kind":"future_kind","subject":"test","at":"2026-09-11T15:00:00Z","source":"relevo"},
   {"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"}
 ]}`
-	if err := os.WriteFile(filepath.Join(d.GatesDir, "ledger.json"), []byte(doc), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	if err := d.Gates.KVPut(ledgerKey, []byte(doc)); err != nil {
+		t.Fatalf("KVPut: %v", err)
 	}
 
 	err := mutateLedgerLocked(d, func(l Ledger) Ledger {
@@ -329,8 +327,8 @@ func TestGatesIgnoresUnknownEntries(t *testing.T) {
   {"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"},
   {"kind":"rate_limited","subject":"test","at":"2026-09-11T15:00:00Z","source":"planner"}
 ]}`
-	if err := os.WriteFile(filepath.Join(d.GatesDir, "ledger.json"), []byte(doc), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	if err := d.Gates.KVPut(ledgerKey, []byte(doc)); err != nil {
+		t.Fatalf("KVPut: %v", err)
 	}
 
 	gates := Gates(d)
@@ -696,7 +694,6 @@ func TestHistoryFailureDoesNotFailTheLedger(t *testing.T) {
 	// A KV whose availability write fails while the ledger write succeeds:
 	// the ledger write is the one that matters and must still land.
 	d.Gates = failPutKV{inner: d.Gates, key: "availability"}
-	d.GatesDir = ""
 
 	if _, err := Unavailable(d, testClaudeRef, time.Time{}, "reason"); err != nil {
 		t.Fatalf("Unavailable: %v", err)

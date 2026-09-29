@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -19,17 +18,6 @@ import (
 // this error.
 var ErrNoGates = errors.New("no gates store configured")
 
-// LegacyGatesPath joins a pre-kv gate document name (ledger.json,
-// availability.json, latency.json) onto dir, or returns "" when no directory is
-// configured, so an import never reads a file out of the process's working
-// directory.
-func LegacyGatesPath(dir, name string) string {
-	if dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, name)
-}
-
 // LoadHistory reads the availability history for display, pruning it to the
 // retention window at d's clock. An unreadable record is an error the caller
 // reports -- the same rule Gates applies to the ledger -- and a nil Gates reads
@@ -38,7 +26,7 @@ func LoadHistory(d Deps) (History, error) {
 	if d.Gates == nil {
 		return History{}, nil
 	}
-	h, err := loadHistory(d.Gates, LegacyGatesPath(d.GatesDir, "availability.json"))
+	h, err := loadHistory(d.Gates)
 	if err != nil {
 		return History{}, err
 	}
@@ -70,7 +58,7 @@ func mutateLedgerLocked(d Deps, fn func(Ledger) Ledger) error {
 	if d.Gates == nil {
 		return ErrNoGates
 	}
-	l, err := LoadLedger(d.Gates, LegacyGatesPath(d.GatesDir, "ledger.json"))
+	l, err := LoadLedger(d.Gates)
 	if err != nil {
 		return err
 	}
@@ -86,7 +74,7 @@ func AppendEntryLocked(d Deps, e Entry) error {
 	if err := mutateLedgerLocked(d, func(l Ledger) Ledger { return l.Append(e) }); err != nil {
 		return err
 	}
-	h, err := loadHistory(d.Gates, LegacyGatesPath(d.GatesDir, "availability.json"))
+	h, err := loadHistory(d.Gates)
 	if err == nil {
 		err = SaveHistory(d.Gates, h.Prune(d.Now()).Append(FromEntry(e, ProviderOf)))
 	}
@@ -194,7 +182,7 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 	var oldest time.Time
 
 	err = d.Store.WithLock(func(*store.Tx) error {
-		l, lerr := LoadLedger(d.Gates, LegacyGatesPath(d.GatesDir, "ledger.json"))
+		l, lerr := LoadLedger(d.Gates)
 		if lerr != nil {
 			return lerr
 		}
@@ -228,7 +216,7 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 				Note:     fmt.Sprintf("cleared %d entries", removed),
 				Since:    oldest,
 			}
-			h, herr := loadHistory(d.Gates, LegacyGatesPath(d.GatesDir, "availability.json"))
+			h, herr := loadHistory(d.Gates)
 			if herr == nil {
 				herr = SaveHistory(d.Gates, h.Prune(d.Now()).Append(ev))
 			}
@@ -254,7 +242,7 @@ func LedgerGates(d Deps, tokens []string) []Gate {
 		return nil
 	}
 
-	l, err := LoadLedger(d.Gates, LegacyGatesPath(d.GatesDir, "ledger.json"))
+	l, err := LoadLedger(d.Gates)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not read ledger: %v\n", err)
 		return nil

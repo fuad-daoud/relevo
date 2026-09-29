@@ -51,7 +51,7 @@ func pinnedClient(wantFP string) *http.Client {
 // certificate plus a client that pins its fingerprint.
 func listenTLSConfig(t *testing.T, dir string, now time.Time) (*tls.Certificate, *http.Client) {
 	t.Helper()
-	secrets := SecretStore{DB: testServeDB(t), Root: dir}
+	secrets := SecretStore{DB: testServeDB(t)}
 	fp, err := InitTLS(secrets, []string{"127.0.0.1"}, now)
 	if err != nil {
 		t.Fatalf("InitTLS: %v", err)

@@ -707,7 +707,7 @@ func TestResolveHooksConfig(t *testing.T) {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	log := hooks.NewKVLog(db.TxKV{DB: d}, filepath.Join(tempHome, ".local", "state", "relevo"))
+	log := hooks.NewKVLog(db.TxKV{DB: d})
 
 	hooksMap := map[string][][]string{"state_changed": {{"/bin/true"}}}
 	cfg, err := resolveHooksConfig(hooksMap, log)

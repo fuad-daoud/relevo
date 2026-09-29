@@ -1,10 +1,7 @@
 package store
 
 import (
-	"encoding/json"
-	"errors"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -95,52 +92,20 @@ func TestReadDaemonInfoMissingIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestReadDaemonInfoImportsLegacyFile pins the import rule: a legacy
-// daemon.json beside an existing database is imported on first read and
-// removed.
-func TestReadDaemonInfoImportsLegacyFile(t *testing.T) {
-	root := t.TempDir()
-	s := New(root)
-	// Create the database without writing the record, so the legacy file is
-	// the only source.
-	if _, err := s.DB(); err != nil {
-		t.Fatalf("DB: %v", err)
-	}
-
-	want := DaemonInfo{Version: "v1.2.3", PID: 4242}
-	raw, err := json.Marshal(want)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	legacy := filepath.Join(root, daemonInfoFileName)
-	if err := os.WriteFile(legacy, raw, 0o644); err != nil {
-		t.Fatalf("seed daemon.json: %v", err)
-	}
-
-	got, ok, err := s.ReadDaemonInfo()
-	if err != nil || !ok {
-		t.Fatalf("ReadDaemonInfo = (_, %v, %v), want the imported record", ok, err)
-	}
-	if got.Version != want.Version || got.PID != want.PID {
-		t.Errorf("imported record = %+v, want %+v", got, want)
-	}
-	if _, err := os.Stat(legacy); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("daemon.json still exists after import: err = %v", err)
-	}
-}
-
+// TestReadDaemonInfoMalformedIsAnError pins that a row that is not a daemon
+// record is an error, not a silent (zero, false, nil).
 func TestReadDaemonInfoMalformedIsAnError(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
-	// The database must exist for the legacy file to be read at all.
-	if _, err := s.DB(); err != nil {
+	d, err := s.DB()
+	if err != nil {
 		t.Fatalf("DB: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, daemonInfoFileName), []byte("{not json"), 0o644); err != nil {
-		t.Fatalf("seed malformed daemon.json: %v", err)
+	if err := d.KVPut(daemonInfoKey, []byte(`{"pid":"not-a-number"}`)); err != nil {
+		t.Fatalf("seed malformed daemon row: %v", err)
 	}
 	if _, _, err := s.ReadDaemonInfo(); err == nil {
-		t.Fatal("ReadDaemonInfo on malformed JSON: err = nil, want an error")
+		t.Fatal("ReadDaemonInfo on a malformed row: err = nil, want an error")
 	}
 }
 

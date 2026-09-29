@@ -103,7 +103,7 @@ func TestInstallCustomAgentsFromAStore(t *testing.T) {
 		t.Fatalf("Put(agents): %v", err)
 	}
 
-	env := harness.OSInstallEnvKV(d, "")
+	env := harness.OSInstallEnvKV(d)
 	results, err := InstallCustomAgents(st, env, harness.InstallOptions{})
 	if err != nil {
 		t.Fatalf("InstallCustomAgents: %v", err)

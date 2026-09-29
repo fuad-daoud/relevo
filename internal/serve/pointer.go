@@ -14,8 +14,6 @@ import (
 // daemonKVKey is the kv row holding the running daemon's pointer.
 const daemonKVKey = "serve.daemon"
 
-var initialisedMarkers = []string{"clients.json", "server.key", "bindings"}
-
 // DaemonPointer identifies the state root of a running serve daemon.
 type DaemonPointer struct {
 	Root      string    `json:"root"`
@@ -63,7 +61,7 @@ func RemoveDaemonPointer(d *db.DB) error {
 }
 
 // Initialised reports whether root has any serve state marker: the clients kv
-// row, the TLS key secret, or the bindings directory.
+// row, the TLS key secret, or the bindings directory beside them.
 func Initialised(root string, d *db.DB) (bool, error) {
 	if d != nil {
 		if _, ok, err := d.KVGet(clientsKVKey); err != nil {
@@ -78,25 +76,14 @@ func Initialised(root string, d *db.DB) (bool, error) {
 		}
 	}
 
-	for _, marker := range initialisedMarkers {
-		info, err := os.Stat(filepath.Join(root, marker))
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		if marker == "bindings" {
-			if info.IsDir() {
-				return true, nil
-			}
-			continue
-		}
-		if !info.IsDir() {
-			return true, nil
-		}
+	info, err := os.Stat(filepath.Join(root, "bindings"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	return false, nil
+	if err != nil {
+		return false, err
+	}
+	return info.IsDir(), nil
 }
 
 // ResolveAdminRoot resolves the root an administrative serve command should use:

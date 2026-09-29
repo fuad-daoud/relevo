@@ -394,7 +394,7 @@ func TestProbeRecordsHistory(t *testing.T) {
 		t.Errorf("each saw %v, want %v in order", seen, wantOrder)
 	}
 
-	h, err := LoadLatency(d.Latency, "")
+	h, err := LoadLatency(d.Latency)
 	if err != nil {
 		t.Fatalf("latency.LoadLatency() error = %v", err)
 	}

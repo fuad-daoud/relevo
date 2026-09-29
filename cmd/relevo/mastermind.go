@@ -89,7 +89,7 @@ func mastermindRegistry(rt relevo.Runtime) (*mastermind.DBRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Root: rt.Store.MasterMindsDir(), Now: rt.Now}, nil
+	return &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Now: rt.Now}, nil
 }
 
 func cmdMasterMindInit(args []string) error {

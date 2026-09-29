@@ -922,8 +922,7 @@ Archiving is the default because every other destruction decision in relevo keep
 by default. An archived binding keeps every row it had -- its rounds, its events,
 its artifacts and its transcripts -- so `relevo history`, `relevo show` and the
 ui's `all` scope still read it months later, and the name frees for a fresh
-binding. Nothing is written to `.archive/` any more: a tarball an older relevo
-left there is imported once, on the next read, and removed.
+binding.
 
 `unbind --done` only touches bindings the MasterMind marked `DONE`. A `PAUSED` or a `BROKEN`
 one is left alone: it still needs a
@@ -968,8 +967,7 @@ The state root holds only what cannot be a row:
   bodies) and `serve/bindings/<owner>/` (one directory per owner).
 
 Nothing else is used. A file dropped into `~/.config/relevo` is imported on the
-next command and removed, and a `.archive/*.tar.gz` an older relevo left behind
-is imported once and removed; after that neither path exists. `relevo doctor`
+next command and removed. `relevo doctor`
 prints the database's `database` row: its path, its size, the schema version,
 and the live and archived binding counts.
 
@@ -1546,7 +1544,7 @@ around 21:00 (30d)` note on a candidate whose provider was limited
 within an hour of now, and a `history` block with a 24-hour row per
 provider. It changes nothing about which candidate is picked; it is the
 cue to write a different order, or to `relevo gate <provider>` a provider
-before it bites. Older installs are migrated on first read.
+before it bites.
 
 ## Permission tiers
 
@@ -2080,7 +2078,7 @@ Each hook command is executed asynchronously in a detached process with a 10-sec
 - `RELEVO_OLD_STATE`: The previous state of the binding.
 - `RELEVO_ROUND`: The current round number.
 
-Hook stdout, stderr, and execution failures are recorded in the database's hook run log. `relevo doctor` prints a `hooks` row -- `hooks: N runs, M failed in the last 24h (last: <event>: <err>)`. A legacy `<root>/hooks.log` is imported once and removed.
+Hook stdout, stderr, and execution failures are recorded in the database's hook run log. `relevo doctor` prints a `hooks` row -- `hooks: N runs, M failed in the last 24h (last: <event>: <err>)`.
 
 Each hook script must have its executable bit set (`chmod +x`). An event with no argv list in the `hooks` section is a silent no-op.
 

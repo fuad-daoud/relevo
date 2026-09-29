@@ -232,7 +232,6 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, reg *roles.R
 		Policy:        pol,
 		Registry:      reg,
 		Gates:         gates,
-		GatesDir:      root,
 		Now:           time.Now,
 		SessionReaper: relevo.NewSessionReaper(binExec{}),
 	}
@@ -415,7 +414,7 @@ func cmdServeRun(args []string) error {
 		return err
 	}
 
-	L, d, machineRoot, err := loadServeConfig()
+	L, d, _, err := loadServeConfig()
 	if err != nil {
 		return err
 	}
@@ -459,7 +458,7 @@ func cmdServeRun(args []string) error {
 	// The hooks dispatcher runs on the machine database's run log, the same
 	// kv `hooks.log` the daemon writes (P5 §4.3), so a served round's hook
 	// runs are visible beside the local ones.
-	hooksCfg, err := resolveHooksConfig(L.Hooks, hooks.NewKVLog(db.TxKV{DB: d}, machineRoot))
+	hooksCfg, err := resolveHooksConfig(L.Hooks, hooks.NewKVLog(db.TxKV{DB: d}))
 	if err != nil {
 		return err
 	}
@@ -529,7 +528,7 @@ func cmdServeRun(args []string) error {
 	var cert *tls.Certificate
 	var fp string
 	if !sf.insecureHTTP {
-		c, err := serve.LoadTLS(serve.SecretStore{DB: d, Root: root})
+		c, err := serve.LoadTLS(serve.SecretStore{DB: d})
 		if err != nil {
 			return err
 		}

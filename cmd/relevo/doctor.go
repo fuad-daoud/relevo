@@ -392,7 +392,7 @@ func cmdDoctor(args []string) error {
 	// §4.4). A database relevo cannot read leaves the row off, as every other
 	// best-effort row does.
 	if d, derr := rt.Store.DB(); derr == nil {
-		if runs, rerr := hooks.NewKVLog(db.TxKV{DB: d}, filepath.Dir(rt.Store.DBPath())).Runs(); rerr == nil {
+		if runs, rerr := hooks.NewKVLog(db.TxKV{DB: d}).Runs(); rerr == nil {
 			rep.Checks = append(rep.Checks, doctor.HooksCheck(doctor.HooksCheckInput{Runs: runs, Now: rt.Now()}))
 		}
 	}

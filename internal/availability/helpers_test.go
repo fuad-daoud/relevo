@@ -67,24 +67,22 @@ func testGateKV(t *testing.T) db.KV {
 	return d
 }
 
-// testGates returns a Gates handle and the directory the legacy ledger.json,
-// availability.json and history.json are imported from.
-func testGates(t *testing.T) (db.KV, string) {
+// testGates returns a Gates handle over a real temp database.
+func testGates(t *testing.T) db.KV {
 	t.Helper()
-	dir := t.TempDir()
-	d, err := db.Open(filepath.Join(dir, "relevo.db"))
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	return d, dir
+	return d
 }
 
 // testDeps builds the Deps the moved tests run against: a temp store, the test
 // candidate set, a real gates database and a fixed clock.
 func testDeps(t *testing.T) Deps {
 	t.Helper()
-	gates, dir := testGates(t)
+	gates := testGates(t)
 	set := candidateSet(t, testCandidatesJSON)
 	reg, err := roles.Build(nil, set, policy.Policy{})
 	if err != nil {
@@ -94,7 +92,6 @@ func testDeps(t *testing.T) Deps {
 		Store:        store.New(t.TempDir()),
 		Candidates:   set,
 		Gates:        gates,
-		GatesDir:     dir,
 		Latency:      gates,
 		Now:          func() time.Time { return baseTime },
 		RoleRegistry: func() *roles.Registry { return reg },

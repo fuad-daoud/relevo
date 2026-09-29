@@ -102,7 +102,7 @@ func cmdCandidates(args []string) error {
 func formatCandidates(rt relevo.Runtime) string {
 	h := availability.LatencyHistory{}
 	if rt.Latency != nil {
-		loaded, err := availability.LoadLatency(rt.Latency, legacyGatesPath(rt.GatesDir, "latency.json"))
+		loaded, err := availability.LoadLatency(rt.Latency)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "relevo: could not read latency: %v\n", err)
 		} else {
@@ -117,12 +117,6 @@ func formatCandidates(rt relevo.Runtime) string {
 	}
 
 	return view.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, availability.Gates(relevo.AvailabilityDeps(rt)), lat)
-}
-
-// legacyGatesPath is <dir>/<name> for the pre-kv gate documents, moved to
-// internal/relevo (cockpit C2b §4.1) so the stats input assembly shares it.
-func legacyGatesPath(dir, name string) string {
-	return availability.LegacyGatesPath(dir, name)
 }
 
 // loadHistory reads the availability history for display, treating an

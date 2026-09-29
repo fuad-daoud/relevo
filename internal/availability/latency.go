@@ -41,13 +41,12 @@ type Summary struct {
 // latencyKey is the kv row the latency document lives in.
 const latencyKey = "latency"
 
-// LoadLatency reads the latency history from the kv row "latency", importing a
-// present legacyPath file (latency.json) on first read. An absent row with no
-// file behind it is an empty LatencyHistory and no error: a
+// LoadLatency reads the latency history from the kv row "latency". An absent
+// row is an empty LatencyHistory and no error: a
 // fresh install has probed nothing yet. Invalid JSON is an error, so a torn or
 // hand-edited document is reported rather than read as empty.
-func LoadLatency(kv db.KV, legacyPath string) (LatencyHistory, error) {
-	data, ok, err := db.KVImportFile(kv, latencyKey, legacyPath)
+func LoadLatency(kv db.KV) (LatencyHistory, error) {
+	data, ok, err := kv.KVGet(latencyKey)
 	if err != nil {
 		return LatencyHistory{}, err
 	}

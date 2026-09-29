@@ -105,8 +105,7 @@ func New(cfg Config) (*Server, error) {
 	if removed, err := sweepTmp(tmpDir, time.Hour, cfg.Now()); err != nil {
 		slog.Warn("temp sweep failed", "dir", tmpDir, "removed", removed, "err", err)
 	}
-	clientsPath := filepath.Join(cfg.Root, "clients.json")
-	clients, err := LoadClients(cfg.DB, clientsPath)
+	clients, err := LoadClients(cfg.DB)
 	if err != nil {
 		return nil, err
 	}
@@ -228,8 +227,7 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		Store:      st,
 		Candidates: s.cfg.Candidates,
 		Policy:     s.cfg.Policy,
-		Gates:      s.gates,    // server-wide, not the owner's own
-		GatesDir:   s.cfg.Root, // its legacy ledger.json/availability.json/history.json
+		Gates:      s.gates, // server-wide, not the owner's own
 		Usage:      s.cfg.Usage,
 		Prices:     s.cfg.Prices,
 		Now:        s.cfg.Now,
