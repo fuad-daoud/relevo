@@ -969,12 +969,18 @@ needs it closed.
 The state root holds only what cannot be a row:
 
 - `relevo.db`, with its `-wal` and `-shm`;
+- `installation.json`, this installation's id and label (the origin stamped on
+  the shared rows it writes), authoritative and never synced;
 - `.daemon.lock` and the per-root `.lock`, the two flocks the daemon and every
   command take;
 - `.worktrees/`, the git worktrees relevo creates;
 - one directory per binding, holding the files of a round that is still open;
 - on a server, `serve/repos/` (the bare repos), `serve/tmp/` (in-flight request
   bodies) and `serve/bindings/<owner>/` (one directory per owner).
+
+Which tables and keys may leave this machine, and which paths must be read
+together with their origin, is classified in
+[`internal/db/migrations/SCOPES.md`](internal/db/migrations/SCOPES.md).
 
 Nothing else is used. A file dropped into `~/.config/relevo` is imported on the
 next command and removed. `relevo doctor`

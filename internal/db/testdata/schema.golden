@@ -8,11 +8,15 @@ index binding_mastermind_id_idx binding
 CREATE INDEX binding_mastermind_id_idx ON binding(mastermind_id)
 
 index binding_name_created_at_uidx binding
-CREATE UNIQUE INDEX binding_name_created_at_uidx ON binding(name, created_at)
+CREATE UNIQUE INDEX binding_name_created_at_uidx
+    ON binding(origin, name, created_at)
 
-index binding_record_owner_name_uidx binding_record
-CREATE UNIQUE INDEX binding_record_owner_name_uidx
-    ON binding_record(owner, name) WHERE archived_at IS NULL
+index binding_record_origin_idx binding_record
+CREATE INDEX binding_record_origin_idx ON binding_record(origin)
+
+index binding_record_origin_owner_name_uidx binding_record
+CREATE UNIQUE INDEX binding_record_origin_owner_name_uidx
+    ON binding_record(origin, owner, name) WHERE archived_at IS NULL
 
 index binding_repo_id_idx binding
 CREATE INDEX binding_repo_id_idx ON binding(repo_id)
@@ -23,14 +27,17 @@ CREATE INDEX event_binding_round_seq_idx ON event(binding_id, round_id, seq)
 index event_binding_seq_uidx event
 CREATE UNIQUE INDEX event_binding_seq_uidx ON event(binding_id, seq)
 
-index mastermind_harness_session_uidx mastermind
-CREATE UNIQUE INDEX mastermind_harness_session_uidx ON mastermind(harness_kind, session_id)
+index mastermind_origin_harness_session_uidx mastermind
+CREATE UNIQUE INDEX mastermind_origin_harness_session_uidx
+    ON mastermind(origin, harness_kind, session_id)
 
-index repo_common_dir_uidx repo
-CREATE UNIQUE INDEX repo_common_dir_uidx ON repo(common_dir) WHERE common_dir IS NOT NULL
+index repo_origin_common_dir_uidx repo
+CREATE UNIQUE INDEX repo_origin_common_dir_uidx
+    ON repo(origin, common_dir) WHERE common_dir IS NOT NULL
 
-index repo_origin_url_uidx repo
-CREATE UNIQUE INDEX repo_origin_url_uidx ON repo(origin_url) WHERE origin_url IS NOT NULL
+index repo_origin_origin_url_uidx repo
+CREATE UNIQUE INDEX repo_origin_origin_url_uidx
+    ON repo(origin, origin_url) WHERE origin_url IS NOT NULL
 
 index round_binding_number_uidx round
 CREATE UNIQUE INDEX round_binding_number_uidx ON round(binding_id, number)
@@ -60,6 +67,9 @@ index sqlite_autoindex_event_1 event
 
 
 index sqlite_autoindex_ingest_cursor_1 ingest_cursor
+
+
+index sqlite_autoindex_installation_1 installation
 
 
 index sqlite_autoindex_kv_1 kv
@@ -123,7 +133,7 @@ CREATE TABLE binding (
     archived_at TEXT,
     archive_path TEXT,
     ingest_source TEXT NOT NULL
-, ticket TEXT)
+, ticket TEXT, origin TEXT NOT NULL DEFAULT '')
 
 table binding_event binding_event
 CREATE TABLE binding_event (
@@ -153,7 +163,7 @@ CREATE TABLE binding_record (
     updated_at TEXT NOT NULL,
     viewed_at TEXT,
     archived_at TEXT
-)
+, origin TEXT NOT NULL DEFAULT '')
 
 table config_doc config_doc
 CREATE TABLE config_doc (
@@ -216,6 +226,14 @@ CREATE TABLE ingest_cursor (
     updated_at TEXT NOT NULL
 )
 
+table installation installation
+CREATE TABLE installation (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL
+)
+
 table kv kv
 CREATE TABLE kv (
     key TEXT PRIMARY KEY,
@@ -231,7 +249,7 @@ CREATE TABLE "mastermind" (
     transcript_locator TEXT,
     first_seen TEXT NOT NULL,
     last_seen TEXT NOT NULL
-)
+, origin TEXT NOT NULL DEFAULT '')
 
 table repo repo
 CREATE TABLE repo (
@@ -239,7 +257,7 @@ CREATE TABLE repo (
     origin_url TEXT,
     common_dir TEXT,
     first_seen TEXT NOT NULL
-, mastermind_consent TEXT, consent_at TEXT)
+, mastermind_consent TEXT, consent_at TEXT, origin TEXT NOT NULL DEFAULT '')
 
 table round round
 CREATE TABLE round (
@@ -315,4 +333,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 , record_json_codec INTEGER NOT NULL DEFAULT 0, rendered_codec INTEGER NOT NULL DEFAULT 0)
 
-schema_versions have=13 know=13
+schema_versions have=14 know=14

@@ -48,6 +48,12 @@ type DB struct {
 	// beginRetry bounds how long Tx retries a busy BEGIN IMMEDIATE; zero, as
 	// on a read-only handle, means beginRetryFor.
 	beginRetry time.Duration
+
+	// origin is the installation id this handle scopes its records to. Empty
+	// means the installation file's id is unknown -- tests, and the peek
+	// runtime -- and every scoped query then matches only rows with an empty
+	// origin, exactly as before the column existed.
+	origin string
 }
 
 // Options tunes OpenWith. A negative value is treated as 0, which selects the
@@ -58,6 +64,9 @@ type Options struct {
 	// BeginRetry bounds how long Tx retries a busy BEGIN IMMEDIATE; 0 selects
 	// beginRetryFor.
 	BeginRetry time.Duration
+	// Origin is the installation id stamped on every row this handle writes
+	// and scoped to on every scoped read. Empty leaves the handle unscoped.
+	Origin string
 }
 
 // journalSizeLimit caps the -wal file after a checkpoint resets it, in bytes;
@@ -125,11 +134,11 @@ func open(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open %s: migrations: %w: %w", path, ErrOpen, err)
 	}
 	if have > know {
-		return &DB{sqlDB: sqlDB, beginRetry: retry, newer: true, have: have, know: know}, nil
+		return &DB{sqlDB: sqlDB, beginRetry: retry, newer: true, have: have, know: know, origin: o.Origin}, nil
 	}
 	// A current schema needs no write: BEGIN IMMEDIATE here failed under load.
 	if have == know {
-		return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know}, nil
+		return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin}, nil
 	}
 
 	if err = applyMigrations(sqlDB, migrationFiles); err != nil {
@@ -141,7 +150,7 @@ func open(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open %s: version: %w: %w", path, ErrOpen, err)
 	}
 
-	return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know}, nil
+	return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin}, nil
 }
 
 // Newer reports whether the database's schema is newer than this relevo's.
@@ -224,6 +233,9 @@ func (d *DB) Version() (int, error) {
 type Tx struct {
 	conn *sql.Conn
 	ctx  context.Context
+	// origin is the opening DB's installation id; a Tx always scopes and
+	// stamps like the handle it came from.
+	origin string
 }
 
 // Tx runs fn inside one BEGIN IMMEDIATE transaction: commit on a nil return,
@@ -268,7 +280,7 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 		time.Sleep(time.Duration(25+rand.Intn(76)) * time.Millisecond)
 	}
 
-	if txErr := fn(&Tx{conn: conn, ctx: ctx}); txErr != nil {
+	if txErr := fn(&Tx{conn: conn, ctx: ctx, origin: d.origin}); txErr != nil {
 		if _, rerr := conn.ExecContext(ctx, "ROLLBACK"); rerr != nil {
 			return fmt.Errorf("db: tx: rollback failed: %w", errors.Join(txErr, rerr))
 		}

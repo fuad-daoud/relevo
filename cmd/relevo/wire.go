@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/release"
@@ -217,12 +218,18 @@ func newRuntime() (relevo.Runtime, error) {
 
 // openDB ensures path's directory exists (Open's precondition) and opens
 // it, migrating as needed. It was `relevo db`'s helper and stays here for
-// every other verb that opens the machine database directly (P3d D3).
+// every other verb that opens the machine database directly (P3d D3). The
+// installation file beside it names the origin every row written through this
+// handle carries.
 func openDB(path string) (*db.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
-	return db.Open(path)
+	inst, err := installation.Load(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	return db.OpenWith(path, db.Options{Origin: inst.ID})
 }
 
 // newRuntimePeek constructs the runtime `relevo daemon --preflight` and

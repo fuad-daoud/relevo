@@ -42,6 +42,14 @@ type RecordEvent struct {
 
 const recordCols = `id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at`
 
+// originScope is the WHERE fragment every scoped record query carries, with
+// the handle's own origin as its one placeholder: a row is in scope when this
+// installation wrote it, or when its origin is empty -- a row that existed
+// before the origin column did. Only one installation opens a machine database
+// today, so an empty-origin row is this installation's own. A sync must refuse
+// to run while any empty-origin row remains.
+const originScope = `origin IN (?, '')`
+
 // nullIfEmpty stores an optional TEXT column: an empty string becomes NULL.
 func nullIfEmpty(s string) any {
 	if s == "" {
@@ -77,16 +85,18 @@ func scanRecord(s rowScanner) (Record, error) {
 	return r, nil
 }
 
-// RecordGet returns owner's live row for name, and whether it was found. The
-// live row is keyed by (owner, name): one machine database holds every owner's
-// bindings.
+// RecordGet returns owner's live row for name within this handle's origin, and
+// whether it was found. The live row is keyed by (origin, owner, name): one
+// machine database holds every owner's bindings, and a shared one would hold
+// every installation's.
 func (d *DB) RecordGet(owner, name string) (Record, bool, error) {
-	return getRecord(context.Background(), d.sqlDB, owner, name)
+	return getRecord(context.Background(), d.sqlDB, d.origin, owner, name)
 }
 
-func getRecord(ctx context.Context, q queryer, owner, name string) (Record, bool, error) {
+func getRecord(ctx context.Context, q queryer, origin, owner, name string) (Record, bool, error) {
 	r, err := scanRecord(q.QueryRowContext(ctx,
-		`SELECT `+recordCols+` FROM binding_record WHERE owner = ? AND name = ? AND archived_at IS NULL`, owner, name))
+		`SELECT `+recordCols+` FROM binding_record WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
+		origin, owner, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, false, nil
 	}
@@ -98,7 +108,8 @@ func getRecord(ctx context.Context, q queryer, owner, name string) (Record, bool
 
 func (d *DB) RecordList(owner string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE owner = ? AND archived_at IS NULL ORDER BY name ASC`, owner)
+		`SELECT `+recordCols+` FROM binding_record WHERE `+originScope+` AND owner = ? AND archived_at IS NULL ORDER BY name ASC`,
+		d.origin, owner)
 	if err != nil {
 		return nil, fmt.Errorf("db: record list: %w", mapBusy(err))
 	}
@@ -114,8 +125,8 @@ func (d *DB) RecordList(owner string) ([]Record, error) {
 // RecordList hide.
 func (d *DB) RecordListArchived(owner string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE owner = ? AND archived_at IS NOT NULL
-			ORDER BY archived_at ASC, name ASC`, owner)
+		`SELECT `+recordCols+` FROM binding_record WHERE `+originScope+` AND owner = ? AND archived_at IS NOT NULL
+			ORDER BY archived_at ASC, name ASC`, d.origin, owner)
 	if err != nil {
 		return nil, fmt.Errorf("db: record list archived: %w", mapBusy(err))
 	}
@@ -156,8 +167,8 @@ func (d *DB) RecordCounts() (live, archived int, err error) {
 func (d *DB) RecordGetArchivedByName(owner, name string) (Record, bool, error) {
 	r, err := scanRecord(d.sqlDB.QueryRowContext(context.Background(),
 		`SELECT `+recordCols+` FROM binding_record
-			WHERE owner = ? AND name = ? AND archived_at IS NOT NULL
-			ORDER BY archived_at DESC, rowid DESC LIMIT 1`, owner, name))
+			WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NOT NULL
+			ORDER BY archived_at DESC, rowid DESC LIMIT 1`, d.origin, owner, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, false, nil
 	}
@@ -177,12 +188,14 @@ func (t *Tx) RecordPut(r Record) (string, error) {
 	}
 
 	var id string
-	err := t.queryRow(`SELECT id FROM binding_record WHERE owner = ? AND name = ? AND archived_at IS NULL`,
-		r.Owner, r.Name).Scan(&id)
+	err := t.queryRow(`SELECT id FROM binding_record WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
+		t.origin, r.Owner, r.Name).Scan(&id)
 	switch {
 	case err == nil:
-		if _, uerr := t.exec(`UPDATE binding_record SET owner = ?, state = ?, round = ?, cwd = ?, record_json = ?, updated_at = ? WHERE id = ?`,
-			r.Owner, r.State, r.Round, r.CWD, r.JSON, formatTime(updatedAt), id); uerr != nil {
+		// The update stamps origin too, so a row this handle touches is scoped
+		// to this installation from then on.
+		if _, uerr := t.exec(`UPDATE binding_record SET origin = ?, owner = ?, state = ?, round = ?, cwd = ?, record_json = ?, updated_at = ? WHERE id = ?`,
+			t.origin, r.Owner, r.State, r.Round, r.CWD, r.JSON, formatTime(updatedAt), id); uerr != nil {
 			return "", fmt.Errorf("db: record put %q: update: %w", r.Name, mapBusy(uerr))
 		}
 		return id, nil
@@ -203,10 +216,10 @@ func (t *Tx) insertRecord(r Record, updatedAt time.Time) (string, error) {
 		createdAt = updatedAt
 	}
 	if _, err := t.exec(`INSERT INTO binding_record
-			(id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,NULL)`,
+			(id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at, origin)
+		VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?)`,
 		id, r.Owner, r.Name, r.State, r.Round, r.CWD, r.JSON,
-		formatTime(createdAt), formatTime(updatedAt), nullableTime(r.ViewedAt)); err != nil {
+		formatTime(createdAt), formatTime(updatedAt), nullableTime(r.ViewedAt), t.origin); err != nil {
 		return "", fmt.Errorf("db: record put %q: insert: %w", r.Name, mapBusy(err))
 	}
 	return id, nil
@@ -215,8 +228,8 @@ func (t *Tx) insertRecord(r Record, updatedAt time.Time) (string, error) {
 // RecordArchive takes owner's live row for name out of RecordGet and
 // RecordList. No live row is a no-op.
 func (t *Tx) RecordArchive(owner, name string, at time.Time) error {
-	if _, err := t.exec(`UPDATE binding_record SET archived_at = ? WHERE owner = ? AND name = ? AND archived_at IS NULL`,
-		formatTime(at), owner, name); err != nil {
+	if _, err := t.exec(`UPDATE binding_record SET archived_at = ? WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
+		formatTime(at), t.origin, owner, name); err != nil {
 		return fmt.Errorf("db: record archive %s/%q: %w", owner, name, mapBusy(err))
 	}
 	return nil
@@ -226,8 +239,8 @@ func (t *Tx) RecordArchive(owner, name string, at time.Time) error {
 // through the foreign key's ON DELETE CASCADE. Archived rows of the same name
 // are kept: they are history a later binding must not destroy.
 func (t *Tx) RecordDelete(owner, name string) error {
-	if _, err := t.exec(`DELETE FROM binding_record WHERE owner = ? AND name = ? AND archived_at IS NULL`,
-		owner, name); err != nil {
+	if _, err := t.exec(`DELETE FROM binding_record WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
+		t.origin, owner, name); err != nil {
 		return fmt.Errorf("db: record delete %s/%q: %w", owner, name, mapBusy(err))
 	}
 	return nil
@@ -236,8 +249,8 @@ func (t *Tx) RecordDelete(owner, name string) error {
 // RecordSetViewed stamps viewed_at on owner's live row for name. No row is a
 // no-op: a read verb must not fail because a stamp could not be written.
 func (t *Tx) RecordSetViewed(owner, name string, at time.Time) error {
-	if _, err := t.exec(`UPDATE binding_record SET viewed_at = ? WHERE owner = ? AND name = ? AND archived_at IS NULL`,
-		formatTime(at), owner, name); err != nil {
+	if _, err := t.exec(`UPDATE binding_record SET viewed_at = ? WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
+		formatTime(at), t.origin, owner, name); err != nil {
 		return fmt.Errorf("db: record set viewed %s/%q: %w", owner, name, mapBusy(err))
 	}
 	return nil

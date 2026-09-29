@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/installation"
 )
 
 // dbForWrite returns the store's database handle, opening it -- and applying
@@ -25,7 +26,14 @@ func (s *Store) dbForWrite() (*db.DB, error) {
 			s.dbErr = fmt.Errorf("open store db %s: %w", s.DBPath(), err)
 			return
 		}
-		d, err := db.Open(s.DBPath())
+		// The installation file beside the database names this machine: its id
+		// is the origin every record this store writes carries.
+		inst, err := installation.Load(s.root)
+		if err != nil {
+			s.dbErr = fmt.Errorf("open store db %s: %w", s.DBPath(), err)
+			return
+		}
+		d, err := db.OpenWith(s.DBPath(), db.Options{Origin: inst.ID})
 		if err != nil {
 			s.dbErr = fmt.Errorf("open store db %s: %w", s.DBPath(), err)
 			return

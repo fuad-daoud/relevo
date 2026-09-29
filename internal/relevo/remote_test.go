@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -2151,6 +2152,24 @@ func TestSendRemoteSetsLastShipped(t *testing.T) {
 // remoteBinding is a minimal active remote binding, round 1, mastermind
 // pointed at mastermindAgent()'s pane so deliverAndSettle's FindAgent succeeds
 // and does not turn the binding orphaned.
+// openStoreDB opens the store's own database with the installation origin the
+// store writes through, so a test can read the rows the store wrote. A handle
+// opened without that origin sees only the rows written before the origin
+// column existed.
+func openStoreDB(t *testing.T, st *store.Store) *db.DB {
+	t.Helper()
+	inst, err := installation.Load(filepath.Dir(st.DBPath()))
+	if err != nil {
+		t.Fatalf("installation.Load: %v", err)
+	}
+	d, err := db.OpenWith(st.DBPath(), db.Options{Origin: inst.ID})
+	if err != nil {
+		t.Fatalf("db.OpenWith(%s): %v", st.DBPath(), err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
 func remoteBinding(server string) store.Binding {
 	return store.Binding{
 		Name:       "api",
@@ -2997,11 +3016,7 @@ func TestMirrorLogUnchangedLogWritesNothing(t *testing.T) {
 	logPath := st.BuilderLogPath("api", 1)
 	base := filepath.Base(logPath)
 
-	d, err := db.Open(st.DBPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
+	d := openStoreDB(t, st)
 	rec, ok, err := d.RecordGet("", "api")
 	if err != nil || !ok {
 		t.Fatalf("RecordGet: ok=%v err=%v", ok, err)
@@ -3230,11 +3245,7 @@ func TestMirrorLogKeepsALegacyFile(t *testing.T) {
 	}
 
 	// Verify no round_file row is written in the DB
-	d, err := db.Open(st.DBPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
+	d := openStoreDB(t, st)
 	rec, ok, err := d.RecordGet("", "api")
 	if err != nil || !ok {
 		t.Fatalf("RecordGet: %v, %v", ok, err)
@@ -5124,11 +5135,7 @@ func TestCatchUpKeepsALegacyLogFile(t *testing.T) {
 	}
 
 	// Verify no round_file row is written in the DB
-	d, err := db.Open(st.DBPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
+	d := openStoreDB(t, st)
 	rec, ok, err := d.RecordGet("", "api")
 	if err != nil || !ok {
 		t.Fatalf("RecordGet: %v, %v", ok, err)
