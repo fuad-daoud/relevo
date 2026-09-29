@@ -523,7 +523,7 @@ func TestShowDBArchivedHeaderFacts(t *testing.T) {
 		t.Error("Archived = false, want true")
 	}
 	if res.ArchivedAt.IsZero() {
-		t.Error("ArchivedAt is zero, want the tarball's stamp")
+		t.Error("ArchivedAt is zero, want the archived record's stamp")
 	}
 }
 

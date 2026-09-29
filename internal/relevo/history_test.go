@@ -185,7 +185,7 @@ func TestHistoryBindingArchivedFacts(t *testing.T) {
 		t.Error("Archived = false, want true")
 	}
 	if hb.ArchivedAt.IsZero() {
-		t.Error("ArchivedAt is zero, want the tarball's stamp")
+		t.Error("ArchivedAt is zero, want the archived record's stamp")
 	}
 }
 
