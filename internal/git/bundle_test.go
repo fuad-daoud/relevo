@@ -271,6 +271,58 @@ func TestFetchBundleFastForwards(t *testing.T) {
 	}
 }
 
+func TestFetchBundleLeavesAutoGcOff(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	bareB := bareRepo(t)
+	// runGit's init turned auto-maintenance off; this test needs it on again,
+	// with a task whose loose-object threshold the objects below cross, so
+	// the repo deterministically has maintenance work waiting.
+	runGit(t, bareB, "config", "maintenance.auto", "true")
+	runGit(t, bareB, "config", "gc.auto", "1")
+	runGit(t, bareB, "config", "maintenance.loose-objects.enabled", "true")
+	runGit(t, bareB, "config", "maintenance.loose-objects.auto", "1")
+
+	ref := "refs/heads/relevo/api"
+	tree := strings.TrimSpace(runGit(t, bareB, "hash-object", "-w", "-t", "tree", os.DevNull))
+	c1 := strings.TrimSpace(runGit(t, bareB, "commit-tree", tree, "-m", "round 1"))
+	c2 := strings.TrimSpace(runGit(t, bareB, "commit-tree", tree, "-p", c1, "-m", "round 2"))
+	runGit(t, bareB, "update-ref", ref, c2)
+
+	bPath := filepath.Join(t.TempDir(), "round.bundle")
+	if _, _, err := client.BundleCreate(ctx, bareB, bPath, []string{ref}, ""); err != nil {
+		t.Fatalf("BundleCreate: %v", err)
+	}
+	// Back to the earlier commit: the fetch moves the ref, and every object
+	// the bundle carries is already present, so the fetch transfers nothing
+	// and writes no pack of its own. Any pack that appears is maintenance's.
+	runGit(t, bareB, "update-ref", ref, c1)
+
+	seedDir := t.TempDir()
+	writeGitFile(t, seedDir, "seed.txt", "a loose object the fetch must leave alone\n")
+	seedSHA := strings.TrimSpace(runGit(t, bareB, "hash-object", "-w", filepath.Join(seedDir, "seed.txt")))
+	loosePath := filepath.Join(bareB, "objects", seedSHA[:2], seedSHA[2:])
+
+	fetched, err := client.FetchBundle(ctx, bareB, bPath, []string{ref})
+	if err != nil {
+		t.Fatalf("FetchBundle: %v", err)
+	}
+	if fetched[ref] != c2 {
+		t.Fatalf("fetched[%s] = %q, want %q", ref, fetched[ref], c2)
+	}
+	packs, err := filepath.Glob(filepath.Join(bareB, "objects", "pack", "*.pack"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packs) != 0 {
+		t.Fatalf("the fetch let git's auto-maintenance pack the store: %v", packs)
+	}
+	if _, err := os.Stat(loosePath); err != nil {
+		t.Fatalf("the loose object was packed away inside the fetch: %v", err)
+	}
+}
+
 func TestFetchBundleRefusesNonFastForward(t *testing.T) {
 	ctx := context.Background()
 	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
