@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -363,6 +365,54 @@ func TestWhoAmI(t *testing.T) {
 	if who.Builders.Quota != "" {
 		t.Fatalf("Builders.Quota = %q, want empty without a scope", who.Builders.Quota)
 	}
+}
+
+// TestWhoAmIAndCandidatesDoNotRaceWithCreate pins #656: create, whoami and
+// candidates all touch s.stores, so they take s.mu and run concurrently under
+// -race without a report. Every request is built on the test goroutine --
+// signedRequest calls t.Fatalf -- and the workers only call ServeHTTP.
+func TestWhoAmIAndCandidatesDoNotRaceWithCreate(t *testing.T) {
+	env := setupTestEnv(t)
+	handler := env.srv.Handler()
+
+	// Several owners, so the per-owner store map grows while the readers walk
+	// it: one owner alone gives the first map write too small a window to race
+	// a reader reliably.
+	owners := []ownerEnv{{kp: env.kp, repoID: env.repoID, headSHA: env.headSHA}}
+	for _, label := range []string{"bob", "carol", "dave"} {
+		owners = append(owners, addOwner(t, env, label))
+	}
+
+	const perOwner = 6
+	reqs := make([]*http.Request, 0, len(owners)*perOwner*3)
+	for _, o := range owners {
+		for i := 0; i < perOwner; i++ {
+			body, _ := json.Marshal(remote.CreateBindingRequest{
+				Name:       fmt.Sprintf("api-%d", i),
+				RepoID:     o.repoID,
+				BaseCommit: o.headSHA,
+				Role:       "builder",
+			})
+			reqs = append(reqs,
+				signedRequest(t, o.kp, "POST", "/v1/bindings", body),
+				signedRequest(t, o.kp, "GET", "/v1/whoami", nil),
+				signedRequest(t, o.kp, "GET", "/v1/candidates", nil),
+			)
+		}
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, req := range reqs {
+		wg.Add(1)
+		go func(req *http.Request) {
+			defer wg.Done()
+			<-start
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+		}(req)
+	}
+	close(start)
+	wg.Wait()
 }
 
 // TestServerRefusesACreateWithoutAnActor pins A4: a client of this release
