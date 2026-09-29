@@ -45,7 +45,7 @@ func (s *Store) ForkState(src string, dst Binding, throughRound int) error {
 // with Round <= throughRound and every round file whose leading number is
 // <= throughRound. Copied entries are all marked Confirmed, so a fork begins
 // with nothing pending, and an entry whose Path pointed into src's directory
-// is rewritten into dst's. dst's bind.json is NOT written -- the caller owns
+// is rewritten into dst's. dst's record is NOT written here -- the caller owns
 // the new Binding.
 //
 // The history goes straight into the database: the record Save writes, the
@@ -152,7 +152,8 @@ func (t *Tx) forkRoundFiles(dstName, dstDir, src, srcDir string, throughRound in
 	}
 
 	// The copied entries become the record's events through the same
-	// conversion importPresent uses for an adopted log.jsonl.
+	// conversion a decoded log.jsonl takes: the medium moved, the conversion
+	// did not.
 	evs, err := recordEventsOf(copied, lines)
 	if err != nil {
 		return fmt.Errorf("encode log for %q: %w", dstName, err)

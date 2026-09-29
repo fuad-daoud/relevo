@@ -11,11 +11,9 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
-	"log/slog"
 	"math/big"
 	"net"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -29,10 +27,9 @@ const (
 )
 
 // SecretStore is the secret surface the TLS helpers read and write: the DB's
-// table plus the legacy serve root, imported on first use.
+// table.
 type SecretStore struct {
-	DB   *db.DB
-	Root string
+	DB *db.DB
 }
 
 func (s SecretStore) SecretGet(name string) ([]byte, bool, error) {
@@ -46,64 +43,6 @@ func (s SecretStore) SecretPut(name string, value []byte, now time.Time) error {
 	return s.DB.Tx(func(t *db.Tx) error { return t.SecretPut(name, value, now) })
 }
 
-// importLegacy adopts the legacy server.key and server.crt files into the
-// secrets and removes each imported file; a secret already set wins. The write
-// precedes the delete, so a crash re-imports rather than losing the material.
-func (s SecretStore) importLegacy() error {
-	if s.Root == "" || s.DB == nil {
-		return nil
-	}
-	keyPath := filepath.Join(s.Root, "server.key")
-	crtPath := filepath.Join(s.Root, "server.crt")
-
-	var importedKey, importedCert bool
-
-	if _, ok, err := s.DB.SecretGet(tlsKeySecret); err != nil {
-		return err
-	} else if !ok {
-		data, rerr := os.ReadFile(keyPath)
-		switch {
-		case rerr == nil:
-			if err := s.SecretPut(tlsKeySecret, data, time.Now().UTC()); err != nil {
-				return err
-			}
-			importedKey = true
-		case errors.Is(rerr, os.ErrNotExist):
-		default:
-			return rerr
-		}
-	}
-
-	if _, ok, err := s.DB.SecretGet(tlsCertSecret); err != nil {
-		return err
-	} else if !ok {
-		data, rerr := os.ReadFile(crtPath)
-		switch {
-		case rerr == nil:
-			if err := s.SecretPut(tlsCertSecret, data, time.Now().UTC()); err != nil {
-				return err
-			}
-			importedCert = true
-		case errors.Is(rerr, os.ErrNotExist):
-		default:
-			return rerr
-		}
-	}
-
-	// Both writes are committed: only now are the imported files removed.
-	if importedKey {
-		if rerr := os.Remove(keyPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-			slog.Warn("tls import: could not remove imported key file", "path", keyPath, "err", rerr)
-		}
-	}
-	if importedCert {
-		if rerr := os.Remove(crtPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-			slog.Warn("tls import: could not remove imported certificate file", "path", crtPath, "err", rerr)
-		}
-	}
-	return nil
-}
-
 // FingerprintOf returns "sha256:" + lower-case hex of sha256(der).
 func FingerprintOf(der []byte) string {
 	sum := sha256.Sum256(der)
@@ -111,9 +50,6 @@ func FingerprintOf(der []byte) string {
 }
 
 func Fingerprint(secrets SecretStore) (string, error) {
-	if err := secrets.importLegacy(); err != nil {
-		return "", err
-	}
 	data, ok, err := secrets.SecretGet(tlsCertSecret)
 	if err != nil {
 		return "", err
@@ -184,10 +120,6 @@ func selfSignedCert(priv *ecdsa.PrivateKey, hosts []string, now time.Time) (cert
 // InitTLS generates a server key and self-signed certificate into the secrets.
 // If either is already set it returns ErrTLSExists without modifying either.
 func InitTLS(secrets SecretStore, hosts []string, now time.Time) (string, error) {
-	if err := secrets.importLegacy(); err != nil {
-		return "", err
-	}
-
 	if _, ok, err := secrets.SecretGet(tlsKeySecret); err != nil {
 		return "", err
 	} else if ok {
@@ -228,9 +160,6 @@ func InitTLS(secrets SecretStore, hosts []string, now time.Time) (string, error)
 // LoadTLS loads the server TLS certificate and key from the secrets, populating
 // Leaf on the returned tls.Certificate.
 func LoadTLS(secrets SecretStore) (tls.Certificate, error) {
-	if err := secrets.importLegacy(); err != nil {
-		return tls.Certificate{}, err
-	}
 	certPEM, ok, err := secrets.SecretGet(tlsCertSecret)
 	if err != nil {
 		return tls.Certificate{}, err

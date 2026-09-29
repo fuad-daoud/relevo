@@ -1,16 +1,10 @@
 package mastermind
 
 import (
-	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
-
-	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 func TestRegistryCreateRejectsSessionTaken(t *testing.T) {
@@ -237,109 +231,3 @@ func TestGetRejectsAMalformedID(t *testing.T) {
 }
 
 func sessionName(i int) string { return "s" + strconv.Itoa(i) }
-
-// failPutKV is a DBRegistry's kv whose every put fails.
-type failPutKV struct{ db.DBTxKV }
-
-func (failPutKV) KVPut(string, []byte) error { return errors.New("put failed") }
-
-// TestRegistryImportAdoptsRecordFiles pins the import: a present
-// masterminds/<id>.json is put to mastermind/<id> and removed, with it.
-func TestRegistryImportAdoptsRecordFiles(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "masterminds")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	for _, id := range []string{"pl_aaaaaaaaaaaa", "pl_bbbbbbbbbbbb"} {
-		raw, err := json.Marshal(record(id, "name-"+id[len(id)-4:], "claude", "sess-"+id, 0))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, id+".json"), raw, 0o600); err != nil {
-			t.Fatalf("write %s: %v", id, err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(root, lockFileName), nil, 0o600); err != nil {
-		t.Fatalf("write lock: %v", err)
-	}
-
-	reg := &DBRegistry{KV: db.TxKV{DB: testDB(t)}, Root: root, Now: func() time.Time { return testNow }}
-
-	records, err := reg.List()
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(records) != 2 {
-		t.Fatalf("List read %d records, want the 2 imported", len(records))
-	}
-
-	if _, err := os.Stat(filepath.Join(root, "pl_aaaaaaaaaaaa.json")); !os.IsNotExist(err) {
-		t.Errorf("the imported file is still there: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, lockFileName)); !os.IsNotExist(err) {
-		t.Errorf("the lock file is still there: %v", err)
-	}
-	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		t.Errorf("the emptied masterminds directory is still there: %v", err)
-	}
-
-	rec, err := reg.Get("pl_aaaaaaaaaaaa")
-	if err != nil {
-		t.Fatalf("Get after the import: %v", err)
-	}
-	if rec.SessionID != "sess-pl_aaaaaaaaaaaa" {
-		t.Errorf("imported record = %+v", rec)
-	}
-}
-
-// TestRegistryImportMalformedFileFailsLoudly pins the corrupt-file rule: a
-// record file that is not valid JSON fails the import and stays put.
-func TestRegistryImportMalformedFileFailsLoudly(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "masterminds")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	path := filepath.Join(root, "pl_aaaaaaaaaaaa.json")
-	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	reg := &DBRegistry{KV: db.TxKV{DB: testDB(t)}, Root: root, Now: func() time.Time { return testNow }}
-
-	_, err := reg.List()
-	if err == nil {
-		t.Fatal("List over a malformed record file = nil, want an error")
-	}
-	if !strings.Contains(err.Error(), path) {
-		t.Errorf("List error = %q, want it to name %q", err, path)
-	}
-	if _, serr := os.Stat(path); serr != nil {
-		t.Errorf("a malformed file must be left in place: %v", serr)
-	}
-}
-
-// TestRegistryImportFailedPutKeepsFile pins the import's order: the file
-// must still be there when the put fails.
-func TestRegistryImportFailedPutKeepsFile(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "masterminds")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	path := filepath.Join(root, "pl_aaaaaaaaaaaa.json")
-	raw, err := json.Marshal(record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-1", 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	reg := &DBRegistry{KV: failPutKV{db.TxKV{DB: testDB(t)}}, Root: root, Now: func() time.Time { return testNow }}
-
-	if _, err := reg.List(); err == nil {
-		t.Fatal("List with a failing put = nil, want the import's error")
-	}
-	if _, serr := os.Stat(path); serr != nil {
-		t.Errorf("a failed put must leave the file where it was: %v", serr)
-	}
-}

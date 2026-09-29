@@ -18,10 +18,8 @@ github.com/fuad-daoud/relevo/internal/histq 94.2
 github.com/fuad-daoud/relevo/internal/hooks 88.6
 github.com/fuad-daoud/relevo/internal/ingest 83.9
 github.com/fuad-daoud/relevo/internal/jsonshape 90.5
-github.com/fuad-daoud/relevo/internal/legacy 100.0
 github.com/fuad-daoud/relevo/internal/mastermind 83.5
 github.com/fuad-daoud/relevo/internal/mcp 78.5
-github.com/fuad-daoud/relevo/internal/migrate 74.3
 github.com/fuad-daoud/relevo/internal/patch 100.0
 github.com/fuad-daoud/relevo/internal/pick 48.4
 github.com/fuad-daoud/relevo/internal/policy 97.0

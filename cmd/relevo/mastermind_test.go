@@ -34,7 +34,7 @@ func mastermindRegistryAt(t *testing.T, state string) *mastermind.DBRegistry {
 		t.Fatalf("open relevo.db: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	return &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Root: filepath.Join(dir, "masterminds")}
+	return &mastermind.DBRegistry{KV: db.TxKV{DB: d}}
 }
 
 // mastermindConsentRepo makes a git repository, stores an answer for it in the

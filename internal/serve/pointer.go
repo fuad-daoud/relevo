@@ -11,13 +11,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// PointerFileName is the legacy daemon pointer file, kept for migrate's detect.
-const PointerFileName = "daemon.json"
-
 // daemonKVKey is the kv row holding the running daemon's pointer.
 const daemonKVKey = "serve.daemon"
-
-var initialisedMarkers = []string{"clients.json", "server.key", "bindings"}
 
 // DaemonPointer identifies the state root of a running serve daemon.
 type DaemonPointer struct {
@@ -65,23 +60,8 @@ func RemoveDaemonPointer(d *db.DB) error {
 	return d.KVDelete(daemonKVKey)
 }
 
-// ReadPointer reads the legacy daemon pointer file; internal/migrate uses it.
-func ReadPointer(defaultRoot string) (p DaemonPointer, ok bool, err error) {
-	data, err := os.ReadFile(filepath.Join(defaultRoot, PointerFileName))
-	if errors.Is(err, os.ErrNotExist) {
-		return DaemonPointer{}, false, nil
-	}
-	if err != nil {
-		return DaemonPointer{}, false, fmt.Errorf("read daemon pointer: %w", err)
-	}
-	if err := json.Unmarshal(data, &p); err != nil {
-		return DaemonPointer{}, false, fmt.Errorf("read daemon pointer: %w", err)
-	}
-	return p, true, nil
-}
-
 // Initialised reports whether root has any serve state marker: the clients kv
-// row, the TLS key secret, the bindings directory, or a legacy file.
+// row, the TLS key secret, or the bindings directory beside them.
 func Initialised(root string, d *db.DB) (bool, error) {
 	if d != nil {
 		if _, ok, err := d.KVGet(clientsKVKey); err != nil {
@@ -96,25 +76,14 @@ func Initialised(root string, d *db.DB) (bool, error) {
 		}
 	}
 
-	for _, marker := range initialisedMarkers {
-		info, err := os.Stat(filepath.Join(root, marker))
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		if marker == "bindings" {
-			if info.IsDir() {
-				return true, nil
-			}
-			continue
-		}
-		if !info.IsDir() {
-			return true, nil
-		}
+	info, err := os.Stat(filepath.Join(root, "bindings"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	return false, nil
+	if err != nil {
+		return false, err
+	}
+	return info.IsDir(), nil
 }
 
 // ResolveAdminRoot resolves the root an administrative serve command should use:

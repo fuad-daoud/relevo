@@ -617,10 +617,10 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	}
 
 	// Refuse a name that is already taken, before anything is spawned. Save
-	// would overwrite only bind.json: the round log and the NNN-*.md files
-	// survive, so a fresh round 1 would collide with the previous session's
-	// round 1 and Reconcile would read that old report entry as "already
-	// handled" -- silently, with no error and no notification.
+	// would overwrite only the binding record: the round log and the NNN-*
+	// files survive, so a fresh round 1 would collide with the previous
+	// session's round 1 and Reconcile would read that old report entry as
+	// "already handled" -- silently, with no error and no notification.
 	if _, err := rt.Store.Load(name); err == nil {
 		return store.Binding{}, Resolution{}, fmt.Errorf(
 			"binding %q already exists: `relevo unbind %s` to start fresh, or `relevo bind --resume --name %s` to adopt it",

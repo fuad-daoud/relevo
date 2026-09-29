@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
@@ -69,19 +68,12 @@ func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
 	return nil, "no reader for mode " + string(src.Mode)
 }
 
-// legacyExitTrailer is legacy.ExitTrailer: the same line a stream written before
-// the rename ends in, taken from legacy so the old name lives in one place.
-const legacyExitTrailer = legacy.ExitTrailer
-
-// LegacyExitTrailerForTest exposes legacyExitTrailer so internal/proc can pin it.
-func LegacyExitTrailerForTest() string { return legacyExitTrailer }
-
 const trailerPoll = 200 * time.Millisecond // how often a still-open stream is re-checked
 
 const tailProbe = 256 // bytes of the file's end read to find the last line
 
 // streamClosed reports whether path's last non-empty line is the exit trailer: the
-// harness has exited. A pre-rename stream ends in the old relay-exit: form instead. // name-guard: legacy
+// harness has exited.
 func streamClosed(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -103,7 +95,7 @@ func streamClosed(path string) bool {
 	}
 	lines := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
 	last := lines[len(lines)-1]
-	return strings.HasPrefix(last, spawn.ExitTrailer) || strings.HasPrefix(last, legacyExitTrailer)
+	return strings.HasPrefix(last, spawn.ExitTrailer)
 }
 
 // waitClosed blocks until the stream is closed or ctx is done.

@@ -33,8 +33,7 @@ import (
 
 func TestClientsAddRevokeLookup(t *testing.T) {
 	d := testServeDB(t)
-	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c, err := LoadClients(d, clientsPath)
+	c, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -87,7 +86,7 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 		t.Fatalf("Lookup after re-add: got %v, want KeyActive", status)
 	}
 
-	cLoaded, err := LoadClients(d, clientsPath)
+	cLoaded, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients reload: %v", err)
 	}
@@ -102,12 +101,11 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 
 func TestClientsLookupSeesEnrollFromAnotherInstance(t *testing.T) {
 	d := testServeDB(t)
-	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c1, err := LoadClients(d, clientsPath)
+	c1, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients 1: %v", err)
 	}
-	c2, err := LoadClients(d, clientsPath)
+	c2, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients 2: %v", err)
 	}
@@ -134,7 +132,7 @@ func TestClientsLookupSeesEnrollFromAnotherInstance(t *testing.T) {
 
 func TestClientsRefreshKeepsListOnParseError(t *testing.T) {
 	d := testServeDB(t)
-	c, err := LoadClients(d, filepath.Join(t.TempDir(), "clients.json"))
+	c, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -162,7 +160,7 @@ func TestClientsRefreshKeepsListOnParseError(t *testing.T) {
 
 func TestClientsRefreshOnDelete(t *testing.T) {
 	d := testServeDB(t)
-	c, err := LoadClients(d, filepath.Join(t.TempDir(), "clients.json"))
+	c, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -188,7 +186,7 @@ func TestClientsRefreshOnDelete(t *testing.T) {
 }
 
 func TestOwnerLabel(t *testing.T) {
-	c, err := LoadClients(testServeDB(t), filepath.Join(t.TempDir(), "clients.json"))
+	c, err := LoadClients(testServeDB(t))
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -1122,7 +1120,7 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 		t.Errorf("available = %+v, want provider anthropic removed 1", resp)
 	}
 
-	l, err := availability.LoadLedger(s.DB(), "")
+	l, err := availability.LoadLedger(s.DB())
 	if err != nil {
 		t.Fatalf("ledger.LoadLedger: %v", err)
 	}

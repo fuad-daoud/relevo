@@ -1,9 +1,7 @@
 package serve
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -669,42 +667,4 @@ func seedServedBinding(t *testing.T, env *testEnv, name string, facts store.Serv
 		t.Fatalf("save binding %s: %v", name, err)
 	}
 	return bare, worktree
-}
-
-// writeServeTarball writes a flat <name>/<member> .tar.gz, the legacy archive
-// layout.
-func writeServeTarball(t *testing.T, dest, name string, members map[string]string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.Create(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gz := gzip.NewWriter(f)
-	tw := tar.NewWriter(gz)
-	for base, body := range members {
-		hdr := &tar.Header{
-			Name:     name + "/" + base,
-			Mode:     0o644,
-			Size:     int64(len(body)),
-			Typeflag: tar.TypeReg,
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write([]byte(body)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
 }

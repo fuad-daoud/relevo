@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
@@ -279,16 +278,12 @@ func TestExitCodeReadsOnlyATrailingTrailer(t *testing.T) {
 		code int
 		ok   bool
 	}{
-		"trailer":                   {"noise\n" + spawn.ExitTrailer + "7\n", 7, true},
-		"trailer no newline":        {spawn.ExitTrailer + "0", 0, true},
-		"no trailer":                {"hello\nworld\n", 0, false},
-		"trailer not last":          {spawn.ExitTrailer + "1\nmore output\n", 0, false},
-		"garbage code":              {spawn.ExitTrailer + "x\n", 0, false},
-		"empty":                     {"", 0, false},
-		"legacy trailer":            {"noise\n" + legacy.ExitTrailer + "3\n", 3, true},
-		"legacy trailer no newline": {legacy.ExitTrailer + "0", 0, true},
-		"legacy trailer not last":   {legacy.ExitTrailer + "1\nmore output\n", 0, false},
-		"legacy garbage code":       {legacy.ExitTrailer + "x\n", 0, false},
+		"trailer":            {"noise\n" + spawn.ExitTrailer + "7\n", 7, true},
+		"trailer no newline": {spawn.ExitTrailer + "0", 0, true},
+		"no trailer":         {"hello\nworld\n", 0, false},
+		"trailer not last":   {spawn.ExitTrailer + "1\nmore output\n", 0, false},
+		"garbage code":       {spawn.ExitTrailer + "x\n", 0, false},
+		"empty":              {"", 0, false},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

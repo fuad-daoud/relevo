@@ -3,7 +3,6 @@ package availability
 import (
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // testLedgerKV is a real t.TempDir() database, the medium the ledger lives in.
@@ -23,17 +21,6 @@ func testLedgerKV(t *testing.T) *db.DB {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d
-}
-
-// writeLegacy writes a pre-kv ledger.json and returns its path, so a test can
-// pin the import rule.
-func writeLegacy(t *testing.T, doc string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "ledger.json")
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
 }
 
 func TestExpired(t *testing.T) {
@@ -56,43 +43,6 @@ func TestExpired(t *testing.T) {
 				t.Errorf("Expired(%v) with Until %v = %v, want %v", now, tt.until, got, tt.want)
 			}
 		})
-	}
-}
-
-// TestLoadKVReadsLegacySource pins that an entry recorded before the rename
-// carries "source":"relay" and must read as relevo's own, not as an unknown // name-guard: legacy
-// source preserved in Other. A SaveLedger then writes "relevo". The pre-rename
-// document arrives as a legacy ledger.json, which LoadLedger imports.
-func TestLoadKVReadsLegacySource(t *testing.T) {
-	kv := testLedgerKV(t)
-	path := writeLegacy(t, `{"entries":[{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"`+legacy.LedgerSource+`"}]}`)
-
-	l, err := LoadLedger(kv, path)
-	if err != nil {
-		t.Fatalf("LoadLedger: %v", err)
-	}
-	if len(l.Entries) != 1 {
-		t.Fatalf("Entries = %+v, want the one pre-rename entry read as relevo's", l.Entries)
-	}
-	if len(l.Other) != 0 {
-		t.Fatalf("Other = %+v, want empty: a relay source must not be kept raw", l.Other) // name-guard: legacy
-	}
-	if got := l.Entries[0].Source; got != "relevo" {
-		t.Errorf("Source = %q, want \"relevo\"", got)
-	}
-
-	if err := SaveLedger(kv, l); err != nil {
-		t.Fatalf("SaveLedger: %v", err)
-	}
-	raw, ok, err := kv.KVGet("ledger")
-	if err != nil || !ok {
-		t.Fatalf("KVGet after SaveLedger = (_, %v, %v), want the ledger row", ok, err)
-	}
-	if !strings.Contains(string(raw), `"source": "relevo"`) {
-		t.Errorf("saved ledger = %s, want the source rewritten to \"relevo\"", raw)
-	}
-	if strings.Contains(string(raw), `"source": "`+legacy.LedgerSource+`"`) {
-		t.Errorf("saved ledger = %s, want no relay source left", raw) // name-guard: legacy
 	}
 }
 
@@ -176,13 +126,12 @@ func TestClearMatchesKindAndSubject(t *testing.T) {
 
 func TestLoadLedgerMissingIsEmpty(t *testing.T) {
 	kv := testLedgerKV(t)
-	path := filepath.Join(t.TempDir(), "nonexistent.json")
-	l, err := LoadLedger(kv, path)
+	l, err := LoadLedger(kv)
 	if err != nil {
-		t.Fatalf("LoadLedger(%q) unexpected error: %v", path, err)
+		t.Fatalf("LoadLedger() unexpected error: %v", err)
 	}
 	if len(l.Entries) != 0 {
-		t.Errorf("LoadLedger(%q) got %d entries, want 0", path, len(l.Entries))
+		t.Errorf("LoadLedger() got %d entries, want 0", len(l.Entries))
 	}
 }
 
@@ -216,7 +165,7 @@ func TestSaveLedgerLoadLedgerRoundTrip(t *testing.T) {
 		t.Fatalf("SaveLedger failed: %v", err)
 	}
 
-	loaded, err := LoadLedger(kv, "")
+	loaded, err := LoadLedger(kv)
 	if err != nil {
 		t.Fatalf("LoadLedger failed: %v", err)
 	}
@@ -291,8 +240,10 @@ func TestLoadKVValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			kv := testLedgerKV(t)
-			path := writeLegacy(t, tt.json)
-			_, err := LoadLedger(kv, path)
+			if err := kv.KVPut(ledgerKey, []byte(tt.json)); err != nil {
+				t.Fatalf("KVPut: %v", err)
+			}
+			_, err := LoadLedger(kv)
 			if err == nil {
 				t.Fatalf("LoadLedger() expected error, got nil")
 			}
@@ -318,9 +269,11 @@ func TestLoadKVUnknownKindOrSourceIsPreserved(t *testing.T) {
 	known := `{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"planner"}`
 
 	kv := testLedgerKV(t)
-	path := writeLegacy(t, `{"entries":[`+unknownKind+`,`+unknownSource+`,`+known+`]}`)
+	if err := kv.KVPut(ledgerKey, []byte(`{"entries":[`+unknownKind+`,`+unknownSource+`,`+known+`]}`)); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
 
-	l, err := LoadLedger(kv, path)
+	l, err := LoadLedger(kv)
 	if err != nil {
 		t.Fatalf("LoadLedger() unexpected error: %v", err)
 	}
@@ -345,9 +298,11 @@ func TestSaveKVCarriesOtherThroughMutation(t *testing.T) {
 	known := `{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"planner"}`
 
 	kv := testLedgerKV(t)
-	path := writeLegacy(t, `{"entries":[`+unknownKind+`,`+unknownSource+`,`+known+`]}`)
+	if err := kv.KVPut(ledgerKey, []byte(`{"entries":[`+unknownKind+`,`+unknownSource+`,`+known+`]}`)); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
 
-	l, err := LoadLedger(kv, path)
+	l, err := LoadLedger(kv)
 	if err != nil {
 		t.Fatalf("LoadLedger() unexpected error: %v", err)
 	}
@@ -362,7 +317,7 @@ func TestSaveKVCarriesOtherThroughMutation(t *testing.T) {
 		t.Fatalf("SaveLedger() failed: %v", err)
 	}
 
-	reloaded, err := LoadLedger(kv, path)
+	reloaded, err := LoadLedger(kv)
 	if err != nil {
 		t.Fatalf("LoadLedger() after SaveLedger unexpected error: %v", err)
 	}

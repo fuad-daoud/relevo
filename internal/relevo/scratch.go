@@ -219,9 +219,8 @@ func parseScratchName(entry string) (name string, round int, ok bool) {
 }
 
 // scratchRepoFromGitFile derives the repository a scratch worktree belongs to
-// from the "gitdir: <repo>/.git/worktrees/<id>" line of its .git file. It is
-// adminRepo in internal/migrate/orphans.go reduced to what the sweep needs:
-// the repository path to hand RemoveWorktree, with no relocation mapping.
+// from the "gitdir: <repo>/.git/worktrees/<id>" line of its .git file: the
+// repository path to hand RemoveWorktree, with no relocation mapping.
 func scratchRepoFromGitFile(path string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(path, ".git"))
 	if err != nil {

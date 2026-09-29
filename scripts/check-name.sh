@@ -34,7 +34,6 @@ git grep -nIE "$pattern" -- . \
 	':(exclude)docs/superpowers/**' \
 	':(exclude)go.sum' \
 	':(exclude)internal/harness/agents/shipped.sha256' \
-	':(exclude)internal/legacy/**' \
 	':(exclude)scripts/rename-relevo.sh' \
 	':(exclude)scripts/check-name.sh' \
 	':(exclude)scripts/check-name_test.sh' \

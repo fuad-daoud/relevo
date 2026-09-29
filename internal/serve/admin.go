@@ -394,7 +394,6 @@ func ledgerRuntime(s *Server) relevo.Runtime {
 		Policy:     s.cfg.Policy,
 		Store:      store.New(s.cfg.Root),
 		Gates:      s.gates,
-		GatesDir:   s.cfg.Root,
 		Now:        s.cfg.Now,
 	}
 }

@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -106,26 +104,14 @@ func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
 	}
 }
 
-// read runs fn on a Tx under the state lock only when name has a legacy file to
-// import: the database already gives a reader a consistent snapshot, so the
-// flock matters only for a load-modify-save sequence and for the import itself.
-// A legacyPresent error also takes the lock, where the import reports the same
-// error rather than silently skipping it.
+// read runs fn on a Tx. The database gives a reader a consistent snapshot, so
+// no flock is needed.
 func (s *Store) read(name string, fn func(tx *Tx) error) error {
-	present, err := s.legacyPresent(name)
-	if err != nil || present {
-		return s.WithLock(fn)
-	}
 	return fn(&Tx{s: s})
 }
 
-// readAll is read's whole-root twin, for List and FindByCWD: it takes the lock
-// only when some binding directory holds a legacy file importAll would adopt.
+// readAll is read's whole-root twin, for List and FindByCWD.
 func (s *Store) readAll(fn func(tx *Tx) error) error {
-	present, err := s.anyLegacyPresent()
-	if err != nil || present {
-		return s.WithLock(fn)
-	}
 	return fn(&Tx{s: s})
 }
 
@@ -169,9 +155,7 @@ func (s *Store) save(b Binding) error {
 	if _, err := d.RecordPut(rec); err != nil {
 		return fmt.Errorf("save binding %q: %w", b.Name, err)
 	}
-
-	// A dst/log.jsonl ForkState left waiting is adopted now that the record exists.
-	return s.importPresent(b.Name)
+	return nil
 }
 
 // prepareSave validates and stamps a binding and builds the record Save writes.
@@ -239,11 +223,6 @@ func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
 // saveWithLog saves the binding and appends entries in one transaction, so a
 // failure anywhere leaves neither the record nor an entry behind.
 func (s *Store) saveWithLog(b Binding, entries []LogEntry) error {
-	// A waiting dst/log.jsonl is adopted before the transaction computes the
-	// entries' seqs.
-	if err := s.importPresent(b.Name); err != nil {
-		return err
-	}
 	b, rec, err := s.prepareSave(b)
 	if err != nil {
 		return err
@@ -279,7 +258,7 @@ func (s *Store) saveWithLog(b Binding, entries []LogEntry) error {
 	if err != nil {
 		return err
 	}
-	return s.importPresent(b.Name)
+	return nil
 }
 
 // assertCWDFree refuses a second active writer on the same working tree.
@@ -321,9 +300,6 @@ func isWriter(b Binding) bool {
 }
 
 func (s *Store) load(name string) (Binding, error) {
-	if err := s.importPresent(name); err != nil {
-		return Binding{}, err
-	}
 	d, err := s.dbForRead()
 	if err != nil {
 		return Binding{}, err
@@ -366,9 +342,6 @@ func decodeBinding(raw []byte, name string) (Binding, error) {
 }
 
 func (s *Store) list() ([]Binding, error) {
-	if err := s.importAll(); err != nil {
-		return nil, err
-	}
 	d, err := s.dbForRead()
 	if err != nil {
 		return nil, err
@@ -393,46 +366,6 @@ func (s *Store) list() ([]Binding, error) {
 	return bindings, nil
 }
 
-// ListFiles reads the bindings under root as one <name>/bind.json per
-// directory; it opens no database and writes nothing.
-func ListFiles(root string) ([]Binding, error) {
-	entries, err := os.ReadDir(root)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read state root: %w", err)
-	}
-
-	bindings := make([]Binding, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		b, err := loadBindingFile(root, e.Name())
-		if errors.Is(err, ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		bindings = append(bindings, b)
-	}
-
-	return bindings, nil
-}
-
-func loadBindingFile(root, name string) (Binding, error) {
-	raw, err := os.ReadFile(filepath.Join(root, name, "bind.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return Binding{}, fmt.Errorf("%s: %w", name, ErrNotFound)
-	}
-	if err != nil {
-		return Binding{}, fmt.Errorf("read binding %q: %w", name, err)
-	}
-	return decodeBinding(raw, name)
-}
-
 // archive marks a binding's record archived and removes its directory, so the
 // name frees for a fresh bind while its log and round files survive as rows.
 // Every round is sealed first, ignoring Sealable: the caller has stopped the
@@ -442,7 +375,7 @@ func (t *Tx) archive(name string) (string, error) {
 	if err := ValidName(name); err != nil {
 		return "", err
 	}
-	// load adopts a present bind.json/log.jsonl first and is the ErrNotFound check.
+	// load is the ErrNotFound check.
 	if _, err := s.load(name); err != nil {
 		return "", err
 	}
@@ -471,9 +404,6 @@ func (t *Tx) archive(name string) (string, error) {
 func (t *Tx) remove(name string) error {
 	s := t.s
 	if err := ValidName(name); err != nil {
-		return err
-	}
-	if err := s.importPresent(name); err != nil {
 		return err
 	}
 	d, err := s.dbForWrite()

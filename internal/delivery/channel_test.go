@@ -3,8 +3,6 @@ package delivery
 import (
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -59,7 +57,7 @@ func neverAlive(int) bool  { return false }
 func TestClaimLiveAbsent(t *testing.T) {
 	t.Parallel()
 
-	f, _, _ := testClaims(t)
+	f, _ := testClaims(t)
 	c, err := f.Live(testClaimMasterMind, time.Now())
 	if err != nil {
 		t.Fatalf("Live: %v", err)
@@ -75,7 +73,7 @@ func TestClaimLiveAbsent(t *testing.T) {
 func TestClaimKeyedByMasterMindID(t *testing.T) {
 	t.Parallel()
 
-	f, d, _ := testClaims(t)
+	f, d := testClaims(t)
 	now := time.Now()
 
 	claim := Claim{MasterMind: testClaimMasterMind, PID: 123, HostPID: 99, HostStartedAt: 42, StartedAt: now, SeenAt: now}
@@ -115,7 +113,7 @@ func TestClaimKeyedByMasterMindID(t *testing.T) {
 func TestClaimLiveIgnoresPaneKeyedRow(t *testing.T) {
 	t.Parallel()
 
-	f, d, _ := testClaims(t)
+	f, d := testClaims(t)
 	now := time.Now()
 
 	// A live, current pane-keyed claim: exactly what an older relevo mcp
@@ -160,7 +158,7 @@ func TestPaneKeyedClaimDead(t *testing.T) {
 func TestClaimLiveRemovesStaleTTL(t *testing.T) {
 	t.Parallel()
 
-	f, d, _ := testClaims(t)
+	f, d := testClaims(t)
 	start := time.Now()
 	seedClaim(t, d, testClaimMasterMind, Claim{MasterMind: testClaimMasterMind, PID: 123, StartedAt: start, SeenAt: start})
 
@@ -182,7 +180,7 @@ func TestClaimLiveRemovesStaleTTL(t *testing.T) {
 func TestClaimLiveRemovesDeadPID(t *testing.T) {
 	t.Parallel()
 
-	f, d, _ := testClaims(t)
+	f, d := testClaims(t)
 	f.Alive = neverAlive
 	now := time.Now()
 	seedClaim(t, d, testClaimMasterMind, Claim{MasterMind: testClaimMasterMind, PID: 999, StartedAt: now, SeenAt: now})
@@ -243,7 +241,7 @@ func TestClaimLiveRemovesUnparseable(t *testing.T) {
 func TestClaimLiveEmptyMasterMind(t *testing.T) {
 	t.Parallel()
 
-	f, _, _ := testClaims(t)
+	f, _ := testClaims(t)
 	if _, err := f.Live("", time.Now()); err == nil {
 		t.Fatal("Live with an empty mastermind must error")
 	}
@@ -252,7 +250,7 @@ func TestClaimLiveEmptyMasterMind(t *testing.T) {
 func TestClaimWriteRefusesSecondLiveWriter(t *testing.T) {
 	t.Parallel()
 
-	f, _, _ := testClaims(t)
+	f, _ := testClaims(t)
 	now := time.Now()
 	first := Claim{MasterMind: testClaimMasterMind, PID: 111, StartedAt: now, SeenAt: now}
 	if err := f.Write(first, now); err != nil {
@@ -273,7 +271,7 @@ func TestClaimWriteRefusesSecondLiveWriter(t *testing.T) {
 func TestClaimWriteRefusesANonMasterMindID(t *testing.T) {
 	t.Parallel()
 
-	f, d, _ := testClaims(t)
+	f, d := testClaims(t)
 	now := time.Now()
 	err := f.Write(Claim{MasterMind: "wG:pQ", PID: 111, StartedAt: now, SeenAt: now}, now)
 	if err == nil {
@@ -287,7 +285,7 @@ func TestClaimWriteRefusesANonMasterMindID(t *testing.T) {
 func TestClaimWriteSameWriterRefreshes(t *testing.T) {
 	t.Parallel()
 
-	f, _, _ := testClaims(t)
+	f, _ := testClaims(t)
 	now := time.Now()
 	claim := Claim{MasterMind: testClaimMasterMind, PID: 111, StartedAt: now, SeenAt: now}
 	if err := f.Write(claim, now); err != nil {
@@ -312,7 +310,7 @@ func TestClaimWriteSameWriterRefreshes(t *testing.T) {
 func TestClaimWriteOverwritesStaleClaim(t *testing.T) {
 	t.Parallel()
 
-	f, _, _ := testClaims(t)
+	f, _ := testClaims(t)
 	start := time.Now()
 	first := Claim{MasterMind: testClaimMasterMind, PID: 111, StartedAt: start, SeenAt: start}
 	if err := f.Write(first, start); err != nil {
@@ -337,7 +335,7 @@ func TestClaimWriteOverwritesStaleClaim(t *testing.T) {
 func TestClaimRemoveOnlyMatchingPID(t *testing.T) {
 	t.Parallel()
 
-	f, _, _ := testClaims(t)
+	f, _ := testClaims(t)
 	now := time.Now()
 	claim := Claim{MasterMind: testClaimMasterMind, PID: 111, StartedAt: now, SeenAt: now}
 	if err := f.Write(claim, now); err != nil {
@@ -362,49 +360,8 @@ func TestClaimRemoveOnlyMatchingPID(t *testing.T) {
 func TestClaimRemoveAbsentIsNotAnError(t *testing.T) {
 	t.Parallel()
 
-	f, _, _ := testClaims(t)
+	f, _ := testClaims(t)
 	if err := f.Remove(testClaimMasterMind, 111); err != nil {
 		t.Fatalf("Remove on an absent claim must not error: %v", err)
-	}
-}
-
-// TestClaimsImportAdoptsChannelFiles is the pre-database import: a present
-// channels/<name>.json is put to claim/<name> and removed, and the emptied
-// directory goes with it.
-func TestClaimsImportAdoptsChannelFiles(t *testing.T) {
-	t.Parallel()
-
-	d := testSecretDB(t)
-	dir := filepath.Join(t.TempDir(), "channels")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	now := time.Now()
-	for name, c := range map[string]Claim{
-		testClaimMasterMind + ".json": {MasterMind: testClaimMasterMind, PID: 123, StartedAt: now, SeenAt: now},
-		paneClaimID + ".json":         {PID: 4242, StartedAt: now, SeenAt: now},
-	} {
-		raw, err := json.Marshal(c)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-
-	f := &KVClaims{KV: db.TxKV{DB: d}, Root: dir, Alive: alwaysAlive}
-	if _, err := f.Live(testClaimMasterMind, now); err != nil {
-		t.Fatalf("Live: %v", err)
-	}
-
-	if _, ok := claimRow(t, d, testClaimMasterMind); !ok {
-		t.Error("the mastermind-keyed claim file was not imported")
-	}
-	if _, ok := claimRow(t, d, paneClaimID); !ok {
-		t.Error("the pane-keyed claim file was not imported")
-	}
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Errorf("the emptied channels directory is still there: %v", err)
 	}
 }

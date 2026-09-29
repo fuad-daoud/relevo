@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
@@ -100,11 +99,6 @@ func TestStreamDrained(t *testing.T) {
 	const drained = 2
 	payload := `{"type":"step","part":{"time":{"end":1}}}`
 	relevoOnly := payload + "\n\n" + spawn.ExitTrailer + "0\n"
-	legacyTrailer := payload + "\n\n" +
-		legacy.RusageTrailer + "cpu_usec=1 mem_peak=2\n\n" +
-		legacy.ExitTrailer + "0\n"
-	atEndOfPayload := func(s string) int64 { return int64(bytes.Index([]byte(s), []byte("}}}"))) }
-	atLegacyRusage := func(s string) int64 { return int64(bytes.Index([]byte(s), []byte(legacy.RusageTrailer))) }
 
 	cases := []struct {
 		name   string
@@ -120,10 +114,6 @@ func TestStreamDrained(t *testing.T) {
 		{"the cursor is inside the payload", false, drained, relevoOnly, func(string) int64 { return 1 }, 0, false},
 		{"the cursor is at the stream's size", false, drained, relevoOnly, func(s string) int64 { return int64(len(s)) }, 0, true},
 		{"no trailer, cursor at EOF", false, drained, "still flushing\n", func(s string) int64 { return int64(len(s)) }, 0, false},
-		{"a legacy trailer with only trailer bytes left", false, drained, legacyTrailer, atLegacyRusage, 0, true},
-		{"a legacy trailer with payload bytes left", false, drained, legacyTrailer, nil, 0, false},
-		{"a just-written stream with the trailer", false, drained, legacyTrailer, atEndOfPayload, 0, false},
-		{"a stale stream with the trailer", false, drained, legacyTrailer, atEndOfPayload, staleStreamAfter + time.Minute, true},
 		{"a stale stream with no trailer", false, drained, payload + "\n", nil, staleStreamAfter + time.Minute, false},
 		{"a pre-rename stream, cursor inside the payload", true, drained, relevoOnly, func(string) int64 { return 1 }, 0, false},
 		{"a pre-rename stream with the trailer", true, drained, relevoOnly, func(s string) int64 { return int64(len(s)) }, 0, true},

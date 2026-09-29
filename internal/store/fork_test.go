@@ -283,9 +283,7 @@ func TestForkStateMidCopyFailureLeavesNoDst(t *testing.T) {
 			name: "corrupted log",
 			corrupt: func(t *testing.T, s *Store, srcName string) {
 				t.Helper()
-				if err := os.WriteFile(s.logPath(srcName), []byte("invalid-json\n"), bindingFileMode); err != nil {
-					t.Fatalf("WriteFile log: %v", err)
-				}
+				putEventJSON(t, s, srcName, []string{"invalid-json"})
 			},
 		},
 	}
@@ -406,7 +404,7 @@ func TestRoundOfFile(t *testing.T) {
 		{"question suffix", "003-question.md", 3, true},
 		{"diff suffix", "004-diff.patch", 4, true},
 		{"custom text suffix", "005-custom.txt", 5, true},
-		{"archive suffix", "010-backup.tar.gz", 10, true},
+		{"archive suffix", "010-backup.patch", 10, true},
 		{"single digit round", "1-plan.md", 1, true},
 		{"large round number", "999-report.md", 999, true},
 		{"multiple hyphens in filename", "002-extra-long-name.md", 2, true},

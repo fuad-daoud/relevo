@@ -350,8 +350,6 @@ type osInstallEnv struct {
 	// reads as "nothing recorded" and refuses to save. Only OSInstallEnvKV
 	// sets it.
 	kv db.KV
-	// manifestPath is the legacy file the first read imports; "" skips it.
-	manifestPath string
 }
 
 // OSInstallEnv returns an InstallEnv backed by the OS and exec packages,
@@ -361,12 +359,11 @@ func OSInstallEnv() InstallEnv {
 	return osInstallEnv{}
 }
 
-// OSInstallEnvKV is OSInstallEnv with the role manifest kept in kv, importing a
-// present legacy file at legacyPath on first read. The caller opens the machine
-// database (this package cannot, since harness <- usage <- store) and passes
-// the handle and the old path in.
-func OSInstallEnvKV(kv db.KV, legacyPath string) InstallEnv {
-	return osInstallEnv{kv: kv, manifestPath: legacyPath}
+// OSInstallEnvKV is OSInstallEnv with the role manifest kept in kv. The caller
+// opens the machine database (this package cannot, since harness <- usage <-
+// store) and passes the handle in.
+func OSInstallEnvKV(kv db.KV) InstallEnv {
+	return osInstallEnv{kv: kv}
 }
 
 func (osInstallEnv) LookPath(binary string) (string, error) {
@@ -399,7 +396,7 @@ func (e osInstallEnv) LoadManifest() (map[string]string, error) {
 	if e.kv == nil {
 		return map[string]string{}, nil
 	}
-	return ReadManifest(e.kv, e.manifestPath)
+	return ReadManifest(e.kv)
 }
 
 func (e osInstallEnv) SaveManifest(m map[string]string) error {

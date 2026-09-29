@@ -3,7 +3,6 @@ package availability
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -42,27 +41,15 @@ type History struct {
 const availabilityKey = "availability"
 
 // loadHistory reads the availability history from the kv row "availability". An
-// absent row with neither legacy file behind it returns an empty History
-// without error, as a fresh install has recorded nothing yet.
-//
-// Importing is the migration: when the row is absent and legacyPath
-// (availability.json) exists, KVImportFile adopts it; when that too is absent,
-// <dir>/history.json -- the pre-rename name -- is tried the same way. Either
-// way the file is removed once its row is written.
-func loadHistory(kv db.KV, legacyPath string) (History, error) {
-	data, ok, err := db.KVImportFile(kv, availabilityKey, legacyPath)
+// absent row returns an empty History without error, as a fresh install has
+// recorded nothing yet.
+func loadHistory(kv db.KV) (History, error) {
+	data, ok, err := kv.KVGet(availabilityKey)
 	if err != nil {
 		return History{}, err
 	}
 	if !ok {
-		legacy := filepath.Join(filepath.Dir(legacyPath), "history.json")
-		data, ok, err = db.KVImportFile(kv, availabilityKey, legacy)
-		if err != nil {
-			return History{}, err
-		}
-		if !ok {
-			return History{}, nil
-		}
+		return History{}, nil
 	}
 
 	var h History

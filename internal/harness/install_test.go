@@ -630,9 +630,8 @@ func TestInstallReportsManifestSaveError(t *testing.T) {
 
 func TestReadWriteManifestRoundTrip(t *testing.T) {
 	kv := testKV(t)
-	legacyPath := filepath.Join(t.TempDir(), "agents-manifest.json")
 
-	empty, err := ReadManifest(kv, legacyPath)
+	empty, err := ReadManifest(kv)
 	if err != nil {
 		t.Fatalf("ReadManifest(missing): %v", err)
 	}
@@ -647,7 +646,7 @@ func TestReadWriteManifestRoundTrip(t *testing.T) {
 	if err := WriteManifest(kv, want); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
-	got, err := ReadManifest(kv, "")
+	got, err := ReadManifest(kv)
 	if err != nil {
 		t.Fatalf("ReadManifest: %v", err)
 	}
@@ -658,11 +657,11 @@ func TestReadWriteManifestRoundTrip(t *testing.T) {
 		t.Errorf("KVGet(agents-manifest) = (_, %v, %v), want the row", ok, err)
 	}
 
-	badPath := filepath.Join(t.TempDir(), "agents-manifest.json")
-	if err := os.WriteFile(badPath, []byte("{not json"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	// A row that is valid JSON but not a role manifest is an error.
+	if err := kv.KVPut(manifestKey, []byte(`{"a":1}`)); err != nil {
+		t.Fatalf("KVPut: %v", err)
 	}
-	if _, err := ReadManifest(testKV(t), badPath); err == nil {
+	if _, err := ReadManifest(kv); err == nil {
 		t.Error("ReadManifest(malformed) = nil error, want an error")
 	}
 }

@@ -320,10 +320,3 @@ func isCrockford(c byte) bool {
 	}
 	return false
 }
-
-// failPutKV fails every put, the guard for KVImportFile's write-before-delete order.
-type failPutKV struct{}
-
-func (failPutKV) KVGet(string) ([]byte, bool, error) { return nil, false, nil }
-func (failPutKV) KVPut(string, []byte) error         { return errors.New("put failed") }
-func (failPutKV) KVDelete(string) error              { return nil }

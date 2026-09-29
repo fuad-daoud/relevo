@@ -27,6 +27,7 @@ import (
 const histFixtureDir = "../ingest/testdata/binding-three-rounds"
 
 var histFixtureBindFiles = map[string]bool{
+	"bind.json":          true,
 	"bind-legacy.json":   true,
 	"bind-round4.json":   true,
 	"bind-cwd-gone.json": true,
@@ -57,6 +58,17 @@ func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBindin
 		if err := os.WriteFile(filepath.Join(s.Dir("fixture"), e.Name()), data, 0o644); err != nil {
 			t.Fatalf("write %s: %v", e.Name(), err)
 		}
+	}
+	bindJSON, err := os.ReadFile(filepath.Join(histFixtureDir, "bind.json"))
+	if err != nil {
+		t.Fatalf("read fixture bind.json: %v", err)
+	}
+	sdb, err := s.DB()
+	if err != nil {
+		t.Fatalf("store db: %v", err)
+	}
+	if _, err := sdb.RecordPut(db.Record{Name: "fixture", JSON: string(bindJSON)}); err != nil {
+		t.Fatalf("RecordPut: %v", err)
 	}
 	if _, err := s.Archive("fixture"); err != nil {
 		t.Fatalf("Archive: %v", err)

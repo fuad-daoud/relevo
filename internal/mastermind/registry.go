@@ -2,13 +2,8 @@ package mastermind
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -20,10 +15,6 @@ import (
 const mastermindKeyPrefix = "mastermind/"
 
 func registryKey(id string) string { return mastermindKeyPrefix + id }
-
-// lockFileName is the pre-database registry's lock file, removed by the
-// import.
-const lockFileName = ".lock"
 
 // seenRefreshInterval is how stale seen_at must be before Touch rewrites it.
 const seenRefreshInterval = time.Minute
@@ -54,13 +45,6 @@ type DBRegistry struct {
 	// Now supplies the clock for records this registry writes. Nil means
 	// time.Now; tests pin it.
 	Now func() time.Time
-
-	// Root is the pre-database masterminds directory the import reads once.
-	// "" imports nothing.
-	Root string
-
-	importOnce sync.Once
-	importErr  error
 }
 
 var _ Registry = (*DBRegistry)(nil)
@@ -70,44 +54,6 @@ func (r *DBRegistry) now() time.Time {
 		return r.Now()
 	}
 	return time.Now()
-}
-
-// ensureImported adopts the pre-database record files once per registry: each
-// <Root>/*.json is put to mastermind/<id> and removed, then the lock file and an
-// emptied directory go too. A malformed file fails loudly and stays put; a
-// missing Root is a no-op.
-func (r *DBRegistry) ensureImported() error {
-	if r.Root == "" {
-		return nil
-	}
-	r.importOnce.Do(func() { r.importErr = r.importFiles() })
-	return r.importErr
-}
-
-func (r *DBRegistry) importFiles() error {
-	entries, err := os.ReadDir(r.Root)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("mastermind: read registry root: %w", err)
-	}
-
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		id := strings.TrimSuffix(name, ".json")
-		if _, _, err := db.KVImportFile(r.KV, registryKey(id), filepath.Join(r.Root, name)); err != nil {
-			return err
-		}
-	}
-
-	// A directory still holding .agy/ is not empty, so it stays.
-	_ = os.Remove(filepath.Join(r.Root, lockFileName))
-	_ = os.Remove(r.Root)
-	return nil
 }
 
 // ops is initLocked's lock-free view of this registry over one transaction.
@@ -155,9 +101,6 @@ func decodeRecord(key string, raw []byte) (Record, error) {
 
 // Get returns the record with that id, or ErrNotFound.
 func (r *DBRegistry) Get(id string) (Record, error) {
-	if err := r.ensureImported(); err != nil {
-		return Record{}, err
-	}
 	return r.getFrom(r.KV, id)
 }
 
@@ -177,9 +120,6 @@ func (r *DBRegistry) getFrom(kv db.KVTx, id string) (Record, error) {
 
 // ByName returns the record with that name, or ErrNotFound.
 func (r *DBRegistry) ByName(name string) (Record, error) {
-	if err := r.ensureImported(); err != nil {
-		return Record{}, err
-	}
 	return r.byNameFrom(r.KV, name)
 }
 
@@ -198,9 +138,6 @@ func (r *DBRegistry) byNameFrom(kv db.KVTx, name string) (Record, error) {
 
 // BySession returns the record whose current session is (kind, sessionID).
 func (r *DBRegistry) BySession(kind, sessionID string) (Record, error) {
-	if err := r.ensureImported(); err != nil {
-		return Record{}, err
-	}
 	return r.bySessionFrom(r.KV, kind, sessionID)
 }
 
@@ -219,9 +156,6 @@ func (r *DBRegistry) bySessionFrom(kv db.KVTx, kind, sessionID string) (Record, 
 
 // ByHost returns the record holding that live (pid, startedAt).
 func (r *DBRegistry) ByHost(pid int, startedAt int64) (Record, error) {
-	if err := r.ensureImported(); err != nil {
-		return Record{}, err
-	}
 	return r.byHostFrom(r.KV, pid, startedAt)
 }
 
@@ -243,9 +177,6 @@ func (r *DBRegistry) byHostFrom(kv db.KVTx, pid int, startedAt int64) (Record, e
 
 // List returns every record, sorted by name.
 func (r *DBRegistry) List() ([]Record, error) {
-	if err := r.ensureImported(); err != nil {
-		return nil, err
-	}
 	return r.listFrom(r.KV)
 }
 
@@ -278,9 +209,6 @@ func (r *DBRegistry) listFrom(kv db.KVTx) ([]Record, error) {
 // Create adds a record, refusing a name, session or live host another
 // record already holds.
 func (r *DBRegistry) Create(rec Record) (Record, error) {
-	if err := r.ensureImported(); err != nil {
-		return Record{}, err
-	}
 	var out Record
 	err := r.KV.Tx(func(tx db.KVTx) error {
 		var e error
@@ -328,9 +256,6 @@ func (r *DBRegistry) createIn(kv db.KVTx, rec Record) (Record, error) {
 // MoveSession points the record at a new session, appending the old one to
 // its history with To = now.
 func (r *DBRegistry) MoveSession(id, sessionID, transcript string, now time.Time) (Record, error) {
-	if err := r.ensureImported(); err != nil {
-		return Record{}, err
-	}
 	var out Record
 	err := r.KV.Tx(func(tx db.KVTx) error {
 		var e error
@@ -387,9 +312,6 @@ func (r *DBRegistry) moveSessionIn(kv db.KVTx, id, sessionID, transcript string,
 // SetHost points the record at a harness process, refusing a live host
 // another record already holds. pid 0 clears the start time too.
 func (r *DBRegistry) SetHost(id string, pid int, startedAt int64) (Record, error) {
-	if err := r.ensureImported(); err != nil {
-		return Record{}, err
-	}
 	var out Record
 	err := r.KV.Tx(func(tx db.KVTx) error {
 		var e error
@@ -439,9 +361,6 @@ func (r *DBRegistry) setHostIn(kv db.KVTx, id string, pid int, startedAt int64) 
 
 // Rename gives a record a new name, refusing one another record holds.
 func (r *DBRegistry) Rename(id, name string) (Record, error) {
-	if err := r.ensureImported(); err != nil {
-		return Record{}, err
-	}
 	var out Record
 	err := r.KV.Tx(func(tx db.KVTx) error {
 		var e error
@@ -480,9 +399,6 @@ func (r *DBRegistry) renameIn(kv db.KVTx, id, name string) (Record, error) {
 // Touch moves seen_at forward, at most once per minute. Best effort:
 // callers ignore its error.
 func (r *DBRegistry) Touch(id string, now time.Time) error {
-	if err := r.ensureImported(); err != nil {
-		return err
-	}
 	return r.KV.Tx(func(tx db.KVTx) error { return r.touchIn(tx, id, now) })
 }
 
@@ -520,9 +436,6 @@ func (r *DBRegistry) touchForcedIn(kv db.KVTx, id string, now time.Time) (Record
 // Forget removes a record; inUse refuses with ErrInUse rather than deleting
 // one a live binding names.
 func (r *DBRegistry) Forget(id string, inUse func(id string) bool) error {
-	if err := r.ensureImported(); err != nil {
-		return err
-	}
 	return r.KV.Tx(func(tx db.KVTx) error { return r.forgetIn(tx, id, inUse) })
 }
 

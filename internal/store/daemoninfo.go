@@ -3,10 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"time"
-
-	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // FileID is a file's identity at one instant: the device and inode that name
@@ -44,8 +41,6 @@ type DaemonInfo struct {
 
 const daemonInfoKey = "daemon"
 
-func (s *Store) daemonInfoPath() string { return filepath.Join(s.root, daemonInfoFileName) }
-
 // WriteDaemonInfo upserts the daemon's record: one short write, so a reader
 // never sees a half-written record.
 func (s *Store) WriteDaemonInfo(info DaemonInfo) error {
@@ -61,8 +56,7 @@ func (s *Store) WriteDaemonInfo(info DaemonInfo) error {
 }
 
 // ReadDaemonInfo reads the daemon's record. A missing row and a store root
-// with no database are (zero, false, nil), not errors. A present legacy
-// daemon.json is imported and removed on the first read; malformed JSON is an
+// with no database are (zero, false, nil), not errors. Malformed JSON is an
 // error.
 func (s *Store) ReadDaemonInfo() (DaemonInfo, bool, error) {
 	d, err := s.DBIfExists()
@@ -73,7 +67,7 @@ func (s *Store) ReadDaemonInfo() (DaemonInfo, bool, error) {
 		return DaemonInfo{}, false, nil
 	}
 
-	raw, ok, err := db.KVImportFile(d, daemonInfoKey, s.daemonInfoPath())
+	raw, ok, err := d.KVGet(daemonInfoKey)
 	if err != nil {
 		return DaemonInfo{}, false, fmt.Errorf("read daemon info: %w", err)
 	}

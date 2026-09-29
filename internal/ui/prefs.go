@@ -26,13 +26,11 @@ type prefs struct {
 }
 
 // PrefsStore is where the ui's preferences live (P3b plan §4.4): the kv row Key
-// in KV, with LegacyPath (ui.json) imported on the first read. A zero
-// PrefsStore -- KV nil -- keeps the ui stateless, nothing loaded, nothing saved,
-// exactly as an empty Options.PrefsPath did.
+// in KV. A zero PrefsStore -- KV nil -- keeps the ui stateless, nothing loaded,
+// nothing saved, exactly as an empty Options.PrefsPath did.
 type PrefsStore struct {
-	KV         db.KV
-	Key        string
-	LegacyPath string
+	KV  db.KV
+	Key string
 }
 
 type prefsSavedMsg struct{}
@@ -44,7 +42,7 @@ func loadPrefs(ps PrefsStore) prefs {
 	if ps.KV == nil {
 		return prefs{}
 	}
-	data, ok, err := db.KVImportFile(ps.KV, ps.Key, ps.LegacyPath)
+	data, ok, err := ps.KV.KVGet(ps.Key)
 	if err != nil || !ok {
 		return prefs{}
 	}

@@ -24,13 +24,9 @@ linters:
     rules:
       - path: '^cmd/relevo/'
         text: '.*'
-      - path: '^dist/'
-        text: '.*'
       - path: '^internal/e2e/'
         text: '.*'
       - path: '^internal/jsonshape/'
-        text: '.*'
-      - path: '^internal/legacy/'
         text: '.*'
       - path: '^internal/patch/'
         text: '.*'

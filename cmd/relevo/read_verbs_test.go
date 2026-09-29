@@ -78,7 +78,7 @@ func assertIngestMirrorEmpty(t *testing.T, path string) {
 
 // TestPrintLogAndPrintShowWriteNothing is `relevo serve log`/`show`'s
 // read-only contract (#216) at the helper level: with markViewed=false the
-// same text a client verb prints comes out, no .viewed sidecar appears, and
+// same text a client verb prints comes out, no viewed mark appears, and
 // printShow with allowDB=false creates no database. markViewed=true is the
 // control that proves the assertion can fail.
 func TestPrintLogAndPrintShowWriteNothing(t *testing.T) {

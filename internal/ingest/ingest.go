@@ -120,9 +120,8 @@ func sourceOpener(src Source, member string) (func() (io.ReadCloser, error), str
 // fact it holds into d in one transaction. Cursors for every member it touched are
 // saved there too, so a later call with unchanged files writes nothing.
 //
-// It returns ErrSource unwrapped when src's bind.json is missing or invalid, or
-// its tarball cannot be read -- nothing is written in that case -- and wraps a
-// database error.
+// It returns ErrSource unwrapped when src's bind.json is missing or invalid --
+// nothing is written in that case -- and wraps a database error.
 func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error) {
 	deps = deps.defaults()
 

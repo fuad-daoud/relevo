@@ -74,7 +74,6 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := s.settleAllServed(); err != nil {
 		slog.Warn("settle served reports failed", "err", err)
 	}
-	s.importOwnerTarballs()
 	s.mu.Unlock()
 
 	ticks := 0
@@ -101,36 +100,6 @@ func (s *Server) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-		}
-	}
-}
-
-// importOwnerTarballs imports every owner's pending .archive/*.tar.gz once, at
-// startup, through ListArchived, which imports and removes each one; an error is
-// logged, never a startup failure. The caller holds s.mu.
-func (s *Server) importOwnerTarballs() {
-	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
-	entries, err := os.ReadDir(bindingsDir)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			slog.Warn("import archived bindings failed", "err", err)
-		}
-		return
-	}
-	for _, entry := range entries {
-		id, ok := remote.IDFromDir(entry.Name())
-		if !entry.IsDir() || !ok {
-			slog.Warn("unexpected entry in bindings dir", "entry", entry.Name())
-			continue
-		}
-		root := filepath.Join(bindingsDir, entry.Name())
-		archived, err := s.ownerStore(root).ListArchived()
-		if err != nil {
-			slog.Warn("import archived bindings failed", "owner", s.clients.LabelOf(id), "err", err)
-			continue
-		}
-		if len(archived) > 0 {
-			slog.Info("imported archived bindings", "owner", s.clients.LabelOf(id), "count", len(archived))
 		}
 	}
 }

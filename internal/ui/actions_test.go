@@ -583,9 +583,8 @@ func TestEnsureYouIdempotent(t *testing.T) {
 	t.Cleanup(func() { _ = d.Close() })
 
 	reg := &mastermind.DBRegistry{
-		KV:   db.TxKV{DB: d},
-		Now:  func() time.Time { return railNow },
-		Root: filepath.Join(t.TempDir(), "masterminds"),
+		KV:  db.TxKV{DB: d},
+		Now: func() time.Time { return railNow },
 	}
 	rt := relevo.Runtime{MasterMinds: reg, Now: func() time.Time { return railNow }}
 

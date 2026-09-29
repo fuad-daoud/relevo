@@ -183,7 +183,6 @@ func TestGateOnLimit(t *testing.T) {
 		// A KV whose ledger put fails: the record cannot be written, so the
 		// switch must proceed anyway.
 		rt.Gates = failPutKV{inner: rt.Gates, key: "ledger"}
-		rt.GatesDir = ""
 
 		_, _, handled, err := gateHeadless(t, rt, b, gateFixtureLine, false)
 		if err != nil {

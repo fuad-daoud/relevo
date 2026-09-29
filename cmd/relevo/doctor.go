@@ -19,7 +19,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -236,19 +235,6 @@ func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy
 	return out
 }
 
-// probeFailedRenameRow is the `rename` row for a probe relevo could not
-// complete (#292 §6): a warning with ProbeFailed, because not being able to
-// stat a root is not the same as knowing it is wrong.
-func probeFailedRenameRow(errText string) doctor.Check {
-	return doctor.Check{
-		Name:        "rename",
-		Group:       "",
-		Severity:    doctor.SevWarn,
-		Detail:      "probe error: " + errText,
-		ProbeFailed: true,
-	}
-}
-
 func cmdDoctor(args []string) error {
 	fs := flag.NewFlagSet("relevo doctor", flag.ContinueOnError)
 	if err := parseFlags(fs, args); err != nil {
@@ -294,19 +280,6 @@ func cmdDoctor(args []string) error {
 	// store has no root accessor on rt.Store, so resolve it the way
 	// newRuntime did (main.go). A failure here just leaves the check off.
 	stateRoot, _ := store.DefaultRoot()
-
-	// #292: the rename row. An old root with no new one is a FAIL (relevo
-	// cannot run safely beside an unmigrated install); an old root beside its
-	// new one is a warning. A probe relevo cannot complete is a warning with
-	// ProbeFailed, never a failure: relevo could not establish the fact at all
-	// (#292 §6). RenameCheck itself never errors.
-	if roots, err := renameRoots(); err != nil {
-		extraChecks = append(extraChecks, probeFailedRenameRow(err.Error()))
-	} else if st, perr := legacy.Probe(roots); perr != nil {
-		extraChecks = append(extraChecks, probeFailedRenameRow(perr.Error()))
-	} else {
-		extraChecks = append(extraChecks, doctor.RenameCheck(roots, st))
-	}
 
 	pricesBody, _, err := rt.Config.Body(config.Prices)
 	if err != nil {
@@ -419,7 +392,7 @@ func cmdDoctor(args []string) error {
 	// §4.4). A database relevo cannot read leaves the row off, as every other
 	// best-effort row does.
 	if d, derr := rt.Store.DB(); derr == nil {
-		if runs, rerr := hooks.NewKVLog(db.TxKV{DB: d}, filepath.Dir(rt.Store.DBPath())).Runs(); rerr == nil {
+		if runs, rerr := hooks.NewKVLog(db.TxKV{DB: d}).Runs(); rerr == nil {
 			rep.Checks = append(rep.Checks, doctor.HooksCheck(doctor.HooksCheckInput{Runs: runs, Now: rt.Now()}))
 		}
 	}

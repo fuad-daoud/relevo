@@ -403,7 +403,7 @@ func TestDiffCommand(t *testing.T) {
 		t.Fatalf("git apply --check failed: %v\nOutput: %s", err, string(applyOut))
 	}
 
-	// #143: a successful `diff` stamps the binding's .viewed sidecar.
+	// #143: a successful `diff` stamps the binding's viewed mark.
 	// Store-only -- reaches no harness.
 	if _, ok := s.ViewedAt("webshop"); !ok {
 		t.Fatal("diff must stamp .viewed on a successful print")
@@ -707,7 +707,7 @@ func TestResolveHooksConfig(t *testing.T) {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	log := hooks.NewKVLog(db.TxKV{DB: d}, filepath.Join(tempHome, ".local", "state", "relevo"))
+	log := hooks.NewKVLog(db.TxKV{DB: d})
 
 	hooksMap := map[string][][]string{"state_changed": {{"/bin/true"}}}
 	cfg, err := resolveHooksConfig(hooksMap, log)

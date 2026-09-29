@@ -57,7 +57,7 @@ func seedSecondOwner(t *testing.T, root, label string) (*store.Store, remote.Cli
 	}
 	defer d.Close()
 
-	clients, err := serve.LoadClients(d, filepath.Join(serveRoot, "clients.json"))
+	clients, err := serve.LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -83,15 +83,13 @@ func TestServeContractStatusJSON(t *testing.T) {
 	_, root := seedServeOwnerState(t, "alice")
 	_, bobID := seedSecondOwner(t, root, "bob")
 
-	serveRoot := filepath.Join(root, "serve")
-
 	d, err := openDB(filepath.Join(root, "relevo.db"))
 	if err != nil {
 		t.Fatalf("openDB: %v", err)
 	}
 	defer d.Close()
 
-	clients, err := serve.LoadClients(d, filepath.Join(serveRoot, "clients.json"))
+	clients, err := serve.LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}

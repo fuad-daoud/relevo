@@ -63,8 +63,9 @@ func TestIngestStoreSourceFillsTheMirror(t *testing.T) {
 	}
 }
 
-// adoptIntoStore imports dir's files into a store root, so the store's database
-// becomes the binding's home and bind.json/log.jsonl are gone.
+// adoptIntoStore seeds dir's binding into a fresh store root's database and
+// removes bind.json/log.jsonl, so the store's database becomes the binding's
+// home and the files no longer exist.
 func adoptIntoStore(t *testing.T, dir string) *store.Store {
 	t.Helper()
 	st := store.New(t.TempDir())
@@ -84,12 +85,13 @@ func adoptIntoStore(t *testing.T, dir string) *store.Store {
 			t.Fatal(err)
 		}
 	}
-	if _, err := st.Load("fixture"); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	seedStoreRecord(t, st, "fixture", st.Dir("fixture"))
 	for _, base := range []string{"bind.json", "log.jsonl"} {
+		if err := os.Remove(filepath.Join(st.Dir("fixture"), base)); err != nil {
+			t.Fatalf("remove %s: %v", base, err)
+		}
 		if _, err := os.Stat(filepath.Join(st.Dir("fixture"), base)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("%s is still a file after the import: %v", base, err)
+			t.Fatalf("%s is still a file: %v", base, err)
 		}
 	}
 	return st

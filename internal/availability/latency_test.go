@@ -21,7 +21,7 @@ func testLatencyKV(t *testing.T) *db.DB {
 
 func TestLoadLatencyMissingIsEmpty(t *testing.T) {
 	kv := testLatencyKV(t)
-	h, err := LoadLatency(kv, filepath.Join(t.TempDir(), "latency.json"))
+	h, err := LoadLatency(kv)
 	if err != nil {
 		t.Fatalf("LoadLatency(missing) error = %v, want nil", err)
 	}
@@ -41,7 +41,7 @@ func TestSaveLatencyLoadLatencyRoundTrip(t *testing.T) {
 		t.Fatalf("SaveLatency() error = %v", err)
 	}
 
-	got, err := LoadLatency(kv, "")
+	got, err := LoadLatency(kv)
 	if err != nil {
 		t.Fatalf("LoadLatency() error = %v", err)
 	}

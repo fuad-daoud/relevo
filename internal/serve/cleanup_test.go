@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -279,15 +280,20 @@ func TestTickPrunesAnUnusedRepo(t *testing.T) {
 		t.Fatalf("mkdir non-owner dir: %v", err)
 	}
 
-	// Another owner with an unreadable store (its bindings path is a file): on
-	// List error pruneUnusedRepos must skip the owner and preserve its repo.
+	// Another owner with an unreadable store (its record row cannot be
+	// decoded): on List error pruneUnusedRepos must skip the owner and
+	// preserve its repo.
 	failOwnerHex := strings.Repeat("b", 64)
 	failBareRepo := filepath.Join(env.srv.cfg.Root, "repos", failOwnerHex, "unpruned.git")
 	if err := env.gitClient.InitBare(ctx, failBareRepo); err != nil {
 		t.Fatalf("init bare failOwner: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(env.srv.cfg.Root, "bindings", failOwnerHex), []byte("block-store-lock"), 0644); err != nil {
-		t.Fatalf("write failOwnerBindings file: %v", err)
+	failOwner, ok := remote.IDFromDir(failOwnerHex)
+	if !ok {
+		t.Fatalf("failOwner hex %q has no id", failOwnerHex)
+	}
+	if _, err := env.srv.cfg.DB.RecordPut(db.Record{Owner: string(failOwner), Name: "broken", Round: 1, JSON: "{"}); err != nil {
+		t.Fatalf("RecordPut failOwner: %v", err)
 	}
 
 	if err := env.srv.Tick(ctx); err != nil {

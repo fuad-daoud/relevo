@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
@@ -78,8 +77,6 @@ func TestParseRusageTrailer(t *testing.T) {
 		"mem only":         {"relevo-rusage:mem_peak=1024", spawn.ProcRusage{PeakMemBytes: 1024}, true},
 		"unknown key":      {"relevo-rusage:cpu_usec=1000 foo=bar", spawn.ProcRusage{CPUMS: 1}, true},
 		"malformed number": {"relevo-rusage:cpu_usec=notanumber", spawn.ProcRusage{}, true},
-		"legacy prefix":    {legacy.RusageTrailer + "cpu_usec=12345 mem_peak=1048576", spawn.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576}, true},
-		"legacy cpu only":  {legacy.RusageTrailer + "cpu_usec=5000", spawn.ProcRusage{CPUMS: 5}, true},
 		"wrong prefix":     {"something-else:cpu_usec=1000", spawn.ProcRusage{}, false},
 	}
 	for name, c := range cases {
@@ -94,7 +91,7 @@ func TestParseRusageTrailer(t *testing.T) {
 
 // TestRusageFindsTheTrailerLine covers the stream shapes Rusage must read: the
 // real supervisor layout, where a blank line separates the rusage and exit
-// trailers, the legacy spelling, output after the exit trailer, and no trailer.
+// trailers, output after the exit trailer, and no trailer.
 func TestRusageFindsTheTrailerLine(t *testing.T) {
 	cases := map[string]struct {
 		body string
@@ -110,11 +107,6 @@ func TestRusageFindsTheTrailerLine(t *testing.T) {
 		},
 		"trailer before the exit trailer": {
 			body: "builder output\n\n" + spawn.RusageTrailerPrefix + "cpu_usec=12345 mem_peak=1048576\n" + spawn.ExitTrailer + "0\n",
-			want: spawn.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576},
-			ok:   true,
-		},
-		"legacy stream": {
-			body: "builder output\n\n" + legacy.RusageTrailer + "cpu_usec=12345 mem_peak=1048576\n\n" + legacy.ExitTrailer + "3\n",
 			want: spawn.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576},
 			ok:   true,
 		},

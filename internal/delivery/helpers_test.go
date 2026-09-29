@@ -26,13 +26,11 @@ func testSecretDB(t *testing.T) *db.DB {
 // testSecrets returns the machine database's secret store.
 func testSecrets(t *testing.T) SecretStore { return db.SecretStore{DB: testSecretDB(t)} }
 
-// testClaims returns a KVClaims over a fresh temp database, the database it
-// writes to, and the directory a legacy channels/ tree would live in. A
-// claim's fake pid must not depend on which pids exist on the test machine,
-// so the store treats every pid as alive.
-func testClaims(t *testing.T) (*KVClaims, *db.DB, string) {
+// testClaims returns a KVClaims over a fresh temp database and the database it
+// writes to. A claim's fake pid must not depend on which pids exist on the test
+// machine, so the store treats every pid as alive.
+func testClaims(t *testing.T) (*KVClaims, *db.DB) {
 	t.Helper()
 	d := testSecretDB(t)
-	dir := filepath.Join(t.TempDir(), "channels")
-	return &KVClaims{KV: db.TxKV{DB: d}, Root: dir, Alive: alwaysAlive}, d, dir
+	return &KVClaims{KV: db.TxKV{DB: d}, Alive: alwaysAlive}, d
 }

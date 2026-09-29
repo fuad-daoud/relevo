@@ -26,8 +26,8 @@ import (
 // the mastermind and a repair round still read them (D2/A1). Once the round after
 // it closes, the following tick moves them into the store's database and
 // deletes them -- and every reader that used to open them still returns the
-// same content: Show, ReadDiff, Pull's PushText, ingest's StoreSource, a fork
-// cut through the round, and gc's tarball.
+// same content: Show, ReadDiff, Pull's PushText, ingest's StoreSource, and a
+// fork cut through the round.
 func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	t.Parallel()
 

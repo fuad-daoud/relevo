@@ -114,15 +114,5 @@ EOF
 commit
 check "the same text outside the block fails" 1
 
-# internal/legacy is the one home of the old names.
-stage
-write internal/legacy/legacy.go <<'EOF'
-package legacy
-
-const Name = "relay"
-EOF
-commit
-check "a file under internal/legacy passes" 0
-
 [ "$fail" -eq 0 ] && echo "check-name: ok"
 exit "$fail"

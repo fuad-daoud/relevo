@@ -68,7 +68,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 		t.Fatalf("open machine db: %v", err)
 	}
 	t.Cleanup(func() { _ = machineDB.Close() })
-	secrets := serve.SecretStore{DB: machineDB, Root: root}
+	secrets := serve.SecretStore{DB: machineDB}
 
 	fp, err := serve.InitTLS(secrets, []string{"localhost", "127.0.0.1"}, now)
 	if err != nil {
@@ -105,9 +105,8 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 		MaxBundleBytes: 64 << 20,
 	}
 
-	clientsPath := filepath.Join(root, "clients.json")
 	enroll := func(pub string) remote.ClientID {
-		cls, err := serve.LoadClients(machineDB, clientsPath)
+		cls, err := serve.LoadClients(machineDB)
 		if err != nil {
 			t.Fatalf("LoadClients: %v", err)
 		}
@@ -187,7 +186,7 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 	// the server and records it on the client binding. Export one the way a
 	// real mastermind session does, so the client runtime resolves a record
 	// instead of failing the add with ErrNoMasterMindSession.
-	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now, Root: st.MasterMindsDir()}
+	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now}
 	prec, err := reg.Create(mastermind.Record{
 		ID:          "pl_eeeeeeeeeeee",
 		Name:        "e2e-mastermind",
@@ -217,7 +216,6 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 		Candidates:  cSet,
 		MasterMinds: reg,
 		Gates:       mdb,
-		GatesDir:    stRoot,
 		Latency:     mdb,
 		Now:         time.Now,
 		Remote:      client.New(servers, kp, time.Now),

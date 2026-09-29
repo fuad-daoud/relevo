@@ -97,29 +97,6 @@ edited alone; a MasterMind session's `relevo mcp` notices the upgrade too -- it
 appends a line to every tool result saying to reconnect it (`/mcp`), so the
 session loads the new server without a restart.
 
-<!-- name-guard: off -->
-
-### Upgrading from relay
-
-relay was renamed relevo in v0.12.0. A machine that ran relay keeps its state,
-its old `relay.service` (or LaunchAgent) and the old `relay` binary until
-`relevo migrate` moves them. The order:
-
-1. Finish or pause every binding (`relevo status`).
-2. Install `relevo`.
-3. Run `relevo migrate --dry-run`, then `relevo migrate`.
-4. Reinstall the Claude Code plugin: remove `relay@relay`, then add the
-   marketplace and install the plugin again:
-   ```
-   /plugin uninstall relay@relay
-   /plugin marketplace add fuad-daoud/relevo
-   /plugin install relevo@relevo
-   ```
-5. Run `relevo config agents`.
-6. Restart MasterMind sessions.
-
-<!-- name-guard: on -->
-
 ### The Claude Code plugin
 
 A Claude Code MasterMind installs relevo as a plugin. The plugin provides the
@@ -426,8 +403,6 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   or forget its records.
 - `relevo doctor` — preflight check: plugin, daemon, harness binaries, roles,
   the database and hooks. See [First run on a clean machine](#first-run-on-a-clean-machine).
-- `relevo migrate [--dry-run] [--keep-old-binary] [--state-from DIR] [--state-to DIR]` —
-  move a pre-relevo installation's state, switch the client unit and remove the old binary.
 - `relevo serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N] [--max-builders N]` — run the remote-builder server (listener + daemon).
 - `relevo serve init|enroll|clients|revoke|fingerprint|status|ui|gc|unbind` — server administration, on the server host. `relevo show --owner` reads one owner's round on that host, and `serve ui` is the server's own reader.
 - `relevo gate --serve [--state DIR]` — list the gates on the server's own ledger.
@@ -947,8 +922,7 @@ Archiving is the default because every other destruction decision in relevo keep
 by default. An archived binding keeps every row it had -- its rounds, its events,
 its artifacts and its transcripts -- so `relevo history`, `relevo show` and the
 ui's `all` scope still read it months later, and the name frees for a fresh
-binding. Nothing is written to `.archive/` any more: a tarball an older relevo
-left there is imported once, on the next read, and removed.
+binding.
 
 `unbind --done` only touches bindings the MasterMind marked `DONE`. A `PAUSED` or a `BROKEN`
 one is left alone: it still needs a
@@ -993,8 +967,7 @@ The state root holds only what cannot be a row:
   bodies) and `serve/bindings/<owner>/` (one directory per owner).
 
 Nothing else is used. A file dropped into `~/.config/relevo` is imported on the
-next command and removed, and a `.archive/*.tar.gz` an older relevo left behind
-is imported once and removed; after that neither path exists. `relevo doctor`
+next command and removed. `relevo doctor`
 prints the database's `database` row: its path, its size, the schema version,
 and the live and archived binding counts.
 
@@ -1571,7 +1544,7 @@ around 21:00 (30d)` note on a candidate whose provider was limited
 within an hour of now, and a `history` block with a 24-hour row per
 provider. It changes nothing about which candidate is picked; it is the
 cue to write a different order, or to `relevo gate <provider>` a provider
-before it bites. Older installs are migrated on first read.
+before it bites.
 
 ## Permission tiers
 
@@ -2105,7 +2078,7 @@ Each hook command is executed asynchronously in a detached process with a 10-sec
 - `RELEVO_OLD_STATE`: The previous state of the binding.
 - `RELEVO_ROUND`: The current round number.
 
-Hook stdout, stderr, and execution failures are recorded in the database's hook run log. `relevo doctor` prints a `hooks` row -- `hooks: N runs, M failed in the last 24h (last: <event>: <err>)`. A legacy `<root>/hooks.log` is imported once and removed.
+Hook stdout, stderr, and execution failures are recorded in the database's hook run log. `relevo doctor` prints a `hooks` row -- `hooks: N runs, M failed in the last 24h (last: <event>: <err>)`.
 
 Each hook script must have its executable bit set (`chmod +x`). An event with no argv list in the `hooks` section is a silent no-op.
 

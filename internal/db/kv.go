@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
 	"strings"
 	"time"
 )
@@ -174,45 +172,4 @@ func (a TxKV) KVKeys(prefix string) ([]string, error) { return a.DB.KVKeys(prefi
 
 func (a TxKV) Tx(fn func(KVTx) error) error {
 	return a.DB.Tx(func(t *Tx) error { return fn(t) })
-}
-
-// KVImportFile is the one import helper every package below uses. The rule is
-// "a file that is present is imported": the key's row wins when it exists (a
-// file beside it is removed); otherwise a present path is read, validated as
-// JSON and put under key, and only then removed; invalid JSON is an error
-// naming path and the file is kept.
-//
-// The write happens before the delete on purpose: a crash between them leaves
-// the file, and the next read imports it again. Deleting first would lose the
-// document on a failed put.
-func KVImportFile(kv KV, key, path string) ([]byte, bool, error) {
-	v, ok, err := kv.KVGet(key)
-	if err != nil {
-		return nil, false, err
-	}
-	if ok {
-		if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-			slog.Warn("kv import: could not remove file for an existing row", "key", key, "path", path, "err", rerr)
-		}
-		return v, true, nil
-	}
-
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("read %s: %w", path, err)
-	}
-	if !json.Valid(data) {
-		return nil, false, fmt.Errorf("decode %s: invalid JSON: %w", path, ErrInvalid)
-	}
-
-	if err := kv.KVPut(key, data); err != nil {
-		return nil, false, err
-	}
-	if err := os.Remove(path); err != nil {
-		slog.Warn("kv import: could not remove imported file", "key", key, "path", path, "err", err)
-	}
-	return data, true, nil
 }

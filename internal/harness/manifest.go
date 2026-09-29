@@ -11,8 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// manifestKey is the kv row the role manifest lives in; ReadManifest imports a
-// present legacy agents-manifest.json file on first read.
+// manifestKey is the kv row the role manifest lives in.
 const manifestKey = "agents-manifest"
 
 // docSHA is the manifest value for one definition: the sha256 of the raw bytes,
@@ -22,11 +21,11 @@ func docSHA(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ReadManifest loads the role manifest from kv, importing a present legacyPath
-// file on first read. An absent row is an empty map and no error; malformed
-// JSON is an error, and the caller decides what to do with it.
-func ReadManifest(kv db.KV, legacyPath string) (map[string]string, error) {
-	raw, ok, err := db.KVImportFile(kv, manifestKey, legacyPath)
+// ReadManifest loads the role manifest from kv. An absent row is an empty map
+// and no error; malformed JSON is an error, and the caller decides what to do
+// with it.
+func ReadManifest(kv db.KV) (map[string]string, error) {
+	raw, ok, err := kv.KVGet(manifestKey)
 	if err != nil {
 		return nil, err
 	}

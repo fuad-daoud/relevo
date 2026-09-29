@@ -20,7 +20,7 @@ type Record struct {
 	JSON      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// ViewedAt replaces the <binding dir>/.viewed sidecar.
+	// ViewedAt replaces the old <binding dir>/.viewed file.
 	ViewedAt *time.Time
 	// ArchivedAt is set by RecordArchive, which hides the row from reads.
 	ArchivedAt *time.Time
@@ -165,31 +165,6 @@ func (d *DB) RecordGetArchivedByName(owner, name string) (Record, bool, error) {
 		return Record{}, false, fmt.Errorf("db: record get archived %s/%q: %w", owner, name, mapBusy(err))
 	}
 	return r, true, nil
-}
-
-// RecordPutArchived inserts one archived row directly, with archived_at set:
-// the tarball import mints a record that was never live.
-func (t *Tx) RecordPutArchived(r Record, at time.Time) (string, error) {
-	id := r.ID
-	if id == "" {
-		id = NewID()
-	}
-	createdAt := r.CreatedAt
-	if createdAt.IsZero() {
-		createdAt = at
-	}
-	updatedAt := r.UpdatedAt
-	if updatedAt.IsZero() {
-		updatedAt = at
-	}
-	if _, err := t.exec(`INSERT INTO binding_record
-			(id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		id, r.Owner, r.Name, r.State, r.Round, r.CWD, r.JSON,
-		formatTime(createdAt), formatTime(updatedAt), nullableTime(r.ViewedAt), formatTime(at)); err != nil {
-		return "", fmt.Errorf("db: record put archived %q: %w", r.Name, mapBusy(err))
-	}
-	return id, nil
 }
 
 // RecordPut inserts or updates the live row for r.Owner and r.Name. A hit

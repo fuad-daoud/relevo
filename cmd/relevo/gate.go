@@ -161,11 +161,10 @@ func gateClear(subject string) error {
 
 	// On a box that also runs a serve daemon, the client ledger just cleared
 	// is not the record that gates anything: a serve daemon keeps its own
-	// gates, in the serve root's database (P3b plan §4.5). The pointer lives
-	// under the serve root (#372 §4.6): the client root's daemon.json is
-	// DaemonInfo, which decodes as a pointer with a live pid.
-	if defRoot, err := defaultServeRoot(); err == nil {
-		if p, ok, _ := serve.ReadPointer(defRoot); ok && pidAlive(p.PID) {
+	// gates, in its own database (P3b plan §4.5).
+	if d, _, err := openMachineDB(); err == nil {
+		defer d.Close()
+		if p, ok, _ := serve.ReadDaemonPointer(d); ok && pidAlive(p.PID) {
 			fmt.Print("note: a relevo serve daemon runs here with its own gates; use relevo gate --serve\n")
 		}
 	}

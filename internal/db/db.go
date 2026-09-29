@@ -324,10 +324,6 @@ func (t *Tx) queryRow(query string, args ...any) *sql.Row {
 	return t.conn.QueryRowContext(t.ctx, query, args...)
 }
 
-func (t *Tx) query(query string, args ...any) (*sql.Rows, error) {
-	return t.conn.QueryContext(t.ctx, query, args...)
-}
-
 // queryer is the slice of *sql.DB and *sql.Conn that readers need, so one
 // query function backs both *DB and *Tx reads.
 type queryer interface {

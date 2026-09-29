@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -12,8 +11,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// testPrefsStore is a real t.TempDir() database and a legacy ui.json path, so
-// a preference round trip exercises the kv row (P3b plan §4.4, §7).
+// testPrefsStore is a real t.TempDir() database, so a preference round trip
+// exercises the kv row (P3b plan §4.4, §7).
 func testPrefsStore(t *testing.T) PrefsStore {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -21,7 +20,7 @@ func testPrefsStore(t *testing.T) PrefsStore {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	return PrefsStore{KV: d, Key: "ui", LegacyPath: filepath.Join(t.TempDir(), "ui.json")}
+	return PrefsStore{KV: d, Key: "ui"}
 }
 
 func TestPrefsRoundTrip(t *testing.T) {
@@ -39,16 +38,6 @@ func TestPrefsRoundTrip(t *testing.T) {
 		t.Errorf("round trip: %+v", got)
 	}
 
-	// A corrupt legacy ui.json is read as zero prefs: an import that refuses it
-	// leaves nothing to load.
-	bad := testPrefsStore(t)
-	if err := os.WriteFile(bad.LegacyPath, []byte("{not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := loadPrefs(bad); got != (prefs{}) {
-		t.Errorf("garbage must load zero prefs, got %+v", got)
-	}
-
 	// A zero PrefsStore (KV nil) is unscoped: nothing loads.
 	if got := loadPrefs(PrefsStore{}); got != (prefs{}) {
 		t.Errorf("zero PrefsStore must load zero prefs, got %+v", got)
@@ -61,7 +50,7 @@ func TestPrefsRoundTrip(t *testing.T) {
 func TestPrefsOldDocumentStillLoads(t *testing.T) {
 	ps := testPrefsStore(t)
 	old := []byte(`{"sort":"name","compact":true,"rail_cols":42,"scope":"all","dashboard":"x","dashboard_sort":"cost"}`)
-	if err := os.WriteFile(ps.LegacyPath, old, 0o644); err != nil {
+	if err := ps.KV.KVPut(ps.Key, old); err != nil {
 		t.Fatal(err)
 	}
 	got := loadPrefs(ps)

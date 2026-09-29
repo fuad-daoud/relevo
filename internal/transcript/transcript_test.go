@@ -88,7 +88,6 @@ func TestRenderDropsSupervisorTrailers(t *testing.T) {
 	}
 	trailers := map[string][]string{
 		"relevo": {"relevo-rusage:cpu_usec=4982568 mem_peak=348131328", "relevo-exit:0"},
-		"legacy": {"relay-rusage:cpu_usec=4982568 mem_peak=348131328", "relay-exit:0"}, // name-guard: legacy
 	}
 	for _, kind := range []string{"claude", "agy", "opencode", "codex"} {
 		for name, lines := range trailers {

@@ -10,8 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // ErrKeyFormat indicates that key data is malformed or invalidly encoded.
@@ -100,16 +98,14 @@ func MarshalPrivate(k Keypair) ([]byte, error) {
 }
 
 // ParsePrivate parses a PEM-encoded private key. The PEM block must be of type
-// "RELEVO ED25519 PRIVATE KEY" or of the pre-rename type
-// legacy.KeyPEMType ("RELAY ED25519 PRIVATE KEY"), which a client key written // name-guard: legacy
-// by relay still carries; any other type, or an invalid key length, returns an // name-guard: legacy
-// error.
+// "RELEVO ED25519 PRIVATE KEY"; any other type, or an invalid key length,
+// returns an error.
 func ParsePrivate(data []byte) (Keypair, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
 		return Keypair{}, ErrKeyFormat
 	}
-	if block.Type != pemTypePrivate && block.Type != legacy.KeyPEMType {
+	if block.Type != pemTypePrivate {
 		return Keypair{}, ErrKeyType
 	}
 	if len(block.Bytes) != ed25519.PrivateKeySize {

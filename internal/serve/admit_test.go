@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -660,18 +661,22 @@ func TestHeldCPUsSkipsAFailingOwner(t *testing.T) {
 	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
 	requireCreated(t, respB, bodyB, "B")
 
-	// A third owner with a legacy binding file that cannot be imported, so its
-	// List errors where B's does not.
 	ownerC := addOwner(t, env, "carol")
 	cDir, ok := ownerC.id.Dir()
 	if !ok {
 		t.Fatal("carol's client id has no dir")
 	}
-	brokenDir := filepath.Join(env.srv.cfg.Root, "bindings", cDir, "broken")
-	if err := os.MkdirAll(brokenDir, 0o755); err != nil {
+	// A record row that cannot be decoded, so carol's List errors where B's
+	// does not.
+	if err := os.MkdirAll(filepath.Join(env.srv.cfg.Root, "bindings", cDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(brokenDir, "bind.json"), []byte("{"), 0o644); err != nil {
+	if _, err := env.srv.cfg.DB.RecordPut(db.Record{
+		Owner: string(ownerC.id),
+		Name:  "broken",
+		Round: 1,
+		JSON:  "{",
+	}); err != nil {
 		t.Fatal(err)
 	}
 

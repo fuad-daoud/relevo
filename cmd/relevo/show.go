@@ -242,8 +242,8 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 		live = true
 	}
 	// #143: a successful print is what "viewed" means, for a live binding
-	// only -- there is no .viewed sidecar for a database-only (archived)
-	// binding to stamp. Best-effort: never fails the read.
+	// only -- an archived binding's record stays as it is.
+	// Best-effort: never fails the read.
 	stampViewed := func() {
 		if markViewed && live {
 			_ = rt.Store.MarkViewed(name, time.Now())

@@ -19,7 +19,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
@@ -337,9 +336,8 @@ func (r *Runner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
 }
 
 // ExitCode reads the trailer the supervisor appended, if it is the stream's last
-// line; a stream written before the rename ends in legacy.ExitTrailer instead
-// and reads the same way. A kill recorded for this handle returns ok=false
-// regardless of what the stream ends with.
+// line. A kill recorded for this handle returns ok=false regardless of what the
+// stream ends with.
 func (r *Runner) ExitCode(_ context.Context, h spawn.ProcHandle, logPath string) (int, bool) {
 	if killRecorded(h, logPath) {
 		return 0, false
@@ -348,14 +346,10 @@ func (r *Runner) ExitCode(_ context.Context, h spawn.ProcHandle, logPath string)
 	if !ok {
 		return 0, false
 	}
-	prefix := spawn.ExitTrailer
-	if !strings.HasPrefix(line, prefix) {
-		prefix = legacy.ExitTrailer
-		if !strings.HasPrefix(line, prefix) {
-			return 0, false
-		}
+	if !strings.HasPrefix(line, spawn.ExitTrailer) {
+		return 0, false
 	}
-	code, err := strconv.Atoi(strings.TrimPrefix(line, prefix))
+	code, err := strconv.Atoi(strings.TrimPrefix(line, spawn.ExitTrailer))
 	if err != nil {
 		return 0, false
 	}
@@ -399,16 +393,15 @@ func (r *Runner) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string
 }
 
 // Rusage scans the last few lines of streamPath, from last to first, for the
-// rusage trailer or the legacy one a pre-rename stream carries; ok is false when
-// none match. The scan is needed because the supervisor's printf leaves a blank
-// line between the rusage and exit trailers.
+// rusage trailer; ok is false when none match. The scan is needed because the
+// supervisor's printf leaves a blank line between the rusage and exit trailers.
 func (r *Runner) Rusage(_ context.Context, _ spawn.ProcHandle, streamPath string) (spawn.ProcRusage, bool) {
 	lines, ok := lastLines(streamPath, 6)
 	if !ok {
 		return spawn.ProcRusage{}, false
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.HasPrefix(lines[i], spawn.RusageTrailerPrefix) || strings.HasPrefix(lines[i], legacy.RusageTrailer) {
+		if strings.HasPrefix(lines[i], spawn.RusageTrailerPrefix) {
 			return ParseRusageTrailer(lines[i])
 		}
 	}

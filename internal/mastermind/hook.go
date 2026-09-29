@@ -153,9 +153,6 @@ type InitInput struct {
 // transaction so two concurrent hook firings serialise.
 func Init(reg Registry, in InitInput) (Record, InitResult, error) {
 	if dr, ok := reg.(*DBRegistry); ok {
-		if err := dr.ensureImported(); err != nil {
-			return Record{}, "", err
-		}
 		var (
 			rec Record
 			res InitResult

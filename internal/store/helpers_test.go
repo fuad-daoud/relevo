@@ -1,11 +1,6 @@
 package store
 
 import (
-	"archive/tar"
-	"compress/gzip"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -95,81 +90,43 @@ func withBinding(b Binding, mutate func(*Binding)) Binding {
 	return b
 }
 
-// writeTarGz writes a flat <name>/<member> tarball at dest, the layout a
-// pre-database relevo archived bindings in.
-func writeTarGz(t *testing.T, dest, name string, members map[string]string) {
+// putRecordJSON puts name's live record with raw record JSON, so a test can
+// seed a record shape the store's own writers would not produce.
+func putRecordJSON(t *testing.T, s *Store, name, recordJSON string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.Create(dest)
+	d, err := s.dbForWrite()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("db: %v", err)
 	}
-	gz := gzip.NewWriter(f)
-	tw := tar.NewWriter(gz)
-	for base, body := range members {
-		hdr := &tar.Header{
-			Name:     name + "/" + base,
-			Mode:     0o644,
-			Size:     int64(len(body)),
-			Typeflag: tar.TypeReg,
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write([]byte(body)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, c := range []func() error{tw.Close, gz.Close, f.Close} {
-		if err := c(); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := d.RecordPut(db.Record{
+		Owner: s.owner,
+		Name:  name,
+		Round: 1,
+		JSON:  recordJSON,
+	}); err != nil {
+		t.Fatalf("RecordPut(%q): %v", name, err)
 	}
 }
 
-// legacyFixture returns the ingest package's legacy bind.json/log.jsonl pair.
-func legacyFixture(t *testing.T, base string) []byte {
+// putEventJSON replaces name's events with raw entry JSON, so a test can seed a
+// log the store's own writers would not produce.
+func putEventJSON(t *testing.T, s *Store, name string, lines []string) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "ingest", "testdata", "binding-three-rounds", base))
+	d, err := s.dbForWrite()
 	if err != nil {
-		t.Fatalf("read fixture %s: %v", base, err)
+		t.Fatalf("db: %v", err)
 	}
-	return raw
-}
-
-// seedLegacyDir writes a legacy binding directory named name from the fixture,
-// optionally patched by patchLog, and returns the log bytes it wrote.
-func seedLegacyDir(t *testing.T, root, name string, patchLog func([]byte) []byte) []byte {
-	t.Helper()
-
-	dir := filepath.Join(root, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
+	rec, ok, err := d.RecordGet(s.owner, name)
+	if err != nil || !ok {
+		t.Fatalf("RecordGet(%q): ok=%v err=%v", name, ok, err)
 	}
-
-	var doc map[string]any
-	if err := json.Unmarshal(legacyFixture(t, "bind.json"), &doc); err != nil {
-		t.Fatalf("decode fixture bind.json: %v", err)
+	evs := make([]db.RecordEvent, 0, len(lines))
+	for i, line := range lines {
+		evs = append(evs, db.RecordEvent{Seq: i + 1, JSON: line})
 	}
-	doc["name"] = name
-	bindJSON, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		t.Fatal(err)
+	if err := d.EventReplaceAll(rec.ID, evs); err != nil {
+		t.Fatalf("EventReplaceAll(%q): %v", name, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "bind.json"), bindJSON, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	logJSON := legacyFixture(t, "log.jsonl")
-	if patchLog != nil {
-		logJSON = patchLog(logJSON)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "log.jsonl"), logJSON, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return logJSON
 }
 
 func containsAll(haystack []string, names map[string][]byte) bool {

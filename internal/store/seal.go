@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
@@ -221,9 +220,8 @@ func Sealable(b Binding, round int, streamDrained bool) bool {
 // other round is vacuously drained.
 //
 // A missing stream is drained. Otherwise the stream is drained when the exit
-// trailer is in its content -- the relevo spelling or the pre-rename spelling
-// legacy keeps -- and the cursor has reached EOF, or every byte past the
-// cursor is a trailer line, or the trailer is present and the stream has been
+// trailer is in its content and the cursor has reached EOF, or every byte past
+// the cursor is a trailer line, or the trailer is present and the stream has been
 // quiet for staleStreamAfter.
 func (s *Store) StreamDrained(b Binding, round int) bool {
 	if round != b.Builder.StreamRound {
@@ -242,7 +240,7 @@ func (s *Store) StreamDrained(b Binding, round int) bool {
 		return false
 	}
 	text := string(body)
-	if !strings.Contains(text, "\n"+spawn.ExitTrailer) && !strings.Contains(text, "\n"+legacy.ExitTrailer) {
+	if !strings.Contains(text, "\n"+spawn.ExitTrailer) {
 		return false
 	}
 	off := b.Builder.StreamOffset
@@ -263,17 +261,14 @@ func (s *Store) StreamDrained(b Binding, round int) bool {
 const staleStreamAfter = time.Hour
 
 // trailerLinesOnly reports whether every line in s is one the supervisor's
-// exit leaves behind: an empty line, or a rusage or exit trailer line in
-// either the relevo or the pre-rename spelling.
+// exit leaves behind: an empty line, or a rusage or exit trailer line.
 func trailerLinesOnly(s string) bool {
 	for _, line := range strings.Split(s, "\n") {
 		if line == "" {
 			continue
 		}
 		if strings.HasPrefix(line, spawn.ExitTrailer) ||
-			strings.HasPrefix(line, legacy.ExitTrailer) ||
-			strings.HasPrefix(line, spawn.RusageTrailerPrefix) ||
-			strings.HasPrefix(line, legacy.RusageTrailer) {
+			strings.HasPrefix(line, spawn.RusageTrailerPrefix) {
 			continue
 		}
 		return false

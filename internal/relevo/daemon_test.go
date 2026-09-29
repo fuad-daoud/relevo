@@ -514,7 +514,7 @@ func TestTickRefreshesOncePastTTL(t *testing.T) {
 				t.Errorf("fetch calls = %d, want %d", ff.calls, tc.wantCalls)
 			}
 
-			c, ok, err := release.Load(mdb, "")
+			c, ok, err := release.Load(mdb)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -557,7 +557,7 @@ func TestTickSurvivesFetchError(t *testing.T) {
 			t.Fatalf("open store db: %v", merr)
 		}
 		defer mdb.Close()
-		if _, ok, err := release.Load(mdb, ""); err != nil || ok {
+		if _, ok, err := release.Load(mdb); err != nil || ok {
 			t.Errorf("cache = (_, %v, %v), want no record: a failed fetch saves nothing", ok, err)
 		}
 	})
@@ -583,7 +583,7 @@ func TestTickSurvivesFetchError(t *testing.T) {
 			t.Errorf("Tick = %v, want nil", err)
 		}
 
-		c, ok, err := release.Load(mdb, "")
+		c, ok, err := release.Load(mdb)
 		if err != nil || !ok {
 			t.Fatalf("Load = (%+v, ok %v, %v), want the seeded cache", c, ok, err)
 		}
@@ -736,7 +736,7 @@ func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
 		t.Fatalf("open store db: %v", merr)
 	}
 	defer mdb.Close()
-	cached, ok, err := release.Load(mdb, "")
+	cached, ok, err := release.Load(mdb)
 	if err != nil || !ok {
 		t.Fatalf("release.Load = (ok %v, err %v), want the fetched answer saved", ok, err)
 	}
@@ -864,6 +864,8 @@ func TestBackfillLeavesMasterMindlessBindingsAlone(t *testing.T) {
 //
 // (Before the database the daemon skipped the binding after loading it; now
 // the load itself refuses it, so a tick over such a root fails its listing.)
+// TestTickSkipsANewerFormatBinding: a newer-format record fails the load, and
+// the record row is left untouched.
 func TestTickSkipsANewerFormatBinding(t *testing.T) {
 	t.Parallel()
 
@@ -875,18 +877,18 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 		Builder:    store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
 		Format:     store.BindingFormat + 1,
 	}
-	if err := os.MkdirAll(rt.Store.Dir(b.Name), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.MarshalIndent(b, "", "  ")
+	raw, err := json.Marshal(b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format": %d`, store.BindingFormat+1))) {
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format":%d`, store.BindingFormat+1))) {
 		t.Fatalf("the fixture must carry format %d, got:\n%s", store.BindingFormat+1, raw)
 	}
-	path := filepath.Join(rt.Store.Dir(b.Name), "bind.json")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
+	d, err := rt.Store.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.RecordPut(db.Record{Owner: "", Name: b.Name, Round: 1, JSON: string(raw)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -897,14 +899,6 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 	}
 	if !errors.Is(err, store.ErrNewerFormatSentinel) {
 		t.Errorf("errors.Is(%v, store.ErrNewerFormatSentinel) = false, want true", err)
-	}
-
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(raw, after) {
-		t.Errorf("the import rewrote a newer-format binding:\nbefore:\n%s\nafter:\n%s", raw, after)
 	}
 }
 
@@ -948,7 +942,7 @@ func TestPruneMasterMindsForgetsAndStamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store db: %v", err)
 	}
-	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Root: st.MasterMindsDir(), Now: func() time.Time { return now }}
+	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Now: func() time.Time { return now }}
 
 	mk := func(id, name, session string, host int) mastermind.Record {
 		rec, err := reg.Create(mastermind.Record{

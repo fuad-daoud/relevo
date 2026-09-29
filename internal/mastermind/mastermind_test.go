@@ -35,9 +35,8 @@ func testRegistry(t *testing.T) *DBRegistry {
 func testRegistryOn(t *testing.T, d *db.DB) *DBRegistry {
 	t.Helper()
 	return &DBRegistry{
-		KV:   db.TxKV{DB: d},
-		Now:  func() time.Time { return testNow },
-		Root: filepath.Join(t.TempDir(), "masterminds"),
+		KV:  db.TxKV{DB: d},
+		Now: func() time.Time { return testNow },
 	}
 }
 

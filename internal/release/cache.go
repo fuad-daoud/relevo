@@ -2,7 +2,6 @@ package release
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -23,15 +22,12 @@ type Cache struct {
 	Source    string    `json:"source"`
 }
 
-// Load reads the cache, importing a present legacyPath file on first read.
-// An absent or malformed cache is (Cache{}, false, nil), never an error: a
-// corrupt cache must only fail to inform a caller, never fail it.
-func Load(kv db.KV, legacyPath string) (Cache, bool, error) {
-	data, ok, err := db.KVImportFile(kv, cacheKey, legacyPath)
+// Load reads the cache. An absent or malformed cache is (Cache{}, false, nil),
+// never an error: a corrupt cache must only fail to inform a caller, never
+// fail it.
+func Load(kv db.KV) (Cache, bool, error) {
+	data, ok, err := kv.KVGet(cacheKey)
 	if err != nil {
-		if errors.Is(err, db.ErrInvalid) {
-			return Cache{}, false, nil
-		}
 		return Cache{}, false, err
 	}
 	if !ok {

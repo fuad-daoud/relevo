@@ -275,7 +275,7 @@ func recordLatency(d Deps, r ProbeResult) {
 	}
 
 	err := d.Store.WithLock(func(*store.Tx) error {
-		h, err := LoadLatency(d.Latency, LegacyGatesPath(d.GatesDir, "latency.json"))
+		h, err := LoadLatency(d.Latency)
 		if err != nil {
 			return err
 		}
