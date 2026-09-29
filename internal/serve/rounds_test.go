@@ -18,7 +18,7 @@ import (
 // plannerCandidateSet is the haiku candidate a served planner binding runs. It
 // lists only roles harness knows -- candidate.Load drops a candidate whose role
 // is unknown -- while the planner row in plannerRegistry assigns it, which is
-// the only place file-mode roles.json assigns candidates (#374).
+// the only place file-mode roles.json assigns candidates.
 func plannerCandidateSet(t *testing.T) *candidate.Set {
 	t.Helper()
 	body := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
@@ -53,7 +53,7 @@ func plannerRegistry(t *testing.T, set *candidate.Set) *roles.Registry {
 	return reg
 }
 
-// TestStartRoundForceSendsAnOverCapPlannerSeed pins #702's server half: the
+// TestStartRoundForceSendsAnOverCapPlannerSeed pins the server half: the
 // round request's force field is applied to the same seed-cap check a local
 // send uses, so an over-cap planner seed is admitted (201) with force and
 // refused (not 201) without it.
