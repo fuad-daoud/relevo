@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // testLedgerKV is a real t.TempDir() database, the medium the ledger lives in.
@@ -56,43 +55,6 @@ func TestExpired(t *testing.T) {
 				t.Errorf("Expired(%v) with Until %v = %v, want %v", now, tt.until, got, tt.want)
 			}
 		})
-	}
-}
-
-// TestLoadKVReadsLegacySource pins that an entry recorded before the rename
-// carries "source":"relay" and must read as relevo's own, not as an unknown // name-guard: legacy
-// source preserved in Other. A SaveLedger then writes "relevo". The pre-rename
-// document arrives as a legacy ledger.json, which LoadLedger imports.
-func TestLoadKVReadsLegacySource(t *testing.T) {
-	kv := testLedgerKV(t)
-	path := writeLegacy(t, `{"entries":[{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"`+legacy.LedgerSource+`"}]}`)
-
-	l, err := LoadLedger(kv, path)
-	if err != nil {
-		t.Fatalf("LoadLedger: %v", err)
-	}
-	if len(l.Entries) != 1 {
-		t.Fatalf("Entries = %+v, want the one pre-rename entry read as relevo's", l.Entries)
-	}
-	if len(l.Other) != 0 {
-		t.Fatalf("Other = %+v, want empty: a relay source must not be kept raw", l.Other) // name-guard: legacy
-	}
-	if got := l.Entries[0].Source; got != "relevo" {
-		t.Errorf("Source = %q, want \"relevo\"", got)
-	}
-
-	if err := SaveLedger(kv, l); err != nil {
-		t.Fatalf("SaveLedger: %v", err)
-	}
-	raw, ok, err := kv.KVGet("ledger")
-	if err != nil || !ok {
-		t.Fatalf("KVGet after SaveLedger = (_, %v, %v), want the ledger row", ok, err)
-	}
-	if !strings.Contains(string(raw), `"source": "relevo"`) {
-		t.Errorf("saved ledger = %s, want the source rewritten to \"relevo\"", raw)
-	}
-	if strings.Contains(string(raw), `"source": "`+legacy.LedgerSource+`"`) {
-		t.Errorf("saved ledger = %s, want no relay source left", raw) // name-guard: legacy
 	}
 }
 

@@ -43,33 +43,6 @@ func TestDaemonPointerKVRoundTrip(t *testing.T) {
 	}
 }
 
-// TestReadPointerFile pins the legacy file reader internal/migrate still uses.
-func TestReadPointerFile(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, PointerFileName), []byte(`{"root":"/srv/serve","pid":4242}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, ok, err := ReadPointer(root)
-	if err != nil || !ok {
-		t.Fatalf("ReadPointer = (ok %v, err %v), want (true, nil)", ok, err)
-	}
-	if got.Root != "/srv/serve" || got.PID != 4242 {
-		t.Errorf("ReadPointer = %+v, want root /srv/serve pid 4242", got)
-	}
-
-	if _, ok, err := ReadPointer(t.TempDir()); err != nil || ok {
-		t.Errorf("ReadPointer(missing) = (ok %v, err %v), want (false, nil)", ok, err)
-	}
-
-	malformedRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(malformedRoot, PointerFileName), []byte("{"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := ReadPointer(malformedRoot); err == nil {
-		t.Error("ReadPointer malformed JSON error = nil, want non-nil")
-	}
-}
-
 func emptyRoot(t *testing.T, _ *db.DB) string { return t.TempDir() }
 
 func missingRoot(t *testing.T, _ *db.DB) string { return filepath.Join(t.TempDir(), "nope") }

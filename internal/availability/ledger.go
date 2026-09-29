@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // Kind classifies why a candidate could not be used.
@@ -100,11 +99,6 @@ const ledgerKey = "ledger"
 // An entry whose kind or source is unknown to this binary is preserved raw in
 // Other rather than rejected, so a ledger written by a newer relevo survives a
 // rollback. Malformed JSON is still an error.
-//
-// An entry recorded before the rename carries Source "relay": LoadLedger reads // name-guard: legacy
-// relevo's own, rewriting the source to "relevo" before the knownKind and
-// knownSource test, so a pre-cutover rate-limit gate keeps gating instead of
-// lapsing into Other. A later SaveLedger then writes "relevo".
 func LoadLedger(kv db.KV, legacyPath string) (Ledger, error) {
 	data, ok, err := db.KVImportFile(kv, ledgerKey, legacyPath)
 	if err != nil {
@@ -131,12 +125,6 @@ func decode(data []byte) (Ledger, error) {
 		var e Entry
 		if err := json.Unmarshal(raw, &e); err != nil {
 			return Ledger{}, fmt.Errorf("decode ledger: entry %d: %w", i, err)
-		}
-
-		// A pre-rename entry is relevo's own, written before the cutover: it
-		// reads as "relevo" so knownSource accepts it.
-		if e.Source == legacy.LedgerSource {
-			e.Source = "relevo"
 		}
 
 		if !knownKind(e.Kind) || !knownSource(e.Source) {

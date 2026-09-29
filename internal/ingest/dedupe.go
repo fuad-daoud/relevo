@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -25,7 +24,6 @@ type DedupeStats struct {
 	TranscriptRowsDeleted         int       `json:"transcript_rows_deleted"`
 	TranscriptRoundsKept          int       `json:"transcript_rounds_kept"`
 	TranscriptRoundsByStreamLines int       `json:"transcript_rounds_by_stream_lines"`
-	TranscriptRowsRenamed         int       `json:"transcript_rows_renamed"`
 	BackupPath                    string    `json:"backup_path"`
 	VacuumErr                     string    `json:"vacuum_err"`
 }
@@ -91,10 +89,7 @@ func dedupeRoundFileBases(kind string, number int) []string {
 // transcript is a duplicate when re-deriving it reproduces every row exactly, or
 // every row is covered by the record's sealed lines (streamLinesCover). MasterMind
 // transcripts are never examined.
-//
-// renames are the substitutions a cutover applied to the sealed stream files, so a
-// row whose stored path predates the rewrite still matches its rewritten line.
-func DedupeMirror(d *db.DB, renames []legacy.Prefix) (dedupePlan, error) {
+func DedupeMirror(d *db.DB) (dedupePlan, error) {
 	var plan dedupePlan
 
 	// Filter{}'s Archived is nil, which queryBindings reads as "no constraint",
@@ -121,7 +116,7 @@ func DedupeMirror(d *db.DB, renames []legacy.Prefix) (dedupePlan, error) {
 			plan.stats.Unmapped++
 			continue
 		}
-		if err := planBinding(&plan, d, b, record, renames); err != nil {
+		if err := planBinding(&plan, d, b, record); err != nil {
 			return dedupePlan{}, err
 		}
 	}
@@ -146,7 +141,7 @@ func dedupeRecord(b db.BindingRow, records []db.Record) (db.Record, bool) {
 	return match, true
 }
 
-func planBinding(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record, renames []legacy.Prefix) error {
+func planBinding(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record) error {
 	rounds, err := d.Rounds(b.ID)
 	if err != nil {
 		return fmt.Errorf("dedupe: rounds of %s: %w", b.Name, err)
@@ -155,7 +150,7 @@ func planBinding(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record, 
 		if err := planArtifacts(plan, d, record, rd); err != nil {
 			return err
 		}
-		if err := planTranscript(plan, d, b, record, rd, renames); err != nil {
+		if err := planTranscript(plan, d, b, record, rd); err != nil {
 			return err
 		}
 	}
@@ -195,7 +190,7 @@ func planArtifacts(plan *dedupePlan, d *db.DB, record db.Record, rd db.Round) er
 }
 
 // planTranscript applies the transcript identity rule to one mirror round.
-func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record, rd db.Round, renames []legacy.Prefix) error {
+func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record, rd db.Round) error {
 	rows, err := d.Transcript(db.OwnerRound, rd.ID, 0, 0)
 	if err != nil {
 		return fmt.Errorf("dedupe: transcript of %s round %d: %w", b.Name, rd.Number, err)
@@ -210,17 +205,17 @@ func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Recor
 	}
 	for _, derived := range candidates {
 		if transcriptRowsEqual(rows, derived) {
-			plan.removeTranscript(rd.ID, len(rows), false, 0)
+			plan.removeTranscript(rd.ID, len(rows), false)
 			return nil
 		}
 	}
 
-	covered, renamed, err := streamLinesCover(d, record, rd, rows, renames)
+	covered, err := streamLinesCover(d, record, rd, rows)
 	if err != nil {
 		return err
 	}
 	if covered {
-		plan.removeTranscript(rd.ID, len(rows), true, renamed)
+		plan.removeTranscript(rd.ID, len(rows), true)
 		return nil
 	}
 
@@ -228,34 +223,31 @@ func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Recor
 	return nil
 }
 
-func (p *dedupePlan) removeTranscript(ownerID string, rows int, byStreamLines bool, renamed int) {
+func (p *dedupePlan) removeTranscript(ownerID string, rows int, byStreamLines bool) {
 	p.transcriptOwners = append(p.transcriptOwners, ownerID)
 	p.stats.TranscriptRoundsDeleted++
 	p.stats.TranscriptRowsDeleted += rows
 	if byStreamLines {
 		p.stats.TranscriptRoundsByStreamLines++
-		p.stats.TranscriptRowsRenamed += renamed
 	}
 }
 
 // streamLinesCover reports whether every row is proven by the record's sealed
-// round files, and how many matched only after the rename rewrite. Three cases, in
-// order: a row with record JSON is covered when it is a line of the sealed builder
-// stream, directly or -- with renames -- after the rewrite; a row with neither
-// record JSON nor rendered text is a blank stream line and holds nothing; a row
-// with rendered text but no record JSON is covered when it is a line of the sealed
-// builder log verbatim (relevo migrate never rewrote .log files, so no rename
-// rewrite is tried). A missing stream is not fatal. rows must be non-empty.
-func streamLinesCover(d *db.DB, record db.Record, rd db.Round, rows []db.TranscriptRecord, renames []legacy.Prefix) (covered bool, renamed int, err error) {
+// round files. Three cases, in order: a row with record JSON is covered when it is
+// a line of the sealed builder stream; a row with neither record JSON nor rendered
+// text is a blank stream line and holds nothing; a row with rendered text but no
+// record JSON is covered when it is a line of the sealed builder log verbatim. A
+// missing stream is not fatal. rows must be non-empty.
+func streamLinesCover(d *db.DB, record db.Record, rd db.Round, rows []db.TranscriptRecord) (covered bool, err error) {
 	streamName, streamBody, found, err := sealedStream(d, record, rd.Number)
 	if err != nil {
-		return false, 0, err
+		return false, err
 	}
 	var stream map[string]bool
 	if found {
 		stream, err = lineSet(record, streamName, streamBody)
 		if err != nil {
-			return false, 0, err
+			return false, err
 		}
 	}
 
@@ -263,12 +255,8 @@ func streamLinesCover(d *db.DB, record db.Record, rd db.Round, rows []db.Transcr
 	logLoaded := false
 	for _, row := range rows {
 		if row.RecordJSON != "" {
-			ok, renamedRow := streamCoversRecord(row.RecordJSON, stream, renames)
-			if !ok {
-				return false, 0, nil
-			}
-			if renamedRow {
-				renamed++
+			if !streamCoversRecord(row.RecordJSON, stream) {
+				return false, nil
 			}
 			continue
 		}
@@ -279,30 +267,20 @@ func streamLinesCover(d *db.DB, record db.Record, rd db.Round, rows []db.Transcr
 			logLoaded = true
 			log, err = sealedLogSet(d, record, rd)
 			if err != nil {
-				return false, 0, err
+				return false, err
 			}
 		}
 		if !log[row.Rendered] {
-			return false, 0, nil
+			return false, nil
 		}
 	}
-	return true, renamed, nil
+	return true, nil
 }
 
 // streamCoversRecord reports whether a row's record JSON is a line of the sealed
-// builder stream; renamed is true when only the rewrite matched.
-func streamCoversRecord(jsonLine string, stream map[string]bool, renames []legacy.Prefix) (ok, renamed bool) {
-	if stream[jsonLine] {
-		return true, false
-	}
-	if len(renames) == 0 {
-		return false, false
-	}
-	rewritten := string(legacy.RewriteJSON([]byte(jsonLine), renames))
-	if rewritten == jsonLine || !stream[rewritten] {
-		return false, false
-	}
-	return true, true
+// builder stream.
+func streamCoversRecord(jsonLine string, stream map[string]bool) bool {
+	return stream[jsonLine]
 }
 
 func sealedLogSet(d *db.DB, record db.Record, rd db.Round) (map[string]bool, error) {
@@ -478,14 +456,14 @@ const dedupeKVKey = "mirror-dedupe.v2"
 // transaction deletes every planned row and writes the stats, and a VACUUM failure
 // is recorded in stats.VacuumErr rather than returned, since the rows are gone
 // either way.
-func DedupeMirrorOnce(d *db.DB, backupDir string, renames []legacy.Prefix, now time.Time) (stats DedupeStats, ran bool, err error) {
+func DedupeMirrorOnce(d *db.DB, backupDir string, now time.Time) (stats DedupeStats, ran bool, err error) {
 	if _, ok, kerr := d.KVGet(dedupeKVKey); kerr != nil {
 		return DedupeStats{}, false, fmt.Errorf("dedupe: kv get %s: %w", dedupeKVKey, kerr)
 	} else if ok {
 		return DedupeStats{}, false, nil
 	}
 
-	plan, err := DedupeMirror(d, renames)
+	plan, err := DedupeMirror(d)
 	if err != nil {
 		return DedupeStats{}, false, err
 	}

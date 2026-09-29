@@ -14,7 +14,6 @@ import (
 	"syscall"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/pick"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -60,7 +59,6 @@ Commands:
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
   update    replace this release binary with the latest release, checksum-verified [--check] [--to vX.Y.Z] [--release]
-  migrate   move ` + legacy.Name + `-era state, switch the client unit and remove the old binary [--dry-run] [--keep-old-binary]
   config    show the actors, the current pick and the candidates
   config edit|get|set|unset|export|import
             read and change the configuration document
@@ -137,18 +135,6 @@ func run(args []string) error {
 		}
 	}
 
-	// #292 §4: an install that runs relevo before `relevo migrate` sees empty
-	// new roots and starts creating them, which then blocks migrate. Every
-	// verb that could touch state is refused except the exempt four. This runs
-	// before captureAgyEnv because captureAgyEnv writes into the state root --
-	// exactly what the guard exists to prevent.
-	if !guardExempt(args[0]) {
-		if err := refuseUnmigrated(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return exitCodeErr{code: 1}
-		}
-	}
-
 	// Every verb captures the calling agy session's agentapi credentials
 	// (#349): an agy mastermind runs relevo constantly (send, wait, pull,
 	// status), and whichever verb it happens to run after an agy restart is
@@ -193,8 +179,6 @@ func run(args []string) error {
 		return cmdDoctor(args[1:])
 	case "update":
 		return cmdUpdate(args[1:])
-	case "migrate":
-		return cmdMigrate(args[1:])
 	case "config":
 		return cmdConfig(args[1:])
 	case "mastermind":

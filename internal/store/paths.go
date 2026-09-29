@@ -326,7 +326,7 @@ func (s *Store) VerifyWorktreePath(name string, round int) string {
 	return filepath.Join(s.WorktreeDir(), ".verify", fmt.Sprintf("%s-%03d", name, round))
 }
 
-// ScratchWorktreeDir is dot-prefixed, so ListFiles and importAll skip it, and
+// ScratchWorktreeDir is dot-prefixed, so the store's readers skip it, and
 // ValidName forbids "." in binding names, so a binding's worktree can never
 // collide with it.
 func (s *Store) ScratchWorktreeDir() string {

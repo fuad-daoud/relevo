@@ -7,8 +7,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 func TestKeyRoundTrip(t *testing.T) {
@@ -80,36 +78,6 @@ func TestParsePublicRejects(t *testing.T) {
 				t.Fatalf("ParsePublic(%q): got %v, want ErrKeyFormat", tc.input, err)
 			}
 		})
-	}
-}
-
-func TestParsePrivateAcceptsLegacyType(t *testing.T) {
-	kp, err := Generate()
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	pemBytes, err := MarshalPrivate(kp)
-	if err != nil {
-		t.Fatalf("MarshalPrivate: %v", err)
-	}
-
-	// A client key written before the rename says "RELAY ED25519 PRIVATE KEY" // name-guard: legacy
-	// on both the BEGIN and the END line; only the block type differs, the
-	// bytes are the same.
-	legacyPEM := bytes.ReplaceAll(pemBytes, []byte("RELEVO ED25519 PRIVATE KEY"), []byte(legacy.KeyPEMType))
-	if bytes.Equal(legacyPEM, pemBytes) {
-		t.Fatal("legacy PEM is unchanged: MarshalPrivate no longer writes the RELEVO type?")
-	}
-
-	parsed, err := ParsePrivate(legacyPEM)
-	if err != nil {
-		t.Fatalf("ParsePrivate(legacy type): %v", err)
-	}
-	if !bytes.Equal(kp.Private, parsed.Private) {
-		t.Fatal("parsed private key does not match original")
-	}
-	if !bytes.Equal(kp.Public, parsed.Public) {
-		t.Fatal("parsed public key does not match original")
 	}
 }
 

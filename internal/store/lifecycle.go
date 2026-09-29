@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -391,46 +389,6 @@ func (s *Store) list() ([]Binding, error) {
 	}
 
 	return bindings, nil
-}
-
-// ListFiles reads the bindings under root as one <name>/bind.json per
-// directory; it opens no database and writes nothing.
-func ListFiles(root string) ([]Binding, error) {
-	entries, err := os.ReadDir(root)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read state root: %w", err)
-	}
-
-	bindings := make([]Binding, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		b, err := loadBindingFile(root, e.Name())
-		if errors.Is(err, ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		bindings = append(bindings, b)
-	}
-
-	return bindings, nil
-}
-
-func loadBindingFile(root, name string) (Binding, error) {
-	raw, err := os.ReadFile(filepath.Join(root, name, "bind.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return Binding{}, fmt.Errorf("%s: %w", name, ErrNotFound)
-	}
-	if err != nil {
-		return Binding{}, fmt.Errorf("read binding %q: %w", name, err)
-	}
-	return decodeBinding(raw, name)
 }
 
 // archive marks a binding's record archived and removes its directory, so the

@@ -11,9 +11,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// PointerFileName is the legacy daemon pointer file, kept for migrate's detect.
-const PointerFileName = "daemon.json"
-
 // daemonKVKey is the kv row holding the running daemon's pointer.
 const daemonKVKey = "serve.daemon"
 
@@ -65,23 +62,8 @@ func RemoveDaemonPointer(d *db.DB) error {
 	return d.KVDelete(daemonKVKey)
 }
 
-// ReadPointer reads the legacy daemon pointer file; internal/migrate uses it.
-func ReadPointer(defaultRoot string) (p DaemonPointer, ok bool, err error) {
-	data, err := os.ReadFile(filepath.Join(defaultRoot, PointerFileName))
-	if errors.Is(err, os.ErrNotExist) {
-		return DaemonPointer{}, false, nil
-	}
-	if err != nil {
-		return DaemonPointer{}, false, fmt.Errorf("read daemon pointer: %w", err)
-	}
-	if err := json.Unmarshal(data, &p); err != nil {
-		return DaemonPointer{}, false, fmt.Errorf("read daemon pointer: %w", err)
-	}
-	return p, true, nil
-}
-
 // Initialised reports whether root has any serve state marker: the clients kv
-// row, the TLS key secret, the bindings directory, or a legacy file.
+// row, the TLS key secret, or the bindings directory.
 func Initialised(root string, d *db.DB) (bool, error) {
 	if d != nil {
 		if _, ok, err := d.KVGet(clientsKVKey); err != nil {

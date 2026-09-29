@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
@@ -161,16 +160,14 @@ func TestPeekMissingStream(t *testing.T) {
 	}
 }
 
-// TestStreamClosedLegacyTrailer: a last line of the old relay-exit: marker is closed. // name-guard: legacy
-func TestStreamClosedLegacyTrailer(t *testing.T) {
+// TestStreamClosedTrailer pins streamClosed against the trailer forms it must
+// recognise, the new spelling included.
+func TestStreamClosedTrailer(t *testing.T) {
 	dir := t.TempDir()
 	cases := map[string]struct {
 		body string
 		want bool
 	}{
-		"legacy trailer":       {"hello\n" + legacy.ExitTrailer + "3\n", true},
-		"legacy no newline":    {legacy.ExitTrailer + "0", true},
-		"legacy not last":      {legacy.ExitTrailer + "3\nmore output\n", false},
 		"new trailer":          {"hello\nrelevo-exit:3\n", true},
 		"no trailer":           {"hello\n", false},
 		"empty last line only": {"\n", false},

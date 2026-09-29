@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -324,32 +323,11 @@ func appendTranscript(t *testing.T, d *db.DB, ownerKind, ownerID string, recs []
 
 func mustPlan(t *testing.T, d *db.DB) dedupePlan {
 	t.Helper()
-	plan, err := DedupeMirror(d, nil)
+	plan, err := DedupeMirror(d)
 	if err != nil {
 		t.Fatalf("DedupeMirror: %v", err)
 	}
 	return plan
-}
-
-// rehearsalRenames builds the substitutions a rehearsal runs with, from the
-// RELEVO_DEDUPE_REHEARSAL_* variables.
-func rehearsalRenames(t *testing.T) []legacy.Prefix {
-	t.Helper()
-	pair := func(fromVar, toVar string) (legacy.Prefix, bool) {
-		from, to := os.Getenv(fromVar), os.Getenv(toVar)
-		if from == "" || to == "" {
-			return legacy.Prefix{}, false
-		}
-		return legacy.Prefix{Old: from, New: to}, true
-	}
-	var renames []legacy.Prefix
-	if p, ok := pair("RELEVO_DEDUPE_REHEARSAL_STATE_FROM", "RELEVO_DEDUPE_REHEARSAL_STATE_TO"); ok {
-		renames = append(renames, p)
-	}
-	if p, ok := pair("RELEVO_DEDUPE_REHEARSAL_CONFIG_FROM", "RELEVO_DEDUPE_REHEARSAL_CONFIG_TO"); ok {
-		renames = append(renames, p)
-	}
-	return renames
 }
 
 func copyRehearsalFile(t *testing.T, src, dst string) {

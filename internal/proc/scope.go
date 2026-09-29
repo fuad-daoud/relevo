@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
@@ -150,19 +149,15 @@ func (r *Runner) ScopeResult(ctx context.Context, unit string) (string, error) {
 	return firstNonEmptyLine(string(out)), nil
 }
 
-// ParseRusageTrailer parses a RusageTrailer line, or the legacy line a
-// pre-rename stream carries. Missing fields stay zero, unknown keys and
-// malformed numbers are ignored, and a line matching neither prefix is not ok.
+// ParseRusageTrailer parses a RusageTrailer line. Missing fields stay zero,
+// unknown keys and malformed numbers are ignored, and a line not matching the
+// prefix is not ok.
 func ParseRusageTrailer(line string) (spawn.ProcRusage, bool) {
-	prefix := spawn.RusageTrailerPrefix
-	if !strings.HasPrefix(line, prefix) {
-		prefix = legacy.RusageTrailer
-		if !strings.HasPrefix(line, prefix) {
-			return spawn.ProcRusage{}, false
-		}
+	if !strings.HasPrefix(line, spawn.RusageTrailerPrefix) {
+		return spawn.ProcRusage{}, false
 	}
 	var r spawn.ProcRusage
-	rest := strings.TrimPrefix(line, prefix)
+	rest := strings.TrimPrefix(line, spawn.RusageTrailerPrefix)
 	for _, field := range strings.Fields(rest) {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {

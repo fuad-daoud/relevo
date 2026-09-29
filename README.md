@@ -97,29 +97,6 @@ edited alone; a MasterMind session's `relevo mcp` notices the upgrade too -- it
 appends a line to every tool result saying to reconnect it (`/mcp`), so the
 session loads the new server without a restart.
 
-<!-- name-guard: off -->
-
-### Upgrading from relay
-
-relay was renamed relevo in v0.12.0. A machine that ran relay keeps its state,
-its old `relay.service` (or LaunchAgent) and the old `relay` binary until
-`relevo migrate` moves them. The order:
-
-1. Finish or pause every binding (`relevo status`).
-2. Install `relevo`.
-3. Run `relevo migrate --dry-run`, then `relevo migrate`.
-4. Reinstall the Claude Code plugin: remove `relay@relay`, then add the
-   marketplace and install the plugin again:
-   ```
-   /plugin uninstall relay@relay
-   /plugin marketplace add fuad-daoud/relevo
-   /plugin install relevo@relevo
-   ```
-5. Run `relevo config agents`.
-6. Restart MasterMind sessions.
-
-<!-- name-guard: on -->
-
 ### The Claude Code plugin
 
 A Claude Code MasterMind installs relevo as a plugin. The plugin provides the
@@ -426,8 +403,6 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   or forget its records.
 - `relevo doctor` — preflight check: plugin, daemon, harness binaries, roles,
   the database and hooks. See [First run on a clean machine](#first-run-on-a-clean-machine).
-- `relevo migrate [--dry-run] [--keep-old-binary] [--state-from DIR] [--state-to DIR]` —
-  move a pre-relevo installation's state, switch the client unit and remove the old binary.
 - `relevo serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N] [--max-builders N]` — run the remote-builder server (listener + daemon).
 - `relevo serve init|enroll|clients|revoke|fingerprint|status|ui|gc|unbind` — server administration, on the server host. `relevo show --owner` reads one owner's round on that host, and `serve ui` is the server's own reader.
 - `relevo gate --serve [--state DIR]` — list the gates on the server's own ledger.

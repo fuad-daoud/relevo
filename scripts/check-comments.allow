@@ -25,13 +25,10 @@ cmd/relevo/main_test.go
 cmd/relevo/mcp.go
 cmd/relevo/mcp_notice.go
 cmd/relevo/mcp_notice_test.go
-cmd/relevo/migrate.go
-cmd/relevo/migrate_test.go
 cmd/relevo/owner_reads_test.go
 cmd/relevo/mastermind.go
 cmd/relevo/mastermind_test.go
 cmd/relevo/read_verbs_test.go
-cmd/relevo/rename.go
 cmd/relevo/restart_notice.go
 cmd/relevo/restart_notice_test.go
 cmd/relevo/serve.go
@@ -45,13 +42,10 @@ cmd/relevo/unbind.go
 cmd/relevo/update.go
 cmd/relevo/wait.go
 cmd/relevo/wire.go
-dist/dist.go
 internal/e2e/fakes_test.go
 internal/e2e/headless_test.go
 internal/e2e/remote_test.go
 internal/e2e/tier_test.go
-internal/legacy/legacy.go
-internal/legacy/legacy_test.go
 internal/pick/confirm.go
 internal/pick/list.go
 internal/pick/model.go

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 func TestDedupeMirrorDeletesIdenticalReportAndKeepsOneByteDifferent(t *testing.T) {
@@ -178,9 +177,6 @@ func TestDedupeMirrorPlansTranscriptByDerivationOrByStreamLines(t *testing.T) {
 	if plan.stats.TranscriptRoundsKept != 1 || plan.stats.TranscriptRoundsByStreamLines != 1 {
 		t.Errorf("kept/byStreamLines = %d/%d, want 1/1", plan.stats.TranscriptRoundsKept, plan.stats.TranscriptRoundsByStreamLines)
 	}
-	if plan.stats.TranscriptRowsRenamed != 0 {
-		t.Errorf("TranscriptRowsRenamed = %d, want 0", plan.stats.TranscriptRowsRenamed)
-	}
 	wantOwners := []string{round3, round4}
 	if !reflect.DeepEqual(plan.transcriptOwners, wantOwners) {
 		t.Errorf("transcriptOwners = %v, want %v", plan.transcriptOwners, wantOwners)
@@ -202,59 +198,15 @@ func TestStreamLinesCoverReadsThePreRenameStream(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("RecordGet = (ok %v, err %v), want the record", ok, err)
 	}
-	covered, renamed, err := streamLinesCover(d, record, db.Round{Number: 3}, []db.TranscriptRecord{
+	covered, err := streamLinesCover(d, record, db.Round{Number: 3}, []db.TranscriptRecord{
 		{Seq: 0, RecordJSON: line, Rendered: "hi"},
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("streamLinesCover: %v", err)
 	}
-	if !covered || renamed != 0 {
-		t.Errorf("covered/renamed = %v/%d, want true/0", covered, renamed)
+	if !covered {
+		t.Errorf("covered = %v, want true", covered)
 	}
-}
-
-func TestDedupeMirrorPlansRenamedStreamLines(t *testing.T) {
-	scene := func(t *testing.T) (*db.DB, string) {
-		t.Helper()
-		d := openTestDB(t)
-		const name = "webshop"
-		bindingID := seedMirrorBinding(t, d, name)
-		recordID := seedRecordAt(t, d, name, "claude", dedupeAt)
-		round1 := seedMirrorRound(t, d, bindingID, 1)
-		putRoundFile(t, d, recordID, "001-builder.jsonl", 1, `{"path":"/h/state/new/b/001-plan.md"}`+"\n")
-		appendTranscript(t, d, db.OwnerRound, round1, []db.TranscriptRecord{
-			{Seq: 0, RecordJSON: `{"path":"/h/state/old/b/001-plan.md"}`, Rendered: "the plan"},
-		})
-		return d, round1
-	}
-
-	t.Run("with the rename", func(t *testing.T) {
-		d, round1 := scene(t)
-		plan, err := DedupeMirror(d, []legacy.Prefix{{Old: "/h/state/old", New: "/h/state/new"}})
-		if err != nil {
-			t.Fatalf("DedupeMirror: %v", err)
-		}
-		if plan.stats.TranscriptRoundsDeleted != 1 || plan.stats.TranscriptRoundsByStreamLines != 1 {
-			t.Errorf("stats = %+v, want 1 round deleted by stream lines", plan.stats)
-		}
-		if plan.stats.TranscriptRowsRenamed != 1 {
-			t.Errorf("TranscriptRowsRenamed = %d, want 1", plan.stats.TranscriptRowsRenamed)
-		}
-		if len(plan.transcriptOwners) != 1 || plan.transcriptOwners[0] != round1 {
-			t.Errorf("transcriptOwners = %v, want [%s]", plan.transcriptOwners, round1)
-		}
-	})
-
-	t.Run("without the rename", func(t *testing.T) {
-		d, _ := scene(t)
-		plan := mustPlan(t, d)
-		if plan.stats.TranscriptRoundsKept != 1 || plan.stats.TranscriptRoundsDeleted != 0 {
-			t.Errorf("stats = %+v, want the round kept and nothing deleted", plan.stats)
-		}
-		if len(plan.transcriptOwners) != 0 {
-			t.Errorf("transcriptOwners = %v, want none", plan.transcriptOwners)
-		}
-	})
 }
 
 // TestDedupeMirrorSealedLinesProveRowsWithNoRecordJSON covers all three sealed-lines
@@ -483,7 +435,7 @@ func TestDedupeMirrorRehearsal(t *testing.T) {
 	}
 	defer func() { _ = d.Close() }()
 
-	plan, err := DedupeMirror(d, rehearsalRenames(t))
+	plan, err := DedupeMirror(d)
 	if err != nil {
 		t.Fatalf("DedupeMirror: %v", err)
 	}
@@ -499,7 +451,7 @@ func TestDedupeMirrorOnceDeletesBacksUpAndRecordsKV(t *testing.T) {
 	backupDir := t.TempDir()
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
-	stats, ran, err := DedupeMirrorOnce(d, backupDir, nil, now)
+	stats, ran, err := DedupeMirrorOnce(d, backupDir, now)
 	if err != nil {
 		t.Fatalf("DedupeMirrorOnce: %v", err)
 	}
@@ -572,7 +524,7 @@ func TestDedupeMirrorOnceRunsOnlyOnce(t *testing.T) {
 	backupDir := t.TempDir()
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
-	if _, _, err := DedupeMirrorOnce(d, backupDir, nil, now); err != nil {
+	if _, _, err := DedupeMirrorOnce(d, backupDir, now); err != nil {
 		t.Fatalf("first DedupeMirrorOnce: %v", err)
 	}
 
@@ -581,7 +533,7 @@ func TestDedupeMirrorOnceRunsOnlyOnce(t *testing.T) {
 		t.Fatalf("Stats: %v", err)
 	}
 
-	stats, ran, err := DedupeMirrorOnce(d, backupDir, nil, now.Add(time.Hour))
+	stats, ran, err := DedupeMirrorOnce(d, backupDir, now.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("second DedupeMirrorOnce: %v", err)
 	}
@@ -618,7 +570,7 @@ func TestDedupeMirrorOnceRunsAfterAV1Run(t *testing.T) {
 	backupDir := t.TempDir()
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
-	stats, ran, err := DedupeMirrorOnce(d, backupDir, nil, now)
+	stats, ran, err := DedupeMirrorOnce(d, backupDir, now)
 	if err != nil {
 		t.Fatalf("DedupeMirrorOnce: %v", err)
 	}
@@ -656,7 +608,7 @@ func TestDedupeMirrorOnceBackupFailureDeletesNothing(t *testing.T) {
 		t.Fatalf("pre-create the backup path: %v", err)
 	}
 
-	_, ran, err := DedupeMirrorOnce(d, backupDir, nil, now)
+	_, ran, err := DedupeMirrorOnce(d, backupDir, now)
 	if err == nil {
 		t.Fatal("DedupeMirrorOnce with an unwritable backup path = nil, want an error")
 	}
@@ -689,7 +641,7 @@ func TestDedupeMirrorOnceWithNothingToDelete(t *testing.T) {
 	backupDir := t.TempDir()
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
-	stats, ran, err := DedupeMirrorOnce(d, backupDir, nil, now)
+	stats, ran, err := DedupeMirrorOnce(d, backupDir, now)
 	if err != nil {
 		t.Fatalf("DedupeMirrorOnce: %v", err)
 	}
