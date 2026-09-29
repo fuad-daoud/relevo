@@ -87,6 +87,13 @@ type WhoAmI struct {
 	// Builders is the server's builder census (#285); nil from a pre-queue
 	// server.
 	Builders *BuildersView `json:"runners,omitempty"`
+
+	// Installation and InstallationLabel name the server's own installation,
+	// advertised only alongside FeatureOrigin. They describe the *server*, not
+	// the client: a pre-origin server omits both, and ID and Label above stay
+	// the client's own identity.
+	Installation      string `json:"installation,omitempty"`
+	InstallationLabel string `json:"installation_label,omitempty"`
 }
 
 // GitIdentity is a client's git identity (#335): the name and email its own
@@ -117,6 +124,13 @@ type CreateBindingRequest struct {
 	// Author is the client's git identity; the server runs this binding's
 	// builders as it (#335). nil means an old client that sent none.
 	Author *GitIdentity `json:"author,omitempty"`
+
+	// ClientInstallation and ClientBindingID are the client's own installation
+	// id and the record id it pre-minted for this binding. The server stores
+	// them as its row's link to the client's copy. Both are additive: an old
+	// client sends none, and the server's row then carries no link.
+	ClientInstallation string `json:"client_installation,omitempty"`
+	ClientBindingID    string `json:"client_binding_id,omitempty"`
 }
 
 // TagRef is one tag a client ships beside a round's bundle, so a server
@@ -211,6 +225,12 @@ type BindingView struct {
 	// sees it. Non-nil only when RoundState == RoundRunning on a server that
 	// sends it; nil from an older server.
 	Live *LiveView `json:"live,omitempty"`
+
+	// ID is the server's binding_record id and Installation the server's own
+	// installation id, so a client can record which server copy its row is
+	// linked to. Both are empty from a pre-origin server.
+	ID           string `json:"id,omitempty"`
+	Installation string `json:"installation,omitempty"`
 }
 
 // QueueView is a queued round's place in the server's queue (#285).
@@ -359,6 +379,13 @@ const FeatureLabels = "labels"
 // -- advertises. A client binding a reader refuses a server without it: the
 // server would otherwise run the reader as a writer.
 const FeatureReaders = "readers"
+
+// FeatureOrigin is the WhoAmI.Features token a server that reports its own
+// installation id and its bindings' record ids advertises, and that accepts a
+// create request's ClientInstallation/ClientBindingID. A client sends the
+// Client* fields only to such a server: an older one ignores them, so the
+// client's row would record a link the server never kept.
+const FeatureOrigin = "origin"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

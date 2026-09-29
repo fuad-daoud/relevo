@@ -77,14 +77,16 @@ func filledFileRange() FileRange {
 func filledWhoAmI() WhoAmI {
 	builders := filledBuildersView()
 	return WhoAmI{
-		ID:            ClientID("SHA256:fixed-test-client-id-00000000000000000000000"),
-		Label:         "test-client",
-		ServerVersion: 1,
-		Transports:    []string{"git-bundle"},
-		Features:      []string{"tier", "queue", "stop", "readers"},
-		BuilderTier:   "edit",
-		MaxTier:       "yolo",
-		Builders:      &builders,
+		ID:                ClientID("SHA256:fixed-test-client-id-00000000000000000000000"),
+		Label:             "test-client",
+		ServerVersion:     1,
+		Transports:        []string{"git-bundle"},
+		Features:          []string{"tier", "queue", "stop", "readers"},
+		BuilderTier:       "edit",
+		MaxTier:           "yolo",
+		Builders:          &builders,
+		Installation:      "01SERVERINSTALLATION0000000",
+		InstallationLabel: "zen",
 	}
 }
 
@@ -98,17 +100,19 @@ func filledGitIdentity() GitIdentity {
 func filledCreateBindingRequest() CreateBindingRequest {
 	author := filledGitIdentity()
 	return CreateBindingRequest{
-		Name:           "test-binding",
-		RepoID:         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		BaseCommit:     "1111222233334444555566667777888899990000",
-		Candidate:      "agy/openai/gpt-4",
-		RoundCap:       10,
-		RoundTimeoutMS: 60000,
-		Tier:           "edit",
-		Role:           "builder",
-		Feature:        "auth",
-		Ticket:         "o/r#607",
-		Author:         &author,
+		Name:               "test-binding",
+		RepoID:             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		BaseCommit:         "1111222233334444555566667777888899990000",
+		Candidate:          "agy/openai/gpt-4",
+		RoundCap:           10,
+		RoundTimeoutMS:     60000,
+		Tier:               "edit",
+		Role:               "builder",
+		Feature:            "auth",
+		Ticket:             "o/r#607",
+		Author:             &author,
+		ClientInstallation: "01CLIENTINSTALLATION0000000",
+		ClientBindingID:    "01CLIENTBINDINGRECORD000000",
 	}
 }
 
@@ -243,6 +247,8 @@ func filledBindingView() BindingView {
 		StalledSince:   fixedTime,
 		Queue:          &q,
 		Live:           &live,
+		ID:             "01SERVERBINDINGRECORD00000000",
+		Installation:   "01SERVERINSTALLATION0000000",
 	}
 }
 

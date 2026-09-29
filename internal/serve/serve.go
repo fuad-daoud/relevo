@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -57,6 +58,11 @@ type Config struct {
 	// SessionReaper deletes harness sessions a served round abandoned; nil
 	// means the deletes are skipped and the entries stay on the binding.
 	SessionReaper relevo.SessionDeleter
+	// Installation is this server's own identity: its id is the origin of
+	// every row the server writes and the id WhoAmI advertises, and its label
+	// lets a client show a name for the machine. The zero value serves
+	// exactly as before, with no installation advertised.
+	Installation installation.Installation
 }
 
 type Server struct {

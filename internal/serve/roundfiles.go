@@ -256,5 +256,5 @@ func (s *Server) handleAckRound(w http.ResponseWriter, r *http.Request) {
 		b = reloaded
 	}
 	entries, _ := rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
+	writeJSON(w, http.StatusOK, s.servedView(rt, b, entries))
 }

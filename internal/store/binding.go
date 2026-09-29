@@ -240,6 +240,18 @@ type Binding struct {
 	// RepoRef is distinct from Repo, the add/fork source checkout.
 	RepoRef *RepoRef `json:"repo_ref,omitempty"`
 
+	// Link names the other copy of a remote binding; nil on a local binding,
+	// on a remote binding an older peer created, and on every binding that
+	// existed before the link columns did. It is a field recordFormat does
+	// not stamp: a binary that drops it loses only the link.
+	Link *RemoteLink `json:"link,omitempty"`
+
+	// RecordID is the binding_record id a save should use, set only by a
+	// caller that must know the id before the save -- addRemote pre-mints it
+	// so the server can be told its client's id. It is not part of bind.json:
+	// the row already carries the id.
+	RecordID string `json:"-"`
+
 	Feature string `json:"feature,omitempty"`
 
 	// Ticket is the issue this binding serves, in stored form (#N or

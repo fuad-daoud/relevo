@@ -12,5 +12,7 @@
   "author": {
     "name": "Test Builder",
     "email": "builder@example.com"
-  }
+  },
+  "client_installation": "01CLIENTINSTALLATION0000000",
+  "client_binding_id": "01CLIENTBINDINGRECORD000000"
 }

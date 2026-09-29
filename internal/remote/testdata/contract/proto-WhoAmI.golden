@@ -20,5 +20,7 @@
     "scopes": true,
     "slice": "relevo.slice",
     "quota": "200%"
-  }
+  },
+  "installation": "01SERVERINSTALLATION0000000",
+  "installation_label": "zen"
 }

@@ -93,10 +93,10 @@ const (
 
 // write answers a non-proceed round start: a retry is the 200 view, an open or
 // started round a named 409.
-func (d roundStartDecision) write(w http.ResponseWriter, b store.Binding, entries []store.LogEntry, msg string) {
+func (d roundStartDecision) write(w http.ResponseWriter, view remote.BindingView, msg string) {
 	switch d {
 	case startRetry:
-		writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
+		writeJSON(w, http.StatusOK, view)
 	case startOpen:
 		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, msg)
 	case startStarted:
@@ -165,7 +165,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	entries, _ := rt.Store.ReadLog(name)
 	if dec, msg := roundStartDecisionOf(rt, b, entries, req.Round, req.Plan); dec != startProceed {
 		s.mu.Unlock()
-		dec.write(w, b, entries, msg)
+		dec.write(w, s.servedView(rt, b, entries), msg)
 		return
 	}
 
@@ -381,7 +381,7 @@ func (s *Server) finishRoundStart(w http.ResponseWriter, r *http.Request, rt rel
 		b = reloaded
 	}
 	entries, _ := rt.Store.ReadLog(name)
-	view := relevo.ServedView(b, entries)
+	view := s.servedView(rt, b, entries)
 	view.Queue = s.queuePositionView(b, view, caller)
 	writeJSON(w, http.StatusCreated, view)
 }

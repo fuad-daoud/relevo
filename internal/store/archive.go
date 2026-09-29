@@ -61,6 +61,28 @@ func (s *Store) ListArchived() ([]ArchivedBinding, error) {
 	return out, nil
 }
 
+// RecordID returns name's live record id, the id a caller names a binding by
+// when it holds only the binding's name -- a served binding's view reports it,
+// and the link columns point at it. A binding that does not exist is
+// ErrNotFound.
+func (s *Store) RecordID(name string) (string, error) {
+	d, err := s.dbForRead()
+	if err != nil {
+		return "", err
+	}
+	if d == nil {
+		return "", fmt.Errorf("%s: %w", name, ErrNotFound)
+	}
+	rec, ok, err := d.RecordGet(s.owner, name)
+	if err != nil {
+		return "", fmt.Errorf("read binding %q: %w", name, err)
+	}
+	if !ok {
+		return "", fmt.Errorf("%s: %w", name, ErrNotFound)
+	}
+	return rec.ID, nil
+}
+
 // ArchivedLog returns the events of the archived record recordID.
 func (s *Store) ArchivedLog(recordID string) ([]LogEntry, error) {
 	d, err := s.dbForRead()

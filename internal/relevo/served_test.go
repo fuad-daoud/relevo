@@ -342,7 +342,7 @@ func TestServedViewReportOutcome(t *testing.T) {
 		{Round: 2, Kind: store.KindReport, Outcome: "halted"},
 	}
 
-	view := ServedView(b, entries)
+	view := ServedView(b, entries, "", "")
 	if view.ReportOutcome != "halted" {
 		t.Fatalf("ReportOutcome: got %q, want %q", view.ReportOutcome, "halted")
 	}
@@ -357,7 +357,7 @@ func TestServedViewReportOutcome(t *testing.T) {
 	}
 
 	// With no report entries for ClosedRound
-	viewNoReports := ServedView(b, nil)
+	viewNoReports := ServedView(b, nil, "", "")
 	if viewNoReports.ReportOutcome != "" {
 		t.Fatalf("ReportOutcome with no entries: got %q, want %q", viewNoReports.ReportOutcome, "")
 	}
@@ -382,7 +382,7 @@ func TestServedViewDiffFacts(t *testing.T) {
 		{Round: 2, Kind: store.KindDiff, Note: "1 file, +1 -0; 1 commit, clean", Commits: 1, Tree: "clean"},
 	}
 
-	view := ServedView(b, entries)
+	view := ServedView(b, entries, "", "")
 	if view.DiffNote != "1 file, +1 -0; 1 commit, clean" {
 		t.Fatalf("DiffNote: got %q, want the round 2 diff entry's note", view.DiffNote)
 	}
@@ -394,7 +394,7 @@ func TestServedViewDiffFacts(t *testing.T) {
 	}
 
 	// With no diff entry for ClosedRound, every fact stays zero.
-	viewNoDiff := ServedView(b, entries[:1])
+	viewNoDiff := ServedView(b, entries[:1], "", "")
 	if viewNoDiff.DiffNote != "" || viewNoDiff.DiffCommits != 0 || viewNoDiff.DiffTree != "" {
 		t.Fatalf("diff facts with no matching entry: got %+v, want all zero", viewNoDiff)
 	}
@@ -417,17 +417,17 @@ func TestServedViewStopped(t *testing.T) {
 		{Round: 1, Kind: store.KindStop, Note: "stopped/killed"},
 		{Round: 2, Kind: store.KindStop, Note: "stopped/killed"},
 	}
-	if view := ServedView(b, entries); view.Stopped != "killed" {
+	if view := ServedView(b, entries, "", ""); view.Stopped != "killed" {
 		t.Fatalf("Stopped = %q, want killed", view.Stopped)
 	}
 
 	// The same entry on an earlier round leaves the field empty.
-	if view := ServedView(b, entries[:1]); view.Stopped != "" {
+	if view := ServedView(b, entries[:1], "", ""); view.Stopped != "" {
 		t.Fatalf("Stopped = %q with only an earlier round's stop entry, want empty", view.Stopped)
 	}
 
 	// No stop entry at all: still empty.
-	if view := ServedView(b, nil); view.Stopped != "" {
+	if view := ServedView(b, nil, "", ""); view.Stopped != "" {
 		t.Fatalf("Stopped = %q with no stop entry, want empty", view.Stopped)
 	}
 }
@@ -465,7 +465,7 @@ func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
 		{Round: 2, Kind: store.KindReport, Outcome: "blocked", Usage: &closed},
 	}
 
-	view := ServedView(b, entries)
+	view := ServedView(b, entries, "", "")
 	if view.Usage == nil || *view.Usage != closed {
 		t.Fatalf("Usage = %+v, want the closed round's report entry's usage", view.Usage)
 	}
@@ -476,13 +476,13 @@ func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
 		{Round: 1, Kind: store.KindReport, Outcome: "done", Usage: &old},
 		{Round: 2, Kind: store.KindReport, Outcome: "blocked"},
 	}
-	viewNoUsage := ServedView(b, entriesNoUsage)
+	viewNoUsage := ServedView(b, entriesNoUsage, "", "")
 	if viewNoUsage.Usage != nil {
 		t.Fatalf("Usage = %+v, want nil when the closed round's report has none", viewNoUsage.Usage)
 	}
 
 	// No report at all: nil.
-	viewNoReports := ServedView(b, nil)
+	viewNoReports := ServedView(b, nil, "", "")
 	if viewNoReports.Usage != nil {
 		t.Fatalf("Usage with no entries = %+v, want nil", viewNoReports.Usage)
 	}
@@ -510,7 +510,7 @@ func TestServedViewCarriesRusage(t *testing.T) {
 		{Round: 1, Kind: store.KindReport, Outcome: "done"},
 		{Round: 2, Kind: store.KindReport, Outcome: "blocked", Rusage: &closed},
 	}
-	view := ServedView(b, entries)
+	view := ServedView(b, entries, "", "")
 	if view.Rusage == nil || *view.Rusage != closed {
 		t.Fatalf("Rusage = %+v, want the closed round's report entry's rusage", view.Rusage)
 	}
@@ -521,7 +521,7 @@ func TestServedViewCarriesRusage(t *testing.T) {
 		{Round: 1, Kind: store.KindReport, Outcome: "done", Rusage: &closed},
 		{Round: 2, Kind: store.KindReport, Outcome: "blocked"},
 	}
-	viewNoRusage := ServedView(b, entriesNoRusage)
+	viewNoRusage := ServedView(b, entriesNoRusage, "", "")
 	if viewNoRusage.Rusage != nil {
 		t.Fatalf("Rusage = %+v, want nil when the closed round's report has none", viewNoRusage.Rusage)
 	}
@@ -540,13 +540,13 @@ func TestServedViewCarriesStalledSince(t *testing.T) {
 	stalled := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	b.StalledSince = stalled
 
-	view := ServedView(b, nil)
+	view := ServedView(b, nil, "", "")
 	if !view.StalledSince.Equal(stalled) {
 		t.Fatalf("StalledSince = %s, want %s", view.StalledSince, stalled)
 	}
 
 	b.StalledSince = time.Time{}
-	view = ServedView(b, nil)
+	view = ServedView(b, nil, "", "")
 	if !view.StalledSince.IsZero() {
 		t.Fatalf("StalledSince = %s, want zero for an unstalled binding", view.StalledSince)
 	}
@@ -1073,7 +1073,7 @@ func TestServedViewPriorTokens(t *testing.T) {
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 40}},
 		},
 	}
-	view := ServedView(b, entries)
+	view := ServedView(b, entries, "", "")
 	if view.PriorTokens == nil {
 		t.Fatal("view.PriorTokens is nil, want sum of switches")
 	}
@@ -1089,12 +1089,12 @@ func TestServedViewPriorTokens(t *testing.T) {
 			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 40}},
 		},
 	}
-	viewNoSwitch := ServedView(b, entriesNoSwitch)
+	viewNoSwitch := ServedView(b, entriesNoSwitch, "", "")
 	if viewNoSwitch.PriorTokens != nil {
 		t.Errorf("viewNoSwitch.PriorTokens = %+v, want nil", viewNoSwitch.PriorTokens)
 	}
 
-	viewEmpty := ServedView(b, nil)
+	viewEmpty := ServedView(b, nil, "", "")
 	if viewEmpty.PriorTokens != nil {
 		t.Errorf("viewEmpty.PriorTokens = %+v, want nil", viewEmpty.PriorTokens)
 	}
