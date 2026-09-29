@@ -453,12 +453,12 @@ var registry = []verbEntry{
 	{
 		Name:    "show",
 		Summary: "one round's plan, report, diff, drift, gate, findings, log or transcript",
-		Args:    "[NAME] [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]",
+		Args:    "[NAME] [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json] [--peek]",
 		Flags: []string{
 			"--after", "--anchors", "--artifact", "--artifacts", "--diff", "--drift",
 			"--findings", "--follow", "--gate", "--json", "--log", "--output",
-			"--owner", "--prompt", "--report", "--round", "--stat", "--state",
-			"--transcript",
+			"--owner", "--peek", "--prompt", "--report", "--round", "--stat",
+			"--state", "--transcript",
 		},
 		Output: "json:ShowResult; --log prints NDJSON events",
 		Exit:   []int{0, 1, 2},
