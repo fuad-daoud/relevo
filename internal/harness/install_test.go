@@ -83,12 +83,13 @@ func TestInstallDryRunTouchesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(results) != 4 {
-		t.Fatalf("expected 4 results, got %d", len(results))
+	if len(results) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(results))
 	}
 	expectedOutcomes := []InstallOutcome{
 		OutcomeKeptIdentical,
 		OutcomeWouldOverwrite,
+		OutcomeWouldWrite,
 		OutcomeWouldWrite,
 		OutcomeWouldWrite,
 	}
@@ -110,8 +111,8 @@ func TestInstallDryRunTouchesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(results2) != 4 {
-		t.Fatalf("expected 4 results, got %d", len(results2))
+	if len(results2) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(results2))
 	}
 	if results2[1].Outcome != OutcomeKeptDiffers {
 		t.Errorf("expected researcher OutcomeKeptDiffers without Force, got %v", results2[1].Outcome)
@@ -124,8 +125,8 @@ func TestInstallNamedKindIgnoresPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(results) != 4 {
-		t.Fatalf("expected 4 results, got %d", len(results))
+	if len(results) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(results))
 	}
 	for i, res := range results {
 		if res.Outcome != OutcomeWrote {
@@ -190,8 +191,8 @@ func TestInstallWriteFailureIsPerFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(results) != 4 {
-		t.Fatalf("expected 4 results, got %d", len(results))
+	if len(results) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(results))
 	}
 	for _, res := range results {
 		if res.Role == "researcher" {
@@ -571,13 +572,13 @@ func TestInstallSavesManifestOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if len(results) != 4 {
-		t.Fatalf("results = %d, want 4", len(results))
+	if len(results) != 5 {
+		t.Fatalf("results = %d, want 5", len(results))
 	}
 	if env.saves != 1 {
 		t.Errorf("manifest saves = %d, want 1", env.saves)
 	}
-	if len(env.manifest) != 4 {
+	if len(env.manifest) != 5 {
 		t.Errorf("manifest = %v, want one entry per written definition", env.manifest)
 	}
 	for _, r := range results {
@@ -602,8 +603,8 @@ func TestInstallReportsManifestLoadErrorOnce(t *testing.T) {
 	if !strings.Contains(err.Error(), "decode role manifest") {
 		t.Errorf("Install error = %v, want it to name the manifest", err)
 	}
-	if len(results) != 4 {
-		t.Fatalf("results = %d, want 4: a corrupt manifest must not block the install", len(results))
+	if len(results) != 5 {
+		t.Fatalf("results = %d, want 5: a corrupt manifest must not block the install", len(results))
 	}
 	for _, r := range results {
 		if r.Outcome != OutcomeWrote {
@@ -623,8 +624,8 @@ func TestInstallReportsManifestSaveError(t *testing.T) {
 	if !strings.Contains(err.Error(), "read-only file system") {
 		t.Errorf("Install error = %v, want the save error", err)
 	}
-	if len(results) != 4 {
-		t.Fatalf("results = %d, want 4", len(results))
+	if len(results) != 5 {
+		t.Fatalf("results = %d, want 5", len(results))
 	}
 }
 

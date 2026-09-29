@@ -231,7 +231,7 @@ func TestDoctorUnknownKindDegradesWithoutFailing(t *testing.T) {
 }
 
 func TestDoctorRolesRow(t *testing.T) {
-	roles := []string{"plan-executor", "researcher", "reviewer", "architect"}
+	roles := []string{"plan-executor", "researcher", "reviewer", "security-reviewer", "architect"}
 	fill := func(body func(role string) string) map[string]string {
 		m := map[string]string{}
 		for _, r := range roles {

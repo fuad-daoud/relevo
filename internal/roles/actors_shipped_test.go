@@ -42,10 +42,11 @@ func TestShippedTableMatchesHarness(t *testing.T) {
 	// Every shipped agent is a definition on every known kind, and its output
 	// label is the one §3.3's table names.
 	wantOutput := map[string]string{
-		"plan-executor": "report",
-		"reviewer":      "findings",
-		"researcher":    "notes",
-		"architect":     "plan",
+		"plan-executor":     "report",
+		"reviewer":          "findings",
+		"security-reviewer": "findings",
+		"researcher":        "notes",
+		"architect":         "plan",
 	}
 	for name, output := range wantOutput {
 		agent, ok := Shipped(name)

@@ -180,8 +180,8 @@ relevo config agents
 One line per file says `wrote`, `updated (unchanged since relevo wrote it)`,
 `kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
 name a harness that is not on `PATH` yet, `--agent` for one definition,
-`--dry-run` to look first. This writes `plan-executor`, `researcher`, `reviewer`
-and `architect` for every kind; `relevo config agents --dry-run` shows what
+`--dry-run` to look first. This writes `plan-executor`, `researcher`, `reviewer`,
+`security-reviewer` and `architect` for every kind; `relevo config agents --dry-run` shows what
 would be written.
 
 `researcher` is the read-only agent the builder's own sub-agents run as. It
@@ -196,6 +196,16 @@ and that is not an example: on agy the key is a tier (`inherit`, `flash`,
 doctor` reports the pin each installed definition carries, warns when an
 agy copy pins a tier or differs from what relevo ships, and names the
 `relevo config agents ... --force` that restores it.
+
+`security-reviewer` is a second read-only consult, separate from `reviewer`: it
+audits a diff, area or question for exploitable issues and returns findings
+with severity, file:line evidence and preconditions. relevo does not run it
+automatically; add a `security` actor whose candidate list names the models
+you want, then bind with `--actor security`. The definition supports a
+two-round protocol: send round one to one model, then hand its findings to a
+second model in round two to confirm or refute each one and hunt what the
+first missed -- two models cover each other's blind spots, and the agent
+definition tells the second round how.
 
 codex agent definitions are TOML profiles at `~/.codex/<name>.config.toml` selected
 with `-p`; the researcher profile pins `gpt-5.6-luna` at `medium` for
