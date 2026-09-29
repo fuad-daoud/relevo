@@ -75,8 +75,8 @@ func parseCreateRequest(r *http.Request) (remote.CreateBindingRequest, string) {
 	if err := store.ValidName(req.Name); err != nil {
 		return req, err.Error()
 	}
-	if req.RepoID == "" {
-		return req, "repo_id is required"
+	if len(req.RepoID) != 64 || !isHex(req.RepoID) || strings.ToLower(req.RepoID) != req.RepoID {
+		return req, "repo_id must be 64 lowercase hex characters"
 	}
 	if len(req.BaseCommit) != 40 || !isHex(req.BaseCommit) {
 		return req, "base_commit must be 40 hex characters"
@@ -182,6 +182,10 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		return store.Binding{}, false
 	}
 	bare := filepath.Join(repoRoot, req.RepoID+".git")
+	if !insideRoot(repoRoot, bare) {
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "repo_id escapes the owner's repo root")
+		return store.Binding{}, false
+	}
 	if err := s.cfg.Git.InitBare(ctx, bare); err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return store.Binding{}, false

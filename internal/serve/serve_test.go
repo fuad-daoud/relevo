@@ -31,6 +31,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
+// testRepoID is the canonical repo id the create tests send: 64 lower-case
+// hex characters, the shape remote.RepoID emits.
+const testRepoID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func TestClientsAddRevokeLookup(t *testing.T) {
 	d := testServeDB(t)
 	c, err := LoadClients(d)
@@ -377,7 +381,7 @@ func TestServerRefusesACreateWithoutAnActor(t *testing.T) {
 
 	rec := createBindingRequest(t, s, kp, remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo123",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("a", 40),
 	})
 	if rec.Code != http.StatusBadRequest {
@@ -510,7 +514,7 @@ func TestCreateBinding(t *testing.T) {
 
 	createBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo123",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("a", 40),
 		Role:       "builder",
 	})
@@ -532,7 +536,7 @@ func TestCreateBinding(t *testing.T) {
 	if !ok {
 		t.Fatalf("id.Dir() failed for %s", id)
 	}
-	bareRepoPath := filepath.Join(root, "repos", idDir, "repo123.git")
+	bareRepoPath := filepath.Join(root, "repos", idDir, testRepoID+".git")
 	if _, err := os.Stat(filepath.Join(bareRepoPath, "HEAD")); err != nil {
 		t.Fatalf("bare repo HEAD missing at %s: %v", bareRepoPath, err)
 	}
@@ -560,7 +564,7 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 
 	createBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo123",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("a", 40),
 		Role:       "builder",
 	})
@@ -695,7 +699,7 @@ func TestCreateBindingTier(t *testing.T) {
 			srv, kp := newTierTestServer(t, tc.pol)
 			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
 				Name:       "api",
-				RepoID:     "repo123",
+				RepoID:     testRepoID,
 				BaseCommit: strings.Repeat("a", 40),
 				Role:       "builder",
 				Tier:       tc.tier,
@@ -747,7 +751,7 @@ func TestCreateBindingLabels(t *testing.T) {
 			srv, kp := newTierTestServer(t, policy.Policy{})
 			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
 				Name:       "api",
-				RepoID:     "repo123",
+				RepoID:     testRepoID,
 				BaseCommit: strings.Repeat("a", 40),
 				Role:       "builder",
 				Feature:    tc.feature,
@@ -804,7 +808,7 @@ func TestCreateBindingRole(t *testing.T) {
 			srv, kp := newRoleTestServer(t, policy.Policy{}, roleTestRegistry(t, set, policy.Policy{}))
 			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
 				Name:       "api",
-				RepoID:     "repo123",
+				RepoID:     testRepoID,
 				BaseCommit: strings.Repeat("a", 40),
 				Role:       tc.role,
 			})
@@ -848,7 +852,7 @@ func requireCreateRefused(t *testing.T, srv *Server, kp remote.Keypair, rec *htt
 	if err != nil {
 		t.Fatal(err)
 	}
-	bare := filepath.Join(repoRoot, "repo123.git")
+	bare := filepath.Join(repoRoot, testRepoID+".git")
 	if _, err := os.Stat(bare); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("bare repo %s exists after the refusal (stat err = %v)", bare, err)
 	}
@@ -883,7 +887,7 @@ func TestCreateInvalid(t *testing.T) {
 
 	badNameBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "invalid/name",
-		RepoID:     "repo1",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("a", 40),
 	})
 	rec := httptest.NewRecorder()
@@ -913,7 +917,7 @@ func TestCreateDuplicate(t *testing.T) {
 
 	body, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo1",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("b", 40),
 		Role:       "builder",
 	})
@@ -950,7 +954,7 @@ func TestListIsOwnerScoped(t *testing.T) {
 
 	bodyA, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo1",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("1", 40),
 		Role:       "builder",
 	})
@@ -994,7 +998,7 @@ func TestGetTouchesLastSeen(t *testing.T) {
 
 	createBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo1",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("2", 40),
 		Role:       "builder",
 	})
@@ -2717,5 +2721,72 @@ func TestUnbindKeepingADirtyWorktreeKeepsItsRefs(t *testing.T) {
 	}
 	if len(refs) != 2 {
 		t.Errorf("refs/relevo/dirty-target/* = %v; want 2 kept refs", refs)
+	}
+}
+
+// TestParseCreateRequestRepoID drives the wire create parser with no server,
+// git or network: only the canonical 64-lower-case-hex id is well formed, and
+// every other shape is a 400 naming repo_id.
+func TestParseCreateRequestRepoID(t *testing.T) {
+	cases := []struct {
+		name string
+		id   string
+		ok   bool
+	}{
+		{"canonical", testRepoID, true},
+		{"empty", "", false},
+		{"short name", "repo1", false},
+		{"63 chars", testRepoID[:63], false},
+		{"65 chars", testRepoID + "a", false},
+		{"upper-case hex", strings.ToUpper(testRepoID), false},
+		{"non-hex byte", testRepoID[:63] + "g", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(remote.CreateBindingRequest{
+				Name:       "api",
+				RepoID:     tc.id,
+				BaseCommit: strings.Repeat("a", 40),
+			})
+			req := httptest.NewRequest("POST", "/v1/bindings", bytes.NewReader(body))
+			_, bad := parseCreateRequest(req)
+			if tc.ok {
+				if bad != "" {
+					t.Fatalf("repo_id %q refused: %q", tc.id, bad)
+				}
+				return
+			}
+			if bad == "" {
+				t.Fatalf("repo_id %q accepted, want refused", tc.id)
+			}
+			if !strings.Contains(bad, "repo_id") {
+				t.Fatalf("message = %q, want it to name repo_id", bad)
+			}
+		})
+	}
+}
+
+// TestInsideRootRefusesEscapes tables the containment guard: the root itself
+// and a path under it are inside; a parent, an absolute stranger and a sibling
+// whose name merely starts with the root are not.
+func TestInsideRootRefusesEscapes(t *testing.T) {
+	cases := []struct {
+		name string
+		root string
+		p    string
+		want bool
+	}{
+		{"inside", "/r/a", "/r/a/x", true},
+		{"equal", "/r/a", "/r/a", true},
+		{"parent", "/r/a", "/r", false},
+		{"absolute", "/r/a", "/etc/passwd", false},
+		{"sibling prefix", "/r/a", "/r/ab/x", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := insideRoot(tc.root, tc.p); got != tc.want {
+				t.Fatalf("insideRoot(%q, %q) = %v, want %v", tc.root, tc.p, got, tc.want)
+			}
+		})
 	}
 }
