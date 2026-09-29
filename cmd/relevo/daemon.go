@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/ingest"
+	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -230,6 +231,36 @@ func cmdDaemon(args []string) error {
 				"backup_path", cstats.BackupPath,
 				"checkpoint_err", cstats.CheckpointErr,
 				"vacuum_err", cstats.VacuumErr)
+		}
+	}
+
+	// The installation's own row, then the origin backfill, run next to the
+	// other run-once passes. The row is the projection other machines read to
+	// label this installation; the backfill stamps this installation's id on
+	// rows written before the origin column existed, and records itself in kv,
+	// so every later start is a no-op. A failure never stops the daemon: a
+	// machine with no database still runs, and the next start retries.
+	if rt.DB != nil {
+		inst, ierr := installation.Load(filepath.Dir(rt.Store.DBPath()))
+		if ierr != nil {
+			slog.Warn("relevo daemon: installation file unavailable", "err", ierr)
+		} else {
+			if terr := rt.DB.Tx(func(t *db.Tx) error {
+				return t.InstallationTouch(inst.ID, inst.Label, time.Now())
+			}); terr != nil {
+				slog.Warn("relevo daemon: installation row skipped", "err", terr)
+			}
+
+			bstats, bran, berr := db.BackfillOriginOnce(rt.DB, inst.ID, time.Now())
+			if berr != nil {
+				slog.Warn("relevo daemon: origin backfill skipped", "err", berr)
+			} else if bran {
+				slog.Info("relevo daemon: origin backfill",
+					"done_at", bstats.DoneAt,
+					"origin", bstats.Origin,
+					"binding_records", bstats.BindingRecords,
+					"bindings", bstats.Bindings)
+			}
 		}
 	}
 

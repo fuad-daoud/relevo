@@ -52,9 +52,9 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// UpsertRepo inserts or updates r by its natural key: origin_url when set,
-// else common_dir. A hit fills the other column when it is null in the db and
-// set on r.
+// UpsertRepo inserts or updates r by its natural key within this handle's
+// origin: origin_url when set, else common_dir. A hit fills the other column
+// when it is null in the db and set on r.
 func (t *Tx) UpsertRepo(r Repo) (string, error) {
 	switch {
 	case r.OriginURL != nil:
@@ -69,16 +69,17 @@ func (t *Tx) UpsertRepo(r Repo) (string, error) {
 func (t *Tx) upsertRepoBy(col, val string, r Repo) (string, error) {
 	var id string
 	var originURL, commonDir sql.Null[string]
-	err := t.queryRow(`SELECT id, origin_url, common_dir FROM repo WHERE `+col+` = ?`, val).
+	err := t.queryRow(`SELECT id, origin_url, common_dir FROM repo WHERE `+originScope+` AND `+col+` = ?`,
+		t.origin, val).
 		Scan(&id, &originURL, &commonDir)
 	if err == nil {
 		if !originURL.Valid && r.OriginURL != nil {
-			if _, err := t.exec(`UPDATE repo SET origin_url = ? WHERE id = ?`, *r.OriginURL, id); err != nil {
+			if _, err := t.exec(`UPDATE repo SET origin = ?, origin_url = ? WHERE id = ?`, t.origin, *r.OriginURL, id); err != nil {
 				return "", fmt.Errorf("db: upsert repo: fill origin_url: %w", mapBusy(err))
 			}
 		}
 		if !commonDir.Valid && r.CommonDir != nil {
-			if _, err := t.exec(`UPDATE repo SET common_dir = ? WHERE id = ?`, *r.CommonDir, id); err != nil {
+			if _, err := t.exec(`UPDATE repo SET origin = ?, common_dir = ? WHERE id = ?`, t.origin, *r.CommonDir, id); err != nil {
 				return "", fmt.Errorf("db: upsert repo: fill common_dir: %w", mapBusy(err))
 			}
 		}
@@ -93,18 +94,19 @@ func (t *Tx) upsertRepoBy(col, val string, r Repo) (string, error) {
 	if firstSeen.IsZero() {
 		firstSeen = time.Now()
 	}
-	if _, err := t.exec(`INSERT INTO repo (id, origin_url, common_dir, first_seen) VALUES (?, ?, ?, ?)`,
-		id, nullableString(r.OriginURL), nullableString(r.CommonDir), formatTime(firstSeen)); err != nil {
+	if _, err := t.exec(`INSERT INTO repo (id, origin, origin_url, common_dir, first_seen) VALUES (?, ?, ?, ?, ?)`,
+		id, t.origin, nullableString(r.OriginURL), nullableString(r.CommonDir), formatTime(firstSeen)); err != nil {
 		return "", fmt.Errorf("db: upsert repo: insert: %w", mapBusy(err))
 	}
 	return id, nil
 }
 
-// UpsertMasterMind inserts or updates p by its natural key: (harness_kind,
-// session_id). When p.ID is set the record's own id wins instead: ingest
-// upserts by the id `relevo mastermind init` minted, and the natural key stays as
-// the uniqueness guard. A (harness_kind, session_id) another id already holds
-// is refused with ErrInvalid rather than silently merging two identities.
+// UpsertMasterMind inserts or updates p by its natural key within this
+// handle's origin: (harness_kind, session_id). When p.ID is set the record's
+// own id wins instead: ingest upserts by the id `relevo mastermind init`
+// minted, and the natural key stays as the uniqueness guard. A
+// (harness_kind, session_id) another id already holds in this origin is
+// refused with ErrInvalid rather than silently merging two identities.
 func (t *Tx) UpsertMasterMind(p MasterMind) (string, error) {
 	if p.HarnessKind == "" || p.SessionID == "" {
 		return "", fmt.Errorf("db: upsert mastermind: HarnessKind and SessionID are required: %w", ErrInvalid)
@@ -121,8 +123,8 @@ func (t *Tx) UpsertMasterMind(p MasterMind) (string, error) {
 
 	var id string
 	var locator sql.Null[string]
-	err := t.queryRow(`SELECT id, transcript_locator FROM mastermind WHERE harness_kind = ? AND session_id = ?`,
-		p.HarnessKind, p.SessionID).Scan(&id, &locator)
+	err := t.queryRow(`SELECT id, transcript_locator FROM mastermind WHERE `+originScope+` AND harness_kind = ? AND session_id = ?`,
+		t.origin, p.HarnessKind, p.SessionID).Scan(&id, &locator)
 	if err == nil {
 		// The locator updates only when p now carries one; otherwise the db's
 		// existing value (if any) is kept, not cleared.
@@ -148,8 +150,8 @@ func (t *Tx) UpsertMasterMind(p MasterMind) (string, error) {
 	if firstSeen.IsZero() {
 		firstSeen = lastSeen
 	}
-	if _, err := t.exec(`INSERT INTO mastermind (id, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, p.HarnessKind, p.SessionID, nullableString(p.TranscriptLocator), formatTime(firstSeen), formatTime(lastSeen)); err != nil {
+	if _, err := t.exec(`INSERT INTO mastermind (id, origin, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, t.origin, p.HarnessKind, p.SessionID, nullableString(p.TranscriptLocator), formatTime(firstSeen), formatTime(lastSeen)); err != nil {
 		return "", fmt.Errorf("db: upsert mastermind: insert: %w", mapBusy(err))
 	}
 	return id, nil
@@ -180,8 +182,8 @@ func (t *Tx) upsertMasterMindByID(p MasterMind, lastSeen time.Time) (string, err
 		if firstSeen.IsZero() {
 			firstSeen = lastSeen
 		}
-		if _, ierr := t.exec(`INSERT INTO mastermind (id, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)`,
-			p.ID, p.HarnessKind, p.SessionID, nullableString(p.TranscriptLocator),
+		if _, ierr := t.exec(`INSERT INTO mastermind (id, origin, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			p.ID, t.origin, p.HarnessKind, p.SessionID, nullableString(p.TranscriptLocator),
 			formatTime(firstSeen), formatTime(lastSeen)); ierr != nil {
 			return "", fmt.Errorf("db: upsert mastermind by id: insert: %w", mapMasterMindKey(ierr))
 		}
@@ -195,7 +197,8 @@ func (t *Tx) upsertMasterMindByID(p MasterMind, lastSeen time.Time) (string, err
 // second id, so the failure surfaces as ErrInvalid.
 func (t *Tx) assertMasterMindKeyFree(id, kind, session string) error {
 	var other string
-	err := t.queryRow(`SELECT id FROM mastermind WHERE harness_kind = ? AND session_id = ?`, kind, session).Scan(&other)
+	err := t.queryRow(`SELECT id FROM mastermind WHERE `+originScope+` AND harness_kind = ? AND session_id = ?`,
+		t.origin, kind, session).Scan(&other)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -228,7 +231,8 @@ func mapMasterMindKey(err error) error {
 	return mapBusy(err)
 }
 
-// UpsertBinding inserts or updates b by its natural key: (name, created_at).
+// UpsertBinding inserts or updates b by its natural key within this handle's
+// origin: (origin, name, created_at).
 func (t *Tx) UpsertBinding(b Binding) (string, error) {
 	if b.Name == "" {
 		return "", fmt.Errorf("db: upsert binding: Name: %w", ErrInvalid)
@@ -243,7 +247,8 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 	createdAt := formatTime(b.CreatedAt)
 
 	var id string
-	err := t.queryRow(`SELECT id FROM binding WHERE name = ? AND created_at = ?`, b.Name, createdAt).Scan(&id)
+	err := t.queryRow(`SELECT id FROM binding WHERE `+originScope+` AND name = ? AND created_at = ?`,
+		t.origin, b.Name, createdAt).Scan(&id)
 	if err == nil {
 		if _, uerr := t.exec(`UPDATE binding SET repo_id=?, mastermind_id=?, feature=?, ticket=?, forked_from_binding_id=?,
 				forked_from_round=?, cwd=?, worktree=?, branch=?, base_commit=?, tier=?, gate=?,
@@ -265,11 +270,11 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 	}
 
 	id = NewID()
-	if _, err := t.exec(`INSERT INTO binding (id, name, repo_id, mastermind_id, feature, ticket, forked_from_binding_id,
+	if _, err := t.exec(`INSERT INTO binding (id, origin, name, repo_id, mastermind_id, feature, ticket, forked_from_binding_id,
 			forked_from_round, cwd, worktree, branch, base_commit, tier, gate, builder_mode, server,
 			created_at, final_state, archived_at, archive_path, ingest_source)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, b.Name, nullableString(b.RepoID), nullableString(b.MasterMindID), nullableString(b.Feature),
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, t.origin, b.Name, nullableString(b.RepoID), nullableString(b.MasterMindID), nullableString(b.Feature),
 		nullableString(b.Ticket),
 		nullableString(b.ForkedFromBindingID), nullableInt(b.ForkedFromRound),
 		b.CWD, nullableString(b.Worktree), nullableString(b.Branch), nullableString(b.BaseCommit),
