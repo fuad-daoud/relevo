@@ -279,7 +279,7 @@ CREATE TABLE round_file (
     bytes INTEGER NOT NULL,
     sha256 TEXT NOT NULL,
     mtime TEXT NOT NULL,
-    sealed_at TEXT NOT NULL,
+    sealed_at TEXT NOT NULL, body_codec INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (record_id, name)
 )
 
@@ -313,6 +313,6 @@ CREATE TABLE transcript (
     ts TEXT,
     record_json TEXT NOT NULL,
     rendered TEXT NOT NULL
-)
+, record_json_codec INTEGER NOT NULL DEFAULT 0, rendered_codec INTEGER NOT NULL DEFAULT 0)
 
-schema_versions have=12 know=12
+schema_versions have=13 know=13

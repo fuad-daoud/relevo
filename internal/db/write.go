@@ -445,9 +445,11 @@ func (t *Tx) AppendTranscript(ownerKind, ownerID string, recs []TranscriptRecord
 		if id == "" {
 			id = NewID()
 		}
-		res, err := t.exec(`INSERT OR IGNORE INTO transcript (id, owner_kind, owner_id, seq, ts, record_json, rendered)
-			VALUES (?,?,?,?,?,?,?)`,
-			id, ownerKind, ownerID, r.Seq, nullableTime(r.TS), r.RecordJSON, r.Rendered)
+		recordJSON, recordCodec := encodeText(r.RecordJSON)
+		rendered, renderedCodec := encodeText(r.Rendered)
+		res, err := t.exec(`INSERT OR IGNORE INTO transcript (id, owner_kind, owner_id, seq, ts, record_json, record_json_codec, rendered, rendered_codec)
+			VALUES (?,?,?,?,?,?,?,?,?)`,
+			id, ownerKind, ownerID, r.Seq, nullableTime(r.TS), recordJSON, recordCodec, rendered, renderedCodec)
 		if err != nil {
 			return added, fmt.Errorf("db: append transcript: %w", mapBusy(err))
 		}
