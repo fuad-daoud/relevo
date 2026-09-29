@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -243,16 +244,39 @@ func checkSpawnSpec(spec spawn.ProcSpec) (string, error) {
 
 // openSpawnFiles opens the builder's log and stream for append.
 func openSpawnFiles(spec spawn.ProcSpec) (logf, streamf *os.File, err error) {
-	logf, err = os.OpenFile(spec.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	logf, err = openAppend(spec.LogPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("proc: log: %w", err)
 	}
-	streamf, err = os.OpenFile(spec.StreamPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	streamf, err = openAppend(spec.StreamPath)
 	if err != nil {
 		_ = logf.Close()
 		return nil, nil, fmt.Errorf("proc: stream: %w", err)
 	}
 	return logf, streamf, nil
+}
+
+// oNoFollow is O_NOFOLLOW where the platform has it: the state directory that
+// holds a round's log and stream is runner-writable, and the flag is the race
+// backstop behind the Lstat refusal, so a link swapped in after the check
+// cannot be followed.
+const oNoFollow = syscall.O_NOFOLLOW
+
+// openAppend opens path for appending, refusing anything that is not a regular
+// file. The state directory that holds a round's log and stream is
+// runner-writable, so a symlink planted at either path must not be followed out
+// of it: the Lstat is the refusal and O_NOFOLLOW the race backstop behind it.
+// The Lstat also keeps a planted fifo from blocking the open, which would wait
+// for a reader that never comes.
+func openAppend(path string) (*os.File, error) {
+	if fi, err := os.Lstat(path); err == nil {
+		if !fi.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s is not a regular file", path)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|oNoFollow, 0o644)
 }
 
 // resolveScope applies both lazy probes and their fallbacks: a scope whose probe
