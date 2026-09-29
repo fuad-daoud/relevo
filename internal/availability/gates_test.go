@@ -802,3 +802,27 @@ func TestRolesMissingNoteWording(t *testing.T) {
 		t.Errorf("mixed note = %q, want both fixes", mixed)
 	}
 }
+
+// TestUnavailableSanitizesReason pins that the reason a caller records is
+// sanitised before it reaches the ledger.
+func TestUnavailableSanitizesReason(t *testing.T) {
+	t.Parallel()
+
+	d := testDeps(t)
+
+	if _, err := Unavailable(d, testClaudeRef, time.Time{}, "quota \x1b[2J"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	gates := Gates(d)
+	if len(gates) == 0 {
+		t.Fatal("Gates = none, want every candidate on the gated provider")
+	}
+	for _, g := range gates {
+		if strings.ContainsRune(g.Note, '\x1b') {
+			t.Errorf("Note = %q, want the control byte replaced", g.Note)
+		}
+		if !strings.Contains(g.Note, "\uFFFD") {
+			t.Errorf("Note = %q, want a replacement rune", g.Note)
+		}
+	}
+}

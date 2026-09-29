@@ -27,6 +27,10 @@ const (
 	MaxAgentNameLen = 32
 	bindingFileMode = 0o644
 	bindingDirMode  = 0o755
+	// stateRootMode is the state root's own mode: owner-only, because the root
+	// holds the database and every binding's files. MkdirAll never chmods, so a
+	// root that already exists keeps whatever mode it has.
+	stateRootMode   = 0o700
 	defaultRoundCap = 20
 	// defaultRoundMSecs is the round budget: 24 hours. A builder working a real
 	// stage runs for hours, so a short budget flags healthy work as needing a
@@ -157,7 +161,7 @@ func (s *Store) WithLock(fn func(tx *Tx) error) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := os.MkdirAll(s.root, bindingDirMode); err != nil {
+	if err := os.MkdirAll(s.root, stateRootMode); err != nil {
 		return fmt.Errorf("create state root: %w", err)
 	}
 

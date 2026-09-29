@@ -10,8 +10,13 @@ import (
 // to append to the log. It differs from Render in what "unknown" means: a
 // record file is a superset of the stream with housekeeping records, so an
 // unknown type, a non-JSON line, or a kind with no record table renders as
-// nothing. Never errors, never panics.
+// nothing. Every returned line is sanitised, exactly as Render's are. Never
+// errors, never panics.
 func RenderRecord(kind string, line []byte) []string {
+	return sanitizeLines(renderRecord(kind, line))
+}
+
+func renderRecord(kind string, line []byte) []string {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 {
 		return nil

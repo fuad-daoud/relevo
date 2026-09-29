@@ -1,12 +1,12 @@
 package ui
 
 import (
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
 type detailModel struct {
@@ -102,23 +102,8 @@ func wrapBody(body string, width int) string {
 
 // sanitizeText makes untrusted text safe to draw. It is called on raw text
 // before any styling, so the ANSI sequences relevo itself adds afterwards are
-// untouched.
+// untouched. The rule is shared with every other untrusted-text path through
+// package sanitize.
 func sanitizeText(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch {
-		case r == '\n':
-			b.WriteRune('\n')
-		case r == '\r':
-			// \r\n becomes \n. A lone \r is dropped.
-		case r == '\t':
-			b.WriteString("    ")
-		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || r == utf8.RuneError:
-			b.WriteRune('\uFFFD')
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
+	return sanitize.Text(s)
 }

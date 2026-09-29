@@ -2980,3 +2980,42 @@ func TestInsideRootRefusesEscapes(t *testing.T) {
 		})
 	}
 }
+
+// TestUnavailableRejectsAnOverlongReason pins the server bound: a reason over
+// 512 bytes is refused with 400 and stores no gate.
+func TestUnavailableRejectsAnOverlongReason(t *testing.T) {
+	cSet, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Candidates: cSet, Now: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := s.Handler()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := json.Marshal(remote.UnavailableRequest{
+		Token:  "claude/anthropic/haiku",
+		Reason: strings.Repeat("x", 513),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kp, "POST", "/v1/unavailable", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("overlong reason status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	if _, ok, err := s.DB().KVGet("serve.ledger"); err != nil || ok {
+		t.Errorf("serve.ledger = (_, %v, %v), want no gate stored", ok, err)
+	}
+}

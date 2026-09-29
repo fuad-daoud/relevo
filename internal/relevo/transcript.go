@@ -27,14 +27,21 @@ const streamTailWindow = 64 * 1024
 // segment that contains its absolute offset (segmentKind). It is pure, and
 // its prefix is stable as the stream grows, which serve's files/log?from=
 // offsets and the client mirror (#442) depend on.
+// lineRenderer turns one raw line of a stream -- with the harness kind of the
+// segment that holds it -- into the lines a reader or a scan sees. Rendering
+// for a reader is transcript.Render; a limit scan uses transcript.LimitLines,
+// which keeps only the lines the harness itself wrote.
+type lineRenderer func(kind string, line []byte) []string
+
 func renderStream(stream []byte, segs []store.StreamSegment, fallback string) []byte {
-	return renderStreamFrom(stream, 0, segs, fallback)
+	return renderStreamFrom(stream, 0, segs, fallback, transcript.Render)
 }
 
 // renderStreamFrom is renderStream with the window's bytes starting at base:
 // the caller that reads only a tail renders the window with the lines'
-// absolute offsets in the whole stream, so segment kinds stay correct.
-func renderStreamFrom(stream []byte, base int64, segs []store.StreamSegment, fallback string) []byte {
+// absolute offsets in the whole stream, so segment kinds stay correct. render
+// is the one place the reader and the limit scan differ.
+func renderStreamFrom(stream []byte, base int64, segs []store.StreamSegment, fallback string, render lineRenderer) []byte {
 	end := bytes.LastIndexByte(stream, '\n')
 	if end < 0 {
 		return nil
@@ -42,7 +49,7 @@ func renderStreamFrom(stream []byte, base int64, segs []store.StreamSegment, fal
 	var out []string
 	off := base
 	for _, line := range bytes.Split(stream[:end], []byte{'\n'}) {
-		out = append(out, transcript.Render(segmentKind(segs, off, fallback), line)...)
+		out = append(out, render(segmentKind(segs, off, fallback), line)...)
 		off += int64(len(line)) + 1
 	}
 	if len(out) == 0 {
@@ -86,10 +93,36 @@ func joinTailLines(lines []string, n int) string {
 // -- a sealed round -- it reads it whole through read and renders the bytes at
 // from or later.
 func streamTail(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) string {
+	return tailWith(path, read, segs, fallback, n, from, transcript.Render)
+}
+
+// scanTail is streamTail's sibling for a limit scan: the same bytes, read the
+// same way, but each line is rendered with transcript.LimitLines, so only the
+// lines the harness itself wrote reach the patterns. This writer's "lines" are
+// the harness-authored text of each raw line, and the reset time is parsed from
+// the same text, so model text, tool output, a successful result and thinking
+// can never gate a provider.
+func scanTail(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) string {
+	return tailWith(path, read, segs, fallback, n, from, transcript.LimitLines)
+}
+
+// tailWith is streamTail and scanTail's shared reader: the last n lines of a
+// round's stream rendered by render, with exactly logTail's conventions (no
+// trailing newline, "" for a missing or empty file, or n <= 0), over
+// renderStream's output, whose entries may themselves contain newlines.
+//
+// from is the earliest byte it may read: 0 for the whole file, a later offset
+// to ignore bytes another process wrote into the same file. When path exists
+// on disk it reads backwards in doubling windows (streamTailWindow first),
+// dropping the first, partial line of a window that does not start at from and
+// rendering the rest with their absolute offsets. When the file is not on disk
+// -- a sealed round -- it reads it whole through read and renders the bytes at
+// from or later.
+func tailWith(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64, render lineRenderer) string {
 	if n <= 0 {
 		return ""
 	}
-	if tail, ok := diskStreamTail(path, segs, fallback, n, from); ok {
+	if tail, ok := diskStreamTail(path, segs, fallback, n, from, render); ok {
 		return tail
 	}
 	data, err := read(path)
@@ -99,12 +132,12 @@ func streamTail(path string, read func(string) ([]byte, error), segs []store.Str
 	if from > int64(len(data)) {
 		return ""
 	}
-	return joinTailLines(renderedLines(renderStreamFrom(data[from:], from, segs, fallback)), n)
+	return joinTailLines(renderedLines(renderStreamFrom(data[from:], from, segs, fallback, render)), n)
 }
 
 // diskStreamTail is streamTail's backwards reader. ok is false when the file
 // is not on disk (or cannot be read), so the caller falls back to read.
-func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n int, from int64) (string, bool) {
+func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n int, from int64, render lineRenderer) (string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", false
@@ -139,7 +172,7 @@ func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n 
 			base = start + int64(i) + 1
 			body = body[i+1:]
 		}
-		lines := renderedLines(renderStreamFrom(body, base, segs, fallback))
+		lines := renderedLines(renderStreamFrom(body, base, segs, fallback, render))
 		if len(lines) >= n || start == from {
 			return joinTailLines(lines, n), true
 		}
@@ -173,6 +206,23 @@ func currentBuilderTail(rt Runtime, b store.Binding, n int) string {
 		from = b.Builder.StreamStart
 	}
 	return streamTail(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
+}
+
+// currentBuilderScanText is currentBuilderTail's sibling for a limit scan. It
+// reads the same bytes -- the current builder process's own output, or a legacy
+// round's log -- but renders each stream line with transcript.LimitLines, so
+// only the lines the harness itself wrote can gate; the legacy log keeps
+// today's rendered-tail scan, because such a round writes its stderr to the log
+// and the rendered text is what the patterns were written against.
+func currentBuilderScanText(rt Runtime, b store.Binding, n int) string {
+	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
+		return logTail(b.Builder.LogPath, n)
+	}
+	from := int64(0)
+	if b.Builder.StreamRound == b.Round {
+		from = b.Builder.StreamStart
+	}
+	return scanTail(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
 }
 
 // roundSegments is the segment list of one round: the live endpoint's own

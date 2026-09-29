@@ -119,6 +119,35 @@ func TestDenialScanIgnoresThePreviousBuildersLines(t *testing.T) {
 	}
 }
 
+// TestLimitScanReadsOnlyHarnessChannels pins the harness-authored-channels rule
+// end to end: a limit-shaped sentence a tool wrote, or a successful result's own
+// text, is the model talking about a limit, not hitting one. limitText drops
+// both, while the rendered tail the scan used to read still shows them.
+func TestLimitScanReadsOnlyHarnessChannels(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	modelText := `{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"run_command","tool_info":{"output":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s."}}}` + "\n"
+	successResult := `{"event":"result","result":{"status":"SUCCESS","response":"Individual quota reached. Resets in 2h48m52s.","error":""}}` + "\n"
+	streamWrite(t, rt, modelText+successResult)
+
+	patterns := availability.LimitPatterns(AvailabilityDeps(rt), b.BuilderCandidate)
+	if _, ok := availability.MatchLimit(builderTail(rt, b, availability.LimitScanLines), patterns, rt.Now(), rt.Policy.LimitGateDefault()); !ok {
+		t.Fatal("the rendered tail does not show the model's limit-shaped text: the fixture no longer exercises the bug")
+	}
+	text := limitText(context.Background(), rt, b)
+	if _, ok := availability.MatchLimit(text, patterns, rt.Now(), rt.Policy.LimitGateDefault()); ok {
+		t.Errorf("limitText = %q, want no limit line: model text and a successful result must not gate", text)
+	}
+	if _, _, handled, err := gateHeadless(t, rt, b, text, false); err != nil {
+		t.Fatalf("gateOnLimit: %v", err)
+	} else if handled {
+		t.Error("handled = true, want false: the stream holds no harness-authored limit line")
+	}
+	if rl := rateLimitedEntries(loadLedger(t, rt)); len(rl) != 0 {
+		t.Errorf("rate_limited entries = %+v, want none", rl)
+	}
+}
+
 // TestCurrentBuilderTailFromStaleRoundIsWholeStream pins the fallback: a
 // cursor left over from another round names no offset in this round's file,
 // so the whole stream is in scope again.

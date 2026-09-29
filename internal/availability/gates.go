@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -152,7 +153,7 @@ func Unavailable(d Deps, token string, until time.Time, reason string) (provider
 		Subject: ref.Provider,
 		At:      now,
 		Until:   until,
-		Note:    reason,
+		Note:    sanitize.Text(reason),
 		Source:  "planner", // why: ClearedByMasterMind's value is state already written
 	}
 	if err := d.Store.WithLock(func(*store.Tx) error { return AppendEntryLocked(d, entry) }); err != nil {
@@ -438,7 +439,7 @@ func gatedNote(d Deps, token string) string {
 		}
 		part := fmt.Sprintf("%s since %s %s", GateKindText(g.Kind), GateTimeText(g.Since), GateUntilText(g.Until))
 		if g.Note != "" {
-			part += ": " + g.Note
+			part += ": " + sanitize.Text(g.Note)
 		}
 		parts = append(parts, part)
 	}

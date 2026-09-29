@@ -190,10 +190,11 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 // limitText is the text a decision point scans for rate-limit patterns: the
 // tail of the current builder process's output -- its log when the round has
-// one, otherwise the bytes it appended to the round's stream. A local builder
-// is always headless since #303.
+// one, otherwise the bytes it appended to the round's stream -- keeping only
+// the lines the harness itself wrote. A local builder is always headless since
+// #303.
 func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
-	return currentBuilderTail(rt, b, availability.LimitScanLines)
+	return currentBuilderScanText(rt, b, availability.LimitScanLines)
 }
 
 // gateOnLimit is the one helper every decision point calls (spec §4.4).

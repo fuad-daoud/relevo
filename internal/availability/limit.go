@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
@@ -95,9 +96,9 @@ func matchesAny(line string, patterns []*regexp.Regexp) bool {
 	return false
 }
 
-// capLine trims line and caps it at 200 runes.
+// capLine trims line, sanitises it and caps it at 200 runes.
 func capLine(line string) string {
-	runes := []rune(strings.TrimSpace(line))
+	runes := []rune(sanitize.Text(strings.TrimSpace(line)))
 	if len(runes) > 200 {
 		runes = runes[:200]
 	}

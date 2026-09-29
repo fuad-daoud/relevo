@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
@@ -449,6 +450,12 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].At.After(out[j].At)
 	})
+
+	// One pass over every Detail, so the log view draws only sanitised text
+	// whatever its source row carried.
+	for i := range out {
+		out[i].Detail = sanitize.Text(out[i].Detail)
+	}
 
 	return out
 }

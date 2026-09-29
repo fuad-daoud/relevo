@@ -520,3 +520,77 @@ func TestVacuumKeepsRows(t *testing.T) {
 		t.Errorf("rounds after Vacuum = %d, want 1", len(rounds))
 	}
 }
+
+// recordCreateMode replaces the createFile seam with one that records the mode
+// the file is created with, before the post-hoc chmod can mask it. The returned
+// func reports the last recorded mode. The test that calls it must not call
+// t.Parallel, or a sibling could create a file through the same seam.
+func recordCreateMode(t *testing.T) func() os.FileMode {
+	t.Helper()
+	orig := createFile
+	var mode os.FileMode
+	createFile = func(path string) error {
+		if err := orig(path); err != nil {
+			return err
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		mode = info.Mode().Perm()
+		return nil
+	}
+	t.Cleanup(func() { createFile = orig })
+	return func() os.FileMode { return mode }
+}
+
+// TestOpenCreatesPrivateFiles pins the creation window: the database is created
+// owner-only before sqlite sees it, so it and the -wal and -shm siblings sqlite
+// derives from its mode are never world-readable, even for the instant before
+// the post-hoc chmod. The creation mode is read through the seam because that
+// chmod runs immediately after.
+func TestOpenCreatesPrivateFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	recorded := recordCreateMode(t)
+
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	if got := recorded(); got != 0o600 {
+		t.Errorf("database created with mode %o, want 600", got)
+	}
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", filepath.Base(p), err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("%s mode = %o, want 600", filepath.Base(p), perm)
+		}
+	}
+}
+
+// TestBackupToCreatesPrivateTarget pins that the backup target is created
+// owner-only before VACUUM INTO writes it, and stays 0600 after.
+func TestBackupToCreatesPrivateTarget(t *testing.T) {
+	d := openTestDB(t)
+	recorded := recordCreateMode(t)
+
+	path := filepath.Join(t.TempDir(), "copy.db")
+	if err := d.BackupTo(path); err != nil {
+		t.Fatalf("BackupTo: %v", err)
+	}
+	if got := recorded(); got != 0o600 {
+		t.Errorf("backup target created with mode %o, want 600", got)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(backup): %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("backup mode = %o, want 600", perm)
+	}
+}

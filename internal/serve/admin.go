@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -423,7 +424,7 @@ func RenderGates(gates []availability.Gate, now time.Time) string {
 		if g.Name != "" {
 			label = g.Name
 		}
-		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", label, availability.GateKindText(g.Kind), availability.GateUntilText(g.Until), g.Note)
+		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", label, availability.GateKindText(g.Kind), availability.GateUntilText(g.Until), sanitize.Text(g.Note))
 	}
 	return sb.String()
 }

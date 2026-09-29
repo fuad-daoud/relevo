@@ -393,3 +393,56 @@ func TestShowPeekFlagLeavesPendingMasterMindPayload(t *testing.T) {
 		}
 	})
 }
+
+// TestPrintShowSanitizesControlBytes pins that show's display path sanitises the
+// round's output while --artifact stays a raw file copy.
+func TestPrintShowSanitizesControlBytes(t *testing.T) {
+	const name = "showsanitize"
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	if err := s.Save(store.Binding{
+		Name: name, CWD: t.TempDir(), Round: 2, State: store.StateActive,
+		Shape: store.ShapeReader, Role: "reviewer",
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for _, e := range []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
+	} {
+		if err := s.AppendLog(name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+	dir := s.ArtifactDir(name, 1, "reviewer")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const summary = "# the summary \x1b[2J\n"
+	if err := os.WriteFile(filepath.Join(dir, "summary.md"), []byte(summary), 0o644); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+
+	got, _, err := captureOutput(t, func() error { return run([]string{"show", name, "--round", "1", "--output"}) })
+	if err != nil {
+		t.Fatalf("show --output: %v", err)
+	}
+	if strings.ContainsRune(string(got), '\x1b') {
+		t.Errorf("show --output = %q, want the control byte replaced", got)
+	}
+	if !strings.Contains(string(got), "\uFFFD") {
+		t.Errorf("show --output = %q, want a replacement rune", got)
+	}
+
+	// The artifact path is a file-copy contract: its bytes stay raw.
+	raw, err := os.ReadFile(filepath.Join(dir, "summary.md"))
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if !strings.Contains(string(raw), "\x1b") {
+		t.Errorf("summary.md = %q, want the stored bytes untouched", raw)
+	}
+}

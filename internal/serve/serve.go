@@ -87,9 +87,10 @@ type Server struct {
 // EnsureStateRoot creates the state root's bindings directory, the directory
 // the doctor's serve/state check probes. MkdirAll also creates the root itself
 // and repairs a bindings directory that was removed; it is idempotent and
-// returns the raw error, as New does.
+// returns the raw error, as New does. The root is owner-only: it holds the
+// database and every binding's files, and MkdirAll never chmods an existing one.
 func EnsureStateRoot(root string) error {
-	return os.MkdirAll(filepath.Join(root, "bindings"), 0o755)
+	return os.MkdirAll(filepath.Join(root, "bindings"), 0o700)
 }
 
 func New(cfg Config) (*Server, error) {
@@ -103,7 +104,7 @@ func New(cfg Config) (*Server, error) {
 		cfg.Git = git.NewClient("git", 0, 0)
 	}
 	tmpDir := filepath.Join(cfg.Root, "tmp")
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
 		return nil, err
 	}
 	// Before anything listens, drop the request temp files a previous process left

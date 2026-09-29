@@ -761,7 +761,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 	}
 	if _, err := os.Stat(reportPath); err == nil {
-		_, m, _, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, availability.LimitScanLines), false)
+		_, m, _, err := gateOnLimit(ctx, rt, tx, b, limitText(ctx, rt, b), false)
 		if err != nil {
 			return b, err
 		}
@@ -959,7 +959,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return haltBinding(ctx, rt, b, escapeDiagnosis(b, codeText))
 	}
 
-	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, availability.LimitScanLines), false)
+	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, limitText(ctx, rt, b), false)
 	if handled {
 		return next, err
 	}

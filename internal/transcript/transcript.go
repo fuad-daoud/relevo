@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
 const maxArg = 200
@@ -19,8 +21,14 @@ var argKeys = []string{"command", "file_path", "path", "AbsolutePath", "pattern"
 // the lines to append to the log. An empty line and a supervisor trailer are
 // nothing; a line that is not a JSON object is itself, verbatim (that is how a
 // plain-text error reaches the log); an unknown event renders as "[<type>]" so
-// a harness upgrade degrades to noise, not silence. Never errors, never panics.
+// a harness upgrade degrades to noise, not silence. Every line is sanitised, so
+// a control byte in a harness's own text never reaches a log, a stream tail or
+// `show`. Never errors, never panics.
 func Render(kind string, line []byte) []string {
+	return sanitizeLines(render(kind, line))
+}
+
+func render(kind string, line []byte) []string {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 {
 		return nil
@@ -43,6 +51,19 @@ func Render(kind string, line []byte) []string {
 		return renderCodex(obj)
 	}
 	return []string{unknown(obj)}
+}
+
+// sanitizeLines applies sanitize.Text to every rendered line, in place of the
+// raw text a harness wrote.
+func sanitizeLines(lines []string) []string {
+	if len(lines) == 0 {
+		return lines
+	}
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = sanitize.Text(l)
+	}
+	return out
 }
 
 func unknown(obj map[string]any) string {
