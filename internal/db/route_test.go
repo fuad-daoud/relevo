@@ -3,7 +3,9 @@
 package db_test
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -17,7 +19,13 @@ func TestRouteNamesTheOpen(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = direct.Close() })
-	if got := direct.Route(); got != "file" {
+	// Under the owner-mode switch every Open is routed through an owner, which
+	// is the switch's whole job, so there the direct handle names a socket.
+	if os.Getenv("RELEVO_DBTEST_OWNER") != "" {
+		if got := direct.Route(); !strings.HasPrefix(got, "owner ") {
+			t.Errorf("Open route under the owner switch = %q, want an owner socket", got)
+		}
+	} else if got := direct.Route(); got != "file" {
 		t.Errorf("Open route = %q, want %q", got, "file")
 	}
 
