@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
@@ -63,29 +62,6 @@ func mastermindPriorIDFunc(d *db.DB) func(kind, session string) (string, bool) {
 	}
 }
 
-// mastermindRepoOf reads cwd's repository identity through the runtime's git
-// client, in the same shape internal/ingest stores: the origin URL normalised,
-// the common dir canonical. A Runtime with no git client, or a cwd outside a
-// repository, yields an empty ref.
-func mastermindRepoOf(ctx context.Context, rt relevo.Runtime, cwd string) db.Repo {
-	if rt.Git == nil {
-		return db.Repo{}
-	}
-	originURL, commonDir, err := rt.Git.RepoFacts(ctx, cwd)
-	if err != nil {
-		return db.Repo{}
-	}
-	out := db.Repo{}
-	if origin := git.NormalizeOriginURL(originURL); origin != "" {
-		out.OriginURL = &origin
-	}
-	if commonDir != "" {
-		dir := commonDir
-		out.CommonDir = &dir
-	}
-	return out
-}
-
 // mastermindRepoKnown reports whether ref names a repository at all.
 func mastermindRepoKnown(ref db.Repo) bool {
 	return ref.OriginURL != nil || ref.CommonDir != nil
@@ -97,14 +73,14 @@ func mastermindRepoKnown(ref db.Repo) bool {
 func mastermindCaller(rt relevo.Runtime, cwd, kindFlag, sessionFlag string) (mastermind.InitInput, error) {
 	if kindFlag != "" || sessionFlag != "" {
 		if kindFlag == "" || sessionFlag == "" {
-			return mastermind.InitInput{}, fmt.Errorf("relevo mastermind: needs both --kind and --session, or neither")
+			return mastermind.InitInput{}, fail(codeUsage, "relevo mastermind: needs both --kind and --session, or neither")
 		}
 		return mastermind.InitInput{Kind: kindFlag, SessionID: sessionFlag}, nil
 	}
 
 	ident, ok := mastermind.Detect(os.Getenv, os.Getppid())
 	if !ok {
-		return mastermind.InitInput{}, fmt.Errorf("not in a detectable mastermind session: pass --kind and --session")
+		return mastermind.InitInput{}, fail(codeRefused, "not in a detectable mastermind session: pass --kind and --session")
 	}
 	in := mastermind.InitInput{
 		Kind:      ident.Kind,
@@ -129,11 +105,34 @@ func mastermindCaller(rt relevo.Runtime, cwd, kindFlag, sessionFlag string) (mas
 	return in, nil
 }
 
+// mastermindEnableFlagValues holds the pointers `mastermind enable` parses
+// into.
+type mastermindEnableFlagValues struct {
+	repo    *bool
+	kind    *string
+	session *string
+	asJSON  *bool
+}
+
+// mastermindEnableFlagSet defines those flags on fs and returns what they
+// parse into.
+func mastermindEnableFlagSet(fs *flag.FlagSet) *mastermindEnableFlagValues {
+	v := &mastermindEnableFlagValues{}
+	v.repo = fs.Bool("repo", false, "remember yes for this repository, not just this session")
+	v.kind = fs.String("kind", "", "harness kind for an explicit registration (with --session)")
+	v.session = fs.String("session", "", "harness session id for an explicit registration (with --kind)")
+	v.asJSON = fs.Bool("json", false, "print the document the consent produced")
+	return v
+}
+
 func cmdMasterMindEnable(args []string) error {
+	return outcomeError(cmdMasterMindEnableRun(args))
+}
+
+func cmdMasterMindEnableRun(args []string) error {
 	fs := flag.NewFlagSet("enable", flag.ContinueOnError)
-	repo := fs.Bool("repo", false, "remember yes for this repository, not just this session")
-	kind := fs.String("kind", "", "harness kind for an explicit registration (with --session)")
-	session := fs.String("session", "", "harness session id for an explicit registration (with --kind)")
+	v := mastermindEnableFlagSet(fs)
+	repo, kind, session, asJSON := v.repo, v.kind, v.session, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -184,12 +183,32 @@ func cmdMasterMindEnable(args []string) error {
 		return err
 	}
 
-	fmt.Printf("MasterMind %s (%s) %s\n", rec.Name, rec.ID, res)
+	// The env-file append is a side effect both modes keep; only the stdout
+	// export line is a notice that moves off stdout under --json.
+	exported := false
 	if envFile := os.Getenv("CLAUDE_ENV_FILE"); envFile != "" {
 		if err := appendEnvLine(envFile, mastermind.EnvLine(rec.ID)); err != nil {
 			return err
 		}
-	} else {
+		exported = true
+	}
+	docRepo := ""
+	if *repo {
+		docRepo = mastermindRepoLabel(rt, cwd)
+	}
+
+	if *asJSON {
+		if !exported {
+			fmt.Fprintf(os.Stderr, "export RELEVO_MASTERMIND=%s\n", rec.ID)
+		}
+		if *repo {
+			fmt.Fprintln(os.Stderr, "relevo will register this repository's sessions (relevo mastermind disable --repo to stop)")
+		}
+		return printDoc(mastermindDocOf(rec.ID, rec.Name, string(res), docRepo))
+	}
+
+	fmt.Printf("MasterMind %s (%s) %s\n", rec.Name, rec.ID, res)
+	if !exported {
 		fmt.Printf("export RELEVO_MASTERMIND=%s\n", rec.ID)
 	}
 	if *repo {
@@ -201,11 +220,34 @@ func cmdMasterMindEnable(args []string) error {
 // cmdMasterMindDisable answers no for the repository, or for this session: the
 // session's own answer is written whether or not it has a record, and an
 // existing record is forgotten.
+// mastermindDisableFlagValues holds the pointers `mastermind disable` parses
+// into.
+type mastermindDisableFlagValues struct {
+	repo    *bool
+	kind    *string
+	session *string
+	asJSON  *bool
+}
+
+// mastermindDisableFlagSet defines those flags on fs and returns what they
+// parse into.
+func mastermindDisableFlagSet(fs *flag.FlagSet) *mastermindDisableFlagValues {
+	v := &mastermindDisableFlagValues{}
+	v.repo = fs.Bool("repo", false, "remember no for this repository; without it, answer no for this session")
+	v.kind = fs.String("kind", "", "harness kind for an explicit session (with --session)")
+	v.session = fs.String("session", "", "harness session id for an explicit session (with --kind)")
+	v.asJSON = fs.Bool("json", false, "print the document the consent produced")
+	return v
+}
+
 func cmdMasterMindDisable(args []string) error {
+	return outcomeError(cmdMasterMindDisableRun(args))
+}
+
+func cmdMasterMindDisableRun(args []string) error {
 	fs := flag.NewFlagSet("disable", flag.ContinueOnError)
-	repo := fs.Bool("repo", false, "remember no for this repository; without it, answer no for this session")
-	kind := fs.String("kind", "", "harness kind for an explicit session (with --session)")
-	session := fs.String("session", "", "harness session id for an explicit session (with --kind)")
+	v := mastermindDisableFlagSet(fs)
+	repo, kind, session, asJSON := v.repo, v.kind, v.session, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -234,6 +276,9 @@ func cmdMasterMindDisable(args []string) error {
 		} else if *kind != "" || *session != "" {
 			return err
 		}
+		if *asJSON {
+			return printDoc(mastermindDocOf("", "", "disabled", mastermindRepoLabel(rt, cwd)))
+		}
 		fmt.Println("relevo will not register this repository's sessions (relevo mastermind enable --repo to change)")
 		return nil
 	}
@@ -250,7 +295,7 @@ func cmdMasterMindDisable(args []string) error {
 	} else {
 		rec, ok := mastermindFilter(rt)
 		if !ok {
-			return fmt.Errorf("not in a detectable mastermind session: pass --repo to answer for the repository, --kind/--session to name one, or run relevo mastermind forget <id|name>")
+			return fail(codeRefused, "not in a detectable mastermind session: pass --repo to answer for the repository, --kind/--session to name one, or run relevo mastermind forget <id|name>")
 		}
 		kindV, sessionV = rec.HarnessKind, rec.SessionID
 	}
@@ -267,6 +312,9 @@ func cmdMasterMindDisable(args []string) error {
 	}
 	rec, err := reg.BySession(kindV, sessionV)
 	if errors.Is(err, mastermind.ErrNotFound) {
+		if *asJSON {
+			return printDoc(mastermindDocOf("", "", "no_record", ""))
+		}
 		fmt.Printf("relevo will not register %s session %s (it had no record to forget)\n", kindV, sessionV)
 		return nil
 	}
@@ -274,7 +322,10 @@ func cmdMasterMindDisable(args []string) error {
 		return err
 	}
 	if err := reg.Forget(rec.ID, mastermindInUse(rt)); err != nil {
-		return fmt.Errorf("relevo mastermind disable: the session answered no, but %w", err)
+		return outcomeError(fmt.Errorf("relevo mastermind disable: the session answered no, but %w", err))
+	}
+	if *asJSON {
+		return printDoc(mastermindDocOf(rec.ID, rec.Name, "forgotten", ""))
 	}
 	fmt.Printf("forgot mastermind %s (%s)\n", rec.Name, rec.ID)
 	return nil
@@ -283,15 +334,36 @@ func cmdMasterMindDisable(args []string) error {
 // cmdMasterMindReset clears the current repository's answer and the calling
 // session's own answer and told baseline, so the next session -- or the next
 // prompt -- asks the consent question again.
+// mastermindResetFlagValues holds the pointers `mastermind reset` parses into.
+type mastermindResetFlagValues struct {
+	kind    *string
+	session *string
+	asJSON  *bool
+}
+
+// mastermindResetFlagSet defines those flags on fs and returns what they parse
+// into.
+func mastermindResetFlagSet(fs *flag.FlagSet) *mastermindResetFlagValues {
+	v := &mastermindResetFlagValues{}
+	v.kind = fs.String("kind", "", "harness kind for an explicit session (with --session)")
+	v.session = fs.String("session", "", "harness session id for an explicit session (with --kind)")
+	v.asJSON = fs.Bool("json", false, "print the document the reset produced")
+	return v
+}
+
 func cmdMasterMindReset(args []string) error {
+	return outcomeError(cmdMasterMindResetRun(args))
+}
+
+func cmdMasterMindResetRun(args []string) error {
 	fs := flag.NewFlagSet("reset", flag.ContinueOnError)
-	kind := fs.String("kind", "", "harness kind for an explicit session (with --session)")
-	session := fs.String("session", "", "harness session id for an explicit session (with --kind)")
+	v := mastermindResetFlagSet(fs)
+	kind, session, asJSON := v.kind, v.session, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("usage: relevo mastermind reset [--kind K --session S]")
+		return fail(codeUsage, "mastermind reset wants [--kind K --session S], got %v", fs.Args())
 	}
 
 	rt, err := newRuntime()
@@ -310,7 +382,7 @@ func cmdMasterMindReset(args []string) error {
 		return callerErr
 	}
 	if !repoKnown && callerErr != nil {
-		return fmt.Errorf("relevo mastermind reset: %s is not inside a git repository and no session was named; pass --kind/--session to clear one session's answer", cwd)
+		return fail(codeRefused, "relevo mastermind reset: %s is not inside a git repository and no session was named; pass --kind/--session to clear one session's answer", cwd)
 	}
 
 	if repoKnown {
@@ -324,54 +396,18 @@ func cmdMasterMindReset(args []string) error {
 		}
 	}
 
+	docRepo := ""
+	if repoKnown {
+		docRepo = mastermindRepoLabel(rt, cwd)
+	}
+
+	if *asJSON {
+		return printDoc(mastermindDocOf("", "", "reset", docRepo))
+	}
 	if repoKnown {
 		fmt.Println("relevo will ask about this repository again (relevo mastermind enable --repo to answer yes now)")
 	} else {
 		fmt.Println("relevo will ask this session again (relevo mastermind enable to answer yes now)")
-	}
-	return nil
-}
-
-// mastermindWriteSessionConsent writes one answer for a session. Unlike the
-// repository answer it needs no git repository: "this session only" is an
-// answer about the session, whatever the cwd is.
-func mastermindWriteSessionConsent(rt relevo.Runtime, kind, session string, c db.Consent) error {
-	if kind == "" || session == "" {
-		return fmt.Errorf("relevo mastermind: needs both --kind and --session, or neither")
-	}
-	d, err := rt.Store.DB()
-	if err != nil {
-		return err
-	}
-	return d.SetSessionConsent(kind, session, c, rt.Now())
-}
-
-// mastermindClearSessionConsent forgets a session's own answer and its told
-// baseline in one write.
-func mastermindClearSessionConsent(rt relevo.Runtime, kind, session string) error {
-	if kind == "" || session == "" {
-		return nil
-	}
-	d, err := rt.Store.DB()
-	if err != nil {
-		return err
-	}
-	return d.ClearSessionConsent(kind, session)
-}
-
-// mastermindWriteConsent writes one answer for cwd's repository. A cwd outside
-// a git repository has nothing to remember, so the answer commands refuse.
-func mastermindWriteConsent(rt relevo.Runtime, cwd string, c db.Consent) error {
-	ref := mastermindRepoOf(context.Background(), rt, cwd)
-	if !mastermindRepoKnown(ref) {
-		return fmt.Errorf("relevo mastermind enable|disable|reset: %s is not inside a git repository, so there is no repository answer to change", cwd)
-	}
-	d, err := rt.Store.DB()
-	if err != nil {
-		return err
-	}
-	if _, err := d.SetRepoConsent(ref, c, rt.Now()); err != nil {
-		return err
 	}
 	return nil
 }
@@ -381,12 +417,29 @@ func mastermindWriteConsent(rt relevo.Runtime, cwd string, c db.Consent) error {
 // not, and nothing when it answered no or is not a repository. The opencode
 // plugin calls it once per session and pushes the text into the session's
 // system instructions.
+// mastermindGuideFlagValues holds the pointers `mastermind guide` parses into.
+type mastermindGuideFlagValues struct {
+	cwd     *string
+	kind    *string
+	session *string
+	asJSON  *bool
+}
+
+// mastermindGuideFlagSet defines those flags on fs and returns what they parse
+// into.
+func mastermindGuideFlagSet(fs *flag.FlagSet) *mastermindGuideFlagValues {
+	v := &mastermindGuideFlagValues{}
+	v.cwd = fs.String("cwd", "", "the session's working directory (default: the process cwd)")
+	v.kind = fs.String("kind", "", "harness kind (with --session): an enabled session's record is created here")
+	v.session = fs.String("session", "", "harness session id (with --kind)")
+	v.asJSON = fs.Bool("json", false, "print {\"state\",\"text\",\"repo\",\"id\",\"name\"} instead of the text")
+	return v
+}
+
 func cmdMasterMindGuide(args []string) error {
 	fs := flag.NewFlagSet("guide", flag.ContinueOnError)
-	cwdFlag := fs.String("cwd", "", "the session's working directory (default: the process cwd)")
-	kind := fs.String("kind", "", "harness kind (with --session): an enabled session's record is created here")
-	session := fs.String("session", "", "harness session id (with --kind)")
-	asJSON := fs.Bool("json", false, "print {\"state\",\"text\",\"repo\",\"id\",\"name\"} instead of the text")
+	v := mastermindGuideFlagSet(fs)
+	cwdFlag, kind, session, asJSON := v.cwd, v.kind, v.session, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -405,7 +458,7 @@ func cmdMasterMindGuide(args []string) error {
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	// The plugin knows the session but not its repository, so an opencode
@@ -419,7 +472,7 @@ func cmdMasterMindGuide(args []string) error {
 	}
 	if cwd == "" {
 		if cwd, err = os.Getwd(); err != nil {
-			return fmt.Errorf("resolve working directory: %w", err)
+			return fail(codeInternal, "resolve working directory: %v", err)
 		}
 	}
 

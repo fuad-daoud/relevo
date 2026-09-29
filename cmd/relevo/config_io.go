@@ -12,20 +12,31 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
+// configExportFlagValues holds the pointer `config export` parses into. It
+// always prints the document, so --json is an accepted no-op.
+type configExportFlagValues struct {
+	asJSON *bool
+}
+
+// configExportFlagSet defines that flag on fs and returns what it parses into,
+// so the registry's parity test finds exactly one installer per verb.
+func configExportFlagSet(fs *flag.FlagSet) *configExportFlagValues {
+	v := &configExportFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the configuration document")
+	return v
+}
+
 // configExport writes the whole-config document (§3) to stdout, indented, with
 // one key per section present in config.Sections order.
 func configExport(args []string) error {
 	fs := flag.NewFlagSet("relevo config export", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	configExportFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	if len(fs.Args()) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config export")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config export takes no arguments, got %v", fs.Args())
 	}
 
 	rt, err := newRuntime()
@@ -34,7 +45,7 @@ func configExport(args []string) error {
 	}
 	out, err := exportDoc(rt)
 	if err != nil {
-		return err
+		return fail(codeConfigInvalid, "%v", err)
 	}
 	_, err = os.Stdout.Write(out)
 	return err
@@ -42,19 +53,34 @@ func configExport(args []string) error {
 
 // configImport reads a document from a file (or stdin for "-"), stores it via
 // PutDoc, and prints any warnings to stderr.
+// configImportFlagValues holds the pointer `config import` parses into.
+type configImportFlagValues struct {
+	asJSON *bool
+}
+
+// configImportFlagSet defines that flag on fs and returns what it parses into,
+// so the registry's parity test finds exactly one installer per verb.
+func configImportFlagSet(fs *flag.FlagSet) *configImportFlagValues {
+	v := &configImportFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the import produced")
+	return v
+}
+
 func configImport(args []string) error {
+	return outcomeError(configImportRun(args))
+}
+
+func configImportRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config import", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	v := configImportFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config import <file|->")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config import wants <file|->")
 	}
 
 	var data []byte
@@ -70,7 +96,7 @@ func configImport(args []string) error {
 
 	doc, err := decodeDoc(data)
 	if err != nil {
-		return err
+		return fail(codeConfigInvalid, "%v", err)
 	}
 
 	rt, err := newRuntime()
@@ -79,12 +105,34 @@ func configImport(args []string) error {
 	}
 	warnings, err := rt.Config.As("cli", "config import "+rest[0]).PutDoc(doc)
 	if err != nil {
-		return err
+		return fail(codeConfigInvalid, "%v", err)
 	}
+	// Warnings already lived on stderr and stay there; under --json the same
+	// list also rides in the document.
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, "relevo: "+w)
 	}
+
+	version, err := rt.Config.Version()
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return printDoc(configImportDocOf(importSections(doc), warnings, version))
+	}
 	return nil
+}
+
+// importSections names the sections a document carries, in config.Sections
+// order, so the sections list reads the same on every run.
+func importSections(doc map[config.Section]json.RawMessage) []string {
+	out := make([]string, 0, len(doc))
+	for _, sec := range config.Sections {
+		if _, ok := doc[sec]; ok {
+			out = append(out, string(sec))
+		}
+	}
+	return out
 }
 
 // exportDoc renders every stored section as the whole-config document (§3).

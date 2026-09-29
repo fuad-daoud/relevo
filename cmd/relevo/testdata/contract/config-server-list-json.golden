@@ -1,0 +1,8 @@
+[
+  {
+    "name": "alpha",
+    "url": "https://alpha.example.test",
+    "state": "no key",
+    "detail": "run relevo config server key"
+  }
+]

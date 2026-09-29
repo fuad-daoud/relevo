@@ -32,16 +32,21 @@ belongs to you -- every binding on this MasterMind is yours. Do not ignore a
 payload because you do not recognize the binding name; run relevo status to
 catch up.
 
-Three verbs are tools here, callable directly instead of through the shell:
+Five verbs are tools here, callable directly instead of through the shell:
 
   - status(name?, all?): one binding, or every binding on this MasterMind, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
     runner a new round.
   - done(name): mark a binding done once its round is verified.
+  - show(name, round?, section?): read one round -- prompt (the default),
+    report, diff, drift, log, transcript, gate log, output or artifacts.
+  - gate(token, for?, reason?, clear?): record a provider rate limit, or clear
+    it with clear: true.
 
-Every other relevo verb -- bind, show, wait, gate, config, and the rest --
-is not a tool here; run it with Bash.
+Every other relevo verb -- bind, wait, config, and the rest -- is not a tool
+here; run it with Bash. relevo help --json lists every verb, its flags, its
+output document and its error codes.
 
 # The relevo guide
 
@@ -61,6 +66,18 @@ This is the guide to relevo, the tool that hands work between you and a runner.
   the round's output, 3 is NEEDS YOU -- ask the human, 4 is DONE.
 - `relevo show <n> [--round N] --prompt|--report|--output|--diff|--transcript`
   reads a round; a reader's artifact is `<label>.md`, printed with `--output`.
+
+## Output and errors
+
+- Every verb takes `--json`: stdout is then one document (`show --log` and a
+  transcript stream are NDJSON, one object per line), and the human output stays
+  the default.
+- A failure is data: human stderr is `relevo: <code>: <message>` then
+  `next: <command>`; with `--json` it is
+  `{"error":{"code":"<code>","message":"<message>","next":"<command>"}}`. Run
+  the `next` command.
+- `relevo help --json` is the registry of every verb, its flags, its output
+  document and its error codes; `relevo help --json <verb>` prints one entry.
 
 ## The recommended loop
 

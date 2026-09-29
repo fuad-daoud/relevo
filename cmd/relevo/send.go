@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
@@ -23,6 +22,7 @@ type sendFlagValues struct {
 	verify    *bool
 	noVerify  *bool
 	force     *bool
+	asJSON    *bool
 }
 
 // sendFlagSet defines send's flags on fs and returns the values they parse
@@ -39,6 +39,7 @@ func sendFlagSet(fs *flag.FlagSet) *sendFlagValues {
 	v.verify = fs.Bool("verify", false, "run a read-only reviewer in a throwaway worktree when the round closes")
 	v.noVerify = fs.Bool("no-verify", false, "do not run a reviewer when the round closes (default: config policy verify.default)")
 	v.force = fs.Bool("force", false, "send a planner actor's seed even when it is over the 4 KiB cap")
+	v.asJSON = fs.Bool("json", false, "print the result as a JSON document")
 	return v
 }
 
@@ -48,18 +49,17 @@ func cmdSend(args []string) error {
 	file, name, tier, candidate := v.file, v.name, v.tier, v.candidate
 	allowYolo, dryRun, regate := v.allowYolo, v.dryRun, v.regate
 	verify, noVerify := v.verify, v.noVerify
-	force := v.force
+	force, asJSON := v.force, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	// Before newRuntime, like add's flag pair: the refusal must not depend on
 	// argv order and must touch neither the state directory nor a harness.
 	if *verify && *noVerify {
-		fmt.Fprintf(os.Stderr, "relevo: relevo send --verify and --no-verify are exclusive\n")
-		return fmt.Errorf("relevo send --verify and --no-verify are exclusive: %w", exitCodeErr{code: 2})
+		return fail(codeRefused, "relevo send --verify and --no-verify are exclusive")
 	}
 	if *file == "" {
-		return fmt.Errorf("relevo send requires --file")
+		return fail(codeUsage, "relevo send requires --file")
 	}
 	regateOpt, err := regateFlag(fs, regate)
 	if err != nil {
@@ -74,7 +74,7 @@ func cmdSend(args []string) error {
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
 	target, err := resolveBinding(rt, *name, fs.Args())
@@ -94,7 +94,10 @@ func cmdSend(args []string) error {
 	if *dryRun {
 		d, err := relevo.SendDryRun(context.Background(), rt, target, *file, opts)
 		if err != nil {
-			return err
+			return writeError(err)
+		}
+		if *asJSON {
+			return printDoc(d)
 		}
 		fmt.Print(relevo.RenderDryRun(d))
 		return nil
@@ -102,14 +105,29 @@ func cmdSend(args []string) error {
 
 	res, err := relevo.Send(context.Background(), rt, target, *file, opts)
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
+	// The pick and drift lines are notices, not the result: --json moves them
+	// to stderr, where stdout carries the document alone.
+	notices := noticeWriter(*asJSON)
 	if res.Pick != "" {
-		fmt.Println(res.Pick)
+		fmt.Fprintln(notices, res.Pick)
 	}
 	if res.Drift != "" {
-		fmt.Println(res.Drift)
+		fmt.Fprintln(notices, res.Drift)
+	}
+	if *asJSON {
+		// The round's candidate and tier: the flags when given, else the
+		// binding's own values, which the send just stored.
+		cand, roundTier := *candidate, *tier
+		if b, lerr := rt.Store.Load(target); lerr == nil {
+			cand = b.BuilderCandidate
+			if roundTier == "" {
+				roundTier = b.Tier
+			}
+		}
+		return printDoc(sendDocOf(target, res.Round, candidateLabel(rt, cand), roundTier, false))
 	}
 	fmt.Printf("sent round %d to %s's runner\n", res.Round, target)
 	warnWaitingOnYou(rt, target)

@@ -1,0 +1,12 @@
+{
+  "dry_run": false,
+  "results": [
+    {
+      "owner": "SHA256:2b3c4d5e6f70",
+      "label": "alice",
+      "name": "webshop",
+      "last_seen": "2026-09-29T12:00:00Z",
+      "archived": true
+    }
+  ]
+}

@@ -13,42 +13,66 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
+// unbindFlagValues holds the pointers unbind parses into.
+type unbindFlagValues struct {
+	name           *string
+	archive        *bool
+	pick           *bool
+	done           *bool
+	delete         *bool
+	dryRun         *bool
+	sweep          *bool
+	mastermindRef  *string
+	allMasterMinds *bool
+	asJSON         *bool
+}
+
+// unbindFlagSet defines those flags on fs, in the usage text's order, and
+// returns what they parse into.
+func unbindFlagSet(fs *flag.FlagSet) *unbindFlagValues {
+	v := &unbindFlagValues{}
+	v.name = fs.String("name", "", "binding to unbind")
+	v.archive = fs.Bool("archive", false, "move the binding aside instead of deleting it, keeping its round log")
+	v.pick = fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
+	v.done = fs.Bool("done", false, "clear the DONE bindings of the calling mastermind (--all-masterminds: of every mastermind)")
+	v.delete = fs.Bool("delete", false, "with --done: remove each finished binding's directory instead of archiving it")
+	v.dryRun = fs.Bool("dry-run", false, "with --done or --sweep: list what would be cleared, change nothing")
+	v.sweep = fs.Bool("sweep", false, "delete relevo/<name> branches and refs/relevo/<name>/* refs of bindings that no longer exist, once they are on a remote-tracking ref")
+	v.mastermindRef = fs.String("mastermind", "", "with --done: clear this mastermind's DONE bindings (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
+	v.allMasterMinds = fs.Bool("all-masterminds", false, "with --done: clear every mastermind's DONE bindings, including ones with no mastermind")
+	v.asJSON = fs.Bool("json", false, "print the result as a JSON document")
+	return v
+}
+
 func cmdUnbind(args []string) error {
 	fs := flag.NewFlagSet("unbind", flag.ContinueOnError)
-	name := fs.String("name", "", "binding to unbind")
-	archive := fs.Bool("archive", false, "move the binding aside instead of deleting it, keeping its round log")
-	pickFlag := fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
-	done := fs.Bool("done", false, "clear the DONE bindings of the calling mastermind (--all-masterminds: of every mastermind)")
-	delete := fs.Bool("delete", false, "with --done: remove each finished binding's directory instead of archiving it")
-	dryRun := fs.Bool("dry-run", false, "with --done or --sweep: list what would be cleared, change nothing")
-	sweep := fs.Bool("sweep", false, "delete relevo/<name> branches and refs/relevo/<name>/* refs of bindings that no longer exist, once they are on a remote-tracking ref")
-	mastermindRef := fs.String("mastermind", "", "with --done: clear this mastermind's DONE bindings (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
-	allMasterMinds := fs.Bool("all-masterminds", false, "with --done: clear every mastermind's DONE bindings, including ones with no mastermind")
+	v := unbindFlagSet(fs)
+	name, archive, pickFlag := v.name, v.archive, v.pick
+	done, delete, dryRun := v.done, v.delete, v.dryRun
+	sweep, mastermindRef, allMasterMinds := v.sweep, v.mastermindRef, v.allMasterMinds
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	if *sweep {
 		if *done || *delete || *archive || *pickFlag || *name != "" || len(fs.Args()) > 0 || *mastermindRef != "" || *allMasterMinds {
-			fmt.Fprintln(os.Stderr, "relevo: --sweep takes no binding and no other flag except --dry-run")
-			return exitCodeErr{code: 2}
+			return fail(codeRefused, "--sweep takes no binding and no other flag except --dry-run")
 		}
-		return runSweep(*dryRun)
+		return runSweep(*dryRun, *asJSON)
 	}
 
 	if (*mastermindRef != "" || *allMasterMinds) && !*done {
-		fmt.Fprintln(os.Stderr, "relevo: --mastermind and --all-masterminds go with --done")
-		return exitCodeErr{code: 2}
+		return fail(codeRefused, "--mastermind and --all-masterminds go with --done")
 	}
 
 	// --done is gc, not unbind: it clears every DONE binding, so naming one or
 	// asking to pick one contradicts it (§4.3).
 	if *done {
 		if *name != "" || len(fs.Args()) > 0 || *pickFlag {
-			fmt.Fprintln(os.Stderr, "relevo: --done clears DONE bindings; do not also name one or pass --pick")
-			return exitCodeErr{code: 2}
+			return fail(codeRefused, "--done clears DONE bindings; do not also name one or pass --pick")
 		}
-		return runGC(*delete, *dryRun, *mastermindRef, *allMasterMinds)
+		return runGC(*delete, *dryRun, *mastermindRef, *allMasterMinds, *asJSON)
 	}
 
 	if *pickFlag {
@@ -60,40 +84,50 @@ func cmdUnbind(args []string) error {
 
 	target, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relevo unbind <name> | --pick [--archive]  (or --name <name>)%s\n"+
+		return fail(codeUsage, "usage: relevo unbind <name> | --pick [--archive]  (or --name <name>)%s\n"+
 			"unbind removes a binding; it will not guess which one you meant", bindingHint("unbind"))
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
 	res, err := relevo.Unbind(context.Background(), rt, target, *archive)
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
-	fmt.Println(relevo.UnbindText(target, res))
+	if *asJSON {
+		if perr := printDoc(unbindDocOf(target, res)); perr != nil {
+			return perr
+		}
+	} else {
+		fmt.Println(relevo.UnbindText(target, res))
+	}
 	warnWaitingOnYou(rt, target)
 
 	return nil
 }
 
-func runSweep(dryRun bool) error {
+func runSweep(dryRun, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
 	dir, err := os.Getwd()
 	if err != nil {
-		return err
+		return writeError(fmt.Errorf("resolve working directory: %w", err))
 	}
 
 	res, err := relevo.SweepRefs(context.Background(), rt, dir, dryRun)
 	if err != nil {
-		return err
+		return writeError(err)
+	}
+
+	if asJSON {
+		return printDoc(sweepDocOf(dryRun, res))
 	}
 
 	if len(res.Refs) == 0 {
@@ -126,23 +160,26 @@ func runSweep(dryRun bool) error {
 // runGC is gc's body (the old cmdGC), now reached through `unbind --done`
 // (§4.3). It clears the calling mastermind's DONE bindings, or, with
 // --all-masterminds, every mastermind's (#482).
-func runGC(delete, dryRun bool, mastermindRef string, all bool) error {
+func runGC(delete, dryRun bool, mastermindRef string, all, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
 	opts, err := gcScope(mastermindRef, all, gcResolver(rt))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "%v", err)
 	}
 	opts.Delete = delete
 	opts.DryRun = dryRun
 
 	done, err := relevo.GC(context.Background(), rt, opts)
 	if err != nil {
-		return err
+		return writeError(err)
+	}
+
+	if asJSON {
+		return printDoc(gcDocOf(dryRun, done))
 	}
 
 	if len(done) == 0 {

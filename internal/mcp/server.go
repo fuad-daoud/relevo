@@ -294,6 +294,28 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage,
 		res, err := s.Verbs.Done(ctx, session, a)
 		return toolResultFrom(res, err)
 
+	case "show":
+		var a ShowArgs
+		if err := decodeArgs(raw, &a); err != nil {
+			return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+		}
+		if err := validateShowArgs(a); err != nil {
+			return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+		}
+		res, err := s.Verbs.Show(ctx, session, a)
+		return toolResultFrom(res, err)
+
+	case "gate":
+		var a GateArgs
+		if err := decodeArgs(raw, &a); err != nil {
+			return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+		}
+		if err := validateGateArgs(a); err != nil {
+			return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+		}
+		res, err := s.Verbs.Gate(ctx, session, a)
+		return toolResultFrom(res, err)
+
 	default:
 		return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: fmt.Sprintf("unknown tool %q", name)}
 	}

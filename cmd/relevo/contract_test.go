@@ -470,23 +470,24 @@ func TestContractHistory(t *testing.T) {
 
 	// "outcome:done" is not a valid db.Round.Outcome (only reported, halted,
 	// exited, switched, done_no_report, open are); this pins today's actual
-	// rejected-query behaviour -- exit 2 and a stderr message, no JSON on
-	// stdout -- separately from the valid-query rows above, since agents do
-	// hit it.
+	// rejected-query behaviour -- the usage code, exit 2, and the JSON error
+	// envelope on stderr, nothing on stdout -- separately from the valid-query
+	// rows above, since agents do hit it.
 	stdout, stderr, err := captureOutput(t, func() error {
 		return run([]string{"history", "--json", "-q", "outcome:done"})
 	})
-	var ec exitCodeErr
-	if !errors.As(err, &ec) {
-		t.Fatalf("history -q outcome:done: error %v is not an exitCodeErr", err)
-	}
-	if ec.code != 2 {
-		t.Errorf("history -q outcome:done: exit code = %d, want 2", ec.code)
-	}
+	requireCLIError(t, err, codeUsage, "relevo help")
 	if len(stdout) != 0 {
 		t.Errorf("history -q outcome:done: stdout = %q, want empty", stdout)
 	}
-	assertGolden(t, "history-q-invalid", normalize(stderr))
+	if len(stderr) != 0 {
+		t.Errorf("history -q outcome:done: stderr = %q, want empty before report", stderr)
+	}
+	var buf bytes.Buffer
+	if code := report(&buf, err, true); code != 2 {
+		t.Errorf("history -q outcome:done: report exit = %d, want 2", code)
+	}
+	assertGolden(t, "history-q-invalid", normalize(buf.Bytes()))
 }
 
 // ---------------------------------------------------------------------
@@ -656,8 +657,8 @@ func TestContractConfigExport(t *testing.T) {
 
 // ---------------------------------------------------------------------
 // C12: every `relevo <verb> ...` command line in internal/harness/agents/*.md,
-// claude-plugin/commands/*.md, internal/mcp/instructions.go and
-// internal/delivery/push.go.
+// claude-plugin/commands/*.md, claude-plugin/skills/*/SKILL.md,
+// internal/mcp/instructions.go and internal/delivery/push.go.
 // ---------------------------------------------------------------------
 
 // relevoCommandLinePattern is the plan's own extraction regexp.
@@ -695,6 +696,7 @@ func c12Sources(t *testing.T) []string {
 	for _, pattern := range []string{
 		filepath.Join("..", "..", "internal", "harness", "agents", "*.md"),
 		filepath.Join("..", "..", "claude-plugin", "commands", "*.md"),
+		filepath.Join("..", "..", "claude-plugin", "skills", "*", "SKILL.md"),
 	} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
@@ -749,11 +751,12 @@ func checkCommandLineMatch(t *testing.T, path string, line int, m []string, verb
 }
 
 // TestContractCommandLineReferences pins C12: every `relevo <verb> [--flag
-// ...]` line in the four listed sources names a verb relevo actually
-// dispatches, and, where the verb's flags are reachable from a test, every
-// flag on that line is one the verb's FlagSet defines. A failing case names
-// the file and line rather than a golden -- the contract is "every reference
-// still resolves", not one fixed rendering.
+// ...]` line in the sources c12Sources lists -- the agent definitions, the
+// plugin commands, the planner-loop skill, instructions.go and push.go --
+// names a verb relevo actually dispatches, and, where the verb's flags are
+// reachable from a test, every flag on that line is one the verb's FlagSet
+// defines. A failing case names the file and line rather than a golden -- the
+// contract is "every reference still resolves", not one fixed rendering.
 //
 // A markdown file's command examples are backtick-quoted (its docs'
 // convention throughout this repo); the pattern runs only inside those
@@ -786,4 +789,51 @@ func TestContractCommandLineReferences(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestHelpJSONDocumentsTheSurface pins the whole registry document: one JSON
+// line on stdout, nothing on stderr, every dispatched verb present, and the
+// error catalog beside them. The build stamp is normalized, so the golden
+// pins the shape rather than one build.
+func TestHelpJSONDocumentsTheSurface(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"help", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("help --json: %v (stderr: %s)", err, stderr)
+	}
+	if len(stderr) != 0 {
+		t.Errorf("help --json: stderr = %q, want empty", stderr)
+	}
+	assertGolden(t, "help-json", normalize(stdout))
+}
+
+// TestHelpJSONOneVerb pins the one-verb form with a name that holds a space,
+// so the multi-word form is covered by the golden.
+func TestHelpJSONOneVerb(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"help", "--json", "config", "server", "add"})
+	})
+	if err != nil {
+		t.Fatalf("help --json config server add: %v (stderr: %s)", err, stderr)
+	}
+	if len(stderr) != 0 {
+		t.Errorf("help --json config server add: stderr = %q, want empty", stderr)
+	}
+	assertGolden(t, "help-json-verb", normalize(stdout))
+}
+
+// TestHelpJSONUnknownVerbRefused pins the refusal: the usage code and the
+// next command, with nothing written before report renders it.
+func TestHelpJSONUnknownVerbRefused(t *testing.T) {
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"help", "--json", "bogus"})
+	})
+	if len(stdout) != 0 {
+		t.Errorf("help --json bogus: stdout = %q, want empty", stdout)
+	}
+	if len(stderr) != 0 {
+		t.Errorf("help --json bogus: stderr = %q, want empty before report", stderr)
+	}
+	requireCLIError(t, err, codeUsage, "relevo help")
 }

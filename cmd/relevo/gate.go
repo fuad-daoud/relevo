@@ -36,61 +36,81 @@ func parseFor(s string, now time.Time) (time.Time, error) {
 // subverbs (§4.3). With no positional it lists the active
 // gates; a positional gates a provider; --clear lifts a gate; --serve sends
 // the same three forms to the local serve daemon's own ledger.
-func cmdGate(args []string) error {
-	const gateUsage = `usage: relevo gate
-       relevo gate <token> [--for D] [--reason S]
-       relevo gate --clear <provider|token>
-       relevo gate --serve [--state DIR] [<token> [--for D] [--reason S] | --clear <provider|token>]`
+// gateFlagValues holds the pointers gate parses into. state is read back off
+// the FlagSet by the --serve route, so it has no pointer of its own.
+type gateFlagValues struct {
+	forFlag   *string
+	reason    *string
+	clear     *string
+	serveFlag *bool
+	asJSON    *bool
+}
 
-	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
-	forFlag := fs.String("for", "", "how long to gate the provider, as a Go `duration` (e.g. 2h); omit to leave it gated until relevo gate --clear")
-	reason := fs.String("reason", "", "why, for the record")
-	clear := fs.String("clear", "", "clear a recorded rate limit: --clear <provider|token>")
-	serveFlag := fs.Bool("serve", false, "act on the local serve daemon's gates instead of this machine's")
+// gateFlagSet defines those flags on fs, in the usage text's order, and
+// returns what they parse into. state has no pointer of its own: the --serve
+// route reads it back off the FlagSet.
+func gateFlagSet(fs *flag.FlagSet) *gateFlagValues {
+	v := &gateFlagValues{}
+	v.forFlag = fs.String("for", "", "how long to gate the provider, as a Go `duration` (e.g. 2h); omit to leave it gated until relevo gate --clear")
+	v.reason = fs.String("reason", "", "why, for the record")
+	v.clear = fs.String("clear", "", "clear a recorded rate limit: --clear <provider|token>")
+	v.serveFlag = fs.Bool("serve", false, "act on the local serve daemon's gates instead of this machine's")
+	v.asJSON = fs.Bool("json", false, "print the gates as JSON")
 	_ = fs.String("state", "", "with --serve: state directory")
+	return v
+}
+
+func cmdGate(args []string) error {
+	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
+	v := gateFlagSet(fs)
+	forFlag, reason, clear, serveFlag, asJSON := v.forFlag, v.reason, v.clear, v.serveFlag, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	positional := fs.Args()
 	if *serveFlag {
-		return gateServe(fs, positional, *forFlag, *reason, *clear)
+		return gateServe(fs, positional, *forFlag, *reason, *clear, *asJSON)
 	}
 	switch {
 	case *clear != "":
-		return gateClear(*clear)
+		return gateClear(*clear, *asJSON)
 	case len(positional) == 1:
-		return gateUnavailable(positional[0], *forFlag, *reason)
+		return gateUnavailable(positional[0], *forFlag, *reason, *asJSON)
 	case len(positional) == 0 && *forFlag == "" && *reason == "":
-		return gateList()
+		return gateList(*asJSON)
 	default:
-		fmt.Fprintln(os.Stderr, gateUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "usage: relevo gate [<token> [--for D] [--reason S]] | --clear <provider|token> | --serve")
 	}
 }
 
 // gateList prints this machine's active gates: the rendering `relevo serve
-// gates` printed for the serve root's ledger (§4.3), fed by relevo.Gates.
-func gateList() error {
+// gates` printed for the serve root's ledger (§4.3), fed by relevo.Gates, or
+// the same ledger as a JSON document.
+func gateList(asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
-	fmt.Print(serve.RenderGates(availability.Gates(relevo.AvailabilityDeps(rt)), rt.Now()))
+	gates := availability.Gates(relevo.AvailabilityDeps(rt))
+	if asJSON {
+		return printDoc(gateRowsOf(gates))
+	}
+	fmt.Print(serve.RenderGates(gates, rt.Now()))
 	return nil
 }
 
 // gateUnavailable records a provider rate limit: exactly today's
 // cmdUnavailable (§4.3).
-func gateUnavailable(token, forFlag, reason string) error {
+func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
 	until, err := parseFor(forFlag, rt.Now())
 	if err != nil {
-		return err
+		return fail(codeUsage, "%v", err)
 	}
 
 	// The argument may be a candidate name or a token. It is resolved here,
@@ -98,31 +118,32 @@ func gateUnavailable(token, forFlag, reason string) error {
 	// canonical token, never the raw argument (A1 §4.2).
 	c, err := rt.Candidates.Resolve(token)
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 	canonical := c.Ref().String()
 
 	provider, err := availability.Unavailable(relevo.AvailabilityDeps(rt), canonical, until, reason)
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
-	count := 0
-	for _, ref := range rt.Candidates.Refs() {
-		parsed, err := candidate.ParseRef(ref)
-		if err != nil {
-			continue
-		}
-		if parsed.Provider == provider {
-			count++
-		}
-	}
+	count := providerCandidateCount(rt, provider)
 
-	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, availability.GateUntilText(until))
+	// The gating line and the document both read provider, until and count, so
+	// they can never disagree; the daemon-switch line is a notice, which --json
+	// moves to stderr (§2.1).
+	notices := noticeWriter(asJSON)
+	if asJSON {
+		if perr := printDoc(gateSetDocOf(provider, until, count)); perr != nil {
+			return perr
+		}
+	} else {
+		fmt.Printf("gated %s (%d candidates) %s\n", provider, count, availability.GateUntilText(until))
+	}
 
 	if bs, err := rt.Store.List(); err == nil {
 		if names := availability.BindingsOnProvider(bs, provider); len(names) > 0 {
-			fmt.Printf("the daemon will switch: %s\n", strings.Join(names, ", "))
+			fmt.Fprintf(notices, "the daemon will switch: %s\n", strings.Join(names, ", "))
 		}
 	}
 
@@ -133,20 +154,43 @@ func gateUnavailable(token, forFlag, reason string) error {
 	return nil
 }
 
+// providerCandidateCount counts the configured candidates a provider serves:
+// the number the gating line and the gate document both carry.
+func providerCandidateCount(rt relevo.Runtime, provider string) int {
+	count := 0
+	for _, ref := range rt.Candidates.Refs() {
+		parsed, err := candidate.ParseRef(ref)
+		if err != nil {
+			continue
+		}
+		if parsed.Provider == provider {
+			count++
+		}
+	}
+	return count
+}
+
 // gateClear lifts a recorded rate limit locally and on every server the
 // bindings name: exactly today's cmdAvailable (§4.3).
-func gateClear(subject string) error {
+func gateClear(subject string, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
 	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), subject, availability.ClearedByMasterMind)
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
-	if removed == 0 {
+	// The clear's document carries the same fields as the set's, plus removed,
+	// which is what tells "nothing was gating X" from "cleared X (N)".
+	notices := noticeWriter(asJSON)
+	if asJSON {
+		if perr := printDoc(gateClearDocOf(provider, providerCandidateCount(rt, provider), removed)); perr != nil {
+			return perr
+		}
+	} else if removed == 0 {
 		fmt.Printf("nothing was gating %s\n", provider)
 	} else {
 		fmt.Printf("cleared %s (%d entries)\n", provider, removed)
@@ -156,7 +200,7 @@ func gateClear(subject string) error {
 	// asked, and each answer is printed -- these are answers, not warnings.
 	ctx := context.Background()
 	for _, line := range relevo.ForwardAvailable(ctx, rt, subject) {
-		fmt.Println(line)
+		fmt.Fprintln(notices, line)
 	}
 
 	// On a box that also runs a serve daemon, the client ledger just cleared
@@ -165,7 +209,7 @@ func gateClear(subject string) error {
 	if d, _, err := openMachineDB(); err == nil {
 		defer d.Close()
 		if p, ok, _ := serve.ReadDaemonPointer(d); ok && pidAlive(p.PID) {
-			fmt.Print("note: a relevo serve daemon runs here with its own gates; use relevo gate --serve\n")
+			fmt.Fprint(notices, "note: a relevo serve daemon runs here with its own gates; use relevo gate --serve\n")
 		}
 	}
 
@@ -175,15 +219,15 @@ func gateClear(subject string) error {
 // gateServe sends the three gate forms to the local serve daemon's own
 // ledger: today's `relevo serve gates`, `relevo serve unavailable` and
 // `relevo serve available`, via the serve root's ledgerRuntime (§4.3).
-func gateServe(fs *flag.FlagSet, positional []string, forFlag, reason, clear string) error {
+func gateServe(fs *flag.FlagSet, positional []string, forFlag, reason, clear string, asJSON bool) error {
 	switch {
 	case clear != "":
-		return serveGateClear(fs, clear)
+		return serveGateClear(fs, clear, asJSON)
 	case len(positional) == 1:
-		return serveGateUnavailable(fs, positional[0], forFlag, reason)
+		return serveGateUnavailable(fs, positional[0], forFlag, reason, asJSON)
 	case len(positional) == 0 && forFlag == "" && reason == "":
-		return serveGateList(fs)
+		return serveGateList(fs, asJSON)
 	default:
-		return fmt.Errorf("usage: relevo gate --serve [--state DIR] [<token> [--for D] [--reason S] | --clear <provider|token>]")
+		return fail(codeUsage, "usage: relevo gate --serve [--state DIR] [<token> [--for D] [--reason S] | --clear <provider|token>]")
 	}
 }

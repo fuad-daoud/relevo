@@ -1,0 +1,8 @@
+{
+  "running": "v0.13.0",
+  "exe": "/usr/local/bin/relevo",
+  "action": "replace",
+  "target": "v0.14.0",
+  "updated": true,
+  "message": "relevo v0.13.0 -\u003e v0.14.0"
+}

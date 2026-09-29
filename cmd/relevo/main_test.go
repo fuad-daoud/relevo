@@ -211,22 +211,22 @@ func TestSendDryRunRequiresFile(t *testing.T) {
 	}
 }
 
-// TestAskIsGone pins the removed verb's stub: `relevo ask` writes one line on
-// stderr naming the replacement workflow and exits 2. It dispatches through run
-// -- parsing and printing only, so nothing is spawned and no runtime is built.
+// TestAskIsGone pins the removed verb's stub: `relevo ask` returns the
+// usage-coded refusal naming the replacement workflow, and exits 2 through the
+// code bridge. It dispatches through run -- parsing only, so nothing is
+// spawned and no runtime is built.
 func TestAskIsGone(t *testing.T) {
 	initRoot(t)
 
-	_, stderr, err := captureOutput(t, func() error {
-		return run([]string{"ask", "--actor", "reviewer", "--file", "q.md"})
-	})
+	err := run([]string{"ask", "--actor", "reviewer", "--file", "q.md"})
+	ce := requireCLIError(t, err, codeUsage, "relevo bind --actor reviewer")
+	want := "relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan"
+	if !strings.Contains(ce.message, want) {
+		t.Errorf("message = %q, want it to contain %q", ce.message, want)
+	}
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 2 {
 		t.Fatalf("relevo ask: run = %v, want exit code 2", err)
-	}
-	want := "relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan"
-	if !strings.Contains(string(stderr), want) {
-		t.Errorf("stderr = %q, want it to contain %q", stderr, want)
 	}
 }
 
@@ -235,10 +235,11 @@ func TestAskIsGone(t *testing.T) {
 // a bad value, not an omission: it exits 2, and the check runs before any
 // runtime is built, so this touches neither the state directory nor a harness.
 func TestSendRegateNegativeIsRejected(t *testing.T) {
-	stdout, stderr, runErr := captureOutput(t, func() error {
+	stdout, _, runErr := captureOutput(t, func() error {
 		return run([]string{"send", "--regate", "-1", "--file", "plan.md"})
 	})
 
+	ce := requireCLIError(t, runErr, codeUsage, "relevo help")
 	var ec exitCodeErr
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("expected exit code 2, got %v", runErr)
@@ -246,8 +247,8 @@ func TestSendRegateNegativeIsRejected(t *testing.T) {
 	if len(stdout) != 0 {
 		t.Errorf("expected nothing on stdout, got %q", string(stdout))
 	}
-	if !strings.Contains(string(stderr), "--regate") {
-		t.Errorf("expected the error to name --regate, got %q", string(stderr))
+	if !strings.Contains(ce.message, "--regate") {
+		t.Errorf("expected the error to name --regate, got %q", ce.message)
 	}
 }
 
@@ -255,16 +256,17 @@ func TestSendRegateNegativeIsRejected(t *testing.T) {
 // --branch/--cwd, the refusal happens in validation, before newRuntime, so it
 // reaches neither the state directory nor a harness.
 func TestSendVerifyAndNoVerifyAreExclusive(t *testing.T) {
-	_, stderr, runErr := captureOutput(t, func() error {
+	_, _, runErr := captureOutput(t, func() error {
 		return run([]string{"send", "--verify", "--no-verify", "--file", "plan.md"})
 	})
 
+	ce := requireCLIError(t, runErr, codeRefused, "")
 	var ec exitCodeErr
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("expected exit code 2, got %v", runErr)
 	}
-	if !strings.Contains(string(stderr), "--verify") || !strings.Contains(string(stderr), "--no-verify") {
-		t.Errorf("expected the error to name both flags, got %q", string(stderr))
+	if !strings.Contains(ce.message, "--verify") || !strings.Contains(ce.message, "--no-verify") {
+		t.Errorf("expected the error to name both flags, got %q", ce.message)
 	}
 }
 
@@ -1093,15 +1095,16 @@ func TestBindRequiresAFeatureChoice(t *testing.T) {
 		{"bind", "--name", "x"},
 		{"bind", "--worktree", "--name", "x"},
 	} {
-		_, stderr, err := captureOutput(t, func() error { return run(args) })
+		_, _, err := captureOutput(t, func() error { return run(args) })
+		ce := requireCLIError(t, err, codeRefused, "")
 		var ec exitCodeErr
 		if !errors.As(err, &ec) || ec.code != 2 {
 			t.Errorf("%v: run = %v, want exit code 2", args, err)
 			continue
 		}
 		for _, flag := range []string{"--feature", "--no-feature"} {
-			if !strings.Contains(string(stderr), flag) {
-				t.Errorf("%v: stderr = %q, want it to name %s", args, stderr, flag)
+			if !strings.Contains(ce.message, flag) {
+				t.Errorf("%v: message = %q, want it to name %s", args, ce.message, flag)
 			}
 		}
 	}
@@ -1110,48 +1113,51 @@ func TestBindRequiresAFeatureChoice(t *testing.T) {
 // TestBindRejectsBothFeatureFlags pins the other half: both flags together is
 // refused with the same one-line exit 2.
 func TestBindRejectsBothFeatureFlags(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error {
+	_, _, err := captureOutput(t, func() error {
 		return run([]string{"bind", "--feature", "auth", "--no-feature", "--name", "x"})
 	})
+	ce := requireCLIError(t, err, codeRefused, "")
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 2 {
 		t.Fatalf("run = %v, want exit code 2", err)
 	}
 	for _, flag := range []string{"--feature", "--no-feature"} {
-		if !strings.Contains(string(stderr), flag) {
-			t.Errorf("stderr = %q, want it to name %s", stderr, flag)
+		if !strings.Contains(ce.message, flag) {
+			t.Errorf("message = %q, want it to name %s", ce.message, flag)
 		}
 	}
 }
 
 // TestBindRejectsABadFeatureStillExits2 pins the shared pre-route check the
 // two route-local store.ValidFeature blocks became: a malformed --feature is
-// still one stderr line and exit 2.
+// still one line and exit 2.
 func TestBindRejectsABadFeatureStillExits2(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error {
+	_, _, err := captureOutput(t, func() error {
 		return run([]string{"bind", "--feature", "a/b", "--name", "x"})
 	})
+	ce := requireCLIError(t, err, codeRefused, "")
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 2 {
 		t.Fatalf("run = %v, want exit code 2", err)
 	}
-	if !strings.Contains(string(stderr), "feature:") {
-		t.Errorf("stderr = %q, want the feature rule's own text", stderr)
+	if !strings.Contains(ce.message, "feature:") {
+		t.Errorf("message = %q, want the feature rule's own text", ce.message)
 	}
 }
 
 // TestBindRejectsABadTicketExits2 pins #637: a malformed --ticket is refused
 // on the same one-line exit 2, before any runtime.
 func TestBindRejectsABadTicketExits2(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error {
+	_, _, err := captureOutput(t, func() error {
 		return run([]string{"bind", "--no-feature", "--ticket", "not a ticket", "--name", "x"})
 	})
+	ce := requireCLIError(t, err, codeRefused, "")
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 2 {
 		t.Fatalf("run = %v, want exit code 2", err)
 	}
-	if !strings.Contains(string(stderr), "ticket:") {
-		t.Errorf("stderr = %q, want the ticket rule's own text", stderr)
+	if !strings.Contains(ce.message, "ticket:") {
+		t.Errorf("message = %q, want the ticket rule's own text", ce.message)
 	}
 }
 
@@ -1458,14 +1464,15 @@ func TestBindRoutesAndRefusals(t *testing.T) {
 		{"rebind+server", []string{"bind", "--resume", "--rebind", "--name", "x", "--server", "s"}, "--resume/--rebind cannot be combined with"},
 	}
 	for _, c := range invalid {
-		_, stderr, err := captureOutput(t, func() error { return run(c.args) })
+		_, _, err := captureOutput(t, func() error { return run(c.args) })
+		ce := requireCLIError(t, err, codeRefused, "")
 		var ec exitCodeErr
 		if !errors.As(err, &ec) || ec.code != 2 {
 			t.Errorf("%s: run = %v, want exit code 2", c.name, err)
 			continue
 		}
-		if !strings.Contains(string(stderr), c.want) {
-			t.Errorf("%s: stderr = %q, want it to contain %q", c.name, stderr, c.want)
+		if !strings.Contains(ce.message, c.want) {
+			t.Errorf("%s: message = %q, want it to contain %q", c.name, ce.message, c.want)
 		}
 	}
 }
@@ -1593,20 +1600,22 @@ func TestUnbindSweepTakesNoBinding(t *testing.T) {
 		{"unbind", "--sweep", "webshop"},
 		{"unbind", "--sweep", "--name", "webshop"},
 	} {
-		_, stderr, err := captureOutput(t, func() error { return run(args) })
+		_, _, err := captureOutput(t, func() error { return run(args) })
+		ce := requireCLIError(t, err, codeRefused, "")
 		var ec exitCodeErr
 		if !errors.As(err, &ec) || ec.code != 2 {
 			t.Errorf("%v: run = %v, want exit code 2", args, err)
 		}
-		wantMsg := "relevo: --sweep takes no binding and no other flag except --dry-run"
-		if !strings.Contains(string(stderr), wantMsg) {
-			t.Errorf("%v: stderr = %q, want to contain %q", args, string(stderr), wantMsg)
+		wantMsg := "--sweep takes no binding and no other flag except --dry-run"
+		if !strings.Contains(ce.message, wantMsg) {
+			t.Errorf("%v: message = %q, want to contain %q", args, ce.message, wantMsg)
 		}
 	}
 }
 
 // TestRemovedVerbsNameTheirReplacement pins §4.6 and §4.1/§4.3: each removed
-// name exits 2 with one line naming the form that replaces it.
+// name returns the usage-coded refusal whose next command is the form that
+// replaces it, and exits 2 through the code bridge.
 func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 	cases := []struct{ verb, replacement string }{
 		{"add", "relevo bind --worktree"},
@@ -1615,19 +1624,19 @@ func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 		{"gc", "relevo unbind --done"},
 		{"pause", "relevo done, then relevo bind --resume"},
 		{"statusline", "relevo status --line"},
-		{"pull", "relevo wait"},
-		{"unavailable", "relevo gate"},
-		{"available", "relevo gate --clear"},
+		{"pull", "relevo wait (it prints the report)"},
+		{"unavailable", "relevo gate <token>"},
+		{"available", "relevo gate --clear <provider>"},
 	}
 	for _, c := range cases {
-		_, stderr, err := captureOutput(t, func() error { return run([]string{c.verb}) })
+		err := run([]string{c.verb})
+		ce := requireCLIError(t, err, codeUsage, c.replacement)
+		if !strings.Contains(ce.message, "was removed") {
+			t.Errorf("%s: message = %q, want it to say it was removed", c.verb, ce.message)
+		}
 		var ec exitCodeErr
 		if !errors.As(err, &ec) || ec.code != 2 {
 			t.Errorf("%s: run = %v, want exit code 2", c.verb, err)
-			continue
-		}
-		if !strings.Contains(string(stderr), c.replacement) {
-			t.Errorf("%s: stderr = %q, want it to name %q", c.verb, stderr, c.replacement)
 		}
 	}
 }

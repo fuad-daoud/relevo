@@ -10,10 +10,26 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
+// doneFlagValues holds the pointers done parses into.
+type doneFlagValues struct {
+	name   *string
+	pick   *bool
+	asJSON *bool
+}
+
+// doneFlagSet defines those flags on fs and returns what they parse into.
+func doneFlagSet(fs *flag.FlagSet) *doneFlagValues {
+	v := &doneFlagValues{}
+	v.name = fs.String("name", "", "binding to mark done")
+	v.pick = fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
+	v.asJSON = fs.Bool("json", false, "print the result as a JSON document")
+	return v
+}
+
 func cmdDone(args []string) error {
 	fs := flag.NewFlagSet("done", flag.ContinueOnError)
-	name := fs.String("name", "", "binding to mark done")
-	pickFlag := fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
+	v := doneFlagSet(fs)
+	name, pickFlag, asJSON := v.name, v.pick, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -27,23 +43,31 @@ func cmdDone(args []string) error {
 
 	target, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relevo done <name> | --pick  (or --name <name>)%s\n"+
+		return fail(codeUsage, "usage: relevo done <name> | --pick  (or --name <name>)%s\n"+
 			"done stops relaying for a binding; it will not guess which one you meant",
 			bindingHint("done"))
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 	res, err := relevo.Done(context.Background(), rt, target)
 	if err != nil && !errors.Is(err, relevo.ErrStopFailed) {
-		return err
+		return writeError(err)
 	}
 
-	fmt.Println(relevo.DoneText(target, res))
+	// A failed process stop still marked the binding done, so the result is
+	// printed before the failure is returned -- as the document under --json.
+	if *asJSON {
+		if perr := printDoc(doneDocOf(target, res)); perr != nil {
+			return perr
+		}
+	} else {
+		fmt.Println(relevo.DoneText(target, res))
+	}
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 	warnWaitingOnYou(rt, target)
 	return nil
@@ -53,33 +77,55 @@ func cmdDone(args []string) error {
 // is killed now and the round closes without a report unless one is already
 // on disk. It takes the binding from --name or a positional and never from
 // the current directory -- a stop ends a round, so it must not guess.
+// stopFlagValues holds the pointer stop parses into.
+type stopFlagValues struct {
+	name   *string
+	asJSON *bool
+}
+
+// stopFlagSet defines that flag on fs and returns what it parses into.
+func stopFlagSet(fs *flag.FlagSet) *stopFlagValues {
+	v := &stopFlagValues{}
+	v.name = fs.String("name", "", "binding whose open round to stop")
+	v.asJSON = fs.Bool("json", false, "print the result as a JSON document")
+	return v
+}
+
 func cmdStop(args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
-	name := fs.String("name", "", "binding whose open round to stop")
+	v := stopFlagSet(fs)
+	name, asJSON := v.name, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	target, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relevo stop <name> | --name <name>\n" +
+		return fail(codeUsage, "usage: relevo stop <name> | --name <name>\n"+
 			"stop kills the builder process and closes its round; it must not guess")
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 	res, err := relevo.Stop(context.Background(), rt, target, relevo.StopOptions{})
 	if errors.Is(err, relevo.ErrNothingToStop) {
-		// Nothing to stop is an answer, not a failure.
+		// Nothing to stop is an answer, not a failure: its document names the
+		// action "nothing" rather than leaving an empty one.
+		if *asJSON {
+			return printDoc(stopDocOf(target, res))
+		}
 		fmt.Printf("nothing to stop: %s has no open round\n", target)
 		return nil
 	}
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
+	if *asJSON {
+		return printDoc(stopDocOf(target, res))
+	}
 	fmt.Println(relevo.StopText(target, res))
 	return nil
 }

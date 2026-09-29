@@ -76,6 +76,60 @@
         "type": "object"
       },
       "name": "done"
+    },
+    {
+      "description": "One round of a binding: its prompt (the default), report, diff, drift, log, transcript, gate log, output or artifact list. Calls relevo.Show.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "binding name",
+            "type": "string"
+          },
+          "round": {
+            "description": "the round to read; omit for the newest completed round",
+            "type": "integer"
+          },
+          "section": {
+            "description": "prompt (the default) | report | diff | drift | log | transcript | gate | output | artifacts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "show"
+    },
+    {
+      "description": "Record that a provider hit a usage limit -- relevo switches and resends -- or clear the gate again. Calls relevo's gate ledger.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "clear": {
+            "description": "clear the gate instead of setting one",
+            "type": "boolean"
+          },
+          "for": {
+            "description": "how long the gate holds, as a Go duration (e.g. 2h); omit to hold until cleared",
+            "type": "string"
+          },
+          "reason": {
+            "description": "why, for the record",
+            "type": "string"
+          },
+          "token": {
+            "description": "candidate name or token to gate, or the subject to clear",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "type": "object"
+      },
+      "name": "gate"
     }
   ]
 }

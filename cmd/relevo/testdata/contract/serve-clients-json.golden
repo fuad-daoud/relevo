@@ -1,0 +1,9 @@
+[
+  {
+    "id": "<CLIENT_ID>",
+    "label": "alice",
+    "pubkey": "<PUBKEY>",
+    "enrolled_at": "<TIME>",
+    "revoked_at": "<TIME>"
+  }
+]

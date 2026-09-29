@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -23,6 +22,7 @@ import (
 type initFlagValues struct {
 	force    *bool
 	noAgents *bool
+	asJSON   *bool
 }
 
 // initFlagSet defines init's flags on fs and returns the values they parse
@@ -31,19 +31,21 @@ func initFlagSet(fs *flag.FlagSet) *initFlagValues {
 	v := &initFlagValues{}
 	v.force = fs.Bool("force", false, "overwrite the existing candidates / policy sections")
 	v.noAgents = fs.Bool("no-agents", false, "do not install agent definitions")
+	v.asJSON = fs.Bool("json", false, "print the document the init produced")
 	return v
 }
 
 func cmdInit(args []string) error {
+	return outcomeError(cmdInitRun(args))
+}
+
+func cmdInitRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config init", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := initFlagSet(fs)
-	force, noAgents := v.force, v.noAgents
+	force, noAgents, asJSON := v.force, v.noAgents, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	rt, err := newRuntime()
@@ -74,7 +76,7 @@ func cmdInit(args []string) error {
 		return err
 	}
 	if !*force && (hasCandidates || hasPolicy || hasActors) {
-		return errors.New("candidates, policy or actors already configured; pass --force to overwrite")
+		return fail(codeConflict, "candidates, policy or actors already configured; pass --force to overwrite")
 	}
 
 	// One PutDoc writes all three sections as one revision (A2 round 2 R5).
@@ -83,22 +85,27 @@ func cmdInit(args []string) error {
 		config.Policy:     files.Policy,
 		config.Actors:     files.Actors,
 	}
-	if _, err := rt.Config.As("init", "config init").PutDoc(doc); err != nil {
+	warnings, err := rt.Config.As("init", "config init").PutDoc(doc)
+	if err != nil {
 		return err
 	}
 
-	fmt.Printf("wrote candidates (%d: %s)\n", len(files.CandidateNames), strings.Join(files.CandidateNames, ", "))
+	// The human lines keep stdout in the default mode and move to stderr under
+	// --json, where stdout carries the document alone.
+	w := noticeWriter(*asJSON)
+
+	fmt.Fprintf(w, "wrote candidates (%d: %s)\n", len(files.CandidateNames), strings.Join(files.CandidateNames, ", "))
 	summary, err := actorSummary(files.Actors, files.ActorOrder)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("wrote actors (%s)\n", summary)
+	fmt.Fprintf(w, "wrote actors (%s)\n", summary)
 	actorSet, _, err := roles.ParseActors(files.Actors)
 	if err != nil {
 		return err
 	}
 	if len(actorSet["builder"].Candidates) == 0 {
-		fmt.Printf("note: no builder candidate (claude only plans); add one from a builder harness (%s): relevo config set actors.builder.candidates '[\"<name>\"]'\n", strings.Join(setup.BuilderKinds(), ", "))
+		fmt.Fprintf(w, "note: no builder candidate (claude only plans); add one from a builder harness (%s): relevo config set actors.builder.candidates '[\"<name>\"]'\n", strings.Join(setup.BuilderKinds(), ", "))
 	}
 
 	if !*noAgents {
@@ -109,18 +116,26 @@ func cmdInit(args []string) error {
 				return err
 			}
 			for _, r := range results {
-				fmt.Println(r.Line())
+				fmt.Fprintln(w, r.Line())
 				if r.Outcome == harness.OutcomeError {
 					failed = true
 				}
 			}
 		}
 		if failed {
-			return exitCodeErr{code: 1}
+			return fail(codeInternal, "one or more agent definitions failed to install")
 		}
 	}
 
-	fmt.Printf("next: edit the model names, then run: relevo doctor\n")
+	fmt.Fprintf(w, "next: edit the model names, then run: relevo doctor\n")
+
+	if *asJSON {
+		version, err := rt.Config.Version()
+		if err != nil {
+			return err
+		}
+		return printDoc(configImportDocOf(importSections(doc), warnings, version))
+	}
 	return nil
 }
 

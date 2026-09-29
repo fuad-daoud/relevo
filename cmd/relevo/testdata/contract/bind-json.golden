@@ -1,0 +1,10 @@
+{
+  "name": "alpha",
+  "dir": "/w/alpha",
+  "actor": "builder",
+  "candidate": "builder-1",
+  "tier": "edit",
+  "state": "active",
+  "resumed": false,
+  "round": 2
+}

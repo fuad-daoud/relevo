@@ -86,6 +86,57 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 	}
 }
 
+// showFlagValues holds the pointers show parses into.
+type showFlagValues struct {
+	round       *int
+	prompt      *bool
+	report      *bool
+	diff        *bool
+	drift       *bool
+	logSection  *bool
+	transcript  *bool
+	gateSection *bool
+	output      *bool
+	artifacts   *bool
+	artifact    *string
+	findings    *string
+	stat        *bool
+	anchors     *bool
+	follow      *bool
+	after       *int
+	asJSON      *bool
+	peek        *bool
+	owner       *string
+	state       *string
+}
+
+// showFlagSet defines those flags on fs, in the usage text's order, and
+// returns what they parse into.
+func showFlagSet(fs *flag.FlagSet) *showFlagValues {
+	v := &showFlagValues{}
+	v.round = fs.Int("round", 0, "the round to read; 0 = the newest completed round")
+	v.prompt = fs.Bool("prompt", false, "show the prompt (default)")
+	v.report = fs.Bool("report", false, "show the report")
+	v.diff = fs.Bool("diff", false, "show the round's captured diff")
+	v.drift = fs.Bool("drift", false, "show the round's drift patch")
+	v.logSection = fs.Bool("log", false, "show the round's log entries")
+	v.transcript = fs.Bool("transcript", false, "show the round's builder transcript")
+	v.gateSection = fs.Bool("gate", false, "show the round's gate log")
+	v.output = fs.Bool("output", false, "show the round's output file (a reader's <label>.md)")
+	v.artifacts = fs.Bool("artifacts", false, "show the round's artifact files")
+	v.artifact = fs.String("artifact", "", "show one artifact's bytes, raw: --artifact <rel>")
+	v.findings = fs.String("findings", "", "show a consult's findings: --findings <id>")
+	v.stat = fs.Bool("stat", false, "with --diff/--drift: print the summary line instead of the patch body")
+	v.anchors = fs.Bool("anchors", false, "with --diff/--drift: prefix each hunk and line with its path:line")
+	v.follow = fs.Bool("follow", false, "with --log: keep printing new entries until the binding is DONE or removed")
+	v.after = fs.Int("after", 0, "with --log: show only entries with a Seq greater than this (0 = all)")
+	v.asJSON = fs.Bool("json", false, "machine-readable output: the ShowResult, Events included for --log")
+	v.peek = fs.Bool("peek", false, "read the section without claiming the binding's pending payload")
+	v.owner = fs.String("owner", "", "on the server host: read this owner's binding, a client label or id")
+	v.state = fs.String("state", "", "with --owner: the serve state directory")
+	return v
+}
+
 // cmdShow prints one round's plan, report, diff, drift, log or transcript,
 // read from a live binding's files or, for anything not live, from the
 // database (docs/specs/2026-09-20-persistence-design.md §5.7). Its --diff,
@@ -93,26 +144,12 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 // (§4.2).
 func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
-	round := fs.Int("round", 0, "the round to read; 0 = the newest completed round")
-	prompt := fs.Bool("prompt", false, "show the prompt (default)")
-	report := fs.Bool("report", false, "show the report")
-	diff := fs.Bool("diff", false, "show the round's captured diff")
-	drift := fs.Bool("drift", false, "show the round's drift patch")
-	logSection := fs.Bool("log", false, "show the round's log entries")
-	transcript := fs.Bool("transcript", false, "show the round's builder transcript")
-	gateSection := fs.Bool("gate", false, "show the round's gate log")
-	output := fs.Bool("output", false, "show the round's output file (a reader's <label>.md)")
-	artifacts := fs.Bool("artifacts", false, "show the round's artifact files")
-	artifact := fs.String("artifact", "", "show one artifact's bytes, raw: --artifact <rel>")
-	findings := fs.String("findings", "", "show a consult's findings: --findings <id>")
-	stat := fs.Bool("stat", false, "with --diff/--drift: print the summary line instead of the patch body")
-	anchors := fs.Bool("anchors", false, "with --diff/--drift: prefix each hunk and line with its path:line")
-	follow := fs.Bool("follow", false, "with --log: keep printing new entries until the binding is DONE or removed")
-	after := fs.Int("after", 0, "with --log: show only entries with a Seq greater than this (0 = all)")
-	asJSON := fs.Bool("json", false, "machine-readable output: the ShowResult, Events included for --log")
-	peek := fs.Bool("peek", false, "read the section without claiming the binding's pending payload")
-	owner := fs.String("owner", "", "on the server host: read this owner's binding, a client label or id")
-	state := fs.String("state", "", "with --owner: the serve state directory")
+	v := showFlagSet(fs)
+	round, prompt, report, diff := v.round, v.prompt, v.report, v.diff
+	drift, logSection, transcript, gateSection := v.drift, v.logSection, v.transcript, v.gateSection
+	output, artifacts, artifact, findings := v.output, v.artifacts, v.artifact, v.findings
+	stat, anchors, follow, after := v.stat, v.anchors, v.follow, v.after
+	asJSON, peek, owner, state := v.asJSON, v.peek, v.owner, v.state
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), showUsage)
 		fs.PrintDefaults()
@@ -121,17 +158,14 @@ func cmdShow(args []string) error {
 		return err
 	}
 	if len(fs.Args()) != 1 {
-		fmt.Fprintln(os.Stderr, showUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "show wants exactly one binding name, got %d", len(fs.Args()))
 	}
 	name := fs.Args()[0]
 
 	// --state names the serve root, so it means nothing without an owner to
 	// read there (§4.1).
 	if *state != "" && *owner == "" {
-		fmt.Fprintln(os.Stderr, "relevo show: --state only applies with --owner")
-		fmt.Fprintln(os.Stderr, showUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "--state only applies with --owner")
 	}
 
 	section, serr := showSectionFlags(showSectionArgs{
@@ -142,15 +176,11 @@ func cmdShow(args []string) error {
 	})
 	if serr != nil {
 		// An --owner invocation is the moved serve show body, so its section
-		// conflict keeps that route's prefix and usage line (§4.1).
+		// conflict keeps that route's name and a hint naming that form (§4.1).
 		if *owner != "" {
-			fmt.Fprintln(os.Stderr, "relevo serve show: "+serr.Error())
-			fmt.Fprintln(os.Stderr, serveShowUsage)
-			return exitCodeErr{code: 2}
+			return failNext(codeUsage, "relevo show --owner", "serve show: %v", serr)
 		}
-		fmt.Fprintln(os.Stderr, "relevo show: "+serr.Error())
-		fmt.Fprintln(os.Stderr, showUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "show: %v", serr)
 	}
 
 	// The absorbed flags are valid only with the section they came from
@@ -161,9 +191,7 @@ func cmdShow(args []string) error {
 			if *anchors {
 				bad = "--anchors"
 			}
-			fmt.Fprintf(os.Stderr, "relevo show: %s requires --diff or --drift\n", bad)
-			fmt.Fprintln(os.Stderr, showUsage)
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "%s requires --diff or --drift", bad)
 		}
 	}
 	if *follow || flagGiven(fs, "after") {
@@ -172,14 +200,11 @@ func cmdShow(args []string) error {
 			if !*follow {
 				bad = "--after"
 			}
-			fmt.Fprintf(os.Stderr, "relevo show: %s requires --log\n", bad)
-			fmt.Fprintln(os.Stderr, showUsage)
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "%s requires --log", bad)
 		}
 	}
 	if *after < 0 {
-		fmt.Fprintln(os.Stderr, "relevo: --after must be >= 0")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "--after must be >= 0")
 	}
 
 	if *owner != "" {
@@ -200,15 +225,35 @@ func cmdShow(args []string) error {
 	case section == relevo.ShowDiff, section == relevo.ShowDrift:
 		// Byte-identical to the removed diff verb, including its default
 		// round and its #143 .viewed stamp.
-		return printDiff(rt, name, *round, *stat, section == relevo.ShowDrift, *anchors)
+		return classifyReadErr(printDiff(rt, name, *round, *stat, section == relevo.ShowDrift, *anchors))
 	case section == relevo.ShowLog && (*round == 0 || *follow):
 		// The whole log is the removed log verb, byte for byte, --json's
 		// NDJSON included.
-		return printLog(rt, name, *round, *after, *asJSON, *follow, true)
+		return classifyReadErr(printLog(rt, name, *round, *after, *asJSON, *follow, true))
 	}
 
 	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON, Peek: *peek, FindingsID: *findings, ArtifactRel: *artifact}
-	return printShow(rt, opts, true, true, "")
+	return classifyReadErr(printShow(rt, opts, true, true, ""))
+}
+
+// classifyReadErr maps a read verb's failure onto the catalog: a binding the
+// store does not hold, a round with nothing completed, an artifact no listing
+// names, and everything else internal. The helpers printShow, printLog and
+// printDiff keep returning the errors they always did, each wrapping one of
+// these causes, so the classification lives at this one boundary.
+func classifyReadErr(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, store.ErrNotFound):
+		return fail(codeBindingNotFound, "%v", err)
+	case errors.Is(err, relevo.ErrNoCompletedRound):
+		return fail(codeRoundNotFound, "%v", err)
+	case errors.Is(err, relevo.ErrNoArtifact):
+		return fail(codeArtifactNotFound, "%v", err)
+	default:
+		return fail(codeInternal, "%v", err)
+	}
 }
 
 // printShow is cmdShow's body after section resolution, moved verbatim.
@@ -235,8 +280,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 		}
 		d, dbErr := openDB(rt.Store.DBPath())
 		if dbErr != nil {
-			fmt.Fprintf(os.Stderr, "relevo show: %v\n", dbErr)
-			return exitCodeErr{code: 1}
+			return fmt.Errorf("open %s: %w", rt.Store.DBPath(), dbErr)
 		}
 		defer d.Close()
 		rt.DB = d
@@ -254,8 +298,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 
 	res, err := relevo.Show(context.Background(), rt, opts)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo show: %v\n", err)
-		return exitCodeErr{code: 1}
+		return err
 	}
 
 	if opts.JSON {
@@ -335,7 +378,7 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 		}
 	}
 	if targetRound < 1 {
-		return fmt.Errorf("binding %q has no completed round yet", name)
+		return fmt.Errorf("binding %q has no completed round yet: %w", name, relevo.ErrNoCompletedRound)
 	}
 
 	if stat {
@@ -356,9 +399,9 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 		}
 		if found == nil || found.Note == "" {
 			if drift {
-				return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, name)
+				return fmt.Errorf("no drift recorded for round %d of %q (--drift): %w", targetRound, name, relevo.ErrNoArtifact)
 			}
-			return fmt.Errorf("no diff recorded for round %d of %q", targetRound, name)
+			return fmt.Errorf("no diff recorded for round %d of %q: %w", targetRound, name, relevo.ErrNoArtifact)
 		}
 		fmt.Println(found.Note)
 		// #143: a successful print is what "viewed" means; the stamp is
@@ -379,9 +422,9 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 	}
 	if !ok {
 		if drift {
-			return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, name)
+			return fmt.Errorf("no drift recorded for round %d of %q (--drift): %w", targetRound, name, relevo.ErrNoArtifact)
 		}
-		return fmt.Errorf("no diff recorded for round %d of %q", targetRound, name)
+		return fmt.Errorf("no diff recorded for round %d of %q: %w", targetRound, name, relevo.ErrNoArtifact)
 	}
 
 	if anchors {

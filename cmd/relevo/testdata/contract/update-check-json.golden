@@ -1,0 +1,8 @@
+{
+  "running": "(devel)",
+  "exe": "/home/u/go/bin/relevo",
+  "action": "go-install",
+  "target": "latest",
+  "updated": false,
+  "message": "go install github.com/fuad-daoud/relevo/cmd/relevo@latest"
+}

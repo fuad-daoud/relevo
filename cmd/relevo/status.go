@@ -41,7 +41,7 @@ func filterReport(rep view.Report, name string) (view.Report, error) {
 			return view.Report{Bindings: []view.BindingStatus{b}}, nil
 		}
 	}
-	return view.Report{}, fmt.Errorf("no binding named %q", name)
+	return view.Report{}, fail(codeBindingNotFound, "no binding named %q", name)
 }
 
 // filterReportMasterMind narrows a status report to one mastermind's bindings. It
@@ -61,12 +61,28 @@ func filterReportMasterMind(rep view.Report, mastermindID string) view.Report {
 	return rep
 }
 
+// statusFlagValues holds the pointers status parses into.
+type statusFlagValues struct {
+	all    *bool
+	asJSON *bool
+	name   *string
+	line   *bool
+}
+
+// statusFlagSet defines those flags on fs and returns what they parse into.
+func statusFlagSet(fs *flag.FlagSet) *statusFlagValues {
+	v := &statusFlagValues{}
+	v.all = fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo unbind --done clears them)")
+	v.asJSON = fs.Bool("json", false, "machine-readable output")
+	v.name = fs.String("name", "", "show only this binding (default: all)")
+	v.line = fs.Bool("line", false, "this mastermind's builders, one row each, for Claude Code's statusLine setting; with --json, output as JSON")
+	return v
+}
+
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo unbind --done clears them)")
-	asJSON := fs.Bool("json", false, "machine-readable output")
-	name := fs.String("name", "", "show only this binding (default: all)")
-	line := fs.Bool("line", false, "this mastermind's builders, one row each, for Claude Code's statusLine setting; with --json, output as JSON")
+	v := statusFlagSet(fs)
+	all, asJSON, name, line := v.all, v.asJSON, v.name, v.line
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -75,8 +91,7 @@ func cmdStatus(args []string) error {
 	// mastermind, so it takes no binding and no other output mode (§4.5).
 	if *line {
 		if *all || *name != "" || len(fs.Args()) > 0 {
-			fmt.Fprintln(os.Stderr, "relevo: --line cannot be combined with --all/--name")
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "--line cannot be combined with --all/--name")
 		}
 		return runStatusline(*asJSON)
 	}
@@ -88,7 +103,7 @@ func cmdStatus(args []string) error {
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 	if rt.Remote != nil {
 		if _, _, serr := relevo.SyncRemoteUnlessDaemon(context.Background(), rt); serr != nil {
@@ -97,7 +112,7 @@ func cmdStatus(args []string) error {
 	}
 	rep, err := relevo.Status(context.Background(), rt)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	// §3.3: a bare `relevo status` shows the calling mastermind's bindings. A

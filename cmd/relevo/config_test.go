@@ -22,7 +22,8 @@ func writeEditor(t *testing.T, body string) string {
 }
 
 // TestRemovedVerbsNameReplacement is step 3's table test: each of the seven
-// verbs P2b folded into `relevo config` exits 2 and names its replacement.
+// verbs P2b folded into `relevo config` returns the usage-coded refusal whose
+// next command is its replacement, and exits 2.
 func TestRemovedVerbsNameReplacement(t *testing.T) {
 	initRoot(t)
 
@@ -36,16 +37,14 @@ func TestRemovedVerbsNameReplacement(t *testing.T) {
 		"servers":    "relevo config server list",
 	}
 	for verb, want := range cases {
-		_, stderr, err := captureOutput(t, func() error {
-			return run([]string{verb})
-		})
+		err := run([]string{verb})
+		ce := requireCLIError(t, err, codeUsage, want)
+		if !strings.Contains(ce.message, "was removed") {
+			t.Errorf("%s: message = %q, want it to say it was removed", verb, ce.message)
+		}
 		var ec exitCodeErr
 		if !errors.As(err, &ec) || ec.code != 2 {
 			t.Errorf("%s: exit = %v, want exit code 2", verb, err)
-			continue
-		}
-		if !strings.Contains(string(stderr), "was removed") || !strings.Contains(string(stderr), want) {
-			t.Errorf("%s: stderr = %q, want it to name the replacement %q", verb, stderr, want)
 		}
 	}
 }
@@ -78,20 +77,19 @@ func TestConfigBareShowsThreeHeadings(t *testing.T) {
 	}
 }
 
-// TestRolesInitIsGone pins R6: the verb prints one line and exits 2.
+// TestRolesInitIsGone pins R6: the verb returns the usage-coded refusal naming
+// the migration, and exits 2.
 func TestRolesInitIsGone(t *testing.T) {
 	initRoot(t)
 
-	stdout, stderr, err := captureOutput(t, func() error {
-		return run([]string{"config", "roles-init"})
-	})
+	err := run([]string{"config", "roles-init"})
+	ce := requireCLIError(t, err, codeUsage, "relevo help")
+	if !strings.Contains(ce.message, "is gone") || !strings.Contains(ce.message, "actors") {
+		t.Errorf("message = %q, want the gone message", ce.message)
+	}
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 2 {
 		t.Fatalf("roles-init: exit = %v, want exit code 2", err)
-	}
-	out := string(stdout) + string(stderr)
-	if !strings.Contains(out, "is gone") || !strings.Contains(out, "actors") {
-		t.Errorf("roles-init output = %q, want the gone message", out)
 	}
 }
 
@@ -460,12 +458,16 @@ func TestConfigSecretUnknownNameExits2(t *testing.T) {
 	initRoot(t)
 
 	_, stderr, err := runWithStdin(t, "x", "config", "secret", "set", "bogus")
+	ce := requireCLIError(t, err, codeUsage, "relevo help")
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 2 {
 		t.Fatalf("secret set bogus: exit = %v, want exit code 2", err)
 	}
-	if !strings.Contains(string(stderr), "typesafe") || !strings.Contains(string(stderr), "client.key") {
-		t.Errorf("stderr = %q, want both allowed names", stderr)
+	if len(stderr) != 0 {
+		t.Errorf("stderr = %q, want empty before report", stderr)
+	}
+	if !strings.Contains(ce.message, "typesafe") || !strings.Contains(ce.message, "client.key") {
+		t.Errorf("message = %q, want both allowed names", ce.message)
 	}
 }
 

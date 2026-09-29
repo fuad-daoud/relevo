@@ -1,1 +1,1 @@
-relevo history: query: outcome:done at 0: outcome wants one of reported, halted, exited, switched, done_no_report, open
+{"error":{"code":"usage","message":"query: outcome:done at 0: outcome wants one of reported, halted, exited, switched, done_no_report, open","next":"relevo help"}}

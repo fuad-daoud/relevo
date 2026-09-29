@@ -1,0 +1,10 @@
+{
+  "sections": [
+    "candidates",
+    "policy"
+  ],
+  "warnings": [
+    "prices[0].in is deprecated"
+  ],
+  "version": 9
+}

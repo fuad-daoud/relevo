@@ -27,6 +27,11 @@ import (
 // SessionStart hook must never block a session on sqlite.
 const mastermindPriorIDTimeout = 2 * time.Second
 
+// mastermindFlagSet declares the bare `mastermind` dispatcher's flags: none
+// today. It exists so the registry's parity test finds exactly one installer
+// per verb.
+func mastermindFlagSet(*flag.FlagSet) {}
+
 // cmdMasterMind dispatches `relevo mastermind init|notice|enable|disable|guide|list|rename|forget`
 // (#303 §4.7, #632). It touches no harness:
 // a mastermind record is relevo's own identity, not a pane.
@@ -68,15 +73,12 @@ func cmdMasterMind(args []string) error {
 	case "prune":
 		// §4.4: pruning is automatic now; the verb names that and exits 2
 		// like every other removed spelling.
-		fmt.Fprintf(os.Stderr, "relevo: %q was removed; the daemon prunes dead MasterMinds hourly\n", "prune")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "%q was removed; the daemon prunes dead MasterMinds hourly", "prune")
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "relevo mastermind: unknown subcommand %q\n", args[0])
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo mastermind: unknown subcommand %q", args[0])
 	}
 }
 
@@ -91,24 +93,47 @@ func mastermindRegistry(rt relevo.Runtime) (*mastermind.DBRegistry, error) {
 	return &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Now: rt.Now}, nil
 }
 
+// mastermindInitFlagValues holds the pointers `mastermind init` parses into.
+type mastermindInitFlagValues struct {
+	name    *string
+	kind    *string
+	session *string
+	hook    *string
+	asJSON  *bool
+}
+
+// mastermindInitFlagSet defines those flags on fs and returns what they parse
+// into.
+func mastermindInitFlagSet(fs *flag.FlagSet) *mastermindInitFlagValues {
+	v := &mastermindInitFlagValues{}
+	v.name = fs.String("name", "", "mastermind name (default: <agent>-<n>, else <kind>-<n>)")
+	v.kind = fs.String("kind", "", "harness kind for an explicit registration (e.g. opencode)")
+	v.session = fs.String("session", "", "harness session id for an explicit registration")
+	v.hook = fs.String("hook", "", "read a Claude Code SessionStart payload from stdin (only \"claude\")")
+	v.asJSON = fs.Bool("json", false, "print the document init produced")
+	return v
+}
+
 func cmdMasterMindInit(args []string) error {
+	return outcomeError(cmdMasterMindInitRun(args))
+}
+
+func cmdMasterMindInitRun(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	name := fs.String("name", "", "mastermind name (default: <agent>-<n>, else <kind>-<n>)")
-	kind := fs.String("kind", "", "harness kind for an explicit registration (e.g. opencode)")
-	session := fs.String("session", "", "harness session id for an explicit registration")
-	hook := fs.String("hook", "", "read a Claude Code SessionStart payload from stdin (only \"claude\")")
+	v := mastermindInitFlagSet(fs)
+	name, kind, session, hook, asJSON := v.name, v.kind, v.session, v.hook, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	if *hook != "" {
+		// The hook form's stdout is Claude's hook contract, so --json is
+		// accepted and has no effect here.
 		if *hook != "claude" {
-			fmt.Fprintf(os.Stderr, "relevo: relevo mastermind init --hook supports only \"claude\", got %q\n", *hook)
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "relevo mastermind init --hook supports only \"claude\", got %q", *hook)
 		}
 		if *kind != "" || *session != "" {
-			fmt.Fprintln(os.Stderr, "relevo: relevo mastermind init --hook reads its kind and session from the hook payload, not --kind/--session")
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "relevo mastermind init --hook reads its kind and session from the hook payload, not --kind/--session")
 		}
 		return mastermindInitHook(*name)
 	}
@@ -145,9 +170,27 @@ func cmdMasterMindInit(args []string) error {
 		return err
 	}
 
+	if *asJSON {
+		fmt.Fprintf(os.Stderr, "export RELEVO_MASTERMIND=%s\n", rec.ID)
+		return printDoc(mastermindDocOf(rec.ID, rec.Name, string(res), mastermindRepoLabel(rt, cwd)))
+	}
 	fmt.Printf("MasterMind %s (%s) %s\n", rec.Name, rec.ID, res)
 	fmt.Printf("export RELEVO_MASTERMIND=%s\n", rec.ID)
 	return nil
+}
+
+// mastermindRepoLabel is the repository label a mastermind document names: the
+// normalised origin URL, else the canonical common dir, else "" when cwd is
+// not inside a repository.
+func mastermindRepoLabel(rt relevo.Runtime, cwd string) string {
+	ref := mastermindRepoOf(context.Background(), rt, cwd)
+	if ref.OriginURL != nil {
+		return *ref.OriginURL
+	}
+	if ref.CommonDir != nil {
+		return *ref.CommonDir
+	}
+	return ""
 }
 
 // mastermindHostStart reads a host process's start time in Unix seconds, the
@@ -181,9 +224,23 @@ func appendEnvLine(path, line string) error {
 // cmdMasterMindEnable answers yes for this session, and with --repo for the
 // repository, then registers the calling session so the answer takes effect
 // without a restart (#632).
+// mastermindListFlagValues holds the pointer `mastermind list` parses into.
+type mastermindListFlagValues struct {
+	asJSON *bool
+}
+
+// mastermindListFlagSet defines that flag on fs and returns what it parses
+// into.
+func mastermindListFlagSet(fs *flag.FlagSet) *mastermindListFlagValues {
+	v := &mastermindListFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the records as a JSON array")
+	return v
+}
+
 func cmdMasterMindList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	asJSON := fs.Bool("json", false, "print the records as a JSON array")
+	v := mastermindListFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -197,11 +254,11 @@ func cmdMasterMindList(args []string) error {
 	// documents (§4.7).
 	reg, err := mastermindRegistry(rt)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 	records, err := reg.List()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	// The count of non-DONE bindings naming each mastermind, from the same store
@@ -210,7 +267,7 @@ func cmdMasterMindList(args []string) error {
 	// machine's present answer about it.
 	counts, err := mastermindBindingCounts(rt)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	// The chat column (#386): what the harness itself calls each session, read
@@ -308,15 +365,34 @@ func annotateMasterMindChat(rt relevo.Runtime, rep *view.Report, res chatlabel.R
 	}
 }
 
+// mastermindRenameFlagValues holds the pointer `mastermind rename` parses into.
+type mastermindRenameFlagValues struct {
+	asJSON *bool
+}
+
+// mastermindRenameFlagSet defines that flag on fs and returns what it parses
+// into.
+func mastermindRenameFlagSet(fs *flag.FlagSet) *mastermindRenameFlagValues {
+	v := &mastermindRenameFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the rename produced")
+	return v
+}
+
 func cmdMasterMindRename(args []string) error {
+	return outcomeError(cmdMasterMindRenameRun(args))
+}
+
+func cmdMasterMindRenameRun(args []string) error {
 	fs := flag.NewFlagSet("rename", flag.ContinueOnError)
+	v := mastermindRenameFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	positional := fs.Args()
 	if len(positional) != 2 {
-		return fmt.Errorf("usage: relevo mastermind rename <id|name> <new-name>")
+		return fail(codeUsage, "mastermind rename wants <id|name> <new-name>")
 	}
 
 	rt, err := newRuntime()
@@ -338,19 +414,41 @@ func cmdMasterMindRename(args []string) error {
 		return err
 	}
 
+	if *asJSON {
+		return printDoc(mastermindRenameDocOf(rec.ID, rec.Name, updated.Name))
+	}
 	fmt.Printf("renamed mastermind %s (%s) to %s\n", rec.Name, rec.ID, updated.Name)
 	return nil
 }
 
+// mastermindForgetFlagValues holds the pointer `mastermind forget` parses into.
+type mastermindForgetFlagValues struct {
+	asJSON *bool
+}
+
+// mastermindForgetFlagSet defines that flag on fs and returns what it parses
+// into.
+func mastermindForgetFlagSet(fs *flag.FlagSet) *mastermindForgetFlagValues {
+	v := &mastermindForgetFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the forget produced")
+	return v
+}
+
 func cmdMasterMindForget(args []string) error {
+	return outcomeError(cmdMasterMindForgetRun(args))
+}
+
+func cmdMasterMindForgetRun(args []string) error {
 	fs := flag.NewFlagSet("forget", flag.ContinueOnError)
+	v := mastermindForgetFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	positional := fs.Args()
 	if len(positional) != 1 {
-		return fmt.Errorf("usage: relevo mastermind forget <id|name>")
+		return fail(codeUsage, "mastermind forget wants <id|name>")
 	}
 
 	rt, err := newRuntime()
@@ -371,6 +469,9 @@ func cmdMasterMindForget(args []string) error {
 		return err
 	}
 
+	if *asJSON {
+		return printDoc(mastermindDocOf(rec.ID, rec.Name, "forgotten", ""))
+	}
 	fmt.Printf("forgot mastermind %s (%s)\n", rec.Name, rec.ID)
 	return nil
 }
@@ -384,7 +485,7 @@ func mastermindLookup(reg mastermind.Registry, ref string) (mastermind.Record, e
 		case err == nil:
 			return rec, nil
 		case errors.Is(err, mastermind.ErrNotFound):
-			return mastermind.Record{}, fmt.Errorf("no mastermind with id %s", ref)
+			return mastermind.Record{}, failWrap(codeMastermindNotFound, err, "no mastermind with id %s", ref)
 		default:
 			return mastermind.Record{}, err
 		}
@@ -395,7 +496,7 @@ func mastermindLookup(reg mastermind.Registry, ref string) (mastermind.Record, e
 	case err == nil:
 		return rec, nil
 	case errors.Is(err, mastermind.ErrNotFound):
-		return mastermind.Record{}, fmt.Errorf("no mastermind named %s", ref)
+		return mastermind.Record{}, failWrap(codeMastermindNotFound, err, "no mastermind named %s", ref)
 	default:
 		return mastermind.Record{}, err
 	}

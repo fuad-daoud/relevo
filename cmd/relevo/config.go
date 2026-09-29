@@ -1,12 +1,13 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -60,8 +61,7 @@ func cmdConfig(args []string) error {
 	case "init":
 		return cmdInit(args[1:])
 	case "roles-init":
-		fmt.Fprintln(os.Stderr, "relevo config roles-init is gone: roles migrate to actors on their own (relevo config log)")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo config roles-init is gone: roles migrate to actors on their own (relevo config log)")
 	case "agents":
 		return cmdAgentInstall(args[1:])
 	case "server":
@@ -72,10 +72,22 @@ func cmdConfig(args []string) error {
 		fmt.Fprintln(os.Stderr, configUsage)
 		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "relevo config: unknown command %q\n", args[0])
-		fmt.Fprintln(os.Stderr, configUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo config: unknown command %q", args[0])
 	}
+}
+
+// configShowFlagValues holds the pointers the bare `config` form parses into.
+type configShowFlagValues struct {
+	probe  *bool
+	asJSON *bool
+}
+
+// configShowFlagSet defines those flags on fs and returns what they parse into.
+func configShowFlagSet(fs *flag.FlagSet) *configShowFlagValues {
+	v := &configShowFlagValues{}
+	v.probe = fs.Bool("probe", false, "run each candidate once with a one-line prompt from this machine and record its time to first output")
+	v.asJSON = fs.Bool("json", false, "print the actors, the pick and the candidates as one JSON document")
+	return v
 }
 
 // configShow is the bare `relevo config`: the actors block, the current pick
@@ -84,20 +96,23 @@ func cmdConfig(args []string) error {
 func configShow(args []string) error {
 	fs := flag.NewFlagSet("relevo config", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	probe := fs.Bool("probe", false, "run each candidate once with a one-line prompt from this machine and record its time to first output")
+	v := configShowFlagSet(fs)
+	probe, asJSON := v.probe, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	if *probe {
+		// Probe lines are a stream of results, not a document; --json has no
+		// shape to print them in.
+		if *asJSON {
+			return fail(codeUsage, "relevo config --probe prints one line per candidate, not JSON; drop --json")
+		}
 		return cmdCandidates(args)
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	// The first block is the actors section after round 2's migration; a
@@ -105,7 +120,12 @@ func configShow(args []string) error {
 	// migrate) keeps today's roles block under its own heading (R7).
 	L, err := rt.Config.Load()
 	if err != nil {
-		return err
+		return fail(codeConfigInvalid, "%v", err)
+	}
+	if *asJSON {
+		gates := availability.Gates(relevo.AvailabilityDeps(rt))
+		refusals := relevo.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, gates)
+		return printDoc(configViewOf(L, rt.RoleRegistry(), rt.Candidates, gates, refusals))
 	}
 	if len(L.Actors) > 0 {
 		fmt.Println("actors")

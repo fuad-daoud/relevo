@@ -24,14 +24,29 @@ import (
 	"github.com/fuad-daoud/relevo/internal/upgrade"
 )
 
-func cmdDaemon(args []string) error {
-	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
-	interval := fs.Duration("interval", 2*time.Second, "poll interval")
-	check := fs.Bool("check", false, "exit 0 if a daemon is running, 1 if not; print nothing")
+// daemonFlagValues holds the pointers daemon parses into.
+type daemonFlagValues struct {
+	interval  *time.Duration
+	check     *bool
+	preflight *bool
+}
+
+// daemonFlagSet defines those flags on fs and returns what they parse into.
+func daemonFlagSet(fs *flag.FlagSet) *daemonFlagValues {
+	v := &daemonFlagValues{}
+	v.interval = fs.Duration("interval", 2*time.Second, "poll interval")
+	v.check = fs.Bool("check", false, "exit 0 if a daemon is running, 1 if not; print nothing")
 	// --preflight is internal: the daemon runs a candidate binary's own
 	// --preflight before re-exec'ing into it (#371 §4.4). It stays out of
 	// the usage text and the README, so it is defined but not printed.
-	preflight := fs.Bool("preflight", false, "validate the runtime configuration and exit (internal)")
+	v.preflight = fs.Bool("preflight", false, "validate the runtime configuration and exit (internal)")
+	return v
+}
+
+func cmdDaemon(args []string) error {
+	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	v := daemonFlagSet(fs)
+	interval, check, preflight := v.interval, v.check, v.preflight
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: relevo daemon [--interval D] [--check]")
 	}

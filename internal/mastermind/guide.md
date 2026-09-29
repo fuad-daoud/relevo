@@ -17,6 +17,18 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 - `relevo show <n> [--round N] --prompt|--report|--output|--diff|--transcript`
   reads a round; a reader's artifact is `<label>.md`, printed with `--output`.
 
+## Output and errors
+
+- Every verb takes `--json`: stdout is then one document (`show --log` and a
+  transcript stream are NDJSON, one object per line), and the human output stays
+  the default.
+- A failure is data: human stderr is `relevo: <code>: <message>` then
+  `next: <command>`; with `--json` it is
+  `{"error":{"code":"<code>","message":"<message>","next":"<command>"}}`. Run
+  the `next` command.
+- `relevo help --json` is the registry of every verb, its flags, its output
+  document and its error codes; `relevo help --json <verb>` prints one entry.
+
 ## The recommended loop
 
 - Seed a planner actor (`planner`, `lite-planner`) with the task and the

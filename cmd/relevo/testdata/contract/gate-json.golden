@@ -1,0 +1,36 @@
+[
+  {
+    "token": "claude/p/m",
+    "name": "m",
+    "kind": "rate_limited",
+    "since": "<TIME>",
+    "until": "<TIME>",
+    "note": "flaky",
+    "source": "planner"
+  },
+  {
+    "token": "claude/q/n",
+    "name": "n",
+    "kind": "rate_limited",
+    "since": "<TIME>",
+    "source": "planner"
+  },
+  {
+    "token": "claude/p/m",
+    "name": "m",
+    "kind": "roles_missing",
+    "since": "<TIME>",
+    "note": "agent definitions missing for builder: .claude/agents/plan-executor.md, .claude/agents/researcher.md; run relevo config agents --kind claude",
+    "source": "relevo",
+    "role": "builder"
+  },
+  {
+    "token": "claude/q/n",
+    "name": "n",
+    "kind": "roles_missing",
+    "since": "<TIME>",
+    "note": "agent definitions missing for builder: .claude/agents/plan-executor.md, .claude/agents/researcher.md; run relevo config agents --kind claude",
+    "source": "relevo",
+    "role": "builder"
+  }
+]

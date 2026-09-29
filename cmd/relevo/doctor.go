@@ -235,15 +235,30 @@ func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy
 	return out
 }
 
+// doctorFlagValues holds the pointer doctor parses into.
+type doctorFlagValues struct {
+	asJSON *bool
+}
+
+// doctorFlagSet defines that flag on fs and returns what it parses into, so
+// the registry's parity test finds exactly one installer per verb.
+func doctorFlagSet(fs *flag.FlagSet) *doctorFlagValues {
+	v := &doctorFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the report as a JSON document")
+	return v
+}
+
 func cmdDoctor(args []string) error {
 	fs := flag.NewFlagSet("relevo doctor", flag.ContinueOnError)
+	v := doctorFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	kinds, storeErr := assembleKinds(rt.Candidates, rt.Store)
@@ -257,7 +272,7 @@ func cmdDoctor(args []string) error {
 	}
 	L, err := rt.Config.Load()
 	if err != nil {
-		return err
+		return fail(codeConfigInvalid, "%v", err)
 	}
 
 	// One doctor row per configured server (remote-builders spec §5.5):
@@ -283,7 +298,7 @@ func cmdDoctor(args []string) error {
 
 	pricesBody, _, err := rt.Config.Body(config.Prices)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	rep := doctor.Run(context.Background(), env, kinds,
@@ -397,8 +412,16 @@ func cmdDoctor(args []string) error {
 		}
 	}
 
-	renderReport(os.Stdout, rep)
+	if *asJSON {
+		if err := printDoc(doctorDocOf(rep)); err != nil {
+			return err
+		}
+	} else {
+		renderReport(os.Stdout, rep)
+	}
 
+	// A failing check still exits 1 in both shapes: the exit code is part of
+	// the contract, and --json only changes where the report goes.
 	if rep.Failures() > 0 {
 		return exitCodeErr{code: 1}
 	}

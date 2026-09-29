@@ -164,12 +164,27 @@ func mastermindInitHookFailure(err error) error {
 	return nil
 }
 
+// mastermindNoticeFlagValues holds the pointer `mastermind notice` parses
+// into.
+type mastermindNoticeFlagValues struct {
+	hook *string
+}
+
+// mastermindNoticeFlagSet defines that flag on fs and returns what it parses
+// into.
+func mastermindNoticeFlagSet(fs *flag.FlagSet) *mastermindNoticeFlagValues {
+	v := &mastermindNoticeFlagValues{}
+	v.hook = fs.String("hook", "", "read a Claude Code UserPromptSubmit payload from stdin (only \"claude\")")
+	return v
+}
+
 // cmdMasterMindNotice runs `relevo mastermind notice --hook claude`, the
 // UserPromptSubmit hook that tells a session its status changed since the
 // baseline its SessionStart hook recorded.
 func cmdMasterMindNotice(args []string) error {
 	fs := flag.NewFlagSet("notice", flag.ContinueOnError)
-	hook := fs.String("hook", "", "read a Claude Code UserPromptSubmit payload from stdin (only \"claude\")")
+	v := mastermindNoticeFlagSet(fs)
+	hook := v.hook
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}

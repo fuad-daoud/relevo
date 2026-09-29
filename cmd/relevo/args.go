@@ -4,10 +4,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -89,9 +93,9 @@ func withEnv(env []string, key, val string) []string {
 func bindingArg(nameFlag string, positional []string) (string, error) {
 	switch {
 	case nameFlag != "" && len(positional) > 0:
-		return "", fmt.Errorf("binding named twice: --name %s and %q; pass it once", nameFlag, positional[0])
+		return "", fail(codeUsage, "binding named twice: --name %s and %q; pass it once", nameFlag, positional[0])
 	case len(positional) > 1:
-		return "", fmt.Errorf("too many binding names: %v; pass one", positional)
+		return "", fail(codeUsage, "too many binding names: %v; pass one", positional)
 	case nameFlag != "":
 		return nameFlag, nil
 	case len(positional) == 1:
@@ -128,7 +132,8 @@ func resolveBinding(rt relevo.Runtime, nameFlag string, positional []string) (st
 		return "", err
 	}
 	if !found {
-		return "", fmt.Errorf("no binding for %s; name one with `relevo <command> NAME` or run relevo bind first", cwd)
+		return "", failNext(codeBindingNotFound, "relevo bind",
+			"no binding for %s; name one with `relevo <command> NAME` or run relevo bind first", cwd)
 	}
 
 	return b.Name, nil
@@ -172,7 +177,7 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 			if errors.Is(err, flag.ErrHelp) {
 				return errHelpShown
 			}
-			return err
+			return fail(codeUsage, "%v", err)
 		}
 
 		rest = fs.Args()
@@ -188,7 +193,13 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	// first non-flag argument and every element here is one, so this consumes
 	// nothing and simply reinstates the list. Flag values already set by the
 	// passes above survive: Parse does not reset them.
-	return fs.Parse(positional)
+	if err := fs.Parse(positional); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return errHelpShown
+		}
+		return fail(codeUsage, "%v", err)
+	}
+	return nil
 }
 
 // regateFlag turns --regate into the *int the relevo package takes (#132 part
@@ -207,18 +218,66 @@ func regateFlag(fs *flag.FlagSet, regate *int) (*int, error) {
 		return nil, nil
 	}
 	if *regate < 0 {
-		fmt.Fprintf(os.Stderr, "relevo: --regate must be >= 0, got %d\n", *regate)
-		return nil, exitCodeErr{code: 2}
+		return nil, fail(codeUsage, "--regate must be >= 0, got %d", *regate)
 	}
 	return regate, nil
 }
 
 // noteRegateNoGate says when a repair budget landed on a binding that has no
 // gate to fail (#132 part 2): accepted and inert, because a binding with no
-// gate never produces gate=fail, but not worth leaving unexplained.
-func noteRegateNoGate(b store.Binding) {
+// gate never produces gate=fail, but not worth leaving unexplained. w is the
+// mode's notice writer: stdout for the human default, stderr under --json.
+func noteRegateNoGate(w io.Writer, b store.Binding) {
 	if b.Regate > 0 && b.Gate == "" {
-		fmt.Printf("  regate %d (no gate configured)\n", b.Regate)
+		fmt.Fprintf(w, "  regate %d (no gate configured)\n", b.Regate)
+	}
+}
+
+// noticeWriter is where a write verb's supplementary lines go: stdout for the
+// human default, unchanged; stderr under --json, where stdout carries the
+// result document and nothing else (§2.1, §2.8).
+func noticeWriter(jsonMode bool) io.Writer {
+	if jsonMode {
+		return os.Stderr
+	}
+	return os.Stdout
+}
+
+// writeError classifies a failure out of one of the relevo write paths into
+// the frame's catalog code (§2.5). It is the one place the write verbs decide
+// a failure class, and it never invents a code: the sentinels relevo and store
+// export are the only distinctions the library makes, and anything else is
+// internal. An error that is already coded passes through untouched.
+func writeError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ce *cliError
+	if errors.As(err, &ce) {
+		return err
+	}
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return fail(codeBindingNotFound, "%v", err)
+	case errors.Is(err, store.ErrCWDTaken):
+		return fail(codeConflict, "%v", err)
+	case errors.Is(err, relevo.ErrTierAboveMax), errors.Is(err, harness.ErrTierUnsupported):
+		return fail(codeTierCap, "%v", err)
+	case errors.Is(err, relevo.ErrAllGated):
+		return fail(codeGateActive, "%v", err)
+	case errors.Is(err, relevo.ErrNoCandidates),
+		errors.Is(err, relevo.ErrRoleNotServed),
+		errors.Is(err, relevo.ErrAmbiguousCandidate),
+		errors.Is(err, relevo.ErrUnknownRole),
+		errors.Is(err, roles.ErrBadActors),
+		errors.Is(err, roles.ErrBadRoles):
+		return fail(codePolicyRefused, "%v", err)
+	case errors.Is(err, client.ErrUnreachable):
+		return fail(codeRemoteUnreachable, "%v", err)
+	case errors.Is(err, relevo.ErrRemoteUnavailable):
+		return fail(codeNotAvailable, "%v", err)
+	default:
+		return fail(codeInternal, "%v", err)
 	}
 }
 

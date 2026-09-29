@@ -2195,8 +2195,8 @@ at runtime with a clear error rather than running without a state lock.
 ## Claude Code plugin
 
 The relevo plugin gives a Claude Code MasterMind two things: the `relevo mcp` MCP
-server (`relevo` from `PATH`), which exposes `status`, `send` and `done` as
-tools, and a `SessionStart` hook that runs
+server (`relevo` from `PATH`), which exposes `status`, `send`, `done`, `show`
+and `gate` as tools, and a `SessionStart` hook that runs
 `relevo mastermind init`. The hook exports `RELEVO_MASTERMIND` and tells the model its
 MasterMind name. Install it once per machine:
 
@@ -2212,6 +2212,8 @@ The plugin also carries slash commands over relevo's verbs:
 - `/relevo:disable` -- this session answers no.
 - `/relevo:disable-repo` -- never in this repository.
 - `/relevo:reset` -- ask the consent question again in this repository and this session.
+
+The plugin also ships a `planner-loop` skill that walks the send → wait → read the report → verify with the project's check → done loop.
 
 Then launch Claude Code normally:
 

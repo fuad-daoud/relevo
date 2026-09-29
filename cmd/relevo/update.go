@@ -17,11 +17,33 @@ import (
 	"github.com/fuad-daoud/relevo/internal/upgrade"
 )
 
+// updateFlagValues holds the pointers update parses into.
+type updateFlagValues struct {
+	check        *bool
+	to           *string
+	forceRelease *bool
+	asJSON       *bool
+}
+
+// updateFlagSet defines those flags on fs and returns what they parse into.
+func updateFlagSet(fs *flag.FlagSet) *updateFlagValues {
+	v := &updateFlagValues{}
+	v.check = fs.Bool("check", false, "print what update would do; change nothing")
+	v.to = fs.String("to", "", "install this release tag instead of the latest; allows a downgrade")
+	v.forceRelease = fs.Bool("release", false, "replace a local build with the release binary")
+	v.asJSON = fs.Bool("json", false, "print the document the run produced")
+	return v
+}
+
 // cmdUpdate is `relevo update` (#293): it replaces a release binary with a
 // checksum-verified release binary of the target tag, or prints the command a
 // `go install` needs, or refuses a local build. It never restarts anything:
 // a running daemon follows a replaced binary on its own (#371).
 func cmdUpdate(args []string) error {
+	return outcomeError(cmdUpdateRun(args))
+}
+
+func cmdUpdateRun(args []string) error {
 	const usage = "usage: relevo update [--check] [--to vX.Y.Z] [--release]"
 
 	fs := flag.NewFlagSet("relevo update", flag.ContinueOnError)
@@ -29,18 +51,13 @@ func cmdUpdate(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), usage)
 	}
-	check := fs.Bool("check", false, "print what update would do; change nothing")
-	to := fs.String("to", "", "install this release tag instead of the latest; allows a downgrade")
-	forceRelease := fs.Bool("release", false, "replace a local build with the release binary")
+	v := updateFlagSet(fs)
+	check, to, forceRelease, asJSON := v.check, v.to, v.forceRelease, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "update wants no arguments, got %v", fs.Args())
 	}
 
 	in := releaseInputs()
@@ -49,8 +66,7 @@ func cmdUpdate(args []string) error {
 
 	exe, err := upgrade.ResolveExe()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo update: cannot resolve the running executable: %v\n", err)
-		return exitCodeErr{code: 1}
+		return fail(codeInternal, "cannot resolve the running executable: %v", err)
 	}
 
 	// The fetch is skipped whenever the decision cannot need the latest tag:
@@ -65,8 +81,7 @@ func cmdUpdate(args []string) error {
 		latest, err = release.NewHTTPFetcher("", 0).Latest(ctx)
 		cancel()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "relevo update: cannot learn the latest release: %v\n", err)
-			return exitCodeErr{code: 1}
+			return fail(codeRemoteUnreachable, "cannot learn the latest release: %v", err)
 		}
 	}
 
@@ -79,32 +94,40 @@ func cmdUpdate(args []string) error {
 	})
 
 	if *check {
-		fmt.Printf("running  %s (%s)\n", running, kind)
-		fmt.Printf("exe      %s\n", exe)
-		fmt.Printf("action   %s\n", dec.Action)
-		fmt.Printf("         %s\n", dec.Message)
+		doc := updateDocOf(running, exe, kind, dec, false)
+		if *asJSON {
+			return printDoc(doc)
+		}
+		renderUpdateCheck(doc)
 		return nil
 	}
 
 	switch dec.Action {
 	case release.UpdateInvalid:
-		fmt.Fprintln(os.Stderr, dec.Message)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "%s", dec.Message)
 	case release.UpdateRefuse:
-		fmt.Fprintln(os.Stderr, dec.Message)
-		return exitCodeErr{code: 1}
+		return fail(codeRefused, "%s", dec.Message)
 	case release.UpdateCurrent:
+		if *asJSON {
+			return printDoc(updateDocOf(running, exe, kind, dec, false))
+		}
 		fmt.Println(dec.Message)
 		return nil
 	case release.UpdatePrintGoInstall:
+		if *asJSON {
+			return printDoc(updateDocOf(running, exe, kind, dec, false))
+		}
 		fmt.Println("relevo was installed with go install; run:")
 		fmt.Printf("  %s\n", dec.Message)
 		return nil
 	}
 
-	// UpdateReplace: download, verify, preflight, then swap in place.
+	// UpdateReplace: download, verify, preflight, then swap in place. The
+	// progress line keeps stdout in the default mode and moves to stderr under
+	// --json, where stdout carries the document alone.
+	w := noticeWriter(*asJSON)
 	archive, _ := release.AssetURLs(dec.Target, runtime.GOOS, runtime.GOARCH)
-	fmt.Printf("relevo %s -> %s: downloading %s\n", running, dec.Target, path.Base(archive))
+	fmt.Fprintf(w, "relevo %s -> %s: downloading %s\n", running, dec.Target, path.Base(archive))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -114,9 +137,9 @@ func cmdUpdate(args []string) error {
 		msg := fmt.Sprintf("update failed: %v", err)
 		if errors.Is(err, os.ErrPermission) {
 			msg += fmt.Sprintf(" (relevo update replaces the binary in place and needs write access to %s)", filepath.Dir(exe))
+			return fail(codeInternal, "%s", msg)
 		}
-		fmt.Fprintf(os.Stderr, "relevo update: %s\n", msg)
-		return exitCodeErr{code: 1}
+		return fail(codeRemoteUnreachable, "%s", msg)
 	}
 	// The temp file is removed on every path that does not swap it in.
 	swapped := false
@@ -127,16 +150,17 @@ func cmdUpdate(args []string) error {
 	}()
 
 	if err := preflightCandidate(tmp, dec.Target, exe); err != nil {
-		fmt.Fprintf(os.Stderr, "relevo update: %v\n", err)
-		return exitCodeErr{code: 1}
+		return fail(codeInternal, "%v", err)
 	}
 
 	if err := os.Rename(tmp, exe); err != nil {
-		fmt.Fprintf(os.Stderr, "relevo update: cannot replace %s: %v\n", exe, err)
-		return exitCodeErr{code: 1}
+		return fail(codeInternal, "cannot replace %s: %v", exe, err)
 	}
 	swapped = true
 
+	if *asJSON {
+		return printDoc(updateDocOf(running, exe, kind, dec, true))
+	}
 	fmt.Printf("relevo updated to %s (%s)\n", dec.Target, exe)
 	if kind != release.KindRelease {
 		fmt.Println("this install is now a release binary; relevo update keeps it current")

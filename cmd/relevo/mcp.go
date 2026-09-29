@@ -28,6 +28,24 @@ const (
 	mcpResolveRetry   = 500 * time.Millisecond
 )
 
+// mcpFlagValues holds the pointers mcp parses into.
+type mcpFlagValues struct {
+	mastermind *string
+	mode       *string
+	kind       *string
+	interval   *time.Duration
+}
+
+// mcpFlagSet defines those flags on fs and returns what they parse into.
+func mcpFlagSet(fs *flag.FlagSet) *mcpFlagValues {
+	v := &mcpFlagValues{}
+	v.mastermind = fs.String("mastermind", "", "mastermind id or name (default: $RELEVO_MASTERMIND, else this session's host)")
+	v.mode = fs.String("mode", "auto", "channel|tools|auto (default: detected from the parent process's argv)")
+	v.kind = fs.String("kind", "", "harness kind this server runs under: opencode resolves the MasterMind per tool call, tools only")
+	v.interval = fs.Duration("interval", time.Second, "poll interval in channel mode (floored at 200ms)")
+	return v
+}
+
 // cmdMCP runs relevo mcp: an MCP server over stdio a Claude Code mastermind
 // spawns from its plugin manifest (docs/specs/2026-09-21-mastermind-channel-design.md,
 // #303 §4.5). In channel mode it also
@@ -35,10 +53,9 @@ const (
 // the verbs as tools.
 func cmdMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	mastermindFlag := fs.String("mastermind", "", "mastermind id or name (default: $RELEVO_MASTERMIND, else this session's host)")
-	modeFlag := fs.String("mode", "auto", "channel|tools|auto (default: detected from the parent process's argv)")
-	kindFlag := fs.String("kind", "", "harness kind this server runs under: opencode resolves the MasterMind per tool call, tools only")
-	interval := fs.Duration("interval", time.Second, "poll interval in channel mode (floored at 200ms)")
+	v := mcpFlagSet(fs)
+	mastermindFlag, modeFlag, kindFlag := v.mastermind, v.mode, v.kind
+	interval := v.interval
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}

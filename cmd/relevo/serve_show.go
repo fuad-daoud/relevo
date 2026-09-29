@@ -10,11 +10,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// serveShowUsage is the removed `relevo serve show` usage line, updated to
-// the verb that carries the --owner route now (§4.1). cmdShow prints it when
-// an --owner invocation names more than one section.
-const serveShowUsage = "usage: relevo show <name> --owner <label|id> [--round N] [--prompt|--report|--diff|--drift|--log|--transcript|--output|--artifacts] [--json] [--state <dir>]"
-
 // serveLog is cmdServeLog's body, moved so `relevo show <name> --owner
 // <label> --log` calls it (§4.1). It takes the parsed values: state is the
 // resolved --state ("" for the default root). It prints one owner's binding
@@ -48,12 +43,7 @@ func serveLog(owner, state, name string, round, after int, asJSON, follow bool) 
 	}
 
 	if err := printLog(rt, name, round, after, asJSON, follow, false); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve log: %s/%s: binding not found\n", owner, name)
-		} else {
-			fmt.Fprintf(os.Stderr, "relevo serve log: %v\n", err)
-		}
-		return exitCodeErr{code: 1}
+		return classifyReadErr(err)
 	}
 	return nil
 }
@@ -95,12 +85,7 @@ func serveShow(owner, state, name string, round int, section relevo.ShowSection,
 	// pending payload.
 	opts := relevo.ShowOptions{Name: name, Round: round, Section: section, JSON: asJSON, Peek: true, ArtifactRel: artifactRel}
 	if err := printShow(rt, opts, false, false, label+"/"); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve show: %s/%s: binding not found (serve show reads live bindings only)\n", owner, name)
-		} else {
-			fmt.Fprintf(os.Stderr, "relevo serve show: %v\n", err)
-		}
-		return exitCodeErr{code: 1}
+		return classifyReadErr(err)
 	}
 	return nil
 }

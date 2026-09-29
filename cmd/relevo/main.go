@@ -4,14 +4,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/pick"
@@ -46,14 +49,14 @@ Commands:
   status    one row per binding: round, state, live pane status, what is pending [--all] [--line]
   history   round history as JSON [--here] [--binding B] [--mastermind P] [--since D] [--limit N] [-q QUERY] [--json]
   show      one round's plan, report, diff, drift, gate, findings, log or transcript, live or archived [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]
-  wait      block until a round closes or needs you, then print the pending report; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout [--peek]
+  wait      block until a round closes or needs you, then print the pending report; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 6 not started, 3 needs you, 4 done/unbound, 124 timeout [--peek]
   ui [:view [args]]  the cockpit: :fleet, :rounds [query], :round <binding> [N]
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   stop      kill the runner process and close its round without a report unless one is already on disk
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
               --done clears every binding the MasterMind marked DONE [--delete] [--dry-run]
   daemon    run the long-running reconciler
-  mcp       run an MCP server over stdio for a Claude Code MasterMind pane: status/send/done
+  mcp       run an MCP server over stdio for a Claude Code MasterMind pane: status/send/show/gate/done
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
@@ -107,19 +110,64 @@ func main() {
 	// command runs, and informational only: it is never signed.
 	client.Version = buildVersion()
 
-	err := run(os.Args[1:])
-	var ec exitCodeErr
+	args := os.Args[1:]
+	os.Exit(report(os.Stderr, run(args), jsonRequested(args)))
+}
+
+// report renders run's error on w and returns the process exit code. It is the
+// one renderer every failure funnels through: a nil error, or help already
+// printed on request, is silent; a coded failure prints one human line plus
+// its next command, or the JSON envelope when the caller asked for --json; an
+// exitCodeErr exits with its own code and prints nothing; anything else keeps
+// the prose line the CLI has always printed.
+func report(w io.Writer, err error, jsonMode bool) int {
 	switch {
 	case err == nil, errors.Is(err, errHelpShown):
-		return
-	case errors.As(err, &ec):
-		os.Exit(ec.code)
-	case errors.Is(err, errUsagePrinted):
-		os.Exit(1)
-	default:
-		fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
-		os.Exit(1)
+		return 0
 	}
+
+	var ce *cliError
+	if errors.As(err, &ce) {
+		if jsonMode {
+			_ = json.NewEncoder(w).Encode(errorEnvelope{Error: errorDocument{
+				Code:    ce.code,
+				Message: ce.message,
+				Next:    ce.next,
+			}})
+		} else {
+			fmt.Fprintf(w, "relevo: %s: %s\n", ce.code, ce.message)
+			if ce.next != "" {
+				fmt.Fprintf(w, "  next: %s\n", ce.next)
+			}
+		}
+		return catalogExit(ce.code)
+	}
+
+	var ec exitCodeErr
+	if errors.As(err, &ec) {
+		return ec.code
+	}
+	if errors.Is(err, errUsagePrinted) {
+		// Usage is a refusal (spec §2.6), so a bare `relevo` on a pipe exits 2
+		// exactly like every other usage failure; the text is already on stderr.
+		return catalog[codeUsage].exit
+	}
+
+	fmt.Fprintf(w, "relevo: %v\n", err)
+	return 1
+}
+
+// jsonRequested reports whether --json is one of args. The scan is an exact
+// token match, not a prefix one: this CLI has no `--` passthrough, so a
+// standalone --json anywhere in the arguments is the caller asking for the
+// machine shape, while a value that merely starts with the word is not.
+func jsonRequested(args []string) bool {
+	for _, a := range args {
+		if a == "--json" {
+			return true
+		}
+	}
+	return false
 }
 
 func run(args []string) error {
@@ -142,11 +190,9 @@ func run(args []string) error {
 
 	switch args[0] {
 	case "help", "-h", "--help":
-		fmt.Print(usage)
-		return nil
+		return cmdHelp(args[1:])
 	case "version", "-v", "--version":
-		fmt.Printf("relevo %s\n", buildVersion())
-		return nil
+		return cmdVersion(args[1:])
 	case "bind":
 		return cmdBind(args[1:])
 	case "unbind":
@@ -154,8 +200,8 @@ func run(args []string) error {
 	case "send":
 		return cmdSend(args[1:])
 	case "ask":
-		fmt.Fprintln(os.Stderr, "relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan")
-		return exitCodeErr{code: 2}
+		return failNext(codeUsage, "relevo bind --actor reviewer",
+			"relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan")
 	case "status":
 		return cmdStatus(args[1:])
 	case "history":
@@ -191,10 +237,9 @@ func run(args []string) error {
 		// into bind/show/unbind/status, name their replacement rather than the
 		// generic unknown-subcommand error (§4.4, §4.6).
 		if replacement, ok := removedVerbs[args[0]]; ok {
-			fmt.Fprintf(os.Stderr, "relevo: %q was removed; use %s\n", args[0], replacement)
-			return exitCodeErr{code: 2}
+			return failNext(codeUsage, replacement, "%q was removed; use %s", args[0], replacement)
 		}
-		return fmt.Errorf("unknown subcommand %q; run \"relevo help\" for the command list", args[0])
+		return fail(codeUsage, "unknown subcommand %q; run \"relevo help\" for the command list", args[0])
 	}
 }
 
@@ -245,9 +290,22 @@ func userConfigRoot() (string, error) {
 	return filepath.Join(home, ".config"), nil
 }
 
+// uiFlagValues holds the pointer the cockpit parses into.
+type uiFlagValues struct {
+	interval *time.Duration
+}
+
+// uiFlagSet defines that flag on fs and returns what it parses into.
+func uiFlagSet(fs *flag.FlagSet) *uiFlagValues {
+	v := &uiFlagValues{}
+	v.interval = fs.Duration("interval", 0, "refresh interval")
+	return v
+}
+
 func cmdUI(args []string) error {
 	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
-	interval := fs.Duration("interval", 0, "refresh interval")
+	v := uiFlagSet(fs)
+	interval := v.interval
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -344,7 +402,7 @@ func runPick(opts pick.Options) error {
 // a binding name are mutually exclusive.
 func pickNamesNothing(nameFlag string, positional []string) error {
 	if nameFlag != "" || len(positional) > 0 {
-		return errors.New("--pick chooses the binding; do not also name one")
+		return fail(codeRefused, "--pick chooses the binding; do not also name one")
 	}
 	return nil
 }
