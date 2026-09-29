@@ -133,8 +133,13 @@ before output. `--raw` skips it, and the bundle says so in its header.
   base64/base62 runs of 40 or more characters that mix case and digits. Hex of 40
   characters or fewer is kept, so commit SHAs survive.
 
-`<redacted>` has one spelling: an exported constant in `internal/sanitize`. The bundle
-never reads the secret rows (`config secret`), `client.key` or typesafe keys.
+`<redacted>` has one spelling: an exported constant in `internal/sanitize`. The bundle never
+*includes* a secret value, and never opens the secret rows (`config secret`), `client.key` or
+the typesafe keys for itself. The config load it shares with `relevo doctor` does read the
+stored secrets into memory -- as `relevo doctor` does on every run -- and renders none of
+them; `TestDefaultBundleCarriesNoSecrets` is the guard that holds the bundle to that: the
+allow-list projections carry no secret, the redaction pass rewrites any secret-shaped string,
+and no rendering contains a seeded secret.
 
 Sources are read-only: a dead daemon or an unreadable database becomes a line in the
 bundle, not a failed command. A write attempted through the read-only runtime fails at

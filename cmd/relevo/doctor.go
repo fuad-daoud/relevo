@@ -249,19 +249,11 @@ func doctorFlagSet(fs *flag.FlagSet) *doctorFlagValues {
 	return v
 }
 
-func cmdDoctor(args []string) error {
-	fs := flag.NewFlagSet("relevo doctor", flag.ContinueOnError)
-	v := doctorFlagSet(fs)
-	asJSON := v.asJSON
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
-	rt, err := newRuntime()
-	if err != nil {
-		return fail(codeInternal, "%v", err)
-	}
-
+// doctorReport runs every check `relevo doctor` has: the configured harness
+// kinds, the server rows, the release, database, scope and role rows, the
+// hooks row and the mastermind checks. cmdDoctor owns the flags, the runtime
+// and the rendering; the bundle calls this so both carry the same report.
+func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	kinds, storeErr := assembleKinds(rt.Candidates, rt.Store)
 	env := doctor.NewEnv(rt.Store, releaseInputs())
 
@@ -270,10 +262,6 @@ func cmdDoctor(args []string) error {
 		if k == "opencode" {
 			opencodeConfigured = true
 		}
-	}
-	L, err := rt.Config.Load()
-	if err != nil {
-		return fail(codeConfigInvalid, "%v", err)
 	}
 
 	// One doctor row per configured server (remote-builders spec §5.5):
@@ -299,7 +287,7 @@ func cmdDoctor(args []string) error {
 
 	pricesBody, _, err := rt.Config.Body(config.Prices)
 	if err != nil {
-		return fail(codeInternal, "%v", err)
+		return doctor.Report{}, fail(codeInternal, "%v", err)
 	}
 
 	rep := doctor.Run(context.Background(), env, kinds,
@@ -420,6 +408,32 @@ func cmdDoctor(args []string) error {
 		if runs, rerr := hooks.NewKVLog(db.TxKV{DB: d}).Runs(); rerr == nil {
 			rep.Checks = append(rep.Checks, doctor.HooksCheck(doctor.HooksCheckInput{Runs: runs, Now: rt.Now()}))
 		}
+	}
+
+	return rep, nil
+}
+
+func cmdDoctor(args []string) error {
+	fs := flag.NewFlagSet("relevo doctor", flag.ContinueOnError)
+	v := doctorFlagSet(fs)
+	asJSON := v.asJSON
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return fail(codeInternal, "%v", err)
+	}
+
+	L, err := rt.Config.Load()
+	if err != nil {
+		return fail(codeConfigInvalid, "%v", err)
+	}
+
+	rep, err := doctorReport(rt, L)
+	if err != nil {
+		return err
 	}
 
 	if *asJSON {

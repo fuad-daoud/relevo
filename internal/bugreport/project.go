@@ -23,6 +23,15 @@ const (
 	noteRunes    = 200
 )
 
+// The --logs caps: one round's report and diff body, and the transcript tail's
+// line count. They live here because they are the bundle's budget for a body,
+// not the verb's.
+const (
+	LogReportBytes = 16 << 10
+	LogDiffBytes   = 64 << 10
+	LogTailLines   = 200
+)
+
 // EnvFacts is what the environment section projects: the build's own facts,
 // never a dump of the process environment.
 type EnvFacts struct {
@@ -291,6 +300,16 @@ func Truncate(text string, limit int) string {
 		cut--
 	}
 	return text[:cut] + "\n… truncated at " + strconv.Itoa(limit) + " bytes"
+}
+
+// TailLines keeps the newest n lines of text: the transcript tail --logs
+// carries is the last lines of the stream, never the whole of it.
+func TailLines(text string, n int) string {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if n > 0 && len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // truncateRunes caps s at n runes and marks the cut.

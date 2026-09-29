@@ -113,6 +113,29 @@ func TestTruncateMarksTheCut(t *testing.T) {
 	}
 }
 
+// TestTailLinesKeepsTheNewest pins the line cap --logs applies to a transcript
+// tail: the last n lines survive, whole, and a text already within the cap is
+// unchanged.
+func TestTailLinesKeepsTheNewest(t *testing.T) {
+	if got := TailLines("one\ntwo", LogTailLines); got != "one\ntwo" {
+		t.Errorf("TailLines below the cap = %q, want the text unchanged", got)
+	}
+
+	lines := make([]string, 0, LogTailLines+7)
+	for i := 1; i <= LogTailLines+7; i++ {
+		lines = append(lines, "line")
+	}
+	lines[LogTailLines+6] = "newest"
+	got := TailLines(strings.Join(lines, "\n"), LogTailLines)
+	kept := strings.Split(got, "\n")
+	if len(kept) != LogTailLines {
+		t.Fatalf("TailLines kept %d lines, want %d", len(kept), LogTailLines)
+	}
+	if kept[len(kept)-1] != "newest" {
+		t.Errorf("TailLines dropped the newest line: %q", got)
+	}
+}
+
 // asJSON renders one value the way a reader of --json sees it.
 func asJSON(t *testing.T, v any) string {
 	t.Helper()

@@ -20,6 +20,15 @@ var registry = []verbEntry{
 		Errors: []string{"binding_not_found", "conflict", "gate_active", "internal", "policy_refused", "refused", "tier_cap", "usage"},
 	},
 	{
+		Name:    "bugreport",
+		Summary: "assemble a local, redacted bug-report bundle and print the gh line",
+		Args:    "[--name N] [--round N] [--logs] [--raw] [--out PATH] [--stdout|--json|--gh]",
+		Flags:   []string{"--gh", "--json", "--logs", "--name", "--out", "--raw", "--round", "--stdout"},
+		Output:  "json:bugreport.Doc",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"internal", "not_available", "usage"},
+	},
+	{
 		Name:    "config",
 		Summary: "show the actors, the current pick and the candidates",
 		Args:    "[--probe [token...]] [--json]",
