@@ -154,7 +154,7 @@ func (t *Tx) Transcript(ownerKind, ownerID string, fromSeq, limit int) ([]Transc
 }
 
 func listTranscript(ctx context.Context, q queryer, ownerKind, ownerID string, fromSeq, limit int) ([]TranscriptRecord, error) {
-	query := `SELECT id, owner_kind, owner_id, seq, ts, record_json, rendered
+	query := `SELECT id, owner_kind, owner_id, seq, ts, record_json, record_json_codec, rendered, rendered_codec
 		FROM transcript WHERE owner_kind = ? AND owner_id = ? AND seq >= ? ORDER BY seq ASC`
 	args := []any{ownerKind, ownerID, fromSeq}
 	if limit > 0 {
@@ -176,16 +176,29 @@ func listTranscript(ctx context.Context, q queryer, ownerKind, ownerID string, f
 func scanTranscript(s rowScanner) (TranscriptRecord, error) {
 	var r TranscriptRecord
 	var ts sql.Null[string]
-	if err := s.Scan(&r.ID, &r.OwnerKind, &r.OwnerID, &r.Seq, &ts, &r.RecordJSON, &r.Rendered); err != nil {
+	var recordJSON, rendered []byte
+	var recordCodec, renderedCodec int
+	if err := s.Scan(&r.ID, &r.OwnerKind, &r.OwnerID, &r.Seq, &ts,
+		&recordJSON, &recordCodec, &rendered, &renderedCodec); err != nil {
 		return TranscriptRecord{}, err
 	}
 	if ts.Valid {
-		t, err := parseTime(ts.V)
-		if err != nil {
-			return TranscriptRecord{}, err
+		t, terr := parseTime(ts.V)
+		if terr != nil {
+			return TranscriptRecord{}, terr
 		}
 		r.TS = &t
 	}
+	jsonBytes, err := decodeColumn(recordJSON, recordCodec)
+	if err != nil {
+		return TranscriptRecord{}, err
+	}
+	renderedBytes, err := decodeColumn(rendered, renderedCodec)
+	if err != nil {
+		return TranscriptRecord{}, err
+	}
+	r.RecordJSON = string(jsonBytes)
+	r.Rendered = string(renderedBytes)
 	return r, nil
 }
 

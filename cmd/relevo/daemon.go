@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/proc"
@@ -202,6 +203,33 @@ func cmdDaemon(args []string) error {
 				"transcript_rounds_by_stream_lines", stats.TranscriptRoundsByStreamLines,
 				"backup_path", stats.BackupPath,
 				"vacuum_err", stats.VacuumErr)
+		}
+	}
+
+	// The pass converts the bulk history columns to per-row zstd once, right
+	// after the dedupe removed the rows it could, so the conversion and its
+	// backup run on the smaller database. It backs the database up first and
+	// records itself in the kv table, so every later start is a no-op, and a
+	// failure never stops the daemon.
+	if rt.DB != nil {
+		cstats, cran, cerr := db.CompressHistoryOnce(rt.DB, filepath.Dir(rt.Store.DBPath()), time.Now())
+		if cerr != nil {
+			slog.Warn("relevo daemon: history compression skipped", "err", cerr)
+		} else if cran {
+			for _, ts := range cstats.Tables {
+				slog.Info("relevo daemon: history compression",
+					"table", ts.Table,
+					"rows_compressed", ts.RowsCompressed,
+					"columns_compressed", ts.ColumnsCompressed,
+					"columns_kept_plain", ts.ColumnsKeptPlain,
+					"bytes_in", ts.BytesIn,
+					"bytes_out", ts.BytesOut)
+			}
+			slog.Info("relevo daemon: history compression done",
+				"done_at", cstats.DoneAt,
+				"backup_path", cstats.BackupPath,
+				"checkpoint_err", cstats.CheckpointErr,
+				"vacuum_err", cstats.VacuumErr)
 		}
 	}
 

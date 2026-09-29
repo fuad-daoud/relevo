@@ -30,10 +30,11 @@ func (t *Tx) RoundFilePut(recordID, name string, round int, body []byte, mtime, 
 	if sealedAt.IsZero() {
 		sealedAt = time.Now()
 	}
+	stored, codec := encodeColumn(body)
 	if _, err := t.exec(`INSERT OR REPLACE INTO round_file
-			(record_id, name, round, body, bytes, sha256, mtime, sealed_at)
-		VALUES (?,?,?,?,?,?,?,?)`,
-		recordID, name, round, body, len(body), hex.EncodeToString(sum[:]),
+			(record_id, name, round, body, body_codec, bytes, sha256, mtime, sealed_at)
+		VALUES (?,?,?,?,?,?,?,?,?)`,
+		recordID, name, round, stored, codec, len(body), hex.EncodeToString(sum[:]),
 		formatMTime(mtime), formatTime(sealedAt)); err != nil {
 		return fmt.Errorf("db: round file put %s/%s: %w", recordID, name, mapBusy(err))
 	}
@@ -44,9 +45,10 @@ func (t *Tx) RoundFilePut(recordID, name string, round int, body []byte, mtime, 
 // the record has no such row, so "never sealed" is told from a failure.
 func (d *DB) RoundFileGet(recordID, name string) (body []byte, mtime time.Time, ok bool, err error) {
 	var mtimeText string
+	var codec int
 	err = d.sqlDB.QueryRowContext(context.Background(),
-		`SELECT body, mtime FROM round_file WHERE record_id = ? AND name = ?`,
-		recordID, name).Scan(&body, &mtimeText)
+		`SELECT body, body_codec, mtime FROM round_file WHERE record_id = ? AND name = ?`,
+		recordID, name).Scan(&body, &codec, &mtimeText)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, time.Time{}, false, nil
 	}
@@ -56,6 +58,10 @@ func (d *DB) RoundFileGet(recordID, name string) (body []byte, mtime time.Time, 
 	mtime, err = parseMTime(mtimeText)
 	if err != nil {
 		return nil, time.Time{}, false, fmt.Errorf("db: round file get %s/%s: parse mtime: %w", recordID, name, err)
+	}
+	body, err = decodeColumn(body, codec)
+	if err != nil {
+		return nil, time.Time{}, false, fmt.Errorf("db: round file get %s/%s: %w", recordID, name, err)
 	}
 	// A zero-length blob scans back as a nil slice, not an absent body.
 	if body == nil {
