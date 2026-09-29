@@ -130,7 +130,7 @@ type SendOptions struct {
 type preflight struct {
 	b    store.Binding      // the binding as loaded (read-only; Send re-loads under the lock)
 	body []byte             // the plan file's bytes
-	tier harness.Tier       // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
+	tier harness.Tier       // effective tier for this round (opts.Tier parsed, or the stored tier); the cap is checked as it is derived for a local launch, while a served round's tier is capped by the server
 	argv []string           // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
 	gate *availability.Gate // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
 	pick *Resolution        // --candidate's resolution to apply under the lock; nil when the builder does not change
@@ -169,6 +169,10 @@ func pendingRoundFile(rt Runtime, name string, round int) (string, bool) {
 // it adds git objects. The remote path stops after the checks that need no
 // server contact (no WhoAmI, no bundle); Send's remote branch calls sendRemote
 // as it always did.
+//
+// Every --candidate guard here and under Send's lock is candidateSendRefused:
+// the round-open refusal, except for a served binding halted in NEEDS YOU,
+// which the candidate re-points.
 func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (preflight, error) {
 	// Read the caller's file first; it is the one input that does not depend
 	// on binding state.
@@ -219,7 +223,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		if err != nil {
 			return preflight{}, err
 		}
-		if roundOpenIn(entries, b.Round) {
+		if candidateSendRefused(b, entries) {
 			return preflight{}, fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --candidate", name, b.Round, name)
 		}
 		if b.Builder.Remote() {
@@ -271,7 +275,18 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	}
 
 	if tier == "" {
-		tier = effectiveTier(b)
+		if b.Builder.Remote() {
+			// A served round is launched by the server, which caps its tier
+			// against the server's own policy; the client's max_tier must not
+			// refuse the send.
+			tier = effectiveTier(b)
+		} else {
+			t, err := launchTier(b, rt.Policy, opts.AllowYolo)
+			if err != nil {
+				return preflight{}, err
+			}
+			tier = t
+		}
 	}
 
 	// A planner actor answers with a plan, so its prompt is a seed: cap it
@@ -485,7 +500,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				if err != nil {
 					return err
 				}
-				if roundOpenIn(entries, b.Round) {
+				if candidateSendRefused(b, entries) {
 					return fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --candidate", name, b.Round, name)
 				}
 			}
@@ -541,7 +556,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 					return err
 				}
 			}
-			started, err := startRound(ctx, rt, tx, b, text)
+			started, err := startRound(ctx, rt, tx, b, text, opts.AllowYolo)
 			if err != nil {
 				if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
 					_ = os.Remove(planPath)

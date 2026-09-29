@@ -133,7 +133,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		}
 	}
 
-	started, err := startRound(ctx, rt, tx, b, prompt)
+	started, err := startRound(ctx, rt, tx, b, prompt, false)
 	if err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
 	}

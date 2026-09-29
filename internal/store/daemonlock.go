@@ -58,7 +58,7 @@ func (s *Store) DaemonRunning() (bool, error) {
 }
 
 func (s *Store) openDaemonLockFile() (*os.File, error) {
-	if err := os.MkdirAll(s.root, stateRootMode); err != nil {
+	if err := os.MkdirAll(s.root, StateRootMode); err != nil {
 		return nil, fmt.Errorf("create state root: %w", err)
 	}
 
