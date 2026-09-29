@@ -12,16 +12,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
+// configExportFlagSet declares `config export`'s flags: none today. It exists
+// so the registry's parity test finds exactly one installer per verb.
+func configExportFlagSet(*flag.FlagSet) {}
+
 // configExport writes the whole-config document (§3) to stdout, indented, with
 // one key per section present in config.Sections order.
 func configExport(args []string) error {
 	fs := flag.NewFlagSet("relevo config export", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	if len(fs.Args()) != 0 {
 		fmt.Fprintln(os.Stderr, "usage: relevo config export")
@@ -42,14 +43,14 @@ func configExport(args []string) error {
 
 // configImport reads a document from a file (or stdin for "-"), stores it via
 // PutDoc, and prints any warnings to stderr.
+// configImportFlagSet declares `config import`'s flags: none today.
+func configImportFlagSet(*flag.FlagSet) {}
+
 func configImport(args []string) error {
 	fs := flag.NewFlagSet("relevo config import", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {

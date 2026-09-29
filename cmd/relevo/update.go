@@ -17,6 +17,22 @@ import (
 	"github.com/fuad-daoud/relevo/internal/upgrade"
 )
 
+// updateFlagValues holds the pointers update parses into.
+type updateFlagValues struct {
+	check        *bool
+	to           *string
+	forceRelease *bool
+}
+
+// updateFlagSet defines those flags on fs and returns what they parse into.
+func updateFlagSet(fs *flag.FlagSet) *updateFlagValues {
+	v := &updateFlagValues{}
+	v.check = fs.Bool("check", false, "print what update would do; change nothing")
+	v.to = fs.String("to", "", "install this release tag instead of the latest; allows a downgrade")
+	v.forceRelease = fs.Bool("release", false, "replace a local build with the release binary")
+	return v
+}
+
 // cmdUpdate is `relevo update` (#293): it replaces a release binary with a
 // checksum-verified release binary of the target tag, or prints the command a
 // `go install` needs, or refuses a local build. It never restarts anything:
@@ -29,14 +45,10 @@ func cmdUpdate(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), usage)
 	}
-	check := fs.Bool("check", false, "print what update would do; change nothing")
-	to := fs.String("to", "", "install this release tag instead of the latest; allows a downgrade")
-	forceRelease := fs.Bool("release", false, "replace a local build with the release binary")
+	v := updateFlagSet(fs)
+	check, to, forceRelease := v.check, v.to, v.forceRelease
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintln(os.Stderr, usage)

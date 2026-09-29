@@ -884,37 +884,37 @@ func TestListShowsChat(t *testing.T) {
 	}
 }
 
-// TestMasterMindPruneWasRemoved pins §4.4: pruning is automatic now, so the verb
-// exits 2 naming the daemon's hourly prune.
+// TestMasterMindPruneWasRemoved pins the removal: pruning is automatic now
+// (the daemon does it hourly), so the verb returns the usage-coded refusal
+// naming that and exits 2.
 func TestMasterMindPruneWasRemoved(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	_, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"mastermind", "prune"})
-	})
+	runErr := run([]string{"mastermind", "prune"})
+	ce := requireCLIError(t, runErr, codeUsage, "relevo help")
+	if !strings.Contains(ce.message, "the daemon prunes dead MasterMinds hourly") {
+		t.Errorf("message = %q, want it to name the daemon's hourly prune", ce.message)
+	}
 	var ec exitCodeErr
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("run = %v, want exit code 2", runErr)
 	}
-	if !strings.Contains(string(stderr), "the daemon prunes dead MasterMinds hourly") {
-		t.Errorf("stderr = %q, want it to name the daemon's hourly prune", stderr)
-	}
 }
 
-// TestPlannerVerbIsRemoved pins D5: `relevo planner ...` names its replacement
-// and exits 2 through removedVerbs, byte for byte like every other removed verb.
+// TestPlannerVerbIsRemoved pins D5: `relevo planner ...` returns the
+// usage-coded refusal that names its replacement as the next command, and
+// exits 2 through the code bridge, like every other removed verb.
 func TestPlannerVerbIsRemoved(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	_, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"planner", "list"})
-	})
+	runErr := run([]string{"planner", "list"})
+	ce := requireCLIError(t, runErr, codeUsage, "relevo mastermind")
+	if !strings.Contains(ce.message, `"planner" was removed; use relevo mastermind`) {
+		t.Errorf("message = %q, want the removed-verb message", ce.message)
+	}
 	var ec exitCodeErr
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("relevo planner list = %v, want exit code 2", runErr)
-	}
-	if !strings.Contains(string(stderr), `"planner" was removed; use relevo mastermind`) {
-		t.Errorf("stderr = %q, want the removed-verb message", stderr)
 	}
 }
 

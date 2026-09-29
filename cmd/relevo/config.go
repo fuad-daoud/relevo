@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -60,8 +59,7 @@ func cmdConfig(args []string) error {
 	case "init":
 		return cmdInit(args[1:])
 	case "roles-init":
-		fmt.Fprintln(os.Stderr, "relevo config roles-init is gone: roles migrate to actors on their own (relevo config log)")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo config roles-init is gone: roles migrate to actors on their own (relevo config log)")
 	case "agents":
 		return cmdAgentInstall(args[1:])
 	case "server":
@@ -72,10 +70,20 @@ func cmdConfig(args []string) error {
 		fmt.Fprintln(os.Stderr, configUsage)
 		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "relevo config: unknown command %q\n", args[0])
-		fmt.Fprintln(os.Stderr, configUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo config: unknown command %q", args[0])
 	}
+}
+
+// configShowFlagValues holds the pointer the bare `config` form parses into.
+type configShowFlagValues struct {
+	probe *bool
+}
+
+// configShowFlagSet defines that flag on fs and returns what it parses into.
+func configShowFlagSet(fs *flag.FlagSet) *configShowFlagValues {
+	v := &configShowFlagValues{}
+	v.probe = fs.Bool("probe", false, "run each candidate once with a one-line prompt from this machine and record its time to first output")
+	return v
 }
 
 // configShow is the bare `relevo config`: the actors block, the current pick
@@ -84,12 +92,10 @@ func cmdConfig(args []string) error {
 func configShow(args []string) error {
 	fs := flag.NewFlagSet("relevo config", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	probe := fs.Bool("probe", false, "run each candidate once with a one-line prompt from this machine and record its time to first output")
+	v := configShowFlagSet(fs)
+	probe := v.probe
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	if *probe {
 		return cmdCandidates(args)

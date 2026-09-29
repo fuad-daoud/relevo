@@ -40,10 +40,7 @@ func cmdInit(args []string) error {
 	v := initFlagSet(fs)
 	force, noAgents := v.force, v.noAgents
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	rt, err := newRuntime()

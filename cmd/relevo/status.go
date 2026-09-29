@@ -61,12 +61,28 @@ func filterReportMasterMind(rep view.Report, mastermindID string) view.Report {
 	return rep
 }
 
+// statusFlagValues holds the pointers status parses into.
+type statusFlagValues struct {
+	all    *bool
+	asJSON *bool
+	name   *string
+	line   *bool
+}
+
+// statusFlagSet defines those flags on fs and returns what they parse into.
+func statusFlagSet(fs *flag.FlagSet) *statusFlagValues {
+	v := &statusFlagValues{}
+	v.all = fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo unbind --done clears them)")
+	v.asJSON = fs.Bool("json", false, "machine-readable output")
+	v.name = fs.String("name", "", "show only this binding (default: all)")
+	v.line = fs.Bool("line", false, "this mastermind's builders, one row each, for Claude Code's statusLine setting; with --json, output as JSON")
+	return v
+}
+
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo unbind --done clears them)")
-	asJSON := fs.Bool("json", false, "machine-readable output")
-	name := fs.String("name", "", "show only this binding (default: all)")
-	line := fs.Bool("line", false, "this mastermind's builders, one row each, for Claude Code's statusLine setting; with --json, output as JSON")
+	v := statusFlagSet(fs)
+	all, asJSON, name, line := v.all, v.asJSON, v.name, v.line
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}

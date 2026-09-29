@@ -51,17 +51,29 @@ type serveFlags struct {
 	maxBuilders    int
 }
 
-func serveFlagSet() (*flag.FlagSet, *serveFlags) {
-	fs := flag.NewFlagSet("relevo serve", flag.ContinueOnError)
-	var sf serveFlags
+// installServeFlags defines the server's own flags on fs, in the usage text's
+// order, and returns what they parse into.
+func installServeFlags(fs *flag.FlagSet) *serveFlags {
+	sf := &serveFlags{}
 	fs.StringVar(&sf.listen, "listen", ":7777", "listen address")
 	fs.StringVar(&sf.state, "state", "", "state directory (defaults to $XDG_STATE_HOME/relevo)")
 	fs.DurationVar(&sf.interval, "interval", 2*time.Second, "poll interval")
 	fs.BoolVar(&sf.insecureHTTP, "insecure-http", false, "serve plain HTTP without TLS")
 	fs.Int64Var(&sf.maxBundleBytes, "max-bundle-bytes", 512<<20, "maximum bundle size in bytes")
 	fs.IntVar(&sf.maxBuilders, "max-builders", 0, "headless builders running at once across all owners (0 = policy.json serve.max_builders, else max(1, NumCPU-1))")
-	return fs, &sf
+	return sf
 }
+
+// serveFlagSet builds the FlagSet `relevo serve` parses and the values it
+// parses into.
+func serveFlagSet() (*flag.FlagSet, *serveFlags) {
+	fs := flag.NewFlagSet("relevo serve", flag.ContinueOnError)
+	return fs, installServeFlags(fs)
+}
+
+// serveRunFlagSet is the registry's installer for `serve`. The registry only
+// walks a flag set, so it discards the parsed values.
+func serveRunFlagSet(fs *flag.FlagSet) { installServeFlags(fs) }
 
 func serveRoot(fs *flag.FlagSet) (string, error) {
 	var stateDir string
@@ -188,17 +200,13 @@ func cmdServe(args []string) error {
 	case "status":
 		return cmdServeStatus(args[1:])
 	case "log":
-		fmt.Fprintln(os.Stderr, "relevo serve log was removed; use relevo show <name> --owner <label> --log")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo serve log was removed; use relevo show <name> --owner <label> --log")
 	case "show":
-		fmt.Fprintln(os.Stderr, "relevo serve show was removed; use relevo show <name> --owner <label>")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo serve show was removed; use relevo show <name> --owner <label>")
 	case "tab":
-		fmt.Fprintln(os.Stderr, "relevo serve tab was removed; use relevo history --tab --owner <label|all>")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo serve tab was removed; use relevo history --tab --owner <label|all>")
 	case "gates", "available", "unavailable":
-		fmt.Fprintf(os.Stderr, "relevo serve %s was removed; use relevo gate --serve …\n", args[0])
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo serve %s was removed; use relevo gate --serve …", args[0])
 	case "ui":
 		return cmdServeUI(args[1:])
 	case "gc":
@@ -212,8 +220,7 @@ func cmdServe(args []string) error {
 		if strings.HasPrefix(args[0], "-") {
 			return cmdServeRun(args)
 		}
-		fmt.Fprintf(os.Stderr, "relevo serve: unknown command %q\n", args[0])
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo serve: unknown command %q", args[0])
 	}
 }
 
@@ -404,10 +411,7 @@ func cmdServeRun(args []string) error {
 	fs, sf := serveFlagSet()
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	root, err := serveRoot(fs)

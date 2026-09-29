@@ -86,6 +86,57 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 	}
 }
 
+// showFlagValues holds the pointers show parses into.
+type showFlagValues struct {
+	round       *int
+	prompt      *bool
+	report      *bool
+	diff        *bool
+	drift       *bool
+	logSection  *bool
+	transcript  *bool
+	gateSection *bool
+	output      *bool
+	artifacts   *bool
+	artifact    *string
+	findings    *string
+	stat        *bool
+	anchors     *bool
+	follow      *bool
+	after       *int
+	asJSON      *bool
+	peek        *bool
+	owner       *string
+	state       *string
+}
+
+// showFlagSet defines those flags on fs, in the usage text's order, and
+// returns what they parse into.
+func showFlagSet(fs *flag.FlagSet) *showFlagValues {
+	v := &showFlagValues{}
+	v.round = fs.Int("round", 0, "the round to read; 0 = the newest completed round")
+	v.prompt = fs.Bool("prompt", false, "show the prompt (default)")
+	v.report = fs.Bool("report", false, "show the report")
+	v.diff = fs.Bool("diff", false, "show the round's captured diff")
+	v.drift = fs.Bool("drift", false, "show the round's drift patch")
+	v.logSection = fs.Bool("log", false, "show the round's log entries")
+	v.transcript = fs.Bool("transcript", false, "show the round's builder transcript")
+	v.gateSection = fs.Bool("gate", false, "show the round's gate log")
+	v.output = fs.Bool("output", false, "show the round's output file (a reader's <label>.md)")
+	v.artifacts = fs.Bool("artifacts", false, "show the round's artifact files")
+	v.artifact = fs.String("artifact", "", "show one artifact's bytes, raw: --artifact <rel>")
+	v.findings = fs.String("findings", "", "show a consult's findings: --findings <id>")
+	v.stat = fs.Bool("stat", false, "with --diff/--drift: print the summary line instead of the patch body")
+	v.anchors = fs.Bool("anchors", false, "with --diff/--drift: prefix each hunk and line with its path:line")
+	v.follow = fs.Bool("follow", false, "with --log: keep printing new entries until the binding is DONE or removed")
+	v.after = fs.Int("after", 0, "with --log: show only entries with a Seq greater than this (0 = all)")
+	v.asJSON = fs.Bool("json", false, "machine-readable output: the ShowResult, Events included for --log")
+	v.peek = fs.Bool("peek", false, "read the section without claiming the binding's pending payload")
+	v.owner = fs.String("owner", "", "on the server host: read this owner's binding, a client label or id")
+	v.state = fs.String("state", "", "with --owner: the serve state directory")
+	return v
+}
+
 // cmdShow prints one round's plan, report, diff, drift, log or transcript,
 // read from a live binding's files or, for anything not live, from the
 // database (docs/specs/2026-09-20-persistence-design.md §5.7). Its --diff,
@@ -93,26 +144,12 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 // (§4.2).
 func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
-	round := fs.Int("round", 0, "the round to read; 0 = the newest completed round")
-	prompt := fs.Bool("prompt", false, "show the prompt (default)")
-	report := fs.Bool("report", false, "show the report")
-	diff := fs.Bool("diff", false, "show the round's captured diff")
-	drift := fs.Bool("drift", false, "show the round's drift patch")
-	logSection := fs.Bool("log", false, "show the round's log entries")
-	transcript := fs.Bool("transcript", false, "show the round's builder transcript")
-	gateSection := fs.Bool("gate", false, "show the round's gate log")
-	output := fs.Bool("output", false, "show the round's output file (a reader's <label>.md)")
-	artifacts := fs.Bool("artifacts", false, "show the round's artifact files")
-	artifact := fs.String("artifact", "", "show one artifact's bytes, raw: --artifact <rel>")
-	findings := fs.String("findings", "", "show a consult's findings: --findings <id>")
-	stat := fs.Bool("stat", false, "with --diff/--drift: print the summary line instead of the patch body")
-	anchors := fs.Bool("anchors", false, "with --diff/--drift: prefix each hunk and line with its path:line")
-	follow := fs.Bool("follow", false, "with --log: keep printing new entries until the binding is DONE or removed")
-	after := fs.Int("after", 0, "with --log: show only entries with a Seq greater than this (0 = all)")
-	asJSON := fs.Bool("json", false, "machine-readable output: the ShowResult, Events included for --log")
-	peek := fs.Bool("peek", false, "read the section without claiming the binding's pending payload")
-	owner := fs.String("owner", "", "on the server host: read this owner's binding, a client label or id")
-	state := fs.String("state", "", "with --owner: the serve state directory")
+	v := showFlagSet(fs)
+	round, prompt, report, diff := v.round, v.prompt, v.report, v.diff
+	drift, logSection, transcript, gateSection := v.drift, v.logSection, v.transcript, v.gateSection
+	output, artifacts, artifact, findings := v.output, v.artifacts, v.artifact, v.findings
+	stat, anchors, follow, after := v.stat, v.anchors, v.follow, v.after
+	asJSON, peek, owner, state := v.asJSON, v.peek, v.owner, v.state
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), showUsage)
 		fs.PrintDefaults()

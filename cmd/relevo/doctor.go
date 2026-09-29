@@ -235,6 +235,10 @@ func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy
 	return out
 }
 
+// doctorFlagSet declares doctor's flags: none today. It exists so the
+// registry's parity test finds exactly one installer per verb.
+func doctorFlagSet(*flag.FlagSet) {}
+
 func cmdDoctor(args []string) error {
 	fs := flag.NewFlagSet("relevo doctor", flag.ContinueOnError)
 	if err := parseFlags(fs, args); err != nil {

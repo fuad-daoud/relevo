@@ -19,17 +19,26 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui"
 )
 
+// serveInitFlagValues holds the pointer `serve init` parses into. state is
+// read back off the FlagSet by serveRoot, so it has no pointer of its own.
+type serveInitFlagValues struct {
+	hosts *hostSlice
+}
+
+// serveInitFlagSet defines those flags on fs and returns what they parse into.
+func serveInitFlagSet(fs *flag.FlagSet) *serveInitFlagValues {
+	v := &serveInitFlagValues{hosts: &hostSlice{}}
+	fs.Var(v.hosts, "host", "hostname or IP to include in certificate SANs")
+	_ = fs.String("state", "", "state directory")
+	return v
+}
+
 func cmdServeInit(args []string) error {
 	fs := flag.NewFlagSet("relevo serve init", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	var hosts hostSlice
-	fs.Var(&hosts, "host", "hostname or IP to include in certificate SANs")
-	_ = fs.String("state", "", "state directory")
+	v := serveInitFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	root, err := serveRoot(fs)
@@ -48,7 +57,7 @@ func cmdServeInit(args []string) error {
 	defer func() { _ = d.Close() }()
 	secrets := serve.SecretStore{DB: d}
 
-	fp, err := serve.InitTLS(secrets, hosts, time.Now())
+	fp, err := serve.InitTLS(secrets, *v.hosts, time.Now())
 	if errors.Is(err, serve.ErrTLSExists) {
 		existingFP, fpErr := serve.Fingerprint(secrets)
 		if fpErr != nil {
@@ -66,17 +75,30 @@ func cmdServeInit(args []string) error {
 	return nil
 }
 
+// serveEnrollFlagValues holds the pointers `serve enroll` parses into. state
+// is read back off the FlagSet, so it has no pointer of its own.
+type serveEnrollFlagValues struct {
+	label *string
+	key   *string
+}
+
+// serveEnrollFlagSet defines those flags on fs and returns what they parse
+// into.
+func serveEnrollFlagSet(fs *flag.FlagSet) *serveEnrollFlagValues {
+	v := &serveEnrollFlagValues{}
+	v.label = fs.String("label", "", "client label")
+	v.key = fs.String("key", "", "client ed25519 public key line")
+	_ = fs.String("state", "", "state directory")
+	return v
+}
+
 func cmdServeEnroll(args []string) error {
 	fs := flag.NewFlagSet("relevo serve enroll", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	label := fs.String("label", "", "client label")
-	key := fs.String("key", "", "client ed25519 public key line")
-	_ = fs.String("state", "", "state directory")
+	v := serveEnrollFlagSet(fs)
+	label, key := v.label, v.key
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	if *label == "" || *key == "" {
@@ -109,15 +131,18 @@ func cmdServeEnroll(args []string) error {
 	return nil
 }
 
+// serveClientsFlagSet declares `serve clients`'s flags: --state only, read
+// back off the FlagSet.
+func serveClientsFlagSet(fs *flag.FlagSet) {
+	_ = fs.String("state", "", "state directory")
+}
+
 func cmdServeClients(args []string) error {
 	fs := flag.NewFlagSet("relevo serve clients", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
+	serveClientsFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	_, d, err := adminRoot(fs)
@@ -135,15 +160,17 @@ func cmdServeClients(args []string) error {
 	return nil
 }
 
+// serveRevokeFlagSet declares `serve revoke`'s flags: --state only.
+func serveRevokeFlagSet(fs *flag.FlagSet) {
+	_ = fs.String("state", "", "state directory")
+}
+
 func cmdServeRevoke(args []string) error {
 	fs := flag.NewFlagSet("relevo serve revoke", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
+	serveRevokeFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	if fs.NArg() < 1 {
@@ -173,15 +200,17 @@ func cmdServeRevoke(args []string) error {
 	return nil
 }
 
+// serveFingerprintFlagSet declares `serve fingerprint`'s flags: --state only.
+func serveFingerprintFlagSet(fs *flag.FlagSet) {
+	_ = fs.String("state", "", "state directory")
+}
+
 func cmdServeFingerprint(args []string) error {
 	fs := flag.NewFlagSet("relevo serve fingerprint", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
+	serveFingerprintFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	_, d, err := adminRoot(fs)
@@ -200,16 +229,19 @@ func cmdServeFingerprint(args []string) error {
 	return nil
 }
 
+// serveStatusFlagSet declares `serve status`'s flags: --state and --json,
+// both read back off the FlagSet (the verb always prints JSON).
+func serveStatusFlagSet(fs *flag.FlagSet) {
+	_ = fs.String("state", "", "state directory")
+	_ = fs.Bool("json", false, "print the census as JSON")
+}
+
 func cmdServeStatus(args []string) error {
 	fs := flag.NewFlagSet("relevo serve status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
-	_ = fs.Bool("json", false, "print the census as JSON")
+	serveStatusFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	root, d, err := adminRoot(fs)
@@ -237,16 +269,27 @@ func cmdServeStatus(args []string) error {
 	return enc.Encode(serve.StatusDocument(owners, builders))
 }
 
+// serveUIFlagValues holds the pointer `serve ui` parses into. state is read
+// back off the FlagSet, so it has no pointer of its own.
+type serveUIFlagValues struct {
+	interval *time.Duration
+}
+
+// serveUIFlagSet defines those flags on fs and returns what they parse into.
+func serveUIFlagSet(fs *flag.FlagSet) *serveUIFlagValues {
+	v := &serveUIFlagValues{}
+	_ = fs.String("state", "", "state directory")
+	v.interval = fs.Duration("interval", 0, "poll interval (0 uses the ui default)")
+	return v
+}
+
 func cmdServeUI(args []string) error {
 	fs := flag.NewFlagSet("relevo serve ui", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
-	interval := fs.Duration("interval", 0, "poll interval (0 uses the ui default)")
+	v := serveUIFlagSet(fs)
+	interval := v.interval
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	// The root resolves before any tty check, so an uninitialised --state
@@ -276,17 +319,30 @@ func cmdServeUI(args []string) error {
 	})
 }
 
+// serveUnbindFlagValues holds the pointers `serve unbind` parses into. state
+// is read back off the FlagSet, so it has no pointer of its own.
+type serveUnbindFlagValues struct {
+	owner *string
+	force *bool
+}
+
+// serveUnbindFlagSet defines those flags on fs and returns what they parse
+// into.
+func serveUnbindFlagSet(fs *flag.FlagSet) *serveUnbindFlagValues {
+	v := &serveUnbindFlagValues{}
+	v.owner = fs.String("owner", "", "client label or id")
+	v.force = fs.Bool("force", false, "unbind even if the round is running")
+	_ = fs.String("state", "", "state directory")
+	return v
+}
+
 func cmdServeUnbind(args []string) error {
 	fs := flag.NewFlagSet("relevo serve unbind", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	owner := fs.String("owner", "", "client label or id")
-	force := fs.Bool("force", false, "unbind even if the round is running")
-	_ = fs.String("state", "", "state directory")
+	v := serveUnbindFlagSet(fs)
+	owner, force := v.owner, v.force
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	if *owner == "" || fs.NArg() < 1 {
@@ -319,17 +375,29 @@ func cmdServeUnbind(args []string) error {
 	return nil
 }
 
+// serveGCFlagValues holds the pointers `serve gc` parses into. state is read
+// back off the FlagSet, so it has no pointer of its own.
+type serveGCFlagValues struct {
+	abandoned *string
+	dryRun    *bool
+}
+
+// serveGCFlagSet defines those flags on fs and returns what they parse into.
+func serveGCFlagSet(fs *flag.FlagSet) *serveGCFlagValues {
+	v := &serveGCFlagValues{}
+	v.abandoned = fs.String("abandoned", "", "abandoned duration threshold")
+	v.dryRun = fs.Bool("dry-run", false, "dry run without unbinding")
+	_ = fs.String("state", "", "state directory")
+	return v
+}
+
 func cmdServeGC(args []string) error {
 	fs := flag.NewFlagSet("relevo serve gc", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	abandoned := fs.String("abandoned", "", "abandoned duration threshold")
-	dryRun := fs.Bool("dry-run", false, "dry run without unbinding")
-	_ = fs.String("state", "", "state directory")
+	v := serveGCFlagSet(fs)
+	abandoned, dryRun := v.abandoned, v.dryRun
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	if *abandoned == "" {

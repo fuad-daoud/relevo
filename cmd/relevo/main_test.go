@@ -211,22 +211,22 @@ func TestSendDryRunRequiresFile(t *testing.T) {
 	}
 }
 
-// TestAskIsGone pins the removed verb's stub: `relevo ask` writes one line on
-// stderr naming the replacement workflow and exits 2. It dispatches through run
-// -- parsing and printing only, so nothing is spawned and no runtime is built.
+// TestAskIsGone pins the removed verb's stub: `relevo ask` returns the
+// usage-coded refusal naming the replacement workflow, and exits 2 through the
+// code bridge. It dispatches through run -- parsing only, so nothing is
+// spawned and no runtime is built.
 func TestAskIsGone(t *testing.T) {
 	initRoot(t)
 
-	_, stderr, err := captureOutput(t, func() error {
-		return run([]string{"ask", "--actor", "reviewer", "--file", "q.md"})
-	})
+	err := run([]string{"ask", "--actor", "reviewer", "--file", "q.md"})
+	ce := requireCLIError(t, err, codeUsage, "relevo bind --actor reviewer")
+	want := "relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan"
+	if !strings.Contains(ce.message, want) {
+		t.Errorf("message = %q, want it to contain %q", ce.message, want)
+	}
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 2 {
 		t.Fatalf("relevo ask: run = %v, want exit code 2", err)
-	}
-	want := "relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan"
-	if !strings.Contains(string(stderr), want) {
-		t.Errorf("stderr = %q, want it to contain %q", stderr, want)
 	}
 }
 
@@ -1606,7 +1606,8 @@ func TestUnbindSweepTakesNoBinding(t *testing.T) {
 }
 
 // TestRemovedVerbsNameTheirReplacement pins §4.6 and §4.1/§4.3: each removed
-// name exits 2 with one line naming the form that replaces it.
+// name returns the usage-coded refusal whose next command is the form that
+// replaces it, and exits 2 through the code bridge.
 func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 	cases := []struct{ verb, replacement string }{
 		{"add", "relevo bind --worktree"},
@@ -1615,19 +1616,19 @@ func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 		{"gc", "relevo unbind --done"},
 		{"pause", "relevo done, then relevo bind --resume"},
 		{"statusline", "relevo status --line"},
-		{"pull", "relevo wait"},
-		{"unavailable", "relevo gate"},
-		{"available", "relevo gate --clear"},
+		{"pull", "relevo wait (it prints the report)"},
+		{"unavailable", "relevo gate <token>"},
+		{"available", "relevo gate --clear <provider>"},
 	}
 	for _, c := range cases {
-		_, stderr, err := captureOutput(t, func() error { return run([]string{c.verb}) })
+		err := run([]string{c.verb})
+		ce := requireCLIError(t, err, codeUsage, c.replacement)
+		if !strings.Contains(ce.message, "was removed") {
+			t.Errorf("%s: message = %q, want it to say it was removed", c.verb, ce.message)
+		}
 		var ec exitCodeErr
 		if !errors.As(err, &ec) || ec.code != 2 {
 			t.Errorf("%s: run = %v, want exit code 2", c.verb, err)
-			continue
-		}
-		if !strings.Contains(string(stderr), c.replacement) {
-			t.Errorf("%s: stderr = %q, want it to name %q", c.verb, stderr, c.replacement)
 		}
 	}
 }

@@ -80,17 +80,29 @@ func printRevisionText(r db.RevisionRow) error {
 
 // cmdConfigLog lists revisions newest first, or shows one with --rev. The list
 // is a header line per revision; --rev adds the message and every change.
+// configLogFlagValues holds the pointers `config log` parses into.
+type configLogFlagValues struct {
+	n      *int
+	rev    *int64
+	asJSON *bool
+}
+
+// configLogFlagSet defines those flags on fs and returns what they parse into.
+func configLogFlagSet(fs *flag.FlagSet) *configLogFlagValues {
+	v := &configLogFlagValues{}
+	v.n = fs.Int("n", 20, "how many revisions to list")
+	v.rev = fs.Int64("rev", 0, "show one revision: its header and changes")
+	v.asJSON = fs.Bool("json", false, "print JSON")
+	return v
+}
+
 func cmdConfigLog(args []string) error {
 	fs := flag.NewFlagSet("relevo config log", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	n := fs.Int("n", 20, "how many revisions to list")
-	rev := fs.Int64("rev", 0, "show one revision: its header and changes")
-	asJSON := fs.Bool("json", false, "print JSON")
+	v := configLogFlagSet(fs)
+	n, rev, asJSON := v.n, v.rev, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	if len(fs.Args()) != 0 {
 		fmt.Fprintln(os.Stderr, "usage: relevo config log [-n N] [--rev N] [--json]")
@@ -148,16 +160,28 @@ func cmdConfigLog(args []string) error {
 
 // cmdConfigRollback prints what rolling back to rev would change, confirms
 // with the user unless --yes, then writes the rollback as one new revision.
+// configRollbackFlagValues holds the pointers `config rollback` parses into.
+type configRollbackFlagValues struct {
+	yes *bool
+	msg *string
+}
+
+// configRollbackFlagSet defines those flags on fs and returns what they parse
+// into.
+func configRollbackFlagSet(fs *flag.FlagSet) *configRollbackFlagValues {
+	v := &configRollbackFlagValues{}
+	v.yes = fs.Bool("yes", false, "skip the confirmation prompt")
+	v.msg = fs.String("m", "", "message for the rollback revision")
+	return v
+}
+
 func cmdConfigRollback(args []string) error {
 	fs := flag.NewFlagSet("relevo config rollback", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	yes := fs.Bool("yes", false, "skip the confirmation prompt")
-	msg := fs.String("m", "", "message for the rollback revision")
+	v := configRollbackFlagSet(fs)
+	yes, msg := v.yes, v.msg
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {

@@ -10,10 +10,24 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
+// doneFlagValues holds the pointers done parses into.
+type doneFlagValues struct {
+	name *string
+	pick *bool
+}
+
+// doneFlagSet defines those flags on fs and returns what they parse into.
+func doneFlagSet(fs *flag.FlagSet) *doneFlagValues {
+	v := &doneFlagValues{}
+	v.name = fs.String("name", "", "binding to mark done")
+	v.pick = fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
+	return v
+}
+
 func cmdDone(args []string) error {
 	fs := flag.NewFlagSet("done", flag.ContinueOnError)
-	name := fs.String("name", "", "binding to mark done")
-	pickFlag := fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
+	v := doneFlagSet(fs)
+	name, pickFlag := v.name, v.pick
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -53,9 +67,22 @@ func cmdDone(args []string) error {
 // is killed now and the round closes without a report unless one is already
 // on disk. It takes the binding from --name or a positional and never from
 // the current directory -- a stop ends a round, so it must not guess.
+// stopFlagValues holds the pointer stop parses into.
+type stopFlagValues struct {
+	name *string
+}
+
+// stopFlagSet defines that flag on fs and returns what it parses into.
+func stopFlagSet(fs *flag.FlagSet) *stopFlagValues {
+	v := &stopFlagValues{}
+	v.name = fs.String("name", "", "binding whose open round to stop")
+	return v
+}
+
 func cmdStop(args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
-	name := fs.String("name", "", "binding whose open round to stop")
+	v := stopFlagSet(fs)
+	name := v.name
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}

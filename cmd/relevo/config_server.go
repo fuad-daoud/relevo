@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +12,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 )
+
+// configServerFlagSet declares the bare `config server` dispatcher's flags:
+// none today. It exists so the registry's parity test finds exactly one
+// installer per verb.
+func configServerFlagSet(*flag.FlagSet) {}
 
 // configServer is the server half of `relevo config`: this machine's
 // remote-builder identity and its configured servers (§4.1).
@@ -40,10 +44,23 @@ func configServer(args []string) error {
 		fmt.Println(usage)
 		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "relevo config server: unknown command %q\n", args[0])
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo config server: unknown command %q", args[0])
 	}
+}
+
+// configServerKeyFlagValues holds the pointers `config server key` parses
+// into.
+type configServerKeyFlagValues struct {
+	enrollOnly *bool
+}
+
+// configServerKeyFlagSet defines that flag on fs and returns what it parses
+// into.
+func configServerKeyFlagSet(fs *flag.FlagSet) *configServerKeyFlagValues {
+	v := &configServerKeyFlagValues{}
+	// The provider parses this line; its format is remote.MarshalPublic's.
+	v.enrollOnly = fs.Bool("enroll-line", false, "print only the enrolment line (ed25519 <pubkey> <comment>)")
+	return v
 }
 
 // configServerKey prints the client id and the enrolment line, generating the
@@ -51,13 +68,10 @@ func configServer(args []string) error {
 func configServerKey(args []string) error {
 	fs := flag.NewFlagSet("relevo config server key", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	// The provider parses this line; its format is remote.MarshalPublic's.
-	enrollOnly := fs.Bool("enroll-line", false, "print only the enrolment line (ed25519 <pubkey> <comment>)")
+	v := configServerKeyFlagSet(fs)
+	enrollOnly := v.enrollOnly
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintln(os.Stderr, "usage: relevo config server key [--enroll-line]")
@@ -74,6 +88,10 @@ func configServerKey(args []string) error {
 	}
 	return printClientKey(pem, *enrollOnly)
 }
+
+// configSecretFlagSet declares the bare `config secret` dispatcher's flags:
+// none today.
+func configSecretFlagSet(*flag.FlagSet) {}
 
 // configSecret is the secrets half of `relevo config` (§4.1). A list prints
 // names only, never values.
@@ -98,9 +116,7 @@ func configSecret(args []string) error {
 		fmt.Println(usage)
 		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "relevo config secret: unknown command %q\n", args[0])
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo config secret: unknown command %q", args[0])
 	}
 }
 
@@ -115,16 +131,16 @@ func checkSecretName(name string) error {
 	return nil
 }
 
+// configSecretSetFlagSet declares `config secret set`'s flags: none today.
+func configSecretSetFlagSet(*flag.FlagSet) {}
+
 // configSecretSet reads the value from stdin, trimmed, and stores it. The
 // client key is validated by PutSecret.
 func configSecretSet(args []string) error {
 	fs := flag.NewFlagSet("relevo config secret set", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
@@ -153,15 +169,15 @@ func configSecretSet(args []string) error {
 	return nil
 }
 
+// configSecretRmFlagSet declares `config secret rm`'s flags: none today.
+func configSecretRmFlagSet(*flag.FlagSet) {}
+
 // configSecretRm removes a stored secret.
 func configSecretRm(args []string) error {
 	fs := flag.NewFlagSet("relevo config secret rm", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
@@ -184,15 +200,15 @@ func configSecretRm(args []string) error {
 	return nil
 }
 
+// configSecretListFlagSet declares `config secret list`'s flags: none today.
+func configSecretListFlagSet(*flag.FlagSet) {}
+
 // configSecretList prints the stored secret names, never their values.
 func configSecretList(args []string) error {
 	fs := flag.NewFlagSet("relevo config secret list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	rt, err := newRuntime()

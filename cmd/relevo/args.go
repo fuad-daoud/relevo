@@ -89,9 +89,9 @@ func withEnv(env []string, key, val string) []string {
 func bindingArg(nameFlag string, positional []string) (string, error) {
 	switch {
 	case nameFlag != "" && len(positional) > 0:
-		return "", fmt.Errorf("binding named twice: --name %s and %q; pass it once", nameFlag, positional[0])
+		return "", fail(codeUsage, "binding named twice: --name %s and %q; pass it once", nameFlag, positional[0])
 	case len(positional) > 1:
-		return "", fmt.Errorf("too many binding names: %v; pass one", positional)
+		return "", fail(codeUsage, "too many binding names: %v; pass one", positional)
 	case nameFlag != "":
 		return nameFlag, nil
 	case len(positional) == 1:
@@ -128,7 +128,8 @@ func resolveBinding(rt relevo.Runtime, nameFlag string, positional []string) (st
 		return "", err
 	}
 	if !found {
-		return "", fmt.Errorf("no binding for %s; name one with `relevo <command> NAME` or run relevo bind first", cwd)
+		return "", failNext(codeBindingNotFound, "relevo bind",
+			"no binding for %s; name one with `relevo <command> NAME` or run relevo bind first", cwd)
 	}
 
 	return b.Name, nil
@@ -172,7 +173,7 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 			if errors.Is(err, flag.ErrHelp) {
 				return errHelpShown
 			}
-			return err
+			return fail(codeUsage, "%v", err)
 		}
 
 		rest = fs.Args()
@@ -188,7 +189,13 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	// first non-flag argument and every element here is one, so this consumes
 	// nothing and simply reinstates the list. Flag values already set by the
 	// passes above survive: Parse does not reset them.
-	return fs.Parse(positional)
+	if err := fs.Parse(positional); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return errHelpShown
+		}
+		return fail(codeUsage, "%v", err)
+	}
+	return nil
 }
 
 // regateFlag turns --regate into the *int the relevo package takes (#132 part

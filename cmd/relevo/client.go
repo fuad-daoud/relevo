@@ -21,12 +21,29 @@ import (
 // yet, and the reply names the enrollment line to hand them. When no client
 // key exists yet it first generates one, as `client init` did, and prints the
 // enrollment line.
+// clientAddServerFlagValues holds the pointers `config server add` parses into.
+type clientAddServerFlagValues struct {
+	fingerprint *string
+	ca          *string
+	insecure    *bool
+}
+
+// clientAddServerFlagSet defines those flags on fs, in the usage text's order,
+// and returns what they parse into, so the registry's parity test walks the
+// same surface the verb does.
+func clientAddServerFlagSet(fs *flag.FlagSet) *clientAddServerFlagValues {
+	v := &clientAddServerFlagValues{}
+	v.fingerprint = fs.String("fingerprint", "", "pin the server's certificate fingerprint (sha256:<hex>)")
+	v.ca = fs.String("ca", "", `trust the system CA pool instead of pinning ("system")`)
+	v.insecure = fs.Bool("insecure", false, "allow plain http (no TLS)")
+	return v
+}
+
 func cmdClientAddServer(args []string) error {
 	fs := flag.NewFlagSet("relevo config server add", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	fingerprint := fs.String("fingerprint", "", "pin the server's certificate fingerprint (sha256:<hex>)")
-	ca := fs.String("ca", "", `trust the system CA pool instead of pinning ("system")`)
-	insecure := fs.Bool("insecure", false, "allow plain http (no TLS)")
+	v := clientAddServerFlagSet(fs)
+	fingerprint, ca, insecure := v.fingerprint, v.ca, v.insecure
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -119,6 +136,10 @@ func cmdClientAddServer(args []string) error {
 // server (relevo.ServerInUse is the pure rule this checks; it is tested in
 // internal/relevo so this thin wrapper needs no harness or network access to
 // test the refusal shape -- see CLAUDE.md's CI rule).
+// clientRmServerFlagSet declares `config server rm`'s flags: none today. It
+// exists so the registry's parity test finds exactly one installer per verb.
+func clientRmServerFlagSet(*flag.FlagSet) {}
+
 func cmdClientRmServer(args []string) error {
 	fs := flag.NewFlagSet("relevo config server rm", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -167,6 +188,9 @@ func cmdClientRmServer(args []string) error {
 // cmdServers prints one row per configured server: name, url, and this
 // client's enrollment on it (§4.7), via the same relevo.ProbeServers doctor's
 // per-server checks use.
+// serversFlagSet declares `config server list`'s flags: none today.
+func serversFlagSet(*flag.FlagSet) {}
+
 func cmdServers(args []string) error {
 	fs := flag.NewFlagSet("relevo config server list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

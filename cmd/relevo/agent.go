@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -53,10 +52,7 @@ func cmdAgentInstall(args []string) error {
 	v := agentFlagSet(fs)
 	kind, agent, force, dryRun := v.kind, v.agent, v.force, v.dryRun
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 
 	opts := harness.InstallOptions{

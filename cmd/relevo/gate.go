@@ -36,6 +36,28 @@ func parseFor(s string, now time.Time) (time.Time, error) {
 // subverbs (§4.3). With no positional it lists the active
 // gates; a positional gates a provider; --clear lifts a gate; --serve sends
 // the same three forms to the local serve daemon's own ledger.
+// gateFlagValues holds the pointers gate parses into. state is read back off
+// the FlagSet by the --serve route, so it has no pointer of its own.
+type gateFlagValues struct {
+	forFlag   *string
+	reason    *string
+	clear     *string
+	serveFlag *bool
+}
+
+// gateFlagSet defines those flags on fs, in the usage text's order, and
+// returns what they parse into. state has no pointer of its own: the --serve
+// route reads it back off the FlagSet.
+func gateFlagSet(fs *flag.FlagSet) *gateFlagValues {
+	v := &gateFlagValues{}
+	v.forFlag = fs.String("for", "", "how long to gate the provider, as a Go `duration` (e.g. 2h); omit to leave it gated until relevo gate --clear")
+	v.reason = fs.String("reason", "", "why, for the record")
+	v.clear = fs.String("clear", "", "clear a recorded rate limit: --clear <provider|token>")
+	v.serveFlag = fs.Bool("serve", false, "act on the local serve daemon's gates instead of this machine's")
+	_ = fs.String("state", "", "with --serve: state directory")
+	return v
+}
+
 func cmdGate(args []string) error {
 	const gateUsage = `usage: relevo gate
        relevo gate <token> [--for D] [--reason S]
@@ -43,11 +65,8 @@ func cmdGate(args []string) error {
        relevo gate --serve [--state DIR] [<token> [--for D] [--reason S] | --clear <provider|token>]`
 
 	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
-	forFlag := fs.String("for", "", "how long to gate the provider, as a Go `duration` (e.g. 2h); omit to leave it gated until relevo gate --clear")
-	reason := fs.String("reason", "", "why, for the record")
-	clear := fs.String("clear", "", "clear a recorded rate limit: --clear <provider|token>")
-	serveFlag := fs.Bool("serve", false, "act on the local serve daemon's gates instead of this machine's")
-	_ = fs.String("state", "", "with --serve: state directory")
+	v := gateFlagSet(fs)
+	forFlag, reason, clear, serveFlag := v.forFlag, v.reason, v.clear, v.serveFlag
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}

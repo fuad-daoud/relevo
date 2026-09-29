@@ -341,29 +341,27 @@ func TestGateServeRefusesUninitialisedRoot(t *testing.T) {
 }
 
 // TestServeGateSubverbsWereRemoved pins D1: `serve gates`, `serve available`
-// and `serve unavailable` exit 2, each naming `relevo gate --serve`.
+// and `serve unavailable` return the usage-coded refusal naming `relevo gate
+// --serve`, and exit 2.
 func TestServeGateSubverbsWereRemoved(t *testing.T) {
 	for _, sub := range []string{"gates", "available", "unavailable"} {
 		t.Run(sub, func(t *testing.T) {
-			stdout, stderr, runErr := captureOutput(t, func() error {
-				return run([]string{"serve", sub})
-			})
+			runErr := run([]string{"serve", sub})
+			ce := requireCLIError(t, runErr, codeUsage, "relevo help")
+			if !strings.Contains(ce.message, "relevo gate --serve") {
+				t.Errorf("message = %q, want it to name relevo gate --serve", ce.message)
+			}
 			var ec exitCodeErr
 			if !errors.As(runErr, &ec) || ec.code != 2 {
 				t.Fatalf("run = %v, want exit code 2", runErr)
-			}
-			if len(stdout) != 0 {
-				t.Errorf("expected nothing on stdout, got %q", string(stdout))
-			}
-			if !strings.Contains(string(stderr), "relevo gate --serve") {
-				t.Errorf("stderr = %q, want it to name relevo gate --serve", stderr)
 			}
 		})
 	}
 }
 
 // TestServeReadSubverbsWereRemoved pins §4.3: `serve log`, `serve show` and
-// `serve tab` exit 2, each naming the form that replaces it.
+// `serve tab` return the usage-coded refusal that names the form replacing
+// them, and exit 2.
 func TestServeReadSubverbsWereRemoved(t *testing.T) {
 	cases := []struct {
 		sub  string
@@ -375,18 +373,14 @@ func TestServeReadSubverbsWereRemoved(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.sub, func(t *testing.T) {
-			stdout, stderr, runErr := captureOutput(t, func() error {
-				return run([]string{"serve", c.sub})
-			})
+			runErr := run([]string{"serve", c.sub})
+			ce := requireCLIError(t, runErr, codeUsage, "relevo help")
+			if !strings.Contains(ce.message, c.want) {
+				t.Errorf("message = %q, want it to name %q", ce.message, c.want)
+			}
 			var ec exitCodeErr
 			if !errors.As(runErr, &ec) || ec.code != 2 {
 				t.Fatalf("run = %v, want exit code 2", runErr)
-			}
-			if len(stdout) != 0 {
-				t.Errorf("expected nothing on stdout, got %q", string(stdout))
-			}
-			if !strings.Contains(string(stderr), c.want) {
-				t.Errorf("stderr = %q, want it to name %q", stderr, c.want)
 			}
 		})
 	}

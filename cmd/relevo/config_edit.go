@@ -14,16 +14,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 )
 
+// configGetFlagSet declares `config get`'s flags: none today. It exists so the
+// registry's parity test finds exactly one installer per verb.
+func configGetFlagSet(*flag.FlagSet) {}
+
 // configGet prints the JSON value at a path, indented. A missing section or
 // key exits 1 with `relevo: <path>: not set`.
 func configGet(args []string) error {
 	fs := flag.NewFlagSet("relevo config get", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
@@ -58,14 +59,14 @@ func configGet(args []string) error {
 // configSet sets a JSON value at a path, creating intermediate objects. A
 // value that is not valid JSON is stored as a JSON string. A path through a
 // non-object exits 1. With no key the whole section is replaced.
+// configSetFlagSet declares `config set`'s flags: none today.
+func configSetFlagSet(*flag.FlagSet) {}
+
 func configSet(args []string) error {
 	fs := flag.NewFlagSet("relevo config set", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 2 {
@@ -106,14 +107,14 @@ func configSet(args []string) error {
 
 // configUnset removes a key, or, with no key, deletes the whole section. A
 // path through a non-object, or a key that is not set, exits 1.
+// configUnsetFlagSet declares `config unset`'s flags: none today.
+func configUnsetFlagSet(*flag.FlagSet) {}
+
 func configUnset(args []string) error {
 	fs := flag.NewFlagSet("relevo config unset", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
@@ -157,14 +158,14 @@ func configUnset(args []string) error {
 // vi, and stores what the editor leaves (§4.2). A file left empty aborts, an
 // unchanged file is a no-op, and an invalid document goes round again with the
 // editor so the user can fix it.
+// configEditFlagSet declares `config edit`'s flags: none today.
+func configEditFlagSet(*flag.FlagSet) {}
+
 func configEdit(args []string) error {
 	fs := flag.NewFlagSet("relevo config edit", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
+		return err
 	}
 	if len(fs.Args()) != 0 {
 		fmt.Fprintln(os.Stderr, "usage: relevo config edit")

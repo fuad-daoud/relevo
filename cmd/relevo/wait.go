@@ -15,13 +15,31 @@ import (
 // cmdWait blocks until a round closes or needs a human, per spec
 // docs/specs/2026-09-14-wait-and-waiting-on-you-design.md §4.8. It reads
 // relevo's own state only: it launches nothing.
+// waitFlagValues holds the pointers wait parses into.
+type waitFlagValues struct {
+	name    *string
+	any     *bool
+	round   *int
+	timeout *time.Duration
+	peek    *bool
+}
+
+// waitFlagSet defines those flags on fs and returns what they parse into.
+func waitFlagSet(fs *flag.FlagSet) *waitFlagValues {
+	v := &waitFlagValues{}
+	v.name = fs.String("name", "", "binding name (default: the binding for this cwd)")
+	v.any = fs.Bool("any", false, "wait on every named binding; the first to close or need you wins, its name printed first")
+	v.round = fs.Int("round", 0, "round to wait on (default: the newest round sent; an earlier round answers from the log)")
+	v.timeout = fs.Duration("timeout", 10*time.Minute, "how long to wait before giving up")
+	v.peek = fs.Bool("peek", false, "print the outcome line only: do not deliver the pending report")
+	return v
+}
+
 func cmdWait(args []string) error {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
-	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
-	anyFlag := fs.Bool("any", false, "wait on every named binding; the first to close or need you wins, its name printed first")
-	round := fs.Int("round", 0, "round to wait on (default: the newest round sent; an earlier round answers from the log)")
-	timeout := fs.Duration("timeout", 10*time.Minute, "how long to wait before giving up")
-	peek := fs.Bool("peek", false, "print the outcome line only: do not deliver the pending report")
+	v := waitFlagSet(fs)
+	name, anyFlag := v.name, v.any
+	round, timeout, peek := v.round, v.timeout, v.peek
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}

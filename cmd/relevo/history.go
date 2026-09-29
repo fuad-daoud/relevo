@@ -59,21 +59,47 @@ func groupJSON(groups []histq.GroupRow, withRows bool) []histq.GroupRow {
 	return out
 }
 
+// historyFlagValues holds the pointers history parses into.
+type historyFlagValues struct {
+	here       *bool
+	binding    *string
+	feature    *string
+	ticket     *string
+	mastermind *string
+	since      *string
+	limit      *int
+	by         *string
+	query      *string
+	withRows   *bool
+}
+
+// historyFlagSet defines those flags on fs, in the usage text's order, and
+// returns what they parse into. json is accepted and ignored -- history always
+// prints JSON -- so it has no pointer.
+func historyFlagSet(fs *flag.FlagSet) *historyFlagValues {
+	v := &historyFlagValues{}
+	v.here = fs.Bool("here", false, "filter to the repo the current directory belongs to")
+	v.binding = fs.String("binding", "", "filter to this binding name")
+	v.feature = fs.String("feature", "", "filter to this feature label")
+	v.ticket = fs.String("ticket", "", "filter by ticket: N or owner/repo#N")
+	v.mastermind = fs.String("mastermind", "", "filter to this mastermind session id")
+	v.since = fs.String("since", "", "only rounds started after this: 24h, 7d, or YYYY-MM-DD")
+	v.limit = fs.Int("limit", 200, "max rows to print; 0 = all")
+	v.by = fs.String("by", "", "regroup the rows by an axis, e.g. ticket")
+	_ = fs.Bool("json", false, "machine-readable output: a JSON array of RoundRow")
+	v.query = fs.String("q", "", "a query: harness:agy outcome:halted since:30d cost>1 by:candidate")
+	v.withRows = fs.Bool("rows", false, "with grouped JSON, include each group's rows")
+	return v
+}
+
 // cmdHistory prints history as JSON across every binding relevo has ever
 // recorded, live or archived, newest first.
 func cmdHistory(args []string) error {
 	fs := flag.NewFlagSet("history", flag.ContinueOnError)
-	here := fs.Bool("here", false, "filter to the repo the current directory belongs to")
-	binding := fs.String("binding", "", "filter to this binding name")
-	feature := fs.String("feature", "", "filter to this feature label")
-	ticket := fs.String("ticket", "", "filter by ticket: N or owner/repo#N")
-	mastermind := fs.String("mastermind", "", "filter to this mastermind session id")
-	since := fs.String("since", "", "only rounds started after this: 24h, 7d, or YYYY-MM-DD")
-	limit := fs.Int("limit", 200, "max rows to print; 0 = all")
-	by := fs.String("by", "", "regroup the rows by an axis, e.g. ticket")
-	_ = fs.Bool("json", false, "machine-readable output: a JSON array of RoundRow")
-	query := fs.String("q", "", "a query: harness:agy outcome:halted since:30d cost>1 by:candidate")
-	withRows := fs.Bool("rows", false, "with grouped JSON, include each group's rows")
+	v := historyFlagSet(fs)
+	here, binding, feature, ticket := v.here, v.binding, v.feature, v.ticket
+	mastermind, since, limit, by := v.mastermind, v.since, v.limit, v.by
+	query, withRows := v.query, v.withRows
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), historyUsage)
 		fs.PrintDefaults()
@@ -92,8 +118,7 @@ func cmdHistory(args []string) error {
 	}
 	d, err := openDB(rt.Store.DBPath())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo history: %v\n", err)
-		return exitCodeErr{code: 1}
+		return fail(codeInternal, "%v", err)
 	}
 	defer d.Close()
 	rt.DB = d
@@ -119,12 +144,11 @@ func cmdHistory(args []string) error {
 
 	f, notes, ferr := opts.Filter(context.Background(), rt, time.Now())
 	if ferr != nil {
-		fmt.Fprintf(os.Stderr, "relevo history: %v\n", ferr)
 		var eq histq.ErrQuery
 		if errors.As(ferr, &eq) {
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "%v", ferr)
 		}
-		return exitCodeErr{code: 1}
+		return fail(codeInternal, "%v", ferr)
 	}
 	for _, n := range notes {
 		fmt.Fprintln(os.Stderr, n)

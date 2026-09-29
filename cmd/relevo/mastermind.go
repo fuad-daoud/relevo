@@ -27,6 +27,11 @@ import (
 // SessionStart hook must never block a session on sqlite.
 const mastermindPriorIDTimeout = 2 * time.Second
 
+// mastermindFlagSet declares the bare `mastermind` dispatcher's flags: none
+// today. It exists so the registry's parity test finds exactly one installer
+// per verb.
+func mastermindFlagSet(*flag.FlagSet) {}
+
 // cmdMasterMind dispatches `relevo mastermind init|notice|enable|disable|guide|list|rename|forget`
 // (#303 §4.7, #632). It touches no harness:
 // a mastermind record is relevo's own identity, not a pane.
@@ -68,15 +73,12 @@ func cmdMasterMind(args []string) error {
 	case "prune":
 		// §4.4: pruning is automatic now; the verb names that and exits 2
 		// like every other removed spelling.
-		fmt.Fprintf(os.Stderr, "relevo: %q was removed; the daemon prunes dead MasterMinds hourly\n", "prune")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "%q was removed; the daemon prunes dead MasterMinds hourly", "prune")
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "relevo mastermind: unknown subcommand %q\n", args[0])
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "relevo mastermind: unknown subcommand %q", args[0])
 	}
 }
 
@@ -91,12 +93,29 @@ func mastermindRegistry(rt relevo.Runtime) (*mastermind.DBRegistry, error) {
 	return &mastermind.DBRegistry{KV: db.TxKV{DB: d}, Now: rt.Now}, nil
 }
 
+// mastermindInitFlagValues holds the pointers `mastermind init` parses into.
+type mastermindInitFlagValues struct {
+	name    *string
+	kind    *string
+	session *string
+	hook    *string
+}
+
+// mastermindInitFlagSet defines those flags on fs and returns what they parse
+// into.
+func mastermindInitFlagSet(fs *flag.FlagSet) *mastermindInitFlagValues {
+	v := &mastermindInitFlagValues{}
+	v.name = fs.String("name", "", "mastermind name (default: <agent>-<n>, else <kind>-<n>)")
+	v.kind = fs.String("kind", "", "harness kind for an explicit registration (e.g. opencode)")
+	v.session = fs.String("session", "", "harness session id for an explicit registration")
+	v.hook = fs.String("hook", "", "read a Claude Code SessionStart payload from stdin (only \"claude\")")
+	return v
+}
+
 func cmdMasterMindInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	name := fs.String("name", "", "mastermind name (default: <agent>-<n>, else <kind>-<n>)")
-	kind := fs.String("kind", "", "harness kind for an explicit registration (e.g. opencode)")
-	session := fs.String("session", "", "harness session id for an explicit registration")
-	hook := fs.String("hook", "", "read a Claude Code SessionStart payload from stdin (only \"claude\")")
+	v := mastermindInitFlagSet(fs)
+	name, kind, session, hook := v.name, v.kind, v.session, v.hook
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -181,9 +200,23 @@ func appendEnvLine(path, line string) error {
 // cmdMasterMindEnable answers yes for this session, and with --repo for the
 // repository, then registers the calling session so the answer takes effect
 // without a restart (#632).
+// mastermindListFlagValues holds the pointer `mastermind list` parses into.
+type mastermindListFlagValues struct {
+	asJSON *bool
+}
+
+// mastermindListFlagSet defines that flag on fs and returns what it parses
+// into.
+func mastermindListFlagSet(fs *flag.FlagSet) *mastermindListFlagValues {
+	v := &mastermindListFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the records as a JSON array")
+	return v
+}
+
 func cmdMasterMindList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	asJSON := fs.Bool("json", false, "print the records as a JSON array")
+	v := mastermindListFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -308,6 +341,9 @@ func annotateMasterMindChat(rt relevo.Runtime, rep *view.Report, res chatlabel.R
 	}
 }
 
+// mastermindRenameFlagSet declares `mastermind rename`'s flags: none today.
+func mastermindRenameFlagSet(*flag.FlagSet) {}
+
 func cmdMasterMindRename(args []string) error {
 	fs := flag.NewFlagSet("rename", flag.ContinueOnError)
 	if err := parseFlags(fs, args); err != nil {
@@ -341,6 +377,9 @@ func cmdMasterMindRename(args []string) error {
 	fmt.Printf("renamed mastermind %s (%s) to %s\n", rec.Name, rec.ID, updated.Name)
 	return nil
 }
+
+// mastermindForgetFlagSet declares `mastermind forget`'s flags: none today.
+func mastermindForgetFlagSet(*flag.FlagSet) {}
 
 func cmdMasterMindForget(args []string) error {
 	fs := flag.NewFlagSet("forget", flag.ContinueOnError)

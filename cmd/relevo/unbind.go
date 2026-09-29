@@ -13,17 +13,41 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
+// unbindFlagValues holds the pointers unbind parses into.
+type unbindFlagValues struct {
+	name           *string
+	archive        *bool
+	pick           *bool
+	done           *bool
+	delete         *bool
+	dryRun         *bool
+	sweep          *bool
+	mastermindRef  *string
+	allMasterMinds *bool
+}
+
+// unbindFlagSet defines those flags on fs, in the usage text's order, and
+// returns what they parse into.
+func unbindFlagSet(fs *flag.FlagSet) *unbindFlagValues {
+	v := &unbindFlagValues{}
+	v.name = fs.String("name", "", "binding to unbind")
+	v.archive = fs.Bool("archive", false, "move the binding aside instead of deleting it, keeping its round log")
+	v.pick = fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
+	v.done = fs.Bool("done", false, "clear the DONE bindings of the calling mastermind (--all-masterminds: of every mastermind)")
+	v.delete = fs.Bool("delete", false, "with --done: remove each finished binding's directory instead of archiving it")
+	v.dryRun = fs.Bool("dry-run", false, "with --done or --sweep: list what would be cleared, change nothing")
+	v.sweep = fs.Bool("sweep", false, "delete relevo/<name> branches and refs/relevo/<name>/* refs of bindings that no longer exist, once they are on a remote-tracking ref")
+	v.mastermindRef = fs.String("mastermind", "", "with --done: clear this mastermind's DONE bindings (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
+	v.allMasterMinds = fs.Bool("all-masterminds", false, "with --done: clear every mastermind's DONE bindings, including ones with no mastermind")
+	return v
+}
+
 func cmdUnbind(args []string) error {
 	fs := flag.NewFlagSet("unbind", flag.ContinueOnError)
-	name := fs.String("name", "", "binding to unbind")
-	archive := fs.Bool("archive", false, "move the binding aside instead of deleting it, keeping its round log")
-	pickFlag := fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
-	done := fs.Bool("done", false, "clear the DONE bindings of the calling mastermind (--all-masterminds: of every mastermind)")
-	delete := fs.Bool("delete", false, "with --done: remove each finished binding's directory instead of archiving it")
-	dryRun := fs.Bool("dry-run", false, "with --done or --sweep: list what would be cleared, change nothing")
-	sweep := fs.Bool("sweep", false, "delete relevo/<name> branches and refs/relevo/<name>/* refs of bindings that no longer exist, once they are on a remote-tracking ref")
-	mastermindRef := fs.String("mastermind", "", "with --done: clear this mastermind's DONE bindings (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
-	allMasterMinds := fs.Bool("all-masterminds", false, "with --done: clear every mastermind's DONE bindings, including ones with no mastermind")
+	v := unbindFlagSet(fs)
+	name, archive, pickFlag := v.name, v.archive, v.pick
+	done, delete, dryRun := v.done, v.delete, v.dryRun
+	sweep, mastermindRef, allMasterMinds := v.sweep, v.mastermindRef, v.allMasterMinds
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
