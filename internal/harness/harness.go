@@ -196,7 +196,7 @@ var knownHarnesses = map[string]Harness{
 		LimitPatterns: []string{
 			`(?i)usage limit`,
 			`(?i)rate limit`,
-			`(?i)quota`,
+			`(?i)quota (exceeded|reached|exhausted)`,
 			`(?i)"status": 429`,
 			`(?i)too many requests`,
 		},

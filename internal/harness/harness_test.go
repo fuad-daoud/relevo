@@ -337,6 +337,45 @@ func TestAgyLimitPatternsMatchFixture(t *testing.T) {
 	t.Errorf("agy LimitPatterns did not match fixture %q", fixture)
 }
 
+// TestCodexLimitPatternsIgnoreProse pins the narrowed codex quota pattern: a
+// lone "quota" in prose is the model talking, not a limit, while the verb forms
+// are a harness's own failure text.
+func TestCodexLimitPatternsIgnoreProse(t *testing.T) {
+	h, ok := Lookup("codex")
+	if !ok {
+		t.Fatal("Lookup(\"codex\") not found")
+	}
+	var patterns []*regexp.Regexp
+	for _, p := range h.LimitPatterns {
+		re, err := regexp.Compile(p)
+		if err != nil {
+			t.Fatalf("compile %q: %v", p, err)
+		}
+		patterns = append(patterns, re)
+	}
+	matches := func(line string) bool {
+		for _, re := range patterns {
+			if re.MatchString(line) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, prose := range []string{
+		"the service quota for this project is configured in the console",
+		"we should stay under the quota for the month",
+	} {
+		if matches(prose) {
+			t.Errorf("codex patterns matched prose %q; a bare quota is not a limit", prose)
+		}
+	}
+	for _, limit := range []string{"quota exceeded", "quota reached", "quota exhausted"} {
+		if !matches(limit) {
+			t.Errorf("codex patterns did not match %q", limit)
+		}
+	}
+}
+
 var launchPrintCases = []struct {
 	kind       string
 	extra      []string
@@ -809,7 +848,7 @@ var harnessTableExpected = map[string]Harness{
 		LimitPatterns: []string{
 			`(?i)usage limit`,
 			`(?i)rate limit`,
-			`(?i)quota`,
+			`(?i)quota (exceeded|reached|exhausted)`,
 			`(?i)"status": 429`,
 			`(?i)too many requests`,
 		},
