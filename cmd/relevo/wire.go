@@ -216,12 +216,20 @@ func newRuntime() (relevo.Runtime, error) {
 	return rt, nil
 }
 
-// openDB ensures path's directory exists (Open's precondition) and opens
-// it, migrating as needed. It was `relevo db`'s helper and stays here for
-// every other verb that opens the machine database directly (P3d D3). The
-// installation file beside it names the origin every row written through this
-// handle carries.
+// openDB opens path: the machine database dials the owner when one is installed
+// and is opened directly otherwise; every other path -- tests, e2e roots,
+// serve's per-owner roots -- is opened directly.
 func openDB(path string) (*db.DB, error) {
+	if d, ok, err := openDBRoute(path); ok {
+		return d, err
+	}
+	return openDBDirect(path)
+}
+
+// openDBDirect opens path itself, ensuring its directory exists (Open's
+// precondition) and minting the installation file beside it. It is the opener
+// the daemon and the tests use.
+func openDBDirect(path string) (*db.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}

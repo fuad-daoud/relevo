@@ -37,11 +37,22 @@ import (
 // of whoever happens to run `go test`. isolateTestEnv holds the rule; a test
 // that needs one of these variables sets it itself.
 func TestMain(m *testing.M) {
+	// The one-opener child answers before any isolation: it must keep the
+	// parent's state root so it dials the parent's in-process owner.
+	if os.Getenv(cmdTestHelperEnv) != "" {
+		os.Exit(runCmdTestHelper())
+	}
+
 	root, err := os.MkdirTemp("", "relevo-cmd-test-")
 	if err != nil {
 		panic(err)
 	}
 	isolateTestEnv(root)
+	// The production route stays off under `go test`: the tests that call run()
+	// keep opening the machine database directly, and a test that wants the
+	// switch installs it itself.
+	dbRouteFromArgs = false
+	installDBRoute(routeNone, verbDialBudget)
 	cleanup, err := dbtest.Install()
 	if err != nil {
 		panic(err)

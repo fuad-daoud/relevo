@@ -57,6 +57,9 @@ func Info(ctx context.Context, sock string) (info, error) {
 }
 
 func dialSock(ctx context.Context, sock string) (net.Conn, error) {
+	if dialer != nil {
+		return dialer(ctx, sock)
+	}
 	var d net.Dialer
 	return d.DialContext(ctx, "unix", sock)
 }

@@ -59,6 +59,11 @@ type DB struct {
 	// runtime -- and every scoped query then matches only rows with an empty
 	// origin, exactly as before the column existed.
 	origin string
+
+	// route is how this handle reaches the database: "file" for a direct open,
+	// "owner <sock>" for a dial. It is what `relevo doctor` reports and what a
+	// test asserts about the switch.
+	route string
 }
 
 // Options tunes OpenWith. A negative value is treated as 0, which selects the
@@ -167,11 +172,11 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open %s: migrations: %w: %w", path, ErrOpen, err)
 	}
 	if have > know {
-		return &DB{sqlDB: sqlDB, beginRetry: retry, newer: true, have: have, know: know, origin: o.Origin}, nil
+		return &DB{sqlDB: sqlDB, beginRetry: retry, newer: true, have: have, know: know, origin: o.Origin, route: "file"}, nil
 	}
 	// A current schema needs no write: BEGIN IMMEDIATE here failed under load.
 	if have == know {
-		return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin}, nil
+		return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin, route: "file"}, nil
 	}
 
 	if err = applyMigrations(sqlDB, migrationFiles); err != nil {
@@ -183,11 +188,15 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open %s: version: %w: %w", path, ErrOpen, err)
 	}
 
-	return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin}, nil
+	return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin, route: "file"}, nil
 }
 
 // Newer reports whether the database's schema is newer than this relevo's.
 func (d *DB) Newer() bool { return d.newer }
+
+// Route names how this handle reaches the database: "file" for a direct open,
+// "owner <sock>" for a dial.
+func (d *DB) Route() string { return d.route }
 
 func (d *DB) SchemaVersions() (have, know int) { return d.have, d.know }
 
@@ -309,6 +318,16 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 		if beginErr == nil {
 			break
 		}
+		// The owner refused the BEGIN before executing it, so a fresh
+		// connection retried inside the same window cannot apply it twice.
+		if restartingRefusal(beginErr) && time.Since(start) < retryFor {
+			_ = conn.Close()
+			conn, err = d.sqlDB.Conn(ctx)
+			if err != nil {
+				return fmt.Errorf("db: tx: %w", err)
+			}
+			continue
+		}
 		mapped := mapBusy(beginErr)
 		if !errors.Is(mapped, ErrBusy) || time.Since(start) >= retryFor {
 			return fmt.Errorf("db: tx begin: %w", mapped)
@@ -327,6 +346,14 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 		return fmt.Errorf("db: tx commit: %w", mapBusy(err))
 	}
 	return nil
+}
+
+// restartingRefusal reports whether an error is the owner's refusal to run a
+// request because it is restarting. The owner guarantees such a request never
+// ran, so the caller may retry it on a fresh connection.
+func restartingRefusal(err error) bool {
+	var ref *wire.Refusal
+	return errors.As(err, &ref) && ref.Code == wire.RefuseRestarting
 }
 
 // mapBusy turns a driver's SQLITE_BUSY into ErrBusy. It matches any error

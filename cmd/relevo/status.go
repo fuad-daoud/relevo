@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -189,6 +190,12 @@ func runStatusline(asJSON bool) error {
 		columns = view.StatusLineWidth(columns, os.Getenv("RELEVO_STATUSLINE_MARGIN"))
 		rt, err := newRuntime()
 		if err != nil {
+			// An owner that never answered prints nothing at all: the
+			// statusline runs inside a prompt and must never fail one. Every
+			// other failure keeps the line below.
+			if errors.Is(err, errOwnerUnavailable) {
+				return nil
+			}
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
 			return nil
 		}

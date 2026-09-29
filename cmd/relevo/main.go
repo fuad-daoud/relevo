@@ -186,7 +186,14 @@ func run(args []string) error {
 	// (#349): an agy mastermind runs relevo constantly (send, wait, pull,
 	// status), and whichever verb it happens to run after an agy restart is
 	// the one that refreshes the session's agentapi credentials.
-	captureAgyEnv()
+	//
+	// The route is installed first, from the same command line: the peek verbs
+	// are read-only and must not capture (which opens and can migrate the
+	// database), and every other verb opens the machine database through the
+	// route once it is set.
+	if peek := installRouteForArgs(args); !peek {
+		captureAgyEnv()
+	}
 
 	switch args[0] {
 	case "help", "-h", "--help":
