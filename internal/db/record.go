@@ -24,6 +24,13 @@ type Record struct {
 	ViewedAt *time.Time
 	// ArchivedAt is set by RecordArchive, which hides the row from reads.
 	ArchivedAt *time.Time
+
+	// LinkOrigin and LinkID are the other copy of a remote binding: the
+	// installation that holds it and that installation's record id. Empty
+	// means the row is not linked -- every row written before migration 015,
+	// and every binding created by or against an older relevo.
+	LinkOrigin string
+	LinkID     string
 }
 
 // RecordEvent is one entry of a binding_record's log. JSON is authoritative,
@@ -40,7 +47,7 @@ type RecordEvent struct {
 	JSON        string
 }
 
-const recordCols = `id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at`
+const recordCols = `id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at, link_origin, link_id`
 
 // originScope is the WHERE fragment every scoped record query carries, with
 // the handle's own origin as its one placeholder: a row is in scope when this
@@ -62,9 +69,10 @@ func scanRecord(s rowScanner) (Record, error) {
 	var r Record
 	var createdAt, updatedAt string
 	var viewedAt, archivedAt sql.Null[string]
+	var linkOrigin, linkID sql.Null[string]
 
 	if err := s.Scan(&r.ID, &r.Owner, &r.Name, &r.State, &r.Round, &r.CWD, &r.JSON,
-		&createdAt, &updatedAt, &viewedAt, &archivedAt); err != nil {
+		&createdAt, &updatedAt, &viewedAt, &archivedAt, &linkOrigin, &linkID); err != nil {
 		return Record{}, err
 	}
 
@@ -81,6 +89,8 @@ func scanRecord(s rowScanner) (Record, error) {
 	if r.ArchivedAt, err = nullTimeFrom(archivedAt); err != nil {
 		return Record{}, fmt.Errorf("parse archived_at: %w", err)
 	}
+	r.LinkOrigin = linkOrigin.V
+	r.LinkID = linkID.V
 
 	return r, nil
 }
@@ -194,8 +204,9 @@ func (t *Tx) RecordPut(r Record) (string, error) {
 	case err == nil:
 		// The update stamps origin too, so a row this handle touches is scoped
 		// to this installation from then on.
-		if _, uerr := t.exec(`UPDATE binding_record SET origin = ?, owner = ?, state = ?, round = ?, cwd = ?, record_json = ?, updated_at = ? WHERE id = ?`,
-			t.origin, r.Owner, r.State, r.Round, r.CWD, r.JSON, formatTime(updatedAt), id); uerr != nil {
+		if _, uerr := t.exec(`UPDATE binding_record SET origin = ?, owner = ?, state = ?, round = ?, cwd = ?, record_json = ?, updated_at = ?, link_origin = ?, link_id = ? WHERE id = ?`,
+			t.origin, r.Owner, r.State, r.Round, r.CWD, r.JSON, formatTime(updatedAt),
+			nullIfEmpty(r.LinkOrigin), nullIfEmpty(r.LinkID), id); uerr != nil {
 			return "", fmt.Errorf("db: record put %q: update: %w", r.Name, mapBusy(uerr))
 		}
 		return id, nil
@@ -216,10 +227,11 @@ func (t *Tx) insertRecord(r Record, updatedAt time.Time) (string, error) {
 		createdAt = updatedAt
 	}
 	if _, err := t.exec(`INSERT INTO binding_record
-			(id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at, origin)
-		VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?)`,
+			(id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at, origin, link_origin, link_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?,?)`,
 		id, r.Owner, r.Name, r.State, r.Round, r.CWD, r.JSON,
-		formatTime(createdAt), formatTime(updatedAt), nullableTime(r.ViewedAt), t.origin); err != nil {
+		formatTime(createdAt), formatTime(updatedAt), nullableTime(r.ViewedAt), t.origin,
+		nullIfEmpty(r.LinkOrigin), nullIfEmpty(r.LinkID)); err != nil {
 		return "", fmt.Errorf("db: record put %q: insert: %w", r.Name, mapBusy(err))
 	}
 	return id, nil

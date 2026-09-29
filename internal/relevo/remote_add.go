@@ -5,13 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -175,9 +178,10 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		}
 	}
 
-	// 4.5. feature probe: a requested --tier or custom --actor requires the
-	// server to advertise the matching feature before any binding is created
-	// there. One WhoAmI answers both, and it is called at most once.
+	// 4.5. feature probe: a requested --tier, label or custom --actor requires
+	// the server to advertise the matching feature before any binding is
+	// created there, and the link requires FeatureOrigin. One WhoAmI answers
+	// all of them, and the add makes exactly one probe.
 	wireTier := ""
 	if opts.Tier != "" {
 		t, err := harness.ParseTier(opts.Tier)
@@ -195,43 +199,59 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	if actor == "" {
 		actor = "builder"
 	}
-	if opts.Tier != "" || wireRole != "" || opts.Feature != "" || opts.Ticket != "" {
-		who, err := rt.Remote.WhoAmI(ctx, opts.Server)
-		if err != nil {
-			return AddResult{}, err
-		}
-		if opts.Tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
-			return AddResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, opts.Server)
-		}
-		// #637: a server that does not advertise labels would save the binding
-		// without them, so a client that sets one refuses -- before any branch,
-		// worktree or create call.
-		if (opts.Feature != "" || opts.Ticket != "") && !slices.Contains(who.Features, remote.FeatureLabels) {
-			return AddResult{}, fmt.Errorf("%w: server %s does not carry binding labels (pre-labels server); upgrade it or drop --feature/--ticket", ErrServerPreTier, opts.Server)
-		}
-		// The client's actors never travel (§5.3): the server resolves the
-		// actor against its own. A server too old to do that would ignore the
-		// field and run the default actor, so it is refused here -- before any
-		// branch, worktree or create call.
-		if wireRole != "" && !slices.Contains(who.Features, remote.FeatureRoles) {
-			return AddResult{}, fmt.Errorf("server %s does not run custom actors (actor %q); upgrade it", opts.Server, opts.Role)
-		}
+	who, err := rt.Remote.WhoAmI(ctx, opts.Server)
+	if err != nil {
+		return AddResult{}, err
+	}
+	if opts.Tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
+		return AddResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, opts.Server)
+	}
+	// #637: a server that does not advertise labels would save the binding
+	// without them, so a client that sets one refuses -- before any branch,
+	// worktree or create call.
+	if (opts.Feature != "" || opts.Ticket != "") && !slices.Contains(who.Features, remote.FeatureLabels) {
+		return AddResult{}, fmt.Errorf("%w: server %s does not carry binding labels (pre-labels server); upgrade it or drop --feature/--ticket", ErrServerPreTier, opts.Server)
+	}
+	// The client's actors never travel (§5.3): the server resolves the
+	// actor against its own. A server too old to do that would ignore the
+	// field and run the default actor, so it is refused here -- before any
+	// branch, worktree or create call.
+	if wireRole != "" && !slices.Contains(who.Features, remote.FeatureRoles) {
+		return AddResult{}, fmt.Errorf("server %s does not run custom actors (actor %q); upgrade it", opts.Server, opts.Role)
 	}
 
 	// 5. view := rt.Remote.CreateBinding(ctx, server, {Name, RepoID, BaseCommit: base, Candidate, RoundCap, RoundTimeoutMS, Tier})
 	// HTTPError 409 -> the server already has this binding for this client, with
 	// no local counterpart here; only `relevo serve unbind` on the server can
 	// clear that, since a local `relevo bind --resume` has nothing to resume.
+	// The two ids the link needs: this client's installation, and a record id
+	// minted here so both sides know the client's row from the start. They
+	// travel only to a server that advertises FeatureOrigin, which stores them
+	// as its row's link; the fields are empty otherwise and the wire omits
+	// them, so an older server sees exactly today's request.
+	clientInstallation := ""
+	clientBindingID := ""
+	if slices.Contains(who.Features, remote.FeatureOrigin) {
+		inst, err := installation.Load(filepath.Dir(rt.Store.DBPath()))
+		if err != nil {
+			return AddResult{}, err
+		}
+		clientInstallation = inst.ID
+		clientBindingID = db.NewID()
+	}
+
 	createReq := remote.CreateBindingRequest{
-		Name:       opts.Name,
-		RepoID:     repoID,
-		BaseCommit: base,
-		Candidate:  candidateStr,
-		Tier:       wireTier,
-		Role:       actor,
-		Feature:    opts.Feature,
-		Ticket:     opts.Ticket,
-		Author:     &remote.GitIdentity{Name: authorName, Email: authorEmail},
+		Name:               opts.Name,
+		RepoID:             repoID,
+		BaseCommit:         base,
+		Candidate:          candidateStr,
+		Tier:               wireTier,
+		Role:               actor,
+		Feature:            opts.Feature,
+		Ticket:             opts.Ticket,
+		Author:             &remote.GitIdentity{Name: authorName, Email: authorEmail},
+		ClientInstallation: clientInstallation,
+		ClientBindingID:    clientBindingID,
 	}
 	view, err := rt.Remote.CreateBinding(ctx, opts.Server, createReq)
 	if err != nil {
@@ -336,6 +356,13 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		RepoRef: captureRepo(ctx, rt, opts.Repo),
 		Feature: opts.Feature,
 		Ticket:  opts.Ticket,
+		// The server's copy of this binding: its installation and its record
+		// id, as the create view reported them. A server that does not
+		// advertise FeatureOrigin sends neither, and the link is then nil.
+		Link: remoteLink(view),
+		// RecordID is the id minted above: the server was told the same id, so
+		// the client copy the server recorded is this row.
+		RecordID: clientBindingID,
 	}
 	res := Resolution{
 		Candidate: cand,
@@ -366,6 +393,16 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		Base:       base,
 		Resolution: res,
 	}, nil
+}
+
+// remoteLink is the client row's link to the server's copy, from a create
+// view: nil when the view carries no installation and no record id, which is
+// what a server that does not advertise FeatureOrigin sends.
+func remoteLink(view remote.BindingView) *store.RemoteLink {
+	if view.Installation == "" && view.ID == "" {
+		return nil
+	}
+	return &store.RemoteLink{Installation: view.Installation, ID: view.ID}
 }
 
 // remotePickEntry is addRemote's and sendRemote's pick log entry: the same

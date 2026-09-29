@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -414,11 +415,19 @@ func cmdServeRun(args []string) error {
 		return err
 	}
 
-	L, d, _, err := loadServeConfig()
+	L, d, stateRoot, err := loadServeConfig()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = d.Close() }()
+
+	// The server's own installation: its rows carry its id as their origin,
+	// and WhoAmI advertises it so a client can link its row to this server's
+	// copy.
+	inst, err := installation.Load(stateRoot)
+	if err != nil {
+		return err
+	}
 
 	candidates, pol, reg := L.Candidates, L.Policy, L.Registry
 
@@ -498,6 +507,7 @@ func cmdServeRun(args []string) error {
 		Hooks:          dispatcher,
 		Scope:          scope,
 		SessionReaper:  relevo.NewSessionReaper(binExec{}),
+		Installation:   inst,
 	}
 
 	srv, err := serve.New(cfg)

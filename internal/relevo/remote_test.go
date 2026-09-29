@@ -833,10 +833,14 @@ func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
 	}
 }
 
-// TestAddRemoteNoTierSkipsProbe pins the no-op path: omitting --tier never
-// probes WhoAmI and sends no Tier on the wire, so a pre-tier server is
-// unaffected by a plain `relevo bind --server` (#141 remote half).
-func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
+// TestAddRemoteNoTierProbesOnceAndSkipsTier pins the probe's shape: every add
+// asks WhoAmI exactly once, because the server's features decide which wire
+// fields may travel (the link needs FeatureOrigin), and omitting --tier sends
+// no Tier on the wire, so a pre-tier server is unaffected by a plain `relevo
+// bind --server` (#141 remote half). A server whose features omit FeatureOrigin
+// is also the old-server case: no Client* fields travel and the stored row has
+// no link.
+func TestAddRemoteNoTierProbesOnceAndSkipsTier(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	fg := &fakeGit{
@@ -858,13 +862,28 @@ func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
+	probes := 0
 	for _, c := range fr.calls {
 		if strings.HasPrefix(c, "WhoAmI") {
-			t.Fatalf("calls = %v, want no WhoAmI", fr.calls)
+			probes++
 		}
+	}
+	if probes != 1 {
+		t.Fatalf("WhoAmI probes = %d, want exactly 1: %v", probes, fr.calls)
 	}
 	if fr.createBindingReq.Tier != "" {
 		t.Fatalf("CreateBindingRequest.Tier = %q, want empty", fr.createBindingReq.Tier)
+	}
+	if fr.createBindingReq.ClientInstallation != "" || fr.createBindingReq.ClientBindingID != "" {
+		t.Fatalf("Client* fields = %q/%q, want none for a server without FeatureOrigin",
+			fr.createBindingReq.ClientInstallation, fr.createBindingReq.ClientBindingID)
+	}
+	stored, err := st.Load("api")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.Link != nil {
+		t.Fatalf("stored Link = %+v, want nil for a server without FeatureOrigin", stored.Link)
 	}
 }
 

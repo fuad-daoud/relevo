@@ -111,6 +111,8 @@ last_verdict.findings
 last_verdict.reasons[]
 last_verdict.round
 last_verdict.verdict
+link.id
+link.installation
 name
 oom_requeue.at
 oom_requeue.running

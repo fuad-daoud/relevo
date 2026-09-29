@@ -11,12 +11,14 @@ import (
 // rather than saving one back with the ticket erased. That refusal is the
 // intended clean break.
 //
-// Later fields (abandoned_sessions, oom_requeue, round_oom_kills) are fields
-// recordFormat never stamps: an older relevo that drops abandoned_sessions
-// loses only pending session deletes, and one that drops oom_requeue or
-// round_oom_kills loses only oom-kill tracking for in-flight rounds. Stamping
-// a field would lock that older relevo out of loading the binding. Bump
-// BindingFormat whenever Binding's JSON shape changes.
+// Later fields (abandoned_sessions, oom_requeue, round_oom_kills, link) are
+// fields recordFormat never stamps: an older relevo that drops
+// abandoned_sessions loses only pending session deletes, one that drops
+// oom_requeue or round_oom_kills loses only oom-kill tracking for in-flight
+// rounds, and one that drops link loses only the name of a remote binding's
+// other copy. Stamping a field would lock that older relevo out of loading the
+// binding. Bump BindingFormat whenever Binding's JSON shape changes in a way
+// that must lock an older relevo out.
 const BindingFormat = 10
 
 // recordFormat is the format to write b at. A record may carry the ticket key,

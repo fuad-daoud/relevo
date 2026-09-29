@@ -107,9 +107,12 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		Label:         label,
 		ServerVersion: remote.Version,
 		Transports:    []string{"git-bundle"},
+		// The server's own installation, not the caller's identity above.
+		Installation:      s.cfg.Installation.ID,
+		InstallationLabel: s.cfg.Installation.Label,
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin}
 		who.BuilderTier = string(relevo.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()

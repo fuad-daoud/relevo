@@ -215,7 +215,8 @@ func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
 	if err != nil {
 		return b, db.Record{}, fmt.Errorf("marshal binding %q: %w", b.Name, err)
 	}
-	return b, db.Record{
+	rec := db.Record{
+		ID:        b.RecordID,
 		Owner:     s.owner,
 		Name:      b.Name,
 		State:     string(b.State),
@@ -224,7 +225,14 @@ func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
 		JSON:      string(raw),
 		CreatedAt: b.CreatedAt,
 		UpdatedAt: b.UpdatedAt,
-	}, nil
+	}
+	// The link is promoted out of the JSON into its own columns, the same way
+	// the fields RecordPut's UPDATE and INSERT write are.
+	if b.Link != nil {
+		rec.LinkOrigin = b.Link.Installation
+		rec.LinkID = b.Link.ID
+	}
+	return b, rec, nil
 }
 
 // saveWithLog saves the binding and appends entries in one transaction, so a

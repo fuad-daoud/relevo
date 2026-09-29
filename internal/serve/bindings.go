@@ -135,7 +135,7 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		b = reloaded
 	}
 	entries, _ := rt.Store.ReadLog(req.Name)
-	writeJSON(w, http.StatusCreated, relevo.ServedView(b, entries))
+	writeJSON(w, http.StatusCreated, s.servedView(rt, b, entries))
 }
 
 // pickServedTier resolves role's candidate and tier for a create. It writes the
@@ -212,8 +212,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		authorName, authorEmail = req.Author.Name, req.Author.Email
 	}
 
-	now := s.cfg.Now()
-	cwd := rt.Store.WorktreePath(req.Name)
+	now, cwd := s.cfg.Now(), rt.Store.WorktreePath(req.Name)
 	return store.Binding{
 		Name:             req.Name,
 		Owner:            string(caller),
@@ -224,6 +223,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		Repo:             bare,
 		Builder:          store.Endpoint{Kind: harnessKind, Mode: store.ModeHeadless, AgentName: req.Name},
 		BuilderCandidate: candidateToken,
+		Link:             servedLink(req),
 		Tier:             string(tier),
 		Role:             role,
 		Shape:            shape,
@@ -266,7 +266,7 @@ func (s *Server) handleListBindings(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		entries, _ := rt.Store.ReadLog(b.Name)
-		views = append(views, relevo.ServedView(b, entries))
+		views = append(views, s.servedView(rt, b, entries))
 	}
 
 	writeJSON(w, http.StatusOK, views)
@@ -302,7 +302,7 @@ func (s *Server) handleGetBinding(w http.ResponseWriter, r *http.Request) {
 		_ = rt.Store.Save(b)
 
 		entries, _ := rt.Store.ReadLog(name)
-		view := relevo.ServedView(b, entries)
+		view := s.servedView(rt, b, entries)
 		view.Queue = s.queuePositionView(b, view, caller)
 		return b, rt, view, true
 	}()
@@ -388,7 +388,7 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 		b = reloaded
 	}
 	entries, _ = rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
+	writeJSON(w, http.StatusOK, s.servedView(rt, b, entries))
 }
 
 func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
@@ -472,7 +472,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 		b = reloaded
 	}
 	entries, _ = rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
+	writeJSON(w, http.StatusOK, s.servedView(rt, b, entries))
 }
 
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
@@ -516,7 +516,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, _ := rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
+	writeJSON(w, http.StatusOK, s.servedView(rt, b, entries))
 }
 
 func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {

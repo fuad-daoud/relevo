@@ -108,5 +108,7 @@
     "last_progress_at": "2026-01-02T03:04:05Z",
     "exploring_since": "2026-01-02T03:04:05Z",
     "gating_since": "2026-01-02T03:04:05Z"
-  }
+  },
+  "id": "01SERVERBINDINGRECORD00000000",
+  "installation": "01SERVERINSTALLATION0000000"
 }

@@ -226,6 +226,19 @@ func validIssueNumber(n string) bool {
 	return true
 }
 
+// RemoteLink names the other copy of a remote binding: the installation that
+// holds it and that installation's record id. A binding created by a new client
+// against a new server carries one on both sides -- the client's row points at
+// the server's record, the server's row at the client's -- so a reader can
+// tell the two copies apart from one binding the mastermind drives.
+type RemoteLink struct {
+	// Installation is the other installation's id, the value in its rows'
+	// origin column.
+	Installation string `json:"installation,omitempty"`
+	// ID is the other installation's binding_record id.
+	ID string `json:"id,omitempty"`
+}
+
 // SameBinding reports whether two bindings hold the same state, by comparing
 // their serialised forms.
 //

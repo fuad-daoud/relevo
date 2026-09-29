@@ -81,8 +81,11 @@ func closeServedRound(ctx context.Context, rt Runtime, b store.Binding) store.Bi
 	return b
 }
 
-// ServedView is the wire view of an owned binding (spec §3.1).
-func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
+// ServedView is the wire view of an owned binding (spec §3.1). recordID is the
+// server's binding_record id and installation the server's own installation id;
+// both are what a client records to link its row to this server's copy, and
+// both are "" for a caller that holds neither.
+func ServedView(b store.Binding, entries []store.LogEntry, recordID, installation string) remote.BindingView {
 	rState := RoundStateOf(b, entries)
 	var halt string
 	if b.State == store.StateNeedsYou {
@@ -148,6 +151,8 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		}
 	}
 	return remote.BindingView{
+		ID:             recordID,
+		Installation:   installation,
 		Name:           b.Name,
 		State:          string(b.State),
 		Round:          b.Round,
