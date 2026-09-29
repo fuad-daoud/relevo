@@ -194,8 +194,10 @@ var secretRe = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(?:key|token|secret|password)=[^\s&,;"']+`),
 }
 
-// runRe matches a run long enough to be a base64 or base62 secret.
-var runRe = regexp.MustCompile(`[A-Za-z0-9+/]{40,}={0,2}`)
+// runRe matches a run long enough to be a base64 or base62 secret. A run never
+// spans a path separator: a long path segment is one segment, so a state root
+// under /tmp that happens to mix case and digits is not mistaken for a token.
+var runRe = regexp.MustCompile(`[A-Za-z0-9+]{40,}={0,2}`)
 
 // redactSecrets replaces every secret-shaped string. A long run is only a
 // secret when it cannot be a commit id: hex of 40 characters or fewer is kept,

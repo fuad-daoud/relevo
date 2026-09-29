@@ -112,7 +112,9 @@ func main() {
 	client.Version = buildVersion()
 
 	args := os.Args[1:]
-	os.Exit(report(os.Stderr, run(args), jsonRequested(args)))
+	err := run(args)
+	recordInternal(args, err)
+	os.Exit(report(os.Stderr, err, jsonRequested(args)))
 }
 
 // report renders run's error on w and returns the process exit code. It is the

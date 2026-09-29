@@ -173,6 +173,24 @@ var redactCases = []struct {
 		want: "id a1B2c3D4e5F6a7B8c9D0e1F2a3B4c5D6e7F8a9B0",
 	},
 	{
+		name: "a long mixed-case digit path is kept",
+		r:    baseRedactor,
+		in:   "/tmp/TestBugreportDefaultWritesDatedFile1234/001/state/relevo",
+		want: "/tmp/TestBugreportDefaultWritesDatedFile1234/001/state/relevo",
+	},
+	{
+		name: "an XDG state root is kept",
+		r:    baseRedactor,
+		in:   "/tmp/xyz123/state/relevo",
+		want: "/tmp/xyz123/state/relevo",
+	},
+	{
+		name: "a long mixed-case digit run without a separator is redacted",
+		r:    baseRedactor,
+		in:   "QWxhZGRpbjpvcGVuIHNlc2FtZQ0YzAbCdEfGhIjKlMnOpQrSt",
+		want: sanitize.Redacted,
+	},
+	{
 		name: "a long lower-case word run is kept",
 		r:    baseRedactor,
 		in:   strings.Repeat("a", 64),

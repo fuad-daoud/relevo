@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -500,5 +501,52 @@ func TestBugreportIsNotReport(t *testing.T) {
 	}
 	if _, ok := registryEntry("report"); ok {
 		t.Error("the registry names a `report` entry, want none")
+	}
+}
+
+// TestBundleIncludesLastError pins the error loop's read half: the failure the
+// state root recorded reaches the bundle's Last error section, and its argv and
+// message pass through the redaction rules like every other string.
+func TestBundleIncludesLastError(t *testing.T) {
+	docsEnv(t)
+	root := seedBugreportMachine(t, "alpha")
+	fakeBugreportExec(t, nil, nil)
+
+	secret := "ghp_16C7e42F292c6912E7710c838347Ae178B4a"
+	if err := bugreport.WriteLastError(root, bugreport.LastError{
+		Time:    time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC),
+		Version: buildVersion(),
+		Verb:    "status",
+		Argv:    []string{"status", "--cwd", "/home/someone/work", secret},
+		Code:    "internal",
+		Message: "cannot read /home/someone/work " + secret,
+		Next:    "relevo bugreport",
+	}); err != nil {
+		t.Fatalf("WriteLastError: %v", err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error { return run([]string{"bugreport", "--stdout"}) })
+	if err != nil {
+		t.Fatalf("bugreport --stdout: %v (stderr: %s)", err, stderr)
+	}
+	body := string(stdout)
+
+	if !strings.HasPrefix(body, "# relevo "+buildVersion()+": internal in status\n") {
+		t.Errorf("bundle title does not carry the recorded failure:\n%s", body)
+	}
+	for _, want := range []string{
+		"| verb | status |",
+		"| code | internal |",
+		"| argv | status --cwd ~/work " + sanitize.Redacted + " |",
+		"| message | cannot read ~/work " + sanitize.Redacted + " |",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("bundle does not carry %q:\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{secret, "/home/someone"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("bundle carries %q unredacted:\n%s", unwanted, body)
+		}
 	}
 }
