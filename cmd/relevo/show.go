@@ -158,17 +158,14 @@ func cmdShow(args []string) error {
 		return err
 	}
 	if len(fs.Args()) != 1 {
-		fmt.Fprintln(os.Stderr, showUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "show wants exactly one binding name, got %d", len(fs.Args()))
 	}
 	name := fs.Args()[0]
 
 	// --state names the serve root, so it means nothing without an owner to
 	// read there (§4.1).
 	if *state != "" && *owner == "" {
-		fmt.Fprintln(os.Stderr, "relevo show: --state only applies with --owner")
-		fmt.Fprintln(os.Stderr, showUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "--state only applies with --owner")
 	}
 
 	section, serr := showSectionFlags(showSectionArgs{
@@ -179,15 +176,11 @@ func cmdShow(args []string) error {
 	})
 	if serr != nil {
 		// An --owner invocation is the moved serve show body, so its section
-		// conflict keeps that route's prefix and usage line (§4.1).
+		// conflict keeps that route's name and a hint naming that form (§4.1).
 		if *owner != "" {
-			fmt.Fprintln(os.Stderr, "relevo serve show: "+serr.Error())
-			fmt.Fprintln(os.Stderr, serveShowUsage)
-			return exitCodeErr{code: 2}
+			return failNext(codeUsage, "relevo show --owner", "serve show: %v", serr)
 		}
-		fmt.Fprintln(os.Stderr, "relevo show: "+serr.Error())
-		fmt.Fprintln(os.Stderr, showUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "show: %v", serr)
 	}
 
 	// The absorbed flags are valid only with the section they came from
@@ -198,9 +191,7 @@ func cmdShow(args []string) error {
 			if *anchors {
 				bad = "--anchors"
 			}
-			fmt.Fprintf(os.Stderr, "relevo show: %s requires --diff or --drift\n", bad)
-			fmt.Fprintln(os.Stderr, showUsage)
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "%s requires --diff or --drift", bad)
 		}
 	}
 	if *follow || flagGiven(fs, "after") {
@@ -209,14 +200,11 @@ func cmdShow(args []string) error {
 			if !*follow {
 				bad = "--after"
 			}
-			fmt.Fprintf(os.Stderr, "relevo show: %s requires --log\n", bad)
-			fmt.Fprintln(os.Stderr, showUsage)
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "%s requires --log", bad)
 		}
 	}
 	if *after < 0 {
-		fmt.Fprintln(os.Stderr, "relevo: --after must be >= 0")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "--after must be >= 0")
 	}
 
 	if *owner != "" {
@@ -237,15 +225,35 @@ func cmdShow(args []string) error {
 	case section == relevo.ShowDiff, section == relevo.ShowDrift:
 		// Byte-identical to the removed diff verb, including its default
 		// round and its #143 .viewed stamp.
-		return printDiff(rt, name, *round, *stat, section == relevo.ShowDrift, *anchors)
+		return classifyReadErr(printDiff(rt, name, *round, *stat, section == relevo.ShowDrift, *anchors))
 	case section == relevo.ShowLog && (*round == 0 || *follow):
 		// The whole log is the removed log verb, byte for byte, --json's
 		// NDJSON included.
-		return printLog(rt, name, *round, *after, *asJSON, *follow, true)
+		return classifyReadErr(printLog(rt, name, *round, *after, *asJSON, *follow, true))
 	}
 
 	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON, Peek: *peek, FindingsID: *findings, ArtifactRel: *artifact}
-	return printShow(rt, opts, true, true, "")
+	return classifyReadErr(printShow(rt, opts, true, true, ""))
+}
+
+// classifyReadErr maps a read verb's failure onto the catalog: a binding the
+// store does not hold, a round with nothing completed, an artifact no listing
+// names, and everything else internal. The helpers printShow, printLog and
+// printDiff keep returning the errors they always did, each wrapping one of
+// these causes, so the classification lives at this one boundary.
+func classifyReadErr(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, store.ErrNotFound):
+		return fail(codeBindingNotFound, "%v", err)
+	case errors.Is(err, relevo.ErrNoCompletedRound):
+		return fail(codeRoundNotFound, "%v", err)
+	case errors.Is(err, relevo.ErrNoArtifact):
+		return fail(codeArtifactNotFound, "%v", err)
+	default:
+		return fail(codeInternal, "%v", err)
+	}
 }
 
 // printShow is cmdShow's body after section resolution, moved verbatim.
@@ -272,8 +280,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 		}
 		d, dbErr := openDB(rt.Store.DBPath())
 		if dbErr != nil {
-			fmt.Fprintf(os.Stderr, "relevo show: %v\n", dbErr)
-			return exitCodeErr{code: 1}
+			return fmt.Errorf("open %s: %w", rt.Store.DBPath(), dbErr)
 		}
 		defer d.Close()
 		rt.DB = d
@@ -291,8 +298,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 
 	res, err := relevo.Show(context.Background(), rt, opts)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo show: %v\n", err)
-		return exitCodeErr{code: 1}
+		return err
 	}
 
 	if opts.JSON {
@@ -372,7 +378,7 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 		}
 	}
 	if targetRound < 1 {
-		return fmt.Errorf("binding %q has no completed round yet", name)
+		return fmt.Errorf("binding %q has no completed round yet: %w", name, relevo.ErrNoCompletedRound)
 	}
 
 	if stat {
@@ -393,9 +399,9 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 		}
 		if found == nil || found.Note == "" {
 			if drift {
-				return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, name)
+				return fmt.Errorf("no drift recorded for round %d of %q (--drift): %w", targetRound, name, relevo.ErrNoArtifact)
 			}
-			return fmt.Errorf("no diff recorded for round %d of %q", targetRound, name)
+			return fmt.Errorf("no diff recorded for round %d of %q: %w", targetRound, name, relevo.ErrNoArtifact)
 		}
 		fmt.Println(found.Note)
 		// #143: a successful print is what "viewed" means; the stamp is
@@ -416,9 +422,9 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 	}
 	if !ok {
 		if drift {
-			return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, name)
+			return fmt.Errorf("no drift recorded for round %d of %q (--drift): %w", targetRound, name, relevo.ErrNoArtifact)
 		}
-		return fmt.Errorf("no diff recorded for round %d of %q", targetRound, name)
+		return fmt.Errorf("no diff recorded for round %d of %q: %w", targetRound, name, relevo.ErrNoArtifact)
 	}
 
 	if anchors {

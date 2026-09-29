@@ -247,7 +247,7 @@ var registry = []verbEntry{
 		},
 		Output: "json:[]RoundRow",
 		Exit:   []int{0, 1, 2},
-		Errors: []string{"usage"},
+		Errors: []string{"internal", "usage"},
 	},
 	{
 		Name:    "mastermind",
@@ -446,7 +446,7 @@ var registry = []verbEntry{
 		},
 		Output: "json:ShowResult; --log prints NDJSON events",
 		Exit:   []int{0, 1, 2},
-		Errors: []string{"usage"},
+		Errors: []string{"artifact_not_found", "binding_not_found", "internal", "round_not_found", "usage"},
 	},
 	{
 		Name:    "status",
@@ -455,7 +455,7 @@ var registry = []verbEntry{
 		Flags:   []string{"--all", "--json", "--line", "--name"},
 		Output:  "json:view.Report; --line: json:view.StatusLineDoc",
 		Exit:    []int{0, 1, 2},
-		Errors:  []string{"usage"},
+		Errors:  []string{"binding_not_found", "internal", "usage"},
 	},
 	{
 		Name:    "stop",
@@ -503,10 +503,11 @@ var registry = []verbEntry{
 	{
 		Name:    "wait",
 		Summary: "block until a round closes or needs you, then print the pending report",
-		Args:    "[NAME] [--any] [--round N] [--peek] [--timeout D]",
-		Flags:   []string{"--any", "--name", "--peek", "--round", "--timeout"},
-		Exit:    []int{0, 2, 3, 4, 5, 124},
-		Errors:  []string{"usage"},
+		Args:    "[NAME] [--any] [--round N] [--peek] [--timeout D] [--json]",
+		Flags:   []string{"--any", "--json", "--name", "--peek", "--round", "--timeout"},
+		Output:  "json:WaitDoc",
+		Exit:    []int{0, 2, 3, 4, 5, 6, 124},
+		Errors:  []string{"binding_not_found", "internal", "round_not_found", "usage"},
 	},
 }
 

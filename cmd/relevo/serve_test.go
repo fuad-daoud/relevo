@@ -72,12 +72,18 @@ func TestServeUnbindWithoutOwnerExits2(t *testing.T) {
 
 // TestShowStateWithoutOwnerExits2 is TestServeLogWithoutOwnerExits2's port
 // to the new form (§8): `--state` names the serve root, so `show` refuses it
-// without `--owner`, naming --owner, exit 2.
+// without `--owner`, naming --owner, exit 2. The refusal is the frame's coded
+// usage error, so the mention is asserted on the code's message rather than on
+// a stderr dump.
 func TestShowStateWithoutOwnerExits2(t *testing.T) {
 	stdout, stderr, runErr := captureOutput(t, func() error {
 		return run([]string{"show", "some-binding", "--state", t.TempDir()})
 	})
 
+	ce := requireCLIError(t, runErr, codeUsage, "relevo help")
+	if !strings.Contains(ce.message, "--owner") {
+		t.Errorf("expected mention of --owner in the refusal, got %q", ce.message)
+	}
 	var ec exitCodeErr
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("expected exit code 2, got %v", runErr)
@@ -85,8 +91,8 @@ func TestShowStateWithoutOwnerExits2(t *testing.T) {
 	if len(stdout) != 0 {
 		t.Errorf("expected nothing on stdout, got %q", string(stdout))
 	}
-	if !strings.Contains(string(stderr), "--owner") {
-		t.Errorf("expected mention of --owner on stderr, got %q", string(stderr))
+	if len(stderr) != 0 {
+		t.Errorf("expected nothing on stderr before report, got %q", string(stderr))
 	}
 }
 

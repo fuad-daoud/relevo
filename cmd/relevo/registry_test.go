@@ -229,8 +229,8 @@ func TestRegistryShape(t *testing.T) {
 		}
 
 		if e.Name == "wait" {
-			if !slices.Equal(e.Exit, []int{0, 2, 3, 4, 5, 124}) {
-				t.Errorf("wait: exit = %v, want its protocol codes 0/2/3/4/5/124", e.Exit)
+			if !slices.Equal(e.Exit, []int{0, 2, 3, 4, 5, 6, 124}) {
+				t.Errorf("wait: exit = %v, want its protocol codes 0/2/3/4/5/6/124", e.Exit)
 			}
 		} else {
 			for _, code := range e.Exit {

@@ -47,7 +47,7 @@ The CLI grew as a human tool that agents also use. Human output stays (owner,
    - `--json` stderr: `{"error":{"code":"<code>","message":"<message>","next":"<command>"}}`.
    The code is stable; the message is not part of any contract.
 6. **Exit codes stay coarse and stable:** 0 ok, 1 failure, 2 usage or refusal.
-   `wait` keeps its protocol codes 0/2/3/4/5/124 (C8).
+   `wait` keeps its protocol codes 0/2/3/4/5/6/124 (C8; 6 = WaitNotStarted).
 7. **`relevo help --json` describes the surface**, and a contract test keeps the
    description and the dispatcher in step. The human `relevo help` output stays.
 8. **Nothing on stdout in `--json` mode except the document.** One round of output,

@@ -41,7 +41,7 @@ func filterReport(rep view.Report, name string) (view.Report, error) {
 			return view.Report{Bindings: []view.BindingStatus{b}}, nil
 		}
 	}
-	return view.Report{}, fmt.Errorf("no binding named %q", name)
+	return view.Report{}, fail(codeBindingNotFound, "no binding named %q", name)
 }
 
 // filterReportMasterMind narrows a status report to one mastermind's bindings. It
@@ -91,8 +91,7 @@ func cmdStatus(args []string) error {
 	// mastermind, so it takes no binding and no other output mode (§4.5).
 	if *line {
 		if *all || *name != "" || len(fs.Args()) > 0 {
-			fmt.Fprintln(os.Stderr, "relevo: --line cannot be combined with --all/--name")
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "--line cannot be combined with --all/--name")
 		}
 		return runStatusline(*asJSON)
 	}
@@ -104,7 +103,7 @@ func cmdStatus(args []string) error {
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 	if rt.Remote != nil {
 		if _, _, serr := relevo.SyncRemoteUnlessDaemon(context.Background(), rt); serr != nil {
@@ -113,7 +112,7 @@ func cmdStatus(args []string) error {
 	}
 	rep, err := relevo.Status(context.Background(), rt)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	// §3.3: a bare `relevo status` shows the calling mastermind's bindings. A

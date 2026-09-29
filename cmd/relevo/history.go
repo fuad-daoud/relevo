@@ -108,8 +108,7 @@ func cmdHistory(args []string) error {
 		return err
 	}
 	if len(fs.Args()) != 0 {
-		fmt.Fprintln(os.Stderr, historyUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "history takes no positional arguments, got %v", fs.Args())
 	}
 
 	rt, err := newRuntime()
@@ -155,7 +154,7 @@ func cmdHistory(args []string) error {
 	}
 	rows, qerr := rt.DB.Query(f)
 	if qerr != nil {
-		return qerr
+		return fail(codeInternal, "%v", qerr)
 	}
 
 	parsed := opts.ParsedQuery()
