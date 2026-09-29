@@ -265,6 +265,30 @@ func makeRoundFormWithTier(t *testing.T, round int, plan, tier string, bundleByt
 	return buf.Bytes(), mw.FormDataContentType()
 }
 
+// makeRoundFormForce is makeRoundForm plus an optional "force" field, written
+// after "plan" and before "bundle" per the wire contract.
+func makeRoundFormForce(t *testing.T, round int, plan string, bundleBytes []byte, force bool) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("plan", plan); err != nil {
+		t.Fatal(err)
+	}
+	if force {
+		if err := mw.WriteField("force", "1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBundlePart(t, mw, bundleBytes)
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes(), mw.FormDataContentType()
+}
+
 // roundFormCandidate is makeRoundForm with the optional "candidate" field.
 func roundFormCandidate(t *testing.T, round int, plan string, bundleBytes []byte, candidate string) ([]byte, string) {
 	t.Helper()

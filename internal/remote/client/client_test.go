@@ -208,7 +208,7 @@ func startRemoteRound(t *testing.T, ctx context.Context, cl *client.Client, fix 
 		t.Fatalf("Snapshot: %v", err)
 	}
 	defer func() { _ = snap.Body.Close() }()
-	return cl.StartRound(ctx, "zen", "api", 1, []byte("# Round 1 Plan\nImplement feature"), snap.Body, "", "", nil, false)
+	return cl.StartRound(ctx, "zen", "api", 1, []byte("# Round 1 Plan\nImplement feature"), snap.Body, "", "", false, nil, false)
 }
 
 func commitServerResult(t *testing.T, worktree string) {
@@ -331,7 +331,7 @@ func TestStartRoundSendsTagsField(t *testing.T) {
 		{Name: "v0", SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 		{Name: "v1", SHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	}
-	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", tags, false); err != nil {
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, tags, false); err != nil {
 		t.Fatalf("StartRound with tags: %v", err)
 	}
 	want, err := json.Marshal(tags)
@@ -348,7 +348,7 @@ func TestStartRoundSendsTagsField(t *testing.T) {
 		t.Fatalf("tags field = %q, want %q", got, string(want))
 	}
 
-	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", nil, false); err != nil {
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, nil, false); err != nil {
 		t.Fatalf("StartRound without tags: %v", err)
 	}
 	mu.Lock()
@@ -356,5 +356,56 @@ func TestStartRoundSendsTagsField(t *testing.T) {
 	mu.Unlock()
 	if had {
 		t.Fatal("tags field sent when tags were nil")
+	}
+}
+
+// TestStartRoundSendsForceField pins the force field's wire shape: written as
+// "1" only when force is true, omitted otherwise.
+func TestStartRoundSendsForceField(t *testing.T) {
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var gotForce string
+	var hadForce bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Errorf("server ParseMultipartForm: %v", err)
+		}
+		mu.Lock()
+		gotForce = r.FormValue("force")
+		_, hadForce = r.MultipartForm.Value["force"]
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"api","round_state":"running"}`))
+	}))
+	defer ts.Close()
+
+	cl := client.New(
+		remote.Servers{"zen": remote.ServerEntry{URL: ts.URL, Insecure: true}},
+		generateKey(t),
+		time.Now,
+	)
+
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", true, nil, false); err != nil {
+		t.Fatalf("StartRound with force: %v", err)
+	}
+	mu.Lock()
+	got, had := gotForce, hadForce
+	mu.Unlock()
+	if !had {
+		t.Fatal("no force field on the request when force was true")
+	}
+	if got != "1" {
+		t.Fatalf("force field = %q, want 1", got)
+	}
+
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, nil, false); err != nil {
+		t.Fatalf("StartRound without force: %v", err)
+	}
+	mu.Lock()
+	_, had = gotForce, hadForce
+	mu.Unlock()
+	if had {
+		t.Fatal("force field sent when force was false")
 	}
 }

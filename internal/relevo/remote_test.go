@@ -65,6 +65,7 @@ type fakeRemote struct {
 	startRoundErr       error
 	startRoundTier      string
 	startRoundCandidate string
+	startRoundForce     bool
 	startRoundTags      []remote.TagRef
 	startRoundRetry     bool
 	roundFileResp       io.ReadCloser
@@ -130,7 +131,7 @@ func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remot
 	return f.getBindingResp, f.getBindingErr
 }
 
-func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error) {
+func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error) {
 	call := fmt.Sprintf("StartRound:%s:%s:%d", server, name, round)
 	if f.beforeCall != nil {
 		f.beforeCall(call)
@@ -138,6 +139,7 @@ func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round 
 	f.calls = append(f.calls, call)
 	f.startRoundTier = tier
 	f.startRoundCandidate = candidate
+	f.startRoundForce = force
 	f.startRoundTags = tags
 	f.startRoundRetry = retryOnUnreachable
 	return f.startRoundResp, f.startRoundErr
@@ -1857,6 +1859,131 @@ func TestSendRemoteTierPassedToStartRound(t *testing.T) {
 	}
 	if fr.startRoundTier != "edit" {
 		t.Fatalf("startRoundTier = %q, want edit", fr.startRoundTier)
+	}
+}
+
+// TestSendRemoteForcePassedToStartRound pins that a Send with Force reaches
+// StartRound over the wire, after the force feature probe succeeds (#702).
+func TestSendRemoteForcePassedToStartRound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:   "api",
+		CWD:    "/fake/repo",
+		Repo:   "/fake/repo",
+		Branch: "relevo/api",
+		Round:  1,
+		State:  store.StateActive,
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: "zen",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relevo/api": "1111111111111111111111111111111111111111",
+		},
+	}
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureForce}},
+		startRoundResp: remote.BindingView{
+			RoundState: remote.RoundRunning,
+		},
+	}
+	ft := &fakeTransport{
+		snapshotResp: remote.Snapshot{
+			Heads: map[string]string{"refs/relevo/api/out": "1111111111111111111111111111111111111111"},
+		},
+	}
+	rt := Runtime{
+		Store:     st,
+		Git:       fg,
+		Remote:    fr,
+		Transport: ft,
+		Now:       time.Now,
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Send(ctx, rt, "api", planFile, SendOptions{Force: true}); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if !fr.startRoundForce {
+		t.Fatalf("startRoundForce = %v, want true", fr.startRoundForce)
+	}
+}
+
+// TestSendRemoteForceRefusedWithoutTheFeature pins #702: a forced send to a
+// server without the force feature is refused before the bundle is shipped,
+// naming the missing feature rather than the "pass --force" sentence.
+func TestSendRemoteForceRefusedWithoutTheFeature(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:   "api",
+		CWD:    "/fake/repo",
+		Repo:   "/fake/repo",
+		Branch: "relevo/api",
+		Round:  1,
+		State:  store.StateActive,
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: "zen",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relevo/api": "1111111111111111111111111111111111111111",
+		},
+	}
+	fr := &fakeRemote{
+		whoAmIResp:     remote.WhoAmI{Features: []string{remote.FeatureTier}},
+		startRoundResp: remote.BindingView{RoundState: remote.RoundRunning},
+	}
+	ft := &fakeTransport{
+		snapshotResp: remote.Snapshot{
+			Heads: map[string]string{"refs/relevo/api/out": "1111111111111111111111111111111111111111"},
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Transport: ft, Now: time.Now}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Send(ctx, rt, "api", planFile, SendOptions{Force: true})
+	if err == nil {
+		t.Fatal("Send --force against a pre-force server must be refused")
+	}
+	if !strings.Contains(err.Error(), "pre-force server") {
+		t.Errorf("err = %q, want the pre-force refusal", err.Error())
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "StartRound:") {
+			t.Errorf("StartRound was called: %v", fr.calls)
+		}
+	}
+	if len(ft.snapshotCalls) != 0 {
+		t.Errorf("a snapshot was taken before the refusal: %+v", ft.snapshotCalls)
+	}
+	if _, statErr := os.Stat(st.PromptPath("api", 1)); !os.IsNotExist(statErr) {
+		t.Errorf("a plan was staged: %v", statErr)
 	}
 }
 
