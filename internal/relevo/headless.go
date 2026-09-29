@@ -177,7 +177,7 @@ func builderEnv(b store.Binding) []string {
 // The spawn appends the marker after the deny filter, so a stale RELEVO_RUNNER
 // in the daemon's own environment cannot shadow it. Pure.
 func roundEnv(b store.Binding) []string {
-	return append(builderEnv(b), mastermind.RunnerEnv+"="+b.Name)
+	return append(builderEnv(b), mastermind.RunnerEnvEntry(b.Name))
 }
 
 // startRound starts the round's process for a headless binding and records

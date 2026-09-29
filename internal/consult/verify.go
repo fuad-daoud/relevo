@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -290,6 +291,7 @@ func (v verifyStart) start(b store.Binding, consult store.Consult, askPath, prom
 		Argv:       argv,
 		LogPath:    streamPath,
 		StreamPath: streamPath,
+		Env:        []string{mastermind.RunnerEnvEntry(v.b.Name)},
 		Scope:      v.d.Scope("verify", v.b.Owner, v.b.Name, v.round, consult.ID),
 	})
 	if err != nil {
