@@ -41,6 +41,10 @@ type bindFlags struct {
 	branch   string
 	server   string
 	base     string
+
+	// asJSON selects the result document instead of the human lines; stdout
+	// then carries the document alone and the notices move to stderr (§2.1).
+	asJSON bool
 }
 
 // bindRoute names which of the three merged paths cmdBind runs.
@@ -99,6 +103,7 @@ type bindFlagValues struct {
 	branch         *string
 	server         *string
 	base           *string
+	asJSON         *bool
 }
 
 // bindFlagSet defines bind's flags on fs and returns the values they parse
@@ -127,6 +132,7 @@ func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v.branch = fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
 	v.server = fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
 	v.base = fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
+	v.asJSON = fs.Bool("json", false, "print the binding as a JSON document")
 	return v
 }
 
@@ -166,6 +172,7 @@ func cmdBind(args []string) error {
 		feature: *v.feature, noFeature: *v.noFeature, ticket: *v.ticket,
 		role: *v.actor, worktree: *v.worktree, cwd: *v.cwd,
 		branch: *v.branch, server: *v.server, base: *v.base,
+		asJSON: *v.asJSON,
 	}
 
 	route, rerr := bindRouteFor(f)
@@ -182,11 +189,12 @@ func cmdBind(args []string) error {
 	}
 }
 
-// refuseFlag prints one line to stderr and returns it wrapped in exit 2,
-// exactly as the route refusal always has; the label rules reuse the shape.
+// refuseFlag is the one-line refusal the label rules and the route check
+// share: a refused code, which the frame renders with exit 2 and no next hint.
+// The message is part of the error, so --json stderr carries it once instead
+// of a stray human line plus an envelope.
 func refuseFlag(err error) error {
-	fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
-	return fmt.Errorf("%v: %w", err, exitCodeErr{code: 2})
+	return fail(codeRefused, "%v", err)
 }
 
 // runBind is bind's own body after parsing: bind the current tree, or resume
@@ -195,23 +203,23 @@ func runBind(f bindFlags) error {
 	// --resume takes the name from --name, so a positional one is dropped on
 	// the floor and the binding lookup then fails on the empty name.
 	if f.resume && f.name == "" {
-		return fmt.Errorf("relevo bind --resume needs --name NAME (a positional name is ignored)")
+		return fail(codeUsage, "relevo bind --resume needs --name NAME (a positional name is ignored)")
 	}
 	if f.rebind && !f.resume {
-		return fmt.Errorf("relevo bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
+		return fail(codeUsage, "relevo bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
 	}
 	if f.role != "" && f.resume {
-		return fmt.Errorf("relevo bind --resume keeps the binding's actor; drop --actor")
+		return fail(codeUsage, "relevo bind --resume keeps the binding's actor; drop --actor")
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("resolve working directory: %w", err)
+		return writeError(fmt.Errorf("resolve working directory: %w", err))
 	}
 
 	opts := relevo.BindOptions{
@@ -279,15 +287,18 @@ func runBind(f bindFlags) error {
 
 	b, res, err := relevo.BindResolved(context.Background(), rt, opts)
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 	// A resume keeps the binding's stored role, so the pick note names it.
 	roleName = relevo.BindingRole(b)
+	// Every supplementary line goes to the human default's stdout, or to
+	// stderr under --json, where stdout must carry the document alone (§2.1).
+	notices := noticeWriter(f.asJSON)
 	if t := relevo.RestoreText(res); t != "" {
-		fmt.Println(t)
+		fmt.Fprintln(notices, t)
 	}
 	if res.WasPaused {
-		fmt.Printf("resumed %s after pause\n", b.Name)
+		fmt.Fprintf(notices, "resumed %s after pause\n", b.Name)
 	}
 
 	if f.resume && (f.candidate != "" || f.rebind) {
@@ -295,24 +306,34 @@ func runBind(f bindFlags) error {
 		if b.BuilderCandidate != "" {
 			builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate))
 		}
-		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
-			"hand it the round with:\n"+
-			"  relevo send --name %s --file %s\n",
-			b.Name, builderDesc, b.Round, b.Name, rt.Store.PromptPath(b.Name, b.Round))
-		noteRegateNoGate(b)
+		if !f.asJSON {
+			fmt.Printf("rebound %s: builder %s, still on round %d\n"+
+				"hand it the round with:\n"+
+				"  relevo send --name %s --file %s\n",
+				b.Name, builderDesc, b.Round, b.Name, rt.Store.PromptPath(b.Name, b.Round))
+		}
+		noteRegateNoGate(notices, b)
 		notePick(rt, roleName, res)
 		warnWaitingOnYou(rt, b.Name)
+		if f.asJSON {
+			return printDoc(bindDocOf(b, cwd, roleName, candidateLabel(rt, b.BuilderCandidate), true))
+		}
 		return nil
 	}
 
-	fmt.Printf("bound %s: mastermind %s -> builder %s (%s), round %d\n",
-		b.Name, b.MasterMind.PaneID, builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate), b.Round)
-	noteRegateNoGate(b)
+	if !f.asJSON {
+		fmt.Printf("bound %s: mastermind %s -> builder %s (%s), round %d\n",
+			b.Name, b.MasterMind.PaneID, builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate), b.Round)
+	}
+	noteRegateNoGate(notices, b)
 	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick(rt, roleName, res)
 	warnWaitingOnYou(rt, b.Name)
+	if f.asJSON {
+		return printDoc(bindDocOf(b, cwd, roleName, candidateLabel(rt, b.BuilderCandidate), f.resume))
+	}
 	return nil
 }
 
@@ -326,28 +347,27 @@ func runAdd(f bindFlags) error {
 	// Before newRuntime, in this order: the flag pair, then a name that is
 	// either given or derivable from the branch.
 	if branch != "" && cwd != "" {
-		fmt.Fprintf(os.Stderr, "relevo: relevo bind --branch and --cwd are exclusive\n")
-		return fmt.Errorf("relevo bind --branch and --cwd are exclusive: %w", exitCodeErr{code: 2})
+		return fail(codeRefused, "relevo bind --branch and --cwd are exclusive")
 	}
 	if name == "" {
 		if branch == "" {
-			return fmt.Errorf("relevo bind requires --name NAME")
+			return fail(codeUsage, "relevo bind requires --name NAME")
 		}
 		derived, err := relevo.DefaultBindingName(branch)
 		if err != nil {
-			return fmt.Errorf("relevo bind --branch %s: cannot derive a binding name (%v); pass --name", branch, err)
+			return fail(codeUsage, "relevo bind --branch %s: cannot derive a binding name (%v); pass --name", branch, err)
 		}
 		name = derived
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
 	repo, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("resolve working directory: %w", err)
+		return writeError(fmt.Errorf("resolve working directory: %w", err))
 	}
 
 	res, err := relevo.Add(context.Background(), rt, relevo.AddOptions{
@@ -369,42 +389,55 @@ func runAdd(f bindFlags) error {
 		Role:         f.role,
 	})
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
-	switch {
-	case res.Binding.Builder.Remote():
-		fmt.Printf("added %s: builder %s on %s\n", res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), res.Binding.Builder.Server)
-		if res.Binding.Tier != "" {
-			fmt.Printf("  tier %s (server)\n", res.Binding.Tier)
-		} else {
-			fmt.Printf("  tier server's choice (pre-tier server)\n")
+	notices := noticeWriter(f.asJSON)
+	if !f.asJSON {
+		switch {
+		case res.Binding.Builder.Remote():
+			fmt.Printf("added %s: builder %s on %s\n", res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), res.Binding.Builder.Server)
+			if res.Binding.Tier != "" {
+				fmt.Printf("  tier %s (server)\n", res.Binding.Tier)
+			} else {
+				fmt.Printf("  tier server's choice (pre-tier server)\n")
+			}
+		case res.Binding.Builder.Headless():
+			fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate))
+		default:
+			fmt.Printf("added %s: builder %s in %s\n",
+				res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), builderWhere(res.Binding.Builder))
 		}
-	case res.Binding.Builder.Headless():
-		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate))
-	default:
-		fmt.Printf("added %s: builder %s in %s\n",
-			res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), builderWhere(res.Binding.Builder))
 	}
-	noteRegateNoGate(res.Binding)
+	noteRegateNoGate(notices, res.Binding)
 	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick(rt, roleOrBuilder(f.role), res.Resolution)
-	switch {
-	case res.Binding.Builder.Remote() && res.Binding.ExistingBranch:
-		fmt.Printf("  branch %s (existing, tip %s) on %s\n", res.Binding.Branch, res.Base, res.Binding.Builder.Server)
-	case res.Binding.Builder.Remote():
-		fmt.Printf("  branch %s (from %s)\n", res.Binding.Branch, res.Base)
-	case res.Worktree != "" && res.Binding.ExistingBranch:
-		fmt.Printf("  worktree %s on existing branch %s (tip %s)\n", res.Worktree, res.Branch, res.Base)
-	case res.Worktree != "":
-		fmt.Printf("  worktree %s on %s (from %s)\n", res.Worktree, res.Branch, res.Base)
-	default:
-		fmt.Printf("  tree %s\n", res.Binding.CWD)
+	if !f.asJSON {
+		switch {
+		case res.Binding.Builder.Remote() && res.Binding.ExistingBranch:
+			fmt.Printf("  branch %s (existing, tip %s) on %s\n", res.Binding.Branch, res.Base, res.Binding.Builder.Server)
+		case res.Binding.Builder.Remote():
+			fmt.Printf("  branch %s (from %s)\n", res.Binding.Branch, res.Base)
+		case res.Worktree != "" && res.Binding.ExistingBranch:
+			fmt.Printf("  worktree %s on existing branch %s (tip %s)\n", res.Worktree, res.Branch, res.Base)
+		case res.Worktree != "":
+			fmt.Printf("  worktree %s on %s (from %s)\n", res.Worktree, res.Branch, res.Base)
+		default:
+			fmt.Printf("  tree %s\n", res.Binding.CWD)
+		}
+		fmt.Printf("  relevo send --name %s --file <plan.md>\n", res.Binding.Name)
 	}
-	fmt.Printf("  relevo send --name %s --file <plan.md>\n", res.Binding.Name)
 	warnWaitingOnYou(rt, res.Binding.Name)
+
+	if f.asJSON {
+		dir := res.Worktree
+		if dir == "" {
+			dir = res.Binding.CWD
+		}
+		return printDoc(bindDocOf(res.Binding, dir, relevo.BindingRole(res.Binding), candidateLabel(rt, res.Binding.BuilderCandidate), false))
+	}
 
 	return nil
 }

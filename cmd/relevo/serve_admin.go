@@ -496,7 +496,7 @@ func serveGateList(fs *flag.FlagSet, asJSON bool) error {
 
 // serveGateClear lifts the server-side gate on a provider, in place, with
 // no forwarding: the verb for the box that runs the daemon (§4.3).
-func serveGateClear(fs *flag.FlagSet, subject string) error {
+func serveGateClear(fs *flag.FlagSet, subject string, asJSON bool) error {
 	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
@@ -517,6 +517,12 @@ func serveGateClear(fs *flag.FlagSet, subject string) error {
 		return err
 	}
 
+	// The document is the same GateDoc the client ledger prints; the counting
+	// rule is the one the server's own gating line uses.
+	if asJSON {
+		return printDoc(gateClearDocOf(provider, serveCandidateCount(cfg, provider), removed))
+	}
+
 	if removed == 0 {
 		fmt.Printf("nothing was gating %s\n", provider)
 		return nil
@@ -528,7 +534,7 @@ func serveGateClear(fs *flag.FlagSet, subject string) error {
 // serveGateUnavailable records a server-side gate: the server ledger's
 // counterpart to gateUnavailable, with no daemon-switch line and no forwarding
 // (the gate is already on the ledger the daemon reads) (§4.3).
-func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string) error {
+func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string, asJSON bool) error {
 	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
@@ -546,7 +552,7 @@ func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string) error
 
 	until, err := parseFor(forFlag, time.Now())
 	if err != nil {
-		return err
+		return fail(codeUsage, "%v", err)
 	}
 
 	provider, err := serve.AdminUnavailable(srv, token, until, reason)
@@ -554,7 +560,21 @@ func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string) error
 		return err
 	}
 
+	if asJSON {
+		return printDoc(gateSetDocOf(provider, until, serveCandidateCount(cfg, provider)))
+	}
+
+	fmt.Printf("gated %s (%d candidates) %s\n", provider, serveCandidateCount(cfg, provider), availability.GateUntilText(until))
+	return nil
+}
+
+// serveCandidateCount counts the configured candidates a provider serves on a
+// serve root's own config: the number its gating line and document carry.
+func serveCandidateCount(cfg serve.Config, provider string) int {
 	count := 0
+	if cfg.Candidates == nil {
+		return count
+	}
 	for _, ref := range cfg.Candidates.Refs() {
 		parsed, err := candidate.ParseRef(ref)
 		if err != nil {
@@ -564,7 +584,5 @@ func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string) error
 			count++
 		}
 	}
-
-	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, availability.GateUntilText(until))
-	return nil
+	return count
 }

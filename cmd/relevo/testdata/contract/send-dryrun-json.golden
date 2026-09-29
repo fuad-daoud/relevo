@@ -1,0 +1,18 @@
+{
+  "name": "alpha",
+  "round": 3,
+  "mode": "headless",
+  "candidate": "claude/p/m",
+  "candidate_name": "builder-1",
+  "where": "/usr/local/bin/claude --print",
+  "prompt_path": "/s/alpha/003-plan.md",
+  "prompt_from": "/tmp/plan.md",
+  "prompt_bytes": 12,
+  "report_path": "/s/alpha/003-report.md",
+  "done_path": "/s/alpha/003-done",
+  "tier": "edit",
+  "prompt_head": [
+    "# plan",
+    "do the thing"
+  ]
+}

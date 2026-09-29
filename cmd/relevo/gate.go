@@ -74,15 +74,9 @@ func cmdGate(args []string) error {
 	}
 	switch {
 	case *clear != "":
-		if *asJSON {
-			return failNext(codeNotAvailable, "relevo gate", "gate --clear --json arrives with the write documents; drop --json to clear %s", *clear)
-		}
-		return gateClear(*clear)
+		return gateClear(*clear, *asJSON)
 	case len(positional) == 1:
-		if *asJSON {
-			return failNext(codeNotAvailable, "relevo gate", "gate %s --json arrives with the write documents; drop --json to gate it", positional[0])
-		}
-		return gateUnavailable(positional[0], *forFlag, *reason)
+		return gateUnavailable(positional[0], *forFlag, *reason, *asJSON)
 	case len(positional) == 0 && *forFlag == "" && *reason == "":
 		return gateList(*asJSON)
 	default:
@@ -108,15 +102,15 @@ func gateList(asJSON bool) error {
 
 // gateUnavailable records a provider rate limit: exactly today's
 // cmdUnavailable (§4.3).
-func gateUnavailable(token, forFlag, reason string) error {
+func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
 	until, err := parseFor(forFlag, rt.Now())
 	if err != nil {
-		return err
+		return fail(codeUsage, "%v", err)
 	}
 
 	// The argument may be a candidate name or a token. It is resolved here,
@@ -124,31 +118,32 @@ func gateUnavailable(token, forFlag, reason string) error {
 	// canonical token, never the raw argument (A1 §4.2).
 	c, err := rt.Candidates.Resolve(token)
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 	canonical := c.Ref().String()
 
 	provider, err := availability.Unavailable(relevo.AvailabilityDeps(rt), canonical, until, reason)
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
-	count := 0
-	for _, ref := range rt.Candidates.Refs() {
-		parsed, err := candidate.ParseRef(ref)
-		if err != nil {
-			continue
-		}
-		if parsed.Provider == provider {
-			count++
-		}
-	}
+	count := providerCandidateCount(rt, provider)
 
-	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, availability.GateUntilText(until))
+	// The gating line and the document both read provider, until and count, so
+	// they can never disagree; the daemon-switch line is a notice, which --json
+	// moves to stderr (§2.1).
+	notices := noticeWriter(asJSON)
+	if asJSON {
+		if perr := printDoc(gateSetDocOf(provider, until, count)); perr != nil {
+			return perr
+		}
+	} else {
+		fmt.Printf("gated %s (%d candidates) %s\n", provider, count, availability.GateUntilText(until))
+	}
 
 	if bs, err := rt.Store.List(); err == nil {
 		if names := availability.BindingsOnProvider(bs, provider); len(names) > 0 {
-			fmt.Printf("the daemon will switch: %s\n", strings.Join(names, ", "))
+			fmt.Fprintf(notices, "the daemon will switch: %s\n", strings.Join(names, ", "))
 		}
 	}
 
@@ -159,20 +154,43 @@ func gateUnavailable(token, forFlag, reason string) error {
 	return nil
 }
 
+// providerCandidateCount counts the configured candidates a provider serves:
+// the number the gating line and the gate document both carry.
+func providerCandidateCount(rt relevo.Runtime, provider string) int {
+	count := 0
+	for _, ref := range rt.Candidates.Refs() {
+		parsed, err := candidate.ParseRef(ref)
+		if err != nil {
+			continue
+		}
+		if parsed.Provider == provider {
+			count++
+		}
+	}
+	return count
+}
+
 // gateClear lifts a recorded rate limit locally and on every server the
 // bindings name: exactly today's cmdAvailable (§4.3).
-func gateClear(subject string) error {
+func gateClear(subject string, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
 	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), subject, availability.ClearedByMasterMind)
 	if err != nil {
-		return err
+		return writeError(err)
 	}
 
-	if removed == 0 {
+	// The clear's document carries the same fields as the set's, plus removed,
+	// which is what tells "nothing was gating X" from "cleared X (N)".
+	notices := noticeWriter(asJSON)
+	if asJSON {
+		if perr := printDoc(gateClearDocOf(provider, providerCandidateCount(rt, provider), removed)); perr != nil {
+			return perr
+		}
+	} else if removed == 0 {
 		fmt.Printf("nothing was gating %s\n", provider)
 	} else {
 		fmt.Printf("cleared %s (%d entries)\n", provider, removed)
@@ -182,7 +200,7 @@ func gateClear(subject string) error {
 	// asked, and each answer is printed -- these are answers, not warnings.
 	ctx := context.Background()
 	for _, line := range relevo.ForwardAvailable(ctx, rt, subject) {
-		fmt.Println(line)
+		fmt.Fprintln(notices, line)
 	}
 
 	// On a box that also runs a serve daemon, the client ledger just cleared
@@ -191,7 +209,7 @@ func gateClear(subject string) error {
 	if d, _, err := openMachineDB(); err == nil {
 		defer d.Close()
 		if p, ok, _ := serve.ReadDaemonPointer(d); ok && pidAlive(p.PID) {
-			fmt.Print("note: a relevo serve daemon runs here with its own gates; use relevo gate --serve\n")
+			fmt.Fprint(notices, "note: a relevo serve daemon runs here with its own gates; use relevo gate --serve\n")
 		}
 	}
 
@@ -204,15 +222,9 @@ func gateClear(subject string) error {
 func gateServe(fs *flag.FlagSet, positional []string, forFlag, reason, clear string, asJSON bool) error {
 	switch {
 	case clear != "":
-		if asJSON {
-			return failNext(codeNotAvailable, "relevo gate", "gate --serve --clear --json arrives with the write documents; drop --json to clear %s", clear)
-		}
-		return serveGateClear(fs, clear)
+		return serveGateClear(fs, clear, asJSON)
 	case len(positional) == 1:
-		if asJSON {
-			return failNext(codeNotAvailable, "relevo gate", "gate --serve %s --json arrives with the write documents; drop --json to gate it", positional[0])
-		}
-		return serveGateUnavailable(fs, positional[0], forFlag, reason)
+		return serveGateUnavailable(fs, positional[0], forFlag, reason, asJSON)
 	case len(positional) == 0 && forFlag == "" && reason == "":
 		return serveGateList(fs, asJSON)
 	default:

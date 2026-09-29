@@ -8,15 +8,16 @@ var registry = []verbEntry{
 	{
 		Name:    "bind",
 		Summary: "bind this MasterMind to a runner over a worktree or an existing tree",
-		Args:    "[NAME]",
+		Args:    "[NAME] [--json]",
 		Flags: []string{
 			"--actor", "--allow-yolo", "--base", "--branch", "--candidate", "--cwd",
-			"--feature", "--gate", "--mastermind", "--name", "--no-feature", "--no-gate",
+			"--feature", "--gate", "--json", "--mastermind", "--name", "--no-feature", "--no-gate",
 			"--rebind", "--regate", "--resume", "--server", "--ticket", "--tier",
 			"--timeout", "--worktree",
 		},
+		Output: "json:BindDoc",
 		Exit:   []int{0, 1, 2},
-		Errors: []string{"usage"},
+		Errors: []string{"binding_not_found", "conflict", "gate_active", "internal", "policy_refused", "refused", "tier_cap", "usage"},
 	},
 	{
 		Name:    "config",
@@ -205,19 +206,20 @@ var registry = []verbEntry{
 	{
 		Name:    "done",
 		Summary: "mark a binding done; relaying stops",
-		Args:    "[NAME]",
-		Flags:   []string{"--name", "--pick"},
+		Args:    "[NAME] [--json]",
+		Flags:   []string{"--json", "--name", "--pick"},
+		Output:  "json:DoneDoc",
 		Exit:    []int{0, 1, 2},
-		Errors:  []string{"usage"},
+		Errors:  []string{"binding_not_found", "conflict", "internal", "refused", "usage"},
 	},
 	{
 		Name:    "gate",
 		Summary: "list this machine's gates, gate a provider, or clear one",
 		Args:    "[<token>] [--for D] [--reason S] [--json] | --clear <provider|token> | --serve",
 		Flags:   []string{"--clear", "--for", "--json", "--reason", "--serve", "--state"},
-		Output:  "json:[]gate",
+		Output:  "json:[]GateRow; set/clear: GateDoc",
 		Exit:    []int{0, 1, 2},
-		Errors:  []string{"internal", "not_available", "usage"},
+		Errors:  []string{"internal", "not_available", "policy_refused", "usage"},
 	},
 	{
 		Name:    "help",
@@ -333,13 +335,14 @@ var registry = []verbEntry{
 	{
 		Name:    "send",
 		Summary: "stage a plan file as the current round and start the runner",
-		Args:    "--file <plan> [NAME]",
+		Args:    "--file <plan> [NAME] [--json]",
 		Flags: []string{
-			"--allow-yolo", "--candidate", "--dry-run", "--file", "--force",
+			"--allow-yolo", "--candidate", "--dry-run", "--file", "--force", "--json",
 			"--name", "--no-verify", "--regate", "--tier", "--verify",
 		},
+		Output: "json:SendDoc; --dry-run: relevo.DryRun",
 		Exit:   []int{0, 1, 2},
-		Errors: []string{"usage"},
+		Errors: []string{"binding_not_found", "conflict", "gate_active", "internal", "policy_refused", "refused", "tier_cap", "usage"},
 	},
 	{
 		Name:    "serve",
@@ -453,10 +456,11 @@ var registry = []verbEntry{
 	{
 		Name:    "stop",
 		Summary: "kill the runner process and close its round unless a report is on disk",
-		Args:    "[NAME]",
-		Flags:   []string{"--name"},
+		Args:    "[NAME] [--json]",
+		Flags:   []string{"--json", "--name"},
+		Output:  "json:StopDoc",
 		Exit:    []int{0, 1, 2},
-		Errors:  []string{"usage"},
+		Errors:  []string{"binding_not_found", "internal", "usage"},
 	},
 	{
 		Name:    "ui",
@@ -469,13 +473,14 @@ var registry = []verbEntry{
 	{
 		Name:    "unbind",
 		Summary: "forget a binding, deleting or archiving its directory",
-		Args:    "[NAME] [--done] [--delete] [--dry-run]",
+		Args:    "[NAME] [--done] [--delete] [--dry-run] [--json]",
 		Flags: []string{
 			"--all-masterminds", "--archive", "--delete", "--done", "--dry-run",
-			"--mastermind", "--name", "--pick", "--sweep",
+			"--json", "--mastermind", "--name", "--pick", "--sweep",
 		},
+		Output: "json:UnbindDoc; --done: gcDoc; --sweep: sweepDoc",
 		Exit:   []int{0, 1, 2},
-		Errors: []string{"usage"},
+		Errors: []string{"binding_not_found", "conflict", "internal", "refused", "usage"},
 	},
 	{
 		Name:    "update",

@@ -1,0 +1,10 @@
+{
+  "dry_run": false,
+  "dir": "/repo",
+  "refs": [
+    {
+      "ref": "refs/heads/relevo/alpha",
+      "deleted": true
+    }
+  ]
+}

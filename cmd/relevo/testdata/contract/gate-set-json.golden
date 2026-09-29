@@ -1,0 +1,6 @@
+{
+  "subject": "anthropic",
+  "until": "2026-09-29T12:00:00Z",
+  "candidates": 3,
+  "mode": "gated"
+}

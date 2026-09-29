@@ -1,0 +1,13 @@
+{
+  "dry_run": true,
+  "bindings": [
+    {
+      "name": "alpha",
+      "cwd": "/c/alpha",
+      "rounds": 3,
+      "archived": true,
+      "deleted": false,
+      "mastermind_id": "pl_alpha"
+    }
+  ]
+}

@@ -148,7 +148,9 @@ func report(w io.Writer, err error, jsonMode bool) int {
 		return ec.code
 	}
 	if errors.Is(err, errUsagePrinted) {
-		return 1
+		// Usage is a refusal (spec §2.6), so a bare `relevo` on a pipe exits 2
+		// exactly like every other usage failure; the text is already on stderr.
+		return catalog[codeUsage].exit
 	}
 
 	fmt.Fprintf(w, "relevo: %v\n", err)
@@ -400,7 +402,7 @@ func runPick(opts pick.Options) error {
 // a binding name are mutually exclusive.
 func pickNamesNothing(nameFlag string, positional []string) error {
 	if nameFlag != "" || len(positional) > 0 {
-		return errors.New("--pick chooses the binding; do not also name one")
+		return fail(codeRefused, "--pick chooses the binding; do not also name one")
 	}
 	return nil
 }
