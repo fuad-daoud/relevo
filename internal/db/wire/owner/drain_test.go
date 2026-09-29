@@ -30,6 +30,26 @@ func readKind(t *testing.T, w *wire.Conn, nc net.Conn, want byte) {
 	}
 }
 
+// waitDraining returns once srv has marked itself draining. Drain runs in a
+// goroutine, so a request sent straight after starting it can win the race and
+// be served before the flag is set.
+func waitDraining(t *testing.T, srv *Server) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		srv.mu.Lock()
+		draining := srv.draining
+		srv.mu.Unlock()
+		if draining {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the server never started draining")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // TestServeRefusesANewTransactionWhileDraining pins the drain contract: a
 // request that arrives while draining on a connection with no open transaction
 // is refused restarting, while a connection already inside one is let through
@@ -51,6 +71,7 @@ func TestServeRefusesANewTransactionWhileDraining(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() { done <- srv.Drain(context.Background()) }()
+	waitDraining(t, srv)
 
 	execRaw(t, b, 1, `CREATE TABLE t (n INTEGER)`)
 	if err := nb.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
