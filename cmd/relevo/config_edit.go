@@ -14,28 +14,38 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 )
 
-// configGetFlagSet declares `config get`'s flags: none today. It exists so the
-// registry's parity test finds exactly one installer per verb.
-func configGetFlagSet(*flag.FlagSet) {}
+// configGetFlagValues holds the pointer `config get` parses into. It prints
+// the value itself, so --json is an accepted no-op.
+type configGetFlagValues struct {
+	asJSON *bool
+}
+
+// configGetFlagSet defines that flag on fs and returns what it parses into, so
+// the registry's parity test finds exactly one installer per verb.
+func configGetFlagSet(fs *flag.FlagSet) *configGetFlagValues {
+	v := &configGetFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the value at the path")
+	return v
+}
 
 // configGet prints the JSON value at a path, indented. A missing section or
-// key exits 1 with `relevo: <path>: not set`.
+// key is config_path_not_set.
 func configGet(args []string) error {
 	fs := flag.NewFlagSet("relevo config get", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	configGetFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config get <section>[.<key>...]")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config get wants one path: <section>[.<key>...]")
 	}
 	path := rest[0]
 
 	sec, keys, ok := configPath(path)
 	if !ok {
-		return fmt.Errorf("%s: not set", path)
+		return fail(codeConfigPathNotSet, "%s: not set", path)
 	}
 
 	rt, err := newRuntime()
@@ -44,14 +54,14 @@ func configGet(args []string) error {
 	}
 	body, present, err := rt.Config.Body(sec)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 	if !present {
-		return fmt.Errorf("%s: not set", path)
+		return fail(codeConfigPathNotSet, "%s: not set", path)
 	}
 	value, ok := jsonAt(body, keys)
 	if !ok {
-		return fmt.Errorf("%s: not set", path)
+		return fail(codeConfigPathNotSet, "%s: not set", path)
 	}
 	return printJSON(os.Stdout, value)
 }

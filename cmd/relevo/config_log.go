@@ -105,8 +105,7 @@ func cmdConfigLog(args []string) error {
 		return err
 	}
 	if len(fs.Args()) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config log [-n N] [--rev N] [--json]")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config log takes no arguments, got %v", fs.Args())
 	}
 
 	rt, err := newRuntime()
@@ -118,9 +117,9 @@ func cmdConfigLog(args []string) error {
 		r, err := rt.Config.Revision(*rev)
 		if err != nil {
 			if errors.Is(err, config.ErrNoRevision) {
-				return fmt.Errorf("no such revision #%d", *rev)
+				return fail(codeRevisionNotFound, "no such revision #%d", *rev)
 			}
-			return err
+			return fail(codeInternal, "%v", err)
 		}
 		if *asJSON {
 			out, err := json.Marshal(revisionJSONOf(r, true))
@@ -134,7 +133,7 @@ func cmdConfigLog(args []string) error {
 
 	rows, err := rt.Config.Log(*n)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 	if *asJSON {
 		list := make([]revisionJSON, 0, len(rows))

@@ -471,7 +471,7 @@ func cmdMasterMindGuide(args []string) error {
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	// The plugin knows the session but not its repository, so an opencode
@@ -485,7 +485,7 @@ func cmdMasterMindGuide(args []string) error {
 	}
 	if cwd == "" {
 		if cwd, err = os.Getwd(); err != nil {
-			return fmt.Errorf("resolve working directory: %w", err)
+			return fail(codeInternal, "resolve working directory: %v", err)
 		}
 	}
 

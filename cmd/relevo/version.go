@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,31 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/release"
 )
+
+// versionFlagValues holds the pointer `version` parses into.
+type versionFlagValues struct {
+	asJSON *bool
+}
+
+// cmdVersion prints the version line, or with --json the same string as a
+// document. Positionals are refused so `relevo version --json extra` cannot
+// silently ignore its argument.
+func cmdVersion(args []string) error {
+	fs := flag.NewFlagSet("relevo version", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	v := versionFlagSet(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if len(fs.Args()) != 0 {
+		return fail(codeUsage, "version takes no arguments, got %v", fs.Args())
+	}
+	if *v.asJSON {
+		return printDoc(versionDoc{Version: buildVersion()})
+	}
+	fmt.Printf("relevo %s\n", buildVersion())
+	return nil
+}
 
 // buildVersion prefers the ldflags stamp a release build carries, then the
 // module version `go install` records, and admits to being an untagged build

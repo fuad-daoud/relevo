@@ -131,32 +131,49 @@ func cmdServeEnroll(args []string) error {
 	return nil
 }
 
-// serveClientsFlagSet declares `serve clients`'s flags: --state only, read
-// back off the FlagSet.
-func serveClientsFlagSet(fs *flag.FlagSet) {
+// serveClientsFlagValues holds the pointer `serve clients` parses into. state
+// is read back off the FlagSet, so it has no pointer of its own.
+type serveClientsFlagValues struct {
+	asJSON *bool
+}
+
+// serveClientsFlagSet defines those flags on fs and returns what they parse
+// into.
+func serveClientsFlagSet(fs *flag.FlagSet) *serveClientsFlagValues {
+	v := &serveClientsFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the enrolled clients as JSON")
 	_ = fs.String("state", "", "state directory")
+	return v
 }
 
 func cmdServeClients(args []string) error {
 	fs := flag.NewFlagSet("relevo serve clients", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	serveClientsFlagSet(fs)
+	v := serveClientsFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	_, d, err := adminRoot(fs)
 	if err != nil {
-		return err
+		return failNext(codeNotAvailable, "relevo serve init", "%v", err)
 	}
 	defer func() { _ = d.Close() }()
 
 	clients, err := serve.LoadClients(d)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
+	}
+	list := clients.List()
+	if *asJSON {
+		if list == nil {
+			list = []serve.Client{}
+		}
+		return printDoc(list)
 	}
 
-	fmt.Print(serve.RenderClients(clients.List()))
+	fmt.Print(serve.RenderClients(list))
 	return nil
 }
 
@@ -200,31 +217,44 @@ func cmdServeRevoke(args []string) error {
 	return nil
 }
 
-// serveFingerprintFlagSet declares `serve fingerprint`'s flags: --state only.
-func serveFingerprintFlagSet(fs *flag.FlagSet) {
+// serveFingerprintFlagValues holds the pointer `serve fingerprint` parses
+// into. state is read back off the FlagSet, so it has no pointer of its own.
+type serveFingerprintFlagValues struct {
+	asJSON *bool
+}
+
+// serveFingerprintFlagSet defines those flags on fs and returns what they
+// parse into.
+func serveFingerprintFlagSet(fs *flag.FlagSet) *serveFingerprintFlagValues {
+	v := &serveFingerprintFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the fingerprint as a JSON document")
 	_ = fs.String("state", "", "state directory")
+	return v
 }
 
 func cmdServeFingerprint(args []string) error {
 	fs := flag.NewFlagSet("relevo serve fingerprint", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	serveFingerprintFlagSet(fs)
+	v := serveFingerprintFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	_, d, err := adminRoot(fs)
 	if err != nil {
-		return err
+		return failNext(codeNotAvailable, "relevo serve init", "%v", err)
 	}
 	defer func() { _ = d.Close() }()
 
 	fp, err := serve.Fingerprint(serve.SecretStore{DB: d})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo serve fingerprint: %v\n", err)
-		return exitCodeErr{code: 1}
+		return fail(codeInternal, "%v", err)
 	}
 
+	if *asJSON {
+		return printDoc(fingerprintDoc{Fingerprint: fp})
+	}
 	fmt.Println(fp)
 	return nil
 }
@@ -246,22 +276,22 @@ func cmdServeStatus(args []string) error {
 
 	root, d, err := adminRoot(fs)
 	if err != nil {
-		return err
+		return failNext(codeNotAvailable, "relevo serve init", "%v", err)
 	}
 	defer func() { _ = d.Close() }()
 
 	cfg, err := serveAdminConfigWithPolicy(root, d)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 	srv, err := serve.New(cfg)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	owners, builders, err := serve.AdminStatus(context.Background(), srv)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	enc := json.NewEncoder(os.Stdout)
@@ -440,23 +470,27 @@ func cmdServeGC(args []string) error {
 // serveGateList lists the gates on the server-wide ledger: `relevo serve
 // gates` was the answer to `relevo gate` printing "nothing was gating" on a
 // box whose gates live on the serve root's ledger, not the caller's (§4.3).
-func serveGateList(fs *flag.FlagSet) error {
+func serveGateList(fs *flag.FlagSet, asJSON bool) error {
 	root, d, err := adminRoot(fs)
 	if err != nil {
-		return err
+		return failNext(codeNotAvailable, "relevo serve init", "%v", err)
 	}
 	defer func() { _ = d.Close() }()
 
 	cfg, err := serveAdminConfigWithCandidates(root, d)
 	if err != nil {
-		return fmt.Errorf("relevo gate --serve: %w", err)
+		return fail(codeInternal, "relevo gate --serve: %v", err)
 	}
 	srv, err := serve.New(cfg)
 	if err != nil {
-		return err
+		return fail(codeInternal, "relevo gate --serve: %v", err)
 	}
 
-	fmt.Print(serve.RenderGates(serve.AdminGates(srv), time.Now()))
+	gates := serve.AdminGates(srv)
+	if asJSON {
+		return printDoc(gateRowsOf(gates))
+	}
+	fmt.Print(serve.RenderGates(gates, time.Now()))
 	return nil
 }
 

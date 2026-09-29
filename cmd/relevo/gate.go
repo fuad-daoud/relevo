@@ -43,6 +43,7 @@ type gateFlagValues struct {
 	reason    *string
 	clear     *string
 	serveFlag *bool
+	asJSON    *bool
 }
 
 // gateFlagSet defines those flags on fs, in the usage text's order, and
@@ -54,48 +55,54 @@ func gateFlagSet(fs *flag.FlagSet) *gateFlagValues {
 	v.reason = fs.String("reason", "", "why, for the record")
 	v.clear = fs.String("clear", "", "clear a recorded rate limit: --clear <provider|token>")
 	v.serveFlag = fs.Bool("serve", false, "act on the local serve daemon's gates instead of this machine's")
+	v.asJSON = fs.Bool("json", false, "print the gates as JSON")
 	_ = fs.String("state", "", "with --serve: state directory")
 	return v
 }
 
 func cmdGate(args []string) error {
-	const gateUsage = `usage: relevo gate
-       relevo gate <token> [--for D] [--reason S]
-       relevo gate --clear <provider|token>
-       relevo gate --serve [--state DIR] [<token> [--for D] [--reason S] | --clear <provider|token>]`
-
 	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
 	v := gateFlagSet(fs)
-	forFlag, reason, clear, serveFlag := v.forFlag, v.reason, v.clear, v.serveFlag
+	forFlag, reason, clear, serveFlag, asJSON := v.forFlag, v.reason, v.clear, v.serveFlag, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	positional := fs.Args()
 	if *serveFlag {
-		return gateServe(fs, positional, *forFlag, *reason, *clear)
+		return gateServe(fs, positional, *forFlag, *reason, *clear, *asJSON)
 	}
 	switch {
 	case *clear != "":
+		if *asJSON {
+			return failNext(codeNotAvailable, "relevo gate", "gate --clear --json arrives with the write documents; drop --json to clear %s", *clear)
+		}
 		return gateClear(*clear)
 	case len(positional) == 1:
+		if *asJSON {
+			return failNext(codeNotAvailable, "relevo gate", "gate %s --json arrives with the write documents; drop --json to gate it", positional[0])
+		}
 		return gateUnavailable(positional[0], *forFlag, *reason)
 	case len(positional) == 0 && *forFlag == "" && *reason == "":
-		return gateList()
+		return gateList(*asJSON)
 	default:
-		fmt.Fprintln(os.Stderr, gateUsage)
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "usage: relevo gate [<token> [--for D] [--reason S]] | --clear <provider|token> | --serve")
 	}
 }
 
 // gateList prints this machine's active gates: the rendering `relevo serve
-// gates` printed for the serve root's ledger (§4.3), fed by relevo.Gates.
-func gateList() error {
+// gates` printed for the serve root's ledger (§4.3), fed by relevo.Gates, or
+// the same ledger as a JSON document.
+func gateList(asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
-	fmt.Print(serve.RenderGates(availability.Gates(relevo.AvailabilityDeps(rt)), rt.Now()))
+	gates := availability.Gates(relevo.AvailabilityDeps(rt))
+	if asJSON {
+		return printDoc(gateRowsOf(gates))
+	}
+	fmt.Print(serve.RenderGates(gates, rt.Now()))
 	return nil
 }
 
@@ -194,15 +201,21 @@ func gateClear(subject string) error {
 // gateServe sends the three gate forms to the local serve daemon's own
 // ledger: today's `relevo serve gates`, `relevo serve unavailable` and
 // `relevo serve available`, via the serve root's ledgerRuntime (§4.3).
-func gateServe(fs *flag.FlagSet, positional []string, forFlag, reason, clear string) error {
+func gateServe(fs *flag.FlagSet, positional []string, forFlag, reason, clear string, asJSON bool) error {
 	switch {
 	case clear != "":
+		if asJSON {
+			return failNext(codeNotAvailable, "relevo gate", "gate --serve --clear --json arrives with the write documents; drop --json to clear %s", clear)
+		}
 		return serveGateClear(fs, clear)
 	case len(positional) == 1:
+		if asJSON {
+			return failNext(codeNotAvailable, "relevo gate", "gate --serve %s --json arrives with the write documents; drop --json to gate it", positional[0])
+		}
 		return serveGateUnavailable(fs, positional[0], forFlag, reason)
 	case len(positional) == 0 && forFlag == "" && reason == "":
-		return serveGateList(fs)
+		return serveGateList(fs, asJSON)
 	default:
-		return fmt.Errorf("usage: relevo gate --serve [--state DIR] [<token> [--for D] [--reason S] | --clear <provider|token>]")
+		return fail(codeUsage, "usage: relevo gate --serve [--state DIR] [<token> [--for D] [--reason S] | --clear <provider|token>]")
 	}
 }

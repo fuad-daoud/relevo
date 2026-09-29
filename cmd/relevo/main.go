@@ -190,8 +190,7 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		return cmdHelp(args[1:])
 	case "version", "-v", "--version":
-		fmt.Printf("relevo %s\n", buildVersion())
-		return nil
+		return cmdVersion(args[1:])
 	case "bind":
 		return cmdBind(args[1:])
 	case "unbind":

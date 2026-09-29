@@ -230,11 +230,11 @@ func cmdMasterMindList(args []string) error {
 	// documents (§4.7).
 	reg, err := mastermindRegistry(rt)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 	records, err := reg.List()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	// The count of non-DONE bindings naming each mastermind, from the same store
@@ -243,7 +243,7 @@ func cmdMasterMindList(args []string) error {
 	// machine's present answer about it.
 	counts, err := mastermindBindingCounts(rt)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 
 	// The chat column (#386): what the harness itself calls each session, read

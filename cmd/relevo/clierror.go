@@ -19,6 +19,8 @@ const (
 	codeArtifactNotFound  errorCode = "artifact_not_found"
 	codeConflict          errorCode = "conflict"
 	codeConfigInvalid     errorCode = "config_invalid"
+	codeConfigPathNotSet  errorCode = "config_path_not_set"
+	codeRevisionNotFound  errorCode = "revision_not_found"
 	codePolicyRefused     errorCode = "policy_refused"
 	codeTierCap           errorCode = "tier_cap"
 	codeNoDaemon          errorCode = "no_daemon"
@@ -48,6 +50,8 @@ var catalog = map[errorCode]catalogEntry{
 	codeArtifactNotFound:  {exit: 1, next: "relevo history"},
 	codeConflict:          {exit: 1},
 	codeConfigInvalid:     {exit: 1},
+	codeConfigPathNotSet:  {exit: 1, next: "relevo config export"},
+	codeRevisionNotFound:  {exit: 1, next: "relevo config log"},
 	codePolicyRefused:     {exit: 1},
 	codeTierCap:           {exit: 1},
 	codeNoDaemon:          {exit: 1, next: "relevo daemon"},

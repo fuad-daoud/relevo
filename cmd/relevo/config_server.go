@@ -52,14 +52,16 @@ func configServer(args []string) error {
 // into.
 type configServerKeyFlagValues struct {
 	enrollOnly *bool
+	asJSON     *bool
 }
 
-// configServerKeyFlagSet defines that flag on fs and returns what it parses
+// configServerKeyFlagSet defines those flags on fs and returns what they parse
 // into.
 func configServerKeyFlagSet(fs *flag.FlagSet) *configServerKeyFlagValues {
 	v := &configServerKeyFlagValues{}
 	// The provider parses this line; its format is remote.MarshalPublic's.
 	v.enrollOnly = fs.Bool("enroll-line", false, "print only the enrolment line (ed25519 <pubkey> <comment>)")
+	v.asJSON = fs.Bool("json", false, "print the client id and the enrolment line as a JSON document")
 	return v
 }
 
@@ -69,13 +71,12 @@ func configServerKey(args []string) error {
 	fs := flag.NewFlagSet("relevo config server key", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := configServerKeyFlagSet(fs)
-	enrollOnly := v.enrollOnly
+	enrollOnly, asJSON := v.enrollOnly, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config server key [--enroll-line]")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config server key takes no arguments, got %v", fs.Args())
 	}
 
 	rt, err := newRuntime()
@@ -84,7 +85,14 @@ func configServerKey(args []string) error {
 	}
 	pem, _, err := ensureClientKey(rt)
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
+	}
+	if *asJSON {
+		kp, err := remote.ParsePrivate(pem)
+		if err != nil {
+			return fail(codeInternal, "%v", err)
+		}
+		return printDoc(serverKeyDoc{ID: string(remote.IDOf(kp.Public)), EnrollLine: client.EnrollLine(kp)})
 	}
 	return printClientKey(pem, *enrollOnly)
 }
@@ -120,13 +128,15 @@ func configSecret(args []string) error {
 	}
 }
 
-// checkSecretName refuses a name other than the two secrets relevo stores,
-// exiting 2 with the allowed names.
+// checkSecretName refuses a name other than the two secrets relevo stores. It
+// names both allowed names, on stderr and in the coded error, so a pipe sees
+// the same words the frame carries.
 func checkSecretName(name string) error {
 	if name != config.SecretTypesafe && name != config.SecretClientKey {
-		fmt.Fprintf(os.Stderr, "relevo config secret: unknown secret %q (allowed: %s, %s)\n",
+		msg := fmt.Sprintf("unknown secret %q (allowed: %s, %s)",
 			name, config.SecretTypesafe, config.SecretClientKey)
-		return exitCodeErr{code: 2}
+		fmt.Fprintln(os.Stderr, "relevo config secret: "+msg)
+		return fail(codeUsage, "%s", msg)
 	}
 	return nil
 }
@@ -200,13 +210,26 @@ func configSecretRm(args []string) error {
 	return nil
 }
 
-// configSecretListFlagSet declares `config secret list`'s flags: none today.
-func configSecretListFlagSet(*flag.FlagSet) {}
+// configSecretListFlagValues holds the pointer `config secret list` parses
+// into.
+type configSecretListFlagValues struct {
+	asJSON *bool
+}
+
+// configSecretListFlagSet defines that flag on fs and returns what it parses
+// into, so the registry's parity test finds exactly one installer per verb.
+func configSecretListFlagSet(fs *flag.FlagSet) *configSecretListFlagValues {
+	v := &configSecretListFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the stored secret names as a JSON array")
+	return v
+}
 
 // configSecretList prints the stored secret names, never their values.
 func configSecretList(args []string) error {
 	fs := flag.NewFlagSet("relevo config secret list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	v := configSecretListFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -217,7 +240,13 @@ func configSecretList(args []string) error {
 	}
 	names, err := rt.Config.SecretNames()
 	if err != nil {
-		return err
+		return fail(codeConfigInvalid, "%v", err)
+	}
+	if *asJSON {
+		if names == nil {
+			names = []string{}
+		}
+		return printDoc(names)
 	}
 	for _, name := range names {
 		fmt.Println(name)

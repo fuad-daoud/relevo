@@ -12,21 +12,31 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// configExportFlagSet declares `config export`'s flags: none today. It exists
+// configExportFlagValues holds the pointer `config export` parses into. It
+// always prints the document, so --json is an accepted no-op.
+type configExportFlagValues struct {
+	asJSON *bool
+}
+
+// configExportFlagSet defines that flag on fs and returns what it parses into,
 // so the registry's parity test finds exactly one installer per verb.
-func configExportFlagSet(*flag.FlagSet) {}
+func configExportFlagSet(fs *flag.FlagSet) *configExportFlagValues {
+	v := &configExportFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the configuration document")
+	return v
+}
 
 // configExport writes the whole-config document (§3) to stdout, indented, with
 // one key per section present in config.Sections order.
 func configExport(args []string) error {
 	fs := flag.NewFlagSet("relevo config export", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	configExportFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if len(fs.Args()) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config export")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config export takes no arguments, got %v", fs.Args())
 	}
 
 	rt, err := newRuntime()
@@ -35,7 +45,7 @@ func configExport(args []string) error {
 	}
 	out, err := exportDoc(rt)
 	if err != nil {
-		return err
+		return fail(codeConfigInvalid, "%v", err)
 	}
 	_, err = os.Stdout.Write(out)
 	return err

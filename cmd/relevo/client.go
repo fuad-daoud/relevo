@@ -185,32 +185,41 @@ func cmdClientRmServer(args []string) error {
 	return nil
 }
 
+// serversFlagValues holds the pointer `config server list` parses into.
+type serversFlagValues struct {
+	asJSON *bool
+}
+
+// serversFlagSet defines that flag on fs and returns what it parses into, so
+// the registry's parity test finds exactly one installer per verb.
+func serversFlagSet(fs *flag.FlagSet) *serversFlagValues {
+	v := &serversFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print one JSON object per configured server")
+	return v
+}
+
 // cmdServers prints one row per configured server: name, url, and this
 // client's enrollment on it (§4.7), via the same relevo.ProbeServers doctor's
-// per-server checks use.
-// serversFlagSet declares `config server list`'s flags: none today.
-func serversFlagSet(*flag.FlagSet) {}
-
+// per-server checks use. A machine with no client key probes every server
+// "no key" without dialling; the same probe feeds the human table and --json.
 func cmdServers(args []string) error {
 	fs := flag.NewFlagSet("relevo config server list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	v := serversFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
 	L, err := rt.Config.Load()
 	if err != nil {
-		return err
+		return fail(codeConfigInvalid, "%v", err)
 	}
 	servers := L.Servers
-	if len(servers) == 0 {
-		fmt.Println("no servers configured; relevo config server add <name> <url>")
-		return nil
-	}
 
 	var remoteRT relevo.Runtime
 	enrollLine := ""
@@ -218,7 +227,15 @@ func cmdServers(args []string) error {
 		remoteRT.Remote = client.New(servers, key, time.Now)
 		enrollLine = client.EnrollLine(key)
 	}
+	probes := relevo.ProbeServers(context.Background(), remoteRT, servers, enrollLine)
 
-	fmt.Print(relevo.RenderServers(relevo.ProbeServers(context.Background(), remoteRT, servers, enrollLine)))
+	if *asJSON {
+		return printDoc(serverRowsOf(probes))
+	}
+	if len(servers) == 0 {
+		fmt.Println("no servers configured; relevo config server add <name> <url>")
+		return nil
+	}
+	fmt.Print(relevo.RenderServers(probes))
 	return nil
 }

@@ -31,25 +31,25 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"config":             installer(configShowFlagSet),
 	"config agents":      installer(agentFlagSet),
 	"config edit":        configEditFlagSet,
-	"config export":      configExportFlagSet,
-	"config get":         configGetFlagSet,
+	"config export":      installer(configExportFlagSet),
+	"config get":         installer(configGetFlagSet),
 	"config import":      configImportFlagSet,
 	"config init":        installer(initFlagSet),
 	"config log":         installer(configLogFlagSet),
 	"config rollback":    installer(configRollbackFlagSet),
 	"config secret":      configSecretFlagSet,
-	"config secret list": configSecretListFlagSet,
+	"config secret list": installer(configSecretListFlagSet),
 	"config secret rm":   configSecretRmFlagSet,
 	"config secret set":  configSecretSetFlagSet,
 	"config server":      configServerFlagSet,
 	"config server add":  installer(clientAddServerFlagSet),
 	"config server key":  installer(configServerKeyFlagSet),
-	"config server list": serversFlagSet,
+	"config server list": installer(serversFlagSet),
 	"config server rm":   clientRmServerFlagSet,
 	"config set":         configSetFlagSet,
 	"config unset":       configUnsetFlagSet,
 	"daemon":             installer(daemonFlagSet),
-	"doctor":             doctorFlagSet,
+	"doctor":             installer(doctorFlagSet),
 	"done":               installer(doneFlagSet),
 	"gate":               installer(gateFlagSet),
 	"help":               installer(helpFlagSet),
@@ -67,9 +67,9 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"mcp":                installer(mcpFlagSet),
 	"send":               installer(sendFlagSet),
 	"serve":              serveRunFlagSet,
-	"serve clients":      serveClientsFlagSet,
+	"serve clients":      installer(serveClientsFlagSet),
 	"serve enroll":       installer(serveEnrollFlagSet),
-	"serve fingerprint":  serveFingerprintFlagSet,
+	"serve fingerprint":  installer(serveFingerprintFlagSet),
 	"serve gc":           installer(serveGCFlagSet),
 	"serve init":         installer(serveInitFlagSet),
 	"serve revoke":       serveRevokeFlagSet,
@@ -82,14 +82,18 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"ui":                 installer(uiFlagSet),
 	"unbind":             installer(unbindFlagSet),
 	"update":             installer(updateFlagSet),
-	"version":            versionFlagSet,
+	"version":            installer(versionFlagSet),
 	"wait":               installer(waitFlagSet),
 }
 
-// versionFlagSet declares version's flags: none today, and none planned while
-// the version line stays the answer. It exists so `help --json` can describe
-// every verb, and the parity test demands exactly one installer per entry.
-func versionFlagSet(*flag.FlagSet) {}
+// versionFlagSet declares version's flags: --json selects the document, and
+// the bare form keeps the version line. The parity test demands exactly one
+// installer per entry.
+func versionFlagSet(fs *flag.FlagSet) *versionFlagValues {
+	v := &versionFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the version as a JSON document")
+	return v
+}
 
 // registryEntry finds one entry by exact name.
 func registryEntry(name string) (verbEntry, bool) {

@@ -1,0 +1,28 @@
+{
+  "actors": {
+    "builder": {
+      "agent": "plan-executor",
+      "candidates": [
+        "claude/p/m"
+      ]
+    }
+  },
+  "pick": [
+    {
+      "role": "builder",
+      "why": "every candidate serving builder is gated"
+    }
+  ],
+  "candidates": [
+    {
+      "ref": "claude/p/m",
+      "name": "m",
+      "harness": "claude",
+      "provider": "p",
+      "model": "m",
+      "roles": [
+        "builder"
+      ]
+    }
+  ]
+}
