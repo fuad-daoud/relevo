@@ -219,7 +219,7 @@ func TestStartRoundPassesStateDir(t *testing.T) {
 		t.Fatalf("Bind --headless: %v", err)
 	}
 
-	_, err = startRound(context.Background(), rt, nil, b, "the prompt")
+	_, err = startRound(context.Background(), rt, nil, b, "the prompt", false)
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	// previous round's id must not survive the start.
 	b.Builder.StreamSessionID = "sess-from-the-previous-process"
 
-	got, err := startRound(context.Background(), rt, nil, b, "the prompt")
+	got, err := startRound(context.Background(), rt, nil, b, "the prompt", false)
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 512 // a switch mid-round: the file already has 512 bytes rendered
-	got, err := startRound(context.Background(), rt, nil, b, "again")
+	got, err := startRound(context.Background(), rt, nil, b, "again", false)
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestStartRoundOnALaterRoundMovesTheCursor(t *testing.T) {
 	rt, b := seedHeadless(t, fr)
 	b.Round = 2
 	b.Builder.StreamRound, b.Builder.StreamOffset = 1, 512
-	got, err := startRound(context.Background(), rt, nil, b, "round two")
+	got, err := startRound(context.Background(), rt, nil, b, "round two", false)
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
@@ -348,6 +348,95 @@ func containsArg(argv []string, flag, value string) bool {
 	return false
 }
 
+// argvHasFlag reports whether argv contains flag exactly.
+func argvHasFlag(argv []string, flag string) bool {
+	for _, a := range argv {
+		if a == flag {
+			return true
+		}
+	}
+	return false
+}
+
+// seedOverCapClaude binds a headless claude writer whose stored tier is yolo,
+// above the default max_tier (edit): the record the cap re-check at launch
+// exists for. AllowYolo at bind time is the explicit allowance bind requires.
+func seedOverCapClaude(t *testing.T, rt Runtime) store.Binding {
+	t.Helper()
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name:         "over-cap",
+		Candidate:    testClaudeRef,
+		MasterMindID: testMasterMindName,
+		CWD:          "/repo",
+		Headless:     true,
+		Tier:         "yolo",
+		AllowYolo:    true,
+	})
+	if err != nil {
+		t.Fatalf("Bind --tier yolo --allow-yolo: %v", err)
+	}
+	return b
+}
+
+// TestStartRoundRefusesStoredTierAboveMaxWithoutAllowYolo pins that a stored
+// tier above max_tier never launches without the explicit allowance: the
+// no-allowance call refuses with ErrTierAboveMax and starts nothing, and only
+// the allowance-carrying call launches at the stored tier.
+func TestStartRoundRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	b := seedOverCapClaude(t, rt)
+
+	if _, err := startRound(context.Background(), rt, nil, b, "p", false); !errors.Is(err, ErrTierAboveMax) {
+		t.Fatalf("startRound(allowYolo=false) = %v, want errors.Is(..., ErrTierAboveMax)", err)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("the refused start launched %d processes, want none", len(fr.specs))
+	}
+
+	if _, err := startRound(context.Background(), rt, nil, b, "p", true); err != nil {
+		t.Fatalf("startRound(allowYolo=true): %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("the allowed start launched %d processes, want exactly 1", len(fr.specs))
+	}
+	if !argvHasFlag(fr.specs[0].Argv, "--dangerously-skip-permissions") {
+		t.Errorf("argv = %v, want --dangerously-skip-permissions", fr.specs[0].Argv)
+	}
+}
+
+// TestResumeRoundRefusesStoredTierAboveMaxWithoutAllowYolo pins the same rule
+// on the resume path: a lost builder's over-cap record is refused from the
+// no-allowance call and only resumes with the allowance.
+func TestResumeRoundRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	b := seedOverCapClaude(t, rt)
+
+	if _, err := resumeRound(context.Background(), rt, nil, b, "sess-1", "p", false); !errors.Is(err, ErrTierAboveMax) {
+		t.Fatalf("resumeRound(allowYolo=false) = %v, want errors.Is(..., ErrTierAboveMax)", err)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("the refused resume launched %d processes, want none", len(fr.specs))
+	}
+
+	if _, err := resumeRound(context.Background(), rt, nil, b, "sess-1", "p", true); err != nil {
+		t.Fatalf("resumeRound(allowYolo=true): %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("the allowed resume launched %d processes, want exactly 1", len(fr.specs))
+	}
+	if !argvHasFlag(fr.specs[0].Argv, "--dangerously-skip-permissions") {
+		t.Errorf("argv = %v, want --dangerously-skip-permissions", fr.specs[0].Argv)
+	}
+}
+
 func TestStartRoundFailureRecordsSpawnFailedAndLeavesPIDZero(t *testing.T) {
 	t.Parallel()
 
@@ -358,7 +447,7 @@ func TestStartRoundFailureRecordsSpawnFailedAndLeavesPIDZero(t *testing.T) {
 	var got store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		got, err = startRound(context.Background(), rt, tx, b, "p")
+		got, err = startRound(context.Background(), rt, tx, b, "p", false)
 		return err
 	})
 	if err == nil || !errors.Is(err, fr.startErr) {
@@ -383,7 +472,7 @@ func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
 
 	rt, b := seedHeadless(t, newFakeRunner())
 	rt.Runner = nil
-	if _, err := startRound(context.Background(), rt, nil, b, "p"); !errors.Is(err, spawn.ErrRunnerUnavailable) {
+	if _, err := startRound(context.Background(), rt, nil, b, "p", false); !errors.Is(err, spawn.ErrRunnerUnavailable) {
 		t.Errorf("err = %v, want ErrRunnerUnavailable", err)
 	}
 }
@@ -398,7 +487,7 @@ func TestStartRoundSetsScope(t *testing.T) {
 	rt, b := seedHeadless(t, fr)
 	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 150, CPUQuota: "150%", MemoryMax: "2G", TasksMax: 64}
 
-	if _, err := startRound(context.Background(), rt, nil, b, "the prompt"); err != nil {
+	if _, err := startRound(context.Background(), rt, nil, b, "the prompt", false); err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
 	if len(fr.specs) != 1 {
@@ -4004,7 +4093,7 @@ func TestStartProcessSendsStderrToTheStream(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 
-	got, err := startRound(context.Background(), rt, nil, b, "the prompt")
+	got, err := startRound(context.Background(), rt, nil, b, "the prompt", false)
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
@@ -4035,7 +4124,7 @@ func TestStartProcessKeepsALegacyRoundsLog(t *testing.T) {
 	legacy := rt.Store.BuilderLogPath("webshop", 1)
 	seedLegacyLog(t, rt, "webshop", 1)
 
-	got, err := startRound(context.Background(), rt, nil, b, "the prompt")
+	got, err := startRound(context.Background(), rt, nil, b, "the prompt", false)
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
@@ -4064,7 +4153,7 @@ func TestStartRoundKeepsWritingAPreRenameRoundStream(t *testing.T) {
 		t.Fatalf("write stream: %v", err)
 	}
 
-	got, err := startRound(context.Background(), rt, nil, b, "the prompt")
+	got, err := startRound(context.Background(), rt, nil, b, "the prompt", false)
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}

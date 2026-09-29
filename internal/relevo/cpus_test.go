@@ -190,13 +190,13 @@ func TestTwoRoundsGetDistinctCores(t *testing.T) {
 	var first, second store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		if first, err = startRound(context.Background(), rt, tx, b, "one"); err != nil {
+		if first, err = startRound(context.Background(), rt, tx, b, "one", false); err != nil {
 			return err
 		}
 		if err := tx.Save(first); err != nil {
 			return err
 		}
-		second, err = startRound(context.Background(), rt, tx, b2, "two")
+		second, err = startRound(context.Background(), rt, tx, b2, "two", false)
 		if err != nil {
 			return err
 		}
@@ -235,14 +235,14 @@ func TestExhaustedPoolRunsOnWholePool(t *testing.T) {
 
 	var second store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		first, err := startRound(context.Background(), rt, tx, b, "one")
+		first, err := startRound(context.Background(), rt, tx, b, "one", false)
 		if err != nil {
 			return err
 		}
 		if err := tx.Save(first); err != nil {
 			return err
 		}
-		second, err = startRound(context.Background(), rt, tx, b2, "two")
+		second, err = startRound(context.Background(), rt, tx, b2, "two", false)
 		return err
 	})
 	if err != nil {
@@ -274,7 +274,7 @@ func TestRelaunchKeepsItsCore(t *testing.T) {
 	var got store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		got, err = startRound(context.Background(), rt, tx, b, "again")
+		got, err = startRound(context.Background(), rt, tx, b, "again", false)
 		return err
 	})
 	if err != nil {
@@ -300,7 +300,7 @@ func TestRoundCloseReleasesCore(t *testing.T) {
 	var first store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		first, err = startRound(context.Background(), rt, tx, b, "one")
+		first, err = startRound(context.Background(), rt, tx, b, "one", false)
 		if err != nil {
 			return err
 		}
@@ -342,7 +342,7 @@ func TestRoundCloseReleasesCore(t *testing.T) {
 	var second store.Binding
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		second, err = startRound(context.Background(), rt, tx, b2, "two")
+		second, err = startRound(context.Background(), rt, tx, b2, "two", false)
 		if err != nil {
 			return err
 		}
@@ -368,7 +368,7 @@ func TestNoPoolWritesNoField(t *testing.T) {
 	var got store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		got, err = startRound(context.Background(), rt, tx, b, "x")
+		got, err = startRound(context.Background(), rt, tx, b, "x", false)
 		return err
 	})
 	if err != nil {

@@ -50,6 +50,18 @@ func checkTierCap(tier harness.Tier, pol policy.Policy, allowYolo bool) error {
 	return nil
 }
 
+// launchTier derives the tier a launch will use and refuses it when the stored
+// tier is above max_tier without the explicit allowance. It is the one place
+// that states the rule: a launch re-checks the stored tier every time, so an
+// over-cap record never starts without a caller that carries the allowance.
+func launchTier(b store.Binding, pol policy.Policy, allowYolo bool) (harness.Tier, error) {
+	tier := effectiveTier(b)
+	if err := checkTierCap(tier, pol, allowYolo); err != nil {
+		return tier, err
+	}
+	return tier, nil
+}
+
 // readerTier floors a reader's permission tier at edit (A5 §4): a reader must
 // be able to write its artifact directory, and shape does not change the tools
 // an agent gets (cockpit spec §3.2). A resolved harness or read tier becomes
