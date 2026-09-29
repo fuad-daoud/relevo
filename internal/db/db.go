@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -90,6 +91,14 @@ func OpenWith(path string, o Options) (*DB, error) {
 	return open(path, o)
 }
 
+// fileDSN builds a `file:` DSN for path with params after the `?`. The path is
+// percent-encoded, so a `#`, `?` or `%` in it stays part of the filename
+// instead of truncating the DSN to another file; the path must be absolute,
+// which every call site satisfies.
+func fileDSN(path, params string) string {
+	return (&url.URL{Scheme: "file", Path: path}).String() + "?" + params
+}
+
 // open routes through the test-only owner hop when one is installed, and opens
 // the file directly otherwise.
 func open(path string, o Options) (*DB, error) {
@@ -113,7 +122,7 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 	if o.BeginRetry > 0 {
 		retry = o.BeginRetry
 	}
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)", path, busy, journalSizeLimit)
+	dsn := fileDSN(path, fmt.Sprintf("_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)", busy, journalSizeLimit))
 
 	// Create the file ourselves first, so it -- and the -wal and -shm siblings
 	// sqlite derives from its mode -- is owner-only from the instant it exists,

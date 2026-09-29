@@ -123,7 +123,7 @@ func Tools() []ToolSpec {
 				"name":      map[string]any{"type": "string", "description": "binding name"},
 				"file":      map[string]any{"type": "string", "description": "path to the plan file"},
 				"tier":      map[string]any{"type": "string", "description": "permission tier override: harness|read|edit|yolo"},
-				"candidate": map[string]any{"type": "string", "description": "candidate name or token to run this round and later ones on (persists); refused while a round is open"},
+				"candidate": map[string]any{"type": "string", "description": "candidate name or token to run this round and later ones on (persists); refused while a live round is open (a halted served round may be re-pointed)"},
 				"verify":    map[string]any{"type": "boolean", "description": "run a read-only reviewer when the round closes"},
 				"regate":    map[string]any{"type": "integer", "description": "automatic repair rounds after a failing gate; 0 disables"},
 				"dry_run":   map[string]any{"type": "boolean", "description": "check preconditions and report what send would do, without sending"},

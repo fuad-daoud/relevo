@@ -22,10 +22,23 @@ import (
 var roundBaseRe = regexp.MustCompile(`^\d{3}-`)
 
 // ReadFile returns path's bytes from disk, or from the sealed round_file row
-// when a seal pass already moved a round file into the database. A miss
-// returns os.ReadFile's own error, so errors.Is(err, fs.ErrNotExist) keeps
-// working.
+// when a seal pass already moved a round file into the database. A reserved
+// round-file name is row-only: relevo never writes one to disk, so a file with
+// that name is a plant or a stale copy and the bytes come from the row, live or
+// archived, or the call is a miss. A miss returns os.ReadFile's own error, so
+// errors.Is(err, fs.ErrNotExist) and os.IsNotExist keep working.
 func (s *Store) ReadFile(path string) ([]byte, error) {
+	if _, name, ok := s.bindingRelOf(path); ok && reservedRoundFile(name) {
+		body, _, found, err := s.sealedRoundFile(path)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+		return body, nil
+	}
+
 	data, err := os.ReadFile(path)
 	if err == nil {
 		return data, nil
@@ -34,17 +47,9 @@ func (s *Store) ReadFile(path string) ([]byte, error) {
 		return nil, err
 	}
 
-	d, recordID, name, ok, lerr := s.sealedLookup(path)
+	body, _, found, lerr := s.sealedRoundFile(path)
 	if lerr != nil {
 		return nil, lerr
-	}
-	if !ok {
-		return nil, err
-	}
-
-	body, _, found, gerr := d.RoundFileGet(recordID, name)
-	if gerr != nil {
-		return nil, gerr
 	}
 	if !found {
 		return nil, err
@@ -53,9 +58,22 @@ func (s *Store) ReadFile(path string) ([]byte, error) {
 }
 
 // StatFile is ReadFile for os.Stat callers: the file's size and mtime when it
-// is on disk, and the sealed row's when it was sealed. A miss returns
-// os.Stat's own error alongside ok == false.
+// is on disk, and the sealed row's when it was sealed. A reserved round-file
+// name is row-only, so its size and mtime come from the row and never from a
+// file: a plant cannot set them. A miss returns os.Stat's own error alongside
+// ok == false.
 func (s *Store) StatFile(path string) (size int64, mtime time.Time, ok bool, err error) {
+	if _, name, resolved := s.bindingRelOf(path); resolved && reservedRoundFile(name) {
+		body, mt, found, ferr := s.sealedRoundFile(path)
+		if ferr != nil {
+			return 0, time.Time{}, false, ferr
+		}
+		if !found {
+			return 0, time.Time{}, false, &fs.PathError{Op: "stat", Path: path, Err: fs.ErrNotExist}
+		}
+		return int64(len(body)), mt, true, nil
+	}
+
 	info, err := os.Stat(path)
 	if err == nil {
 		return info.Size(), info.ModTime(), true, nil
@@ -65,22 +83,30 @@ func (s *Store) StatFile(path string) (size int64, mtime time.Time, ok bool, err
 	}
 	missErr := err
 
-	d, recordID, name, found, lerr := s.sealedLookup(path)
+	body, mt, found, lerr := s.sealedRoundFile(path)
 	if lerr != nil {
 		return 0, time.Time{}, false, lerr
 	}
 	if !found {
 		return 0, time.Time{}, false, missErr
 	}
-
-	body, mt, ok, gerr := d.RoundFileGet(recordID, name)
-	if gerr != nil {
-		return 0, time.Time{}, false, gerr
-	}
-	if !ok {
-		return 0, time.Time{}, false, missErr
-	}
 	return int64(len(body)), mt, true, nil
+}
+
+// sealedRoundFile answers path from the row that holds it: the name's live
+// record, or its most recently archived one, where archive() put its round
+// files. found is false when no row holds the name, so the caller keeps its own
+// not-exist error.
+func (s *Store) sealedRoundFile(path string) (body []byte, mtime time.Time, found bool, err error) {
+	d, recordID, name, ok, lerr := s.sealedLookup(path)
+	if lerr != nil || !ok {
+		return nil, time.Time{}, false, lerr
+	}
+	body, mtime, found, err = d.RoundFileGet(recordID, name)
+	if err != nil {
+		return nil, time.Time{}, false, err
+	}
+	return body, mtime, found, nil
 }
 
 // sealedLookup resolves path as a round file of the binding it names under
@@ -118,7 +144,8 @@ func (s *Store) sealedLookup(path string) (d *db.DB, recordID, name string, foun
 
 // RoundFiles is what is in name's directory -- the flat round files and every
 // file under its round artifact directories -- plus the sealed names in the
-// database, sorted and de-duplicated.
+// database, sorted and de-duplicated. A reserved round-file name is never a
+// disk round file, so it is listed only when a row holds it.
 func (s *Store) RoundFiles(name string) ([]string, error) {
 	seen := map[string]bool{}
 
@@ -297,7 +324,10 @@ func consultActive(c Consult) bool {
 // A read or write error leaves every file in place and is returned, so the
 // next pass retries; RoundFilePut is an upsert, so a removal that failed after
 // the commit re-puts the same bytes. A removal error is logged, never
-// returned: the seal itself succeeded. Non-NNN files are never sealed.
+// returned: the seal itself succeeded. Non-NNN files are never sealed, and
+// neither is a reserved round-file name: relevo authors those keys only as
+// rows, so a file with one of those names is skipped by the walk and left
+// where it is.
 func (t *Tx) SealRound(name string, round int) (int, error) {
 	files, err := roundFilesOfDir(t.s.Dir(name), round)
 	if err != nil || len(files) == 0 {
@@ -387,8 +417,11 @@ func roundFilesOfDir(dir string, round int) ([]diskRoundFile, error) {
 // error. A flat file whose name has no NNN- prefix has round 0; a file under an
 // NNN-* directory takes that directory's round.
 //
-// Security: a symlink, file or dir, is skipped with one warning per path; a
-// dot-file or dot-dir is skipped; a relative path containing ".." is refused.
+// Security: a reserved round-file name is skipped with one warning per path,
+// because relevo authors those keys only as rows and a file with one of those
+// names is a plant or a stale copy; a symlink, file or dir, is skipped with one
+// warning per path; a dot-file or dot-dir is skipped; a relative path
+// containing ".." is refused.
 func diskFiles(dir string) ([]diskRoundFile, error) {
 	var out []diskRoundFile
 	if err := walkRoundDir(dir, func(f diskRoundFile) { out = append(out, f) }); err != nil {
@@ -432,6 +465,12 @@ func walkRoundDir(dir string, fn func(diskRoundFile)) error {
 			if err := walkArtifactDir(path, base, round, fn); err != nil {
 				return err
 			}
+			continue
+		}
+		// A reserved name is row-only: relevo never writes one to disk, so a
+		// file with it is a plant or a stale copy and never a round file.
+		if reservedRoundFile(base) {
+			slog.Warn("round walk: skipping reserved round file", "path", path)
 			continue
 		}
 		// round is 0 for a flat file that is not a round file: it is listed,

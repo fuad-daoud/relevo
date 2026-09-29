@@ -555,7 +555,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// survives a close that fails later and is retried on the next tick.
 	if b.Shape == store.ShapeReader {
 		if stripped := reporttail.StripTail(body); !bytes.Equal(stripped, body) {
-			if err := os.WriteFile(path, stripped, 0o644); err != nil {
+			if err := replaceReaderOutput(path, stripped); err != nil {
 				slog.Warn("reader output not stripped", "binding", b.Name, "round", b.Round, "err", err)
 			}
 		}

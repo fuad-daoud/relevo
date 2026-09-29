@@ -90,7 +90,7 @@ type Server struct {
 // returns the raw error, as New does. The root is owner-only: it holds the
 // database and every binding's files, and MkdirAll never chmods an existing one.
 func EnsureStateRoot(root string) error {
-	return os.MkdirAll(filepath.Join(root, "bindings"), 0o700)
+	return os.MkdirAll(filepath.Join(root, "bindings"), store.StateRootMode)
 }
 
 func New(cfg Config) (*Server, error) {
@@ -104,7 +104,7 @@ func New(cfg Config) (*Server, error) {
 		cfg.Git = git.NewClient("git", 0, 0)
 	}
 	tmpDir := filepath.Join(cfg.Root, "tmp")
-	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+	if err := os.MkdirAll(tmpDir, store.StateRootMode); err != nil {
 		return nil, err
 	}
 	// Before anything listens, drop the request temp files a previous process left

@@ -493,7 +493,9 @@ func TestReadDrift(t *testing.T) {
 
 	patchPath := s.DriftPath("webshop", 5)
 	patchContent := "--- a/file\n+++ b/file\n@@ ...\n"
-	if err := os.WriteFile(patchPath, []byte(patchContent), 0o644); err != nil {
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("webshop", 5, patchPath, []byte(patchContent))
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -527,16 +529,25 @@ func TestReadDrift(t *testing.T) {
 		t.Fatalf("ReadDrift unknown binding returned err %v, want ErrNotFound", err)
 	}
 
-	// 4. Wrapped read error (e.g. drift path is an unreadable directory)
-	unreadableDir := s.DriftPath("webshop", 6)
-	if err := os.Mkdir(unreadableDir, 0o755); err != nil {
+	// 4. A directory sits at a reserved drift path. A reserved key answers
+	// from the row or misses -- the disk is never consulted -- so with no row
+	// the call is a miss, not the read error a directory would raise. There is
+	// no wrapped-error path left for a reserved key.
+	reservedDir := s.DriftPath("webshop", 6)
+	if err := os.Mkdir(reservedDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = ReadDrift(s, "webshop", 6)
-	if err == nil {
-		t.Fatal("expected error reading directory as file")
+	data, ok, err = ReadDrift(s, "webshop", 6)
+	if err != nil {
+		t.Fatalf("ReadDrift reserved path returned err: %v", err)
 	}
-	if filepath.Base(unreadableDir) != "006-drift.patch" {
-		t.Fatalf("unexpected path: %s", unreadableDir)
+	if ok {
+		t.Fatal("ReadDrift reserved path returned ok=true")
+	}
+	if data != nil {
+		t.Fatalf("ReadDrift reserved path returned non-nil data: %v", data)
+	}
+	if filepath.Base(reservedDir) != "006-drift.patch" {
+		t.Fatalf("unexpected path: %s", reservedDir)
 	}
 }

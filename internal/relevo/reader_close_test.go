@@ -239,6 +239,48 @@ func TestReaderCloseStripsARunnerWrittenSummaryWithABlock(t *testing.T) {
 	}
 }
 
+// TestReaderCloseRefusesToStripThroughASymlink pins that a runner-planted
+// symlink at the output path is left alone by the strip: the target keeps the
+// planted body, the path stays a symlink, and the round still closes.
+func TestReaderCloseRefusesToStripThroughASymlink(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	output := rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings")
+	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "planted.md")
+	if err := os.WriteFile(target, []byte(readerCloseFinal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, output); err != nil {
+		t.Fatal(err)
+	}
+	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
+	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("round = %d, want the round closed and advanced", got.Round)
+	}
+	body, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read the link's target: %v", err)
+	}
+	if string(body) != readerCloseFinal {
+		t.Errorf("link target = %q, want it byte-identical to the planted body", body)
+	}
+	if fi, err := os.Lstat(output); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("output Lstat = %v, %v; want the path still a symlink", fi, err)
+	}
+}
+
 // TestReaderCloseKeepsTheHaltedStatusOutOfTheSummary checks that a halted
 // reader round's status is preserved in the entry's Outcome/HaltedAt and the
 // payload annotation, while the findings.md file has no relevo block.

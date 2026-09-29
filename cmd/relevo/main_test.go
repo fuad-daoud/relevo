@@ -358,8 +358,10 @@ func TestDiffCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write round 1 diff patch
-	if err := os.WriteFile(s.DiffPath("webshop", 1), []byte(patchContent), 0o644); err != nil {
+	// Author round 1's diff patch as a round_file row.
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("webshop", 1, s.DiffPath("webshop", 1), []byte(patchContent))
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -469,7 +471,9 @@ func TestDiffAnchorsCommand(t *testing.T) {
 	if err := s.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(s.DiffPath("webshop", 1), []byte(patchContent), 0o644); err != nil {
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("webshop", 1, s.DiffPath("webshop", 1), []byte(patchContent))
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -512,12 +516,16 @@ func TestDiffDriftCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write round 2 drift patch
-	if err := os.WriteFile(s.DriftPath("webshop", 2), []byte(driftPatchRound2), 0o644); err != nil {
+	// Author round 2's drift patch as a round_file row.
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("webshop", 2, s.DriftPath("webshop", 2), []byte(driftPatchRound2))
+	}); err != nil {
 		t.Fatal(err)
 	}
-	// Write round 1 drift patch
-	if err := os.WriteFile(s.DriftPath("webshop", 1), []byte(driftPatchRound1), 0o644); err != nil {
+	// Author round 1's drift patch as a round_file row.
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("webshop", 1, s.DriftPath("webshop", 1), []byte(driftPatchRound1))
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -679,6 +687,38 @@ func TestDaemonCheckLeavesNoDB(t *testing.T) {
 	dbPath := filepath.Join(root, "state", "relevo", "relevo.db")
 	if _, serr := os.Stat(dbPath); !errors.Is(serr, os.ErrNotExist) {
 		t.Errorf("relevo.db exists after --check: stat error = %v, want not-exist", serr)
+	}
+}
+
+// TestDaemonSecondStartLeavesNoDB pins the lock-first start (#701): a daemon
+// that loses AcquireDaemonLock exits before newRuntime, so it mints no
+// installation.json and opens no relevo.db (nor its -wal/-shm), leaving only
+// the .daemon.lock its own acquisition touched. The test holds the lock first,
+// then calls cmdDaemon directly -- never run, which would need a harness and
+// the network.
+func TestDaemonSecondStartLeavesNoDB(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+
+	stateRoot := filepath.Join(root, "state", "relevo")
+	lock, err := store.New(stateRoot).AcquireDaemonLock()
+	if err != nil {
+		t.Fatalf("AcquireDaemonLock: %v", err)
+	}
+	t.Cleanup(func() { _ = lock.Close() })
+
+	err = cmdDaemon(nil)
+	if !errors.Is(err, store.ErrDaemonRunning) {
+		t.Fatalf("cmdDaemon error = %v, want store.ErrDaemonRunning", err)
+	}
+
+	for _, name := range []string{"relevo.db", "relevo.db-wal", "relevo.db-shm", "installation.json"} {
+		p := filepath.Join(stateRoot, name)
+		if _, serr := os.Stat(p); !errors.Is(serr, os.ErrNotExist) {
+			t.Errorf("%s exists after a losing start: stat error = %v, want not-exist", p, serr)
+		}
 	}
 }
 

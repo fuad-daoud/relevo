@@ -228,7 +228,7 @@ func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if _, err := startRound(context.Background(), rt, nil, b, "the prompt"); err != nil {
+	if _, err := startRound(context.Background(), rt, nil, b, "the prompt", false); err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
 	if len(fr.specs) != 1 {
@@ -248,7 +248,7 @@ func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind opencode: %v", err)
 	}
-	if _, err := startRound(context.Background(), rt, nil, b2, "the prompt"); err != nil {
+	if _, err := startRound(context.Background(), rt, nil, b2, "the prompt", false); err != nil {
 		t.Fatalf("startRound opencode: %v", err)
 	}
 	if len(fr2.specs) != 1 {
