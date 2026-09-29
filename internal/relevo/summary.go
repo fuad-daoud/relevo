@@ -88,6 +88,32 @@ func writeReaderOutput(path, text string) error {
 	return f.Close()
 }
 
+// replaceReaderOutput truncates an existing regular file in place and writes
+// data over it. A close only reaches here for an output it just read, so a
+// missing path, a symlink, a directory or a fifo is refused rather than
+// followed or recreated, and nothing is created. The Lstat is the refusal and
+// O_NOFOLLOW the race backstop behind it; the check also keeps a fifo open from
+// blocking. Without O_CREATE the mode is inert, so an existing file's mode and
+// owner are left as they were.
+func replaceReaderOutput(path string, data []byte) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("reader output %s is not a regular file", path)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|oNoFollow, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 // lastStreamKind is the harness kind of the round's last stream segment: the
 // kind of the process that last wrote, which a mid-round switch changes. The
 // endpoint's own Kind is the fallback for a round that recorded no segment.

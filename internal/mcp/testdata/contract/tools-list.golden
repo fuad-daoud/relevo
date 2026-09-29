@@ -24,7 +24,7 @@
         "additionalProperties": false,
         "properties": {
           "candidate": {
-            "description": "candidate name or token to run this round and later ones on (persists); refused while a round is open",
+            "description": "candidate name or token to run this round and later ones on (persists); refused while a live round is open (a halted served round may be re-pointed)",
             "type": "string"
           },
           "dry_run": {
