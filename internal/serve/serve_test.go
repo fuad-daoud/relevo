@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -30,6 +33,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
+
+// testRepoID is the canonical repo id the create tests send: 64 lower-case
+// hex characters, the shape remote.RepoID emits.
+const testRepoID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 func TestClientsAddRevokeLookup(t *testing.T) {
 	d := testServeDB(t)
@@ -361,6 +368,55 @@ func TestWhoAmI(t *testing.T) {
 	}
 }
 
+// TestWhoAmIAndCandidatesDoNotRaceWithCreate pins the owner-store lock: create,
+// whoami and candidates all touch s.stores, so they take s.mu and run
+// concurrently under -race without a report. Every request is built on the test
+// goroutine -- signedRequest calls t.Fatalf -- and the workers only call
+// ServeHTTP.
+func TestWhoAmIAndCandidatesDoNotRaceWithCreate(t *testing.T) {
+	env := setupTestEnv(t)
+	handler := env.srv.Handler()
+
+	// Several owners, so the per-owner store map grows while the readers walk
+	// it: one owner alone gives the first map write too small a window to race
+	// a reader reliably.
+	owners := []ownerEnv{{kp: env.kp, repoID: env.repoID, headSHA: env.headSHA}}
+	for _, label := range []string{"bob", "carol", "dave"} {
+		owners = append(owners, addOwner(t, env, label))
+	}
+
+	const perOwner = 6
+	reqs := make([]*http.Request, 0, len(owners)*perOwner*3)
+	for _, o := range owners {
+		for i := 0; i < perOwner; i++ {
+			body, _ := json.Marshal(remote.CreateBindingRequest{
+				Name:       fmt.Sprintf("api-%d", i),
+				RepoID:     o.repoID,
+				BaseCommit: o.headSHA,
+				Role:       "builder",
+			})
+			reqs = append(reqs,
+				signedRequest(t, o.kp, "POST", "/v1/bindings", body),
+				signedRequest(t, o.kp, "GET", "/v1/whoami", nil),
+				signedRequest(t, o.kp, "GET", "/v1/candidates", nil),
+			)
+		}
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, req := range reqs {
+		wg.Add(1)
+		go func(req *http.Request) {
+			defer wg.Done()
+			<-start
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+		}(req)
+	}
+	close(start)
+	wg.Wait()
+}
+
 // TestServerRefusesACreateWithoutAnActor pins A4: a client of this release
 // always names the actor, so an empty one is a 400 naming the field and stores
 // nothing.
@@ -377,7 +433,7 @@ func TestServerRefusesACreateWithoutAnActor(t *testing.T) {
 
 	rec := createBindingRequest(t, s, kp, remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo123",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("a", 40),
 	})
 	if rec.Code != http.StatusBadRequest {
@@ -510,7 +566,7 @@ func TestCreateBinding(t *testing.T) {
 
 	createBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo123",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("a", 40),
 		Role:       "builder",
 	})
@@ -532,7 +588,7 @@ func TestCreateBinding(t *testing.T) {
 	if !ok {
 		t.Fatalf("id.Dir() failed for %s", id)
 	}
-	bareRepoPath := filepath.Join(root, "repos", idDir, "repo123.git")
+	bareRepoPath := filepath.Join(root, "repos", idDir, testRepoID+".git")
 	if _, err := os.Stat(filepath.Join(bareRepoPath, "HEAD")); err != nil {
 		t.Fatalf("bare repo HEAD missing at %s: %v", bareRepoPath, err)
 	}
@@ -560,7 +616,7 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 
 	createBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo123",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("a", 40),
 		Role:       "builder",
 	})
@@ -695,7 +751,7 @@ func TestCreateBindingTier(t *testing.T) {
 			srv, kp := newTierTestServer(t, tc.pol)
 			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
 				Name:       "api",
-				RepoID:     "repo123",
+				RepoID:     testRepoID,
 				BaseCommit: strings.Repeat("a", 40),
 				Role:       "builder",
 				Tier:       tc.tier,
@@ -747,7 +803,7 @@ func TestCreateBindingLabels(t *testing.T) {
 			srv, kp := newTierTestServer(t, policy.Policy{})
 			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
 				Name:       "api",
-				RepoID:     "repo123",
+				RepoID:     testRepoID,
 				BaseCommit: strings.Repeat("a", 40),
 				Role:       "builder",
 				Feature:    tc.feature,
@@ -804,7 +860,7 @@ func TestCreateBindingRole(t *testing.T) {
 			srv, kp := newRoleTestServer(t, policy.Policy{}, roleTestRegistry(t, set, policy.Policy{}))
 			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
 				Name:       "api",
-				RepoID:     "repo123",
+				RepoID:     testRepoID,
 				BaseCommit: strings.Repeat("a", 40),
 				Role:       tc.role,
 			})
@@ -848,7 +904,7 @@ func requireCreateRefused(t *testing.T, srv *Server, kp remote.Keypair, rec *htt
 	if err != nil {
 		t.Fatal(err)
 	}
-	bare := filepath.Join(repoRoot, "repo123.git")
+	bare := filepath.Join(repoRoot, testRepoID+".git")
 	if _, err := os.Stat(bare); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("bare repo %s exists after the refusal (stat err = %v)", bare, err)
 	}
@@ -871,6 +927,114 @@ func requireRoleStored(t *testing.T, srv *Server, kp remote.Keypair, role, wantC
 	}
 }
 
+// twoBuilderCandidatesJSON is the two-candidate set the explicit-refusal create
+// test needs: both can serve builder, so one of them can be named while the
+// requested role's own list omits it.
+const twoBuilderCandidatesJSON = `[
+	{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]},
+	{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}
+]`
+
+// allDefinitionsMissing is a stub harness.RoleChecker that reports every
+// definition it is asked about as missing, so a candidate that serves the role
+// still carries a roles_missing gate.
+type allDefinitionsMissing struct{}
+
+func (allDefinitionsMissing) Missing(_ string, definitions []string) []string {
+	return definitions
+}
+
+// roleRefusalServer builds a server whose ui-builder role lists only haiku, so
+// naming sonnet is a candidate that exists but the role does not serve.
+func roleRefusalServer(t *testing.T, checker harness.RoleChecker) (*Server, remote.Keypair) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(path, []byte(twoBuilderCandidatesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set, err := candidate.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := "writer"
+	reg, err := roles.Build(&roles.File{Rows: map[string]roles.Row{
+		"ui-builder": {
+			Shape:       &writer,
+			Candidates:  []string{"claude/anthropic/haiku"},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "srv-ui"}},
+		},
+	}}, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+	srv, err := New(Config{
+		DB:         testServeDB(t),
+		Root:       t.TempDir(),
+		Candidates: set,
+		Registry:   reg,
+		Roles:      checker,
+		Now:        time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	return srv, kp
+}
+
+// TestCreateRefusesACandidateTheRoleDoesNotServe pins the explicit pick's
+// refusal at the create: naming a candidate the requested role refuses answers
+// 422 invalid with the refusal's own message and stores nothing, rather than
+// falling back to the actor's ranked pick. Two refusals are covered: a token
+// the role's list does not contain, and a candidate a roles_missing gate
+// refuses.
+func TestCreateRefusesACandidateTheRoleDoesNotServe(t *testing.T) {
+	cases := []struct {
+		name      string
+		checker   harness.RoleChecker
+		candidate string
+		wantMsg   string
+	}{
+		{"not in the role's list", nil, "claude/anthropic/sonnet", "sonnet"},
+		{"roles_missing gate", allDefinitionsMissing{}, "claude/anthropic/haiku", "haiku"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, kp := roleRefusalServer(t, tc.checker)
+			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+				Name:       "api",
+				RepoID:     testRepoID,
+				BaseCommit: strings.Repeat("a", 40),
+				Role:       "ui-builder",
+				Candidate:  tc.candidate,
+			})
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+			}
+			var errBody remote.ErrorBody
+			if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+				t.Fatalf("decode error body: %v", err)
+			}
+			if errBody.Code != remote.CodeInvalid {
+				t.Errorf("code = %q, want %q", errBody.Code, remote.CodeInvalid)
+			}
+			if !strings.Contains(errBody.Message, tc.wantMsg) {
+				t.Errorf("message = %q, want it to name %q", errBody.Message, tc.wantMsg)
+			}
+			id := remote.IDOf(kp.Public)
+			if _, err := testRuntime(t, srv, id).Store.Load("api"); err == nil {
+				t.Fatal("binding was stored despite the refusal")
+			}
+		})
+	}
+}
+
 func TestCreateInvalid(t *testing.T) {
 	s, _ := newTestServer(t, 0)
 	kp, err := remote.Generate()
@@ -883,7 +1047,7 @@ func TestCreateInvalid(t *testing.T) {
 
 	badNameBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "invalid/name",
-		RepoID:     "repo1",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("a", 40),
 	})
 	rec := httptest.NewRecorder()
@@ -913,7 +1077,7 @@ func TestCreateDuplicate(t *testing.T) {
 
 	body, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo1",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("b", 40),
 		Role:       "builder",
 	})
@@ -950,7 +1114,7 @@ func TestListIsOwnerScoped(t *testing.T) {
 
 	bodyA, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo1",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("1", 40),
 		Role:       "builder",
 	})
@@ -994,7 +1158,7 @@ func TestGetTouchesLastSeen(t *testing.T) {
 
 	createBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
-		RepoID:     "repo1",
+		RepoID:     testRepoID,
 		BaseCommit: strings.Repeat("2", 40),
 		Role:       "builder",
 	})
@@ -2717,5 +2881,72 @@ func TestUnbindKeepingADirtyWorktreeKeepsItsRefs(t *testing.T) {
 	}
 	if len(refs) != 2 {
 		t.Errorf("refs/relevo/dirty-target/* = %v; want 2 kept refs", refs)
+	}
+}
+
+// TestParseCreateRequestRepoID drives the wire create parser with no server,
+// git or network: only the canonical 64-lower-case-hex id is well formed, and
+// every other shape is a 400 naming repo_id.
+func TestParseCreateRequestRepoID(t *testing.T) {
+	cases := []struct {
+		name string
+		id   string
+		ok   bool
+	}{
+		{"canonical", testRepoID, true},
+		{"empty", "", false},
+		{"short name", "repo1", false},
+		{"63 chars", testRepoID[:63], false},
+		{"65 chars", testRepoID + "a", false},
+		{"upper-case hex", strings.ToUpper(testRepoID), false},
+		{"non-hex byte", testRepoID[:63] + "g", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(remote.CreateBindingRequest{
+				Name:       "api",
+				RepoID:     tc.id,
+				BaseCommit: strings.Repeat("a", 40),
+			})
+			req := httptest.NewRequest("POST", "/v1/bindings", bytes.NewReader(body))
+			_, bad := parseCreateRequest(req)
+			if tc.ok {
+				if bad != "" {
+					t.Fatalf("repo_id %q refused: %q", tc.id, bad)
+				}
+				return
+			}
+			if bad == "" {
+				t.Fatalf("repo_id %q accepted, want refused", tc.id)
+			}
+			if !strings.Contains(bad, "repo_id") {
+				t.Fatalf("message = %q, want it to name repo_id", bad)
+			}
+		})
+	}
+}
+
+// TestInsideRootRefusesEscapes tables the containment guard: the root itself
+// and a path under it are inside; a parent, an absolute stranger and a sibling
+// whose name merely starts with the root are not.
+func TestInsideRootRefusesEscapes(t *testing.T) {
+	cases := []struct {
+		name string
+		root string
+		p    string
+		want bool
+	}{
+		{"inside", "/r/a", "/r/a/x", true},
+		{"equal", "/r/a", "/r/a", true},
+		{"parent", "/r/a", "/r", false},
+		{"absolute", "/r/a", "/etc/passwd", false},
+		{"sibling prefix", "/r/a", "/r/ab/x", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := insideRoot(tc.root, tc.p); got != tc.want {
+				t.Fatalf("insideRoot(%q, %q) = %v, want %v", tc.root, tc.p, got, tc.want)
+			}
+		})
 	}
 }

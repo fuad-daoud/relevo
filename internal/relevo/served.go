@@ -222,7 +222,7 @@ func ResolveServedTier(rt Runtime, token, explicit string) (harness.Tier, error)
 // ResolveServedTier(rt, PickServedCandidate(rt, ""), ""), falling back to
 // harness (not an error) when the chain refuses.
 func ServedBuilderTier(rt Runtime) harness.Tier {
-	token, _ := PickServedCandidate(rt, "")
+	token, _, _ := PickServedCandidate(rt, "")
 	tier, err := ResolveServedTier(rt, token, "")
 	if err != nil {
 		return harness.TierHarness
@@ -231,26 +231,26 @@ func ServedBuilderTier(rt Runtime) harness.Tier {
 }
 
 // PickServedCandidateFor resolves the role's candidate token and harness kind
-// for a served binding.
-func PickServedCandidateFor(rt Runtime, role, token string) (string, string) {
+// for a served binding. An explicit token the role refuses is returned as that
+// refusal, never swapped for another candidate: the create that named it must
+// answer, not silently serve someone else. With no token it is the role's
+// ranked pick, or ("", "") when nothing serves the role.
+func PickServedCandidateFor(rt Runtime, role, token string) (string, string, error) {
 	if rt.Candidates == nil {
-		return token, ""
+		return token, "", nil
 	}
 	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), token, role)
-	if err == nil {
-		return res.Candidate.Ref().String(), res.Candidate.Harness
-	}
-	if token != "" {
-		// The token may be a candidate name or a canonical token (A1 §4.2).
-		if c, err := rt.Candidates.Resolve(token); err == nil {
-			return c.Ref().String(), c.Harness
+	if err != nil {
+		if token != "" {
+			return token, "", err
 		}
+		return "", "", nil
 	}
-	return token, ""
+	return res.Candidate.Ref().String(), res.Candidate.Harness, nil
 }
 
 // PickServedCandidate is PickServedCandidateFor for the built-in builder role.
-func PickServedCandidate(rt Runtime, token string) (string, string) {
+func PickServedCandidate(rt Runtime, token string) (string, string, error) {
 	return PickServedCandidateFor(rt, "builder", token)
 }
 

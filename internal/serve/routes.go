@@ -97,6 +97,9 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	caller := callerOf(r)
 	label := s.clients.LabelOf(caller)
 	who := remote.WhoAmI{

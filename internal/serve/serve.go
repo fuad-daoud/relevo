@@ -198,6 +198,18 @@ func (s *Server) repoRoot(owner remote.ClientID) (string, error) {
 	return filepath.Join(s.cfg.Root, "repos", dir), nil
 }
 
+// insideRoot reports whether p is root itself or under it. It is the create
+// path's defence in depth after the join: filepath.Rel is used so a root that
+// is a string prefix of a sibling ("/r/a" against "/r/ab/x") is outside, and a
+// parent element ("/r/a" against "/r") is refused.
+func insideRoot(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
 // OwnerRuntime resolves owner's runtime for the ui's server source; it takes
 // s.mu itself. A caller holding s.mu calls runtimeAt instead.
 func (s *Server) OwnerRuntime(owner remote.ClientID) (relevo.Runtime, error) {

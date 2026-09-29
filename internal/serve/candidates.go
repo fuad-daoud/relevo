@@ -10,6 +10,9 @@ import (
 )
 
 func (s *Server) handleCandidates(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	caller := callerOf(r)
 	rt, err := s.runtime(caller)
 	if err != nil {
@@ -23,7 +26,7 @@ func (s *Server) handleCandidates(w http.ResponseWriter, r *http.Request) {
 		gatedMap[g.Token] = true
 	}
 
-	pickedToken, _ := relevo.PickServedCandidate(rt, "")
+	pickedToken, _, _ := relevo.PickServedCandidate(rt, "")
 
 	var views []remote.CandidateView
 	if s.cfg.Candidates != nil {
