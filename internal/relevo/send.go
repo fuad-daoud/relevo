@@ -169,6 +169,10 @@ func pendingRoundFile(rt Runtime, name string, round int) (string, bool) {
 // it adds git objects. The remote path stops after the checks that need no
 // server contact (no WhoAmI, no bundle); Send's remote branch calls sendRemote
 // as it always did.
+//
+// Every --candidate guard here and under Send's lock is candidateSendRefused:
+// the round-open refusal, except for a served binding halted in NEEDS YOU,
+// which the candidate re-points.
 func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (preflight, error) {
 	// Read the caller's file first; it is the one input that does not depend
 	// on binding state.
@@ -219,7 +223,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		if err != nil {
 			return preflight{}, err
 		}
-		if roundOpenIn(entries, b.Round) {
+		if candidateSendRefused(b, entries) {
 			return preflight{}, fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --candidate", name, b.Round, name)
 		}
 		if b.Builder.Remote() {
@@ -485,7 +489,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				if err != nil {
 					return err
 				}
-				if roundOpenIn(entries, b.Round) {
+				if candidateSendRefused(b, entries) {
 					return fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --candidate", name, b.Round, name)
 				}
 			}

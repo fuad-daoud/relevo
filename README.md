@@ -1612,7 +1612,7 @@ For the verify reviewer, tier resolves from the policy section's `tier.reviewer`
 
 Every builder runs a new process for each round, so a round may temporarily override the tier with `relevo send --tier <tier> [--allow-yolo]`. The override applies to that round only, and resets to the binding's default tier when the round completes.
 
-`relevo send --candidate <token>` moves the binding to another configured candidate from this round on. It is refused while a round is open (stop it first with `relevo stop`). An explicit pick of a gated candidate is recorded and proceeds, as with `relevo bind --worktree --candidate`. The binding's tier is re-derived for the new candidate. On a remote binding the server must advertise the `builder` feature.
+`relevo send --candidate <token>` moves the binding to another configured candidate from this round on. It is refused while a live round is open (stop it first with `relevo stop`) -- except on a served binding halted in `NEEDS YOU`, where `stop` is itself refused and naming the candidate re-points that round instead. An explicit pick of a gated candidate is recorded and proceeds, as with `relevo bind --worktree --candidate`. The binding's tier is re-derived for the new candidate. On a remote binding the server must advertise the `builder` feature.
 
 ### Permission-blocked exits
 

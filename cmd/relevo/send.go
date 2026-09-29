@@ -32,7 +32,7 @@ func sendFlagSet(fs *flag.FlagSet) *sendFlagValues {
 	v.file = fs.String("file", "", "path to the plan file to hand the runner")
 	v.name = fs.String("name", "", "binding name (default: the binding for this cwd)")
 	v.tier = fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then the actor's tier, then harness)")
-	v.candidate = fs.String("candidate", "", "candidate name or harness/provider/model token to run this round and later ones on; refused while a round is open")
+	v.candidate = fs.String("candidate", "", "candidate name or harness/provider/model token to run this round and later ones on; refused while a live round is open (a halted served round may be re-pointed)")
 	v.allowYolo = fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	v.dryRun = fs.Bool("dry-run", false, "check every precondition and print what send would do, without sending")
 	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
