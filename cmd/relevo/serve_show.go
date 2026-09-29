@@ -90,7 +90,10 @@ func serveShow(owner, state, name string, round int, section relevo.ShowSection,
 		return exitCodeErr{code: 1}
 	}
 
-	opts := relevo.ShowOptions{Name: name, Round: round, Section: section, JSON: asJSON, ArtifactRel: artifactRel}
+	// The owner read always peeks (#673): it is the admin's read of another
+	// owner's binding, so it must stay read-only and never claim that owner's
+	// pending payload.
+	opts := relevo.ShowOptions{Name: name, Round: round, Section: section, JSON: asJSON, Peek: true, ArtifactRel: artifactRel}
 	if err := printShow(rt, opts, false, false, label+"/"); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			fmt.Fprintf(os.Stderr, "relevo serve show: %s/%s: binding not found (serve show reads live bindings only)\n", owner, name)

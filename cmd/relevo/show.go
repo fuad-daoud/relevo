@@ -17,7 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-const showUsage = `usage: relevo show <name> [--round N] [--prompt|--report|--diff|--drift|--log|--transcript|--gate|--findings ID|--output|--artifacts|--artifact REL] [--json]
+const showUsage = `usage: relevo show <name> [--round N] [--prompt|--report|--diff|--drift|--log|--transcript|--gate|--findings ID|--output|--artifacts|--artifact REL] [--json] [--peek]
        relevo show <name> --diff|--drift [--stat] [--anchors]
        relevo show <name> --log [--follow] [--after N]
        relevo show <name> --owner <label|id> [--log] [--state DIR]`
@@ -109,6 +109,7 @@ func cmdShow(args []string) error {
 	follow := fs.Bool("follow", false, "with --log: keep printing new entries until the binding is DONE or removed")
 	after := fs.Int("after", 0, "with --log: show only entries with a Seq greater than this (0 = all)")
 	asJSON := fs.Bool("json", false, "machine-readable output: the ShowResult, Events included for --log")
+	peek := fs.Bool("peek", false, "read the section without claiming the binding's pending payload")
 	owner := fs.String("owner", "", "on the server host: read this owner's binding, a client label or id")
 	state := fs.String("state", "", "with --owner: the serve state directory")
 	fs.Usage = func() {
@@ -205,7 +206,7 @@ func cmdShow(args []string) error {
 		return printLog(rt, name, *round, *after, *asJSON, *follow, true)
 	}
 
-	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON, FindingsID: *findings, ArtifactRel: *artifact}
+	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON, Peek: *peek, FindingsID: *findings, ArtifactRel: *artifact}
 	return printShow(rt, opts, true, true, "")
 }
 

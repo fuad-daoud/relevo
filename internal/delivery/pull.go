@@ -11,10 +11,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// Pull is pullPending for the cockpit: the round view calls it with route
-// "tui" when it opens a binding whose report is ready for the human mastermind,
-// so the text it returns is shown and the entry is marked delivered to the TUI
-// rather than to `relevo wait`.
+// Pull is pullPending for in-process readers: the cockpit's round view calls it
+// with route "tui" when it opens a binding whose report is ready for the human
+// mastermind, so the text it returns is shown and the entry is marked delivered
+// to the TUI rather than to `relevo wait`; `relevo show`'s live branch calls it
+// with route "show" and discards the text, so a plain read confirms the payload
+// instead of leaving it to be pushed afterwards.
 func Pull(ctx context.Context, st *store.Store, name, route string) (text string, found bool, err error) {
 	return pullPending(ctx, st, name, route)
 }

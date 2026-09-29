@@ -154,3 +154,40 @@ func TestShowOwnerLogIsTheOldServeLog(t *testing.T) {
 		t.Error("show --owner --log must not stamp .viewed")
 	}
 }
+
+// TestShowOwnerLeavesPendingMasterMindPayload pins #673's owner carve-out: the
+// admin's read of another owner's binding stays read-only, so a queued
+// mastermind-bound report on that binding is still pending after `show
+// --owner`. Store-only: no harness, no listener, no network.
+func TestShowOwnerLeavesPendingMasterMindPayload(t *testing.T) {
+	owner, _ := seedServeOwnerState(t, "alice")
+
+	if err := owner.AppendLog("api", store.LogEntry{
+		TS: time.Date(2026, 9, 10, 10, 0, 1, 0, time.UTC), Round: 1,
+		Direction: store.DirToMasterMind, Kind: store.KindReport,
+		Payload: "round 1 report", Path: owner.ReportPath("api", 1),
+	}); err != nil {
+		t.Fatalf("AppendLog pending: %v", err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"show", "api", "--owner", "alice", "--report"})
+	})
+	if err != nil {
+		t.Fatalf("show api --owner alice --report: %v", err)
+	}
+	if string(stdout) != "# report body\n" {
+		t.Errorf("stdout = %q, want the report body", stdout)
+	}
+
+	entries, err := owner.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && !e.Confirmed {
+			return // still pending: the owner read claimed nothing
+		}
+	}
+	t.Error("show --owner confirmed the pending payload; the owner read must stay read-only")
+}
