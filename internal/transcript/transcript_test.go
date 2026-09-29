@@ -12,6 +12,7 @@ import (
 var update = flag.Bool("update", false, "rewrite testdata/*.log from the renderer")
 
 func TestFixtures(t *testing.T) {
+	utc(t)
 	streams, err := filepath.Glob(filepath.Join("testdata", "*.jsonl"))
 	if err != nil || len(streams) == 0 {
 		t.Fatalf("no fixtures: %v", err)
@@ -24,9 +25,10 @@ func TestFixtures(t *testing.T) {
 				t.Fatal(err)
 			}
 			logPath := filepath.Join("testdata", kind+".log")
+			r := NewRenderer()
 			var got []string
 			for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
-				got = append(got, Render(kind, []byte(line))...)
+				got = append(got, r.Render(kind, []byte(line))...)
 			}
 			g := strings.Join(got, "\n") + "\n"
 			if *update {
@@ -72,7 +74,7 @@ func TestRenderRules(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := Render(c.kind, []byte(c.line)); !reflect.DeepEqual(got, c.want) {
+			if got := NewRenderer().Render(c.kind, []byte(c.line)); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("Render(%q, %q) = %q, want %q", c.kind, c.line, got, c.want)
 			}
 		})
@@ -92,11 +94,12 @@ func TestRenderDropsSupervisorTrailers(t *testing.T) {
 	for _, kind := range []string{"claude", "agy", "opencode", "codex"} {
 		for name, lines := range trailers {
 			t.Run(kind+"/"+name, func(t *testing.T) {
+				r := NewRenderer()
 				var got []string
 				for _, line := range append([]string{body[kind]}, lines...) {
-					got = append(got, Render(kind, []byte(line))...)
+					got = append(got, r.Render(kind, []byte(line))...)
 				}
-				if want := Render(kind, []byte(body[kind])); !reflect.DeepEqual(got, want) {
+				if want := NewRenderer().Render(kind, []byte(body[kind])); !reflect.DeepEqual(got, want) {
 					t.Errorf("rendered = %q, want %q without the trailers", got, want)
 				}
 			})
@@ -163,7 +166,7 @@ func TestClaudeTable(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := Render("claude", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
+			if got := NewRenderer().Render("claude", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})
@@ -254,7 +257,7 @@ func TestAgyTable(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := Render("agy", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
+			if got := NewRenderer().Render("agy", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})
@@ -262,13 +265,14 @@ func TestAgyTable(t *testing.T) {
 }
 
 func TestOpencodeTable(t *testing.T) {
+	utc(t)
 	cases := map[string]struct {
 		line string
 		want []string
 	}{
 		"error": {
 			`{"type":"error","timestamp":1789589781193,"sessionID":"ses_1","error":{"type":"provider.no-route","message":"Model unavailable: openrouter/z-ai/glm-5.3-flash"}}`,
-			[]string{"  ⎿ error: Model unavailable: openrouter/z-ai/glm-5.3-flash"},
+			[]string{"20:16:21   ⎿ error: Model unavailable: openrouter/z-ai/glm-5.3-flash"},
 		},
 		"tool_use in an unknown status is rule 5": {
 			`{"type":"tool_use","part":{"type":"tool","tool":"read","state":{"status":"running","input":{"path":"a"}}}}`,
@@ -301,7 +305,7 @@ func TestOpencodeTable(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := Render("opencode", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
+			if got := NewRenderer().Render("opencode", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})
@@ -395,7 +399,7 @@ var codexCases = map[string]lineCase{
 func TestCodexTable(t *testing.T) {
 	for name, c := range codexCases {
 		t.Run(name, func(t *testing.T) {
-			if got := Render("codex", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
+			if got := NewRenderer().Render("codex", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})
@@ -406,7 +410,7 @@ func TestCodexTable(t *testing.T) {
 // text never reaches a rendered line: the shared sanitiser runs on every line
 // Render returns.
 func TestRenderSanitizesControlBytes(t *testing.T) {
-	got := Render("claude", []byte(`{"type":"error","message":"boom \u001b[2J\u0007"}`))
+	got := NewRenderer().Render("claude", []byte(`{"type":"error","message":"boom \u001b[2J\u0007"}`))
 	if len(got) != 1 {
 		t.Fatalf("Render = %q, want one line", got)
 	}

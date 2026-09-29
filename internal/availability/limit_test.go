@@ -259,7 +259,7 @@ func TestAgyLimitDetectedInRenderedStream(t *testing.T) {
 	}
 	patterns := agyPatterns(t)
 	for i, line := range lines {
-		rendered := strings.Join(transcript.Render("agy", []byte(line)), "\n")
+		rendered := strings.Join(transcript.NewRenderer().Render("agy", []byte(line)), "\n")
 		_, ok := MatchLimit(rendered, patterns, now, 0)
 		if want := i < 5; ok != want {
 			t.Errorf("line %d: rendered stream matches = %v, want %v; rendered:\n%s", i+1, ok, want, rendered)
@@ -275,7 +275,11 @@ func TestAgyLimitDetectedInRenderedStream(t *testing.T) {
 // dropping the signal. The fixture lives in the transcript package and is read
 // by relative path, so both packages scan the same bytes.
 func TestOpencodeLimitDetectedInRenderedStream(t *testing.T) {
-	t.Parallel()
+	// The pinned render below carries the event's clock, so the zone is pinned
+	// too; not parallel, so the write cannot race another test's render.
+	prev := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = prev })
 
 	now := testNow()
 	const fallback = time.Hour
@@ -298,9 +302,9 @@ func TestOpencodeLimitDetectedInRenderedStream(t *testing.T) {
 		{false, false, time.Time{}},
 	}
 	for i, line := range lines {
-		rendered := strings.Join(transcript.Render("opencode", []byte(line)), "\n")
+		rendered := strings.Join(transcript.NewRenderer().Render("opencode", []byte(line)), "\n")
 		if i == 0 {
-			const wantRendered = "  ⎿ error: Error 429: You have reached your weekly ExamplePass limit. The limit resets in 23m, please try again later."
+			const wantRendered = "19:41:10   ⎿ error: Error 429: You have reached your weekly ExamplePass limit. The limit resets in 23m, please try again later."
 			if rendered != wantRendered {
 				t.Errorf("row 1 rendered = %q, want %q", rendered, wantRendered)
 			}
@@ -332,6 +336,28 @@ func TestMatchLimitLastLineWins(t *testing.T) {
 	}
 	if want := "individual quota reached: last"; got.Line != want {
 		t.Errorf("Line = %q, want %q", got.Line, want)
+	}
+}
+
+func TestMatchLimitSkipsStampedThinkingLines(t *testing.T) {
+	t.Parallel()
+
+	// The most recent line is a stamped musing that names a limit; under it is
+	// the real limit line. The thinking marker is tested after the stamp, so
+	// the musing is skipped and the real line is the one found.
+	text := "12:41:03   ⎿ error: individual quota reached, resets in 2h39m27s\n" +
+		"12:41:03 ∴ individual quota reached, resets in 30d"
+	got, ok := MatchLimit(text, agyPatterns(t), testNow(), 0)
+	if !ok {
+		t.Fatal("MatchLimit ok = false, want the real limit line")
+	}
+	if want := "12:41:03   ⎿ error: individual quota reached, resets in 2h39m27s"; got.Line != want {
+		t.Errorf("Line = %q, want %q", got.Line, want)
+	}
+
+	// Nothing but stamped musings: nothing matches.
+	if _, ok := MatchLimit("12:41:03 ∴ individual quota reached", agyPatterns(t), testNow(), 0); ok {
+		t.Error("a stamped thinking line matched, want it skipped")
 	}
 }
 

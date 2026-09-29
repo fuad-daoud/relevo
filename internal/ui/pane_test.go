@@ -719,3 +719,134 @@ func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 		}
 	}
 }
+
+// TestColourTranscriptKeepsTheStampFaint: a stamped thinking/call/result line
+// keeps today's styling, with the stamp rendered faint ahead of it.
+func TestColourTranscriptKeepsTheStampFaint(t *testing.T) {
+	body := "12:41:03 +4.2s ● Bash go test ./...\n" +
+		"12:41:03   ⎿ ok: ok  github.com/x 0.4s\n" +
+		"12:41:03 ∴ considering\n" +
+		"+0.9s   ⎿ error: no such file\n" +
+		"12:41:03 ● Read"
+	out := strings.Split(colourTranscript(body), "\n")
+
+	cases := []struct {
+		i     int
+		stamp string
+		text  string
+	}{
+		{0, "12:41:03 +4.2s ", "● Bash(go test ./...)"},
+		{1, "12:41:03 ", "  ⎿ ok: ok  github.com/x 0.4s"},
+		{2, "12:41:03 ", "∴ considering"},
+		{3, "+0.9s ", "  ⎿ error: no such file"},
+		{4, "12:41:03 ", "● Read"},
+	}
+	for _, c := range cases {
+		if got := stripANSI(out[c.i]); got != c.stamp+c.text {
+			t.Errorf("line %d = %q, want %q", c.i, got, c.stamp+c.text)
+		}
+		if !strings.HasPrefix(out[c.i], faintStyle.Render(c.stamp)) {
+			t.Errorf("line %d stamp is not faint: %q", c.i, out[c.i])
+		}
+	}
+	if !strings.Contains(out[0], stateActiveStyle.Render("●")) ||
+		!strings.Contains(out[0], lipgloss.NewStyle().Bold(true).Render("Bash")) {
+		t.Errorf("call not styled: %q", out[0])
+	}
+	if want := faintStyle.Render("12:41:03 ") + dimStyle.Render("  ⎿ ok: ok  github.com/x 0.4s"); out[1] != want {
+		t.Errorf("ok result not dim: %q", out[1])
+	}
+	if want := faintStyle.Render("12:41:03 ") + dimStyle.Italic(true).Render("∴ considering"); out[2] != want {
+		t.Errorf("thinking line not dim italic: %q", out[2])
+	}
+	if want := faintStyle.Render("+0.9s ") + errorStyle.Render("  ⎿ error: no such file"); out[3] != want {
+		t.Errorf("error result not red: %q", out[3])
+	}
+}
+
+// TestScrollbarGeometry: pure geometry from the viewport's own numbers.
+func TestScrollbarGeometry(t *testing.T) {
+	for _, c := range []struct{ total, height, offset int }{
+		{3, 10, 0}, {10, 10, 0}, {0, 0, 0}, {10, 0, 0}, {0, 10, 0},
+	} {
+		if got := barCells(c.total, c.height, c.offset); got != nil {
+			t.Errorf("barCells(%d, %d, %d) = %v, want hidden", c.total, c.height, c.offset, got)
+		}
+	}
+
+	thumbRow := func(offset int) int {
+		for i, c := range barCells(100, 10, offset) {
+			if c == mutedStyle.Render("█") {
+				return i
+			}
+		}
+		return -1
+	}
+	for _, c := range []struct{ offset, row int }{
+		{0, 0},  // top
+		{45, 4}, // middle
+		{90, 9}, // bottom (total - height)
+	} {
+		if got := thumbRow(c.offset); got != c.row {
+			t.Errorf("thumb at offset %d = row %d, want %d", c.offset, got, c.row)
+		}
+	}
+	for i, c := range barCells(100, 10, 45) {
+		want := borderStyle.Render("│")
+		if i == 4 {
+			want = mutedStyle.Render("█")
+		}
+		if c != want {
+			t.Errorf("cell %d = %q, want %q", i, c, want)
+		}
+	}
+
+	// The thumb is at least one cell, however long the content.
+	cells := barCells(1000, 10, 0)
+	if len(cells) != 10 {
+		t.Fatalf("%d cells, want one per viewport row (10)", len(cells))
+	}
+	thumbs := 0
+	for _, c := range cells {
+		if c == mutedStyle.Render("█") {
+			thumbs++
+		}
+	}
+	if thumbs != 1 {
+		t.Errorf("%d thumb cells, want 1", thumbs)
+	}
+}
+
+// TestScrollbarInPaneView: the bar is drawn on every viewport row and in the
+// last column only -- the pane's width and the viewport's content width do not
+// move.
+func TestScrollbarInPaneView(t *testing.T) {
+	b := view.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE"}
+	p := paneModel(t, b, tabTerminal)
+	p.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("screen line\n", 200)}
+	p.detail.vp.SetContent(bodyOf(tabTerminal, p.detail.cache[tabTerminal], false))
+
+	got := p.view(p.width)
+	lines := strings.Split(got, "\n")
+	if len(lines) != p.rows {
+		t.Fatalf("%d pane rows, want %d", len(lines), p.rows)
+	}
+	if p.detail.vp.Width != p.contentWidth() {
+		t.Errorf("vp.Width = %d, want contentWidth %d", p.detail.vp.Width, p.contentWidth())
+	}
+	bar := 0
+	for i, l := range lines {
+		if w := lipgloss.Width(l); w != p.width {
+			t.Errorf("row %d is %d wide, pane is %d", i, w, p.width)
+		}
+		if strings.Contains(stripANSI(l), "█") || strings.Contains(stripANSI(l), "│") {
+			bar++
+			if !strings.HasSuffix(stripANSI(l), "█") && !strings.HasSuffix(stripANSI(l), "│") {
+				t.Errorf("row %d draws the bar outside the last column: %q", i, stripANSI(l))
+			}
+		}
+	}
+	if bar != p.detail.vp.Height {
+		t.Errorf("bar drawn on %d rows, want every viewport row (%d)", bar, p.detail.vp.Height)
+	}
+}

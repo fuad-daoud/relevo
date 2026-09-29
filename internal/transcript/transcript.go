@@ -4,8 +4,6 @@
 package transcript
 
 import (
-	"bytes"
-	"encoding/json"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -16,42 +14,6 @@ import (
 const maxArg = 200
 
 var argKeys = []string{"command", "file_path", "path", "AbsolutePath", "pattern", "description", "prompt", "query", "url"}
-
-// Render turns one raw line of the stream (without its trailing newline) into
-// the lines to append to the log. An empty line and a supervisor trailer are
-// nothing; a line that is not a JSON object is itself, verbatim (that is how a
-// plain-text error reaches the log); an unknown event renders as "[<type>]" so
-// a harness upgrade degrades to noise, not silence. Every line is sanitised, so
-// a control byte in a harness's own text never reaches a log, a stream tail or
-// `show`. Never errors, never panics.
-func Render(kind string, line []byte) []string {
-	return sanitizeLines(render(kind, line))
-}
-
-func render(kind string, line []byte) []string {
-	trimmed := bytes.TrimSpace(line)
-	if len(trimmed) == 0 {
-		return nil
-	}
-	if isTrailerLine(trimmed) {
-		return nil
-	}
-	var obj map[string]any
-	if trimmed[0] != '{' || json.Unmarshal(trimmed, &obj) != nil || obj == nil {
-		return []string{string(line)}
-	}
-	switch kind {
-	case "claude":
-		return renderClaude(obj)
-	case "agy":
-		return renderAgy(obj)
-	case "opencode":
-		return renderOpencode(obj)
-	case "codex":
-		return renderCodex(obj)
-	}
-	return []string{unknown(obj)}
-}
 
 // sanitizeLines applies sanitize.Text to every rendered line, in place of the
 // raw text a harness wrote.
@@ -65,7 +27,6 @@ func sanitizeLines(lines []string) []string {
 	}
 	return out
 }
-
 func unknown(obj map[string]any) string {
 	if t := str(obj["type"]); t != "" {
 		return "[" + t + "]"

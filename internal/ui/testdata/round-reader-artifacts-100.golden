@@ -5,26 +5,26 @@
                                                                                                     
    prompt     artifacts 2     log     transcript                          round   [   r1 of 1   ]   
                                                                                                     
-     FILE                          SIZE    WRITTEN   OPENS IN                                       
-     findings.md                   11.3k   14:00     pager                                          
-     summary.md                    1.1k    14:00     pager                                          
-                                                                                                    
-     findings.md · the reviewer's final message                                                     
-     findings                                                                                       
-                                                                                                    
-     • nothing to flag                                                                              
-     • the artifact directory survives the seal                                                     
-                                                                                                    
-     findings                                                                                       
-                                                                                                    
-     • nothing to flag                                                                              
-     • the artifact directory survives the seal                                                     
-                                                                                                    
-     findings                                                                                       
-                                                                                                    
-     • nothing to flag                                                                              
-     • the artifact directory survives the seal                                                     
-                                                                                                    
-     findings                                                                                       
+     FILE                          SIZE    WRITTEN   OPENS IN                                      █
+     findings.md                   11.3k   14:00     pager                                         │
+     summary.md                    1.1k    14:00     pager                                         │
+                                                                                                   │
+     findings.md · the reviewer's final message                                                    │
+     findings                                                                                      │
+                                                                                                   │
+     • nothing to flag                                                                             │
+     • the artifact directory survives the seal                                                    │
+                                                                                                   │
+     findings                                                                                      │
+                                                                                                   │
+     • nothing to flag                                                                             │
+     • the artifact directory survives the seal                                                    │
+                                                                                                   │
+     findings                                                                                      │
+                                                                                                   │
+     • nothing to flag                                                                             │
+     • the artifact directory survives the seal                                                    │
+                                                                                                   │
+     findings                                                                                      │
 
  enter  open file      tab  next tab      :  command      ?  all keys      esc  back                

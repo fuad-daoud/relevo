@@ -597,7 +597,9 @@ The daemon renders the stream as it grows -- one line per
 tool call (`● Bash go test ./...`), its result with the first line of what it printed (`  ⎿ ok: ok  github.com/… 0.4s`, `  ⎿ error: …`),
 the builder's text, any denied permission, and the final answer -- so
 `relevo ui`'s terminal tab and `relevo status` show
-the round live, about two seconds behind. Between rounds the tab keeps
+the round live, about two seconds behind. When the harness's stream carries
+times, each rendered line opens with a plain-text stamp: the event's clock in
+this machine's zone, then how long the step took (`12:41:03 +4.2s ● Bash go test ./...`). Between rounds the tab keeps
 the last round's rendered output. The `.jsonl` is the raw record;
 relevo never reads it for meaning, and `relevo show <name> --round N
 --transcript` renders it for a human. A round from an older relevo version

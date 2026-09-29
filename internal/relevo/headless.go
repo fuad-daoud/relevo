@@ -405,12 +405,16 @@ func carryStream(from, to store.Endpoint) store.Endpoint {
 // drainStream brings a legacy round's builder log up to date with its stream
 // (transcript spec §4.2) and, for a round with no log, only advances the
 // cursor and captures the session id: every complete line of the stream file
-// past the endpoint's cursor is rendered with transcript.Render and, when the
-// round has a log on disk (legacyLog), appended to it in one write. The cursor
-// moves past the last newline consumed either way.
+// past the endpoint's cursor is rendered with one transcript renderer for the
+// pass and, when the round has a log on disk (legacyLog), appended to it in one
+// write. The cursor moves past the last newline consumed either way.
 // A trailing partial line waits for the next tick. The cursor is keyed on
 // StreamRound, not b.Round, so a round that closed on its marker while the
 // builder was still flushing keeps draining until the next round starts.
+//
+// The pass owns one renderer, so a claude call and its result drained in the
+// same range keep their duration; the two events falling either side of a tick
+// boundary lose that one duration, and nothing else.
 //
 // The first drained line that names the harness's own session records it on
 // the endpoint (#147); later lines cannot change it, so a sub-agent's session
@@ -429,6 +433,7 @@ func drainStream(rt Runtime, b store.Binding) store.Binding {
 	if legacyLog(rt, b.Name, round) {
 		logPath = rt.Store.BuilderLogPath(b.Name, round)
 	}
+	r := transcript.NewRenderer()
 	b.Builder.StreamOffset = drainFile(
 		logPath,
 		rt.Store.StreamPath(b.Name, round),
@@ -440,7 +445,7 @@ func drainStream(rt Runtime, b store.Binding) store.Binding {
 					b.Builder.StreamSessionID = id
 				}
 			}
-			return transcript.Render(kind, line)
+			return r.Render(kind, line)
 		},
 		"stream", "binding", b.Name, "round", round,
 	)

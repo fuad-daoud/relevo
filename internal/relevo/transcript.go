@@ -23,18 +23,21 @@ const streamTailWindow = 64 * 1024
 // last '\n'; a trailing partial line is ignored -- into the bytes
 // drainFile+appendLines would have appended to an empty log for the same
 // stream: each non-empty Render result, joined with '\n' and terminated with
-// one. A line is rendered with transcript.Render of the harness kind of the
-// segment that contains its absolute offset (segmentKind). It is pure, and
-// its prefix is stable as the stream grows, which serve's files/log?from=
-// offsets and the client mirror (#442) depend on.
+// one. The reader's renderer is one per pass, of the harness kind of the
+// segment that contains each line's absolute offset (segmentKind); a later
+// line can never change an earlier one, so the rendering's prefix is stable as
+// the stream grows, which serve's files/log?from= offsets and the client
+// mirror (#442) depend on.
+//
 // lineRenderer turns one raw line of a stream -- with the harness kind of the
 // segment that holds it -- into the lines a reader or a scan sees. Rendering
-// for a reader is transcript.Render; a limit scan uses transcript.LimitLines,
-// which keeps only the lines the harness itself wrote.
+// for a reader is a transcript.Renderer through streamRenderer; a limit scan
+// uses transcript.LimitLines, which keeps only the lines the harness itself
+// wrote.
 type lineRenderer func(kind string, line []byte) []string
 
 func renderStream(stream []byte, segs []store.StreamSegment, fallback string) []byte {
-	return renderStreamFrom(stream, 0, segs, fallback, transcript.Render)
+	return renderStreamFrom(stream, 0, segs, fallback, streamRenderer())
 }
 
 // renderStreamFrom is renderStream with the window's bytes starting at base:
@@ -93,7 +96,16 @@ func joinTailLines(lines []string, n int) string {
 // -- a sealed round -- it reads it whole through read and renders the bytes at
 // from or later.
 func streamTail(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) string {
-	return tailWith(path, read, segs, fallback, n, from, transcript.Render)
+	return tailWith(path, read, segs, fallback, n, from, streamRenderer())
+}
+
+// streamRenderer is the reader's lineRenderer: one Renderer for the whole
+// pass, so a claude call and its result rendered in the same pass keep the
+// span between them. A scan never uses it: scanTail renders with
+// transcript.LimitLines, which is stateless.
+func streamRenderer() lineRenderer {
+	r := transcript.NewRenderer()
+	return func(kind string, line []byte) []string { return r.Render(kind, line) }
 }
 
 // scanTail is streamTail's sibling for a limit scan: the same bytes, read the
