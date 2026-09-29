@@ -53,16 +53,24 @@ func TestForkStateCopiesRoundFilesAndLog(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadFile dst %s: %v", name, err)
 		}
-		if !bytes.Equal(dstContent, srcSnap[name]) {
-			t.Errorf("file %s content mismatch: dst=%q, src=%q", name, dstContent, srcSnap[name])
+		// A reserved name is row-only, so its source content comes from the
+		// source's row, not from the directory snapshot.
+		want := srcSnap[name]
+		if reservedRoundFile(name) {
+			if want, err = s.ReadFile(filepath.Join(srcDir, name)); err != nil {
+				t.Fatalf("ReadFile src %s: %v", name, err)
+			}
+		}
+		if !bytes.Equal(dstContent, want) {
+			t.Errorf("file %s content mismatch: dst=%q, src=%q", name, dstContent, want)
 		}
 	}
 
 	checkSourceUntouched(t, s, srcName, srcDir, srcEntriesBefore, srcSnap, srcLogBefore)
 }
 
-// seedForkSource creates rounds 1..rounds of srcName, each with five round
-// files and three log entries.
+// seedForkSource creates rounds 1..rounds of srcName, each with four round
+// files on disk and a diff round_file row, plus three log entries.
 func seedForkSource(t *testing.T, s *Store, srcName string, rounds int) {
 	t.Helper()
 	b := newBinding(srcName, "/repo")
@@ -74,16 +82,23 @@ func seedForkSource(t *testing.T, s *Store, srcName string, rounds int) {
 	srcDir := s.Dir(srcName)
 	for r := 1; r <= rounds; r++ {
 		files := map[string]string{
-			s.PromptPath(srcName, r):   fmt.Sprintf("plan content for round %d", r),
-			s.ReportPath(srcName, r):   fmt.Sprintf("report content for round %d", r),
-			s.QuestionPath(srcName, r): fmt.Sprintf("question content for round %d", r),
-			s.DiffPath(srcName, r):     fmt.Sprintf("diff content for round %d", r),
+			s.PromptPath(srcName, r):                                      fmt.Sprintf("plan content for round %d", r),
+			s.ReportPath(srcName, r):                                      fmt.Sprintf("report content for round %d", r),
+			s.QuestionPath(srcName, r):                                    fmt.Sprintf("question content for round %d", r),
 			filepath.Join(srcDir, fmt.Sprintf("%03d-custom.artifact", r)): fmt.Sprintf("custom artifact %d", r),
 		}
 		for path, content := range files {
 			if err := os.WriteFile(path, []byte(content), bindingFileMode); err != nil {
 				t.Fatalf("WriteFile %s: %v", path, err)
 			}
+		}
+
+		// A diff is row-only, so the source authors it into round_file and a
+		// fork copies the row rather than a file.
+		if err := s.WithLock(func(tx *Tx) error {
+			return tx.PutRoundFile(srcName, r, s.DiffPath(srcName, r), []byte(fmt.Sprintf("diff content for round %d", r)))
+		}); err != nil {
+			t.Fatalf("PutRoundFile diff: %v", err)
 		}
 
 		deliveryTime := time.Now().UTC().Add(-time.Hour)

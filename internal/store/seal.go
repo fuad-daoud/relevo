@@ -22,10 +22,23 @@ import (
 var roundBaseRe = regexp.MustCompile(`^\d{3}-`)
 
 // ReadFile returns path's bytes from disk, or from the sealed round_file row
-// when a seal pass already moved a round file into the database. A miss
-// returns os.ReadFile's own error, so errors.Is(err, fs.ErrNotExist) keeps
-// working.
+// when a seal pass already moved a round file into the database. A reserved
+// round-file name is row-only: relevo never writes one to disk, so a file with
+// that name is a plant or a stale copy and the bytes come from the row, live or
+// archived, or the call is a miss. A miss returns os.ReadFile's own error, so
+// errors.Is(err, fs.ErrNotExist) and os.IsNotExist keep working.
 func (s *Store) ReadFile(path string) ([]byte, error) {
+	if _, name, ok := s.bindingRelOf(path); ok && reservedRoundFile(name) {
+		body, _, found, err := s.sealedRoundFile(path)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+		return body, nil
+	}
+
 	data, err := os.ReadFile(path)
 	if err == nil {
 		return data, nil
@@ -34,17 +47,9 @@ func (s *Store) ReadFile(path string) ([]byte, error) {
 		return nil, err
 	}
 
-	d, recordID, name, ok, lerr := s.sealedLookup(path)
+	body, _, found, lerr := s.sealedRoundFile(path)
 	if lerr != nil {
 		return nil, lerr
-	}
-	if !ok {
-		return nil, err
-	}
-
-	body, _, found, gerr := d.RoundFileGet(recordID, name)
-	if gerr != nil {
-		return nil, gerr
 	}
 	if !found {
 		return nil, err
@@ -53,9 +58,22 @@ func (s *Store) ReadFile(path string) ([]byte, error) {
 }
 
 // StatFile is ReadFile for os.Stat callers: the file's size and mtime when it
-// is on disk, and the sealed row's when it was sealed. A miss returns
-// os.Stat's own error alongside ok == false.
+// is on disk, and the sealed row's when it was sealed. A reserved round-file
+// name is row-only, so its size and mtime come from the row and never from a
+// file: a plant cannot set them. A miss returns os.Stat's own error alongside
+// ok == false.
 func (s *Store) StatFile(path string) (size int64, mtime time.Time, ok bool, err error) {
+	if _, name, resolved := s.bindingRelOf(path); resolved && reservedRoundFile(name) {
+		body, mt, found, ferr := s.sealedRoundFile(path)
+		if ferr != nil {
+			return 0, time.Time{}, false, ferr
+		}
+		if !found {
+			return 0, time.Time{}, false, &fs.PathError{Op: "stat", Path: path, Err: fs.ErrNotExist}
+		}
+		return int64(len(body)), mt, true, nil
+	}
+
 	info, err := os.Stat(path)
 	if err == nil {
 		return info.Size(), info.ModTime(), true, nil
@@ -65,22 +83,30 @@ func (s *Store) StatFile(path string) (size int64, mtime time.Time, ok bool, err
 	}
 	missErr := err
 
-	d, recordID, name, found, lerr := s.sealedLookup(path)
+	body, mt, found, lerr := s.sealedRoundFile(path)
 	if lerr != nil {
 		return 0, time.Time{}, false, lerr
 	}
 	if !found {
 		return 0, time.Time{}, false, missErr
 	}
-
-	body, mt, ok, gerr := d.RoundFileGet(recordID, name)
-	if gerr != nil {
-		return 0, time.Time{}, false, gerr
-	}
-	if !ok {
-		return 0, time.Time{}, false, missErr
-	}
 	return int64(len(body)), mt, true, nil
+}
+
+// sealedRoundFile answers path from the row that holds it: the name's live
+// record, or its most recently archived one, where archive() put its round
+// files. found is false when no row holds the name, so the caller keeps its own
+// not-exist error.
+func (s *Store) sealedRoundFile(path string) (body []byte, mtime time.Time, found bool, err error) {
+	d, recordID, name, ok, lerr := s.sealedLookup(path)
+	if lerr != nil || !ok {
+		return nil, time.Time{}, false, lerr
+	}
+	body, mtime, found, err = d.RoundFileGet(recordID, name)
+	if err != nil {
+		return nil, time.Time{}, false, err
+	}
+	return body, mtime, found, nil
 }
 
 // sealedLookup resolves path as a round file of the binding it names under
