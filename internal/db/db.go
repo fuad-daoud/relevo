@@ -11,9 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db/wire"
+
 	// This package is the only place that knows it is sqlite today and Turso
-	// tomorrow, so its driver is imported here and nowhere else.
-	"modernc.org/sqlite"
+	// tomorrow, so its driver is registered here and nowhere else. The wire
+	// driver reads errors through their Code method, so nothing else needs the
+	// package's types.
+	_ "modernc.org/sqlite"
 )
 
 // rfc3339Milli is the text encoding every timestamp uses in the db.
@@ -95,7 +99,20 @@ func fileDSN(path, params string) string {
 	return (&url.URL{Scheme: "file", Path: path}).String() + "?" + params
 }
 
-func open(path string, o Options) (_ *DB, err error) {
+// open routes through the test-only owner hop when one is installed, and opens
+// the file directly otherwise.
+func open(path string, o Options) (*DB, error) {
+	if hop := ownerHop; hop != nil {
+		sock, err := hop(path, o, func() (*DB, error) { return openDirect(path, o) })
+		if err != nil {
+			return nil, err
+		}
+		return dial(sock, o, false)
+	}
+	return openDirect(path, o)
+}
+
+func openDirect(path string, o Options) (_ *DB, err error) {
 	seedFromTemplate(path)
 	busy := busyTimeoutMS
 	if o.BusyTimeout > 0 {
@@ -312,13 +329,14 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 	return nil
 }
 
-// mapBusy turns a driver's SQLITE_BUSY into ErrBusy.
+// mapBusy turns a driver's SQLITE_BUSY into ErrBusy. It matches any error
+// carrying the code, so a value rebuilt on the client from the wire maps the
+// same way the driver's own error does.
 func mapBusy(err error) error {
 	if err == nil {
 		return nil
 	}
-	var sqliteErr *sqlite.Error
-	if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqliteBusy {
+	if code, ok := wire.CodeOf(err); ok && code == sqliteBusy {
 		return ErrBusy
 	}
 	if strings.Contains(err.Error(), "database is locked") {

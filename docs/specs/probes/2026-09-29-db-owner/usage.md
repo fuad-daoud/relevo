@@ -1,0 +1,119 @@
+# How relevo uses its database, from the proxy's point of view (#680)
+
+**Deliverable note.** The seed says *"This is a research round, not a plan: do not propose code, answer the questions below"* and asks for a report with one section per question, ending with the requirements a proxy must meet. relevo saves this round's message as `001-lite-planner/plan.md`; this text is that report, not a plan for code.
+
+**Base and method.** Read at `442fc598` in the round's throwaway worktree. The issue body was read with `gh issue view 680` (checked there at `dd2abcb6`); §0 lists where it is stale or wrong. Every claim carries a `file:line`. "(inferred)" marks something taken from documentation or arithmetic rather than observed directly. Live numbers come from read-only `sqlite3` queries against `~/.local/state/relevo/relevo.db` and a `/proc/*/fd` scan, both on 2026-09-29 — no writes, no repository edits.
+
+## 0. The issue body: what is wrong, stale, or missing
+
+1. **"`db.Open` (`cmd/relevo/wire.go:225`, `internal/store/db.go:28`)" is wrong twice.** Both lines are inside helpers that call `db.OpenWith`, not `db.Open`: `openDB` calls it at `cmd/relevo/wire.go:232`, and `Store.dbForWrite` at `internal/store/db.go:36`. `db.Open` itself has **no production caller at all**; its only non-test caller is the test helper `internal/db/dbtest/dbtest.go:29` (and 63 `db.Open` calls in `_test.go` files). `db.OpenReadOnly` is at `cmd/relevo/wire.go:256`, not `:249`.
+2. **"`--check`/`--preflight` … must keep never opening the database" is too strong.** They never *create, migrate or write* — but `newRuntimePeek` does open the file **read-only** when no config file is present and `relevo.db` exists (`cmd/relevo/wire.go:252-260`). `relevo daemon --check` itself touches no database (`DaemonRunning` uses only the lock file, `internal/store/daemonlock.go:45-58`), and `--preflight` returns at `cmd/relevo/daemon.go:62-68`.
+3. **"The database is opened only after `--check` has returned and after `AcquireDaemonLock`" (`cmd/relevo/daemon.go:109-111`) is false as written.** `newRuntime()` (called at `cmd/relevo/daemon.go:51`) already opened and, if needed, migrated the file at `cmd/relevo/wire.go:168`, and `buildRuntime` opened a second handle at `wire.go:323`, all before `AcquireDaemonLock` at `daemon.go:143`. The comment is true only of the ingest handle `rt.DB` (`daemon.go:172`).
+4. **One process holds several handles.** `relevo ui` opens the machine database twice by construction (`cmd/relevo/wire.go:168` and `cmd/relevo/main.go:272`); the daemon holds at least four (`newRuntime`'s config handle, `rt.Store`'s handle from `wire.go:323`, `rt.DB` at `daemon.go:172`, `releaseStore` at `daemon.go:217`). Measured while writing this: the running daemon had **6 connections** (6 `relevo.db` + 6 `-wal` fds), each `relevo mcp` and `relevo wait` had **3**.
+5. **Missing from the issue's "what exists today":** `internal/doctor/env.go:107,155`, `internal/relevo/installenv.go:24,39` and `cmd/relevo/wire.go:141` each open an **extra handle that is never closed**; `installation.json` is minted beside the database by whichever process opens first (`internal/installation/installation.go:24-46`, called at `store/db.go:31`, `wire.go:228`); and `internal/ingest/ingest.go:71` holds a package-level `store.New("/")` used for path helpers only — harmless today, but a data method on it would target `/relevo.db`.
+6. The issue's "10 processes held the file" is consistent with what I measured: 4 holders at one instant (2 × `relevo mcp`, 1 × `relevo wait`, 1 × `relevo daemon`) with no round in flight, 6 earlier when three `relevo wait` processes ran. The 53 `newRuntime()` sites in 26 files is exact.
+
+## 1. Every place a process opens the database
+
+**The seam.** `db.Open`/`OpenWith` (`internal/db/db.go:79,85`) and `db.OpenReadOnly` (`internal/db/config.go:188`) are the only two openings; `store.Store` is the lazy front door (`dbForWrite` `internal/store/db.go:20`, `dbForRead` `:54`), and `store.NewShared` (`internal/store/store.go:95`) borrows a handle someone else opened.
+
+| Open site | Command / process | Lifetime of the handle | Runs with no daemon? |
+|---|---|---|---|
+| `wire.go:168` (`newRuntime` → `openDB`) | every CLI verb but `serve` run and the peek path | process exit | yes (all one-shots) |
+| `wire.go:310,323` (`buildRuntime`, `openGates`) | same processes — Gates/Latency/Registry/Channels/hooks log | process exit | yes |
+| `wire.go:137-147` (`newDeliverers`) | same processes when `relevo.db` exists — agy creds store, **never closed** | process exit | yes |
+| `wire.go:256` (`newRuntimePeek`) | `relevo daemon --check`/`--preflight` when no config file exists and the db does | closed at `wire.go:259` | yes |
+| `history.go:93`, `show.go:235`, `main.go:272` | `relevo history`, `relevo show` (archived), `relevo ui` — an extra `openDB` for `rt.DB` | process exit | yes |
+| `serve.go:106` (`openMachineDB`) | `relevo serve` run and every serve admin verb | run: process exit (`serve.go:417-421`) | yes (it *is* the owner there) |
+| `internal/serve/serve.go:139` (`NewShared`), `:120` (gate KV on `cfg.DB`) | the serve daemon's per-owner stores | server life | n/a |
+| `internal/relevo/daemon.go:172` (`rt.DB`), `:217` (`releaseStore`), `:294` (`hooksRunLog`) | `relevo daemon` — three more handles beside `rt.Store` | daemon life; closed for re-exec at `:365` | n/a |
+| `internal/relevo/installenv.go:24,39` | `relevo config agents`, cockpit mastermind actions — **fresh, never closed** | call site | yes |
+| `internal/doctor/env.go:107,155` | `relevo doctor`, and `relevo status` via `status.go:133-134` — **fresh, never closed** | call site | yes |
+| `internal/store/db.go:20-49` | every `Store` data method (Load, ReadLog, Save, …) | store life | yes |
+
+**Where no daemon exists:** tests. `cmd/relevo`'s `TestMain` isolates HOME/XDG and installs the template (`cmd/relevo/main_test.go:39-51`), 8 more packages use `dbtest.Main`, and **336** test call sites construct a `Store` rooted in a temp dir (63 of them `db.Open` directly). CI runs `make check` = `go test -race -count=1 -cover ./...` with no harness and no network (`Makefile`). e2e points `XDG_STATE_HOME` at a temp root (`internal/e2e/headless_test.go:88-93`) and opens its own db (`:446`); the serve tests borrow a temp machine db (`internal/e2e/remote_test.go:154`). Plugin hooks (`claude-plugin/hooks/hooks.json`) run `relevo mastermind init\|notice --hook claude`; the statusline runs `relevo status --line` (`cmd/relevo/status.go:165-199`) — both plain one-shots. So: **every one of these opens happens today with no daemon, and all but `mcp`, `wait`, `ui`, `daemon`, `serve` are short-lived.**
+
+## 2. Transactions
+
+**One BEGIN IMMEDIATE implementation.** `db.DB.Tx`/`tx` (`internal/db/db.go:245-294`): `BEGIN IMMEDIATE` at `:272`, rollback `:284`, commit `:290`, busy retry with 25-100 ms jitter up to `beginRetry` (default `beginRetryFor = 30s`, `:38`, `:64`), `mapBusy` at `:297`. Migrations open their own `BEGIN IMMEDIATE` per file, with an inside-the-transaction re-check (`internal/db/migrate.go:129-177`).
+
+**Every write path.** `*DB` convenience wrappers each open one short Tx (`record.go:368-400`, `kv.go:51,66`, `config.go:166,170`, `write.go:518-583`, `origin.go:38`, `consent.go:76,139,193,220`). Store-level sites that own a transaction: `lifecycle.go:234` (`saveWithLog`: RecordPut + `MAX(seq)` + appends), `seal.go:321` (all of a round's files), `fork.go:171` (all copied files), `roundfile_put.go:47` (one row — a second Tx opened *under* the state flock, not nested in a db.Tx). Config: one Tx per method (`config.go:345,369,415,478,493`, `import.go:127`), multi-section atomicity being the caller's. Mastermind/channel/hook/gate writers: `registry.go:213-439`, `channel.go:136`, `runlog.go:26`, `gates.go:114,158,184`, `probe.go:277`, `drain.go:109,136`, `tls.go:43`.
+
+**Transactions held across slow I/O — three verified cases.**
+1. `ingest.Ingest` runs a whole binding's upsert in one Tx (`internal/ingest/ingest.go:144`), and inside it reads the binding's `log.jsonl` (`ingest_tx.go:53-68` → `readAppendOnly` → `io.ReadAll`, `cursor.go:50`) and the harness's **whole session transcript** the same way (`ingest_tx.go:289-322`). Sizes on this machine: mastermind transcript files up to 49 MB; the ingest cursor's largest resume is 20.5 MB (kv `ingest_cursor` rows read from the live db). It also reads through the *store* while its own Tx is open: the daemon calls it with `StoreSource` (`daemon.go:549`), whose `Open` goes to `Store.ReadFile` (`seal.go:24-53`) — disk, or a sealed row.
+2. `seal.SealRound`: one Tx, `os.ReadFile` per file, then `RoundFilePut` (`seal.go:321-338`).
+3. `fork` (untraced by name in the issue): one Tx, `t.s.ReadFile`/`StatFile` per copied file (`fork.go:171-193`), sealed rows included.
+   Nothing I traced spans a **process spawn, git call or network call** inside a SQL transaction — by design: `resolveRefs` runs before the ingest Tx (`ingest.go:167-170`), config import reads files before committing (`import.go:100-127`).
+   What *is* held across spawns is the **state flock** (not SQL): `Store.WithLock` (`store.go:156-182`, 90 s limit) wraps `Reconcile` (`daemon.go:294` → `reconcile.go:132`), which reaches `delivery.DeliverPending` → a deliverer process (`deliver.go:88-99`) and the two git calls of round-diff capture — exactly the longest-hold note at `store.go:43-49`.
+
+**Invariants.** `seq = MAX(seq)+1` exists twice: atomic inside one Tx in `saveWithLog` (`lifecycle.go:239-255`), and as **two transactions on one handle** in `appendLog` (`log.go:297` then `:314`), safe only because every caller holds the state flock (`AppendLog` wrapper `log.go:201`). `ConfirmIndex` keys on that seq (`log.go:271`, `record.go:330`). `config_meta.version` bumps per Tx (`config.go:69`). Migrations serialise through BEGIN IMMEDIATE (`migrate.go:135-139`). **Nested db.Tx is never used**, but the *same handle* is used concurrently from inside a Tx (cases 1-3 above) — which needs a second connection on that `*sql.DB`.
+
+## 3. SQLite-specific behaviour the client side depends on
+
+- **Per-connection PRAGMAs.** The DSN applies `busy_timeout`, `journal_mode(WAL)`, `foreign_keys(ON)` and `journal_size_limit(64 MiB)` to every connection (`db.go:74,99`); `OpenReadOnly` applies only `busy_timeout` and `mode=ro` (`config.go:197`). `foreign_keys` and `journal_size_limit` are per connection — any server-side pool must open with the same DSN or FK enforcement silently changes.
+- **File chmod.** Open chmods the db 0600 and `-wal`/`-shm` if present (`db.go:119-126,311-329`); `BackupTo` chmods the copy (`:205`). The reason is stated at `:105-107`: the file holds secrets.
+- **VACUUM / VACUUM INTO / WAL checkpoint.** `BackupTo` = `VACUUM INTO ?`, refusing an existing path (`db.go:193-209`); `Vacuum` (`:211-218`); `walCheckpoint` = `PRAGMA wal_checkpoint(TRUNCATE)` (`compress.go:299-306`). One-shot daemon passes back up first: `ingest.DedupeMirrorOnce` (`dedupe.go:459-486`) and `db.CompressHistoryOnce` (`compress.go:75-107`), each writing `relevo.db.pre-*` beside the database.
+- **ATTACH: none** (grep over `*.go`/`*.sql`).
+- **Error codes inspected by callers.** `SQLITE_BUSY = 5` (`db.go:31`) via `*sqlite.Error.Code()` and the `"database is locked"` text → `ErrBusy` (`:296-309`), retried in `ping` (`:174-184`), in `Tx` begin (`:271-281`), and **by callers**: `delivery.retryBusy` (`pull.go:24-47`) retries a store lock with 250 ms/1 s/2 s delays because "other relevo processes and the daemon hold the database concurrently". `SQLITE_CONSTRAINT = 19` and `"UNIQUE constraint failed"` → `ErrInvalid` (`write.go:214-231`); `"no such table"` marks pre-config schemas (`config.go:226-229`).
+- **Schema answer.** No `user_version`: a `schema_version` table plus a `sqlite_master` probe (`migrate.go:41-61`, `db.go:220-229`); `Newer()`/`ErrNewerSchema` (`db.go:156-168,245-247`) gate writes, migrations are embedded (`migrate.go:16-17`) and only the opener applies them. `CheckMigrate` (`db.go:163`) has **no caller** — dead code.
+- **Path assumptions.** `Open` builds the DSN from the path (`db.go:99`); `OpenReadOnly` `os.Stat`s it first (`config.go:193`); `dbForRead` decides "no database" by `os.Stat` (`store/db.go:58`); backup dirs are `filepath.Dir(Store.DBPath())` (`daemon.go:191,216`); `installation.json` lives in the same root (`installation.go:24-46`); the test template is copied **inside** `Open` (`db.go:90`, `template.go:26-57`).
+- **Documented rule.** `internal/db/migrations/README.md:38-40`: "One process opens the file until upstream's `multiprocess_wal` leaves experimental status (#466)" — with the Turso pragma bans (`foreign_key_check`, `defer_foreign_keys`, `wal_autocheckpoint`, in-place VACUUM).
+- **File locks outside the db.** `.lock` (`store.go:36,164-181`) and `.daemon.lock` (`daemonlock.go`) are files, not SQL, and §2's sequence invariants lean on the first.
+
+## 4. Value types crossing the boundary
+
+- **Time**: every timestamp is TEXT `2006-01-02T15:04:05.000Z` (`db.go:18-29`), parsed back with `parseTime`; NULLs are `sql.Null[string]` (`event.go:112-116`); durations derive from pairs (`event.go:133-144`).
+- **Booleans** are INTEGER 0/1 (`migrations/001_initial.sql:5`); **integers/NULLs** via `sql.Null[int64]/[string]` (`record.go:355-364`, `lookup.go:131-136`).
+- **BLOBs**: three bulk columns carry a per-row codec (`migrations/013_column_codec.sql`): `round_file.body`, `transcript.record_json`, `transcript.rendered`. codec 0 = plain (TEXT stays TEXT), codec 1 = a zstd frame stored as a **BLOB** (`codec.go:9-15,29-38,56-65`). Secrets are raw `[]byte` (`config.go:111-121`).
+- **Measured sizes** (read-only, live db): file 254,758,912 B = 62,197 × 4096; `round_file` 3,974 rows (3,323 zstd), largest body **834,648 B**, total 87,731,289 B; `transcript` 83,461 rows, largest `record_json` **4,467,306 B — already a zstd frame** (plain max 354,806 B), largest `rendered` 2,929 B, total 121,734,451 B; largest single mastermind transcript 13.9 MB over 3,644 rows; `event` 3,283 rows / 6,967 B max; `binding_event` 3,109 / 6,972 B; 532 bindings, 868 rounds.
+- **Large result sets are materialised whole.** `collectRows` (`scan.go:13-30`) reads every row; `limit <= 0` means no limit (`lookup.go:149-165`), and callers use it: `dedupe.go:194` (every round of the mirror), `show.go:536` (`--transcript`). No `rows.Next` streaming exists above `internal/db`; log follow streams *files*, not rows. A single query response can therefore be tens of MB.
+
+## 5. How often short-lived processes open it
+
+- `relevo wait` floats its own 1 s poll (`wait.go:58`) and holds its handles for the whole wait (default 10 m, `wait.go:23`); the README tells the MasterMind to run it as a background command after every send (`README.md:2007-2013`).
+- `relevo mcp` polls at 1 s in channel mode (`cmd/relevo/mcp.go:41`) and writes a claim plus drains each tick (`:299-336`), holding its handles for the session.
+- The daemon ticks at 2 s (`cmd/relevo/daemon.go:29`); the cockpit polls at 2 s (`internal/ui/ui.go:55-56`).
+- The statusline is documented as `"refreshInterval": 1` (`README.md:1130`) — Claude Code may spawn a `relevo status --line` process **every second**.
+- Hooks: `SessionStart` once per session, `UserPromptSubmit` once per user message (`claude-plugin/hooks/hooks.json`).
+- Handles per process: **3** for a plain verb (`wire.go:168,:323,:141`), **4** for `mastermind init/notice` (the timed open, `mastermind.go:135`, `mastermind_hook.go:90,205`), **4** for `ui`, **1** for `serve`, **4+** for the daemon. Observed fd counts (1 connection = 1 db fd + 1 `-wal` fd): mcp 3, wait 3, daemon 6.
+
+**Estimate, one interactive Claude Code session + daemon + mcp + one wait in flight:** statusline ≈ 60 processes/min × 3 = **~180 file-opens/min**; hooks ≈ 10-60/min × 4 = 40-240 (inferred rate); wait and mcp add 3 held handles each plus 60 poll iterations/min; daemon 4 handles, 30 ticks/min. So **~200 file-opens/min**, dominated by the statusline, with **~10-15 connections held open at any instant**. (inferred: refresh rates are documented, not measured under Claude Code; open counts are read from the code and corroborated by `/proc`.)
+
+## 6. What a SQL-level proxy under `internal/db` would NOT cover
+
+1. **Nothing above `internal/db` touches sqlite in production.** `modernc.org/sqlite` is imported only by `db.go:15` and `write.go:10`; `sql.Open("sqlite", …)` has no production caller outside `internal/db`. Verified by grep.
+2. **Tests do.** 63 `db.Open` calls in `_test.go` files, 336 `Store` constructions in temp roots, `internal/db/dbtest` seeding through the package global `SetFreshTemplate` (`template.go:17-20`), and one raw `sql.Open("sqlite", …)` above the seam in `internal/config/revision_test.go:249`.
+3. **File-level facts a SQL session cannot express** (all owner-side under the design, but load-bearing): existence/`os.Stat` semantics (`store/db.go:54-65`, `wire.go:254`); chmod of the db, `-wal`/`-shm` and backups (`db.go:119-126,205`); `VACUUM INTO` to a **path** and the backup names/dir (`db.go:195-209`, `daemon.go:191,216`); `installation.json` minting and the `Origin` stamped on rows (`installation.go:24-46`, `db.go:67-69`, `store/db.go:36`, `wire.go:232`); the two flock files (`store.go:36`, `daemonlock.go`).
+4. **Broken error identity.** `db.ErrBusy`/`ErrInvalid` are derived from modernc error values and message text (`db.go:301-308`, `write.go:220-231`); a caller retries on `errors.Is(err, db.ErrBusy)` (`pull.go:29-47`). The wire must carry the code or the retry dies silently.
+5. **The schema answer is an opener decision**, not a file read: `Newer()` is consulted at `wire.go:178,189`, `store/db.go:41`, `daemon.go:174`, `serve.go:312`.
+6. **`--check`/`--preflight`'s "files, else read-only db, else nothing" rule** (`wire.go:250-263`) becomes an endpoint question.
+7. **Out-of-band openers**: `sqlite3` introspection (the issue's risk 6) and the cockpit's own `rt.DB` are second openers; the "one process" rule is convention until the proxy lands.
+8. **A different database entirely**: opencode's own db read via the `sqlite3` binary (`wire.go:148-155`, `internal/doctor/opencode.go:23-56`) is not relevo.db and is unaffected.
+
+## 7. Requirements the proxy must meet (closed list)
+
+1. **Many handles per client process.** One CLI verb builds 2-3 handles, `ui` 4, the daemon ≥4; one client must be able to hold all of them over the socket, and closing one must not disturb another (`db.DB.Close` is per handle and non-idempotent — `daemon.go:157-169` relies on that).
+2. **Concurrency on a pinned handle.** A transaction pins a connection while the same `*db.DB` is read again: seal (`seal.go:321` + `ReadFile`), fork (`fork.go:171`), ingest over a `StoreSource` (`daemon.go:549` → `seal.go:24-53`). The protocol must not serialise a client to one operation at a time, or these paths deadlock by construction.
+3. **BEGIN IMMEDIATE end to end**, with the busy retry window (`db.go:266-281`) and `ErrBusy` reachable by the client for `delivery.retryBusy` (`pull.go:24-47`).
+4. **Long client transactions across local I/O.** Ingest keeps its write transaction open while reading up to tens of MB from disk (49 MB files measured); the owner must not time it out and other clients' writes must not be starved into errors.
+5. **`seq = MAX(seq)+1` both ways.** Inside one transaction (`lifecycle.go:239-255`) and across two (`log.go:297,314`) — the second is only correct because of the state flock; the proxy must keep the flock's serialisation or move the append owner-side with identical results.
+6. **Value fidelity.** TEXT stays TEXT and frames stay BLOB (`codec.go:56-65`); `[]byte` values (secrets, zstd frames, patch bodies) and NULL-vs-empty (`sql.Null`) survive; per-value payloads to ~4.5 MB and per-response payloads in the tens of MB are supported.
+7. **No mandatory streaming, no hidden cap.** Current callers materialise whole result sets (`scan.go:13-30`, `lookup.go:149-165`); the protocol must permit no-limit queries.
+8. **Error fidelity.** SQLITE_BUSY=5 / SQLITE_CONSTRAINT=19 (and extended codes) and the three text recognitions must reproduce `db.ErrBusy`/`db.ErrInvalid` client-side.
+9. **Owner-side pragmas.** `busy_timeout`, `journal_mode(WAL)`, `foreign_keys(ON)`, `journal_size_limit(64 MiB)` on every server connection (`db.go:99`), plus the 0600 chmod of the db and its `-wal`/`-shm` (`db.go:119-126`).
+10. **Open-time work moves owner-side**: migrations and (for tests) the template seed (`db.go:90`) stay behind the seam, with an in-process/pipe transport so `internal/db`, `internal/store` and `internal/e2e` keep opening files directly.
+11. **Existence semantics.** `Store.DBIfExists`'s `(nil, nil)` for "no database" (`store/db.go:54-65`) needs an endpoint answer, or `relevo show` and the peek path change behaviour.
+12. **Installation identity.** `Origin` scoping/stamping (`db.go:52-69`) is decided by the opener today; the owner must mint/read `installation.json` and clients must not need to.
+13. **Owner-side maintenance:** `VACUUM`, `VACUUM INTO` with the caller's path, `wal_checkpoint(TRUNCATE)` and 0600 on the backup (`db.go:193-218`, `compress.go:299-306`).
+14. **Schema handshake before reads.** `Newer()`/`ErrNewerSchema` must be answerable at connect (`wire.go:178,189`, `store/db.go:41`, `daemon.go:174`, `serve.go:312`); `CheckMigrate` (`db.go:163`) is dead and should stay dead.
+15. **Client latency budgets.** Hooks abandon a slow open after 2 s and answer "unset" (`mastermind.go:25-28`, `mastermind_consent.go:18-49`); the statusline prints nothing on failure and must never fail a prompt (`status.go:165-207`). A cold-starting owner either fits in that budget or the surfaces degrade.
+16. **Polling clients not starved.** `wait` (1 s, `wait.go:192-240`) and `mcp` (1 s, write per tick, `mcp.go:299-336`) must keep their cadence while long transactions run; long requests must stay off the 2 s daemon tick (issue risk 8).
+17. **The state flock's role must be decided, not assumed away.** It serialises store read-modify-write and is re-entered with backoff (`pull.go:24-27`); 34 production `WithLock` sites depend on it.
+18. **Spawn-under-lock stays possible.** `DeliverPending` spawns a deliverer inside `WithLock` (`deliver.go:88-99`); a design that requires the owner for the flock's lifetime must keep that (and the 30 s deliverer call) from blocking unrelated work.
+19. **Tests stay direct.** The ~336 temp-store call sites, the 63 direct `db.Open` calls and the e2e harness must keep passing at the new boundary (issue staging 0).
+20. **Debuggability.** `relevo db` is a removed verb (`cmd/relevo/main.go:227`); either the direct-open fallback survives the transition or a query path replaces `sqlite3` before the Turso swap.
+21. **A stated concurrency budget.** Design for ~15 simultaneous connections (~4 processes × 3-6) and ~200 opens/min seen today, with a documented answer for what happens above it.
+22. **No accidental second opener.** `openDB(rt.Store.DBPath())` call sites (`wire.go:168`, `history.go:93`, `show.go:235`, `main.go:272`, `serve.go:106`, `daemon.go:172`) must flip in the same round as the default, with the hidden direct-open switch as the only fallback.
+23. **Client-death rollback.** A client killed mid-transaction (a 20 MB ingest row set in flight) must roll back owner-side and leave the multi-call invariants intact (issue risk 3).
+24. **Read-only sessions while the owner writes.** `OpenReadOnly` today reads a WAL file another process writes (`config.go:192-197`); the endpoint needs the same ability (`--check` while the daemon runs).
+25. **Same observable failures.** Every refusal (owner down, skew, permission, busy) must produce the actionable line the file path produces today, because `doctor`, the hooks and `wait` all branch on them.

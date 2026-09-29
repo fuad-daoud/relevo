@@ -277,6 +277,29 @@ jobs:
           RELEVO_REQUIRE_COVERAGE: '1'
         run: sh scripts/check-coverage.sh
 
+  # The transparency proof: the same internal/db and internal/store suites with
+  # every database reached through an in-process owner. The shards above run the
+  # default direct mode, so every PR exercises both. It is deliberately not a
+  # macOS leg: the free-plan macOS job cap, and this switch's owner-per-path fd
+  # cost, while the short-socket-path rule is pinned by a test that runs
+  # everywhere. It uploads no artifact, so the coverage job is unaffected.
+  owner-mode:
+    name: owner-mode
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RELEVO_DBTEST_OWNER: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: test through an in-process owner
+        run: go test -race -count=1 ./internal/db/... ./internal/store/...
+
   portability:
     name: cross-compile
     needs: changes
