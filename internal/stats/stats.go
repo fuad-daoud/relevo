@@ -38,15 +38,8 @@ type Report struct {
 	Scorecard    []ScoreRow
 	Spend        Spend
 	Reliability  Reliability
-	Repos        []GroupRow // key = RoundRow.Repo, "(none)" when nil
-	Features     []GroupRow // only rows with a Feature; empty when none
-	// NoFeature is the "(none)" bucket; zero when every row has a feature.
-	NoFeature GroupRow
-	// Tickets is only rows with a Ticket; empty when none.
-	Tickets []GroupRow
-	// NoTicket is the "(none)" bucket; zero when every row has a ticket.
-	NoTicket GroupRow
-	Outcomes Outcomes
+	Repos        []RepoRow // key = RoundRow.Repo, "(none)" when nil, each with its feature and ticket children
+	Outcomes     Outcomes
 }
 
 type TokenCounts struct {
@@ -121,15 +114,7 @@ func Build(in Inputs) Report {
 	rep.Scorecard = buildScorecard(in, rows)
 	rep.Spend = buildSpend(in, rows, rep.Since, loc)
 	rep.Reliability = buildReliability(in, rows, loc)
-	rep.Repos = groupRows(in, rows, repoKey)
-	rep.Features = groupRows(in, rows, featureKey)
-	if none := groupRows(in, rows, noFeatureKey); len(none) > 0 {
-		rep.NoFeature = none[0]
-	}
-	rep.Tickets = groupRows(in, rows, ticketKey)
-	if none := groupRows(in, rows, noTicketKey); len(none) > 0 {
-		rep.NoTicket = none[0]
-	}
+	rep.Repos = buildRepos(in, rows)
 	rep.Outcomes = buildOutcomes(rows)
 	return rep
 }

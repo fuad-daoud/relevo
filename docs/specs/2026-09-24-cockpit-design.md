@@ -289,8 +289,11 @@ over `db.RoundRow` and the gate records, and shared with `relevo history --stats
 | Candidates | Scoped to one actor (`a` cycles; default `builder`). Per candidate: rounds; **done %** = reported / closed; **halt %** = halted / closed; median duration of closed rounds; ttft p50 over the window; **$/round** = mean over rounds with a known cost basis, or `plan`. Rows with fewer than 5 rounds are dimmed. `(unrecorded)` is excluded. |
 | Spend | Cost per day over the window as bars, all actors, with this week against last week. `p` splits the bars by provider. |
 | Reliability | Switches (count and % of rounds), gates, spawn failures, the by-hour limit heatmap per provider (what `relevo config` prints today), and the gates active now. |
-| Repos & features | Per repo, and per `--feature` label when present: rounds, cost, halts, and rounds per landed binding (a binding that reached DONE). |
+| Repos & features | Per repo, expanding in place to its features then its tickets with the repo's own numbers: rounds, cost, halts, and rounds per landed binding (a binding that reached DONE); a label used by two repos appears under each. |
 | Outcomes | Counts of reported, halted, switched and no outcome. |
+
+On the repos tab `space` toggles a repo and `→`/`←` expand and collapse it in place,
+and `enter` on a child filters `:rounds` to that repo and label.
 
 ## 6. Architecture
 

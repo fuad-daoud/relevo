@@ -66,6 +66,9 @@ type statsView struct {
 	ovFocus    int      // overview cursor: 0 candidates, 1 busiest repos
 	ovCursor   [2]int   // selected row per overview table
 	configured []string // every configured candidate's token, sorted; nil when the set is nil
+	// expanded is the repos tab's view state: the repo keys whose children
+	// show (§4.1). A nil map is every repo collapsed.
+	expanded map[string]bool
 }
 
 // statsCandStatusW is the candidates tab's STATUS cell: three cells of gutter
@@ -216,9 +219,17 @@ func (v statsView) Keys() []KeyHelp {
 			{"tab", "next tab"},
 			{"w", "window"},
 		}
-	case "candidates", "repos":
+	case "candidates":
 		return []KeyHelp{
 			{"↑↓", "move"},
+			{"enter", "its rounds"},
+			{"tab", "next tab"},
+			{"w", "window"},
+		}
+	case "repos":
+		return []KeyHelp{
+			{"↑↓", "move"},
+			{"space", "expand"},
 			{"enter", "its rounds"},
 			{"tab", "next tab"},
 			{"w", "window"},
@@ -349,15 +360,21 @@ func (v statsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.top = clamp(v.top+1, 0, statsMaxTop(len(lines), avail))
 		return v, nil
 	case "left", "h":
-		if statsTabs[v.tab] == "overview" {
+		switch statsTabs[v.tab] {
+		case "overview":
 			v.ovFocus = 0
 			v.follow(env)
+		case "repos":
+			v.collapseSelectedRepo(env)
 		}
 		return v, nil
 	case "right", "l":
-		if statsTabs[v.tab] == "overview" {
+		switch statsTabs[v.tab] {
+		case "overview":
 			v.ovFocus = 1
 			v.follow(env)
+		case "repos":
+			v.expandSelectedRepo(env)
 		}
 		return v, nil
 	case "s":
@@ -370,7 +387,17 @@ func (v statsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		_, _, avail := v.page(env)
 		v.top = max(0, v.top-max(1, avail-1))
 		return v, nil
-	case "pgdown", "pgdn", " ": // bubbletea reports Page Down as "pgdown"
+	case "pgdown", "pgdn": // bubbletea reports Page Down as "pgdown"
+		lines, _, avail := v.page(env)
+		v.top = min(v.top+max(1, avail-1), statsMaxTop(len(lines), avail))
+		return v, nil
+	case " ":
+		// Space pages every other tab; on repos it toggles the selected row's
+		// repo's expansion (§4.1).
+		if statsTabs[v.tab] == "repos" {
+			v.toggleSelectedRepo(env)
+			return v, nil
+		}
 		lines, _, avail := v.page(env)
 		v.top = min(v.top+max(1, avail-1), statsMaxTop(len(lines), avail))
 		return v, nil
@@ -430,8 +457,88 @@ func (v statsView) panelRows() int {
 	if v.focus == 0 {
 		return len(v.overviewCandRows(func(s string) string { return s }))
 	}
-	repos, features, tickets := v.repoTabRows()
-	return len(repos) + len(features) + len(tickets)
+	return len(v.repoTabRows())
+}
+
+// reposSelected is the repo owning the selected repos-tab row: its key and
+// whether that row is one of its children.
+func (v statsView) reposSelected() (key string, child, ok bool) {
+	rows := v.repoTabRows()
+	if len(rows) == 0 {
+		return "", false, false
+	}
+	r := rows[statsClamp(v.cursor[1], len(rows))]
+	if r.parent != "" {
+		return r.parent, true, true
+	}
+	if r.kind != kindRepo {
+		return "", false, false
+	}
+	return r.group.Key, false, true
+}
+
+// repoRowIndex is the visible index of a repo's own row, or -1.
+func (v statsView) repoRowIndex(key string) int {
+	for i, r := range v.repoTabRows() {
+		if r.kind == kindRepo && r.group.Key == key {
+			return i
+		}
+	}
+	return -1
+}
+
+// toggleSelectedRepo flips the expansion of the repo owning the selected row
+// (§4.1): a child collapses its repo and leaves the cursor on the repo's row; a
+// repo row toggles in place, so the cursor does not move.
+func (v *statsView) toggleSelectedRepo(env Env) {
+	key, child, ok := v.reposSelected()
+	if !ok {
+		return
+	}
+	if v.expanded[key] {
+		v.collapseRepo(key, child)
+		v.follow(env)
+		return
+	}
+	v.expandRepo(key)
+}
+
+// expandSelectedRepo shows the selected row's repo's children; expanding never
+// moves the cursor (§4.1).
+func (v *statsView) expandSelectedRepo(env Env) {
+	if key, _, ok := v.reposSelected(); ok {
+		v.expandRepo(key)
+	}
+}
+
+// collapseSelectedRepo hides the selected row's repo's children; a cursor on one
+// of them lands on the repo's own row (§4.1).
+func (v *statsView) collapseSelectedRepo(env Env) {
+	if key, child, ok := v.reposSelected(); ok {
+		v.collapseRepo(key, child)
+		v.follow(env)
+	}
+}
+
+// expandRepo shows a repo's children without moving the cursor.
+func (v *statsView) expandRepo(key string) {
+	if v.expanded == nil {
+		v.expanded = map[string]bool{}
+	}
+	v.expanded[key] = true
+}
+
+// collapseRepo hides a repo's children; when the cursor was on one of them it
+// lands on the repo's own row.
+func (v *statsView) collapseRepo(key string, child bool) {
+	if v.expanded == nil {
+		return
+	}
+	idx := v.repoRowIndex(key)
+	delete(v.expanded, key)
+	if child && idx >= 0 {
+		v.cursor[1] = idx
+	}
 }
 
 // moveCursor moves the focused panel's cursor, clamped to its rows.
@@ -499,8 +606,8 @@ func (v statsView) sinceTerm() string {
 }
 
 // enter opens `:rounds` filtered to the focused panel's selected row (§4.3,
-// §4.4). On the repos tab the cursor indexes one combined list: the repo rows
-// first, then the feature rows, then the ticket rows.
+// §4.4). On the repos tab the cursor indexes the visible rows: every repo row,
+// plus the children of the expanded repos.
 func (v statsView) enter(env Env) (View, tea.Cmd) {
 	if v.focus == 0 {
 		names := env.Src.Base().Candidates.NameOf
@@ -514,30 +621,35 @@ func (v statsView) enter(env Env) (View, tea.Cmd) {
 		}
 		return v.roundsForCandidate(env, rows[i].Token)
 	}
-	repos, features, tickets := v.repoTabRows()
-	if len(repos)+len(features)+len(tickets) == 0 {
+	rows := v.repoTabRows()
+	if len(rows) == 0 {
 		return v, nil
 	}
-	i := statsClamp(v.cursor[1], len(repos)+len(features)+len(tickets))
-	switch {
-	case i >= len(repos)+len(features):
-		tKey := tickets[i-len(repos)-len(features)].Key
-		if tKey == "(none)" {
-			return v, notice("rounds with no ticket cannot be filtered")
-		}
-		return v.openRounds(env, `ticket:"`+tKey+`"`+v.sinceTerm())
-	case i >= len(repos):
-		fKey := features[i-len(repos)].Key
-		if fKey == "(none)" {
-			return v, notice("rounds with no feature cannot be filtered")
-		}
-		return v.openRounds(env, `feature:"`+fKey+`"`+v.sinceTerm())
+	r := rows[statsClamp(v.cursor[1], len(rows))]
+	switch r.kind {
+	case kindFeature:
+		return v.enterRepoChild(env, r, "feature")
+	case kindTicket:
+		return v.enterRepoChild(env, r, "ticket")
 	}
-	key := repos[i].Key
+	key := r.group.Key
 	if key == "(none)" {
 		return v, notice("rounds with no repo cannot be filtered")
 	}
 	return v.roundsForRepo(env, key)
+}
+
+// enterRepoChild opens `:rounds` for a feature or ticket child, scoped to its
+// repo (§4.4). A "(none)" label keeps its notice, and a child of the "(none)"
+// repo cannot be expressed -- no query term means "no repo" -- so it notices.
+func (v statsView) enterRepoChild(env Env, r repoTabRow, term string) (View, tea.Cmd) {
+	if r.group.Key == "(none)" {
+		return v, notice("rounds with no " + term + " cannot be filtered")
+	}
+	if r.parent == "(none)" {
+		return v, notice("rounds with no repo cannot be filtered")
+	}
+	return v.openRounds(env, `repo:"`+r.parent+`" `+term+`:"`+r.group.Key+`"`+v.sinceTerm())
 }
 
 // enterOverview opens `:rounds` filtered to the overview table's selected row
@@ -1297,8 +1409,8 @@ func statsTableWindow(n, cursor, rows int) (first, last int) {
 
 // overviewRepoRows is the BUSIEST REPOS table's order: a copy of the report's
 // repos, stable-sorted by tokens desc (§3.3).
-func (v statsView) overviewRepoRows() []stats.GroupRow {
-	rows := append([]stats.GroupRow(nil), v.rep.Repos...)
+func (v statsView) overviewRepoRows() []stats.RepoRow {
+	rows := append([]stats.RepoRow(nil), v.rep.Repos...)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Tokens > rows[j].Tokens })
 	return rows
 }
@@ -2474,23 +2586,60 @@ func statsRepoCellW(nameW int, visible []statsRepoCol) int {
 	return w
 }
 
-// repoTabRows is the repos tab's three tables and the combined cursor list's
-// order (§4.1): the repos by tokens, then a copy of the features by tokens,
-// then a copy of the tickets by tokens, with a last (no feature)/(no ticket)
-// row for the unlabelled bucket when there are rows to follow it (§2.3, #637).
-func (v statsView) repoTabRows() (repos, features, tickets []stats.GroupRow) {
-	repos = v.overviewRepoRows()
-	features = append([]stats.GroupRow(nil), v.rep.Features...)
-	sort.SliceStable(features, func(i, j int) bool { return features[i].Tokens > features[j].Tokens })
-	if len(features) > 0 && v.rep.NoFeature.Rounds > 0 {
-		features = append(features, v.rep.NoFeature)
+// repoTabRows is the repos tab's visible rows (§4.1): every repo row, plus the
+// children of the repos the view has expanded. The cursor walks only these.
+func (v statsView) repoTabRows() []repoTabRow {
+	repos := v.overviewRepoRows()
+	out := make([]repoTabRow, 0, len(repos))
+	for _, r := range repos {
+		out = append(out, repoTabRow{kind: kindRepo, group: r.GroupRow})
+		if v.expanded[r.Key] {
+			out = append(out, repoChildren(r)...)
+		}
 	}
-	tickets = append([]stats.GroupRow(nil), v.rep.Tickets...)
-	sort.SliceStable(tickets, func(i, j int) bool { return tickets[i].Tokens > tickets[j].Tokens })
-	if len(tickets) > 0 && v.rep.NoTicket.Rounds > 0 {
-		tickets = append(tickets, v.rep.NoTicket)
+	return out
+}
+
+// repoTabRow is one visible repos-tab row: a repo, or one of an expanded repo's
+// children. parent is the owning repo's key for a child and "" for a repo row.
+type repoTabRow struct {
+	kind   repoKind
+	group  stats.GroupRow
+	parent string
+}
+
+// repoChildren is an expanded repo's child rows in display order (§4.1): its
+// labelled features by tokens desc, then its (no feature) row when the repo has
+// both a labelled feature and a featureless round, then its labelled tickets by
+// tokens desc, then (no ticket) under the same rule. A repo with no labelled
+// features or tickets has no section, so it has no children.
+func repoChildren(r stats.RepoRow) []repoTabRow {
+	var out []repoTabRow
+	if len(r.Features) > 0 {
+		for _, g := range reposByTokens(r.Features) {
+			out = append(out, repoTabRow{kind: kindFeature, group: g, parent: r.Key})
+		}
+		if r.NoFeature.Rounds > 0 {
+			out = append(out, repoTabRow{kind: kindFeature, group: r.NoFeature, parent: r.Key})
+		}
 	}
-	return repos, features, tickets
+	if len(r.Tickets) > 0 {
+		for _, g := range reposByTokens(r.Tickets) {
+			out = append(out, repoTabRow{kind: kindTicket, group: g, parent: r.Key})
+		}
+		if r.NoTicket.Rounds > 0 {
+			out = append(out, repoTabRow{kind: kindTicket, group: r.NoTicket, parent: r.Key})
+		}
+	}
+	return out
+}
+
+// reposByTokens is the repos tab's per-section ordering: a copy of rows,
+// stable-sorted by tokens desc (§4.1).
+func reposByTokens(rows []stats.GroupRow) []stats.GroupRow {
+	out := append([]stats.GroupRow(nil), rows...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Tokens > out[j].Tokens })
+	return out
 }
 
 // statsRepoHead is a repos-table header row (§4.2): the name label clipped to
@@ -2548,10 +2697,12 @@ const (
 )
 
 // statsRepoRow is one repos-table row (§4.2): the fitted name, the numbers in
-// muted and the share cell. The selected row is rebuilt as plain text, share
+// muted and the share cell. A child row's name is indented two cells inside the
+// name column, the dash grid's convention; its numbers and share stay on the
+// repo rows' columns. The selected row is rebuilt as plain text, share
 // included, and rendered once with the band, fitted to the row width so it
 // ends at width-3.
-func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int, visible []statsRepoCol, selected bool) string {
+func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int, visible []statsRepoCol, indent, selected bool) string {
 	name := shortRepo(g.Key)
 	switch kind {
 	case kindFeature:
@@ -2559,75 +2710,49 @@ func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int,
 	case kindTicket:
 		name = shortTicket(g.Key)
 	}
-	key := stats.FitKey(name, nameW, false)
+	cellW := statsRepoCellW(nameW, visible)
+	key := ""
+	if indent {
+		key = "  "
+		nameW = statsMinWidth(nameW - 2)
+	}
+	key += stats.FitKey(name, nameW, false)
 	cells := statsRepoCells(g, visible)
 	if selected {
 		text := key + cells + statsSharePlain(g.Tokens, windowTotal)
-		return "   " + selBandStyle.Foreground(textStyle.GetForeground()).Bold(true).Render(fit(text, statsRepoCellW(nameW, visible)))
+		return "   " + selBandStyle.Foreground(textStyle.GetForeground()).Bold(true).Render(fit(text, cellW))
 	}
 	return "   " + fgStyle.Render(key) + mutedStyle.Render(cells) +
 		statsShareCell(g.Tokens, windowTotal)
 }
 
-// reposTabLines is the repos tab (§4.2): the repos table, then the features
-// table and the tickets table (each one's blank line and header left out when
-// it has no rows), two blank lines, and the selected row's detail block. sel is
-// the selected row's line, so the page follows the cursor.
+// reposTabLines is the repos tab (§4.1): one REPO table over the visible rows --
+// every repo, plus the children of the expanded ones, whose names are indented
+// two cells inside the name column -- then two blank lines and the selected
+// row's detail block. sel is the selected row's line, so the page follows the
+// cursor.
 func (v statsView) reposTabLines(env Env, width int) ([]string, int) {
-	repos, features, tickets := v.repoTabRows()
-	n := len(repos) + len(features) + len(tickets)
+	rows := v.repoTabRows()
+	n := len(rows)
 	visible, nameW := statsRepoVisible(width)
 	windowTotal := v.rep.Totals.TokenKinds.Total()
-	cur := 0
-	if n > 0 {
-		cur = clamp(v.cursor[1], 0, n-1)
+	if n == 0 {
+		return []string{statsRepoHead("REPO", nameW, visible)}, -1
 	}
+	cur := clamp(v.cursor[1], 0, n-1)
 
 	out := []string{statsRepoHead("REPO", nameW, visible)}
 	sel := -1
-	for i, g := range repos {
+	var detail repoTabRow
+	for i, r := range rows {
 		if i == cur {
 			sel = len(out)
+			detail = r
 		}
-		out = append(out, statsRepoRow(g, kindRepo, windowTotal, nameW, visible, i == cur))
-	}
-	if len(features) > 0 {
-		out = append(out, "")
-		out = append(out, statsRepoHead("FEATURE", nameW, visible))
-		for i, g := range features {
-			selected := len(repos)+i == cur
-			if selected {
-				sel = len(out)
-			}
-			out = append(out, statsRepoRow(g, kindFeature, windowTotal, nameW, visible, selected))
-		}
-	}
-	if len(tickets) > 0 {
-		out = append(out, "")
-		out = append(out, statsRepoHead("TICKET", nameW, visible))
-		for i, g := range tickets {
-			selected := len(repos)+len(features)+i == cur
-			if selected {
-				sel = len(out)
-			}
-			out = append(out, statsRepoRow(g, kindTicket, windowTotal, nameW, visible, selected))
-		}
-	}
-	if n == 0 {
-		return out, -1
-	}
-
-	detail, kind := stats.GroupRow{}, kindRepo
-	switch {
-	case cur < len(repos):
-		detail = repos[cur]
-	case cur < len(repos)+len(features):
-		detail, kind = features[cur-len(repos)], kindFeature
-	default:
-		detail, kind = tickets[cur-len(repos)-len(features)], kindTicket
+		out = append(out, statsRepoRow(r.group, r.kind, windowTotal, nameW, visible, r.parent != "", i == cur))
 	}
 	out = append(out, "", "")
-	out = append(out, v.statsGroupDetail(env, detail, kind, windowTotal)...)
+	out = append(out, v.statsGroupDetail(env, detail.group, detail.kind, windowTotal)...)
 	return out, sel
 }
 
