@@ -690,6 +690,38 @@ func TestDaemonCheckLeavesNoDB(t *testing.T) {
 	}
 }
 
+// TestDaemonSecondStartLeavesNoDB pins the lock-first start (#701): a daemon
+// that loses AcquireDaemonLock exits before newRuntime, so it mints no
+// installation.json and opens no relevo.db (nor its -wal/-shm), leaving only
+// the .daemon.lock its own acquisition touched. The test holds the lock first,
+// then calls cmdDaemon directly -- never run, which would need a harness and
+// the network.
+func TestDaemonSecondStartLeavesNoDB(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+
+	stateRoot := filepath.Join(root, "state", "relevo")
+	lock, err := store.New(stateRoot).AcquireDaemonLock()
+	if err != nil {
+		t.Fatalf("AcquireDaemonLock: %v", err)
+	}
+	t.Cleanup(func() { _ = lock.Close() })
+
+	err = cmdDaemon(nil)
+	if !errors.Is(err, store.ErrDaemonRunning) {
+		t.Fatalf("cmdDaemon error = %v, want store.ErrDaemonRunning", err)
+	}
+
+	for _, name := range []string{"relevo.db", "relevo.db-wal", "relevo.db-shm", "installation.json"} {
+		p := filepath.Join(stateRoot, name)
+		if _, serr := os.Stat(p); !errors.Is(serr, os.ErrNotExist) {
+			t.Errorf("%s exists after a losing start: stat error = %v, want not-exist", p, serr)
+		}
+	}
+}
+
 // TestDefaultServeRoot pins the root `relevo gate --clear` reads the serve
 // pointer from (#372 §4.6): the serve root under the state root, not the
 // client root's daemon.json.
