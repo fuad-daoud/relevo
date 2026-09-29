@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -144,5 +145,22 @@ func TestVerifyConsultStderrSharesTheStream(t *testing.T) {
 	}
 	if !strings.HasSuffix(spec.LogPath, "-consult.jsonl") {
 		t.Errorf("LogPath = %q, want it to end in -consult.jsonl", spec.LogPath)
+	}
+}
+
+// TestVerifyConsultCarriesRunnerMarker pins #662: the reviewer a verify close
+// starts is a runner too, so its spec carries exactly the one RELEVO_RUNNER
+// entry -- no GIT_* identity and no other variable it could inherit. Deleting
+// the Env from the verify spawn fails this test.
+func TestVerifyConsultCarriesRunnerMarker(t *testing.T) {
+	t.Parallel()
+
+	_, fr, _, _ := startVerifyRound(t)
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %d, want 1: the verify consult's own spawn", len(fr.specs))
+	}
+	want := []string{"RELEVO_RUNNER=webshop"}
+	if got := fr.specs[0].Env; !reflect.DeepEqual(got, want) {
+		t.Errorf("verify spec.Env = %v, want %v", got, want)
 	}
 }

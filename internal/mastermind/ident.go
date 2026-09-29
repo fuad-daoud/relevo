@@ -62,11 +62,18 @@ func Detect(env func(string) string, ppid int) (Ident, bool) {
 	return Ident{}, false
 }
 
-// RunnerEnv marks a process relevo started for a round: its value is the
-// binding name the round runs for. A harness session relevo spawns for a round
-// carries exactly this one identity variable, so the consent hooks can tell a
-// runner from the human's own session and stay silent for it.
+// RunnerEnv marks a process relevo started for a round, or at round close for
+// the consult that reviews it: its value is the binding name the round runs
+// for. A harness session relevo spawns for a round, and one it spawns for the
+// round-close reviewer, carries exactly this one identity variable, so the
+// consent hooks can tell a runner from the human's own session and stay silent
+// for it.
 const RunnerEnv = "RELEVO_RUNNER"
+
+// RunnerEnvEntry is the environment entry that carries the marker, the one
+// place its spelling lives: a round's process and the reviewer started beside
+// it both build it here, so they cannot drift.
+func RunnerEnvEntry(name string) string { return RunnerEnv + "=" + name }
 
 // IsRunner reports whether env belongs to a process relevo started for a round:
 // a non-empty RunnerEnv. A nil env is not a runner, so a caller with no
