@@ -19,16 +19,22 @@ type GroupRow struct {
 	ByCandidate            map[string]int // round count per Candidate, nil skipped
 }
 
-// RepoRow is one repo bucket and its children: the repo's own GroupRow,
-// its labelled features and tickets, and the per-repo feature-less and
-// ticket-less buckets. A label two repos use appears under each with only that
-// repo's rows counted.
+// RepoRow is one repo bucket and its children: the repo's own GroupRow, its
+// labelled features, and its feature-less bucket. Each feature carries its own
+// tickets, so a label two repos use appears under each with only that repo's
+// rows counted.
 type RepoRow struct {
 	GroupRow
-	Features  []GroupRow // only this repo's rows with a Feature
-	NoFeature GroupRow   // this repo's "(none)" feature bucket; zero when every row has a feature
-	Tickets   []GroupRow // only this repo's rows with a Ticket
-	NoTicket  GroupRow   // this repo's "(none)" ticket bucket; zero when every row has a ticket
+	Features  []FeatureRow // only this repo's rows with a Feature
+	NoFeature FeatureRow   // this repo's "(none)" feature bucket; zero when every row has a feature
+}
+
+// FeatureRow is one feature's bucket and the labelled tickets nested under it.
+// Its own numbers include the feature's ticketless rounds; Tickets holds only
+// the rounds that also carry a ticket.
+type FeatureRow struct {
+	GroupRow
+	Tickets []GroupRow // only this feature's rows with a Ticket
 }
 
 type Outcomes struct {
@@ -134,10 +140,11 @@ func groupRows(in Inputs, rows []db.RoundRow, key func(db.RoundRow) (string, boo
 	return out
 }
 
-// buildRepos groups the rows by repo and, inside each repo, by feature and by
-// ticket. A repo's children count only its own rows, so a label two repos use
-// appears under each with that repo's numbers . The repos come back in
-// groupRows order: rounds desc, key asc.
+// buildRepos groups the rows by repo and, inside each repo, nests each
+// feature's tickets under it. A repo's children count only its own rows, so a
+// label two repos use appears under each with that repo's numbers. A round with
+// neither label counts only in its repo's (no feature) bucket. The repos come
+// back in groupRows order: rounds desc, key asc.
 func buildRepos(in Inputs, rows []db.RoundRow) []RepoRow {
 	byRepo := map[string][]db.RoundRow{}
 	for _, r := range rows {
@@ -151,12 +158,29 @@ func buildRepos(in Inputs, rows []db.RoundRow) []RepoRow {
 	out := make([]RepoRow, 0, len(groups))
 	for _, g := range groups {
 		own := byRepo[g.Key]
+		byFeature := map[string][]db.RoundRow{}
+		var featureless []db.RoundRow
+		for _, r := range own {
+			if r.Feature == nil {
+				featureless = append(featureless, r)
+				continue
+			}
+			byFeature[*r.Feature] = append(byFeature[*r.Feature], r)
+		}
+		features := make([]FeatureRow, 0, len(byFeature))
+		for _, f := range groupRows(in, own, featureKey) {
+			features = append(features, FeatureRow{
+				GroupRow: f,
+				Tickets:  groupRows(in, byFeature[f.Key], ticketKey),
+			})
+		}
 		out = append(out, RepoRow{
-			GroupRow:  g,
-			Features:  groupRows(in, own, featureKey),
-			NoFeature: noneRow(in, own, noFeatureKey),
-			Tickets:   groupRows(in, own, ticketKey),
-			NoTicket:  noneRow(in, own, noTicketKey),
+			GroupRow: g,
+			Features: features,
+			NoFeature: FeatureRow{
+				GroupRow: noneRow(in, own, noFeatureKey),
+				Tickets:  groupRows(in, featureless, ticketKey),
+			},
 		})
 	}
 	return out
@@ -197,13 +221,6 @@ func ticketKey(r db.RoundRow) (string, bool) {
 		return "", false
 	}
 	return *r.Ticket, true
-}
-
-func noTicketKey(r db.RoundRow) (string, bool) {
-	if r.Ticket == nil {
-		return "(none)", true
-	}
-	return "", false
 }
 
 func buildOutcomes(rows []db.RoundRow) Outcomes {

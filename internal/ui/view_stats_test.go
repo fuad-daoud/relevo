@@ -84,10 +84,10 @@ func statsFixture() stats.Report {
 		Repos: []stats.RepoRow{
 			{
 				GroupRow: stats.GroupRow{Key: "https://github.com/fuad-daoud/relevo", Rounds: 5, Halted: 1, Landed: 1, CostUSD: 1.30, Tokens: 2_400_000, RoundsPerLand: 3.0},
-				Features: []stats.GroupRow{
-					{Key: "cockpit", Rounds: 3, CostUSD: 0.90, Tokens: 1_500_000, Landed: 1, RoundsPerLand: 2.0},
+				Features: []stats.FeatureRow{
+					{GroupRow: stats.GroupRow{Key: "cockpit", Rounds: 3, CostUSD: 0.90, Tokens: 1_500_000, Landed: 1, RoundsPerLand: 2.0}},
 				},
-				NoFeature: stats.GroupRow{Key: "(none)", Rounds: 2, Tokens: 900_000},
+				NoFeature: stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Rounds: 2, Tokens: 900_000}},
 			},
 			{
 				GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, CostUSD: 0.10, Tokens: 100_000},
@@ -2411,41 +2411,27 @@ func TestStatsReposTabTables(t *testing.T) {
 	}
 }
 
-// TestStatsRepoChildren pins an expanded repo's children (§4.1): the labelled
-// features by tokens desc, then the (no feature) row when the repo has both a
-// labelled feature and a featureless round, then the labelled tickets and
-// (no ticket) under the same rule; a repo with no labels has no children.
+// TestStatsRepoChildren pins an expanded repo's children (§4.1): each labelled
+// feature by tokens desc, its labelled tickets nested under it by tokens desc,
+// then the (no feature) row with its tickets under the same rule. The (no
+// feature) row shows when the repo has featureless rounds and either a labelled
+// feature or a labelled ticket; a repo with no labels has no children.
 func TestStatsRepoChildren(t *testing.T) {
 	repo := stats.RepoRow{GroupRow: stats.GroupRow{Key: "r"}}
 
 	t.Run("labelled only", func(t *testing.T) {
 		labelled := repo
-		labelled.Features = []stats.GroupRow{{Key: "small", Tokens: 10}, {Key: "big", Tokens: 100}}
+		labelled.Features = []stats.FeatureRow{
+			{GroupRow: stats.GroupRow{Key: "small", Tokens: 10}},
+			{GroupRow: stats.GroupRow{Key: "big", Tokens: 100}, Tickets: []stats.GroupRow{
+				{Key: "t1", Tokens: 5}, {Key: "t2", Tokens: 50},
+			}},
+		}
 		// Zero featureless rounds: no (no feature) row even though the bucket
 		// carries tokens.
-		labelled.NoFeature = stats.GroupRow{Key: "(none)", Tokens: 5}
+		labelled.NoFeature = stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Tokens: 5}}
 		got := repoChildren(labelled)
-		if len(got) != 2 {
-			t.Fatalf("children = %+v, want the two labelled features", got)
-		}
-		if got[0].group.Key != "big" || got[1].group.Key != "small" {
-			t.Errorf("children order = %q, %q; want big then small (tokens desc)", got[0].group.Key, got[1].group.Key)
-		}
-		for _, r := range got {
-			if r.kind != kindFeature || r.parent != "r" {
-				t.Errorf("child = %+v, want a feature of repo r", r)
-			}
-		}
-	})
-
-	t.Run("labelled and unlabelled", func(t *testing.T) {
-		mixed := repo
-		mixed.Features = []stats.GroupRow{{Key: "f1", Tokens: 100}}
-		mixed.NoFeature = stats.GroupRow{Key: "(none)", Rounds: 2, Tokens: 50}
-		mixed.Tickets = []stats.GroupRow{{Key: "t1", Tokens: 70}}
-		mixed.NoTicket = stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 5}
-		got := repoChildren(mixed)
-		want := []string{"f1", "(none)", "t1", "(none)"}
+		want := []string{"big", "t2", "t1", "small"}
 		if len(got) != len(want) {
 			t.Fatalf("children = %+v, want %v", got, want)
 		}
@@ -2454,17 +2440,76 @@ func TestStatsRepoChildren(t *testing.T) {
 				t.Errorf("child %d = %q, want %q", i, got[i].group.Key, key)
 			}
 		}
-		if got[1].kind != kindFeature || got[3].kind != kindTicket {
-			t.Errorf("kinds = %v, %v; want the (none) buckets to keep their section's kind", got[1].kind, got[3].kind)
+		if got[0].kind != kindFeature || got[1].kind != kindTicket || got[2].kind != kindTicket ||
+			got[3].kind != kindFeature {
+			t.Errorf("kinds = %v, %v, %v, %v; want feature, ticket, ticket, feature",
+				got[0].kind, got[1].kind, got[2].kind, got[3].kind)
+		}
+		for _, r := range got {
+			if r.parent != "r" {
+				t.Errorf("child = %+v, want a child of repo r", r)
+			}
+		}
+		for _, r := range got[1:3] {
+			if r.feature != "big" {
+				t.Errorf("ticket row = %+v, want it owned by feature big", r)
+			}
+		}
+	})
+
+	t.Run("labelled and unlabelled", func(t *testing.T) {
+		mixed := repo
+		mixed.Features = []stats.FeatureRow{{GroupRow: stats.GroupRow{Key: "f1", Tokens: 100}}}
+		mixed.NoFeature = stats.FeatureRow{
+			GroupRow: stats.GroupRow{Key: "(none)", Rounds: 2, Tokens: 50},
+			Tickets:  []stats.GroupRow{{Key: "t1", Tokens: 70}},
+		}
+		got := repoChildren(mixed)
+		want := []string{"f1", "(none)", "t1"}
+		if len(got) != len(want) {
+			t.Fatalf("children = %+v, want %v", got, want)
+		}
+		for i, key := range want {
+			if got[i].group.Key != key {
+				t.Errorf("child %d = %q, want %q", i, got[i].group.Key, key)
+			}
+		}
+		if got[1].kind != kindFeature || got[2].kind != kindTicket {
+			t.Errorf("kinds = %v, %v; want a (no feature) row then its ticket", got[1].kind, got[2].kind)
+		}
+		if got[2].feature != "(none)" {
+			t.Errorf("the (no feature) ticket's feature = %q, want %q", got[2].feature, "(none)")
+		}
+	})
+
+	t.Run("tickets only", func(t *testing.T) {
+		// No labelled feature, but featureless rounds carrying tickets: the
+		// (no feature) row shows so those tickets stay reachable.
+		tickets := repo
+		tickets.NoFeature = stats.FeatureRow{
+			GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 30},
+			Tickets:  []stats.GroupRow{{Key: "t9", Tokens: 30}},
+		}
+		got := repoChildren(tickets)
+		want := []string{"(none)", "t9"}
+		if len(got) != len(want) {
+			t.Fatalf("children = %+v, want %v", got, want)
+		}
+		for i, key := range want {
+			if got[i].group.Key != key {
+				t.Errorf("child %d = %q, want %q", i, got[i].group.Key, key)
+			}
+		}
+		if got[0].kind != kindFeature || got[1].kind != kindTicket {
+			t.Errorf("kinds = %v, %v; want a (no feature) row then its ticket", got[0].kind, got[1].kind)
 		}
 	})
 
 	t.Run("unlabelled only", func(t *testing.T) {
 		plain := repo
-		plain.NoFeature = stats.GroupRow{Key: "(none)", Rounds: 3, Tokens: 30}
-		plain.NoTicket = stats.GroupRow{Key: "(none)", Rounds: 3, Tokens: 30}
+		plain.NoFeature = stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Rounds: 3, Tokens: 30}}
 		if got := repoChildren(plain); len(got) != 0 {
-			t.Errorf("children = %+v, want none: with no labelled feature or ticket there is no section", got)
+			t.Errorf("children = %+v, want none: no labelled child and no ticket to nest", got)
 		}
 	})
 }
@@ -2571,7 +2616,8 @@ func TestStatsReposTabDetail(t *testing.T) {
 // TestStatsReposNoFeatureRow pins §2.3 at repo scope: a repo with both a
 // labelled feature and a featureless round ends its feature section with a
 // (no feature) row, enter on it notices instead of pushing rounds, and a repo
-// with no labelled features shows neither section, so nothing to show.
+// whose featureless rounds carry no ticket and whose features are gone shows
+// nothing.
 func TestStatsReposNoFeatureRow(t *testing.T) {
 	t.Run("row and detail", func(t *testing.T) {
 		v := statsView{window: "30d", loaded: true, rep: statsFixture(), tab: statsTabRepos,
@@ -2605,17 +2651,20 @@ func TestStatsReposNoFeatureRow(t *testing.T) {
 		}
 	})
 
-	t.Run("a repo with no labelled features shows nothing", func(t *testing.T) {
+	t.Run("unlabelled rounds alone show nothing", func(t *testing.T) {
 		rep := statsFixture()
+		// No labelled feature and no ticket on the featureless rounds: the
+		// visibility rule keeps (no feature) hidden.
 		rep.Repos[0].Features = nil
+		rep.Repos[0].NoFeature.Tickets = nil
 		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos,
 			expanded: map[string]bool{statsFixtureRepoKey: true}}
 		if got := repoChildren(rep.Repos[0]); len(got) != 0 {
-			t.Fatalf("children = %+v, want none when the repo has no labelled feature", got)
+			t.Fatalf("children = %+v, want none without a labelled feature or ticket", got)
 		}
 		body := stripANSI(v.Body(statsTestEnv(t, 132, 40), 132, 40))
 		if strings.Contains(body, "(no feature)") {
-			t.Errorf("repos tab shows (no feature) with no labelled feature:\n%s", body)
+			t.Errorf("repos tab shows (no feature) with no labelled child to reach:\n%s", body)
 		}
 		if strings.Contains(body, "FEATURE") {
 			t.Errorf("repos tab shows a FEATURE header:\n%s", body)
@@ -2839,21 +2888,25 @@ func TestStatsGateReasonHTTPStatus(t *testing.T) {
 	}
 }
 
-// TestStatsReposTicketRows pins #637 at repo scope: a repo with both a
-// labelled ticket and an unlabelled round ends its ticket section with a
-// (no ticket) row, the visible rows share one cursor, and a repo with no
-// labelled tickets has no ticket section.
+// TestStatsReposTicketRows pins the nested tickets at repo scope: a labelled
+// ticket sits under its feature four cells in against the feature's two, the
+// (no feature) bucket nests its own tickets, a ticket row's detail names it a
+// ticket, and no (no ticket) row exists anywhere.
 func TestStatsReposTicketRows(t *testing.T) {
 	rep := statsFixture()
-	rep.Repos[0].Tickets = []stats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
-	rep.Repos[0].NoTicket = stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 400_000}
+	rep.Repos[0].Features[0].Tickets = []stats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
+	rep.Repos[0].NoFeature.Tickets = []stats.GroupRow{{Key: "o/r#608", Rounds: 1, Tokens: 400_000}}
 
-	t.Run("rows and detail", func(t *testing.T) {
+	t.Run("rows, indent and detail", func(t *testing.T) {
 		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos,
 			expanded: map[string]bool{statsFixtureRepoKey: true}}
 		children := repoChildren(rep.Repos[0])
-		if len(children) != 4 || children[2].group.Key != "o/r#607" || children[3].group.Key != "(none)" {
-			t.Fatalf("children = %+v, want the feature, (no feature), the ticket and (no ticket)", children)
+		if len(children) != 4 || children[0].group.Key != "cockpit" || children[1].group.Key != "o/r#607" ||
+			children[2].group.Key != "(none)" || children[3].group.Key != "o/r#608" {
+			t.Fatalf("children = %+v, want cockpit, its ticket, (no feature) and its ticket", children)
+		}
+		if children[1].feature != "cockpit" || children[3].feature != "(none)" {
+			t.Errorf("ticket owners = %q, %q; want cockpit and (none)", children[1].feature, children[3].feature)
 		}
 		v.focus = 1
 		// The repo, its four children, then the second repo.
@@ -2862,50 +2915,46 @@ func TestStatsReposTicketRows(t *testing.T) {
 		}
 
 		body := stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60))
+		lines := strings.Split(body, "\n")
 		if strings.Contains(body, "TICKET") {
 			t.Errorf("repos tab still shows a TICKET header:\n%s", body)
 		}
-		if !strings.Contains(body, "o/r#607") {
-			t.Errorf("repos tab missing the ticket row:\n%s", body)
+		if strings.Contains(body, "(no ticket)") {
+			t.Errorf("repos tab shows a (no ticket) row:\n%s", body)
 		}
-		if !strings.Contains(body, "(no ticket)") {
-			t.Errorf("repos tab missing the (no ticket) row:\n%s", body)
+		repoLine := statsLineIndex(lines, "fuad-daoud/relevo")
+		featureLine := statsLineIndex(lines, "cockpit")
+		ticketLine := statsLineIndex(lines, "o/r#607")
+		if repoLine < 0 || featureLine < 0 || ticketLine < 0 {
+			t.Fatalf("missing a row: repo %d, feature %d, ticket %d\n%s", repoLine, featureLine, ticketLine, body)
+		}
+		repoCol := statsFirstCol(lines[repoLine])
+		if got, want := statsFirstCol(lines[featureLine]), repoCol+2; got != want {
+			t.Errorf("the feature name starts at col %d, want %d (two cells inside)\n%q",
+				got, want, lines[featureLine])
+		}
+		if got, want := statsFirstCol(lines[ticketLine]), repoCol+4; got != want {
+			t.Errorf("the ticket name starts at col %d, want %d (four cells inside)\n%q\n%q",
+				got, want, lines[featureLine], lines[ticketLine])
 		}
 
-		// The (no ticket) row is the repo's last child, and its detail names it.
-		v.cursor[1] = 4
+		// The ticket's detail names its kind.
+		v.cursor[1] = 2
 		lines, sel := v.reposTabLines(statsTestEnv(t, 132, 60), 132)
 		if sel < 0 || sel >= len(lines) {
-			t.Fatalf("sel = %d, want a line in the (no ticket) block", sel)
+			t.Fatalf("sel = %d, want a line in the ticket's block", sel)
 		}
 		first := stripANSI(lines[len(lines)-3])
-		if !strings.Contains(first, "(no ticket)") {
-			t.Errorf("(no ticket) detail line 1 = %q, want it to name the bucket\n%s", first, strings.Join(lines, "\n"))
+		if !strings.Contains(first, "o/r#607") || !strings.Contains(first, "ticket") {
+			t.Errorf("ticket detail line 1 = %q, want it to name the ticket\n%s", first, strings.Join(lines, "\n"))
 		}
 	})
 
-	t.Run("no-ticket row notices", func(t *testing.T) {
-		// The repo row, its feature, (no feature), the ticket and (no ticket).
-		m := statsReposShell(t, rep, statsFixtureRepoKey)
-		for i := 0; i < 4; i++ {
-			res, _ := m.Update(statsKey('j'))
-			m = res.(Model)
-		}
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		if _, ok := m.top().(roundsView); ok {
-			t.Fatal("the (no ticket) row must not push a rounds view")
-		}
-		if !strings.Contains(m.notice, "rounds with no ticket cannot be filtered") {
-			t.Errorf("notice = %q", m.notice)
-		}
-	})
-
-	t.Run("no labelled tickets means no section", func(t *testing.T) {
+	t.Run("no labelled tickets means no ticket rows", func(t *testing.T) {
 		v := statsView{window: "30d", loaded: true, rep: statsFixture(), tab: statsTabRepos,
 			expanded: map[string]bool{statsFixtureRepoKey: true}}
 		if got := repoChildren(v.rep.Repos[0]); len(got) != 2 {
-			t.Fatalf("children = %+v, want only the feature section", got)
+			t.Fatalf("children = %+v, want only the feature rows", got)
 		}
 		body := stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60))
 		if strings.Contains(body, "TICKET") {
@@ -2925,8 +2974,8 @@ func TestStatsReposExpandKeys(t *testing.T) {
 	env := statsTestEnv(t, 100, 30)
 	// A second labelled repo, so both repos have children to expand.
 	rep := statsFixture()
-	rep.Repos[1].Features = []stats.GroupRow{{Key: "loose", Tokens: 50_000}}
-	rep.Repos[1].NoFeature = stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 50_000}
+	rep.Repos[1].Features = []stats.FeatureRow{{GroupRow: stats.GroupRow{Key: "loose", Tokens: 50_000}}}
+	rep.Repos[1].NoFeature = stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 50_000}}
 	v := View(statsView{window: "30d", loaded: true, rep: rep})
 
 	next, _ := v.Update(statsKey('5'), env)
@@ -3079,13 +3128,15 @@ func TestStatsReposExpansionSurvivesRefresh(t *testing.T) {
 }
 
 // TestStatsReposChildEnter pins §4.4: enter on a feature child opens `:rounds`
-// scoped to its repo and its label, enter on a ticket child likewise, the
-// (no feature)/(no ticket) rows keep their notices, and a child of the (none)
-// repo notices because no query term means "no repo".
+// scoped to its repo and its label; a ticket under a feature adds the feature
+// term; a ticket under (no feature) scopes to the repo and the ticket; the
+// (no feature) row keeps its notice; and a child of the (none) repo notices
+// because no query term means "no repo".
 func TestStatsReposChildEnter(t *testing.T) {
 	cases := []struct {
 		name         string
 		expanded     []string
+		tickets      bool
 		downs        int
 		want         string
 		wantNotice   string
@@ -3093,8 +3144,10 @@ func TestStatsReposChildEnter(t *testing.T) {
 	}{
 		{name: "feature child", expanded: []string{statsFixtureRepoKey}, downs: 1,
 			want: `repo:"https://github.com/fuad-daoud/relevo" feature:"cockpit" since:30d`},
-		{name: "ticket child", expanded: []string{statsFixtureRepoKey}, downs: 3,
-			want: `repo:"https://github.com/fuad-daoud/relevo" ticket:"o/r#607" since:30d`},
+		{name: "ticket under a feature", expanded: []string{statsFixtureRepoKey}, tickets: true, downs: 2,
+			want: `repo:"https://github.com/fuad-daoud/relevo" feature:"cockpit" ticket:"o/r#607" since:30d`},
+		{name: "ticket under (no feature)", expanded: []string{statsFixtureRepoKey}, tickets: true, downs: 4,
+			want: `repo:"https://github.com/fuad-daoud/relevo" ticket:"o/r#608" since:30d`},
 		{name: "no feature child", expanded: []string{statsFixtureRepoKey}, downs: 2,
 			wantNotice: "rounds with no feature cannot be filtered"},
 		{name: "child of the (none) repo", expanded: []string{"(none)"}, downs: 2,
@@ -3103,11 +3156,14 @@ func TestStatsReposChildEnter(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			rep := statsFixture()
-			rep.Repos[0].Tickets = []stats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
+			if c.tickets {
+				rep.Repos[0].Features[0].Tickets = []stats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
+				rep.Repos[0].NoFeature.Tickets = []stats.GroupRow{{Key: "o/r#608", Rounds: 1, Tokens: 400_000}}
+			}
 			if c.labelledNone {
 				// A label on the (none) repo, so it has a child to select.
-				rep.Repos[1].Features = []stats.GroupRow{{Key: "loose", Rounds: 1, Tokens: 50_000}}
-				rep.Repos[1].NoFeature = stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 50_000}
+				rep.Repos[1].Features = []stats.FeatureRow{{GroupRow: stats.GroupRow{Key: "loose", Rounds: 1, Tokens: 50_000}}}
+				rep.Repos[1].NoFeature = stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 50_000}}
 			}
 			m := statsReposShell(t, rep, c.expanded...)
 			for i := 0; i < c.downs; i++ {

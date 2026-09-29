@@ -723,8 +723,9 @@ func statsOverviewReport() stats.Report {
 
 // statsReposExpandedReport is the stats-repos-expanded-132 golden's report: a
 // Build over rows where one feature label and one ticket are used by two repos,
-// so each repo carries its own scoped numbers, plus unlabelled rounds, so the
-// (no feature) and (no ticket) rows show, and a repo with no labels at all.
+// so each repo carries its own scoped numbers and nests the ticket under its
+// feature, plus unlabelled rounds, so the (no feature) row shows, and a repo
+// with no labels at all.
 func statsReposExpandedReport() stats.Report {
 	s := func(v string) *string { return &v }
 	i64 := func(v int64) *int64 { return &v }
@@ -749,7 +750,7 @@ func statsReposExpandedReport() stats.Report {
 		// The shared label cockpit under relevo, counted on its own.
 		row("b1", relevo, shared, ticket, 10, 900_000, 100_000),
 		row("b1", relevo, shared, nil, 11, 900_000, 100_000),
-		// Relevo's unlabelled round: the (no feature) and (no ticket) rows.
+		// Relevo's unlabelled round: the (no feature) row.
 		row("b2", relevo, nil, nil, 12, 200_000, 20_000),
 		// The same label and ticket under money, counted on its own.
 		row("b3", money, shared, ticket, 13, 300_000, 30_000),

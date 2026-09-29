@@ -640,8 +640,10 @@ func (v statsView) enter(env Env) (View, tea.Cmd) {
 }
 
 // enterRepoChild opens `:rounds` for a feature or ticket child, scoped to its
-// repo (§4.4). A "(none)" label keeps its notice, and a child of the "(none)"
-// repo cannot be expressed -- no query term means "no repo" -- so it notices.
+// repo (§4.4). A ticket under a labelled feature also carries that feature's
+// term; a ticket under the (no feature) bucket has none. A "(none)" label keeps
+// its notice, and a child of the "(none)" repo cannot be expressed -- no query
+// term means "no repo" -- so it notices.
 func (v statsView) enterRepoChild(env Env, r repoTabRow, term string) (View, tea.Cmd) {
 	if r.group.Key == "(none)" {
 		return v, notice("rounds with no " + term + " cannot be filtered")
@@ -649,7 +651,11 @@ func (v statsView) enterRepoChild(env Env, r repoTabRow, term string) (View, tea
 	if r.parent == "(none)" {
 		return v, notice("rounds with no repo cannot be filtered")
 	}
-	return v.openRounds(env, `repo:"`+r.parent+`" `+term+`:"`+r.group.Key+`"`+v.sinceTerm())
+	query := `repo:"` + r.parent + `"`
+	if r.feature != "" && r.feature != "(none)" {
+		query += ` feature:"` + r.feature + `"`
+	}
+	return v.openRounds(env, query+` `+term+`:"`+r.group.Key+`"`+v.sinceTerm())
 }
 
 // enterOverview opens `:rounds` filtered to the overview table's selected row
@@ -2602,43 +2608,52 @@ func (v statsView) repoTabRows() []repoTabRow {
 
 // repoTabRow is one visible repos-tab row: a repo, or one of an expanded repo's
 // children. parent is the owning repo's key for a child and "" for a repo row.
+// feature is a ticket row's owning feature key, "(none)" under the (no feature)
+// bucket and "" for every other row.
 type repoTabRow struct {
-	kind   repoKind
-	group  stats.GroupRow
-	parent string
+	kind    repoKind
+	group   stats.GroupRow
+	parent  string
+	feature string
 }
 
-// repoChildren is an expanded repo's child rows in display order (§4.1): its
-// labelled features by tokens desc, then its (no feature) row when the repo has
-// both a labelled feature and a featureless round, then its labelled tickets by
-// tokens desc, then (no ticket) under the same rule. A repo with no labelled
-// features or tickets has no section, so it has no children.
+// repoChildren is an expanded repo's child rows in display order (§4.1): each
+// labelled feature by tokens desc with its labelled tickets nested under it by
+// tokens desc, then the (no feature) row with its tickets under the same rule.
+// The (no feature) row shows when the repo has featureless rounds and either a
+// labelled feature or a labelled ticket, so a featureless round's ticket stays
+// reachable; a repo with no labels at all has no children.
 func repoChildren(r stats.RepoRow) []repoTabRow {
 	var out []repoTabRow
-	if len(r.Features) > 0 {
-		for _, g := range reposByTokens(r.Features) {
-			out = append(out, repoTabRow{kind: kindFeature, group: g, parent: r.Key})
-		}
-		if r.NoFeature.Rounds > 0 {
-			out = append(out, repoTabRow{kind: kindFeature, group: r.NoFeature, parent: r.Key})
+	for _, f := range reposByTokens(r.Features, func(f stats.FeatureRow) int64 { return f.Tokens }) {
+		out = append(out, repoTabRow{kind: kindFeature, group: f.GroupRow, parent: r.Key})
+		for _, t := range reposByTokens(f.Tickets, func(g stats.GroupRow) int64 { return g.Tokens }) {
+			out = append(out, repoTabRow{kind: kindTicket, group: t, parent: r.Key, feature: f.Key})
 		}
 	}
-	if len(r.Tickets) > 0 {
-		for _, g := range reposByTokens(r.Tickets) {
-			out = append(out, repoTabRow{kind: kindTicket, group: g, parent: r.Key})
-		}
-		if r.NoTicket.Rounds > 0 {
-			out = append(out, repoTabRow{kind: kindTicket, group: r.NoTicket, parent: r.Key})
-		}
+	if !repoNoFeatureShown(r) {
+		return out
+	}
+	out = append(out, repoTabRow{kind: kindFeature, group: r.NoFeature.GroupRow, parent: r.Key})
+	for _, t := range reposByTokens(r.NoFeature.Tickets, func(g stats.GroupRow) int64 { return g.Tokens }) {
+		out = append(out, repoTabRow{kind: kindTicket, group: t, parent: r.Key, feature: "(none)"})
 	}
 	return out
 }
 
+// repoNoFeatureShown is the (no feature) row's visibility rule (§4.1): the repo
+// has featureless rounds and either a labelled feature or a ticket to keep
+// reachable. A repo with no labels at all expands to nothing.
+func repoNoFeatureShown(r stats.RepoRow) bool {
+	return r.NoFeature.Rounds > 0 && (len(r.Features) > 0 || len(r.NoFeature.Tickets) > 0)
+}
+
 // reposByTokens is the repos tab's per-section ordering: a copy of rows,
-// stable-sorted by tokens desc (§4.1).
-func reposByTokens(rows []stats.GroupRow) []stats.GroupRow {
-	out := append([]stats.GroupRow(nil), rows...)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Tokens > out[j].Tokens })
+// stable-sorted by tokens desc (§4.1). A feature section and each feature's
+// ticket section both use it.
+func reposByTokens[Row any](rows []Row, tokens func(Row) int64) []Row {
+	out := append([]Row(nil), rows...)
+	sort.SliceStable(out, func(i, j int) bool { return tokens(out[i]) > tokens(out[j]) })
 	return out
 }
 
@@ -2697,12 +2712,13 @@ const (
 )
 
 // statsRepoRow is one repos-table row (§4.2): the fitted name, the numbers in
-// muted and the share cell. A child row's name is indented two cells inside the
-// name column, the dash grid's convention; its numbers and share stay on the
-// repo rows' columns. The selected row is rebuilt as plain text, share
+// muted and the share cell. depth is the row's level in the nested table: the
+// name is indented 2*depth cells inside the name column -- two for a feature,
+// four for a ticket -- the dash grid's convention; its numbers and share stay
+// on the repo rows' columns. The selected row is rebuilt as plain text, share
 // included, and rendered once with the band, fitted to the row width so it
 // ends at width-3.
-func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int, visible []statsRepoCol, indent, selected bool) string {
+func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int, visible []statsRepoCol, depth int, selected bool) string {
 	name := shortRepo(g.Key)
 	switch kind {
 	case kindFeature:
@@ -2711,11 +2727,9 @@ func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int,
 		name = shortTicket(g.Key)
 	}
 	cellW := statsRepoCellW(nameW, visible)
-	key := ""
-	if indent {
-		key = "  "
-		nameW = statsMinWidth(nameW - 2)
-	}
+	pad := 2 * depth
+	key := strings.Repeat(" ", pad)
+	nameW = statsMinWidth(nameW - pad)
 	key += stats.FitKey(name, nameW, false)
 	cells := statsRepoCells(g, visible)
 	if selected {
@@ -2727,10 +2741,10 @@ func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int,
 }
 
 // reposTabLines is the repos tab (§4.1): one REPO table over the visible rows --
-// every repo, plus the children of the expanded ones, whose names are indented
-// two cells inside the name column -- then two blank lines and the selected
-// row's detail block. sel is the selected row's line, so the page follows the
-// cursor.
+// every repo, plus the children of the expanded ones, each nesting level
+// indented two cells further inside the name column -- then two blank lines and
+// the selected row's detail block. sel is the selected row's line, so the page
+// follows the cursor.
 func (v statsView) reposTabLines(env Env, width int) ([]string, int) {
 	rows := v.repoTabRows()
 	n := len(rows)
@@ -2749,7 +2763,14 @@ func (v statsView) reposTabLines(env Env, width int) ([]string, int) {
 			sel = len(out)
 			detail = r
 		}
-		out = append(out, statsRepoRow(r.group, r.kind, windowTotal, nameW, visible, r.parent != "", i == cur))
+		depth := 0
+		if r.parent != "" {
+			depth = 1
+			if r.feature != "" {
+				depth = 2
+			}
+		}
+		out = append(out, statsRepoRow(r.group, r.kind, windowTotal, nameW, visible, depth, i == cur))
 	}
 	out = append(out, "", "")
 	out = append(out, v.statsGroupDetail(env, detail.group, detail.kind, windowTotal)...)
