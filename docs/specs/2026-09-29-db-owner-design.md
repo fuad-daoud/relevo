@@ -102,9 +102,9 @@ wire's reconstructed errors map the same way.
 ## 5. The protocol
 
 **Transport.** `<state root>/relevo.sock`, mode 0600, in the 0700 state root.
-The owner checks the peer uid (`SO_PEERCRED` on Linux, `getpeereid` on macOS,
-via `golang.org/x/sys/unix`). The code is `//go:build unix`; other platforms
-get a stub that refuses, as `internal/store/lock_unsupported.go` does.
+The owner checks the peer uid (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED`/`Xucred`
+on macOS, via `golang.org/x/sys/unix`). The code is `//go:build unix`; other
+platforms get a stub that refuses, as `internal/store/lock_unsupported.go` does.
 
 **Frames.** A 4-byte little-endian length, then the payload. Control payloads
 are JSON objects with a `type` and a request `id`:
@@ -122,10 +122,10 @@ side holds a large result twice.
 **Connections.** Each client driver connection pins one owner connection,
 opened with today's DSN pragmas (`busy_timeout`, `journal_mode(WAL)`,
 `foreign_keys(ON)`, `journal_size_limit`), so per-connection behaviour is
-unchanged. The owner caps pinned connections (starting at 64); a client over
-the cap waits. When a client disconnects, the owner cancels its in-flight
-request, issues `ROLLBACK`, and closes the pinned connection rather than
-returning it to a pool.
+unchanged. The cap counts pinned owner connections; the handshake never waits on
+it, and a client over the cap waits. When a client disconnects, the owner cancels
+its in-flight request, issues `ROLLBACK`, and closes the pinned connection
+rather than returning it to a pool.
 
 **Cancellation.** `cancel{id}` cancels the context of a running request on the
 owner, which interrupts the statement.
@@ -177,11 +177,11 @@ lock, clears `FD_CLOEXEC` on the listener, passes it as `RELEVO_LISTEN_FD`, and
 execs. The new image adopts the listener with `net.FileListener` -- no unlink,
 no rebind -- takes the lock, opens and migrates, and serves. Connections
 arriving in the gap wait in the kernel backlog. Existing client connections
-close at exec; the driver reports `driver.ErrBadConn`, and `database/sql`
-retries a statement outside a transaction on a fresh connection by itself. A
-transaction still open after the drain fails with the retryable `restarting`.
-Without the fd handoff, queued connections are reset (measured), which is why
-the handoff is required, not optional.
+close at exec; a request that never reached the owner is retried on a fresh
+connection, while one already sent fails with a connection-lost error and is
+never retried automatically. A transaction still open after the drain fails with
+the retryable `restarting`. Without the fd handoff, queued connections are reset
+(measured), which is why the handoff is required, not optional.
 
 **Long-lived clients** (`mcp`, `wait`, `ui`, serve) recover the same way from
 an owner crash: bad connection, re-dial, auto-start.

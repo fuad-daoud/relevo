@@ -9,10 +9,10 @@ github.com/fuad-daoud/relevo/internal/classify 87.2
 github.com/fuad-daoud/relevo/internal/config 82.0
 github.com/fuad-daoud/relevo/internal/consult 16.8
 github.com/fuad-daoud/relevo/internal/db 80.9
-github.com/fuad-daoud/relevo/internal/db/dbtest 46.2
+github.com/fuad-daoud/relevo/internal/db/dbtest 61.4
 github.com/fuad-daoud/relevo/internal/db/wire 73.2
-github.com/fuad-daoud/relevo/internal/db/wire/client 55.5
-github.com/fuad-daoud/relevo/internal/db/wire/owner 38.7
+github.com/fuad-daoud/relevo/internal/db/wire/client 57.0
+github.com/fuad-daoud/relevo/internal/db/wire/owner 58.5
 github.com/fuad-daoud/relevo/internal/delivery 86.2
 github.com/fuad-daoud/relevo/internal/doctor 87.3
 github.com/fuad-daoud/relevo/internal/git 83.2
@@ -27,7 +27,7 @@ github.com/fuad-daoud/relevo/internal/mcp 81.2
 github.com/fuad-daoud/relevo/internal/patch 100.0
 github.com/fuad-daoud/relevo/internal/pick 48.4
 github.com/fuad-daoud/relevo/internal/policy 97.0
-github.com/fuad-daoud/relevo/internal/proc 87.8
+github.com/fuad-daoud/relevo/internal/proc 88.0
 github.com/fuad-daoud/relevo/internal/release 88.2
 github.com/fuad-daoud/relevo/internal/relevo 86.0
 github.com/fuad-daoud/relevo/internal/remote 86.7

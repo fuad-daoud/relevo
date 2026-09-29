@@ -26,6 +26,10 @@ type conn struct {
 	dead   bool
 }
 
+// closeDrainTimeout bounds how long Close waits for the owner to finish the
+// client's cleanup before closing the socket anyway.
+const closeDrainTimeout = 2 * time.Second
+
 func (c *conn) newID() int {
 	c.id++
 	return c.id
@@ -83,11 +87,35 @@ func (c *conn) send(kind byte, v any, raw []byte) error {
 	return c.w.Write(payload)
 }
 
-// ioErr marks the connection unusable and reports driver.ErrBadConn, so
-// database/sql discards it rather than reusing a desynchronised stream.
-func (c *conn) ioErr(err error) error {
+// badConn marks the connection unusable and reports driver.ErrBadConn. It is
+// used only before any byte of a request has reached the owner -- a dead
+// connection, or a send that failed -- where a retry on a fresh connection
+// cannot run a statement twice.
+func (c *conn) badConn(err error) error {
 	c.dead = true
 	return fmt.Errorf("%w: %w", driver.ErrBadConn, err)
+}
+
+// connLost marks the connection unusable and reports a lost connection. It is
+// used after a request has been sent: the owner may already have run the
+// statement, so the error deliberately does not match driver.ErrBadConn and
+// database/sql must not retry it.
+func (c *conn) connLost(err error) error {
+	c.dead = true
+	return fmt.Errorf("%w: %w", wire.ErrConnLost, err)
+}
+
+// IsValid reports whether the connection may be reused. A dead connection fails
+// this check, so the pool discards it instead of reusing a desynchronised
+// stream.
+func (c *conn) IsValid() bool { return !c.dead }
+
+// ResetSession discards a dead connection before the pool hands it out again.
+func (c *conn) ResetSession(context.Context) error {
+	if c.dead {
+		return driver.ErrBadConn
+	}
+	return nil
 }
 
 func (c *conn) sendCancel(id int) {
@@ -97,15 +125,17 @@ func (c *conn) sendCancel(id int) {
 	_ = c.send(wire.KindCancel, &wire.Cancel{Header: wire.Header{Type: wire.TypeCancel, ID: id}}, nil)
 }
 
-// readFrame reads and returns one frame's kind and raw payload.
+// readFrame reads and returns one frame's kind and raw payload. It always runs
+// after a request frame was sent, so a read failure is a lost connection: the
+// statement may have run, and database/sql must not retry it.
 func (c *conn) readFrame() (byte, []byte, error) {
 	frame, err := c.w.Read()
 	if err != nil {
-		return 0, nil, c.ioErr(err)
+		return 0, nil, c.connLost(err)
 	}
 	kind, err := wire.Kind(frame)
 	if err != nil {
-		return 0, nil, c.ioErr(err)
+		return 0, nil, c.connLost(err)
 	}
 	return kind, frame, nil
 }
@@ -136,7 +166,19 @@ func (c *conn) Prepare(string) (driver.Stmt, error) {
 }
 
 func (c *conn) Close() error {
+	if c.dead {
+		return c.nc.Close()
+	}
 	c.dead = true
+	// Tell the owner this connection is done and wait for it to close the
+	// socket, so its rollback and discard of the pinned connection finish
+	// before database/sql returns: whatever the database must write back to
+	// the file happens while the caller is still inside Close.
+	if err := c.send(wire.KindClose, &wire.Close{Header: wire.Header{Type: wire.TypeClose}}, nil); err != nil {
+		return c.nc.Close()
+	}
+	_ = c.nc.SetReadDeadline(time.Now().Add(closeDrainTimeout))
+	_, _ = c.w.Read()
 	return c.nc.Close()
 }
 
@@ -189,7 +231,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	}
 	id := c.newID()
 	if err := c.send(wire.KindExec, &wire.Exec{Header: wire.Header{Type: wire.TypeExec, ID: id}, Query: query}, raw); err != nil {
-		return nil, c.ioErr(err)
+		return nil, c.badConn(err)
 	}
 	stop := context.AfterFunc(ctx, func() { c.sendCancel(id) })
 	defer stop()
@@ -199,24 +241,23 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		return nil, err
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		// The owner has been told to interrupt; the stream's state is no
-		// longer known, so the connection is abandoned and database/sql
-		// resumes the caller's context error.
+		// The owner has been told to interrupt and the stream's state is no
+		// longer known, so the connection is abandoned; the caller sees its
+		// own context error and database/sql never retries the statement.
 		c.dead = true
-		return nil, driver.ErrBadConn
+		return nil, ctxErr
 	}
 	switch kind {
 	case wire.KindDone:
 		var m wire.Done
 		if _, err := wire.Decode(frame, &m); err != nil {
-			return nil, c.ioErr(err)
+			return nil, c.connLost(err)
 		}
 		return wireResult{rows: m.RowsAffected, id: m.LastInsertID}, nil
 	case wire.KindError:
 		return nil, decodeError(frame)
 	default:
-		c.dead = true
-		return nil, fmt.Errorf("client: unexpected frame kind %d for exec: %w", kind, driver.ErrBadConn)
+		return nil, c.connLost(fmt.Errorf("client: unexpected frame kind %d for exec", kind))
 	}
 }
 
@@ -230,7 +271,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	}
 	id := c.newID()
 	if err := c.send(wire.KindQuery, &wire.Query{Header: wire.Header{Type: wire.TypeQuery, ID: id}, Query: query}, raw); err != nil {
-		return nil, c.ioErr(err)
+		return nil, c.badConn(err)
 	}
 	stop := context.AfterFunc(ctx, func() { c.sendCancel(id) })
 
@@ -242,7 +283,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		stop()
 		c.dead = true
-		return nil, driver.ErrBadConn
+		return nil, ctxErr
 	}
 	switch kind {
 	case wire.KindRows:
@@ -260,8 +301,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		return &emptyRows{}, nil
 	default:
 		stop()
-		c.dead = true
-		return nil, fmt.Errorf("client: unexpected frame kind %d for query: %w", kind, driver.ErrBadConn)
+		return nil, c.connLost(fmt.Errorf("client: unexpected frame kind %d for query", kind))
 	}
 }
 
@@ -329,7 +369,7 @@ func (r *rows) Next(dest []driver.Value) error {
 
 func (r *rows) requestNext() error {
 	if err := r.c.send(wire.KindNext, &wire.Next{Header: wire.Header{Type: wire.TypeNext, ID: r.id}}, nil); err != nil {
-		return r.c.ioErr(err)
+		return r.c.badConn(err)
 	}
 	kind, frame, err := r.c.readFrame()
 	if err != nil {
@@ -344,8 +384,7 @@ func (r *rows) requestNext() error {
 	case wire.KindError:
 		return decodeError(frame)
 	default:
-		r.c.dead = true
-		return fmt.Errorf("client: unexpected frame kind %d for query: %w", kind, driver.ErrBadConn)
+		return r.c.connLost(fmt.Errorf("client: unexpected frame kind %d for query", kind))
 	}
 }
 
@@ -362,8 +401,7 @@ func (r *rows) awaitDone() error {
 	case wire.KindError:
 		return decodeError(frame)
 	default:
-		r.c.dead = true
-		return fmt.Errorf("client: expected done, got frame kind %d: %w", kind, driver.ErrBadConn)
+		return r.c.connLost(fmt.Errorf("client: expected done, got frame kind %d", kind))
 	}
 }
 

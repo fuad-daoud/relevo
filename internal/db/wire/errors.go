@@ -2,6 +2,11 @@ package wire
 
 import "errors"
 
+// ErrConnLost marks a connection lost after a request was already sent: the
+// owner may have run the statement, so the error deliberately does not match
+// driver.ErrBadConn and database/sql must not retry it automatically.
+var ErrConnLost = errors.New("wire: connection lost after the request was sent")
+
 // Error is a rebuilt SQLite error: it carries the owner's code so the client's
 // existing code masks keep working, and its text so the message fallbacks do.
 type Error struct {

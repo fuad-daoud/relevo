@@ -14,8 +14,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
 
-// maxConns caps simultaneous pinned connections. A client over the cap waits;
-// it is never refused.
+// maxConns caps simultaneous pinned connections. Only a request that needs a
+// pinned connection takes a slot: the handshake never waits on the cap, and a
+// client over the cap waits rather than being refused.
 var maxConns = 64
 
 // ownerUID is the uid every peer must match. It is read once by New, so a test
@@ -36,7 +37,10 @@ type Server struct {
 	closed bool
 	ln     net.Listener
 	conns  map[*conn]struct{}
-	sem    chan struct{}
+	// sem holds one slot per pinned connection; a request that needs one waits
+	// on it inside pin, and cleanup returns it when that connection is
+	// discarded. Idle handshaken connections never take a slot.
+	sem chan struct{}
 }
 
 // New wraps a database handle, its schema versions and the installation id
@@ -119,9 +123,6 @@ func (s *Server) handle(nc net.Conn) {
 		_ = nc.Close()
 		return
 	}
-
-	s.sem <- struct{}{}
-	defer func() { <-s.sem }()
 
 	c := newConn(s, nc)
 	s.addConn(c)

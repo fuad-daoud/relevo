@@ -122,6 +122,36 @@ func refusal(t *testing.T, w *wire.Conn) *wire.Refusal {
 	return &m
 }
 
+// execRaw writes one exec frame without waiting for its answer.
+func execRaw(t *testing.T, w *wire.Conn, id int, query string) {
+	t.Helper()
+	payload, err := wire.Encode(wire.KindExec, &wire.Exec{
+		Header: wire.Header{Type: wire.TypeExec, ID: id},
+		Query:  query,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Encode exec: %v", err)
+	}
+	if err := w.Write(payload); err != nil {
+		t.Fatalf("Write exec: %v", err)
+	}
+}
+
+// readDone reads one frame and requires it to be a done answer.
+func readDone(t *testing.T, w *wire.Conn, nc net.Conn) {
+	t.Helper()
+	if err := nc.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	frame, err := w.Read()
+	if err != nil {
+		t.Fatalf("Read done: %v", err)
+	}
+	if kind, err := wire.Kind(frame); err != nil || kind != wire.KindDone {
+		t.Fatalf("frame kind = %d (%v), want done", kind, err)
+	}
+}
+
 func TestOwnerGreetsWithItsSchemaAndOrigin(t *testing.T) {
 	_, sock := startServer(t)
 	w, _ := dialRaw(t, sock)
@@ -170,39 +200,91 @@ func TestOwnerRefusesWhenShuttingDown(t *testing.T) {
 
 func TestConnectionCapWaitsInsteadOfRefusing(t *testing.T) {
 	old := maxConns
-	maxConns = 2
+	maxConns = 1
 	defer func() { maxConns = old }()
 
 	_, sock := startServer(t)
 
-	// Fill the cap with two live connections.
-	c1, n1 := dialRaw(t, sock)
-	sendHello(t, c1, wire.Version)
-	welcome(t, c1)
-	c2, _ := dialRaw(t, sock)
-	sendHello(t, c2, wire.Version)
-	welcome(t, c2)
+	// One client pins the single slot for the life of its connection.
+	a, na := dialRaw(t, sock)
+	sendHello(t, a, wire.Version)
+	welcome(t, a)
+	execRaw(t, a, 1, `CREATE TABLE t (n INTEGER)`)
+	readDone(t, a, na)
 
-	// A third client is not refused; it waits. A short read deadline shows no
-	// welcome arrived while the cap is full.
-	c3, n3 := dialRaw(t, sock)
-	sendHello(t, c3, wire.Version)
-	if err := n3.SetReadDeadline(time.Now().Add(300 * time.Millisecond)); err != nil {
+	// A second client's handshake is served while the cap is full: the cap
+	// never bounds the handshake, so a short deadline is enough to prove it.
+	b, nb := dialRaw(t, sock)
+	if err := nb.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
-	if _, err := c3.Read(); err == nil {
-		t.Fatal("a third connection was served over the cap")
-	}
-	_ = n3.Close()
-
-	// Free a slot; a fresh connection is served again.
-	_ = n1.Close()
-	c4, n4 := dialRaw(t, sock)
-	if err := n4.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	sendHello(t, b, wire.Version)
+	welcome(t, b)
+	if err := nb.SetReadDeadline(time.Time{}); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
-	sendHello(t, c4, wire.Version)
-	welcome(t, c4)
+
+	// Its request waits for the slot, and keeps waiting longer than the
+	// client's two-second handshake timeout: a cap that refused, or that
+	// bounded the handshake, would have failed this client already.
+	execRaw(t, b, 1, `INSERT INTO t (n) VALUES (1)`)
+	if err := nb.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	if _, err := b.Read(); err == nil {
+		t.Fatal("a request was served over the cap")
+	}
+	if err := nb.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+
+	// Free the slot; the waiting request now succeeds.
+	_ = na.Close()
+	readDone(t, b, nb)
+}
+
+// liveConn returns the server's one live connection.
+func liveConn(t *testing.T, s *Server) *conn {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for c := range s.conns {
+		return c
+	}
+	t.Fatal("server has no live connection")
+	return nil
+}
+
+// TestAFinishedRequestDoesNotDropTheNextOne pins the slot hand-off: a finished
+// request clears its slot from its own goroutine, so a request that arrives in
+// that window waits for the clear rather than having the whole connection
+// dropped as if the client had pipelined two requests.
+func TestAFinishedRequestDoesNotDropTheNextOne(t *testing.T) {
+	srv, sock := startServer(t)
+	w, nc := dialRaw(t, sock)
+	sendHello(t, w, wire.Version)
+	welcome(t, w)
+
+	// A request whose goroutine has answered but not yet released its slot is
+	// the window this test widens by hand.
+	c := liveConn(t, srv)
+	held, _ := newRequest(99)
+	c.mu.Lock()
+	c.cur = held
+	c.mu.Unlock()
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		c.mu.Lock()
+		if c.cur == held {
+			c.cur = nil
+		}
+		c.mu.Unlock()
+		close(held.done)
+	}()
+
+	// The next request must be served, not dropped with the connection.
+	execRaw(t, w, 1, `CREATE TABLE t (n INTEGER)`)
+	readDone(t, w, nc)
 }
 
 func TestOwnerDropsADifferentUid(t *testing.T) {

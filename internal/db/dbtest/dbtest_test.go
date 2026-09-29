@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -54,5 +55,62 @@ func TestInstallSetsAndClears(t *testing.T) {
 
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("template directory still present after cleanup: %v", err)
+	}
+}
+
+// TestOwnerModeRoutesOpenThroughASocket pins the on mode: with the variable set
+// OwnerMode installs the hop, and the first Open of a path is reached through
+// an owner listening on a short /tmp socket.
+func TestOwnerModeRoutesOpenThroughASocket(t *testing.T) {
+	t.Setenv(ownerEnv, "1")
+	reg, cleanup, err := ownerMode()
+	if err != nil {
+		t.Fatalf("ownerMode: %v", err)
+	}
+	t.Cleanup(cleanup)
+	if reg == nil {
+		t.Fatal("ownerMode returned no registry with the variable set")
+	}
+
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	sock, ok := reg.socks[path]
+	if !ok {
+		t.Fatalf("OwnerMode did not route %s through a socket", path)
+	}
+	if !strings.HasPrefix(sock, "/tmp/") {
+		t.Errorf("owner socket %q is not directly under /tmp", sock)
+	}
+	if len(sock) >= 104 {
+		t.Errorf("owner socket path is %d bytes, over the 104-byte sun_path", len(sock))
+	}
+}
+
+// TestOwnerModeOffOpensDirectly pins the off mode: an unset variable installs
+// nothing, and Open creates the file itself.
+func TestOwnerModeOffOpensDirectly(t *testing.T) {
+	t.Setenv(ownerEnv, "")
+	reg, cleanup, err := ownerMode()
+	if err != nil {
+		t.Fatalf("ownerMode: %v", err)
+	}
+	t.Cleanup(cleanup)
+	if reg != nil {
+		t.Fatal("ownerMode installed a registry with the variable unset")
+	}
+
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("a direct Open did not create %s: %v", path, err)
 	}
 }

@@ -156,14 +156,10 @@ func (c *conn) start(kind byte, frame []byte) error {
 		return err
 	}
 
-	c.mu.Lock()
-	if cur := c.cur; cur != nil {
-		c.mu.Unlock()
-		return fmt.Errorf("owner: request %d already in flight", cur.id)
+	r, ctx, err := c.claim(m.ID)
+	if err != nil {
+		return err
 	}
-	r, ctx := newRequest(m.ID)
-	c.cur = r
-	c.mu.Unlock()
 
 	go func() {
 		defer func() {
@@ -178,6 +174,30 @@ func (c *conn) start(kind byte, frame []byte) error {
 		c.run(ctx, r, kind, m.Query, raw)
 	}()
 	return nil
+}
+
+// claim takes the connection's single request slot. A finished request clears
+// the slot from its own goroutine, so a client that sends its next request the
+// moment it reads the answer waits for that clear rather than having its whole
+// connection dropped as though it had pipelined two requests.
+func (c *conn) claim(id int) (*request, context.Context, error) {
+	for {
+		c.mu.Lock()
+		cur := c.cur
+		if cur == nil {
+			r, ctx := newRequest(id)
+			c.cur = r
+			c.mu.Unlock()
+			return r, ctx, nil
+		}
+		c.mu.Unlock()
+
+		select {
+		case <-cur.done:
+		case <-time.After(discardTimeout):
+			return nil, nil, fmt.Errorf("owner: request %d already in flight", cur.id)
+		}
+	}
 }
 
 func (c *conn) run(ctx context.Context, r *request, kind byte, query string, raw []byte) {
@@ -198,14 +218,30 @@ func (c *conn) run(ctx context.Context, r *request, kind byte, query string, raw
 	c.query(ctx, r, pinned, query, args)
 }
 
+// pin opens the client's own owner connection on first use, holding one of the
+// server's connection slots for it. The slot is taken on the request's context,
+// with no deadline of its own, so a client over the cap waits here -- the
+// handshake never does -- and a disconnect releases the wait.
 func (c *conn) pin(ctx context.Context) (*sql.Conn, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.pinned != nil {
-		return c.pinned, nil
+		pinned := c.pinned
+		c.mu.Unlock()
+		return pinned, nil
 	}
+	c.mu.Unlock()
+
+	select {
+	case c.s.sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	pinned, err := c.s.dbh.Conn(ctx)
 	if err != nil {
+		<-c.s.sem
 		return nil, err
 	}
 	c.pinned = pinned
@@ -340,15 +376,15 @@ func (s *rowStream) read() ([]any, bool, error) {
 }
 
 // cleanup runs when the client goes away: it interrupts any running statement,
-// rolls the pinned connection back whatever state it was in, and discards it.
+// rolls the pinned connection back whatever state it was in, discards it, and
+// frees the connection slot that pin took.
 func (c *conn) cleanup() {
 	c.mu.Lock()
 	r := c.cur
 	c.cur = nil
-	pinned := c.pinned
-	c.pinned = nil
 	c.mu.Unlock()
 
+	pinned := c.takePinned()
 	if r != nil {
 		r.cancel()
 		r.signalStop()
@@ -356,13 +392,30 @@ func (c *conn) cleanup() {
 		case <-r.done:
 		case <-time.After(discardTimeout):
 		}
+		// A request that was still acquiring its slot when cleanup began can
+		// pin a connection after the read above; take it so its slot is freed
+		// with the rest.
+		if p := c.takePinned(); p != nil {
+			pinned = p
+		}
 	}
 	if pinned != nil {
 		_, _ = pinned.ExecContext(context.Background(), "ROLLBACK")
 		_ = pinned.Raw(func(any) error { return driver.ErrBadConn })
 		_ = pinned.Close()
+		<-c.s.sem
 	}
 	_ = c.nc.Close()
+}
+
+// takePinned detaches the client's pinned connection, returning nil when there
+// is none. A non-nil result owns the connection slot the pin took.
+func (c *conn) takePinned() *sql.Conn {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	pinned := c.pinned
+	c.pinned = nil
+	return pinned
 }
 
 // shutdown drops the client connection, which makes serve return and cleanup
