@@ -3047,6 +3047,57 @@ func TestStatsReposExpandKeys(t *testing.T) {
 	}
 }
 
+// TestStatsReposExpandEmptyRepo pins #669: a repo with no features or tickets
+// stays collapsed and answers the expand keys with a notice instead of silence,
+// while a featureless repo whose rounds carry tickets still expands to its
+// (no feature) row.
+func TestStatsReposExpandEmptyRepo(t *testing.T) {
+	env := statsTestEnv(t, 100, 30)
+	rep := statsFixture()
+	rep.Repos[0].Features = nil
+	rep.Repos[0].NoFeature = stats.FeatureRow{}
+	v := View(statsView{window: "30d", loaded: true, rep: rep})
+	next, _ := v.Update(statsKey('5'), env)
+	v = next
+
+	for _, key := range []tea.KeyMsg{{Type: tea.KeySpace}, {Type: tea.KeyRight}} {
+		next, cmd := v.Update(key, env)
+		if cmd == nil {
+			t.Fatalf("%v on a repo with no children must notice", key)
+		}
+		msg, ok := cmd().(noticeMsg)
+		if !ok {
+			t.Fatalf("%v: msg = %T, want a notice", key, msg)
+		}
+		if !strings.Contains(msg.text, "has no features or tickets") {
+			t.Errorf("%v: notice = %q, want it to name what is missing", key, msg.text)
+		}
+		got := next.(statsView)
+		if got.expanded[statsFixtureRepoKey] {
+			t.Errorf("%v expanded a repo with no children", key)
+		}
+		if n := got.panelRows(); n != 2 {
+			t.Errorf("%v: panelRows = %d, want the two repo rows", key, n)
+		}
+	}
+
+	// The reachability case keeps working: featureless rounds with tickets
+	// expand to (no feature) and its tickets, with no notice.
+	rep.Repos[0].NoFeature = stats.FeatureRow{
+		GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 30},
+		Tickets:  []stats.GroupRow{{Key: "t9", Tokens: 30}},
+	}
+	v = View(statsView{window: "30d", loaded: true, rep: rep})
+	next, _ = v.Update(statsKey('5'), env)
+	next, cmd := next.Update(tea.KeyMsg{Type: tea.KeySpace}, env)
+	if cmd != nil {
+		t.Errorf("a repo with a ticket under (no feature) must expand, not notice")
+	}
+	if !next.(statsView).expanded[statsFixtureRepoKey] {
+		t.Errorf("a repo with a ticket under (no feature) must expand")
+	}
+}
+
 // TestStatsReposVisibleCursor pins §4.1's cursor: ↑↓ walk only the visible rows
 // and stop at the list's ends, and a collapsed repo's children are unreachable.
 func TestStatsReposVisibleCursor(t *testing.T) {

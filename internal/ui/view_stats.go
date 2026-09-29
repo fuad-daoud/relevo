@@ -374,7 +374,7 @@ func (v statsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 			v.ovFocus = 1
 			v.follow(env)
 		case "repos":
-			v.expandSelectedRepo(env)
+			return v, v.expandSelectedRepo(env)
 		}
 		return v, nil
 	case "s":
@@ -395,8 +395,7 @@ func (v statsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		// Space pages every other tab; on repos it toggles the selected row's
 		// repo's expansion (§4.1).
 		if statsTabs[v.tab] == "repos" {
-			v.toggleSelectedRepo(env)
-			return v, nil
+			return v, v.toggleSelectedRepo(env)
 		}
 		lines, _, avail := v.page(env)
 		v.top = min(v.top+max(1, avail-1), statsMaxTop(len(lines), avail))
@@ -489,26 +488,28 @@ func (v statsView) repoRowIndex(key string) int {
 
 // toggleSelectedRepo flips the expansion of the repo owning the selected row
 // (§4.1): a child collapses its repo and leaves the cursor on the repo's row; a
-// repo row toggles in place, so the cursor does not move.
-func (v *statsView) toggleSelectedRepo(env Env) {
+// repo row toggles in place, so the cursor does not move. A repo with nothing to
+// show notices instead of expanding, so the key never looks dead.
+func (v *statsView) toggleSelectedRepo(env Env) tea.Cmd {
 	key, child, ok := v.reposSelected()
 	if !ok {
-		return
+		return nil
 	}
 	if v.expanded[key] {
 		v.collapseRepo(key, child)
 		v.follow(env)
-		return
+		return nil
 	}
-	v.expandRepo(key)
+	return v.expandRepo(key)
 }
 
 // expandSelectedRepo shows the selected row's repo's children; expanding never
 // moves the cursor (§4.1).
-func (v *statsView) expandSelectedRepo(env Env) {
+func (v *statsView) expandSelectedRepo(env Env) tea.Cmd {
 	if key, _, ok := v.reposSelected(); ok {
-		v.expandRepo(key)
+		return v.expandRepo(key)
 	}
+	return nil
 }
 
 // collapseSelectedRepo hides the selected row's repo's children; a cursor on one
@@ -520,12 +521,27 @@ func (v *statsView) collapseSelectedRepo(env Env) {
 	}
 }
 
-// expandRepo shows a repo's children without moving the cursor.
-func (v *statsView) expandRepo(key string) {
+// expandRepo shows a repo's children without moving the cursor. A repo with no
+// children stays collapsed and notices, so the key never looks dead.
+func (v *statsView) expandRepo(key string) tea.Cmd {
+	if !v.repoHasChildren(key) {
+		return notice(shortRepo(key) + " has no features or tickets")
+	}
 	if v.expanded == nil {
 		v.expanded = map[string]bool{}
 	}
 	v.expanded[key] = true
+	return nil
+}
+
+// repoHasChildren reports whether expanding a repo would show any row.
+func (v statsView) repoHasChildren(key string) bool {
+	for _, r := range v.rep.Repos {
+		if r.Key == key {
+			return len(repoChildren(r)) > 0
+		}
+	}
+	return false
 }
 
 // collapseRepo hides a repo's children; when the cursor was on one of them it
