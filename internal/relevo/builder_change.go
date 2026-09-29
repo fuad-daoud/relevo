@@ -72,6 +72,28 @@ func roundOpenIn(entries []store.LogEntry, round int) bool {
 		!HasEntry(entries, round, store.DirToMasterMind, store.KindReport)
 }
 
+// candidateSendRefused reports whether `relevo send --candidate` is refused
+// because the binding's round is already open, with one exception: a served
+// binding that has halted in NEEDS YOU may be re-pointed at a named candidate.
+//
+// The why: a halt is a human decision point, and on a served binding `relevo
+// stop` is itself refused (the server answers 409 round_halted), so naming the
+// candidate that continues *this* round is the human's only lever there. A
+// local binding is not exempt -- it stops and re-sends as its refusal has
+// always said.
+//
+// "Served" has two spellings, because relevo keeps two copies of such a
+// binding: the server's copy carries Owner and a headless builder, while the
+// client's copy carries Builder.Mode == ModeRemote and no Owner. This is the
+// same "not local" test RunningProcs uses.
+func candidateSendRefused(b store.Binding, entries []store.LogEntry) bool {
+	if !roundOpenIn(entries, b.Round) {
+		return false
+	}
+	served := b.Owner != "" || b.Builder.Remote()
+	return !(served && b.State == store.StateNeedsYou)
+}
+
 // HasPromptEntry reports whether the log holds a to-builder prompt entry of
 // round, in either kind spelling, with HasEntry's shape and nudge exclusion.
 func HasPromptEntry(entries []store.LogEntry, round int) bool {

@@ -131,7 +131,11 @@ func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remot
 }
 
 func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error) {
-	f.calls = append(f.calls, fmt.Sprintf("StartRound:%s:%s:%d", server, name, round))
+	call := fmt.Sprintf("StartRound:%s:%s:%d", server, name, round)
+	if f.beforeCall != nil {
+		f.beforeCall(call)
+	}
+	f.calls = append(f.calls, call)
 	f.startRoundTier = tier
 	f.startRoundCandidate = candidate
 	f.startRoundTags = tags
@@ -5835,6 +5839,87 @@ func TestSendRemoteBuilderRefusedWhileRoundOpen(t *testing.T) {
 	}
 	if len(fr.calls) != 0 {
 		t.Errorf("the refusal contacted the server: %v", fr.calls)
+	}
+}
+
+// TestSendRemoteBuilderRepointsAHaltedRound pins the client half of the
+// re-point: a served binding halted on its open round may be re-pointed by
+// --candidate. The token reaches StartRound, the server's canonical candidate
+// is recorded, and the local copy keeps round 1, clears its halt and goes
+// active. Nothing is staged before the server answers.
+func TestSendRemoteBuilderRepointsAHaltedRound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	view := remote.BindingView{RoundState: remote.RoundRunning, Candidate: "opencode/test/m"}
+	fr := &fakeRemote{
+		whoAmIResp:     remote.WhoAmI{Features: []string{remote.FeatureTier, remote.FeatureBuilder}},
+		startRoundResp: view,
+	}
+	rt, st, _ := remoteBuilderRT(t, fr)
+
+	stored, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.State = store.StateNeedsYou
+	stored.Halt = "builder agy/test/m (exited (code 1) without a report); already switched"
+	stored.HaltAt = time.Now().UTC()
+	if err := st.Save(stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendLog("api", store.LogEntry{
+		TS: time.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The plan may not be on disk while the server is being asked: the client
+	// records the server's answer first.
+	stagedAtStart := false
+	fr.beforeCall = func(call string) {
+		if !strings.HasPrefix(call, "StartRound:") {
+			return
+		}
+		if _, statErr := os.Stat(st.PromptPath("api", 1)); statErr == nil {
+			stagedAtStart = true
+		}
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan 2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Send(ctx, rt, "api", planFile, SendOptions{Builder: "opencode/test/m"})
+	if err != nil {
+		t.Fatalf("Send --candidate on a halted served round: %v", err)
+	}
+	if fr.startRoundCandidate != "opencode/test/m" {
+		t.Errorf("fake saw candidate %q, want opencode/test/m", fr.startRoundCandidate)
+	}
+	if stagedAtStart {
+		t.Error("a plan was staged before the server answered")
+	}
+	if res.Round != 1 {
+		t.Errorf("res.Round = %d, want 1", res.Round)
+	}
+
+	after, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Round != 1 {
+		t.Errorf("Round = %d, want 1 (the round is re-pointed, not advanced)", after.Round)
+	}
+	if after.BuilderCandidate != "opencode/test/m" {
+		t.Errorf("BuilderCandidate = %q, want the served candidate opencode/test/m", after.BuilderCandidate)
+	}
+	if after.State != store.StateActive {
+		t.Errorf("State = %q, want active", after.State)
+	}
+	if after.Halt != "" {
+		t.Errorf("Halt = %q, want cleared", after.Halt)
 	}
 }
 
