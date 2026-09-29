@@ -2,8 +2,6 @@ package store
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -12,10 +10,6 @@ import (
 // read back as active, while a state the version does know is not rewritten.
 func TestLoadLegacyStates(t *testing.T) {
 	s := New(t.TempDir())
-	dir := s.Dir("webshop")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 
 	for _, tc := range []struct {
 		name string
@@ -34,13 +28,11 @@ func TestLoadLegacyStates(t *testing.T) {
 			} else {
 				b.State = StateNeedsYou
 			}
-			raw, err := json.MarshalIndent(b, "", "  ")
+			raw, err := json.Marshal(b)
 			if err != nil {
-				t.Fatalf("encode bind.json: %v", err)
+				t.Fatalf("encode record JSON: %v", err)
 			}
-			if err := os.WriteFile(filepath.Join(dir, "bind.json"), raw, 0o644); err != nil {
-				t.Fatalf("write bind.json: %v", err)
-			}
+			putRecordJSON(t, s, "webshop", string(raw))
 
 			got, err := s.Load("webshop")
 			if err != nil {

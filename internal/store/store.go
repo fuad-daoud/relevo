@@ -33,13 +33,7 @@ const (
 	// human. A runaway guard, not a progress estimate; `relevo bind --timeout`
 	// overrides it per binding.
 	defaultRoundMSecs = 86400000
-	archiveDirName    = ".archive"
-
-	// maxArchiveFileBytes bounds a single file going into an archive: relevo's
-	// own state files are small, and a runaway file should fail the archive
-	// rather than balloon it.
-	maxArchiveFileBytes = 64 << 20
-	lockFileName        = ".lock"
+	lockFileName      = ".lock"
 	// daemonLockFileName is separate from lockFileName because the daemon
 	// holds it for its entire lifetime: sharing one would block every other
 	// command forever.

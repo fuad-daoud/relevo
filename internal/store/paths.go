@@ -213,18 +213,9 @@ func (s *Store) DriftPath(name string, round int) string {
 	return s.roundFile(name, round, "drift", ".patch")
 }
 
-// ViewedPath is where the "viewed" sidecar lived before viewed_at became a
-// record column; nothing writes it now.
-func (s *Store) ViewedPath(name string) string {
-	return filepath.Join(s.Dir(name), ".viewed")
-}
-
 // MarkViewed is a no-op when the binding has no record: a read verb must not
 // fail because a stamp could not be written.
 func (s *Store) MarkViewed(name string, at time.Time) error {
-	if err := s.importPresent(name); err != nil {
-		return err
-	}
 	d, err := s.dbForWrite()
 	if err != nil {
 		return err
@@ -240,9 +231,6 @@ func (s *Store) MarkViewed(name string, at time.Time) error {
 }
 
 func (s *Store) ViewedAt(name string) (time.Time, bool) {
-	if err := s.importPresent(name); err != nil {
-		return time.Time{}, false
-	}
 	d, err := s.dbForRead()
 	if err != nil || d == nil {
 		return time.Time{}, false
@@ -281,18 +269,6 @@ func (s *Store) consultFile(name string, round int, id, suffix, ext string) stri
 	}
 	return filepath.Join(s.Dir(name), fmt.Sprintf("%03d-%s-%s%s", round, id, suffix, ext))
 }
-
-func (s *Store) bindingPath(name string) string {
-	return filepath.Join(s.Dir(name), "bind.json")
-}
-
-// ArchiveDir is the legacy directory a pre-database relevo kept archived
-// bindings in; nothing writes it now, it is the one-time import's input.
-func (s *Store) ArchiveDir() string { return filepath.Join(s.root, archiveDirName) }
-
-// archiveStampLayout is the stamp a legacy tarball's file name carries, and
-// the archived_at the import gives the record it makes from it.
-const archiveStampLayout = "20060102-150405"
 
 func (s *Store) DBPath() string { return filepath.Join(s.root, "relevo.db") }
 

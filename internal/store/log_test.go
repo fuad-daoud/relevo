@@ -1,9 +1,7 @@
 package store
 
 import (
-	"bytes"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -51,33 +49,6 @@ func TestReadLogOnNeverWrittenLogIsNilNil(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("got %+v, want nil", got)
-	}
-}
-
-func TestReadLogRefusesOversizedLogInsteadOfTruncating(t *testing.T) {
-	s, name := seedBinding(t)
-
-	entry := LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x", Confirmed: true}
-	raw, err := json.Marshal(entry)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-
-	var buf bytes.Buffer
-	for i := 0; i < maxLogEntries+1; i++ {
-		buf.Write(raw)
-		buf.WriteByte('\n')
-	}
-	if err := os.WriteFile(s.logPath(name), buf.Bytes(), bindingFileMode); err != nil {
-		t.Fatalf("seed oversized log: %v", err)
-	}
-
-	_, err = s.ReadLog(name)
-	if err == nil {
-		t.Fatal("ReadLog: got nil error, want a refusal for an oversized log")
-	}
-	if !strings.Contains(err.Error(), "exceeds") {
-		t.Errorf("error = %q, want it to mention the log exceeding the bound", err.Error())
 	}
 }
 
@@ -134,24 +105,15 @@ func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 	s, name := seedBinding(t)
 	s.logCap = 5
 
-	// Seed the log with entries below the cap, written through log.jsonl so
-	// importPresent adopts them.
-	entry := LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x", Confirmed: true}
-	raw, err := json.Marshal(entry)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	var buf bytes.Buffer
+	// Seed the log with entries below the cap through the database.
 	for i := 0; i < s.maxLog()-1; i++ {
-		buf.Write(raw)
-		buf.WriteByte('\n')
-	}
-	if err := os.WriteFile(s.logPath(name), buf.Bytes(), bindingFileMode); err != nil {
-		t.Fatalf("seed log: %v", err)
+		if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x", Confirmed: true}); err != nil {
+			t.Fatalf("seed log: %v", err)
+		}
 	}
 	seeded, err := s.ReadLog(name)
 	if err != nil {
-		t.Fatalf("ReadLog (adopt the seed): %v", err)
+		t.Fatalf("ReadLog (the seed): %v", err)
 	}
 	if len(seeded) != s.maxLog()-1 {
 		t.Fatalf("seeded %d entries, want %d", len(seeded), s.maxLog()-1)
@@ -251,16 +213,10 @@ func TestLogEntryCommitFactsRoundTripAndAreOmittedWhenUnknown(t *testing.T) {
 }
 
 // TestLogSeqNumbering pins that appendLog assigns the next position -- also
-// when the caller supplied one -- and that a pre-Seq log is numbered on read.
+// when the caller supplied one.
 func TestLogSeqNumbering(t *testing.T) {
-	preSeqLines := `{"ts":"2026-09-10T10:00:00.000Z","round":1,"direction":"to_builder","kind":"plan","confirmed":true}
-{"ts":"2026-09-10T10:00:01.000Z","round":1,"direction":"to_planner","kind":"report","confirmed":true}
-{"ts":"2026-09-10T10:01:00.000Z","round":2,"direction":"to_builder","kind":"plan","confirmed":true}
-`
-
 	cases := []struct {
 		name    string
-		seed    func(t *testing.T, s *Store, name string)
 		appends []LogEntry
 		want    []int
 	}{
@@ -276,25 +232,11 @@ func TestLogSeqNumbering(t *testing.T) {
 			},
 			want: []int{1, 2, 3, 4},
 		},
-		{
-			name: "a pre-Seq file is numbered on read",
-			seed: func(t *testing.T, s *Store, name string) {
-				t.Helper()
-				if err := os.WriteFile(s.logPath(name), []byte(preSeqLines), bindingFileMode); err != nil {
-					t.Fatalf("seed pre-Seq log: %v", err)
-				}
-			},
-			appends: []LogEntry{{Round: 2, Direction: DirToMasterMind, Kind: KindReport}},
-			want:    []int{1, 2, 3, 4},
-		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, name := seedBinding(t)
-			if tc.seed != nil {
-				tc.seed(t, s, name)
-			}
 			for _, e := range tc.appends {
 				if err := s.AppendLog(name, e); err != nil {
 					t.Fatalf("AppendLog: %v", err)
@@ -531,12 +473,14 @@ func TestConfirmIndexRejectsAnIndexOutsideTheLog(t *testing.T) {
 func TestConfirmIndexKeepsSeq(t *testing.T) {
 	s, name := seedBinding(t)
 
-	raw := `{"ts":"2026-09-10T10:00:00.000Z","round":1,"direction":"to_builder","kind":"plan","confirmed":true}
-{"ts":"2026-09-10T10:00:01.000Z","round":1,"direction":"to_planner","kind":"report","confirmed":false}
-{"ts":"2026-09-10T10:01:00.000Z","round":2,"direction":"to_builder","kind":"plan","confirmed":true}
-`
-	if err := os.WriteFile(s.logPath(name), []byte(raw), bindingFileMode); err != nil {
-		t.Fatalf("seed log: %v", err)
+	for _, e := range []LogEntry{
+		{Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true},
+		{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "done"},
+		{Round: 2, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true},
+	} {
+		if err := s.AppendLog(name, e); err != nil {
+			t.Fatalf("seed log: %v", err)
+		}
 	}
 
 	if err := s.ConfirmIndex(name, 1, ""); err != nil {
@@ -569,14 +513,12 @@ func TestConfirmIndexKeepsSeq(t *testing.T) {
 func TestConfirmIndexPreservesUnknownKeys(t *testing.T) {
 	s, name := seedBinding(t)
 
-	raw := `{"seq":1,"ts":"2026-09-10T10:00:00.000Z","round":1,"direction":"to_builder","kind":"plan","confirmed":true,"future_key":1}
-{"seq":2,"ts":"2026-09-10T10:00:01.000Z","round":1,"direction":"to_planner","kind":"report","confirmed":false,"future_key":1}
-{"seq":3,"ts":"2026-09-10T10:01:00.000Z","round":2,"direction":"to_builder","kind":"plan","confirmed":true,"future_key":1}
-`
-	if err := os.WriteFile(s.logPath(name), []byte(raw), bindingFileMode); err != nil {
-		t.Fatalf("seed log: %v", err)
+	before := []string{
+		`{"seq":1,"ts":"2026-09-10T10:00:00.000Z","round":1,"direction":"to_builder","kind":"plan","confirmed":true,"future_key":1}`,
+		`{"seq":2,"ts":"2026-09-10T10:00:01.000Z","round":1,"direction":"to_planner","kind":"report","confirmed":false,"future_key":1}`,
+		`{"seq":3,"ts":"2026-09-10T10:01:00.000Z","round":2,"direction":"to_builder","kind":"plan","confirmed":true,"future_key":1}`,
 	}
-	before := strings.Split(strings.TrimSuffix(raw, "\n"), "\n")
+	putEventJSON(t, s, name, before)
 
 	// Confirm the middle line, so both a changed line and unchanged lines on
 	// either side are exercised.

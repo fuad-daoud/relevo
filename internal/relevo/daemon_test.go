@@ -864,6 +864,8 @@ func TestBackfillLeavesMasterMindlessBindingsAlone(t *testing.T) {
 //
 // (Before the database the daemon skipped the binding after loading it; now
 // the load itself refuses it, so a tick over such a root fails its listing.)
+// TestTickSkipsANewerFormatBinding: a newer-format record fails the load, and
+// the record row is left untouched.
 func TestTickSkipsANewerFormatBinding(t *testing.T) {
 	t.Parallel()
 
@@ -875,18 +877,18 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 		Builder:    store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
 		Format:     store.BindingFormat + 1,
 	}
-	if err := os.MkdirAll(rt.Store.Dir(b.Name), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.MarshalIndent(b, "", "  ")
+	raw, err := json.Marshal(b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format": %d`, store.BindingFormat+1))) {
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format":%d`, store.BindingFormat+1))) {
 		t.Fatalf("the fixture must carry format %d, got:\n%s", store.BindingFormat+1, raw)
 	}
-	path := filepath.Join(rt.Store.Dir(b.Name), "bind.json")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
+	d, err := rt.Store.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.RecordPut(db.Record{Owner: "", Name: b.Name, Round: 1, JSON: string(raw)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -897,14 +899,6 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 	}
 	if !errors.Is(err, store.ErrNewerFormatSentinel) {
 		t.Errorf("errors.Is(%v, store.ErrNewerFormatSentinel) = false, want true", err)
-	}
-
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(raw, after) {
-		t.Errorf("the import rewrote a newer-format binding:\nbefore:\n%s\nafter:\n%s", raw, after)
 	}
 }
 

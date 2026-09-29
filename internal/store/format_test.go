@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -228,7 +227,7 @@ func TestBindingShapeDefaultsToWriter(t *testing.T) {
 }
 
 // TestSaveRefusesANewerFormat pins that a binding written by a newer relevo is
-// refused, both by Save and by the import, leaving the file byte-for-byte.
+// refused, both by Save and by the read.
 func TestSaveRefusesANewerFormat(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("webshop", "/home/dev/projects/webshop")
@@ -250,31 +249,17 @@ func TestSaveRefusesANewerFormat(t *testing.T) {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}
 
-	// A bind.json a newer relevo left on disk is refused and left untouched.
-	if err := os.MkdirAll(s.Dir(b.Name), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.MarshalIndent(b, "", "  ")
+	// A record row a newer relevo wrote is refused.
+	raw, err := json.Marshal(b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format": %d`, BindingFormat+1))) {
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format":%d`, BindingFormat+1))) {
 		t.Fatalf("the fixture must carry format %d, got:\n%s", BindingFormat+1, raw)
 	}
-	path := filepath.Join(s.Dir(b.Name), "bind.json")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	putRecordJSON(t, s, b.Name, string(raw))
 	if _, err := s.Load(b.Name); !errors.As(err, &newer) {
-		t.Fatalf("Load of a newer-format bind.json = %v, want *ErrNewerFormat", err)
-	}
-
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(raw, after) {
-		t.Error("a refused import must leave the file byte-identical")
+		t.Fatalf("Load of a newer-format record = %v, want *ErrNewerFormat", err)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -72,151 +71,6 @@ func TestArchiveSealsAndFreesTheName(t *testing.T) {
 	}
 }
 
-func TestListArchivedImportsAndRemovesATarball(t *testing.T) {
-	s := New(t.TempDir())
-	dest := filepath.Join(s.ArchiveDir(), "webshop-20260911-215319.tar.gz")
-	logLine := `{"ts":"2026-09-10T10:00:00Z","seq":1,"round":1,"direction":"to_builder","kind":"plan","confirmed":true}`
-	writeTarGz(t, dest, "webshop", map[string]string{
-		"bind.json":   `{"name":"webshop","cwd":"/repo","round":2,"state":"done"}`,
-		"log.jsonl":   logLine + "\n",
-		"001-plan.md": "round 1 plan\n",
-	})
-	want := time.Date(2026, 9, 11, 21, 53, 19, 0, time.UTC)
-
-	archived, err := s.ListArchived()
-	if err != nil {
-		t.Fatalf("ListArchived: %v", err)
-	}
-	if len(archived) != 1 {
-		t.Fatalf("ListArchived = %+v, want exactly one imported record", archived)
-	}
-	a := archived[0]
-	if a.Binding.Name != "webshop" || !a.ArchivedAt.Equal(want) {
-		t.Errorf("imported = %+v at %v, want webshop at %v", a, a.ArchivedAt, want)
-	}
-	if a.Binding.CWD != "/repo" || a.Binding.Round != 2 {
-		t.Errorf("imported binding = %+v, want the tarball's bind.json", a.Binding)
-	}
-
-	events, err := s.ArchivedLog(a.RecordID)
-	if err != nil || len(events) != 1 || !IsPromptKind(events[0].Kind) {
-		t.Errorf("ArchivedLog = %+v, %v; want the tarball's one prompt entry", events, err)
-	}
-	if body, err := s.ReadFile(filepath.Join(s.Dir("webshop"), "001-plan.md")); err != nil || string(body) != "round 1 plan\n" {
-		t.Errorf("ReadFile(001-plan.md) = %q, %v; want the imported member", body, err)
-	}
-
-	// A file that is present is imported, and then it, and the now-empty
-	// .archive/, are gone.
-	if _, err := os.Stat(dest); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the imported tarball is still there: %v", err)
-	}
-	if _, err := os.Stat(s.ArchiveDir()); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf(".archive/ is still there after the last tarball was imported: %v", err)
-	}
-
-	if again, err := s.ListArchived(); err != nil || len(again) != 1 {
-		t.Errorf("second ListArchived = %+v, %v; want the one record", again, err)
-	}
-}
-
-// TestListArchivedImportDoesNotTouchALiveBinding pins the collision rule: the
-// live binding is left exactly as it was.
-func TestListArchivedImportDoesNotTouchALiveBinding(t *testing.T) {
-	s := New(t.TempDir())
-	if err := s.Save(newBinding("webshop", "/live/tree")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	dest := filepath.Join(s.ArchiveDir(), "webshop-20260911-215319.tar.gz")
-	writeTarGz(t, dest, "webshop", map[string]string{
-		"bind.json": `{"name":"webshop","cwd":"/old/tree","round":1,"state":"done"}`,
-	})
-
-	archived, err := s.ListArchived()
-	if err != nil {
-		t.Fatalf("ListArchived: %v", err)
-	}
-	if len(archived) != 1 || archived[0].Binding.CWD != "/old/tree" {
-		t.Fatalf("ListArchived = %+v, want the tarball imported as its own record", archived)
-	}
-
-	live, err := s.Load("webshop")
-	if err != nil {
-		t.Fatalf("the live binding must survive the import: %v", err)
-	}
-	if live.CWD != "/live/tree" {
-		t.Errorf("live binding CWD = %q, want /live/tree", live.CWD)
-	}
-}
-
-// TestListArchivedKeepsAnUnimportableTarball pins the ordering and the
-// corrupt-file rule: a failed import leaves the tarball and writes no rows.
-func TestListArchivedKeepsAnUnimportableTarball(t *testing.T) {
-	cases := []struct {
-		name  string
-		files map[string]string
-		raw   string // written verbatim instead of a real tarball
-	}{
-		{
-			name: "not gzip",
-			raw:  "this is not gzip",
-		},
-		{
-			name: "a log.jsonl that does not parse",
-			files: map[string]string{
-				"bind.json": `{"name":"webshop","cwd":"/repo","round":1,"state":"done"}`,
-				"log.jsonl": "{not json}\n",
-			},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			checkUnimportableTarball(t, tc.raw, tc.files)
-		})
-	}
-}
-
-func checkUnimportableTarball(t *testing.T, raw string, files map[string]string) {
-	t.Helper()
-	s := New(t.TempDir())
-	dest := filepath.Join(s.ArchiveDir(), "webshop-20260911-215319.tar.gz")
-	if raw != "" {
-		if err := os.MkdirAll(s.ArchiveDir(), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(dest, []byte(raw), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		writeTarGz(t, dest, "webshop", files)
-	}
-
-	archived, err := s.ListArchived()
-	if err != nil {
-		t.Fatalf("ListArchived: %v", err)
-	}
-	if len(archived) != 0 {
-		t.Errorf("ListArchived = %+v, want nothing imported", archived)
-	}
-	if _, err := os.Stat(dest); err != nil {
-		t.Errorf("an unimportable tarball must be left in place: %v", err)
-	}
-
-	// Its record did not survive the rolled-back transaction either.
-	d, err := s.DB()
-	if err != nil {
-		t.Fatalf("DB: %v", err)
-	}
-	if _, ok, err := d.RecordGet(s.owner, "webshop"); err != nil || ok {
-		t.Errorf("RecordGet(webshop) = %v, %v; want no live row", ok, err)
-	}
-	if recs, err := d.RecordListArchived(s.owner); err != nil || len(recs) != 0 {
-		t.Errorf("RecordListArchived = %+v, %v; want no archived row", recs, err)
-	}
-}
-
 // TestReadFileResolvesTheMostRecentlyArchivedRecord pins the archived half of
 // sealedLookup, and ListArchived's oldest-first order.
 func TestReadFileResolvesTheMostRecentlyArchivedRecord(t *testing.T) {
@@ -247,18 +101,24 @@ func TestReadFileResolvesTheMostRecentlyArchivedRecord(t *testing.T) {
 	}
 }
 
-// TestArchivedLogDecodesEntries pins ArchivedLog against an imported record:
+// TestArchivedLogDecodesEntries pins ArchivedLog against a stored record:
 // entry_json is authoritative and Seq, Confirmed, DeliveredAt and Route come
 // from the promoted columns.
 func TestArchivedLogDecodesEntries(t *testing.T) {
 	s := New(t.TempDir())
-	dest := filepath.Join(s.ArchiveDir(), "webshop-20260911-215319.tar.gz")
-	lines := `{"ts":"2026-09-10T10:00:00Z","round":1,"direction":"to_builder","kind":"plan","confirmed":true}` + "\n" +
-		`{"ts":"2026-09-10T10:01:00Z","round":1,"direction":"to_planner","kind":"report","confirmed":true,"delivered_at":"2026-09-10T10:02:00Z","route":"channel"}` + "\n"
-	writeTarGz(t, dest, "webshop", map[string]string{
-		"bind.json": `{"name":"webshop","cwd":"/repo","round":2,"state":"done"}`,
-		"log.jsonl": lines,
-	})
+	b := newBinding("webshop", "/repo")
+	delivered := time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC)
+	e1 := LogEntry{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true}
+	e2 := LogEntry{
+		TS: time.Date(2026, 9, 10, 10, 1, 0, 0, time.UTC), Round: 1, Direction: DirToMasterMind,
+		Kind: KindReport, Confirmed: true, DeliveredAt: &delivered, Route: "channel",
+	}
+	if err := s.WithLock(func(tx *Tx) error { return tx.SaveWithLog(b, e1, e2) }); err != nil {
+		t.Fatalf("SaveWithLog: %v", err)
+	}
+	if _, err := s.Archive("webshop"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
 
 	archived, err := s.ListArchived()
 	if err != nil || len(archived) != 1 {
@@ -278,7 +138,7 @@ func TestArchivedLogDecodesEntries(t *testing.T) {
 		t.Errorf("entries[1] = %+v, want the promoted confirm columns", entries[1])
 	}
 
-	// The raw JSON survived verbatim.
+	// The raw JSON survives verbatim.
 	d, err := s.DB()
 	if err != nil {
 		t.Fatalf("DB: %v", err)
@@ -289,7 +149,7 @@ func TestArchivedLogDecodesEntries(t *testing.T) {
 	}
 	var decoded LogEntry
 	if err := json.Unmarshal([]byte(events[1].JSON), &decoded); err != nil {
-		t.Fatalf("entry_json is not the original line: %v", err)
+		t.Fatalf("entry_json is not the stored entry: %v", err)
 	}
 	if decoded.Kind != KindReport {
 		t.Errorf("entry_json kind = %q, want report", decoded.Kind)

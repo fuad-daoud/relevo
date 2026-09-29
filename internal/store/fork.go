@@ -152,7 +152,8 @@ func (t *Tx) forkRoundFiles(dstName, dstDir, src, srcDir string, throughRound in
 	}
 
 	// The copied entries become the record's events through the same
-	// conversion importPresent uses for an adopted log.jsonl.
+	// conversion a decoded log.jsonl takes: the medium moved, the conversion
+	// did not.
 	evs, err := recordEventsOf(copied, lines)
 	if err != nil {
 		return fmt.Errorf("encode log for %q: %w", dstName, err)

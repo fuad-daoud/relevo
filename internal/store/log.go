@@ -1,21 +1,18 @@
 package store
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// maxLogEntries is a corruption guard, not a rotation policy: ReadLog refuses
-// to read further rather than silently truncating and hiding the newest
-// entries.
+// maxLogEntries is a corruption guard, not a rotation policy: a write that
+// would take the log past it is refused rather than silently truncating and
+// hiding the newest entries.
 const maxLogEntries = 10000
 
 // Direction is which way a message travelled.
@@ -200,10 +197,6 @@ type GateRecord struct {
 	Note       string `json:"note,omitempty"`
 }
 
-func (s *Store) logPath(name string) string {
-	return filepath.Join(s.Dir(name), "log.jsonl")
-}
-
 func (s *Store) AppendLog(name string, e LogEntry) error {
 	return s.WithLock(func(tx *Tx) error { return tx.AppendLog(name, e) })
 }
@@ -287,9 +280,6 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 	if err := ValidName(name); err != nil {
 		return err
 	}
-	if err := s.importPresent(name); err != nil {
-		return err
-	}
 	d, err := s.dbForWrite()
 	if err != nil {
 		return err
@@ -341,9 +331,6 @@ func encodeEvent(e LogEntry, seq int) (db.RecordEvent, error) {
 // readLog returns every entry in order; a binding with no record yields nil,
 // nil, the result a missing log.jsonl gave before the database.
 func (s *Store) readLog(name string) ([]LogEntry, error) {
-	if err := s.importPresent(name); err != nil {
-		return nil, err
-	}
 	d, err := s.dbForRead()
 	if err != nil {
 		return nil, err
@@ -368,9 +355,6 @@ func (s *Store) readLog(name string) ([]LogEntry, error) {
 // readLogAfter returns the entries whose Seq is greater than after; a log with
 // no such entry yields nil, nil.
 func (s *Store) readLogAfter(name string, after int) ([]LogEntry, error) {
-	if err := s.importPresent(name); err != nil {
-		return nil, err
-	}
 	d, err := s.dbForRead()
 	if err != nil {
 		return nil, err
@@ -390,45 +374,6 @@ func (s *Store) readLogAfter(name string, after int) ([]LogEntry, error) {
 		return nil, fmt.Errorf("read log for %q: %w", name, err)
 	}
 	return logEntriesOf(events)
-}
-
-// decodeLog scans a log.jsonl stream, one LogEntry per line, refusing to read
-// past maxLogEntries rather than silently truncating.
-//
-// A file written before Seq existed has no seq key: each entry's Seq is then
-// its position among the decoded entries, and nothing is rewritten.
-func decodeLog(r io.Reader) ([]LogEntry, error) {
-	entries := make([]LogEntry, 0, 64)
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
-		var e LogEntry
-		if err := json.Unmarshal(line, &e); err != nil {
-			return nil, fmt.Errorf("decode log entry: %w", err)
-		}
-
-		// len(entries) counts decoded entries, so a skipped empty line does
-		// not advance the numbering.
-		if e.Seq == 0 {
-			e.Seq = len(entries) + 1
-		}
-
-		entries = append(entries, e)
-		if len(entries) > maxLogEntries {
-			return nil, fmt.Errorf("log exceeds %d entries", maxLogEntries)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan log: %w", err)
-	}
-
-	return entries, nil
 }
 
 // pendingForMasterMind returns the OLDEST undelivered payload bound for the
@@ -474,9 +419,6 @@ func (s *Store) pendingForMasterMindThrough(name string, round int) ([]PendingEn
 // re-deriving "the entry we must have meant", so callers holding the lock
 // across pendingForMasterMind and this call confirm exactly the entry they read.
 func (s *Store) confirmIndex(name string, idx int, route string) error {
-	if err := s.importPresent(name); err != nil {
-		return err
-	}
 	d, err := s.dbForWrite()
 	if err != nil {
 		return err

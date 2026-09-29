@@ -144,6 +144,61 @@ func assertArtifact(t *testing.T, d *db.DB, roundID, kind string, wantFound bool
 	}
 }
 
+// seedStoreRecord puts the bind.json at dir/bind.json as name's record and the
+// log.jsonl lines as its events, so a store's database is the binding's home.
+func seedStoreRecord(t *testing.T, s *store.Store, name, dir string) {
+	t.Helper()
+	bindJSON, err := os.ReadFile(filepath.Join(dir, "bind.json"))
+	if err != nil {
+		t.Fatalf("read bind.json: %v", err)
+	}
+	d, err := s.DB()
+	if err != nil {
+		t.Fatalf("store db: %v", err)
+	}
+	recID, err := d.RecordPut(db.Record{Name: name, JSON: string(bindJSON)})
+	if err != nil {
+		t.Fatalf("RecordPut(%s): %v", name, err)
+	}
+
+	logJSON, err := os.ReadFile(filepath.Join(dir, "log.jsonl"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		t.Fatalf("read log.jsonl: %v", err)
+	}
+	var evs []db.RecordEvent
+	n := 0
+	for _, line := range strings.Split(strings.TrimRight(string(logJSON), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var e store.LogEntry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("decode log.jsonl line %d: %v", n, err)
+		}
+		if e.Seq == 0 {
+			e.Seq = n + 1
+		}
+		evs = append(evs, db.RecordEvent{
+			Seq:         e.Seq,
+			TS:          e.TS,
+			Round:       e.Round,
+			Direction:   string(e.Direction),
+			Kind:        string(e.Kind),
+			Confirmed:   e.Confirmed,
+			DeliveredAt: e.DeliveredAt,
+			Route:       e.Route,
+			JSON:        line,
+		})
+		n++
+	}
+	if err := d.EventReplaceAll(recID, evs); err != nil {
+		t.Fatalf("EventReplaceAll(%s): %v", name, err)
+	}
+}
+
 // archiveFixtureAs packs the fixture, with bindFile as bind.json, into an
 // archived record and returns the store and the record's id.
 func archiveFixtureAs(t *testing.T, bindFile string) (*store.Store, string) {
@@ -163,6 +218,7 @@ func archiveFixtureAs(t *testing.T, bindFile string) (*store.Store, string) {
 	if err := os.WriteFile(filepath.Join(s.Dir("fixture"), "bind.json"), bindData, 0o644); err != nil {
 		t.Fatalf("write bind.json: %v", err)
 	}
+	seedStoreRecord(t, s, "fixture", s.Dir("fixture"))
 	if _, err := s.Archive("fixture"); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}

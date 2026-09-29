@@ -425,55 +425,6 @@ func TestReadsDoNotWaitForTheStateLock(t *testing.T) {
 	})
 }
 
-// TestReadImportsLegacyFileUnderTheLock pins that a legacy bind.json still
-// takes the state lock and is imported.
-func TestReadImportsLegacyFileUnderTheLock(t *testing.T) {
-	s := New(t.TempDir())
-	dir := s.Dir("old")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	body := `{"name":"old","cwd":"/repo","planner":{"pane_id":"w2:p3","kind":"claude"},"builder":{"pane_id":"w2:p4","kind":"agy"},"round":1,"state":"active","round_cap":20,"round_timeout_ms":1800000}`
-	legacy := filepath.Join(dir, "bind.json")
-	if err := os.WriteFile(legacy, []byte(body), 0o644); err != nil {
-		t.Fatalf("write bind.json: %v", err)
-	}
-
-	release := holdStateLock(t, s)
-
-	loaded := make(chan error, 1)
-	go func() {
-		got, err := s.Load("old")
-		if err != nil {
-			loaded <- err
-			return
-		}
-		if got.Name != "old" || got.CWD != "/repo" {
-			loaded <- fmt.Errorf("Load = %+v, want the legacy record", got)
-			return
-		}
-		loaded <- nil
-	}()
-
-	select {
-	case err := <-loaded:
-		t.Fatalf("Load returned while the state lock was held: %v", err)
-	case <-time.After(300 * time.Millisecond):
-	}
-
-	release()
-	if err := <-loaded; err != nil {
-		t.Fatalf("Load after release: %v", err)
-	}
-
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Errorf("legacy bind.json survived the import: %v", err)
-	}
-	if raw := bindingRecordJSON(t, s, "old"); len(raw) == 0 {
-		t.Error("no record was written for the imported binding")
-	}
-}
-
 func TestNestedAccessDoesNotDeadlock(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("nested", "/repo")
@@ -678,7 +629,7 @@ func TestFindByCWDAmbiguousReaders(t *testing.T) {
 	}
 }
 
-func TestListSkipsTheArchiveDirectory(t *testing.T) {
+func TestListSkipsArchivedBindings(t *testing.T) {
 	s := New(t.TempDir())
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -751,30 +702,18 @@ func TestLoadIgnoresRemovedLegacyKeys(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(t.TempDir())
-			dir := s.Dir("old")
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				t.Fatalf("mkdir: %v", err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, "bind.json"), []byte(tc.body), 0o644); err != nil {
-				t.Fatalf("write bind.json: %v", err)
-			}
+			putRecordJSON(t, s, "old", tc.body)
 			tc.check(t, s)
 		})
 	}
 }
 
-// TestLoadKeepsALegacyEdgesRecord pins that a bind.json carrying an "edges"
+// TestLoadKeepsALegacyEdgesRecord pins that a record carrying an "edges"
 // key still loads: Binding.Edges is a read-only shim now.
 func TestLoadKeepsALegacyEdgesRecord(t *testing.T) {
 	s := New(t.TempDir())
-	dir := s.Dir("old")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
 	body := `{"name":"old","cwd":"/repo","planner":{"pane_id":"w2:p3","kind":"claude"},"builder":{"pane_id":"w2:p4","kind":"agy"},"edges":[{"id":"a1b2c3","round":1,"when":"report","then":"send","target":"client","prompt":"/plans/client.md","mode":"queue","added_at":"2026-09-01T10:00:00Z","fired":true,"result":"queued"}],"round":1,"state":"active","round_cap":20,"round_timeout_ms":1800000}`
-	if err := os.WriteFile(filepath.Join(dir, "bind.json"), []byte(body), 0o644); err != nil {
-		t.Fatalf("write bind.json: %v", err)
-	}
+	putRecordJSON(t, s, "old", body)
 
 	got, err := s.Load("old")
 	if err != nil {

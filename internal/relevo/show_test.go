@@ -74,6 +74,26 @@ func seedShowDB(t *testing.T) *db.DB {
 	return d
 }
 
+// seedArchivedLog writes the fixture's log.jsonl lines as the record's events,
+// the medium the database gives them.
+func seedArchivedLog(t *testing.T, d *db.DB, recID string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(showFixtureDir, "log.jsonl"))
+	if err != nil {
+		t.Fatalf("read fixture log.jsonl: %v", err)
+	}
+	var evs []db.RecordEvent
+	for i, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		evs = append(evs, db.RecordEvent{Seq: i + 1, JSON: line})
+	}
+	if err := d.EventReplaceAll(recID, evs); err != nil {
+		t.Fatalf("EventReplaceAll: %v", err)
+	}
+}
+
 // archiveShowFixture copies the golden fixture into a fresh store's
 // "fixture" directory -- writing one file per extra basename -> body -- and
 // archives it, so the returned store holds exactly one archived record with
@@ -105,6 +125,19 @@ func archiveShowFixture(t *testing.T, extra map[string]string) *store.Store {
 			t.Fatalf("write %s: %v", base, err)
 		}
 	}
+	bindJSON, err := os.ReadFile(filepath.Join(showFixtureDir, "bind.json"))
+	if err != nil {
+		t.Fatalf("read fixture bind.json: %v", err)
+	}
+	sdb, err := s.DB()
+	if err != nil {
+		t.Fatalf("store db: %v", err)
+	}
+	recID, err := sdb.RecordPut(db.Record{Name: "fixture", JSON: string(bindJSON)})
+	if err != nil {
+		t.Fatalf("RecordPut: %v", err)
+	}
+	seedArchivedLog(t, sdb, recID)
 	if _, err := s.Archive("fixture"); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
