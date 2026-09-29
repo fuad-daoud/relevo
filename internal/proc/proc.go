@@ -262,13 +262,13 @@ func openSpawnFiles(spec spawn.ProcSpec) (logf, streamf *os.File, err error) {
 // cannot be followed.
 const oNoFollow = syscall.O_NOFOLLOW
 
-// openAppend opens path for appending, refusing anything that is not a regular
-// file. The state directory that holds a round's log and stream is
-// runner-writable, so a symlink planted at either path must not be followed out
-// of it: the Lstat is the refusal and O_NOFOLLOW the race backstop behind it.
-// The Lstat also keeps a planted fifo from blocking the open, which would wait
-// for a reader that never comes.
-func openAppend(path string) (*os.File, error) {
+// openRegular opens path with the given flags, refusing anything that is not a
+// regular file. The state directory that holds a round's log, stream and kill
+// record is runner-writable, so a symlink planted at any of them must not be
+// followed out of it: the Lstat is the refusal and O_NOFOLLOW the race backstop
+// behind it. The Lstat also keeps a planted fifo from blocking the open, which
+// would wait for a reader that never comes.
+func openRegular(path string, flags int) (*os.File, error) {
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {
 			return nil, fmt.Errorf("%s is not a regular file", path)
@@ -276,7 +276,11 @@ func openAppend(path string) (*os.File, error) {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|oNoFollow, 0o644)
+	return os.OpenFile(path, flags|os.O_CREATE|os.O_WRONLY|oNoFollow, 0o644)
+}
+
+func openAppend(path string) (*os.File, error) {
+	return openRegular(path, os.O_APPEND)
 }
 
 // resolveScope applies both lazy probes and their fallbacks: a scope whose probe
@@ -385,6 +389,8 @@ func (r *Runner) ExitCode(_ context.Context, h spawn.ProcHandle, logPath string)
 // SIGKILLs the group. Alive's start-time check runs first, so a reused pid is
 // never signalled. The record precedes the signal, because a reader only ever
 // reads a dead handle, so the record is in place before the process could die.
+// A record that cannot be written is warned about, never a reason to leave a
+// process alive.
 func (r *Runner) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string) error {
 	alive, err := r.Alive(ctx, h)
 	if err != nil {
@@ -394,7 +400,7 @@ func (r *Runner) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string
 		return nil
 	}
 	if err := recordKill(h, streamPath); err != nil {
-		return err
+		slog.Warn("kill record not written; signalling anyway", "stream", streamPath, "err", err)
 	}
 	if err := syscall.Kill(-h.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("proc: SIGTERM %d: %w", h.PID, err)
