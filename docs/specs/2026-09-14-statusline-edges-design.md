@@ -10,6 +10,10 @@ the first night of use.
 **Depends on:** #151 (merged).
 **Status:** draft; plan at `docs/plans/2026-09-14-statusline-edges.md`.
 
+**Amended 2026-09-28 by `docs/plans/2026-09-27-round-vocabulary.md`:** a
+round's input is now its prompt; the current words are `prompt sent` and
+`no prompt yet`, and the log kind is `prompt`. The sections below stay as
+written.
 ## 1. System overview
 
 `relay statusline` shipped in #151 and worked on first use, with four

@@ -3,10 +3,10 @@
 [![ci](https://github.com/fuad-daoud/relevo/actions/workflows/ci.yml/badge.svg)](https://github.com/fuad-daoud/relevo/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Site: [relay-site.fuad-daoud.com](https://relay-site.fuad-daoud.com) (source in [fuad-daoud/relevo-site](https://github.com/fuad-daoud/relevo-site), together with the `DESIGN.md` and `PRODUCT.md` that govern the page).
+Site: [relevo-site.fuad-daoud.com](https://relevo-site.fuad-daoud.com) (source in [fuad-daoud/relevo-site](https://github.com/fuad-daoud/relevo-site), together with the `DESIGN.md` and `PRODUCT.md` that govern the page).
 
 `relevo` automates the plan/report handoff between two AI coding agents. A
-human talks to a **planner** agent; the planner hands work to a **builder**
+human talks to a **MasterMind** agent; the MasterMind hands work to a **builder**
 agent; relevo moves the files between them so the human never copy-pastes a
 plan or a report by hand. Builders are headless or remote processes, and
 relevo no longer integrates with herdr.
@@ -17,12 +17,12 @@ relevo is Spanish for relay (the changeover in a relay race); it was called rela
 
 Relevo makes no judgements. It moves files, starts builders, and reports what
 each round did — whether a report is good, whether a question needs a human,
-whether the work is done, is a decision that stays with the planner (or the
+whether the work is done, is a decision that stays with the MasterMind (or the
 human) at every step.
 
 ## Requirements
 
-- **Two agent harnesses** — one for the planner, one for the builder. relevo
+- **Two agent harnesses** — one for the MasterMind, one for the builder. relevo
   knows how to start `opencode`, `claude`, `agy` and `codex`; you tell it
   which models in [Candidates](#candidates).
 - **`git` on `PATH` (optional).** Required for automatic round diff capture; without it, relevo works normally but rounds produce no diffs.
@@ -44,11 +44,16 @@ go install github.com/fuad-daoud/relevo/cmd/relevo@latest
 
 That drops `relevo` in `$(go env GOPATH)/bin` — make sure it is on your `PATH`.
 
-A release binary and a `go install` both know how they were installed. `relevo
-doctor` warns when a newer release exists and prints the update step for that
-install: the archive and `checksums.txt` to download, or the `go install`
-command. `relevo status` shows one line when a newer release exists. A local
-build is never called stale.
+A release binary and a `go install` both know how they were installed. A
+release binary updates itself with `relevo update`: it downloads the archive,
+verifies its SHA-256 against `checksums.txt`, preflights the new binary and
+renames it over the running one. `relevo update --check` prints what it would
+do and changes nothing, and `--to vX.Y.Z` installs an exact tag (downgrades
+included). A `go install` gets its `go install` command printed instead. A
+local build is left alone unless `relevo update --release` converts it to a
+release binary. `relevo doctor` warns when a newer release exists and prints
+the update step for that install. `relevo status` shows one line when a newer
+release exists.
 
 Or from a clone, which also stamps the binary with the current tag so
 `relevo version` is meaningful:
@@ -79,45 +84,24 @@ make service        # systemd user unit on Linux, LaunchAgent on macOS
 
 ### Upgrading
 
-A running daemon moves onto a newly installed binary by itself within a few
-seconds, and a round in flight is not interrupted: builders, gates and consults
+`relevo update` lands a new binary the same atomic way `make install` does -- a
+rename within the directory, so a running daemon never sees a half-written
+file. A running daemon moves onto a newly installed binary by itself within a
+few seconds, and a round in flight is not interrupted: builders, gates and consults
 run in their own systemd scopes and survive the restart. A daemon started
 before this release needs one manual restart to start following upgrades —
 `make service`, or `systemctl --user restart relevo.service`. `relevo doctor`
 shows what the daemon is running. The daemon also refreshes the agent
 definitions relevo wrote for each harness on every start, and leaves a file you
-edited alone; a planner session's `relevo mcp` notices the upgrade too -- it
+edited alone; a MasterMind session's `relevo mcp` notices the upgrade too -- it
 appends a line to every tool result saying to reconnect it (`/mcp`), so the
 session loads the new server without a restart.
 
-<!-- name-guard: off -->
-
-### Upgrading from relay
-
-relay was renamed relevo in v0.12.0. A machine that ran relay keeps its state,
-its old `relay.service` (or LaunchAgent) and the old `relay` binary until
-`relevo migrate` moves them. The order:
-
-1. Finish or pause every binding (`relevo status`).
-2. Install `relevo`.
-3. Run `relevo migrate --dry-run`, then `relevo migrate`.
-4. Reinstall the Claude Code plugin: remove `relay@relay`, then add the
-   marketplace and install the plugin again:
-   ```
-   /plugin uninstall relay@relay
-   /plugin marketplace add fuad-daoud/relevo
-   /plugin install relevo@relevo
-   ```
-5. Run `relevo config agents`.
-6. Restart planner sessions.
-
-<!-- name-guard: on -->
-
 ### The Claude Code plugin
 
-A Claude Code planner installs relevo as a plugin. The plugin provides the
+A Claude Code MasterMind installs relevo as a plugin. The plugin provides the
 `relevo mcp` MCP server and a `SessionStart` hook that runs
-`relevo planner init`, so relevo knows which planner session is calling:
+`relevo mastermind init`, so relevo knows which MasterMind session is calling:
 
     /plugin marketplace add fuad-daoud/relevo
     /plugin install relevo@relevo
@@ -134,7 +118,7 @@ try one, reinstall: `claude plugin uninstall relevo@relevo && claude plugin
 install relevo@relevo`.
 
 See [Claude Code plugin](#claude-code-plugin) below for how a report reaches
-the planner.
+the MasterMind.
 
 ## First run on a clean machine
 
@@ -148,16 +132,20 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
    relevo config init
    ```
    It finds the harness binaries on `PATH`, writes one builder candidate per
-   harness to the candidates section, writes the policy section and the builder
-   actor, and installs the agent definitions into each of those harnesses. The
+   harness to the candidates section except claude, which only plans (it gets the
+   `planner` actor), writes the policy section and the builder
+   actor, plus a `planner` and a `lite-planner` reader actor for claude and
+   opencode, and installs the agent definitions into each of those harnesses. The
    configuration lives in relevo.db under the state root, not in a file; a
    file you drop into `~/.config/relevo` is imported on the next command and
    removed. It refuses to overwrite the candidates, policy or actors section
-   without `--force`, and `--no-roles` skips the definitions. It says what it wrote and
+   without `--force`, and `--no-agents` skips the definitions. With claude as the
+   only harness on `PATH`, the builder is written with no candidates, and init
+   prints the command to add one. It says what it wrote and
    the command to run next, e.g.:
    ```
-   wrote candidates (2: claude, opencode)
-   wrote actors (builder: sonnet, glm-5.3-flash)
+   wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)
+   wrote actors (builder: glm-5.3-flash; planner: opus; lite-planner: deepseek-v4.1-flash)
    wrote  ~/.claude/agents/plan-executor.md
    wrote  ~/.config/opencode/agents/plan-executor.md
    next: edit the model names, then run: relevo doctor
@@ -176,11 +164,12 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
 4. Run the literal fix commands `relevo doctor` prints for any missing items.
 5. Re-run `relevo doctor` to confirm `0 failures`.
 6. Start the daemon (e.g. `relevo daemon &` or `make service`).
-7. Bind your first agent from the planner session:
+7. Bind your first agent from the MasterMind session:
    ```
-   relevo bind --builder claude/anthropic/sonnet
+   relevo bind --no-feature --candidate claude/anthropic/sonnet
    ```
-   (or, with one candidate, `relevo bind`).
+   (or, with one candidate, `relevo bind --no-feature`). A fresh `relevo bind`
+   must name exactly one of `--feature <label>` / `--no-feature`.
 
 To install the agent definitions into each harness on `PATH` by hand instead —
 the daemon refreshes unmodified definitions on every start and upgrade, a file
@@ -190,7 +179,7 @@ relevo config agents
 ```
 One line per file says `wrote`, `updated (unchanged since relevo wrote it)`,
 `kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
-name a harness that is not on `PATH` yet, `--role` for one definition,
+name a harness that is not on `PATH` yet, `--agent` for one definition,
 `--dry-run` to look first. This writes `plan-executor`, `researcher`, `reviewer`
 and `architect` for every kind; `relevo config agents --dry-run` shows what
 would be written.
@@ -228,10 +217,10 @@ On a clean machine, seed your configuration first (see
 relevo config init                 # seed candidates, policy and actors, install the agent definitions
 ```
 
-From the planner session, in the repository you want worked on:
+From the MasterMind session, in the repository you want worked on:
 
 ```
-relevo bind --builder claude/anthropic/sonnet     # start a builder on this tree
+relevo bind --no-feature --candidate claude/anthropic/sonnet     # start a builder on this tree
 relevo send --file plan.md         # hand it the plan; the builder starts working
 relevo status                      # watch the round
 relevo wait                        # block until the round closes; prints the report
@@ -243,36 +232,43 @@ empty `NNN-done` as its last action; relevo closes the round on that marker.
 A builder that exits without the marker still closes the round, and relevo
 delivers its report flagged `unmarked`.
 
-`relevo bind` identifies the calling planner through `RELEVO_PLANNER`, which
+`relevo bind` identifies the calling MasterMind through `RELEVO_MASTERMIND`, which
 the relevo plugin's `SessionStart` hook exports, or through the harness
 process the `relevo mcp` server shares with the session. Run
-`relevo planner list` to see the planners relevo knows.
+`relevo mastermind list` to see the MasterMinds relevo knows.
 
-Its `chat` column names each planner as a person sees it: a Claude Code chat's
+Its `chat` column names each MasterMind as a person sees it: a Claude Code chat's
 title, or its last prompt, plus the claude.ai link when the session is bridged;
 an opencode session's title; and `-` when nothing can be read. The label is read
 from the harness's own files when the command runs and is never stored. The same
-label follows the planner's name in `relevo status` and `relevo doctor`.
-`relevo planner rename <id|name> <new-name>` gives a planner a name of your own.
+label follows the MasterMind's name in `relevo status` and `relevo doctor`.
+`relevo mastermind rename <id|name> <new-name>` gives a MasterMind a name of your own.
 
 ## Command surface
 
-- `relevo bind [--name N] [--builder CANDIDATE] [--actor R] [--tier T [--allow-yolo]] [--gate CMD|--no-gate] [--regate N] [--resume [--rebind]] [--timeout D] [--feature L] [--planner P]`
-  — start a binding between the calling planner and a builder. `--builder` is
+- `relevo bind [--name N] [--candidate CANDIDATE] [--actor R] [--tier T [--allow-yolo]] [--gate CMD|--no-gate] [--regate N] [--resume [--rebind]] [--timeout D] --feature L|--no-feature [--ticket REF] [--mastermind P]`
+  — start a binding between the calling MasterMind and a builder. A fresh bind
+  must name exactly one of `--feature <label>` (a label grouping it with other
+  bindings) and `--no-feature` (it serves no feature); naming neither or both is
+  refused, exit 2, before any state, worktree or network work. `--ticket REF` is
+  optional and allowed with either: a number, `#N`, `owner/repo#N` or an issue
+  URL, stored as `owner/repo#N` when relevo knows the repository. `--candidate` is
   a candidate token; `--actor R` is the writer actor the binding runs (default
   `builder`). A name that already exists is refused rather than reused:
   only the binding's record would be rewritten, so a fresh round 1 would
   collide with the previous session's round log. `--resume --name N` re-points that
-  existing binding's planner side at the calling planner without touching the
-  builder; `relevo unbind N` is the other way out.
-- `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--builder CANDIDATE] [--verify|--no-verify] [--regate N]` — stage the file as the current round's
-  plan and hand it to the builder as the prompt of a fresh process started in
-  the binding's tree.
+  existing binding's MasterMind side at the calling MasterMind without touching the
+  builder; on a resume `--feature` sets the label, `--no-feature` clears it, and
+  naming neither keeps it, while `--ticket` sets one. `relevo unbind N` is the other way out.
+- `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
+  prompt and hand it to the builder as the prompt of a fresh process started in
+  the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
+  larger one is refused unless `--force`.
   A headless binding whose previous round's process is still running refuses
-  the send; wait for its report or `relevo done` it.
+  the send; wait for the round to close or `relevo done` it.
   `--dry-run` checks every precondition a send would and prints what it would
-  do, writing nothing: no plan staged, no log entry, no prompt, no process
-  started. A precondition that fails is the same error `relevo send` gives, exit
+  do, writing nothing: no prompt staged, no log entry, no process started.
+  A precondition that fails is the same error `relevo send` gives, exit
   1, with nothing written. A local binding names the exact command line it
   would run, and a remote one the server and branch without contacting it:
   ```
@@ -280,29 +276,21 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
     builder   headless agy/google/gemini-3.8-flash-high
     where     /usr/bin/agy -p
     tier      yolo
-    plan      /home/me/.local/state/relevo/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
+    prompt    /home/me/.local/state/relevo/api-auth/005-prompt.md  (staged from ./plan.md, 4.1 KiB)
     report    /home/me/.local/state/relevo/api-auth/005-report.md
     marker    /home/me/.local/state/relevo/api-auth/005-done
-    prompt    relevo: round 5 · to builder "api-auth" · from the planner (not the human)
+    head      relevo: round 5 · to builder "api-auth" · from the MasterMind (not the human)
               Your working tree is: /home/me/.worktrees/api-auth
   ```
-- `relevo ask [NAME|--name N] --actor R (--file PATH | -q "<question>") [--candidate T] [--planner P]` —
-  spawn a one-shot consult beside the binding and queue its findings like a
-  report; `--round N` resumes the builder that built a closed round instead,
-  which fixes the actor and the candidate. See [Consults](#consults-asking-a-reviewer).
 - `relevo show NAME --diff [--round R] [--stat] [--drift] [--anchors]` — print a round's
   captured patch to stdout, or its diffstat summary with `--stat`. Pass `--drift`
   to inspect between-rounds drift instead of the round's diff; `--drift` composes
   with `--stat` and `--round`, and defaults to the currently open round where plain
   `relevo show --diff` defaults to the newest completed one. Pass `--anchors` to prefix
   each hunk and each `' '`/`'+'` line with its `path:line`, ready to quote into a
-  review comments file (see "Reviewing a round" below).
-- `relevo review [NAME|--name N] --file comments.md [--round R] [--out PATH] [--send]` —
-  turn a `path:line: comment` comments file into a follow-up plan, one task per
-  anchored comment quoting its hunk from the round's diff. Not destructive, so
-  it falls back to the CWD's binding. See "Reviewing a round" below.
+  review comment (see "Reviewing a round" below).
 - `relevo status [NAME|--name N] [--json] [--all] [--line]` — one row per binding: round, display state, the builder's own status, the last relayed event and anything pending. `--line` is the one-row-per-binding form Claude Code's status line runs (see [Status line](#status-line)). Rows are attention-first -- NEEDS YOU, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relevo ui` has always used, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
-  While a round is open a row also shows the round's live diff against its baseline (`+120/-30 in 6`, `(shared tree)` for a `--cwd` binding sharing the planner's own working tree), an ACTIVE row's `quiet <age>` since its last progress sample, and `●new` when the binding's newest report is unread (its record's `viewed_at` stamp is older than the newest report).
+  While a round is open a row also shows the round's live diff against its baseline (`+120/-30 in 6`, `(shared tree)` for a `--cwd` binding sharing the MasterMind's own working tree), an ACTIVE row's `quiet <age>` since its last progress sample, and `●new` when the binding's newest report is unread (its record's `viewed_at` stamp is older than the newest report).
   `--json` also carries fields the prose above does not spell out:
   ```
   branch      the binding's worktree branch; absent for a --cwd binding
@@ -320,16 +308,10 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   last_seq=$(relevo status --json | jq -r '.bindings[] | select(.name == "NAME") | .last_seq')
   relevo show NAME --log --after $(last_seq) --json
   ```
-- `relevo history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S] [--harness K] [--provider P] [--model M] [--candidate T] [--outcome O] [--since D] [--until D] [--archived|--live] [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]` —
-  one line per round across every binding relevo has ever recorded, live or archived, newest first. `-q` filters with the query language and `--by` regroups the result. See "The database" below.
-- `relevo history --tab [--since D] [--by binding|model|provider|owner] [--json]` —
-  tokens and cost across bindings, archived ones included. See "Round usage" below.
-- `relevo history --stats [--since D] [--json]` —
-  rounds, outcomes, switches, gate results and consults across bindings,
-  archived ones included, read from the round records; the last 30 days of
-  provider blocks come from the gate history. See "Usage stats" below.
-- `relevo show <name> [--round N] [--plan|--report|--diff [--stat|--anchors]|--drift|--log [--follow --after N]|--transcript|--gate|--findings <id>] [--json]` —
-  one round's plan, report, diff, drift, log, transcript, gate log or a consult's findings: from a live binding's open round files, or, for anything sealed or archived, from the database. See "The database" below.
+- `relevo history [--here] [--binding B] [--mastermind P] [--since D] [--limit N] [-q "<query>"] [--json] [--rows]` —
+  round history as a JSON array across every binding relevo has ever recorded, live or archived, newest first. `-q` filters with the query language. See "The database" below.
+- `relevo show <name> [--round N] [--prompt|--report|--diff [--stat|--anchors]|--drift|--log [--follow --after N]|--transcript|--gate|--findings <id>|--output] [--json]` —
+  one round's prompt, report, diff, drift, log, transcript, gate log, output file or a consult's findings: from a live binding's open round files, or, for anything sealed or archived, from the database. See "The database" below.
 - `relevo wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D] [--peek]` — block
   until the round closes or the binding needs you, reading relevo's own state only.
   Exit 0: closed on the marker, stdout is the report path. 2: closed
@@ -337,13 +319,13 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   path or `-`. 3: needs you, stdout is one line saying what it is waiting on. 4:
   the binding is DONE or was unbound. 5: closed, but the builder's report says
   halted or blocked -- read it before sending again; stdout is the report path.
-  6: the round has no plan entry -- it was never sent, so nothing is in flight;
+  6: the round has no prompt entry -- it was never sent, so nothing is in flight;
   stdout says so. 124: `--timeout` (default 10m) elapsed. On every exit but 4 and
   124 the wait then prints a blank line and the oldest pending report's text
   (the report's pointer line, a blank line, then the report itself, capped at
   64 KiB), marked delivered, unless `--peek` asks for the outcome line only.
   `--any` waits on several and prints the
-  winner's name first. A Claude Code planner runs `relevo wait N` as a
+  winner's name first. A Claude Code MasterMind runs `relevo wait N` as a
   background command and ends its turn: Claude Code wakes the session when the
   command exits, with the report in its output (see
   [Claude Code plugin](#claude-code-plugin)).
@@ -351,14 +333,14 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   `:round <binding> [N]`. `:fleet` is the root table of bindings; `enter` opens its round
   detail, `esc` goes back, `:` the command line, `?` the key list. `relevo ui :rounds`
   opens the rounds grid directly (`:rounds` reaches it from the fleet).
-- `relevo bind --worktree --name N [--builder CANDIDATE] [--actor R] [--cwd DIR] [--feature LABEL]` — attach an
-  additional builder to this planner on its own git worktree, starting at
-  round 1. This is how one planner drives several builders at once.
+- `relevo bind --worktree --name N --feature L|--no-feature [--ticket REF] [--candidate CANDIDATE] [--actor R] [--cwd DIR]` — attach an
+  additional builder to this MasterMind on its own git worktree, starting at
+  round 1. This is how one MasterMind drives several builders at once.
   `--actor R` is the writer actor the binding runs (default `builder`).
-  `relevo bind --name N --server S [--base REF]` runs that builder on a
+  `relevo bind --no-feature --name N --server S [--base REF]` runs that builder on a
   configured remote server instead (see "Remote builders: the client" below);
   `--cwd` cannot be combined with `--server`.
-  `relevo bind --branch B` checks an existing branch out into relevo's own
+  `relevo bind --no-feature --branch B` checks an existing branch out into relevo's own
   worktree instead of cutting `relevo/<name>`: a local `B` is used first, and
   `origin/B` is made a local tracking branch only when no local `B` exists
   (a branch on neither is refused). A branch already checked out in another
@@ -369,21 +351,19 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   create. Works with `--server`; not with `--cwd`.
   For a `--server` binding the server's own `refs/heads/relevo/<name>` ref is
   kept in the repository beside the adopted branch: every closed round
-  absorbs it and fast-forwards `B` to it, and relevo deletes neither.
-  `relevo bind --from` with `--branch` is not available yet.
-- `relevo bind --from <source>@R --name N [--builder CANDIDATE] [--cwd DIR] [--feature LABEL]` —
-  branch a new binding from an earlier round of an existing binding, copying
-  round history and artifacts through round R and launching a fresh builder in a
-  dedicated git worktree (or in `--cwd`). `--feature` defaults to the source
-  binding's own.
+  absorbs it and fast-forwards `B` to it; relevo never deletes the adopted
+  branch; the server's `relevo/<name>` ref is deleted by `unbind --done` once it is on a
+  remote-tracking ref.
 - `relevo config` — show the actors, the current pick and the configured
   candidates, in three blocks; `relevo config --probe` runs each candidate
   once and records its time to first output.
 - `relevo config init` — seed the candidates, policy and actors sections from
-  the harnesses on `PATH` and install the agent definitions (`--force`,
-  `--no-roles`).
+  the harnesses on `PATH` (one builder candidate per harness except claude,
+  which only plans, plus a `planner` and a `lite-planner` reader actor for
+  claude and opencode) and install the agent definitions (`--force`,
+  `--no-agents`).
 - `relevo config agents` — install the per-kind agent definitions
-  (`--kind`, `--role`, `--force`, `--dry-run`).
+  (`--kind`, `--agent`, `--force`, `--dry-run`).
 - `relevo config export|import|get|set|unset|edit` — read and change the
   configuration document section by section.
 - `relevo config secret set|rm|list` — store, forget or list the `typesafe`
@@ -398,39 +378,40 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   `--pick` chooses from a list in the terminal.
 - `relevo stop NAME|--name N` — kill the builder process and close its open
   round without a report. See [Stopping a round](#stopping-a-round).
-- `relevo land NAME|--name N [--onto REF] [--pr] [--merge] [--no-gate] [--force]` —
-  rebase the binding's branch onto its base, run the gate, push, and open or
-  print the PR. See [Landing a branch](#landing-a-branch).
 - `relevo unbind NAME|--name N|--pick [--archive]` — forget a binding, deleting its directory or
   archiving its record first. `--pick` chooses from a list in the terminal.
 
-- `relevo unbind --done [--dry-run] [--delete]` — clear every binding the planner marked
-  `DONE`, in one pass. Archives by default; pass `--delete` to remove each binding's directory instead (`relevo unbind --done --archive` is accepted as a no-op).
-- `relevo edge add <source> --when report|diff|done|gate --then send --target <binding> --prompt <file> [--mode queue|fire] [--round N]`;
-  `relevo edge list <source>`; `relevo edge rm <source> <id>` — declare, list or
-  drop a planner's handoff to another binding. See [Edges (triggers)](#edges-triggers).
+- `relevo unbind --done [--dry-run] [--delete] [--mastermind P | --all-masterminds]` —
+  clear the DONE bindings of the calling MasterMind (resolved like every
+  MasterMind-scoped verb), in one pass; also deletes each cleared binding's
+  `relevo/<name>` branch and `refs/relevo/<name>/*` refs once each is on a
+  remote-tracking ref. `--all-masterminds` clears every MasterMind's, including
+  bindings with no MasterMind. If no MasterMind resolves, it refuses rather than
+  clearing everything, and each line names the binding's MasterMind. Archives by
+  default; pass `--delete` to remove each binding's directory instead
+  (`relevo unbind --done --archive` is accepted as a no-op).
+- `relevo unbind --sweep [--dry-run]` — delete `relevo/<name>` branches and `refs/relevo/<name>/*` refs of bindings that no longer exist, once each is on a remote-tracking ref.
 - `relevo daemon [--interval D] [--check]` — the long-running reconciler; this is what the
-  service unit runs. It reconciles builders, queues reports for the planner
+  service unit runs. It reconciles builders, queues reports for the MasterMind
   and syncs remote bindings. `--check` exits 0 when a daemon is running and 1 when not, printing nothing.
-- `relevo mcp [--mode channel|tools|auto] [--planner P] [--interval D]` — run the
-  MCP server over stdio for a Claude Code planner pane. See
+- `relevo mcp [--mode channel|tools|auto] [--mastermind P] [--interval D]` — run the
+  MCP server over stdio for a Claude Code MasterMind pane. See
   [Claude Code plugin](#claude-code-plugin).
-- `relevo planner init [--name N] [--kind K --session S] [--hook claude]`;
-  `relevo planner list [--json]`; `relevo planner rename <id|name> <new-name>`;
-  `relevo planner forget <id|name>` — register this planner, or list, rename
+- `relevo mastermind init [--name N] [--kind K --session S] [--hook claude]`;
+  `relevo mastermind list [--json]`; `relevo mastermind rename <id|name> <new-name>`;
+  `relevo mastermind forget <id|name>` — register this MasterMind, or list, rename
   or forget its records.
 - `relevo doctor` — preflight check: plugin, daemon, harness binaries, roles,
   the database and hooks. See [First run on a clean machine](#first-run-on-a-clean-machine).
-- `relevo migrate [--dry-run] [--keep-old-binary] [--state-from DIR] [--state-to DIR]` —
-  move a pre-relevo installation's state, switch the client unit and remove the old binary.
 - `relevo serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N] [--max-builders N]` — run the remote-builder server (listener + daemon).
-- `relevo serve init|enroll|clients|revoke|fingerprint|status|ui|gc|unbind` — server administration, on the server host. `relevo show --owner` and `relevo history --tab --owner` read one owner's round or usage on that host, and `serve ui` is the server's own reader.
+- `relevo serve init|enroll|clients|revoke|fingerprint|status|ui|gc|unbind` — server administration, on the server host. `relevo show --owner` reads one owner's round on that host, and `serve ui` is the server's own reader.
 - `relevo gate --serve [--state DIR]` — list the gates on the server's own ledger.
 - `relevo gate --serve --clear <provider|token> [--state DIR]` — clear a recorded rate limit on the server's ledger.
 - `relevo gate --serve <token> [--for D] [--reason S] [--state DIR]` — record a provider rate limit on the server's ledger.
-- `relevo config server key` — generate this machine's remote-builder identity (an
+- `relevo config server key [--enroll-line]` — generate this machine's remote-builder identity (an
   ed25519 keypair); prints the enrollment line a server admin runs
-  `relevo serve enroll --key "<line>"` with.
+  `relevo serve enroll --key "<line>"` with. With `--enroll-line`, it prints
+  only the `ed25519 ...` line, for scripts.
 - `relevo config server add NAME URL (--fingerprint sha256:HEX | --ca system | --insecure)` —
   record a remote server; with `--fingerprint`, checks enrollment once.
   Generates and prints this machine's key when it has none yet.
@@ -443,11 +424,11 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
 - `relevo version` — the build's version.
 
 Every binding-scoped command takes its binding either positionally or as
-`--name`; naming it both ways at once is refused. `send` and `review` fall
+`--name`; naming it both ways at once is refused. `send` falls
 back to whichever binding owns the current working directory, and a bare
 `relevo status` lists them all. Naming one is **required** for `done`,
-`stop`, `land` and `unbind`: those act on a specific loop — `stop` kills a
-process, the others end or land one — and they refuse to guess (see below).
+`stop` and `unbind`: those act on a specific loop — `stop` kills a
+process, the others end one — and they refuse to guess (see below).
 
 ### Renamed commands
 
@@ -464,7 +445,6 @@ name exits 2 and names its replacement:
 | `relevo client` | `relevo config server` |
 | `relevo servers` | `relevo config server list` |
 | `relevo add` | `relevo bind --worktree` |
-| `relevo fork` | `relevo bind --from <source>@<round>` |
 | `relevo diff` | `relevo show --diff` |
 | `relevo log` | `relevo show --log` |
 | `relevo gc` | `relevo unbind --done` |
@@ -473,8 +453,6 @@ name exits 2 and names its replacement:
 | `relevo pull` | `relevo wait (it prints the report)` |
 | `relevo unavailable` | `relevo gate <token>` |
 | `relevo available` | `relevo gate --clear <provider>` |
-| `relevo tab` | `relevo history --tab` |
-| `relevo stats` | `relevo history --stats` |
 | `relevo db` | `relevo doctor (the database row)` |
 
 ### Reviewing a round
@@ -493,26 +471,6 @@ auth.go:41  	if u == "" {
 auth.go:42 +		return errEmptyUser
 auth.go:43  	}
 ```
-
-A comments file is one `path:line: text` per line; a line without an anchor
-is a general comment:
-
-```
-auth.go:42: return a typed error, not errEmptyUser directly
-auth.go:43: this brace can go too, see the hunk above
-wire the new error into the CLI's exit code table
-```
-
-`relevo review NAME --file comments.md [--round R] [--out PATH] [--send]`
-validates every anchor against that round's diff — an anchor the diff does
-not have is refused before anything is written — and renders a plan with one
-task per anchored comment, quoting the anchored hunk (three lines of context
-either side) and the comment verbatim, plus a "General comments" section for
-the unanchored lines. It writes the plan to `--out`, or by default
-`<binding dir>/NNN-review-plan.md` (`NNN` the reviewed round), and prints the
-path. `--send` hands that plan to the builder as the next round, the same as
-`relevo send --file`. The rendered plan opens with "Fix ONLY what these
-comments ask" — delete that line if the round should be broader.
 
 ### The report block
 
@@ -541,13 +499,13 @@ appends to round logs. It holds the state lock only for the duration of a
 read, exactly as `relevo status` does.
 
 `:fleet` is the root: every binding as a table row (name, actor, candidate,
-round, state, age, spend, planner, repo). `s` toggles attention and name
+round, state, age, spend, MasterMind, repo). `s` toggles attention and name
 order and `/` filters the rows; `enter` opens the selected binding's round
 detail, `esc` goes back to it, `:` opens the command line (`:fleet`,
 `:rounds [query]`, `:round <binding> [N]`), `?` lists every key, and `q`
 quits at the root. The pane's five tabs:
-- **plan** — the round's own plan file, first in the order (#183).
-- **report** — that round's planner-bound report or question payload.
+- **prompt** — the round's own prompt file, first in the order (#183).
+- **report** — that round's MasterMind-bound report or question payload.
 - **terminal** — recent live terminal output from the builder's log.
 - **diff** — the captured git patch from the round.
 - **log** — the formatted append-only round log, scoped to the round.
@@ -587,7 +545,7 @@ query kept. The grammar is exactly `relevo history -q`'s:
 / by:day since:14d
 ```
 
-`b` regroups by the next axis (binding, repo, feature, builder, harness,
+`b` regroups by the next axis (binding, repo, feature, ticket, builder, harness,
 provider, model, day, outcome); groups carry rounds, reported, halted, commits,
 tokens, cost and the last round's date, and `enter` on a group expands its
 rounds beneath it. `s` cycles the sort column for the level under the cursor
@@ -617,25 +575,24 @@ refuses `:rounds`; `relevo ui` never exits over it.
 A builder is a process relevo runs, one fresh process per round; each
 `relevo send` starts the harness's non-interactive form -- `agy -p …`,
 `claude -p …`, `opencode run …` -- in the binding's tree with the round's
-prompt, writes the harness's streamed JSON events to
-`~/.local/state/relevo/<name>/NNN-builder.jsonl` and its stderr to
-`NNN-builder.log`, both beside the round's plan and report, and returns.
+prompt, writes the harness's output -- stdout and stderr both -- to
+`~/.local/state/relevo/<name>/NNN-runner.jsonl` beside the round's prompt and
+report, and returns.
 Those are the round's **open-round files**, in the binding's directory under
 the state root. When the round closes, relevo seals them into the database in
 the same transaction that closes the round -- the report text rides in the
-planner's payload -- and removes them, so the directory afterwards holds only
+MasterMind's payload -- and removes them, so the directory afterwards holds only
 the files of a round still open.
-The daemon renders the stream into the `.log` as it grows -- one line per
+The daemon renders the stream as it grows -- one line per
 tool call (`● Bash go test ./...`), its result with the first line of what it printed (`  ⎿ ok: ok  github.com/… 0.4s`, `  ⎿ error: …`),
 the builder's text, any denied permission, and the final answer -- so
-`relevo ui`'s terminal tab, `relevo status` and `tail -f` on the `.log` show
+`relevo ui`'s terminal tab and `relevo status` show
 the round live, about two seconds behind. Between rounds the tab keeps
-the last round's log. The `.jsonl` is the raw record;
-relevo never reads it for meaning. When relevo itself stops or replaces that process -- a
-mid-round switch, `relevo done`, `relevo unbind` -- it appends one line to the
-same log saying so (`--- relevo 23:13:51: switched to claude/anthropic/sonnet (rate-limited …) ---`),
-so two builders' output in one round is never ambiguous. The process exits when
-it has written the report, or when
+the last round's rendered output. The `.jsonl` is the raw record;
+relevo never reads it for meaning, and `relevo show <name> --round N
+--transcript` renders it for a human. A round from an older relevo version
+keeps its `NNN-builder.log`, and the readers show that instead. The process
+exits when it has written the report, or when
 it fails; between rounds a headless binding has no process and is idle, not
 broken. The completion marker is the contract: a process that wrote its report and
 created `NNN-done`, then exited non-zero, has done its job. A process that
@@ -652,7 +609,7 @@ What this means in practice:
   than improvise"); headless makes that a hard requirement.
 - **`relevo status`** shows `builder  headless  <kind>  <idle|working|exited N>
   pid P since HH:MM` and the log's last three lines as `log` rows.
-  `relevo ui`'s terminal tab shows the log file.
+  `relevo ui`'s terminal tab shows the round's rendered output.
 - **Exit without a report** is logged as an `exit` entry (exit code and the
   log's last 20 lines) and the daemon switches builders, up to `max_switches`
   (a switch caused by a rate-limit gate is not counted); then
@@ -673,7 +630,18 @@ What this means in practice:
   agent session kept running inside the shared service, still editing the
   worktree relevo had already switched away from. `relevo doctor` notes the shared
   service (and, when readable, its session count from opencode.db) whenever
-  `~/.config/opencode/service.json` exists.
+  `~/.config/opencode/service.json` exists. They also pass `--thinking`, so
+  the model's reasoning reaches the transcript.
+- **A round's session is a runner, never a MasterMind.** Every process relevo
+  starts for a round carries exactly one `RELEVO_RUNNER=<binding name>` in its
+  environment, and relevo strips its own identity variables
+  (`RELEVO_MASTERMIND`, `RELEVO_PLANNER`, and a stale `RELEVO_RUNNER` inherited
+  from the daemon) from every spawned child. The MasterMind consent hooks read
+  the marker and stay silent for it, so a builder or reader session is never
+  asked the repository consent question, never briefed and never registered as
+  a MasterMind: it is there to do the round's work. The marker reaches every
+  round process -- local and served, a fresh spawn, a resume after a daemon
+  restart, a mid-round switch, a repair round and the admit of a queued round.
 
 **Scopes.** A local headless round runs in its own transient systemd scope
 named `relevo-round-local-<binding>-<round>` (an owned remote binding uses its
@@ -718,7 +686,7 @@ done`, `relevo unbind`, or `relevo stop`.
 
 The signals are the working tree (its fingerprint is `HEAD` plus `git status
 --porcelain`, hashed -- no diff, no snapshot) and the builder's output: the
-builder's stream file (`NNN-builder.jsonl`) mtime. Each signal keeps the time it last changed, and the daemon samples at
+builder's stream file (`NNN-runner.jsonl`) mtime. Each signal keeps the time it last changed, and the daemon samples at
 most once every `progress_interval_ms` (default thirty seconds).
 
 - **`stalled <age>`** -- no signal has moved for `stall_after_ms` (default
@@ -750,7 +718,7 @@ gate` still overrides; `relevo gate --clear` undoes a false positive.
 
 ### Remote builders: the server
 
-`relevo serve` runs a remote-builder server: an HTTPS listener over enrolled clients and an autonomous daemon loop that runs headless builders on the server host without a local planner or GUI. It opens the one machine database: enrolled clients, the server's TLS key and certificate, its gates and every served binding are records in relevo.db. `--state` only says where the server keeps its bare repos, its temp files and its worktrees.
+`relevo serve` runs a remote-builder server: an HTTPS listener over enrolled clients and an autonomous daemon loop that runs headless builders on the server host without a local MasterMind or GUI. It opens the one machine database: enrolled clients, the server's TLS key and certificate, its gates and every served binding are records in relevo.db. `--state` only says where the server keeps its bare repos, its temp files and its worktrees.
 
 On a fresh server host, the first run looks like:
 1. `relevo serve init --host <hostname>` generates a server private key and self-signed certificate, printing the SHA-256 fingerprint that clients pin.
@@ -765,22 +733,21 @@ On a fresh server host, the first run looks like:
 
 On the server machine, the admin runs these on the server host. No `--state` is needed: an admin verb reads the running daemon's root from the database's `serve.daemon` record (an explicit `--state` still wins, and a stale record falls back to the default root with a note):
 
-- `relevo serve status [--json]` displays active bindings across all owners, sorted by owner label; `--json` prints the same census as one JSON object with the top-level keys `builders`, `last_contact` and `owners`.
-- `relevo show <name> --owner <label|id>` prints one round's plan, report, diff, drift, log or transcript, with `relevo show`'s flags. Read-only, and it reads live bindings only: a non-live binding reads as "binding not found".
+- `relevo serve status [--json]` prints active bindings across all owners as JSON (top-level keys `builders`, `last_contact` and `owners`), sorted by owner label.
+- `relevo show <name> --owner <label|id>` prints one round's prompt, report, diff, drift, log or transcript, with `relevo show`'s flags. Read-only, and it reads live bindings only: a non-live binding reads as "binding not found".
 - `relevo show <name> --owner <label|id> --log` prints that owner's binding log, with `relevo show --log`'s `--round`, `--after`, `--json` and `--follow`. Read-only: `--owner` is an exact label or an exact client id, and nothing is stamped or created.
-- `relevo history --tab [--owner <label|id|all>] [--since 7d] [--by binding|model|provider|owner]` sums recorded usage: with `--owner` for that one owner, and `--owner all` (or no `--owner`) for every owner, where a binding group reads `<label>/<name>` and `--by owner` groups by owner label. Reads only; it creates nothing.
 - `relevo serve clients` lists enrolled clients and their revocation status.
 - `relevo serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
-- A **DONE** served binding is collected once its last round has been acked by the client, or after seven days without an ack: the daemon removes its worktree, deletes its branch and every `refs/relevo/<name>/*` ref in the owner's bare repo, and archives its record in the database (this cleanup lands in the server's next round).
+- A **DONE** served binding is collected once its last round has been acked by the client, or after seven days without an ack: the daemon removes its worktree, deletes its branch and every `refs/relevo/<name>/*` ref in the owner's bare repo, and archives its record in the database (this cleanup lands in the server's next round). Every server unbind releases the binding's branch and refs as well. A bare repo is deleted once no live binding uses it, and the next bind of that repository recreates it.
 
-What `relevo serve` does not do: it runs no planner and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Tenant isolation by unix user or container is tracked in #204.
+What `relevo serve` does not do: it runs no MasterMind and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Tenant isolation by unix user or container is tracked in #204.
 
 ### Remote builders: the client
 
 A remote binding is an ordinary binding whose builder runs on someone else's
 machine, over a signed, pinned HTTPS connection instead of a local process.
 It has no worktree of its own: `relevo send` ships a bundle of your branch's
-history alongside the plan, and the daemon polls the server for the round's
+history alongside the prompt, and the daemon polls the server for the round's
 state the same way it polls a local builder.
 
 Set up once per machine:
@@ -804,7 +771,7 @@ Set up once per machine:
 
 Then, from any repository:
 ```
-relevo bind --name api --server zen        # creates the server binding and
+relevo bind --name api --server zen --no-feature        # creates the server binding and
                                            # the local branch relevo/api, no worktree
 relevo send --name api --file plan.md      # ships plan.md and a bundle of relevo/api
 relevo status                              # round state comes from the server, polled
@@ -822,14 +789,13 @@ check out something else, then `relevo wait`.
 `relevo send` also ships your repository's tags as data beside the bundle, and
 the server sets each one whose commit it already has, so a tagged server
 worktree can `git describe --tags`. Catch-up fetches the builder's own stream
-file (`NNN-builder.jsonl`) alongside the report, diff and log, so a remote
+file (`NNN-runner.jsonl`) alongside the report, diff and log, so a remote
 round's failure carries its detail to the client.
 
 What is refused: `--cwd` cannot be combined with `--server` (a remote binding
-is always created fresh, never bound to an existing directory); `relevo ask`
-("consults are local-only"); `relevo bind --from` from a remote source ("--from across
-servers is not supported"); and `relevo bind --resume --rebind` (or
-`--builder`) against a remote binding ("cannot change a remote
+is always created fresh, never bound to an existing directory); and
+`relevo bind --resume --rebind` (or
+`--candidate`) against a remote binding ("cannot change a remote
 builder; unbind and re-create" -- a binding's mode is fixed at creation, the same
 rule a headless binding follows). `relevo done` and `relevo unbind` tell the
 server first, and only change anything locally once it agrees (a 404 from
@@ -854,7 +820,7 @@ fingerprint.
 Each round carries a budget; past it, relevo flags the binding `NEEDS YOU` and
 notifies once. It never kills anything — a builder working a real stage of a
 plan runs for hours, so the budget is a runaway guard, not a progress estimate.
-The default is 24 hours; `relevo bind --timeout 2h` sets it per binding.
+The default is 24 hours; `relevo bind --no-feature --timeout 2h` sets it per binding.
 
 A headless builder that exits without writing its report file still closes the
 round, and relevo delivers its report flagged `unmarked`. Nothing is scraped and
@@ -862,13 +828,13 @@ nothing is guessed.
 
 ### Running several builders at once
 
-`relevo bind` gives the planner one builder over the current tree. `relevo bind --worktree`
+`relevo bind` gives the MasterMind one builder over the current tree. `relevo bind --worktree`
 attaches more, each on its own git worktree, so they never contend for files:
 
 ```
-relevo bind --builder claude/anthropic/sonnet --name api
-relevo bind --worktree --name frontend --builder claude/anthropic/sonnet
-relevo bind --worktree --name backend  --builder opencode/openrouter/z-ai/glm-5.3-flash
+relevo bind --no-feature --candidate claude/anthropic/sonnet --name api
+relevo bind --worktree --no-feature --name frontend --candidate claude/anthropic/sonnet
+relevo bind --worktree --no-feature --name backend  --candidate opencode/openrouter/z-ai/glm-5.3-flash
 
 relevo send --name frontend --file ui_plan.md
 relevo send --name backend  --file api_plan.md
@@ -880,67 +846,17 @@ binding takes `--name`.
 
 Every mutating verb (`bind`, `send`, `done`, `unbind`) ends by
 listing, on stderr, every *other* binding that is waiting on a human — a halt,
-a dead builder, a lost planner — with how long and the verb that resolves it,
+a dead builder, a lost MasterMind — with how long and the verb that resolves it,
 e.g. `waiting on you: api round 4 halted 23m -- relevo status --name api`. The
 exit code is unchanged; it is a reminder, not a refusal.
 
-Relevo does not sequence them and does not merge their trees. The planner
+Relevo does not sequence them and does not merge their trees. The MasterMind
 decides how many builders it needs, which run in parallel and which wait, and
 integrates the results — relevo only carries plans out and reports back.
 
-**`relevo bind --worktree` is not `relevo bind --from`.** A `--from` bind continues a timeline: it copies
-round history through a chosen round and starts at the round after it. A peer
-starts at round 1 with an empty log, because it is not a continuation of
-anything.
-
 Headless builders are the cheap way to run several: no terminal per builder,
-no idle harness holding memory. `relevo bind --worktree --name api` gives a peer its own
+no idle harness holding memory. `relevo bind --worktree --no-feature --name api` gives a peer its own
 worktree and a fresh process per round.
-
-### Edges (triggers)
-
-When a plan splits work across two bindings -- one writes the contract,
-another builds against it -- the planner otherwise sits in the middle of
-every handoff: wait for the report, read it, `relevo send --name other --file
-…`. An **edge** declares that handoff up front:
-
-```
-relevo edge add api --when report --then send --target client --prompt ./client-plan.md
-```
-
-This says: when `api`'s current round closes and its report exists, hand
-`client-plan.md` to `client` as its next round. Relevo never inspects the
-artifact; it checks existence -- the same fact `queueReport` checks for the
-report itself -- and delivers a prompt the planner wrote ahead of time.
-`--when` names the artifact: `report`, `diff`, `done` or `gate`. `--then`
-is `send` -- the only thing an edge does today; `then: ask` is a follow-up.
-
-**Queue by default, fire on request.** `--mode queue`, the default, holds the
-handoff in front of the planner as a payload naming the exact command to run
--- the same held-payload delivery a report gets. `--mode fire` runs the send
-itself, unattended, for a chain the planner has run before and trusts. A fire
-that cannot reach its target (busy, gone, gated) is never lost: it is
-downgraded to the same queued payload, with the failure named, so the planner
-still sees the handoff. Either way the edge fires exactly once, on its own
-round's close -- an edge missing its artifact at close is marked skipped and
-never reconsidered, since a round's artifacts are final once it closes.
-
-`relevo edge list <source>` prints one line per declared edge, Fired and
-Result included; `relevo edge rm <source> <id>` drops one -- removing a fired
-edge is fine. Builders never declare edges; the CLI is the planner's.
-
-### Forking a binding
-
-`relevo bind --from` branches a new binding from an earlier round of an existing binding:
-
-```
-relevo bind --from webshop@2 --name webshop-alt
-```
-
-- **What is copied:** Round history up through the round `--from` names (`SRC@R`): every log entry through R (marked confirmed, with nothing pending) and the round files through R (`NNN-plan.md`, `NNN-report.md`, `NNN-question.md`, `NNN-diff.patch`). The new binding is a fresh record in the database.
-- **What is not copied:** Working tree code state is not rewound. By default, relevo creates a fresh git worktree at `~/.local/state/relevo/.worktrees/<new-name>` on a new branch `relevo/<new-name>` cut from current `HEAD` of the source repository. Pass `--cwd DIR` to bind to an existing directory instead.
-- **State layout:** Relevo keeps worktrees it creates under `.worktrees/` in the state root (`~/.local/state/relevo/.worktrees/`).
-- **Teardown rule:** Relevo removes a worktree it created only when it is clean (`git status` reports no untracked or uncommitted changes), and never removes the branch. If uncommitted edits remain or git is unavailable, `relevo unbind` and `relevo unbind --done` leave the worktree untouched and report the exact command to inspect or remove it manually.
 
 
 ### Stopping a round
@@ -967,66 +883,16 @@ from the queue instead, since there is no process to kill. A server that
 predates this refuses the request with a pointer to `relevo unbind webshop`,
 which stops the round and drops the binding.
 
-### Landing a branch
-
-`relevo land <name>` is the mechanical version of the sequence a planner
-types by hand after a green round. It runs, in order, and stops at the first
-failure with **nothing pushed** except where noted:
-
-```
-relevo land webshop            # fetch, rebase onto origin/main, gate, push, print the PR command
-relevo land webshop --pr       # ... and run `gh pr create --head relevo/webshop --base main --fill`
-relevo land webshop --merge    # merge origin/main in instead of rebasing (no rewrite, no force)
-relevo land webshop --onto trunk   # for a binding that recorded no base branch
-relevo land webshop --force    # land while a round is still open
-relevo land webshop --no-gate  # skip the gate for this land (the result says "skipped")
-```
-
-1. **Preconditions.** The binding must be a local binding with a worktree of
-   its own (`--cwd` bindings have none), must not be `PAUSED` or `DONE`, and
-   must have a clean tree -- `land` will not commit for you, and it will not
-   rebase a tree a builder is still writing to. A round still open is refused
-   unless you pass `--force`.
-2. **Fetch and rebase.** `git fetch origin <base>`, then
-   `git rebase origin/<base>`. A conflict aborts the rebase, lists the
-   conflicting paths, changes nothing and exits **3**.
-3. **Gate.** The binding's gate runs on the rebased tree (`sh -c "<gate>
-   2>&1"`), with its output in `~/.local/state/relevo/<name>/land-gate.log`. A
-   failing gate pushes nothing and exits **2**.
-4. **Push.** `git push -u origin <branch>`, with `--force-with-lease` when the
-   branch already exists on the remote -- the rebase rewrote it.
-5. **PR.** With `--pr` and `gh` on PATH, `gh pr create --head <branch> --base
-   <base> --fill` runs and its URL is recorded. Otherwise the exact command is
-   printed for you to run. If `gh` fails *after* the push, relevo says so: the
-   branch is on origin, and only the PR is missing.
-6. **Log.** `landed <branch> -> <base> [pr <url>]`, with the time recorded on
-   the binding. `relevo status` then shows `landed` on the round line until the
-   next `relevo send` clears it.
-
-The base *branch* is recorded at `bind` time: the branch the source
-checkout had checked out (e.g. `main`). An older binding, a `--cwd` binding,
-and a `--branch` adoption have none, so `land` asks you for `--onto`. Use
-`--merge` when the branch must keep its history or when someone else may be
-working on top of it; the base is then merged in rather than rebased onto, and
-because nothing is rewritten the push needs no lease.
-
-**`land` never merges a pull request, and never deletes a branch or a
-worktree.** It is the mechanical half of the job and stops at the PR. Merging
-is a separate, deliberate act: merge only after `gh pr checks <n> --watch`
-has finished with every job passing -- a green first job is not a green CI
-(the rule in `CLAUDE.md`, repeated here because `land` is where it is easiest
-to forget).
-
 ### Cleaning up finished bindings
 
 A binding's live state is a record in the database, not a directory of files.
 While a round is open that round's files sit in `$XDG_STATE_HOME/relevo/<name>/`
-(defaulting to `~/.local/state/relevo/<name>/`) -- its plan, report,
-patch (`NNN-diff.patch`), captured dialog, builder log and stream -- and when the
+(defaulting to `~/.local/state/relevo/<name>/`) -- its prompt, report,
+patch (`NNN-diff.patch`), captured dialog and builder stream -- and when the
 round closes relevo seals them into the database and removes them.
 
 `unread`/`●new` comes from the binding record's `viewed_at` stamp (#143):
-`relevo show` (`--plan`, `--diff`, `--log`) each stamps it after a successful
+`relevo show` (`--prompt`, `--diff`, `--log`) each stamps it after a successful
 print of a live binding, and `status` compares the binding's newest report
 against it. `relevo ui` never writes it directly -- it stamps through the same
 call `show` uses, keeping `ui` itself read-only. `relevo done` stops relaying and, when the binding's worktree is clean and
@@ -1034,19 +900,21 @@ no round is open, removes the worktree so its branch can be checked out
 in the main repo (`removed worktree ... (branch relevo/x is free to check
 out)`); a dirty tree or an open round is kept and `relevo unbind --done` retries
 when it is clean. The binding directory itself is never removed by `done`
-— the log is the record of what the planner actually told the builder.
+— the log is the record of what the MasterMind actually told the builder.
 `relevo bind --resume <name>` puts a removed worktree back on the same
 branch at the same path; a DONE binding may then be rebound with
 `--rebind`, since the old builder cannot work in the recreated directory.
 
-relevo deletes a branch in **zero** places: not at `unbind`, `unbind --done`, `done`, nor
-on a `bind` rollback. The one exception is a `relevo/<name>` branch `bind --server`
-created seconds earlier and must undo because the server refused the binding.
+relevo deletes a branch in two places:
+- `unbind --done` and `unbind --sweep`, for a `relevo/<name>` branch relevo created, only when its commit is on a remote-tracking ref;
+- the existing `bind --server` rollback exception, which stays (a `relevo/<name>` branch created seconds earlier and undone because the server refused the binding).
+
+A branch adopted with `--branch` is never deleted; `unbind`, `done` and a kept (dirty) worktree never delete anything.
 
 ```
 relevo unbind ai              # delete the binding and its whole directory
 relevo unbind ai --archive    # keep the binding's record, log and rounds in the database
-relevo unbind --done          # archive every DONE binding
+relevo unbind --done          # archive this MasterMind's DONE bindings
 relevo unbind --done --delete # remove them instead
 ```
 
@@ -1054,10 +922,9 @@ Archiving is the default because every other destruction decision in relevo keep
 by default. An archived binding keeps every row it had -- its rounds, its events,
 its artifacts and its transcripts -- so `relevo history`, `relevo show` and the
 ui's `all` scope still read it months later, and the name frees for a fresh
-binding. Nothing is written to `.archive/` any more: a tarball an older relevo
-left there is imported once, on the next read, and removed.
+binding.
 
-`unbind --done` only touches bindings the planner marked `DONE`. A `PAUSED` or a `BROKEN`
+`unbind --done` only touches bindings the MasterMind marked `DONE`. A `PAUSED` or a `BROKEN`
 one is left alone: it still needs a
 human, and clearing it would throw away the state that explains why it stopped,
 while a paused binding is released but alive — `relevo bind --resume` brings it
@@ -1069,12 +936,13 @@ or the working index, and they are reclaimed automatically by the repository's
 own `git gc`.
 
 **What a binding records.** Beyond its round history and live state, a fresh
-`bind` fills in four more facts about the binding: which
+`bind` fills in five more facts about the binding: which
 repository it works in (the origin URL, normalised, and the git common
 directory — best-effort, so a directory git can't read leaves this blank
 rather than failing the command), the `--feature` label grouping it with
-other bindings (a `--from` bind inherits its source's unless you pass your own), which
-binding and round it was forked from, and the planner's own harness
+other bindings (or that it serves none), the `--ticket` issue it serves
+(stored as `#N`, or `owner/repo#N` when the repository is known), which
+binding and round it was forked from, and the MasterMind's own harness
 transcript file path, when relevo can locate one at bind time. None of this
 changes what you see day to day; it exists for `relevo history`, the ui's
 dashboard and the database below.
@@ -1084,7 +952,7 @@ dashboard and the database below.
 relevo keeps a pure-Go sqlite database at `$XDG_STATE_HOME/relevo/relevo.db`
 (defaulting to `~/.local/state/relevo/relevo.db`), mode 0600, and it is the
 record: the configuration sections and secrets, every binding with its round
-log and rounds, gates, planner records, and every file a closed round produced
+log and rounds, gates, MasterMind records, and every file a closed round produced
 (artifact and transcript rows). Nothing else is a source of truth, and no verb
 needs it closed.
 
@@ -1094,14 +962,12 @@ The state root holds only what cannot be a row:
 - `.daemon.lock` and the per-root `.lock`, the two flocks the daemon and every
   command take;
 - `.worktrees/`, the git worktrees relevo creates;
-- one directory per binding, holding the files of a round that is still open
-  (and a `land-gate.log` from the last `relevo land`);
+- one directory per binding, holding the files of a round that is still open;
 - on a server, `serve/repos/` (the bare repos), `serve/tmp/` (in-flight request
   bodies) and `serve/bindings/<owner>/` (one directory per owner).
 
 Nothing else is used. A file dropped into `~/.config/relevo` is imported on the
-next command and removed, and a `.archive/*.tar.gz` an older relevo left behind
-is imported once and removed; after that neither path exists. `relevo doctor`
+next command and removed. `relevo doctor`
 prints the database's `database` row: its path, its size, the schema version,
 and the live and archived binding counts.
 
@@ -1116,24 +982,19 @@ across every binding relevo has ever recorded -- live or archived -- newest
 first.
 
 ```
-relevo history [--here|--repo <url|dir>]   filter to a repo: --here resolves the current directory's
-                                           origin url (or its git common dir with no remote);
-                                           --repo takes either form directly
+relevo history [--here]                    filter to a repo: --here resolves the current directory's
+                                           origin url (or its git common dir with no remote)
               [--feature LABEL]           filter to a --feature label
+              [--ticket REF]              filter by ticket: a bare N or #N matches any stored ticket
+                                           ending in #N, owner/repo#N matches exactly
               [--binding NAME]            filter to one binding name
-              [--planner SESSION]         filter to one planner session id
-              [--harness K] [--provider P] [--model M]
-                                           filter to the round's builder columns
-              [--candidate TOKEN]         filter to one harness/provider/model token
-              [--outcome O]               filter to one round outcome: reported, halted, exited,
-                                           switched, done_no_report, open
-              [--since D] [--until D]     only rounds started in this window: 24h, 7d, or YYYY-MM-DD
-              [--archived|--live]         archived bindings only, or live bindings only (default: both)
+              [--mastermind SESSION]         filter to one MasterMind session id
+              [--since D]                 only rounds started after this: 24h, 7d, or YYYY-MM-DD
               [--limit N]                 max rows to print; 0 = all (default 200)
               [--json]                    a JSON array of RoundRow, `[]` when empty
               [-q "<query>"]              filter with the query language below
-              [--by <axis>]               regroup the result: none, binding, repo, feature, builder,
-                                           harness, provider, model, day, outcome
+              [--by <axis>]               regroup the result: none, binding, repo, feature, ticket,
+                                           candidate, actor, harness, provider, model, day, outcome
               [--rows]                    with --json --by, include each group's Rows
 ```
 
@@ -1169,7 +1030,7 @@ query  := token*                              whitespace separated
 token  := key ":" value                       equality; "quoted" for spaces
         | numkey op number                    op in > < >= <= = 
         | word                                case-insensitive substring of binding, repo or feature
-key    := binding repo feature planner harness provider model candidate outcome
+key    := binding repo feature ticket MasterMind harness provider model candidate outcome
           report state gate basis server mode since until archived by
 numkey := cost tokens commits duration round
 values : outcome reported|halted|exited|switched|done_no_report|open
@@ -1179,7 +1040,7 @@ values : outcome reported|halted|exited|switched|done_no_report|open
          mode    pane|headless|remote   (pane: history only)
          archived true|false
          since/until 24h|7d|YYYY-MM-DD
-         by      none|binding|repo|feature|builder|harness|provider|model|day|outcome
+         by      none|binding|repo|feature|ticket|candidate|actor|harness|provider|model|day|outcome
          duration minutes; tokens = in+cache+write+out; cost in USD
 ```
 
@@ -1197,7 +1058,7 @@ $ relevo history --by day --since 14d
 
 ### relevo show
 
-`relevo show` prints one round's plan, report, diff, drift, log or
+`relevo show` prints one round's prompt, report, diff, drift, log or
 transcript. A live binding is read straight from its files, exactly as
 today; anything not live -- an archived binding, or one this machine's
 database otherwise knows about -- is read from the database instead, so a
@@ -1205,8 +1066,8 @@ round from months ago renders the same way a live one does.
 
 ```
 relevo show <name> [--round N]                      the round to read; default: the newest completed one
-                   [--plan|--report|--diff|--drift|--log|--transcript]
-                                                     which section; default: --plan; only one may be given
+                   [--prompt|--report|--diff|--drift|--log|--transcript|--output]
+                                                     which section; default: --prompt; only one may be given
                    [--json]                         the ShowResult as JSON (Events included for --log)
 ```
 
@@ -1232,17 +1093,17 @@ report text here
 you choose. Neither resolves the current directory for you: a bare `relevo done` once ended a live
 loop by accident, and the recovery is `relevo bind --resume --name <name>`.
 `--pick` is explicit for the same reason -- a bare verb never opens a picker,
-so a planner agent can never fall into one.
+so a MasterMind agent can never fall into one.
 And because a popup takes focus the instant it opens, `Enter` on a binding
 that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 -- and only `y` proceeds; any other key returns to the list.
 
 ## Status line
 
-`relevo status --line` shows this planner's live bindings, one row each, under
+`relevo status --line` shows this MasterMind's live bindings, one row each, under
 the Claude Code prompt; it shows nothing on error and never probes a builder.
-The first line names the planner (`planner architect-14`), so each terminal
-shows which planner it is; `relevo planner list` maps that name to its chat.
+The first line names the MasterMind (`MasterMind architect-14`), so each terminal
+shows which MasterMind it is; `relevo mastermind list` maps that name to its chat.
 Each row shows the round's harness (`harness@server` for a remote builder),
 what it is waiting on, this round's tokens, and the round's length: ticking while
 it runs, frozen once the report is in.
@@ -1254,7 +1115,7 @@ Add this to `~/.claude/settings.json`:
 ```
 
 One precondition: `relevo` must be on the `PATH` of the Claude Code process.
-The planner session is identified by `RELEVO_PLANNER`, which the relevo plugin's
+The MasterMind session is identified by `RELEVO_MASTERMIND`, which the relevo plugin's
 hook exports.
 
 Claude Code renders a few cells less than `COLUMNS`; relevo subtracts 4 by
@@ -1268,7 +1129,7 @@ count the cells before Claude Code's `…`:
 
 Each row is `○ name  rN · builder · what relevo is waiting on  …  age · STATE`,
 where `builder` is the harness segment of the candidate token, and `age` is
-time since the last plan, report or question crossed.
+time since the last prompt, report or question crossed.
 
 ## Candidates
 
@@ -1304,7 +1165,7 @@ with `relevo config edit`. The array is:
 - `harness` — a kind relevo knows: `agy`, `claude`, `opencode`, `codex`. Required.
 - `provider` — who enforces the quota; free text. Required.
 - `model` — passed to the harness as-is. Required.
-- `tree` — `binding` (the default) or `none` (which `relevo ask` refuses today).
+- `tree` — `binding` (the default) or `none`.
 - `extra_args` — appended verbatim after what relevo renders.
 - `tier` — default permission tier for this candidate: `harness`, `read`, `edit`, `yolo`. Optional; defaults to the actor's tier, else `harness`.
 - `denial_patterns` — regexes that replace the harness default denial patterns for this candidate when detecting permission-blocked exits. Optional.
@@ -1332,6 +1193,8 @@ An actor is relevo's name for a job; its agent is the harness definition `relevo
 
 For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` runs `-m gpt-5.6-terra -c model_reasoning_effort=high`, and the suffix stays in the token so two efforts are two candidates.
 
+For `claude` the `model` may end in `:low|medium|high|xhigh|max`: `opus:medium` runs `--model opus --effort medium`, and any other suffix stays part of the model id, so a Bedrock id such as `...-v1:0` passes through whole. For `opencode` the effort is a variant, `model#<variant>`, passed as is to `opencode run -m`: variants are per model, and opencode refuses an unknown one.
+
 Under `workspace-write`, codex also cannot write to Go's default build cache (`~/.cache/go-build`), so a Go plan fails at `go build` unless the plan sets `GOCACHE` inside the worktree or `/tmp`, or your `~/.codex/config.toml` lists it under `sandbox_workspace_write.writable_roots`. relevo adds only its own state directory.
 
 Any `extra_args` are appended verbatim after what relevo renders. Because relevo renders the argv, the token in `relevo status` is exactly what was started.
@@ -1340,10 +1203,10 @@ Any `extra_args` are appended verbatim after what relevo renders. Because relevo
 
 ### Choosing a candidate
 
-Pass the token to `relevo bind --builder claude/anthropic/sonnet` and relevo
+Pass the token to `relevo bind --no-feature --candidate claude/anthropic/sonnet` and relevo
 starts exactly that, gated or not (with a `note:` on stderr if it is).
 
-With `--builder` omitted, relevo decides, by one rule:
+With `--candidate` omitted, relevo decides, by one rule:
 
 - exactly one configured candidate serves the actor → that one, unless it
   is gated;
@@ -1355,12 +1218,10 @@ With `--builder` omitted, relevo decides, by one rule:
   Name one, or add it to the actor.
 
 When every candidate serving the actor is gated or `off`, relevo refuses and
-says why each one is; an explicit `--builder` still bypasses that. The same
-rule applies to `relevo bind --worktree`, `relevo bind --from` (which first
-inherits the source's candidate -- an inherited token counts as explicit) and
-`relevo ask --candidate`.
+says why each one is; an explicit `--candidate` still bypasses that. The same
+rule applies to `relevo bind --worktree`.
 
-Every choice is written down. `bind` and `ask` print one
+Every choice is written down. `bind` and `send` print one
 line saying what was picked and why, and the same line lands in the
 binding's log as a `pick` entry, so `relevo show --log` shows it later:
 
@@ -1440,7 +1301,7 @@ and classifier paragraphs at or above the threshold, which judge flagged the
 content (`regex`, `jev`, or `both`), and the maximum probability seen across
 all paragraphs. The 0.7 threshold is provisional pending `make jev`. Model
 output is never altered and delivery is never held: a high probability flags the
-entry for the planner to see, but never halts delivery.
+entry for the MasterMind to see, but never halts delivery.
 
 `relevo config` shows what relevo would do right now:
 
@@ -1546,12 +1407,16 @@ shape: `builder` must run a writer agent, `reviewer` and `researcher` a reader.
 An unknown agent, a reader with `check`, or a builtin actor with the wrong
 shape is refused when the config loads.
 
-- A new **reader** actor runs with `relevo ask --actor <name>`; a new
-  **writer** actor runs as a binding's actor: `relevo bind --worktree --actor
-  <name>` or `relevo bind --actor <name>`. Every round of that binding runs it,
-  and `relevo bind --from` keeps it.
+- A new **reader** actor runs as a binding's actor too: `relevo bind
+  --worktree --no-feature --actor <name>` or `relevo bind --no-feature --actor <name>`, then `relevo
+  send` hands it the round's prompt. Its round writes `NNN-<actor>/<label>.md`
+  -- the actor's resolved output label (`plan.md` for the architect,
+  `findings.md` for the reviewer, `notes.md` for the researcher) -- and any
+  files it produced, and the MasterMind reads it with
+  `relevo show <name> --output`. A new **writer** actor runs a round the same
+  way. Every round of that binding runs it.
 
-With `relevo bind --worktree --server S --actor <r>`, the server resolves `<r>`
+With `relevo bind --worktree --no-feature --server S --actor <r>`, the server resolves `<r>`
 against **its own** actors section, and your local sections do not travel. A
 server too old to run custom actors refuses the add.
 
@@ -1568,7 +1433,7 @@ A missing custom definition gates its candidates for that actor only, and
 `relevo doctor` lists it.
 
 **Bring your own agent.** Everything relevo's round protocol needs travels in
-the prompt relevo sends: the working tree and its `git status` check, the plan
+the prompt relevo sends: the working tree and its `git status` check, the prompt
 path, the report path, the done marker and the closing `relevo` block. A custom
 definition only shapes behaviour; `requires` names the definitions your agent
 dispatches to (the shipped builder requires `researcher`).
@@ -1584,9 +1449,8 @@ ignored, and relevo warns about any that remain.
 
 **Seeing it.** `relevo config` shows the actors block, then the pick per actor
 labelled `(config actors)`, then the candidates; `relevo status --json` has
-`builder_definition` for a custom builder. `relevo status` shows `role <r>` on
-a non-builder binding's builder line, and `status --json` has `role` (the
-stored field keeps that name; A4 renames it).
+`agent_definition` for a custom runner. `relevo status` shows `actor <r>` on
+the runner line, and `status --json` has `actor`.
 
 **Remote builders.** A server resolves actors from its *own* config, not the
 client's.
@@ -1595,7 +1459,7 @@ client's.
 
 relevo keeps a ledger of when a candidate could not be used: spawn failures it
 observed itself, rate limits you report. It shows the ledger, and an omitted
-`--builder` skips what the ledger gates (see [Choosing a
+`--candidate` skips what the ledger gates (see [Choosing a
 candidate](#choosing-a-candidate)). It is a table in the database, not a file.
 
 Report a limit with:
@@ -1622,7 +1486,7 @@ its own.
 Where it shows: `relevo status` gains a `candidates` block only while
 something is gated; `relevo config` marks gated rows `unavailable:`;
 `relevo doctor` warns per gated candidate with the command that clears it.
-`bind`/`ask` with an explicit token print a `note:` on
+`bind`/`send` with an explicit token print a `note:` on
 stderr when the candidate is gated and **proceed** -- you named it. With
 the token omitted they skip gated candidates and refuse when nothing
 ungated serves the actor.
@@ -1630,7 +1494,7 @@ ungated serves the actor.
 A candidate whose harness agent files are missing on disk is gated the same
 way (`roles missing` in `relevo config` and `relevo
 doctor`), fixed with `relevo config agents --kind <kind>` -- except an
-explicit `--builder` pick of it is **refused**, not allowed to proceed,
+explicit `--candidate` pick of it is **refused**, not allowed to proceed,
 because it cannot succeed. `relevo serve` logs each configured harness
 kind's agent coverage once at startup.
 
@@ -1647,7 +1511,7 @@ open, in two cases:
 The daemon resolves `builder` again through the builder actor's candidate list
 and the ledger (an omitted token, so the actor's order applies even to a builder
 you named), starts the pick in the **same** tree, and hands it the **same**
-round's plan. The round number does not change; the round clock
+round's prompt. The round number does not change; the round clock
 restarts. The new builder inherits whatever the old one left in the
 tree. A `switch` entry in the log says what was tried and why:
 
@@ -1680,7 +1544,7 @@ around 21:00 (30d)` note on a candidate whose provider was limited
 within an hour of now, and a `history` block with a 24-hour row per
 provider. It changes nothing about which candidate is picked; it is the
 cue to write a different order, or to `relevo gate <provider>` a provider
-before it bites. Older installs are migrated on first read.
+before it bites.
 
 ## Permission tiers
 
@@ -1709,7 +1573,7 @@ codex does not support the `read` tier: `-s read-only` cannot write the report, 
 Tiers are ordered as `read < edit < yolo`. `harness` is outside this hierarchy and is never compared as above or below other tiers.
 
 `max_tier` in the policy section defines the permission ceiling across all commands, defaulting to `edit`. Any command requesting a tier above `max_tier` (such as `yolo` under default policy) is refused unless:
-- The command includes `--allow-yolo` on the command line (e.g. `relevo bind --tier yolo --allow-yolo` or `relevo send --tier yolo --allow-yolo`), or
+- The command includes `--allow-yolo` on the command line (e.g. `relevo bind --no-feature --tier yolo --allow-yolo` or `relevo send --tier yolo --allow-yolo`), or
 - `max_tier` is explicitly raised to `"yolo"` in the policy section.
 
 `max_tier` cannot be set to `"harness"` because `"harness"` is outside the rank order and does not represent a ceiling.
@@ -1724,15 +1588,13 @@ When starting an agent, relevo resolves the permission tier through a precedence
 
 The result is then capped by the policy's `max_tier`.
 
-When branching a binding (`relevo bind --from`), if `--tier` is omitted, the new binding inherits the source binding's configured `tier`.
-
-For consults (`relevo ask`), tier resolves from the candidate's `tier`, the actor's `tier`, or `harness`. Consults accept no `--tier` flag, and a consult requesting `yolo` requires `max_tier: "yolo"` in the policy section since `ask` has no `--allow-yolo` flag.
+For the verify reviewer, tier resolves from the policy section's `tier.reviewer` when set, else the candidate's `tier`, else `harness` -- and then capped by `max_tier`. The reviewer accepts no `--tier` flag, and a reviewer requesting `yolo` requires `max_tier: "yolo"` in the policy section since `send --verify` has no `--allow-yolo` flag.
 
 ### Per-round tiers
 
 Every builder runs a new process for each round, so a round may temporarily override the tier with `relevo send --tier <tier> [--allow-yolo]`. The override applies to that round only, and resets to the binding's default tier when the round completes.
 
-`relevo send --builder <token>` moves the binding to another configured candidate from this round on. It is refused while a round is open (stop it first with `relevo stop`). An explicit pick of a gated candidate is recorded and proceeds, as with `relevo bind --worktree --builder`. The binding's tier is re-derived for the new candidate. On a remote binding the server must advertise the `builder` feature.
+`relevo send --candidate <token>` moves the binding to another configured candidate from this round on. It is refused while a round is open (stop it first with `relevo stop`). An explicit pick of a gated candidate is recorded and proceeds, as with `relevo bind --worktree --candidate`. The binding's tier is re-derived for the new candidate. On a remote binding the server must advertise the `builder` feature.
 
 ### Permission-blocked exits
 
@@ -1740,7 +1602,7 @@ When a headless builder exits without producing a report file, relevo inspects t
 
 If a permission denial pattern matches (for example, if a tool was refused because the agent attempted an edit while in `read` mode, or executed a command without required approvals):
 - The binding halts and transitions to `NEEDS YOU`.
-- The halt message quotes the matching denial line and instructs the planner to re-send with a higher tier or adjust harness allow lists.
+- The halt message quotes the matching denial line and instructs the MasterMind to re-send with a higher tier or adjust harness allow lists.
 - The ledger records an exit entry with note suffix `; permission-blocked: <line>`.
 - relevo does **not** switch to another candidate (which would waste quota on a configuration error) and does **not** record a rate-limit gate.
 
@@ -1772,13 +1634,12 @@ halt -- until the gate finishes or times out.
 
 Configure it with `--gate '<cmd>'` on `relevo bind` or `relevo bind
 --worktree`; `--no-gate` opts a binding out of the policy section's `gate.default`
-(see above) even when one is configured machine-wide. `relevo bind --from` without
-`--gate`/`--no-gate` inherits the source binding's gate. Omitting both flags
+(see above) even when one is configured machine-wide. Omitting both flags
 on `bind` falls back to `gate.default`, `""` meaning no gate at all --
 bindings written before this feature have no gate and are unaffected.
 
 The gate's full output -- and the supervisor's exit trailer -- lives at
-`NNN-gate.log` next to the round's plan and report. Its result is one of
+`NNN-gate.log` next to the round's prompt and report. Its result is one of
 `pass`, `fail`, `timeout`, or `error` (the last for a gate that could not
 start, or whose exit code could not be read):
 
@@ -1787,7 +1648,7 @@ Gate: make check -- PASS (exit 0, 1m40s). Output: /path/to/003-gate.log
 ```
 
 A failing gate's payload line also carries the last few non-empty lines of
-the log, so the planner sees why without opening the file:
+the log, so the MasterMind sees why without opening the file:
 
 ```
 Gate: make check -- FAIL (exit 2, 1m40s). Output: /path/to/003-gate.log
@@ -1805,8 +1666,7 @@ in the JSON that `relevo show --log --json` and `relevo show --json` print: the 
 session that built the closed round, so a report read two rounds later can
 still name the session that wrote it. It is the session the round's stream
 announced in its first event. It is absent when the harness named none -- relevo
-never guesses. The one-line form appends ` session=<kind>:<id8>`, and it is what
-`ask --round` resumes.
+never guesses. The one-line form appends ` session=<kind>:<id8>`.
 
 ### Verify
 
@@ -1816,19 +1676,19 @@ own output, relevo runs a read-only **reviewer** over the finished round and
 records its verdict. `--no-verify` overrides the policy default for one send;
 the two flags are exclusive.
 
-The reviewer is an ordinary consult (`relevo ask --actor reviewer`) with two
-differences. It runs **headless**, so its findings are its final message rather
-than a file, and it runs in a **throwaway worktree**: relevo creates a detached
+The reviewer is a headless, one-shot consult started at round close. Its
+findings are its final message rather than a file, and it runs in a **throwaway
+worktree**: relevo creates a detached
 worktree at the builder's HEAD under
 `~/.local/state/relevo/.worktrees/.verify/<name>-<NNN>`, launches the reviewer
 there, and removes the tree once the consult reaches any terminal state. That
 isolation is what lets the reviewer run tests without touching the builder's
-tree or the planner's checkout, and it is why the reviewer consult's tier is
+tree or the MasterMind's checkout, and it is why the reviewer consult's tier is
 the policy section's `tier.reviewer` when set, else the candidate's, else **yolo** --
 for this consult only, in this tree only. The reviewer's agent definition still
 tells it not to edit; relevo cannot observe writes.
 
-The question names the round's plan, report, diff and gate log, and asks the
+The question names the round's prompt, report, diff and gate log, and asks the
 reviewer to end its findings with exactly this block:
 
 ```
@@ -1838,7 +1698,7 @@ reasons: ["..."]
 
 relevo parses the last ` ```relevo ` block for those two lines. Anything else --
 no block, an unreadable one, a verdict that is neither word -- is recorded as
-`unstructured` and delivered as prose for the planner to read. `verdict` and
+`unstructured` and delivered as prose for the MasterMind to read. `verdict` and
 `reasons` ride on the findings entry, and the newest verdict shows in
 `relevo status` as `verdict: rejected (2 reasons)` for as long as it judges the
 round just closed.
@@ -1856,21 +1716,21 @@ leave a tree under `.worktrees/.verify/`; remove it with
 ### Repair rounds
 
 A failing gate does nothing on its own: the round closes, the report goes to
-the planner, and a human judges the diff. A binding can opt into a **repair
+the MasterMind, and a human judges the diff. A binding can opt into a **repair
 round** instead, with `--regate N` on `relevo bind`
 or `relevo send`, or with `"regate": N` under `gate` in the policy section (the
-default for new bindings, which `relevo bind --from` inherits from its source). `N` is
+default for new bindings). `N` is
 how many repair rounds relevo may open after failing gates; `0` -- the default
 -- turns the loop off, and `--regate` on a binding with no gate is accepted and
 inert, since a binding with no gate never fails one.
 
 When a round closes with `gate=fail` and the budget is not yet spent, relevo
-stages round N+1 in the same tick, after the report has been queued. Its plan
-file is written for the builder rather than by the planner: it names the failed
+stages round N+1 in the same tick, after the report has been queued. Its prompt
+is written for the builder rather than by the MasterMind: it names the failed
 round's acceptance check and the original plan, and carries the last 200
 non-empty lines of `NNN-gate.log`, instructing the builder to fix ONLY what the
 check reports and to halt and report if no code change can fix it. The hand-off
-is exactly a send's -- a fresh builder process -- and the new round's plan
+is exactly a send's -- a fresh builder process -- and the new round's prompt
 entry is logged with `repair k/M`.
 
 Two bounds end the loop with `NEEDS YOU` instead of another repair round:
@@ -1887,47 +1747,51 @@ stand, and relevo never writes or removes `NNN-done`. A passing gate or a human
 Headless bindings are the intended case -- the server runs the same reconcile,
 so a remote headless binding gets repair rounds too.
 
-## Consults: asking a reviewer
+## Reader actors
 
-A **consult** is a one-shot agent spawned beside a binding to answer one
-question. Unlike a builder, it is not persistent, does not advance the round,
-and does not count against the one-writer-per-tree rule: it is a separate
-record on the binding, not a binding of its own.
+A **reader** actor is a binding, exactly as a writer is, but its round reads
+and reports: relevo runs one headless process, it never edits the shared tree,
+and its output lands in the round's artifact directory. That output is
+`NNN-<actor>/<label>.md` -- the reader's final message -- named after the
+actor's resolved output label (`plan.md` for the architect, `findings.md` for
+the reviewer, `notes.md` for the researcher), plus any files it produced. A
+round from before the rename answers `summary.md`, its old fallback name.
 
-The planner runs, from its own session:
+The MasterMind runs, from its own session:
 
 ```
-relevo ask --actor reviewer --file q.md webshop
+relevo bind --no-feature --actor reviewer --name webshop
+relevo send --name webshop --file q.md
 ```
 
-relevo stages the question and starts the agent. The consult reads the staged question, writes its findings to a
-file, and replies with only that path. Findings land under the binding's state
-directory as `NNN-<id>-findings.md` — the exact path is printed when you ask —
-and relevo queues them to the planner like any other report, once the file
-exists. That file's existence is the only completion gate: relevo makes no
-judgements about what the findings say.
+relevo stages `q.md` as the round's prompt and runs the reader headless; its
+**final message** becomes the round's output at `NNN-<actor>/<label>.md` and is
+queued to the MasterMind like any report. `relevo show <name> --output` prints
+the output file, `relevo show <name> --artifacts` lists the round's other files,
+and the cockpit's artifacts tab shows both.
 
-A consult is a one-shot process: relevo starts the harness in its print form,
-and the consult's **final message** becomes the findings, which relevo writes
-to `NNN-<id>-findings.md` and queues to the planner. The same form resumes a
-closed round's builder session and runs
-a verifier at round close. The process is the only thing relevo can observe: it is killed at the
-consult timeout (10m), and a process that exits without a final message is
-reported silent with its exit code and the stream to read. The resolved tier
-still gates the pick: at `read`, claude and agy
-can run (claude `--permission-mode plan`, agy `--mode plan`), while opencode
-and codex cannot honour `read` and are refused.
+A bound reader round is the only way to get a reader's answer: the old
+one-shot `relevo ask` consult is gone. `relevo show <name> --findings <id>`
+still reads the findings of a consult recorded before that removal, and it is
+how a verify reviewer's findings are read.
 
-While consults are running, `relevo status` appends ` +Nc` to the binding's row
-— only when non-zero, so a healthy binding looks no different. A finished
-consult's record is dropped once its findings have been queued. Terminal
-consults are not work in flight, so the count does not include them.
+The process is the only thing relevo can observe: relevo kills one that
+outlives its deadline, and a process that exits without a final message is
+reported with its exit code and the stream to read. The resolved tier still
+gates the pick: at `read`, claude and agy can run (claude `--permission-mode
+plan`, agy `--mode plan`), while opencode and codex cannot honour `read` and
+are refused.
+
+While a verify reviewer is running, `relevo status` appends ` +Nc` to the
+binding's row — only when non-zero, so a healthy binding looks no different. A
+finished reviewer's record is dropped once its findings have been queued.
+Terminal consults are not work in flight, so the count does not include them.
 
 `relevo config agents` writes the reviewer definition with the other
 agents; to install just this one:
 
 ```
-relevo config agents --role reviewer
+relevo config agents --agent reviewer
 ```
 
 `relevo doctor` reports whether the definition landed, on every kind.
@@ -1946,6 +1810,24 @@ and no more. Note also that `reviewer` is deliberately not the `researcher`
 agent: `researcher` is dispatched by a builder's own plan-executor and returns
 findings in-band to it, while a reviewer runs as its own relevo consult and
 hands back a file path.
+
+### Planner actors
+
+A planner actor is a reader binding too: bind it, send it the task, and read
+its plan back from the round's output.
+
+```
+relevo bind --no-feature --actor lite-planner --name plan-x
+relevo send --name plan-x --file task.md
+relevo show plan-x --output                                   # or the cockpit's artifacts tab
+relevo send --name <builder> --file <the output path>
+```
+
+The plan is the reader round's output, `NNN-lite-planner/plan.md`. Review
+it with `relevo show plan-x --output` (or the cockpit's artifacts tab), then
+hand that output path to a builder with `relevo send --name <builder> --file
+<the output path>`. Reviewing is a human (or MasterMind) step: relevo
+sends nothing automatically.
 
 ### Round usage
 
@@ -1969,8 +1851,8 @@ provenance:
 | agy | the round's stream (`estimated`) |
 | opencode | the round's stream (`measured`) |
 
-A binding on `--cwd` shares the planner's directory, so its rounds
-are `unknown` (`shared cwd`) rather than counting the planner's spend.
+A binding on `--cwd` shares the MasterMind's directory, so its rounds
+are `unknown` (`shared cwd`) rather than counting the MasterMind's spend.
 
 The `prices` section is `{"as_of": "YYYY-MM-DD", "source": "...", "models":
 {"<provider>/<model>": {"in": …, "cache_read": …, "cache_write": …,
@@ -2047,19 +1929,19 @@ is nothing to count after the fact. They stay where they are visible, on
 `switches` counts the rounds that changed builder mid-round, attributes each to
 the provider it left with a reason (`rate-limited`, `exited`, `gated`, `remote`
 or `other`), and says how many of the rounds that was. `gate` counts pass, fail,
-timeout and error over the rounds that ran a gate. `consults` counts asks per
-actor (`session` for `ask --round`) with the findings' models beside them, plus
-the verifies that were skipped.
+timeout and error over the rounds that ran a gate. `consults` counts consults
+per actor with the findings' models beside them, plus the verifies that were
+skipped.
 
 `blocked` comes from the gate history in the database, which keeps 30 days: rate-limit and
 spawn-failure events in that window, and the gates a human cleared with
 `relevo gate --clear`. Only a gate cleared by hand has a recorded length -- an
 expired gate keeps no expiry time, so it counts as an event with no duration.
 
-### Consult candidates
+### Reviewer candidates
 
-`relevo ask --actor reviewer` resolves the reviewer actor and picks from its
-`candidates` list, by the same rule as `--builder`.
+The verify reviewer resolves the reviewer actor and picks from its `candidates`
+list, by the same rule as `--candidate`.
 
 In the actors section:
 
@@ -2067,70 +1949,43 @@ In the actors section:
 "reviewer": { "agent": "reviewer", "candidates": ["opus"] }
 ```
 
-```bash
-relevo ask --actor reviewer --candidate claude/anthropic/opus --file q.md webshop
-```
-
-Until the reviewer actor lists a candidate, `ask` fails with
+Until the reviewer actor lists a candidate, the verify consult fails with
 `no configured candidate serves actor "reviewer"`.
 
-### Asking a past round's builder
+## The MasterMind: architect
 
-A closed round's report names the harness session that built it, so you can ask
-that session what it did and why without reopening the round:
+`architect` is the planner actor's contract and a session persona. As the
+planner actor's contract, `planner` and `lite-planner` run it as a reader round:
+a seed goes in, and the plan comes out as the final message, saved as `plan.md`.
+The contract is minimal -- the plan says the behaviour, the cases, the seams and
+one-line ordered steps, and the planner never edits and never builds; a strong
+builder owns the how.
 
-```
-relevo ask --round 1 -q "why did you stop at the second migration?" webshop
-```
-
-`--round N` looks the session up on round N's report entry and resumes it as a
-headless consult with the harness's own resume form — claude `--resume`, agy
-`--conversation`, opencode `run --session … --fork`. The answer is the
-process's final message, which relevo writes to the usual
-`NNN-<id>-findings.md` and queues to the planner exactly as any consult's
-findings are. `--actor` and `--candidate` are ignored (with a note on stderr if
-you passed one): resuming a session fixes both. The question comes from
-`--file` or `-q`, and exactly one of them is required.
-
-Round N must be closed. Resuming the open round's builder would put two writers
-in one session, so `--round` refuses the current round and says which; a round
-whose report names no session — built before relevo recorded sessions, or by a
-harness that printed none — is refused too, because relevo will not guess which
-session to resume.
-
-Resuming mutates the session on claude and agy: the resumed turn is appended to
-it. That is why relevo reaches for this only once the round has closed, and why
-the prompt tells the builder to change nothing and run no writing tool — but it
-is the session's own history that changes, not the tree. opencode has no
-read-only flag, so its round consult runs at `harness` tier and its `--fork`
-leaves the original session untouched: the resumed turn lands in a copy. codex
-has no verified resume form, and `relevo ask --round` refuses it by name.
-
-## The planner: architect
-
-relevo ships one more definition it never launches: `architect`, the planner's
-persona. The planner is the session you drive -- the one you run `relevo bind`
-and `relevo ask` from -- and relevo does not pick its harness or start it. What
-relevo provides is the definition, so the same architect runs on any kind:
+As a persona, the same architect is the definition relevo ships for the session
+you drive. The MasterMind is the session you drive -- the one you run `relevo
+bind` and `relevo send` from -- and relevo does not pick its harness or start
+it. What relevo provides is the definition, so the same architect runs on any
+kind:
 
 ```
-relevo config agents --role architect
+relevo config agents --agent architect
 ```
 
 (`relevo config agents` with no flags writes it too.)
 
-Then start the planner with the harness's own `--agent` flag, for example:
+Then start the MasterMind with the harness's own `--agent` flag, for example:
 
 ```
 claude   --agent architect --model opus
 opencode --agent architect -m openrouter/deepseek/deepseek-v4-pro
 ```
 
-The `relevo planner init` SessionStart hook also injects the relevo handoff
-rules, so a planner session running an agent other than `architect` still
-receives them.
+Its agy copy pins `model: inherit` and a read-only tool set; the claude and
+opencode copies leave `model:` unset so the launch line's flag decides. The
+`relevo mastermind init` SessionStart hook injects the relevo guide, so a
+MasterMind session on any agent receives it.
 
-**Wait for the report after every send.** In Claude Code the planner starts
+**Wait for the report after every send.** In Claude Code the MasterMind starts
 `relevo wait <name> --timeout <budget>` as a **background**
 command and ends its turn: Claude Code wakes the session when the command exits,
 with the report already in the command's output, and the `relevo mcp` send result
@@ -2139,24 +1994,16 @@ harnesses run `relevo wait <name> --timeout 9m` in a loop while it exits 124; th
 wait prints the report, and they end their turn only when no binding has a round in
 flight.
 
-The architect designs and never implements: it produces a system overview,
-file structure, data structures, interface contracts, pseudocode, an error
-handling strategy and ordered implementation steps -- the plan a builder's
-plan-executor takes as written. Its agy copy pins `model: inherit` and a
-read-plus-`write_to_file` tool set, enough to read the tree and write the plan
-and nothing more; the claude and opencode copies leave `model:` unset so the
-launch line's flag decides.
-
 `architect` is not a relevo actor: it is absent from the actors section, so
-`relevo ask --actor architect` is refused, and
-`relevo doctor` does not check for it -- doctor reports only the definitions
-some candidate would load, and no candidate loads the planner.
+`relevo bind --actor architect` is refused, and
+`relevo doctor` does not check for it -- doctor reports only the role table's
+definitions.
 
 ## Display states
 
 `relevo status` collapses the binding's internal state into four:
 
-- **ACTIVE** — someone is working (planner or builder), nothing needs a human
+- **ACTIVE** — someone is working (MasterMind or builder), nothing needs a human
   yet.
 - **NEEDS YOU** — relevo has stopped and a person must act. Covers a dead
   builder process, a round that ran past its timeout, and a binding that hit
@@ -2166,7 +2013,7 @@ some candidate would load, and no candidate loads the planner.
   pre-housekeeping relevo left paused still reads as PAUSED, and
   `relevo bind --resume` restores it. Nothing needs a human, and
   `relevo unbind --done` leaves it alone.
-- **DONE** — the planner declared the work verified via `relevo done`, and
+- **DONE** — the MasterMind declared the work verified via `relevo done`, and
   relaying has stopped deliberately, not because anything went wrong: unlike
   NEEDS YOU, nothing needs a human here. `Reconcile` returns immediately for
   a done binding — no reports are queued and no timeouts are flagged. The binding and its round log stay in the database (`relevo show <name> --log`
@@ -2176,7 +2023,7 @@ some candidate would load, and no candidate loads the planner.
 ## Running the daemon
 
 `relevo daemon` is the reconciler: it watches builders, queues reports back to
-the planner, and flags stalled rounds. Nothing else needs it running — the CLI
+the MasterMind, and flags stalled rounds. Nothing else needs it running — the CLI
 works on its own — but without it, reports are only delivered when you run
 `relevo wait` by hand.
 
@@ -2231,7 +2078,7 @@ Each hook command is executed asynchronously in a detached process with a 10-sec
 - `RELEVO_OLD_STATE`: The previous state of the binding.
 - `RELEVO_ROUND`: The current round number.
 
-Hook stdout, stderr, and execution failures are recorded in the database's hook run log. `relevo doctor` prints a `hooks` row -- `hooks: N runs, M failed in the last 24h (last: <event>: <err>)`. A legacy `<root>/hooks.log` is imported once and removed.
+Hook stdout, stderr, and execution failures are recorded in the database's hook run log. `relevo doctor` prints a `hooks` row -- `hooks: N runs, M failed in the last 24h (last: <event>: <err>)`.
 
 Each hook script must have its executable bit set (`chmod +x`). An event with no argv list in the `hooks` section is a silent no-op.
 
@@ -2268,7 +2115,7 @@ so there is no lifecycle hook to install for it.
 
 ### opencode permission allowlist
 
-relevo stages plans and reports under `~/.local/state/relevo/<binding>/`, outside
+relevo stages prompts and reports under `~/.local/state/relevo/<binding>/`, outside
 the repo the builder is working in, so a fresh opencode builder blocks on an
 "Access external directory" dialog on its first round. To skip it entirely, add
 this to `~/.config/opencode/opencode.jsonc`:
@@ -2297,26 +2144,26 @@ relaying stops until you point it at a new builder:
 
 ```bash
 relevo bind --resume --name N --rebind                                       # start a fresh builder, picked by the actor's order
-relevo bind --resume --name N --builder agy/google/gemini-3.8-flash-high     # start a fresh builder, naming it
+relevo bind --resume --name N --candidate agy/google/gemini-3.8-flash-high     # start a fresh builder, naming it
 ```
 
 The binding keeps its name, round number, round log, working directory, and diff
 baseline. The replacement builder is started with its agent on the launch line,
 like any builder relevo spawns. With `--rebind` the candidate is resolved through
 the builder actor's candidate list and the ledger, and the pick is logged, exactly as a fresh
-bind with `--builder` omitted. Relevo does not automatically re-send the current
-plan: it prints the `relevo send` command pointing at the staged plan so you can
-hand over the round when ready.
+bind with `--candidate` omitted. Relevo does not automatically re-send the current
+prompt: it prints the `relevo send` command pointing at the staged prompt so you
+can hand over the round when ready.
 
-If only the planner moved or restarted, `relevo bind --resume --name N` re-points
-the planner without touching the builder. If you want to start over from scratch,
+If only the MasterMind moved or restarted, `relevo bind --resume --name N` re-points
+the MasterMind without touching the builder. If you want to start over from scratch,
 use `relevo unbind N` and bind fresh.
 
 A headless binding is never `BROKEN` for lack of a process: between rounds
 there is none. If its process died mid-round the daemon already switched or
 halted it (see "Headless builders"). To move a binding to a fresh process by
-hand, `relevo send` the staged plan again once `relevo status` shows the builder
-`exited`.
+hand, `relevo send` the staged prompt again once `relevo status` shows the
+builder `exited`.
 
 ## Platform support
 
@@ -2331,25 +2178,30 @@ at runtime with a clear error rather than running without a state lock.
 
 ## Claude Code plugin
 
-The relevo plugin gives a Claude Code planner two things: the `relevo mcp` MCP
+The relevo plugin gives a Claude Code MasterMind two things: the `relevo mcp` MCP
 server (`relevo` from `PATH`), which exposes `status`, `send` and `done` as
 tools, and a `SessionStart` hook that runs
-`relevo planner init`. The hook exports `RELEVO_PLANNER` and tells the model its
-planner name. Install it once per machine:
+`relevo mastermind init`. The hook exports `RELEVO_MASTERMIND` and tells the model its
+MasterMind name. Install it once per machine:
 
     /plugin marketplace add fuad-daoud/relevo
     /plugin install relevo@relevo
 
-The plugin also carries two slash commands over relevo's read verbs:
+The plugin also carries slash commands over relevo's verbs:
 
 - `/relevo:status [--name <binding>] [--all]` -- the bindings, round and state.
-- `/relevo:show [<binding>] [--round N] [--diff|--drift|--log|--report|--plan|--transcript]` -- one round's plan, report, diff, drift, log or transcript, already fetched.
+- `/relevo:show [<binding>] [--round N] [--diff|--drift|--log|--report|--prompt|--transcript]` -- one round's prompt, report, diff, drift, log or transcript, already fetched.
+- `/relevo:enable` -- this session answers the consent question yes.
+- `/relevo:enable-repo` -- this repository answers yes from now on.
+- `/relevo:disable` -- this session answers no.
+- `/relevo:disable-repo` -- never in this repository.
+- `/relevo:reset` -- ask the consent question again in this repository and this session.
 
 Then launch Claude Code normally:
 
     claude --agent architect --model opus
 
-**The background wait is the default.** After each `relevo send`, the planner
+**The background wait is the default.** After each `relevo send`, the MasterMind
 runs
 
     relevo wait --name <n> --timeout <budget>
@@ -2378,19 +2230,19 @@ which replaces Anthropic's list for that org and makes plain
 tools mode: the tools work and nothing is pushed, which is the background wait
 above.
 
-**How reports arrive.** relevo identifies the planner session itself -- the
-plugin's hook registers it, and `relevo planner list` shows the records -- so no
-verb has to guess who is calling. A report then reaches the planner by exactly
+**How reports arrive.** relevo identifies the MasterMind session itself -- the
+plugin's hook registers it, and `relevo mastermind list` shows the records -- so no
+verb has to guess who is calling. A report then reaches the MasterMind by exactly
 one of four routes: the background wait (the Claude Code default), the channel
 (opt-in, above), a deliverer for a harness that has one (opencode, agy), or
 `relevo wait` by hand. Nothing is ever typed into a terminal.
 
-An agy planner runs `relevo planner init` once inside agy, with no flags: relevo
+An agy MasterMind runs `relevo mastermind init` once inside agy, with no flags: relevo
 detects the session from agy's own environment, so nothing has to be exported by
-hand. Every relevo command that planner runs refreshes the session's local
+hand. Every relevo command that MasterMind runs refreshes the session's local
 agentapi credentials, which relevo keeps 0600 under its state directory and never
 prints. A report relevo pushes through those credentials wakes the idle agy
-session, so an agy planner is woken by a report rather than polling for it --
+session, so an agy MasterMind is woken by a report rather than polling for it --
 and that wake-up costs one turn of the agy session.
 
 ## Design
@@ -2405,7 +2257,7 @@ code.
 See [CONTRIBUTING.md](CONTRIBUTING.md). In short: open an issue first, keep it
 stdlib-only, write the test, and make sure `make check` passes.
 
-`make e2e` runs one headless relevo round end to end -- planner init, bind,
+`make e2e` runs one headless relevo round end to end -- MasterMind init, bind,
 send, delivery -- with a fake harness binary on `PATH`. It runs in CI and is not
 part of `make check`.
 

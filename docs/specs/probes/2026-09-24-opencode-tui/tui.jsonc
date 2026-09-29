@@ -1,0 +1,12 @@
+{
+  // The TUI config the round plan (§2) expects. Kept for the record only:
+  //
+  // FINDING (see docs/specs/2026-09-24-opencode-tui-probe.md): OpenCode 2.0.14
+  // does NOT read tui.jsonc for file plugins. The binary contains only the
+  // string "tui.json", which a one-time migration copies into cli.json under
+  // "plugins"; the TUI loads no file plugin from there either. 2.0.14 loads a
+  // file TUI plugin from <config>/plugins/<name>/, a package whose
+  // exports["./tui"] module default-exports { id, setup }. run.sh installs the
+  // probe that way, so this file is not used at run time.
+  "plugin": ["@PROBE_PLUGIN@"]
+}

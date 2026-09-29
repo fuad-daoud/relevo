@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func TestGateLineForms(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		rec  store.GateRecord
@@ -54,6 +56,8 @@ func TestGateLineForms(t *testing.T) {
 }
 
 func TestTailLines(t *testing.T) {
+	t.Parallel()
+
 	t.Run("last n non-empty lines", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "gate.log")
@@ -106,27 +110,14 @@ func TestTailLines(t *testing.T) {
 		}
 	})
 
-	// #292 §1: a pre-rename gate log's relay-rusage: line is skipped too. The // name-guard: legacy
-	// relay-exit: line is gate output, and stays, exactly as relevo-exit: does. // name-guard: legacy
-	t.Run("skips the legacy rusage trailer line", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "gate.log")
-		content := "a\nb\n\n" + legacy.RusageTrailer + "cpu_usec=1 mem_peak=2\n\n" + legacy.ExitTrailer + "2\n"
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		want := []string{"a", "b", legacy.ExitTrailer + "2"}
-		got := tailLines(os.ReadFile, path, 3)
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("tailLines() = %v, want %v", got, want)
-		}
-	})
 }
 
 // TestGateStepScopesTheGate pins #313: the gate starts in its own
 // relevo-gate-* scope, using the template's GateCPUQuota as its CPUQuota, and
 // with no scope at all when the runtime has no template.
 func TestGateStepScopesTheGate(t *testing.T) {
+	t.Parallel()
+
 	runGate := func(t *testing.T, rt Runtime, b store.Binding) {
 		t.Helper()
 		if err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -141,7 +132,7 @@ func TestGateStepScopesTheGate(t *testing.T) {
 		fr := newFakeRunner()
 		rt, b := sentBinding(t)
 		rt.Runner = fr
-		rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%"}
+		rt.Scope = &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%"}
 		b.Gate = "make check"
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -192,7 +183,7 @@ func TestGateStepScopesTheGate(t *testing.T) {
 		fr := newFakeRunner()
 		rt, b := sentBinding(t)
 		rt.Runner = fr
-		rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", AllowedCPUs: "0-3"}
+		rt.Scope = &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "150%", AllowedCPUs: "0-3"}
 		two := 2
 		b.RoundCPU = &two
 		b.Gate = "make check"
@@ -219,6 +210,8 @@ func TestGateStepScopesTheGate(t *testing.T) {
 // Mutation check: drop the `Attempt == 0` guard (or the lostToRestart call)
 // and this fails on Result "error" with no second Start.
 func TestGateStepRestartsAGateLostToRestart(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -289,6 +282,8 @@ func TestGateStepRestartsAGateLostToRestart(t *testing.T) {
 // gate already at Attempt 1 that is lost again is reported as an error, not
 // restarted a second time.
 func TestGateStepSecondLossIsReportedNotRerun(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -335,6 +330,8 @@ func TestGateStepSecondLossIsReportedNotRerun(t *testing.T) {
 // Mutation check: drop the Seen clause from lostToRestart and this fails with
 // a second Start.
 func TestGateStepSeenAliveThenNoTrailerIsAnError(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -383,6 +380,8 @@ func TestGateStepSeenAliveThenNoTrailerIsAnError(t *testing.T) {
 }
 
 func TestGateTimeoutFor(t *testing.T) {
+	t.Parallel()
+
 	t.Run("binding override wins", func(t *testing.T) {
 		b := store.Binding{GateTimeoutMS: 5000}
 		pol := policy.Policy{}

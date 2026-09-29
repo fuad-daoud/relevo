@@ -1,0 +1,25 @@
+{
+  "candidates": [
+    {
+      "harness": "claude",
+      "model": "m",
+      "name": "m",
+      "provider": "p"
+    }
+  ],
+  "actors": {
+    "builder": {
+      "agent": "plan-executor",
+      "candidates": [
+        "claude/p/m"
+      ]
+    }
+  },
+  "policy": {
+    "order": {
+      "builder": [
+        "claude/p/m"
+      ]
+    }
+  }
+}

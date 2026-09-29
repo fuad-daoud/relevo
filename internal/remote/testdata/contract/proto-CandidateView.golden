@@ -1,0 +1,7 @@
+{
+  "token": "agy/openai/gpt-4",
+  "name": "gpt-4",
+  "kind": "agy",
+  "gated": true,
+  "pick": true
+}

@@ -1,12 +1,12 @@
- relevo · dashboard   (all rounds)   by:none                                                                     / filter  b regroup  s sort  d fleet  r refresh
-query failed: no such column: repo.origin_url                                                                                                                   
-started           binding       rnd  builder                               outcome        commits  tree    gate   tokens   cost     duration                    
-2026-09-20 22:01  persist       r5   claude/anthropic/sonnet               reported       +1       clean   pass   1.2M     $0.42    27m                         
-2026-09-19 09:30  persist       r4   claude/anthropic/sonnet               halted         +0       dirty   fail   500k     $1.10    12m                         
-2026-09-18 08:00  api           r2   agy/antigravity/claude-sonnet-4-6     reported       +3       clean   pass   2.0M     ?        -                           
-                                                                                                                                                                
-                                                                                                                                                                
-                                                                                                                                                                
+    relevo · dashboard   (all rounds)   by:none                                                               / filter  b regroup  s sort  d fleet  r refresh   
+   query failed: no such column: repo.origin_url                                                                                                                
+   STARTED  BINDING                                           RND   CANDIDATE              REPO                    OUTCOME     COMMITS  TREE    TOKENS   TOOK   
+   yesterday ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 round · 1.2M   
+   22:01    persist                                           r5    claude/anthropic/son…  x/persist               done              1  clean     1.2M    27m   
+   sat 19 sep ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 round · 500k   
+   09:30    persist                                           r4    claude/anthropic/son…  x/persist               halted            0  dirty     500k    12m   
+   fri 18 sep ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 round · 2M   
+   08:00    api                                               r2    agy/antigravity/clau…  x/api                   done              3  clean       2M      ·   
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 

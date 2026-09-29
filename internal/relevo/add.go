@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -15,11 +18,11 @@ import (
 type AddOptions struct {
 	Name      string // name for the new binding; required, must be free
 	Candidate string // candidate harness/provider/model token; empty means resolve by role through resolveCandidate
-	// PlannerID is the caller's --planner value when it has one, and the
+	// MasterMindID is the caller's --mastermind value when it has one, and the
 	// resolved record's id afterwards. Empty means "resolve this session's
-	// planner" (§4.3).
-	PlannerID string
-	Repo      string // the repository the worktree is cut from; the caller's cwd
+	// mastermind" (§4.3).
+	MasterMindID string
+	Repo         string // the repository the worktree is cut from; the caller's cwd
 
 	// CWD binds the peer to a directory the human already prepared instead of
 	// creating a worktree. It is the escape hatch for a non-git tree; relevo
@@ -66,6 +69,12 @@ type AddOptions struct {
 	// (#172); "" means ungrouped. Validated by store.ValidFeature when set.
 	Feature string
 
+	// Ticket is the issue this binding serves, as typed on --ticket (#637).
+	// Add parses it once against opts.Repo and stores the canonical form; ""
+	// means none. There is no --no-feature: nothing to clear, the mark is
+	// CLI-only and only a fresh bind needs it.
+	Ticket string
+
 	// Role is the writer role the new binding runs (#382); "" means builder.
 	// It must name a writer role in roles.json.
 	Role string
@@ -83,17 +92,30 @@ type AddResult struct {
 	Resolution Resolution
 }
 
-// Add attaches an additional builder to the calling planner, on its own tree.
+// requireRemoteReaders refuses a reader bind against a server that does not
+// advertise remote.FeatureReaders. The server is the side that runs the
+// reader, so a server without the feature would run it as a writer: the
+// client refuses before creating anything, and the message keeps the old
+// local-only wording and names the server.
+func requireRemoteReaders(ctx context.Context, rt Runtime, server string) error {
+	if rt.Remote == nil {
+		return ErrRemoteUnavailable
+	}
+	who, err := rt.Remote.WhoAmI(ctx, server)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(who.Features, remote.FeatureReaders) {
+		return fmt.Errorf("reader actors run locally only; bind without --server (server %s predates remote readers; upgrade it)", server)
+	}
+	return nil
+}
+
+// Add attaches an additional builder to the calling mastermind, on its own tree.
 //
-// It is deliberately not `fork`. A fork continues a timeline: it copies round
-// history through some round, starts at the round after it, and records where
-// it came from. A peer was never a continuation of anything -- it starts at
-// round 1 with an empty log and no provenance -- so writing ForkedFrom on it
-// would record a relationship that does not exist.
+// Preconditions:  a relevo mastermind resolves for the caller (--mastermind,
 //
-// Preconditions:  a relevo planner resolves for the caller (--planner,
-//
-//	$RELEVO_PLANNER, the host process, or the session); opts.Name is valid
+//	$RELEVO_MASTERMIND, the host process, or the session); opts.Name is valid
 //	and unused; opts.Candidate is resolvable to builder; opts.Repo is a git
 //	repository unless opts.CWD is given.
 //
@@ -107,23 +129,64 @@ type AddResult struct {
 //
 //	or a wrapped git failure.
 func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
-	// Resolve the caller's planner before the --server branch. A remote
-	// binding is the calling planner's, exactly like a local one: its id and
+	// Resolve the caller's mastermind before the --server branch. A remote
+	// binding is the calling mastermind's, exactly like a local one: its id and
 	// session go into the client-side record addRemote writes. Only the
-	// server-side binding stays planner-less -- nothing about the planner
+	// server-side binding stays mastermind-less -- nothing about the mastermind
 	// crosses the wire (§4.4).
-	rec, haveRec, err := resolveVerbPlanner(rt, opts.PlannerID)
+	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
 	if err != nil {
 		return AddResult{}, err
 	}
+	// #637: the ticket is parsed once, before the local/remote split, so the
+	// local literal and addRemote both carry the stored form.
+	if opts.Ticket != "" {
+		ticket, terr := parseTicket(opts.Ticket, captureRepo(ctx, rt, opts.Repo))
+		if terr != nil {
+			return AddResult{}, terr
+		}
+		opts.Ticket = ticket
+	}
 	if opts.Server != "" {
+		// A reader runs on the server too (#607): the server cuts the round's
+		// scratch worktree and serves the closed round's artifacts, so a
+		// reader bind needs a server that advertises remote.FeatureReaders.
+		// A server that predates it would run the reader as a writer and
+		// touch the served tree, so the refusal here is feature-gated. A role
+		// this client's registry does not know is left to the server's own
+		// check.
+		if shape, rerr := actorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
+			if err := requireRemoteReaders(ctx, rt, opts.Server); err != nil {
+				return AddResult{}, err
+			}
+			// A reader round has no check, so the writer-only knobs are
+			// refused here too, naming the flag, exactly as the local path
+			// below does.
+			if opts.Gate != "" {
+				return AddResult{}, errors.New("--gate: a reader round has no check")
+			}
+			if opts.Regate != nil {
+				return AddResult{}, errors.New("--regate: a reader round has no check")
+			}
+		}
 		return addRemote(ctx, rt, opts, rec, haveRec)
 	}
-	// A binding runs one writer role (#382 §2). Refuse a bad one here, on the
-	// local path only: a remote binding's role is resolved against the
-	// server's own roles.json, never this client's (§5.3).
-	if err := checkWriterRole(rt.RoleRegistry(), opts.Role); err != nil {
+	// A binding runs one actor, writer or reader (A5 §2). Refuse an unknown
+	// one here, on the local path only: a remote binding's actor is resolved
+	// against the server's own roles.json, never this client's (§5.3).
+	shape, err := actorShape(rt.RoleRegistry(), opts.Role)
+	if err != nil {
 		return AddResult{}, err
+	}
+	// A reader round has no check, so the writer-only knobs are refused at
+	// add, naming the flag.
+	if shape == store.ShapeReader {
+		if opts.Gate != "" {
+			return AddResult{}, errors.New("--gate: a reader round has no check")
+		}
+		if opts.Regate != nil {
+			return AddResult{}, errors.New("--regate: a reader round has no check")
+		}
 	}
 	if err := store.ValidName(opts.Name); err != nil {
 		return AddResult{}, err
@@ -142,24 +205,31 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
 	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, roleName)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName)
 	if err != nil {
 		return AddResult{}, err
 	}
 	c := res.Candidate
 
 	tier := resolveRoleTier(opts.Tier, c, rt.RoleRegistry(), roleName)
+	if shape == store.ShapeReader {
+		var tierErr error
+		tier, tierErr = readerTier(tier, c.Harness, rt.Policy)
+		if tierErr != nil {
+			return AddResult{}, tierErr
+		}
+	}
 	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return AddResult{}, err
 	}
 
 	if !haveRec {
-		return AddResult{}, ErrNoPlannerSession
+		return AddResult{}, ErrNoMasterMindSession
 	}
-	opts.PlannerID = rec.ID
-	plannerEP := recordEndpoint(rec)
-	if plannerEP.TranscriptLocator == "" {
-		plannerEP.TranscriptLocator = plannerLocator(rt, plannerEP.Kind, plannerEP.SessionID)
+	opts.MasterMindID = rec.ID
+	mastermindEP := recordEndpoint(rec)
+	if mastermindEP.TranscriptLocator == "" {
+		mastermindEP.TranscriptLocator = mastermindLocator(rt, mastermindEP.Kind, mastermindEP.SessionID)
 	}
 
 	if _, err := rt.Store.Load(opts.Name); err == nil {
@@ -177,6 +247,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		base           string
 		baseRef        string
 		existingBranch bool
+		createdBranch  bool
 	)
 
 	if opts.Branch != "" && opts.CWD != "" {
@@ -256,6 +327,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		if err := rt.Git.AddWorktree(ctx, opts.Repo, cwd, branch, base); err != nil {
 			return AddResult{}, err
 		}
+		createdBranch = true
 		worktree = cwd
 		// The branch the cut came from, for `relevo land` (#136). A --cwd or
 		// --branch binding records none: nothing was cut, so there is no
@@ -269,28 +341,38 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		if worktree != "" && rt.Git != nil {
 			_ = rt.Git.RemoveWorktree(ctx, opts.Repo, worktree, true)
 		}
+		// A branch Add cut itself (the cut path only: --cwd and --branch
+		// adopt a branch that already existed) is removed too, so a retry
+		// does not fail with "branch already exists" (#437). DeleteBranch is
+		// idempotent on a missing branch, and a failure here is ignored
+		// exactly like the worktree removal's.
+		if createdBranch && rt.Git != nil {
+			_ = rt.Git.DeleteBranch(ctx, opts.Repo, branch)
+		}
 	}
 
 	other, found, err := rt.Store.FindByCWD(cwd)
-	if err != nil {
+	if err != nil && !errors.Is(err, store.ErrAmbiguousCWD) {
 		rollback()
 		return AddResult{}, err
 	}
-	if found && other.Name != opts.Name && other.State != store.StateDone {
+	// Only a writer is refused here: a reader may share a writer's tree
+	// (A5 §3), so the refusal applies between two writers only.
+	if shape == store.ShapeWriter && found && other.Name != opts.Name && other.State != store.StateDone && other.Shape == store.ShapeWriter {
 		rollback()
 		return AddResult{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
 			cwd, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)
 	}
 
 	bindOpts := BindOptions{
-		Name:      opts.Name,
-		Candidate: c.Ref().String(),
-		PlannerID: opts.PlannerID,
-		CWD:       cwd,
-		Headless:  opts.Headless,
-		Tier:      string(tier),
-		AllowYolo: opts.AllowYolo,
-		Role:      normRole(opts.Role),
+		Name:         opts.Name,
+		Candidate:    c.Ref().String(),
+		MasterMindID: opts.MasterMindID,
+		CWD:          cwd,
+		Headless:     opts.Headless,
+		Tier:         string(tier),
+		AllowYolo:    opts.AllowYolo,
+		Role:         normRole(opts.Role),
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
@@ -309,8 +391,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	b := store.Binding{
 		Name:             opts.Name,
 		CWD:              cwd,
-		Planner:          plannerEP,
-		PlannerID:        opts.PlannerID,
+		MasterMind:       mastermindEP,
+		MasterMindID:     opts.MasterMindID,
 		Builder:          builder,
 		BuilderCandidate: c.Ref().String(),
 		Round:            1,
@@ -323,7 +405,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Repo:             opts.Repo,
 		Tier:             string(tier),
 		Role:             normRole(opts.Role),
-		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleGates(rt.RoleRegistry(), roleName)),
+		Shape:            shape,
+		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
 		Regate:           resolveRegate(opts.Regate, rt.Policy),
 		// captureRepo runs against opts.Repo, not cwd: opts.Repo is the
 		// parent checkout the worktree is cut from (its git identity is
@@ -333,6 +416,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		// checkout, including on the --cwd escape hatch.
 		RepoRef: captureRepo(ctx, rt, opts.Repo),
 		Feature: opts.Feature,
+		Ticket:  opts.Ticket,
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {

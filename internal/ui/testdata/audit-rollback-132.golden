@@ -1,0 +1,34 @@
+  ◆ relevo    audit                                                                                            v0.13.0-28    14:02  
+                                                                                                                                    
+   5 revisions   11 changes                                                                                        config version 16
+                                                                                                                                    
+   WHEN    REV  SOURCE     MESSAGE                                                                                        CHANGES   
+   today ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 revision   
+   01:36    #5  ui         add actor planner                                                                                    1   
+   yesterday ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 revision   
+   09:59    #4  cli        c╭─ roll back ──────────────────────────────────────────────────────────────╮                        1   
+   mon 14 sep ┈┈┈┈┈┈┈┈┈┈┈┈┈┈│                                                                          │┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 revisions   
+   23:18    #3  migration  r│ Roll back to #4?                                                         │                        2   
+   21:52    #2  migration  c│                                                                          │                        7   
+   21:52    #1  baseline   c│ undoes     - actor planner   agent architect                             │                        0   
+                            │                                                                          │                            
+                            │ saves as   #6 · rollback                                                 │                            
+   #4   cli · Sep 16 09:59 ·│ kept       #5 and every revision before it                               │                            
+   ~ claude-sonnet-4-6 provi│                                                                          │                            
+                            │  y  roll back       n  cancel      any other key cancels                 │                            
+                            │                                                                          │                            
+                            ╰──────────────────────────────────────────────────────────────────────────╯                            
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ y  roll back      n  cancel                                                                                                        

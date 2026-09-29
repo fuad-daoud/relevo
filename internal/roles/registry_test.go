@@ -485,8 +485,8 @@ func TestBuildNewWriterRow(t *testing.T) {
 	if role.Shape != harness.ShapeBuilder {
 		t.Errorf("Shape = %q, want %q", role.Shape, harness.ShapeBuilder)
 	}
-	if !role.Gate {
-		t.Error("Gate = false, want true: a new writer gates by default")
+	if !role.Check {
+		t.Error("Check = false, want true: a new writer checks by default")
 	}
 	if role.Builtin {
 		t.Error("Builtin = true, want false")
@@ -513,8 +513,8 @@ func TestBuildNewWriterGateFalse(t *testing.T) {
 	if !ok {
 		t.Fatal("Role(\"ui-builder\") not found")
 	}
-	if role.Gate {
-		t.Error("Gate = true, want false: the row opted out")
+	if role.Check {
+		t.Error("Check = true, want false: the row opted out")
 	}
 }
 

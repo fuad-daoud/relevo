@@ -11,17 +11,15 @@ import (
 // hooksWindow bounds the failure count the hooks row reports: the last day.
 const hooksWindow = 24 * time.Hour
 
-// HooksCheckInput is what the hooks row needs: the recorded runs, oldest
-// first, and the clock the 24-hour window is measured against.
+// HooksCheckInput is the recorded runs, oldest first, and the clock the
+// 24-hour window is measured against.
 type HooksCheckInput struct {
 	Runs []hooks.HookRun
 	Now  time.Time
 }
 
-// HooksCheck is the hooks row (P3b round 2 §4.4): "hooks: N runs, M failed in
-// the last 24h", plus the last failure's event and error. The row is OK when
-// nothing failed in the window and a warning otherwise; the text stays on one
-// line.
+// HooksCheck reports "hooks: N runs, M failed in the last 24h", plus the
+// last failure's event and error, on one line.
 func HooksCheck(in HooksCheckInput) Check {
 	failed := 0
 	last := -1
@@ -50,8 +48,7 @@ func HooksCheck(in HooksCheckInput) Check {
 	return c
 }
 
-// firstLine is text's first line, so an error carrying newlines cannot split
-// the row over several lines.
+// firstLine keeps an error carrying newlines from splitting the row.
 func firstLine(text string) string {
 	line, _, _ := strings.Cut(text, "\n")
 	return line

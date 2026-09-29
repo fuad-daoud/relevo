@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/doctor"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -163,9 +163,9 @@ func TestAssembleDefinitionsNilSet(t *testing.T) {
 
 func TestLedgerChecks(t *testing.T) {
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
-	gates := []ledger.Gate{
-		{Token: "claude/anthropic/sonnet", Kind: ledger.RateLimited, Since: now, Until: time.Time{}},
-		{Token: "agy/google/m", Kind: ledger.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
+	gates := []availability.Gate{
+		{Token: "claude/anthropic/sonnet", Kind: availability.RateLimited, Since: now, Until: time.Time{}},
+		{Token: "agy/google/m", Kind: availability.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
 	}
 
 	checks := ledgerChecks(gates)
@@ -282,7 +282,7 @@ func TestServerChecksScopesWarning(t *testing.T) {
 		}
 	}
 
-	if zenOK == nil || !strings.Contains(zenOK.Detail, "builders 2/3, 1 queued, scopes off") {
+	if zenOK == nil || !strings.Contains(zenOK.Detail, "runners 2/3, 1 queued, scopes off") {
 		t.Fatalf("zen ok check = %+v, want it naming the builders census", zenOK)
 	}
 	if zenWarn == nil || zenWarn.Severity != doctor.SevWarn ||
@@ -290,24 +290,24 @@ func TestServerChecksScopesWarning(t *testing.T) {
 		t.Fatalf("zen scopes warning = %+v, want the exact message", zenWarn)
 	}
 
-	if contaboOK == nil || !strings.Contains(contaboOK.Detail, "builders 2/3, 1 queued, scopes on (relevo.slice, 200%)") {
+	if contaboOK == nil || !strings.Contains(contaboOK.Detail, "runners 2/3, 1 queued, scopes on (relevo.slice, 200%)") {
 		t.Fatalf("contabo ok check = %+v, want it naming the builders census and quota", contaboOK)
 	}
 	if contaboWarn != nil {
 		t.Fatalf("contabo scopes warning = %+v, want none (Scopes is true)", contaboWarn)
 	}
 
-	if quotaOK == nil || !strings.Contains(quotaOK.Detail, "builders 1/3, 0 queued, scopes on (150%)") {
+	if quotaOK == nil || !strings.Contains(quotaOK.Detail, "runners 1/3, 0 queued, scopes on (150%)") {
 		t.Fatalf("quotaonly ok check = %+v, want it naming the quota alone", quotaOK)
 	}
-	if sliceOK == nil || !strings.Contains(sliceOK.Detail, "builders 1/3, 0 queued, scopes on (relevo.slice)") {
+	if sliceOK == nil || !strings.Contains(sliceOK.Detail, "runners 1/3, 0 queued, scopes on (relevo.slice)") {
 		t.Fatalf("sliceonly ok check = %+v, want it naming the slice alone", sliceOK)
 	}
-	if plainOK == nil || !strings.HasSuffix(plainOK.Detail, "builders 1/3, 0 queued, scopes on") {
+	if plainOK == nil || !strings.HasSuffix(plainOK.Detail, "runners 1/3, 0 queued, scopes on") {
 		t.Fatalf("plain ok check = %+v, want it naming scopes on", plainOK)
 	}
 
-	if oldOK == nil || strings.Contains(oldOK.Detail, "builders ") {
+	if oldOK == nil || strings.Contains(oldOK.Detail, "runners ") {
 		t.Fatalf("old (pre-queue) ok check = %+v, want no builders text", oldOK)
 	}
 }
@@ -329,13 +329,13 @@ func TestRefusalChecks(t *testing.T) {
 			t.Errorf("check %d = %+v", i, c)
 		}
 	}
-	if want := "3 candidates serve builder and no order is set -- add/bind without --builder would refuse"; checks[0].Detail != want {
+	if want := "3 candidates serve builder and no order is set -- add/bind without --candidate would refuse"; checks[0].Detail != want {
 		t.Errorf("builder Detail = %q, want %q", checks[0].Detail, want)
 	}
 	if want := `relevo config set policy '{"order":{"builder":["agy/test/m","claude/test/m","opencode/test/m"]}}'`; checks[0].Fix != want {
 		t.Errorf("builder Fix = %q, want %q", checks[0].Fix, want)
 	}
-	if want := "every candidate serving reviewer is gated -- ask --role reviewer without --candidate would refuse"; checks[1].Detail != want {
+	if want := "every candidate serving reviewer is gated -- bind --actor reviewer without --candidate would refuse"; checks[1].Detail != want {
 		t.Errorf("reviewer Detail = %q, want %q", checks[1].Detail, want)
 	}
 	if want := "relevo gate --clear test"; checks[1].Fix != want {

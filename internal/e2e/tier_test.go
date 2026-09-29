@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -52,7 +53,7 @@ func TestServedBuilderLaunchesAtPolicyTier(t *testing.T) {
 
 	runner.mu.Lock()
 	specsLen := len(runner.specs)
-	var spec relevo.ProcSpec
+	var spec spawn.ProcSpec
 	if specsLen > 0 {
 		spec = runner.specs[0]
 	}
@@ -106,7 +107,7 @@ func TestServedBuilderDefaultsToHarness(t *testing.T) {
 
 	runner.mu.Lock()
 	specsLen := len(runner.specs)
-	var spec relevo.ProcSpec
+	var spec spawn.ProcSpec
 	if specsLen > 0 {
 		spec = runner.specs[0]
 	}
@@ -188,7 +189,7 @@ func TestRemoteTierOverWire(t *testing.T) {
 
 	runner.mu.Lock()
 	specsLen := len(runner.specs)
-	var spec0 relevo.ProcSpec
+	var spec0 spawn.ProcSpec
 	if specsLen > 0 {
 		spec0 = runner.specs[0]
 	}
@@ -250,7 +251,7 @@ func TestRemoteTierOverWire(t *testing.T) {
 
 	runner.mu.Lock()
 	specsLen = len(runner.specs)
-	var spec1 relevo.ProcSpec
+	var spec1 spawn.ProcSpec
 	if specsLen > 1 {
 		spec1 = runner.specs[1]
 	}

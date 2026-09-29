@@ -8,12 +8,12 @@ import (
 )
 
 func TestServersRoundTrip(t *testing.T) {
-	saved := Servers{
-		"zen": ServerEntry{
+	saved := remote.Servers{
+		"zen": remote.ServerEntry{
 			URL:         "https://zen:7777",
 			Fingerprint: "sha256:abcd",
 		},
-		"local": ServerEntry{
+		"local": remote.ServerEntry{
 			URL:      "http://localhost:8888",
 			Insecure: true,
 		},
@@ -26,7 +26,7 @@ func TestServersRoundTrip(t *testing.T) {
 		t.Errorf("EncodeServers output does not end in a newline: %q", data)
 	}
 
-	loaded, err := ParseServers(data)
+	loaded, err := remote.ParseServers(data)
 	if err != nil {
 		t.Fatalf("ParseServers: %v", err)
 	}
@@ -41,100 +41,6 @@ func TestServersRoundTrip(t *testing.T) {
 	}
 }
 
-// TestParseServersValidatesEntries pins that a stored servers body may not
-// carry an entry ValidateEntry refuses.
-func TestParseServersValidatesEntries(t *testing.T) {
-	_, err := ParseServers([]byte(`{"bad":{"url":"http://zen:7777"}}`))
-	if err == nil {
-		t.Fatal("ParseServers accepted an http entry without insecure")
-	}
-	if !strings.Contains(err.Error(), "bad") {
-		t.Errorf("error %v does not name the entry", err)
-	}
-}
-
-func TestValidateEntry(t *testing.T) {
-	tests := []struct {
-		name    string
-		entry   ServerEntry
-		wantErr bool
-	}{
-		{
-			name: "valid https with fingerprint",
-			entry: ServerEntry{
-				URL:         "https://zen:7777",
-				Fingerprint: "sha256:1234",
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid https with ca system",
-			entry: ServerEntry{
-				URL: "https://zen:7777",
-				CA:  "system",
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid http with insecure",
-			entry: ServerEntry{
-				URL:      "http://localhost:8080",
-				Insecure: true,
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid https with insecure",
-			entry: ServerEntry{
-				URL:      "https://localhost:8080",
-				Insecure: true,
-			},
-			wantErr: false,
-		},
-		{
-			name: "refuse http without insecure",
-			entry: ServerEntry{
-				URL: "http://zen:7777",
-			},
-			wantErr: true,
-		},
-		{
-			name: "refuse https without pin or ca",
-			entry: ServerEntry{
-				URL: "https://zen:7777",
-			},
-			wantErr: true,
-		},
-		{
-			name: "refuse invalid url",
-			entry: ServerEntry{
-				URL: "::not-a-url::",
-			},
-			wantErr: true,
-		},
-		{
-			name: "refuse unsupported ca",
-			entry: ServerEntry{
-				URL: "https://zen:7777",
-				CA:  "custom",
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateEntry(tc.entry)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("ValidateEntry(%+v) err = %v, wantErr = %v", tc.entry, err, tc.wantErr)
-			}
-		})
-	}
-}
-
-// TestEnrollLine pins the user@host comment rule lifted out of InitKey: the
-// line is an "ed25519 <base64>" enrolment line carrying the same comment a
-// written client.pub used to.
 func TestEnrollLine(t *testing.T) {
 	kp, err := remote.Generate()
 	if err != nil {

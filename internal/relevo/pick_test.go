@@ -3,12 +3,11 @@ package relevo
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -43,14 +42,16 @@ func kinds(t *testing.T, rt Runtime, name string) []store.Kind {
 }
 
 func TestBindPicksFirstUngatedInOrder(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
-	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
-	untilText := GateUntilText(baseTime.Add(SpawnFailedCooldown))
+	availability.RecordSpawnFailure(AvailabilityDeps(rt), testAgyRef, "earlier", errors.New("agent start: exit 1"))
+	untilText := availability.GateUntilText(baseTime.Add(availability.SpawnFailedCooldown))
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: "", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -67,7 +68,7 @@ func TestBindPicksFirstUngatedInOrder(t *testing.T) {
 		t.Fatalf("picks = %+v, want 1", got)
 	}
 	p := got[0]
-	if !p.Confirmed || p.Direction != store.DirToPlanner || p.Round != 1 {
+	if !p.Confirmed || p.Direction != store.DirToMasterMind || p.Round != 1 {
 		t.Errorf("pick entry = %+v", p)
 	}
 	wantNote := "picked claude/test/m for builder: order #2; skipped agy/test/m (spawn failed " + untilText + ")"
@@ -77,13 +78,15 @@ func TestBindPicksFirstUngatedInOrder(t *testing.T) {
 }
 
 func TestBindResolvedReturnsTheResolution(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
-	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
+	availability.RecordSpawnFailure(AvailabilityDeps(rt), testAgyRef, "earlier", errors.New("agent start: exit 1"))
 
 	_, res, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: "", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
@@ -100,17 +103,19 @@ func TestBindResolvedReturnsTheResolution(t *testing.T) {
 }
 
 func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
 	// testClaudeRef's provider ("test") is shared by all three candidates in
 	// testCandidatesJSON, so this gates all three.
-	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testClaudeRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: "", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if !errors.Is(err, ErrAllGated) {
 		t.Fatalf("err = %v, want ErrAllGated", err)
@@ -121,13 +126,15 @@ func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
 }
 
 func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
-	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
-	untilText := GateUntilText(baseTime.Add(SpawnFailedCooldown))
+	availability.RecordSpawnFailure(AvailabilityDeps(rt), testAgyRef, "earlier", errors.New("agent start: exit 1"))
+	untilText := availability.GateUntilText(baseTime.Add(availability.SpawnFailedCooldown))
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -155,11 +162,13 @@ func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
 // pick entry, so this checks the entry the resume itself adds, not the
 // total count.
 func TestResumeRebindLogsPickAtCurrentRound(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	before := picks(t, rt, "webshop")
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo", Resume: true,
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo", Resume: true,
 	})
 	if err != nil {
 		t.Fatalf("Bind resume: %v", err)
@@ -179,12 +188,14 @@ func TestResumeRebindLogsPickAtCurrentRound(t *testing.T) {
 }
 
 func TestAddLogsPick(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	rt.Policy = orderOf("builder", testAgyRef)
 
 	res, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: "", PlannerID: testPlannerName, Repo: addRepo(t),
+		Name: "frontend", Candidate: "", MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -199,113 +210,5 @@ func TestAddLogsPick(t *testing.T) {
 	}
 	if got[0].Round != 1 {
 		t.Errorf("pick round = %d, want 1", got[0].Round)
-	}
-}
-
-func TestForkInheritedLogsSource(t *testing.T) {
-	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
-	srcCWD := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	seedFourRoundBinding(t, rt, "source", srcCWD)
-
-	res, err := Fork(context.Background(), rt, ForkOptions{
-		Source: "source", Round: 2, NewName: "alt", Candidate: "", PlannerID: testPlannerName,
-	})
-	if err != nil {
-		t.Fatalf("Fork: %v", err)
-	}
-	if res.Resolution.InheritedFrom != "source" {
-		t.Errorf("InheritedFrom = %q, want source", res.Resolution.InheritedFrom)
-	}
-
-	ks := kinds(t, rt, "alt")
-	forkIdx := -1
-	for i, k := range ks {
-		if k == store.KindFork {
-			forkIdx = i
-			break
-		}
-	}
-	if forkIdx == -1 || forkIdx+1 >= len(ks) || ks[forkIdx+1] != store.KindPick {
-		t.Fatalf("kinds = %v, want KindFork immediately followed by KindPick", ks)
-	}
-
-	entries, err := rt.Store.ReadLog("alt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pick := entries[forkIdx+1]
-	wantNote := "picked opencode/test/m for builder: explicit, inherited from source, policy bypassed"
-	if pick.Note != wantNote {
-		t.Errorf("pick note = %q, want %q", pick.Note, wantNote)
-	}
-	if pick.Round != 3 {
-		t.Errorf("pick round = %d, want 3", pick.Round)
-	}
-}
-
-func TestAskLogsPickBeforeAsk(t *testing.T) {
-	rt, b := seedForAsk(t)
-
-	qPath := writeQuestion(t, "what do you think?")
-
-	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: qPath, Name: b.Name, PlannerID: testPlannerName,
-	})
-	if err != nil {
-		t.Fatalf("Ask: %v", err)
-	}
-
-	ks := kinds(t, rt, "webshop")
-	if len(ks) < 2 || ks[len(ks)-2] != store.KindPick || ks[len(ks)-1] != store.KindAsk {
-		t.Fatalf("kinds tail = %v, want [..., pick, ask]", ks)
-	}
-
-	entries, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pick := entries[len(entries)-2]
-	if pick.Round != res.Consult.Round {
-		t.Errorf("pick round = %d, want %d", pick.Round, res.Consult.Round)
-	}
-	wantNote := "picked claude/test/m for reviewer: sole candidate"
-	if pick.Note != wantNote {
-		t.Errorf("pick note = %q, want %q", pick.Note, wantNote)
-	}
-}
-
-// TestStrandedAskLogsNoPick checks the delta a stranded ask adds, not the
-// total: seedForAsk's own seedBound already writes a leading pick entry for
-// the builder bind.
-
-// TestStrandedAskLogsNoPick checks the delta a stranded ask adds, not the
-// total: seedForAsk's own seedBound already writes a leading pick entry for
-// the builder bind.
-func TestStrandedAskLogsNoPick(t *testing.T) {
-	fr := newFakeRunner()
-	rt, b := seedForAsk(t)
-	rt.Runner = fr
-	before := picks(t, rt, "webshop")
-	fr.startErr = errors.New("process start: exit 1")
-
-	qPath := writeQuestion(t, "what do you think?")
-
-	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: qPath, Name: b.Name, PlannerID: testPlannerName,
-	})
-	if err == nil {
-		t.Fatal("expected an error from a stranded ask")
-	}
-	if res.Resolution.How != HowSole {
-		t.Errorf("Resolution.How = %q, want HowSole", res.Resolution.How)
-	}
-
-	after := picks(t, rt, "webshop")
-	if len(after) != len(before) {
-		t.Errorf("a stranded ask must log no pick, before=%+v after=%+v", before, after)
 	}
 }

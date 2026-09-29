@@ -2,9 +2,6 @@ package harness
 
 import "testing"
 
-// TestDefinitionPathShippedRows pins that every shipped row resolves to
-// exactly the path the table carries, on every kind, so DefinitionPath and
-// install/refresh (#371) can never disagree about where a shipped file lives.
 func TestDefinitionPathShippedRows(t *testing.T) {
 	for _, h := range All() {
 		if len(h.Roles) == 0 {
@@ -23,8 +20,6 @@ func TestDefinitionPathShippedRows(t *testing.T) {
 	}
 }
 
-// TestDefinitionPathConvention pins the per-kind path a custom name resolves
-// to: the name itself is the only variable.
 func TestDefinitionPathConvention(t *testing.T) {
 	tests := []struct {
 		kind string

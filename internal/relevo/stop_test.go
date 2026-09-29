@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -33,6 +35,8 @@ func stopEntries(t *testing.T, rt Runtime, name string) []store.LogEntry {
 }
 
 func TestStopDecisionTable(t *testing.T) {
+	t.Parallel()
+
 	open := store.Binding{Round: 1, RoundStartedAt: baseTime}
 	queued := store.Binding{Round: 1, QueuedAt: baseTime}
 
@@ -58,6 +62,8 @@ func TestStopDecisionTable(t *testing.T) {
 // TestStopPayload pins the exact payload and note a stopped close writes, for
 // both haveReport values and both where values (local "" and remote).
 func TestStopPayload(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name        string
 		how         string
@@ -65,38 +71,63 @@ func TestStopPayload(t *testing.T) {
 		where       string
 		reportPath  string
 		haveReport  bool
+		clause      string
+		shape       string
 		wantPayload string
 		wantNote    string
 	}{
 		{
 			name: "report on disk", how: "killed", round: 2,
 			reportPath: "/s/reports/002.md", haveReport: true,
-			wantPayload: "Builder was stopped (killed) for round 2. Report: relevo show webshop --round 2 --report",
+			clause:      "Report: relevo show webshop --round 2 --report",
+			wantPayload: "The runner was stopped (killed) for round 2. Report: relevo show webshop --round 2 --report",
 			wantNote:    "stopped",
 		},
 		{
 			name: "no report", how: "killed", round: 2,
 			reportPath: "/s/reports/002.md", haveReport: false,
-			wantPayload: "Builder was stopped (killed) for round 2; no report was written.",
+			wantPayload: "The runner was stopped (killed) for round 2; no report was written.",
+			wantNote:    "noreport stopped",
+		},
+		{
+			name: "reaped, no report", how: "reaped", round: 2,
+			reportPath: "/s/reports/002.md", haveReport: false,
+			wantPayload: "The runner was stopped (reaped) for round 2; no report was written.",
 			wantNote:    "noreport stopped",
 		},
 		{
 			name: "remote, report on disk", how: "killed", round: 2, where: " on zen",
 			reportPath: "/s/reports/002.md", haveReport: true,
-			wantPayload: "Builder was stopped (killed) for round 2 on zen. Report: relevo show webshop --round 2 --report",
+			clause:      "Report: relevo show webshop --round 2 --report",
+			wantPayload: "The runner was stopped (killed) for round 2 on zen. Report: relevo show webshop --round 2 --report",
 			wantNote:    "stopped",
+		},
+		{
+			name: "reader, report on disk", how: "killed", round: 1,
+			reportPath: "/s/reports/001.md", haveReport: true,
+			clause:      "Findings: relevo show reader-bind --round 1 --output",
+			shape:       store.ShapeReader,
+			wantPayload: "The runner was stopped (killed) for round 1. Findings: relevo show reader-bind --round 1 --output",
+			wantNote:    "stopped",
+		},
+		{
+			name: "reader, no report", how: "killed", round: 1,
+			reportPath: "/s/reports/001.md", haveReport: false,
+			shape:       store.ShapeReader,
+			wantPayload: "The runner was stopped (killed) for round 1; no output was written.",
+			wantNote:    "noreport stopped",
 		},
 		{
 			name: "remote, no report", how: "dequeued", round: 3, where: " on zen",
 			reportPath: "/s/reports/003.md", haveReport: false,
-			wantPayload: "Builder was stopped (dequeued) for round 3 on zen; no report was written.",
+			wantPayload: "The runner was stopped (dequeued) for round 3 on zen; no report was written.",
 			wantNote:    "noreport stopped",
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			payload, note := stopPayload(c.how, "webshop", c.round, c.where, c.haveReport)
+			payload, note := stopPayload(c.how, "webshop", c.round, c.where, c.haveReport, c.clause, c.shape)
 			if payload != c.wantPayload {
 				t.Errorf("payload = %q, want %q", payload, c.wantPayload)
 			}
@@ -115,6 +146,8 @@ func TestStopPayload(t *testing.T) {
 // round without a report -- never through the exit-without-report path, which
 // would switch the builder and charge the round.
 func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
+	t.Parallel()
+
 	t.Run("no report", func(t *testing.T) {
 		fr := newFakeRunner()
 		rt, b := sentHeadless(t, fr)
@@ -130,6 +163,9 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 
 		if len(fr.kills) != 1 || fr.kills[0] != h {
 			t.Fatalf("kills = %+v, want the round's process %+v", fr.kills, h)
+		}
+		if want := []string{rt.Store.StreamPath("webshop", b.Round)}; !reflect.DeepEqual(fr.killStreams, want) {
+			t.Errorf("killStreams = %+v, want %+v", fr.killStreams, want)
 		}
 		if len(fr.specs) != 1 {
 			t.Errorf("specs = %d, want 1: a stop must not start a replacement", len(fr.specs))
@@ -152,7 +188,7 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 			t.Errorf("Builder.PID = %d, want 0 after the process was stopped", got.Builder.PID)
 		}
 
-		pending, found, err := rt.Store.PendingForPlanner("webshop")
+		pending, found, err := rt.Store.PendingForMasterMind("webshop")
 		if err != nil || !found {
 			t.Fatalf("report must be queued: found=%v err=%v", found, err)
 		}
@@ -177,7 +213,7 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 			t.Fatalf("Stop: %v", err)
 		}
 
-		pending, found, err := rt.Store.PendingForPlanner("webshop")
+		pending, found, err := rt.Store.PendingForMasterMind("webshop")
 		if err != nil || !found {
 			t.Fatalf("report must be queued: found=%v err=%v", found, err)
 		}
@@ -188,6 +224,138 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 			t.Errorf("payload = %q, must name the show command", pending.Payload)
 		}
 	})
+}
+
+// deadRunner loads webshop and clears its recorded process, so a Stop sees a
+// round whose runner has already gone.
+func deadRunner(t *testing.T, rt Runtime) {
+	t.Helper()
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Builder = clearProcess(b.Builder)
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestStopReapsTheScopeWhenTheRunnerIsGone pins the reaped action: the runner
+// is already gone, so there is no process to kill, but its scope is still
+// loaded and is ended. The close says reaped and records stopped/reaped.
+func TestStopReapsTheScopeWhenTheRunnerIsGone(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{}
+	deadRunner(t, rt)
+	unit := scopeUnitName(b)
+	fr.scopeActive = map[string]bool{unit: true}
+
+	res, err := Stop(context.Background(), rt, "webshop", StopOptions{})
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if res.Action != "reaped" {
+		t.Errorf("Action = %q, want reaped", res.Action)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("kills = %+v, want none: the runner was already gone", fr.kills)
+	}
+	if len(fr.scopeStops) != 1 || fr.scopeStops[0] != unit {
+		t.Errorf("scopeStops = %v, want [%s]", fr.scopeStops, unit)
+	}
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 2 {
+		t.Errorf("Round = %d, want 2: the round closed", got.Round)
+	}
+	if stops := stopEntries(t, rt, "webshop"); len(stops) != 1 || stops[0].Note != "stopped/reaped" {
+		t.Errorf("stop entries = %+v, want one stopped/reaped", stops)
+	}
+}
+
+// TestStopReportsGoneWhenNothingIsLeftToStop pins the gone action: no live
+// process and no loaded scope means nothing was stopped and the close says so.
+func TestStopReportsGoneWhenNothingIsLeftToStop(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{}
+	deadRunner(t, rt)
+
+	res, err := Stop(context.Background(), rt, "webshop", StopOptions{})
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if res.Action != "gone" {
+		t.Errorf("Action = %q, want gone", res.Action)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("kills = %+v, want none", fr.kills)
+	}
+	if len(fr.scopeStops) != 0 {
+		t.Errorf("scopeStops = %v, want none", fr.scopeStops)
+	}
+	if stops := stopEntries(t, rt, "webshop"); len(stops) != 1 || stops[0].Note != "stopped/gone" {
+		t.Errorf("stop entries = %+v, want one stopped/gone", stops)
+	}
+}
+
+// TestStopKillsTheProcessAndReapsTheScope pins the combined action: a live
+// process is signalled and the scope a straggler may still hold is ended, and
+// the close still says killed.
+func TestStopKillsTheProcessAndReapsTheScope(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{}
+	h := handleOf(b.Builder)
+	unit := scopeUnitName(b)
+	fr.scopeActive = map[string]bool{unit: true}
+
+	res, err := Stop(context.Background(), rt, "webshop", StopOptions{})
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if res.Action != "killed" {
+		t.Errorf("Action = %q, want killed", res.Action)
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != h {
+		t.Errorf("kills = %+v, want the round's handle %+v", fr.kills, h)
+	}
+	if len(fr.scopeStops) != 1 || fr.scopeStops[0] != unit {
+		t.Errorf("scopeStops = %v, want [%s]", fr.scopeStops, unit)
+	}
+}
+
+// TestStopWithScopesOffNeverProbesAScope pins the fallback: with rt.Scope nil,
+// Stop asks the runner about no scope at all.
+func TestStopWithScopesOffNeverProbesAScope(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, fr)
+	deadRunner(t, rt)
+
+	res, err := Stop(context.Background(), rt, "webshop", StopOptions{})
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if res.Action != "gone" {
+		t.Errorf("Action = %q, want gone", res.Action)
+	}
+	if len(fr.scopeQueries) != 0 {
+		t.Errorf("scopeQueries = %v, want none (rt.Scope is nil)", fr.scopeQueries)
+	}
+	if len(fr.scopeStops) != 0 {
+		t.Errorf("scopeStops = %v, want none (rt.Scope is nil)", fr.scopeStops)
+	}
 }
 
 // ownedStopFixture is a served (owned) binding with a bare repo and a
@@ -233,12 +401,15 @@ func ownedStopFixture(t *testing.T, fr *fakeRunner, queued bool) (Runtime, store
 		b.RoundStartedAt = baseTime
 		b.Builder.PID = 4242
 		b.Builder.StartedAt = baseTime.Unix()
+		// The fixture is a running round, so the runner must report its
+		// recorded process alive: Stop now signals only a live process.
+		fr.script(4242, true)
 	}
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AppendLog("api", store.LogEntry{
-		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -257,6 +428,8 @@ func ownedStopFixture(t *testing.T, fr *fakeRunner, queued bool) (Runtime, store
 // Serve.ClosedRound names the stopped round and RoundStateOf reports closed,
 // so the owner's ServedView is no longer "running" (nor "idle").
 func TestStopOwnedRunningRoundClosesServedRound(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := ownedStopFixture(t, fr, false)
 
@@ -295,6 +468,8 @@ func TestStopOwnedRunningRoundClosesServedRound(t *testing.T) {
 // cleared (the server's census is derived from it), no process is killed, and
 // the round closes as stopped with the dequeued wording.
 func TestStopOwnedQueuedRoundDequeues(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := ownedStopFixture(t, fr, true)
 
@@ -329,6 +504,8 @@ func TestStopOwnedQueuedRoundDequeues(t *testing.T) {
 }
 
 func TestStopNothingToStop(t *testing.T) {
+	t.Parallel()
+
 	t.Run("no open round", func(t *testing.T) {
 		rt, b := sentBinding(t)
 		b.RoundStartedAt = time.Time{}
@@ -403,6 +580,8 @@ func remoteStopFixture(t *testing.T, fr *fakeRemote) (Runtime, remote.BindingVie
 // runs one observe pass so the round is closed locally with the stopped
 // payload pending -- never delivered.
 func TestStopRemoteKillsAndCollects(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureStop}}}
 	rt, _ := remoteStopFixture(t, fr)
@@ -429,11 +608,11 @@ func TestStopRemoteKillsAndCollects(t *testing.T) {
 		t.Errorf("state = %s, want active: a stopped close must not halt", got.State)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("api")
+	pending, found, err := rt.Store.PendingForMasterMind("api")
 	if err != nil || !found {
 		t.Fatalf("report must be pending: found=%v err=%v", found, err)
 	}
-	if !strings.Contains(pending.Payload, "Builder was stopped (killed) for round 1 on zen") {
+	if !strings.Contains(pending.Payload, "The runner was stopped (killed) for round 1 on zen") {
 		t.Errorf("payload = %q, want the stopped text", pending.Payload)
 	}
 	if pending.Confirmed {
@@ -445,6 +624,8 @@ func TestStopRemoteKillsAndCollects(t *testing.T) {
 // server whose WhoAmI advertises no FeatureStop is told nothing, and the hint
 // names relevo unbind.
 func TestStopRemotePreStopServerRefuses(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{}}
 	rt, _ := remoteStopFixture(t, fr)
@@ -467,6 +648,8 @@ func TestStopRemotePreStopServerRefuses(t *testing.T) {
 // server's answer becomes the local sentinel, so the CLI prints "nothing to
 // stop" and exits 0.
 func TestStopRemoteNothingToStop(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{
 		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureStop}},
@@ -482,6 +665,8 @@ func TestStopRemoteNothingToStop(t *testing.T) {
 // TestStopRemote404NamesUnbind pins the server-404 refusal and its hint: the
 // binding is gone there, so the local record should be unbound.
 func TestStopRemote404NamesUnbind(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{
 		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureStop}},
@@ -500,6 +685,8 @@ func TestStopRemote404NamesUnbind(t *testing.T) {
 // stopped the round, so a failed local observe is not an error. Stop still
 // reports killed and leaves the binding alone, not halted.
 func TestStopRemotePartialSuccess(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{
 		whoAmIResp:    remote.WhoAmI{Features: []string{remote.FeatureStop}},
@@ -525,6 +712,8 @@ func TestStopRemotePartialSuccess(t *testing.T) {
 }
 
 func TestSendClearsStopRequest(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	b.StopRequestedAt = baseTime
 	b.StopGraceMS = 300000

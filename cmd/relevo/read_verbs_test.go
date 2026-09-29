@@ -26,8 +26,8 @@ func seedReadVerbStore(t *testing.T) (*store.Store, relevo.Runtime, []store.LogE
 		t.Fatalf("Save: %v", err)
 	}
 	for _, e := range []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Note: "round one"},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Note: "round one"},
 	} {
 		if err := s.AppendLog("api", e); err != nil {
 			t.Fatalf("AppendLog: %v", err)
@@ -78,7 +78,7 @@ func assertIngestMirrorEmpty(t *testing.T, path string) {
 
 // TestPrintLogAndPrintShowWriteNothing is `relevo serve log`/`show`'s
 // read-only contract (#216) at the helper level: with markViewed=false the
-// same text a client verb prints comes out, no .viewed sidecar appears, and
+// same text a client verb prints comes out, no viewed mark appears, and
 // printShow with allowDB=false creates no database. markViewed=true is the
 // control that proves the assertion can fail.
 func TestPrintLogAndPrintShowWriteNothing(t *testing.T) {

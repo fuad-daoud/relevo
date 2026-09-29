@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -13,18 +12,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// This file is round 2's one-time migration (cockpit spec §3.8; A2 plan round
-// 2 R3): it rewrites a pre-actors config -- a roles section, or the legacy
-// policy.order/policy.tier and candidate roles/tier fields -- as an actors
-// section plus, when a role needs one, an agents section, recorded as one
-// revision whose source is "migration". The old keys stop being read after it
-// (R4); rolling back re-arms it (a test pins that).
-
-// MigrateToActors migrates the stored config when it has no actors section and
-// still carries a roles section, a policy order or tier, or a candidate roles
-// or tier key. It reports whether it wrote.
+// MigrateToActors rewrites a pre-actors stored config -- a roles section, or
+// the legacy policy.order/policy.tier and candidate roles/tier keys -- as an
+// actors section plus, when a role needs one, an agents section, recorded as
+// one revision whose source is "migration". It reports whether it wrote.
 //
-// It computes the whole new document first and validates every section before
+// It computes the whole new document and validates every section before
 // opening the transaction, so a failure writes nothing and the old config
 // keeps working.
 func (s *Store) MigrateToActors() (bool, error) {
@@ -89,9 +82,6 @@ func (s *Store) MigrateToActors() (bool, error) {
 	return true, nil
 }
 
-// legacyRolesPresent reports whether doc is a pre-actors config: a roles
-// section, or an order or tier key in policy, or a roles or tier key on any
-// candidate (R3 "When").
 func legacyRolesPresent(doc Doc) bool {
 	if _, ok := doc[Roles]; ok {
 		return true
@@ -105,8 +95,6 @@ func legacyRolesPresent(doc Doc) bool {
 	return false
 }
 
-// candidateSetFromDoc parses doc's candidates section, or gives an empty set
-// when it is absent, exactly as Load does.
 func candidateSetFromDoc(doc Doc) (*candidate.Set, error) {
 	body, ok := doc[Candidates]
 	if !ok {
@@ -119,9 +107,6 @@ func candidateSetFromDoc(doc Doc) (*candidate.Set, error) {
 	return set, nil
 }
 
-// ignoredLegacyWarnings names the pre-actors keys Load no longer reads once an
-// actors section decides (R4): policy.order, policy.tier, and every candidate
-// roles or tier key.
 func ignoredLegacyWarnings(candBody []byte, candOK bool, polBody []byte, polOK bool) []string {
 	var out []string
 	if polOK && jsonHasAnyKey(polBody, "order") {
@@ -148,123 +133,155 @@ func ignoredLegacyWarnings(candBody []byte, candOK bool, polBody []byte, polOK b
 	return out
 }
 
-// migrateDoc computes the migrated document from doc and set, with the notes
-// the migration revision carries. It is pure: doc is not modified.
+type migration struct {
+	agents    map[string]roles.AgentEntry
+	actors    map[string]roles.Actor
+	roleTiers map[string]string
+	notes     []string
+}
+
 func migrateDoc(doc Doc, set *candidate.Set) (Doc, []string, error) {
+	m, err := buildMigration(doc, set)
+	if err != nil {
+		return nil, nil, err
+	}
+	out, err := migratedSections(doc, set, m)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, m.notes, nil
+}
+
+func buildMigration(doc Doc, set *candidate.Set) (*migration, error) {
+	pol, rf, err := legacySections(doc)
+	if err != nil {
+		return nil, err
+	}
+	reg, err := roles.Build(rf, set, pol)
+	if err != nil {
+		return nil, err
+	}
+	old, err := legacyRows(rf, set, pol)
+	if err != nil {
+		return nil, err
+	}
+
+	m := &migration{
+		agents:    map[string]roles.AgentEntry{},
+		actors:    map[string]roles.Actor{},
+		roleTiers: map[string]string{},
+	}
+	// Existing agents survive the migration; a new native agent whose name
+	// collides with one takes the <role>-agent fallback.
+	if body, ok := doc[Agents]; ok {
+		existing, _, err := roles.ParseAgents(body)
+		if err != nil {
+			return nil, err
+		}
+		for name, entry := range existing {
+			m.agents[name] = entry
+		}
+	}
+
+	for _, name := range reg.Names() {
+		role, _ := reg.Role(name)
+		a, agentName, notes := actorForRole(name, role, old.Rows[name], set, rf, m.agents)
+		m.notes = append(m.notes, notes...)
+		if agentName == "" {
+			continue
+		}
+		if t, ok := reg.RoleTier(name); ok {
+			a.Tier = string(t)
+			m.roleTiers[name] = string(t)
+		}
+		m.actors[name] = a
+	}
+	return m, nil
+}
+
+func legacySections(doc Doc) (policy.Policy, *roles.File, error) {
 	pol := policy.Policy{}
 	if body, ok := doc[Policy]; ok {
 		p, _, err := policy.Parse(FileName(Policy), body)
 		if err != nil {
-			return nil, nil, err
+			return policy.Policy{}, nil, err
 		}
 		pol = p
 	}
-
 	var rf *roles.File
 	if body, ok := doc[Roles]; ok {
 		f, _, err := roles.Parse(FileName(Roles), body)
 		if err != nil {
-			return nil, nil, err
+			return policy.Policy{}, nil, err
 		}
 		rf = f
 	}
+	return pol, rf, nil
+}
 
-	reg, err := roles.Build(rf, set, pol)
+func legacyRows(rf *roles.File, set *candidate.Set, pol policy.Policy) (*roles.File, error) {
+	if rf != nil {
+		return rf, nil
+	}
+	f, _, err := roles.FromLegacy(set, pol)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
+	}
+	return f, nil
+}
+
+func actorForRole(name string, role roles.Role, row roles.Row, set *candidate.Set, rf *roles.File, agentsOut map[string]roles.AgentEntry) (roles.Actor, string, []string) {
+	agentName, entry, created := agentForRole(role, agentsOut)
+	if agentName == "" {
+		return roles.Actor{}, "", []string{fmt.Sprintf("actor %s: no definitions; skipped", name)}
 	}
 
-	// The old rows: the stored roles File in file mode, and -- when the roles
-	// section is absent -- the legacy derivation of candidates and policy,
-	// which gives every builtin row with its ranked tokens, unlisted ones
-	// appended, and its tier (R3 step 1).
-	old := rf
-	if old == nil {
-		f, _, err := roles.FromLegacy(set, pol)
-		if err != nil {
-			return nil, nil, err
-		}
-		old = f
-	}
-
-	roleTiers := make(map[string]string)
 	var notes []string
-
-	// Existing agents survive the migration; a new native agent whose name
-	// collides with one of them takes the <role>-agent fallback.
-	agentsOut := make(map[string]actors.AgentEntry)
-	if body, ok := doc[Agents]; ok {
-		existing, _, err := actors.ParseAgents(body)
-		if err != nil {
-			return nil, nil, err
-		}
-		for name, entry := range existing {
-			agentsOut[name] = entry
-		}
+	if created {
+		agentsOut[agentName] = entry
+		notes = append(notes, fmt.Sprintf("agent %s: from role %s's definitions", agentName, name))
 	}
 
-	actorsOut := make(map[string]actors.Actor)
-	for _, name := range reg.Names() {
-		role, _ := reg.Role(name)
-		row := old.Rows[name]
-
-		agentName, entry, created := agentForRole(role, agentsOut)
-		if agentName == "" {
-			// A role with no definition for any kind has nothing to name an
-			// agent after and cannot be expressed: skip it rather than write
-			// an agents entry that would not validate.
-			notes = append(notes, fmt.Sprintf("actor %s: no definitions; skipped", name))
+	a := roles.Actor{Agent: agentName}
+	seen := make(map[string]bool)
+	for _, raw := range row.Candidates {
+		display := raw
+		if _, err := set.Resolve(raw); err == nil {
+			display = set.NameOf(raw)
+		} else {
+			notes = append(notes, fmt.Sprintf("actor %s: candidate %q is not configured; kept", name, raw))
+		}
+		if seen[display] {
+			// Two raw entries resolving to one candidate: file mode dedupes
+			// them on the ranked token, so the actor names the candidate once.
 			continue
 		}
-		if created {
-			agentsOut[agentName] = entry
-			notes = append(notes, fmt.Sprintf("agent %s: from role %s's definitions", agentName, name))
-		}
-
-		a := actors.Actor{Agent: agentName}
-		seen := make(map[string]bool)
-		for _, raw := range row.Candidates {
-			display := raw
-			if _, err := set.Resolve(raw); err == nil {
-				display = set.NameOf(raw)
-			} else {
-				notes = append(notes, fmt.Sprintf("actor %s: candidate %q is not configured; kept", name, raw))
-			}
-			if seen[display] {
-				// Two raw entries that resolve to one candidate: the file
-				// mode dedupes them on the ranked token, so the actor names
-				// the candidate once.
-				continue
-			}
-			seen[display] = true
-			a.Candidates = append(a.Candidates, actors.Entry{Candidate: display, Off: containsString(row.Off, raw)})
-		}
-		if t, ok := reg.RoleTier(name); ok {
-			a.Tier = string(t)
-			roleTiers[name] = string(t)
-		}
-		if rf != nil && row.Gate != nil {
-			a.Check = row.Gate
-		}
-		actorsOut[name] = a
+		seen[display] = true
+		a.Candidates = append(a.Candidates, roles.Entry{Candidate: display, Off: containsString(row.Off, raw)})
 	}
+	if rf != nil && row.Check != nil {
+		a.Check = row.Check
+	}
+	return a, agentName, notes
+}
 
+func migratedSections(doc Doc, set *candidate.Set, m *migration) (Doc, error) {
 	out := make(Doc, len(doc)+2)
 	for sec, body := range doc {
 		out[sec] = body
 	}
 
-	actorsJSON, err := actors.EncodeActors(actorsOut)
+	actorsJSON, err := roles.EncodeActors(m.actors)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	out[Actors] = actorsJSON
 	delete(out, Roles)
 
-	if len(agentsOut) > 0 {
-		agentsJSON, err := actors.EncodeAgents(agentsOut)
+	if len(m.agents) > 0 {
+		agentsJSON, err := roles.EncodeAgents(m.agents)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		out[Agents] = agentsJSON
 	}
@@ -272,37 +289,32 @@ func migrateDoc(doc Doc, set *candidate.Set) (Doc, []string, error) {
 	if body, ok := doc[Policy]; ok {
 		updated, err := stripObjectKeys(body, Policy, "order", "tier")
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		out[Policy] = updated
 	}
 
 	if body, ok := doc[Candidates]; ok {
-		updated, candNotes, err := stripCandidateKeys(body, set, roleTiers)
+		updated, candNotes, err := stripCandidateKeys(body, set, m.roleTiers)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		out[Candidates] = updated
-		notes = append(notes, candNotes...)
+		m.notes = append(m.notes, candNotes...)
 	}
-
-	return out, notes, nil
+	return out, nil
 }
 
-// agentForRole resolves one role to the agent an actor runs. It returns the
-// agent name, the agents entry to add when the agent is new, and whether that
-// entry has to be added. An empty name means the role has no definition at
-// all and cannot be expressed as an actor.
-func agentForRole(role roles.Role, agentsOut map[string]actors.AgentEntry) (string, actors.AgentEntry, bool) {
+func agentForRole(role roles.Role, agentsOut map[string]roles.AgentEntry) (string, roles.AgentEntry, bool) {
 	if shipped, ok := shippedAgentFor(role); ok {
-		return shipped, actors.AgentEntry{}, false
+		return shipped, roles.AgentEntry{}, false
 	}
 	if len(role.Definitions) == 0 {
-		return "", actors.AgentEntry{}, false
+		return "", roles.AgentEntry{}, false
 	}
 
 	name := nativeAgentName(role)
-	if _, shipped := actors.Shipped(name); shipped {
+	if _, shipped := roles.Shipped(name); shipped {
 		name = role.Name + "-agent"
 	}
 	if _, exists := agentsOut[name]; exists {
@@ -316,14 +328,10 @@ func agentForRole(role roles.Role, agentsOut map[string]actors.AgentEntry) (stri
 			Requires: append([]string(nil), d.Requires...),
 		}
 	}
-	entry := actors.AgentEntry{Shape: shapeWord(role.Shape), Native: native}
+	entry := roles.AgentEntry{Shape: shapeWord(role.Shape), Native: native}
 	return name, entry, true
 }
 
-// shippedAgentFor returns the shipped agent name for a builtin role whose
-// definitions are, for every kind in harness.All(), exactly the shipped ones
-// (Agent and Requires). A role with no such match, or with a kind missing, is
-// not shipped.
 func shippedAgentFor(role roles.Role) (string, bool) {
 	spec, ok := harness.RoleByName(role.Name)
 	if !ok {
@@ -345,9 +353,7 @@ func shippedAgentFor(role roles.Role) (string, bool) {
 	return spec.Definition, true
 }
 
-// nativeAgentName names a role's native agent after its claude definition's
-// agent when every kind uses the same agent and requires, and <role>-agent
-// otherwise (R3 step 2).
+// nativeAgentName falls back to <role>-agent when the kinds disagree.
 func nativeAgentName(role roles.Role) string {
 	claude, ok := role.Definitions["claude"]
 	if !ok {
@@ -364,7 +370,6 @@ func nativeAgentName(role roles.Role) string {
 	return claude.Agent
 }
 
-// shapeWord renders a role shape as the actors section's word.
 func shapeWord(shape harness.RoleShape) string {
 	if shape == harness.ShapeBuilder {
 		return "writer"
@@ -372,7 +377,6 @@ func shapeWord(shape harness.RoleShape) string {
 	return "reader"
 }
 
-// sameStrings reports whether a and b hold the same strings in order.
 func sameStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -385,7 +389,6 @@ func sameStrings(a, b []string) bool {
 	return true
 }
 
-// containsString reports whether list holds want.
 func containsString(list []string, want string) bool {
 	for _, s := range list {
 		if s == want {
@@ -395,7 +398,6 @@ func containsString(list []string, want string) bool {
 	return false
 }
 
-// jsonHasAnyKey reports whether body is a JSON object carrying any of keys.
 func jsonHasAnyKey(body []byte, keys ...string) bool {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(body, &obj); err != nil {
@@ -409,8 +411,6 @@ func jsonHasAnyKey(body []byte, keys ...string) bool {
 	return false
 }
 
-// candidatesHaveAnyKey reports whether any element of body's JSON array
-// carries one of keys.
 func candidatesHaveAnyKey(body []byte, keys ...string) bool {
 	var rows []map[string]json.RawMessage
 	if err := json.Unmarshal(body, &rows); err != nil {
@@ -426,12 +426,10 @@ func candidatesHaveAnyKey(body []byte, keys ...string) bool {
 	return false
 }
 
-// stripObjectKeys removes keys from a JSON object body, keeping every other
-// key and its bytes, and returns the re-indented object.
 func stripObjectKeys(body []byte, sec Section, keys ...string) ([]byte, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(body, &obj); err != nil {
-		return nil, fmt.Errorf("%s: %v", sec, err)
+		return nil, fmt.Errorf("%s: %w", sec, err)
 	}
 	for _, k := range keys {
 		delete(obj, k)
@@ -439,13 +437,10 @@ func stripObjectKeys(body []byte, sec Section, keys ...string) ([]byte, error) {
 	return encodeSection(obj)
 }
 
-// stripCandidateKeys removes each element's roles and tier keys, keeping
-// `name` and every other key, and notes a candidate tier an actor cannot carry
-// (R3 step 3).
 func stripCandidateKeys(body []byte, set *candidate.Set, roleTiers map[string]string) ([]byte, []string, error) {
 	var rows []map[string]json.RawMessage
 	if err := json.Unmarshal(body, &rows); err != nil {
-		return nil, nil, fmt.Errorf("%s: %v", Candidates, err)
+		return nil, nil, fmt.Errorf("%s: %w", Candidates, err)
 	}
 
 	var notes []string
@@ -468,8 +463,6 @@ func stripCandidateKeys(body []byte, set *candidate.Set, roleTiers map[string]st
 	return encoded, notes, nil
 }
 
-// tierDropped reports whether a candidate tier has no actor to live on: it is
-// dropped when no role the candidate lists carries that same tier.
 func tierDropped(tier string, rolesOf []string, roleTiers map[string]string) bool {
 	if len(rolesOf) == 0 {
 		return true
@@ -482,8 +475,6 @@ func tierDropped(tier string, rolesOf []string, roleTiers map[string]string) boo
 	return true
 }
 
-// candidateLabel names a candidate element for a note: its name key when set,
-// else the harness/provider/model ref it carries, else "?".
 func candidateLabel(row map[string]json.RawMessage, set *candidate.Set) string {
 	if name := rawString(row["name"]); name != "" {
 		return name
@@ -504,8 +495,6 @@ func candidateLabel(row map[string]json.RawMessage, set *candidate.Set) string {
 	return ref
 }
 
-// rawString returns the JSON string in raw, or "" when raw is absent or not a
-// string.
 func rawString(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -517,7 +506,6 @@ func rawString(raw json.RawMessage) string {
 	return s
 }
 
-// rawStrings returns the JSON array of strings in raw, or nil.
 func rawStrings(raw json.RawMessage) []string {
 	if len(raw) == 0 {
 		return nil
@@ -529,8 +517,6 @@ func rawStrings(raw json.RawMessage) []string {
 	return out
 }
 
-// encodeSection renders a section body as indented JSON with a trailing
-// newline, the shape the store's other writes use.
 func encodeSection(v any) ([]byte, error) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {

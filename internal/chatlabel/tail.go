@@ -6,12 +6,9 @@ import (
 	"os"
 )
 
-// ReadTail returns the last max bytes of the file at path, starting at a line
-// boundary. max <= 0 means DefaultTailBytes. Errors are returned as-is: the
-// caller turns them into the empty label.
-//
-// A transcript can be megabytes long and is appended to, so the window is taken
-// from the end and its first partial line is dropped.
+// ReadTail returns the last max bytes of the file at path (max <= 0 means
+// DefaultTailBytes), starting at a line boundary since the window is cut from
+// the end of a long, appended-to transcript. Errors are returned as-is.
 func ReadTail(path string, max int64) ([]byte, error) {
 	if max <= 0 {
 		max = DefaultTailBytes
@@ -21,7 +18,7 @@ func ReadTail(path string, max int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -40,8 +37,7 @@ func ReadTail(path string, max int64) ([]byte, error) {
 		return nil, err
 	}
 
-	// The window opens mid-line, so everything up to and including the first
-	// newline is partial and must go.
+	// The window opens mid-line; everything through the first newline is partial.
 	if i := bytes.IndexByte(buf, '\n'); i >= 0 {
 		return buf[i+1:], nil
 	}

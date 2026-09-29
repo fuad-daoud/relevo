@@ -8,6 +8,8 @@ import (
 )
 
 func TestReconcileFlagsRoundTimeout(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	// Pin the budget explicitly: this exercises the timeout mechanism, not
 	// whatever the store's default happens to be.
@@ -59,6 +61,8 @@ func TestReconcileFlagsRoundTimeout(t *testing.T) {
 // TestReconcileStopsAtRoundCap checks the cap's decision point: a round past
 // the cap halts instead of being relayed further.
 func TestReconcileStopsAtRoundCap(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	b.Round = b.RoundCap + 1
 
@@ -77,11 +81,13 @@ func TestReconcileStopsAtRoundCap(t *testing.T) {
 	}
 }
 
-// TestReconcileTimeoutNotifiesOnceInEveryPlannerState is the regression test
+// TestReconcileTimeoutNotifiesOnceInEveryMasterMindState is the regression test
 // for the halt storm: at a 2s poll, a halt that re-records is a notification
 // every couple of seconds, forever, on a live desktop. Five ticks against a
 // timed-out binding must leave exactly one halt recorded for the round.
-func TestReconcileTimeoutNotifiesOnceInEveryPlannerState(t *testing.T) {
+func TestReconcileTimeoutNotifiesOnceInEveryMasterMindState(t *testing.T) {
+	t.Parallel()
+
 	rt, b := timedOutBinding(t)
 
 	for i := 0; i < 5; i++ {
@@ -106,6 +112,8 @@ func TestReconcileTimeoutNotifiesOnceInEveryPlannerState(t *testing.T) {
 // TestReconcileTimeoutNotifiesAgainInALaterRound is the other half of
 // the dedup: one halt per round that goes wrong, not one per binding.
 func TestReconcileTimeoutNotifiesAgainInALaterRound(t *testing.T) {
+	t.Parallel()
+
 	rt, b := timedOutBinding(t)
 
 	b, err := reconcile(t, rt, b)
@@ -119,8 +127,8 @@ func TestReconcileTimeoutNotifiesAgainInALaterRound(t *testing.T) {
 	b.RoundTimeoutMS = int((30 * time.Minute).Milliseconds())
 	b.RoundStartedAt = baseTime.Add(-31 * time.Minute)
 	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
-		TS: baseTime, Round: b.Round, Direction: store.DirToBuilder, Kind: store.KindPlan,
-		Path: rt.Store.PlanPath(b.Name, b.Round), Confirmed: true,
+		TS: baseTime, Round: b.Round, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+		Path: rt.Store.PromptPath(b.Name, b.Round), Confirmed: true,
 	}); err != nil {
 		t.Fatalf("seed round %d plan: %v", b.Round, err)
 	}
@@ -142,6 +150,8 @@ func TestReconcileTimeoutNotifiesAgainInALaterRound(t *testing.T) {
 
 // TestReconcileRoundCapNotifiesOnce guards the same dedup on the other halt.
 func TestReconcileRoundCapNotifiesOnce(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	b.Round = b.RoundCap + 1
 

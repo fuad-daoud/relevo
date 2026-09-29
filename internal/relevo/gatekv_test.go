@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
 
 // testGateKV returns a real t.TempDir() database for a Runtime's Gates or
@@ -25,15 +27,14 @@ func testGateKV(t *testing.T) db.KV {
 // testGates returns a Gates handle and the directory the legacy ledger.json,
 // availability.json and history.json are imported from: the kv row and its
 // legacy path can then be exercised together.
-func testGates(t *testing.T) (db.KV, string) {
+func testGates(t *testing.T) db.KV {
 	t.Helper()
-	dir := t.TempDir()
-	d, err := db.Open(filepath.Join(dir, "relevo.db"))
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	return d, dir
+	return d
 }
 
 // testSecretDB returns a real t.TempDir() database, the machine database the
@@ -50,26 +51,14 @@ func testSecretDB(t *testing.T) *db.DB {
 }
 
 // testSecrets returns the machine database's secret store.
-func testSecrets(t *testing.T) SecretStore { return db.SecretStore{DB: testSecretDB(t)} }
+func testSecrets(t *testing.T) delivery.SecretStore { return db.SecretStore{DB: testSecretDB(t)} }
 
-// testClaims returns a KVClaims over a fresh temp database, the database it
-// writes to, and the directory a legacy channels/ tree would live in.
-func testClaims(t *testing.T) (*KVClaims, *db.DB, string) {
+// testMasterMinds returns a mastermind registry over a fresh temp database.
+func testMasterMinds(t *testing.T) *mastermind.DBRegistry {
 	t.Helper()
-	d := testSecretDB(t)
-	dir := filepath.Join(t.TempDir(), "channels")
-	// alwaysAlive, as the FileClaims fixtures had: a claim's fake pid must not
-	// depend on which pids happen to exist on the machine running the test.
-	return &KVClaims{KV: db.TxKV{DB: d}, Root: dir, Alive: alwaysAlive}, d, dir
-}
-
-// testPlanners returns a planner registry over a fresh temp database.
-func testPlanners(t *testing.T) *planner.DBRegistry {
-	t.Helper()
-	return &planner.DBRegistry{
-		KV:   db.TxKV{DB: testSecretDB(t)},
-		Now:  time.Now,
-		Root: filepath.Join(t.TempDir(), "planners"),
+	return &mastermind.DBRegistry{
+		KV:  db.TxKV{DB: testSecretDB(t)},
+		Now: time.Now,
 	}
 }
 
@@ -96,3 +85,13 @@ func (k failPutKV) KVPut(key string, v []byte) error {
 	return k.inner.KVPut(key, v)
 }
 func (k failPutKV) KVDelete(key string) error { return k.inner.KVDelete(key) }
+
+// loadLedger reads a runtime's ledger for assertions.
+func loadLedger(t *testing.T, rt Runtime) availability.Ledger {
+	t.Helper()
+	l, err := availability.LoadLedger(rt.Gates)
+	if err != nil {
+		t.Fatalf("LoadKV ledger: %v", err)
+	}
+	return l
+}

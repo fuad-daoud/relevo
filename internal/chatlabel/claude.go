@@ -6,9 +6,8 @@ import (
 	"strings"
 )
 
-// claudeEntry is the slice of a Claude Code transcript line this package
-// reads. It is deliberately small: unknown fields are ignored, and a line that
-// carries none of these contributes nothing.
+// claudeEntry is the slice of a transcript line this package reads; unknown
+// fields are ignored.
 type claudeEntry struct {
 	Type            string `json:"type"`
 	CustomTitle     string `json:"customTitle"`
@@ -17,13 +16,10 @@ type claudeEntry struct {
 	BridgeSessionID string `json:"bridgeSessionId"`
 }
 
-// Claude builds the Label for a Claude Code transcript (JSONL) from its tail.
-// It never errors and never panics: a line that is blank, does not start with
-// `{`, or fails to decode is skipped.
-//
-// The order of the title sources is the one a person would expect to see: the
-// name they set with /rename, then the automatic chat title, then the last
-// prompt they typed.
+// Claude builds the Label for a Claude Code transcript (JSONL) from its tail,
+// preferring a /rename'd title, then the automatic title, then the last
+// prompt. A line that is blank, not JSON, or undecodable is skipped; nothing
+// here errors or panics.
 func Claude(tail []byte) Label {
 	var customTitle, aiTitle, lastPrompt, bridgeSession string
 
@@ -36,8 +32,7 @@ func Claude(tail []byte) Label {
 		if err := json.Unmarshal(line, &e); err != nil {
 			continue
 		}
-		// Each entry type re-appends through a session, so the latest
-		// non-empty value of its field is the current one.
+		// Each type re-appends through a session; the latest non-empty value wins.
 		switch e.Type {
 		case "custom-title":
 			if e.CustomTitle != "" {

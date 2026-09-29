@@ -17,7 +17,7 @@ func newTestBinding(name string) store.Binding {
 	return store.Binding{
 		Name:             name,
 		CWD:              "/tmp/test",
-		Planner:          store.Endpoint{PaneID: "w1:p1", SessionID: "planner-session", Kind: "claude"},
+		MasterMind:       store.Endpoint{PaneID: "w1:p1", SessionID: "mastermind-session", Kind: "claude"},
 		Builder:          store.Endpoint{AgentName: name + "-builder", PaneID: "w1:p2", Kind: "opencode"},
 		BuilderCandidate: "agy",
 		Round:            2,
@@ -26,10 +26,10 @@ func newTestBinding(name string) store.Binding {
 }
 
 func TestTabOrderStartsWithPlan(t *testing.T) {
-	if tabPlan != 0 {
-		t.Fatalf("tabPlan = %d, want 0 (first in the tab order)", tabPlan)
+	if tabPrompt != 0 {
+		t.Fatalf("tabPrompt = %d, want 0 (first in the tab order)", tabPrompt)
 	}
-	wantOrder := [tabCount]string{"plan", "report", "terminal", "diff", "log"}
+	wantOrder := [tabCount]string{"prompt", "report", "transcript", "diff", "log", "artifacts"}
 	if tabTitles != wantOrder {
 		t.Fatalf("tabTitles = %v, want %v", tabTitles, wantOrder)
 	}
@@ -44,7 +44,7 @@ func TestFetchPlanLive(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	planPath := st.PlanPath(name, 1)
+	planPath := st.PromptPath(name, 1)
 	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestFetchPlanLive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := fetchPlan(context.Background(), plannerSource{rt}, name, 1)
+	cmd := fetchPrompt(context.Background(), mastermindSource{rt}, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -64,11 +64,72 @@ func TestFetchPlanLive(t *testing.T) {
 	if tMsg.content.body != "# Round 1 plan\n" {
 		t.Fatalf("body = %q, want the plan file's content", tMsg.content.body)
 	}
-	if tMsg.t != tabPlan {
-		t.Errorf("t = %v, want tabPlan", tMsg.t)
+	if tMsg.t != tabPrompt {
+		t.Errorf("t = %v, want tabPrompt", tMsg.t)
 	}
 	if tMsg.round != 1 {
 		t.Errorf("round = %d, want 1", tMsg.round)
+	}
+}
+
+// TestFetchPlanTimeIsWhenThePlanWasSent pins the plan tab's time to the plan
+// log entry's TS, not to the moment the tab was read.
+func TestFetchPlanTimeIsWhenThePlanWasSent(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	planPath := st.PromptPath(name, 2)
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, []byte("# Round 2 plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sent := time.Date(2026, 9, 8, 12, 0, 0, 0, time.Local)
+	if err := st.AppendLog(name, store.LogEntry{
+		TS: sent, Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: planPath,
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	tMsg := fetchPrompt(context.Background(), mastermindSource{rt}, name, 2)().(tabMsg)
+	if tMsg.content.err != nil {
+		t.Fatalf("unexpected error: %v", tMsg.content.err)
+	}
+	if !tMsg.content.at.Equal(sent) {
+		t.Errorf("content.at = %v, want the plan entry's TS %v", tMsg.content.at, sent)
+	}
+}
+
+// TestFetchReportTimeIsWhenTheReportArrived pins the report tab's time to the
+// report log entry's TS.
+func TestFetchReportTimeIsWhenTheReportArrived(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	arrived := time.Date(2026, 9, 8, 12, 30, 0, 0, time.Local)
+	if err := st.AppendLog(name, store.LogEntry{
+		TS: arrived, Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "round 2 report",
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	tMsg := fetchReport(context.Background(), mastermindSource{rt}, name, 2)().(tabMsg)
+	if tMsg.content.err != nil {
+		t.Fatalf("unexpected error: %v", tMsg.content.err)
+	}
+	if !tMsg.content.at.Equal(arrived) {
+		t.Errorf("content.at = %v, want the report entry's TS %v", tMsg.content.at, arrived)
 	}
 }
 
@@ -78,7 +139,7 @@ func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 		Store: st,
 	}
 
-	cmd := fetchStatus(context.Background(), plannerSource{rt})
+	cmd := fetchStatus(context.Background(), mastermindSource{rt})
 	if cmd == nil {
 		t.Fatal("fetchStatus returned nil command")
 	}
@@ -105,7 +166,7 @@ func TestFetchReportScrapedPayloadDoesNotTouchPath(t *testing.T) {
 	entry := store.LogEntry{
 		TS:        time.Now(),
 		Round:     2,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Path:      "/nonexistent/directory/that/does/not/exist/report.md",
 		Payload:   "scraped report payload content",
@@ -115,7 +176,7 @@ func TestFetchReportScrapedPayloadDoesNotTouchPath(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	cmd := fetchReport(context.Background(), plannerSource{rt}, name, 2)
+	cmd := fetchReport(context.Background(), mastermindSource{rt}, name, 2)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -145,7 +206,7 @@ func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	cmd := fetchReport(context.Background(), plannerSource{rt}, name, 1)
+	cmd := fetchReport(context.Background(), mastermindSource{rt}, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -173,8 +234,8 @@ func TestFetchReportTakesRound(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	entries := []store.LogEntry{
-		{TS: time.Now(), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "round 1 report"},
-		{TS: time.Now(), Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "round 2 report"},
+		{TS: time.Now(), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "round 1 report"},
+		{TS: time.Now(), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "round 2 report"},
 	}
 	for _, e := range entries {
 		if err := st.AppendLog(name, e); err != nil {
@@ -182,7 +243,7 @@ func TestFetchReportTakesRound(t *testing.T) {
 		}
 	}
 
-	msg := fetchReport(context.Background(), plannerSource{rt}, name, 1)().(tabMsg)
+	msg := fetchReport(context.Background(), mastermindSource{rt}, name, 1)().(tabMsg)
 	if msg.content.body != "round 1 report" {
 		t.Errorf("round 1: body = %q, want %q", msg.content.body, "round 1 report")
 	}
@@ -190,7 +251,7 @@ func TestFetchReportTakesRound(t *testing.T) {
 		t.Errorf("round 1: tabMsg.round = %d, want 1", msg.round)
 	}
 
-	msg = fetchReport(context.Background(), plannerSource{rt}, name, 2)().(tabMsg)
+	msg = fetchReport(context.Background(), mastermindSource{rt}, name, 2)().(tabMsg)
 	if msg.content.body != "round 2 report" {
 		t.Errorf("round 2: body = %q, want %q (not round 1's, even though it is the newest logged)", msg.content.body, "round 2 report")
 	}
@@ -204,7 +265,7 @@ func TestFetchDiffRoundZero(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 
-	cmd := fetchDiff(context.Background(), plannerSource{rt}, "webshop", 0)
+	cmd := fetchDiff(context.Background(), mastermindSource{rt}, "webshop", 0)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -229,7 +290,7 @@ func TestFetchDiffRoundNoStoredPatch(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	cmd := fetchDiff(context.Background(), plannerSource{rt}, name, 1)
+	cmd := fetchDiff(context.Background(), mastermindSource{rt}, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -259,14 +320,14 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 		TS:        now,
 		Round:     1,
 		Direction: store.DirToBuilder,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 		Path:      "/path/plan1.md",
 		Note:      "started",
 	}
 	e2 := store.LogEntry{
 		TS:        now.Add(2 * time.Minute),
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Path:      "/path/report1.md",
 		Note:      "finished",
@@ -279,10 +340,10 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	want := "2026-09-08 12:00:00  round 1   to_builder plan      /path/plan1.md started\n" +
+	want := "2026-09-08 12:00:00  round 1   to_runner  prompt    /path/plan1.md started\n" +
 		"2026-09-08 12:02:00  round 1   to_planner report    /path/report1.md finished\n"
 
-	cmd := fetchLog(context.Background(), plannerSource{rt}, name, 1)
+	cmd := fetchLog(context.Background(), mastermindSource{rt}, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -309,8 +370,8 @@ func TestFetchLogFiltersRound(t *testing.T) {
 	}
 	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.Local)
 	entries := []store.LogEntry{
-		{TS: now, Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: "/p1.md"},
-		{TS: now.Add(time.Minute), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: "/p2.md"},
+		{TS: now, Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: "/p1.md"},
+		{TS: now.Add(time.Minute), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: "/p2.md"},
 	}
 	for _, e := range entries {
 		if err := st.AppendLog(name, e); err != nil {
@@ -318,7 +379,7 @@ func TestFetchLogFiltersRound(t *testing.T) {
 		}
 	}
 
-	msg := fetchLog(context.Background(), plannerSource{rt}, name, 1)().(tabMsg)
+	msg := fetchLog(context.Background(), mastermindSource{rt}, name, 1)().(tabMsg)
 	if msg.content.err != nil {
 		t.Fatalf("unexpected error: %v", msg.content.err)
 	}
@@ -340,8 +401,8 @@ func TestFetchForRouting(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	for _, tab := range []tab{tabPlan, tabReport, tabTerminal, tabDiff, tabLog} {
-		cmd := fetchFor(context.Background(), plannerSource{rt}, tab, name, 1, 24, true)
+	for _, tab := range []tab{tabPrompt, tabReport, tabTerminal, tabDiff, tabLog, tabArtifacts} {
+		cmd := fetchFor(context.Background(), mastermindSource{rt}, tab, name, 1, 24, 0, true)
 		if cmd == nil {
 			t.Fatalf("fetchFor returned nil for tab %v", tab)
 		}
@@ -376,7 +437,7 @@ func TestFetchTerminalHeadlessReadsTheLogNotThePane(t *testing.T) {
 	// The lines argument is a pane-builder concern (#180's Task 2): the
 	// headless branch now always returns the whole log, capped only by
 	// headlessLogLines, so a request for 3 lines still gets all of it.
-	msg := fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 3)()
+	msg := fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 2, 3)()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", msg)
@@ -408,7 +469,7 @@ func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	msg := fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 5)().(tabMsg)
+	msg := fetchTerminal(context.Background(), mastermindSource{rt}, name, 2, 5)().(tabMsg)
 	if got := strings.Count(msg.content.body, "\n") + 1; got != 40 {
 		t.Errorf("headless terminal body has %d lines, want all 40 regardless of the lines argument", got)
 	}
@@ -421,7 +482,7 @@ func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte(strings.Join(linesOver, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg = fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 5)().(tabMsg)
+	msg = fetchTerminal(context.Background(), mastermindSource{rt}, name, 2, 5)().(tabMsg)
 	lines := strings.Split(msg.content.body, "\n")
 	if len(lines) != headlessLogLines || !strings.HasSuffix(lines[len(lines)-1], fmt.Sprint(headlessLogLines+10)) {
 		t.Errorf("capped body: %d lines, last %q", len(lines), lines[len(lines)-1])
@@ -437,7 +498,7 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	tMsg := fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
+	tMsg := fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 2, 24)().(tabMsg)
 	if tMsg.content.empty != "headless builder; no round has run yet, so there is no log" {
 		t.Errorf("idle: empty = %q", tMsg.content.empty)
 	}
@@ -447,7 +508,7 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	tMsg = fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
+	tMsg = fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 2, 24)().(tabMsg)
 	if !strings.HasPrefix(tMsg.content.empty, "log not written yet: ") || !strings.Contains(tMsg.content.empty, b.Builder.LogPath) {
 		t.Errorf("missing log: empty = %q", tMsg.content.empty)
 	}
@@ -473,7 +534,7 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tMsg := fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
+	tMsg := fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 2, 24)().(tabMsg)
 	if tMsg.content.empty != "" || tMsg.content.err != nil {
 		t.Fatalf("between rounds the last log must show: %+v", tMsg.content)
 	}
@@ -502,7 +563,7 @@ func TestFetchTerminalRemoteBuilder(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	msg := fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
+	msg := fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 2, 24)().(tabMsg)
 	if msg.content.err != nil || msg.content.empty != "" {
 		t.Fatalf("content = %+v, want a body", msg.content)
 	}
@@ -514,8 +575,116 @@ func TestFetchTerminalRemoteBuilder(t *testing.T) {
 	}
 
 	// No local log for the round: the single line naming the server.
-	msg = fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 1, 24)().(tabMsg)
+	msg = fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 1, 24)().(tabMsg)
 	if want := "remote builder on contabo: relevo show --log webshop"; msg.content.empty != want {
 		t.Errorf("empty = %q, want %q", msg.content.empty, want)
+	}
+}
+
+// N10: a live headless binding whose round has a stream and no log renders the
+// stream; an endpoint whose LogPath is its round's stream path (the 2b shape)
+// renders the stream too; and an endpoint naming its own log reads that file
+// even when a stream exists.
+func TestFetchTerminalHeadlessRendersTheStream(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+
+	stream := "stream line one\nstream line two\n"
+	b := newTestBinding("webshop") // Round 2
+	b.Builder = store.Endpoint{
+		AgentName:   "webshop-builder",
+		Kind:        "agy",
+		Mode:        store.ModeHeadless,
+		PID:         4242,
+		StreamRound: 2,
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	streamPath := st.RunnerStreamPath("webshop", 2)
+	if err := os.WriteFile(streamPath, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+
+	msg := fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 2, 24)().(tabMsg)
+	if msg.content.err != nil || msg.content.empty != "" {
+		t.Fatalf("content = %+v, want the rendered stream", msg.content)
+	}
+	if msg.content.body != "stream line one\nstream line two" {
+		t.Errorf("body = %q, want the rendered stream", msg.content.body)
+	}
+	if !msg.content.transcript {
+		t.Error("transcript = false, want true for a rendered stream")
+	}
+	if msg.content.logName != "002-runner.jsonl (rendered)" {
+		t.Errorf("logName = %q, want 002-runner.jsonl (rendered)", msg.content.logName)
+	}
+
+	// LogPath equal to the round's stream path (2b): still the stream.
+	b.Builder.LogPath = streamPath
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	msg = fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 2, 24)().(tabMsg)
+	if msg.content.err != nil || msg.content.empty != "" {
+		t.Fatalf("2b shape: content = %+v, want the rendered stream", msg.content)
+	}
+	if msg.content.body != "stream line one\nstream line two" || msg.content.logName != "002-runner.jsonl (rendered)" {
+		t.Errorf("2b shape: body = %q, logName = %q, want the rendered stream", msg.content.body, msg.content.logName)
+	}
+
+	// Rule 1: a log that is not the round's stream is read even when a stream
+	// exists.
+	logPath := filepath.Join(t.TempDir(), "002-builder.log")
+	if err := os.WriteFile(logPath, []byte("endpoint log line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b.Builder.LogPath = logPath
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	msg = fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 2, 24)().(tabMsg)
+	if msg.content.err != nil || msg.content.empty != "" {
+		t.Fatalf("rule 1: content = %+v, want the endpoint's log", msg.content)
+	}
+	if msg.content.body != "endpoint log line" {
+		t.Errorf("rule 1: body = %q, want the endpoint's log", msg.content.body)
+	}
+	if msg.content.logName != "002-builder.log" {
+		t.Errorf("rule 1: logName = %q, want 002-builder.log", msg.content.logName)
+	}
+}
+
+// A round whose stream is only NNN-builder.jsonl still renders, and the tab
+// labels it under the name it was read from.
+func TestFetchTerminalRendersThePreRenameStream(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+
+	stream := "stream line one\nstream line two\n"
+	b := newTestBinding("webshop") // Round 2
+	b.Builder = store.Endpoint{
+		AgentName:   "webshop-builder",
+		Kind:        "agy",
+		Mode:        store.ModeHeadless,
+		PID:         4242,
+		StreamRound: 2,
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.WriteFile(st.BuilderStreamPath("webshop", 2), []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+
+	msg := fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 2, 24)().(tabMsg)
+	if msg.content.err != nil || msg.content.empty != "" {
+		t.Fatalf("content = %+v, want the rendered stream", msg.content)
+	}
+	if msg.content.body != "stream line one\nstream line two" {
+		t.Errorf("body = %q, want the rendered stream", msg.content.body)
+	}
+	if msg.content.logName != "002-builder.jsonl (rendered)" {
+		t.Errorf("logName = %q, want 002-builder.jsonl (rendered)", msg.content.logName)
 	}
 }

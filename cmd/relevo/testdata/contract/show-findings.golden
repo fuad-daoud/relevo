@@ -1,0 +1,12 @@
+{
+  "Name": "showsections",
+  "Round": 1,
+  "Rounds": 1,
+  "Live": true,
+  "Archived": false,
+  "ArchivedAt": "<TIME>",
+  "Section": "findings",
+  "Text": "verdict: accepted\n",
+  "Missing": false,
+  "Events": null
+}

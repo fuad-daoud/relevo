@@ -5,29 +5,26 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
-// ScopeUnitFileName returns the systemd unit file name for a scope unit
-// (the value cgroupfs shows as the cgroup path's last element), built in
-// exactly one place so the supervisor's own guard (#216) and systemd-run's
-// --unit= flag never drift apart.
+// ScopeUnitFileName returns the systemd unit file name for a scope unit, built
+// here so the supervisor's cgroup guard and systemd-run's --unit= never drift.
 func ScopeUnitFileName(unit string) string {
 	return unit + ".scope"
 }
 
-// ScopeArgv wraps inner (the argv Start would otherwise exec) so it runs as
-// a transient systemd --scope unit instead: systemd-run execs inner in
-// place once the scope is registered, so the pid Start records is inner's
-// own pid (#244).
-func ScopeArgv(s relevo.ScopeSpec, inner []string) []string {
+// ScopeArgv wraps inner (the argv Start would otherwise exec) so it runs as a
+// transient systemd --scope unit; systemd-run execs inner in place, so the pid
+// Start records is inner's own. The quota precedes the pin, the pin memory.
+func ScopeArgv(s spawn.ScopeSpec, inner []string) []string {
 	argv := []string{"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + ScopeUnitFileName(s.Unit)}
 	if s.Slice != "" {
 		argv = append(argv, "--slice="+s.Slice)
@@ -51,18 +48,33 @@ func ScopeArgv(s relevo.ScopeSpec, inner []string) []string {
 }
 
 // ProbeScopes confirms systemd-run can start a scope under slice before the
-// daemon relies on it for every served round: a throwaway scope that runs
-// "true" and exits. nil means scopes work; a non-nil error names why they
-// do not (systemd-run missing, the user manager refusing), and the caller
-// runs served builders unscoped instead.
+// daemon relies on it; a non-nil error means served builders run unscoped.
 func ProbeScopes(ctx context.Context, slice string) error {
-	suffix := make([]byte, 4)
-	if _, err := rand.Read(suffix); err != nil {
+	unit, err := probeUnit("relevo-probe-")
+	if err != nil {
 		return fmt.Errorf("systemd-run: %s", err.Error())
 	}
-	spec := relevo.ScopeSpec{Unit: "relevo-probe-" + hex.EncodeToString(suffix), Slice: slice, CPUWeight: 100}
-	argv := ScopeArgv(spec, []string{"true"})
+	spec := spawn.ScopeSpec{Unit: unit, Slice: slice, CPUWeight: 100}
+	return runScopeProbe(ctx, spec, "systemd-run")
+}
 
+// ProbeAllowedCPUs confirms systemd-run accepts AllowedCPUs=<cpus> before the
+// daemon pins every round; a refused pin leaves the scope and its quota but
+// drops the pin. It detects refusal only: a systemd that silently ignores an
+// undelegated cpuset reports no error, which `relevo doctor` reports.
+func ProbeAllowedCPUs(ctx context.Context, slice, cpus string) error {
+	unit, err := probeUnit("relevo-probe-cpus-")
+	if err != nil {
+		return fmt.Errorf("systemd-run AllowedCPUs=%s: %s", cpus, err.Error())
+	}
+	spec := spawn.ScopeSpec{Unit: unit, Slice: slice, CPUWeight: 100, AllowedCPUs: cpus}
+	return runScopeProbe(ctx, spec, "systemd-run AllowedCPUs="+cpus)
+}
+
+// runScopeProbe runs spec's throwaway scope, returning systemd-run's first
+// stderr line, or its exit status when it printed nothing, prefixed with prefix.
+func runScopeProbe(ctx context.Context, spec spawn.ScopeSpec, prefix string) error {
+	argv := ScopeArgv(spec, []string{"true"})
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
@@ -73,39 +85,41 @@ func ProbeScopes(ctx context.Context, slice string) error {
 		if line == "" {
 			line = err.Error()
 		}
-		return fmt.Errorf("systemd-run: %s", line)
+		return fmt.Errorf("%s: %s", prefix, line)
 	}
 	return nil
 }
 
-// ProbeAllowedCPUs confirms systemd-run accepts AllowedCPUs=<cpus> before the
-// daemon relies on pinning every round (#314): a throwaway scope that runs
-// "true" and exits, launched with the property. nil means it is accepted; a
-// non-nil error names why it was refused, and the caller runs its spawns with
-// the scope and its quota but without pinning. It detects refusal only: a
-// systemd that silently ignores an undelegated cpuset shows no exit code, and
-// `relevo doctor` is where that is reported.
-func ProbeAllowedCPUs(ctx context.Context, slice, cpus string) error {
+func probeUnit(prefix string) (string, error) {
 	suffix := make([]byte, 4)
 	if _, err := rand.Read(suffix); err != nil {
-		return fmt.Errorf("systemd-run AllowedCPUs=%s: %s", cpus, err.Error())
+		return "", err
 	}
-	spec := relevo.ScopeSpec{Unit: "relevo-probe-cpus-" + hex.EncodeToString(suffix), Slice: slice, CPUWeight: 100, AllowedCPUs: cpus}
-	argv := ScopeArgv(spec, []string{"true"})
+	return prefix + hex.EncodeToString(suffix), nil
+}
 
-	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+// ScopeActive reports whether unit's transient scope is still loaded: its
+// ActiveState is active, activating, deactivating or reloading. A missing
+// systemctl is (false, nil); any other failure is returned and treated as not
+// active by the caller.
+func (r *Runner) ScopeActive(ctx context.Context, unit string) (bool, error) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		line := firstNonEmptyLine(stderr.String())
-		if line == "" {
-			line = err.Error()
+
+	cmd := exec.CommandContext(cctx, "systemctl", "--user", "show", "--property=ActiveState", "--value", ScopeUnitFileName(unit))
+	out, err := cmd.Output()
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return false, nil
 		}
-		return fmt.Errorf("systemd-run AllowedCPUs=%s: %s", cpus, line)
+		return false, err
 	}
-	return nil
+	switch strings.TrimSpace(string(out)) {
+	case "active", "activating", "deactivating", "reloading":
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 func firstNonEmptyLine(s string) string {
@@ -117,27 +131,33 @@ func firstNonEmptyLine(s string) string {
 	return ""
 }
 
-// RusageTrailer prefixes the line the supervisor appends, inside a
-// relevo-round-*.scope cgroup only, right before the exit trailer:
-// "relevo-rusage:cpu_usec=<n> mem_peak=<n>".
-const RusageTrailer = "relevo-rusage:"
+// ScopeResult returns the systemd Result of unit's transient scope, e.g.
+// "success" or "oom-kill". A missing systemctl returns ("", nil); any other
+// failure is returned and treated as not oom-killed by the caller.
+func (r *Runner) ScopeResult(ctx context.Context, unit string) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
-// ParseRusageTrailer parses a RusageTrailer line, or the relay-rusage: line a // name-guard: legacy
-// pre-rename stream carries (#292 §1): whichever prefix matches is stripped,
-// and behaviour for the new prefix is unchanged. Fields are space-separated
-// key=value; either may be absent (that field stays zero); unknown keys are
-// ignored; a malformed number leaves that field zero. A line matching neither
-// prefix reports ok false.
-func ParseRusageTrailer(line string) (relevo.ProcRusage, bool) {
-	prefix := RusageTrailer
-	if !strings.HasPrefix(line, prefix) {
-		prefix = legacy.RusageTrailer
-		if !strings.HasPrefix(line, prefix) {
-			return relevo.ProcRusage{}, false
+	cmd := exec.CommandContext(cctx, "systemctl", "--user", "show", "--property=Result", "--value", ScopeUnitFileName(unit))
+	out, err := cmd.Output()
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", nil
 		}
+		return "", err
 	}
-	var r relevo.ProcRusage
-	rest := strings.TrimPrefix(line, prefix)
+	return firstNonEmptyLine(string(out)), nil
+}
+
+// ParseRusageTrailer parses a RusageTrailer line. Missing fields stay zero,
+// unknown keys and malformed numbers are ignored, and a line not matching the
+// prefix is not ok.
+func ParseRusageTrailer(line string) (spawn.ProcRusage, bool) {
+	if !strings.HasPrefix(line, spawn.RusageTrailerPrefix) {
+		return spawn.ProcRusage{}, false
+	}
+	var r spawn.ProcRusage
+	rest := strings.TrimPrefix(line, spawn.RusageTrailerPrefix)
 	for _, field := range strings.Fields(rest) {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {

@@ -6,12 +6,11 @@ import (
 	"strings"
 )
 
-// RenderRecord turns one line of a harness's own session record into the
-// lines to append to the log (#184). It differs from Render in what
-// "unknown" means: a record file is a superset of the stream with
-// housekeeping records the stream never has, so an unknown record type,
-// a non-JSON line, or a kind with no record table renders as nothing.
-// Never errors, never panics.
+// RenderRecord turns one line of a harness's own session record into the lines
+// to append to the log. It differs from Render in what "unknown" means: a
+// record file is a superset of the stream with housekeeping records, so an
+// unknown type, a non-JSON line, or a kind with no record table renders as
+// nothing. Never errors, never panics.
 func RenderRecord(kind string, line []byte) []string {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 {
@@ -27,14 +26,10 @@ func RenderRecord(kind string, line []byte) []string {
 	return renderClaudeRecord(obj)
 }
 
-// renderClaudeRecord is RenderRecord's table for kind "claude": an
-// assistant record, and a user record carrying a tool_result block, render
-// exactly as the stream renders them; a user record that is a typed prompt
-// (relevo's or the human's) renders as "> " plus its first line; anything
-// else -- the ~18 housekeeping record types a session file carries that the
-// stream never has (attachment, permission-mode, mode, last-prompt,
-// atis-latch, agent-setting, queue-operation, file-history-snapshot,
-// file-history-delta, system, summary, pr-link, ...) -- renders as nothing.
+// renderClaudeRecord is RenderRecord's table for kind "claude": an assistant,
+// or a user record carrying a tool_result, renders as the stream renders it; a
+// typed prompt renders as "> " plus its first line; every housekeeping record
+// type and anything else renders as nothing.
 func renderClaudeRecord(obj map[string]any) []string {
 	switch str(obj["type"]) {
 	case "assistant":
@@ -48,7 +43,6 @@ func renderClaudeRecord(obj map[string]any) []string {
 	return nil
 }
 
-// hasToolResult reports whether a user record carries a tool_result block.
 func hasToolResult(obj map[string]any) bool {
 	for _, blk := range contentBlocks(obj) {
 		if str(blk["type"]) == "tool_result" {
@@ -58,11 +52,9 @@ func hasToolResult(obj map[string]any) bool {
 	return false
 }
 
-// renderClaudePrompt renders a user record that is a typed prompt, not a
-// tool result: "> " plus the first non-empty line of its text, truncated to
-// maxArg runes with "…". message.content is a string or a list of
-// text-only blocks; anything else (mixed or non-text blocks, or no usable
-// text) is not a prompt shape and renders as nothing.
+// renderClaudePrompt renders a typed prompt as "> " plus the first non-empty
+// line of its text, truncated to maxArg runes with "…"; any other shape
+// renders as nothing.
 func renderClaudePrompt(obj map[string]any) []string {
 	text, ok := claudePromptText(obj)
 	if !ok {
@@ -75,10 +67,6 @@ func renderClaudePrompt(obj map[string]any) []string {
 	return []string{"> " + truncateRunes(line, maxArg)}
 }
 
-// claudePromptText is a user record's typed text: message.content as a
-// string, or the newline-joined text of a list whose blocks are all
-// "text". ok is false for any other shape (missing content, or a
-// tool_result or other non-text block anywhere in the list).
 func claudePromptText(obj map[string]any) (string, bool) {
 	content := asMap(obj["message"])["content"]
 	if s, ok := content.(string); ok {
@@ -99,8 +87,6 @@ func claudePromptText(obj map[string]any) (string, bool) {
 	return strings.Join(parts, "\n"), true
 }
 
-// firstNonEmptyLine is the first line of s with non-whitespace content, its
-// trailing "\r" stripped; "" when every line is blank.
 func firstNonEmptyLine(s string) string {
 	for _, line := range strings.Split(s, "\n") {
 		line = strings.TrimRight(line, "\r")
@@ -111,8 +97,6 @@ func firstNonEmptyLine(s string) string {
 	return ""
 }
 
-// truncateRunes keeps at most n runes of s, marked with a trailing "…" when
-// any were cut.
 func truncateRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {

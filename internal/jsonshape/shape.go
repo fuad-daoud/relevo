@@ -1,7 +1,6 @@
 // Package jsonshape derives the JSON key paths a Go struct encodes to. The
-// format numbers in internal/store and internal/planner guard the shape those
-// paths describe: a new field is a shape change, and these paths are what the
-// golden tests compare to notice one.
+// format numbers in internal/store and internal/mastermind guard the shape those
+// paths describe: a new field is a shape change these paths' golden tests catch.
 package jsonshape
 
 import (
@@ -12,20 +11,11 @@ import (
 	"time"
 )
 
-// Keys returns every JSON key path t encodes to, sorted and unique.
-//
-// The paths follow encoding/json's field selection:
-//   - a field tagged `json:"-"` is skipped;
-//   - a field's tag name is used, or its Go name when the tag names nothing
-//     (an option like omitempty is not a name);
-//   - an embedded struct is flattened, as encoding/json promotes its fields;
-//   - pointers, slices, arrays and structs recurse, a slice or array adding
-//     "[]" to the path and a map adding "{}", so a map of structs is
-//     "name{}.field";
-//   - time.Time and any type implementing json.Marshaler is a leaf.
-//
-// A struct with a new field therefore yields a new path, which is exactly what
-// the format guard's golden test must catch.
+// Keys returns every JSON key path t encodes to, sorted and unique, following
+// encoding/json's own field selection: a `json:"-"` field is skipped, a
+// tagged name wins over the Go name, an embedded struct with no tag name is
+// flattened, and a slice/array/map adds "[]"/"{}" to the path before
+// recursing. time.Time and any json.Marshaler are leaves.
 func Keys(t reflect.Type) []string {
 	set := map[string]struct{}{}
 	walk(t, "", set)
@@ -38,19 +28,14 @@ func Keys(t reflect.Type) []string {
 	return out
 }
 
-// timeType is the one type treated as a leaf besides json.Marshaler.
 var timeType = reflect.TypeOf(time.Time{})
 
-// marshalerType is json.Marshaler's interface type.
 var marshalerType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
 
-// isLeaf reports whether t encodes as one JSON value, not as an object to
-// recurse into.
 func isLeaf(t reflect.Type) bool {
 	return t == timeType || t.Implements(marshalerType)
 }
 
-// walk collects the key paths t contributes under prefix.
 func walk(t reflect.Type, prefix string, set map[string]struct{}) {
 	if isLeaf(t) {
 		addKey(prefix, set)
@@ -72,15 +57,12 @@ func walk(t reflect.Type, prefix string, set map[string]struct{}) {
 	case reflect.Map:
 		walk(t.Elem(), prefix+"{}", set)
 	default:
-		// Every other kind -- strings, numbers, bools, interfaces, funcs --
-		// is a leaf value.
-		addKey(prefix, set)
+		addKey(prefix, set) // strings, numbers, bools, interfaces, funcs: all leaves
 	}
 }
 
-// walkStruct walks t's exported fields, and its embedded fields as
-// encoding/json does: an anonymous field with no tag name is flattened into
-// the parent's namespace.
+// walkStruct flattens an anonymous field with no tag name into prefix, as
+// encoding/json promotes it, instead of nesting under the field's name.
 func walkStruct(t reflect.Type, prefix string, set map[string]struct{}) {
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
@@ -103,7 +85,6 @@ func walkStruct(t reflect.Type, prefix string, set map[string]struct{}) {
 	}
 }
 
-// join extends prefix with one named field.
 func join(prefix, name string) string {
 	if prefix == "" {
 		return name
@@ -111,8 +92,8 @@ func join(prefix, name string) string {
 	return prefix + "." + name
 }
 
-// addKey records a terminal path. An empty prefix is the type passed to Keys
-// itself: only a struct has paths, so there is nothing to record.
+// addKey records a terminal path; an empty prefix is the type Keys itself was
+// called with, which has nothing to record unless it is a struct.
 func addKey(prefix string, set map[string]struct{}) {
 	if prefix == "" {
 		return

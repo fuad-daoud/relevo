@@ -14,6 +14,8 @@ import (
 // gate command, the original plan and the gate log, and carry every tail line
 // the closing tick captured.
 func TestRepairPlanNamesEverything(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{Name: "webshop", Gate: "make check"}
 	tail := []string{"ok  \tgithub.com/example/pkg\t0.01s", "FAIL\tgithub.com/example/pkg2\t0.02s", "exit status 2"}
 	planPath := "/state/webshop/001-plan.md"
@@ -51,6 +53,8 @@ func TestRepairPlanNamesEverything(t *testing.T) {
 // integer, a 10-hex sha, a /tmp path and line order must hash equal; a real
 // word difference must not; and an unreadable log is "".
 func TestGateSignatureIgnoresNoise(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a.log")
 	other := filepath.Join(dir, "b.log")

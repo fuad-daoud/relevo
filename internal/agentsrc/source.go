@@ -1,10 +1,6 @@
 // Package agentsrc parses, validates and formats relevo's single-source agent
-// format, and renders one native file per harness kind from it.
-//
-// A custom agent is one source file: frontmatter (name, description, shape,
-// output, requires, kinds) plus a prompt body. The shipped agents under
-// internal/harness/agents are not rendered by this package; they stay
-// hand-maintained per kind (spec §3.2).
+// format and renders one native file per harness kind from it. The shipped
+// agents under internal/harness/agents are hand-maintained per kind.
 package agentsrc
 
 import (
@@ -22,81 +18,81 @@ import (
 var ErrBadSource = errors.New("bad agent source")
 
 // Shape distinguishes an agent that may change the tree from one that may
-// write only its artifact directory. It does not change the rendered tools.
+// write only its artifact directory; it does not change the rendered tools.
 type Shape string
 
 const (
-	// ShapeWriter is an agent that may change the tree.
 	ShapeWriter Shape = "writer"
-	// ShapeReader is an agent that may write only its artifact directory.
 	ShapeReader Shape = "reader"
 )
 
 // Source is one custom agent: frontmatter plus prompt body.
 type Source struct {
-	// Name is the agent's name; ^[a-z0-9][a-z0-9._-]{0,63}$ and never a
-	// shipped agent name.
-	Name string
-	// Description is one line, non-empty, <= 300 runes, no newline.
-	Description string
-	// Shape is writer or reader.
-	Shape Shape
-	// Output labels what a round leaves; ^[a-z][a-z0-9-]{0,23}$.
-	Output string
-	// Requires names helper agents this one spawns; may be empty.
-	Requires []string
-	// Kinds are the harness kinds to render; empty means every known kind.
-	Kinds []string
-	// Body is the prompt. After Parse it ends with exactly one "\n".
-	Body string
+	Name        string
+	Description string // one line, at most 300 runes
+	Shape       Shape
+	Output      string
+	Requires    []string
+	Kinds       []string
+	Body        string // after Parse, ends with exactly one "\n"
 }
 
 var (
-	nameRe   = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
-	outputRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,23}$`)
-	// requiredKeys are the frontmatter keys a source must carry.
+	nameRe       = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+	outputRe     = regexp.MustCompile(`^[a-z][a-z0-9-]{0,23}$`)
 	requiredKeys = []string{"name", "description", "shape", "output"}
 )
 
-// syntaxErr renders a frontmatter syntax error: the line is the one that
-// carried the bad text.
 func syntaxErr(line int, what string) error {
 	return fmt.Errorf("agent source: line %d: %s: %w", line, what, ErrBadSource)
 }
 
-// fieldErr renders a validation error against one field.
 func fieldErr(name, field, what string) error {
 	return fmt.Errorf("agent source %s: %s: %s: %w", name, field, what, ErrBadSource)
 }
 
-// Parse reads the source text format. On success every field is validated and
-// the body ends with exactly one "\n"; every error wraps ErrBadSource.
+// Parse reads the source text format and validates every field; on success the
+// body ends with exactly one "\n" and every error wraps ErrBadSource.
 func Parse(data []byte) (Source, error) {
 	text := string(data)
 	if !strings.HasPrefix(text, "---\n") {
 		return Source{}, syntaxErr(1, "missing opening fence ---")
 	}
-	rest := text[len("---\n"):]
-	lines := strings.Split(rest, "\n")
+	lines := strings.Split(text[len("---\n"):], "\n")
 
-	close := -1
+	close, err := closingFence(lines)
+	if err != nil {
+		return Source{}, err
+	}
+	s, err := parseFrontmatter(lines[:close], close+2)
+	if err != nil {
+		return Source{}, err
+	}
+	s.Body = normaliseBody(strings.Join(lines[close+1:], "\n"))
+	if err := s.Validate(); err != nil {
+		return Source{}, err
+	}
+	return s, nil
+}
+
+func closingFence(lines []string) (int, error) {
 	for i, ln := range lines {
 		if ln == "---" {
-			close = i
-			break
+			return i, nil
 		}
 	}
-	if close < 0 {
-		return Source{}, syntaxErr(len(lines)+1, "missing closing fence ---")
-	}
+	return 0, syntaxErr(len(lines)+1, "missing closing fence ---")
+}
 
+// parseFrontmatter reads the key: value lines before the closing fence.
+// missingKeyLine is the line number a missing-required-key error names.
+func parseFrontmatter(lines []string, missingKeyLine int) (Source, error) {
 	var s Source
 	s.Requires = []string{}
 	s.Kinds = []string{}
 	seen := make(map[string]bool, len(requiredKeys)+2)
-	for i := 0; i < close; i++ {
+	for i, raw := range lines {
 		lineNo := i + 2 // line 1 is the opening fence
-		raw := lines[i]
 		if strings.TrimSpace(raw) == "" {
 			return Source{}, syntaxErr(lineNo, "blank line in frontmatter")
 		}
@@ -141,22 +137,17 @@ func Parse(data []byte) (Source, error) {
 	}
 	for _, key := range requiredKeys {
 		if !seen[key] {
-			return Source{}, syntaxErr(close+2, fmt.Sprintf("missing required key %q", key))
+			return Source{}, syntaxErr(missingKeyLine, fmt.Sprintf("missing required key %q", key))
 		}
-	}
-
-	body := strings.Join(lines[close+1:], "\n")
-	body = strings.TrimPrefix(body, "\n")
-	body = strings.TrimRight(body, "\n") + "\n"
-	s.Body = body
-
-	if err := s.Validate(); err != nil {
-		return Source{}, err
 	}
 	return s, nil
 }
 
-// isKnownKey reports whether key is one of the seven frontmatter keys.
+func normaliseBody(body string) string {
+	body = strings.TrimPrefix(body, "\n")
+	return strings.TrimRight(body, "\n") + "\n"
+}
+
 func isKnownKey(key string) bool {
 	switch key {
 	case "name", "description", "shape", "output", "requires", "kinds":
@@ -186,7 +177,7 @@ func parseList(v string) ([]string, error) {
 	return out, nil
 }
 
-// Validate checks every field rule of the source format (§3, §4.2).
+// Validate checks every field rule of the source format.
 func (s Source) Validate() error {
 	if !nameRe.MatchString(s.Name) {
 		return fieldErr(s.Name, "name", "must match "+nameRe.String())
@@ -244,8 +235,7 @@ func (s Source) Validate() error {
 }
 
 // RenderedKinds is the kind list a source renders to: its own kinds, or every
-// known kind when Kinds is empty. It is exported for internal/actors, which
-// needs a custom agent's kind list to build its roles.File definitions.
+// known kind when Kinds is empty. Exported for internal/roles.
 func RenderedKinds(s Source) []string {
 	if len(s.Kinds) > 0 {
 		return s.Kinds
@@ -258,7 +248,7 @@ func RenderedKinds(s Source) []string {
 	return out
 }
 
-// Format writes the source text format. Parse(Format(s)) equals s for any
+// Format writes the source text format; Parse(Format(s)) equals s for any
 // valid s whose Body already ends in exactly one "\n".
 func Format(s Source) []byte {
 	var b strings.Builder

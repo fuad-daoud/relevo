@@ -9,6 +9,8 @@ import (
 // sight and every later Note answers with that same instant, which is what
 // makes the halt text's duration honest.
 func TestAuthGraceNoteKeepsTheFirstTime(t *testing.T) {
+	t.Parallel()
+
 	g := NewAuthGrace()
 	first := g.Note("api", baseTime)
 	if !first.Equal(baseTime) {
@@ -30,6 +32,8 @@ func TestAuthGraceNoteKeepsTheFirstTime(t *testing.T) {
 // TestAuthGraceExpiredAtTheLimit pins the boundary: a grace expires exactly at
 // the limit, not before.
 func TestAuthGraceExpiredAtTheLimit(t *testing.T) {
+	t.Parallel()
+
 	g := NewAuthGrace()
 	g.Note("api", baseTime)
 
@@ -51,6 +55,8 @@ func TestAuthGraceExpiredAtTheLimit(t *testing.T) {
 // TestAuthGraceClearRestartsTheClock pins that a success between two transient
 // errors resets the grace, so the second one starts its own 15 minutes.
 func TestAuthGraceClearRestartsTheClock(t *testing.T) {
+	t.Parallel()
+
 	g := NewAuthGrace()
 	g.Note("api", baseTime)
 	g.Clear("api")
@@ -72,6 +78,8 @@ func TestAuthGraceClearRestartsTheClock(t *testing.T) {
 // TestAuthGraceNilIsSafe pins §3's nil case: a CLI one-shot carries no grace,
 // so it never expires -- and none of the methods panic.
 func TestAuthGraceNilIsSafe(t *testing.T) {
+	t.Parallel()
+
 	var g *AuthGrace
 	first := g.Note("api", baseTime)
 	if !first.Equal(baseTime) {

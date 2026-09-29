@@ -1,38 +1,10 @@
 package db
 
 import (
-	"strconv"
 	"testing"
 	"time"
 )
 
-func testRecord(name string) Record {
-	now := time.Now().UTC().Truncate(time.Millisecond)
-	return Record{
-		Owner:     "",
-		Name:      name,
-		State:     "active",
-		Round:     1,
-		CWD:       "/tmp/" + name,
-		JSON:      `{"name":"` + name + `"}`,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-}
-
-func testEvent(seq int) RecordEvent {
-	return RecordEvent{
-		Seq:       seq,
-		TS:        time.Now().UTC().Truncate(time.Millisecond),
-		Round:     1,
-		Direction: "to_planner",
-		Kind:      "report",
-		JSON:      `{"seq":` + strconv.Itoa(seq) + `,"kind":"report","unknown_key":"kept"}`,
-	}
-}
-
-// TestRecordPutGetList pins the put/get/list contract: a live row is readable
-// by name, list is name-ordered, and a second put upserts the same row.
 func TestRecordPutGetList(t *testing.T) {
 	d := openTestDB(t)
 
@@ -73,8 +45,7 @@ func TestRecordPutGetList(t *testing.T) {
 		t.Fatalf("RecordSetViewed: %v", err)
 	}
 
-	// A second put upserts: same id, new promoted columns, created_at and
-	// viewed_at kept.
+	// A second put upserts: same id, created_at and viewed_at kept.
 	next := testRecord("beta")
 	next.State = "needs_you"
 	next.Round = 4
@@ -107,9 +78,8 @@ func TestRecordPutGetList(t *testing.T) {
 	}
 }
 
-// TestRecordPutScopesByOwner pins the (owner, name) keying (P5 §4.1): the same
-// name may be live under two owners, each Put keys its own row, and neither
-// owner's read sees the other's.
+// TestRecordPutScopesByOwner pins that the same name may be live under two
+// owners and neither read sees the other's row.
 func TestRecordPutScopesByOwner(t *testing.T) {
 	d := openTestDB(t)
 
@@ -147,7 +117,6 @@ func TestRecordPutScopesByOwner(t *testing.T) {
 		t.Errorf("owner B row = %+v, want id %s owner 0011223344556677 round 3", gotB, secondID)
 	}
 
-	// Each owner's List sees only its own row, and the local owner "" sees none.
 	listA, err := d.RecordList("abcdef0123456789")
 	if err != nil {
 		t.Fatalf("RecordList(owner A): %v", err)
@@ -167,8 +136,6 @@ func TestRecordPutScopesByOwner(t *testing.T) {
 	}
 }
 
-// TestRecordArchiveFreesName pins that an archived row leaves Load/List and
-// that its name can then be bound again, as a new row with a fresh id.
 func TestRecordArchiveFreesName(t *testing.T) {
 	d := openTestDB(t)
 
@@ -192,7 +159,6 @@ func TestRecordArchiveFreesName(t *testing.T) {
 		t.Fatalf("RecordList after archive = %v, want empty", recordNames(list))
 	}
 
-	// The archived row itself is kept, with its stamp.
 	var archived string
 	if err := d.sqlDB.QueryRow(`SELECT archived_at FROM binding_record WHERE id = ?`, firstID).Scan(&archived); err != nil {
 		t.Fatalf("select archived_at: %v", err)
@@ -201,7 +167,6 @@ func TestRecordArchiveFreesName(t *testing.T) {
 		t.Error("archived_at is empty on the archived row")
 	}
 
-	// The name is reusable: a fresh put inserts a new live row.
 	secondID, err := d.RecordPut(testRecord("alpha"))
 	if err != nil {
 		t.Fatalf("RecordPut after archive: %v", err)
@@ -210,14 +175,11 @@ func TestRecordArchiveFreesName(t *testing.T) {
 		t.Errorf("re-put reused archived id %s, want a new row", firstID)
 	}
 
-	// Archiving a name with no live row is a no-op.
 	if err := d.RecordArchive("", "missing", at); err != nil {
 		t.Errorf("RecordArchive(missing) = %v, want nil", err)
 	}
 }
 
-// TestRecordDeleteCascadesEvents pins that deleting the live row takes its
-// events with it.
 func TestRecordDeleteCascadesEvents(t *testing.T) {
 	d := openTestDB(t)
 
@@ -248,10 +210,9 @@ func TestRecordDeleteCascadesEvents(t *testing.T) {
 	}
 }
 
-// TestEventAppendReplaceConfirmAfterSeq pins the events half: append, replace
-// all, read after a seq, max seq, and a confirm that patches the JSON while
-// keeping an unknown key.
-func TestEventAppendReplaceConfirmAfterSeq(t *testing.T) {
+// TestEventAppendAndReplaceAll pins the event log, including that a duplicate
+// seq fails.
+func TestEventAppendAndReplaceAll(t *testing.T) {
 	d := openTestDB(t)
 
 	id, err := d.RecordPut(testRecord("alpha"))
@@ -266,7 +227,6 @@ func TestEventAppendReplaceConfirmAfterSeq(t *testing.T) {
 		t.Error("a second append of seq 1 = nil, want a primary-key error")
 	}
 
-	// ReplaceAll swaps the whole log for the given entries.
 	if err := d.EventReplaceAll(id, []RecordEvent{testEvent(1), testEvent(2), testEvent(3)}); err != nil {
 		t.Fatalf("EventReplaceAll: %v", err)
 	}
@@ -297,16 +257,28 @@ func TestEventAppendReplaceConfirmAfterSeq(t *testing.T) {
 	if empty, err := d.EventMaxSeq("no-such-record"); err != nil || empty != 0 {
 		t.Errorf("EventMaxSeq(no-such-record) = (%d, %v), want (0, nil)", empty, err)
 	}
+}
 
-	// A confirm patches the entry's JSON; an unknown key a newer relevo wrote
-	// survives because the caller hands back the patched map as newJSON.
+// TestEventConfirmPatchesJSON pins that a confirm patches the entry's JSON, so
+// an unknown key survives.
+func TestEventConfirmPatchesJSON(t *testing.T) {
+	d := openTestDB(t)
+
+	id, err := d.RecordPut(testRecord("alpha"))
+	if err != nil {
+		t.Fatalf("RecordPut: %v", err)
+	}
+	if err := d.EventReplaceAll(id, []RecordEvent{testEvent(1), testEvent(2)}); err != nil {
+		t.Fatalf("EventReplaceAll: %v", err)
+	}
+
 	patched := `{"seq":2,"confirmed":true,"unknown_key":"kept"}`
 	at := time.Now().UTC().Truncate(time.Millisecond)
 	if err := d.EventConfirm(id, 2, at, "channel", patched); err != nil {
 		t.Fatalf("EventConfirm: %v", err)
 	}
 
-	all, err = d.EventsOf(id, 0)
+	all, err := d.EventsOf(id, 0)
 	if err != nil {
 		t.Fatalf("EventsOf after confirm: %v", err)
 	}
@@ -324,31 +296,14 @@ func TestEventAppendReplaceConfirmAfterSeq(t *testing.T) {
 		t.Errorf("entry_json = %s, want %s", confirmed.JSON, patched)
 	}
 
-	// A confirm of an entry with an empty route leaves route unset.
-	if err := d.EventConfirm(id, 3, at, "", testEvent(3).JSON); err != nil {
-		t.Fatalf("EventConfirm(3): %v", err)
+	if err := d.EventConfirm(id, 1, at, "", testEvent(1).JSON); err != nil {
+		t.Fatalf("EventConfirm(1): %v", err)
 	}
 	all, err = d.EventsOf(id, 0)
 	if err != nil {
 		t.Fatalf("EventsOf after second confirm: %v", err)
 	}
-	if all[2].Route != "" {
-		t.Errorf("route = %q, want empty", all[2].Route)
+	if all[0].Route != "" {
+		t.Errorf("route = %q, want empty", all[0].Route)
 	}
-}
-
-func recordNames(rs []Record) []string {
-	out := make([]string, len(rs))
-	for i, r := range rs {
-		out[i] = r.Name
-	}
-	return out
-}
-
-func eventSeqs(evs []RecordEvent) []int {
-	out := make([]int, len(evs))
-	for i, e := range evs {
-		out[i] = e.Seq
-	}
-	return out
 }

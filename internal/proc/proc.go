@@ -1,9 +1,8 @@
 //go:build unix
 
-// Package proc is relevo's local process Runner (#99): it starts a headless
-// builder detached from relevo, tells later whether that exact process is
-// still running, reads the exit code its supervisor left in the log, and
-// stops it. It knows nothing about rounds or harnesses.
+// Package proc is relevo's local process Runner: it starts a builder detached
+// from relevo, reports whether that exact process is still running, reads the
+// exit code its supervisor left in the stream, and stops it.
 package proc
 
 import (
@@ -20,38 +19,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
-
-// ExitTrailer prefixes the one line the supervisor appends to the stream when
-// the builder exits: "relevo-exit:<code>". It is the only thing relevo ever
-// reads out of a builder stream.
-const ExitTrailer = "relevo-exit:"
 
 // DefaultKillGrace is how long Kill waits after SIGTERM before SIGKILL.
 const DefaultKillGrace = 5 * time.Second
 
-// ReapFragment is the supervisor's scope reap (#378), kept as its own const
-// so supervisorScript can embed it and a test can source exactly the text
-// production runs. It is a POSIX sh function:
-//
-//	relevo_reap_scope <procs_file> <self_pid>
-//
-// It terminates every other process still in the supervisor's scope cgroup
-// once the harness has exited, so the scope empties and --collect removes it
-// even when the harness left a straggler behind -- a git fsmonitor--daemon
-// reparented to the user manager, say, which would otherwise keep the scope
-// alive indefinitely. It signals exactly the pids the cgroup lists: TERM
-// first, then a short grace, then KILL for whatever is left.
-//
-// The file is read with the builtin read, never cat: a cat subprocess would
-// itself be in the cgroup being reaped. The redirect order is deliberate --
-// stderr to /dev/null before the file open -- because sh applies
-// redirections left to right, so a missing file's own "No such file" is
-// silenced too. Every command's errors are discarded and it always returns
-// 0: a scope that will not empty must never cost the builder its exit
-// trailer.
+// ReapFragment is the supervisor's scope reap: a POSIX sh function
+// relevo_reap_scope <procs_file> <self_pid> that TERMs, then KILLs, every other
+// pid in the scope's cgroup, so a straggler the harness abandoned cannot keep
+// the scope alive. The file is read with the builtin read, never cat -- a cat
+// subprocess would join the cgroup being reaped -- and every error is
+// discarded, so an unemptiable scope never costs the builder its exit trailer.
 const ReapFragment = `relevo_reap_scope() {
   procs=$1
   self=$2
@@ -75,62 +54,16 @@ const ReapFragment = `relevo_reap_scope() {
 }
 `
 
-// supervisorScript runs the builder with stdin closed and, whatever happens
-// to it, appends the trailer. Plain sh: no bash-isms. "$@" is the argv the
-// runner passes after the script name.
-//
-// Before the builder starts, the supervisor raises its own oom_score_adj;
-// the builder inherits it. Under memory pressure the kernel then prefers a
-// builder over `relevo daemon` (#120). The write fails silently where there
-// is no /proc (macOS) or it is refused, and the builder runs as before.
-// The redirection sits inside a group so the shell's own "No such file"
-// for a missing /proc is silenced too, not only echo's stderr: sh applies
-// redirections left to right, and the open fails before 2>/dev/null.
-// The builder stays a child of this sh (no exec) so an OOM kill of the
-// builder still leaves a trailer. A group kill from Kill takes the sh with
-// it and leaves none; relevo writes its own marker line for every process it
-// stops (relevo.appendLogMarker).
-// The trailer is printed with a leading newline so a builder that died
-// mid-line leaves it on a line of its own; the blank line before it is
-// rendered as nothing (transcript rule 1). It goes to stdout -- the stream
-// file -- so the stream is the complete raw record and ExitCode reads one file.
-//
-// When Start wrapped this script in a systemd scope (#244, #216), the
-// supervisor also reads its own cgroup's cpu.stat and memory.peak after the
-// builder exits and prints a relevo-rusage: line before the exit trailer.
-//
-// After that line, the same branch reaps the scope (#378): relevo_reap_scope
-// TERMs, then KILLs, every other process still in the cgroup, so a harness
-// that left one running cannot keep the scope alive forever. Only a spawn
-// that was told the scope it should be in reaps; a plain spawn (empty want)
-// or a mismatched cgroup never does. The reap runs before the trailer, so
-// the trailer stays the stream's last line.
-//
-// The reap's self pid comes from /proc/self/stat through the builtin read,
-// never from $$. A scoped spawn reaches this script through systemd-run,
-// whose unit syntax rewrites a literal $$ to a single $, so "$$" would
-// arrive as the one-character string "$" and the reap would kill the
-// supervisor too -- the scope would empty, but the exit trailer would never
-// be written and ExitCode would lose the round's code. read resolves
-// /proc/self against the shell itself (a child such as readlink would name
-// itself), so the pid is the supervisor's own. An unreadable /proc leaves
-// the guard's test false: no self, no reap, exactly today's behaviour.
-//
-// want is buildArgv's first argument after "relevo-supervisor": the scope
-// unit file name Start expects this process to be running in, or "" for a
-// plain spawn. The guard is on want, not merely on the inherited cgroup
-// matching a relevo-round-*.scope shape (#216): a process spawned inside a
-// round's own scope -- relevo's test suite, run on a scoped server, is
-// exactly this case -- inherits that cgroup too, so matching the shape
-// alone would make a plain spawn started from inside a round wrongly emit
-// a rusage line for the round's cgroup, not its own.
-//
-// A TERM (Runner.Kill's first step, or a scope stop) ends the supervisor with
-// 143 before it can print the exit trailer: a pending trap runs before the
-// next command in every POSIX shell, so "a killed supervisor writes no
-// trailer" holds whichever shell /bin/sh is and whichever of the group dies
-// first. Without the trap, bash (macOS /bin/sh) could reap the TERM-ed child
-// first and print the trailer.
+// supervisorScript runs the builder with stdin closed and appends the trailer
+// whatever happens to it; plain sh, no bash-isms. Its first argument is the
+// scope unit Start expects this process to run in, or "" for a plain spawn.
+// It raises oom_score_adj so the kernel prefers a builder over the daemon under
+// memory pressure, and keeps the builder a child (no exec) so an OOM kill still
+// leaves a trailer. Only when its own cgroup matches that unit does it print a
+// rusage line and reap the scope: a plain spawn from inside a round's scope
+// inherits that cgroup too. The reap's self pid comes from /proc/self/stat,
+// never $$, which systemd-run's unit syntax rewrites to a single $ and which
+// would make the supervisor reap itself; a TERM exits 143 before the trailer.
 const supervisorScript = ReapFragment + `want=$1
 shift
 trap 'exit 143' TERM
@@ -149,7 +82,6 @@ if [ -n "$want" ]; then
 fi
 printf '\nrelevo-exit:%s\n' "$rc"`
 
-// probeState is the scope probe's verdict (#295, #370 §4.7).
 type probeState int
 
 const (
@@ -158,46 +90,37 @@ const (
 	probeFailed                    // the last probe failed
 )
 
-// ScopeReprobeAfter is how long a failed scope probe is trusted before a
-// scoped Start retries it (#370 §4.7). One transient failure -- a user manager
-// still coming up, a full /run -- costs at most this long, not the daemon's
-// whole life.
+// ScopeReprobeAfter is how long a failed scope probe is trusted before a scoped
+// Start retries it, so one transient failure costs at most this long.
 const ScopeReprobeAfter = 5 * time.Minute
 
-// Runner is the local relevo.Runner.
+// Runner is the local spawn.Runner.
 type Runner struct {
 	// KillGrace is the SIGTERM-to-SIGKILL grace; zero means DefaultKillGrace.
 	KillGrace time.Duration
 
-	// probeMu guards the scope probe state below (#370 §4.7). The probe runs
-	// on the first scoped Start and, after a failure, on the first scoped
-	// Start at least ScopeReprobeAfter later; a success is sticky. A Runner
-	// never asked for a scope never probes.
+	// probeMu guards the probe state below: one probe on the first scoped
+	// Start, retried after a failure at least ScopeReprobeAfter later.
 	probeMu sync.Mutex
 	// scopes is the probe's verdict, and scopesFailedAt when it failed.
 	scopes         probeState
 	scopesFailedAt time.Time
-	// probe runs the scope probe; nil means ProbeScopes. It exists so tests
-	// can exercise the retry rule without a real systemd-run.
+	// probe runs the scope probe; nil means ProbeScopes, tests inject one.
 	probe func(ctx context.Context, slice string) error
-	// now is the probe's clock; nil means time.Now. Tests set it so they can
-	// step across ScopeReprobeAfter without waiting.
+	// now is the probe's clock; nil means time.Now, tests step it forward.
 	now func() time.Time
 
-	// pinOnce guards the lazy pin probe (#314): the first Start whose scope
-	// carries an AllowedCPUs pool probes systemd-run with that property, and
-	// every later Start reuses that verdict. A Runner never asked for a pin
-	// never probes.
+	// pinOnce guards the lazy pin probe: the first Start whose scope carries an
+	// AllowedCPUs pool probes systemd-run with it, and later Starts reuse that.
 	pinOnce sync.Once
-	// pinOK is the verdict of that one probe: true means AllowedCPUs is
-	// accepted and specs keep it, false means every later Start drops the pin
-	// while keeping the scope and its quota.
+	// pinOK is that verdict: false means later Starts drop the pin only.
 	pinOK bool
 }
 
-var _ relevo.Runner = (*Runner)(nil)
+var _ spawn.Runner = (*Runner)(nil)
 
-// New returns a Runner with the default grace.
+var _ spawn.ScopeProber = (*Runner)(nil)
+
 func New() *Runner { return &Runner{} }
 
 func (r *Runner) grace() time.Duration {
@@ -208,11 +131,9 @@ func (r *Runner) grace() time.Duration {
 }
 
 // scopesUsable reports whether a scoped spawn may run in its own scope right
-// now (#370 §4.7): the probe is taken when the verdict is unknown, or when a
-// failure is at least ScopeReprobeAfter old. A success is sticky, so a Runner
-// probes once for its lifetime on a host where scopes work; a failure is
-// logged exactly once, when it is taken, so a Start inside the retry window is
-// silent.
+// now: the probe is taken when the verdict is unknown or a failure is at least
+// ScopeReprobeAfter old, and a success is sticky. A failure is logged once,
+// when it is taken.
 func (r *Runner) scopesUsable(ctx context.Context, slice string) bool {
 	r.probeMu.Lock()
 	defer r.probeMu.Unlock()
@@ -246,12 +167,10 @@ func (r *Runner) nowTime() time.Time {
 	return time.Now()
 }
 
-// buildArgv builds the argv Start execs: bin run under supervisorScript,
-// wrapped in a systemd scope when spec.Scope is set (#244, #216). The
-// supervisor's first argument is the scope unit file name Start expects to
-// be running in (or "" for a plain spawn), so it can tell its own round's
-// scope from one it merely inherited (#216).
-func buildArgv(spec relevo.ProcSpec, bin string) []string {
+// buildArgv builds the argv Start execs: bin under supervisorScript, wrapped in
+// a systemd scope when spec.Scope is set. The supervisor's first argument is the
+// scope unit Start expects to be running in, or "" for a plain spawn.
+func buildArgv(spec spawn.ProcSpec, bin string) []string {
 	var want string
 	if spec.Scope != nil {
 		want = ScopeUnitFileName(spec.Scope.Unit)
@@ -265,134 +184,137 @@ func buildArgv(spec relevo.ProcSpec, bin string) []string {
 
 // Start launches spec under a detached supervisor and returns its handle
 // without waiting. exec.Command, not CommandContext: the caller's context
-// ending (a CLI exiting) must not kill a builder relevo meant to leave
-// running. Setsid puts the supervisor in its own session and process group,
-// so it neither dies with relevo's terminal nor shares a group Kill could
-// hit by accident. Checks that can fail run before either file is created, so a
-// refused Start leaves nothing behind.
-func (r *Runner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
-	if len(spec.Argv) == 0 {
-		return relevo.ProcHandle{}, errors.New("proc: empty argv")
-	}
-	if spec.StreamPath == "" {
-		return relevo.ProcHandle{}, errors.New("proc: empty stream path")
-	}
-	info, err := os.Stat(spec.Dir)
+// ending must not kill a builder relevo meant to leave running. Setsid keeps the
+// supervisor out of relevo's session and out of any group Kill could hit.
+func (r *Runner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
+	bin, err := checkSpawnSpec(spec)
 	if err != nil {
-		return relevo.ProcHandle{}, fmt.Errorf("proc: dir: %w", err)
+		return spawn.ProcHandle{}, err
 	}
-	if !info.IsDir() {
-		return relevo.ProcHandle{}, fmt.Errorf("proc: %s is not a directory", spec.Dir)
-	}
-	bin, err := exec.LookPath(spec.Argv[0])
+	logf, streamf, err := openSpawnFiles(spec)
 	if err != nil {
-		return relevo.ProcHandle{}, fmt.Errorf("proc: %w", err)
+		return spawn.ProcHandle{}, err
 	}
-	logf, err := os.OpenFile(spec.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return relevo.ProcHandle{}, fmt.Errorf("proc: log: %w", err)
-	}
-	defer logf.Close()
-	streamf, err := os.OpenFile(spec.StreamPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return relevo.ProcHandle{}, fmt.Errorf("proc: stream: %w", err)
-	}
-	defer streamf.Close()
+	defer func() { _ = logf.Close() }()
+	defer func() { _ = streamf.Close() }()
 
-	// The scope probe is lazy and re-runnable (#295, #370 §4.7): a local CLI
-	// verb has no eager startup probe (cmd/relevo/serve.go's served path keeps
-	// its own), so the verdict is taken here on the first scoped Start. A
-	// failed probe is retried on the first scoped Start at least
-	// ScopeReprobeAfter later, so one transient failure no longer costs the
-	// daemon's whole life; a success is sticky. Start took spec by value, so
-	// clearing Scope here never mutates the caller's struct.
-	if spec.Scope != nil && !r.scopesUsable(ctx, spec.Scope.Slice) {
-		spec.Scope = nil // local copy; the caller's spec is not mutated
-	}
-
-	// The pin probe is lazy and runs at most once per Runner (#314), like the
-	// scope probe above: a user manager that refuses AllowedCPUs gets one
-	// warning and scopes without pinning, and a round never fails because of
-	// pinning. The fallback clears the field on a dereference copy and
-	// re-points the local field: Start took spec by value, but Scope is a
-	// pointer, so a write through spec.Scope would mutate the caller's spec.
-	if spec.Scope != nil && spec.Scope.AllowedCPUs != "" {
-		r.pinOnce.Do(func() {
-			if err := ProbeAllowedCPUs(ctx, spec.Scope.Slice, spec.Scope.AllowedCPUs); err != nil {
-				slog.Warn("cpu pinning unavailable; scopes will run without AllowedCPUs", "allowed_cpus", spec.Scope.AllowedCPUs, "err", err)
-				r.pinOK = false
-				return
-			}
-			r.pinOK = true
-		})
-		if !r.pinOK {
-			sc := *spec.Scope
-			sc.AllowedCPUs = ""
-			spec.Scope = &sc
-		}
-	}
-
-	// A scoped spawn gets GOMAXPROCS sized to the CPUs its scope allows
-	// (#315). It runs after both fallbacks so it follows the scope actually
-	// launched: a refused pin contributes nothing, and a dropped scope adds
-	// nothing at all. The value replaces an inherited GOMAXPROCS: when an
-	// entry is added, the parent's is denied below so the child sees exactly
-	// one (#315 round 2). The full-slice expression forces a copy, so the
-	// append never writes the caller's backing array -- spec is a value copy,
-	// but spec.Env shares the caller's array.
-	add := goMaxProcsEnv(os.Environ(), spec.Env, spec.Scope)
-	spec.Env = append(spec.Env[:len(spec.Env):len(spec.Env)], add...)
-
-	// Every spawn also runs with git's fsmonitor disabled (#378), belt and
-	// braces beside the supervisor's reap: a builder that never starts
-	// fsmonitor--daemon never leaves one behind to keep its scope alive. The
-	// entries are appended with the same full-slice expression, so the
-	// caller's spec.Env backing array is never written.
-	gitEnv := gitNoFsmonitorEnv(os.Environ(), spec.Env)
-	spec.Env = append(spec.Env[:len(spec.Env):len(spec.Env)], gitEnv...)
-
-	// deny carries GOMAXPROCS only when an entry was added: the scope's value
-	// must replace the inherited one, not sit beside it. GIT_CONFIG_COUNT is
-	// always denied: gitNoFsmonitorEnv always appends its own, and the child
-	// must see exactly one, pointing past every entry the parent set. The
-	// full-slice expression copies, so the package var is never appended in
-	// place.
-	deny := append(DeniedEnv[:len(DeniedEnv):len(DeniedEnv)], "GIT_CONFIG_COUNT")
-	if len(add) > 0 {
-		deny = append(deny[:len(deny):len(deny)], "GOMAXPROCS")
-	}
-
+	spec = r.resolveScope(ctx, spec)
 	argv := buildArgv(spec, bin)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = spec.Dir
-	cmd.Env = ChildEnv(os.Environ(), deny, spec.Env)
+	cmd.Env = spawnEnv(os.Environ(), spec.Env, spec.Scope)
 	cmd.Stdin = nil
 	cmd.Stdout = streamf
 	cmd.Stderr = logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return relevo.ProcHandle{}, fmt.Errorf("proc: start: %w", err)
+		return spawn.ProcHandle{}, fmt.Errorf("proc: start: %w", err)
 	}
 	pid := cmd.Process.Pid
-	// Reap the supervisor when it exits, if this process is still around
-	// to do it (the daemon is). A short-lived CLI exits first and init
-	// reaps instead. Nobody blocks on this.
+	// Reap the supervisor here, if this process outlives it (the daemon does);
+	// a short-lived CLI exits first and init reaps instead.
 	go func() { _ = cmd.Wait() }()
 
+	return handleFor(ctx, pid), nil
+}
+
+// checkSpawnSpec validates spec and resolves the binary Start will exec; every
+// check runs before either file is created, so a refused Start leaves nothing.
+func checkSpawnSpec(spec spawn.ProcSpec) (string, error) {
+	if len(spec.Argv) == 0 {
+		return "", errors.New("proc: empty argv")
+	}
+	if spec.StreamPath == "" {
+		return "", errors.New("proc: empty stream path")
+	}
+	info, err := os.Stat(spec.Dir)
+	if err != nil {
+		return "", fmt.Errorf("proc: dir: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("proc: %s is not a directory", spec.Dir)
+	}
+	bin, err := exec.LookPath(spec.Argv[0])
+	if err != nil {
+		return "", fmt.Errorf("proc: %w", err)
+	}
+	return bin, nil
+}
+
+// openSpawnFiles opens the builder's log and stream for append.
+func openSpawnFiles(spec spawn.ProcSpec) (logf, streamf *os.File, err error) {
+	logf, err = os.OpenFile(spec.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, nil, fmt.Errorf("proc: log: %w", err)
+	}
+	streamf, err = os.OpenFile(spec.StreamPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		_ = logf.Close()
+		return nil, nil, fmt.Errorf("proc: stream: %w", err)
+	}
+	return logf, streamf, nil
+}
+
+// resolveScope applies both lazy probes and their fallbacks: a scope whose probe
+// fails is dropped, so the builder runs unscoped, and a refused AllowedCPUs is
+// cleared while the scope and its quota stay. The pin fallback re-points a
+// copied ScopeSpec, since Start took spec by value but Scope is a pointer.
+func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.ProcSpec {
+	if spec.Scope == nil {
+		return spec
+	}
+	if !r.scopesUsable(ctx, spec.Scope.Slice) {
+		spec.Scope = nil
+		return spec
+	}
+	if spec.Scope.AllowedCPUs == "" {
+		return spec
+	}
+	r.pinOnce.Do(func() {
+		if err := ProbeAllowedCPUs(ctx, spec.Scope.Slice, spec.Scope.AllowedCPUs); err != nil {
+			slog.Warn("cpu pinning unavailable; scopes will run without AllowedCPUs", "allowed_cpus", spec.Scope.AllowedCPUs, "err", err)
+			r.pinOK = false
+			return
+		}
+		r.pinOK = true
+	})
+	if !r.pinOK {
+		sc := *spec.Scope
+		sc.AllowedCPUs = ""
+		spec.Scope = &sc
+	}
+	return spec
+}
+
+// spawnEnv adds the GOMAXPROCS and fsmonitor entries and filters the parent so
+// the child sees exactly one of each; the full-slice expressions copy, so the
+// caller's Env array and the DeniedEnv var are never written in place.
+func spawnEnv(parent, extra []string, scope *spawn.ScopeSpec) []string {
+	add := goMaxProcsEnv(parent, extra, scope)
+	env := append(extra[:len(extra):len(extra)], add...)
+	env = append(env[:len(env):len(env)], gitNoFsmonitorEnv(parent, env)...)
+
+	deny := append(DeniedEnv[:len(DeniedEnv):len(DeniedEnv)], "GIT_CONFIG_COUNT")
+	if len(add) > 0 {
+		deny = append(deny[:len(deny):len(deny)], "GOMAXPROCS")
+	}
+	return ChildEnv(parent, deny, env)
+}
+
+// handleFor returns the handle for a just-started pid; when ps cannot report a
+// start time, time.Now is within the tolerance Alive allows.
+func handleFor(ctx context.Context, pid int) spawn.ProcHandle {
 	started, _, err := psInfo(ctx, pid)
 	if err != nil {
-		// The supervisor may already have finished (a trivial argv) or ps
-		// may be unhappy; the handle still needs a time. Now is within the
-		// one-second tolerance of a process started a moment ago.
 		started = time.Now()
 	}
-	return relevo.ProcHandle{PID: pid, StartedAt: started.Truncate(time.Second)}, nil
+	return spawn.ProcHandle{PID: pid, StartedAt: started.Truncate(time.Second)}
 }
 
 // Alive reports whether the handle's process exists, is not a zombie, and
-// started when the handle says it did (within one second). A missing pid is
-// (false, nil); only ps itself failing to run is an error.
-func (r *Runner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
+// started within a second of when the handle says. A missing pid is (false,
+// nil); only ps itself failing to run is an error.
+func (r *Runner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
 	if h.PID <= 0 {
 		return false, nil
 	}
@@ -413,40 +335,42 @@ func (r *Runner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
 	return diff <= time.Second, nil
 }
 
-// ExitCode reads the trailer the supervisor appended, if it is the stream's
-// last line. A stream written before the rename ends in legacy.ExitTrailer
-// instead, and reads the same way (#292 §1). The handle is unused: the stream
-// is the record.
-func (r *Runner) ExitCode(_ context.Context, _ relevo.ProcHandle, logPath string) (int, bool) {
+// ExitCode reads the trailer the supervisor appended, if it is the stream's last
+// line. A kill recorded for this handle returns ok=false regardless of what the
+// stream ends with.
+func (r *Runner) ExitCode(_ context.Context, h spawn.ProcHandle, logPath string) (int, bool) {
+	if killRecorded(h, logPath) {
+		return 0, false
+	}
 	line, ok := lastLine(logPath)
 	if !ok {
 		return 0, false
 	}
-	prefix := ExitTrailer
-	if !strings.HasPrefix(line, prefix) {
-		prefix = legacy.ExitTrailer
-		if !strings.HasPrefix(line, prefix) {
-			return 0, false
-		}
+	if !strings.HasPrefix(line, spawn.ExitTrailer) {
+		return 0, false
 	}
-	code, err := strconv.Atoi(strings.TrimPrefix(line, prefix))
+	code, err := strconv.Atoi(strings.TrimPrefix(line, spawn.ExitTrailer))
 	if err != nil {
 		return 0, false
 	}
 	return code, true
 }
 
-// Kill sends SIGTERM to the supervisor's process group -- the supervisor and
-// the builder under it -- waits up to the grace for Alive to turn false,
-// then SIGKILLs the group. Alive's start-time check runs first, so a reused
-// pid is never signalled. Not alive is nil.
-func (r *Runner) Kill(ctx context.Context, h relevo.ProcHandle) error {
+// Kill sends SIGTERM to the supervisor's process group -- the supervisor and the
+// builder under it -- waits up to the grace for Alive to turn false, then
+// SIGKILLs the group. Alive's start-time check runs first, so a reused pid is
+// never signalled. The record precedes the signal, because a reader only ever
+// reads a dead handle, so the record is in place before the process could die.
+func (r *Runner) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string) error {
 	alive, err := r.Alive(ctx, h)
 	if err != nil {
 		return err
 	}
 	if !alive {
 		return nil
+	}
+	if err := recordKill(h, streamPath); err != nil {
+		return err
 	}
 	if err := syscall.Kill(-h.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("proc: SIGTERM %d: %w", h.PID, err)
@@ -469,34 +393,27 @@ func (r *Runner) Kill(ctx context.Context, h relevo.ProcHandle) error {
 }
 
 // Rusage scans the last few lines of streamPath, from last to first, for the
-// relevo-rusage: trailer, or the relay-rusage: one a pre-rename stream // name-guard: legacy
-// carries (#292 §1); ok is false when none of those lines match (plain
-// spawn, killed supervisor, still running). The scan -- rather than assuming
-// a fixed offset -- is needed because supervisorScript's printf leaves a
-// blank line between the rusage and exit trailers, so the trailer is not
-// reliably the second-to-last line. The handle is unused: the stream is the
-// record, as for ExitCode.
-func (r *Runner) Rusage(_ context.Context, _ relevo.ProcHandle, streamPath string) (relevo.ProcRusage, bool) {
+// rusage trailer; ok is false when none match. The scan is needed because the
+// supervisor's printf leaves a blank line between the rusage and exit trailers.
+func (r *Runner) Rusage(_ context.Context, _ spawn.ProcHandle, streamPath string) (spawn.ProcRusage, bool) {
 	lines, ok := lastLines(streamPath, 6)
 	if !ok {
-		return relevo.ProcRusage{}, false
+		return spawn.ProcRusage{}, false
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.HasPrefix(lines[i], RusageTrailer) || strings.HasPrefix(lines[i], legacy.RusageTrailer) {
+		if strings.HasPrefix(lines[i], spawn.RusageTrailerPrefix) {
 			return ParseRusageTrailer(lines[i])
 		}
 	}
-	return relevo.ProcRusage{}, false
+	return spawn.ProcRusage{}, false
 }
 
 var errNoProcess = errors.New("proc: no such process")
 
-// StartTime reports when a process started, in the OS's own resolution, via the
-// same `ps -o lstart=` read psInfo uses (and Endpoint.StartedAt records). It is
-// exported for `relevo planner init`, which needs the harness process's start
-// time to defend a planner record against pid reuse exactly as a binding's
-// endpoint does (#303 §3.1). A missing pid is an error, not the zero time: the
-// caller decides what a host it cannot measure means.
+// StartTime reports when a process started, via the same `ps -o lstart=` read
+// psInfo uses. `relevo mastermind init` needs it to defend a mastermind record against
+// pid reuse, as a binding's endpoint does. A missing pid is an error, not the
+// zero time: the caller decides what a host it cannot measure means.
 func StartTime(ctx context.Context, pid int) (time.Time, error) {
 	started, _, err := psInfo(ctx, pid)
 	if err != nil {
@@ -505,17 +422,14 @@ func StartTime(ctx context.Context, pid int) (time.Time, error) {
 	return started, nil
 }
 
-// psLayout is what `ps -o lstart=` prints on Linux (procps) and macOS:
-// "Sat Sep 12 16:35:34 2026". The day may be space-padded; _2 accepts both.
+// psLayout is what `ps -o lstart=` prints on Linux (procps) and macOS, where
+// the day may be space-padded -- _2 accepts both.
 const psLayout = "Mon Jan _2 15:04:05 2006"
 
-// psInfo asks ps for one process's start time and state. ps is the one
-// portable source of a start time: /proc is Linux-only and sysctl needs
-// cgo. A failed ps is classified (#370, spec §4.1): only "exited 1 with
-// nothing on stdout" -- how procps and BSD ps report a pid that is gone --
-// is errNoProcess. A ps that was signalled or cut short by the caller's
-// context is a plain error, so every Alive caller treats the process as
-// alive this tick rather than as dead.
+// psInfo asks ps for one process's start time and state: ps is the one portable
+// source of a start time, since /proc is Linux-only and sysctl needs cgo. A
+// failed ps is classified; a signalled or cancelled one is a plain error, so
+// every Alive caller treats the process as alive this tick rather than dead.
 func psInfo(ctx context.Context, pid int) (started time.Time, state string, err error) {
 	out, err := exec.CommandContext(ctx, "ps", "-o", "stat=", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
@@ -525,8 +439,6 @@ func psInfo(ctx context.Context, pid int) (started time.Time, state string, err 
 		case psNoProcess:
 			return time.Time{}, "", errNoProcess
 		default:
-			// psTransient, and psOK (a non-ExitError failure): both are
-			// returned wrapped, exactly as any other ps failure was.
 			return time.Time{}, "", fmt.Errorf("proc: ps: %w", err)
 		}
 	}
@@ -544,8 +456,7 @@ func psInfo(ctx context.Context, pid int) (started time.Time, state string, err 
 	return started, fields[0], nil
 }
 
-// lastLine returns the final line of the file (ignoring trailing newlines),
-// reading only its tail. ok is false for a missing or empty file.
+// lastLine returns the file's final line, ignoring trailing newlines.
 func lastLine(path string) (string, bool) {
 	lines, ok := lastLines(path, 1)
 	if !ok {
@@ -554,16 +465,14 @@ func lastLine(path string) (string, bool) {
 	return lines[len(lines)-1], true
 }
 
-// lastLines returns up to the final n non-empty lines of the file, oldest
-// first (ignoring trailing newlines), reading only its tail. ok is false
-// for a missing or empty file; a file with fewer than n lines in its tail
-// returns as many as were read.
+// lastLines returns up to the final n non-empty lines of the file, oldest first,
+// reading only its tail; ok is false for a missing or empty file.
 func lastLines(path string, n int) ([]string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil || info.Size() == 0 {
 		return nil, false

@@ -59,7 +59,7 @@ func (w *lineWriter) Flush() {
 	w.buf = w.buf[:0]
 }
 
-// lineExec is relevo.LineExec's production implementation: one harness
+// lineExec is availability.LineExec's production implementation: one harness
 // invocation, every stdout line handed to onLine as it arrives.
 type lineExec struct{}
 

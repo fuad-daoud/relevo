@@ -2,155 +2,65 @@ package db
 
 import (
 	"errors"
-	"reflect"
-	"sort"
 	"testing"
 	"time"
 )
 
-// pair identifies a round by (binding name, round number), the shape every
-// per-Filter-field test asserts an exact set of.
-type pair struct {
-	binding string
-	number  int
-}
-
-func pairsOf(rows []RoundRow) []pair {
-	out := make([]pair, len(rows))
-	for i, r := range rows {
-		out[i] = pair{binding: r.BindingName, number: r.Number}
+// TestQueryFilters pins every Filter field's WHERE clause: each row names the
+// field it constrains and the exact set of rounds it selects. A nil want means
+// the row asserts only the row count.
+func TestQueryFilters(t *testing.T) {
+	s := seedDB(t)
+	a1a2 := []pair{{"webshop", 1}, {"webshop", 2}, {"api", 1}, {"api", 2}}
+	api := []pair{{"api", 1}, {"api", 2}}
+	cases := []struct {
+		name  string
+		f     Filter
+		want  []pair
+		count int
+	}{
+		{"repo matches origin or common_dir", Filter{Repo: "https://example.test/a.git"}, a1a2, 0},
+		{"repo matches common_dir", Filter{Repo: "/home/x/a/.git"}, a1a2, 0},
+		{"feature", Filter{Feature: "checkout"}, []pair{{"webshop", 1}, {"webshop", 2}}, 0},
+		{"bare ticket number matches every repo", Filter{Ticket: "607"}, []pair{{"webshop", 1}, {"webshop", 2}, {"api", 1}, {"api", 2}}, 0},
+		{"hash ticket number matches every repo", Filter{Ticket: "#607"}, []pair{{"webshop", 1}, {"webshop", 2}, {"api", 1}, {"api", 2}}, 0},
+		{"owner/repo ticket is exact", Filter{Ticket: "o/r#607"}, []pair{{"webshop", 1}, {"webshop", 2}}, 0},
+		{"hash ticket elsewhere", Filter{Ticket: "#42"}, []pair{{"docs", 1}, {"docs", 2}}, 0},
+		{"unparseable ticket matches nothing", Filter{Ticket: "garbage"}, nil, 0},
+		{"wildcard in ticket matches nothing", Filter{Ticket: "%"}, nil, 0},
+		{"binding name", Filter{Binding: "docs"}, []pair{{"docs", 1}, {"docs", 2}}, 0},
+		{"mastermind session", Filter{MasterMind: "sess-1"}, nil, 6},
+		{"harness", Filter{Harness: "opencode"}, api, 0},
+		{"provider", Filter{Provider: "openrouter"}, api, 0},
+		{"model", Filter{Model: "glm"}, api, 0},
+		{"candidate", Filter{Candidate: "opencode/openrouter/glm"}, api, 0},
+		{"outcome", Filter{Outcome: OutcomeHalted}, []pair{{"api", 1}, {"docs", 2}}, 0},
+		{"report outcome", Filter{ReportOutcome: "halted"}, []pair{{"docs", 2}}, 0},
+		{"binding state", Filter{State: "needs_you"}, []pair{{"docs", 1}, {"docs", 2}}, 0},
+		{"gate result", Filter{GateResult: "fail"}, []pair{{"api", 1}}, 0},
+		{"cost basis", Filter{CostBasis: "exact"}, []pair{{"webshop", 1}}, 0},
+		{"round number", Filter{Round: 2}, []pair{{"webshop", 2}, {"api", 2}, {"docs", 2}}, 0},
+		{"since", Filter{Since: s.day2}, []pair{{"webshop", 2}, {"api", 2}, {"docs", 2}}, 0},
+		{"until", Filter{Until: s.day2}, []pair{{"webshop", 1}, {"api", 1}, {"docs", 1}}, 0},
+		{"archived only", Filter{Archived: ptr(true)}, api, 0},
+		{"live only", Filter{Archived: ptr(false)}, []pair{{"webshop", 1}, {"webshop", 2}, {"docs", 1}, {"docs", 2}}, 0},
+		{"limit caps the newest first", Filter{Limit: 2, Newest: true}, nil, 2},
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].binding != out[j].binding {
-			return out[i].binding < out[j].binding
-		}
-		return out[i].number < out[j].number
-	})
-	return out
-}
-
-func assertPairs(t *testing.T, got []RoundRow, want []pair) {
-	t.Helper()
-	gotPairs := pairsOf(got)
-	sort.Slice(want, func(i, j int) bool {
-		if want[i].binding != want[j].binding {
-			return want[i].binding < want[j].binding
-		}
-		return want[i].number < want[j].number
-	})
-	if !reflect.DeepEqual(gotPairs, want) {
-		t.Errorf("got %v, want %v", gotPairs, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := s.d.Query(c.f)
+			if err != nil {
+				t.Fatalf("Query: %v", err)
+			}
+			if c.want == nil {
+				if len(got) != c.count {
+					t.Fatalf("got %d rows, want %d", len(got), c.count)
+				}
+				return
+			}
+			assertPairs(t, got, c.want)
+		})
 	}
-}
-
-// seed builds: two repos (A has origin+common_dir; B has origin only),
-// three bindings (webshop, api on repo A -- api archived; docs on repo B),
-// one planner per binding, and six rounds spanning harnesses agy/opencode,
-// outcomes reported/halted/open, one gated round, two cost bases, dates one
-// day apart.
-type seeded struct {
-	d          *DB
-	repoAID    string
-	repoBID    string
-	webshopID  string
-	apiID      string
-	docsID     string
-	day1, day2 time.Time
-}
-
-func seedDB(t *testing.T) seeded {
-	t.Helper()
-	d := openTestDB(t)
-
-	day1 := time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC)
-	day2 := time.Date(2026, 9, 11, 9, 0, 0, 0, time.UTC)
-
-	repoAID, err := d.UpsertRepo(Repo{
-		OriginURL: ptr("https://example.test/a.git"),
-		CommonDir: ptr("/home/x/a/.git"),
-		FirstSeen: day1,
-	})
-	if err != nil {
-		t.Fatalf("UpsertRepo A: %v", err)
-	}
-	repoBID, err := d.UpsertRepo(Repo{OriginURL: ptr("https://example.test/b.git"), FirstSeen: day1})
-	if err != nil {
-		t.Fatalf("UpsertRepo B: %v", err)
-	}
-
-	plannerID, err := d.UpsertPlanner(Planner{HarnessKind: "claude", SessionID: "sess-1", FirstSeen: day1, LastSeen: day2})
-	if err != nil {
-		t.Fatalf("UpsertPlanner: %v", err)
-	}
-
-	webshopID, err := d.UpsertBinding(Binding{
-		Name: "webshop", RepoID: &repoAID, PlannerID: &plannerID, Feature: ptr("checkout"),
-		CWD: "/home/x/webshop", BuilderMode: "headless", CreatedAt: day1, IngestSource: IngestLive,
-	})
-	if err != nil {
-		t.Fatalf("UpsertBinding webshop: %v", err)
-	}
-
-	apiID, err := d.UpsertBinding(Binding{
-		Name: "api", RepoID: &repoAID, PlannerID: &plannerID,
-		CWD: "/home/x/api", BuilderMode: "headless", CreatedAt: day1,
-		ArchivedAt: ptr(day2), ArchivePath: ptr("/archive/api.tar.gz"), IngestSource: IngestArchive,
-	})
-	if err != nil {
-		t.Fatalf("UpsertBinding api: %v", err)
-	}
-
-	docsID, err := d.UpsertBinding(Binding{
-		Name: "docs", RepoID: &repoBID, PlannerID: &plannerID, FinalState: ptr("needs_you"),
-		CWD: "/home/x/docs", BuilderMode: "pane", CreatedAt: day1, IngestSource: IngestLive,
-	})
-	if err != nil {
-		t.Fatalf("UpsertBinding docs: %v", err)
-	}
-
-	rounds := []Round{
-		{
-			BindingID: webshopID, Number: 1, StartedAt: day1, Outcome: OutcomeReported,
-			BuilderCandidate: ptr("claude/anthropic/sonnet"), BuilderHarness: ptr("agy"),
-			BuilderProvider: ptr("anthropic"), BuilderModel: ptr("sonnet"),
-			CostBasis: ptr("exact"), CostUSD: ptr(1.5),
-			Switches: 2,
-		},
-		{
-			BindingID: webshopID, Number: 2, StartedAt: day2, Outcome: OutcomeOpen,
-			BuilderCandidate: ptr("claude/anthropic/sonnet"), BuilderHarness: ptr("agy"),
-			BuilderProvider: ptr("anthropic"), BuilderModel: ptr("sonnet"),
-		},
-		{
-			BindingID: apiID, Number: 1, StartedAt: day1, Outcome: OutcomeHalted,
-			BuilderCandidate: ptr("opencode/openrouter/glm"), BuilderHarness: ptr("opencode"),
-			BuilderProvider: ptr("openrouter"), BuilderModel: ptr("glm"),
-			GateResult: ptr("fail"), CostBasis: ptr("estimated"), CostUSD: ptr(0.2),
-		},
-		{
-			BindingID: apiID, Number: 2, StartedAt: day2, Outcome: OutcomeReported,
-			BuilderCandidate: ptr("opencode/openrouter/glm"), BuilderHarness: ptr("opencode"),
-			BuilderProvider: ptr("openrouter"), BuilderModel: ptr("glm"),
-			GateResult: ptr("pass"),
-		},
-		{
-			BindingID: docsID, Number: 1, StartedAt: day1, Outcome: OutcomeReported,
-			BuilderCandidate: ptr("claude/anthropic/sonnet"), BuilderHarness: ptr("agy"),
-			BuilderProvider: ptr("anthropic"), BuilderModel: ptr("sonnet"), ReportOutcome: ptr("done"),
-		},
-		{
-			BindingID: docsID, Number: 2, StartedAt: day2, Outcome: OutcomeHalted,
-			BuilderCandidate: ptr("claude/anthropic/sonnet"), BuilderHarness: ptr("agy"),
-			BuilderProvider: ptr("anthropic"), BuilderModel: ptr("sonnet"), ReportOutcome: ptr("halted"),
-		},
-	}
-	for _, r := range rounds {
-		if _, err := d.UpsertRound(r); err != nil {
-			t.Fatalf("UpsertRound %+v: %v", r, err)
-		}
-	}
-
-	return seeded{d: d, repoAID: repoAID, repoBID: repoBID, webshopID: webshopID, apiID: apiID, docsID: docsID, day1: day1, day2: day2}
 }
 
 func TestQueryNoFilterReturnsAllNewestFirst(t *testing.T) {
@@ -169,145 +79,14 @@ func TestQueryNoFilterReturnsAllNewestFirst(t *testing.T) {
 	}
 }
 
-func TestQueryByRepoOrigin(t *testing.T) {
+func TestQueryHereUnresolvedIsInvalid(t *testing.T) {
 	s := seedDB(t)
-	got, err := s.d.Query(Filter{Repo: "https://example.test/a.git"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"webshop", 1}, {"webshop", 2}, {"api", 1}, {"api", 2}})
-}
-
-func TestQueryByRepoCommonDir(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Repo: "/home/x/a/.git"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"webshop", 1}, {"webshop", 2}, {"api", 1}, {"api", 2}})
-}
-
-func TestQueryByFeature(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Feature: "checkout"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"webshop", 1}, {"webshop", 2}})
-}
-
-func TestQueryByBinding(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Binding: "docs"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"docs", 1}, {"docs", 2}})
-}
-
-func TestQueryByPlanner(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Planner: "sess-1"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	if len(got) != 6 {
-		t.Fatalf("got %d rows, want 6", len(got))
+	_, err := s.d.Query(Filter{Here: "/some/cwd"})
+	if !errors.Is(err, ErrInvalid) {
+		t.Errorf("err = %v, want ErrInvalid", err)
 	}
 }
 
-func TestQueryByHarness(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Harness: "opencode"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"api", 1}, {"api", 2}})
-}
-
-func TestQueryByProvider(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Provider: "openrouter"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"api", 1}, {"api", 2}})
-}
-
-func TestQueryByModel(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Model: "glm"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"api", 1}, {"api", 2}})
-}
-
-func TestQueryByCandidate(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Candidate: "opencode/openrouter/glm"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"api", 1}, {"api", 2}})
-}
-
-func TestQueryByOutcome(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Outcome: OutcomeHalted})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"api", 1}, {"docs", 2}})
-}
-
-func TestQueryByReportOutcome(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{ReportOutcome: "halted"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"docs", 2}})
-}
-
-func TestQueryByState(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{State: "needs_you"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"docs", 1}, {"docs", 2}})
-}
-
-func TestQueryByGateResult(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{GateResult: "fail"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"api", 1}})
-}
-
-func TestQueryByCostBasis(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{CostBasis: "exact"})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"webshop", 1}})
-}
-
-func TestQueryByRound(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Round: 2})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"webshop", 2}, {"api", 2}, {"docs", 2}})
-}
-
-// TestQueryReturnsSwitches pins §4.1: RoundRow carries the round's stored
-// switch count.
 func TestQueryReturnsSwitches(t *testing.T) {
 	s := seedDB(t)
 	got, err := s.d.Query(Filter{Binding: "webshop", Round: 1})
@@ -322,69 +101,26 @@ func TestQueryReturnsSwitches(t *testing.T) {
 	}
 }
 
-func TestQuerySince(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Since: s.day2})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"webshop", 2}, {"api", 2}, {"docs", 2}})
-}
-
-func TestQueryUntil(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Until: s.day2})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"webshop", 1}, {"api", 1}, {"docs", 1}})
-}
-
-func TestQueryArchivedTrue(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Archived: ptr(true)})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"api", 1}, {"api", 2}})
-}
-
-func TestQueryArchivedFalse(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Archived: ptr(false)})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	assertPairs(t, got, []pair{{"webshop", 1}, {"webshop", 2}, {"docs", 1}, {"docs", 2}})
-}
-
-func TestQueryLimit(t *testing.T) {
-	s := seedDB(t)
-	got, err := s.d.Query(Filter{Limit: 2, Newest: true})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("got %d rows, want 2", len(got))
-	}
-}
-
-func TestQueryHereUnresolvedIsInvalid(t *testing.T) {
-	s := seedDB(t)
-	_, err := s.d.Query(Filter{Here: "/some/cwd"})
-	if !errors.Is(err, ErrInvalid) {
-		t.Errorf("err = %v, want ErrInvalid", err)
-	}
-}
-
 // TestQueryRowCarriesTokensDurationAndMode pins the RoundRow columns the
-// dashboard's sums need: the four token counters, the duration computed in
-// Go from started_at and closed_at, report_outcome, the round's
-// builder_mode, and the binding's server. A round with no closed_at has a
-// nil DurationMS.
+// dashboard's sums need, and that a round with no closed_at has a nil
+// DurationMS.
 func TestQueryRowCarriesTokensDurationAndMode(t *testing.T) {
 	d := openTestDB(t)
+	seedTokenRounds(t, d)
 
+	rows, err := d.Query(Filter{Newest: false})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	assertTokenRow(t, rows[0])
+	assertOpenRoundRow(t, rows[1])
+}
+
+func seedTokenRounds(t *testing.T, d *DB) {
+	t.Helper()
 	server := "contabo"
 	bindingID, err := d.UpsertBinding(Binding{
 		Name: "remote-run", CWD: "/home/x/remote", BuilderMode: "headless",
@@ -402,7 +138,7 @@ func TestQueryRowCarriesTokensDurationAndMode(t *testing.T) {
 	if _, err := d.UpsertRound(Round{
 		BindingID: bindingID, Number: 1, StartedAt: started, ClosedAt: &closed,
 		Outcome: OutcomeReported, InTokens: &in, CacheTokens: &cache,
-		WriteTokens: &write, OutTokens: &out, BuilderMode: &mode, ReportOutcome: &report,
+		WriteTokens: &write, OutTokens: &out, Mode: &mode, ReportOutcome: &report,
 	}); err != nil {
 		t.Fatalf("UpsertRound 1: %v", err)
 	}
@@ -412,16 +148,10 @@ func TestQueryRowCarriesTokensDurationAndMode(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertRound 2: %v", err)
 	}
+}
 
-	rows, err := d.Query(Filter{Newest: false})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows, want 2", len(rows))
-	}
-
-	got := rows[0]
+func assertTokenRow(t *testing.T, got RoundRow) {
+	t.Helper()
 	if got.Number != 1 {
 		t.Fatalf("rows[0].Number = %d, want 1 (oldest first)", got.Number)
 	}
@@ -446,23 +176,25 @@ func TestQueryRowCarriesTokensDurationAndMode(t *testing.T) {
 	if got.ReportOutcome == nil || *got.ReportOutcome != "done" {
 		t.Errorf("ReportOutcome = %v, want done", got.ReportOutcome)
 	}
-	if got.BuilderMode == nil || *got.BuilderMode != "remote" {
-		t.Errorf("BuilderMode = %v, want remote", got.BuilderMode)
+	if got.Mode == nil || *got.Mode != "remote" {
+		t.Errorf("Mode = %v, want remote", got.Mode)
 	}
 	if got.Server == nil || *got.Server != "contabo" {
 		t.Errorf("Server = %v, want contabo", got.Server)
 	}
+}
 
-	open := rows[1]
+func assertOpenRoundRow(t *testing.T, open RoundRow) {
+	t.Helper()
 	if open.Number != 2 {
 		t.Fatalf("rows[1].Number = %d, want 2", open.Number)
 	}
 	if open.ClosedAt != nil || open.DurationMS != nil {
 		t.Errorf("open round: ClosedAt = %v, DurationMS = %v; want both nil", open.ClosedAt, open.DurationMS)
 	}
-	if open.InTokens != nil || open.ReportOutcome != nil || open.BuilderMode != nil {
-		t.Errorf("open round: InTokens = %v, ReportOutcome = %v, BuilderMode = %v; want all nil",
-			open.InTokens, open.ReportOutcome, open.BuilderMode)
+	if open.InTokens != nil || open.ReportOutcome != nil || open.Mode != nil {
+		t.Errorf("open round: InTokens = %v, ReportOutcome = %v, Mode = %v; want all nil",
+			open.InTokens, open.ReportOutcome, open.Mode)
 	}
 }
 
@@ -528,7 +260,7 @@ func TestRoundsAscending(t *testing.T) {
 
 func TestArtifactMissingIsFalse(t *testing.T) {
 	s := seedDB(t)
-	_, ok, err := s.d.Artifact("nonexistent-round", ArtifactPlan)
+	_, ok, err := s.d.Artifact("nonexistent-round", ArtifactPrompt)
 	if err != nil {
 		t.Fatalf("Artifact: %v", err)
 	}
@@ -543,11 +275,11 @@ func TestTranscriptPaging(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		recs = append(recs, TranscriptRecord{Seq: i, RecordJSON: "{}", Rendered: "line"})
 	}
-	if _, err := d.AppendTranscript(OwnerPlanner, "sess-1", recs); err != nil {
+	if _, err := d.AppendTranscript(OwnerMasterMind, "sess-1", recs); err != nil {
 		t.Fatalf("AppendTranscript: %v", err)
 	}
 
-	got, err := d.Transcript(OwnerPlanner, "sess-1", 2, 2)
+	got, err := d.Transcript(OwnerMasterMind, "sess-1", 2, 2)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}
@@ -575,8 +307,8 @@ func TestEventsRoundZeroIsAll(t *testing.T) {
 	}
 
 	evs := []Event{
-		{BindingID: bindingID, RoundID: &round1ID, Seq: 1, TS: time.Now(), Kind: "send", Direction: "planner_to_builder", EntryJSON: "{}"},
-		{BindingID: bindingID, RoundID: &round2ID, Seq: 2, TS: time.Now(), Kind: "send", Direction: "planner_to_builder", EntryJSON: "{}"},
+		{BindingID: bindingID, RoundID: &round1ID, Seq: 1, TS: time.Now(), Kind: "send", Direction: "mastermind_to_builder", EntryJSON: "{}"},
+		{BindingID: bindingID, RoundID: &round2ID, Seq: 2, TS: time.Now(), Kind: "send", Direction: "mastermind_to_builder", EntryJSON: "{}"},
 	}
 	if _, err := d.AppendEvents(bindingID, evs); err != nil {
 		t.Fatalf("AppendEvents: %v", err)
@@ -623,4 +355,102 @@ func TestStatsCounts(t *testing.T) {
 	if stats.SizeBytes <= 0 {
 		t.Errorf("SizeBytes = %d, want > 0", stats.SizeBytes)
 	}
+}
+
+func TestRecentEvents(t *testing.T) {
+	d := openTestDB(t)
+	since := seedRecentEvents(t, d)
+
+	got, err := d.RecentEvents(since, 0)
+	if err != nil {
+		t.Fatalf("RecentEvents: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d events, want 3 (only those since `since`)", len(got))
+	}
+	want := []struct {
+		kind, binding string
+	}{
+		{"switch", "webshop"},
+		{"plan", "webshop"},
+		{"report", "atlas"},
+	}
+	for i, w := range want {
+		if got[i].Kind != w.kind || got[i].BindingName != w.binding {
+			t.Errorf("got[%d] = %+v, want %s on %s", i, got[i], w.kind, w.binding)
+		}
+	}
+
+	if got[0].Round == nil || *got[0].Round != 2 {
+		t.Errorf("got[0].Round = %v, want 2", got[0].Round)
+	}
+	if got[2].Round == nil || *got[2].Round != 1 {
+		t.Errorf("got[2].Round = %v, want 1", got[2].Round)
+	}
+	if got[2].Tokens == nil || *got[2].Tokens != 1000 {
+		t.Errorf("got[2].Tokens = %v, want 1000 (the four counters summed)", got[2].Tokens)
+	}
+	if got[2].DurationMS == nil || *got[2].DurationMS != 600_000 {
+		t.Errorf("got[2].DurationMS = %v, want 600000", got[2].DurationMS)
+	}
+	if got[0].DurationMS != nil || got[1].DurationMS != nil {
+		t.Errorf("open rounds: DurationMS = %v, %v; want both nil", got[0].DurationMS, got[1].DurationMS)
+	}
+
+	limited, err := d.RecentEvents(since, 2)
+	if err != nil {
+		t.Fatalf("RecentEvents(limit 2): %v", err)
+	}
+	if len(limited) != 2 {
+		t.Fatalf("len(limited) = %d, want 2", len(limited))
+	}
+}
+
+func seedRecentEvents(t *testing.T, d *DB) time.Time {
+	t.Helper()
+	now := time.Now().Truncate(time.Millisecond)
+
+	binding1ID, err := d.UpsertBinding(newTestBinding("atlas", now.Add(-time.Hour)))
+	if err != nil {
+		t.Fatalf("UpsertBinding 1: %v", err)
+	}
+	binding2ID, err := d.UpsertBinding(newTestBinding("webshop", now.Add(-time.Hour)))
+	if err != nil {
+		t.Fatalf("UpsertBinding 2: %v", err)
+	}
+
+	r1 := newTestRound(binding1ID, 1, OutcomeReported)
+	r1.StartedAt = now.Add(-30 * time.Minute)
+	ct := now.Add(-20 * time.Minute)
+	r1.ClosedAt = &ct
+	in, cache, write, out := int64(100), int64(200), int64(300), int64(400)
+	r1.InTokens, r1.CacheTokens, r1.WriteTokens, r1.OutTokens = &in, &cache, &write, &out
+	round1ID, err := d.UpsertRound(r1)
+	if err != nil {
+		t.Fatalf("UpsertRound 1: %v", err)
+	}
+
+	r2 := newTestRound(binding2ID, 2, OutcomeOpen)
+	r2.StartedAt = now.Add(-10 * time.Minute)
+	round2ID, err := d.UpsertRound(r2)
+	if err != nil {
+		t.Fatalf("UpsertRound 2: %v", err)
+	}
+
+	evs1 := []Event{
+		{BindingID: binding1ID, RoundID: &round1ID, Seq: 1, TS: now.Add(-20 * time.Minute), Kind: "plan", Direction: "mastermind_to_builder", EntryJSON: "{}"},
+		{BindingID: binding1ID, RoundID: &round1ID, Seq: 2, TS: now.Add(-10 * time.Minute), Kind: "report", Direction: "builder_to_planner", EntryJSON: `{"outcome":"done"}`},
+	}
+	if _, err := d.AppendEvents(binding1ID, evs1); err != nil {
+		t.Fatalf("AppendEvents 1: %v", err)
+	}
+	evs2 := []Event{
+		{BindingID: binding2ID, RoundID: &round2ID, Seq: 1, TS: now.Add(-5 * time.Minute), Kind: "plan", Direction: "mastermind_to_builder", EntryJSON: "{}"},
+		{BindingID: binding2ID, RoundID: &round2ID, Seq: 2, TS: now.Add(-2 * time.Minute), Kind: "switch", Direction: "system", EntryJSON: "{}"},
+	}
+	if _, err := d.AppendEvents(binding2ID, evs2); err != nil {
+		t.Fatalf("AppendEvents 2: %v", err)
+	}
+
+	return now.Add(-15 * time.Minute)
 }

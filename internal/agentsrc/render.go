@@ -8,10 +8,8 @@ import (
 	"strings"
 )
 
-// agyTools is the tool allowlist agy requires, byte for byte the one the
-// shipped plan-executor's agy definition carries. Shape never changes it: a
-// reader needs write tools to fill its artifact directory, and the scratch
-// worktree (not the tool list) keeps it off the binding's tree.
+// agyTools is the tool allowlist agy needs; the scratch worktree, not the tool
+// list, is what keeps a reader off the binding's tree.
 const agyTools = "  - view_file\n" +
 	"  - grep_search\n" +
 	"  - find_by_name\n" +
@@ -21,11 +19,8 @@ const agyTools = "  - view_file\n" +
 	"  - replace_file_content\n" +
 	"  - multi_replace_file_content\n"
 
-// Render returns the bytes of the native file for one harness kind.
-//
-// Precondition: s.Validate() is nil and kind is one of the kinds the source
-// renders. Otherwise Render returns the validation error, or an error saying
-// the kind is not in the source's kinds. It never returns partial bytes.
+// Render returns the bytes of the native file for one harness kind. It
+// validates s first and never returns partial bytes.
 func Render(s Source, kind string) ([]byte, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
@@ -74,8 +69,6 @@ func kindRendered(s Source, kind string) bool {
 	return false
 }
 
-// renderCodex writes the codex TOML profile: a header, the body as a literal
-// string, and one [agents.<r>] table per require.
 func renderCodex(s Source) []byte {
 	var b strings.Builder
 	b.WriteString("# relevo agent " + s.Name + " for codex, rendered by relevo from its source.\n")
@@ -109,7 +102,6 @@ func yamlScalar(s string) string {
 	return strings.TrimRight(buf.String(), "\n")
 }
 
-// isPlainScalar reports whether s round-trips as a YAML plain scalar.
 func isPlainScalar(s string) bool {
 	if s == "" {
 		return false

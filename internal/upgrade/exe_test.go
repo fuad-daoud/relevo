@@ -8,9 +8,8 @@ import (
 	"testing"
 )
 
-// TestExeIdentityChangesOnRename pins §4.2's point: identity follows the bytes.
-// A rename over the path is what `make install` does, and it must read as a new
-// identity; a second stat of the same file must not.
+// TestExeIdentityChangesOnRename pins that a rename over the path (as `make
+// install` does) reads as a new identity, but a repeat stat does not.
 func TestExeIdentityChangesOnRename(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "relevo")

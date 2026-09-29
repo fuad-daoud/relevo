@@ -16,9 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// shippedDoc returns the exact bytes this relevo ships for role/kind, so a
-// fixture can be built that matches the shipped copy and does not spuriously
-// trip the doctor's ship-drift check (step 3, #91/#94).
+// shippedDoc returns the exact bytes this relevo ships for role/kind.
 func shippedDoc(t *testing.T, role, kind string) string {
 	t.Helper()
 	b, err := harness.AgentDoc(role, kind)
@@ -31,8 +29,6 @@ func shippedDoc(t *testing.T, role, kind string) string {
 type fakeEnv struct {
 	daemonRunning bool
 	daemonErr     error
-	// daemonInfo* are what DaemonInfo reports: the record, whether it exists,
-	// and an optional read error (#371).
 	daemonInfo    store.DaemonInfo
 	daemonInfoOK  bool
 	daemonInfoErr error
@@ -47,16 +43,14 @@ type fakeEnv struct {
 	commandOut    []byte
 	commandErr    error
 
-	// release* are what ReleaseState reports: the running version, the cached
-	// latest, whether that cache is usable, and the install kind (#293).
+	// commandFn, when non-nil, answers Command directly and overrides commandOut/commandErr.
+	commandFn func(bin string, args ...string) ([]byte, error)
+
 	releaseRunning string
 	releaseLatest  string
 	releaseOK      bool
 	releaseKind    release.Kind
 
-	// manifest is what LoadManifest returns (#371 §4.10): a home-relative
-	// definition path to the sha relevo last wrote there. nil reads as no
-	// manifest recorded.
 	manifest map[string]string
 }
 
@@ -99,8 +93,6 @@ func (f *fakeEnv) Stat(path string) error {
 	return os.ErrNotExist
 }
 
-// ReadFile returns recorded content. A path in existingFiles but absent from
-// fileContents reads as empty, which must produce no model suffix and no error.
 func (f *fakeEnv) ReadFile(path string) ([]byte, error) {
 	return []byte(f.fileContents[path]), nil
 }
@@ -121,6 +113,9 @@ func (f *fakeEnv) Probe(dir string) error {
 }
 
 func (f *fakeEnv) Command(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	if f.commandFn != nil {
+		return f.commandFn(bin, args...)
+	}
 	if f.commandErr != nil {
 		return nil, f.commandErr
 	}
@@ -131,8 +126,6 @@ func (f *fakeEnv) ReleaseState() (string, string, bool, release.Kind) {
 	return f.releaseRunning, f.releaseLatest, f.releaseOK, f.releaseKind
 }
 
-// LoadManifest satisfies doctor.Env (#371 §4.10): the recorded manifest, or
-// nil for a machine that has none.
 func (f *fakeEnv) LoadManifest() (map[string]string, error) {
 	return f.manifest, nil
 }
@@ -156,8 +149,6 @@ func countChecksForGroup(report Report, group string) int {
 	return count
 }
 
-// TestConfigCheck pins #372 §4.4's config row: no warnings is OK, and warnings
-// render as a Warn listing every one.
 func TestConfigCheck(t *testing.T) {
 	ok := ConfigCheck(nil)
 	if ok.Name != "config" || ok.Group != "" || ok.Severity != SevOK {
@@ -179,8 +170,6 @@ func TestConfigCheck(t *testing.T) {
 	}
 }
 
-// TestDoctorConfigRow pins that Run renders the config row from
-// WithConfigWarnings.
 func TestDoctorConfigRow(t *testing.T) {
 	rep := Run(context.Background(), &fakeEnv{}, nil,
 		WithConfigWarnings([]string{"w1", "w2"}))
@@ -241,86 +230,72 @@ func TestDoctorUnknownKindDegradesWithoutFailing(t *testing.T) {
 	}
 }
 
-// TestDoctorRolesRow covers §4.10's role-staleness row: stale when the daemon
-// would write or update a definition, OK with the "differs from every copy
-// relevo has shipped (kept as your edit)" detail when the user's own edit is
-// being kept, and OK when everything is current. A harness whose binary is not
-// on PATH gets no row, because it gets no other per-harness row either.
 func TestDoctorRolesRow(t *testing.T) {
-	claudeRoles := []string{"plan-executor", "researcher", "reviewer", "architect"}
-	relPath := func(role string) string { return ".claude/agents/" + role + ".md" }
-
+	roles := []string{"plan-executor", "researcher", "reviewer", "architect"}
+	fill := func(body func(role string) string) map[string]string {
+		m := map[string]string{}
+		for _, r := range roles {
+			m[r] = body(r)
+		}
+		return m
+	}
 	envFor := func(contents map[string]string) *fakeEnv {
-		existing := map[string]bool{}
-		files := map[string]string{}
+		existing, files := map[string]bool{}, map[string]string{}
 		for role, content := range contents {
-			p := "/fake/home/" + relPath(role)
-			existing[p] = true
-			files[p] = content
+			p := "/fake/home/.claude/agents/" + role + ".md"
+			existing[p], files[p] = true, content
 		}
-		return &fakeEnv{
-			daemonRunning: true,
-			lookPaths:     map[string]string{"claude": "/usr/bin/claude"},
-			homeDir:       "/fake/home",
-			existingFiles: existing,
-			fileContents:  files,
-		}
+		return &fakeEnv{daemonRunning: true, lookPaths: map[string]string{"claude": "/usr/bin/claude"}, homeDir: "/fake/home", existingFiles: existing, fileContents: files}
 	}
 
-	t.Run("stale", func(t *testing.T) {
-		rep := Run(context.Background(), envFor(nil), []string{"claude"})
-		c := findCheck(rep, "claude", "roles")
-		if c == nil {
-			t.Fatal("claude has its binary on PATH, so it needs a roles row")
-		}
-		if c.Severity != SevWarn {
-			t.Errorf("severity = %v, want SevWarn", c.Severity)
-		}
-		if !strings.Contains(c.Detail, "role definitions are stale") {
-			t.Errorf("detail = %q, want it to say the definitions are stale", c.Detail)
-		}
-		if c.Fix != "relevo config agents" {
-			t.Errorf("fix = %q, want relevo config agents", c.Fix)
-		}
-	})
-
-	t.Run("user edited is kept", func(t *testing.T) {
-		contents := map[string]string{}
-		for _, role := range claudeRoles {
-			contents[role] = "---\nmodel: haiku\n---\nmine\n"
-		}
-		rep := Run(context.Background(), envFor(contents), []string{"claude"})
-		c := findCheck(rep, "claude", "roles")
-		if c == nil {
-			t.Fatal("claude has its binary on PATH, so it needs a roles row")
-		}
-		if c.Severity != SevOK || c.Detail != "differs from every copy relevo has shipped (kept as your edit)" {
-			t.Errorf("row = %+v, want OK with detail %q", *c, "differs from every copy relevo has shipped (kept as your edit)")
-		}
-	})
-
-	t.Run("current", func(t *testing.T) {
-		contents := map[string]string{}
-		for _, role := range claudeRoles {
-			contents[role] = shippedDoc(t, role, "claude")
-		}
-		rep := Run(context.Background(), envFor(contents), []string{"claude"})
-		c := findCheck(rep, "claude", "roles")
-		if c == nil {
-			t.Fatal("claude has its binary on PATH, so it needs a roles row")
-		}
-		if c.Severity != SevOK || c.Detail != "up to date" {
-			t.Errorf("row = %+v, want OK and up to date", *c)
-		}
-	})
-
-	t.Run("binary off PATH has no row", func(t *testing.T) {
-		env := &fakeEnv{lookPaths: map[string]string{}}
-		rep := Run(context.Background(), env, []string{"claude"})
-		if c := findCheck(rep, "claude", "roles"); c != nil {
-			t.Errorf("roles row %+v, want none when the binary is off PATH", *c)
-		}
-	})
+	tests := []struct {
+		name       string
+		contents   func(t *testing.T) map[string]string
+		noBinary   bool
+		wantRow    bool
+		wantSev    Severity
+		wantDetail string
+		wantFix    string
+	}{
+		{name: "stale", wantRow: true, wantSev: SevWarn, wantDetail: "agent definitions are stale", wantFix: "relevo config agents"},
+		{name: "user edited is kept", wantRow: true, wantSev: SevOK, wantDetail: "differs from every copy relevo has shipped (kept as your edit)",
+			contents: func(*testing.T) map[string]string {
+				return fill(func(string) string { return "---\nmodel: haiku\n---\nmine\n" })
+			}},
+		{name: "current", wantRow: true, wantSev: SevOK, wantDetail: "up to date",
+			contents: func(t *testing.T) map[string]string {
+				return fill(func(r string) string { return shippedDoc(t, r, "claude") })
+			}},
+		{name: "binary off PATH has no row", noBinary: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := &fakeEnv{lookPaths: map[string]string{}}
+			if !tc.noBinary {
+				var contents map[string]string
+				if tc.contents != nil {
+					contents = tc.contents(t)
+				}
+				env = envFor(contents)
+			}
+			c := findCheck(Run(context.Background(), env, []string{"claude"}), "claude", "roles")
+			if !tc.wantRow {
+				if c != nil {
+					t.Errorf("roles row %+v, want none when the binary is off PATH", *c)
+				}
+				return
+			}
+			if c == nil {
+				t.Fatal("claude has its binary on PATH, so it needs a roles row")
+			}
+			if c.Severity != tc.wantSev || !strings.Contains(c.Detail, tc.wantDetail) {
+				t.Errorf("row = %+v, want severity %v containing %q", *c, tc.wantSev, tc.wantDetail)
+			}
+			if tc.wantFix != "" && c.Fix != tc.wantFix {
+				t.Errorf("fix = %q, want %q", c.Fix, tc.wantFix)
+			}
+		})
+	}
 }
 
 func TestDoctorAdoptedBindingSurvivesMissingBinary(t *testing.T) {
@@ -328,14 +303,11 @@ func TestDoctorAdoptedBindingSurvivesMissingBinary(t *testing.T) {
 		lookPaths: map[string]string{}, // binary absent
 	}
 
-	// A normal Run reports the binary it could not find.
 	normalRep := Run(context.Background(), env, []string{"claude"})
 	if findCheck(normalRep, "claude", "binary") == nil {
 		t.Fatal("normal Run must report the binary it could not find on PATH")
 	}
 
-	// An adopted pane's binary is the user's own concern: no binary row, and
-	// the role rows that binary gates stay off too.
 	adoptedRep := Run(context.Background(), env, []string{"claude"}, WithAdopted(true))
 	if c := findCheck(adoptedRep, "claude", "binary"); c != nil {
 		t.Fatalf("adopted Run must not report a binary row, got %+v", *c)
@@ -371,8 +343,6 @@ func TestDoctorUsableBuilderMissingRoleFileDoesNotBreakCompleteness(t *testing.T
 }
 
 func TestDoctorHomePathFailureReportsErrorWithoutFix(t *testing.T) {
-	// A failure resolving home directory should report SevWarn with detail
-	// explaining home could not be resolved, Fix empty, ProbeFailed true.
 	env := &fakeEnv{
 		daemonRunning: true,
 		lookPaths: map[string]string{
@@ -397,50 +367,6 @@ func TestDoctorHomePathFailureReportsErrorWithoutFix(t *testing.T) {
 	}
 	if !strings.Contains(c.Detail, "could not resolve home directory") {
 		t.Errorf("detail = %q, want containing 'could not resolve home directory'", c.Detail)
-	}
-}
-
-func TestFrontmatterModel(t *testing.T) {
-	tests := []struct {
-		name string
-		raw  string
-		want string
-	}{
-		{
-			name: "pinned model",
-			raw:  "---\nname: researcher\nmodel: haiku\n---\n\nbody\n",
-			want: "haiku",
-		},
-		{
-			name: "model with a slash",
-			raw:  "---\nmodel: openrouter/z-ai/glm-5.3-flash\n---\n",
-			want: "openrouter/z-ai/glm-5.3-flash",
-		},
-		{
-			name: "trailing whitespace trimmed",
-			raw:  "---\nmodel:   haiku   \n---\n",
-			want: "haiku",
-		},
-		{name: "no model key", raw: "---\nname: researcher\n---\n", want: ""},
-		{name: "no frontmatter", raw: "just a body\n", want: ""},
-		{name: "empty file", raw: "", want: ""},
-		{
-			name: "model after the frontmatter is not a pin",
-			raw:  "---\nname: x\n---\n\nmodel: not-a-pin\n",
-			want: "",
-		},
-		{
-			name: "unterminated frontmatter",
-			raw:  "---\nmodel: haiku\n",
-			want: "",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := frontmatterModel([]byte(tc.raw)); got != tc.want {
-				t.Errorf("frontmatterModel(%q) = %q, want %q", tc.raw, got, tc.want)
-			}
-		})
 	}
 }
 
@@ -483,7 +409,7 @@ func TestDoctorMissingRoleFileNamesTheRoleInTheFix(t *testing.T) {
 	if c.Severity != SevWarn {
 		t.Errorf("severity = %v, want warn", c.Severity)
 	}
-	want := "relevo config agents --kind claude --role researcher"
+	want := "relevo config agents --kind claude --agent researcher"
 	if c.Fix != want {
 		t.Errorf("fix = %q, want %q", c.Fix, want)
 	}
@@ -511,10 +437,6 @@ func TestDoctorReportsTheInstalledModelPin(t *testing.T) {
 }
 
 func TestDoctorOmitsModelSuffixWhenUnpinned(t *testing.T) {
-	// plan-executor.claude.md ships with no model: line at all (the pin is a
-	// researcher/reviewer worked example, not a plan-executor one), so it is
-	// the one role whose shipped copy is itself the "unpinned" fixture and
-	// therefore does not also trip the doctor's ship-drift check (step 3).
 	env := newFakeEnvForKind(t, "claude")
 	env.existingFiles = map[string]bool{
 		"/fake/home/.claude/agents/plan-executor.md": true,
@@ -539,8 +461,6 @@ func TestDoctorOmitsModelSuffixWhenUnpinned(t *testing.T) {
 	}
 }
 
-// newFakeEnvForKind is a fakeEnv where everything except the role files is
-// healthy, so a test can vary existingFiles and fileContents alone.
 func newFakeEnvForKind(t *testing.T, kind string) *fakeEnv {
 	t.Helper()
 	return &fakeEnv{
@@ -550,8 +470,7 @@ func newFakeEnvForKind(t *testing.T, kind string) *fakeEnv {
 	}
 }
 
-// agyEnv is an agy machine in good order: binary on PATH, three role files
-// present and pinning inherit. Tests perturb one thing at a time from here.
+// agyEnv is an agy machine in good order; tests perturb one thing at a time.
 func agyEnv(t *testing.T) *fakeEnv {
 	t.Helper()
 	home := "/home/u"
@@ -642,9 +561,6 @@ func TestDoctorAgyRoleWarnsOnATierPin(t *testing.T) {
 }
 
 func TestDoctorClaudeRoleNeverWarnsOnAPin(t *testing.T) {
-	// This test pins the decision that non-agy definitions are the user's to
-	// edit: claude's Role.ExpectModel is "" (spec §3.2), so neither the
-	// tier-pin branch nor the ship-drift check (round 2, #91/#94) fires here.
 	env := &fakeEnv{
 		homeDir:       "/home/u",
 		lookPaths:     map[string]string{"claude": "/usr/bin/claude"},
@@ -679,16 +595,13 @@ func TestDoctorAgyMissingRoleHasAFix(t *testing.T) {
 	report := Run(context.Background(), env, []string{"agy"})
 	c := findCheck(report, "agy", "reviewer")
 	if c == nil || c.Severity != SevWarn || c.Detail != "missing: ~/.gemini/config/agents/reviewer.md" ||
-		c.Fix != "relevo config agents --kind agy --role reviewer" {
+		c.Fix != "relevo config agents --kind agy --agent reviewer" {
 		t.Errorf("row = %+v", c)
 	}
 }
 
-// Step 3 (#91/#94), narrowed in round 2: relevo doctor warns when an
-// installed definition differs from the shipped one only on a kind whose
-// definition relevo owns outright (Role.ExpectModel set -- today, agy).
-// These four subtests exercise that on agy; the fifth exercises the
-// opposite on claude, which the gate in doctor.roleCheck excludes.
+// relevo doctor warns on drift only when Role.ExpectModel is set (today,
+// agy); the fifth subtest exercises the opposite on claude.
 func TestDoctorRoleDriftFromShipped(t *testing.T) {
 	shipped := shippedDoc(t, "researcher", "agy")
 
@@ -724,16 +637,12 @@ func TestDoctorRoleDriftFromShipped(t *testing.T) {
 		if !strings.Contains(c.Detail, "differs from the definition this relevo ships") {
 			t.Errorf("detail = %q, want it to mention shipped drift", c.Detail)
 		}
-		if c.Fix != "relevo config agents --kind agy --role researcher --force" {
+		if c.Fix != "relevo config agents --kind agy --agent researcher --force" {
 			t.Errorf("fix = %q", c.Fix)
 		}
 	})
 
 	t.Run("a tier-pin mismatch still reports the pin warning, not drift", func(t *testing.T) {
-		// agyEnv's role files are already byte-identical to the shipped
-		// copies (agyEnv/shippedDoc, above); overriding the pin necessarily
-		// makes the installed copy differ from what's shipped too, but the
-		// pin check runs first and its message is the more specific one.
 		env := agyEnv(t)
 		env.fileContents[env.homeDir+"/.gemini/config/agents/researcher.md"] = "---\nname: researcher\nmodel: pro\n---\nbody\n"
 		report := Run(context.Background(), env, []string{"agy"})
@@ -745,9 +654,6 @@ func TestDoctorRoleDriftFromShipped(t *testing.T) {
 	})
 
 	t.Run("a claude definition that differs from shipped is still OK", func(t *testing.T) {
-		// This is the test the ExpectModel gate in doctor.roleCheck is for:
-		// claude's Role.ExpectModel is "", so the installed copy is the
-		// user's to edit and doctor does not compare it against shipped.
 		env := newFakeEnvForKind(t, "claude")
 		env.existingFiles = map[string]bool{"/fake/home/.claude/agents/plan-executor.md": true}
 		env.fileContents = map[string]string{
@@ -759,47 +665,6 @@ func TestDoctorRoleDriftFromShipped(t *testing.T) {
 			t.Errorf("row = %+v, want SevOK", c)
 		}
 	})
-}
-
-func TestPinnedModelToml(t *testing.T) {
-	cases := []struct {
-		name string
-		kind string
-		raw  string
-		want string
-	}{
-		{
-			name: "codex top-level model before a table",
-			kind: "codex",
-			raw:  "# c\nmodel = \"gpt-5.6-luna\"\nmodel_reasoning_effort = \"medium\"\n[agents.x]\nmodel = \"other\"\n",
-			want: "gpt-5.6-luna",
-		},
-		{
-			name: "codex model_reasoning_effort must not match model",
-			kind: "codex",
-			raw:  "model_reasoning_effort = \"medium\"\n",
-			want: "",
-		},
-		{
-			name: "codex model inside a table is not a top-level pin",
-			kind: "codex",
-			raw:  "[agents.x]\nmodel = \"other\"\n",
-			want: "",
-		},
-		{
-			name: "claude frontmatter model",
-			kind: "claude",
-			raw:  "---\nmodel: opus\n---\n",
-			want: "opus",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := pinnedModel(tc.kind, []byte(tc.raw)); got != tc.want {
-				t.Errorf("pinnedModel(%q, ...) = %q, want %q", tc.kind, got, tc.want)
-			}
-		})
-	}
 }
 
 func TestDoctorCodexResearcherPin(t *testing.T) {
@@ -837,7 +702,7 @@ func TestDoctorCodexResearcherPin(t *testing.T) {
 		report := Run(context.Background(), env, []string{"codex"})
 		c := findCheck(report, "codex", "researcher")
 		wantDetail := "~/.codex/researcher.config.toml (model: gpt-5.6-terra) -- pins gpt-5.6-terra; relevo ships gpt-5.6-luna"
-		wantFix := "relevo config agents --kind codex --role researcher --force"
+		wantFix := "relevo config agents --kind codex --agent researcher --force"
 		if c == nil || c.Severity != SevWarn || c.Detail != wantDetail || c.Fix != wantFix {
 			t.Errorf("row = %+v, want SevWarn %q fix %q", c, wantDetail, wantFix)
 		}
@@ -857,7 +722,6 @@ func TestDoctorCodexResearcherPin(t *testing.T) {
 
 func TestDoctorChecksOnlyTheDefinitionsGiven(t *testing.T) {
 	env := newFakeEnvForKind(t, "claude")
-	// No role files installed at all.
 	env.existingFiles = map[string]bool{}
 
 	report := Run(context.Background(), env, []string{"claude"},
@@ -891,11 +755,7 @@ func TestDoctorKindAbsentFromDefinitionsKeepsEveryRow(t *testing.T) {
 	}
 }
 
-// findUsageCheck is findCheck's counterpart for the usage checks (#142):
-// those are matched by Name and a Detail substring rather than by Group,
-// since sqlite3/prices rows are global (Group ""), and findCheck above
-// already owns the name findCheck for the Group/Name lookup the rest of
-// this file uses.
+// findUsageCheck matches usage rows by Name and a Detail substring.
 func findUsageCheck(rep Report, name, detailSub string) (Check, bool) {
 	for _, c := range rep.Checks {
 		if c.Name == name && strings.Contains(c.Detail, detailSub) {
@@ -914,7 +774,7 @@ func TestUsageChecks(t *testing.T) {
 			t.Errorf("want a warn row for sqlite3: %+v", rep.Checks)
 		}
 		if !strings.Contains(c.Detail, "background wait") {
-			t.Errorf("Detail = %q, want it to say an opencode planner's reports wait for the background wait", c.Detail)
+			t.Errorf("Detail = %q, want it to say an opencode mastermind's reports wait for the background wait", c.Detail)
 		}
 		if strings.Contains(c.Detail, "pane") {
 			t.Errorf("Detail = %q, want it to name no pane", c.Detail)
@@ -946,11 +806,6 @@ func TestUsageChecks(t *testing.T) {
 	})
 }
 
-// TestExtraChecksAppended checks that WithExtraChecks appends its checks
-// verbatim at the end of the report, after every check Run itself built --
-// including the usage checks WithUsage enables (#100 step 5: cmd/relevo
-// folds relevo.ProbeServers' server rows in this way, without Run knowing
-// anything about servers.json or the network).
 func TestExtraChecksAppended(t *testing.T) {
 	env := &fakeEnv{lookPaths: map[string]string{}, existingFiles: map[string]bool{}}
 	extra := []Check{
@@ -962,9 +817,6 @@ func TestExtraChecksAppended(t *testing.T) {
 	if len(rep.Checks) == 0 {
 		t.Fatal("report has no checks")
 	}
-	// Mutation target: have WithExtraChecks prepend, or Run drop cfg.extra
-	// entirely, and this either finds "servers" somewhere other than last,
-	// or not at all.
 	last := rep.Checks[len(rep.Checks)-1]
 	if last.Name != "servers" || last.Detail != "zen: enrolled as laptop" {
 		t.Fatalf("last check = %+v, want the extra check appended after every check Run built (including usage)", last)
@@ -973,94 +825,38 @@ func TestExtraChecksAppended(t *testing.T) {
 		t.Fatal("usage's own prices check must still run alongside an extra check")
 	}
 }
+
 func TestClassifyCheck(t *testing.T) {
-	t.Run("unconfigured", func(t *testing.T) {
-		st := classify.Status{Configured: false}
-		c := ClassifyCheck(st)
-		if c.Name != "classify" {
-			t.Errorf("Name = %q, want classify", c.Name)
-		}
-		if c.Severity != SevOK {
-			t.Errorf("Severity = %v, want SevOK", c.Severity)
-		}
-		if !strings.Contains(c.Detail, "regex only (no classify block in policy.json)") {
-			t.Errorf("Detail = %q", c.Detail)
-		}
-		if c.Fix != "" {
-			t.Errorf("Fix = %q, want empty", c.Fix)
-		}
-	})
-
-	t.Run("configured with env key", func(t *testing.T) {
-		st := classify.Status{
-			Configured: true,
-			Model:      "jev-latest",
-			KeySource:  "env",
-		}
-		c := ClassifyCheck(st)
-		if c.Name != "classify" {
-			t.Errorf("Name = %q, want classify", c.Name)
-		}
-		if c.Severity != SevOK {
-			t.Errorf("Severity = %v, want SevOK", c.Severity)
-		}
-		if !strings.Contains(c.Detail, "jev-latest; key from TYPESAFE_API_KEY") {
-			t.Errorf("Detail = %q", c.Detail)
-		}
-		if !strings.HasSuffix(c.Detail, "; not passed to builders") {
-			t.Errorf("Detail %q does not end with '; not passed to builders'", c.Detail)
-		}
-		if c.Fix != "" {
-			t.Errorf("Fix = %q, want empty", c.Fix)
-		}
-	})
-
-	t.Run("configured with db key", func(t *testing.T) {
-		st := classify.Status{
-			Configured: true,
-			Model:      "jev-custom",
-			KeySource:  "db",
-		}
-		c := ClassifyCheck(st)
-		if c.Name != "classify" {
-			t.Errorf("Name = %q, want classify", c.Name)
-		}
-		if c.Severity != SevOK {
-			t.Errorf("Severity = %v, want SevOK", c.Severity)
-		}
-		if !strings.Contains(c.Detail, "jev-custom; key from the database") {
-			t.Errorf("Detail = %q", c.Detail)
-		}
-		if c.Fix != "" {
-			t.Errorf("Fix = %q, want empty", c.Fix)
-		}
-	})
-
-	t.Run("configured with missing key", func(t *testing.T) {
-		st := classify.Status{
-			Configured: true,
-			Model:      "jev-latest",
-			KeySource:  "",
-		}
-		c := ClassifyCheck(st)
-		if c.Name != "classify" {
-			t.Errorf("Name = %q, want classify", c.Name)
-		}
-		if c.Severity != SevWarn {
-			t.Errorf("Severity = %v, want SevWarn", c.Severity)
-		}
-		if !strings.Contains(c.Detail, "jev-latest configured but no classifier key; the daemon falls back to regex") {
-			t.Errorf("Detail = %q", c.Detail)
-		}
-		if !strings.Contains(c.Fix, "set TYPESAFE_API_KEY for the daemon, or store a key in the database") {
-			t.Errorf("Fix = %q", c.Fix)
-		}
-	})
+	tests := []struct {
+		name       string
+		st         classify.Status
+		wantSev    Severity
+		wantDetail string
+		wantFix    string
+	}{
+		{name: "unconfigured", st: classify.Status{Configured: false},
+			wantSev: SevOK, wantDetail: "regex only (no classify block in policy.json)"},
+		{name: "configured with env key", st: classify.Status{Configured: true, Model: "jev-latest", KeySource: "env"},
+			wantSev: SevOK, wantDetail: "jev-latest; key from TYPESAFE_API_KEY; not passed to builders"},
+		{name: "configured with db key", st: classify.Status{Configured: true, Model: "jev-custom", KeySource: "db"},
+			wantSev: SevOK, wantDetail: "jev-custom; key from the database"},
+		{name: "configured with missing key", st: classify.Status{Configured: true, Model: "jev-latest"},
+			wantSev: SevWarn, wantDetail: "jev-latest configured but no classifier key; the daemon falls back to regex",
+			wantFix: "set TYPESAFE_API_KEY for the daemon, or store a key in the database"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := ClassifyCheck(tc.st)
+			if c.Name != "classify" || c.Severity != tc.wantSev || !strings.Contains(c.Detail, tc.wantDetail) {
+				t.Errorf("row = %+v, want name classify, severity %v, detail containing %q", c, tc.wantSev, tc.wantDetail)
+			}
+			if !strings.Contains(c.Fix, tc.wantFix) {
+				t.Errorf("Fix = %q, want it to contain %q", c.Fix, tc.wantFix)
+			}
+		})
+	}
 }
 
-// TestOpencodeAllowlistRow checks the wiring (#236): the opencode branch grows
-// the external_directory row when a state root is supplied, and no other kind
-// does. Dropping the kind check in Run makes the second half fail.
 func TestOpencodeAllowlistRow(t *testing.T) {
 	const stateRoot = "/fake/home/.local/state/relevo"
 
@@ -1088,18 +884,17 @@ func TestOpencodeAllowlistRow(t *testing.T) {
 	}
 }
 
-// releaseArchiveFix builds the KindRelease fix text the way doctor.releaseFix
-// does, from this platform's own URLs, so the table row below passes on any
-// platform.
+// releaseArchiveFix builds the KindRelease fix text from this platform's
+// own URLs, so the table row below passes on any platform.
 func releaseArchiveFix(latest string) string {
 	archive, checksums := release.AssetURLs(latest, runtime.GOOS, runtime.GOARCH)
-	return fmt.Sprintf("download %s, check it against %s, and replace this relevo binary with the one inside", archive, checksums)
+	return fmt.Sprintf("relevo update (or download %s, check it against %s, and replace this relevo binary with the one inside)", archive, checksums)
 }
 
-// TestDoctorReleaseCheck walks §4.5's table through fakeEnv: every row, the
-// Fix for each install variant, and the standing promise that a stale relevo
-// is a warning, never a failure.
 func TestDoctorReleaseCheck(t *testing.T) {
+	fe := func(running, latest string, kind release.Kind) fakeEnv {
+		return fakeEnv{releaseRunning: running, releaseLatest: latest, releaseOK: true, releaseKind: kind}
+	}
 	tests := []struct {
 		name         string
 		env          fakeEnv
@@ -1107,88 +902,15 @@ func TestDoctorReleaseCheck(t *testing.T) {
 		wantDetail   string
 		wantFix      string
 	}{
-		{
-			name:         "no cache: not checked",
-			env:          fakeEnv{},
-			wantSeverity: SevOK,
-			wantDetail:   "not checked",
-		},
-		{
-			name: "unparseable running side: not checked",
-			env: fakeEnv{
-				releaseRunning: "(devel)", releaseLatest: "v0.7.0",
-				releaseOK: true, releaseKind: release.KindLocalBuild,
-			},
-			wantSeverity: SevOK,
-			wantDetail:   "not checked",
-		},
-		{
-			name: "unparseable latest side: not checked",
-			env: fakeEnv{
-				releaseRunning: "v0.6.0", releaseLatest: "not-a-tag",
-				releaseOK: true, releaseKind: release.KindGoInstall,
-			},
-			wantSeverity: SevOK,
-			wantDetail:   "not checked",
-		},
-		{
-			name: "unknown install kind: not checked",
-			env: fakeEnv{
-				releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
-				releaseOK: true, releaseKind: release.KindUnknown,
-			},
-			wantSeverity: SevOK,
-			wantDetail:   "not checked",
-		},
-		{
-			name: "local build: nothing to update to",
-			env: fakeEnv{
-				releaseRunning: "v0.7.0-8-gbd8aed0", releaseLatest: "v0.8.0",
-				releaseOK: true, releaseKind: release.KindLocalBuild,
-			},
-			wantSeverity: SevOK,
-			wantDetail:   "local build v0.7.0-8-gbd8aed0; nothing to update to",
-		},
-		{
-			name: "latest not newer: current",
-			env: fakeEnv{
-				releaseRunning: "v0.7.0", releaseLatest: "v0.7.0",
-				releaseOK: true, releaseKind: release.KindGoInstall,
-			},
-			wantSeverity: SevOK,
-			wantDetail:   "v0.7.0 is current",
-		},
-		{
-			name: "behind a go install: go install",
-			env: fakeEnv{
-				releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
-				releaseOK: true, releaseKind: release.KindGoInstall,
-			},
-			wantSeverity: SevWarn,
-			wantDetail:   "v0.6.0 is behind v0.7.0",
-			wantFix:      "go install github.com/fuad-daoud/relevo/cmd/relevo@latest",
-		},
-		{
-			// The release row's fix is built from this platform's own URLs,
-			// exactly the way doctor.releaseFix builds it.
-			name: "behind a release binary: archive and checksums",
-			env: fakeEnv{
-				releaseRunning: "v0.8.0", releaseLatest: "v0.9.0",
-				releaseOK: true, releaseKind: release.KindRelease,
-			},
-			wantSeverity: SevWarn,
-			wantDetail:   "v0.8.0 is behind v0.9.0",
-			wantFix:      releaseArchiveFix("v0.9.0"),
-		},
-		{
-			name: "release binary at the latest tag: current",
-			env: fakeEnv{
-				releaseRunning: "v0.9.0", releaseLatest: "v0.9.0",
-				releaseOK: true, releaseKind: release.KindRelease,
-			},
-			wantSeverity: SevOK,
-			wantDetail:   "v0.9.0 is current",
-		},
+		{name: "no cache: not checked", env: fakeEnv{}, wantSeverity: SevOK, wantDetail: "not checked"},
+		{name: "unparseable running side: not checked", env: fe("(devel)", "v0.7.0", release.KindLocalBuild), wantSeverity: SevOK, wantDetail: "not checked"},
+		{name: "unparseable latest side: not checked", env: fe("v0.6.0", "not-a-tag", release.KindGoInstall), wantSeverity: SevOK, wantDetail: "not checked"},
+		{name: "unknown install kind: not checked", env: fe("v0.6.0", "v0.7.0", release.KindUnknown), wantSeverity: SevOK, wantDetail: "not checked"},
+		{name: "local build: nothing to update to", env: fe("v0.7.0-8-gbd8aed0", "v0.8.0", release.KindLocalBuild), wantSeverity: SevOK, wantDetail: "local build v0.7.0-8-gbd8aed0; nothing to update to"},
+		{name: "latest not newer: current", env: fe("v0.7.0", "v0.7.0", release.KindGoInstall), wantSeverity: SevOK, wantDetail: "v0.7.0 is current"},
+		{name: "behind a go install: go install", env: fe("v0.6.0", "v0.7.0", release.KindGoInstall), wantSeverity: SevWarn, wantDetail: "v0.6.0 is behind v0.7.0", wantFix: "go install github.com/fuad-daoud/relevo/cmd/relevo@latest"},
+		{name: "behind a release binary: archive and checksums", env: fe("v0.8.0", "v0.9.0", release.KindRelease), wantSeverity: SevWarn, wantDetail: "v0.8.0 is behind v0.9.0", wantFix: releaseArchiveFix("v0.9.0")},
+		{name: "release binary at the latest tag: current", env: fe("v0.9.0", "v0.9.0", release.KindRelease), wantSeverity: SevOK, wantDetail: "v0.9.0 is current"},
 	}
 
 	for _, tc := range tests {
@@ -1216,9 +938,6 @@ func TestDoctorReleaseCheck(t *testing.T) {
 	}
 }
 
-// TestReleaseFix is the pure fix-text table: the release row is the literal
-// string with the linux/amd64 URLs written out in full, and the kinds with no
-// update path return "".
 func TestReleaseFix(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1234,7 +953,7 @@ func TestReleaseFix(t *testing.T) {
 			latest: "v0.9.0",
 			goos:   "linux",
 			goarch: "amd64",
-			want:   "download https://github.com/fuad-daoud/relevo/releases/download/v0.9.0/relevo_v0.9.0_linux_amd64.tar.gz, check it against https://github.com/fuad-daoud/relevo/releases/download/v0.9.0/checksums.txt, and replace this relevo binary with the one inside",
+			want:   "relevo update (or download https://github.com/fuad-daoud/relevo/releases/download/v0.9.0/relevo_v0.9.0_linux_amd64.tar.gz, check it against https://github.com/fuad-daoud/relevo/releases/download/v0.9.0/checksums.txt, and replace this relevo binary with the one inside)",
 		},
 		{
 			name:   "go install keeps its command",
@@ -1271,9 +990,6 @@ func TestReleaseFix(t *testing.T) {
 	}
 }
 
-// TestDoctorDaemonVersionStates covers the four states of §4.8's daemon row
-// while the daemon is running (#371): no record, a refused binary, a version
-// behind the CLI, and equal.
 func TestDoctorDaemonVersionStates(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -1338,8 +1054,6 @@ func TestDoctorDaemonVersionStates(t *testing.T) {
 	}
 }
 
-// TestDoctorDaemonRowsUnchanged pins the two rows #371 keeps byte-identical: a
-// stopped daemon and a failed probe.
 func TestDoctorDaemonRowsUnchanged(t *testing.T) {
 	stopped := findCheck(Run(context.Background(), &fakeEnv{daemonRunning: false}, nil), "", "daemon")
 	if stopped == nil {
@@ -1358,11 +1072,6 @@ func TestDoctorDaemonRowsUnchanged(t *testing.T) {
 	}
 }
 
-// TestCustomRoleRow pins §3.6: a definition in scope that relevo does not ship
-// gets a row of its own -- SevWarn with the by-hand fix when the file is
-// missing, SevOK with "(custom)" when it is there -- while a shipped
-// definition beside it keeps its own row and its own `relevo config agents`
-// fix.
 func TestCustomRoleRow(t *testing.T) {
 	const customPath = "/fake/home/.claude/agents/my-executor.md"
 
@@ -1383,7 +1092,7 @@ func TestCustomRoleRow(t *testing.T) {
 		if !strings.Contains(c.Detail, "(custom)") {
 			t.Errorf("detail = %q, want it marked custom", c.Detail)
 		}
-		wantFix := "install your agent definition at ~/.claude/agents/my-executor.md; relevo never installs a custom definition"
+		wantFix := "run relevo config agents --kind claude, or install your agent definition at ~/.claude/agents/my-executor.md"
 		if c.Fix != wantFix {
 			t.Errorf("fix = %q, want %q", c.Fix, wantFix)
 		}
@@ -1392,7 +1101,7 @@ func TestCustomRoleRow(t *testing.T) {
 		if shipped == nil || shipped.Severity != SevWarn {
 			t.Fatalf("shipped plan-executor row = %+v, want a missing-file warn", shipped)
 		}
-		if shipped.Fix != "relevo config agents --kind claude --role plan-executor" {
+		if shipped.Fix != "relevo config agents --kind claude --agent plan-executor" {
 			t.Errorf("shipped fix = %q, want relevo config agents", shipped.Fix)
 		}
 		if strings.Contains(shipped.Detail, "(custom)") {

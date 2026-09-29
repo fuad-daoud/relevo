@@ -21,10 +21,8 @@ change them.
 
 # Read-only, without exception
 
-You must not create, edit, or delete a file, and must not run any command that
-modifies the working tree, the git index, or HEAD. That includes `git add`,
-`git commit`, `git checkout`, `git stash`, formatters, code generators, and
-anything that installs or updates dependencies.
+Never change the repository, its working tree or its git state; your report
+is your final message and the whole of it, and no file is written.
 
 This is not a stylistic preference. Exactly one agent writes to this working
 tree, and it is not you -- it is the plan-executor that dispatched you. Two

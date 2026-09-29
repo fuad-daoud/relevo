@@ -3,7 +3,6 @@ package harness
 import (
 	"errors"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -35,8 +34,7 @@ func TestParseTier(t *testing.T) {
 			t.Errorf("ParseTier(%q) expected error, got nil", in)
 			continue
 		}
-		wantMsg := `unknown tier `
-		if !strings.Contains(err.Error(), wantMsg) || !strings.Contains(err.Error(), "known: harness, read, edit, yolo") {
+		if !strings.Contains(err.Error(), "unknown tier ") || !strings.Contains(err.Error(), "known: harness, read, edit, yolo") {
 			t.Errorf("ParseTier(%q) error = %q, want it to name known set", in, err.Error())
 		}
 	}
@@ -72,7 +70,6 @@ func TestTierOrder(t *testing.T) {
 		t.Errorf("TierRead.Above(TierRead) = true, want false")
 	}
 
-	// Above returns false when either side is harness.
 	harnessCases := [][2]Tier{
 		{TierHarness, TierHarness},
 		{TierHarness, TierRead},
@@ -97,25 +94,21 @@ func TestPermissionArgsTable(t *testing.T) {
 		wantErr    error
 		wantSubstr string
 	}{
-		// claude
 		{"claude", TierHarness, nil, nil, ""},
 		{"claude", TierRead, []string{"--permission-mode", "plan"}, nil, ""},
 		{"claude", TierEdit, []string{"--permission-mode", "acceptEdits"}, nil, ""},
 		{"claude", TierYolo, []string{"--dangerously-skip-permissions"}, nil, ""},
 
-		// agy
 		{"agy", TierHarness, nil, nil, ""},
 		{"agy", TierRead, []string{"--mode", "plan"}, nil, ""},
 		{"agy", TierEdit, []string{"--mode", "accept-edits"}, nil, ""},
 		{"agy", TierYolo, []string{"--dangerously-skip-permissions"}, nil, ""},
 
-		// opencode
 		{"opencode", TierHarness, nil, nil, ""},
 		{"opencode", TierRead, nil, ErrTierUnsupported, ""},
 		{"opencode", TierEdit, nil, ErrTierUnsupported, ""},
 		{"opencode", TierYolo, []string{"--auto"}, nil, ""},
 
-		// codex
 		{"codex", TierHarness, nil, nil, ""},
 		{"codex", TierRead, nil, ErrTierUnsupported, "writable_roots"},
 		{"codex", TierEdit, []string{"-s", "workspace-write", "-c", StatePlaceholder}, nil, ""},
@@ -136,13 +129,13 @@ func TestPermissionArgsTable(t *testing.T) {
 				if tt.wantSubstr != "" && !strings.Contains(err.Error(), tt.wantSubstr) {
 					t.Errorf("PermissionArgs(%s) error = %q, want containing %q", tt.tier, err.Error(), tt.wantSubstr)
 				}
-			} else {
-				if err != nil {
-					t.Fatalf("PermissionArgs(%s) unexpected error: %v", tt.tier, err)
-				}
-				if !reflect.DeepEqual(args, tt.wantArgs) {
-					t.Errorf("PermissionArgs(%s) = %v, want %v", tt.tier, args, tt.wantArgs)
-				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("PermissionArgs(%s) unexpected error: %v", tt.tier, err)
+			}
+			if !reflect.DeepEqual(args, tt.wantArgs) {
+				t.Errorf("PermissionArgs(%s) = %v, want %v", tt.tier, args, tt.wantArgs)
 			}
 		})
 	}
@@ -158,8 +151,6 @@ func TestLaunchAppliesTier(t *testing.T) {
 		t.Fatal("RoleByName(\"reviewer\") not found")
 	}
 
-	// claude builder at edit -> Print contains --permission-mode acceptEdits
-	// after --agent plan-executor and before extra
 	c, _ := Lookup("claude")
 	extra := []string{"--some-flag"}
 	cl, err := c.Launch("prov", "m/x", extra, builder, TierEdit)
@@ -172,7 +163,6 @@ func TestLaunchAppliesTier(t *testing.T) {
 		t.Errorf("claude Print = %v, want %v", cl.Print, wantClaudePrint)
 	}
 
-	// agy reviewer at read -> --mode plan in the print form
 	a, _ := Lookup("agy")
 	al, err := a.Launch("prov", "m/x", nil, reviewer, TierRead)
 	if err != nil {
@@ -182,7 +172,6 @@ func TestLaunchAppliesTier(t *testing.T) {
 		t.Errorf("agy Print = %v, want the adjacent pair --mode plan", al.Print)
 	}
 
-	// opencode at yolo -> --auto in the print form
 	o, _ := Lookup("opencode")
 	ol, err := o.Launch("prov", "m/x", nil, builder, TierYolo)
 	if err != nil {
@@ -222,7 +211,7 @@ func TestLaunchHarnessTierUnchanged(t *testing.T) {
 			provider:  "prov",
 			model:     "m/x",
 			extra:     nil,
-			wantPrint: []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--standalone"},
+			wantPrint: []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--thinking", "--standalone"},
 		},
 	}
 
@@ -244,7 +233,6 @@ func TestLaunchHarnessTierUnchanged(t *testing.T) {
 func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 	builder, _ := RoleByName("builder")
 
-	// agy extra --dangerously-skip-permissions at edit -> ErrExtraArgsPermission naming it
 	agy, _ := Lookup("agy")
 	_, err := agy.Launch("prov", "m/x", []string{"--dangerously-skip-permissions"}, builder, TierEdit)
 	if !errors.Is(err, ErrExtraArgsPermission) {
@@ -254,7 +242,6 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 		t.Errorf("error %q should name --dangerously-skip-permissions", err.Error())
 	}
 
-	// same extra at harness -> ok and the flag present once
 	l, err := agy.Launch("prov", "m/x", []string{"--dangerously-skip-permissions"}, builder, TierHarness)
 	if err != nil {
 		t.Fatalf("agy Launch harness with extra perm flag unexpected error: %v", err)
@@ -269,7 +256,6 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 		t.Errorf("flag --dangerously-skip-permissions present %d times, want 1", count)
 	}
 
-	// claude extra --permission-mode=plan (equals form) at read -> refused
 	claude, _ := Lookup("claude")
 	_, err = claude.Launch("prov", "m/x", []string{"--permission-mode=plan"}, builder, TierRead)
 	if !errors.Is(err, ErrExtraArgsPermission) {
@@ -279,7 +265,6 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 		t.Errorf("error %q should name --permission-mode=plan", err.Error())
 	}
 
-	// codex extra -s read-only at edit -> refused
 	codex, _ := Lookup("codex")
 	_, err = codex.Launch("prov", "m/x", []string{"-s", "read-only"}, builder, TierEdit)
 	if !errors.Is(err, ErrExtraArgsPermission) {
@@ -289,30 +274,11 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 		t.Errorf("error %q should name -s", err.Error())
 	}
 
-	// same extra at harness -> ok, extra passed through
 	cl, err := codex.Launch("prov", "m/x", []string{"-s", "read-only"}, builder, TierHarness)
 	if err != nil {
 		t.Fatalf("codex Launch harness with extra perm flag unexpected error: %v", err)
 	}
 	if len(cl.Print) < 2 || cl.Print[len(cl.Print)-2] != "-s" || cl.Print[len(cl.Print)-1] != "read-only" {
 		t.Errorf("codex Print should end with -s read-only: %v", cl.Print)
-	}
-}
-
-func TestDenialPatternsSetOnEveryKind(t *testing.T) {
-	for _, h := range All() {
-		if len(h.DenialPatterns) < 1 {
-			t.Errorf("harness %q: len(DenialPatterns) = %d, want >= 1", h.Kind, len(h.DenialPatterns))
-		}
-	}
-}
-
-func TestDenialPatternsCompile(t *testing.T) {
-	for _, h := range All() {
-		for _, pat := range h.DenialPatterns {
-			if _, err := regexp.Compile(pat); err != nil {
-				t.Errorf("harness %q: pattern %q failed to compile: %v", h.Kind, pat, err)
-			}
-		}
 	}
 }

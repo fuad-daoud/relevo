@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-func testPrices() Prices {
-	return Prices{AsOf: "2026-09-18", Models: map[string]ModelPrice{
-		// USD per million tokens. Round numbers so the sums are exact.
-		"anthropic/claude-sonnet-5": {In: 3, CacheRead: 0.3, CacheWrite: 3.75, Out: 15},
-		"google/gemini-3.8-flash":   {In: 0.5, CacheRead: 0.05, CacheWrite: 0, Out: 2},
-	}}
-}
-
 func TestTokensArithmetic(t *testing.T) {
 	a := Tokens{In: 10, CacheRead: 20, CacheWrite: 30, Out: 40}
 	b := Tokens{In: 1, CacheRead: 2, CacheWrite: 3, Out: 4}
@@ -23,7 +15,6 @@ func TestTokensArithmetic(t *testing.T) {
 	if got.Total() != 110 {
 		t.Errorf("Total = %d, want 110", got.Total())
 	}
-	// 22 cache-read of 66 prompt tokens.
 	if r := got.CacheRatio(); r < 0.333 || r > 0.334 {
 		t.Errorf("CacheRatio = %v, want 1/3", r)
 	}
@@ -32,7 +23,26 @@ func TestTokensArithmetic(t *testing.T) {
 	}
 }
 
-func TestFoldNoSamplesIsUnknown(t *testing.T) {
+func TestFold(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{"no samples is unknown", foldNoSamples},
+		{"all measured", foldAllMeasured},
+		{"estimates from prices", foldEstimatesFromPrices},
+		{"mixed measured and estimated", foldMixedMeasuredAndEstimated},
+		{"unpriced model is unknown, never zero", foldUnpricedModelIsUnknown},
+		{"picks the model with the most output", foldPicksModelWithMostOutput},
+		{"carries the plan flag", foldCarriesPlanFlag},
+		{"a negative count is clamped to zero and noted", foldNegativeCountIsClamped},
+	}
+	for _, c := range cases {
+		t.Run(c.name, c.run)
+	}
+}
+
+func foldNoSamples(t *testing.T) {
 	u := Fold(nil, testPrices(), false, "no stream")
 	if u.Cost.Basis != Unknown || u.Samples != 0 || u.Note != "no stream" {
 		t.Errorf("Fold(nil) = %+v", u)
@@ -42,7 +52,7 @@ func TestFoldNoSamplesIsUnknown(t *testing.T) {
 	}
 }
 
-func TestFoldAllMeasured(t *testing.T) {
+func foldAllMeasured(t *testing.T) {
 	s := []Sample{
 		{Provider: "anthropic", Model: "claude-sonnet-5", Tokens: Tokens{In: 100, Out: 10}, USD: 0.02, HasCost: true},
 		{Provider: "anthropic", Model: "claude-sonnet-5", Tokens: Tokens{In: 50, Out: 5}, USD: 0.01, HasCost: true},
@@ -65,20 +75,19 @@ func TestFoldAllMeasured(t *testing.T) {
 	}
 }
 
-func TestFoldEstimatesFromPrices(t *testing.T) {
+func foldEstimatesFromPrices(t *testing.T) {
 	s := []Sample{{Provider: "anthropic", Model: "claude-sonnet-5",
 		Tokens: Tokens{In: 1_000_000, CacheRead: 1_000_000, CacheWrite: 1_000_000, Out: 1_000_000}}}
 	u := Fold(s, testPrices(), false, "")
 	if u.Cost.Basis != Estimated {
 		t.Fatalf("basis = %q, want estimated", u.Cost.Basis)
 	}
-	// 3 + 0.3 + 3.75 + 15
-	if u.Cost.USD < 22.049 || u.Cost.USD > 22.051 {
+	if u.Cost.USD < 22.049 || u.Cost.USD > 22.051 { // 3 + 0.3 + 3.75 + 15
 		t.Errorf("USD = %v, want 22.05", u.Cost.USD)
 	}
 }
 
-func TestFoldMixedMeasuredAndEstimated(t *testing.T) {
+func foldMixedMeasuredAndEstimated(t *testing.T) {
 	s := []Sample{
 		{Provider: "anthropic", Model: "claude-sonnet-5", Tokens: Tokens{In: 1_000_000}, USD: 5, HasCost: true},
 		{Provider: "anthropic", Model: "claude-sonnet-5", Tokens: Tokens{In: 1_000_000}},
@@ -92,7 +101,7 @@ func TestFoldMixedMeasuredAndEstimated(t *testing.T) {
 	}
 }
 
-func TestFoldUnpricedModelIsUnknownNeverZero(t *testing.T) {
+func foldUnpricedModelIsUnknown(t *testing.T) {
 	s := []Sample{{Provider: "google", Model: "gemini-9-ultra", Tokens: Tokens{In: 500, Out: 20}}}
 	u := Fold(s, testPrices(), false, "")
 	if u.Cost.Basis != Unknown {
@@ -109,7 +118,7 @@ func TestFoldUnpricedModelIsUnknownNeverZero(t *testing.T) {
 	}
 }
 
-func TestFoldPicksModelWithMostOutput(t *testing.T) {
+func foldPicksModelWithMostOutput(t *testing.T) {
 	s := []Sample{
 		{Provider: "anthropic", Model: "claude-sonnet-5", Tokens: Tokens{Out: 10}, USD: 1, HasCost: true},
 		{Provider: "anthropic", Model: "claude-opus-5", Tokens: Tokens{Out: 100}, USD: 1, HasCost: true},
@@ -124,7 +133,7 @@ func TestFoldPicksModelWithMostOutput(t *testing.T) {
 	}
 }
 
-func TestFoldCarriesPlanFlag(t *testing.T) {
+func foldCarriesPlanFlag(t *testing.T) {
 	s := []Sample{{Provider: "anthropic", Model: "claude-sonnet-5", Tokens: Tokens{In: 1}, USD: 0, HasCost: true}}
 	u := Fold(s, Prices{}, true, "")
 	if !u.Cost.Plan {
@@ -135,7 +144,7 @@ func TestFoldCarriesPlanFlag(t *testing.T) {
 	}
 }
 
-func TestFoldNegativeCountIsZeroAndNoted(t *testing.T) {
+func foldNegativeCountIsClamped(t *testing.T) {
 	s := []Sample{{Provider: "anthropic", Model: "claude-sonnet-5", Tokens: Tokens{In: -5, Out: 3}, USD: 1, HasCost: true}}
 	u := Fold(s, Prices{}, false, "")
 	if u.Tokens.In != 0 || u.Tokens.Out != 3 {

@@ -3,14 +3,21 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func TestDefaultWaitRound(t *testing.T) {
+	t.Parallel()
+
 	t.Run("no entries falls back to b.Round", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		if got := DefaultWaitRound(b, nil); got != 1 {
@@ -21,7 +28,7 @@ func TestDefaultWaitRound(t *testing.T) {
 	t.Run("an open round's plan entry is the default", func(t *testing.T) {
 		b := store.Binding{Round: 3}
 		entries := []store.LogEntry{
-			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan},
+			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 		}
 		if got := DefaultWaitRound(b, entries); got != 3 {
 			t.Errorf("DefaultWaitRound = %d, want 3", got)
@@ -31,20 +38,30 @@ func TestDefaultWaitRound(t *testing.T) {
 	t.Run("after a close, the newest planned round wins over b.Round", func(t *testing.T) {
 		b := store.Binding{Round: 4}
 		entries := []store.LogEntry{
-			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan},
-			{Round: 3, Direction: store.DirToPlanner, Kind: store.KindReport},
+			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt},
+			{Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport},
 		}
 		if got := DefaultWaitRound(b, entries); got != 3 {
 			t.Errorf("DefaultWaitRound = %d, want 3", got)
 		}
 	})
 
+	t.Run("a legacy plan entry still names the round", func(t *testing.T) {
+		b := store.Binding{Round: 4}
+		entries := []store.LogEntry{
+			{Round: 2, Direction: store.DirToBuilder, Kind: store.Kind("plan")},
+		}
+		if got := DefaultWaitRound(b, entries); got != 2 {
+			t.Errorf("DefaultWaitRound = %d, want 2 (the legacy plan entry counts)", got)
+		}
+	})
+
 	t.Run("a nudge is not a send", func(t *testing.T) {
 		b := store.Binding{Round: 4}
 		entries := []store.LogEntry{
-			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan},
-			{Round: 3, Direction: store.DirToPlanner, Kind: store.KindReport},
-			{Round: 4, Direction: store.DirToBuilder, Kind: store.KindPlan, Note: nudgeNote},
+			{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt},
+			{Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport},
+			{Round: 4, Direction: store.DirToBuilder, Kind: store.KindPrompt, Note: nudgeNote},
 		}
 		if got := DefaultWaitRound(b, entries); got != 3 {
 			t.Errorf("DefaultWaitRound = %d, want 3 (the round-4 entry is a nudge, not a send)", got)
@@ -53,12 +70,14 @@ func TestDefaultWaitRound(t *testing.T) {
 }
 
 func TestWaitOutcome(t *testing.T) {
+	t.Parallel()
+
 	noQuestion := mapQuestion(nil)
 
 	t.Run("a marked close is WaitClosed", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: ""},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: ""},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
@@ -70,7 +89,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("marked report with Outcome: halted is WaitHalted (5)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: OutcomeHalted},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: reporttail.OutcomeHalted},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitHalted, Line: "/x/001-report.md", Done: true}
@@ -82,7 +101,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("unmarked with Outcome: blocked is WaitHalted (5)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: "unmarked", Outcome: OutcomeBlocked},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "unmarked", Outcome: reporttail.OutcomeBlocked},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitHalted, Line: "/x/001-report.md", Done: true}
@@ -94,7 +113,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("marked done is WaitClosed (0)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: OutcomeDone},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: reporttail.OutcomeDone},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
@@ -106,7 +125,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("marked unstructured is WaitClosed (0)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: OutcomeUnstructured},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: reporttail.OutcomeUnstructured},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
@@ -118,7 +137,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("deferred is WaitClosed (0)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: OutcomeDeferred},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: reporttail.OutcomeDeferred},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
@@ -130,7 +149,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("unmarked is WaitUnmarked with the report path", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: "unmarked"},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "unmarked"},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitUnmarked, Line: "/x/001-report.md", Done: true}
@@ -142,7 +161,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("scraped is WaitUnmarked with the report path", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: "scraped"},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "scraped"},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitUnmarked, Line: "/x/001-report.md", Done: true}
@@ -154,7 +173,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("noreport is WaitUnmarked with a dash", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: "noreport"},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "noreport"},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitUnmarked, Line: "-", Done: true}
@@ -186,7 +205,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("active with an open, sent round and no report is not done", func(t *testing.T) {
 		b := store.Binding{Round: 1, State: store.StateActive}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+			{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		if got.Done {
@@ -194,10 +213,21 @@ func TestWaitOutcome(t *testing.T) {
 		}
 	})
 
+	t.Run("active with a legacy plan entry is still open, not never-sent", func(t *testing.T) {
+		b := store.Binding{Round: 1, State: store.StateActive}
+		entries := []store.LogEntry{
+			{Round: 1, Direction: store.DirToBuilder, Kind: store.Kind("plan")},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		if got.Done || got.Code == WaitNotStarted {
+			t.Errorf("WaitOutcome = %+v, want the legacy round read as open", got)
+		}
+	})
+
 	t.Run("DONE with a report for the asked round: the report wins", func(t *testing.T) {
 		b := store.Binding{Round: 2, State: store.StateDone}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: ""},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: ""},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
@@ -209,7 +239,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("broken after a clean close, asked for the closed round, still reports the close", func(t *testing.T) {
 		b := store.Binding{Round: 2, State: store.StateBroken}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: ""},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: ""},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
@@ -221,7 +251,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("the same broken binding asked for the next, unsent round needs a human", func(t *testing.T) {
 		b := store.Binding{Round: 2, State: store.StateBroken}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: ""},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: ""},
 		}
 		got := WaitOutcome(b, entries, 2, noQuestion)
 		if got.Code != WaitNeedsYou || !got.Done {
@@ -238,15 +268,15 @@ func manualSent(t *testing.T, rt Runtime, name, cwd string) store.Binding {
 	b := store.Binding{
 		Name: name, CWD: cwd, Round: 1, State: store.StateActive,
 		RoundStartedAt: rt.Now().UTC(),
-		Planner:        store.Endpoint{PaneID: "w2:p3"},
+		MasterMind:     store.Endpoint{PaneID: "w2:p3"},
 		Builder:        store.Endpoint{PaneID: "w2:p4"},
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save %s: %v", name, err)
 	}
 	if err := rt.Store.AppendLog(name, store.LogEntry{
-		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan,
-		Path: rt.Store.PlanPath(name, 1), Confirmed: true,
+		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+		Path: rt.Store.PromptPath(name, 1), Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog %s: %v", name, err)
 	}
@@ -254,13 +284,15 @@ func manualSent(t *testing.T, rt Runtime, name, cwd string) store.Binding {
 }
 
 func TestWaitAnyReturnsTheFirstThatCloses(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	manualSent(t, rt, "first", "/repo/first")
 	manualSent(t, rt, "second", "/repo/second")
 
 	reportPath := rt.Store.ReportPath("second", 1)
 	if err := rt.Store.AppendLog("second", store.LogEntry{
-		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 		Path: reportPath, Payload: "done",
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
@@ -279,6 +311,8 @@ func TestWaitAnyReturnsTheFirstThatCloses(t *testing.T) {
 }
 
 func TestWaitNamesUnknownBindingIsAnError(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -291,10 +325,12 @@ func TestWaitNamesUnknownBindingIsAnError(t *testing.T) {
 }
 
 func TestWaitReturnsAtOnceWhenAlreadyClosed(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	if err := rt.Store.AppendLog("webshop", store.LogEntry{
-		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 		Path: reportPath, Payload: "done",
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
@@ -315,6 +351,8 @@ func TestWaitReturnsAtOnceWhenAlreadyClosed(t *testing.T) {
 }
 
 func TestWaitGoneWhenUnboundMidWait(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	calls := 0
@@ -339,6 +377,8 @@ func TestWaitGoneWhenUnboundMidWait(t *testing.T) {
 }
 
 func TestWaitTimesOut(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	tick := 0
@@ -365,6 +405,8 @@ func TestWaitTimesOut(t *testing.T) {
 }
 
 func TestWaitNotStartedReturnsAtOnce(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	// A binding that was never sent: no log entries at all.
@@ -401,6 +443,8 @@ func TestWaitNotStartedReturnsAtOnce(t *testing.T) {
 }
 
 func TestWaitExplicitUnsentRoundReturnsAtOnce(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -435,10 +479,12 @@ func TestWaitExplicitUnsentRoundReturnsAtOnce(t *testing.T) {
 }
 
 func TestWaitDefaultRoundIsTheNewestPlanned(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	if err := rt.Store.AppendLog("webshop", store.LogEntry{
-		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		TS: rt.Now().UTC(), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 		Path: reportPath, Payload: "done",
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
@@ -467,6 +513,8 @@ func TestWaitDefaultRoundIsTheNewestPlanned(t *testing.T) {
 // with a queued report. Wait prints the outcome and then the report text, and
 // marks it delivered with route "wait".
 func TestWaitDeliversThePendingReport(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
@@ -485,7 +533,7 @@ func TestWaitDeliversThePendingReport(t *testing.T) {
 	if res.DeliverErr != nil {
 		t.Errorf("DeliverErr = %v, want nil", res.DeliverErr)
 	}
-	if _, still, err := rt.Store.PendingForPlanner("webshop"); err != nil || still {
+	if _, still, err := rt.Store.PendingForMasterMind("webshop"); err != nil || still {
 		t.Errorf("the report must be delivered (still pending=%v err=%v)", still, err)
 	}
 	entries, err := rt.Store.ReadLog("webshop")
@@ -501,6 +549,8 @@ func TestWaitDeliversThePendingReport(t *testing.T) {
 // TestWaitPeekLeavesTheReportPending: --peek reports the outcome only and
 // leaves the entry pending (§4.1).
 func TestWaitPeekLeavesTheReportPending(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
@@ -516,7 +566,96 @@ func TestWaitPeekLeavesTheReportPending(t *testing.T) {
 	if res.Payload != "" {
 		t.Errorf("Payload = %q, want nothing delivered with --peek", res.Payload)
 	}
-	if _, still, err := rt.Store.PendingForPlanner("webshop"); err != nil || !still {
+	if _, still, err := rt.Store.PendingForMasterMind("webshop"); err != nil || !still {
 		t.Errorf("--peek must leave the entry pending (still pending=%v err=%v)", still, err)
+	}
+}
+
+// seedTwoRounds seeds an active binding with an undelivered round-1 report, a
+// sent round 2 and its report. It is the fixture #433 is about: round 1's
+// delivery failed, so it is still pending when round 2 closes.
+func seedTwoRounds(t *testing.T, rt Runtime) (round1Path, round2Path string) {
+	t.Helper()
+	dir := t.TempDir()
+	round1Path = filepath.Join(dir, "001-report.md")
+	round2Path = filepath.Join(dir, "002-report.md")
+	if err := os.WriteFile(round1Path, []byte("round 1 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 1 report: %v", err)
+	}
+	if err := os.WriteFile(round2Path, []byte("round 2 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 2 report: %v", err)
+	}
+
+	b := store.Binding{
+		Name: "webshop", CWD: "/repo/webshop", Round: 2, State: store.StateActive,
+		MasterMind: store.Endpoint{Kind: "claude", SessionID: "sess"}, MasterMindID: "pl_aaaaaaaabbbb",
+		Builder: store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		for _, e := range []store.LogEntry{
+			{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: rt.Store.PromptPath("webshop", 1), Confirmed: true},
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "round 1 report", Path: round1Path, Confirmed: false},
+			{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: rt.Store.PromptPath("webshop", 2), Confirmed: true},
+			{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "round 2 report", Path: round2Path, Confirmed: false},
+		} {
+			if err := tx.AppendLog("webshop", e); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed two rounds: %v", err)
+	}
+	return round1Path, round2Path
+}
+
+// TestWaitDeliversTheWaitedRoundAfterAFailedOne is #433's regression: round 1's
+// report was never delivered, round 2 then closed. Wait must print round 2's
+// outcome line and round 2's report text last, carry round 1's under its own
+// header, name round 2 in Round, and leave nothing pending.
+func TestWaitDeliversTheWaitedRoundAfterAFailedOne(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	round1Path, round2Path := seedTwoRounds(t, rt)
+
+	name, res, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Timeout: time.Minute, Interval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if name != "webshop" || res.Code != WaitClosed || !res.Done {
+		t.Fatalf("Wait = (%q, %+v), want the seeded round closed", name, res)
+	}
+	if res.Line != round2Path {
+		t.Errorf("Line = %q, want round 2's report path %q", res.Line, round2Path)
+	}
+	if res.Round != 2 {
+		t.Errorf("Round = %d, want 2", res.Round)
+	}
+	if !strings.HasSuffix(res.Payload, "round 2 body\n") {
+		t.Errorf("Payload does not end with round 2's report text:\n%s", res.Payload)
+	}
+	header := fmt.Sprintf("── round 1: not delivered earlier (%s) ──", round1Path)
+	if !strings.Contains(res.Payload, header) {
+		t.Errorf("Payload does not carry round 1's header %q:\n%s", header, res.Payload)
+	}
+	if !strings.Contains(res.Payload, "round 1 body") {
+		t.Errorf("Payload does not carry round 1's report text:\n%s", res.Payload)
+	}
+	if _, still, err := rt.Store.PendingForMasterMind("webshop"); err != nil || still {
+		t.Errorf("a following pullPending must find nothing (still pending=%v err=%v)", still, err)
+	}
+
+	payload, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait")
+	if err != nil {
+		t.Fatalf("pullPending: %v", err)
+	}
+	if found || payload != "" {
+		t.Errorf("pullPending after Wait = (%q, %v), want nothing pending", payload, found)
 	}
 }

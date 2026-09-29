@@ -10,6 +10,8 @@ import (
 // (#192). It is the mutation target: flip which input the function looks at
 // and this must catch it.
 func TestEscapeOutcome(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		treeUnchanged, repoDirty, hasReport bool
 		want                                EscapeOutcome
@@ -36,6 +38,8 @@ func TestEscapeOutcome(t *testing.T) {
 // Build the "true" base case (local headless binding with Repo and baseline)
 // once and derive all "false" cases from it by changing exactly one field.
 func TestEscapeApplies(t *testing.T) {
+	t.Parallel()
+
 	// base: local headless binding with Repo and RoundBaselineTree -> true
 	base := store.Binding{
 		Builder:           store.Endpoint{Mode: store.ModeHeadless},

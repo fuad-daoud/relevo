@@ -48,13 +48,14 @@ type File struct {
 type Row struct {
 	// Shape is "writer" or "reader". A built-in row may give it only to
 	// repeat the built-in shape; a new role must give it. A new writer runs
-	// as a binding's role (`relevo bind --worktree --role` / `relevo bind --role`); a
-	// new reader runs through `relevo ask --role`.
+	// as a binding's role (`relevo bind --worktree --actor` / `relevo bind --actor`); a
+	// new reader is bound with `relevo bind --actor`.
 	Shape *string `json:"shape"`
 
-	// Gate marks a writer role whose round closes on a gate. true is
-	// refused on a reader role. Nothing in S1 reads it.
-	Gate *bool `json:"gate"`
+	// Check marks a writer role whose round closes on a check. true is
+	// refused on a reader role. The JSON key stays "gate": a roles section is
+	// only ever the input of the A2 migration, which still carries that key.
+	Check *bool `json:"gate,omitempty"`
 
 	// Definitions overrides the agent definition per harness kind. A kind
 	// the row omits keeps the shipped definition (built-in roles) or has
@@ -174,7 +175,7 @@ func validate(path string, f *File) error {
 		}
 
 		// gate
-		if row.Gate != nil && *row.Gate && shape == harness.ShapeConsult {
+		if row.Check != nil && *row.Check && shape == harness.ShapeConsult {
 			return badField("gate", "a reader role has no gate")
 		}
 

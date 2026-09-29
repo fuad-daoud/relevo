@@ -1,7 +1,6 @@
-// Package usage reads what a round consumed from each harness's own
-// record and folds it into one figure with its provenance (#142). It
-// knows harness record shapes and nothing else: no rounds, no bindings,
-// no store. Nothing in relevo decides anything on what it returns.
+// Package usage reads what a round consumed from each harness's own record and
+// folds it into one figure with its provenance. It knows harness record shapes and
+// nothing else: no rounds, no bindings, no store.
 package usage
 
 import (
@@ -9,17 +8,14 @@ import (
 	"sort"
 )
 
-// Basis is where the dollar figure came from -- provenance, not the truth
-// of the bill.
+// Basis is where the dollar figure came from -- provenance, not the truth of the
+// bill.
 type Basis string
 
 const (
-	// Measured: the harness itself reported dollars.
-	Measured Basis = "measured"
-	// Estimated: relevo multiplied harness-reported tokens by a price table.
-	Estimated Basis = "estimated"
-	// Unknown: no record, no tokens, no price row, or no way to read.
-	Unknown Basis = "unknown"
+	Measured  Basis = "measured"  // the harness itself reported dollars
+	Estimated Basis = "estimated" // relevo priced harness-reported tokens
+	Unknown   Basis = "unknown"   // no record, no tokens, no price row, or no way to read
 )
 
 // Tokens are counts as the provider bills them. Out includes thinking and
@@ -31,16 +27,14 @@ type Tokens struct {
 	Out        int64 `json:"out"`
 }
 
-// Add returns the field-wise sum.
 func (t Tokens) Add(o Tokens) Tokens {
 	return Tokens{In: t.In + o.In, CacheRead: t.CacheRead + o.CacheRead, CacheWrite: t.CacheWrite + o.CacheWrite, Out: t.Out + o.Out}
 }
 
-// Total is every token the round moved.
 func (t Tokens) Total() int64 { return t.In + t.CacheRead + t.CacheWrite + t.Out }
 
-// CacheRatio is the share of prompt tokens served from cache; 0 when there
-// were no prompt tokens.
+// CacheRatio is the share of prompt tokens served from cache; 0 when there were
+// no prompt tokens.
 func (t Tokens) CacheRatio() float64 {
 	prompt := t.In + t.CacheRead + t.CacheWrite
 	if prompt == 0 {
@@ -49,30 +43,24 @@ func (t Tokens) CacheRatio() float64 {
 	return float64(t.CacheRead) / float64(prompt)
 }
 
-// Cost is dollars with provenance. Plan marks a subscription lane: the
-// printer says "plan", never "$0" and never "free".
+// Cost is dollars with provenance. Plan marks a subscription lane: the printer
+// says "plan", never "$0".
 type Cost struct {
 	USD   float64 `json:"usd"`
 	Basis Basis   `json:"basis"`
 	Plan  bool    `json:"plan,omitempty"`
 }
 
-// Usage is what one round consumed. A reader that finds nothing returns
-// Basis Unknown with a Note; the zero value (Basis "") is never written.
+// Usage is what one round consumed; the zero value (Basis "") is never written.
 type Usage struct {
-	Harness  string `json:"harness"`
-	Provider string `json:"provider"`
-	// Model is the model most Out tokens went to; "" when nothing was read.
-	Model string `json:"model"`
-	// DurationMS is the round's wall time, 0 when its start is unknown.
-	DurationMS int64  `json:"duration_ms"`
+	Harness    string `json:"harness"`
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`       // the model most Out tokens went to
+	DurationMS int64  `json:"duration_ms"` // the round's wall time, 0 when its start is unknown
 	Tokens     Tokens `json:"tokens"`
 	Cost       Cost   `json:"cost"`
-	// Samples is how many records were folded; 0 under Unknown means
-	// nothing was found.
-	Samples int `json:"samples"`
-	// Step figures from the builder stream (#323, #324); zero when the
-	// harness's stream does not show them.
+	Samples    int    `json:"samples"` // how many records were folded
+	// Step figures from the builder stream; zero when its stream does not show them.
 	Steps            int   `json:"steps,omitempty"`
 	ToolCalls        int   `json:"tool_calls,omitempty"`
 	StepP50MS        int64 `json:"step_p50_ms,omitempty"`
@@ -81,8 +69,8 @@ type Usage struct {
 	Note string `json:"note,omitempty"`
 }
 
-// Sample is one billed message as a reader found it. HasCost says USD came
-// from the record; false means the record carried tokens only.
+// Sample is one billed message as a reader found it. HasCost says USD came from the
+// record; false means it carried tokens only.
 type Sample struct {
 	Provider string
 	Model    string
@@ -91,15 +79,10 @@ type Sample struct {
 	HasCost  bool
 }
 
-// Fold sums samples into a Usage. Tokens always sum. Cost, in order:
-//   - no samples: Unknown, Note as given
-//   - every sample HasCost: Measured, USD = sum of the records
-//   - otherwise each sample without HasCost is estimated from prices; if
-//     every one resolves, Estimated and USD = measured + estimated; if
-//     any does not, Unknown, USD 0, Note "no price for provider/model".
-//
-// Model is the model with the most Out tokens; Note gains "n models" when
-// more than one was seen. plan is copied through.
+// Fold sums samples into a Usage. Tokens always sum. Cost, in order: no samples is
+// Unknown with the given Note; every sample HasCost is Measured with the records'
+// sum; otherwise each sample without HasCost is estimated from prices, and if any
+// does not resolve the whole figure is Unknown, USD 0. plan is copied through.
 func Fold(samples []Sample, prices Prices, plan bool, note string) Usage {
 	u := Usage{Cost: Cost{Basis: Unknown, Plan: plan}, Note: note}
 	if len(samples) == 0 {

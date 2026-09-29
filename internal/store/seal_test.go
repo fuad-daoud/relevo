@@ -9,15 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // TestSealableTable pins the pure predicate: a closed, quiet round is
-// sealable, and each in-flight reader of the round holds it back. The latest
-// closed round (b.Round-1) is held back too, unless the binding is DONE, so
-// the planner and a repair round can still read its files (D2/A1). The stream
-// blocker now takes streamDrained, not PID: the "not drained" row is the one
-// the plan's mutation check drops blocker 2 for.
+// sealable, each in-flight reader holds it back, and the latest closed round
+// is held back too unless the binding is DONE.
 func TestSealableTable(t *testing.T) {
 	base := newBinding("webshop", "/home/dev/webshop")
 	base.Round = 5
@@ -87,161 +84,77 @@ func TestSealableTable(t *testing.T) {
 	}
 }
 
-func withBinding(b Binding, mutate func(*Binding)) Binding {
-	mutate(&b)
-	return b
+// streamPathForCase is the stream name a TestStreamDrained case writes under:
+// the pre-rename name for a legacy case, the current name otherwise.
+func streamPathForCase(s *Store, b Binding, drained int, legacy bool) string {
+	if legacy {
+		return s.BuilderStreamPath(b.Name, drained)
+	}
+	return s.RunnerStreamPath(b.Name, drained)
 }
 
-// TestStreamDrained pins the drain test Sealable's stream blocker takes: a
-// missing stream is drained, and a present one is drained only once the
-// supervisor's exit trailer is in it and the endpoint's cursor has reached
-// its size.
+// TestStreamDrained pins the drain test Sealable's stream blocker takes:
+// each case supplies the stream's bytes, the cursor and the file's age.
 func TestStreamDrained(t *testing.T) {
-	s := New(t.TempDir())
-	b := newBinding("webshop", "/home/dev/webshop")
-	b.Round = 4
-	b.Builder.StreamRound = 3
-	if err := s.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
+	const drained = 2
+	payload := `{"type":"step","part":{"time":{"end":1}}}`
+	relevoOnly := payload + "\n\n" + spawn.ExitTrailer + "0\n"
+
+	cases := []struct {
+		name   string
+		legacy bool // true: write file under the old name (BuilderStreamPath)
+		round  int
+		body   string // "" leaves no stream file
+		offset func(string) int64
+		age    time.Duration
+		want   bool
+	}{
+		{"a missing stream is drained", false, drained, "", nil, 0, true},
+		{"another round is vacuously drained", false, drained - 1, relevoOnly, nil, 0, true},
+		{"the cursor is inside the payload", false, drained, relevoOnly, func(string) int64 { return 1 }, 0, false},
+		{"the cursor is at the stream's size", false, drained, relevoOnly, func(s string) int64 { return int64(len(s)) }, 0, true},
+		{"no trailer, cursor at EOF", false, drained, "still flushing\n", func(s string) int64 { return int64(len(s)) }, 0, false},
+		{"a stale stream with no trailer", false, drained, payload + "\n", nil, staleStreamAfter + time.Minute, false},
+		{"a pre-rename stream, cursor inside the payload", true, drained, relevoOnly, func(string) int64 { return 1 }, 0, false},
+		{"a pre-rename stream with the trailer", true, drained, relevoOnly, func(s string) int64 { return int64(len(s)) }, 0, true},
 	}
 
-	// No file at all: nothing to drain.
-	if !s.StreamDrained(b, 3) {
-		t.Error("StreamDrained with no stream file = false, want true")
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(t.TempDir())
+			b := newBinding("webshop", "/home/dev/webshop")
+			b.Round = 4
+			b.Builder.StreamRound = drained
+			if err := s.Save(b); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
 
-	// A round other than the one being drained is vacuously drained.
-	if !s.StreamDrained(b, 2) {
-		t.Error("StreamDrained of another round = false, want true")
-	}
+			if tc.body != "" {
+				path := streamPathForCase(s, b, drained, tc.legacy)
+				if err := os.WriteFile(path, []byte(tc.body), bindingFileMode); err != nil {
+					t.Fatalf("write stream: %v", err)
+				}
+				if tc.age > 0 {
+					old := time.Now().Add(-tc.age)
+					if err := os.Chtimes(path, old, old); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tc.offset != nil {
+					b.Builder.StreamOffset = tc.offset(tc.body)
+				}
+			}
 
-	stream := s.BuilderStreamPath(b.Name, 3)
-	body := []byte(`{"type":"step"}` + "\n\n" + ExitTrailer + "0\n")
-	if err := os.WriteFile(stream, body, bindingFileMode); err != nil {
-		t.Fatalf("write stream: %v", err)
-	}
-
-	// The trailer is present but the cursor is still inside the payload: the
-	// bytes it has not rendered are payload lines, so the builder may still be
-	// flushing.
-	short := b
-	short.Builder.StreamOffset = 1
-	if s.StreamDrained(short, 3) {
-		t.Error("StreamDrained with the cursor inside the payload = true, want false")
-	}
-
-	// The trailer is present and the cursor is at the stream's size.
-	done := b
-	done.Builder.StreamOffset = int64(len(body))
-	if !s.StreamDrained(done, 3) {
-		t.Error("StreamDrained with the cursor at size = false, want true")
-	}
-
-	// No trailer, even with the cursor at EOF: the builder is still flushing.
-	noTrailer := []byte("still flushing\n")
-	if err := os.WriteFile(stream, noTrailer, bindingFileMode); err != nil {
-		t.Fatalf("rewrite stream: %v", err)
-	}
-	flushing := b
-	flushing.Builder.StreamOffset = int64(len(noTrailer))
-	if s.StreamDrained(flushing, 3) {
-		t.Error("StreamDrained without the trailer = true, want false")
-	}
-}
-
-// TestStreamDrainedLegacyTrailer pins the pre-rename stream: a supervisor that
-// wrote the legacy exit trailer still ends the round, and the cursor a
-// pre-rename drain stopped before the trailer lines is drained -- the live
-// leftover the seal could not close.
-func TestStreamDrainedLegacyTrailer(t *testing.T) {
-	s := New(t.TempDir())
-	b := newBinding("webshop", "/home/dev/webshop")
-	b.Round = 4
-	b.Builder.StreamRound = 3
-	if err := s.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	body := []byte(`{"type":"step"}` + "\n\n" +
-		legacy.RusageTrailer + "cpu_usec=1 mem_peak=2\n\n" +
-		legacy.ExitTrailer + "0\n")
-	if err := os.WriteFile(s.BuilderStreamPath(b.Name, 3), body, bindingFileMode); err != nil {
-		t.Fatalf("write stream: %v", err)
-	}
-
-	// The cursor stopped just before the pre-rename rusage and exit lines: the
-	// only bytes left are trailer lines, so the stream is drained.
-	at := bytes.Index(body, []byte(legacy.RusageTrailer))
-	if at < 0 {
-		t.Fatal("the legacy rusage trailer is not in the stream")
-	}
-	old := b
-	old.Builder.StreamOffset = int64(at)
-	if !s.StreamDrained(old, 3) {
-		t.Error("StreamDrained of a pre-rename stream whose only unrendered bytes are its trailer = false, want true")
-	}
-
-	// Payload bytes after the cursor still hold the round back.
-	held := b
-	held.Builder.StreamOffset = 0
-	if s.StreamDrained(held, 3) {
-		t.Error("StreamDrained with payload bytes after the cursor = true, want false")
-	}
-}
-
-// TestStreamDrainedStaleStreamWithTrailer pins the live zen case: the
-// pre-rename drain stopped mid-line, three bytes before the trailer, so the
-// unrendered tail is not trailer-only. With the exit trailer present the
-// builder is gone, and once the stream has been quiet for staleStreamAfter
-// the round may seal; a freshly written one still waits.
-func TestStreamDrainedStaleStreamWithTrailer(t *testing.T) {
-	s := New(t.TempDir())
-	b := newBinding("gomaxprocs", "/home/dev/gomaxprocs")
-	b.Round = 3
-	b.Builder.StreamRound = 2
-	if err := s.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	body := []byte(`{"type":"step","part":{"time":{"end":1}}}` + "\n\n" +
-		legacy.RusageTrailer + "cpu_usec=1 mem_peak=2\n\n" +
-		legacy.ExitTrailer + "0\n")
-	path := s.BuilderStreamPath(b.Name, 2)
-	if err := os.WriteFile(path, body, bindingFileMode); err != nil {
-		t.Fatalf("write stream: %v", err)
-	}
-	b.Builder.StreamOffset = int64(bytes.Index(body, []byte("}}}")))
-
-	if s.StreamDrained(b, 2) {
-		t.Error("StreamDrained of a just-written stream with payload bytes after the cursor = true, want false")
-	}
-
-	old := time.Now().Add(-staleStreamAfter - time.Minute)
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatal(err)
-	}
-	if !s.StreamDrained(b, 2) {
-		t.Error("StreamDrained of a stale stream carrying its exit trailer = false, want true")
-	}
-
-	// Without an exit trailer, a stale stream still holds the round: the
-	// builder may be alive and silent.
-	if err := os.WriteFile(path, []byte(`{"type":"step"}`+"\n"), bindingFileMode); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatal(err)
-	}
-	b.Builder.StreamOffset = 0
-	if s.StreamDrained(b, 2) {
-		t.Error("StreamDrained of a stale stream with no exit trailer = true, want false")
+			if got := s.StreamDrained(b, tc.round); got != tc.want {
+				t.Errorf("StreamDrained(round %d) = %v, want %v", tc.round, got, tc.want)
+			}
+		})
 	}
 }
 
 // TestSealRoundMovesOneRound pins the seal itself: exactly round 3's round
 // files and consult files become rows and leave the directory, other rounds
-// and non-NNN files stay, and ReadFile then returns the same bytes it did
-// before.
+// and non-NNN files stay, ReadFile is unchanged, and a second seal is a no-op.
 func TestSealRoundMovesOneRound(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("webshop", "/home/dev/webshop")
@@ -250,31 +163,7 @@ func TestSealRoundMovesOneRound(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	sealed := map[string][]byte{
-		"003-plan.md":              []byte("# round 3 plan\n"),
-		"003-report.md":            []byte("report with a \x00 binary byte\n"),
-		"003-done":                 nil,
-		"003-builder.log":          []byte("builder stderr\n"),
-		"003-builder.jsonl":        []byte("{}\n"),
-		"003-gate.log":             []byte("gate passed\n"),
-		"003-aabbccdd-ask.md":      []byte("the question\n"),
-		"003-aabbccdd-findings.md": []byte("the findings\n"),
-	}
-	kept := map[string][]byte{
-		"002-plan.md":   []byte("round 2\n"),
-		"004-plan.md":   []byte("the open round\n"),
-		"land-gate.log": []byte("not a round file\n"),
-	}
-	for name, body := range sealed {
-		if err := os.WriteFile(filepath.Join(s.Dir("webshop"), name), body, bindingFileMode); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	for name, body := range kept {
-		if err := os.WriteFile(filepath.Join(s.Dir("webshop"), name), body, bindingFileMode); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	sealed, kept := writeSealFixtures(t, s)
 
 	rounds, err := s.RoundsOnDisk("webshop")
 	if err != nil {
@@ -295,24 +184,7 @@ func TestSealRoundMovesOneRound(t *testing.T) {
 	if n != len(sealed) {
 		t.Errorf("SealRound sealed %d files, want %d", n, len(sealed))
 	}
-
-	for name := range sealed {
-		if _, err := os.Stat(filepath.Join(s.Dir("webshop"), name)); !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("%s is still on disk", name)
-		}
-		got, err := s.ReadFile(filepath.Join(s.Dir("webshop"), name))
-		if err != nil {
-			t.Fatalf("ReadFile(%s): %v", name, err)
-		}
-		if !bytes.Equal(got, sealed[name]) {
-			t.Errorf("ReadFile(%s) = %q, want %q", name, got, sealed[name])
-		}
-	}
-	for name := range kept {
-		if _, err := os.Stat(filepath.Join(s.Dir("webshop"), name)); err != nil {
-			t.Errorf("%s should have stayed on disk: %v", name, err)
-		}
-	}
+	checkSealedFiles(t, s, sealed, kept)
 
 	// A second seal of the same round finds nothing: the files are gone.
 	if err := s.WithLock(func(tx *Tx) error {
@@ -339,9 +211,56 @@ func TestSealRoundMovesOneRound(t *testing.T) {
 	}
 }
 
-// TestReadFileMissingStaysErrNotExist pins that a path the store never sealed
-// still reports os.ReadFile's own error, so callers' ErrNotExist checks keep
-// working.
+func writeSealFixtures(t *testing.T, s *Store) (sealed, kept map[string][]byte) {
+	t.Helper()
+	sealed = map[string][]byte{
+		"003-plan.md":              []byte("# round 3 plan\n"),
+		"003-report.md":            []byte("report with a \x00 binary byte\n"),
+		"003-done":                 nil,
+		"003-builder.log":          []byte("builder stderr\n"),
+		"003-builder.jsonl":        []byte("{}\n"),
+		"003-gate.log":             []byte("gate passed\n"),
+		"003-aabbccdd-ask.md":      []byte("the question\n"),
+		"003-aabbccdd-findings.md": []byte("the findings\n"),
+	}
+	kept = map[string][]byte{
+		"002-plan.md": []byte("round 2\n"),
+		"004-plan.md": []byte("the open round\n"),
+		"notes.txt":   []byte("not a round file\n"),
+	}
+	for _, files := range []map[string][]byte{sealed, kept} {
+		for name, body := range files {
+			if err := os.WriteFile(filepath.Join(s.Dir("webshop"), name), body, bindingFileMode); err != nil {
+				t.Fatalf("write %s: %v", name, err)
+			}
+		}
+	}
+	return sealed, kept
+}
+
+func checkSealedFiles(t *testing.T, s *Store, sealed, kept map[string][]byte) {
+	t.Helper()
+	for name, body := range sealed {
+		if _, err := os.Stat(filepath.Join(s.Dir("webshop"), name)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s is still on disk", name)
+		}
+		got, err := s.ReadFile(filepath.Join(s.Dir("webshop"), name))
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", name, err)
+		}
+		if !bytes.Equal(got, body) {
+			t.Errorf("ReadFile(%s) = %q, want %q", name, got, body)
+		}
+	}
+	for name := range kept {
+		if _, err := os.Stat(filepath.Join(s.Dir("webshop"), name)); err != nil {
+			t.Errorf("%s should have stayed on disk: %v", name, err)
+		}
+	}
+}
+
+// TestReadFileMissingStaysErrNotExist pins that an unsealed path still reports
+// os.ReadFile's own error.
 func TestReadFileMissingStaysErrNotExist(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("webshop", "/home/dev/webshop")
@@ -359,8 +278,8 @@ func TestReadFileMissingStaysErrNotExist(t *testing.T) {
 		t.Errorf("StatFile(%s) = (ok %v, err %v), want (false, ErrNotExist)", path, ok, err)
 	}
 
-	// A non-round basename, an unknown binding and a path outside the root
-	// are all plain misses.
+	// A non-round basename, an unknown binding and a path outside the root are
+	// all plain misses.
 	for _, p := range []string{
 		filepath.Join(s.Dir("webshop"), "bind.json.x"),
 		filepath.Join(s.Dir("nobody"), "003-report.md"),
@@ -370,25 +289,4 @@ func TestReadFileMissingStaysErrNotExist(t *testing.T) {
 			t.Errorf("ReadFile(%s) err = %v, want ErrNotExist", p, err)
 		}
 	}
-}
-
-func containsAll(haystack []string, names map[string][]byte) bool {
-	have := map[string]bool{}
-	for _, h := range haystack {
-		have[h] = true
-	}
-	for name := range names {
-		if !have[name] {
-			return false
-		}
-	}
-	return true
-}
-
-func keys(m map[string][]byte) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }

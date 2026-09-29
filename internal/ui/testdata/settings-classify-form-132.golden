@@ -1,0 +1,34 @@
+  ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
+                                                                                                                                    
+   18 settings   3 set                                                                                                              
+                                                                                                                                    
+   SETTING                                                                         VALUE                   DEFAULT                  
+   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 4 settings · 2 set   
+   max_switches                                                                    2                       2                        
+   max_tier                                                                        yolo                    edit                     
+   verify.default  ╭─ classify ─────────────────────────────────────────────────────────────────────────────────╮                   
+   artifact_max_mb │                                                                                            │                   
+   check ┈┈┈┈┈┈┈┈┈┈│ provider          off    jev                                                               │┈┈┈┈┈ 3 settings   
+   gate.default    │                                                                                            │                   
+   gate.timeout    │ model                                       default jev-latest                             │                   
+   gate.regate     │                                                                                            │                   
+   timing ┈┈┈┈┈┈┈┈┈│ threshold                                   default 0.7                                    │┈┈┈┈┈ 5 settings   
+   limit_gate_defau│                                                                                            │                   
+   stall_after     │ timeout                                     default 4s                                     │                   
+   progress_interva│                                                                                            │                   
+   explore_after   │ scores each builder line for prompt injection, beside the pattern scan                     │                   
+   stale_after     │                                                                                            │                   
+   processes ┈┈┈┈┈┈│  enter  save       tab  next field       esc  cancel       ←→  choose                      │settings · 1 set   
+   scope           ╰────────────────────────────────────────────────────────────────────────────────────────────╯o limits           
+   serve.max_builders                                                              21                      21                       
+   serve.scope                                                                     slice relevo.slice      as scope                 
+   scan ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 2 settings   
+   scan_patterns                                                                   none                    none                     
+   classify                                                                        off                     off                      
+   notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
+   notify.webhooks                                                                 none                    none                     
+                                                                                                                                    
+   classify   off                                                                                                                   
+   An optional classifier that scores a builder's lines for prompt injection, beside the pattern scan.                              
+
+ enter  save      tab  next field      esc  cancel      ←→  choose                                                                  

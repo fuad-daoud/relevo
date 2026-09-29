@@ -15,24 +15,153 @@ func seedDone(t *testing.T, rt Runtime, name, cwd string) {
 	t.Helper()
 	b := store.Binding{
 		Name: name, CWD: cwd,
-		Planner: store.Endpoint{PaneID: "w1:p1"},
-		Builder: store.Endpoint{PaneID: "w1:p2"},
-		Round:   3, State: store.StateDone,
+		MasterMind: store.Endpoint{PaneID: "w1:p1"},
+		Builder:    store.Endpoint{PaneID: "w1:p2"},
+		Round:      3, State: store.StateDone,
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save %s: %v", name, err)
 	}
 }
 
+// seedDoneFor is seedDone with an explicit MasterMindID, for the GC scope tests
+// (#482).
+func seedDoneFor(t *testing.T, rt Runtime, name, cwd, mastermindID string) {
+	t.Helper()
+	b := store.Binding{
+		Name: name, CWD: cwd,
+		MasterMind: store.Endpoint{PaneID: "w1:p1"},
+		Builder:    store.Endpoint{PaneID: "w1:p2"},
+		Round:      3, State: store.StateDone,
+		MasterMindID: mastermindID,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save %s: %v", name, err)
+	}
+}
+
+// TestGCClearsOnlyThisMasterMindsBindings pins #482: GC in mastermind-scoped mode
+// only clears bindings whose MasterMindID matches, leaving another mastermind's
+// bindings and a legacy (MasterMindID-less) binding untouched.
+func TestGCClearsOnlyThisMasterMindsBindings(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
+	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
+	seedDoneFor(t, rt, "legacy", "/repo-legacy", "")
+
+	got, err := GC(context.Background(), rt, GCOptions{MasterMindID: "pl_aaa", Delete: true})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "a1" || got[0].MasterMindID != "pl_aaa" {
+		t.Fatalf("gc result = %+v, want only a1 with MasterMindID pl_aaa", got)
+	}
+
+	remaining, err := rt.Store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	names := map[string]bool{}
+	for _, b := range remaining {
+		names[b.Name] = true
+	}
+	if !names["b1"] || !names["legacy"] {
+		t.Errorf("b1 and legacy must survive, remaining = %+v", remaining)
+	}
+}
+
+// TestGCAllMasterMindsClearsEveryDoneBinding pins #482: AllMasterMinds clears every
+// DONE binding regardless of mastermind, including a legacy MasterMindID-less one.
+func TestGCAllMasterMindsClearsEveryDoneBinding(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
+	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
+	seedDoneFor(t, rt, "legacy", "/repo-legacy", "")
+
+	got, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true, Delete: true})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("gc result = %+v, want all three bindings", got)
+	}
+	want := map[string]string{"a1": "pl_aaa", "b1": "pl_bbb", "legacy": ""}
+	for _, r := range got {
+		if wantID, ok := want[r.Name]; !ok || r.MasterMindID != wantID {
+			t.Errorf("result %+v, want MasterMindID %q for %s", r, wantID, r.Name)
+		}
+	}
+}
+
+// TestGCRefusesWithoutScope pins #482: GC refuses to run with neither a
+// MasterMindID nor AllMasterMinds, and refuses when both are set, so no caller can
+// get "everything" by leaving the scope empty.
+func TestGCRefusesWithoutScope(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
+	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
+	seedDoneFor(t, rt, "legacy", "/repo-legacy", "")
+
+	if _, err := GC(context.Background(), rt, GCOptions{}); !errors.Is(err, ErrGCNoScope) {
+		t.Fatalf("GC with no scope: err = %v, want ErrGCNoScope", err)
+	}
+	if _, err := GC(context.Background(), rt, GCOptions{MasterMindID: "pl_aaa", AllMasterMinds: true}); !errors.Is(err, ErrGCNoScope) {
+		t.Fatalf("GC with both scopes: err = %v, want ErrGCNoScope", err)
+	}
+
+	remaining, err := rt.Store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(remaining) != 3 {
+		t.Errorf("all three bindings must survive a scope error, got %d", len(remaining))
+	}
+}
+
+// TestGCMasterMindDryRunListsOnlyThisMasterMind pins #482: a mastermind-scoped dry run
+// lists only that mastermind's bindings and changes nothing.
+func TestGCMasterMindDryRunListsOnlyThisMasterMind(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
+	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
+	seedDoneFor(t, rt, "legacy", "/repo-legacy", "")
+
+	got, err := GC(context.Background(), rt, GCOptions{MasterMindID: "pl_bbb", DryRun: true})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "b1" {
+		t.Fatalf("gc result = %+v, want only b1", got)
+	}
+
+	remaining, err := rt.Store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(remaining) != 3 {
+		t.Errorf("dry run must change nothing, got %d bindings", len(remaining))
+	}
+}
+
 func TestGCClearsOnlyDoneBindings(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 
 	live := store.Binding{
 		Name: "live", CWD: "/repo-live",
-		Planner: store.Endpoint{PaneID: "w1:p3"},
-		Builder: store.Endpoint{PaneID: "w1:p4"},
-		Round:   1, State: store.StateActive,
+		MasterMind: store.Endpoint{PaneID: "w1:p3"},
+		Builder:    store.Endpoint{PaneID: "w1:p4"},
+		Round:      1, State: store.StateActive,
 	}
 	if err := rt.Store.Save(live); err != nil {
 		t.Fatalf("save live: %v", err)
@@ -41,15 +170,15 @@ func TestGCClearsOnlyDoneBindings(t *testing.T) {
 	// the state that explains why it stopped.
 	broken := store.Binding{
 		Name: "broke", CWD: "/repo-broke",
-		Planner: store.Endpoint{PaneID: "w1:p5"},
-		Builder: store.Endpoint{PaneID: "w1:p6"},
-		Round:   2, State: store.StateBroken,
+		MasterMind: store.Endpoint{PaneID: "w1:p5"},
+		Builder:    store.Endpoint{PaneID: "w1:p6"},
+		Round:      2, State: store.StateBroken,
 	}
 	if err := rt.Store.Save(broken); err != nil {
 		t.Fatalf("save broken: %v", err)
 	}
 
-	got, err := GC(context.Background(), rt, GCOptions{Delete: true})
+	got, err := GC(context.Background(), rt, GCOptions{Delete: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -67,10 +196,12 @@ func TestGCClearsOnlyDoneBindings(t *testing.T) {
 }
 
 func TestGCDryRunChangesNothing(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 
-	got, err := GC(context.Background(), rt, GCOptions{DryRun: true})
+	got, err := GC(context.Background(), rt, GCOptions{DryRun: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -83,15 +214,17 @@ func TestGCDryRunChangesNothing(t *testing.T) {
 }
 
 func TestGCArchivesByDefault(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 	if err := rt.Store.AppendLog("finished", store.LogEntry{
-		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	got, err := GC(context.Background(), rt, GCOptions{})
+	got, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -106,12 +239,14 @@ func TestGCArchivesByDefault(t *testing.T) {
 		t.Fatalf("ListArchived = %+v, want the archived binding", archived)
 	}
 	events, err := rt.Store.ArchivedLog(archived[0].RecordID)
-	if err != nil || len(events) != 1 || events[0].Kind != store.KindPlan {
+	if err != nil || len(events) != 1 || events[0].Kind != store.KindPrompt {
 		t.Errorf("ArchivedLog = %+v, %v; want the plan entry the archive kept", events, err)
 	}
 }
 
 func TestGCWorktreeTeardown(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{}
 	rt := newRuntime(t)
 	rt.Git = fg
@@ -123,13 +258,13 @@ func TestGCWorktreeTeardown(t *testing.T) {
 		Name: "forked", CWD: wt,
 		Worktree: wt,
 		State:    store.StateDone, Round: 2,
-		Planner: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
+		MasterMind: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
 	}
 	if err := rt.Store.Save(forked); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{})
+	res, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -173,20 +308,22 @@ func TestGCWorktreeTeardown(t *testing.T) {
 }
 
 func TestGCAfterDoneReportsGone(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{dirtyResult: false}
 	rt := newRuntime(t)
 	rt.Git = fg
 
 	wt := t.TempDir()
 	b := store.Binding{
-		Name:     "webshop",
-		CWD:      wt,
-		Worktree: wt,
-		Branch:   "relevo/webshop",
-		State:    store.StateActive,
-		Round:    1,
-		Planner:  store.Endpoint{PaneID: "w1:p1"},
-		Builder:  store.Endpoint{PaneID: "w1:p2"},
+		Name:       "webshop",
+		CWD:        wt,
+		Worktree:   wt,
+		Branch:     "relevo/webshop",
+		State:      store.StateActive,
+		Round:      1,
+		MasterMind: store.Endpoint{PaneID: "w1:p1"},
+		Builder:    store.Endpoint{PaneID: "w1:p2"},
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
@@ -206,7 +343,7 @@ func TestGCAfterDoneReportsGone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gcRes, err := GC(context.Background(), rt, GCOptions{})
+	gcRes, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -241,6 +378,8 @@ func rootNames(t *testing.T, root string) []string {
 }
 
 func TestGCWorktreeDryRun(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{}
 	rt := newRuntime(t)
 	rt.Git = fg
@@ -252,7 +391,7 @@ func TestGCWorktreeDryRun(t *testing.T) {
 		Name: "forked", CWD: wt,
 		Worktree: wt,
 		State:    store.StateDone, Round: 2,
-		Planner: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
+		MasterMind: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
 	}
 	if err := rt.Store.Save(forked); err != nil {
 		t.Fatal(err)
@@ -261,7 +400,7 @@ func TestGCWorktreeDryRun(t *testing.T) {
 	// Read state root before
 	entriesBefore := rootNames(t, rt.Store.Dir(""))
 
-	res, err := GC(context.Background(), rt, GCOptions{DryRun: true})
+	res, err := GC(context.Background(), rt, GCOptions{DryRun: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC dry run: %v", err)
 	}
@@ -289,6 +428,8 @@ func TestGCWorktreeDryRun(t *testing.T) {
 }
 
 func TestGCWorktreeDirtyCheckError(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{dirtyErr: errors.New("git lock busy\ndetails")}
 	rt := newRuntime(t)
 	rt.Git = fg
@@ -298,13 +439,13 @@ func TestGCWorktreeDirtyCheckError(t *testing.T) {
 		Name: "forked-dirty-err", CWD: wt,
 		Worktree: wt,
 		State:    store.StateDone, Round: 2,
-		Planner: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
+		MasterMind: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
 	}
 	if err := rt.Store.Save(forked); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{Delete: true})
+	res, err := GC(context.Background(), rt, GCOptions{Delete: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -338,10 +479,12 @@ func TestGCWorktreeDirtyCheckError(t *testing.T) {
 }
 
 func TestGCDeleteRemovesTheDirectory(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 
-	got, err := GC(context.Background(), rt, GCOptions{Delete: true})
+	got, err := GC(context.Background(), rt, GCOptions{Delete: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -365,25 +508,27 @@ func TestGCDeleteRemovesTheDirectory(t *testing.T) {
 }
 
 func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{}
 	rt := newRuntime(t)
 	rt.Git = fg
 
 	missingWT := filepath.Join(t.TempDir(), "nonexistent-worktree")
 	b := store.Binding{
-		Name:     "finished-gone",
-		CWD:      "/repo-done",
-		Worktree: missingWT,
-		Planner:  store.Endpoint{PaneID: "w1:p1"},
-		Builder:  store.Endpoint{PaneID: "w1:p2"},
-		Round:    3,
-		State:    store.StateDone,
+		Name:       "finished-gone",
+		CWD:        "/repo-done",
+		Worktree:   missingWT,
+		MasterMind: store.Endpoint{PaneID: "w1:p1"},
+		Builder:    store.Endpoint{PaneID: "w1:p2"},
+		Round:      3,
+		State:      store.StateDone,
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
-	got, err := GC(context.Background(), rt, GCOptions{})
+	got, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -408,19 +553,21 @@ func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 // TestGCIgnoresPaused: gc sweeps only DONE, so a paused binding -- worktree
 // released but the binding very much alive -- survives it untouched.
 func TestGCIgnoresPaused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	b := store.Binding{
 		Name: "parked", CWD: "/repo-parked", Worktree: "/wt/parked",
-		Planner: store.Endpoint{PaneID: "w1:p1"},
-		Builder: store.Endpoint{Kind: "agy"},
-		Round:   3, State: store.StatePaused,
+		MasterMind: store.Endpoint{PaneID: "w1:p1"},
+		Builder:    store.Endpoint{Kind: "agy"},
+		Round:      3, State: store.StatePaused,
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save paused: %v", err)
 	}
 
-	got, err := GC(context.Background(), rt, GCOptions{Delete: true})
+	got, err := GC(context.Background(), rt, GCOptions{Delete: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}

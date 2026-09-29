@@ -74,6 +74,26 @@ func seedShowDB(t *testing.T) *db.DB {
 	return d
 }
 
+// seedArchivedLog writes the fixture's log.jsonl lines as the record's events,
+// the medium the database gives them.
+func seedArchivedLog(t *testing.T, d *db.DB, recID string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(showFixtureDir, "log.jsonl"))
+	if err != nil {
+		t.Fatalf("read fixture log.jsonl: %v", err)
+	}
+	var evs []db.RecordEvent
+	for i, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		evs = append(evs, db.RecordEvent{Seq: i + 1, JSON: line})
+	}
+	if err := d.EventReplaceAll(recID, evs); err != nil {
+		t.Fatalf("EventReplaceAll: %v", err)
+	}
+}
+
 // archiveShowFixture copies the golden fixture into a fresh store's
 // "fixture" directory -- writing one file per extra basename -> body -- and
 // archives it, so the returned store holds exactly one archived record with
@@ -105,6 +125,19 @@ func archiveShowFixture(t *testing.T, extra map[string]string) *store.Store {
 			t.Fatalf("write %s: %v", base, err)
 		}
 	}
+	bindJSON, err := os.ReadFile(filepath.Join(showFixtureDir, "bind.json"))
+	if err != nil {
+		t.Fatalf("read fixture bind.json: %v", err)
+	}
+	sdb, err := s.DB()
+	if err != nil {
+		t.Fatalf("store db: %v", err)
+	}
+	recID, err := sdb.RecordPut(db.Record{Name: "fixture", JSON: string(bindJSON)})
+	if err != nil {
+		t.Fatalf("RecordPut: %v", err)
+	}
+	seedArchivedLog(t, sdb, recID)
 	if _, err := s.Archive("fixture"); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
@@ -162,20 +195,20 @@ func newShowLiveStore(t *testing.T) *store.Store {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
-	write(s.PlanPath("fixture", 1), "# Round 1 plan\n")
+	write(s.PromptPath("fixture", 1), "# Round 1 plan\n")
 	write(s.ReportPath("fixture", 1), "# Round 1 report\n")
 	write(s.DiffPath("fixture", 1), "diff --git a/x b/x\n")
-	write(s.PlanPath("fixture", 2), "# Round 2 plan\n")
+	write(s.PromptPath("fixture", 2), "# Round 2 plan\n")
 	write(s.ReportPath("fixture", 2), "# Round 2 report\n")
 	write(s.BuilderLogPath("fixture", 2), "round 2 builder log line 1\nround 2 builder log line 2\n")
-	write(s.PlanPath("fixture", 3), "# Round 3 plan\n")
+	write(s.PromptPath("fixture", 3), "# Round 3 plan\n")
 
 	entries := []store.LogEntry{
-		{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 10, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
-		{TS: time.Date(2026, 9, 10, 10, 1, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 10, 10, 1, 1, 0, time.UTC), Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "halted"},
-		{TS: time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC), Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+		{TS: time.Date(2026, 9, 10, 10, 1, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 1, 1, 0, time.UTC), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Outcome: "halted"},
+		{TS: time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC), Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
 	}
 	for _, e := range entries {
 		if err := s.AppendLog("fixture", e); err != nil {
@@ -186,8 +219,10 @@ func newShowLiveStore(t *testing.T) *store.Store {
 }
 
 func TestShowLiveDefaultsToNewestCompletedPlan(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: newShowLiveStore(t)}
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -209,6 +244,8 @@ func TestShowLiveDefaultsToNewestCompletedPlan(t *testing.T) {
 }
 
 func TestShowLiveRoundReport(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: newShowLiveStore(t)}
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 1, Section: ShowReport})
 	if err != nil {
@@ -223,6 +260,8 @@ func TestShowLiveRoundReport(t *testing.T) {
 }
 
 func TestShowLiveMissingDiffIsMissingNotError(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: newShowLiveStore(t)}
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 2, Section: ShowDiff})
 	if err != nil {
@@ -237,6 +276,8 @@ func TestShowLiveMissingDiffIsMissingNotError(t *testing.T) {
 }
 
 func TestShowLiveLogFiltersRound(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: newShowLiveStore(t)}
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 1, Section: ShowLog})
 	if err != nil {
@@ -253,6 +294,8 @@ func TestShowLiveLogFiltersRound(t *testing.T) {
 }
 
 func TestShowLiveTranscriptReadsBuilderLog(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: newShowLiveStore(t)}
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 2, Section: ShowTranscript})
 	if err != nil {
@@ -271,6 +314,8 @@ func TestShowLiveTranscriptReadsBuilderLog(t *testing.T) {
 // closed (Round: 4, no round-4 plan sent yet) must still report Rounds ==
 // 3, not 4.
 func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	b := store.Binding{
 		Name:  "idle",
@@ -281,17 +326,17 @@ func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := os.WriteFile(s.PlanPath("idle", 3), []byte("# Round 3 plan\n"), 0o644); err != nil {
+	if err := os.WriteFile(s.PromptPath("idle", 3), []byte("# Round 3 plan\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
 
 	entries := []store.LogEntry{
-		{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 10, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
-		{TS: time.Date(2026, 9, 10, 10, 1, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 10, 10, 1, 1, 0, time.UTC), Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
-		{TS: time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC), Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{TS: time.Date(2026, 9, 10, 10, 2, 1, 0, time.UTC), Round: 3, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+		{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+		{TS: time.Date(2026, 9, 10, 10, 1, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 1, 1, 0, time.UTC), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+		{TS: time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC), Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 2, 1, 0, time.UTC), Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
 	}
 	for _, e := range entries {
 		if err := s.AppendLog("idle", e); err != nil {
@@ -300,7 +345,7 @@ func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
 	}
 
 	rt := Runtime{Store: s}
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "idle", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "idle", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -313,6 +358,8 @@ func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
 }
 
 func TestShowLiveNoCompletedRound(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	b := store.Binding{
 		Name:  "openonly",
@@ -323,26 +370,28 @@ func TestShowLiveNoCompletedRound(t *testing.T) {
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := os.WriteFile(s.PlanPath("openonly", 1), []byte("# plan\n"), 0o644); err != nil {
+	if err := os.WriteFile(s.PromptPath("openonly", 1), []byte("# plan\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
-	entry := store.LogEntry{TS: time.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true}
+	entry := store.LogEntry{TS: time.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true}
 	if err := s.AppendLog("openonly", entry); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
 	rt := Runtime{Store: s}
-	_, err := Show(context.Background(), rt, ShowOptions{Name: "openonly", Section: ShowPlan})
+	_, err := Show(context.Background(), rt, ShowOptions{Name: "openonly", Section: ShowPrompt})
 	if !errors.Is(err, ErrNoCompletedRound) {
 		t.Errorf("err = %v, want ErrNoCompletedRound", err)
 	}
 }
 
 func TestShowDBFallsBackWhenNotLive(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -362,6 +411,8 @@ func TestShowDBFallsBackWhenNotLive(t *testing.T) {
 }
 
 func TestShowDBTranscriptFromRows(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
@@ -382,6 +433,8 @@ func TestShowDBTranscriptFromRows(t *testing.T) {
 // active state it derives to OutcomeOpen (internal/ingest/outcome.go), so
 // the newest *completed* round must be round 1.
 func TestShowDBSkipsOpenRoundForNewestCompleted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	bind := `{
   "name": "openhead",
@@ -421,7 +474,7 @@ func TestShowDBSkipsOpenRoundForNewestCompleted(t *testing.T) {
 	seedRoundMirror(t, d, dir)
 
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "openhead", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "openhead", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -434,6 +487,8 @@ func TestShowDBSkipsOpenRoundForNewestCompleted(t *testing.T) {
 }
 
 func TestShowDBLogFromEvents(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
@@ -455,10 +510,12 @@ func TestShowDBLogFromEvents(t *testing.T) {
 }
 
 func TestShowDBArchivedHeaderFacts(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowArchiveDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -466,15 +523,17 @@ func TestShowDBArchivedHeaderFacts(t *testing.T) {
 		t.Error("Archived = false, want true")
 	}
 	if res.ArchivedAt.IsZero() {
-		t.Error("ArchivedAt is zero, want the tarball's stamp")
+		t.Error("ArchivedAt is zero, want the archived record's stamp")
 	}
 }
 
 func TestShowRoundOutOfRange(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
-	_, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 99, Section: ShowPlan})
+	_, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 99, Section: ShowPrompt})
 	if err == nil {
 		t.Fatal("Show: want an error for a round out of range")
 	}
@@ -485,9 +544,11 @@ func TestShowRoundOutOfRange(t *testing.T) {
 }
 
 func TestShowUnknownBinding(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: store.New(t.TempDir())}
 
-	_, err := Show(context.Background(), rt, ShowOptions{Name: "nope", Section: ShowPlan})
+	_, err := Show(context.Background(), rt, ShowOptions{Name: "nope", Section: ShowPrompt})
 	if err == nil {
 		t.Fatal("Show: want an error for an unknown binding")
 	}
@@ -501,6 +562,8 @@ func TestShowUnknownBinding(t *testing.T) {
 // no mirror at all. Mutation: drop Show's archived step and Show returns
 // not-found (DB is nil).
 func TestShowArchivedReadsSealedRoundFiles(t *testing.T) {
+	t.Parallel()
+
 	s := archiveShowFixture(t, map[string]string{"001-gate.log": "gate output\n"})
 	rt := Runtime{Store: s}
 
@@ -521,7 +584,7 @@ func TestShowArchivedReadsSealedRoundFiles(t *testing.T) {
 		want    string
 		missing bool
 	}{
-		{name: "plan round 1", round: 1, section: ShowPlan, want: fixture("001-plan.md")},
+		{name: "plan round 1", round: 1, section: ShowPrompt, want: fixture("001-plan.md")},
 		{name: "report round 2", round: 2, section: ShowReport, want: fixture("002-report.md")},
 		{name: "diff round 1", round: 1, section: ShowDiff, want: fixture("001-diff.patch")},
 		{name: "drift round 2", round: 2, section: ShowDrift, want: fixture("002-drift.patch")},
@@ -575,6 +638,8 @@ func TestShowArchivedReadsSealedRoundFiles(t *testing.T) {
 // step over the database: the record's sealed gate log answers where showDB
 // on its own reports Missing (it has no gate row).
 func TestShowArchivedWinsOverTheMirror(t *testing.T) {
+	t.Parallel()
+
 	s := archiveShowFixture(t, map[string]string{"001-gate.log": "gate output\n"})
 	archived, err := s.ListArchived()
 	if err != nil || len(archived) != 1 {
@@ -608,10 +673,12 @@ func TestShowArchivedWinsOverTheMirror(t *testing.T) {
 // is the highest KindReport entry round -- round 2 in the fixture -- not the
 // highest planned round (3).
 func TestShowArchivedDefaultsToNewestCompletedRound(t *testing.T) {
+	t.Parallel()
+
 	s := archiveShowFixture(t, nil)
 	rt := Runtime{Store: s}
 
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPlan})
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPrompt})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}
@@ -724,7 +791,7 @@ func seedRoundMirror(t *testing.T, d *db.DB, dir string) {
 	}
 
 	roundFiles := []struct{ base, kind string }{
-		{"%03d-plan.md", db.ArtifactPlan},
+		{"%03d-plan.md", db.ArtifactPrompt},
 		{"%03d-report.md", db.ArtifactReport},
 		{"%03d-diff.patch", db.ArtifactDiff},
 		{"%03d-drift.patch", db.ArtifactDrift},
@@ -781,5 +848,236 @@ func seedRoundMirror(t *testing.T, d *db.DB, dir string) {
 		return nil
 	}); err != nil {
 		t.Fatalf("seed round mirror: %v", err)
+	}
+}
+
+// N8: a live round with a stream and no NNN-builder.log renders the stream,
+// and the archived variant renders the sealed stream the same way.
+func TestShowTranscriptRendersTheStreamWithoutALog(t *testing.T) {
+	t.Parallel()
+
+	stream := "live stream line one\nlive stream line two\n"
+
+	t.Run("live", func(t *testing.T) {
+		s := store.New(t.TempDir())
+		b := store.Binding{Name: "fixture", CWD: "/work/fixture", Round: 1, State: store.StateActive}
+		if err := s.Save(b); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		entry := store.LogEntry{TS: time.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true}
+		if err := s.AppendLog("fixture", entry); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+		if err := os.WriteFile(s.BuilderStreamPath("fixture", 1), []byte(stream), 0o644); err != nil {
+			t.Fatalf("write stream: %v", err)
+		}
+
+		res, err := Show(context.Background(), Runtime{Store: s}, ShowOptions{Name: "fixture", Round: 1, Section: ShowTranscript})
+		if err != nil {
+			t.Fatalf("Show: %v", err)
+		}
+		if res.Missing || res.Text != stream {
+			t.Errorf("Missing = %v, Text = %q, want the rendered stream %q", res.Missing, res.Text, stream)
+		}
+	})
+
+	t.Run("archived", func(t *testing.T) {
+		s := archiveShowFixture(t, map[string]string{"003-builder.jsonl": stream})
+		res, err := Show(context.Background(), Runtime{Store: s}, ShowOptions{Name: "fixture", Round: 3, Section: ShowTranscript})
+		if err != nil {
+			t.Fatalf("Show: %v", err)
+		}
+		if res.Missing || res.Text != stream {
+			t.Errorf("Missing = %v, Text = %q, want the rendered sealed stream %q", res.Missing, res.Text, stream)
+		}
+		if !res.Archived {
+			t.Error("Archived = false, want true")
+		}
+	})
+}
+
+// TestFindingsRound pins the pure resolver behind `show --findings`: a
+// requested round within upper is taken as is, one above upper is refused with
+// the plan-round count, and no --round scans newest-first for the round that
+// holds the consult's findings, ErrNoFindings when none does.
+func TestFindingsRound(t *testing.T) {
+	t.Parallel()
+
+	existsErr := errors.New("exists failed")
+	holds := func(rounds ...int) func(int) (bool, error) {
+		return func(round int) (bool, error) {
+			for _, r := range rounds {
+				if r == round {
+					return true, nil
+				}
+			}
+			return false, nil
+		}
+	}
+
+	cases := []struct {
+		name      string
+		requested int
+		upper     int
+		exists    func(int) (bool, error)
+		want      int
+		wantErr   string
+		wantNone  bool
+	}{
+		{name: "requested round within upper", requested: 1, upper: 1, exists: holds(), want: 1},
+		{name: "requested round above upper", requested: 2, upper: 1, exists: holds(), wantErr: "round 2: binding has 1 rounds"},
+		{name: "newest held round wins", requested: 0, upper: 2, exists: holds(1), want: 1},
+		{name: "newest of two held rounds wins", requested: 0, upper: 2, exists: holds(1, 2), want: 2},
+		{name: "no round holds the findings", requested: 0, upper: 2, exists: holds(), wantNone: true},
+		{name: "exists error propagates", requested: 0, upper: 2, exists: func(int) (bool, error) { return false, existsErr }, wantErr: "exists failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			round, err := findingsRound(tc.requested, tc.upper, tc.exists)
+			if tc.wantNone {
+				if !errors.Is(err, ErrNoFindings) {
+					t.Fatalf("findingsRound(%d, %d) err = %v, want ErrNoFindings", tc.requested, tc.upper, err)
+				}
+				return
+			}
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("findingsRound(%d, %d) err = %v, want %q", tc.requested, tc.upper, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("findingsRound(%d, %d): %v", tc.requested, tc.upper, err)
+			}
+			if round != tc.want {
+				t.Errorf("findingsRound(%d, %d) = %d, want %d", tc.requested, tc.upper, round, tc.want)
+			}
+		})
+	}
+}
+
+// TestShowLiveFindingsOnBindingWithNoRounds pins #593 on the live path: a
+// consult is recorded on the binding's current round, which has no plan entry
+// yet, so `show --findings <id>` must read it with and without --round.
+func TestShowLiveFindingsOnBindingWithNoRounds(t *testing.T) {
+	t.Parallel()
+
+	s := store.New(t.TempDir())
+	b := store.Binding{
+		Name:  "consultonly",
+		CWD:   "/work/consultonly",
+		Round: 1,
+		State: store.StateActive,
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	const id = "abc"
+	const want = "# Plan\n\nWrite the plan as findings.\n"
+	if err := os.WriteFile(s.FindingsPath("consultonly", 1, id), []byte(want), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	rt := Runtime{Store: s}
+	for _, round := range []int{1, 0} {
+		res, err := Show(context.Background(), rt, ShowOptions{
+			Name: "consultonly", Round: round, Section: ShowFindings, FindingsID: id,
+		})
+		if err != nil {
+			t.Fatalf("Show(round %d): %v", round, err)
+		}
+		if res.Missing {
+			t.Errorf("Show(round %d): Missing = true, want the findings text", round)
+		}
+		if res.Text != want {
+			t.Errorf("Show(round %d): Text = %q, want %q", round, res.Text, want)
+		}
+		if res.Round != 1 {
+			t.Errorf("Show(round %d): Round = %d, want 1", round, res.Round)
+		}
+		if res.Rounds != 0 {
+			t.Errorf("Show(round %d): Rounds = %d, want the plan-round count 0", round, res.Rounds)
+		}
+	}
+}
+
+// TestShowLiveFindingsUnknownConsult: no round holds the consult's findings,
+// so `show --findings` with no --round reports ErrNoFindings rather than
+// scanning into a bound error.
+func TestShowLiveFindingsUnknownConsult(t *testing.T) {
+	t.Parallel()
+
+	s := store.New(t.TempDir())
+	b := store.Binding{
+		Name:  "consultonly",
+		CWD:   "/work/consultonly",
+		Round: 1,
+		State: store.StateActive,
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.WriteFile(s.FindingsPath("consultonly", 1, "abc"), []byte("# Plan\n"), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	rt := Runtime{Store: s}
+	_, err := Show(context.Background(), rt, ShowOptions{
+		Name: "consultonly", Round: 0, Section: ShowFindings, FindingsID: "zzz",
+	})
+	if !errors.Is(err, ErrNoFindings) {
+		t.Fatalf("err = %v, want ErrNoFindings", err)
+	}
+	if !strings.Contains(err.Error(), "zzz") || !strings.Contains(err.Error(), "consultonly") {
+		t.Errorf("err = %v, want it to name consult zzz on consultonly", err)
+	}
+}
+
+// TestShowArchivedFindingsOnBindingWithNoRounds is the archived analogue of
+// TestShowLiveFindingsOnBindingWithNoRounds: an archived record whose round 1
+// has no plan entry still answers a findings read, sealed or scanned.
+func TestShowArchivedFindingsOnBindingWithNoRounds(t *testing.T) {
+	t.Parallel()
+
+	s := store.New(t.TempDir())
+	b := store.Binding{
+		Name:  "archivedconsult",
+		CWD:   "/work/archivedconsult",
+		Round: 1,
+		State: store.StateActive,
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	const id = "abc"
+	const want = "# Plan\n\nArchived consult findings.\n"
+	if err := os.WriteFile(s.FindingsPath("archivedconsult", 1, id), []byte(want), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	if _, err := s.Archive("archivedconsult"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	rt := Runtime{Store: s}
+	for _, round := range []int{1, 0} {
+		res, err := Show(context.Background(), rt, ShowOptions{
+			Name: "archivedconsult", Round: round, Section: ShowFindings, FindingsID: id,
+		})
+		if err != nil {
+			t.Fatalf("Show(round %d): %v", round, err)
+		}
+		if !res.Archived {
+			t.Errorf("Show(round %d): Archived = false, want true", round)
+		}
+		if res.Missing {
+			t.Errorf("Show(round %d): Missing = true, want the findings text", round)
+		}
+		if res.Text != want {
+			t.Errorf("Show(round %d): Text = %q, want %q", round, res.Text, want)
+		}
+		if res.Round != 1 {
+			t.Errorf("Show(round %d): Round = %d, want 1", round, res.Round)
+		}
 	}
 }

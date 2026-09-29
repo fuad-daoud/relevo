@@ -63,34 +63,43 @@ func TestRenderedKeysMatchShipped(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Render(writer, %s): %v", kind, err)
 		}
-		shippedKeys := frontmatterKeys(t, shipped)
-		renderedKeys := frontmatterKeys(t, rendered)
-		switch kind {
-		case "claude":
-			if !reflect.DeepEqual(shippedKeys, renderedKeys) {
-				t.Errorf("claude keys = %v, want the shipped keys %v", renderedKeys, shippedKeys)
-			}
-		case "agy":
-			if !reflect.DeepEqual(shippedKeys, renderedKeys) {
-				t.Errorf("agy keys = %v, want the shipped keys %v", renderedKeys, shippedKeys)
-			}
-			got := frontmatterListItems(t, rendered, "tools")
-			want := frontmatterListItems(t, shipped, "tools")
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("agy tools = %v, want the shipped list in order %v", got, want)
-			}
-		case "opencode":
-			for k := range shippedKeys {
-				if !renderedKeys[k] {
-					t.Errorf("opencode keys = %v, missing the shipped key %q", renderedKeys, k)
-				}
-			}
-			if len(renderedKeys) != len(shippedKeys)+1 || !renderedKeys["name"] {
-				t.Errorf("opencode keys = %v, want the shipped keys %v plus name", renderedKeys, shippedKeys)
+		checkRenderedKeys(t, kind, shipped, rendered)
+	}
+	checkCodexRender(t, s)
+}
+
+func checkRenderedKeys(t *testing.T, kind string, shipped, rendered []byte) {
+	t.Helper()
+	shippedKeys := frontmatterKeys(t, shipped)
+	renderedKeys := frontmatterKeys(t, rendered)
+	switch kind {
+	case "claude":
+		if !reflect.DeepEqual(shippedKeys, renderedKeys) {
+			t.Errorf("claude keys = %v, want the shipped keys %v", renderedKeys, shippedKeys)
+		}
+	case "agy":
+		if !reflect.DeepEqual(shippedKeys, renderedKeys) {
+			t.Errorf("agy keys = %v, want the shipped keys %v", renderedKeys, shippedKeys)
+		}
+		got := frontmatterListItems(t, rendered, "tools")
+		want := frontmatterListItems(t, shipped, "tools")
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("agy tools = %v, want the shipped list in order %v", got, want)
+		}
+	case "opencode":
+		for k := range shippedKeys {
+			if !renderedKeys[k] {
+				t.Errorf("opencode keys = %v, missing the shipped key %q", renderedKeys, k)
 			}
 		}
+		if len(renderedKeys) != len(shippedKeys)+1 || !renderedKeys["name"] {
+			t.Errorf("opencode keys = %v, want the shipped keys %v plus name", renderedKeys, shippedKeys)
+		}
 	}
+}
 
+func checkCodexRender(t *testing.T, s Source) {
+	t.Helper()
 	rendered, err := Render(s, "codex")
 	if err != nil {
 		t.Fatalf("Render(writer, codex): %v", err)
@@ -131,7 +140,7 @@ func TestRenderShapeDoesNotChangeTools(t *testing.T) {
 }
 
 func TestRenderRefusesKindNotListed(t *testing.T) {
-	s := readerFixture() // kinds: [claude, agy]
+	s := readerFixture()
 	for _, kind := range []string{"codex", "nosuch"} {
 		out, err := Render(s, kind)
 		if err == nil {
@@ -194,7 +203,6 @@ func TestYamlScalar(t *testing.T) {
 	}
 }
 
-// frontmatterText returns the text between the first two --- fences.
 func frontmatterText(t *testing.T, doc []byte) string {
 	t.Helper()
 	s := string(doc)
@@ -209,8 +217,6 @@ func frontmatterText(t *testing.T, doc []byte) string {
 	return rest[:end]
 }
 
-// frontmatterKeys is the set of top-level frontmatter keys: lines with no
-// leading space that contain ":", keyed on the text before the first ":".
 func frontmatterKeys(t *testing.T, doc []byte) map[string]bool {
 	t.Helper()
 	keys := map[string]bool{}
@@ -227,7 +233,6 @@ func frontmatterKeys(t *testing.T, doc []byte) map[string]bool {
 	return keys
 }
 
-// frontmatterListItems collects the "- item" lines that follow "<key>:".
 func frontmatterListItems(t *testing.T, doc []byte, key string) []string {
 	t.Helper()
 	var out []string

@@ -9,23 +9,24 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // splitModel builds the shell at width x height with the given live rows
 // (R2.10: the split is gone (X1); this is now just "a loaded shell").
-func splitModel(t *testing.T, width, height int, rows ...relevo.BindingStatus) Model {
+func splitModel(t *testing.T, width, height int, rows ...view.BindingStatus) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: rows}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: rows}})
 	return res.(Model)
 }
 
@@ -33,22 +34,22 @@ func splitModel(t *testing.T, width, height int, rows ...relevo.BindingStatus) M
 func fleet(m Model) fleetView { return m.stack[0].(fleetView) }
 
 // testEnv is a view's Env for a test at width x height, clock railNow.
-func testEnv(src Source, rep relevo.Report, width, height int) Env {
+func testEnv(src Source, rep view.Report, width, height int) Env {
 	return Env{Ctx: context.Background(), Src: src, Report: rep, Loaded: true,
 		StatusAt: railNow, Now: railNow, Width: width, Height: height}
 }
 
 // newTestRound builds a round view over key with no live rows beyond ret.
-func newTestRound(t *testing.T, rt relevo.Runtime, rep relevo.Report, key string, round int) roundView {
+func newTestRound(t *testing.T, rt relevo.Runtime, rep view.Report, key string, round int) roundView {
 	t.Helper()
-	v, _ := newRoundView(testEnv(plannerSource{rt}, rep, 140, 40), key, round)
+	v, _ := newRoundView(testEnv(mastermindSource{rt}, rep, 140, 40), key, round)
 	return v.(roundView)
 }
 
 // newTestHistRound builds a hist round view over h.
 func newTestHistRound(t *testing.T, rt relevo.Runtime, h relevo.HistoryBinding, round int) roundView {
 	t.Helper()
-	v, _ := newHistRoundView(testEnv(plannerSource{rt}, relevo.Report{}, 140, 40), h, round)
+	v, _ := newHistRoundView(testEnv(mastermindSource{rt}, view.Report{}, 140, 40), h, round)
 	return v.(roundView)
 }
 
@@ -80,21 +81,21 @@ func drain(t *testing.T, m Model, cmds ...tea.Cmd) Model {
 
 // roundKey sends one key through a round view's Update.
 func roundKey(rv roundView, k tea.KeyMsg) roundView {
-	next, _ := rv.Update(k, testEnv(plannerSource{relevo.Runtime{}}, rv.pane.report, rv.pane.width, rv.pane.rows+4))
+	next, _ := rv.Update(k, testEnv(mastermindSource{relevo.Runtime{}}, rv.pane.report, rv.pane.width, rv.pane.rows+4))
 	return next.(roundView)
 }
 
 // roundMsg sends one message through a round view's Update.
 func roundMsg(rv roundView, msg tea.Msg) roundView {
-	next, _ := rv.Update(msg, testEnv(plannerSource{relevo.Runtime{}}, rv.pane.report, rv.pane.width, rv.pane.rows+4))
+	next, _ := rv.Update(msg, testEnv(mastermindSource{relevo.Runtime{}}, rv.pane.report, rv.pane.width, rv.pane.rows+4))
 	return next.(roundView)
 }
 
-func threeRows() []relevo.BindingStatus {
-	return []relevo.BindingStatus{
-		{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relevo.LastEvent{TS: railNow.Add(-6 * time.Minute)}},
-		{Name: "docs", Round: 1, Display: "DONE", BuilderKind: "agy", Last: &relevo.LastEvent{TS: railNow.Add(-time.Hour)}},
-		{Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy", BuilderStatus: "blocked", Last: &relevo.LastEvent{TS: railNow.Add(-2 * time.Minute)}},
+func threeRows() []view.BindingStatus {
+	return []view.BindingStatus{
+		{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &view.LastEvent{TS: railNow.Add(-6 * time.Minute)}},
+		{Name: "docs", Round: 1, Display: "DONE", BuilderKind: "agy", Last: &view.LastEvent{TS: railNow.Add(-time.Hour)}},
+		{Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy", BuilderStatus: "blocked", Last: &view.LastEvent{TS: railNow.Add(-2 * time.Minute)}},
 	}
 }
 
@@ -102,14 +103,14 @@ func threeRows() []relevo.BindingStatus {
 // second client's same-named binding appearing above must not steal the
 // cursor -- it stays on the key it was on.
 func TestStickyFollowsKeyAcrossOwners(t *testing.T) {
-	m := splitModel(t, 140, 40, relevo.BindingStatus{
+	m := splitModel(t, 140, 40, view.BindingStatus{
 		Name: "persist", Owner: "b", OwnerLabel: "b", Round: 1, Display: "ACTIVE", BuilderKind: "agy",
 	})
 	fv := fleet(m)
 	if got := fv.rows(m.env())[fv.cursor].Key(); got != "b/persist" {
 		t.Fatalf("cursor on %q", got)
 	}
-	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{
+	res, _ := m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{
 		{Name: "persist", Owner: "a", OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "persist", Owner: "b", OwnerLabel: "b", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
 	}}})
@@ -125,8 +126,8 @@ func TestStickyFollowsKeyAcrossOwners(t *testing.T) {
 // bindings read apart.
 func TestFleetNameColumnShowsOwnerName(t *testing.T) {
 	m := splitModel(t, 140, 40,
-		relevo.BindingStatus{Name: "api", Owner: "a", OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
-		relevo.BindingStatus{Name: "api", Owner: "b", OwnerLabel: "b", Round: 2, Display: "ACTIVE", BuilderKind: "agy"},
+		view.BindingStatus{Name: "api", Owner: "a", OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
+		view.BindingStatus{Name: "api", Owner: "b", OwnerLabel: "b", Round: 2, Display: "ACTIVE", BuilderKind: "agy"},
 	)
 	view := plain(m.View())
 	if !strings.Contains(view, "a/api") || !strings.Contains(view, "b/api") {
@@ -137,7 +138,10 @@ func TestFleetNameColumnShowsOwnerName(t *testing.T) {
 // TestSortToggleKeepsSelection pins §5.4's `a`: it flips the order, keeps
 // the selection, and returns the sort pref.
 func TestSortToggleKeepsSelection(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...)
+	b1 := view.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &view.LastEvent{TS: railNow.Add(-6 * time.Minute)}}
+	b2 := view.BindingStatus{Name: "docs", Round: 1, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &view.LastEvent{TS: railNow.Add(-time.Hour)}}
+	b3 := view.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &view.LastEvent{TS: railNow.Add(-2 * time.Minute)}}
+	m := splitModel(t, 140, 40, b1, b2, b3)
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = res.(Model)
 	fv := fleet(m)
@@ -202,7 +206,7 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	if !strings.Contains(stripANSI(m.keysView(m.env())), "hello") {
 		t.Errorf("keys row must carry the notice: %q", stripANSI(m.keysView(m.env())))
 	}
-	if !strings.Contains(stripANSI(m.keysView(m.env())), ": command") || !strings.Contains(stripANSI(m.keysView(m.env())), "? help") {
+	if !strings.Contains(stripANSI(m.keysView(m.env())), "command") || !strings.Contains(stripANSI(m.keysView(m.env())), "all keys") {
 		t.Errorf("the globals must be in the keys row: %q", stripANSI(m.keysView(m.env())))
 	}
 
@@ -227,24 +231,32 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	if strings.Contains(f, "[ ] round") {
 		t.Errorf("the view's keys must be the side that gives way: %q", f)
 	}
-	if !strings.Contains(f, "? help") || !strings.Contains(f, "esc back") {
+	if !strings.Contains(f, "all keys") || !strings.Contains(f, "back") {
 		t.Errorf("the global tail must survive the squeeze: %q", f)
 	}
 }
 
-// TestHeaderGatesAndClock pins the header's right side (§5.3): the gates
-// and the clock.
+// TestHeaderGatesAndClock pins the header's right side (§5.3): the clock
+// and needs-you count, and the gated line in the fleet body (D2).
 func TestHeaderGatesAndClock(t *testing.T) {
-	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
+	t.Cleanup(availability.SetGateClock(func() time.Time { return railNow }))
 	m := splitModel(t, 140, 40, threeRows()...)
-	m.report.Gated = []ledger.Gate{{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
+	m.report.Gated = []availability.Gate{{Token: "codex", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
 	h := stripANSI(m.headerView(m.env()))
-	if !strings.Contains(h, "codex gated until 15:30") || !strings.Contains(h, "14:02") {
-		t.Errorf("header = %q", h)
+	if strings.Contains(h, "gated") {
+		t.Errorf("header must not contain gates (D2): %q", h)
+	}
+	if !strings.Contains(h, "14:02") {
+		t.Errorf("header must carry clock: %q", h)
 	}
 	// The needs-you count is on the header too.
 	if !strings.Contains(h, "● 1 needs you") {
 		t.Errorf("header must carry the needs-you count: %q", h)
+	}
+	// Gates are rendered in the fleet body instead (§2.3, D2).
+	body := stripANSI(fleet(m).Body(m.env(), 140, 40))
+	if !strings.Contains(body, "gated  codex") {
+		t.Errorf("fleet body must contain gated line: %q", body)
 	}
 }
 
@@ -257,9 +269,9 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	}
 	rt := relevo.Runtime{Store: st}
 	rows := threeRows()
-	rows[0].Headless = &relevo.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}
+	rows[0].Headless = &view.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}
 
-	rv := newTestRound(t, rt, relevo.Report{Bindings: rows}, "api", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: rows}, "api", 0)
 	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	rv.pane.tabInFlight = false
 	if !rv.pane.detail.follow {
@@ -295,41 +307,48 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	}
 }
 
-// TestPaneHeadShowsClientLine: an owner-labelled row's planner line is
-// replaced by the client line; a planner row keeps the planner line.
-func TestPaneHeadShowsClientLine(t *testing.T) {
+// TestPaneHeadShowsClientLine: an owner-labelled row's mastermind line is
+// TestContextShowsClientLine: an owner-labelled row's mastermind line is
+// replaced by the client line; a mastermind row keeps the mastermind line.
+func TestContextShowsClientLine(t *testing.T) {
 	id := "SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"
 
-	client := relevo.BindingStatus{
+	client := view.BindingStatus{
 		Name: "webshop", Owner: id, OwnerLabel: "zen", Round: 4, Display: "NEEDS YOU",
 		BuilderKind: "agy", BuilderStatus: "blocked",
 	}
 	p := paneModel(t, client, tabReport)
-	head := stripANSI(strings.Join(p.paneHead(&client), "\n"))
-	if !strings.Contains(head, "client") || !strings.Contains(head, "zen") {
-		t.Errorf("no client line:\n%s", head)
+	rv := roundView{pane: p}
+	env := testEnv(p.src, view.Report{Bindings: []view.BindingStatus{client}}, p.width, p.rows)
+	ctxLeft, _ := rv.Context(env)
+	ctx := stripANSI(ctxLeft)
+	if !strings.Contains(ctx, "client zen") {
+		t.Errorf("no client line:\n%s", ctx)
 	}
-	if strings.Contains(head, "planner") {
-		t.Errorf("the planner line must be replaced:\n%s", head)
+	if strings.Contains(ctx, "mastermind") {
+		t.Errorf("the mastermind line must be replaced:\n%s", ctx)
 	}
 
-	planner := relevo.BindingStatus{
+	mastermind := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
 		BuilderKind: "agy", BuilderStatus: "blocked",
-		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
+		MasterMindID: "mastermind-9f2", MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "channel",
 	}
-	p = paneModel(t, planner, tabReport)
-	head = stripANSI(strings.Join(p.paneHead(&planner), "\n"))
-	if !strings.Contains(head, "planner") {
-		t.Errorf("planner row must keep its planner line:\n%s", head)
+	p = paneModel(t, mastermind, tabReport)
+	rv = roundView{pane: p}
+	env = testEnv(p.src, view.Report{Bindings: []view.BindingStatus{mastermind}}, p.width, p.rows)
+	ctxLeft, _ = rv.Context(env)
+	ctx = stripANSI(ctxLeft)
+	if !strings.Contains(ctx, "architect-1") {
+		t.Errorf("mastermind row must keep its mastermind line:\n%s", ctx)
 	}
-	if strings.Contains(head, "client") {
-		t.Errorf("planner row must not show a client line:\n%s", head)
+	if strings.Contains(ctx, "client") {
+		t.Errorf("mastermind row must not show a client line:\n%s", ctx)
 	}
 }
 
 func TestPaneHeadUsageAndSpendRows(t *testing.T) {
-	var b relevo.BindingStatus
+	var b view.BindingStatus
 	for _, r := range threeRows() {
 		if r.Name == "webshop" {
 			b = r
@@ -339,29 +358,20 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 	b.LastUsage = &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
 		Tokens: usage.Tokens{In: 100, CacheRead: 15_000_000, Out: 55_000}, Cost: usage.Cost{USD: 4.71, Basis: usage.Measured}, Samples: 1}
 	b.Spend = &usage.Spend{Rounds: 2, Measured: 4.71, Unknown: 1}
-	head := p.paneHead(&b)
-	joined := stripANSI(strings.Join(head, "\n"))
-	if !strings.Contains(joined, "usage    claude-sonnet-5 · 9m · in 100 · cache 15.0M (100%) · write 0 · out 55k · $4.71") {
-		t.Errorf("no usage row in the block's own idiom:\n%s", joined)
+	tokens := stripANSI(p.tokensLine(&b))
+	if !strings.Contains(tokens, "tokens in 100 · cache 15.0M (100%) · out 55k · $4.71") {
+		t.Errorf("no usage row in the block's own idiom:\n%s", tokens)
 	}
-	if !strings.Contains(joined, "spend    2 rounds · $4.71 · 1 unknown") {
-		t.Errorf("no spend row:\n%s", joined)
-	}
-	if head[len(head)-1] != "" {
-		t.Error("the block still ends with its blank row")
-	}
-	b.LastUsage, b.Spend = nil, nil
-	p2 := paneModel(t, b, tabReport)
-	if n := len(p2.paneHead(&b)); n != 5 {
-		t.Errorf("without usage the block is 5 rows, got %d", n)
+	if !strings.Contains(tokens, "spend $4.71") {
+		t.Errorf("no spend row:\n%s", tokens)
 	}
 }
 
-// TestPaneHeadLiveUsageRow pins the live figure's place in the header
-// (#234): a running round's `usage` row is the live one, exactly one, and
-// the closed round's row does not appear beside it; spend keeps its row.
+// TestPaneHeadLiveUsageRow pins the live figure's place in the card
+// (#234): a running round's `tokens` row is the live one, exactly one, and
+// the closed round's row does not appear beside it; spend keeps its place.
 func TestPaneHeadLiveUsageRow(t *testing.T) {
-	var b relevo.BindingStatus
+	var b view.BindingStatus
 	for _, r := range threeRows() {
 		if r.Name == "webshop" {
 			b = r
@@ -374,18 +384,17 @@ func TestPaneHeadLiveUsageRow(t *testing.T) {
 		Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
 		Cost:   usage.Cost{USD: 0.04, Basis: usage.Measured}, Samples: 3}
 	b.Spend = &usage.Spend{Rounds: 2, Measured: 0.16}
-	head := p.paneHead(&b)
-	joined := stripANSI(strings.Join(head, "\n"))
-	if n := strings.Count(joined, "usage    "); n != 1 {
-		t.Errorf("%d usage rows, want exactly one:\n%s", n, joined)
+	tokens := stripANSI(p.tokensLine(&b))
+	if n := strings.Count(tokens, "tokens "); n != 1 {
+		t.Errorf("%d usage rows, want exactly one:\n%s", n, tokens)
 	}
-	if !strings.Contains(joined, "usage    live · glm-5.3-flash") {
-		t.Errorf("the usage row must be the live one:\n%s", joined)
+	if !strings.Contains(tokens, "tokens in 2k · cache 91k (95%) · write 3k · out 8k · $0.04") {
+		t.Errorf("the usage row must be the live one:\n%s", tokens)
 	}
-	if strings.Contains(joined, "gemini-3-pro") || strings.Contains(joined, "6m") {
-		t.Errorf("the closed round's row must yield to the live one:\n%s", joined)
+	if strings.Contains(tokens, "gemini-3-pro") || strings.Contains(tokens, "6m") {
+		t.Errorf("the closed round's row must yield to the live one:\n%s", tokens)
 	}
-	if !strings.Contains(joined, "spend    2 rounds · $0.16") {
-		t.Errorf("no spend row:\n%s", joined)
+	if !strings.Contains(tokens, "spend $0.16") {
+		t.Errorf("no spend row:\n%s", tokens)
 	}
 }

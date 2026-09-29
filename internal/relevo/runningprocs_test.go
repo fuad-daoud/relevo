@@ -12,6 +12,8 @@ import (
 // (owner-carrying) or remote binding, a done consult, a pane process and a
 // zero pid are not.
 func TestRunningProcs(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		bs   []store.Binding

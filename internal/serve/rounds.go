@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -18,20 +19,109 @@ import (
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// sameSavedPlan reports whether planText is byte-identical to the plan the
-// server saved for round -- the sha256 comparison the closed-round dedupe has
-// used since the round-resend rule, factored out for the open-round idempotent
-// send (#373 §4.2). A plan that was never saved, or cannot be read, is not the
-// same plan.
+// sameSavedPlan reports whether planText is byte-identical to the plan saved for
+// round; an unreadable plan is not the same plan.
 func sameSavedPlan(rt relevo.Runtime, name string, round int, planText string) bool {
-	saved, err := os.ReadFile(rt.Store.PlanPath(name, round))
+	saved, err := os.ReadFile(rt.Store.PromptPath(name, round))
 	if err != nil {
 		return false
 	}
 	return sha256.Sum256([]byte(planText)) == sha256.Sum256(saved)
+}
+
+type roundRequest struct {
+	Round     int
+	Plan      string
+	Tier      string
+	Candidate string
+	Bundle    io.Reader
+}
+
+// parseRoundRequest reads the round's form fields; bad is the 400 to answer and
+// close releases the bundle part.
+func parseRoundRequest(r *http.Request) (req roundRequest, close func(), bad string) {
+	close = func() {}
+	roundStr := r.FormValue("round")
+	if roundStr == "" {
+		return req, close, "round is required"
+	}
+	round, err := strconv.Atoi(roundStr)
+	if err != nil || round < 1 {
+		return req, close, "invalid round"
+	}
+	req.Round = round
+
+	req.Plan = r.FormValue("plan")
+	if req.Plan == "" {
+		return req, close, "plan is required"
+	}
+	if tier := r.FormValue("tier"); tier != "" {
+		if _, err := harness.ParseTier(tier); err != nil {
+			return req, close, err.Error()
+		}
+		req.Tier = tier
+	}
+	req.Candidate = r.FormValue("candidate")
+
+	file, _, fileErr := r.FormFile("bundle")
+	if fileErr != nil {
+		return req, close, ""
+	}
+	close = func() { _ = file.Close() }
+	size, seekErr := file.Seek(0, io.SeekEnd)
+	if seekErr == nil && size > 0 {
+		if _, err := file.Seek(0, io.SeekStart); err == nil {
+			req.Bundle = file
+		}
+	}
+	return req, close, ""
+}
+
+// roundStartDecision is what the open-round checks say about a start request.
+type roundStartDecision int
+
+const (
+	startProceed roundStartDecision = iota
+	startRetry                      // identical retry: answer 200 with the view
+	startOpen                       // the round is running with a different plan
+	startStarted                    // another round's plan differs
+)
+
+// write answers a non-proceed round start: a retry is the 200 view, an open or
+// started round a named 409.
+func (d roundStartDecision) write(w http.ResponseWriter, b store.Binding, entries []store.LogEntry, msg string) {
+	switch d {
+	case startRetry:
+		writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
+	case startOpen:
+		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, msg)
+	case startStarted:
+		writeErr(w, http.StatusConflict, remote.CodeRoundStarted, msg)
+	}
+}
+
+// roundStartDecisionOf classifies a start request against the binding's log: an
+// identical retry is a no-op, a different plan for the open round is
+// 409 round_open, and a different round's plan is 409 round_started.
+func roundStartDecisionOf(rt relevo.Runtime, b store.Binding, entries []store.LogEntry, reqRound int, planText string) (roundStartDecision, string) {
+	st := relevo.RoundStateOf(b, entries)
+	if (st == remote.RoundRunning || st == remote.RoundQueued) && reqRound == b.Round && sameSavedPlan(rt, b.Name, b.Round, planText) {
+		return startRetry, ""
+	}
+	if st == remote.RoundRunning {
+		return startOpen, "round is running"
+	}
+	if reqRound != b.Round {
+		if reqRound == b.Round-1 && sameSavedPlan(rt, b.Name, b.Round-1, planText) {
+			return startRetry, ""
+		}
+		return startStarted, fmt.Sprintf("round %d already started with a different plan", reqRound)
+	}
+	return startProceed, ""
 }
 
 func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
@@ -45,53 +135,17 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	roundStr := r.FormValue("round")
-	if roundStr == "" {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "round is required")
+	req, closeBundle, bad := parseRoundRequest(r)
+	if bad != "" {
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, bad)
 		return
 	}
-	reqRound, err := strconv.Atoi(roundStr)
-	if err != nil || reqRound < 1 {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "invalid round")
-		return
-	}
-
-	planText := r.FormValue("plan")
-	if planText == "" {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "plan is required")
-		return
-	}
-
-	tierStr := r.FormValue("tier")
-	if tierStr != "" {
-		if _, err := harness.ParseTier(tierStr); err != nil {
-			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
-			return
-		}
-	}
-
-	// candidate is --builder's token (#318): a canonical candidate that
-	// persists as the binding's builder from this round on. Absent or "" keeps
-	// the binding's builder.
-	candidate := r.FormValue("candidate")
-
-	var bundlePart io.Reader
-	file, _, fileErr := r.FormFile("bundle")
-	if fileErr == nil {
-		defer file.Close()
-		size, seekErr := file.Seek(0, io.SeekEnd)
-		if seekErr == nil && size > 0 {
-			if _, err := file.Seek(0, io.SeekStart); err == nil {
-				bundlePart = file
-			}
-		}
-	}
+	defer closeBundle()
 
 	s.mu.Lock()
 
 	caller := callerOf(r)
 	name := r.PathValue("name")
-
 	b, rt, err := s.loadBinding(caller, name)
 	if err != nil {
 		s.mu.Unlock()
@@ -109,34 +163,9 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, _ := rt.Store.ReadLog(name)
-
-	// An identical retry of the open round is a no-op 200 (#373 §4.2). The
-	// client's StartRound retries once the server advertises
-	// FeatureIdempotentSend, so a repeated request for the round that is
-	// running or queued, with the plan the server saved for it, must not
-	// re-Send, reset QueuedAt, append a log entry or absorb the bundle
-	// again. It returns before the running->409 check below; a different plan
-	// for the open round is still 409 round_open.
-	st := relevo.RoundStateOf(b, entries)
-	if (st == remote.RoundRunning || st == remote.RoundQueued) && reqRound == b.Round && sameSavedPlan(rt, name, b.Round, planText) {
+	if dec, msg := roundStartDecisionOf(rt, b, entries, req.Round, req.Plan); dec != startProceed {
 		s.mu.Unlock()
-		writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
-		return
-	}
-	if st == remote.RoundRunning {
-		s.mu.Unlock()
-		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, "round is running")
-		return
-	}
-
-	if reqRound != b.Round {
-		if reqRound == b.Round-1 && sameSavedPlan(rt, name, b.Round-1, planText) {
-			s.mu.Unlock()
-			writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
-			return
-		}
-		s.mu.Unlock()
-		writeErr(w, http.StatusConflict, remote.CodeRoundStarted, fmt.Sprintf("round %d already started with a different plan", reqRound))
+		dec.write(w, b, entries, msg)
 		return
 	}
 
@@ -147,10 +176,10 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A requested builder change is validated before anything moves: a bad
-	// token refuses with nothing absorbed and no ref touched (#318 §5.4). Send
-	// re-resolves it under its own lock as a backstop.
-	if candidate != "" {
-		if _, err := relevo.ResolveSendBuilderFor(rt, relevo.BindingRole(b), b.BuilderCandidate, candidate); err != nil {
+	// token refuses with nothing absorbed and no ref touched. Send re-resolves
+	// it under its own lock as a backstop.
+	if req.Candidate != "" {
+		if _, err := relevo.ResolveSendBuilderFor(rt, relevo.BindingRole(b), b.BuilderCandidate, req.Candidate); err != nil {
 			s.mu.Unlock()
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
 			return
@@ -160,27 +189,154 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	bare := b.Serve.BareRepo
 	outRef := "refs/relevo/" + name + "/out"
 
-	// Absorb OUTSIDE s.mu
+	// Absorb OUTSIDE s.mu.
 	s.mu.Unlock()
 
-	if bundlePart != nil {
-		_, absorbErr := s.transport.Absorb(r.Context(), bare, remote.ContentTypeGitBundle, bundlePart, []string{outRef})
-		if absorbErr != nil {
-			if errors.Is(absorbErr, git.ErrNotFastForward) ||
-				errors.Is(absorbErr, git.ErrBadBundle) ||
-				errors.Is(absorbErr, remote.ErrUnexpectedRef) ||
-				errors.Is(absorbErr, remote.ErrUnsupportedType) {
-				writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, absorbErr.Error())
-				return
-			}
-			writeErr(w, http.StatusInternalServerError, "", absorbErr.Error())
-			return
-		}
+	if !s.absorbRoundBundle(w, r, bare, outRef, req.Bundle) {
+		return
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.finishRoundStart(w, r, rt, caller, name, bare, outRef, b, req)
+}
 
+func (s *Server) absorbRoundBundle(w http.ResponseWriter, r *http.Request, bare, outRef string, bundle io.Reader) bool {
+	if bundle == nil {
+		return true
+	}
+	_, err := s.transport.Absorb(r.Context(), bare, remote.ContentTypeGitBundle, bundle, []string{outRef})
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, git.ErrNotFastForward) ||
+		errors.Is(err, git.ErrBadBundle) ||
+		errors.Is(err, remote.ErrUnexpectedRef) ||
+		errors.Is(err, remote.ErrUnsupportedType) {
+		writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, err.Error())
+		return false
+	}
+	writeErr(w, http.StatusInternalServerError, "", err.Error())
+	return false
+}
+
+// applyRoundTags sets the client's shipped tags whose commit is already in bare;
+// an unrelated tag is skipped. old = "" is unconditional, so a tag the client
+// moved moves here too.
+func (s *Server) applyRoundTags(ctx context.Context, w http.ResponseWriter, bare, rawTags string) bool {
+	if rawTags == "" {
+		return true
+	}
+	var tags []remote.TagRef
+	if err := json.Unmarshal([]byte(rawTags), &tags); err != nil {
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "tags: "+err.Error())
+		return false
+	}
+	for _, tag := range tags {
+		if err := validTagRef(tag); err != nil {
+			slog.Debug("tag skipped", "tag", tag.Name, "err", err)
+			continue
+		}
+		if err := s.cfg.Git.UpdateRef(ctx, bare, "refs/tags/"+tag.Name, tag.SHA, ""); err != nil {
+			slog.Debug("tag not set", "tag", tag.Name, "err", err)
+		}
+	}
+	return true
+}
+
+func (s *Server) syncRoundWorktree(ctx context.Context, w http.ResponseWriter, bare, outRef string, b store.Binding, outSHA string) bool {
+	if _, statErr := os.Stat(b.Worktree); os.IsNotExist(statErr) {
+		if err := s.cfg.Git.UpdateRef(ctx, bare, "refs/heads/"+b.Branch, outSHA, ""); err != nil {
+			writeErr(w, http.StatusInternalServerError, "", err.Error())
+			return false
+		}
+		if err := s.cfg.Git.CheckoutWorktree(ctx, bare, b.Worktree, b.Branch); err != nil {
+			writeErr(w, http.StatusInternalServerError, "", err.Error())
+			return false
+		}
+		return true
+	}
+
+	err := s.cfg.Git.MergeFF(ctx, b.Worktree, outRef)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, git.ErrNotFastForward):
+		writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "relevo/"+b.Name+" on the server has moved past your copy")
+	case errors.Is(err, git.ErrMergeConflict):
+		writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "uncommitted work in the server worktree conflicts with your update")
+	default:
+		writeErr(w, http.StatusInternalServerError, "", err.Error())
+	}
+	return false
+}
+
+func writePlanTemp(root, planText string) (string, error) {
+	f, err := os.CreateTemp(filepath.Join(root, "tmp"), "plan-*")
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	if _, err := f.WriteString(planText); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	_ = f.Close()
+	return path, nil
+}
+
+// writeSendError maps a Send failure to its response: a halted binding gets 409
+// round_halted, anything unrecognised a 500.
+func writeSendError(w http.ResponseWriter, rt relevo.Runtime, name string, b store.Binding, sendErr error) {
+	switch {
+	case errors.Is(sendErr, spawn.ErrRunnerUnavailable):
+		writeErr(w, http.StatusServiceUnavailable, remote.CodeNoRunner, sendErr.Error())
+	case errors.Is(sendErr, relevo.ErrBuilderBusy), errors.Is(sendErr, relevo.ErrReportPending):
+		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, sendErr.Error())
+	case errors.Is(sendErr, relevo.ErrTierAboveMax):
+		writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax, sendErr.Error())
+	case errors.Is(sendErr, relevo.ErrBadBuilder):
+		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, sendErr.Error())
+	default:
+		if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {
+			b = reloaded
+		}
+		if b.State == store.StateNeedsYou || b.Halt != "" {
+			slog.Warn("round start failed", "binding", name, "round", b.Round, "err", sendErr, "halt", b.Halt)
+			writeErr(w, http.StatusConflict, remote.CodeRoundHalted, orText(b.Halt, sendErr.Error()))
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "", sendErr.Error())
+	}
+}
+
+// recordRoundAccepted writes the accept-time census entry and queued hook:
+// Send's deferred branch does not know the census.
+func (s *Server) recordRoundAccepted(r *http.Request, rt relevo.Runtime, name string, b store.Binding) {
+	acceptCensus, censusErr := s.census()
+	if censusErr != nil {
+		slog.Warn("census failed at round accept", "binding", name, "err", censusErr)
+	}
+	if err := rt.Store.AppendLog(name, store.LogEntry{
+		TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true,
+		Note: fmt.Sprintf("queued (%d/%d builders busy)", acceptCensus.Running, s.cap()),
+	}); err != nil {
+		slog.Warn("append queue entry failed", "binding", name, "err", err)
+	}
+	if s.cfg.Hooks != nil {
+		s.cfg.Hooks.Dispatch(r.Context(), hooks.Event{
+			Type:      hooks.EventRoundQueued,
+			BindingID: name,
+			State:     string(b.State),
+			Round:     b.Round,
+			Timestamp: rt.Now().UTC(),
+		})
+	}
+}
+
+// finishRoundStart runs the locked half of a round start -- ref, worktree,
+// send, accept census, admit -- writing the 201 view or the failure itself.
+func (s *Server) finishRoundStart(w http.ResponseWriter, r *http.Request, rt relevo.Runtime, caller remote.ClientID, name, bare, outRef string, b store.Binding, req roundRequest) {
 	if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {
 		b = reloaded
 	}
@@ -194,131 +350,29 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "no outbound ref; send a bundle first")
 		return
 	}
-
-	// The client's tags ship as data beside the bundle (#242). Set the ones
-	// whose commit is already here; a tag for a commit the server does not
-	// have is expected (an unrelated tag) and is skipped. Idempotent: a tag
-	// already at that sha is a no-op, and old = "" means unconditional, so a
-	// tag the client moved moves here too.
-	if rawTags := r.FormValue("tags"); rawTags != "" {
-		var tags []remote.TagRef
-		if err := json.Unmarshal([]byte(rawTags), &tags); err != nil {
-			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "tags: "+err.Error())
-			return
-		}
-		for _, tag := range tags {
-			if err := validTagRef(tag); err != nil {
-				slog.Debug("tag skipped", "tag", tag.Name, "err", err)
-				continue
-			}
-			if err := s.cfg.Git.UpdateRef(r.Context(), bare, "refs/tags/"+tag.Name, tag.SHA, ""); err != nil {
-				slog.Debug("tag not set", "tag", tag.Name, "err", err)
-				continue
-			}
-		}
+	if !s.applyRoundTags(r.Context(), w, bare, r.FormValue("tags")) {
+		return
+	}
+	if !s.syncRoundWorktree(r.Context(), w, bare, outRef, b, outSHA) {
+		return
 	}
 
-	if _, statErr := os.Stat(b.Worktree); os.IsNotExist(statErr) {
-		if err := s.cfg.Git.UpdateRef(r.Context(), bare, "refs/heads/"+b.Branch, outSHA, ""); err != nil {
-			writeErr(w, http.StatusInternalServerError, "", err.Error())
-			return
-		}
-		if err := s.cfg.Git.CheckoutWorktree(r.Context(), bare, b.Worktree, b.Branch); err != nil {
-			writeErr(w, http.StatusInternalServerError, "", err.Error())
-			return
-		}
-	} else {
-		if err := s.cfg.Git.MergeFF(r.Context(), b.Worktree, outRef); err != nil {
-			if errors.Is(err, git.ErrNotFastForward) {
-				writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "relevo/"+name+" on the server has moved past your copy")
-				return
-			}
-			if errors.Is(err, git.ErrMergeConflict) {
-				writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "uncommitted work in the server worktree conflicts with your update")
-				return
-			}
-			writeErr(w, http.StatusInternalServerError, "", err.Error())
-			return
-		}
-	}
-
-	tmpFile, err := os.CreateTemp(filepath.Join(s.cfg.Root, "tmp"), "plan-*")
+	tmpFilePath, err := writePlanTemp(s.cfg.Root, req.Plan)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return
 	}
-	tmpFilePath := tmpFile.Name()
-	defer os.Remove(tmpFilePath)
+	defer func() { _ = os.Remove(tmpFilePath) }()
 
-	if _, err := tmpFile.WriteString(planText); err != nil {
-		_ = tmpFile.Close()
-		writeErr(w, http.StatusInternalServerError, "", err.Error())
-		return
-	}
-	_ = tmpFile.Close()
-
-	_, sendErr := relevo.Send(r.Context(), rt, name, tmpFilePath, relevo.SendOptions{Tier: tierStr, Builder: candidate, Defer: true})
-	if sendErr != nil {
-		if errors.Is(sendErr, relevo.ErrRunnerUnavailable) {
-			writeErr(w, http.StatusServiceUnavailable, remote.CodeNoRunner, sendErr.Error())
-			return
-		}
-		if errors.Is(sendErr, relevo.ErrBuilderBusy) {
-			writeErr(w, http.StatusConflict, remote.CodeRoundOpen, sendErr.Error())
-			return
-		}
-		if errors.Is(sendErr, relevo.ErrTierAboveMax) {
-			writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax, sendErr.Error())
-			return
-		}
-		// Backstop: the token was validated before absorb, but the ledger or
-		// the candidates could have changed in between (#318).
-		if errors.Is(sendErr, relevo.ErrBadBuilder) {
-			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, sendErr.Error())
-			return
-		}
-		if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {
-			b = reloaded
-		}
-		if b.State == store.StateNeedsYou || b.Halt != "" {
-			slog.Warn("round start failed", "binding", name, "round", b.Round, "err", sendErr, "halt", b.Halt)
-			writeErr(w, http.StatusConflict, remote.CodeRoundHalted, orText(b.Halt, sendErr.Error()))
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, "", sendErr.Error())
+	if _, sendErr := relevo.Send(r.Context(), rt, name, tmpFilePath, relevo.SendOptions{Tier: req.Tier, Builder: req.Candidate, Defer: true}); sendErr != nil {
+		writeSendError(w, rt, name, b, sendErr)
 		return
 	}
 
 	if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {
 		b = reloaded
 	}
-
-	// The accept-time census, logged before admit: Send's deferred branch
-	// does not know the census, so handleStartRound writes the audit entry
-	// itself, still under s.mu (#285). If admit below starts the round at
-	// once, the log shows "queued (0/3 busy)" followed by "started after 0s
-	// queued" -- intended, the log is the audit trail.
-	acceptCensus, censusErr := s.census()
-	if censusErr != nil {
-		slog.Warn("census failed at round accept", "binding", name, "err", censusErr)
-	}
-	if err := rt.Store.AppendLog(name, store.LogEntry{
-		TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindQueue, Confirmed: true,
-		Note: fmt.Sprintf("queued (%d/%d builders busy)", acceptCensus.Running, s.cap()),
-	}); err != nil {
-		slog.Warn("append queue entry failed", "binding", name, "err", err)
-	}
-
-	if s.cfg.Hooks != nil {
-		s.cfg.Hooks.Dispatch(r.Context(), hooks.Event{
-			Type:      hooks.EventRoundQueued,
-			BindingID: name,
-			State:     string(b.State),
-			Round:     b.Round,
-			Timestamp: rt.Now().UTC(),
-		})
-	}
-
+	s.recordRoundAccepted(r, rt, name, b)
 	if err := s.admit(r.Context()); err != nil {
 		slog.Warn("admit failed", "binding", name, "err", err)
 	}
@@ -326,81 +380,15 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {
 		b = reloaded
 	}
-	entries, _ = rt.Store.ReadLog(name)
+	entries, _ := rt.Store.ReadLog(name)
 	view := relevo.ServedView(b, entries)
 	view.Queue = s.queuePositionView(b, view, caller)
 	writeJSON(w, http.StatusCreated, view)
 }
 
-func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	caller := callerOf(r)
-	name := r.PathValue("name")
-	b, rt, err := s.loadBinding(caller, name)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
-		return
-	}
-	if !Allowed(caller, "files", b) {
-		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-		return
-	}
-
-	n, err := strconv.Atoi(r.PathValue("n"))
-	if err != nil || n < 1 || n > b.Round {
-		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-		return
-	}
-
-	kind := r.PathValue("kind")
-	var path string
-	switch kind {
-	case "report":
-		path = rt.Store.ReportPath(name, n)
-	case "diff":
-		path = rt.Store.DiffPath(name, n)
-	case "log":
-		path = rt.Store.BuilderLogPath(name, n)
-	case "stream":
-		path = rt.Store.BuilderStreamPath(name, n)
-	case "plan":
-		path = rt.Store.PlanPath(name, n)
-	default:
-		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "unknown file kind")
-		return
-	}
-
-	if kind != "log" {
-		if b.Serve == nil || n > b.Serve.ClosedRound {
-			writeErr(w, http.StatusNotFound, remote.CodeNotFound, fmt.Sprintf("round %d is not closed", n))
-			return
-		}
-	}
-
-	// A sealed round's file is a row, not a file (P3c §4.4): ReadFile answers
-	// from disk or from the sealed row, and a miss is still a 404.
-	data, err := rt.Store.ReadFile(path)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "file not found")
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
-}
-
 // validTagRef reports whether a shipped tag is well formed enough to set as a
-// ref. Git tag names may legally contain "/" (release/1.0, v1/rc2), so this
-// follows git's ref-name rules loosely rather than refusing any slash; a
-// name that still fails is skipped by the caller, never a 400 for the whole
-// round start (#242 follow-up).
+// ref. Git tag names may legally contain "/", so this follows git's ref-name
+// rules loosely; a failure is skipped by the caller, never a 400.
 func validTagRef(tag remote.TagRef) error {
 	name := tag.Name
 	if name == "" || strings.Contains(name, "..") || strings.ContainsAny(name, " \t\n\r") {
@@ -429,114 +417,4 @@ func validTagRef(tag remote.TagRef) error {
 		return fmt.Errorf("invalid tag sha %q", tag.SHA)
 	}
 	return nil
-}
-
-func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-
-	caller := callerOf(r)
-	name := r.PathValue("name")
-	b, _, err := s.loadBinding(caller, name)
-	if err != nil {
-		s.mu.Unlock()
-		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
-		return
-	}
-	if !Allowed(caller, "bundle", b) {
-		s.mu.Unlock()
-		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-		return
-	}
-
-	n, err := strconv.Atoi(r.PathValue("n"))
-	if err != nil || b.Serve == nil || n != b.Serve.ClosedRound {
-		s.mu.Unlock()
-		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "round not closed")
-		return
-	}
-
-	bare := b.Serve.BareRepo
-	refs := []string{"refs/heads/" + b.Branch}
-	if b.Serve.DirtyCommit != "" {
-		refs = append(refs, fmt.Sprintf("refs/relevo/%s/round-%d", name, n))
-	}
-	since := r.URL.Query().Get("since")
-
-	s.mu.Unlock()
-
-	snap, err := s.transport.Snapshot(r.Context(), bare, refs, since)
-	if err != nil {
-		if errors.Is(err, remote.ErrSinceUnknown) {
-			writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "since is not an ancestor of the result")
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, "", err.Error())
-		return
-	}
-
-	if snap.Empty {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	defer snap.Body.Close()
-
-	w.Header().Set("Content-Type", snap.ContentType)
-	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, snap.Body)
-}
-
-func (s *Server) handleAckRound(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	caller := callerOf(r)
-	name := r.PathValue("name")
-	b, rt, err := s.loadBinding(caller, name)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
-		return
-	}
-	if !Allowed(caller, "ack", b) {
-		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-		return
-	}
-
-	n, err := strconv.Atoi(r.PathValue("n"))
-	if err != nil || b.Serve == nil || n > b.Serve.ClosedRound {
-		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, fmt.Sprintf("round %d is not closed", n))
-		return
-	}
-
-	err = rt.Store.WithLock(func(tx *store.Tx) error {
-		b2, err := tx.Load(name)
-		if err != nil {
-			return err
-		}
-		if b2.Serve != nil && n > b2.Serve.AckedRound {
-			b2.Serve.AckedRound = n
-		}
-		if err := tx.Save(b2); err != nil {
-			return err
-		}
-		_, err = settleServed(tx, name, n)
-		return err
-	})
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "", err.Error())
-		return
-	}
-
-	if reloaded, err := rt.Store.Load(name); err == nil {
-		b = reloaded
-	}
-	entries, _ := rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
 }

@@ -43,112 +43,74 @@ func TestDaemonPointerKVRoundTrip(t *testing.T) {
 	}
 }
 
-// TestReadPointerFile pins the legacy file reader that only internal/migrate
-// still uses (P5 D1).
-func TestReadPointerFile(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, PointerFileName), []byte(`{"root":"/srv/serve","pid":4242}`), 0o644); err != nil {
+func emptyRoot(t *testing.T, _ *db.DB) string { return t.TempDir() }
+
+func missingRoot(t *testing.T, _ *db.DB) string { return filepath.Join(t.TempDir(), "nope") }
+
+func rootWithClientsRow(t *testing.T, d *db.DB) string {
+	t.Helper()
+	if err := d.KVPut(clientsKVKey, []byte("[]")); err != nil {
 		t.Fatal(err)
 	}
-	got, ok, err := ReadPointer(root)
-	if err != nil || !ok {
-		t.Fatalf("ReadPointer = (ok %v, err %v), want (true, nil)", ok, err)
-	}
-	if got.Root != "/srv/serve" || got.PID != 4242 {
-		t.Errorf("ReadPointer = %+v, want root /srv/serve pid 4242", got)
-	}
-
-	if _, ok, err := ReadPointer(t.TempDir()); err != nil || ok {
-		t.Errorf("ReadPointer(missing) = (ok %v, err %v), want (false, nil)", ok, err)
-	}
-
-	malformedRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(malformedRoot, PointerFileName), []byte("{"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := ReadPointer(malformedRoot); err == nil {
-		t.Error("ReadPointer malformed JSON error = nil, want non-nil")
-	}
+	return t.TempDir()
 }
 
+func rootWithTLSKey(t *testing.T, d *db.DB) string {
+	t.Helper()
+	if err := d.Tx(func(tx *db.Tx) error {
+		return tx.SecretPut(tlsKeySecret, []byte("key"), time.Now().UTC())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return t.TempDir()
+}
+
+func rootWithBindingsDir(t *testing.T, _ *db.DB) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "bindings"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func rootWithLegacyClients(t *testing.T, _ *db.DB) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "clients.json"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// TestInitialised is a table because each row only differs in which marker it
+// seeds; every row must answer exactly that marker's presence.
 func TestInitialised(t *testing.T) {
-	t.Run("empty database and root", func(t *testing.T) {
-		got, err := Initialised(t.TempDir(), testServeDB(t))
-		if err != nil {
-			t.Fatalf("Initialised: %v", err)
-		}
-		if got {
-			t.Error("Initialised = true, want false")
-		}
-	})
-
-	t.Run("clients kv row", func(t *testing.T) {
-		d := testServeDB(t)
-		if err := d.KVPut(clientsKVKey, []byte("[]")); err != nil {
-			t.Fatal(err)
-		}
-		got, err := Initialised(t.TempDir(), d)
-		if err != nil {
-			t.Fatalf("Initialised: %v", err)
-		}
-		if !got {
-			t.Error("Initialised = false, want true for a serve.clients row")
-		}
-	})
-
-	t.Run("tls key secret", func(t *testing.T) {
-		d := testServeDB(t)
-		if err := d.Tx(func(tx *db.Tx) error {
-			return tx.SecretPut(tlsKeySecret, []byte("key"), time.Now().UTC())
-		}); err != nil {
-			t.Fatal(err)
-		}
-		got, err := Initialised(t.TempDir(), d)
-		if err != nil {
-			t.Fatalf("Initialised: %v", err)
-		}
-		if !got {
-			t.Error("Initialised = false, want true for a serve.tls.key secret")
-		}
-	})
-
-	t.Run("bindings directory", func(t *testing.T) {
-		root := t.TempDir()
-		if err := os.Mkdir(filepath.Join(root, "bindings"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		got, err := Initialised(root, testServeDB(t))
-		if err != nil {
-			t.Fatalf("Initialised: %v", err)
-		}
-		if !got {
-			t.Error("Initialised = false, want true for a bindings directory")
-		}
-	})
-
-	t.Run("legacy clients.json file", func(t *testing.T) {
-		root := t.TempDir()
-		if err := os.WriteFile(filepath.Join(root, "clients.json"), nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		got, err := Initialised(root, testServeDB(t))
-		if err != nil {
-			t.Fatalf("Initialised: %v", err)
-		}
-		if !got {
-			t.Error("Initialised = false, want true for a legacy clients.json")
-		}
-	})
-
-	t.Run("missing directory", func(t *testing.T) {
-		got, err := Initialised(filepath.Join(t.TempDir(), "nope"), testServeDB(t))
-		if err != nil {
-			t.Fatalf("Initialised: %v", err)
-		}
-		if got {
-			t.Error("Initialised = true, want false")
-		}
-	})
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, d *db.DB) string
+		want  bool
+	}{
+		{"empty database and root", emptyRoot, false},
+		{"clients kv row", rootWithClientsRow, true},
+		{"tls key secret", rootWithTLSKey, true},
+		{"bindings directory", rootWithBindingsDir, true},
+		{"a clients.json file alone is not serve state", rootWithLegacyClients, false},
+		{"missing directory", missingRoot, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := testServeDB(t)
+			root := tc.setup(t, d)
+			got, err := Initialised(root, d)
+			if err != nil {
+				t.Fatalf("Initialised: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("Initialised = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestResolveAdminRoot(t *testing.T) {

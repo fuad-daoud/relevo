@@ -43,7 +43,7 @@ func TestDirSourceListsAndOpens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -66,8 +66,7 @@ func TestDirSourceListsAndOpens(t *testing.T) {
 }
 
 func TestDirSourceMissingBindIsErrSource(t *testing.T) {
-	dir := t.TempDir()
-	src := DirSource(dir)
+	src := DirSource(t.TempDir())
 
 	if _, err := src.Bind(); err == nil {
 		t.Fatal("Bind() over a directory with no bind.json must fail")
@@ -76,10 +75,8 @@ func TestDirSourceMissingBindIsErrSource(t *testing.T) {
 	}
 }
 
-// buildArchivedSource saves a binding through store.Store the normal way,
-// adds a round file to its directory, then archives it, returning the store
-// and the archived record's id (P3d §4.1). It is ArchivedSource's fixture, the
-// way DirSource's tests build a directory.
+// buildArchivedSource saves a binding, adds a round file, then archives it and
+// returns the store and the record's id.
 func buildArchivedSource(t *testing.T, root, name string) (*store.Store, string) {
 	t.Helper()
 	s := store.New(root)
@@ -135,7 +132,7 @@ func TestArchivedSourceReadsMembersWithoutExtracting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -151,8 +148,7 @@ func TestArchivedSourceReadsMembersWithoutExtracting(t *testing.T) {
 		t.Errorf("Open(missing) err = %v, want os.ErrNotExist", err)
 	}
 
-	// Reading an archived record extracts nothing: the record is in the
-	// database, and no round file reappears under the root.
+	// Reading an archived record extracts nothing: no round file reappears.
 	after, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
@@ -184,23 +180,4 @@ func TestArchivedSourceOriginAndStamp(t *testing.T) {
 	if at.IsZero() {
 		t.Error("ArchivedAt() returned the zero time")
 	}
-}
-
-func writeFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

@@ -12,12 +12,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/serve"
 )
 
-// ServeChecks evaluates the health of a relevo serve installation. It runs when
-// the machine database holds the serve.tls.key secret (P5 §4.7): the
-// certificate and the clients come from that database, and the state check
-// probes the root the running daemon's serve.daemon row names -- or serveRoot
-// when there is none. Reading the root from the row is what makes the serve
-// rows show on a box started with a non-default --state.
+// ServeChecks evaluates the health of a relevo serve installation. It runs
+// when the machine database holds the serve.tls.key secret: the certificate
+// and the clients come from that database, and the state check probes the
+// root the running daemon's serve.daemon row names -- or serveRoot when
+// there is none. Reading the root from the row is what makes the serve rows
+// show on a box started with a non-default --state.
 func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time) []Check {
 	if d == nil {
 		return nil
@@ -31,151 +31,96 @@ func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time) []Check {
 		root = p.Root
 	}
 
-	var checks []Check
+	return []Check{
+		serveCertificateCheck(d, now),
+		serveClientsCheck(d),
+		serveStateCheck(env, root),
+	}
+}
 
-	// 1. Certificate check
-	if rawCrt, ok, err := d.SecretGet("serve.tls.cert"); err != nil || !ok {
-		checks = append(checks, Check{
-			Group:    "serve",
-			Name:     "certificate",
-			Severity: SevFail,
-			Detail:   "unreadable",
-			Fix:      "relevo serve init",
-		})
-	} else {
-		block, _ := pem.Decode(rawCrt)
-		if block == nil {
-			checks = append(checks, Check{
-				Group:    "serve",
-				Name:     "certificate",
-				Severity: SevFail,
-				Detail:   "unreadable",
-				Fix:      "relevo serve init",
-			})
-		} else {
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				checks = append(checks, Check{
-					Group:    "serve",
-					Name:     "certificate",
-					Severity: SevFail,
-					Detail:   "unreadable",
-					Fix:      "relevo serve init",
-				})
-			} else if now.After(cert.NotAfter) {
-				checks = append(checks, Check{
-					Group:    "serve",
-					Name:     "certificate",
-					Severity: SevFail,
-					Detail:   "expired",
-					Fix:      "relevo serve init",
-				})
-			} else if cert.NotAfter.Before(now.Add(30 * 24 * time.Hour)) {
-				checks = append(checks, Check{
-					Group:    "serve",
-					Name:     "certificate",
-					Severity: SevWarn,
-					Detail:   fmt.Sprintf("expires %s", cert.NotAfter.Format("2006-01-02")),
-				})
-			} else {
-				checks = append(checks, Check{
-					Group:    "serve",
-					Name:     "certificate",
-					Severity: SevOK,
-					Detail:   fmt.Sprintf("valid until %s", cert.NotAfter.Format("2006-01-02")),
-				})
-			}
-		}
+func serveCertificateCheck(d *db.DB, now time.Time) Check {
+	c := Check{Group: "serve", Name: "certificate"}
+	unreadable := func() Check {
+		c.Severity, c.Detail, c.Fix = SevFail, "unreadable", "relevo serve init"
+		return c
 	}
 
-	// 2. Clients check
-	rawClients, clientsOK, err := d.KVGet("serve.clients")
+	rawCrt, ok, err := d.SecretGet("serve.tls.cert")
+	if err != nil || !ok {
+		return unreadable()
+	}
+	block, _ := pem.Decode(rawCrt)
+	if block == nil {
+		return unreadable()
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		checks = append(checks, Check{
-			Group:    "serve",
-			Name:     "clients",
-			Severity: SevFail,
-			Detail:   err.Error(),
-		})
-	} else if !clientsOK {
-		checks = append(checks, Check{
-			Group:    "serve",
-			Name:     "clients",
-			Severity: SevWarn,
-			Detail:   "none enrolled",
-			Fix:      "relevo serve enroll --label <name> --key <line>",
-		})
-	} else {
-		var list []struct {
-			ID        string    `json:"id"`
-			RevokedAt time.Time `json:"revoked_at,omitempty"`
-		}
-		if err := json.Unmarshal(rawClients, &list); err != nil {
-			checks = append(checks, Check{
-				Group:    "serve",
-				Name:     "clients",
-				Severity: SevFail,
-				Detail:   "parse error",
-				Fix:      "fix the serve.clients row in the database",
-			})
-		} else {
-			active := 0
-			for _, c := range list {
-				if c.RevokedAt.IsZero() {
-					active++
-				}
-			}
-			if active == 0 {
-				checks = append(checks, Check{
-					Group:    "serve",
-					Name:     "clients",
-					Severity: SevWarn,
-					Detail:   "none enrolled",
-					Fix:      "relevo serve enroll --label <name> --key <line>",
-				})
-			} else if active == 1 {
-				checks = append(checks, Check{
-					Group:    "serve",
-					Name:     "clients",
-					Severity: SevOK,
-					Detail:   "1 enrolled",
-				})
-			} else {
-				checks = append(checks, Check{
-					Group:    "serve",
-					Name:     "clients",
-					Severity: SevOK,
-					Detail:   fmt.Sprintf("%d enrolled", active),
-				})
-			}
-		}
+		return unreadable()
 	}
 
-	// 3. State check
-	bindingsDir := filepath.Join(root, "bindings")
+	switch {
+	case now.After(cert.NotAfter):
+		c.Severity, c.Detail, c.Fix = SevFail, "expired", "relevo serve init"
+	case cert.NotAfter.Before(now.Add(30 * 24 * time.Hour)):
+		c.Severity, c.Detail = SevWarn, fmt.Sprintf("expires %s", cert.NotAfter.Format("2006-01-02"))
+	default:
+		c.Severity, c.Detail = SevOK, fmt.Sprintf("valid until %s", cert.NotAfter.Format("2006-01-02"))
+	}
+	return c
+}
+
+func serveClientsCheck(d *db.DB) Check {
+	c := Check{Group: "serve", Name: "clients"}
+	noneEnrolled := func() Check {
+		c.Severity, c.Detail, c.Fix = SevWarn, "none enrolled", "relevo serve enroll --label <name> --key <line>"
+		return c
+	}
+
+	rawClients, ok, err := d.KVGet("serve.clients")
+	switch {
+	case err != nil:
+		c.Severity, c.Detail = SevFail, err.Error()
+		return c
+	case !ok:
+		return noneEnrolled()
+	}
+
+	var list []struct {
+		ID        string    `json:"id"`
+		RevokedAt time.Time `json:"revoked_at,omitempty"`
+	}
+	if err := json.Unmarshal(rawClients, &list); err != nil {
+		c.Severity, c.Detail, c.Fix = SevFail, "parse error", "fix the serve.clients row in the database"
+		return c
+	}
+
+	active := 0
+	for _, cl := range list {
+		if cl.RevokedAt.IsZero() {
+			active++
+		}
+	}
+	switch active {
+	case 0:
+		return noneEnrolled()
+	case 1:
+		c.Severity, c.Detail = SevOK, "1 enrolled"
+	default:
+		c.Severity, c.Detail = SevOK, fmt.Sprintf("%d enrolled", active)
+	}
+	return c
+}
+
+func serveStateCheck(env Env, root string) Check {
+	c := Check{Group: "serve", Name: "state"}
 	if err := env.Stat(root); err != nil {
-		checks = append(checks, Check{
-			Group:    "serve",
-			Name:     "state",
-			Severity: SevFail,
-			Detail:   err.Error(),
-			Fix:      "relevo serve init",
-		})
-	} else if err := env.Probe(bindingsDir); err != nil {
-		checks = append(checks, Check{
-			Group:    "serve",
-			Name:     "state",
-			Severity: SevFail,
-			Detail:   fmt.Sprintf("not writable: %v", err),
-		})
-	} else {
-		checks = append(checks, Check{
-			Group:    "serve",
-			Name:     "state",
-			Severity: SevOK,
-			Detail:   "bindings writable",
-		})
+		c.Severity, c.Detail, c.Fix = SevFail, err.Error(), "relevo serve init"
+		return c
 	}
-
-	return checks
+	if err := env.Probe(filepath.Join(root, "bindings")); err != nil {
+		c.Severity, c.Detail = SevFail, fmt.Sprintf("not writable: %v", err)
+		return c
+	}
+	c.Severity, c.Detail = SevOK, "bindings writable"
+	return c
 }

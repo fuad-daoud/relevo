@@ -1,10 +1,7 @@
 package harness
 
-// IsShipped reports whether name is one of the agent definitions kind ships.
-// It is the question a resolved definition's Custom flag asks: a name relevo
-// does not ship resolves to the kind's path convention instead (#374 §5).
-//
-// An unknown kind gives false.
+// IsShipped reports whether name is one of the definitions kind ships; an
+// unknown kind gives false.
 func IsShipped(kind, name string) bool {
 	h, ok := Lookup(kind)
 	if !ok {
@@ -15,16 +12,8 @@ func IsShipped(kind, name string) bool {
 }
 
 // DefinitionPath returns the home-relative path of the agent definition name
-// for kind, and false for an unknown kind.
-//
-// A shipped name returns that row's Path exactly (for example
-// ".claude/agents/plan-executor.md"), because the shipped file is the one
-// relevo installs and refreshes (#371). Any other name follows the per-kind
-// convention route: a custom definition relevo never writes, but a caller must
-// still know where its file lives.
-//
-//	name already passed the roles name rule; this function does not
-//	validate it (roles §5.1 rejects a name a path could not carry).
+// for kind, and false for an unknown kind. A shipped name returns its table
+// Path; any other name follows the per-kind convention route.
 func DefinitionPath(kind, name string) (string, bool) {
 	h, ok := Lookup(kind)
 	if !ok {

@@ -9,28 +9,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// revAt is the fixed instant every revision test stamps.
-var revAt = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-
-// atTime is a WithClock seam pinned to one instant.
-func atTime(t time.Time) func() time.Time { return func() time.Time { return t } }
-
-// revChanges decodes a revision row's raw JSON change list.
-func revChanges(t *testing.T, r db.RevisionRow) []Change {
-	t.Helper()
-	var cs []Change
-	if err := json.Unmarshal(r.Changes, &cs); err != nil {
-		t.Fatalf("revision changes %q: %v", r.Changes, err)
-	}
-	return cs
-}
-
 func TestPutRecordsRevision(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":2}`)); err != nil {
@@ -74,6 +59,8 @@ func TestPutRecordsRevision(t *testing.T) {
 }
 
 func TestIdenticalPutRecordsNothing(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	for i := 0; i < 2; i++ {
@@ -99,6 +86,8 @@ func TestIdenticalPutRecordsNothing(t *testing.T) {
 }
 
 func TestFirstRevisionAddsBaseline(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	// Seed the section with raw Txs: no Store, so no revision. Two writes put
@@ -154,6 +143,8 @@ func TestFirstRevisionAddsBaseline(t *testing.T) {
 }
 
 func TestNoBaselineOnEmptyConfig(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":1}`)); err != nil {
@@ -170,6 +161,8 @@ func TestNoBaselineOnEmptyConfig(t *testing.T) {
 }
 
 func TestPutDocOneRevision(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	doc := Doc{
@@ -200,6 +193,8 @@ func TestPutDocOneRevision(t *testing.T) {
 }
 
 func TestSecretRevisionHasNoValue(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 	value := []byte("super-secret-typesafe-value")
 
@@ -232,12 +227,14 @@ func TestSecretRevisionHasNoValue(t *testing.T) {
 }
 
 func TestRevisionInsertFailureRollsBackWrite(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	s := Open(d).WithClock(atTime(revAt))
 
 	// Seed a section so the write is a real change, not a no-op.
@@ -254,10 +251,10 @@ func TestRevisionInsertFailureRollsBackWrite(t *testing.T) {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	if _, err := raw.Exec(`DROP TABLE config_revision`); err != nil {
-		raw.Close()
+		_ = raw.Close()
 		t.Fatalf("drop config_revision: %v", err)
 	}
-	raw.Close()
+	_ = raw.Close()
 
 	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":2}`)); err == nil {
 		t.Fatal("Put with no config_revision table: want an error, got nil")
@@ -273,6 +270,8 @@ func TestRevisionInsertFailureRollsBackWrite(t *testing.T) {
 }
 
 func TestRollbackRestoresAndDeletes(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	bodyA := []byte(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`)
@@ -332,6 +331,8 @@ func TestRollbackRestoresAndDeletes(t *testing.T) {
 }
 
 func TestRollbackNoChange(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":1}`)); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -353,6 +354,8 @@ func TestRollbackNoChange(t *testing.T) {
 }
 
 func TestRollbackUnknown(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	if _, err := s.Rollback(99); !errors.Is(err, ErrNoRevision) {
@@ -364,6 +367,8 @@ func TestRollbackUnknown(t *testing.T) {
 }
 
 func TestImportFilesRecordsImport(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 	dir := filepath.Join(t.TempDir(), "relevo")
 	seedConfigDir(t, dir)
@@ -391,5 +396,38 @@ func TestImportFilesRecordsImport(t *testing.T) {
 	}
 	if got["secret."+SecretClientKey] != "set" || got["secret."+SecretTypesafe] != "set" {
 		t.Errorf("secret changes = %v, want both secrets set", got)
+	}
+}
+
+func TestRevisionDoc(t *testing.T) {
+	t.Parallel()
+
+	s := openStore(t).WithClock(atTime(revAt))
+
+	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":2}`)); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+	if _, err := s.As("cli", "config set policy.max_switches").Put(Policy, []byte(`{"max_switches":3}`)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	doc, err := s.RevisionDoc(1)
+	if err != nil {
+		t.Fatalf("RevisionDoc(1): %v", err)
+	}
+	if got := string(compactCopy(doc[Policy])); got != `{"max_switches":2}` {
+		t.Errorf("RevisionDoc(1)[policy] = %q, want the body revision 1 wrote", got)
+	}
+
+	if _, err := s.RevisionDoc(99); !errors.Is(err, ErrNoRevision) {
+		t.Errorf("RevisionDoc(99) = %v, want ErrNoRevision", err)
+	}
+
+	cur, err := s.Current()
+	if err != nil {
+		t.Fatalf("Current: %v", err)
+	}
+	if got := string(compactCopy(cur[Policy])); got != `{"max_switches":3}` {
+		t.Errorf("Current()[policy] = %q, want the newest stored body", got)
 	}
 }

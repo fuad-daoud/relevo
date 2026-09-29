@@ -1,0 +1,53 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - funlen
+    - gocognit
+    - errcheck
+    - errorlint
+    - unused
+    - govet
+    - staticcheck
+    - ineffassign
+  settings:
+    funlen:
+      lines: 70
+      statements: -1
+      ignore-comments: true
+    gocognit:
+      min-complexity: 30
+  exclusions:
+    # One rule per Go package directory as it is today; every linter is
+    # excluded for that path. Phase 3 deletes one rule per finished package.
+    rules:
+      - path: '^cmd/relevo/'
+        text: '.*'
+      - path: '^internal/e2e/'
+        text: '.*'
+      - path: '^internal/jsonshape/'
+        text: '.*'
+      - path: '^internal/patch/'
+        text: '.*'
+      - path: '^internal/pick/'
+        text: '.*'
+      - path: '^internal/relevo/'
+        text: '.*'
+      - path: '^internal/remote/[^/]+\.go$'
+        text: '.*'
+      - path: '^internal/roles/'
+        text: '.*'
+      - path: '^internal/setup/'
+        text: '.*'
+      - path: '^internal/ui/[^/]+\.go$'
+        text: '.*'
+      - path: '^internal/ui/dash/'
+        text: '.*'
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+run:
+  tests: true

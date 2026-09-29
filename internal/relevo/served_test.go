@@ -14,8 +14,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // servedTierCandidatesJSON has one builder candidate with a "read" tier
@@ -32,6 +34,8 @@ const servedNoTierCandidateJSON = `[
 ]`
 
 func TestResolveServedTier(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, servedTierCandidatesJSON)
 	token := "claude/test/m"
 
@@ -91,6 +95,8 @@ func TestResolveServedTier(t *testing.T) {
 }
 
 func TestServedBuilderTier(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, servedNoTierCandidateJSON)
 
 	// Policy tier set -> that tier (candidate token resolved via PickServedCandidate("") has no tier of its own).
@@ -103,6 +109,49 @@ func TestServedBuilderTier(t *testing.T) {
 	rt = Runtime{Candidates: nil, Policy: policy.Policy{Tier: map[string]string{"builder": "yolo"}}, Now: func() time.Time { return baseTime }}
 	if got := ServedBuilderTier(rt); got != harness.TierHarness {
 		t.Fatalf("refused chain: got %v, want harness", got)
+	}
+}
+
+// TestServedBuilderTierFollowsTheRoleRegistry pins that the builder tier a
+// served round resolves comes from the runtime's roles registry, not from
+// whichever candidate the legacy fallback happens to rank first.
+func TestServedBuilderTierFollowsTheRoleRegistry(t *testing.T) {
+	t.Parallel()
+	set := candidateSet(t, servedNoTierCandidateJSON)
+
+	actorsSection := map[string]roles.Actor{
+		"builder": {
+			Agent:      "plan-executor",
+			Candidates: []roles.Entry{{Candidate: "claude/test/m"}},
+			Tier:       "yolo",
+		},
+	}
+	rf, _, err := roles.FromActors(nil, actorsSection)
+	if err != nil {
+		t.Fatalf("roles.FromActors: %v", err)
+	}
+	reg, err := roles.Build(rf, set, policy.Policy{MaxTier: "yolo"})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+
+	rt := Runtime{
+		Candidates: set,
+		Policy:     policy.Policy{MaxTier: "yolo"},
+		Registry:   reg,
+		Gates:      testGateKV(t),
+		Now:        func() time.Time { return baseTime },
+	}
+	if got := ServedBuilderTier(rt); got != harness.TierYolo {
+		t.Fatalf("registry builder tier: got %v, want yolo", got)
+	}
+
+	// The same runtime without the registry falls back to the legacy
+	// derivation, which carries no role tier: assert only that it is not
+	// yolo, since which tier it names is not what this test pins.
+	rt.Registry = nil
+	if got := ServedBuilderTier(rt); got == harness.TierYolo {
+		t.Fatalf("nil registry: got %v, want anything but yolo", got)
 	}
 }
 
@@ -137,6 +186,8 @@ func runGit(t *testing.T, dir string, args ...string) string {
 }
 
 func TestRoundStateOf(t *testing.T) {
+	t.Parallel()
+
 	// Arm 1: StateNeedsYou
 	b1 := store.Binding{
 		State: store.StateNeedsYou,
@@ -152,7 +203,7 @@ func TestRoundStateOf(t *testing.T) {
 		Round: 1,
 	}
 	entries2 := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 	}
 	if got := RoundStateOf(b2, entries2); got != remote.RoundRunning {
 		t.Fatalf("arm 2 (running): got %v, want %v", got, remote.RoundRunning)
@@ -169,8 +220,8 @@ func TestRoundStateOf(t *testing.T) {
 	}
 	// Entries has both plan and report for round 1
 	entries3 := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport},
 	}
 	if got := RoundStateOf(b3, entries3); got != remote.RoundClosed {
 		t.Fatalf("arm 3 (closed): got %v, want %v", got, remote.RoundClosed)
@@ -197,8 +248,10 @@ func TestRoundStateOf(t *testing.T) {
 // Mutation check: drop the `!b.QueuedAt.IsZero()` arm from RoundStateOf and
 // this fails on the first case.
 func TestRoundStateOfQueued(t *testing.T) {
+	t.Parallel()
+
 	entries := []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
 	}
 
 	queued := store.Binding{
@@ -229,6 +282,8 @@ func TestRoundStateOfQueued(t *testing.T) {
 }
 
 func TestServedViewReportOutcome(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		Name:             "api",
 		State:            store.StateActive,
@@ -272,6 +327,8 @@ func TestServedViewReportOutcome(t *testing.T) {
 }
 
 func TestServedViewDiffFacts(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		Name:             "api",
 		State:            store.StateActive,
@@ -310,6 +367,8 @@ func TestServedViewDiffFacts(t *testing.T) {
 // stopped, read from the KindStop entry closeStopped writes for that round,
 // and leaves the field empty when the only stop entry names an earlier round.
 func TestServedViewStopped(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		Name:  "api",
 		State: store.StateActive,
@@ -340,6 +399,8 @@ func TestServedViewStopped(t *testing.T) {
 // closed round's usage the way it ships ReportOutcome (#216): from the
 // newest KindReport entry for Serve.ClosedRound, and only from it.
 func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
+	t.Parallel()
+
 	closed := usage.Usage{
 		Harness: "opencode",
 		Model:   "haiku",
@@ -394,6 +455,8 @@ func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
 // the wire, the same way TestServedViewCarriesClosedRoundUsage pins Usage
 // (#244, #216).
 func TestServedViewCarriesRusage(t *testing.T) {
+	t.Parallel()
+
 	closed := store.Rusage{CPUMS: 12300, PeakMemBytes: 850 << 20}
 	b := store.Binding{
 		Name:             "api",
@@ -430,6 +493,8 @@ func TestServedViewCarriesRusage(t *testing.T) {
 // TestServedViewCarriesStalledSince pins #252's wire field: a stalled binding
 // ships its stamp to the client, and an unstalled one ships the zero time.
 func TestServedViewCarriesStalledSince(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		Name:  "api",
 		State: store.StateActive,
@@ -451,6 +516,8 @@ func TestServedViewCarriesStalledSince(t *testing.T) {
 }
 
 func TestCloseServedRoundClean(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 
@@ -508,6 +575,8 @@ func TestCloseServedRoundClean(t *testing.T) {
 }
 
 func TestCloseServedRoundDirty(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 
@@ -579,6 +648,8 @@ func TestCloseServedRoundDirty(t *testing.T) {
 }
 
 func TestCloseServedRoundGitFailureKeepsFacts(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fGit := &fakeGit{
 		refSHA: map[string]string{
@@ -616,22 +687,24 @@ func TestCloseServedRoundGitFailureKeepsFacts(t *testing.T) {
 }
 
 func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := store.Binding{
-		Name:    "api",
-		Owner:   "client1",
-		State:   store.StateActive,
-		Round:   1,
-		CWD:     t.TempDir(),
-		Planner: store.Endpoint{SessionID: "sess1", PaneID: "p1"},
+		Name:       "api",
+		Owner:      "client1",
+		State:      store.StateActive,
+		Round:      1,
+		CWD:        t.TempDir(),
+		MasterMind: store.Endpoint{SessionID: "sess1", PaneID: "p1"},
 	}
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.AppendLog("api", store.LogEntry{
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Payload:   "the report",
 		Confirmed: false,
@@ -664,6 +737,8 @@ func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
 }
 
 func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	fr := newFakeRunner()
@@ -698,7 +773,7 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 	if err := st.AppendLog("api", store.LogEntry{
 		Round:     1,
 		Direction: store.DirToBuilder,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -765,7 +840,7 @@ func ownedExitFixture(t *testing.T) (Runtime, store.Binding, *fakeRunner, string
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+	if err := st.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
 		t.Fatal(err)
 	}
 	fr.script(1234, false)
@@ -798,6 +873,8 @@ func reconcileOwned(t *testing.T, rt Runtime, b store.Binding) store.Binding {
 // sees the round as idle and never fetches it (the flaky
 // TestRemoteRoundCollectedAfterClientWasAway hit exactly this).
 func TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts(t *testing.T) {
+	t.Parallel()
+
 	rt, b, _, sha := ownedExitFixture(t)
 	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte("report\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -818,6 +895,8 @@ func TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts(t *testing.T) {
 // that exits while a stop is requested closes through closeStopped, and the
 // served round's facts are recorded there too.
 func TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts(t *testing.T) {
+	t.Parallel()
+
 	rt, b, _, _ := ownedExitFixture(t)
 	b.StopRequestedAt = time.Now().Add(-time.Second)
 	if err := rt.Store.Save(b); err != nil {
@@ -830,6 +909,8 @@ func TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts(t *testing.T) {
 }
 
 func TestLiveViewOf(t *testing.T) {
+	t.Parallel()
+
 	at := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	started := at.Add(-10 * time.Minute)
 	lastProg := at.Add(-2 * time.Minute)
@@ -837,16 +918,17 @@ func TestLiveViewOf(t *testing.T) {
 	gateStarted := at.Add(-1 * time.Minute)
 
 	u := &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}}
-	row := BindingStatus{
-		Headless: &HeadlessInfo{
+	row := view.BindingStatus{
+		Headless: &view.HeadlessInfo{
 			PID:       1234,
 			StartedAt: started,
 			ExitCode:  "3",
 			Tail:      []string{"line1", "line2"},
 		},
-		LiveUsage:      u,
-		Live:           &LiveDiff{Files: 4, Added: 20, Removed: 5, Shared: true},
-		LastProgressAt: lastProg,
+		LiveUsage:        u,
+		RoundPriorTokens: usage.Tokens{In: 500, Out: 250},
+		Live:             &view.LiveDiff{Files: 4, Added: 20, Removed: 5, Shared: true},
+		LastProgressAt:   lastProg,
 	}
 	b := store.Binding{
 		ExploringSince: exploring,
@@ -877,6 +959,9 @@ func TestLiveViewOf(t *testing.T) {
 	if v.Usage != u {
 		t.Errorf("Usage = %v, want %v", v.Usage, u)
 	}
+	if v.PriorTokens != (usage.Tokens{In: 500, Out: 250}) {
+		t.Errorf("PriorTokens = %+v, want in:500 out:250", v.PriorTokens)
+	}
 	if v.Diff == nil || v.Diff.Files != 4 || v.Diff.Added != 20 || v.Diff.Removed != 5 {
 		t.Errorf("Diff = %+v, want Files:4 Added:20 Removed:5", v.Diff)
 	}
@@ -891,7 +976,7 @@ func TestLiveViewOf(t *testing.T) {
 	}
 
 	// nil Headless, LiveUsage and Live give zero values and nil pointers
-	rowNil := BindingStatus{
+	rowNil := view.BindingStatus{
 		LastProgressAt: lastProg,
 	}
 	bNil := store.Binding{}
@@ -919,5 +1004,61 @@ func TestLiveViewOf(t *testing.T) {
 	}
 	if !vNil.GatingSince.IsZero() {
 		t.Errorf("GatingSince = %v, want zero", vNil.GatingSince)
+	}
+}
+
+func TestServedViewPriorTokens(t *testing.T) {
+	t.Parallel()
+
+	b := store.Binding{
+		Name:             "api",
+		State:            store.StateActive,
+		Round:            3,
+		BuilderCandidate: "claude-sonnet",
+		Serve: &store.ServeFacts{
+			ClosedRound: 2,
+			AckedRound:  1,
+		},
+	}
+
+	// 1. Server entries with two switches carrying usage in the closed round -> view.PriorTokens is their sum
+	entries := []store.LogEntry{
+		{
+			Round: 2, Kind: store.KindSwitch, Direction: store.DirToMasterMind,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}},
+		},
+		{
+			Round: 2, Kind: store.KindSwitch, Direction: store.DirToMasterMind,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}},
+		},
+		{
+			Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind, Outcome: "done",
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 40}},
+		},
+	}
+	view := ServedView(b, entries)
+	if view.PriorTokens == nil {
+		t.Fatal("view.PriorTokens is nil, want sum of switches")
+	}
+	want := usage.Tokens{In: 300, Out: 80}
+	if *view.PriorTokens != want {
+		t.Errorf("view.PriorTokens = %+v, want %+v", *view.PriorTokens, want)
+	}
+
+	// 2. None -> nil
+	entriesNoSwitch := []store.LogEntry{
+		{
+			Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind, Outcome: "done",
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 40}},
+		},
+	}
+	viewNoSwitch := ServedView(b, entriesNoSwitch)
+	if viewNoSwitch.PriorTokens != nil {
+		t.Errorf("viewNoSwitch.PriorTokens = %+v, want nil", viewNoSwitch.PriorTokens)
+	}
+
+	viewEmpty := ServedView(b, nil)
+	if viewEmpty.PriorTokens != nil {
+		t.Errorf("viewEmpty.PriorTokens = %+v, want nil", viewEmpty.PriorTokens)
 	}
 }

@@ -7,11 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // RoundStateOf returns the execution state of an owned binding (remote-builders spec §3.1).
@@ -20,8 +22,8 @@ func RoundStateOf(b store.Binding, entries []store.LogEntry) remote.RoundState {
 	if b.State == store.StateNeedsYou {
 		return remote.RoundNeedsYou
 	}
-	open := HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
-		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+	open := HasPromptEntry(entries, b.Round) &&
+		!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
 	if open && !b.QueuedAt.IsZero() {
 		return remote.RoundQueued
 	}
@@ -117,9 +119,9 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		}
 	}
 	// stopped is how the closed round was stopped: the newest KindStop entry
-	// for ClosedRound whose note names one ("stopped/killed" or
-	// "stopped/dequeued"). A close any other way writes no such entry, and
-	// the field stays "" (#344).
+	// for ClosedRound whose note names one ("stopped/killed",
+	// "stopped/reaped", "stopped/gone" or "stopped/dequeued"). A close any
+	// other way writes no such entry, and the field stays "" (#344).
 	var stopped string
 	if b.Serve != nil && b.Serve.ClosedRound > 0 {
 		for i := len(entries) - 1; i >= 0; i-- {
@@ -134,9 +136,16 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 	}
 	var ackedRound int
 	var closedRound int
+	var priorTokens *usage.Tokens
 	if b.Serve != nil {
 		ackedRound = b.Serve.AckedRound
 		closedRound = b.Serve.ClosedRound
+		if closedRound > 0 {
+			pt := view.PriorTokensOf(entries, closedRound)
+			if pt.Total() > 0 {
+				priorTokens = &pt
+			}
+		}
 	}
 	return remote.BindingView{
 		Name:           b.Name,
@@ -149,6 +158,7 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		DirtyCommit:    dirtyCommit,
 		ReportOutcome:  reportOutcome,
 		Stopped:        stopped,
+		Shape:          b.Shape,
 		DiffNote:       diffNote,
 		DiffCommits:    diffCommits,
 		DiffTree:       diffTree,
@@ -158,7 +168,10 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		RoundCap:       b.RoundCap,
 		RoundTimeoutMS: b.RoundTimeoutMS,
 		Tier:           string(effectiveTier(b)),
+		Feature:        b.Feature,
+		Ticket:         b.Ticket,
 		Usage:          reportUsage,
+		PriorTokens:    priorTokens,
 		Rusage:         reportRusage,
 		StalledSince:   b.StalledSince,
 	}
@@ -223,7 +236,7 @@ func PickServedCandidateFor(rt Runtime, role, token string) (string, string) {
 	if rt.Candidates == nil {
 		return token, ""
 	}
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, role)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), token, role)
 	if err == nil {
 		return res.Candidate.Ref().String(), res.Candidate.Harness
 	}
@@ -241,10 +254,11 @@ func PickServedCandidate(rt Runtime, token string) (string, string) {
 	return PickServedCandidateFor(rt, "builder", token)
 }
 
-func liveViewOf(row BindingStatus, b store.Binding, at time.Time) *remote.LiveView {
+func liveViewOf(row view.BindingStatus, b store.Binding, at time.Time) *remote.LiveView {
 	v := &remote.LiveView{
 		At:             at,
 		Usage:          row.LiveUsage,
+		PriorTokens:    row.RoundPriorTokens,
 		LastProgressAt: row.LastProgressAt,
 		ExploringSince: b.ExploringSince,
 	}

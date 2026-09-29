@@ -26,7 +26,7 @@ func (binExec) Run(ctx context.Context, bin string, args ...string) ([]byte, err
 	return out, nil
 }
 
-// binEnvExec is binExec with an environment: relevo.EnvExec over the real PATH,
+// binEnvExec is binExec with an environment: delivery.EnvExec over the real PATH,
 // with stderr folded into the error the same way. extraEnv is appended to the
 // parent environment, never replacing it, so agy still finds its own PATH and
 // HOME; there is no shell, so no value here can be re-interpreted.

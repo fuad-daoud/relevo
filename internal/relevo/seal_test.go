@@ -12,20 +12,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/ingest"
+	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // TestClosedRoundSealsOnceTheNextRoundCloses is the P3c seal's end-to-end
 // contract (§4.3, §4.4): the tick that closes round 1 leaves its files alone,
 // and they stay on disk while round 1 is the binding's latest closed round --
-// the planner and a repair round still read them (D2/A1). Once the round after
+// the mastermind and a repair round still read them (D2/A1). Once the round after
 // it closes, the following tick moves them into the store's database and
 // deletes them -- and every reader that used to open them still returns the
-// same content: Show, ReadDiff, Pull's PushText, ingest's StoreSource, a fork
-// cut through the round, and gc's tarball.
+// same content: Show, ReadDiff, Pull's PushText, ingest's StoreSource, and a
+// fork cut through the round.
 func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	report := []byte("round 1's report\n")
@@ -68,11 +73,11 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	}
 
 	// Tick 2 keeps round 1 on disk: it is now the binding's latest closed
-	// round, and the planner and a repair round still read its files (D2/A1).
+	// round, and the mastermind and a repair round still read its files (D2/A1).
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("second Tick: %v", err)
 	}
-	for _, base := range []string{"001-report.md", "001-plan.md"} {
+	for _, base := range []string{"001-report.md", "001-prompt.md"} {
 		if _, err := os.Stat(filepath.Join(rt.Store.Dir("webshop"), base)); err != nil {
 			t.Errorf("%s was deleted while it is still the latest closed round (D2): %v", base, err)
 		}
@@ -93,7 +98,7 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("third Tick: %v", err)
 	}
-	for _, base := range []string{"001-plan.md", "001-report.md", "001-diff.patch", "001-builder.log", "001-done"} {
+	for _, base := range []string{"001-prompt.md", "001-report.md", "001-diff.patch", "001-builder.log", "001-done"} {
 		if _, err := os.Stat(filepath.Join(rt.Store.Dir("webshop"), base)); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("%s is still on disk after the seal", base)
 		}
@@ -114,12 +119,12 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 		t.Errorf("Show(report) = %q (missing %v), want %q", res.Text, res.Missing, report)
 	}
 
-	patch, ok, err := ReadDiff(rt, "webshop", 1)
+	patch, ok, err := capture.ReadDiff(rt.Store, "webshop", 1)
 	if err != nil || !ok || !bytes.Equal(patch, diff) {
 		t.Errorf("ReadDiff = %q (ok %v, err %v), want %q", patch, ok, err, diff)
 	}
 
-	text, found, err := pullPending(context.Background(), rt, "webshop", "wait")
+	text, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil || !found {
 		t.Fatalf("pullPending: found=%v err=%v", found, err)
 	}
@@ -175,6 +180,8 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 // else, the empty directory goes too. An ACTIVE binding's directory stays, as
 // more rounds are coming.
 func TestSealPassEmptiesADoneDirOnly(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name     string
 		state    store.State
@@ -195,7 +202,7 @@ func TestSealPassEmptiesADoneDirOnly(t *testing.T) {
 			}
 
 			if err := st.WithLock(func(tx *store.Tx) error {
-				sealRounds(st, tx, b)
+				sealRounds(st, tx, b, policy.DefaultArtifactMaxMB*(1<<20))
 				return nil
 			}); err != nil {
 				t.Fatalf("sealRounds: %v", err)

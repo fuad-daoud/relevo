@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -16,6 +17,8 @@ import (
 // daemon drives it (sealRounds under the state lock), so a retry keeps working
 // on a round relevo no longer holds on disk.
 func TestRetryPlanReadsSealed(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	rt := Runtime{Store: st, Now: func() time.Time { return baseTime }}
 
@@ -23,23 +26,23 @@ func TestRetryPlanReadsSealed(t *testing.T) {
 	// finished, so both are sealable (store.Sealable).
 	b := store.Binding{
 		Name: "webshop", CWD: "/repo/webshop", Round: 3, State: store.StateDone,
-		PlannerID: "pl_aaaaaaaabbbb",
+		MasterMindID: "pl_aaaaaaaabbbb",
 	}
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	plan := []byte("# Round 1 plan\n\nDo the thing.\n")
-	if err := os.WriteFile(st.PlanPath("webshop", 1), plan, 0o644); err != nil {
+	if err := os.WriteFile(st.PromptPath("webshop", 1), plan, 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
 
 	if err := st.WithLock(func(tx *store.Tx) error {
-		sealRounds(st, tx, b)
+		sealRounds(st, tx, b, rt.Policy.ArtifactMaxBytes())
 		return nil
 	}); err != nil {
 		t.Fatalf("sealRounds: %v", err)
 	}
-	if _, err := os.Stat(st.PlanPath("webshop", 1)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(st.PromptPath("webshop", 1)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the plan is still on disk after the seal (err %v)", err)
 	}
 
@@ -55,6 +58,8 @@ func TestRetryPlanReadsSealed(t *testing.T) {
 // TestRetryPlanMissingNamesTheRound: a round with no plan recorded is an
 // error naming the round, not an empty plan a Send would push.
 func TestRetryPlanMissingNamesTheRound(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 
 	_, err := RetryPlan(rt, "webshop", 4)
@@ -70,10 +75,12 @@ func TestRetryPlanMissingNamesTheRound(t *testing.T) {
 // (§4.5). It returns the pending text and marks the entry delivered to "tui",
 // so the daemon's own delivery and a background wait no longer claim it.
 func TestPullMarksTuiRoute(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
-	text, found, err := Pull(context.Background(), rt, "webshop", "tui")
+	text, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "tui")
 	if err != nil {
 		t.Fatalf("Pull: %v", err)
 	}

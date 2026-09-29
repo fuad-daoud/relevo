@@ -29,13 +29,9 @@ type agyEvent struct {
 	} `json:"result"`
 }
 
-// agyStream reads a headless round's stream. The result event's usage is
-// the sample; with no result event, each agent_response step_update with
-// usage is a sample. agy reports no dollars. Model: the init event's, else
-// the candidate's. agy in a pane keeps no usage record at all (verified
-// 2026-09-18), so there is no pane reader. The parser state lives on the
-// carry (#234), so the same line loop feeds the per-stream cache without
-// drifting.
+// agyStream reads a headless round's stream: the result event's usage, or each
+// agent_response step_update with usage when there is none. agy reports no dollars
+// and keeps no pane record, so there is no pane reader.
 func agyStream(r io.Reader, fallbackProvider, fallbackModel string) []Sample {
 	c, _ := newCarry("agy", fallbackProvider, fallbackModel)
 	scanLines(r, c.feed)

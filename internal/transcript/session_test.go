@@ -1,26 +1,6 @@
 package transcript
 
-import (
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-)
-
-// streamFixture is line n (1-based) of a usage stream fixture, without its
-// trailing newline.
-func streamFixture(t *testing.T, name string, n int) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "usage", "testdata", name))
-	if err != nil {
-		t.Fatalf("read fixture %s: %v", name, err)
-	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if n > len(lines) {
-		t.Fatalf("fixture %s has %d lines; want line %d", name, len(lines), n)
-	}
-	return lines[n-1]
-}
+import "testing"
 
 func TestSessionID(t *testing.T) {
 	cases := []struct {

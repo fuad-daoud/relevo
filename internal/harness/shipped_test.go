@@ -5,25 +5,18 @@ import (
 	"testing"
 )
 
-// A historical architect.claude.md blob (commit 9b837e64 of this repository,
-// captured when scripts/agents-shipped.sh was first generated). Its sha is one
-// of the lines the committed agents/shipped.sha256 records, so an install that
-// finds these bytes on disk must recognise them as an older release.
 const historicalArchitectSHA = "68702993acc9ba6f71d5b552fd8a7890af959abd7312c5c6081e651c98835305"
 
 func TestShippedBeforeMatchesHistoricalBlob(t *testing.T) {
 	if !ShippedBefore("architect.claude.md", historicalArchitectSHA) {
 		t.Errorf("ShippedBefore(architect.claude.md, %s) = false, want true", historicalArchitectSHA)
 	}
-	// The same sha under another definition is not a match: the index is
-	// keyed by basename as well as sha.
 	if ShippedBefore("reviewer.claude.md", historicalArchitectSHA) {
 		t.Error("ShippedBefore(reviewer.claude.md, historical architect sha) = true, want false")
 	}
 }
 
 func TestShippedBeforeRejectsUnknownAndEmpty(t *testing.T) {
-	// A sha256 that no relevo has ever shipped.
 	unknown := strings.Repeat("ab", 32)
 	if ShippedBefore("architect.claude.md", unknown) {
 		t.Errorf("ShippedBefore(architect.claude.md, %s) = true, want false", unknown)
@@ -39,9 +32,6 @@ func TestShippedBeforeRejectsUnknownAndEmpty(t *testing.T) {
 	}
 }
 
-// TestShippedBeforeCoversEveryWorkingTreeDefinition pins the other half of
-// scripts/agents-shipped.sh --check: every definition this build embeds has its
-// current sha in the index, so a fresh install is recognised on the next relevo.
 func TestShippedBeforeCoversEveryWorkingTreeDefinition(t *testing.T) {
 	for _, h := range All() {
 		for _, r := range h.Roles {
@@ -58,8 +48,6 @@ func TestShippedBeforeCoversEveryWorkingTreeDefinition(t *testing.T) {
 	}
 }
 
-// TestShippedIndexLinesAreWellFormed asserts §6: the committed file has no
-// malformed line, so nothing relies on the parser's skip branch.
 func TestShippedIndexLinesAreWellFormed(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(shippedSHA256, "\n"), "\n")
 	if len(lines) == 0 {

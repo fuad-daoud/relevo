@@ -1,0 +1,34 @@
+  ◆ relevo   fleet ›  log                                                                                      v0.13.0-28    14:02  
+                                                                                                                                    
+   8 events today   2 sent   1 done   1 halted   1 exited   1 switched   1 gated                                        following   
+                                                                                                                                    
+   TIME   BINDING         RND   EVENT      DETAIL                                                                                   
+   today ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 8 events   
+   13:45  oc-live         r1    sent       on gemini-3.8-flash-high (#1) · yolo                                                     
+   13:30  haiku           r2    done       1 file +1 -0 · 1 commit · clean · 154k tokens · <1m                                      
+   13:10  question        r1    halted     at step 2 · 1 file +1 -0 · 0 commits · dirty · 138k tokens · 1m                          
+   12:40  ck-d2-stats     r17   sent       yolo · edited since r16: 36 files +3187 -45                                              
+   12:15  oc-496          r2    switched   to glm-5.3-flash (#6) · exited without a report                                          
+   12:14  oc-496          r2    exited     without a report (code 0)                                                                
+   11:50  —                     gated      cline-pass · weekly Clinepass limit reached, resets in 1d 4h                             
+   11:20  you                   gate       gated google until 22:00                                                                 
+   yesterday ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 events   
+   16:30  persist         r5    done       4 files +80 -12 · 2 commits · clean · 1.2M tokens · 27m                                  
+   15:00  —                     config     rev 12 · set candidates                                                                  
+   14:45  persist         r5    sent                                                                                                
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ ↑↓  move      enter  open round      /  filter      f  follow      :  command      ?  all keys      esc  back                      

@@ -9,10 +9,9 @@ import (
 
 // BindingRoleChecks reports one FAIL row per binding that is not DONE whose
 // role (b.Role, or "builder" when it is empty) the registry does not define.
-// A remote binding's role is resolved by its server against the server's own
-// roles.json, so the local registry cannot judge it.
-// Pure: known is the caller's registry lookup, so internal/doctor needs no
-// internal/relevo import. Rows are sorted by binding name.
+// A remote binding's role is resolved by its server, so the local registry
+// cannot judge it. known is the caller's registry lookup, so internal/doctor
+// needs no internal/relevo import.
 func BindingRoleChecks(bindings []store.Binding, known func(role string) bool) []Check {
 	sorted := append([]store.Binding(nil), bindings...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
@@ -33,10 +32,10 @@ func BindingRoleChecks(bindings []store.Binding, known func(role string) bool) [
 			continue
 		}
 		out = append(out, Check{
-			Name:     "binding role",
+			Name:     "binding actor",
 			Severity: SevFail,
-			Detail:   fmt.Sprintf("binding %s runs role %q, which config roles no longer defines", b.Name, role),
-			Fix:      "restore the role in config roles, or relevo done " + b.Name,
+			Detail:   fmt.Sprintf("binding %s runs actor %q, which config actors no longer defines", b.Name, role),
+			Fix:      "restore the actor in config actors, or relevo done " + b.Name,
 		})
 	}
 	return out

@@ -14,8 +14,8 @@ import (
 // Direction: Model.sortDesc true is descending -- newest, biggest first,
 // the sensible default for every column here.
 var (
-	roundSortKeys = []string{"started", "cost", "tokens", "duration", "commits"}
-	groupSortKeys = []string{"cost", "rounds", "halted", "last"}
+	roundSortKeys = []string{"started", "tokens", "duration", "commits"}
+	groupSortKeys = []string{"tokens", "rounds", "halted", "last"}
 )
 
 func indexOf(list []string, s string) int {
@@ -41,7 +41,7 @@ func (m Model) roundSortKey() string {
 }
 
 // groupSortKey is the key the group rows sort by: sortKey when it names a
-// group column, "cost" otherwise.
+// group column, "tokens" otherwise.
 func (m Model) groupSortKey() string {
 	if isGroupSortKey(m.sortKey) {
 		return m.sortKey
@@ -58,12 +58,21 @@ func (m Model) sortedRows(rows []db.RoundRow) []db.RoundRow {
 	return out
 }
 
-// sortedGroups is groups ordered by the group sort key.
+// sortedGroups is groups ordered by the group sort key. The "-" (none) group
+// sorts last whatever the key and direction (§5.7).
 func (m Model) sortedGroups(groups []histq.GroupRow) []histq.GroupRow {
 	out := append([]histq.GroupRow(nil), groups...)
 	key, desc := m.groupSortKey(), m.sortDesc
 	sort.SliceStable(out, func(i, j int) bool { return groupLess(out[i], out[j], key, desc) })
-	return out
+	var others, nones []histq.GroupRow
+	for _, g := range out {
+		if g.Key == "-" || g.Key == "" {
+			nones = append(nones, g)
+		} else {
+			others = append(others, g)
+		}
+	}
+	return append(others, nones...)
 }
 
 func cmpInt64(a, b int64, desc bool) bool {
@@ -80,12 +89,6 @@ func roundLess(a, b db.RoundRow, key string, desc bool) bool {
 			return a.StartedAt.After(b.StartedAt)
 		}
 		return a.StartedAt.Before(b.StartedAt)
-	case "cost":
-		av, bv := costValue(a), costValue(b)
-		if desc {
-			return av > bv
-		}
-		return av < bv
 	case "tokens":
 		return cmpInt64(tokenValue(a), tokenValue(b), desc)
 	case "duration":
@@ -98,11 +101,8 @@ func roundLess(a, b db.RoundRow, key string, desc bool) bool {
 
 func groupLess(a, b histq.GroupRow, key string, desc bool) bool {
 	switch key {
-	case "cost":
-		if desc {
-			return a.CostUSD > b.CostUSD
-		}
-		return a.CostUSD < b.CostUSD
+	case "tokens":
+		return cmpInt64(a.Tokens, b.Tokens, desc)
 	case "rounds":
 		return cmpInt64(int64(a.Rounds), int64(b.Rounds), desc)
 	case "halted":
@@ -114,14 +114,6 @@ func groupLess(a, b histq.GroupRow, key string, desc bool) bool {
 		return a.Last.Before(b.Last)
 	}
 	return false
-}
-
-// costValue is a row's cost for sorting: nil counts as zero.
-func costValue(r db.RoundRow) float64 {
-	if r.CostUSD == nil {
-		return 0
-	}
-	return *r.CostUSD
 }
 
 // tokenValue is the sum of a row's four token columns, nil counting zero.

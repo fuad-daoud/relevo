@@ -10,8 +10,10 @@ import (
 )
 
 func TestLogLineWithoutUsageIsTodaysFormat(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
-	e := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/p/004-report.md", Note: "scraped"}
+	e := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/p/004-report.md", Note: "scraped"}
 	want := ts.Local().Format("2006-01-02 15:04:05") + "  round 4   to_planner report    /p/004-report.md scraped"
 	if got := LogLine(e); got != want {
 		t.Errorf("\n got  %q\n want %q", got, want)
@@ -22,7 +24,9 @@ func TestLogLineWithoutUsageIsTodaysFormat(t *testing.T) {
 }
 
 func TestLogLineWithUsageAddsSecondLine(t *testing.T) {
-	e := store.LogEntry{TS: time.Now(), Round: 4, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/p/004-report.md",
+	t.Parallel()
+
+	e := store.LogEntry{TS: time.Now(), Round: 4, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/p/004-report.md",
 		Usage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 60_000,
 			Tokens: usage.Tokens{In: 100, Out: 10}, Cost: usage.Cost{USD: 0.5, Basis: usage.Measured}, Samples: 1}}
 	got := LogLine(e)
@@ -39,14 +43,16 @@ func TestLogLineWithUsageAddsSecondLine(t *testing.T) {
 }
 
 func TestLogLineLateSuffix(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
-	base := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: "/p/004-report.md", Note: "nudge"}
+	base := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: "/p/004-report.md", Note: "nudge"}
 	notLate := base
 	notLate.Late = false
 	late := base
 	late.Late = true
 
-	wantNotLate := ts.Local().Format("2006-01-02 15:04:05") + "  round 4   to_builder plan      /p/004-report.md nudge"
+	wantNotLate := ts.Local().Format("2006-01-02 15:04:05") + "  round 4   to_runner  prompt    /p/004-report.md nudge"
 	if got := LogLine(notLate); got != wantNotLate {
 		t.Errorf("\n got  %q\n want %q", got, wantNotLate)
 	}
@@ -62,11 +68,13 @@ func TestLogLineLateSuffix(t *testing.T) {
 }
 
 func TestLogLineOutcomeAndFlagged(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	e := store.LogEntry{
 		TS:        ts,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Path:      "/p/001-report.md",
 		Note:      "noreport",
@@ -82,11 +90,13 @@ func TestLogLineOutcomeAndFlagged(t *testing.T) {
 }
 
 func TestLogLineClassify(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	e := store.LogEntry{
 		TS:        ts,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Path:      "/p/001-report.md",
 		Flagged:   3,
@@ -103,7 +113,7 @@ func TestLogLineClassify(t *testing.T) {
 	eTimeout := store.LogEntry{
 		TS:        ts,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Path:      "/p/001-report.md",
 		Flagged:   3,
@@ -117,12 +127,14 @@ func TestLogLineClassify(t *testing.T) {
 }
 
 func TestLogLineTierOnPlanOnly(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	plan := store.LogEntry{
 		TS:        ts,
 		Round:     1,
 		Direction: store.DirToBuilder,
-		Kind:      store.KindPlan,
+		Kind:      store.KindPrompt,
 		Path:      "/p/001-plan.md",
 		Tier:      "edit",
 	}
@@ -134,7 +146,7 @@ func TestLogLineTierOnPlanOnly(t *testing.T) {
 	report := store.LogEntry{
 		TS:        ts,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Path:      "/p/001-report.md",
 		Tier:      "edit",
@@ -148,9 +160,11 @@ func TestLogLineTierOnPlanOnly(t *testing.T) {
 // TestLogLineGateSuffix pins #132: a report entry with a Gate record appends
 // " gate=<Result>"; an entry with none carries no such suffix.
 func TestLogLineGateSuffix(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	withGate := store.LogEntry{
-		TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		TS: ts, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 		Path: "/p/001-report.md", Gate: &store.GateRecord{Result: "fail"},
 	}
 	got := LogLine(withGate)
@@ -170,9 +184,11 @@ func TestLogLineGateSuffix(t *testing.T) {
 // appends " session=<kind>:<id8>" (the id cut to eight characters); an entry
 // with none carries no suffix.
 func TestLogLineSessionSuffix(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	withSession := store.LogEntry{
-		TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		TS: ts, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 		Path:           "/p/001-report.md",
 		BuilderSession: &store.BuilderSession{Kind: "claude", ID: "0123456789abcdef"},
 	}
@@ -198,6 +214,8 @@ func TestLogLineSessionSuffix(t *testing.T) {
 // contract's own correction: 8550 ms is 8.55 s, an exact tie, and half-up
 // (ms+50)/100 gives 86 tenths -> "8.6s".
 func TestShortCPU(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		ms   int64
 		want string
@@ -227,6 +245,8 @@ func TestShortCPU(t *testing.T) {
 // line carries the cpu time at seconds resolution rather than
 // usage.ShortDuration's "<1m", and shortBytes still renders peak memory.
 func TestLogLineRusageUsesSecondsResolution(t *testing.T) {
+	t.Parallel()
+
 	e := store.LogEntry{
 		Kind:   store.KindReport,
 		Rusage: &store.Rusage{CPUMS: 8550, PeakMemBytes: 341 << 20},

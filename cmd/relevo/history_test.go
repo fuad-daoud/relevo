@@ -13,78 +13,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
-// TestHistoryUsageFlagsConflict pins the two usage errors `relevo history`
-// rejects before ever touching the database: --archived with --live
-// together, and an --outcome outside db's enum. validateHistoryFlags is a
-// pure function, so this never executes the subcommand -- CI launches no harness.
-func TestHistoryUsageFlagsConflict(t *testing.T) {
-	if err := validateHistoryFlags(false, false, ""); err != nil {
-		t.Errorf("validateHistoryFlags(false, false, \"\") = %v, want nil", err)
-	}
-	if err := validateHistoryFlags(true, false, "reported"); err != nil {
-		t.Errorf("validateHistoryFlags(true, false, \"reported\") = %v, want nil", err)
-	}
-	if err := validateHistoryFlags(true, true, ""); err == nil {
-		t.Error("validateHistoryFlags(true, true, \"\") = nil, want an error (--archived and --live conflict)")
-	}
-	if err := validateHistoryFlags(false, false, "not-a-real-outcome"); err == nil {
-		t.Error(`validateHistoryFlags(false, false, "not-a-real-outcome") = nil, want an error`)
-	}
-}
-
-// TestValidateHistoryBy pins that --by accepts exactly the ten histq axes
-// and that its error lists them all.
-func TestValidateHistoryBy(t *testing.T) {
-	if err := validateHistoryBy(""); err != nil {
-		t.Errorf(`validateHistoryBy("") = %v, want nil`, err)
-	}
-	for _, a := range histq.Axes() {
-		if err := validateHistoryBy(string(a)); err != nil {
-			t.Errorf("validateHistoryBy(%q) = %v, want nil", a, err)
-		}
-	}
-	for _, bad := range []string{"nope", "Builders"} {
-		err := validateHistoryBy(bad)
-		if err == nil {
-			t.Errorf("validateHistoryBy(%q) = nil, want an error", bad)
-			continue
-		}
-		for _, a := range histq.Axes() {
-			if !strings.Contains(err.Error(), string(a)) {
-				t.Errorf("validateHistoryBy(%q) error %q does not list axis %q", bad, err.Error(), a)
-			}
-		}
-	}
-}
-
-// TestHistoryAxis pins the defensive axis resolution cmdHistory uses: a
-// parsed query that names no axis ("") reads as AxisNone, so no path can turn
-// a plain `relevo history` into a regroup and print "no rounds", while a real
-// by: query still regroups. Pure, so this never runs the subcommand and never
-// reaches a harness.
-func TestHistoryAxis(t *testing.T) {
-	cases := []struct {
-		name   string
-		parsed histq.Query
-		by     string
-		want   histq.Axis
-	}{
-		{"zero query, no --by", histq.Query{}, "", histq.AxisNone},
-		{"AxisNone query, no --by", histq.Query{By: histq.AxisNone}, "", histq.AxisNone},
-		{"AxisBuilder query, no --by", histq.Query{By: histq.AxisBuilder}, "", histq.AxisBuilder},
-		{"zero query, --by binding", histq.Query{}, "binding", histq.AxisBinding},
-		{"AxisBuilder query, --by binding", histq.Query{By: histq.AxisBuilder}, "binding", histq.AxisBinding},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := historyAxis(c.parsed, c.by); got != c.want {
-				t.Errorf("historyAxis(%+v, %q) = %q, want %q", c.parsed, c.by, got, c.want)
-			}
-		})
-	}
-}
-
 // TestHistoryPlainListsRounds pins the bug this round fixes: `relevo history`
 // without -q printed "no rounds" however many rows relevo.db held, because
 // Filter left the parsed query's By as the zero value and cmdHistory read ""
@@ -204,7 +132,7 @@ func TestHistoryJSONHasBuilderName(t *testing.T) {
 	}
 
 	token := "agy/antigravity/opus"
-	rows := []db.RoundRow{{BindingName: "api-auth", Number: 3, BuilderCandidate: &token}}
+	rows := []db.RoundRow{{BindingName: "api-auth", Number: 3, Candidate: &token}}
 
 	raw, err := json.Marshal(historyJSONRows(rows, set))
 	if err != nil {
@@ -221,7 +149,7 @@ func TestHistoryJSONHasBuilderName(t *testing.T) {
 	if got := decoded[0]["BindingName"]; got != "api-auth" {
 		t.Errorf("BindingName = %v, want the embedded row's field", got)
 	}
-	if got := decoded[0]["BuilderCandidate"]; got != token {
-		t.Errorf("BuilderCandidate = %v, want the token", got)
+	if got := decoded[0]["Candidate"]; got != token {
+		t.Errorf("Candidate = %v, want the token", got)
 	}
 }

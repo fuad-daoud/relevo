@@ -84,7 +84,6 @@ func TestWebhookPostsMatchingEventsOnly(t *testing.T) {
 		},
 	}
 
-	// A matching state_changed:needs_you posts once.
 	sink.Dispatch(context.Background(), Event{
 		Type: EventStateChanged, State: "needs_you", BindingID: "api-auth", Round: 4,
 	})
@@ -93,7 +92,6 @@ func TestWebhookPostsMatchingEventsOnly(t *testing.T) {
 		t.Fatalf("calls after matching state_changed:needs_you = %d, want 1", got)
 	}
 
-	// A non-matching state (active, not needs_you) posts nothing.
 	sink.Dispatch(context.Background(), Event{
 		Type: EventStateChanged, State: "active", BindingID: "api-auth", Round: 4,
 	})
@@ -102,7 +100,6 @@ func TestWebhookPostsMatchingEventsOnly(t *testing.T) {
 		t.Fatalf("calls after non-matching state_changed:active = %d, want 1", got)
 	}
 
-	// A different event type entirely posts nothing.
 	sink.Dispatch(context.Background(), Event{
 		Type: EventBuilderStalled, BindingID: "api-auth", Round: 4,
 	})
@@ -176,10 +173,8 @@ func TestWebhookFormats(t *testing.T) {
 	})
 }
 
-// syncBuffer is a mutex-guarded bytes.Buffer: the webhook POST's failure log
-// is written from a detached goroutine (see WebhookSink.Dispatch), so the
-// test goroutine reading it back needs its own synchronization -- a bare
-// bytes.Buffer would race under `go test -race`.
+// syncBuffer is a mutex-guarded bytes.Buffer: Dispatch writes the failure log
+// from a detached goroutine, so a bare bytes.Buffer would race under -race.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -223,10 +218,7 @@ func TestWebhookFailureIsLoggedNotRaised(t *testing.T) {
 	srv.waitCall(t, 2*time.Second)
 
 	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if logBuf.Len() > 0 || time.Now().After(deadline) {
-			break
-		}
+	for logBuf.Len() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 

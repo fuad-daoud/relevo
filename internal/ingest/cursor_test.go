@@ -55,7 +55,9 @@ func TestReadAppendOnlyResumes(t *testing.T) {
 	if _, err := f.WriteString("d\ne\n"); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
 
 	lines, startSeq, cur2, reset, err := readAppendOnly(opener(path), path, cur, true)
 	if err != nil {
@@ -92,8 +94,6 @@ func TestReadAppendOnlyLeavesPartialLine(t *testing.T) {
 		t.Errorf("ByteOffset = %d, want %d (must not include the partial line)", cur.ByteOffset, len("a\nb\n"))
 	}
 
-	// A later read with nothing new appended still leaves the partial line
-	// unread.
 	lines2, _, _, reset, err := readAppendOnly(opener(path), path, cur, true)
 	if err != nil {
 		t.Fatalf("second read: %v", err)
@@ -106,10 +106,8 @@ func TestReadAppendOnlyLeavesPartialLine(t *testing.T) {
 	}
 }
 
-// TestIngestCursorReset pins the rewrite-detection rule: a file rewritten
-// with different first bytes must reset the cursor to 0 and return every
-// line again. Mutation check: removing the head-sha comparison (accepting
-// any same-or-larger size as a valid continuation) must fail this test.
+// TestIngestCursorReset pins that a file rewritten with different first bytes
+// resets the cursor to 0 and returns every line again.
 func TestIngestCursorReset(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "log.jsonl")
 	if err := os.WriteFile(path, []byte("a\nb\nc\n"), 0o644); err != nil {
@@ -121,8 +119,8 @@ func TestIngestCursorReset(t *testing.T) {
 		t.Fatalf("first read: %v", err)
 	}
 
-	// Rewrite the file with different content of the same (or greater)
-	// length, so a size-only check would treat it as unread continuation.
+	// Different content of the same length, so a size-only check would treat it
+	// as an unread continuation.
 	if err := os.WriteFile(path, []byte("x\ny\nz\n"), 0o644); err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}

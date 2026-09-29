@@ -10,9 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -38,6 +42,8 @@ func writePlan(t *testing.T, body string) string {
 // process that cannot start -- is startRound's ErrRunnerUnavailable and the
 // spawn-failed switch, both covered in headless_test.go.
 func TestSendLogsThePlan(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
@@ -49,7 +55,7 @@ func TestSendLogsThePlan(t *testing.T) {
 		t.Fatalf("ReadLog: %v", err)
 	}
 	// seedBound's underlying Bind already wrote the builder bind's pick entry.
-	if len(entries) != 2 || entries[0].Kind != store.KindPick || entries[1].Kind != store.KindPlan || entries[1].Direction != store.DirToBuilder {
+	if len(entries) != 2 || entries[0].Kind != store.KindPick || entries[1].Kind != store.KindPrompt || entries[1].Direction != store.DirToBuilder {
 		t.Fatalf("log = %+v", entries)
 	}
 	if !entries[1].Confirmed {
@@ -58,6 +64,8 @@ func TestSendLogsThePlan(t *testing.T) {
 }
 
 func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	fg := &fakeGit{snapshotTreeID: "tree-abc123", headCommitID: "head-abc123"}
 	rt.Git = fg
@@ -90,6 +98,8 @@ func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
 }
 
 func TestSendHeadFailureLeavesTreeAndClearsHead(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	rt.Git = &fakeGit{snapshotTreeID: "tree-abc123", headCommitErr: errors.New("unborn HEAD")}
 
@@ -106,6 +116,8 @@ func TestSendHeadFailureLeavesTreeAndClearsHead(t *testing.T) {
 }
 
 func TestSendBaselineFailureTolerated(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	fg := &fakeGit{snapshotTreeErr: errors.New("git broken")}
 	rt.Git = fg
@@ -128,12 +140,12 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 	}
 
 	// Verify plan was still copied and logged
-	copied, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	copied, err := os.ReadFile(rt.Store.PromptPath("webshop", 1))
 	if err != nil || string(copied) != "# test plan" {
 		t.Fatalf("plan file error: %v, content: %q", err, string(copied))
 	}
 	log, err := rt.Store.ReadLog("webshop")
-	if err != nil || len(log) == 0 || log[len(log)-1].Kind != store.KindPlan {
+	if err != nil || len(log) == 0 || log[len(log)-1].Kind != store.KindPrompt {
 		t.Fatalf("expected plan log entry, got %v, err: %v", log, err)
 	}
 }
@@ -143,13 +155,15 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 // TestSendRefusesPaused: a paused binding has no builder to address and its
 // worktree is gone; the human resumes it first. No plan is staged.
 func TestSendRefusesPaused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	b := store.Binding{
 		Name: "webshop", CWD: "/repo", Worktree: "/wt/webshop", Branch: "relevo/webshop",
-		Planner: store.Endpoint{SessionID: "sess-architect", Kind: "claude"},
-		Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
-		Round:   2, State: store.StatePaused,
+		MasterMind: store.Endpoint{SessionID: "sess-architect", Kind: "claude"},
+		Builder:    store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		Round:      2, State: store.StatePaused,
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save paused: %v", err)
@@ -171,6 +185,8 @@ func TestSendRefusesPaused(t *testing.T) {
 }
 
 func TestSendUnchangedTreeBetweenRounds(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	b.Round = 2
 	b.RoundClosedTree = "tree-1"
@@ -201,6 +217,8 @@ func TestSendUnchangedTreeBetweenRounds(t *testing.T) {
 }
 
 func TestSendChangedTreeBetweenRounds(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	b.Round = 2
 	b.RoundClosedTree = "tree-1"
@@ -248,8 +266,8 @@ func TestSendChangedTreeBetweenRounds(t *testing.T) {
 	if !de.Confirmed {
 		t.Error("drift entry must have Confirmed == true")
 	}
-	if de.Direction != store.DirToPlanner {
-		t.Errorf("drift entry Direction = %v, want DirToPlanner", de.Direction)
+	if de.Direction != store.DirToMasterMind {
+		t.Errorf("drift entry Direction = %v, want DirToMasterMind", de.Direction)
 	}
 	if de.Path == "" {
 		t.Fatal("drift entry Path is empty")
@@ -266,8 +284,10 @@ func TestSendChangedTreeBetweenRounds(t *testing.T) {
 
 // TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport asserts that
 // an unconsumed pending report is still returned by Pull after a Send with drift.
-// An unconfirmed drift entry would shadow the report in pendingForPlanner.
+// An unconfirmed drift entry would shadow the report in pendingForMasterMind.
 func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
+	t.Parallel()
+
 	rt, b := queuedBinding(t) // queues an unconfirmed report for round 1
 	b.Round = 2
 	b.RoundClosedTree = "tree-1"
@@ -292,7 +312,7 @@ func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
 		t.Fatal("expected drift to be detected")
 	}
 
-	payload, found, err := pullPending(context.Background(), rt, "webshop", "wait")
+	payload, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil || !found {
 		t.Fatalf("pullPending: found=%v err=%v", found, err)
 	}
@@ -302,6 +322,8 @@ func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
 }
 
 func TestSendRound1NoRoundClosedTreeSilent(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	if b.RoundClosedTree != "" {
 		t.Fatalf("expected round 1 RoundClosedTree to be empty, got %q", b.RoundClosedTree)
@@ -330,6 +352,8 @@ func TestSendRound1NoRoundClosedTreeSilent(t *testing.T) {
 }
 
 func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	b.Round = 2
 	b.RoundClosedTree = "tree-closed"
@@ -359,10 +383,12 @@ func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
 // the builder is told the plan, the report and the completion marker, in that
 // order, and told the marker is its last action (spec §3.3).
 func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
-	b := store.Binding{Name: "webshop", CWD: "/repo/webshop", Round: 3}
-	got := composePrompt(b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
+	t.Parallel()
 
-	wantOrigin := OriginLine("webshop", 3, store.DirToBuilder, store.KindPlan)
+	b := store.Binding{Name: "webshop", CWD: "/repo/webshop", Round: 3}
+	got := composePrompt(Runtime{}, b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
+
+	wantOrigin := delivery.OriginLine("webshop", 3, store.DirToBuilder, store.KindPrompt)
 	firstLine := strings.SplitN(got, "\n", 2)[0]
 	if firstLine != wantOrigin {
 		t.Errorf("first line = %q, want origin line %q", firstLine, wantOrigin)
@@ -388,18 +414,41 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	}
 }
 
+// TestComposePromptReaderNamesTheOutputFile pins the reader handoff: it names
+// the actor's output file and carries no artifact-directory sentence, because
+// the actor writes nothing relevo reads.
+func TestComposePromptReaderNamesTheOutputFile(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	rt := Runtime{Store: st}
+	b := store.Binding{Name: "reader-bind", CWD: "/repo", Round: 1, Shape: store.ShapeReader, Role: "reviewer"}
+
+	got := composePrompt(rt, b, "/s/001-prompt.md", "/s/001-report.md", "/s/001-done")
+
+	if strings.Contains(got, "Write every file you produce") {
+		t.Errorf("reader prompt still asks the runner to write an artifact directory:\n%s", got)
+	}
+	output := st.OutputPath("reader-bind", 1, "reviewer", "findings")
+	if !strings.Contains(got, "Your final message is your findings: it is saved as "+output+".") {
+		t.Errorf("reader prompt must name the output file %s:\n%s", output, got)
+	}
+}
+
 func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	// Create an agy candidate without extra_args so TierYolo adds --dangerously-skip-permissions cleanly
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
 	rt.Runner = fr
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name:      "webshop",
-		Candidate: "agy/test/m",
-		PlannerID: testPlannerName,
-		CWD:       "/repo",
-		Headless:  true,
+		Name:         "webshop",
+		Candidate:    "agy/test/m",
+		MasterMindID: testMasterMindName,
+		CWD:          "/repo",
+		Headless:     true,
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -442,7 +491,7 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 	}
 	var planEntry *store.LogEntry
 	for i := range entries {
-		if entries[i].Round == 1 && entries[i].Kind == store.KindPlan {
+		if entries[i].Round == 1 && entries[i].Kind == store.KindPrompt {
 			planEntry = &entries[i]
 			break
 		}
@@ -464,7 +513,7 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		next, err := queueReport(context.Background(), rt, tx, cur, entries, "/dev/null", "done", "test", nil, nil, nil)
+		next, err := queueReport(context.Background(), rt, tx, cur, entries, "/dev/null", "done", "test", nil, nil, nil, nil, "")
 		if err != nil {
 			return err
 		}
@@ -483,7 +532,252 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 	}
 }
 
+// TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn pins #436's second half:
+// a failure after the process started must stop it and say so, so a busy db
+// never leaves an untracked builder running.
+func TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, fr)
+
+	before, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	old := sendAfterSpawn
+	sendAfterSpawn = func(name string) error { return errors.New("injected") }
+	t.Cleanup(func() { sendAfterSpawn = old })
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
+	if err == nil {
+		t.Fatal("Send returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "injected") || !strings.Contains(err.Error(), "was stopped") {
+		t.Errorf("Send error = %q, want it to contain both %q and %q", err, "injected", "was stopped")
+	}
+
+	if len(fr.handles) != 1 {
+		t.Fatalf("Start was called %d times, want 1", len(fr.handles))
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != fr.handles[0] {
+		t.Errorf("kills = %+v, want exactly the handle Start returned (%+v)", fr.kills, fr.handles[0])
+	}
+
+	after, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load after: %v", err)
+	}
+	if after.Builder.PID != before.Builder.PID {
+		t.Errorf("builder PID = %d, want unchanged %d", after.Builder.PID, before.Builder.PID)
+	}
+	if after.Round != before.Round {
+		t.Errorf("round = %d, want unchanged %d", after.Round, before.Round)
+	}
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindPrompt && e.Round == 1 {
+			t.Errorf("log has a plan entry for round 1, want none: %+v", e)
+		}
+	}
+}
+
+// TestSendRefusesWhileTheRoundsScopeIsActive pins #445: when the round's
+// scope unit is still loaded, Send refuses before it spawns anything, with
+// ErrScopeActive, and leaves no plan file or NEEDS YOU behind.
+func TestSendRefusesWhileTheRoundsScopeIsActive(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, fr)
+	rt.Scope = &spawn.ScopeSpec{}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	fr.scopeActive = map[string]bool{scopeUnitName(b): true}
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
+	if !errors.Is(err, ErrScopeActive) {
+		t.Fatalf("Send = %v, want errors.Is(..., ErrScopeActive)", err)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("Start was called %d times, want 0", len(fr.specs))
+	}
+	after, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load after: %v", err)
+	}
+	if after.State == store.StateNeedsYou {
+		t.Errorf("State = %q, want not NEEDS YOU", after.State)
+	}
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", b.Round)); !os.IsNotExist(err) {
+		t.Errorf("plan file for round %d exists, want none (err=%v)", b.Round, err)
+	}
+}
+
+// TestSendWithScopesOffNeverProbesAScope pins the guard's precondition: with
+// rt.Scope nil, no scope unit can exist, so Send never asks the runner about
+// one and the send proceeds normally.
+func TestSendWithScopesOffNeverProbesAScope(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, fr)
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(fr.scopeQueries) != 0 {
+		t.Errorf("scopeQueries = %v, want none (rt.Scope is nil)", fr.scopeQueries)
+	}
+}
+
+// closeWebshopRoundOne reconciles webshop's round 1 on its marker and report
+// and persists the result, so a later Send sees round 2. Reconcile itself does
+// not save -- the daemon's tick does -- so a test must.
+func closeWebshopRoundOne(t *testing.T, rt Runtime, b store.Binding) store.Binding {
+	t.Helper()
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the close", got.Round)
+	}
+	if err := rt.Store.Save(got); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+// roundTwoWithActivePreviousScope closes round 1 on its marker and report, so
+// the binding is at round 2, then turns scopes on and scripts round 1's unit
+// active: the state the send-time guard exists for. It returns the runtime, the
+// round-2 binding and round 1's unit base name.
+func roundTwoWithActivePreviousScope(t *testing.T, fr *fakeRunner) (Runtime, store.Binding, string) {
+	t.Helper()
+	rt, b := sentHeadless(t, fr)
+	got := closeWebshopRoundOne(t, rt, b)
+	rt.Scope = &spawn.ScopeSpec{}
+	unit := scopeUnitNameFor(scopeRound, got.Owner, got.Name, 1, "")
+	fr.scopeActive = map[string]bool{unit: true}
+	return rt, got, unit
+}
+
+// TestSendReapsAnEarlierRoundsScopeBeforeItStarts pins the send-time guard's
+// first half: the round before the one being sent still holds a scope, so Send
+// ends it before staging round 2 and then starts the new process.
+func TestSendReapsAnEarlierRoundsScopeBeforeItStarts(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b, unit := roundTwoWithActivePreviousScope(t, fr)
+	if len(fr.specs) != 1 {
+		t.Fatalf("setup started %d processes, want 1", len(fr.specs))
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "round two"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(fr.scopeStops) != 1 || fr.scopeStops[0] != unit {
+		t.Errorf("scopeStops = %v, want [%s]", fr.scopeStops, unit)
+	}
+	if len(fr.specs) != 2 {
+		t.Errorf("specs = %d, want 2: one new process for round 2", len(fr.specs))
+	}
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", b.Round)); err != nil {
+		t.Errorf("plan for round %d: %v, want it to exist", b.Round, err)
+	}
+}
+
+// TestSendRefusesWhenAnEarlierRoundsScopeCannotBeEnded pins the refusal: when
+// the previous round's scope will not end, Send refuses with ErrScopeActive
+// before it stages anything, so no plan file and no NEEDS YOU are left behind.
+func TestSendRefusesWhenAnEarlierRoundsScopeCannotBeEnded(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b, _ := roundTwoWithActivePreviousScope(t, fr)
+	fr.scopeStopErr = errors.New("systemctl: stop failed")
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "round two"), SendOptions{})
+	if !errors.Is(err, ErrScopeActive) {
+		t.Fatalf("Send = %v, want errors.Is(..., ErrScopeActive)", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("Start was called %d times, want 1 (the setup's)", len(fr.specs))
+	}
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", b.Round)); !os.IsNotExist(err) {
+		t.Errorf("plan file for round %d exists, want none (err=%v)", b.Round, err)
+	}
+}
+
+// proberOnlyRunner is a Runner that can see a scope but not end one: it embeds
+// spawn.Runner for the method set and adds only ScopeActive, so a type
+// assertion to spawn.ScopeStopper must fail.
+type proberOnlyRunner struct {
+	spawn.Runner
+	active map[string]bool
+}
+
+func (r proberOnlyRunner) ScopeActive(_ context.Context, unit string) (bool, error) {
+	return r.active[unit], nil
+}
+
+// TestSendRefusesAScopeItsRunnerCannotEnd pins the missing-stopper case: a
+// runner that can see the previous round's loaded scope but cannot end it
+// refuses the send rather than start a second builder beside it.
+func TestSendRefusesAScopeItsRunnerCannotEnd(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b, unit := roundTwoWithActivePreviousScope(t, fr)
+	rt.Runner = proberOnlyRunner{active: map[string]bool{unit: true}}
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "round two"), SendOptions{})
+	if !errors.Is(err, ErrScopeActive) {
+		t.Fatalf("Send = %v, want errors.Is(..., ErrScopeActive)", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("Start was called %d times, want 1 (the setup's)", len(fr.specs))
+	}
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", b.Round)); !os.IsNotExist(err) {
+		t.Errorf("plan file for round %d exists, want none (err=%v)", b.Round, err)
+	}
+}
+
+// TestSendWithScopesOffNeverProbesAnEarlierRoundsScope pins the earlier-round
+// guard's precondition: with rt.Scope nil, a round-2 send never asks about
+// round 1's scope and proceeds normally.
+func TestSendWithScopesOffNeverProbesAnEarlierRoundsScope(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	closeWebshopRoundOne(t, rt, b)
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "round two"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(fr.scopeQueries) != 0 {
+		t.Errorf("scopeQueries = %v, want none (rt.Scope is nil)", fr.scopeQueries)
+	}
+	if len(fr.scopeStops) != 0 {
+		t.Errorf("scopeStops = %v, want none (rt.Scope is nil)", fr.scopeStops)
+	}
+}
+
 func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 
@@ -502,7 +796,7 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	}
 	var planEntry *store.LogEntry
 	for i := range entries {
-		if entries[i].Round == 1 && entries[i].Kind == store.KindPlan {
+		if entries[i].Round == 1 && entries[i].Kind == store.KindPrompt {
 			planEntry = &entries[i]
 			break
 		}
@@ -518,11 +812,11 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	if len(fr.specs) != 1 {
 		t.Fatalf("got %d specs, want 1", len(fr.specs))
 	}
-	planPath := rt.Store.PlanPath("webshop", 1)
+	planPath := rt.Store.PromptPath("webshop", 1)
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	donePath := rt.Store.DonePath("webshop", 1)
 	b, _ := rt.Store.Load("webshop")
-	wantPrompt := composePrompt(b, planPath, reportPath, donePath)
+	wantPrompt := composePrompt(rt, b, planPath, reportPath, donePath)
 	wantArgv := []string{
 		"agy", "-p", wantPrompt, "--model", "m", "--agent", "plan-executor",
 		"--output-format", "stream-json", "--print-timeout", "24h0m0s", "--add-dir", "/repo",
@@ -556,6 +850,8 @@ func endProcess(t *testing.T, rt Runtime, b store.Binding) {
 // reports the launch it would use -- the harness binary first -- without
 // starting anything.
 func TestSendDryRunHeadlessShowsArgv(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 
@@ -581,9 +877,11 @@ func TestSendDryRunHeadlessShowsArgv(t *testing.T) {
 // TestSendDryRunGateNote pins the advisory gate note: a rate-limited candidate
 // still dry-runs, but the note says the daemon would switch after the start.
 func TestSendDryRunGateNote(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 
-	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testAgyRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -603,6 +901,8 @@ func TestSendDryRunGateNote(t *testing.T) {
 // returns the identical error Send would, exit-1 text included, and writes
 // nothing on the way.
 func TestSendDryRunErrorsMatchSend(t *testing.T) {
+	t.Parallel()
+
 	type dryRunCase struct {
 		name  string
 		opts  SendOptions
@@ -675,7 +975,7 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadLog: %v", err)
 			}
-			planPath := rtDry.Store.PlanPath(nameDry, 1)
+			planPath := rtDry.Store.PromptPath(nameDry, 1)
 			_, statBefore := os.Stat(planPath)
 			planExisted := statBefore == nil
 			specsBefore := 0
@@ -717,6 +1017,8 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 // TestRenderDryRunShape pins the exact rendered shape of a dry run: the seven
 // labelled lines, in order, with the 1024-based size.
 func TestRenderDryRunShape(t *testing.T) {
+	t.Parallel()
+
 	d := DryRun{
 		Name:          "api-auth",
 		Round:         5,
@@ -724,25 +1026,25 @@ func TestRenderDryRunShape(t *testing.T) {
 		Candidate:     "agy/google/gemini-3.8-flash-high",
 		CandidateName: "gemini-3.8-flash-high",
 		Where:         "/usr/bin/agy -p",
-		PlanPath:      "/home/p/.local/state/relevo/api-auth/005-plan.md",
-		PlanFrom:      "./plan.md",
-		PlanBytes:     4198,
+		PromptPath:    "/home/p/.local/state/relevo/api-auth/005-prompt.md",
+		PromptFrom:    "./plan.md",
+		PromptBytes:   4198,
 		ReportPath:    "/home/p/.local/state/relevo/api-auth/005-report.md",
 		DonePath:      "/home/p/.local/state/relevo/api-auth/005-done",
 		Tier:          "yolo",
 		PromptHead: []string{
-			`relevo: round 5 · to builder "api-auth" · from the planner (not the human)`,
+			`relevo: round 5 · to runner "api-auth" · from the MasterMind (not the human)`,
 			"Your working tree is: /home/p/.worktrees/api-auth",
 		},
 	}
 	want := `would send round 5 to api-auth
-  builder   headless gemini-3.8-flash-high
+  runner    headless gemini-3.8-flash-high
   where     /usr/bin/agy -p
   tier      yolo
-  plan      /home/p/.local/state/relevo/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
+  prompt    /home/p/.local/state/relevo/api-auth/005-prompt.md  (staged from ./plan.md, 4.1 KiB)
   report    /home/p/.local/state/relevo/api-auth/005-report.md
   marker    /home/p/.local/state/relevo/api-auth/005-done
-  prompt    relevo: round 5 · to builder "api-auth" · from the planner (not the human)
+  head      relevo: round 5 · to runner "api-auth" · from the MasterMind (not the human)
             Your working tree is: /home/p/.worktrees/api-auth
 `
 	got := RenderDryRun(d)
@@ -752,7 +1054,7 @@ func TestRenderDryRunShape(t *testing.T) {
 
 	// The seven labelled lines appear in this order.
 	at := -1
-	for _, label := range []string{"builder", "where", "tier", "plan", "report", "marker", "prompt"} {
+	for _, label := range []string{"runner", "where", "tier", "prompt", "report", "marker", "head"} {
 		i := strings.Index(got, "  "+label+" ")
 		if i < 0 {
 			t.Fatalf("no %q line in:\n%s", label, got)
@@ -773,6 +1075,8 @@ func TestRenderDryRunShape(t *testing.T) {
 // TestVerifyPolicyDefault pins #144's trigger: an explicit SendOptions.Verify
 // wins, and a plain Send takes policy.json verify.default.
 func TestVerifyPolicyDefault(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	rt.Policy.Verify = &policy.VerifyPolicy{Default: true}
 
@@ -802,7 +1106,7 @@ func TestVerifyPolicyDefault(t *testing.T) {
 }
 
 // switchSetup binds webshop on agy/test/m with a fake runner -- the setup
-// TestSendHeadlessTierYoloOverrideAndRoundClose uses -- for the --builder
+// TestSendHeadlessTierYoloOverrideAndRoundClose uses -- for the --candidate
 // tests. Every local builder is headless, so the runner drives the round.
 func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
 	t.Helper()
@@ -810,18 +1114,18 @@ func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
 	rt := newRuntime(t)
 	rt.Runner = fr
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name:      "webshop",
-		Candidate: testAgyRef,
-		PlannerID: testPlannerName,
-		CWD:       "/repo",
-		Headless:  true,
+		Name:         "webshop",
+		Candidate:    testAgyRef,
+		MasterMindID: testMasterMindName,
+		CWD:          "/repo",
+		Headless:     true,
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	return rt, fr
 }
 
-// TestSendBuilderMovesTheCandidateAndPersists pins §5.2 (a): --builder starts
+// TestSendBuilderMovesTheCandidateAndPersists pins §5.2 (a): --candidate starts
 // the round on the named candidate, files its pick entry before the plan
 // entry, and the change persists into the next plain send.
 //
@@ -829,6 +1133,8 @@ func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
 // preflight substitution, and this test fails on the persisted
 // BuilderCandidate assertion.
 func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 
 	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# go"), SendOptions{Builder: testClaudeRef})
@@ -863,7 +1169,7 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 	}
 	planIdx := -1
 	for i, e := range entries {
-		if e.Round == 1 && e.Kind == store.KindPlan {
+		if e.Round == 1 && e.Kind == store.KindPrompt {
 			planIdx = i
 			break
 		}
@@ -871,7 +1177,7 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 	if planIdx < 1 {
 		t.Fatalf("plan entry not found after a bind pick: %+v", entries)
 	}
-	if prev := entries[planIdx-1]; prev.Kind != store.KindPick || prev.Direction != store.DirToPlanner || !strings.Contains(prev.Note, testClaudeRef) {
+	if prev := entries[planIdx-1]; prev.Kind != store.KindPick || prev.Direction != store.DirToMasterMind || !strings.Contains(prev.Note, testClaudeRef) {
 		t.Errorf("entry before the plan = %+v, want a pick naming %s", prev, testClaudeRef)
 	}
 
@@ -891,9 +1197,62 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 	}
 }
 
+// TestSendRecordsPickAndPlanInOrderInOneWrite pins #471: a --candidate send
+// writes the pick entry and the plan entry in one write, so they land with
+// consecutive seqs in that order, and the binding carries the spawned pid.
+func TestSendRecordsPickAndPlanInOrderInOneWrite(t *testing.T) {
+	t.Parallel()
+
+	rt, fr := switchSetup(t)
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# go"), SendOptions{Builder: testClaudeRef}); err != nil {
+		t.Fatalf("Send --builder: %v", err)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(fr.handles) != 1 {
+		t.Fatalf("handles = %d, want 1", len(fr.handles))
+	}
+	if b.Builder.PID != fr.handles[0].PID {
+		t.Errorf("Builder.PID = %d, want the spawned %d", b.Builder.PID, fr.handles[0].PID)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	planIdx := -1
+	for i, e := range entries {
+		if e.Round == b.Round && e.Kind == store.KindPrompt {
+			planIdx = i
+			break
+		}
+	}
+	if planIdx < 1 {
+		t.Fatalf("no plan entry for round %d after a pick: %+v", b.Round, entries)
+	}
+	pick := entries[planIdx-1]
+	if pick.Kind != store.KindPick {
+		t.Fatalf("entry before the plan = %+v, want the round's pick", pick)
+	}
+	if pick.Round != b.Round {
+		t.Errorf("pick.Round = %d, want %d", pick.Round, b.Round)
+	}
+	if pick.Seq == 0 || entries[planIdx].Seq != pick.Seq+1 {
+		t.Errorf("seqs = pick %d, plan %d; want consecutive", pick.Seq, entries[planIdx].Seq)
+	}
+
+	endProcess(t, rt, b)
+}
+
 // TestSendBuilderRefusedWhileRoundOpen pins §5.2 (b): an open round is
 // refused before anything is staged or spawned.
 func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
 		t.Fatalf("prime Send: %v", err)
@@ -903,7 +1262,7 @@ func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
-	planPath := rt.Store.PlanPath("webshop", 1)
+	planPath := rt.Store.PromptPath("webshop", 1)
 	beforePlan, err := os.ReadFile(planPath)
 	if err != nil {
 		t.Fatalf("read staged plan: %v", err)
@@ -933,9 +1292,207 @@ func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {
 	}
 }
 
+// TestSendRefusedWhileDoneMarkerNotIngested pins that a round whose builder
+// has already written its completion marker, but whose close the daemon has
+// not yet ingested, is refused: the round is over, and restaging its plan
+// would start a second builder the daemon would close on the stale marker.
+func TestSendRefusedWhileDoneMarkerNotIngested(t *testing.T) {
+	t.Parallel()
+
+	rt, fr := switchSetup(t)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+		t.Fatalf("prime Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	endProcess(t, rt, b)
+
+	touch(t, rt.Store.DonePath("webshop", 1))
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("# report"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	before, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	planPath := rt.Store.PromptPath("webshop", 1)
+	beforePlan, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read staged plan: %v", err)
+	}
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "# two"), SendOptions{})
+	if err == nil {
+		t.Fatal("Send must be refused while the round's done marker is on disk")
+	}
+	if !errors.Is(err, ErrReportPending) {
+		t.Errorf("err = %v, want it to wrap ErrReportPending", err)
+	}
+	if !strings.Contains(err.Error(), "001-done") {
+		t.Errorf("err = %q, want it to name the 001-done marker", err.Error())
+	}
+
+	after, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("log grew from %d to %d entries; a refusal writes nothing", len(before), len(after))
+	}
+	afterPlan, err := os.ReadFile(planPath)
+	if err != nil || string(afterPlan) != string(beforePlan) {
+		t.Errorf("plan was restaged: got (%q, %v), want %q", string(afterPlan), err, string(beforePlan))
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("a refused send started a process: %d specs", len(fr.specs))
+	}
+}
+
+// TestSendRefusedWhileReportNotIngested is the same refusal for a round whose
+// builder wrote only its report: the report alone proves the builder is done,
+// even though the marker has not appeared yet.
+func TestSendRefusedWhileReportNotIngested(t *testing.T) {
+	t.Parallel()
+
+	rt, fr := switchSetup(t)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+		t.Fatalf("prime Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	endProcess(t, rt, b)
+
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("# report"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	before, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	planPath := rt.Store.PromptPath("webshop", 1)
+	beforePlan, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read staged plan: %v", err)
+	}
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "# two"), SendOptions{})
+	if err == nil {
+		t.Fatal("Send must be refused while the round's report is on disk")
+	}
+	if !errors.Is(err, ErrReportPending) {
+		t.Errorf("err = %v, want it to wrap ErrReportPending", err)
+	}
+	if !strings.Contains(err.Error(), "001-report.md") {
+		t.Errorf("err = %q, want it to name 001-report.md", err.Error())
+	}
+
+	after, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("log grew from %d to %d entries; a refusal writes nothing", len(before), len(after))
+	}
+	afterPlan, err := os.ReadFile(planPath)
+	if err != nil || string(afterPlan) != string(beforePlan) {
+		t.Errorf("plan was restaged: got (%q, %v), want %q", string(afterPlan), err, string(beforePlan))
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("a refused send started a process: %d specs", len(fr.specs))
+	}
+}
+
+// TestSendAfterExitWithoutReportStillResends pins the other side of the rule:
+// a builder that died without writing either file leaves the round re-sendable,
+// exactly as before.
+func TestSendAfterExitWithoutReportStillResends(t *testing.T) {
+	t.Parallel()
+
+	rt, fr := switchSetup(t)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+		t.Fatalf("prime Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	endProcess(t, rt, b)
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# two"), SendOptions{})
+	if err != nil {
+		t.Fatalf("Send after an exit without a report: %v", err)
+	}
+	if res.Round != 1 {
+		t.Errorf("Round = %d, want 1 (Send never advances the round)", res.Round)
+	}
+	if len(fr.specs) != 2 {
+		t.Errorf("specs = %d, want a second process started", len(fr.specs))
+	}
+}
+
+// TestSendProceedsOnceRoundClosed pins that the refusal is tied to the current
+// round, not to the files: once the round closes (the daemon ingests the marker
+// and advances), the next round has no marker and the send goes through, staged
+// at the new round's plan path.
+func TestSendProceedsOnceRoundClosed(t *testing.T) {
+	t.Parallel()
+
+	rt, fr := switchSetup(t)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+		t.Fatalf("prime Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	endProcess(t, rt, b)
+	touch(t, rt.Store.DonePath("webshop", 1))
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("# report"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	got, closed := closeOnMarkerUnderLock(t, rt, b)
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+	if err := rt.Store.Save(got); err != nil {
+		t.Fatalf("save the closed binding: %v", err)
+	}
+	beforePlan, err := os.ReadFile(rt.Store.PromptPath("webshop", 1))
+	if err != nil {
+		t.Fatalf("read round-1 plan: %v", err)
+	}
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# two"), SendOptions{})
+	if err != nil {
+		t.Fatalf("Send after the round closed: %v", err)
+	}
+	if res.Round != 2 {
+		t.Errorf("Round = %d, want 2", res.Round)
+	}
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 2)); err != nil {
+		t.Errorf("plan not staged at 002-prompt.md: %v", err)
+	}
+	afterPlan, err := os.ReadFile(rt.Store.PromptPath("webshop", 1))
+	if err != nil || string(afterPlan) != string(beforePlan) {
+		t.Errorf("round-1 plan changed: got (%q, %v), want %q", string(afterPlan), err, string(beforePlan))
+	}
+	if len(fr.specs) != 2 {
+		t.Errorf("specs = %d, want a second process started", len(fr.specs))
+	}
+}
+
 // TestSendBuilderUnknownTokenWritesNothing pins §5.2 (c): a token that does
 // not resolve is refused with ErrBadBuilder before any write.
 func TestSendBuilderUnknownTokenWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 	before, err := rt.Store.ReadLog("webshop")
 	if err != nil {
@@ -969,8 +1526,10 @@ func TestSendBuilderUnknownTokenWritesNothing(t *testing.T) {
 // rate-limited candidate proceeds, and the pick line records the bypass and
 // names the live gate.
 func TestSendBuilderGatedTokenProceeds(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := switchSetup(t)
-	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testClaudeRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -996,6 +1555,8 @@ func TestSendBuilderGatedTokenProceeds(t *testing.T) {
 // TestSendDryRunBuilderMakesNoWrites pins §5.2 (e): the dry run reports the
 // new candidate and its argv, and writes nothing.
 func TestSendDryRunBuilderMakesNoWrites(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 	before, err := rt.Store.ReadLog("webshop")
 	if err != nil {
@@ -1023,7 +1584,7 @@ func TestSendDryRunBuilderMakesNoWrites(t *testing.T) {
 	if len(after) != len(before) {
 		t.Errorf("log grew from %d to %d entries; a dry run writes nothing", len(before), len(after))
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 1)); !os.IsNotExist(err) {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 1)); !os.IsNotExist(err) {
 		t.Errorf("a dry run staged a plan: %v", err)
 	}
 }
@@ -1032,6 +1593,8 @@ func TestSendDryRunBuilderMakesNoWrites(t *testing.T) {
 // own candidate is a no-op -- no pick entry, no tier change, and the send
 // proceeds exactly as a plain one.
 func TestSendBuilderSameCandidateIsPlainSend(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 
 	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# go"), SendOptions{Builder: testAgyRef})
@@ -1055,7 +1618,7 @@ func TestSendBuilderSameCandidateIsPlainSend(t *testing.T) {
 		if e.Round == 1 && e.Kind == store.KindPick {
 			picks++
 		}
-		if e.Round == 1 && e.Kind == store.KindPlan {
+		if e.Round == 1 && e.Kind == store.KindPrompt {
 			plan = true
 		}
 	}
@@ -1064,5 +1627,132 @@ func TestSendBuilderSameCandidateIsPlainSend(t *testing.T) {
 	}
 	if !plan {
 		t.Error("no plan entry: the send did not proceed normally")
+	}
+}
+
+// plannerSeedRows is the file registry the seed-cap cases run on: the builder
+// and reviewer rows, beside a `planner` reader row that runs the architect
+// definition.
+func plannerSeedRows() map[string]roles.Row {
+	return map[string]roles.Row{
+		"builder":  {Candidates: []string{testClaudeRef}},
+		"reviewer": {Candidates: []string{testClaudeRef}},
+		"planner": {
+			Shape:       ptr("reader"),
+			Candidates:  []string{testClaudeRef},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "architect"}},
+		},
+	}
+}
+
+// plannerSeedRuntime binds one actor (name, role) on a real repo, with a file
+// registry that resolves `planner` to the architect definition.
+func plannerSeedRuntime(t *testing.T, name, role string) Runtime {
+	t.Helper()
+	repo := readerRepo(t)
+	rt := newRuntime(t)
+	rt.Git = git.NewClient("git", 0, 0)
+	rt.Runner = newFakeRunner()
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, plannerSeedRows())
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: name, Role: role, Candidate: testClaudeRef,
+		MasterMindID: testMasterMindName, CWD: repo,
+	}); err != nil {
+		t.Fatalf("Bind(%s, %q): %v", name, role, err)
+	}
+	return rt
+}
+
+// TestPlannerSeedCapRefusesOverCap pins §4.3: a seed over 4 KiB to a planner
+// actor is refused in the preflight, naming the size and --force, and writes
+// nothing.
+func TestPlannerSeedCapRefusesOverCap(t *testing.T) {
+	t.Parallel()
+
+	rt := plannerSeedRuntime(t, "planner-bind", "planner")
+	before, err := rt.Store.ReadLog("planner-bind")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+
+	_, err = Send(context.Background(), rt, "planner-bind", writePlan(t, strings.Repeat("x", 4097)), SendOptions{})
+	if err == nil {
+		t.Fatal("Send(4097 bytes to a planner) = nil, want the cap refusal")
+	}
+	for _, want := range []string{"4097", "--force"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not name %q", err, want)
+		}
+	}
+	if _, statErr := os.Stat(rt.Store.PromptPath("planner-bind", 1)); !os.IsNotExist(statErr) {
+		t.Errorf("refusal wrote a prompt file: %v", statErr)
+	}
+	after, err := rt.Store.ReadLog("planner-bind")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("refusal wrote a log entry: %d -> %d", len(before), len(after))
+	}
+	b, err := rt.Store.Load("planner-bind")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.Round != 1 {
+		t.Errorf("refusal advanced the round to %d, want 1", b.Round)
+	}
+}
+
+// TestPlannerSeedCapForceSends: --force spends the cap and the round proceeds.
+func TestPlannerSeedCapForceSends(t *testing.T) {
+	t.Parallel()
+
+	rt := plannerSeedRuntime(t, "planner-bind", "planner")
+	if _, err := Send(context.Background(), rt, "planner-bind", writePlan(t, strings.Repeat("x", 4097)), SendOptions{Force: true}); err != nil {
+		t.Fatalf("Send(4097 bytes, --force): %v", err)
+	}
+}
+
+// TestPlannerSeedCapAtCapSends: 4096 bytes is not over the cap.
+func TestPlannerSeedCapAtCapSends(t *testing.T) {
+	t.Parallel()
+
+	rt := plannerSeedRuntime(t, "planner-bind", "planner")
+	if _, err := Send(context.Background(), rt, "planner-bind", writePlan(t, strings.Repeat("x", 4096)), SendOptions{}); err != nil {
+		t.Fatalf("Send(4096 bytes): %v", err)
+	}
+}
+
+// TestPlannerSeedCapSkipsOtherActors: the cap is the planner actor's alone, so
+// a reviewer and a builder take a 5000-byte prompt.
+func TestPlannerSeedCapSkipsOtherActors(t *testing.T) {
+	t.Parallel()
+
+	big := strings.Repeat("x", 5000)
+	reviewer := plannerSeedRuntime(t, "reviewer-bind", "reviewer")
+	if _, err := Send(context.Background(), reviewer, "reviewer-bind", writePlan(t, big), SendOptions{}); err != nil {
+		t.Fatalf("Send(5000 bytes to a reviewer): %v", err)
+	}
+	builder := plannerSeedRuntime(t, "builder-bind", "")
+	if _, err := Send(context.Background(), builder, "builder-bind", writePlan(t, big), SendOptions{}); err != nil {
+		t.Fatalf("Send(5000 bytes to a builder): %v", err)
+	}
+}
+
+// TestPlannerSeedCapDryRunRefuses: the check lives in the read-only preflight,
+// so a dry run refuses with identically no state change.
+func TestPlannerSeedCapDryRunRefuses(t *testing.T) {
+	t.Parallel()
+
+	rt := plannerSeedRuntime(t, "planner-bind", "planner")
+	big := writePlan(t, strings.Repeat("x", 4097))
+
+	_, dryErr := SendDryRun(context.Background(), rt, "planner-bind", big, SendOptions{})
+	if dryErr == nil {
+		t.Fatal("SendDryRun(4097 bytes to a planner) = nil, want the cap refusal")
+	}
+	_, sendErr := Send(context.Background(), rt, "planner-bind", big, SendOptions{})
+	if sendErr == nil || sendErr.Error() != dryErr.Error() {
+		t.Errorf("SendDryRun refusal %q, Send refusal %q; want the same", dryErr, sendErr)
 	}
 }

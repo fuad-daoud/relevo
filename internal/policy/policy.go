@@ -1,194 +1,133 @@
-// Package policy loads policy.json: where the planner tells relevo how to
-// choose among candidates. This step carries order[role] only; later #61
-// steps add the scoring knobs -- weights, floor, providers[].peak,
-// max_switches, cooldown -- each arriving with the step that reads it
-// (spec §1 "Why this is not #61's step 2 as written").
+// Package policy loads policy.json: where the mastermind tells relevo how to
+// choose among candidates and tunes the daemon's knobs.
 package policy
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"net/url"
-	"os"
-	"path/filepath"
-	"reflect"
-	"regexp"
 	"runtime"
-	"sort"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/jsonshape"
 )
 
-// ErrBadPolicy reports a policy.json that does not validate.
-var ErrBadPolicy = errors.New("bad policy")
-
-// memoryMaxPattern is serve.scope.memory_max's shape: digits with an
-// optional single-letter unit suffix (K, M, G, T), the systemd MemoryMax=
-// grammar this value is passed straight through to.
-var memoryMaxPattern = regexp.MustCompile(`^[0-9]+[KMGT]?$`)
-
-// cpuQuotaPattern is cpu_quota's shape: digits with a percent sign, the
-// systemd CPUQuota= grammar this value is passed straight through to
-// ("200%" = two cores' worth).
-var cpuQuotaPattern = regexp.MustCompile(`^[0-9]+%$`)
-
-// cpuListPattern is allowed_cpus' shape: a systemd cpu-list of numbers and
-// ranges, comma-separated, with no spaces. It is the pool of cores relevo
-// hands out, one per round.
-var cpuListPattern = regexp.MustCompile(`^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$`)
-
-// Policy is the planner's candidate preferences, loaded from policy.json.
+// Policy is the mastermind's candidate preferences and daemon tuning, loaded
+// from policy.json.
 type Policy struct {
 	// Order maps a role to its preferred candidate tokens, most preferred
-	// first. A role absent here is unordered, and the resolver refuses to
-	// choose among several candidates that serve it.
+	// first; an absent role is unordered.
 	Order map[string][]string `json:"order,omitempty"`
 
-	// MaxSwitches is how many times the daemon may replace a builder within
-	// one round before the binding goes NEEDS YOU; nil is DefaultMaxSwitches;
-	// 0 disables switching.
+	// MaxSwitches caps builder replacements within one round before the
+	// binding goes NEEDS YOU; nil is DefaultMaxSwitches, 0 disables it.
 	MaxSwitches *int `json:"max_switches,omitempty"`
-
+	// ArtifactMaxMB caps a round's artifact directory; nil and 0 mean
+	// DefaultArtifactMaxMB, and a negative value is refused.
+	ArtifactMaxMB *int `json:"artifact_max_mb,omitempty"`
 	// LimitGateDefaultMS is how long a matched limit gates the provider when
-	// no reset time can be parsed from the matched line. nil is
-	// DefaultLimitGate; a present value must be > 0.
+	// no reset time parses; nil is DefaultLimitGate.
 	LimitGateDefaultMS *int `json:"limit_gate_default_ms,omitempty"`
-
-	// StallAfterMS is how long a live headless builder's stream may go
-	// without an event before relevo labels it stalled (#252). nil is
-	// DefaultStallAfter; a present value must be > 0.
+	// StallAfterMS is how long a live builder's stream may go silent before
+	// it is labelled stalled; nil is DefaultStallAfter.
 	StallAfterMS *int `json:"stall_after_ms,omitempty"`
-
-	// ProgressIntervalMS is how often the daemon samples a binding's progress
-	// signals while its round is open (#135). nil is DefaultProgressInterval;
-	// a present value must be > 0.
+	// ProgressIntervalMS is how often the daemon samples a round's progress;
+	// nil is DefaultProgressInterval.
 	ProgressIntervalMS *int `json:"progress_interval_ms,omitempty"`
-
-	// ExploreAfterMS is how long a builder's output or screen may keep moving
-	// while its tree has not before relevo labels it exploring (#135). nil is
-	// DefaultExploreAfter; a present value must be > 0.
+	// ExploreAfterMS is how long output may move without the tree changing
+	// before a builder is labelled exploring; nil is DefaultExploreAfter.
 	ExploreAfterMS *int `json:"explore_after_ms,omitempty"`
-
-	// StaleAfterMS is how long a NEEDS YOU or HELD binding may sit unacted
-	// before relevo labels it stale (#135). nil is DefaultStaleAfter; a present
-	// value must be > 0.
+	// StaleAfterMS is how long NEEDS YOU or HELD may sit unacted before it
+	// is labelled stale; nil is DefaultStaleAfter.
 	StaleAfterMS *int `json:"stale_after_ms,omitempty"`
 
-	// ScanPatterns is extra regular expressions appended to the built-in list
-	// of instruction-shaped line patterns (#139).
+	// ScanPatterns extends the built-in instruction-shaped line patterns.
 	ScanPatterns []string `json:"scan_patterns,omitempty"`
-
-	// Classify configures the optional classifier beside the regex scan (#211).
+	// Classify configures the optional classifier beside the regex scan.
 	Classify *Classify `json:"classify,omitempty"`
 
-	// Tier maps a role name to its default tier (#141). Absent role -> no
-	// default here. Every key must be a known role; every value must parse;
-	// no value may be Above MaxTierOrDefault().
+	// Tier maps a role to its default tier, capped by MaxTierOrDefault().
 	Tier map[string]string `json:"tier,omitempty"`
-
-	// MaxTier is the highest tier a command may request without --allow-yolo
-	// (#141). "" is DefaultMaxTier. Must parse and must not be "harness".
+	// MaxTier is the highest tier a command may request without
+	// --allow-yolo; "" is DefaultMaxTier and must not be "harness".
 	MaxTier string `json:"max_tier,omitempty"`
 
-	// Gate configures the acceptance command relevo runs on a binding's
-	// completion marker when the binding itself has none (#132).
+	// Gate configures the acceptance command run on a binding with no
+	// completion marker of its own.
 	Gate *GatePolicy `json:"gate,omitempty"`
-
-	// Verify configures the default for `relevo send --verify` (#144): when
-	// verify.default is true, a plain `relevo send` marks the round for a
-	// read-only reviewer at round close.
+	// Verify configures the default for `relevo send --verify`.
 	Verify *VerifyPolicy `json:"verify,omitempty"`
-
-	// Notify configures webhook sinks that receive lifecycle events over
-	// HTTP, beside the hooks.d script dispatcher (#4).
+	// Notify configures webhook sinks for lifecycle events.
 	Notify *NotifyPolicy `json:"notify,omitempty"`
-
-	// Serve configures relevo serve (#285). nil is every default.
+	// Serve configures relevo serve; nil is every default.
 	Serve *ServePolicy `json:"serve,omitempty"`
-
-	// Scope is the systemd scope template for rounds this host runs. Serve.Scope
-	// replaces it entirely for served rounds (#295). nil means defaults, not off.
+	// Scope is the systemd scope template for rounds this host runs;
+	// Serve.Scope replaces it entirely for served rounds.
 	Scope *ScopePolicy `json:"scope,omitempty"`
 }
 
-// ServePolicy configures relevo serve (#285).
+// ServePolicy configures relevo serve.
 type ServePolicy struct {
-	// MaxBuilders caps headless builders running at once across all
-	// owners. nil = max(1, runtime.NumCPU()-1). A value below 1 is a Load error.
+	// MaxBuilders caps headless builders running at once; nil is
+	// max(1, runtime.NumCPU()-1).
 	MaxBuilders *int `json:"max_builders,omitempty"`
-	// Scope is the per-round systemd scope (part 3 uses it). nil = defaults.
+	// Scope is the per-round systemd scope; nil is defaults.
 	Scope *ScopePolicy `json:"scope,omitempty"`
 }
 
 // ScopePolicy configures the per-round systemd scope a served headless
-// builder runs under (part 3 uses this; defined and validated here).
+// builder runs under.
 type ScopePolicy struct {
 	Enabled   *bool  `json:"enabled,omitempty"`    // nil = true
 	Slice     string `json:"slice,omitempty"`      // "" = systemd default; else must end in ".slice"
 	CPUWeight int    `json:"cpu_weight,omitempty"` // 0 = 100; else 1..10000
 	MemoryMax string `json:"memory_max,omitempty"` // "" = none; else ^[0-9]+[KMGT]?$
 	CPUQuota  string `json:"cpu_quota,omitempty"`  // "" = none; else ^[0-9]+%$, at least 1%
-	// GateCPUQuota is the gate's own CPU ceiling (#313). "" means the gate
-	// uses CPUQuota, the same as a round. Otherwise it must match
-	// ^[0-9]+%$ and be at least 1%, the same grammar as CPUQuota.
+	// GateCPUQuota is the gate's own CPU ceiling; "" uses CPUQuota.
 	GateCPUQuota string `json:"gate_cpu_quota,omitempty"`
-	// AllowedCPUs is the pool of cores relevo hands out, one per round: a
-	// systemd cpu-list such as "0-2". "" means no pinning, and nothing in the
-	// CPU-pinning path runs. It needs cpuset delegated to the user manager,
-	// which `relevo doctor` checks.
+	// AllowedCPUs is the pool of cores relevo hands out, one per round; ""
+	// means no pinning. Needs cpuset delegated to the user manager.
 	AllowedCPUs string `json:"allowed_cpus,omitempty"`
 	TasksMax    int    `json:"tasks_max,omitempty"` // 0 = none; else >= 1
 }
 
-// NotifyPolicy configures webhook delivery of lifecycle events (#4).
+// NotifyPolicy configures webhook delivery of lifecycle events.
 type NotifyPolicy struct {
 	Webhooks []Webhook `json:"webhooks,omitempty"`
 }
 
 // Webhook is one HTTP sink that receives a JSON POST for each event it
-// matches (#4).
+// matches.
 type Webhook struct {
-	// URL is where the event is POSTed; required, http:// or https://.
-	URL string `json:"url"`
-	// Events filters which events reach this webhook. Empty means every
-	// event. "state_changed:<state>" matches a state_changed event whose
-	// State equals <state> (e.g. "state_changed:needs_you"); the ":<state>"
-	// suffix is only valid on state_changed.
+	URL string `json:"url"` // required, http:// or https://
+	// Events filters which events reach this webhook; empty means every event.
 	Events []string `json:"events,omitempty"`
-	// Format shapes the POST body: "json" (default) sends the event as
-	// JSON; "slack" sends {"text": ...}; "discord" sends {"content": ...}.
+	// Format shapes the POST body: "json" (default), "slack", or "discord".
 	Format string `json:"format,omitempty"`
 }
 
-// VerifyPolicy configures the default verify flag for the rounds `relevo
-// send` opens (#144).
+// WebhookEvents is every event name a webhook may subscribe to, in the order
+// Parse's own error message lists them. A subscription for state_changed may
+// also carry a ":<state>" suffix naming one target state.
+var WebhookEvents = []string{"state_changed", "round_started", "fork_created", "builder_stalled", "binding_stale"}
+
+// VerifyPolicy configures the default verify flag for `relevo send`.
 type VerifyPolicy struct {
-	// Default is what Send uses when neither --verify nor --no-verify was
-	// given. Absent, or false, means no reviewer: a human opts in.
+	// Default is used when neither --verify nor --no-verify was given.
 	Default bool `json:"default,omitempty"`
 }
 
-// GatePolicy configures the default gate command and its timeout (#132).
+// GatePolicy configures the default gate command and its timeout.
 type GatePolicy struct {
 	Default   string `json:"default,omitempty"`    // "" = no gate unless --gate
 	TimeoutMS *int   `json:"timeout_ms,omitempty"` // nil = DefaultGateTimeout; must be > 0
-	// Regate is the default repair-round budget for new bindings (#132 part
-	// 2): how many automatic repair rounds relevo opens after a failing gate.
-	// nil = 0 = no repair; must be >= 0 when present.
+	// Regate is the automatic repair-round budget after a failing gate; nil
+	// is 0 (no repair).
 	Regate *int `json:"regate,omitempty"`
 }
 
-// Classify configures the optional classifier beside the regex scan (#211).
+// Classify configures the optional classifier beside the regex scan.
 type Classify struct {
 	Provider           string   `json:"provider"`                      // required; only "jev" is known
 	Model              string   `json:"model,omitempty"`               // default DefaultClassifyModel
-	InjectionThreshold *float64 `json:"injection_threshold,omitempty"` // default DefaultInjectionThreshold; must be > 0 and <= 1
+	InjectionThreshold *float64 `json:"injection_threshold,omitempty"` // default DefaultInjectionThreshold; (0, 1]
 	TimeoutMS          *int     `json:"timeout_ms,omitempty"`          // default DefaultClassifyTimeout; must be > 0
 }
 
@@ -217,45 +156,36 @@ func (c *Classify) Timeout() time.Duration {
 	return time.Duration(*c.TimeoutMS) * time.Millisecond
 }
 
-// DefaultMaxTier is the ceiling used when MaxTier is empty (#141).
+// DefaultMaxTier is the ceiling used when MaxTier is empty.
 const DefaultMaxTier = harness.TierEdit
 
-// DefaultMaxSwitches is the switch limit used when MaxSwitches is nil: two
-// replacements cover "the first pick was gated and the second failed to
-// spawn"; a third in one round is a pattern a human should see.
+// DefaultMaxSwitches covers a gated pick plus a failed spawn; a third in one round is a pattern a human should see.
 const DefaultMaxSwitches = 2
 
-// DefaultLimitGate is how long a matched limit gates the provider when no
-// reset time can be parsed from the matched line and LimitGateDefaultMS is nil.
+// DefaultArtifactMaxMB is the artifact directory cap when
+// policy.artifact_max_mb is unset or 0: 25 MB.
+const DefaultArtifactMaxMB = 25
+
 const DefaultLimitGate = time.Hour
 
-// DefaultStallAfter is how long a live headless builder's stream may go
-// without an event before relevo labels it stalled (#252): long enough that a
-// thinking builder is never labelled, short enough that a hung one is.
+// DefaultStallAfter is long enough that a thinking builder is never
+// labelled, short enough that a hung one is.
 const DefaultStallAfter = 15 * time.Minute
 
-// DefaultProgressInterval is how often the daemon samples a binding's progress
-// signals while its round is open (#135): often enough that a label appears
-// promptly, rare enough that the sampling costs one git status and one screen
-// read per binding per interval.
+// DefaultProgressInterval is often enough that a label appears promptly,
+// rare enough that sampling stays cheap.
 const DefaultProgressInterval = 30 * time.Second
 
-// DefaultExploreAfter is how long a builder's output or screen may keep moving
-// while its tree has not before relevo labels it exploring (#135): long enough
-// that a read-heavy plan is never labelled, short enough that a plan which has
-// stopped writing is.
+// DefaultExploreAfter is long enough that a read-heavy plan is never
+// labelled, short enough that a plan which stopped writing is.
 const DefaultExploreAfter = 20 * time.Minute
 
-// DefaultStaleAfter is how long a NEEDS YOU or HELD binding may sit unacted
-// before relevo labels it stale (#135): hours, not minutes, because a human's
-// decision may wait on their next working day.
+// DefaultStaleAfter is hours, not minutes: a human's decision may wait on
+// their next working day.
 const DefaultStaleAfter = 4 * time.Hour
 
-// DefaultGateTimeout bounds one gate run when neither the binding nor
-// policy.json's gate.timeout_ms sets one (#132).
 const DefaultGateTimeout = 10 * time.Minute
 
-// SwitchLimit is MaxSwitches with the default applied.
 func (p Policy) SwitchLimit() int {
 	if p.MaxSwitches == nil {
 		return DefaultMaxSwitches
@@ -263,8 +193,16 @@ func (p Policy) SwitchLimit() int {
 	return *p.MaxSwitches
 }
 
-// LimitGateDefault is LimitGateDefaultMS converted to time.Duration with the
-// default applied.
+// ArtifactMaxBytes returns the artifact directory cap in bytes: the
+// configured artifact_max_mb, or DefaultArtifactMaxMB when it is unset or 0.
+func (p Policy) ArtifactMaxBytes() int64 {
+	mb := DefaultArtifactMaxMB
+	if p.ArtifactMaxMB != nil && *p.ArtifactMaxMB > 0 {
+		mb = *p.ArtifactMaxMB
+	}
+	return int64(mb) * (1 << 20)
+}
+
 func (p Policy) LimitGateDefault() time.Duration {
 	if p.LimitGateDefaultMS == nil {
 		return DefaultLimitGate
@@ -272,8 +210,6 @@ func (p Policy) LimitGateDefault() time.Duration {
 	return time.Duration(*p.LimitGateDefaultMS) * time.Millisecond
 }
 
-// StallAfter is StallAfterMS converted to time.Duration with the default
-// applied (#252).
 func (p Policy) StallAfter() time.Duration {
 	if p.StallAfterMS == nil {
 		return DefaultStallAfter
@@ -281,8 +217,6 @@ func (p Policy) StallAfter() time.Duration {
 	return time.Duration(*p.StallAfterMS) * time.Millisecond
 }
 
-// ProgressInterval is ProgressIntervalMS converted to time.Duration with the
-// default applied (#135).
 func (p Policy) ProgressInterval() time.Duration {
 	if p.ProgressIntervalMS == nil {
 		return DefaultProgressInterval
@@ -290,8 +224,6 @@ func (p Policy) ProgressInterval() time.Duration {
 	return time.Duration(*p.ProgressIntervalMS) * time.Millisecond
 }
 
-// ExploreAfter is ExploreAfterMS converted to time.Duration with the default
-// applied (#135).
 func (p Policy) ExploreAfter() time.Duration {
 	if p.ExploreAfterMS == nil {
 		return DefaultExploreAfter
@@ -299,8 +231,6 @@ func (p Policy) ExploreAfter() time.Duration {
 	return time.Duration(*p.ExploreAfterMS) * time.Millisecond
 }
 
-// StaleAfter is StaleAfterMS converted to time.Duration with the default
-// applied (#135).
 func (p Policy) StaleAfter() time.Duration {
 	if p.StaleAfterMS == nil {
 		return DefaultStaleAfter
@@ -308,7 +238,6 @@ func (p Policy) StaleAfter() time.Duration {
 	return time.Duration(*p.StaleAfterMS) * time.Millisecond
 }
 
-// MaxTierOrDefault returns MaxTier as a harness.Tier, or DefaultMaxTier when empty (#141).
 func (p Policy) MaxTierOrDefault() harness.Tier {
 	if p.MaxTier == "" {
 		return DefaultMaxTier
@@ -320,7 +249,7 @@ func (p Policy) MaxTierOrDefault() harness.Tier {
 	return t
 }
 
-// TierFor returns the configured tier for role, or ok false if absent (#141).
+// TierFor returns the configured tier for role, or ok false if absent.
 func (p Policy) TierFor(role string) (harness.Tier, bool) {
 	if p.Tier == nil {
 		return "", false
@@ -336,8 +265,6 @@ func (p Policy) TierFor(role string) (harness.Tier, bool) {
 	return t, true
 }
 
-// GateDefault is the gate command a binding gets when it does not set one
-// itself, or "" when Gate is nil (#132).
 func (p Policy) GateDefault() string {
 	if p.Gate == nil {
 		return ""
@@ -345,8 +272,6 @@ func (p Policy) GateDefault() string {
 	return p.Gate.Default
 }
 
-// GateTimeout is gate.timeout_ms converted to time.Duration with the default
-// applied; safe on a nil Gate.
 func (p Policy) GateTimeout() time.Duration {
 	if p.Gate == nil || p.Gate.TimeoutMS == nil {
 		return DefaultGateTimeout
@@ -354,8 +279,6 @@ func (p Policy) GateTimeout() time.Duration {
 	return time.Duration(*p.Gate.TimeoutMS) * time.Millisecond
 }
 
-// GateRegate is gate.regate with the default applied: 0 (no automatic repair)
-// when the key is absent, and safe on a nil Gate (#132 part 2).
 func (p Policy) GateRegate() int {
 	if p.Gate == nil || p.Gate.Regate == nil {
 		return 0
@@ -363,9 +286,6 @@ func (p Policy) GateRegate() int {
 	return *p.Gate.Regate
 }
 
-// VerifyDefault is verify.default with the absent-file case applied: false
-// when Verify is nil, so a machine without `verify` in policy.json behaves
-// exactly as it did before the key existed (#144).
 func (p Policy) VerifyDefault() bool {
 	if p.Verify == nil {
 		return false
@@ -373,8 +293,6 @@ func (p Policy) VerifyDefault() bool {
 	return p.Verify.Default
 }
 
-// MaxBuildersOrDefault is serve.max_builders with the default applied:
-// max(1, runtime.NumCPU()-1) when Serve is nil or MaxBuilders is nil (#285).
 func (p Policy) MaxBuildersOrDefault() int {
 	if p.Serve == nil || p.Serve.MaxBuilders == nil {
 		if n := runtime.NumCPU() - 1; n > 1 {
@@ -385,9 +303,8 @@ func (p Policy) MaxBuildersOrDefault() int {
 	return *p.Serve.MaxBuilders
 }
 
-// ScopeFor returns the scope block that applies to a context: a served
-// round takes Serve.Scope when set, else the top-level Scope. nil means
-// defaults (enabled, no limits) -- never "disabled".
+// ScopeFor returns the scope for a context: a served round takes
+// Serve.Scope when set, else the top-level Scope.
 func (p Policy) ScopeFor(served bool) *ScopePolicy {
 	if served && p.Serve != nil && p.Serve.Scope != nil {
 		return p.Serve.Scope
@@ -395,388 +312,9 @@ func (p Policy) ScopeFor(served bool) *ScopePolicy {
 	return p.Scope
 }
 
-// validateScope checks one ScopePolicy block (top-level "scope", or
-// "serve.scope") with prefix naming the block's JSON path in the error text.
-// A nil block is not an error: absent means defaults (#295).
-func validateScope(path, prefix string, sc *ScopePolicy) error {
-	if sc == nil {
-		return nil
-	}
-	if sc.Slice != "" && !strings.HasSuffix(sc.Slice, ".slice") {
-		return fmt.Errorf("%s: %s.slice: must end in \".slice\", got %q: %w", path, prefix, sc.Slice, ErrBadPolicy)
-	}
-	if sc.CPUWeight != 0 && (sc.CPUWeight < 1 || sc.CPUWeight > 10000) {
-		return fmt.Errorf("%s: %s.cpu_weight: must be 1..10000, got %d: %w", path, prefix, sc.CPUWeight, ErrBadPolicy)
-	}
-	if sc.MemoryMax != "" && !memoryMaxPattern.MatchString(sc.MemoryMax) {
-		return fmt.Errorf("%s: %s.memory_max: must match ^[0-9]+[KMGT]?$, got %q: %w", path, prefix, sc.MemoryMax, ErrBadPolicy)
-	}
-	if sc.CPUQuota != "" {
-		if !cpuQuotaPattern.MatchString(sc.CPUQuota) {
-			return fmt.Errorf("%s: %s.cpu_quota: must match ^[0-9]+%%$, got %q: %w", path, prefix, sc.CPUQuota, ErrBadPolicy)
-		}
-		if n, err := strconv.Atoi(strings.TrimSuffix(sc.CPUQuota, "%")); err == nil && n < 1 {
-			return fmt.Errorf("%s: %s.cpu_quota: must be at least 1%%, got %q: %w", path, prefix, sc.CPUQuota, ErrBadPolicy)
-		}
-	}
-	if sc.GateCPUQuota != "" {
-		if !cpuQuotaPattern.MatchString(sc.GateCPUQuota) {
-			return fmt.Errorf("%s: %s.gate_cpu_quota: must match ^[0-9]+%%$, got %q: %w", path, prefix, sc.GateCPUQuota, ErrBadPolicy)
-		}
-		if n, err := strconv.Atoi(strings.TrimSuffix(sc.GateCPUQuota, "%")); err == nil && n < 1 {
-			return fmt.Errorf("%s: %s.gate_cpu_quota: must be at least 1%%, got %q: %w", path, prefix, sc.GateCPUQuota, ErrBadPolicy)
-		}
-	}
-	if sc.AllowedCPUs != "" {
-		if _, err := ParseCPUList(sc.AllowedCPUs); err != nil {
-			return fmt.Errorf("%s: %s.allowed_cpus: %s, got %q: %w", path, prefix, err, sc.AllowedCPUs, ErrBadPolicy)
-		}
-	}
-	if sc.TasksMax != 0 && sc.TasksMax < 1 {
-		return fmt.Errorf("%s: %s.tasks_max: must be at least 1, got %d: %w", path, prefix, sc.TasksMax, ErrBadPolicy)
-	}
-	return nil
-}
-
-// ParseCPUList parses a systemd cpu-list: the pool of cores relevo hands out,
-// one per round. Numbers and ranges are comma-separated with no spaces, e.g.
-// "0-2" or "1,3,5-7". It returns the cores sorted and de-duplicated. A range
-// a-b requires a <= b, and no core above 1023 is accepted -- that stops a typo
-// from making the expansion allocate a huge slice. Pure.
-func ParseCPUList(s string) ([]int, error) {
-	if !cpuListPattern.MatchString(s) {
-		return nil, fmt.Errorf("not a cpu list")
-	}
-	seen := make(map[int]bool)
-	var out []int
-	for _, part := range strings.Split(s, ",") {
-		lo, hi := 0, 0
-		if dash := strings.Index(part, "-"); dash >= 0 {
-			var err error
-			lo, err = strconv.Atoi(part[:dash])
-			if err != nil {
-				return nil, fmt.Errorf("not a cpu list")
-			}
-			hi, err = strconv.Atoi(part[dash+1:])
-			if err != nil {
-				return nil, fmt.Errorf("not a cpu list")
-			}
-			if lo > hi {
-				return nil, fmt.Errorf("range %d-%d runs backwards", lo, hi)
-			}
-		} else {
-			n, err := strconv.Atoi(part)
-			if err != nil {
-				return nil, fmt.Errorf("not a cpu list")
-			}
-			lo, hi = n, n
-		}
-		for n := lo; n <= hi; n++ {
-			if n > 1023 {
-				return nil, fmt.Errorf("cpu %d is above 1023", n)
-			}
-		}
-		for n := lo; n <= hi; n++ {
-			if !seen[n] {
-				seen[n] = true
-				out = append(out, n)
-			}
-		}
-	}
-	sort.Ints(out)
-	return out, nil
-}
-
-// policyUnknownKeyWarnings returns one warning per decoded key path that
-// Policy's JSON shape (jsonshape.Keys) does not declare.
-//
-// A key inside a map-typed field (order, tier) is never unknown: the keys of a
-// map are data, not schema, so any name is allowed below it (#372 §4.4).
-func policyUnknownKeyWarnings(path string, raw []byte) []string {
-	var data map[string]any
-	if err := json.Unmarshal(raw, &data); err != nil {
-		// The typed decode already reported the shape error.
-		return nil
-	}
-
-	leaves := jsonshape.Keys(reflect.TypeOf(Policy{}))
-	leafSet := make(map[string]bool, len(leaves))
-	for _, l := range leaves {
-		leafSet[l] = true
-	}
-
-	var paths []string
-	var walk func(prefix string, v any)
-	walk = func(prefix string, v any) {
-		switch val := v.(type) {
-		case map[string]any:
-			if hasLeafPrefix(leaves, prefix, "{}") {
-				return // a map-typed field: any key below it is allowed
-			}
-			keys := make([]string, 0, len(val))
-			for k := range val {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				child := k
-				if prefix != "" {
-					child = prefix + "." + k
-				}
-				switch {
-				case leafSet[child] || hasLeafPrefix(leaves, child, ".") ||
-					hasLeafPrefix(leaves, child, "[]") || hasLeafPrefix(leaves, child, "{}"):
-					walk(child, val[k])
-				default:
-					paths = append(paths, child)
-				}
-			}
-		case []any:
-			// An array adds "[]" to the path, matching jsonshape's shape.
-			for _, item := range val {
-				walk(prefix+"[]", item)
-			}
-		}
-	}
-	walk("", data)
-
-	base := filepath.Base(path)
-	warnings := make([]string, 0, len(paths))
-	for _, p := range paths {
-		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relevo reads)", base, p))
-	}
-	return warnings
-}
-
-// hasLeafPrefix reports whether some declared leaf path continues p with sep:
-// sep is "." for a nested object, "[]" for an array, "{}" for a map.
-func hasLeafPrefix(leaves []string, p, sep string) bool {
-	if p == "" {
-		return false
-	}
-	pre := p + sep
-	for _, l := range leaves {
-		if strings.HasPrefix(l, pre) {
-			return true
-		}
-	}
-	return false
-}
-
-// Load reads and validates a policy file, discarding the unknown-key warnings
-// LoadWithWarnings returns. Callers that surface warnings use that function.
-func Load(path string) (Policy, error) {
-	p, _, err := LoadWithWarnings(path)
-	return p, err
-}
-
-// LoadWithWarnings reads and validates a policy file, returning the keys this
-// relevo does not know as warnings. A missing file is the zero Policy and no
-// error, so every machine without a policy.json behaves exactly as it did
-// before this file existed. A present file whose known keys do not validate is
-// an error wrapping ErrBadPolicy: LoadWithWarnings checks only the file's own
-// shape -- it never opens candidates.json, so a token naming no configured
-// candidate is tolerated here and caught later, by the resolver and by
-// PolicyWarnings.
-//
-// An unknown key is a warning, not an error (#372 §4.4): a key a newer relevo
-// reads must not stop this relevo, and a typo surfaces in `relevo doctor`. A key
-// inside a map-typed field (order, tier) is never unknown.
-func LoadWithWarnings(path string) (Policy, []string, error) {
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return Policy{}, nil, nil
-	}
-	if err != nil {
-		return Policy{}, nil, fmt.Errorf("read %s: %w", path, err)
-	}
-	return Parse(path, raw)
-}
-
-// Parse validates a policy from data, naming it by name in every message. name
-// is the file path when LoadWithWarnings calls it, so an existing message is
-// unchanged; internal/config passes the stored section's file name. It applies
-// exactly the rules LoadWithWarnings documents.
-func Parse(name string, raw []byte) (Policy, []string, error) {
-	path := name
-	var p Policy
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return Policy{}, nil, fmt.Errorf("%s: %v: %w", path, err, ErrBadPolicy)
-	}
-
-	warnings := policyUnknownKeyWarnings(path, raw)
-
-	if p.MaxSwitches != nil && *p.MaxSwitches < 0 {
-		return Policy{}, warnings, fmt.Errorf("%s: max_switches: must be >= 0, got %d: %w", path, *p.MaxSwitches, ErrBadPolicy)
-	}
-
-	if p.LimitGateDefaultMS != nil && *p.LimitGateDefaultMS <= 0 {
-		return Policy{}, warnings, fmt.Errorf("%s: limit_gate_default_ms: must be > 0, got %d: %w", path, *p.LimitGateDefaultMS, ErrBadPolicy)
-	}
-
-	if p.StallAfterMS != nil && *p.StallAfterMS <= 0 {
-		return Policy{}, warnings, fmt.Errorf("%s: stall_after_ms: must be > 0, got %d: %w", path, *p.StallAfterMS, ErrBadPolicy)
-	}
-
-	if p.ProgressIntervalMS != nil && *p.ProgressIntervalMS <= 0 {
-		return Policy{}, warnings, fmt.Errorf("%s: progress_interval_ms: must be > 0, got %d: %w", path, *p.ProgressIntervalMS, ErrBadPolicy)
-	}
-
-	if p.ExploreAfterMS != nil && *p.ExploreAfterMS <= 0 {
-		return Policy{}, warnings, fmt.Errorf("%s: explore_after_ms: must be > 0, got %d: %w", path, *p.ExploreAfterMS, ErrBadPolicy)
-	}
-
-	if p.StaleAfterMS != nil && *p.StaleAfterMS <= 0 {
-		return Policy{}, warnings, fmt.Errorf("%s: stale_after_ms: must be > 0, got %d: %w", path, *p.StaleAfterMS, ErrBadPolicy)
-	}
-
-	if p.Gate != nil && p.Gate.TimeoutMS != nil && *p.Gate.TimeoutMS <= 0 {
-		return Policy{}, warnings, fmt.Errorf("%s: gate.timeout_ms: must be > 0, got %d: %w", path, *p.Gate.TimeoutMS, ErrBadPolicy)
-	}
-
-	if p.Gate != nil && p.Gate.Regate != nil && *p.Gate.Regate < 0 {
-		return Policy{}, warnings, fmt.Errorf("%s: gate.regate: must be >= 0, got %d: %w", path, *p.Gate.Regate, ErrBadPolicy)
-	}
-
-	if p.Serve != nil && p.Serve.MaxBuilders != nil && *p.Serve.MaxBuilders < 1 {
-		return Policy{}, warnings, fmt.Errorf("%s: serve.max_builders: must be at least 1, got %d: %w", path, *p.Serve.MaxBuilders, ErrBadPolicy)
-	}
-
-	if err := validateScope(path, "scope", p.Scope); err != nil {
-		return Policy{}, warnings, err
-	}
-	if p.Serve != nil {
-		if err := validateScope(path, "serve.scope", p.Serve.Scope); err != nil {
-			return Policy{}, warnings, err
-		}
-	}
-
-	for i, pat := range p.ScanPatterns {
-		if _, err := regexp.Compile(pat); err != nil {
-			return Policy{}, warnings, fmt.Errorf("%s: scan_patterns[%d]: %v: %w", path, i, err, ErrBadPolicy)
-		}
-	}
-
-	if p.Classify != nil {
-		if p.Classify.Provider == "" {
-			return Policy{}, warnings, fmt.Errorf("%s: classify.provider: required: %w", path, ErrBadPolicy)
-		}
-		if p.Classify.Provider != "jev" {
-			return Policy{}, warnings, fmt.Errorf("%s: classify.provider: unknown %q (known: jev): %w", path, p.Classify.Provider, ErrBadPolicy)
-		}
-		if p.Classify.InjectionThreshold != nil {
-			v := *p.Classify.InjectionThreshold
-			if v <= 0 || v > 1 {
-				return Policy{}, warnings, fmt.Errorf("%s: classify.injection_threshold: must be in (0, 1], got %v: %w", path, v, ErrBadPolicy)
-			}
-		}
-		if p.Classify.TimeoutMS != nil && *p.Classify.TimeoutMS <= 0 {
-			return Policy{}, warnings, fmt.Errorf("%s: classify.timeout_ms: must be > 0, got %d: %w", path, *p.Classify.TimeoutMS, ErrBadPolicy)
-		}
-	}
-
-	maxTier := DefaultMaxTier
-	if p.MaxTier != "" {
-		parsed, err := harness.ParseTier(p.MaxTier)
-		if err != nil {
-			return Policy{}, warnings, fmt.Errorf("%s: max_tier: %v: %w", path, err, ErrBadPolicy)
-		}
-		if parsed == harness.TierHarness {
-			return Policy{}, warnings, fmt.Errorf("%s: max_tier: \"harness\" is not a cap: %w", path, ErrBadPolicy)
-		}
-		maxTier = parsed
-	}
-
-	tierRoles := make([]string, 0, len(p.Tier))
-	for role := range p.Tier {
-		tierRoles = append(tierRoles, role)
-	}
-	sort.Strings(tierRoles)
-
-	for _, role := range tierRoles {
-		if _, ok := harness.RoleByName(role); !ok {
-			return Policy{}, warnings, fmt.Errorf("%s: tier.%s: unknown role (known: %v): %w", path, role, harness.RoleNames(), ErrBadPolicy)
-		}
-		val := p.Tier[role]
-		parsed, err := harness.ParseTier(val)
-		if err != nil {
-			return Policy{}, warnings, fmt.Errorf("%s: tier.%s: %v: %w", path, role, err, ErrBadPolicy)
-		}
-		if parsed.Above(maxTier) {
-			return Policy{}, warnings, fmt.Errorf("%s: tier.%s: %s exceeds max_tier %s; raise max_tier in the same file: %w", path, role, parsed, maxTier, ErrBadPolicy)
-		}
-	}
-
-	roles := make([]string, 0, len(p.Order))
-	for role := range p.Order {
-		roles = append(roles, role)
-	}
-	sort.Strings(roles)
-
-	for _, role := range roles {
-		if _, ok := harness.RoleByName(role); !ok {
-			return Policy{}, warnings, fmt.Errorf("%s: order.%s: unknown role (known: %v): %w", path, role, harness.RoleNames(), ErrBadPolicy)
-		}
-
-		tokens := p.Order[role]
-		if tokens == nil {
-			return Policy{}, warnings, fmt.Errorf("%s: order.%s: must be an array: %w", path, role, ErrBadPolicy)
-		}
-
-		seen := make(map[string]bool, len(tokens))
-		for i, tok := range tokens {
-			// An entry is a candidate name or a canonical token (A1 §4.2).
-			if !candidate.IsName(tok) {
-				if _, err := candidate.ParseRef(tok); err != nil {
-					return Policy{}, warnings, fmt.Errorf("%s: order.%s[%d]: %q: want a candidate name or harness/provider/model: %w", path, role, i, tok, ErrBadPolicy)
-				}
-			}
-			if seen[tok] {
-				return Policy{}, warnings, fmt.Errorf("%s: order.%s[%d]: duplicate token %q: %w", path, role, i, tok, ErrBadPolicy)
-			}
-			seen[tok] = true
-		}
-	}
-
-	if p.Notify != nil {
-		knownEvents := map[string]bool{
-			"state_changed":   true,
-			"round_started":   true,
-			"fork_created":    true,
-			"builder_stalled": true,
-			"binding_stale":   true,
-		}
-
-		for i, hook := range p.Notify.Webhooks {
-			u, err := url.Parse(hook.URL)
-			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-				return Policy{}, warnings, fmt.Errorf("%s: notify.webhooks[%d].url: must be an http or https URL, got %q: %w", path, i, hook.URL, ErrBadPolicy)
-			}
-
-			switch hook.Format {
-			case "", "json", "slack", "discord":
-			default:
-				return Policy{}, warnings, fmt.Errorf("%s: notify.webhooks[%d].format: unknown %q (known: json, slack, discord): %w", path, i, hook.Format, ErrBadPolicy)
-			}
-
-			for j, ev := range hook.Events {
-				name, _, hasState := strings.Cut(ev, ":")
-				if !knownEvents[name] {
-					return Policy{}, warnings, fmt.Errorf("%s: notify.webhooks[%d].events[%d]: unknown event %q (known: state_changed, round_started, fork_created, builder_stalled, binding_stale): %w", path, i, j, ev, ErrBadPolicy)
-				}
-				if hasState && name != "state_changed" {
-					return Policy{}, warnings, fmt.Errorf("%s: notify.webhooks[%d].events[%d]: %q: only state_changed accepts a :<state> suffix: %w", path, i, j, ev, ErrBadPolicy)
-				}
-			}
-		}
-	}
-
-	return p, warnings, nil
-}
-
 // OrderFor returns role's preferred candidate tokens, most preferred first,
-// or nil when the role has no entry. The result is a copy, so a caller
-// cannot reorder the loaded policy by accident.
+// or nil when absent. The result is a copy, so a caller cannot reorder the
+// loaded policy by accident.
 func (p Policy) OrderFor(role string) []string {
 	return append([]string(nil), p.Order[role]...)
 }

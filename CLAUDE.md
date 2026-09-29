@@ -1,6 +1,6 @@
 # relevo
 
-relevo automates the plan/report handoff between two AI coding agents: a planner
+relevo automates the plan/report handoff between two AI coding agents: a MasterMind
 hands work to a builder, and relevo moves the files between them. Builders are
 headless or remote processes; relevo no longer integrates with herdr.
 
@@ -8,8 +8,8 @@ headless or remote processes; relevo no longer integrates with herdr.
 
 The dispatch protocol -- `relevo send` not in-session subagents, headless by
 default, one harness many worktrees, `relevo gate` on a usage limit,
-stop rather than improvise -- is in the shipped `architect` definition
-(`internal/harness/agents/architect.*.md`, "Handing off"), not here. What
+stop rather than improvise -- is in the injected relevo guide
+(`internal/mastermind/guide.md`), not here. What
 follows is what is specific to this machine and this repo.
 
 - Candidates, actors and policy live in relevo.db; `relevo config` shows and
@@ -25,7 +25,11 @@ follows is what is specific to this machine and this repo.
   tree or an open round is kept and `relevo unbind --done` retries. `relevo
   bind --resume` restores a released worktree; rebind a DONE binding only
   after that restore.
-- A headless round's log is at `~/.local/state/relevo/<name>/NNN-builder.log`.
+- A headless round's output is its stream
+  `~/.local/state/relevo/<name>/NNN-runner.jsonl` (stderr included; sealed into the
+  database after the round). Read it rendered with `relevo show <name> --round N --transcript`.
+  A round from before the stream rename is `NNN-builder.jsonl`, which readers fall back to.
+  Rounds from before builder-log round 2 (#478) also have `NNN-builder.log`.
 - When a builder reports a usage limit mid-round, `relevo gate <token>` is
   enough: the daemon switches and resends. Do not rebind by hand unless
   `relevo status` says `NEEDS YOU`.
@@ -52,6 +56,33 @@ without the logic is not pinning anything.
   Compose relevo config paths through `userConfigRoot()` (`cmd/relevo/main.go`),
   never by hand -- see #42 for what hand-rolling one costs.
 
+### Code style
+
+- A package comment is 1-3 lines saying what the package owns. A comment says
+  *why*, and only where the code cannot: a non-obvious constraint, where a
+  number comes from, an ordering that matters, a hazard. It never restates the
+  code, and a doc comment on an exported name is written only when it adds
+  something the name and signature do not.
+- No history in the code: no issue or PR numbers, no spec sections, no
+  "round N", "used to", "pre-#NNN". Git and the issues hold history. Tests
+  follow the same rules, and a test's name says what it pins.
+- The dexpace Go styleguide applies, with two exceptions: no "two assertions
+  per function" rule, and no mandatory doc comment on an exported name.
+  Functions are at most 70 lines; non-test files at most 600; one package per
+  concept.
+- `make check` enforces this with golangci-lint (`.golangci.yml`) and
+  `scripts/check-comments.sh` / `scripts/check-filesize.sh`. Packages and files
+  not yet cleaned are listed as exclusions; a round that finishes a package
+  removes its entries, and a new exclusion is never added to get a round green.
+- `make check` also fails when a package's statement coverage drops more than
+  one point below `testdata/coverage-baseline.txt`; a round that moves code
+  between packages regenerates the baseline with
+  `sh scripts/check-coverage.sh --write` and says so in its report, and no
+  round lowers a baseline to get green. The baseline is tied to the Go minor
+  version and platform recorded in its header, is enforced on CI's
+  ubuntu-latest/go-stable leg, and is skipped elsewhere; a Go upgrade on that
+  leg means regenerating it.
+
 ## Merging and CI
 
 - Merge only after `gh pr checks <n> --watch` has finished with every job
@@ -62,4 +93,10 @@ without the logic is not pinning anything.
   `cmd/relevo` must not execute a subcommand that spawns a harness or reaches
   the network; test the rule as a pure function in `internal/relevo` instead.
   Say so in any plan step that adds a CLI test.
-- A cmd/relevo test never reads the user's real config or state: the package's TestMain points HOME, XDG_CONFIG_HOME and XDG_STATE_HOME at a temp root. A test that needs its own config writes it under a t.TempDir() it sets as XDG_CONFIG_HOME (#235).
+- A cmd/relevo test never reads the user's real config, state or data, and
+  never sees the calling harness: the package's TestMain points HOME,
+  XDG_CONFIG_HOME, XDG_STATE_HOME and XDG_DATA_HOME at a temp root and
+  unsets CLAUDECODE, CLAUDE_*, RELEVO_*, ANTIGRAVITY_* and TYPESAFE_API_KEY
+  (#235, #463). A test that needs its own config writes it under a
+  t.TempDir() it sets as XDG_CONFIG_HOME; a test that needs a harness
+  variable t.Setenv's it.

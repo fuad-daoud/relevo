@@ -5,17 +5,17 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
 
-	// modernc.org/sqlite is the one driver import in relevo: this package is
-	// the only place that knows it is sqlite today and Turso tomorrow.
+	// This package is the only place that knows it is sqlite today and Turso
+	// tomorrow, so its driver is imported here and nowhere else.
 	"modernc.org/sqlite"
 )
 
-// rfc3339Milli is the text encoding every timestamp uses in the db: RFC3339
-// UTC with millisecond precision.
+// rfc3339Milli is the text encoding every timestamp uses in the db.
 const rfc3339Milli = "2006-01-02T15:04:05.000Z"
 
 func formatTime(t time.Time) string { return t.UTC().Format(rfc3339Milli) }
@@ -28,95 +28,129 @@ func parseTime(s string) (time.Time, error) {
 	return t, nil
 }
 
-// sqliteBusy is SQLITE_BUSY, sqlite's result code for "database is locked".
 const sqliteBusy = 5
 
-// DB is a connection to relevo's sqlite database. The zero value is not
-// usable; construct one with Open.
+// busyTimeoutMS is the busy_timeout pragma every connection opens with, in
+// milliseconds; a var so a test can shrink it.
+var busyTimeoutMS = 5000
+
+// beginRetryFor bounds how long Tx keeps retrying a busy BEGIN IMMEDIATE.
+var beginRetryFor = 30 * time.Second
+
+// DB is a connection to relevo's sqlite database; construct one with Open.
 type DB struct {
 	sqlDB *sql.DB
-	// newer is true when the database's schema is newer than this binary's
-	// embedded migrations, in which case Open must not migrate or write it.
+	// newer is true when the schema is newer than this binary's migrations.
 	newer bool
 	have  int // schema version on disk
 	know  int // highest migration this binary embeds
+
+	// beginRetry bounds how long Tx retries a busy BEGIN IMMEDIATE; zero, as
+	// on a read-only handle, means beginRetryFor.
+	beginRetry time.Duration
 }
 
+// Options tunes OpenWith. A negative value is treated as 0, which selects the
+// package default; an empty Options opens exactly as Open does.
+type Options struct {
+	// BusyTimeout is the per-connection busy_timeout; 0 selects busyTimeoutMS.
+	BusyTimeout time.Duration
+	// BeginRetry bounds how long Tx retries a busy BEGIN IMMEDIATE; 0 selects
+	// beginRetryFor.
+	BeginRetry time.Duration
+}
+
+// journalSizeLimit caps the -wal file after a checkpoint resets it, in bytes;
+// without it sqlite keeps a write burst's high-water size for the process's life.
+const journalSizeLimit = 64 << 20
+
 // Open opens (creating if needed) the sqlite database at path, applying
-// every pending migration before returning. path's directory must already
-// exist. The connection runs with WAL journaling, a 5s busy timeout, and
-// foreign keys on.
-//
-// A database whose schema is newer than this binary's embedded migrations is
-// left untouched -- never migrated, never written -- and returned with
-// Newer() == true, so an older relevo can read it without downgrading it
-// (#372 §4.5).
+// pending migrations. A database whose schema is newer than this binary's is
+// left untouched, so an older relevo cannot downgrade it.
 func Open(path string) (*DB, error) {
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)"
+	return OpenWith(path, Options{})
+}
+
+// OpenWith opens path like Open, with the busy waits tunable so a caller that
+// must fail fast does not wait out the defaults.
+func OpenWith(path string, o Options) (*DB, error) {
+	return open(path, o)
+}
+
+func open(path string, o Options) (_ *DB, err error) {
+	seedFromTemplate(path)
+	busy := busyTimeoutMS
+	if o.BusyTimeout > 0 {
+		busy = int(o.BusyTimeout.Milliseconds())
+	}
+	retry := beginRetryFor
+	if o.BeginRetry > 0 {
+		retry = o.BeginRetry
+	}
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)", path, busy, journalSizeLimit)
 
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: %w: %w", path, ErrOpen, err)
 	}
+	// Secrets live in this file, so a failure to make it and its WAL siblings
+	// owner-only fails the open: a world-readable secrets store is not a
+	// warning.
+	defer func() {
+		if err != nil {
+			if cerr := sqlDB.Close(); cerr != nil {
+				err = fmt.Errorf("%w, and close failed: %w", err, cerr)
+			}
+		}
+	}()
 
-	if err := ping(sqlDB); err != nil {
-		sqlDB.Close()
+	if err = ping(sqlDB); err != nil {
 		return nil, fmt.Errorf("db: open %s: ping: %w: %w", path, ErrOpen, err)
 	}
-
-	// Secrets live in this file (§4.2), so it and its WAL siblings are
-	// owner-only from the first open. A chmod failure is returned: running
-	// with a world-readable secrets store is not a warning.
-	if err := chmodPrivate(path); err != nil {
-		sqlDB.Close()
+	if err = chmodPrivate(path); err != nil {
 		return nil, fmt.Errorf("db: open %s: chmod: %w: %w", path, ErrOpen, err)
 	}
 	for _, suffix := range []string{"-wal", "-shm"} {
-		if err := chmodIfExists(path + suffix); err != nil {
-			sqlDB.Close()
+		if err = chmodIfExists(path + suffix); err != nil {
 			return nil, fmt.Errorf("db: open %s: chmod %s: %w: %w", path, suffix, ErrOpen, err)
 		}
 	}
 
 	have, err := maxVersion(sqlDB)
 	if err != nil {
-		sqlDB.Close()
 		return nil, fmt.Errorf("db: open %s: version: %w: %w", path, ErrOpen, err)
 	}
 	know, err := maxEmbedded(migrationFiles)
 	if err != nil {
-		sqlDB.Close()
 		return nil, fmt.Errorf("db: open %s: migrations: %w: %w", path, ErrOpen, err)
 	}
 	if have > know {
-		return &DB{sqlDB: sqlDB, newer: true, have: have, know: know}, nil
+		return &DB{sqlDB: sqlDB, beginRetry: retry, newer: true, have: have, know: know}, nil
+	}
+	// A current schema needs no write: BEGIN IMMEDIATE here failed under load.
+	if have == know {
+		return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know}, nil
 	}
 
-	if err := applyMigrations(sqlDB, migrationFiles); err != nil {
-		sqlDB.Close()
+	if err = applyMigrations(sqlDB, migrationFiles); err != nil {
 		return nil, fmt.Errorf("db: open %s: migrate: %w: %w", path, ErrOpen, err)
 	}
 
 	have, err = maxVersion(sqlDB)
 	if err != nil {
-		sqlDB.Close()
 		return nil, fmt.Errorf("db: open %s: version: %w: %w", path, ErrOpen, err)
 	}
 
-	return &DB{sqlDB: sqlDB, have: have, know: know}, nil
+	return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know}, nil
 }
 
-// Newer reports whether the database's schema is newer than this relevo's
-// embedded migrations. Such a database is never migrated or written.
+// Newer reports whether the database's schema is newer than this relevo's.
 func (d *DB) Newer() bool { return d.newer }
 
-// SchemaVersions returns the schema version on disk and the highest version
-// this relevo knows, for the newer-schema warning text.
 func (d *DB) SchemaVersions() (have, know int) { return d.have, d.know }
 
-// CheckMigrate returns an error when the database's schema is newer than this
-// relevo, so `relevo db migrate` refuses rather than touching it. A nil result
-// means the schema is this relevo's to migrate.
+// CheckMigrate refuses a database whose schema is newer than this relevo, so
+// `relevo db migrate` does not touch it.
 func (d *DB) CheckMigrate() error {
 	if !d.newer {
 		return nil
@@ -125,10 +159,9 @@ func (d *DB) CheckMigrate() error {
 }
 
 // ping establishes the first connection, retrying while sqlite reports the
-// database busy. Two processes opening a fresh database at once both try to
-// switch it to WAL in the DSN, and sqlite does not invoke the busy handler for
-// a journal_mode change: it returns SQLITE_BUSY to the loser. Once the winner
-// has set WAL, the loser's pragma is a no-op, so a bounded retry succeeds.
+// database busy. Two processes opening a fresh database both try to switch it
+// to WAL in the DSN, and sqlite does not invoke the busy handler for a
+// journal_mode change, so the loser gets SQLITE_BUSY and must retry.
 func ping(sqlDB *sql.DB) error {
 	var err error
 	for attempt := 0; attempt < 50; attempt++ {
@@ -141,7 +174,6 @@ func ping(sqlDB *sql.DB) error {
 	return err
 }
 
-// Close closes the underlying connection.
 func (d *DB) Close() error {
 	if err := d.sqlDB.Close(); err != nil {
 		return fmt.Errorf("db: close: %w", err)
@@ -149,15 +181,8 @@ func (d *DB) Close() error {
 	return nil
 }
 
-// BackupTo writes a consistent, standalone copy of the whole database to
-// path with VACUUM INTO. The copy holds every committed row and no
-// journal-mode companions of its own, so it can be opened with Open like any
-// other database file.
-//
-// A path that already exists is refused, with an error naming it: VACUUM
-// INTO would overwrite it, and a caller that means to overwrite a backup
-// says so itself. The copy is chmodded 0600 afterwards, because the
-// database holds secrets from schema v2 on.
+// BackupTo copies the whole database to path with VACUUM INTO. A path that
+// already exists is refused, because VACUUM INTO would overwrite it.
 func (d *DB) BackupTo(path string) error {
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("db: backup to %s: file already exists: %w", path, ErrInvalid)
@@ -174,9 +199,8 @@ func (d *DB) BackupTo(path string) error {
 	return nil
 }
 
-// Vacuum compacts the database in place with VACUUM, returning a file to the
-// OS that still holds the rows a delete pass removed. It runs outside any
-// transaction, as sqlite requires.
+// Vacuum compacts the database in place. It runs outside any transaction, as
+// sqlite requires.
 func (d *DB) Vacuum() error {
 	if _, err := d.sqlDB.ExecContext(context.Background(), `VACUUM`); err != nil {
 		return fmt.Errorf("db: vacuum: %w", mapBusy(err))
@@ -184,53 +208,69 @@ func (d *DB) Vacuum() error {
 	return nil
 }
 
-// Version returns the highest applied schema_version, 0 when none has run.
 func (d *DB) Version() (int, error) {
-	var v sql.NullInt64
+	var v sql.Null[int64]
 	if err := d.sqlDB.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil {
 		return 0, fmt.Errorf("db: version: %w", err)
 	}
 	if !v.Valid {
 		return 0, nil
 	}
-	return int(v.Int64), nil
+	return int(v.V), nil
 }
 
-// Tx is a locked view of the database inside one BEGIN IMMEDIATE
-// transaction. Every writer and reader exists on it; the *DB forms wrap one
-// Tx each.
+// Tx is a locked view of the database inside one BEGIN IMMEDIATE transaction;
+// the *DB forms wrap one Tx each.
 type Tx struct {
 	conn *sql.Conn
 	ctx  context.Context
 }
 
-// Tx runs fn inside one BEGIN IMMEDIATE transaction: commit on a nil
-// return, rollback otherwise. A driver busy error is mapped to ErrBusy.
-//
-// A database whose schema is newer than this binary is never written (#372
-// §4.5): Tx refuses with an error wrapping ErrNewerSchema, so every writer --
-// the config store's Put and PutSecret, the daemon's ingest -- fails cleanly
-// instead of downgrading a schema a newer relevo owns.
+// Tx runs fn inside one BEGIN IMMEDIATE transaction: commit on a nil return,
+// rollback otherwise. A busy BEGIN IMMEDIATE is retried until the DB's retry
+// window has elapsed since the first attempt; COMMIT is not retried. A
+// database whose schema is newer than this binary is never written.
 func (d *DB) Tx(fn func(*Tx) error) error {
 	if d.newer {
 		return fmt.Errorf("db: tx: schema version %d is newer than this relevo (knows %d); refusing to write: %w", d.have, d.know, ErrNewerSchema)
 	}
+	return d.tx(context.Background(), fn)
+}
 
-	ctx := context.Background()
-
+func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 	conn, err := d.sqlDB.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("db: tx: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if cerr := conn.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("db: tx close: %w", cerr)
+		}
+	}()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("db: tx begin: %w", mapBusy(err))
+	// BEGIN IMMEDIATE takes the write lock at once, so a competing writer
+	// fails busy instead of blocking. fn never runs until BEGIN succeeds, so it
+	// runs at most once.
+	retryFor := d.beginRetry
+	if retryFor <= 0 {
+		retryFor = beginRetryFor
+	}
+	start := time.Now()
+	for {
+		_, beginErr := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
+		if beginErr == nil {
+			break
+		}
+		mapped := mapBusy(beginErr)
+		if !errors.Is(mapped, ErrBusy) || time.Since(start) >= retryFor {
+			return fmt.Errorf("db: tx begin: %w", mapped)
+		}
+		time.Sleep(time.Duration(25+rand.Intn(76)) * time.Millisecond)
 	}
 
 	if txErr := fn(&Tx{conn: conn, ctx: ctx}); txErr != nil {
 		if _, rerr := conn.ExecContext(ctx, "ROLLBACK"); rerr != nil {
-			return fmt.Errorf("db: tx: %v, and rollback failed: %w", txErr, rerr)
+			return fmt.Errorf("db: tx: rollback failed: %w", errors.Join(txErr, rerr))
 		}
 		return txErr
 	}
@@ -241,8 +281,7 @@ func (d *DB) Tx(fn func(*Tx) error) error {
 	return nil
 }
 
-// mapBusy turns a driver's SQLITE_BUSY into ErrBusy, so callers can
-// errors.Is against one sentinel regardless of the driver underneath.
+// mapBusy turns a driver's SQLITE_BUSY into ErrBusy.
 func mapBusy(err error) error {
 	if err == nil {
 		return nil
@@ -257,8 +296,7 @@ func mapBusy(err error) error {
 	return err
 }
 
-// chmodPrivate makes path owner-only (0600). The database holds secrets from
-// schema v2 on, so this is not a hardening nicety (§4.2).
+// chmodPrivate makes path owner-only; the database holds secrets.
 func chmodPrivate(path string) error {
 	if err := os.Chmod(path, 0o600); err != nil {
 		return err
@@ -266,8 +304,8 @@ func chmodPrivate(path string) error {
 	return nil
 }
 
-// chmodIfExists makes path owner-only when it exists; a missing file is not
-// an error, because sqlite creates the -wal and -shm siblings lazily.
+// chmodIfExists makes path owner-only when it exists; sqlite creates the -wal
+// and -shm siblings lazily.
 func chmodIfExists(path string) error {
 	if err := os.Chmod(path, 0o600); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -278,23 +316,16 @@ func chmodIfExists(path string) error {
 	return nil
 }
 
-// exec runs a statement against the transaction's connection.
 func (t *Tx) exec(query string, args ...any) (sql.Result, error) {
 	return t.conn.ExecContext(t.ctx, query, args...)
 }
 
-// queryRow runs a single-row query against the transaction's connection.
 func (t *Tx) queryRow(query string, args ...any) *sql.Row {
 	return t.conn.QueryRowContext(t.ctx, query, args...)
 }
 
-// query runs a multi-row query against the transaction's connection.
-func (t *Tx) query(query string, args ...any) (*sql.Rows, error) {
-	return t.conn.QueryContext(t.ctx, query, args...)
-}
-
-// queryer is the slice of *sql.DB and *sql.Conn that readers need, so the
-// same query function backs both *DB and *Tx readers.
+// queryer is the slice of *sql.DB and *sql.Conn that readers need, so one
+// query function backs both *DB and *Tx reads.
 type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row

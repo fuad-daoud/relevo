@@ -7,14 +7,7 @@ import (
 	"sort"
 )
 
-// This file is the whole-document diff behind every config revision
-// (docs/specs/2026-09-24-cockpit-design.md §6.4): a generic JSON-path diff, so
-// a revision can say what changed without a typed draft engine (A3b adds
-// those). Nothing here touches the database; DiffDocs and Describe are pure.
-
-// Change is one difference between two config documents, or one secret change
-// that never appears in a document. Before and After are compact JSON and are
-// absent for the ops that have no such side.
+// Change is one difference between two config documents, or a secret change.
 type Change struct {
 	Path   string          `json:"path"`
 	Op     string          `json:"op"`               // "add" | "remove" | "change" | "set" (secrets only)
@@ -22,15 +15,12 @@ type Change struct {
 	After  json.RawMessage `json:"after,omitempty"`  // absent for remove/set
 }
 
-// Doc is the whole config document: one raw JSON body per section present.
 type Doc = map[Section]json.RawMessage
 
-// maxValue is the number of runes a Describe value keeps before its ellipsis.
 const maxValue = 60
 
 // DiffDocs returns the changes that turn a into b, in a deterministic order:
-// sections in Sections order, object keys sorted, array indices ascending. Two
-// equal documents give an empty, non-nil slice.
+// sections in Sections order, object keys sorted, array indices ascending.
 func DiffDocs(a, b Doc) []Change {
 	changes := []Change{}
 	for _, sec := range Sections {
@@ -48,7 +38,7 @@ func DiffDocs(a, b Doc) []Change {
 	return changes
 }
 
-// Describe renders one change as the one line `config log` prints ( §3.5).
+// Describe renders one change as the one line config log prints.
 func Describe(c Change) string {
 	switch c.Op {
 	case "change":
@@ -64,10 +54,8 @@ func Describe(c Change) string {
 	}
 }
 
-// EncodeDoc renders doc as an indented JSON object with one key per section,
-// in Sections order. A map's own keys would be sorted alphabetically, so the
-// object is assembled by hand and then indented. It is the one encoder:
-// `config export`, `config edit` and the revision snapshot all use it.
+// EncodeDoc renders doc as an indented JSON object with one key per section in
+// Sections order, assembled by hand because a map's keys sort alphabetically.
 func EncodeDoc(doc Doc) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte('{')
@@ -79,7 +67,7 @@ func EncodeDoc(doc Doc) ([]byte, error) {
 		}
 		var compact bytes.Buffer
 		if err := json.Compact(&compact, body); err != nil {
-			return nil, fmt.Errorf("%s: %v", sec, err)
+			return nil, fmt.Errorf("%s: %w", sec, err)
 		}
 		if !first {
 			buf.WriteByte(',')
@@ -103,10 +91,8 @@ func EncodeDoc(doc Doc) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// diffRaw diffs one section body. Both sides are decoded with
-// json.Decoder.UseNumber and then walked recursively. A side that does not
-// decode is compared by its compact encoding at the section path, which is the
-// only honest answer for bytes that are not JSON.
+// diffRaw diffs one section body by decoding both sides with UseNumber and
+// walking them; a side that does not decode is compared compactly as bytes.
 func diffRaw(path string, a, b json.RawMessage) []Change {
 	out := []Change{}
 	av, aok := decodeValue(a)
@@ -193,7 +179,6 @@ func decodeValue(raw json.RawMessage) (any, bool) {
 	return v, true
 }
 
-// mustCompact encodes a decoded value as compact JSON.
 func mustCompact(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -202,8 +187,7 @@ func mustCompact(v any) json.RawMessage {
 	return compactCopy(b)
 }
 
-// compactCopy returns raw with insignificant whitespace removed, or a copy of
-// raw when it is not valid JSON.
+// compactCopy strips insignificant whitespace, or copies raw when invalid.
 func compactCopy(raw json.RawMessage) json.RawMessage {
 	var buf bytes.Buffer
 	if err := json.Compact(&buf, raw); err != nil {
@@ -212,8 +196,8 @@ func compactCopy(raw json.RawMessage) json.RawMessage {
 	return append(json.RawMessage(nil), buf.Bytes()...)
 }
 
-// joinPath appends one object key to a path, quoting it when it is not a valid
-// identifier (so a key holding a dot cannot be mistaken for a nested path).
+// joinPath appends an object key, quoting a key that is not a bare identifier
+// so a dot in it cannot be mistaken for a nested path.
 func joinPath(path, key string) string {
 	if isIdent(key) {
 		return path + "." + key
@@ -225,8 +209,6 @@ func joinPath(path, key string) string {
 	return path + "[" + string(quoted) + "]"
 }
 
-// isIdent reports whether key is a bare JSON-path identifier: a letter or
-// underscore followed by letters, digits or underscores.
 func isIdent(key string) bool {
 	if key == "" {
 		return false
@@ -245,8 +227,6 @@ func isIdent(key string) bool {
 	return true
 }
 
-// cutValue shortens a Describe value to maxValue runes, marking the cut with
-// an ellipsis.
 func cutValue(s string) string {
 	runes := []rune(s)
 	if len(runes) <= maxValue {

@@ -20,8 +20,6 @@ type statResult struct {
 	err error
 }
 
-// scriptedWatcher drives a Watcher through a fixed sequence of Stat results
-// and preflight outcomes, and checks the action of every Check.
 func scriptedWatcher(t *testing.T, stats []statResult, preflights []error, want []Action) *Watcher {
 	t.Helper()
 
@@ -62,8 +60,6 @@ func scriptedWatcher(t *testing.T, stats []statResult, preflights []error, want 
 	return w
 }
 
-// TestWatcherCheck covers §4.3's whole table: the two-check debounce, the sticky
-// refusal, and the reset when the file goes back to ours or disappears.
 func TestWatcherCheck(t *testing.T) {
 	first, second := id(2), id(3)
 	boom := errors.New("policy.json: unknown field")
@@ -121,8 +117,6 @@ func TestWatcherCheck(t *testing.T) {
 	}
 }
 
-// TestWatcherRefusedExposesIdentity pins the accessor daemon.json is built
-// from, and that a refusal is sticky per identity.
 func TestWatcherRefusedExposesIdentity(t *testing.T) {
 	cur := id(2)
 	w := scriptedWatcher(t,
@@ -139,13 +133,8 @@ func TestWatcherRefusedExposesIdentity(t *testing.T) {
 	}
 }
 
-// TestWatcherRollbackClearsRefusal pins §4.3 step 2's amendment: when the file
-// goes back to our own binary -- a rollback -- any refusal is dropped, so a
-// later reinstall of the refused build is tried again rather than silently
-// skipped.
-//
-// Mutation: drop `w.refused = nil` in Check and the fourth Check returns None
-// (the same identity is not tried again) instead of Wait.
+// Mutation: without `w.refused = nil` in Check, the fourth Check below
+// returns None, not Wait.
 func TestWatcherRollbackClearsRefusal(t *testing.T) {
 	refused := id(2)
 	w := scriptedWatcher(t,
@@ -158,8 +147,6 @@ func TestWatcherRollbackClearsRefusal(t *testing.T) {
 	}
 }
 
-// TestWatcherPreflightGetsATimeoutDeadline pins that the preflight runs under
-// the package's own bounded context, not the daemon's whole lifetime.
 func TestWatcherPreflightGetsATimeoutDeadline(t *testing.T) {
 	cur := id(2)
 	w := &Watcher{Path: "/relevo", Started: id(1)}

@@ -1,13 +1,26 @@
- relevo › fleet                                                                         ● 1 needs you  ·  codex gated until 15:30  ·  14:02 
-6 bindings · 1 needs you · 3 active                                                                        sort attention · refreshed 0s ago
-   NAME            ACTOR         ON                      RND   STATE       NOW                       SPEND     PLANNER         REPO         
-   webshop         builder       -                       r4    NEEDS YOU   question · 2m             $9.40     architect-1                  
-     └ which branch should r4 target?                                                                                                       
-   api             builder       -                       r2    ACTIVE      working                             architect-1                  
-▎  atlas           builder       -                       r4    ACTIVE      working                   $0.16     architect-1                  
-   worker          builder       opencode-1              r2    ACTIVE      working                             architect-1                  
-   ledger          builder       -                       r3    PAUSED      paused                    ~$1.63    architect-1                  
-   docs            builder       -                       r1    DONE        done · 3h                           architect-1     /home/x/docs 
+  ◆ relevo    fleet                                                                                  ● 1 needs you     v0.13.0-28    14:02  
+                                                                                                                                            
+   5 live   1 needs you   3 working   1 on hold   1 done                                                   sort attention · refreshed 0s ago
+                                                                                                                                            
+ ╭─ atlas  round 4 · working ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ 
+ │  MasterMind architect-1  ·  -  ·  relevo/atlas  ·  $0.16                                                                               │ 
+ │                                                                                                                                        │ 
+ │    enter  open round       x  stop       g  gate       o  shell                                                                        │ 
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
+                                                                                                                                            
+     needs you   1    a builder is waiting on an answer                                                                                     
+   ●  webshop             r4 · q╭─ stop ───────────────────────────────────────────────────────────────────╮                                
+        ╰ which branch should r4│                                                                          │                                
+                                │ Stop atlas round 4?                                                      │                                
+     working   3    a round is r│                                                                          │                                
+   ●  api                 r2 · w│ MasterMind architect-1 is waiting on this round                          │                                
+ ▍ ●  atlas               r4 · w│ builder on - · working · $0.16                                           │                                
+   ●  worker              r2 · w│                                                                          │                                
+                                │  y  stop the round       n  cancel      any other key cancels            │                                
+     on hold   1    paused or he│                                                                          │                                
+   ◐  ledger              r3 · p╰──────────────────────────────────────────────────────────────────────────╯                                
+                                                                                                                                            
+   ✓  1 done  ·  1 today  ·  last docs 3h ago       .  show                                                                                 
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
@@ -22,19 +35,6 @@
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-Stop atlas round 4?                                                                                                                         
-planner architect-1 is waiting on this round                                                                                                
-builder on - · working · $0.16                                                                                                              
-y stop · n cancel                                                                                                                           
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ move   home/end first/last   enter open   a sort   / filter   s send   b bind   x stop   D done   u unbind   : command   ? help   q quit 
+   ◌ gated  codex 1h  ·  the pick skips them                                                                                                
+
+ y  stop the round      n  cancel                                                                                                           

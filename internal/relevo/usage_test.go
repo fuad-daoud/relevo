@@ -48,6 +48,8 @@ func closeRound(t *testing.T, rt Runtime, b store.Binding) store.LogEntry {
 }
 
 func TestRoundCloseRecordsUsage(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	rt.Git = &fakeGit{snapshotTreeID: "t", diffResult: git.Diff{}}
 	fu := &fakeUsage{samples: []usage.Sample{{Provider: "test", Model: "m", Tokens: usage.Tokens{In: 10, Out: 2}, USD: 0.5, HasCost: true}}}
@@ -81,6 +83,8 @@ func TestRoundCloseRecordsUsage(t *testing.T) {
 }
 
 func TestRoundCloseWithNoReaderIsUnknownAndStillCloses(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	rt.Usage = nil
 	e := closeRound(t, rt, b)
@@ -94,6 +98,8 @@ func TestRoundCloseWithNoReaderIsUnknownAndStillCloses(t *testing.T) {
 }
 
 func TestRoundCloseReaderNoteIsUnknown(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	rt.Usage = &fakeUsage{note: "no stream"}
 	e := closeRound(t, rt, b)
@@ -103,6 +109,8 @@ func TestRoundCloseReaderNoteIsUnknown(t *testing.T) {
 }
 
 func TestRoundCloseReaderTimeoutStillCloses(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	rt.Usage = &fakeUsage{block: true}
 	done := make(chan store.LogEntry, 1)
@@ -118,11 +126,13 @@ func TestRoundCloseReaderTimeoutStillCloses(t *testing.T) {
 }
 
 func TestRoundSourceHeadlessAndPlan(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	b.Builder.Mode = store.ModeHeadless
 	b.Worktree = "/wt"
 	src := roundSource(rt, b, baseTime, baseTime.Add(time.Minute))
-	if src.Mode != usage.ModeHeadless || src.StreamPath != rt.Store.BuilderStreamPath(b.Name, b.Round) {
+	if src.Mode != usage.ModeHeadless || src.StreamPath != rt.Store.RunnerStreamPath(b.Name, b.Round) {
 		t.Errorf("headless source = %+v", src)
 	}
 	if src.Worktree != "/wt" {
@@ -139,6 +149,8 @@ func TestRoundSourceHeadlessAndPlan(t *testing.T) {
 }
 
 func TestRecordUsageFoldsWithRuntimePrices(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Now: func() time.Time { return baseTime }}
 	rt.Usage = &fakeUsage{samples: []usage.Sample{{Provider: "test", Model: "m", Tokens: usage.Tokens{In: 1_000_000}}}}
 	rt.Prices = usage.Prices{Models: map[string]usage.ModelPrice{"test/m": {In: 2}}}
@@ -156,6 +168,8 @@ func TestRecordUsageFoldsWithRuntimePrices(t *testing.T) {
 // tool-call counts land on the Usage even when no reader is wired, and a
 // stream that cannot be read leaves them zero without failing the round.
 func TestRecordUsageAttachesStepStats(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "001-builder.jsonl")
 	lines := []string{
 		`{"type":"step_start","timestamp":1000}`,

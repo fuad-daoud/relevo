@@ -7,7 +7,7 @@ package pick
 import (
 	"errors"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // Verb is the relevo command a picker runs on the chosen binding.
@@ -40,10 +40,10 @@ var (
 
 // rowsFor is the spec §4 table: what each verb can act on. done cannot act
 // on a DONE binding; unbind clears DONE bindings, so it lists them.
-func rowsFor(verb Verb, rep relevo.Report) []relevo.BindingStatus {
+func rowsFor(verb Verb, rep view.Report) []view.BindingStatus {
 	switch verb {
 	case VerbDone:
-		return relevo.HideDone(rep).Bindings
+		return view.HideDone(rep).Bindings
 	default:
 		return rep.Bindings
 	}
@@ -65,7 +65,7 @@ func emptyText(verb Verb) string {
 // common such key is Enter. The list showed the row's state; nobody had
 // read it yet. DONE rows under unbind are what gc clears anyway and run at
 // once.
-func needsConfirm(verb Verb, r relevo.BindingStatus) bool {
+func needsConfirm(verb Verb, r view.BindingStatus) bool {
 	switch verb {
 	case VerbDone, VerbUnbind:
 		return r.Display != "DONE"

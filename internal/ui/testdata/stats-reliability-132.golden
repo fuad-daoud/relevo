@@ -1,0 +1,34 @@
+  ◆ relevo    stats                                                                                            v0.13.0-28    14:02  
+                                                                                                                                    
+    overview     candidates     tokens     reliability     repos                                    window   7d   30d   90d   all   
+                                                                                                                                    
+   SWITCHES                        RATE LIMITS                     SPAWN FAILURES                  GATED NOW                        
+   0                               0                               0                               1                                
+   in 0 rounds · 0% of rounds      across 0 providers              builders that failed to start   candidates waiting on a limit    
+                                                                                                                                    
+                                                                                                                                    
+   CANDIDATE                                                PROVIDER      UNTIL             LEFT   REASON                           
+   gemini-3.8-flash-high                                    ·             Sep 18 16:02        1d   ·                                
+                                                                                                                                    
+                                                                                                                                    
+   no rate limits in this window                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ ↑↓  scroll      tab  next tab      w  window      :  command      ?  all keys      q  quit                                         

@@ -7,16 +7,12 @@ import (
 	"time"
 )
 
-// marshalLeaf is the "a type with a MarshalJSON method" case: a leaf, whatever
-// fields it has.
 type marshalLeaf struct {
 	N int
 }
 
 func (marshalLeaf) MarshalJSON() ([]byte, error) { return []byte(`{}`), nil }
 
-// fixtureInner is what every recursion case below points at. Its fields cover
-// a tagless field, an omitempty option and a "-" field.
 type fixtureInner struct {
 	NoTag   string
 	Tagged  int    `json:"tagged,omitempty"`
@@ -58,8 +54,6 @@ func TestKeys(t *testing.T) {
 	}
 }
 
-// TestKeysSkipsTheDashField pins the other half of the "-" rule: a field
-// tagged json:"-" contributes no path at all.
 func TestKeysSkipsTheDashField(t *testing.T) {
 	for _, key := range Keys(reflect.TypeOf(fixture{})) {
 		if key == "Skipped" || key == "skipped" {

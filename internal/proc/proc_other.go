@@ -2,17 +2,15 @@
 
 // Package proc is relevo's local process Runner. relevo targets Linux and
 // macOS; this file exists so the tree compiles elsewhere, where every call
-// reports relevo.ErrRunnerUnavailable.
+// reports spawn.ErrRunnerUnavailable.
 package proc
 
 import (
 	"context"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
-
-const ExitTrailer = "relevo-exit:"
 
 const DefaultKillGrace = 5 * time.Second
 
@@ -20,33 +18,31 @@ type Runner struct {
 	KillGrace time.Duration
 }
 
-var _ relevo.Runner = (*Runner)(nil)
+var _ spawn.Runner = (*Runner)(nil)
 
 func New() *Runner { return &Runner{} }
 
-func (r *Runner) Start(context.Context, relevo.ProcSpec) (relevo.ProcHandle, error) {
-	return relevo.ProcHandle{}, relevo.ErrRunnerUnavailable
+func (r *Runner) Start(context.Context, spawn.ProcSpec) (spawn.ProcHandle, error) {
+	return spawn.ProcHandle{}, spawn.ErrRunnerUnavailable
 }
 
-func (r *Runner) Alive(context.Context, relevo.ProcHandle) (bool, error) {
-	return false, relevo.ErrRunnerUnavailable
+func (r *Runner) Alive(context.Context, spawn.ProcHandle) (bool, error) {
+	return false, spawn.ErrRunnerUnavailable
 }
 
-func (r *Runner) ExitCode(context.Context, relevo.ProcHandle, string) (int, bool) {
+func (r *Runner) ExitCode(context.Context, spawn.ProcHandle, string) (int, bool) {
 	return 0, false
 }
 
-func (r *Runner) Kill(context.Context, relevo.ProcHandle) error {
-	return relevo.ErrRunnerUnavailable
+func (r *Runner) Kill(context.Context, spawn.ProcHandle, string) error {
+	return spawn.ErrRunnerUnavailable
 }
 
-func (r *Runner) Rusage(context.Context, relevo.ProcHandle, string) (relevo.ProcRusage, bool) {
-	return relevo.ProcRusage{}, false
+func (r *Runner) Rusage(context.Context, spawn.ProcHandle, string) (spawn.ProcRusage, bool) {
+	return spawn.ProcRusage{}, false
 }
 
-// StartTime has no implementation here, where psInfo does not exist either.
-// The non-unix half of the tree reports ErrRunnerUnavailable for every process
-// question, and this one answers the same.
+// StartTime reports ErrRunnerUnavailable too: psInfo does not exist here.
 func StartTime(context.Context, int) (time.Time, error) {
-	return time.Time{}, relevo.ErrRunnerUnavailable
+	return time.Time{}, spawn.ErrRunnerUnavailable
 }

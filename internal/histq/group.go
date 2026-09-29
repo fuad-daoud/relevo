@@ -7,12 +7,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// basisUnknown is the CostBasis word a round's cost is not trusted for;
-// histq spells the vocabulary itself rather than importing internal/usage.
+// basisUnknown is the CostBasis word a round's cost is not trusted for; histq
+// spells the vocabulary itself rather than importing internal/usage.
 const basisUnknown = "unknown"
 
-// GroupRow is one bucket of rounds that share an axis value, with the sums
-// `relevo history --by` and the dashboard print.
 type GroupRow struct {
 	Key                                                            string
 	Rounds, Reported, Halted, Exited, Switched, DoneNoReport, Open int
@@ -24,7 +22,6 @@ type GroupRow struct {
 	Rows                                                           []db.RoundRow
 }
 
-// Tiles summarises every row in a view: the totals line above the grid.
 type Tiles struct {
 	Rounds  int
 	CostUSD float64
@@ -32,17 +29,16 @@ type Tiles struct {
 	Tokens  int64
 	Halted  int
 	Exited  int
-	// MedianDurationMS is the median of the rows whose DurationMS is set,
-	// 0 when none are; an even count takes the mean of the two middles.
+	// MedianDurationMS is the median of the rows whose DurationMS is set, 0
+	// when none are; an even count takes the mean of the two middles.
 	MedianDurationMS int64
 	Bindings         int
 	Builders         int
 }
 
-// Group buckets rows by an axis and sums each bucket. AxisNone (or "") is
-// no regroup and returns nil. day keys are the StartedAt date in loc, so
-// the caller's timezone decides where a round's day starts.
-// (docs/specs/2026-09-21-dashboard-design.md §4).
+// Group buckets rows by an axis and sums each bucket; AxisNone (or "") is no
+// regroup and returns nil. day keys are the StartedAt date in loc, so the
+// caller's timezone decides where a round's day starts.
 func Group(rows []db.RoundRow, by Axis, loc *time.Location) []GroupRow {
 	if by == AxisNone || by == "" {
 		return nil
@@ -137,8 +133,8 @@ func Totals(rows []db.RoundRow) Tiles {
 			t.Exited++
 		}
 		bindings[r.BindingID] = true
-		if r.BuilderCandidate != nil {
-			builders[*r.BuilderCandidate] = true
+		if r.Candidate != nil {
+			builders[*r.Candidate] = true
 		}
 		if r.DurationMS != nil {
 			durations = append(durations, *r.DurationMS)
@@ -150,7 +146,6 @@ func Totals(rows []db.RoundRow) Tiles {
 	return t
 }
 
-// groupKey renders the axis value one row belongs to; a nil column is "-".
 func groupKey(r db.RoundRow, by Axis, loc *time.Location) string {
 	switch by {
 	case AxisBinding:
@@ -159,14 +154,18 @@ func groupKey(r db.RoundRow, by Axis, loc *time.Location) string {
 		return derefKey(r.Repo)
 	case AxisFeature:
 		return derefKey(r.Feature)
-	case AxisBuilder:
-		return derefKey(r.BuilderCandidate)
+	case AxisTicket:
+		return derefKey(r.Ticket)
+	case AxisCandidate:
+		return derefKey(r.Candidate)
+	case AxisActor:
+		return r.Actor
 	case AxisHarness:
-		return derefKey(r.BuilderHarness)
+		return derefKey(r.Harness)
 	case AxisProvider:
-		return derefKey(r.BuilderProvider)
+		return derefKey(r.Provider)
 	case AxisModel:
-		return derefKey(r.BuilderModel)
+		return derefKey(r.Model)
 	case AxisDay:
 		return r.StartedAt.In(loc).Format("2006-01-02")
 	case AxisOutcome:
@@ -182,28 +181,20 @@ func derefKey(s *string) string {
 	return *s
 }
 
-// costKnown reports whether a row's cost is summed: it has a value and its
-// basis is not "unknown".
 func costKnown(r db.RoundRow) bool {
 	return r.CostUSD != nil && (r.CostBasis == nil || *r.CostBasis != basisUnknown)
 }
 
-// costUnknown reports whether a row counts as unknown in a view: no cost at
-// all, or a basis of "unknown".
 func costUnknown(r db.RoundRow) bool {
 	return r.CostUSD == nil || (r.CostBasis != nil && *r.CostBasis == basisUnknown)
 }
 
-// sortRowsNewestFirst orders a group's rounds by StartedAt, newest first;
-// equal timestamps keep the input order.
 func sortRowsNewestFirst(rows []db.RoundRow) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		return rows[i].StartedAt.After(rows[j].StartedAt)
 	})
 }
 
-// median returns the median of xs, 0 when empty; an even count is the mean
-// of the two middle values.
 func median(xs []int64) int64 {
 	if len(xs) == 0 {
 		return 0

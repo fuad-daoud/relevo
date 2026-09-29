@@ -4,26 +4,30 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // gatedBuilder reports the first live rate-limit gate on b's own builder
-// candidate, if any. Pure over Gates(rt).
+// candidate, if any. Pure over the ledger and b's own token: a token the
+// configured set no longer holds (the candidate was edited or deleted
+// mid-round) is still checked, because the running process is on that triple.
 //
 // SpawnFailed gates are ignored: a running builder is not a failed spawn, so
 // a spawn-failure gate recorded against this same token by an earlier switch
 // attempt must not itself trigger another switch.
-func gatedBuilder(rt Runtime, b store.Binding) (ledger.Gate, bool) {
-	for _, g := range Gates(rt) {
-		if g.Token == b.BuilderCandidate && g.Kind == ledger.RateLimited {
+func gatedBuilder(rt Runtime, b store.Binding) (availability.Gate, bool) {
+	for _, g := range availability.LedgerGates(AvailabilityDeps(rt), []string{b.BuilderCandidate}) {
+		if g.Token == b.BuilderCandidate && g.Kind == availability.RateLimited {
 			return g, true
 		}
 	}
-	return ledger.Gate{}, false
+	return availability.Gate{}, false
 }
 
 // roundExclusionGates is one ledger.Gate per token in b.RoundExcluded --
@@ -34,12 +38,12 @@ func gatedBuilder(rt Runtime, b store.Binding) (ledger.Gate, bool) {
 // NOT changed to look at these: it looks only at RateLimited, so an
 // exclusion never triggers a switch by itself -- only the switch's own
 // resolution sees it.
-func roundExclusionGates(b store.Binding) []ledger.Gate {
-	gates := make([]ledger.Gate, 0, len(b.RoundExcluded))
+func roundExclusionGates(b store.Binding) []availability.Gate {
+	gates := make([]availability.Gate, 0, len(b.RoundExcluded))
 	for _, t := range b.RoundExcluded {
-		gates = append(gates, ledger.Gate{
+		gates = append(gates, availability.Gate{
 			Token:   t,
-			Kind:    ledger.ExitedNoReport,
+			Kind:    availability.ExitedNoReport,
 			Note:    "round " + strconv.Itoa(b.Round),
 			Binding: b.Name,
 		})
@@ -49,20 +53,21 @@ func roundExclusionGates(b store.Binding) []ledger.Gate {
 
 // switchEntry is the log record of one builder switch: why the switch
 // happened, and what ExplainResolution says about the pick that replaced
-// the builder (spec §3.3, §4.4). Always Confirmed and DirToPlanner, the same
+// the builder (spec §3.3, §4.4). Always Confirmed and DirToMasterMind, the same
 // reasoning as pickEntry: a switch is never a pending payload.
-func switchEntry(now time.Time, round int, reason string, res Resolution) store.LogEntry {
+func switchEntry(now time.Time, round int, reason string, res Resolution, u *usage.Usage) store.LogEntry {
 	return store.LogEntry{
-		TS: now.UTC(), Round: round, Direction: store.DirToPlanner,
+		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
 		Kind: store.KindSwitch, Confirmed: true,
-		Note: "switched builder (" + reason + "): " + ExplainResolution("builder", res),
+		Usage: u,
+		Note:  "switched builder (" + reason + "): " + ExplainResolution("builder", res),
 	}
 }
 
 // switchBuilder replaces b's builder mid-round with the next candidate the
 // policy order and the ledger's live gates pick, and hands it the SAME
 // round's plan. The round number does not change -- the new builder
-// inherits the partial diff CaptureRoundDiff already handles -- but
+// inherits the partial diff capture.RoundDiff already handles -- but
 // RoundStartedAt is restarted, so the replacement gets its own startGrace
 // before a nudge and its own round budget, exactly like a fresh handoff.
 //
@@ -93,13 +98,19 @@ func switchEntry(now time.Time, round int, reason string, res Resolution) store.
 func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string, closeOld, counted bool) (store.Binding, error) {
 	limit := rt.Policy.SwitchLimit()
 	if b.RoundSwitches >= limit {
+		if b.Builder.PID == 0 {
+			b = abandonSession(b)
+		}
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: builder %s (%s); already switched %d time(s) this round (max_switches %d)",
 			b.Name, reason, b.BuilderCandidate, b.RoundSwitches, limit))
 	}
 
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, append(Gates(rt), roundExclusionGates(b)...), "", bindingRole(b))
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, append(availability.Gates(AvailabilityDeps(rt)), roundExclusionGates(b)...), "", bindingRole(b))
 	if err != nil {
+		if b.Builder.PID == 0 {
+			b = abandonSession(b)
+		}
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: builder %s (%s); cannot switch: %v",
 			b.Name, reason, b.BuilderCandidate, err))
@@ -107,10 +118,10 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	if closeOld {
 		// The one place besides done/unbind where relevo stops a process it
-		// started (#99): the planner gated the provider while the round's
+		// started (#99): the mastermind gated the provider while the round's
 		// process was still running.
 		if b.Builder.PID != 0 && rt.Runner != nil {
-			if err := rt.Runner.Kill(ctx, handleOf(b.Builder)); err != nil {
+			if err := rt.Runner.Kill(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); err != nil {
 				return haltBinding(ctx, rt, b, fmt.Sprintf(
 					"%s: builder %s; could not stop its process %d to replace it: %v",
 					b.Name, reason, b.Builder.PID, err))
@@ -118,8 +129,10 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		}
 	}
 
+	b = abandonSession(b)
 	old := b.BuilderCandidate
 	now := rt.Now().UTC()
+	prior := peekUsage(ctx, rt, b, now)
 
 	// The replacement inherits the mode (spec §5.4): a headless binding gets
 	// a headless endpoint, which startRound below fills in.
@@ -144,7 +157,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		return b, nil
 	}
 
-	b.Builder = ep
+	b.Builder = carryStream(b.Builder, ep)
 	b.BuilderCandidate = res.Token()
 	if counted {
 		b.RoundSwitches++
@@ -154,15 +167,11 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	b.BuilderScreenAt = time.Time{}
 	b.State = store.StateActive
 
-	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, res)); err != nil {
+	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, res, prior)); err != nil {
 		return b, err
 	}
 
-	if b.Builder.Headless() {
-		appendLogMarker(rt.Store.BuilderLogPath(b.Name, b.Round), now, "switched to "+res.Token()+" ("+reason+")")
-	}
-
-	text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
+	text := composePrompt(rt, b, rt.Store.PromptPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 	started, err := startRound(ctx, rt, tx, b, text)
 	if err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
@@ -177,4 +186,63 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		"from", old, "to", res.Token(), "reason", reason, "switches", b.RoundSwitches)
 
 	return b, nil
+}
+
+// limitText is the text a decision point scans for rate-limit patterns: the
+// tail of the current builder process's output -- its log when the round has
+// one, otherwise the bytes it appended to the round's stream. A local builder
+// is always headless since #303.
+func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
+	return currentBuilderTail(rt, b, availability.LimitScanLines)
+}
+
+// gateOnLimit is the one helper every decision point calls (spec §4.4).
+// Preconditions: the round is open and the caller holds the store lock.
+//
+// It applies the switchable guard itself -- the same one the existing
+// gatedBuilder triggers use -- and returns handled=false without reading the
+// ledger when it fails: an adopted builder is never gated by relevo, and no
+// call site has to repeat the check.
+//
+// On a match it records one rate_limited ledger entry (source relevo), warns,
+// marks a headless builder's log, then checks whether this round already has
+// a report on disk: if so the gate is recorded but the round is left for the
+// caller to close as it would have (handled=false, m.Line set); otherwise it
+// switches the builder uncounted (handled=true) and returns the replacement.
+func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string, closeOld bool) (next store.Binding, m availability.LimitMatch, handled bool, err error) {
+	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
+	if !switchable {
+		return b, availability.LimitMatch{}, false, nil
+	}
+
+	now := rt.Now()
+	patterns := availability.LimitPatterns(AvailabilityDeps(rt), b.BuilderCandidate)
+	m, ok := availability.MatchLimit(text, patterns, now, rt.Policy.LimitGateDefault())
+	if !ok {
+		return b, availability.LimitMatch{}, false, nil
+	}
+
+	entry := availability.Entry{
+		Kind:    availability.RateLimited,
+		Subject: availability.ProviderOf(b.BuilderCandidate),
+		At:      now,
+		Until:   m.Until,
+		Note:    m.Line,
+		Source:  "relevo",
+		Binding: b.Name,
+	}
+	if err := availability.AppendEntryLocked(AvailabilityDeps(rt), entry); err != nil {
+		fmt.Fprintf(os.Stderr, "relevo: could not record rate limit gate: %v\n", err)
+	}
+
+	slog.Warn("provider rate-limited",
+		"binding", b.Name, "round", b.Round, "provider", entry.Subject,
+		"until", m.Until, "parsed", m.Parsed, "line", m.Line)
+
+	if _, _, ok, _ := rt.Store.StatFile(rt.Store.ReportPath(b.Name, b.Round)); ok {
+		return b, m, false, nil
+	}
+
+	next, err = switchBuilder(ctx, rt, tx, b, "rate-limited: "+m.Line, closeOld, false)
+	return next, m, true, err
 }

@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// TestRenderRecord covers RenderRecord's claude table (#184): assistant and
-// user-with-a-tool-result must match the stream renderer exactly; a typed
-// user prompt renders as its first line; every housekeeping record type,
-// non-JSON line, and non-claude kind renders as nothing (unlike Render,
-// which degrades unknowns to "[type]" and passes non-JSON through).
 func TestRenderRecord(t *testing.T) {
 	assistantLine := []byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"x"}}]}}`)
 	userToolResultLine := []byte(`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"ok text"}]}}`)

@@ -1,0 +1,30 @@
+  ◆ relevo    candidates                                                       v0.13.0-28    14:02  
+                                                                                                    
+   7 candidates   3 ready   4 gated                                                  sort pick order
+                                                                                                    
+   CANDIDATE                              HARNESS   PROVIDER    SERVES                  STATUS      
+   gemini-3.8-flash-high                  agy       google      builder 1               gated       
+   claude-sonnet-4-6                      agy       agy-extra   builder 2               gated 20h   
+   deepseek-v4.1-flash                    opencode  cline-pass  builder 3               gated 1d    
+   gpt-5.6-terra                          codex     openai      builder 4 · reviewer 2  gated 24d   
+   sonnet                                 claude    anthropic   builder 5 · reviewer 1  ready       
+   glm-5.3-flash                          opencode  openrouter  builder 6               ready       
+   haiku                                  claude    anthropic   researcher 1            ready       
+                                                                                                    
+                                                                                                    
+   gemini-3.8-flash-high   agy · google · gemini-3.8-flash-high                                     
+   gated since 13:17, until cleared   Individual quota reached                                      
+   the builder's first pick; while it is gated the builder takes sonnet                             
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+
+ enter  edit      a  add      d  delete      g  gate      :  command      ?  all keys      q  quit  

@@ -14,8 +14,8 @@ import (
 )
 
 // roundOfFile parses the leading NNN- of a binding directory entry and returns
-// the round number. It accepts every suffix the store writes today without
-// enumerating them, so a future round artifact is copied by forks with no change.
+// the round number. It accepts every suffix the store writes without
+// enumerating them, so a future round artifact is copied by forks unchanged.
 func roundOfFile(base string) (int, bool) {
 	idx := strings.IndexByte(base, '-')
 	if idx <= 0 || idx == len(base)-1 {
@@ -42,32 +42,20 @@ func (s *Store) ForkState(src string, dst Binding, throughRound int) error {
 }
 
 // ForkState copies src's history into a NEW binding for dst: every log entry
-// with Round <= throughRound, and every round file whose leading number is
-// <= throughRound. Copied log entries are all marked Confirmed, so a fork
-// begins with nothing pending, and a copied entry's Path, when it pointed into
-// src's directory, is rewritten to point into dst's, so the fork no longer
-// depends on src.
+// with Round <= throughRound and every round file whose leading number is
+// <= throughRound. Copied entries are all marked Confirmed, so a fork begins
+// with nothing pending, and an entry whose Path pointed into src's directory
+// is rewritten into dst's. dst's record is NOT written here -- the caller owns
+// the new Binding.
 //
 // The history goes straight into the database: the record Save writes, the
 // copied entries as that record's events, and one round_file row per copied
-// file. Save creates dst's directory and the fork leaves it empty -- no files
-// are created in it -- and src is never modified. It does NOT write dst's
-// bind.json -- the caller owns the new Binding.
+// file. Save creates dst's directory and the fork leaves it empty; src is
+// never modified.
 //
-// Preconditions:  the lock is held; src exists; dst.Name has no record and no
-//
-//	directory; throughRound >= 1.
-//
-// Postconditions: Load(dst.Name) works; ReadLog returns the copied entries
-//
-//	with rewritten paths; RoundFiles lists the copied names and ReadFile
-//	returns identical bytes; $STATE/<dst.Name> holds no files.
-//
-// Errors: ErrNotFound (src), a wrapped copy error, or an error if dst.Name
-//
-//	already has a record or a directory. On error, dst's record is deleted,
-//	which cascades its events and round files, so a failed fork leaves
-//	nothing List could pick up and nothing on disk.
+// The lock must be held, src must exist, and dst.Name must have neither a
+// record nor a directory. On error dst's record is deleted, which cascades its
+// events and round files, so a failed fork leaves nothing List could pick up.
 func (t *Tx) ForkState(src string, dst Binding, throughRound int) error {
 	if err := ValidName(dst.Name); err != nil {
 		return err
@@ -138,38 +126,49 @@ func (t *Tx) ForkState(src string, dst Binding, throughRound int) error {
 		lines = append(lines, raw)
 	}
 
+	if err := t.forkRoundFiles(dst.Name, dstDir, src, srcDir, throughRound, copied, lines); err != nil {
+		return err
+	}
+
+	success = true
+	return nil
+}
+
+// forkRoundFiles writes the copied entries as dst's events and every selected
+// round file as a round_file row, in one transaction. RoundFiles unions what
+// is in src's directory with what a seal pass already moved into the database,
+// so a fork cut from a closed round copies its files either way.
+func (t *Tx) forkRoundFiles(dstName, dstDir, src, srcDir string, throughRound int, copied []LogEntry, lines [][]byte) error {
 	d, err := t.s.dbForWrite()
 	if err != nil {
 		return err
 	}
-	rec, ok, err := d.RecordGet(t.s.owner, dst.Name)
+	rec, ok, err := d.RecordGet(t.s.owner, dstName)
 	if err != nil {
-		return fmt.Errorf("read binding %q: %w", dst.Name, err)
+		return fmt.Errorf("read binding %q: %w", dstName, err)
 	}
 	if !ok {
-		return fmt.Errorf("%s: %w", dst.Name, ErrNotFound)
+		return fmt.Errorf("%s: %w", dstName, ErrNotFound)
 	}
 
 	// The copied entries become the record's events through the same
-	// conversion importPresent uses for an adopted log.jsonl.
+	// conversion a decoded log.jsonl takes: the medium moved, the conversion
+	// did not.
 	evs, err := recordEventsOf(copied, lines)
 	if err != nil {
-		return fmt.Errorf("encode log for %q: %w", dst.Name, err)
+		return fmt.Errorf("encode log for %q: %w", dstName, err)
 	}
 	if err := d.EventReplaceAll(rec.ID, evs); err != nil {
-		return fmt.Errorf("write log for %q: %w", dst.Name, err)
+		return fmt.Errorf("write log for %q: %w", dstName, err)
 	}
 
-	// RoundFiles unions what is in src's directory with what a seal pass
-	// already moved into the database (P3c §4.4), so a fork cut from a
-	// closed round copies its files either way.
 	names, err := t.s.RoundFiles(src)
 	if err != nil {
 		return fmt.Errorf("list round files %q: %w", src, err)
 	}
 
 	now := time.Now().UTC()
-	if err := d.Tx(func(dtx *db.Tx) error {
+	return d.Tx(func(dtx *db.Tx) error {
 		for _, base := range names {
 			r, ok := roundOfFile(base)
 			if !ok || r > throughRound {
@@ -187,14 +186,9 @@ func (t *Tx) ForkState(src string, dst Binding, throughRound int) error {
 				mtime = mt
 			}
 			if err := dtx.RoundFilePut(rec.ID, base, r, body, mtime, now); err != nil {
-				return fmt.Errorf("copy %s for %q: %w", base, dst.Name, err)
+				return fmt.Errorf("copy %s for %q: %w", base, dstName, err)
 			}
 		}
 		return nil
-	}); err != nil {
-		return err
-	}
-
-	success = true
-	return nil
+	})
 }

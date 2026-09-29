@@ -1,0 +1,48 @@
+{
+  "Name": "showsections",
+  "Round": 1,
+  "Rounds": 1,
+  "Live": true,
+  "Archived": false,
+  "ArchivedAt": "<TIME>",
+  "Section": "log",
+  "Text": "",
+  "Missing": false,
+  "Events": [
+    {
+      "seq": 1,
+      "ts": "<TIME>",
+      "round": 1,
+      "direction": "to_runner",
+      "kind": "prompt",
+      "confirmed": true
+    },
+    {
+      "seq": 2,
+      "ts": "<TIME>",
+      "round": 1,
+      "direction": "to_planner",
+      "kind": "report",
+      "confirmed": true,
+      "note": "round one"
+    },
+    {
+      "seq": 3,
+      "ts": "<TIME>",
+      "round": 1,
+      "direction": "to_planner",
+      "kind": "diff",
+      "confirmed": true,
+      "note": "1 file, +1 -0"
+    },
+    {
+      "seq": 4,
+      "ts": "<TIME>",
+      "round": 1,
+      "direction": "to_planner",
+      "kind": "drift",
+      "confirmed": true,
+      "note": "1 file, +1 -1"
+    }
+  ]
+}

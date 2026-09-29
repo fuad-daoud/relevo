@@ -2,7 +2,6 @@ package candidate
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -48,36 +47,7 @@ func TestRefRoundTrip(t *testing.T) {
 }
 
 func TestSetQueries(t *testing.T) {
-	dir := t.TempDir()
-	confPath := filepath.Join(dir, "candidates.json")
-	data := `[
-		{
-			"harness": "claude",
-			"provider": "anthropic",
-			"model": "sonnet",
-			"roles": ["builder", "reviewer"]
-		},
-		{
-			"harness": "opencode",
-			"provider": "openrouter",
-			"model": "z-ai/glm-5.3-flash",
-			"roles": ["builder"]
-		},
-		{
-			"harness": "agy",
-			"provider": "google",
-			"model": "gemini-3.8-flash-high",
-			"roles": ["builder"]
-		}
-	]`
-	if err := os.WriteFile(confPath, []byte(data), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	set, err := Load(confPath)
-	if err != nil {
-		t.Fatalf("Load() unexpected err: %v", err)
-	}
+	set := writeCandidates(t, threeSetBody)
 
 	if set.Len() != 3 {
 		t.Errorf("Len() = %d, want 3", set.Len())
@@ -114,6 +84,10 @@ func TestSetQueries(t *testing.T) {
 	if len(researchers) != 0 {
 		t.Errorf("ForRole(\"researcher\") returned %d entries, want 0", len(researchers))
 	}
+}
+
+func TestLookup(t *testing.T) {
+	set := writeCandidates(t, threeSetBody)
 
 	claudeSonnet, err := set.Lookup(Ref{"claude", "anthropic", "sonnet"})
 	if err != nil {
@@ -146,8 +120,7 @@ func TestLoadMissingFileIsEmpty(t *testing.T) {
 	}
 }
 
-// Note: Rule 6 (CanServe false) is unreachable with the shipped table --
-// every kind serves every role -- so it is not included in the validation table.
+// CanServe false is unreachable with the shipped harness table, so it is not pinned here.
 func TestLoadValidation(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -203,11 +176,7 @@ func TestLoadValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "candidates.json")
-			if err := os.WriteFile(path, []byte(tt.body), 0644); err != nil {
-				t.Fatal(err)
-			}
-			_, err := Load(path)
+			_, err := Load(writeTemp(t, tt.body))
 			if err == nil {
 				t.Fatalf("Load() expected error containing %q, got nil", tt.wantSubstring)
 			}
@@ -218,10 +187,6 @@ func TestLoadValidation(t *testing.T) {
 	}
 }
 
-// TestLoadAcceptsEmptyRoles is the port of the two "roles must not be empty"
-// cases TestLoadValidation used to carry (#374 §4.4): a candidate with an empty
-// roles array, or none at all, is valid. It serves nothing in legacy mode, and
-// in roles.json mode its roles are ignored anyway.
 func TestLoadAcceptsEmptyRoles(t *testing.T) {
 	tests := []struct {
 		name string
@@ -233,14 +198,7 @@ func TestLoadAcceptsEmptyRoles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "candidates.json")
-			if err := os.WriteFile(path, []byte(tt.body), 0644); err != nil {
-				t.Fatal(err)
-			}
-			set, err := Load(path)
-			if err != nil {
-				t.Fatalf("Load() unexpected err: %v", err)
-			}
+			set := writeCandidates(t, tt.body)
 			if set.Len() != 1 {
 				t.Fatalf("Len() = %d, want 1", set.Len())
 			}
@@ -259,24 +217,6 @@ func TestLoadAcceptsEmptyRoles(t *testing.T) {
 	}
 }
 
-// loadWarnings writes body to a temp candidates.json and loads it with
-// LoadWithWarnings, failing on any error.
-func loadWarnings(t *testing.T, body string) (*Set, []string) {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "candidates.json")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	set, warnings, err := LoadWithWarnings(path)
-	if err != nil {
-		t.Fatalf("LoadWithWarnings(%s): %v", body, err)
-	}
-	return set, warnings
-}
-
-// TestLoadSkipsUnknownHarnessAndRole pins #372 §4.4: a candidate whose harness
-// or one of whose roles is unknown is skipped with a warning, and the others
-// still load. A duplicate still fails.
 func TestLoadSkipsUnknownHarnessAndRole(t *testing.T) {
 	t.Run("unknown harness", func(t *testing.T) {
 		set, warnings := loadWarnings(t, `[
@@ -305,188 +245,121 @@ func TestLoadSkipsUnknownHarnessAndRole(t *testing.T) {
 	})
 
 	t.Run("a duplicate still fails", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "candidates.json")
 		body := `[{"harness":"claude","provider":"p","model":"m","roles":["builder"]},{"harness":"claude","provider":"p","model":"m","roles":["reviewer"]}]`
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := LoadWithWarnings(path); err == nil || !strings.Contains(err.Error(), "duplicate candidate") {
+		if _, _, err := LoadWithWarnings(writeTemp(t, body)); err == nil || !strings.Contains(err.Error(), "duplicate candidate") {
 			t.Fatalf("LoadWithWarnings err = %v, want a duplicate error", err)
 		}
 	})
 }
 
-func TestLoadAcceptsExtraArgsAndTree(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "candidates.json")
-	body := `[
+func TestLoadFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		body  string
+		ref   Ref
+		check func(t *testing.T, c Candidate)
+	}{
 		{
-			"harness": "agy",
-			"provider": "google",
-			"model": "gemini-3.8-flash-high",
-			"roles": ["builder"],
-			"tree": "binding",
-			"extra_args": ["--dangerously-skip-permissions"]
-		}
-	]`
-	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	set, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load() unexpected err: %v", err)
-	}
-
-	c, err := set.Lookup(Ref{"agy", "google", "gemini-3.8-flash-high"})
-	if err != nil {
-		t.Fatalf("Lookup() err: %v", err)
-	}
-
-	wantExtra := []string{"--dangerously-skip-permissions"}
-	if !reflect.DeepEqual(c.ExtraArgs, wantExtra) {
-		t.Errorf("ExtraArgs = %v, want %v", c.ExtraArgs, wantExtra)
-	}
-	if c.Tree != "binding" {
-		t.Errorf("Tree = %q, want \"binding\"", c.Tree)
-	}
-}
-
-func TestLoadAcceptsLimitPatterns(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "candidates.json")
-	body := `[
+			name: "extra_args and tree",
+			body: `[{"harness":"agy","provider":"google","model":"gemini-3.8-flash-high","roles":["builder"],"tree":"binding","extra_args":["--dangerously-skip-permissions"]}]`,
+			ref:  Ref{"agy", "google", "gemini-3.8-flash-high"},
+			check: func(t *testing.T, c Candidate) {
+				if want := []string{"--dangerously-skip-permissions"}; !reflect.DeepEqual(c.ExtraArgs, want) {
+					t.Errorf("ExtraArgs = %v, want %v", c.ExtraArgs, want)
+				}
+				if c.Tree != "binding" {
+					t.Errorf("Tree = %q, want \"binding\"", c.Tree)
+				}
+			},
+		},
 		{
-			"harness": "agy",
-			"provider": "google",
-			"model": "gemini-3.8-flash-high",
-			"roles": ["builder"],
-			"limit_patterns": ["(?i)quota"]
-		}
-	]`
-	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	set, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load() unexpected err: %v", err)
-	}
-
-	c, err := set.Lookup(Ref{"agy", "google", "gemini-3.8-flash-high"})
-	if err != nil {
-		t.Fatalf("Lookup() err: %v", err)
-	}
-
-	wantPatterns := []string{"(?i)quota"}
-	if !reflect.DeepEqual(c.LimitPatterns, wantPatterns) {
-		t.Errorf("LimitPatterns = %v, want %v", c.LimitPatterns, wantPatterns)
-	}
-}
-
-func TestLoadAcceptsDialogPatterns(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "candidates.json")
-	body := `[
+			name: "limit_patterns",
+			body: `[{"harness":"agy","provider":"google","model":"gemini-3.8-flash-high","roles":["builder"],"limit_patterns":["(?i)quota"]}]`,
+			ref:  Ref{"agy", "google", "gemini-3.8-flash-high"},
+			check: func(t *testing.T, c Candidate) {
+				if want := []string{"(?i)quota"}; !reflect.DeepEqual(c.LimitPatterns, want) {
+					t.Errorf("LimitPatterns = %v, want %v", c.LimitPatterns, want)
+				}
+			},
+		},
 		{
-			"harness": "agy",
-			"provider": "google",
-			"model": "gemini-3.8-flash-high",
-			"roles": ["builder"],
-			"dialog_patterns": ["(?i)confirm"]
-		}
-	]`
-	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	set, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load() unexpected err: %v", err)
-	}
-
-	c, err := set.Lookup(Ref{"agy", "google", "gemini-3.8-flash-high"})
-	if err != nil {
-		t.Fatalf("Lookup() err: %v", err)
-	}
-
-	wantPatterns := []string{"(?i)confirm"}
-	if !reflect.DeepEqual(c.DialogPatterns, wantPatterns) {
-		t.Errorf("DialogPatterns = %v, want %v", c.DialogPatterns, wantPatterns)
-	}
-}
-
-func TestCandidatePlanFlag(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "candidates.json")
-	body := `[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"],"plan":true},
-	          {"harness":"agy","provider":"google","model":"g","roles":["builder"]}]`
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	set, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c, err := set.Lookup(Ref{Harness: "claude", Provider: "anthropic", Model: "sonnet"})
-	if err != nil || !c.Plan {
-		t.Errorf("plan flag not loaded: %+v, %v", c, err)
-	}
-	c, _ = set.Lookup(Ref{Harness: "agy", Provider: "google", Model: "g"})
-	if c.Plan {
-		t.Error("plan defaults to false")
-	}
-}
-
-func TestLoadAcceptsTierAndDenialPatterns(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "candidates.json")
-	body := `[
+			name: "dialog_patterns",
+			body: `[{"harness":"agy","provider":"google","model":"gemini-3.8-flash-high","roles":["builder"],"dialog_patterns":["(?i)confirm"]}]`,
+			ref:  Ref{"agy", "google", "gemini-3.8-flash-high"},
+			check: func(t *testing.T, c Candidate) {
+				if want := []string{"(?i)confirm"}; !reflect.DeepEqual(c.DialogPatterns, want) {
+					t.Errorf("DialogPatterns = %v, want %v", c.DialogPatterns, want)
+				}
+			},
+		},
 		{
-			"harness": "claude",
-			"provider": "anthropic",
-			"model": "sonnet",
-			"roles": ["builder"],
-			"tier": "yolo",
-			"denial_patterns": ["(?i)permission denied"]
-		}
-	]`
-	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
-		t.Fatal(err)
+			name: "tier and denial_patterns",
+			body: `[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"],"tier":"yolo","denial_patterns":["(?i)permission denied"]}]`,
+			ref:  Ref{"claude", "anthropic", "sonnet"},
+			check: func(t *testing.T, c Candidate) {
+				if c.Tier != "yolo" {
+					t.Errorf("Tier = %q, want \"yolo\"", c.Tier)
+				}
+				if want := []string{"(?i)permission denied"}; !reflect.DeepEqual(c.DenialPatterns, want) {
+					t.Errorf("DenialPatterns = %v, want %v", c.DenialPatterns, want)
+				}
+			},
+		},
 	}
 
-	set, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load() unexpected err: %v", err)
-	}
-
-	c, err := set.Lookup(Ref{"claude", "anthropic", "sonnet"})
-	if err != nil {
-		t.Fatalf("Lookup() err: %v", err)
-	}
-
-	if c.Tier != "yolo" {
-		t.Errorf("Tier = %q, want \"yolo\"", c.Tier)
-	}
-	wantPatterns := []string{"(?i)permission denied"}
-	if !reflect.DeepEqual(c.DenialPatterns, wantPatterns) {
-		t.Errorf("DenialPatterns = %v, want %v", c.DenialPatterns, wantPatterns)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := writeCandidates(t, tt.body).Lookup(tt.ref)
+			if err != nil {
+				t.Fatalf("Lookup(%s): %v", tt.ref, err)
+			}
+			tt.check(t, c)
+		})
 	}
 }
 
-// TestSetProviders: two candidates on one provider name it once, the result
-// is sorted whatever order the file listed them in, and a nil set -- a server
-// with no candidates.json -- answers nil instead of panicking.
+func TestLoadPlanFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		ref  Ref
+		want bool
+	}{
+		{
+			name: "loaded",
+			body: `[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"],"plan":true}]`,
+			ref:  Ref{"claude", "anthropic", "sonnet"},
+			want: true,
+		},
+		{
+			name: "defaults to false",
+			body: `[{"harness":"agy","provider":"google","model":"g","roles":["builder"]}]`,
+			ref:  Ref{"agy", "google", "g"},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := writeCandidates(t, tt.body).Lookup(tt.ref)
+			if err != nil {
+				t.Fatalf("Lookup(%s): %v", tt.ref, err)
+			}
+			if c.Plan != tt.want {
+				t.Errorf("Plan = %v, want %v", c.Plan, tt.want)
+			}
+		})
+	}
+}
+
 func TestSetProviders(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "candidates.json")
 	body := `[
 	  {"harness":"opencode","provider":"test","model":"m","roles":["builder"]},
 	  {"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]},
 	  {"harness":"agy","provider":"zeta","model":"g","roles":["builder"]},
 	  {"harness":"claude","provider":"test","model":"sonnet","roles":["reviewer"]}
 	]`
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	set, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	set := writeCandidates(t, body)
 
 	got := set.Providers()
 	want := []string{"anthropic", "test", "zeta"}
@@ -500,115 +373,107 @@ func TestSetProviders(t *testing.T) {
 	}
 }
 
-// TestParseNames pins §4.1's name rules: derived names are filled, an explicit
-// name is kept, the three Parse errors fire, and a skipped entry still takes
-// part in DeriveNames so a later name does not shift when it is fixed.
-func TestParseNames(t *testing.T) {
-	t.Run("derived names are filled", func(t *testing.T) {
-		body := `[
-			{"harness":"claude","provider":"anthropic","model":"sonnet"},
-			{"harness":"agy","provider":"google","model":"gemini-3.8-flash-high"}
-		]`
-		set, _, err := Parse("candidates.json", []byte(body))
-		if err != nil {
-			t.Fatalf("Parse: %v", err)
-		}
-		if got, want := set.Names(), []string{"gemini-3.8-flash-high", "sonnet"}; !reflect.DeepEqual(got, want) {
-			t.Errorf("Names() = %v, want %v", got, want)
-		}
-		c, err := set.Lookup(Ref{"claude", "anthropic", "sonnet"})
-		if err != nil {
-			t.Fatalf("Lookup: %v", err)
-		}
-		if c.Name != "sonnet" {
-			t.Errorf("candidate Name = %q, want %q", c.Name, "sonnet")
-		}
-	})
+func TestParseFillsNames(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantNames []string
+		ref       Ref
+		wantName  string
+	}{
+		{
+			name:      "derived names are filled",
+			body:      twoSetBody,
+			wantNames: []string{"gemini-3.8-flash-high", "sonnet"},
+			ref:       Ref{"claude", "anthropic", "sonnet"},
+			wantName:  "sonnet",
+		},
+		{
+			name:      "an explicit name is kept",
+			body:      `[{"name":"haiku","harness":"claude","provider":"anthropic","model":"claude-3-5-haiku"}]`,
+			wantNames: []string{"haiku"},
+			ref:       Ref{"claude", "anthropic", "claude-3-5-haiku"},
+			wantName:  "haiku",
+		},
+	}
 
-	t.Run("an explicit name is kept", func(t *testing.T) {
-		body := `[{"name":"haiku","harness":"claude","provider":"anthropic","model":"claude-3-5-haiku"}]`
-		set, _, err := Parse("candidates.json", []byte(body))
-		if err != nil {
-			t.Fatalf("Parse: %v", err)
-		}
-		if got, want := set.Names(), []string{"haiku"}; !reflect.DeepEqual(got, want) {
-			t.Errorf("Names() = %v, want %v", got, want)
-		}
-	})
-
-	t.Run("bad shape", func(t *testing.T) {
-		body := `[{"name":"Bad","harness":"claude","provider":"anthropic","model":"sonnet"}]`
-		_, _, err := Parse("candidates.json", []byte(body))
-		if err == nil {
-			t.Fatal("Parse succeeded for a bad name, want an error")
-		}
-		want := `name "Bad": want ^[a-z0-9][a-z0-9.-]{0,23}$`
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("Parse err = %q, want it containing %q", err.Error(), want)
-		}
-	})
-
-	t.Run("duplicate name", func(t *testing.T) {
-		body := `[
-			{"name":"x","harness":"claude","provider":"anthropic","model":"a"},
-			{"name":"x","harness":"claude","provider":"other","model":"b"}
-		]`
-		_, _, err := Parse("candidates.json", []byte(body))
-		if err == nil {
-			t.Fatal("Parse succeeded for a duplicate name, want an error")
-		}
-		want := `candidate 1: duplicate name "x" at index 0 and 1`
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("Parse err = %q, want it containing %q", err.Error(), want)
-		}
-	})
-
-	t.Run("provider clash", func(t *testing.T) {
-		body := `[
-			{"harness":"claude","provider":"anthropic","model":"a"},
-			{"name":"anthropic","harness":"claude","provider":"other","model":"b"}
-		]`
-		_, _, err := Parse("candidates.json", []byte(body))
-		if err == nil {
-			t.Fatal("Parse succeeded for a name equal to a provider, want an error")
-		}
-		want := `candidate 1: name "anthropic" is also a provider name`
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("Parse err = %q, want it containing %q", err.Error(), want)
-		}
-	})
-
-	t.Run("a skipped entry still takes part in DeriveNames", func(t *testing.T) {
-		body := `[
-			{"harness":"nope","provider":"p","model":"m"},
-			{"harness":"claude","provider":"anthropic","model":"m"}
-		]`
-		set, warnings, err := Parse("candidates.json", []byte(body))
-		if err != nil {
-			t.Fatalf("Parse: %v", err)
-		}
-		if len(warnings) != 1 {
-			t.Fatalf("warnings = %v, want one for the unknown harness", warnings)
-		}
-		// The skipped entry still reserved "m", so the surviving candidate
-		// keeps the name DeriveNames gave it in the full list.
-		if got, want := set.Names(), []string{"claude-m"}; !reflect.DeepEqual(got, want) {
-			t.Errorf("Names() = %v, want %v", got, want)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			set := parseSet(t, tt.body)
+			if got := set.Names(); !reflect.DeepEqual(got, tt.wantNames) {
+				t.Errorf("Names() = %v, want %v", got, tt.wantNames)
+			}
+			c, err := set.Lookup(tt.ref)
+			if err != nil {
+				t.Fatalf("Lookup(%s): %v", tt.ref, err)
+			}
+			if c.Name != tt.wantName {
+				t.Errorf("candidate Name = %q, want %q", c.Name, tt.wantName)
+			}
+		})
+	}
 }
 
-// TestResolve pins §4.1's Resolve: a name, a token, a bad token, an unknown
-// string that lists the known names, and a nil set.
-func TestResolve(t *testing.T) {
-	body := `[
-		{"harness":"claude","provider":"anthropic","model":"sonnet"},
-		{"harness":"agy","provider":"google","model":"gemini-3.8-flash-high"}
-	]`
-	set, _, err := Parse("candidates.json", []byte(body))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
+func TestParseNameErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "bad shape",
+			body: `[{"name":"Bad","harness":"claude","provider":"anthropic","model":"sonnet"}]`,
+			want: `name "Bad": want ^[a-z0-9][a-z0-9.-]{0,23}$`,
+		},
+		{
+			name: "duplicate name",
+			body: `[
+				{"name":"x","harness":"claude","provider":"anthropic","model":"a"},
+				{"name":"x","harness":"claude","provider":"other","model":"b"}
+			]`,
+			want: `candidate 1: duplicate name "x" at index 0 and 1`,
+		},
+		{
+			name: "provider clash",
+			body: `[
+				{"harness":"claude","provider":"anthropic","model":"a"},
+				{"name":"anthropic","harness":"claude","provider":"other","model":"b"}
+			]`,
+			want: `candidate 1: name "anthropic" is also a provider name`,
+		},
 	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := Parse("candidates.json", []byte(tt.body))
+			if err == nil {
+				t.Fatalf("Parse succeeded, want an error containing %q", tt.want)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Parse err = %q, want it containing %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSkippedEntryKeepsDerivedNames(t *testing.T) {
+	body := `[
+		{"harness":"nope","provider":"p","model":"m"},
+		{"harness":"claude","provider":"anthropic","model":"m"}
+	]`
+	set, warnings := parseWarnings(t, body)
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want one for the unknown harness", warnings)
+	}
+	// The skipped entry still reserved "m", so the surviving candidate keeps
+	// the name DeriveNames gave it in the full list.
+	if got, want := set.Names(), []string{"claude-m"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Names() = %v, want %v", got, want)
+	}
+}
+
+func TestResolve(t *testing.T) {
+	set := parseSet(t, twoSetBody)
 
 	t.Run("by name", func(t *testing.T) {
 		c, err := set.Resolve("sonnet")
@@ -659,14 +524,8 @@ func TestResolve(t *testing.T) {
 	})
 }
 
-// TestNameOf pins §4.1's NameOf: a known token resolves, an unknown one is
-// returned unchanged, and a nil set returns its argument.
 func TestNameOf(t *testing.T) {
-	body := `[{"harness":"claude","provider":"anthropic","model":"sonnet"}]`
-	set, _, err := Parse("candidates.json", []byte(body))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
+	set := parseSet(t, oneSetBody)
 
 	if got := set.NameOf("claude/anthropic/sonnet"); got != "sonnet" {
 		t.Errorf("NameOf(known) = %q, want sonnet", got)
@@ -681,15 +540,8 @@ func TestNameOf(t *testing.T) {
 	}
 }
 
-// TestNameFor pins round 3 F3's NameFor: ok is true only when the set holds
-// the token. A known token gives its name; an unknown one and a nil set give
-// "", false, so a caller can leave a name field empty.
 func TestNameFor(t *testing.T) {
-	body := `[{"harness":"claude","provider":"anthropic","model":"sonnet"}]`
-	set, _, err := Parse("candidates.json", []byte(body))
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
+	set := parseSet(t, oneSetBody)
 
 	name, ok := set.NameFor("claude/anthropic/sonnet")
 	if !ok || name != "sonnet" {

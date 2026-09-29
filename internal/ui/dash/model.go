@@ -72,6 +72,10 @@ type Model struct {
 	// means identity.
 	Names func(token string) string
 
+	// Running reports whether binding's round n is running right now. The host
+	// sets it from its live status; nil means no round is running.
+	Running func(binding string, round int) bool
+
 	// Embedded is true when the dashboard is hosted as a view inside the
 	// cockpit shell rather than owning the whole screen (B1 round 2). The
 	// shell draws the identity line itself, so View omits headerLine and
@@ -92,6 +96,13 @@ type Styles struct {
 	Archived  lipgloss.Style
 	Attention lipgloss.Style
 	Live      lipgloss.Style
+	Strong    lipgloss.Style
+	Accent    lipgloss.Style
+	Warn      lipgloss.Style
+	Ok        lipgloss.Style
+	Danger    lipgloss.Style
+	Grid      lipgloss.Style
+	Chip      lipgloss.Style
 }
 
 // RowsMsg is one successful refresh: the rows the query selected.
@@ -142,6 +153,7 @@ func New(d *db.DB, loc *time.Location, now func() time.Time, queryText, sortKey 
 		m.query.Filter.Newest = true
 	}
 	m.groups = histq.Group(m.rows, m.query.By, m.loc)
+	m.clampCursor()
 	return m
 }
 
@@ -251,6 +263,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.query.By = nextAxis(m.query.By)
 		m.groups = histq.Group(m.rows, m.query.By, m.loc)
 		m.cursor = 0
+		m.clampCursor()
 		return m, nil
 
 	case "s":
@@ -267,6 +280,8 @@ func (m Model) updateKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m, nil // an empty grid: enter is a no-op (§6)
 		}
 		switch l := lines[m.cursor]; l.kind {
+		case lineDay:
+			return m, nil // no-op (unreachable, but safe)
 		case lineGroup:
 			m.expanded[l.group.Key] = !m.expanded[l.group.Key]
 			return m, nil
@@ -286,21 +301,40 @@ func (m Model) updateKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.moveCursor(+1)
 	case "pgup":
 		m.moveCursor(-m.pageSize())
-	case "pgdown":
+	case "pgdown", " ":
 		m.moveCursor(m.pageSize())
 	case "home":
-		m.moveCursorTo(0)
+		m.moveCursorTo(0, +1)
 	case "end":
-		m.moveCursorTo(len(m.visible()) - 1)
+		m.moveCursorTo(len(m.visible())-1, -1)
 	}
 	return m, nil
 }
 
-// moveCursor moves the cursor delta lines, clamped to the visible list.
-func (m *Model) moveCursor(delta int) { m.moveCursorTo(m.cursor + delta) }
+// selectable reports whether line i can receive the cursor (§5.6).
+func (m Model) selectable(i int) bool {
+	lines := m.visible()
+	if i < 0 || i >= len(lines) {
+		return false
+	}
+	return lines[i].kind != lineDay
+}
 
-func (m *Model) moveCursorTo(c int) {
-	n := len(m.visible())
+// moveCursor moves the cursor delta lines, clamped to the visible list.
+func (m *Model) moveCursor(delta int) {
+	dir := 1
+	if delta < 0 {
+		dir = -1
+	}
+	m.moveCursorTo(m.cursor+delta, dir)
+}
+
+func (m *Model) moveCursorTo(c int, dir int) {
+	if dir == 0 {
+		dir = 1
+	}
+	lines := m.visible()
+	n := len(lines)
 	if n == 0 {
 		m.cursor = 0
 		return
@@ -311,22 +345,26 @@ func (m *Model) moveCursorTo(c int) {
 	if c > n-1 {
 		c = n - 1
 	}
+	orig := c
+	for c >= 0 && c < n && !m.selectable(c) {
+		c += dir
+	}
+	if c < 0 || c >= n {
+		c = orig
+		for c >= 0 && c < n && !m.selectable(c) {
+			c -= dir
+		}
+	}
+	if c < 0 || c >= n || !m.selectable(c) {
+		m.cursor = 0
+		return
+	}
 	m.cursor = c
 }
 
 // clampCursor keeps the cursor inside the visible list after a refresh.
 func (m *Model) clampCursor() {
-	n := len(m.visible())
-	if n == 0 {
-		m.cursor = 0
-		return
-	}
-	if m.cursor > n-1 {
-		m.cursor = n - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
+	m.moveCursorTo(m.cursor, 1)
 }
 
 // pageSize is one screenful of grid.
@@ -339,12 +377,11 @@ func (m Model) pageSize() int {
 }
 
 // gridHeight is the rows left for the grid under the fixed lines: three
-// when the screen owns its identity line, two when it is embedded and the
-// host draws that line.
+// when the screen owns its identity line, two when it is embedded (§5.1).
 func (m Model) gridHeight() int {
-	header := dashHeaderRows
+	header := 3
 	if m.Embedded {
-		header--
+		header = 2
 	}
 	h := m.height - header
 	if h < 0 {
@@ -402,9 +439,19 @@ func (m Model) View() string {
 	m.vp.Height = m.gridHeight()
 	m.vp.SetContent(m.gridContent())
 	m.vp.SetYOffset(m.windowTop())
-	body := m.tilesLine() + "\n" + m.thirdLine() + "\n" + m.vp.View()
+	grid := m.vp.View()
 	if m.Embedded {
-		return body
+		return "" + "\n" + m.thirdLine() + "\n" + grid
 	}
-	return m.headerLine() + "\n" + body
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
+	}
+	var line2 string
+	if p := m.Problem(); p != "" {
+		line2 = "   " + fit(m.styles.Error.Render(clip(p, cw)), cw) + "   "
+	} else {
+		line2 = "   " + fit(m.SummaryLine(cw), cw) + "   "
+	}
+	return m.headerLine() + "\n" + line2 + "\n" + m.thirdLine() + "\n" + grid
 }

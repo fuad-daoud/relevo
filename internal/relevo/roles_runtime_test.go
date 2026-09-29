@@ -12,12 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
-	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // rolesRuntimeCandidatesJSON is three claude candidates, all able to serve
@@ -77,6 +76,8 @@ func rolesCandidate(t *testing.T, set *candidate.Set, token string) candidate.Ca
 // list, a gated candidate is skipped and named, and a candidate the row does
 // not list is never picked.
 func TestRolesRuntimeFileModeRanking(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder": {Candidates: []string{"claude/test/b", "claude/test/a"}},
@@ -94,8 +95,8 @@ func TestRolesRuntimeFileModeRanking(t *testing.T) {
 	}
 
 	// Gate the first choice: the walk takes the second, at its own position.
-	gates := []ledger.Gate{{
-		Token: "claude/test/b", Kind: ledger.RateLimited, Until: baseTime.Add(time.Hour),
+	gates := []availability.Gate{{
+		Token: "claude/test/b", Kind: availability.RateLimited, Until: baseTime.Add(time.Hour),
 	}}
 	res, err = resolveRole(reg, set, gates, "", "builder")
 	if err != nil {
@@ -115,9 +116,9 @@ func TestRolesRuntimeFileModeRanking(t *testing.T) {
 	if reg.Serves("builder", candidate.Ref{Harness: "claude", Provider: "test", Model: "c"}) {
 		t.Error("Serves(builder, claude/test/c) = true, want false: the row does not list it")
 	}
-	both := []ledger.Gate{
-		{Token: "claude/test/b", Kind: ledger.RateLimited, Until: baseTime.Add(time.Hour)},
-		{Token: "claude/test/a", Kind: ledger.RateLimited, Until: baseTime.Add(time.Hour)},
+	both := []availability.Gate{
+		{Token: "claude/test/b", Kind: availability.RateLimited, Until: baseTime.Add(time.Hour)},
+		{Token: "claude/test/a", Kind: availability.RateLimited, Until: baseTime.Add(time.Hour)},
 	}
 	_, err = resolveRole(reg, set, both, "", "builder")
 	if !errors.Is(err, ErrAllGated) {
@@ -132,6 +133,8 @@ func TestRolesRuntimeFileModeRanking(t *testing.T) {
 // explicit token the row does not list is refused, and in file mode the
 // refusal says so.
 func TestRolesRuntimeFileModeExplicitTokenNotListed(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder": {Candidates: []string{"claude/test/b", "claude/test/a"}},
@@ -153,6 +156,8 @@ func TestRolesRuntimeFileModeExplicitTokenNotListed(t *testing.T) {
 // row tier wins and the candidate's own tier is ignored; the explicit tier
 // still wins over both.
 func TestRolesRuntimeFileModeTier(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeTierCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder": {
@@ -176,6 +181,8 @@ func TestRolesRuntimeFileModeTier(t *testing.T) {
 // TestRolesRuntimeVerifyTier pins §4.6/§9 step 6.4: verifyTier reads the
 // reviewer row in file mode, and gives yolo when the file sets no tier.
 func TestRolesRuntimeVerifyTier(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeTierCandidatesJSON)
 	c := rolesCandidate(t, set, "claude/test/b")
 
@@ -201,6 +208,8 @@ func TestRolesRuntimeVerifyTier(t *testing.T) {
 // the argv carries, while a kind the file does not override keeps the shipped
 // one.
 func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	set := rt.Candidates
 	rt.Registry = rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
@@ -213,7 +222,7 @@ func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 	fr := newFakeRunner()
 	rt.Runner = fr
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "custom-builder", Candidate: testClaudeRef, PlannerID: testPlannerName,
+		Name: "custom-builder", Candidate: testClaudeRef, MasterMindID: testMasterMindName,
 		CWD: "/custom-repo", Headless: true,
 	})
 	if err != nil {
@@ -233,7 +242,7 @@ func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 	fr2 := newFakeRunner()
 	rt.Runner = fr2
 	b2, err := Bind(context.Background(), rt, BindOptions{
-		Name: "shipped-builder", Candidate: testOpencodeRef, PlannerID: testPlannerName,
+		Name: "shipped-builder", Candidate: testOpencodeRef, MasterMindID: testMasterMindName,
 		CWD: "/shipped-repo", Headless: true,
 	})
 	if err != nil {
@@ -250,65 +259,12 @@ func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 	}
 }
 
-// TestRolesRuntimeCustomReaderRoleThroughAsk pins §5/§9 step 6.6: a role the
-// file adds is a real consult role -- Ask resolves it, spawns its definition,
-// and names it among the known roles when it refuses an unknown one.
-func TestRolesRuntimeCustomReaderRoleThroughAsk(t *testing.T) {
-	rt, _ := seedForAsk(t)
-	set := rt.Candidates
-	rt.Registry = rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
-		"security-reviewer": {
-			Shape:       ptr("reader"),
-			Definitions: map[string]roles.DefRow{"claude": {Agent: "sec-review"}},
-			Candidates:  []string{testClaudeRef},
-		},
-	})
-
-	// `security-reviewer` plus the 8-character consult id leaves five
-	// characters for the binding name, so this binding is not "webshop".
-	b := store.Binding{
-		Name:    "shop",
-		CWD:     "/ask-tree",
-		Planner: store.Endpoint{PaneID: "w2:p3"},
-		Builder: store.Endpoint{AgentName: "shop-builder", PaneID: "w2:p4", Kind: "agy"},
-		Round:   1,
-		State:   store.StateActive,
-	}
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("seed %s binding: %v", b.Name, err)
-	}
-
-	fr := newFakeRunner()
-	rt.Runner = fr
-	q := writeQuestion(t, "Review the auth change.")
-
-	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "security-reviewer", File: q, Name: b.Name, PlannerID: testPlannerName,
-	}); err != nil {
-		t.Fatalf("Ask(security-reviewer): %v", err)
-	}
-	if len(fr.specs) != 1 {
-		t.Fatalf("got %d processes, want 1", len(fr.specs))
-	}
-	if !containsAdjacentPair(fr.specs[0].Argv, "--agent", "sec-review") {
-		t.Errorf("argv = %v, want --agent sec-review", fr.specs[0].Argv)
-	}
-
-	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "nope", File: q, Name: b.Name, PlannerID: testPlannerName,
-	})
-	if !errors.Is(err, ErrUnknownRole) {
-		t.Fatalf("Ask(nope) err = %v, want ErrUnknownRole", err)
-	}
-	if !strings.Contains(err.Error(), "security-reviewer") {
-		t.Errorf("err = %q, want it to list security-reviewer among the known roles", err.Error())
-	}
-}
-
 // TestRolesRuntimeFileModeProbe pins §5's probe paragraph for file mode: the
 // probed role is whichever role's candidate list names the candidate, and a
 // candidate no role lists is still "no known role".
 func TestRolesRuntimeFileModeProbe(t *testing.T) {
+	t.Parallel()
+
 	rt, now := probeRuntime(t, testCandidatesJSON)
 	set := rt.Candidates
 	rt.Registry = rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
@@ -320,7 +276,7 @@ func TestRolesRuntimeFileModeProbe(t *testing.T) {
 	})
 
 	fake := &fakeExec{now: now}
-	got := ProbeCandidate(context.Background(), rt, fake, rolesCandidate(t, set, testClaudeRef), "box")
+	got := availability.ProbeCandidate(context.Background(), AvailabilityDeps(rt), fake, rolesCandidate(t, set, testClaudeRef), "box")
 	if len(fake.argvs) != 1 {
 		t.Fatalf("probe ran %d times, want 1 (Err = %q)", len(fake.argvs), got.Err)
 	}
@@ -330,7 +286,7 @@ func TestRolesRuntimeFileModeProbe(t *testing.T) {
 
 	orphan := candidate.Candidate{Harness: "claude", Provider: "test", Model: "orphan"}
 	fake2 := &fakeExec{now: now}
-	got2 := ProbeCandidate(context.Background(), rt, fake2, orphan, "box")
+	got2 := availability.ProbeCandidate(context.Background(), AvailabilityDeps(rt), fake2, orphan, "box")
 	if got2.Err != "no known role" {
 		t.Errorf("Err = %q, want %q", got2.Err, "no known role")
 	}

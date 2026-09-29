@@ -4,12 +4,11 @@ import (
 	"context"
 )
 
-// Fake is a mock Classifier used in tests.
 type Fake struct {
-	Probabilities []float64 // returned; if shorter than the request, the last value is repeated; if empty, 0.0 for all
-	Model         string    // "" -> "fake"
-	Err           error     // returned instead when non-nil
-	Calls         []Request // every request received, appended
+	Probabilities []float64
+	Model         string
+	Err           error
+	Calls         []Request
 	InputTokens   int
 }
 

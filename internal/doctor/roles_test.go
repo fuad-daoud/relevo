@@ -7,8 +7,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestBindingRoleChecks pins #382 §5.4: a binding whose role roles.json no
-// longer defines gets one FAIL row naming the binding and the role, a builder
+// TestBindingRoleChecks pins that a binding whose role roles.json no longer
+// defines gets one FAIL row naming the binding and the role, a builder
 // binding ("") is always defined, and a DONE binding is not reported.
 func TestBindingRoleChecks(t *testing.T) {
 	known := func(role string) bool { return role == "builder" || role == "ui-builder" }
@@ -28,10 +28,10 @@ func TestBindingRoleChecks(t *testing.T) {
 	if row.Severity != SevFail {
 		t.Errorf("row.Severity = %v, want SevFail", row.Severity)
 	}
-	if row.Name != "binding role" {
-		t.Errorf("row.Name = %q, want binding role", row.Name)
+	if row.Name != "binding actor" {
+		t.Errorf("row.Name = %q, want binding actor", row.Name)
 	}
-	if !strings.Contains(row.Detail, `binding c runs role "gone"`) {
-		t.Errorf("row.Detail = %q, want it to name binding c and role gone", row.Detail)
+	if !strings.Contains(row.Detail, `binding c runs actor "gone"`) {
+		t.Errorf("row.Detail = %q, want it to name binding c and actor gone", row.Detail)
 	}
 }

@@ -6,18 +6,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// Apply is the in-Go half of a query: the conditions db.Query cannot
-// express, applied to the rows it returned. Order is preserved and every
-// condition must hold (a query with none keeps every row).
-//
-// A bare Word is a case-insensitive substring of the row's binding name,
-// repo or feature -- any of the three. A NumCond compares cost (*CostUSD),
-// tokens (sum of the four token columns, nil counting 0), commits
-// (*Commits), duration (minutes, from *DurationMS) or the round number; a
-// nil column fails every comparison. Report, Gate, Basis, Server and Mode
-// compare against ReportOutcome, GateResult, CostBasis, Server and
-// BuilderMode, and a nil column fails too
-// (docs/specs/2026-09-21-dashboard-design.md §3-§4).
+// Apply is the in-Go half of a query: the conditions db.Query cannot express,
+// applied to the rows it returned, order preserved. A bare Word matches the
+// row's binding name, repo or feature as a case-insensitive substring.
 func (q Query) Apply(rows []db.RoundRow) []db.RoundRow {
 	out := make([]db.RoundRow, 0, len(rows))
 	for _, r := range rows {
@@ -28,7 +19,6 @@ func (q Query) Apply(rows []db.RoundRow) []db.RoundRow {
 	return out
 }
 
-// keep reports whether every condition in q holds for r.
 func (q Query) keep(r db.RoundRow) bool {
 	for _, w := range q.Words {
 		if !rowHasWord(r, w) {
@@ -52,14 +42,12 @@ func (q Query) keep(r db.RoundRow) bool {
 	if q.Server != "" && !strEquals(r.Server, q.Server) {
 		return false
 	}
-	if q.Mode != "" && !strEquals(r.BuilderMode, q.Mode) {
+	if q.Mode != "" && !strEquals(r.Mode, q.Mode) {
 		return false
 	}
 	return true
 }
 
-// rowHasWord reports whether word is a case-insensitive substring of the
-// row's binding name, repo or feature.
 func rowHasWord(r db.RoundRow, word string) bool {
 	w := strings.ToLower(word)
 	if strings.Contains(strings.ToLower(r.BindingName), w) {
@@ -74,7 +62,6 @@ func rowHasWord(r db.RoundRow, word string) bool {
 	return false
 }
 
-// numHolds reports whether the row satisfies one numeric condition.
 func numHolds(r db.RoundRow, n NumCond) bool {
 	switch n.Key {
 	case "cost":
@@ -100,7 +87,6 @@ func numHolds(r db.RoundRow, n NumCond) bool {
 	return true
 }
 
-// compareNum applies op, one of > < >= <= or =, to have and want.
 func compareNum(op string, have, want float64) bool {
 	switch op {
 	case ">":
@@ -117,7 +103,6 @@ func compareNum(op string, have, want float64) bool {
 	return false
 }
 
-// rowTokens sums the four token columns, treating nil as zero.
 func rowTokens(r db.RoundRow) int64 {
 	var n int64
 	for _, p := range []*int64{r.InTokens, r.CacheTokens, r.WriteTokens, r.OutTokens} {

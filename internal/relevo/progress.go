@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // signals is one tick's read of a binding's progress sources (#135). A source
@@ -26,7 +27,7 @@ func sampleSignals(ctx context.Context, rt Runtime, b store.Binding) signals {
 	var s signals
 
 	if rt.Git != nil && b.CWD != "" {
-		if fp, err := rt.Git.TreeFingerprint(ctx, b.CWD); err == nil {
+		if fp, err := rt.Git.TreeFingerprint(ctx, roundTree(rt, b)); err == nil {
 			s.tree = fp
 		}
 	}
@@ -135,12 +136,12 @@ func anySignal(b store.Binding, p *store.Progress) bool {
 func labelsOf(b store.Binding, now time.Time) (working string, stale string) {
 	switch {
 	case !b.StalledSince.IsZero():
-		working = "stalled " + AgeText(now.Sub(b.StalledSince))
+		working = "stalled " + view.AgeText(now.Sub(b.StalledSince))
 	case !b.ExploringSince.IsZero():
-		working = "exploring " + AgeText(now.Sub(b.ExploringSince))
+		working = "exploring " + view.AgeText(now.Sub(b.ExploringSince))
 	}
 	if !b.StaleSince.IsZero() {
-		stale = "stale " + AgeText(now.Sub(b.StaleSince))
+		stale = "stale " + view.AgeText(now.Sub(b.StaleSince))
 	}
 	return working, stale
 }

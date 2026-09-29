@@ -10,9 +10,7 @@ import (
 	"testing"
 )
 
-// shExit runs script under sh and returns its *exec.ExitError with whatever
-// it printed on stdout. sh is fine here: every CI image has it, and this is
-// the test, not a harness (#370, spec §4.1).
+// shExit runs script under sh and returns its *exec.ExitError and stdout.
 func shExit(t *testing.T, script string) (*exec.ExitError, []byte) {
 	t.Helper()
 	out, err := exec.Command("sh", "-c", script).Output()
@@ -23,12 +21,8 @@ func shExit(t *testing.T, script string) (*exec.ExitError, []byte) {
 	return ee, out
 }
 
-// TestClassifyPS is the table for psInfo's decision (#370, spec §4.1): the
-// one shape that means "no such pid", and every shape that must stay an
-// error so a caller treats the process as alive this tick.
-//
-// Mutation check: make the signalled branch return psNoProcess and the case
-// "a signalled ps is transient" fails.
+// TestClassifyPS pins the one shape that means "no such pid" and every shape
+// that must stay an error, so a caller treats the process as alive this tick.
 func TestClassifyPS(t *testing.T) {
 	ee1, out1 := shExit(t, "exit 1")                     // procps's "no such pid": exit 1, nothing on stdout
 	ee1b, out1b := shExit(t, "echo nope; exit 1")        // exit 1 with output: not "no such pid"

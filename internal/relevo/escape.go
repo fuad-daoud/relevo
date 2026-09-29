@@ -56,6 +56,11 @@ func escapeOutcome(treeUnchanged, repoDirty, hasReport bool) EscapeOutcome {
 //     in a bare repo)
 //   - otherwise                  -> true
 func escapeApplies(b store.Binding) bool {
+	if b.Shape == store.ShapeReader {
+		// A reader never touches b.CWD: it runs in a scratch copy, so a dirty
+		// binding tree next to it says nothing about an escape.
+		return false
+	}
 	if !b.Builder.Headless() {
 		return false
 	}
@@ -107,10 +112,10 @@ func escapeCheck(ctx context.Context, rt Runtime, b store.Binding, hasReport boo
 }
 
 // escapeDiagnosis is the halt message for an EscapeHalt outcome: it names
-// both directories and the log, so the human reading NEEDS YOU has enough
-// to go straight to the evidence.
+// both directories and the transcript command, so the human reading NEEDS YOU
+// has enough to go straight to the evidence.
 func escapeDiagnosis(b store.Binding, codeText string) string {
 	return fmt.Sprintf(
 		"%s: builder exited (code %s) without a report; worktree %s unchanged since the round began while %s is dirty -- the builder likely worked outside its tree; see %s",
-		b.Name, codeText, b.CWD, b.Repo, b.Builder.LogPath)
+		b.Name, codeText, b.CWD, b.Repo, showCommand(b.Name, b.Round, "transcript"))
 }

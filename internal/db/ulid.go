@@ -5,14 +5,11 @@ import (
 	"time"
 )
 
-// crockford is the Crockford base32 alphabet ULIDs use: no I, L, O, U, to
-// avoid confusion with 1 and 0.
+// crockford is the Crockford base32 alphabet ULIDs use: no I, L, O or U.
 const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-// NewID mints a 26-character Crockford base32 ULID: a 48-bit millisecond
-// UNIX timestamp followed by 80 bits of crypto/rand randomness. Two ids
-// minted in the same millisecond are not guaranteed to sort in mint order;
-// only the millisecond ordering is guaranteed.
+// NewID mints a 26-character Crockford base32 ULID from the millisecond clock
+// and 80 random bits; only millisecond order is guaranteed, not mint order.
 func NewID() string {
 	var id [16]byte
 
@@ -25,18 +22,13 @@ func NewID() string {
 	id[5] = byte(ms)
 
 	if _, err := rand.Read(id[6:]); err != nil {
-		// crypto/rand.Read only fails when the OS entropy source is
-		// unavailable, which leaves the process unable to do anything
-		// trustworthy anyway.
+		// Only an unusable OS entropy source fails here.
 		panic("db: crypto/rand: " + err.Error())
 	}
 
 	return encodeULID(id)
 }
 
-// encodeULID packs 16 bytes (128 bits) into 26 Crockford base32 characters
-// (130 bits: the top 2 bits of the first character are always zero). This is
-// the standard ULID bit layout.
 func encodeULID(id [16]byte) string {
 	var out [26]byte
 

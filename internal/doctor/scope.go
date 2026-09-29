@@ -5,32 +5,28 @@ import (
 	"strings"
 )
 
-// ScopeBlock is one policy scope block whose allowed_cpus asks relevo to pin a
-// round per core (#314). Key is the block-qualified field name the row's
-// messages use ("scope.allowed_cpus" or "serve.scope.allowed_cpus"), and MaxCPU
-// is the highest core AllowedCPUs names. The caller computes MaxCPU with
-// policy.ParseCPUList, so this package never imports policy.
+// ScopeBlock is one policy scope block whose allowed_cpus asks relevo to pin
+// a round per core. Key is the block-qualified field name the row's messages
+// use ("scope.allowed_cpus" or "serve.scope.allowed_cpus"); MaxCPU is the
+// highest core AllowedCPUs names (the caller computes it with
+// policy.ParseCPUList, so this package never imports policy).
 type ScopeBlock struct {
 	Key         string
 	AllowedCPUs string
 	MaxCPU      int
 }
 
-// UserManagerControllersPath is the user manager's cgroup.controllers file.
-// `relevo doctor` reads it to tell whether cpuset is delegated, because a
-// systemd that ignores an undelegated AllowedCPUs silently shows no exit code
-// anywhere else.
+// UserManagerControllersPath is the user manager's cgroup.controllers file:
+// read to tell whether cpuset is delegated, since an undelegated
+// AllowedCPUs is silently ignored elsewhere.
 func UserManagerControllersPath(uid int) string {
 	return fmt.Sprintf("/sys/fs/cgroup/user.slice/user-%d.slice/user@%d.service/cgroup.controllers", uid, uid)
 }
 
-// ScopeChecks checks every scope block that asks for cpu pinning (#314): the
-// user manager must have cpuset delegated, or systemd refuses or ignores
-// AllowedCPUs, and the pool must name only cores this host has.
-//
-// It returns nil when every block is empty. Each non-empty block gets one row,
-// with the precedence unreadable, then cpuset not delegated, then a core above
-// this host's count, then ok.
+// ScopeChecks checks every scope block that asks for cpu pinning: the user
+// manager must have cpuset delegated, and the pool must name only cores this
+// host has. Returns nil when every block is empty; each non-empty block gets
+// one row.
 func ScopeChecks(env Env, blocks []ScopeBlock, controllersPath string, ncpu int) []Check {
 	nonEmpty := blocks[:0:0]
 	for _, b := range blocks {
@@ -69,8 +65,7 @@ func ScopeChecks(env Env, blocks []ScopeBlock, controllersPath string, ncpu int)
 	return checks
 }
 
-// rowName is the check row's Name for a block-qualified key: the key with its
-// "scope" segment dropped, so "scope.allowed_cpus" -> "allowed_cpus" and
+// rowName drops key's "scope" segment: "scope.allowed_cpus" -> "allowed_cpus",
 // "serve.scope.allowed_cpus" -> "serve.allowed_cpus".
 func rowName(key string) string {
 	parts := strings.Split(key, ".")
@@ -84,7 +79,6 @@ func rowName(key string) string {
 	return strings.Join(out, ".")
 }
 
-// hasField reports whether the cgroup.controllers text names field.
 func hasField(raw []byte, field string) bool {
 	for _, f := range strings.Fields(string(raw)) {
 		if f == field {

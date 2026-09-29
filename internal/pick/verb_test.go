@@ -3,8 +3,8 @@ package pick
 import (
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // TestRowsForFiltersPerVerb pins the spec §4 table.
@@ -13,12 +13,12 @@ func TestRowsForFiltersPerVerb(t *testing.T) {
 	// report. A row with Display "DONE" and no State cannot occur, so the
 	// fixture sets both -- round 1 set only Display and the test could not
 	// pass against the real HideDone.
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+	rep := view.Report{Bindings: []view.BindingStatus{
 		{Name: "active", State: string(store.StateActive), Display: "ACTIVE", BuilderStatus: "working"},
 		{Name: "blocked", State: string(store.StateNeedsYou), Display: "NEEDS YOU", BuilderStatus: "blocked"},
 		{Name: "finished", State: string(store.StateDone), Display: "DONE", BuilderStatus: "idle"},
 	}}
-	names := func(rows []relevo.BindingStatus) []string {
+	names := func(rows []view.BindingStatus) []string {
 		var out []string
 		for _, r := range rows {
 			out = append(out, r.Name)

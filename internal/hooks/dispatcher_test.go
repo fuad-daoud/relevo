@@ -73,9 +73,6 @@ func (m *mockExecutor) assertNoCalls(t *testing.T, wait time.Duration) {
 	}
 }
 
-// TestLocalDispatcher_Dispatch_Routing pins D4's port: the dispatcher runs the
-// argv lists configured for the event type, in order, and nothing for an
-// event type with no entry. The old form scanned <type>.d directories.
 func TestLocalDispatcher_Dispatch_Routing(t *testing.T) {
 	first := []string{"/bin/hook-one", "--flag", "value"}
 	second := []string{"/bin/hook-two"}

@@ -7,15 +7,9 @@ import (
 	"strings"
 	"time"
 
-	// The driver is imported here as well as in db.go so a constraint
-	// violation can be told from a busy database by its result code. Both
-	// imports are inside this package, which db.go's header names as the one
-	// place that knows the driver.
 	"modernc.org/sqlite"
 )
 
-// nullableString turns a nullable Go pointer into a driver value: nil for a
-// nil pointer, the pointed-to value otherwise.
 func nullableString(s *string) any {
 	if s == nil {
 		return nil
@@ -59,8 +53,8 @@ func boolToInt(b bool) int {
 }
 
 // UpsertRepo inserts or updates r by its natural key: origin_url when set,
-// else common_dir. A hit fills the other column when it is null in the db
-// and set on r, and returns the existing id.
+// else common_dir. A hit fills the other column when it is null in the db and
+// set on r.
 func (t *Tx) UpsertRepo(r Repo) (string, error) {
 	switch {
 	case r.OriginURL != nil:
@@ -74,7 +68,7 @@ func (t *Tx) UpsertRepo(r Repo) (string, error) {
 
 func (t *Tx) upsertRepoBy(col, val string, r Repo) (string, error) {
 	var id string
-	var originURL, commonDir sql.NullString
+	var originURL, commonDir sql.Null[string]
 	err := t.queryRow(`SELECT id, origin_url, common_dir FROM repo WHERE `+col+` = ?`, val).
 		Scan(&id, &originURL, &commonDir)
 	if err == nil {
@@ -106,18 +100,14 @@ func (t *Tx) upsertRepoBy(col, val string, r Repo) (string, error) {
 	return id, nil
 }
 
-// UpsertPlanner inserts or updates p by its natural key: (harness_kind,
-// session_id). A hit updates last_seen and fills transcript_locator when it
-// is null in the db and set on p.
-//
-// When p.ID is set the record's own id wins instead (#303
-// §3.5): relevo's planner records are keyed by the id `relevo planner init`
-// minted, so ingest upserts by id and the natural key stays as the uniqueness
-// guard. A (harness_kind, session_id) another id already holds is refused with
-// ErrInvalid rather than silently merging two identities.
-func (t *Tx) UpsertPlanner(p Planner) (string, error) {
+// UpsertMasterMind inserts or updates p by its natural key: (harness_kind,
+// session_id). When p.ID is set the record's own id wins instead: ingest
+// upserts by the id `relevo mastermind init` minted, and the natural key stays as
+// the uniqueness guard. A (harness_kind, session_id) another id already holds
+// is refused with ErrInvalid rather than silently merging two identities.
+func (t *Tx) UpsertMasterMind(p MasterMind) (string, error) {
 	if p.HarnessKind == "" || p.SessionID == "" {
-		return "", fmt.Errorf("db: upsert planner: HarnessKind and SessionID are required: %w", ErrInvalid)
+		return "", fmt.Errorf("db: upsert mastermind: HarnessKind and SessionID are required: %w", ErrInvalid)
 	}
 
 	lastSeen := p.LastSeen
@@ -126,31 +116,31 @@ func (t *Tx) UpsertPlanner(p Planner) (string, error) {
 	}
 
 	if p.ID != "" {
-		return t.upsertPlannerByID(p, lastSeen)
+		return t.upsertMasterMindByID(p, lastSeen)
 	}
 
 	var id string
-	var locator sql.NullString
-	err := t.queryRow(`SELECT id, transcript_locator FROM planner WHERE harness_kind = ? AND session_id = ?`,
+	var locator sql.Null[string]
+	err := t.queryRow(`SELECT id, transcript_locator FROM mastermind WHERE harness_kind = ? AND session_id = ?`,
 		p.HarnessKind, p.SessionID).Scan(&id, &locator)
 	if err == nil {
-		// The locator updates only when p now carries one; otherwise the
-		// db's existing value (if any) is kept, not cleared.
+		// The locator updates only when p now carries one; otherwise the db's
+		// existing value (if any) is kept, not cleared.
 		var locatorArg any
 		if locator.Valid {
-			locatorArg = locator.String
+			locatorArg = locator.V
 		}
 		if p.TranscriptLocator != nil {
 			locatorArg = *p.TranscriptLocator
 		}
-		if _, err := t.exec(`UPDATE planner SET last_seen = ?, transcript_locator = ? WHERE id = ?`,
+		if _, err := t.exec(`UPDATE mastermind SET last_seen = ?, transcript_locator = ? WHERE id = ?`,
 			formatTime(lastSeen), locatorArg, id); err != nil {
-			return "", fmt.Errorf("db: upsert planner: update: %w", mapBusy(err))
+			return "", fmt.Errorf("db: upsert mastermind: update: %w", mapBusy(err))
 		}
 		return id, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("db: upsert planner: select: %w", mapBusy(err))
+		return "", fmt.Errorf("db: upsert mastermind: select: %w", mapBusy(err))
 	}
 
 	id = NewID()
@@ -158,25 +148,20 @@ func (t *Tx) UpsertPlanner(p Planner) (string, error) {
 	if firstSeen.IsZero() {
 		firstSeen = lastSeen
 	}
-	if _, err := t.exec(`INSERT INTO planner (id, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)`,
+	if _, err := t.exec(`INSERT INTO mastermind (id, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)`,
 		id, p.HarnessKind, p.SessionID, nullableString(p.TranscriptLocator), formatTime(firstSeen), formatTime(lastSeen)); err != nil {
-		return "", fmt.Errorf("db: upsert planner: insert: %w", mapBusy(err))
+		return "", fmt.Errorf("db: upsert mastermind: insert: %w", mapBusy(err))
 	}
 	return id, nil
 }
 
-// upsertPlannerByID inserts or updates one planner by its own id: a hit
-// rewrites harness_kind, session_id and last_seen, and transcript_locator only
-// when p carries one; a miss inserts with that id. The natural-key unique index
-// still applies, so a conflicting (harness_kind, session_id) under another id
-// is refused with an error wrapping ErrInvalid.
-func (t *Tx) upsertPlannerByID(p Planner, lastSeen time.Time) (string, error) {
-	if err := t.assertPlannerKeyFree(p.ID, p.HarnessKind, p.SessionID); err != nil {
+func (t *Tx) upsertMasterMindByID(p MasterMind, lastSeen time.Time) (string, error) {
+	if err := t.assertMasterMindKeyFree(p.ID, p.HarnessKind, p.SessionID); err != nil {
 		return "", err
 	}
 
 	var existing string
-	err := t.queryRow(`SELECT id FROM planner WHERE id = ?`, p.ID).Scan(&existing)
+	err := t.queryRow(`SELECT id FROM mastermind WHERE id = ?`, p.ID).Scan(&existing)
 	switch {
 	case err == nil:
 		set := []string{"harness_kind = ?", "session_id = ?", "last_seen = ?"}
@@ -186,8 +171,8 @@ func (t *Tx) upsertPlannerByID(p Planner, lastSeen time.Time) (string, error) {
 			args = append(args, *p.TranscriptLocator)
 		}
 		args = append(args, p.ID)
-		if _, uerr := t.exec(`UPDATE planner SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...); uerr != nil {
-			return "", fmt.Errorf("db: upsert planner by id: update: %w", mapPlannerKey(uerr))
+		if _, uerr := t.exec(`UPDATE mastermind SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...); uerr != nil {
+			return "", fmt.Errorf("db: upsert mastermind by id: update: %w", mapMasterMindKey(uerr))
 		}
 		return p.ID, nil
 	case errors.Is(err, sql.ErrNoRows):
@@ -195,59 +180,55 @@ func (t *Tx) upsertPlannerByID(p Planner, lastSeen time.Time) (string, error) {
 		if firstSeen.IsZero() {
 			firstSeen = lastSeen
 		}
-		if _, ierr := t.exec(`INSERT INTO planner (id, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)`,
+		if _, ierr := t.exec(`INSERT INTO mastermind (id, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)`,
 			p.ID, p.HarnessKind, p.SessionID, nullableString(p.TranscriptLocator),
 			formatTime(firstSeen), formatTime(lastSeen)); ierr != nil {
-			return "", fmt.Errorf("db: upsert planner by id: insert: %w", mapPlannerKey(ierr))
+			return "", fmt.Errorf("db: upsert mastermind by id: insert: %w", mapMasterMindKey(ierr))
 		}
 		return p.ID, nil
 	default:
-		return "", fmt.Errorf("db: upsert planner by id: select: %w", mapBusy(err))
+		return "", fmt.Errorf("db: upsert mastermind by id: select: %w", mapBusy(err))
 	}
 }
 
-// assertPlannerKeyFree refuses to hand one (harness_kind, session_id) to a
-// second id. The natural-key index would refuse it too; checking here turns
-// the driver's own text into the ErrInvalid the caller is promised.
-func (t *Tx) assertPlannerKeyFree(id, kind, session string) error {
+// assertMasterMindKeyFree refuses to hand one (harness_kind, session_id) to a
+// second id, so the failure surfaces as ErrInvalid.
+func (t *Tx) assertMasterMindKeyFree(id, kind, session string) error {
 	var other string
-	err := t.queryRow(`SELECT id FROM planner WHERE harness_kind = ? AND session_id = ?`, kind, session).Scan(&other)
+	err := t.queryRow(`SELECT id FROM mastermind WHERE harness_kind = ? AND session_id = ?`, kind, session).Scan(&other)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("db: upsert planner by id: select natural key: %w", mapBusy(err))
+		return fmt.Errorf("db: upsert mastermind by id: select natural key: %w", mapBusy(err))
 	}
 	if other == id {
 		return nil
 	}
-	return fmt.Errorf("db: upsert planner by id: (harness_kind, session_id) is held by planner %q: %w", other, ErrInvalid)
+	return fmt.Errorf("db: upsert mastermind by id: (harness_kind, session_id) is held by mastermind %q: %w", other, ErrInvalid)
 }
 
-// sqliteConstraint is SQLITE_CONSTRAINT, sqlite's result code for a failed
-// constraint. A UNIQUE index violation reports it, possibly with an extended
-// code, which is why mapPlannerKey masks the low byte.
+// sqliteConstraint is SQLITE_CONSTRAINT. A UNIQUE index violation reports it
+// possibly with an extended code, which is why mapMasterMindKey masks the low
+// byte.
 const sqliteConstraint = 19
 
-// mapPlannerKey turns a sqlite constraint violation into ErrInvalid, so a
-// natural-key conflict reaching the write still surfaces as the error §3.5
-// promises the caller.
-func mapPlannerKey(err error) error {
+// mapMasterMindKey turns a sqlite constraint violation into ErrInvalid.
+func mapMasterMindKey(err error) error {
 	if err == nil {
 		return nil
 	}
 	var sqliteErr *sqlite.Error
 	if errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqliteConstraint {
-		return fmt.Errorf("planner (harness_kind, session_id) already exists: %w", ErrInvalid)
+		return fmt.Errorf("mastermind (harness_kind, session_id) already exists: %w", ErrInvalid)
 	}
 	if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-		return fmt.Errorf("planner (harness_kind, session_id) already exists: %w", ErrInvalid)
+		return fmt.Errorf("mastermind (harness_kind, session_id) already exists: %w", ErrInvalid)
 	}
 	return mapBusy(err)
 }
 
 // UpsertBinding inserts or updates b by its natural key: (name, created_at).
-// A hit updates every mutable column.
 func (t *Tx) UpsertBinding(b Binding) (string, error) {
 	if b.Name == "" {
 		return "", fmt.Errorf("db: upsert binding: Name: %w", ErrInvalid)
@@ -264,11 +245,12 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 	var id string
 	err := t.queryRow(`SELECT id FROM binding WHERE name = ? AND created_at = ?`, b.Name, createdAt).Scan(&id)
 	if err == nil {
-		if _, uerr := t.exec(`UPDATE binding SET repo_id=?, planner_id=?, feature=?, forked_from_binding_id=?,
+		if _, uerr := t.exec(`UPDATE binding SET repo_id=?, mastermind_id=?, feature=?, ticket=?, forked_from_binding_id=?,
 				forked_from_round=?, cwd=?, worktree=?, branch=?, base_commit=?, tier=?, gate=?,
 				builder_mode=?, server=?, final_state=?, archived_at=?, archive_path=?, ingest_source=?
 			WHERE id=?`,
-			nullableString(b.RepoID), nullableString(b.PlannerID), nullableString(b.Feature),
+			nullableString(b.RepoID), nullableString(b.MasterMindID), nullableString(b.Feature),
+			nullableString(b.Ticket),
 			nullableString(b.ForkedFromBindingID), nullableInt(b.ForkedFromRound),
 			b.CWD, nullableString(b.Worktree), nullableString(b.Branch), nullableString(b.BaseCommit),
 			nullableString(b.Tier), nullableString(b.Gate), b.BuilderMode, nullableString(b.Server),
@@ -283,11 +265,12 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 	}
 
 	id = NewID()
-	if _, err := t.exec(`INSERT INTO binding (id, name, repo_id, planner_id, feature, forked_from_binding_id,
+	if _, err := t.exec(`INSERT INTO binding (id, name, repo_id, mastermind_id, feature, ticket, forked_from_binding_id,
 			forked_from_round, cwd, worktree, branch, base_commit, tier, gate, builder_mode, server,
 			created_at, final_state, archived_at, archive_path, ingest_source)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, b.Name, nullableString(b.RepoID), nullableString(b.PlannerID), nullableString(b.Feature),
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, b.Name, nullableString(b.RepoID), nullableString(b.MasterMindID), nullableString(b.Feature),
+		nullableString(b.Ticket),
 		nullableString(b.ForkedFromBindingID), nullableInt(b.ForkedFromRound),
 		b.CWD, nullableString(b.Worktree), nullableString(b.Branch), nullableString(b.BaseCommit),
 		nullableString(b.Tier), nullableString(b.Gate), b.BuilderMode, nullableString(b.Server),
@@ -299,7 +282,6 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 }
 
 // UpsertRound inserts or updates r by its natural key: (binding_id, number).
-// A hit updates every column.
 func (t *Tx) UpsertRound(r Round) (string, error) {
 	if r.BindingID == "" {
 		return "", fmt.Errorf("db: upsert round: BindingID: %w", ErrInvalid)
@@ -307,19 +289,23 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 	if !ValidOutcome(r.Outcome) {
 		return "", fmt.Errorf("db: upsert round: Outcome: %w", ErrInvalid)
 	}
+	// An empty actor is the builder actor, the column's own default and the seeded actor.
+	if r.Actor == "" {
+		r.Actor = "builder"
+	}
 
 	var id string
 	err := t.queryRow(`SELECT id FROM round WHERE binding_id = ? AND number = ?`, r.BindingID, r.Number).Scan(&id)
 	if err == nil {
-		if _, uerr := t.exec(`UPDATE round SET started_at=?, closed_at=?, outcome=?, builder_candidate=?,
-				builder_harness=?, builder_provider=?, builder_model=?, builder_mode=?, tier=?,
+		if _, uerr := t.exec(`UPDATE round SET started_at=?, closed_at=?, outcome=?, candidate=?,
+				harness=?, provider=?, model=?, mode=?, actor=?, tier=?,
 				commits=?, tree=?, gate_result=?, gate_exit=?, gate_duration_ms=?,
 				in_tokens=?, cache_tokens=?, write_tokens=?, out_tokens=?, cost_usd=?, cost_basis=?,
 				report_outcome=?, switches=?
 			WHERE id=?`,
-			formatTime(r.StartedAt), nullableTime(r.ClosedAt), r.Outcome, nullableString(r.BuilderCandidate),
-			nullableString(r.BuilderHarness), nullableString(r.BuilderProvider), nullableString(r.BuilderModel),
-			nullableString(r.BuilderMode), nullableString(r.Tier),
+			formatTime(r.StartedAt), nullableTime(r.ClosedAt), r.Outcome, nullableString(r.Candidate),
+			nullableString(r.Harness), nullableString(r.Provider), nullableString(r.Model),
+			nullableString(r.Mode), r.Actor, nullableString(r.Tier),
 			nullableInt(r.Commits), nullableString(r.Tree), nullableString(r.GateResult), nullableInt(r.GateExit),
 			nullableInt64(r.GateDurationMS),
 			nullableInt64(r.InTokens), nullableInt64(r.CacheTokens), nullableInt64(r.WriteTokens), nullableInt64(r.OutTokens),
@@ -340,14 +326,14 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 		startedAt = time.Now()
 	}
 	if _, err := t.exec(`INSERT INTO round (id, binding_id, number, started_at, closed_at, outcome,
-			builder_candidate, builder_harness, builder_provider, builder_model, builder_mode, tier,
+			candidate, harness, provider, model, mode, actor, tier,
 			commits, tree, gate_result, gate_exit, gate_duration_ms,
 			in_tokens, cache_tokens, write_tokens, out_tokens, cost_usd, cost_basis,
 			report_outcome, switches)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, r.BindingID, r.Number, formatTime(startedAt), nullableTime(r.ClosedAt), r.Outcome,
-		nullableString(r.BuilderCandidate), nullableString(r.BuilderHarness), nullableString(r.BuilderProvider),
-		nullableString(r.BuilderModel), nullableString(r.BuilderMode), nullableString(r.Tier),
+		nullableString(r.Candidate), nullableString(r.Harness), nullableString(r.Provider),
+		nullableString(r.Model), nullableString(r.Mode), r.Actor, nullableString(r.Tier),
 		nullableInt(r.Commits), nullableString(r.Tree), nullableString(r.GateResult), nullableInt(r.GateExit),
 		nullableInt64(r.GateDurationMS),
 		nullableInt64(r.InTokens), nullableInt64(r.CacheTokens), nullableInt64(r.WriteTokens), nullableInt64(r.OutTokens),
@@ -359,7 +345,7 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 }
 
 // AppendEvents inserts every event not already present, keyed on
-// (binding_id, seq); known seqs are ignored. It returns how many were added.
+// (binding_id, seq), and returns how many were added.
 func (t *Tx) AppendEvents(bindingID string, evs []Event) (int, error) {
 	added := 0
 	for _, e := range evs {
@@ -385,8 +371,6 @@ func (t *Tx) AppendEvents(bindingID string, evs []Event) (int, error) {
 	return added, nil
 }
 
-// UpsertArtifact inserts or updates a by its natural key: (round_id, kind,
-// consult_id), with a nil ConsultID treated as "".
 func (t *Tx) UpsertArtifact(a Artifact) error {
 	if !ValidArtifactKind(a.Kind) {
 		return fmt.Errorf("db: upsert artifact: Kind: %w", ErrInvalid)
@@ -423,10 +407,9 @@ func (t *Tx) UpsertArtifact(a Artifact) error {
 	return nil
 }
 
-// DeleteArtifact removes the artifact row with this id. Deleting an id that
-// is not there is not an error: the caller may be applying a plan built
-// against a database that has since lost the row, and the end state it wants
-// -- no such row -- already holds.
+// DeleteArtifact removes the artifact row with this id. A missing id is not an
+// error: the caller may be applying a plan built against a database that has
+// since lost the row, and the end state it wants already holds.
 func (t *Tx) DeleteArtifact(id string) error {
 	if _, err := t.exec(`DELETE FROM artifact WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("db: delete artifact %s: %w", id, mapBusy(err))
@@ -434,12 +417,9 @@ func (t *Tx) DeleteArtifact(id string) error {
 	return nil
 }
 
-// DeleteRoundTranscript removes every transcript row of one mirror round:
-// owner_kind = 'round' and owner_id = roundID. It returns how many rows went.
-//
-// The owner kind is hard-coded to OwnerRound, not taken from the caller, so
-// this function cannot delete a planner transcript (owner_kind = 'planner')
-// even if it is handed a planner's id.
+// DeleteRoundTranscript removes every transcript row of one mirror round and
+// returns how many rows went. The owner kind is hard-coded to OwnerRound, so
+// this cannot delete a mastermind transcript even if handed a mastermind's id.
 func (t *Tx) DeleteRoundTranscript(roundID string) (int64, error) {
 	res, err := t.exec(`DELETE FROM transcript WHERE owner_kind = ? AND owner_id = ?`, OwnerRound, roundID)
 	if err != nil {
@@ -453,8 +433,7 @@ func (t *Tx) DeleteRoundTranscript(roundID string) (int64, error) {
 }
 
 // AppendTranscript inserts every record not already present, keyed on
-// (owner_kind, owner_id, seq); known seqs are ignored. It returns how many
-// were added.
+// (owner_kind, owner_id, seq), and returns how many were added.
 func (t *Tx) AppendTranscript(ownerKind, ownerID string, recs []TranscriptRecord) (int, error) {
 	if !ValidOwnerKind(ownerKind) {
 		return 0, fmt.Errorf("db: append transcript: OwnerKind: %w", ErrInvalid)
@@ -482,11 +461,8 @@ func (t *Tx) AppendTranscript(ownerKind, ownerID string, recs []TranscriptRecord
 }
 
 // LinkEvents sets round_id = roundID on every event of bindingID whose
-// round_id is still null and whose seq is in seqs. The ingester calls this
-// once a round's row exists (its id is not known when events are appended,
-// which happens first) -- and it is safe to call again on a later tick,
-// since the WHERE round_id IS NULL clause makes an already-linked row a
-// no-op rather than overwriting it.
+// round_id is still null and whose seq is in seqs. The WHERE round_id IS NULL
+// clause makes a second call a no-op rather than overwriting the link.
 func (t *Tx) LinkEvents(bindingID, roundID string, seqs []int) error {
 	if roundID == "" {
 		return fmt.Errorf("db: link events: RoundID: %w", ErrInvalid)
@@ -511,7 +487,6 @@ func (t *Tx) LinkEvents(bindingID, roundID string, seqs []int) error {
 	return nil
 }
 
-// SaveCursor inserts or replaces c by its natural key: source.
 func (t *Tx) SaveCursor(c Cursor) error {
 	if c.Source == "" {
 		return fmt.Errorf("db: save cursor: Source: %w", ErrInvalid)
@@ -541,11 +516,11 @@ func (d *DB) UpsertRepo(r Repo) (string, error) {
 	return id, err
 }
 
-func (d *DB) UpsertPlanner(p Planner) (string, error) {
+func (d *DB) UpsertMasterMind(p MasterMind) (string, error) {
 	var id string
 	err := d.Tx(func(t *Tx) error {
 		var err error
-		id, err = t.UpsertPlanner(p)
+		id, err = t.UpsertMasterMind(p)
 		return err
 	})
 	return id, err

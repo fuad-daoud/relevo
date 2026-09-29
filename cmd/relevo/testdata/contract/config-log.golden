@@ -1,0 +1,60 @@
+[
+  {
+    "rev": 2,
+    "at": "<TIME>",
+    "source": "migration",
+    "message": "roles → actors",
+    "version": 4,
+    "changes": [
+      {
+        "path": "candidates[0].roles",
+        "op": "remove",
+        "before": [
+          "builder"
+        ]
+      },
+      {
+        "path": "actors",
+        "op": "add",
+        "after": {
+          "builder": {
+            "agent": "plan-executor",
+            "candidates": [
+              "m"
+            ]
+          },
+          "researcher": {
+            "agent": "researcher"
+          },
+          "reviewer": {
+            "agent": "reviewer"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "rev": 1,
+    "at": "<TIME>",
+    "source": "cli",
+    "message": "config set candidates",
+    "version": 1,
+    "changes": [
+      {
+        "path": "candidates",
+        "op": "add",
+        "after": [
+          {
+            "harness": "claude",
+            "model": "m",
+            "name": "m",
+            "provider": "p",
+            "roles": [
+              "builder"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

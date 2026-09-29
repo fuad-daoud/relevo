@@ -1,0 +1,34 @@
+  ◆ relevo    candidates                                                                                       v0.13.0-28    14:02  
+                                                                                                                                    
+   7 candidates   3 ready   4 gated                                                                                  sort pick order
+                                                                                                                                    
+   CANDIDATE                         HARNESS   PROVIDER    MODEL                                SERVES                  STATUS      
+   gemini-3.8-flash-high             agy       google      gemini-3.8-flash-high                builder 1               gated       
+   claude-sonnet-4-6                 agy       agy-extra   claude-sonnet-4-6                    builder 2               gated 20h   
+   deepseek-v4.1-fl╭─ edit deepseek-v4.1-flash ─────────────────────────────────────────────────────────────────╮       gated 1d    
+   gpt-5.6-terra   │                                                                                            │wer 2  gated 24d   
+   sonnet          │ harness     agy    claude    codex    opencode                                             │wer 1  ready       
+   glm-5.3-flash   │                                                                                            │       ready       
+   haiku           │ provider   cline-pass                                                                      │       ready       
+                   │             openrouter    cline-pass                                                       │                   
+                   │                                                                                            │                   
+   deepseek-v4.1-fl│ model      cline-pass/deepseek-v4.2-flash#high                                             │                   
+   gated since 14:0│                                                                                            │                   
+   the builder's th│ name       deepseek-v4.2-flash   was deepseek-v4.1-flash · still builder 3                 │                   
+                   │                                                                                            │                   
+                   │ cline-pass is gated until Sep 18 14:02                                                     │                   
+                   │ the gate is the provider's, so the new model stays gated                                   │                   
+                   │                                                                                            │                   
+                   │  enter  save       tab  next field       esc  cancel                                       │                   
+                   ╰────────────────────────────────────────────────────────────────────────────────────────────╯                   
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ enter  save      tab  next field      esc  cancel                                                                                  

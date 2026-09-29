@@ -6,11 +6,9 @@ import (
 	"testing"
 )
 
-// TestGitNoFsmonitorEnv pins #378's entry rule: which index the fsmonitor
-// entry takes, and the count that makes git read it. The index continues the
-// count already in force -- spec.Env first, then the parent, else 0 -- so an
-// inherited GIT_CONFIG_COUNT is respected rather than shadowed; a
-// non-numeric count is 0. Inputs are never mutated.
+// TestGitNoFsmonitorEnv pins which index the entry takes and the count that
+// makes git read it: the count already in force, extra first, then parent, with
+// a non-numeric count as 0. Inputs are never mutated.
 func TestGitNoFsmonitorEnv(t *testing.T) {
 	cases := []struct {
 		name   string

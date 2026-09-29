@@ -13,49 +13,20 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestIngestStoreSourceFillsTheMirror is P3a §8 step 4's test: a binding held
-// in the store's database ingests into the mirror exactly as the same fixture
-// did through DirSource -- a binding row and its event rows -- even though
+// TestIngestStoreSourceFillsTheMirror pins that a binding held in the store's
+// database ingests exactly as the same fixture did through DirSource, though
 // bind.json and log.jsonl no longer exist as files.
 func TestIngestStoreSourceFillsTheMirror(t *testing.T) {
 	ctx := context.Background()
 	deps := Deps{Now: func() time.Time { return time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC) }}
 
-	// DirSource over a fresh copy of the fixture, for the baseline mirror.
 	dir := copyFixture(t)
 	dirDB := openTestDB(t)
 	if _, err := Ingest(ctx, DirSource(dir), dirDB, deps); err != nil {
 		t.Fatalf("Ingest(DirSource): %v", err)
 	}
 
-	// The same fixture adopted into a store root, so the store's database is
-	// the binding's home and bind.json/log.jsonl are gone.
-	root := t.TempDir()
-	st := store.New(root)
-	if err := os.MkdirAll(st.Dir("fixture"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(st.Dir("fixture"), e.Name()), data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := st.Load("fixture"); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	for _, base := range []string{"bind.json", "log.jsonl"} {
-		if _, err := os.Stat(filepath.Join(st.Dir("fixture"), base)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("%s is still a file after the import: %v", base, err)
-		}
-	}
+	st := adoptIntoStore(t, dir)
 
 	storeDB := openTestDB(t)
 	if _, err := Ingest(ctx, StoreSource(st, "fixture"), storeDB, deps); err != nil {
@@ -76,10 +47,7 @@ func TestIngestStoreSourceFillsTheMirror(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Events(store): %v", err)
 	}
-	if len(storeEvents) == 0 {
-		t.Fatal("StoreSource ingested no event rows")
-	}
-	if len(storeEvents) != len(dirEvents) {
+	if len(storeEvents) == 0 || len(storeEvents) != len(dirEvents) {
 		t.Fatalf("StoreSource ingested %d events, DirSource %d", len(storeEvents), len(dirEvents))
 	}
 	for i := range storeEvents {
@@ -95,10 +63,42 @@ func TestIngestStoreSourceFillsTheMirror(t *testing.T) {
 	}
 }
 
-// entryOf decodes an event's entry_json to the fields both sources must agree
-// on. The bytes differ by construction -- DirSource passes the file's line
-// through and StoreSource re-marshals a decoded LogEntry -- so the test
-// compares meaning, not bytes.
+// adoptIntoStore seeds dir's binding into a fresh store root's database and
+// removes bind.json/log.jsonl, so the store's database becomes the binding's
+// home and the files no longer exist.
+func adoptIntoStore(t *testing.T, dir string) *store.Store {
+	t.Helper()
+	st := store.New(t.TempDir())
+	if err := os.MkdirAll(st.Dir("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(st.Dir("fixture"), e.Name()), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedStoreRecord(t, st, "fixture", st.Dir("fixture"))
+	for _, base := range []string{"bind.json", "log.jsonl"} {
+		if err := os.Remove(filepath.Join(st.Dir("fixture"), base)); err != nil {
+			t.Fatalf("remove %s: %v", base, err)
+		}
+		if _, err := os.Stat(filepath.Join(st.Dir("fixture"), base)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s is still a file: %v", base, err)
+		}
+	}
+	return st
+}
+
+// entryOf decodes an event's entry_json to the fields both sources must agree on;
+// their bytes differ by construction, so the test compares meaning, not bytes.
 func entryOf(t *testing.T, entryJSON string) string {
 	t.Helper()
 	var e store.LogEntry

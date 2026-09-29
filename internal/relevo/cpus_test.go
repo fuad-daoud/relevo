@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -16,6 +17,8 @@ import (
 // live round holds; not ok when every core is held or the pool is empty; held
 // cores outside the pool and duplicates are ignored.
 func TestPickCPU(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		pool []int
@@ -44,6 +47,8 @@ func TestPickCPU(t *testing.T) {
 // RoundCPU but no live process and no gate blocks nothing; a nil RoundCPU is
 // excluded even with a live process or a running gate.
 func TestHeldIn(t *testing.T) {
+	t.Parallel()
+
 	zero, one := 0, 1
 	bindings := []store.Binding{
 		{Name: "self", RoundCPU: &one, Builder: store.Endpoint{PID: 42}},  // excluded: self
@@ -62,6 +67,8 @@ func TestHeldIn(t *testing.T) {
 // TestLocalHeldCPUs reads a real temp store's bindings through the caller's
 // transaction, the local census path startRound uses.
 func TestLocalHeldCPUs(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	zero, one := 0, 1
 	err := st.WithLock(func(tx *store.Tx) error {
@@ -89,6 +96,8 @@ func TestLocalHeldCPUs(t *testing.T) {
 // a JSON round trip, a binding JSON without the key decodes to nil, and a nil
 // pin is omitted.
 func TestRoundCPUJSON(t *testing.T) {
+	t.Parallel()
+
 	zero := 0
 	data, err := json.Marshal(store.Binding{Name: "x", RoundCPU: &zero})
 	if err != nil {
@@ -122,6 +131,8 @@ func TestRoundCPUJSON(t *testing.T) {
 // TestCPUPinText pins the pin string scopeFor consumes: "" when no core is
 // pinned, the decimal core otherwise -- core 0 included.
 func TestCPUPinText(t *testing.T) {
+	t.Parallel()
+
 	zero, two := 0, 2
 	cases := []struct {
 		name string
@@ -154,7 +165,7 @@ func cpuPtrText(p *int) string {
 func bindSecond(t *testing.T, rt Runtime) store.Binding {
 	t.Helper()
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "second", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo2",
+		Name: "second", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo2",
 	}); err != nil {
 		t.Fatalf("Bind second: %v", err)
 	}
@@ -169,10 +180,12 @@ func bindSecond(t *testing.T, rt Runtime) store.Binding {
 // first round takes the lowest free core and, while it is live, the second
 // takes the next one.
 func TestTwoRoundsGetDistinctCores(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b2 := bindSecond(t, rt)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-1"}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-1"}
 
 	var first, second store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -213,10 +226,12 @@ func TestTwoRoundsGetDistinctCores(t *testing.T) {
 // TestExhaustedPoolRunsOnWholePool pins #314's exhaustion rule: when every pool
 // core is held, the round runs on the whole pool with no RoundCPU.
 func TestExhaustedPoolRunsOnWholePool(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b2 := bindSecond(t, rt)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0"}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0"}
 
 	var second store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -248,9 +263,11 @@ func TestExhaustedPoolRunsOnWholePool(t *testing.T) {
 // TestRelaunchKeepsItsCore pins #314's relaunch/switch rule: a binding whose
 // RoundCPU is still in the pool and still free keeps it.
 func TestRelaunchKeepsItsCore(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-3"}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-3"}
 	one := 1
 	b.RoundCPU = &one
 
@@ -274,9 +291,11 @@ func TestRelaunchKeepsItsCore(t *testing.T) {
 // TestRoundCloseReleasesCore pins #314's release: queueReport's reset block
 // clears RoundCPU, and the next round on another binding can take that core.
 func TestRoundCloseReleasesCore(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-1"}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-1"}
 
 	var first store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -306,7 +325,7 @@ func TestRoundCloseReleasesCore(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil)
+		next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil, "")
 		if err != nil {
 			return err
 		}
@@ -340,9 +359,11 @@ func TestRoundCloseReleasesCore(t *testing.T) {
 // TestNoPoolWritesNoField pins #314's off switch: a scope with no allowed_cpus
 // leaves RoundCPU nil and the spec's AllowedCPUs empty.
 func TestNoPoolWritesNoField(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
 
 	var got store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {

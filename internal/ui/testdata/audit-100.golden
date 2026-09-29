@@ -1,0 +1,30 @@
+  ◆ relevo    audit                                                            v0.13.0-28    14:02  
+                                                                                                    
+   5 revisions   11 changes                                                        config version 16
+                                                                                                    
+   WHEN    REV  SOURCE     MESSAGE                                                        CHANGES   
+   today ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 revision   
+   01:36    #5  ui         add actor planner                                                    1   
+   yesterday ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 revision   
+   09:59    #4  cli        config set candidates                                                1   
+   mon 14 sep ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 revisions   
+   23:18    #3  migration  roles → actors                                                       2   
+   21:52    #2  migration  candidate names derived                                              7   
+   21:52    #1  baseline   config before revisions                                              0   
+                                                                                                    
+                                                                                                    
+   #4   cli · Sep 16 09:59 · config set candidates                                                  
+   ~ claude-sonnet-4-6 provider   antigravity → agy-extra                                           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+
+ enter  all changes      R  roll back to here      :  command      ?  all keys      q  quit         

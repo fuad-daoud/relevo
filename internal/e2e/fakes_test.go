@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 type promptCall struct {
@@ -22,39 +23,39 @@ type promptCall struct {
 
 type scriptRunner struct {
 	mu    sync.Mutex
-	specs []relevo.ProcSpec
+	specs []spawn.ProcSpec
 	alive bool
 }
 
-func (r *scriptRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
+func (r *scriptRunner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.specs = append(r.specs, spec)
 	r.alive = true
-	return relevo.ProcHandle{PID: 4242, StartedAt: time.Now()}, nil
+	return spawn.ProcHandle{PID: 4242, StartedAt: time.Now()}, nil
 }
 
-func (r *scriptRunner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
+func (r *scriptRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.alive, nil
 }
 
-func (r *scriptRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPath string) (int, bool) {
+func (r *scriptRunner) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath string) (int, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return 0, !r.alive
 }
 
-func (r *scriptRunner) Kill(ctx context.Context, h relevo.ProcHandle) error {
+func (r *scriptRunner) Kill(ctx context.Context, h spawn.ProcHandle, _ string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.alive = false
 	return nil
 }
 
-func (r *scriptRunner) Rusage(ctx context.Context, h relevo.ProcHandle, streamPath string) (relevo.ProcRusage, bool) {
-	return relevo.ProcRusage{}, false
+func (r *scriptRunner) Rusage(ctx context.Context, h spawn.ProcHandle, streamPath string) (spawn.ProcRusage, bool) {
+	return spawn.ProcRusage{}, false
 }
 
 func runGit(t *testing.T, dir string, args ...string) string {

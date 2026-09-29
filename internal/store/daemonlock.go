@@ -7,12 +7,10 @@ import (
 	"path/filepath"
 )
 
-// ErrDaemonRunning reports that another process already holds the daemon lock.
 var ErrDaemonRunning = errors.New("relevo daemon already running")
 
-// DaemonLock is a held daemon lock. Closing it releases the lock; so does the
-// process exiting, because flock is owned by the kernel and dropped when the
-// last descriptor closes. There is no stale lock file to reap.
+// DaemonLock is a held daemon lock. Closing it releases the lock; the kernel
+// also drops it when the process exits, so there is no stale lock file to reap.
 type DaemonLock struct {
 	f *os.File
 }
@@ -20,9 +18,9 @@ type DaemonLock struct {
 // AcquireDaemonLock takes the exclusive daemon lock, returning ErrDaemonRunning
 // if another process holds it.
 //
-// It deliberately does not take s.mu. The daemon holds this lock for its entire
-// lifetime, and s.mu serialises WithLock: holding both would deadlock every
-// state operation the daemon subsequently makes.
+// It deliberately does not take s.mu: the daemon holds this lock for its whole
+// lifetime and s.mu serialises WithLock, so holding both would deadlock every
+// state operation the daemon makes.
 func (s *Store) AcquireDaemonLock() (*DaemonLock, error) {
 	f, err := s.openDaemonLockFile()
 	if err != nil {
@@ -31,34 +29,31 @@ func (s *Store) AcquireDaemonLock() (*DaemonLock, error) {
 
 	locked, err := tryLockExclusive(f)
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("lock %s: %w", f.Name(), err)
 	}
 	if !locked {
-		f.Close()
+		_ = f.Close()
 		return nil, ErrDaemonRunning
 	}
 
 	return &DaemonLock{f: f}, nil
 }
 
-// DaemonRunning reports whether a daemon currently holds the lock. It answers
-// by trying to take the lock and releasing it again immediately, so a true
-// result means "was held a moment ago", which is all any caller can know.
+// DaemonRunning reports whether a daemon holds the lock, by trying to take it
+// and releasing it immediately.
 func (s *Store) DaemonRunning() (bool, error) {
 	f, err := s.openDaemonLockFile()
 	if err != nil {
 		return false, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	locked, err := tryLockExclusive(f)
 	if err != nil {
 		return false, fmt.Errorf("lock %s: %w", f.Name(), err)
 	}
 
-	// Granted means nobody held it, so no daemon is running. Closing f in the
-	// defer releases what we just took.
 	return !locked, nil
 }
 
@@ -75,7 +70,6 @@ func (s *Store) openDaemonLockFile() (*os.File, error) {
 	return f, nil
 }
 
-// Close releases the lock.
 func (l *DaemonLock) Close() error {
 	if l == nil || l.f == nil {
 		return nil

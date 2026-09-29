@@ -7,13 +7,17 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/capture"
+	diffpatch "github.com/fuad-daoud/relevo/internal/patch"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-const showUsage = `usage: relevo show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript|--gate|--findings ID] [--json]
+const showUsage = `usage: relevo show <name> [--round N] [--prompt|--report|--diff|--drift|--log|--transcript|--gate|--findings ID|--output|--artifacts|--artifact REL] [--json]
        relevo show <name> --diff|--drift [--stat] [--anchors]
        relevo show <name> --log [--follow] [--after N]
        relevo show <name> --owner <label|id> [--log] [--state DIR]`
@@ -30,24 +34,38 @@ func flagGiven(fs *flag.FlagSet, name string) bool {
 	return given
 }
 
+// showSectionArgs is showSectionFlags' input: which section flags were given.
+// It is a struct rather than a parameter list because the count has outgrown
+// a readable argument list.
+type showSectionArgs struct {
+	prompt, report, diff, drift bool
+	log, transcript, gate       bool
+	output, artifacts           bool
+	findingsID                  string
+	artifactRel                 string
+}
+
 // showSectionFlags counts how many section flags are set and resolves the
-// one section they name, defaulting to plan when none is given. It is a
+// one section they name, defaulting to prompt when none is given. It is a
 // pure function so a cmd/relevo test can pin "more than one is a usage
 // error" without executing the subcommand. findingsID is `--findings`'s
-// value: a non-empty id names the findings section.
-func showSectionFlags(plan, report, diff, drift, log, transcript, gate bool, findingsID string) (relevo.ShowSection, error) {
+// value: a non-empty id names the findings section. A non-empty artifactRel
+// is `--artifact`'s rel and names the artifacts section, as --artifacts does.
+func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 	sections := []struct {
 		on      bool
 		section relevo.ShowSection
 	}{
-		{plan, relevo.ShowPlan},
-		{report, relevo.ShowReport},
-		{diff, relevo.ShowDiff},
-		{drift, relevo.ShowDrift},
-		{log, relevo.ShowLog},
-		{transcript, relevo.ShowTranscript},
-		{gate, relevo.ShowGate},
-		{findingsID != "", relevo.ShowFindings},
+		{a.prompt, relevo.ShowPrompt},
+		{a.report, relevo.ShowReport},
+		{a.diff, relevo.ShowDiff},
+		{a.drift, relevo.ShowDrift},
+		{a.log, relevo.ShowLog},
+		{a.transcript, relevo.ShowTranscript},
+		{a.gate, relevo.ShowGate},
+		{a.findingsID != "", relevo.ShowFindings},
+		{a.output, relevo.ShowOutput},
+		{a.artifacts || a.artifactRel != "", relevo.ShowArtifacts},
 	}
 	var chosen relevo.ShowSection
 	n := 0
@@ -59,11 +77,11 @@ func showSectionFlags(plan, report, diff, drift, log, transcript, gate bool, fin
 	}
 	switch n {
 	case 0:
-		return relevo.ShowPlan, nil
+		return relevo.ShowPrompt, nil
 	case 1:
 		return chosen, nil
 	default:
-		return "", fmt.Errorf("only one of --plan, --report, --diff, --drift, --log, --transcript, --gate, --findings may be given")
+		return "", fmt.Errorf("only one of --prompt, --report, --diff, --drift, --log, --transcript, --gate, --findings, --output, --artifacts may be given")
 	}
 }
 
@@ -75,13 +93,16 @@ func showSectionFlags(plan, report, diff, drift, log, transcript, gate bool, fin
 func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	round := fs.Int("round", 0, "the round to read; 0 = the newest completed round")
-	plan := fs.Bool("plan", false, "show the plan (default)")
+	prompt := fs.Bool("prompt", false, "show the prompt (default)")
 	report := fs.Bool("report", false, "show the report")
 	diff := fs.Bool("diff", false, "show the round's captured diff")
 	drift := fs.Bool("drift", false, "show the round's drift patch")
 	logSection := fs.Bool("log", false, "show the round's log entries")
 	transcript := fs.Bool("transcript", false, "show the round's builder transcript")
 	gateSection := fs.Bool("gate", false, "show the round's gate log")
+	output := fs.Bool("output", false, "show the round's output file (a reader's <label>.md)")
+	artifacts := fs.Bool("artifacts", false, "show the round's artifact files")
+	artifact := fs.String("artifact", "", "show one artifact's bytes, raw: --artifact <rel>")
 	findings := fs.String("findings", "", "show a consult's findings: --findings <id>")
 	stat := fs.Bool("stat", false, "with --diff/--drift: print the summary line instead of the patch body")
 	anchors := fs.Bool("anchors", false, "with --diff/--drift: prefix each hunk and line with its path:line")
@@ -111,7 +132,12 @@ func cmdShow(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	section, serr := showSectionFlags(*plan, *report, *diff, *drift, *logSection, *transcript, *gateSection, *findings)
+	section, serr := showSectionFlags(showSectionArgs{
+		prompt: *prompt, report: *report, diff: *diff, drift: *drift,
+		log: *logSection, transcript: *transcript, gate: *gateSection,
+		output: *output, artifacts: *artifacts,
+		findingsID: *findings, artifactRel: *artifact,
+	})
 	if serr != nil {
 		// An --owner invocation is the moved serve show body, so its section
 		// conflict keeps that route's prefix and usage line (§4.1).
@@ -160,7 +186,7 @@ func cmdShow(args []string) error {
 		if section == relevo.ShowLog && *round == 0 {
 			return serveLog(*owner, *state, name, *round, *after, *asJSON, *follow)
 		}
-		return serveShow(*owner, *state, name, *round, section, *asJSON)
+		return serveShow(*owner, *state, name, *round, section, *asJSON, *artifact)
 	}
 
 	rt, err := newRuntime()
@@ -179,7 +205,7 @@ func cmdShow(args []string) error {
 		return printLog(rt, name, *round, *after, *asJSON, *follow, true)
 	}
 
-	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON, FindingsID: *findings}
+	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON, FindingsID: *findings, ArtifactRel: *artifact}
 	return printShow(rt, opts, true, true, "")
 }
 
@@ -216,8 +242,8 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 		live = true
 	}
 	// #143: a successful print is what "viewed" means, for a live binding
-	// only -- there is no .viewed sidecar for a database-only (archived)
-	// binding to stamp. Best-effort: never fails the read.
+	// only -- an archived binding's record stays as it is.
+	// Best-effort: never fails the read.
 	stampViewed := func() {
 		if markViewed && live {
 			_ = rt.Store.MarkViewed(name, time.Now())
@@ -246,8 +272,26 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	}
 	fmt.Fprintln(os.Stderr, header)
 
+	if opts.ArtifactRel != "" {
+		// --artifact: the file's bytes, raw, with nothing added. An unlisted
+		// rel is an error Show already returned.
+		if _, err := os.Stdout.Write([]byte(res.Text)); err != nil {
+			return err
+		}
+		stampViewed()
+		return nil
+	}
+
 	if res.Missing {
 		fmt.Printf("no %s for round %d\n", res.Section, res.Round)
+		stampViewed()
+		return nil
+	}
+
+	if res.Section == relevo.ShowArtifacts {
+		for _, f := range res.Artifacts {
+			fmt.Println(relevo.ArtifactLine(f))
+		}
 		stampViewed()
 		return nil
 	}
@@ -266,5 +310,156 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	}
 	fmt.Print(text)
 	stampViewed()
+	return nil
+}
+
+// printDiff is diff's body (the old cmdDiff), shared by `show --diff` and
+// `show --drift` (§4.2): the output is byte-identical to the removed diff verb
+// for the same arguments, including the #143 .viewed stamp.
+// round 0 means diff's default: the newest completed round, or the open round
+// with drift.
+func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors bool) error {
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		return err
+	}
+
+	targetRound := round
+	if targetRound == 0 {
+		if drift {
+			targetRound = b.Round
+		} else {
+			targetRound = b.Round - 1
+		}
+	}
+	if targetRound < 1 {
+		return fmt.Errorf("binding %q has no completed round yet", name)
+	}
+
+	if stat {
+		entries, err := rt.Store.ReadLog(name)
+		if err != nil {
+			return err
+		}
+		targetKind := store.KindDiff
+		if drift {
+			targetKind = store.KindDrift
+		}
+		var found *store.LogEntry
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entries[i].Round == targetRound && entries[i].Kind == targetKind {
+				found = &entries[i]
+				break
+			}
+		}
+		if found == nil || found.Note == "" {
+			if drift {
+				return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, name)
+			}
+			return fmt.Errorf("no diff recorded for round %d of %q", targetRound, name)
+		}
+		fmt.Println(found.Note)
+		// #143: a successful print is what "viewed" means; the stamp is
+		// best-effort and must never fail a read command.
+		_ = rt.Store.MarkViewed(name, time.Now())
+		return nil
+	}
+
+	var patch []byte
+	var ok bool
+	if drift {
+		patch, ok, err = capture.ReadDrift(rt.Store, name, targetRound)
+	} else {
+		patch, ok, err = capture.ReadDiff(rt.Store, name, targetRound)
+	}
+	if err != nil {
+		return err
+	}
+	if !ok {
+		if drift {
+			return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, name)
+		}
+		return fmt.Errorf("no diff recorded for round %d of %q", targetRound, name)
+	}
+
+	if anchors {
+		patch, err = diffpatch.Annotate(patch)
+		if err != nil {
+			return err
+		}
+	}
+
+	if _, err := os.Stdout.Write(patch); err != nil {
+		return err
+	}
+	// #143: a successful print is what "viewed" means; the stamp is
+	// best-effort and must never fail a read command.
+	_ = rt.Store.MarkViewed(name, time.Now())
+	return nil
+}
+
+// printLog is the log body after flag parsing and newRuntime(): it prints
+// name's entries, applying the --round filter, JSON-encoded when asJSON is
+// set, and follows new entries until the binding is DONE or removed when
+// follow is set. markViewed guards the #143 .viewed stamp: `relevo show --log`
+// stamps and the read-only `relevo serve log` must not, because the stamp is
+// the owner's, not the admin's.
+func printLog(rt relevo.Runtime, name string, round, after int, asJSON, follow, markViewed bool) error {
+	// A binding that does not exist is named at once, the way every other
+	// command reports it; only a binding that disappears mid-follow (below)
+	// ends the loop quietly.
+	if _, err := rt.Store.Load(name); err != nil {
+		return err
+	}
+
+	// emit applies the --round filter, so the initial batch and every
+	// followed entry render identically.
+	emit := func(e store.LogEntry) {
+		if round != 0 && e.Round != round {
+			return
+		}
+		if asJSON {
+			_ = json.NewEncoder(os.Stdout).Encode(e)
+			return
+		}
+		fmt.Println(relevo.LogLine(e))
+	}
+
+	entries, err := rt.Store.ReadLogAfter(name, after)
+	if err != nil {
+		return err
+	}
+	last := after
+	for _, e := range entries {
+		emit(e)
+		last = e.Seq
+	}
+
+	if !follow {
+		// #143: a successful print is what "viewed" means; the stamp is
+		// best-effort and must never fail a read command.
+		if markViewed {
+			_ = rt.Store.MarkViewed(name, time.Now())
+		}
+		return nil
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := relevo.FollowLog(ctx, rt, name, last, time.Second, emit); err != nil {
+		if ctx.Err() != nil {
+			// Interrupted: what was already printed is the answer, and the
+			// stamp is #143's the same as any other exit.
+			if markViewed {
+				_ = rt.Store.MarkViewed(name, time.Now())
+			}
+			return nil
+		}
+		return err
+	}
+	if markViewed {
+		_ = rt.Store.MarkViewed(name, time.Now())
+	}
 	return nil
 }

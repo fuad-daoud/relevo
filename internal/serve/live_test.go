@@ -15,21 +15,15 @@ func TestLiveCache(t *testing.T) {
 
 	c.put(key, 1, now, view)
 
-	// within the TTL is a hit
-	got, hit := c.get(key, 1, now.Add(time.Second))
-	if !hit || got != view {
+	if got, hit := c.get(key, 1, now.Add(time.Second)); !hit || got != view {
 		t.Errorf("get within TTL: hit = %v, got = %+v, want hit = true, view", hit, got)
 	}
 
-	// after the TTL, a miss
-	got, hit = c.get(key, 1, now.Add(liveViewTTL))
-	if hit {
+	if got, hit := c.get(key, 1, now.Add(liveViewTTL)); hit {
 		t.Errorf("get after TTL: hit = true, want false (expired); got = %+v", got)
 	}
 
-	// a different round, a miss
-	got, hit = c.get(key, 2, now.Add(time.Second))
-	if hit {
+	if got, hit := c.get(key, 2, now.Add(time.Second)); hit {
 		t.Errorf("get different round: hit = true, want false; got = %+v", got)
 	}
 }

@@ -1,0 +1,47 @@
+{
+  "at": "2026-01-02T03:04:05Z",
+  "pid": 4242,
+  "started_at": "2026-01-02T03:04:05Z",
+  "exit_code": "0",
+  "tail": [
+    "output line 1",
+    "output line 2"
+  ],
+  "usage": {
+    "harness": "opencode",
+    "provider": "anthropic",
+    "model": "claude-sonnet-5",
+    "duration_ms": 12500,
+    "tokens": {
+      "in": 1000,
+      "cache_read": 3000,
+      "cache_write": 500,
+      "out": 250
+    },
+    "cost": {
+      "usd": 0.05,
+      "basis": "measured",
+      "plan": true
+    },
+    "samples": 2,
+    "steps": 5,
+    "tool_calls": 3,
+    "step_p50_ms": 1200,
+    "first_output_p50_ms": 400,
+    "note": "sample note"
+  },
+  "prior_tokens": {
+    "in": 100,
+    "cache_read": 200,
+    "cache_write": 50,
+    "out": 25
+  },
+  "diff": {
+    "files": 3,
+    "added": 42,
+    "removed": 7
+  },
+  "last_progress_at": "2026-01-02T03:04:05Z",
+  "exploring_since": "2026-01-02T03:04:05Z",
+  "gating_since": "2026-01-02T03:04:05Z"
+}

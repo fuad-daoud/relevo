@@ -6,9 +6,8 @@ import (
 	"strings"
 )
 
-// Money is the cost word. Plan wins over basis: a subscription lane never
-// shows dollars. Under a cent prints "<$0.01" so a tiny round is not
-// mistaken for a free one.
+// Money is the cost word. Plan wins over basis: a subscription lane never shows
+// dollars. Under a cent prints "<$0.01", not "$0.00".
 func Money(c Cost) string {
 	switch {
 	case c.Plan:
@@ -26,7 +25,7 @@ func Money(c Cost) string {
 	return fmt.Sprintf("%s%.2f", prefix, c.USD)
 }
 
-// ShortTokens: < 1000 as-is, < 1M "182k", else "2.3M". Rounds half up.
+// ShortTokens: < 1000 as-is, < 1M "182k", else "2.3M".
 func ShortTokens(n int64) string {
 	switch {
 	case n < 1000:
@@ -53,8 +52,7 @@ func ShortDuration(ms int64) string {
 	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 
-// msText is a millisecond figure for the round line: "640ms" below a
-// second, "3.1s" from there up.
+// msText renders "640ms" below a second, "3.1s" from there up.
 func msText(ms int64) string {
 	if ms < 1000 {
 		return fmt.Sprintf("%dms", ms)
@@ -62,11 +60,8 @@ func msText(ms int64) string {
 	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
-// tokenCells is the four token cells in order, or nil when there are no
-// samples (#234): "in 2k", "cache 166k (91%)", "write 14k", "out 12k".
-// `in` is uncached input; `cache` is CacheRead with its share of the
-// prompt in parentheses, omitted when the prompt total is 0; `write` is
-// printed even when it is 0, so a reader learns the field exists.
+// tokenCells is the four token cells in order, or nil when there are no samples.
+// `write` is printed even when 0, so a reader learns the field exists.
 func tokenCells(t Tokens, samples int) []string {
 	if samples == 0 {
 		return nil
@@ -82,8 +77,6 @@ func tokenCells(t Tokens, samples int) []string {
 	}
 }
 
-// Line is the round line, issue #142's format. Parts are joined by two
-// spaces and omitted when empty; see the spec §2 for the exact rules.
 func Line(u Usage) string {
 	var parts []string
 	var id []string
@@ -99,9 +92,6 @@ func Line(u Usage) string {
 		parts = append(parts, d)
 	}
 	parts = append(parts, tokenCells(u.Tokens, u.Samples)...)
-	// The step figures (#323, #324) sit between the tokens and the money,
-	// each only when it carries a value. A Usage with none renders exactly
-	// as it did before them.
 	if u.Steps > 0 {
 		parts = append(parts, fmt.Sprintf("%d steps", u.Steps))
 	}
@@ -125,13 +115,9 @@ func Line(u Usage) string {
 	return strings.Join(parts, "  ")
 }
 
-// Parts is the round as short, separable parts for a surface that joins
-// them with its own separator and already names the harness elsewhere
-// (the ui's binding block): model (harness when there is none), duration,
-// the four token cells ("in N", "cache N (NN%)", "write N", "out N") and
-// the cost word. An unknown note that
-// ends in " for <provider>/<model>" loses that suffix -- the model is the
-// first part. Empty parts are omitted.
+// Parts is the round as separable parts for a surface that joins them itself and
+// already names the harness. An unknown note ending in " for <provider>/<model>"
+// loses that suffix.
 func Parts(u Usage) []string {
 	var parts []string
 	switch {
@@ -152,17 +138,13 @@ func Parts(u Usage) []string {
 	return append(parts, money)
 }
 
-// LiveParts is Parts with the word "live" prepended (#234): a figure for a
-// round that is still running, read from the harness's record on this
-// call. The caller sets DurationMS to now - the round's start and takes
-// the cost word as Money renders it.
+// LiveParts is Parts with the word "live" prepended: a figure for a running round.
 func LiveParts(u Usage) []string {
 	return append([]string{"live"}, Parts(u)...)
 }
 
-// LiveShort is the card/statusline form of a live figure:
-// "live ~$0.04 · 103k tok". "" when there are no samples, so a surface
-// shows nothing rather than "live unknown".
+// LiveShort is the card/statusline form of a live figure; "" with no samples, so a
+// surface shows nothing rather than "live unknown".
 func LiveShort(u Usage) string {
 	if u.Samples == 0 {
 		return ""

@@ -1,12 +1,28 @@
- relevo › fleet                                                                         ● 1 needs you  ·  codex gated until 15:30  ·  14:02 
-6 bindings · 1 needs you · 3 active                                                                        sort attention · refreshed 0s ago
-:a                                                                                                                                          
-▸ stats  rounds, cost and health                                                                                                            
-  ungate  clear a recorded rate limit                                                                                                       
-  round api  open api                                                                                                                       
-  round atlas  open atlas                                                                                                                   
-  ungate codex  clear the rate limit on codex                                                                                               
-  ungate codex  clear the rate limit on codex                                                                                               
+  ◆ relevo    fleet                                                                                  ● 1 needs you     v0.13.0-28    14:02  
+                                                                                                                                            
+   5 live   1 needs you   3 working   1 on hold   1 done                                                   sort attention · refreshed 0s ago
+                                                                                                                                            
+ ╭─ webshop  round 4 · question · 2m ─────────────────────────────────────────────────────────────────────────────────────────────────────╮ 
+ │  MasterMind architect-1  ·  -  ·  relevo/webshop  ·  $9.40                                                                             │ 
+ │                                                                                                                                        │ 
+ │    enter  open round                                                                                                                   │ 
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
+                            ╭─ command ────────────────────────────────────────────────────────────────────────╮                            
+     needs you   1    a buil│ :a                                                                               │                            
+ ▍ ●  webshop             r4│                                                                                  │                            
+        ╰ which branch shoul│ VIEWS                                                                            │                            
+                            │ ▸ audit  config revisions, and roll back                                         │                            
+     working   3    a round │   actors  who runs each job, and in what order                                   │                            
+   ●  api                 r2│   agents  agent definitions per harness                                          │                            
+   ●  atlas               r4│   stats  rounds, cost and health                                                 │                            
+   ●  worker              r2│   ungate  clear a recorded rate limit                                            │                            
+                            │   candidates  candidates, gates and who picks them                               │                            
+     on hold   1    paused o│ BINDINGS                                                                         │                            
+   ◐  ledger              r3│   round api  working · r2 · -                                                    │                            
+                            │   round atlas  working · r4 · -                                                  │                            
+   ✓  1 done  ·  1 today  · │ + 2 more match; keep typing                                                      │                            
+                            │                                              tab complete · enter go · esc close │                            
+                            ╰──────────────────────────────────────────────────────────────────────────────────╯                            
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
@@ -19,22 +35,6 @@
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ move   home/end first/last   enter open   a sort   / filter   : command   ? help   q quit                                                
+   ◌ gated  codex 1h  ·  the pick skips them                                                                                                
+
+ ↑↓  move      tab  complete      enter  go      esc  close                                                                                 

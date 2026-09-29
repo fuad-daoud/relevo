@@ -8,10 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -80,7 +79,7 @@ func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
 				Role:  role,
 				Index: -1,
 				Token: tok,
-				Text:  fmt.Sprintf("%s: %s serves the role but is not in order.%s", role, c.Name, role),
+				Text:  fmt.Sprintf("%s: %s serves the actor but is not in order.%s", role, c.Name, role),
 			})
 		}
 	}
@@ -102,7 +101,7 @@ type RoleRefusal struct {
 // least one serving candidate that resolveCandidate would refuse with no
 // token named. It is the one source of doctor's policy rows and relevo
 // policy's "would refuse" lines (#165).
-func RoleRefusals(set *candidate.Set, pol policy.Policy, gates []ledger.Gate) []RoleRefusal {
+func RoleRefusals(set *candidate.Set, pol policy.Policy, gates []availability.Gate) []RoleRefusal {
 	if set == nil || set.Len() == 0 {
 		return nil
 	}
@@ -125,7 +124,7 @@ func RoleRefusals(set *candidate.Set, pol policy.Policy, gates []ledger.Gate) []
 // refusalFromErr maps resolveCandidate's error for role to a RoleRefusal.
 // FormatPolicy and RoleRefusals both go through here, so relevo config and
 // relevo doctor print the same words for the same state.
-func refusalFromErr(role string, serving []candidate.Candidate, gates []ledger.Gate, err error) (RoleRefusal, bool) {
+func refusalFromErr(role string, serving []candidate.Candidate, gates []availability.Gate, err error) (RoleRefusal, bool) {
 	tokens := make([]string, 0, len(serving))
 	for _, c := range serving {
 		tokens = append(tokens, c.Ref().String())
@@ -192,7 +191,7 @@ type policyRoleView struct {
 // FormatPolicyFor call, so the two can never drift. The gates are filtered to
 // the role here, so a gate scoped to another role never shows on this role's
 // rows or in its refusal.
-func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set, width int, gates []ledger.Gate, hist history.History, now time.Time, loc *time.Location) {
+func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set, width int, gates []availability.Gate, hist availability.History, now time.Time, loc *time.Location) {
 	sb.WriteString(v.header + "\n")
 	if len(v.rows) == 0 {
 		if v.noRows != "" {
@@ -202,7 +201,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 	}
 
 	roleGates := gatesForRole(gates, v.role)
-	byToken := make(map[string][]ledger.Gate)
+	byToken := make(map[string][]availability.Gate)
 	for _, g := range roleGates {
 		byToken[g.Token] = append(byToken[g.Token], g)
 	}
@@ -220,7 +219,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 		}
 		var gateTexts []string
 		for _, g := range byToken[tok] {
-			gateTexts = append(gateTexts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
+			gateTexts = append(gateTexts, availability.GateKindText(g.Kind)+" "+availability.GateUntilText(g.Until))
 		}
 		tailParts = append(tailParts, uniqStrings(gateTexts)...)
 		tail := strings.Join(tailParts, "; ")
@@ -253,7 +252,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 // and why -- computed by calling it, so the marker here can never disagree
 // with what bind actually picks (spec §4.7). It is a listing, not a check:
 // `relevo config` prints this and always exits 0.
-func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hist history.History, now time.Time, loc *time.Location) string {
+func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []availability.Gate, hist availability.History, now time.Time, loc *time.Location) string {
 	if set == nil || set.Len() == 0 {
 		return "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
 	}
@@ -277,7 +276,7 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 			header:  header,
 			serving: serving,
 			sole:    len(serving) == 1,
-			noRows:  "  no candidate serves this role",
+			noRows:  "  no candidate serves this actor",
 		}
 		if len(serving) > 0 {
 			if ordered {
@@ -315,7 +314,7 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 // their candidate lists and their refusal come from roles.json, the header
 // names the file, a role with nothing to rank says so, and the "no policy
 // configured" line never prints -- roles.json is the policy.
-func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hist history.History, now time.Time, loc *time.Location) string {
+func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy, gates []availability.Gate, hist availability.History, now time.Time, loc *time.Location) string {
 	if !reg.FileMode() {
 		return FormatPolicy(set, pol, gates, hist, now, loc)
 	}
@@ -410,7 +409,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 // gating read from reg (#374 §3.1). In legacy mode it delegates, so the rows
 // are unchanged; in file mode it walks reg.Names() and each role's ranked
 // candidates.
-func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy, gates []ledger.Gate) []RoleRefusal {
+func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy, gates []availability.Gate) []RoleRefusal {
 	if !reg.FileMode() {
 		return RoleRefusals(set, pol, gates)
 	}
@@ -483,8 +482,8 @@ func LegacyRoleFieldWarnings(reg *roles.Registry, set *candidate.Set, pol policy
 // around now, or "" when the window around now saw none (spec §4.2).
 // History never changes a pick -- resolveCandidate is untouched -- this is
 // display only.
-func peakText(hist history.History, provider string, now time.Time, loc *time.Location) string {
-	c := history.HourCounts(hist, provider, ledger.RateLimited, loc)
+func peakText(hist availability.History, provider string, now time.Time, loc *time.Location) string {
+	c := availability.HourCounts(hist, provider, availability.RateLimited, loc)
 	h := now.In(loc).Hour()
 	n := c[(h+23)%24] + c[h] + c[(h+1)%24]
 	if n == 0 {
@@ -499,14 +498,14 @@ func peakText(hist history.History, provider string, now time.Time, loc *time.Lo
 // §4.2). A provider whose Cleared events carry a Since also gets a row in
 // the "blocked for" summary under the grid (#302). It returns "" when hist
 // has no events, so a fresh install's `relevo config` prints nothing extra.
-func formatHistory(hist history.History, loc *time.Location) string {
+func formatHistory(hist availability.History, loc *time.Location) string {
 	if len(hist.Events) == 0 {
 		return ""
 	}
 
 	type pair struct {
 		provider string
-		kind     ledger.Kind
+		kind     availability.Kind
 	}
 	seen := make(map[pair]bool)
 	providerSeen := make(map[string]bool)
@@ -529,14 +528,14 @@ func formatHistory(hist history.History, loc *time.Location) string {
 	}
 	sb.WriteString(strings.Repeat(" ", 27) + strings.Join(labels[:], " ") + "\n")
 
-	kinds := []ledger.Kind{ledger.RateLimited, ledger.SpawnFailed, history.Cleared}
+	kinds := []availability.Kind{availability.RateLimited, availability.SpawnFailed, availability.Cleared}
 	for _, p := range providers {
 		for _, k := range kinds {
 			if !seen[pair{p, k}] {
 				continue
 			}
-			counts := history.HourCounts(hist, p, k, loc)
-			row := fmt.Sprintf("  %-10s %-13s", p, GateKindText(k))
+			counts := availability.HourCounts(hist, p, k, loc)
+			row := fmt.Sprintf("  %-10s %-13s", p, availability.GateKindText(k))
 			for _, n := range counts {
 				cell := "."
 				if n != 0 {
@@ -550,7 +549,7 @@ func formatHistory(hist history.History, loc *time.Location) string {
 
 	var blocked strings.Builder
 	for _, p := range providers {
-		durations := history.BlockedDurations(hist, p)
+		durations := availability.BlockedDurations(hist, p)
 		if len(durations) == 0 {
 			continue
 		}

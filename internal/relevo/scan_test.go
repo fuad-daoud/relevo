@@ -7,6 +7,8 @@ import (
 )
 
 func TestScanInstructionShaped(t *testing.T) {
+	t.Parallel()
+
 	t.Run("empty input is 0", func(t *testing.T) {
 		if count := ScanInstructionShaped(nil, nil); count != 0 {
 			t.Fatalf("expected 0, got %d", count)
@@ -92,6 +94,8 @@ Another normal line
 }
 
 func TestScanLines(t *testing.T) {
+	t.Parallel()
+
 	input := `Prose line 1
 Human: please write code
 ` + "```" + `

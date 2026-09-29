@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// RunningProc is one local process a daemon restart could kill (#370 §4.8):
-// the binding it belongs to, which of the round's roles it plays, and its pid.
+// RunningProc is one local process a daemon restart could kill: the binding
+// it belongs to, which of the round's roles it plays, and its pid.
 type RunningProc struct {
 	Binding string
 	Kind    string // "builder", "gate" or "consult"
@@ -17,9 +17,9 @@ type RunningProc struct {
 }
 
 // ParseUnifiedCgroup returns the cgroup path of the `0::<path>` line of
-// /proc/<pid>/cgroup -- the unified hierarchy on a cgroup v2 host. A file with
-// no such line (a cgroup v1 host, or a format relevo does not know) reports ok
-// false, which RestartSafety reads as "cannot tell".
+// /proc/<pid>/cgroup. A file with no such line (a cgroup v1 host, or an
+// unknown format) reports ok false, which RestartSafety reads as "cannot
+// tell".
 func ParseUnifiedCgroup(content string) (string, bool) {
 	for _, line := range strings.Split(content, "\n") {
 		if rest, ok := strings.CutPrefix(line, "0::"); ok {
@@ -29,23 +29,18 @@ func ParseUnifiedCgroup(content string) (string, bool) {
 	return "", false
 }
 
-// inOwnScope reports whether a cgroup path's last element is a relevo scope: the
-// process is in its own `relevo-*.scope` and survives a daemon restart (#370
-// §4.8). Only the last element is read, so any slice above it is irrelevant.
+// inOwnScope reports whether a cgroup path's last element is a relevo scope:
+// the process is in its own `relevo-*.scope` and survives a daemon restart.
 func inOwnScope(cgroupPath string) bool {
 	base := path.Base(cgroupPath)
 	return strings.HasPrefix(base, "relevo-") && strings.HasSuffix(base, ".scope")
 }
 
-// RestartSafety is the doctor row that says whether a daemon restart right now
-// would kill anything (#370 §4.8). Name "restart". It never fails the report:
-// a process whose cgroup read says not-exist has exited and is skipped, and a
-// host relevo cannot read -- any other read error, or a file with no `0::`
-// line, which is what macOS and a cgroup v1 host give -- degrades to
-// `cannot tell on this host`.
-//
-// The Warn detail names at most three offenders, then `and K more`, and Unsafe
-// carries the full count for restartNotice.
+// RestartSafety is the doctor row that says whether a daemon restart right
+// now would kill anything. It never fails: a not-exist cgroup read means the
+// process exited and is skipped, and any other unreadable host (macOS, a
+// cgroup v1 host) degrades to `cannot tell on this host`. The Warn detail
+// names at most three offenders, then `and K more`.
 func RestartSafety(procs []RunningProc, readCgroup func(pid int) (string, error)) Check {
 	c := Check{Group: "", Name: "restart"}
 	if len(procs) == 0 {
@@ -58,7 +53,7 @@ func RestartSafety(procs []RunningProc, readCgroup func(pid int) (string, error)
 		content, err := readCgroup(p.PID)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				continue // the process exited between its binding's read and this one
+				continue
 			}
 			return restartCannotTell(c)
 		}
@@ -72,10 +67,9 @@ func RestartSafety(procs []RunningProc, readCgroup func(pid int) (string, error)
 		}
 	}
 
-	// Every gathered process read as not-exist. On Linux they simply exited;
-	// on a host with no /proc (macOS) that is every process, and relevo cannot
-	// tell the two apart -- which is why this is the "cannot tell" answer
-	// rather than a quiet OK.
+	// Every process read as not-exist: on Linux they simply exited, but on a
+	// host with no /proc that is every process, and the two cannot be told
+	// apart.
 	if running == 0 {
 		return restartCannotTell(c)
 	}
@@ -90,23 +84,20 @@ func RestartSafety(procs []RunningProc, readCgroup func(pid int) (string, error)
 	return c
 }
 
-// restartOK returns c as a quiet OK row with detail.
 func restartOK(c Check, detail string) Check {
 	c.Severity = SevOK
 	c.Detail = detail
 	return c
 }
 
-// restartCannotTell is the "cannot tell on this host" row: relevo could not
-// establish the fact, and nothing is wrong that it can act on.
 func restartCannotTell(c Check) Check {
 	c.Severity = SevOK
 	c.Detail = "cannot tell on this host"
 	return c
 }
 
-// offendersText joins the offenders for the Warn detail, listing at most three
-// and summarising the rest as `and K more` (#370 §4.8).
+// offendersText lists at most three offenders, summarising the rest as `and
+// K more`.
 func offendersText(offenders []string) string {
 	const max = 3
 	if len(offenders) <= max {

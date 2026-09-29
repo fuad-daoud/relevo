@@ -1,8 +1,10 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,46 +13,6 @@ import (
 	"time"
 )
 
-// errFake is a sentinel Tx callers return to force a rollback in tests.
-var errFake = errors.New("fake failure")
-
-// embeddedVersion is the highest migration this binary embeds. The tests below
-// use it rather than a literal so adding a migration (schema v2, §3.1) does not
-// mean editing every version count.
-func embeddedVersion(t *testing.T) int {
-	t.Helper()
-	v, err := maxEmbedded(migrationFiles)
-	if err != nil {
-		t.Fatalf("maxEmbedded: %v", err)
-	}
-	return v
-}
-
-// seedNewerSchema creates path with a schema_version row above every embedded
-// migration, as a newer relevo would have left it, and returns the table count
-// before this binary opens it.
-func seedNewerSchema(t *testing.T, path string) int {
-	t.Helper()
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	defer sqlDB.Close()
-
-	if _, err := sqlDB.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)`); err != nil {
-		t.Fatalf("create schema_version: %v", err)
-	}
-	if _, err := sqlDB.Exec(`INSERT INTO schema_version (version, applied_at) VALUES (99, '2026-01-01T00:00:00.000Z')`); err != nil {
-		t.Fatalf("insert version 99: %v", err)
-	}
-
-	var tables int
-	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'`).Scan(&tables); err != nil {
-		t.Fatalf("count tables: %v", err)
-	}
-	return tables
-}
-
 func TestOpenCreatesAndMigrates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 
@@ -58,13 +20,13 @@ func TestOpenCreatesAndMigrates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	v, err := d.Version()
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if want := embeddedVersion(t); v != int(want) {
+	if want := embeddedVersion(t); v != want {
 		t.Errorf("Version() = %d, want %d", v, want)
 	}
 
@@ -84,19 +46,19 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open (1st): %v", err)
 	}
-	d1.Close()
+	_ = d1.Close()
 
 	d2, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open (2nd): %v", err)
 	}
-	defer d2.Close()
+	t.Cleanup(func() { _ = d2.Close() })
 
 	v, err := d2.Version()
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if want := embeddedVersion(t); v != int(want) {
+	if want := embeddedVersion(t); v != want {
 		t.Errorf("Version() = %d, want %d", v, want)
 	}
 
@@ -109,9 +71,56 @@ func TestOpenIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestOpenLeavesANewerSchemaAlone pins #372 §4.5: a schema above this relevo's
-// highest embedded migration is returned with Newer() == true and is not
-// migrated (the table count does not change).
+// TestOpenCurrentSchemaWhileAnotherProcessWrites pins that Open on a database
+// whose schema is already current takes no write lock: it must return
+// quickly even while another connection holds BEGIN IMMEDIATE.
+func TestOpenCurrentSchemaWhileAnotherProcessWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (1st): %v", err)
+	}
+	_ = d.Close()
+
+	oldTimeout := busyTimeoutMS
+	busyTimeoutMS = 200
+	t.Cleanup(func() { busyTimeoutMS = oldTimeout })
+
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", path, busyTimeoutMS)
+	writer, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open writer: %v", err)
+	}
+	t.Cleanup(func() { _ = writer.Close() })
+
+	ctx := context.Background()
+	conn, err := writer.Conn(ctx)
+	if err != nil {
+		t.Fatalf("writer.Conn: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		t.Fatalf("BEGIN IMMEDIATE: %v", err)
+	}
+	t.Cleanup(func() { _, _ = conn.ExecContext(ctx, "ROLLBACK") })
+
+	start := time.Now()
+	d2, err := Open(path)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Open (2nd) while another connection holds the write lock: %v", err)
+	}
+	defer func() { _ = d2.Close() }()
+	if elapsed >= 2*time.Second {
+		t.Errorf("Open took %s, want < 2s: a current schema must not wait on the write lock", elapsed)
+	}
+	if d2.Newer() {
+		t.Error("Newer() = true, want false")
+	}
+}
+
+// TestOpenLeavesANewerSchemaAlone pins that a newer schema is not migrated.
 func TestOpenLeavesANewerSchemaAlone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	before := seedNewerSchema(t, path)
@@ -120,7 +129,7 @@ func TestOpenLeavesANewerSchemaAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	if !d.Newer() {
 		t.Fatal("Newer() = false, want true for a schema above this relevo's migrations")
@@ -139,9 +148,6 @@ func TestOpenLeavesANewerSchemaAlone(t *testing.T) {
 	}
 }
 
-// TestCheckMigrateRefusesANewerSchema pins the function `relevo db migrate`
-// calls: it errors on a newer schema (wrapping ErrNewerSchema) and returns nil
-// on one this relevo may migrate (#372 §4.5).
 func TestCheckMigrateRefusesANewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	seedNewerSchema(t, path)
@@ -150,7 +156,7 @@ func TestCheckMigrateRefusesANewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	if err := d.CheckMigrate(); err == nil {
 		t.Fatal("CheckMigrate() = nil, want an error on a newer schema")
@@ -162,16 +168,14 @@ func TestCheckMigrateRefusesANewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open fresh: %v", err)
 	}
-	defer fresh.Close()
+	t.Cleanup(func() { _ = fresh.Close() })
 	if err := fresh.CheckMigrate(); err != nil {
 		t.Errorf("CheckMigrate() on a fresh schema = %v, want nil", err)
 	}
 }
 
-// TestConcurrentOpenAppliesEachMigrationOnce pins #372 §4.5's migration guard:
-// two processes opening the same fresh database concurrently both succeed, and
-// schema_version holds exactly one row per migration. The in-transaction
-// re-check is what makes this hold; remove it and this fails.
+// TestConcurrentOpenAppliesEachMigrationOnce pins the migration guard: the
+// in-transaction re-check is what makes one row per migration hold.
 func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		path := filepath.Join(t.TempDir(), "relevo.db")
@@ -204,21 +208,21 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 		}
 		rows, err := sqlDB.Query(`SELECT version FROM schema_version`)
 		if err != nil {
-			sqlDB.Close()
+			_ = sqlDB.Close()
 			t.Fatalf("iteration %d: query schema_version: %v", i, err)
 		}
 		versions := map[int]int{}
 		for rows.Next() {
 			var v int
 			if err := rows.Scan(&v); err != nil {
-				rows.Close()
-				sqlDB.Close()
+				_ = rows.Close()
+				_ = sqlDB.Close()
 				t.Fatalf("iteration %d: scan version: %v", i, err)
 			}
 			versions[v]++
 		}
-		rows.Close()
-		sqlDB.Close()
+		_ = rows.Close()
+		_ = sqlDB.Close()
 
 		if want := embeddedVersion(t); len(versions) != want {
 			t.Fatalf("iteration %d: schema_version rows = %v, want one row per migration (%d)", i, versions, want)
@@ -231,8 +235,20 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 	}
 }
 
-// TestTxRefusesANewerSchema pins §6: a writer on a schema a newer relevo wrote
-// refuses with ErrNewerSchema instead of downgrading it.
+// TestOpenSetsJournalSizeLimit pins that sqlite truncates the -wal file after a
+// checkpoint instead of leaving it at a write burst's high-water size.
+func TestOpenSetsJournalSizeLimit(t *testing.T) {
+	d := openTestDB(t)
+
+	var limit int
+	if err := d.sqlDB.QueryRow(`PRAGMA journal_size_limit`).Scan(&limit); err != nil {
+		t.Fatalf("PRAGMA journal_size_limit: %v", err)
+	}
+	if limit != journalSizeLimit {
+		t.Errorf("journal_size_limit = %d, want %d", limit, journalSizeLimit)
+	}
+}
+
 func TestTxRefusesANewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	seedNewerSchema(t, path)
@@ -241,7 +257,7 @@ func TestTxRefusesANewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	err = d.Tx(func(tx *Tx) error { return nil })
 	if !errors.Is(err, ErrNewerSchema) {
@@ -256,7 +272,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	origin := "https://example.test/repo.git"
 	wantErr := errFake
@@ -267,7 +283,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 		}
 		return wantErr
 	})
-	if err != wantErr {
+	if !errors.Is(err, wantErr) {
 		t.Fatalf("Tx returned %v, want %v", err, wantErr)
 	}
 
@@ -280,11 +296,147 @@ func TestTxRollsBackOnError(t *testing.T) {
 	}
 }
 
-// TestBackupToCopiesEveryRowAndRefusesAnExistingPath pins BackupTo's contract:
-// the copy opens with Open and holds the same row counts as the source, the
-// file is owner-only, and a path that already exists is refused with an error
-// naming it. Mutation that breaks it: delete the os.Stat guard, and the second
-// BackupTo silently overwrites the copy instead of failing.
+// TestTxRetriesABusyBegin pins that a busy BEGIN IMMEDIATE is retried, and fn
+// still runs exactly once.
+func TestTxRetriesABusyBegin(t *testing.T) {
+	oldTimeout, oldRetry := busyTimeoutMS, beginRetryFor
+	busyTimeoutMS, beginRetryFor = 20, 3*time.Second
+	t.Cleanup(func() { busyTimeoutMS, beginRetryFor = oldTimeout, oldRetry })
+
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d1, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open d1: %v", err)
+	}
+	t.Cleanup(func() { _ = d1.Close() })
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open d2: %v", err)
+	}
+	t.Cleanup(func() { _ = d2.Close() })
+
+	holding := make(chan struct{})
+	var once sync.Once
+	d1Done := make(chan error, 1)
+	go func() {
+		d1Done <- d1.Tx(func(tx *Tx) error {
+			once.Do(func() { close(holding) })
+			time.Sleep(300 * time.Millisecond)
+			return nil
+		})
+	}()
+	<-holding
+
+	var mu sync.Mutex
+	runs := 0
+	err = d2.Tx(func(tx *Tx) error {
+		mu.Lock()
+		runs++
+		mu.Unlock()
+		return nil
+	})
+	if cerr := <-d1Done; cerr != nil {
+		t.Fatalf("d1.Tx: %v", cerr)
+	}
+	if err != nil {
+		t.Fatalf("d2.Tx = %v, want nil (it must retry past d1's lock)", err)
+	}
+	if runs != 1 {
+		t.Errorf("d2's fn ran %d times, want exactly 1", runs)
+	}
+}
+
+// TestTxGivesUpOnABusyBeginAfterTheDeadline pins the beginRetryFor bound.
+func TestTxGivesUpOnABusyBeginAfterTheDeadline(t *testing.T) {
+	oldTimeout, oldRetry := busyTimeoutMS, beginRetryFor
+	busyTimeoutMS, beginRetryFor = 20, 200*time.Millisecond
+	t.Cleanup(func() { busyTimeoutMS, beginRetryFor = oldTimeout, oldRetry })
+
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d1, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open d1: %v", err)
+	}
+	t.Cleanup(func() { _ = d1.Close() })
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open d2: %v", err)
+	}
+	t.Cleanup(func() { _ = d2.Close() })
+
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	d1Done := make(chan error, 1)
+	go func() {
+		d1Done <- d1.Tx(func(tx *Tx) error {
+			once.Do(func() { close(holding) })
+			<-release
+			return nil
+		})
+	}()
+	<-holding
+
+	ran := false
+	err = d2.Tx(func(tx *Tx) error {
+		ran = true
+		return nil
+	})
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("d2.Tx = %v, want errors.Is(..., ErrBusy)", err)
+	}
+	if !strings.Contains(err.Error(), "db: tx begin") {
+		t.Errorf("d2.Tx error = %q, want it to contain %q", err, "db: tx begin")
+	}
+	if ran {
+		t.Error("d2's fn ran, but its BEGIN never succeeded")
+	}
+
+	close(release)
+	if cerr := <-d1Done; cerr != nil {
+		t.Fatalf("d1.Tx: %v", cerr)
+	}
+}
+
+// TestOpenWithShortBusyFailsFast pins that OpenWith's BeginRetry bounds a busy
+// Tx, so a caller that must fail fast does not wait out the default window.
+func TestOpenWithShortBusyFailsFast(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d, err := OpenWith(path, Options{BusyTimeout: 20 * time.Millisecond, BeginRetry: time.Millisecond})
+	if err != nil {
+		t.Fatalf("OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- d.Tx(func(tx *Tx) error {
+			close(holding)
+			<-release
+			return nil
+		})
+	}()
+	<-holding
+
+	start := time.Now()
+	err = d.Tx(func(tx *Tx) error { return nil })
+	elapsed := time.Since(start)
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("second Tx = %v, want errors.Is(..., ErrBusy)", err)
+	}
+	if elapsed >= 2*time.Second {
+		t.Errorf("second Tx took %s, want under 2s: BeginRetry must bound the wait", elapsed)
+	}
+
+	close(release)
+	if cerr := <-holderDone; cerr != nil {
+		t.Fatalf("first Tx: %v", cerr)
+	}
+}
+
+// TestBackupToCopiesEveryRowAndRefusesAnExistingPath pins the copy and the guard.
 func TestBackupToCopiesEveryRowAndRefusesAnExistingPath(t *testing.T) {
 	d := openTestDB(t)
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
@@ -322,7 +474,7 @@ func TestBackupToCopiesEveryRowAndRefusesAnExistingPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(backup): %v", err)
 	}
-	defer copyDB.Close()
+	t.Cleanup(func() { _ = copyDB.Close() })
 
 	got, err := copyDB.Stats()
 	if err != nil {
@@ -343,9 +495,7 @@ func TestBackupToCopiesEveryRowAndRefusesAnExistingPath(t *testing.T) {
 	}
 }
 
-// TestVacuumKeepsRows pins Vacuum's contract: it completes on a database with
-// rows and leaves them readable. Mutation that breaks it: run VACUUM inside a
-// transaction -- sqlite refuses it there, and the error surfaces here.
+// TestVacuumKeepsRows pins that Vacuum leaves the rows readable.
 func TestVacuumKeepsRows(t *testing.T) {
 	d := openTestDB(t)
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)

@@ -25,11 +25,8 @@ type opencodeEvent struct {
 	} `json:"part"`
 }
 
-// opencodeStream reads a headless round's `run --format json` stream: one
-// sample per step_finish part, dollars as opencode computed them. The
-// stream names no model, so provider and model are the candidate's. The
-// parser state lives on the carry (#234), so the same line loop feeds the
-// per-stream cache without drifting.
+// opencodeStream reads a headless round's `run --format json` stream: one sample
+// per step_finish part, dollars as opencode computed them.
 func opencodeStream(r io.Reader, provider, model string) []Sample {
 	c, _ := newCarry("opencode", provider, model)
 	scanLines(r, c.feed)

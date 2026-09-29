@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // WaitResult is what `relevo wait` reports once it stops polling.
@@ -25,6 +28,11 @@ type WaitResult struct {
 	// DeliverErr is a read or confirm failure while delivering Payload. It
 	// never changes the exit code (§6): the CLI prints it to stderr.
 	DeliverErr error
+
+	// Round is the round Wait waited on for the binding it returns, so the
+	// CLI can name it when a delivery fails. 0 when not applicable: a
+	// timeout or a gone binding.
+	Round int
 }
 
 const (
@@ -33,7 +41,7 @@ const (
 	// WaitUnmarked is the exit code for a round that closed without a marked
 	// report (unmarked, scraped, or noreport).
 	WaitUnmarked = 2
-	// WaitNeedsYou is the exit code for a binding WaitingOn classified as
+	// WaitNeedsYou is the exit code for a binding view.WaitingOn classified as
 	// needing a human.
 	WaitNeedsYou = 3
 	// WaitGone is the exit code for a binding that is DONE, or was unbound
@@ -55,7 +63,7 @@ func lastReportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool)
 	var last store.LogEntry
 	found := false
 	for _, e := range entries {
-		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindReport {
 			last, found = e, true
 		}
 	}
@@ -63,13 +71,13 @@ func lastReportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool)
 }
 
 // DefaultWaitRound is the round `relevo wait` waits on when --round is not
-// given: the highest round among to_builder/plan entries (a nudge is not a
-// send, so entries noted nudgeNote are excluded, as HasEntry excludes them);
-// b.Round when there is none (spec §4.5, decision 7).
+// given: the highest round among to_builder/prompt entries (a nudge is not a
+// send, so entries noted nudgeNote are excluded, as HasPromptEntry excludes
+// them); b.Round when there is none (spec §4.5, decision 7).
 func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 	round := 0
 	for _, e := range entries {
-		if e.Direction == store.DirToBuilder && e.Kind == store.KindPlan && e.Note != nudgeNote && e.Round > round {
+		if e.Direction == store.DirToBuilder && store.IsPromptKind(e.Kind) && e.Note != nudgeNote && e.Round > round {
 			round = e.Round
 		}
 	}
@@ -81,14 +89,14 @@ func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 
 // WaitOutcome classifies one binding's round into a WaitResult, per spec
 // §4.6. Pure apart from questionOf. The report entry for round is checked
-// before State == done and before WaitingOn, so an earlier round's close is
+// before State == done and before view.WaitingOn, so an earlier round's close is
 // reported regardless of what the binding is doing now.
 func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionOf func(name string, round int) string) WaitResult {
 	if e, ok := lastReportEntry(entries, round); ok {
 		code := WaitClosed
 		// a marked round that halted is 5, not 0; an unmarked round that halted is
-		// also 5 -- the planner has to read why either way.
-		if e.Outcome == OutcomeHalted || e.Outcome == OutcomeBlocked {
+		// also 5 -- the mastermind has to read why either way.
+		if e.Outcome == reporttail.OutcomeHalted || e.Outcome == reporttail.OutcomeBlocked {
 			code = WaitHalted
 		} else if e.Note != "" {
 			code = WaitUnmarked
@@ -104,17 +112,17 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 		return WaitResult{Code: WaitGone, Done: true}
 	}
 
-	if w, ok := WaitingOn(b, entries, questionOf); ok {
+	if w, ok := view.WaitingOn(b, entries, questionOf); ok {
 		return WaitResult{Code: WaitNeedsYou, Line: w.Line, Done: true}
 	}
 
 	// Nothing in flight: the round was never sent, so no later poll can see
-	// it close. A nudge is not a send, so HasEntry excludes it, as
+	// it close. A nudge is not a send, so HasPromptEntry excludes it, as
 	// DefaultWaitRound does.
-	if !HasEntry(entries, round, store.DirToBuilder, store.KindPlan) {
+	if !HasPromptEntry(entries, round) {
 		return WaitResult{
 			Code: WaitNotStarted,
-			Line: fmt.Sprintf("round %d was never sent to %s's builder", round, b.Name),
+			Line: fmt.Sprintf("round %d was never sent to %s's runner", round, b.Name),
 			Done: true,
 		}
 	}
@@ -141,7 +149,7 @@ func waitDeliverable(code int) bool {
 // Wait polls the store until one of opts.Names closes its
 // round, needs a human, or is gone, or opts.Timeout elapses, per spec §4.7.
 // On an exit that delivers (every code but WaitTimeout and WaitGone) it then
-// prints the binding's oldest pending payload for the planner (§4.1): the
+// prints the binding's oldest pending payload for the mastermind (§4.1): the
 // returned WaitResult carries the text in Payload and marks the entry
 // delivered with route "wait", unless opts.Peek suppresses that. A delivery
 // failure is returned in DeliverErr and never changes Code (§6).
@@ -187,7 +195,7 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 		// otherwise see the round's state go stale. Advisory: a sync error
 		// does not stop the poll, since the loop below re-reads the store
 		// either way.
-		_, _ = SyncRemote(ctx, rt)
+		_, _, _ = SyncRemoteUnlessDaemon(ctx, rt)
 
 		for _, n := range opts.Names {
 			b, err := rt.Store.Load(n)
@@ -208,13 +216,14 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 				// outcome only. A delivery failure never changes the exit
 				// code (§6); the CLI prints DeliverErr to stderr.
 				if waitDeliverable(r.Code) && !opts.Peek {
-					text, found, derr := pullPending(ctx, rt, n, "wait")
+					text, found, derr := delivery.PullPendingThrough(ctx, rt.Store, n, "wait", rounds[n])
 					if derr != nil {
 						r.DeliverErr = derr
 					} else if found {
 						r.Payload = text
 					}
 				}
+				r.Round = rounds[n]
 				return n, r, nil
 			}
 		}

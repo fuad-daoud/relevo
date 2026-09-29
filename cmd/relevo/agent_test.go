@@ -177,7 +177,7 @@ func TestAgentInstallUnknownRoleExits2(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"config", "agents", "--kind", "claude", "--role", "nope"})
+		return run([]string{"config", "agents", "--kind", "claude", "--agent", "nope"})
 	})
 
 	var ec exitCodeErr

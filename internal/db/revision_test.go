@@ -1,10 +1,7 @@
 package db
 
 import (
-	"database/sql"
-	"path/filepath"
 	"testing"
-	"testing/fstest"
 	"time"
 )
 
@@ -14,31 +11,7 @@ func TestRevisionInsertAndRead(t *testing.T) {
 
 	var revs []int64
 	for i, source := range []string{"cli", "rollback"} {
-		err := d.Tx(func(tx *Tx) error {
-			exists, err := tx.RevisionsExist()
-			if err != nil {
-				return err
-			}
-			if want := i > 0; exists != want {
-				t.Errorf("RevisionsExist before insert %d = %v, want %v", i+1, exists, want)
-			}
-			rev, err := tx.RevisionInsert(RevisionRow{
-				At:       now,
-				Source:   source,
-				Message:  "message " + source,
-				Version:  int64(i + 1),
-				Changes:  []byte(`[{"path":"policy.x","op":"add","after":1}]`),
-				Snapshot: []byte(`{"policy":{}}`),
-			})
-			if err != nil {
-				return err
-			}
-			revs = append(revs, rev)
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("Tx %d: %v", i+1, err)
-		}
+		revs = append(revs, insertRevision(t, d, i, source, now))
 	}
 	if revs[0] != 1 || revs[1] != 2 {
 		t.Fatalf("revs = %v, want [1 2]", revs)
@@ -91,50 +64,29 @@ func TestRevisionInsertAndRead(t *testing.T) {
 	}
 }
 
-// TestRevisionsOnSchemaFive: a database migrated only to v5 has no
-// config_revision table, and every read reports empty or absent rather than
-// erroring. The fstest.MapFS pattern is TestOpenReadOnlySchemaOne's
-// (config_test.go:146).
-func TestRevisionsOnSchemaFive(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relevo.db")
-
-	fsys := fstest.MapFS{}
-	for _, name := range []string{
-		"001_initial.sql",
-		"002_config.sql",
-		"003_binding_record.sql",
-		"004_round_file.sql",
-		"005_owner_scope.sql",
-	} {
-		data, err := migrationFiles.ReadFile("migrations/" + name)
+func insertRevision(t *testing.T, d *DB, i int, source string, now time.Time) int64 {
+	t.Helper()
+	var rev int64
+	err := d.Tx(func(tx *Tx) error {
+		exists, err := tx.RevisionsExist()
 		if err != nil {
-			t.Fatalf("read migration %s: %v", name, err)
+			return err
 		}
-		fsys["migrations/"+name] = &fstest.MapFile{Data: data}
-	}
-
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
+		if want := i > 0; exists != want {
+			t.Errorf("RevisionsExist before insert %d = %v, want %v", i+1, exists, want)
+		}
+		rev, err = tx.RevisionInsert(RevisionRow{
+			At:       now,
+			Source:   source,
+			Message:  "message " + source,
+			Version:  int64(i + 1),
+			Changes:  []byte(`[{"path":"policy.x","op":"add","after":1}]`),
+			Snapshot: []byte(`{"policy":{}}`),
+		})
+		return err
+	})
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("Tx %d: %v", i+1, err)
 	}
-	if err := applyMigrations(sqlDB, fsys); err != nil {
-		t.Fatalf("applyMigrations: %v", err)
-	}
-	if err := sqlDB.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-
-	d, err := OpenReadOnly(path)
-	if err != nil {
-		t.Fatalf("OpenReadOnly: %v", err)
-	}
-	defer d.Close()
-
-	rows, err := d.Revisions(0)
-	if err != nil || len(rows) != 0 {
-		t.Fatalf("Revisions on schema 5 = (%v, %v), want (empty, nil)", rows, err)
-	}
-	if _, ok, err := d.Revision(1); err != nil || ok {
-		t.Fatalf("Revision on schema 5 = (_, %v, %v), want (_, false, nil)", ok, err)
-	}
+	return rev
 }

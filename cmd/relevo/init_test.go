@@ -61,8 +61,8 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	}
 
 	L := storedConfig(t)
-	if L.Candidates.Len() != 2 {
-		t.Errorf("stored candidates = %v, want claude and opencode", L.Candidates.Refs())
+	if L.Candidates.Len() != 3 {
+		t.Errorf("stored candidates = %v, want the one builder and two mastermind candidates", L.Candidates.Refs())
 	}
 	// R5: the candidates carry no roles/tier, the policy only max_tier, and a
 	// builder actor over the candidates' names is what says who serves what.
@@ -82,8 +82,8 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	if builder.Agent != "plan-executor" || builder.Tier != "yolo" {
 		t.Errorf("builder actor = %+v, want plan-executor at tier yolo", builder)
 	}
-	if len(builder.Candidates) != 2 {
-		t.Errorf("builder candidates = %v, want the two plan names", builder.Candidates)
+	if len(builder.Candidates) != 1 {
+		t.Errorf("builder candidates = %v, want the one non-claude plan name", builder.Candidates)
 	}
 
 	for _, path := range []string{
@@ -122,17 +122,49 @@ func TestInitReportsActors(t *testing.T) {
 	}
 
 	L := storedConfig(t)
-	builder, ok := L.Actors["builder"]
-	if !ok {
-		t.Fatalf("stored actors = %v, want a builder", L.Actors)
+	var parts []string
+	for _, name := range []string{"builder", "planner", "lite-planner"} {
+		a, ok := L.Actors[name]
+		if !ok {
+			t.Fatalf("stored actors = %v, want a %s", L.Actors, name)
+		}
+		names := make([]string, 0, len(a.Candidates))
+		for _, e := range a.Candidates {
+			names = append(names, e.Candidate)
+		}
+		parts = append(parts, name+": "+strings.Join(names, ", "))
 	}
-	names := make([]string, 0, len(builder.Candidates))
-	for _, e := range builder.Candidates {
-		names = append(names, e.Candidate)
-	}
-	want := "wrote actors (builder: " + strings.Join(names, ", ") + ")"
+	want := "wrote actors (" + strings.Join(parts, "; ") + ")"
 	out := string(stdout) + string(stderr)
 	if !strings.Contains(out, want) {
+		t.Errorf("output does not contain %q:\n%s", want, out)
+	}
+	if want := "wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)"; !strings.Contains(out, want) {
+		t.Errorf("output does not contain %q:\n%s", want, out)
+	}
+}
+
+// TestInitClaudeOnlyNotesMissingBuilder pins the claude-only case: the builder
+// is written with no candidates and init says how to add one.
+func TestInitClaudeOnlyNotesMissingBuilder(t *testing.T) {
+	initRoot(t)
+
+	bin := t.TempDir()
+	stubBinary(t, bin, "claude")
+	t.Setenv("PATH", bin)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "init"})
+	})
+	if err != nil {
+		t.Fatalf("run init: %v (stderr: %s)", err, stderr)
+	}
+
+	out := string(stdout) + string(stderr)
+	if !strings.Contains(out, "builder: none") {
+		t.Errorf("output does not contain %q:\n%s", "builder: none", out)
+	}
+	if want := `note: no builder candidate (claude only plans); add one from a builder harness (agy, codex, opencode): relevo config set actors.builder.candidates '["<name>"]'`; !strings.Contains(out, want) {
 		t.Errorf("output does not contain %q:\n%s", want, out)
 	}
 }
@@ -195,7 +227,7 @@ func TestInitNoBinariesExits1(t *testing.T) {
 	}
 }
 
-func TestInitNoRolesSkipsInstall(t *testing.T) {
+func TestInitNoAgentsSkipsInstall(t *testing.T) {
 	home, _ := initRoot(t)
 
 	bin := t.TempDir()
@@ -203,12 +235,12 @@ func TestInitNoRolesSkipsInstall(t *testing.T) {
 	t.Setenv("PATH", bin)
 
 	if _, stderr, err := captureOutput(t, func() error {
-		return run([]string{"config", "init", "--no-roles"})
+		return run([]string{"config", "init", "--no-agents"})
 	}); err != nil {
-		t.Fatalf("init --no-roles: %v (stderr: %s)", err, stderr)
+		t.Fatalf("init --no-agents: %v (stderr: %s)", err, stderr)
 	}
 
 	if _, err := os.Stat(filepath.Join(home, ".claude", "agents", "plan-executor.md")); err == nil {
-		t.Fatal("plan-executor.md written despite --no-roles")
+		t.Fatal("plan-executor.md written despite --no-agents")
 	}
 }

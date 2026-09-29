@@ -1,13 +1,10 @@
 //go:build scopeaccept && unix
 
-// #378's local acceptance check, behind a non-default build tag because it
-// needs a real systemd user manager and creates a real scope on the machine.
-// CI and `make check` never run it; it is not in `go vet ./...` either.
+// This local acceptance check sits behind a non-default build tag: it needs a
+// real systemd user manager and creates a real scope, its own relevo-accept-*
+// one, and touches nothing else.
 //
 //	go test -tags scopeaccept -count=1 -run TestScopeAcceptReapsItsScope -v ./internal/proc
-//
-// It creates its own relevo-accept-* scope and touches nothing else: no
-// relevo.service, no scope this test did not create.
 package proc
 
 import (
@@ -24,15 +21,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
-// TestScopeAcceptReapsItsScope runs one harness in a scope of its own, the
-// shape a round has: the harness starts a process that outlives it
-// (`setsid sleep 300` -- detached from the supervisor's process group,
-// reparented to the user manager, still a member of the scope's cgroup) and
-// exits 0. The supervisor must end the stream with the exit trailer, and the
-// scope must be empty: not active, its straggler gone.
+// TestScopeAcceptReapsItsScope leaves a detached process in a scope of its own
+// and asserts the scope empties: no active scope, no straggler, trailer last.
 func TestScopeAcceptReapsItsScope(t *testing.T) {
 	if _, err := exec.LookPath("systemd-run"); err != nil {
 		t.Skip("systemd-run is not installed")
@@ -45,33 +38,27 @@ func TestScopeAcceptReapsItsScope(t *testing.T) {
 
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "harness.jsonl")
-	// The harness runs with dir as its working directory, so its pid file is
-	// relative to it.
+	// The harness runs in dir, so its pid file is relative to it.
 	pidFile := filepath.Join(dir, "sleep.pid")
 
-	// The straggler records its own pid before exec'ing sleep, and the
-	// harness waits for that record before exiting, so this test knows which
-	// pid must be gone and nothing is written to the stream after the
-	// trailer. The pid is read with the builtin read of /proc/self/stat,
-	// never $$: this harness script is an element of the supervisor's argv,
-	// which systemd-run passes through its unit syntax, where $$ collapses
-	// to a single $.
+	// The straggler records its pid before exec'ing sleep and the harness waits
+	// for that record, so nothing lands in the stream after the trailer. The pid
+	// comes from /proc/self/stat, never $$, which systemd-run rewrites.
 	const script = "setsid sh -c 'read -r p _ </proc/self/stat; echo \"$p\" > sleep.pid; exec sleep 300' &\n" +
 		"while [ ! -s sleep.pid ]; do sleep 0.05; done\n" +
 		"exit 0\n"
 
 	started := time.Now()
 	r := New()
-	h, err := r.Start(context.Background(), relevo.ProcSpec{
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", script},
 		LogPath: filepath.Join(dir, "harness.log"), StreamPath: stream,
-		Scope: &relevo.ScopeSpec{Unit: unit, CPUWeight: 100},
+		Scope: &spawn.ScopeSpec{Unit: unit, CPUWeight: 100},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	// Keep the machine clean if an assertion fails before the reap did its
-	// job: the straggler would otherwise sleep for five minutes.
+	// Keep the machine clean if an assertion fails before the reap did its job.
 	t.Cleanup(func() {
 		if data, err := os.ReadFile(pidFile); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
@@ -90,12 +77,12 @@ func TestScopeAcceptReapsItsScope(t *testing.T) {
 	}
 	if !ok || code != 0 {
 		data, _ := os.ReadFile(stream)
-		t.Fatalf("stream after 5s = %q (code %d, ok %v); want it to end with %s0", data, code, ok, ExitTrailer)
+		t.Fatalf("stream after 5s = %q (code %d, ok %v); want it to end with %s0", data, code, ok, spawn.ExitTrailer)
 	}
-	t.Logf("stream ended with %s%d %s after the harness exit", ExitTrailer, code, time.Since(started).Round(time.Millisecond))
+	t.Logf("stream ended with %s%d %s after the harness exit", spawn.ExitTrailer, code, time.Since(started).Round(time.Millisecond))
 
 	// 2. The scope is no longer active within 5 s: it emptied, so --collect
-	// removed it. "not active" covers inactive, failed and gone alike.
+	// removed it.
 	active := ""
 	for deadline := time.Now().Add(5 * time.Second); ; {
 		active = scopeActive(t, ScopeUnitFileName(unit))
@@ -130,8 +117,7 @@ func TestScopeAcceptReapsItsScope(t *testing.T) {
 		ScopeUnitFileName(unit), active, pid, time.Since(started).Round(time.Millisecond), data)
 }
 
-// scopeActive returns what `systemctl --user is-active` reports for the unit,
-// or a description of the failure when systemctl itself could not run.
+// scopeActive returns what `systemctl --user is-active` reports for the unit.
 func scopeActive(t *testing.T, unit string) string {
 	t.Helper()
 	out, err := exec.Command("systemctl", "--user", "is-active", unit).Output()
@@ -141,7 +127,6 @@ func scopeActive(t *testing.T, unit string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// readSleepPID reads the pid the harness's straggler recorded.
 func readSleepPID(t *testing.T, path string) int {
 	t.Helper()
 	data, err := os.ReadFile(path)

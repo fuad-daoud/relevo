@@ -3,110 +3,14 @@ package ingest
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
-
-const fixtureDir = "testdata/binding-three-rounds"
-
-func openTestDB(t *testing.T) *db.DB {
-	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	return d
-}
-
-// copyFixture copies the golden fixture (minus bind-legacy.json, which is
-// only ever used in place of bind.json) into a fresh temp dir so a test can
-// mutate it freely.
-func copyFixture(t *testing.T) string {
-	t.Helper()
-	return copyFixtureAs(t, "bind.json")
-}
-
-// copyLegacyFixture is copyFixture with bind-legacy.json standing in for
-// bind.json, for the legacy-bind.json tests.
-func copyLegacyFixture(t *testing.T) string {
-	t.Helper()
-	return copyFixtureAs(t, "bind-legacy.json")
-}
-
-func copyFixtureAs(t *testing.T, bindFile string) string {
-	t.Helper()
-	dst := t.TempDir()
-	entries, err := os.ReadDir(fixtureDir)
-	if err != nil {
-		t.Fatalf("ReadDir fixture: %v", err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || isBindVariant(e.Name()) {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(fixtureDir, e.Name()))
-		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
-		}
-		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
-			t.Fatalf("write %s: %v", e.Name(), err)
-		}
-	}
-	{
-		data, err := os.ReadFile(filepath.Join(fixtureDir, bindFile))
-		if err != nil {
-			t.Fatalf("read %s: %v", bindFile, err)
-		}
-		if err := os.WriteFile(filepath.Join(dst, "bind.json"), data, 0o644); err != nil {
-			t.Fatalf("write bind.json: %v", err)
-		}
-	}
-	return dst
-}
-
-// isBindVariant reports whether name is one of the fixture's bind.json
-// stand-ins (bind.json itself, or a bind-*.json variant used by a specific
-// test), so copyFixtureAs never lets an unrelated variant leak into a
-// destination dir as a stray member.
-func isBindVariant(name string) bool {
-	if name == "bind.json" {
-		return true
-	}
-	return strings.HasPrefix(name, "bind-") && strings.HasSuffix(name, ".json")
-}
-
-func mustBinding(t *testing.T, d *db.DB, name string) db.BindingRow {
-	t.Helper()
-	b, found, err := d.Binding(name)
-	if err != nil {
-		t.Fatalf("Binding(%s): %v", name, err)
-	}
-	if !found {
-		t.Fatalf("Binding(%s): not found", name)
-	}
-	return b
-}
-
-func mustRounds(t *testing.T, d *db.DB, bindingID string) []db.Round {
-	t.Helper()
-	rounds, err := d.Rounds(bindingID)
-	if err != nil {
-		t.Fatalf("Rounds: %v", err)
-	}
-	sort.Slice(rounds, func(i, j int) bool { return rounds[i].Number < rounds[j].Number })
-	return rounds
-}
-
-func strEq(a *string, want string) bool { return a != nil && *a == want }
 
 func TestIngestFixtureLive(t *testing.T) {
 	dir := copyFixture(t)
@@ -118,10 +22,8 @@ func TestIngestFixtureLive(t *testing.T) {
 		t.Fatalf("Ingest: %v", err)
 	}
 
-	// D3b fence items 1 and 3: the fixture's log carries no answer entry, so
-	// no artifact row is written at all (Artifacts == 0); this test locates
-	// no planner transcript, so TranscriptRecords == 0, and the builder
-	// stream's one unparseable line no longer contributes to Skipped.
+	// The fixture's log carries no answer entry, so Artifacts is 0 and no
+	// mastermind transcript is located, so TranscriptRecords is 0.
 	wantStats := Stats{Bindings: 1, Rounds: 3, Events: 9}
 	if stats != wantStats {
 		t.Errorf("Stats = %+v, want %+v", stats, wantStats)
@@ -131,7 +33,7 @@ func TestIngestFixtureLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Stats: %v", err)
 	}
-	wantRows := map[string]int{"repo": 1, "planner": 1, "binding": 1, "round": 3, "event": 9, "artifact": 0, "transcript": 0}
+	wantRows := map[string]int{"repo": 1, "mastermind": 1, "binding": 1, "round": 3, "event": 9, "artifact": 0, "transcript": 0}
 	for tbl, want := range wantRows {
 		if dbStats.Rows[tbl] != want {
 			t.Errorf("Rows[%s] = %d, want %d", tbl, dbStats.Rows[tbl], want)
@@ -145,31 +47,42 @@ func TestIngestFixtureLive(t *testing.T) {
 	if !strEq(b.Feature, "auth") {
 		t.Errorf("Feature = %v, want auth", b.Feature)
 	}
+	if !strEq(b.Ticket, "o/r#607") {
+		t.Errorf("Ticket = %v, want o/r#607", b.Ticket)
+	}
 	if !strEq(b.FinalState, "needs_you") {
 		t.Errorf("FinalState = %v, want needs_you", b.FinalState)
 	}
 	if b.IngestSource != "live" {
 		t.Errorf("IngestSource = %q, want live", b.IngestSource)
 	}
-	if b.PlannerID == nil {
-		t.Error("PlannerID is nil, want a planner row")
+	if b.MasterMindID == nil {
+		t.Error("MasterMindID is nil, want a mastermind row")
+	}
+}
+
+func TestIngestFixtureLiveRounds(t *testing.T) {
+	dir := copyFixture(t)
+	d := openTestDB(t)
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{Now: func() time.Time { return now }}); err != nil {
+		t.Fatalf("Ingest: %v", err)
 	}
 
+	b := mustBinding(t, d, "fixture")
 	rounds := mustRounds(t, d, b.ID)
 	if len(rounds) != 3 {
 		t.Fatalf("len(rounds) = %d, want 3", len(rounds))
 	}
-	if rounds[0].Outcome != db.OutcomeReported {
-		t.Errorf("round 1 outcome = %q, want reported", rounds[0].Outcome)
-	}
-	if rounds[1].Outcome != db.OutcomeReported {
-		t.Errorf("round 2 outcome = %q, want reported", rounds[1].Outcome)
+	if rounds[0].Outcome != db.OutcomeReported || rounds[1].Outcome != db.OutcomeReported {
+		t.Errorf("rounds 1-2 outcomes = %q/%q, want reported", rounds[0].Outcome, rounds[1].Outcome)
 	}
 	if !strEq(rounds[1].ReportOutcome, "halted") {
 		t.Errorf("round 2 report_outcome = %v, want halted", rounds[1].ReportOutcome)
 	}
-	if !strEq(rounds[1].BuilderHarness, "agy") || !strEq(rounds[1].BuilderProvider, "google") {
-		t.Errorf("round 2 builder = %v/%v, want agy/google", rounds[1].BuilderHarness, rounds[1].BuilderProvider)
+	if !strEq(rounds[1].Harness, "agy") || !strEq(rounds[1].Provider, "google") {
+		t.Errorf("round 2 builder = %v/%v, want agy/google", rounds[1].Harness, rounds[1].Provider)
 	}
 	if rounds[2].Outcome != db.OutcomeExited {
 		t.Errorf("round 3 outcome = %q, want exited", rounds[2].Outcome)
@@ -183,57 +96,29 @@ func TestIngestFixtureLive(t *testing.T) {
 		t.Errorf("len(events) = %d, want 9", len(events))
 	}
 
-	// D3b fence item 1: the plain round-file artifacts are no longer mirrored,
-	// so plan/report/diff/drift are absent for every round.
-	// r1: plan/report/diff and gate_log/question absent.
-	assertArtifact(t, d, rounds[0].ID, db.ArtifactPlan, false)
+	// Plain round-file artifacts are not mirrored: plan/report/diff/drift are
+	// absent for every round.
+	assertArtifact(t, d, rounds[0].ID, db.ArtifactPrompt, false)
 	assertArtifact(t, d, rounds[0].ID, db.ArtifactReport, false)
 	assertArtifact(t, d, rounds[0].ID, db.ArtifactDiff, false)
 	assertArtifact(t, d, rounds[0].ID, db.ArtifactGateLog, false)
-	// r2: plan/report/drift absent.
-	assertArtifact(t, d, rounds[1].ID, db.ArtifactPlan, false)
+	assertArtifact(t, d, rounds[1].ID, db.ArtifactPrompt, false)
 	assertArtifact(t, d, rounds[1].ID, db.ArtifactReport, false)
 	assertArtifact(t, d, rounds[1].ID, db.ArtifactDrift, false)
-	// r3: plan and report absent.
-	assertArtifact(t, d, rounds[2].ID, db.ArtifactPlan, false)
+	assertArtifact(t, d, rounds[2].ID, db.ArtifactPrompt, false)
 	assertArtifact(t, d, rounds[2].ID, db.ArtifactReport, false)
 
-	// D3b fence item 3: no round transcript row is mirrored any more.
-	r1t, err := d.Transcript(db.OwnerRound, rounds[0].ID, 0, 0)
-	if err != nil {
-		t.Fatalf("Transcript r1: %v", err)
-	}
-	if len(r1t) != 0 {
-		t.Errorf("len(r1 transcript) = %d, want 0", len(r1t))
-	}
-
-	r2t, err := d.Transcript(db.OwnerRound, rounds[1].ID, 0, 0)
-	if err != nil {
-		t.Fatalf("Transcript r2: %v", err)
-	}
-	if len(r2t) != 0 {
-		t.Errorf("len(r2 transcript) = %d, want 0", len(r2t))
-	}
-
-	r3t, err := d.Transcript(db.OwnerRound, rounds[2].ID, 0, 0)
-	if err != nil {
-		t.Fatalf("Transcript r3: %v", err)
-	}
-	if len(r3t) != 0 {
-		t.Errorf("len(r3 transcript) = %d, want 0", len(r3t))
+	for _, rd := range rounds {
+		recs, err := d.Transcript(db.OwnerRound, rd.ID, 0, 0)
+		if err != nil {
+			t.Fatalf("Transcript round %d: %v", rd.Number, err)
+		}
+		if len(recs) != 0 {
+			t.Errorf("round %d has %d round-owned transcript rows, want 0", rd.Number, len(recs))
+		}
 	}
 }
 
-// TestIngestLinksEventsToRounds pins the Task 0(a) fix: events are appended
-// before any round row exists, so every event.round_id starts out null;
-// after ingest, db.Events(bindingID, round) must return exactly that
-// round's entries by following round_id, not by re-decoding entry_json
-// client-side.
-//
-// Mutation check: skip the link step (comment out the
-// linkEventsToRounds call in Ingest) and this must fail -- every
-// db.Events(bindingID, N) call returns zero rows instead of the round's
-// entries, since round_id stays null forever.
 func TestIngestLinksEventsToRounds(t *testing.T) {
 	dir := copyFixture(t)
 	d := openTestDB(t)
@@ -244,7 +129,6 @@ func TestIngestLinksEventsToRounds(t *testing.T) {
 	}
 
 	b := mustBinding(t, d, "fixture")
-
 	round2, err := d.Events(b.ID, 2)
 	if err != nil {
 		t.Fatalf("Events(round 2): %v", err)
@@ -265,90 +149,26 @@ func TestIngestLinksEventsToRounds(t *testing.T) {
 		}
 	}
 
-	round1, err := d.Events(b.ID, 1)
-	if err != nil {
-		t.Fatalf("Events(round 1): %v", err)
-	}
-	if len(round1) != 4 {
-		t.Fatalf("Events(round 1) = %d rows, want 4", len(round1))
-	}
-
-	round3, err := d.Events(b.ID, 3)
-	if err != nil {
-		t.Fatalf("Events(round 3): %v", err)
-	}
-	if len(round3) != 2 {
-		t.Fatalf("Events(round 3) = %d rows, want 2", len(round3))
-	}
-}
-
-func assertArtifact(t *testing.T, d *db.DB, roundID, kind string, wantFound bool) {
-	t.Helper()
-	_, found, err := d.Artifact(roundID, kind)
-	if err != nil {
-		t.Fatalf("Artifact(%s): %v", kind, err)
-	}
-	if found != wantFound {
-		t.Errorf("Artifact(%s) found = %v, want %v", kind, found, wantFound)
-	}
-}
-
-// archiveFixtureAs packs the golden fixture, with bindFile standing in for
-// bind.json, into an archived record under a fresh temp state root and returns
-// the store and that record's id -- the archive-source counterpart of
-// copyFixtureAs (P3d §4.1: an archived binding is a record, not a tarball).
-func archiveFixtureAs(t *testing.T, bindFile string) (*store.Store, string) {
-	t.Helper()
-	root := t.TempDir()
-	s := store.New(root)
-	if err := os.MkdirAll(s.Dir("fixture"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	entries, err := os.ReadDir(fixtureDir)
-	if err != nil {
-		t.Fatalf("ReadDir fixture: %v", err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || isBindVariant(e.Name()) {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(fixtureDir, e.Name()))
+	for round, want := range map[int]int{1: 4, 3: 2} {
+		rows, err := d.Events(b.ID, round)
 		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
+			t.Fatalf("Events(round %d): %v", round, err)
 		}
-		if err := os.WriteFile(filepath.Join(s.Dir("fixture"), e.Name()), data, 0o644); err != nil {
-			t.Fatalf("write %s: %v", e.Name(), err)
+		if len(rows) != want {
+			t.Errorf("Events(round %d) = %d rows, want %d", round, len(rows), want)
 		}
 	}
-	bindData, err := os.ReadFile(filepath.Join(fixtureDir, bindFile))
-	if err != nil {
-		t.Fatalf("read %s: %v", bindFile, err)
-	}
-	if err := os.WriteFile(filepath.Join(s.Dir("fixture"), "bind.json"), bindData, 0o644); err != nil {
-		t.Fatalf("write bind.json: %v", err)
-	}
-	if _, err := s.Archive("fixture"); err != nil {
-		t.Fatalf("Archive: %v", err)
-	}
-	archived, err := s.ListArchived()
-	if err != nil || len(archived) != 1 {
-		t.Fatalf("ListArchived = %+v, %v, want exactly one record", archived, err)
-	}
-	return s, archived[0].RecordID
 }
 
 func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	deps := Deps{Now: func() time.Time { return now }}
 
-	liveDir := copyFixture(t)
 	liveDB := openTestDB(t)
-	if _, err := Ingest(context.Background(), DirSource(liveDir), liveDB, deps); err != nil {
+	if _, err := Ingest(context.Background(), DirSource(copyFixture(t)), liveDB, deps); err != nil {
 		t.Fatalf("live Ingest: %v", err)
 	}
-
 	archiveStore, recordID := archiveFixtureAs(t, "bind.json")
-
 	archiveDB := openTestDB(t)
 	if _, err := Ingest(context.Background(), ArchivedSource(archiveStore, recordID), archiveDB, deps); err != nil {
 		t.Fatalf("archive Ingest: %v", err)
@@ -356,30 +176,13 @@ func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
 
 	liveB := mustBinding(t, liveDB, "fixture")
 	archB := mustBinding(t, archiveDB, "fixture")
-
-	if !strPtrEq(liveB.RepoOrigin, archB.RepoOrigin) {
-		t.Errorf("RepoOrigin live=%v archive=%v", liveB.RepoOrigin, archB.RepoOrigin)
-	}
-	if !strPtrEq(liveB.Feature, archB.Feature) {
-		t.Errorf("Feature live=%v archive=%v", liveB.Feature, archB.Feature)
-	}
-	if !strPtrEq(liveB.FinalState, archB.FinalState) {
-		t.Errorf("FinalState live=%v archive=%v", liveB.FinalState, archB.FinalState)
-	}
-	if liveB.CWD != archB.CWD || liveB.BuilderMode != archB.BuilderMode {
-		t.Errorf("CWD/BuilderMode mismatch: live=%q/%q archive=%q/%q", liveB.CWD, liveB.BuilderMode, archB.CWD, archB.BuilderMode)
-	}
-	if !liveB.CreatedAt.Equal(archB.CreatedAt) {
-		t.Errorf("CreatedAt live=%v archive=%v", liveB.CreatedAt, archB.CreatedAt)
-	}
+	compareBindings(t, liveB, archB)
 	if archB.IngestSource != "archive" {
 		t.Errorf("archive IngestSource = %q, want archive", archB.IngestSource)
 	}
 	if archB.ArchivedAt == nil {
 		t.Error("archive ArchivedAt is nil, want the archive stamp")
 	}
-	// An archived record has no tarball behind it any more (P3d §4.5), so
-	// ArchivePath carries no path.
 
 	liveRounds := normalizeRounds(mustRounds(t, liveDB, liveB.ID))
 	archRounds := normalizeRounds(mustRounds(t, archiveDB, archB.ID))
@@ -388,31 +191,93 @@ func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
 	}
 	for i := range liveRounds {
 		lr, ar := liveRounds[i], archRounds[i]
-		if lr.Number != ar.Number || lr.Outcome != ar.Outcome || !strPtrEq(lr.ReportOutcome, ar.ReportOutcome) ||
-			!strPtrEq(lr.BuilderHarness, ar.BuilderHarness) || !strPtrEq(lr.BuilderProvider, ar.BuilderProvider) ||
-			!strPtrEq(lr.BuilderModel, ar.BuilderModel) || !intPtrEq(lr.Commits, ar.Commits) ||
-			!strPtrEq(lr.Tree, ar.Tree) || !strPtrEq(lr.GateResult, ar.GateResult) ||
-			lr.Switches != ar.Switches {
+		if !roundsEqual(lr, ar) {
 			t.Errorf("round %d mismatch: live=%+v archive=%+v", lr.Number, lr, ar)
 		}
+		compareArtifacts(t, liveDB, archiveDB, lr, ar)
+		compareTranscripts(t, liveDB, archiveDB, lr, ar)
 	}
+	compareEvents(t, liveDB, liveB.ID, archiveDB, archB.ID)
+}
 
-	liveEvents, err := liveDB.Events(liveB.ID, 0)
+func compareBindings(t *testing.T, live, arch db.BindingRow) {
+	t.Helper()
+	if !strPtrEq(live.RepoOrigin, arch.RepoOrigin) {
+		t.Errorf("RepoOrigin live=%v archive=%v", live.RepoOrigin, arch.RepoOrigin)
+	}
+	if !strPtrEq(live.Feature, arch.Feature) {
+		t.Errorf("Feature live=%v archive=%v", live.Feature, arch.Feature)
+	}
+	if !strPtrEq(live.Ticket, arch.Ticket) {
+		t.Errorf("Ticket live=%v archive=%v", live.Ticket, arch.Ticket)
+	}
+	if !strPtrEq(live.FinalState, arch.FinalState) {
+		t.Errorf("FinalState live=%v archive=%v", live.FinalState, arch.FinalState)
+	}
+	if live.CWD != arch.CWD || live.BuilderMode != arch.BuilderMode {
+		t.Errorf("CWD/BuilderMode mismatch: live=%q/%q archive=%q/%q", live.CWD, live.BuilderMode, arch.CWD, arch.BuilderMode)
+	}
+	if !live.CreatedAt.Equal(arch.CreatedAt) {
+		t.Errorf("CreatedAt live=%v archive=%v", live.CreatedAt, arch.CreatedAt)
+	}
+}
+
+func roundsEqual(lr, ar db.Round) bool {
+	return lr.Number == ar.Number && lr.Outcome == ar.Outcome &&
+		strPtrEq(lr.ReportOutcome, ar.ReportOutcome) &&
+		strPtrEq(lr.Harness, ar.Harness) &&
+		strPtrEq(lr.Provider, ar.Provider) &&
+		strPtrEq(lr.Model, ar.Model) && intPtrEq(lr.Commits, ar.Commits) &&
+		strPtrEq(lr.Tree, ar.Tree) && strPtrEq(lr.GateResult, ar.GateResult) &&
+		lr.Switches == ar.Switches
+}
+
+func compareArtifacts(t *testing.T, liveDB, archiveDB *db.DB, lr, ar db.Round) {
+	t.Helper()
+	for _, kind := range []string{db.ArtifactPrompt, db.ArtifactReport, db.ArtifactDiff, db.ArtifactDrift} {
+		la, lfound, _ := liveDB.Artifact(lr.ID, kind)
+		aa, afound, _ := archiveDB.Artifact(ar.ID, kind)
+		if lfound != afound {
+			t.Errorf("round %d artifact %s found live=%v archive=%v", lr.Number, kind, lfound, afound)
+			continue
+		}
+		if lfound && (la.Text != aa.Text || la.SHA256 != aa.SHA256 || la.Bytes != aa.Bytes) {
+			t.Errorf("round %d artifact %s content mismatch", lr.Number, kind)
+		}
+	}
+}
+
+func compareTranscripts(t *testing.T, liveDB, archiveDB *db.DB, lr, ar db.Round) {
+	t.Helper()
+	lTranscript, _ := liveDB.Transcript(db.OwnerRound, lr.ID, 0, 0)
+	aTranscript, _ := archiveDB.Transcript(db.OwnerRound, ar.ID, 0, 0)
+	if len(lTranscript) != len(aTranscript) {
+		t.Errorf("round %d transcript count live=%d archive=%d", lr.Number, len(lTranscript), len(aTranscript))
+		return
+	}
+	for j := range lTranscript {
+		if lTranscript[j].RecordJSON != aTranscript[j].RecordJSON || lTranscript[j].Rendered != aTranscript[j].Rendered {
+			t.Errorf("round %d transcript row %d mismatch", lr.Number, j)
+		}
+	}
+}
+
+// compareEvents compares decoded entries, not raw entry_json: the live source is a
+// directory whose log.jsonl lines are kept verbatim, while an archived record's
+// log.jsonl is re-encoded from its event rows.
+func compareEvents(t *testing.T, liveDB *db.DB, liveID string, archiveDB *db.DB, archID string) {
+	t.Helper()
+	liveEvents, err := liveDB.Events(liveID, 0)
 	if err != nil {
 		t.Fatalf("live Events: %v", err)
 	}
-	archEvents, err := archiveDB.Events(archB.ID, 0)
+	archEvents, err := archiveDB.Events(archID, 0)
 	if err != nil {
 		t.Fatalf("archive Events: %v", err)
 	}
 	if len(liveEvents) != len(archEvents) {
 		t.Fatalf("event count live=%d archive=%d", len(liveEvents), len(archEvents))
 	}
-	// Compared as decoded entries, not as raw entry_json: the live source
-	// here is a directory, whose log.jsonl lines are kept verbatim, while an
-	// archived record's log.jsonl is re-encoded from its event rows exactly
-	// as StoreSource re-encodes a live one's. The mirror rows are what must
-	// agree.
 	for i := range liveEvents {
 		var le, ae store.LogEntry
 		if err := json.Unmarshal([]byte(liveEvents[i].EntryJSON), &le); err != nil {
@@ -421,65 +286,20 @@ func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
 		if err := json.Unmarshal([]byte(archEvents[i].EntryJSON), &ae); err != nil {
 			t.Fatalf("decode archive event %d: %v", i, err)
 		}
-		if le.Kind != ae.Kind || le.Round != ae.Round || le.Direction != ae.Direction ||
-			le.Confirmed != ae.Confirmed || !le.TS.Equal(ae.TS) || le.Path != ae.Path ||
-			le.Payload != ae.Payload || le.Outcome != ae.Outcome || le.Tier != ae.Tier ||
-			le.Note != ae.Note {
+		if !logEntryEqual(le, ae) {
 			t.Errorf("event %d mismatch: live=%+v archive=%+v", i, le, ae)
 		}
 		if liveEvents[i].Seq != archEvents[i].Seq {
 			t.Errorf("event %d seq live=%d archive=%d", i, liveEvents[i].Seq, archEvents[i].Seq)
 		}
 	}
-
-	for i := range liveRounds {
-		for _, kind := range []string{db.ArtifactPlan, db.ArtifactReport, db.ArtifactDiff, db.ArtifactDrift} {
-			la, lfound, _ := liveDB.Artifact(mustRounds(t, liveDB, liveB.ID)[i].ID, kind)
-			aa, afound, _ := archiveDB.Artifact(mustRounds(t, archiveDB, archB.ID)[i].ID, kind)
-			if lfound != afound {
-				t.Errorf("round %d artifact %s found live=%v archive=%v", i+1, kind, lfound, afound)
-				continue
-			}
-			if lfound && (la.Text != aa.Text || la.SHA256 != aa.SHA256 || la.Bytes != aa.Bytes) {
-				t.Errorf("round %d artifact %s content mismatch", i+1, kind)
-			}
-		}
-
-		lRoundID := mustRounds(t, liveDB, liveB.ID)[i].ID
-		aRoundID := mustRounds(t, archiveDB, archB.ID)[i].ID
-		lTranscript, _ := liveDB.Transcript(db.OwnerRound, lRoundID, 0, 0)
-		aTranscript, _ := archiveDB.Transcript(db.OwnerRound, aRoundID, 0, 0)
-		if len(lTranscript) != len(aTranscript) {
-			t.Errorf("round %d transcript count live=%d archive=%d", i+1, len(lTranscript), len(aTranscript))
-			continue
-		}
-		for j := range lTranscript {
-			if lTranscript[j].RecordJSON != aTranscript[j].RecordJSON || lTranscript[j].Rendered != aTranscript[j].Rendered {
-				t.Errorf("round %d transcript row %d mismatch", i+1, j)
-			}
-		}
-	}
 }
 
-func normalizeRounds(rounds []db.Round) []db.Round {
-	out := make([]db.Round, len(rounds))
-	copy(out, rounds)
-	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
-	return out
-}
-
-func strPtrEq(a, b *string) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
-}
-
-func intPtrEq(a, b *int) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
+func logEntryEqual(le, ae store.LogEntry) bool {
+	return le.Kind == ae.Kind && le.Round == ae.Round && le.Direction == ae.Direction &&
+		le.Confirmed == ae.Confirmed && le.TS.Equal(ae.TS) && le.Path == ae.Path &&
+		le.Payload == ae.Payload && le.Outcome == ae.Outcome && le.Tier == ae.Tier &&
+		le.Note == ae.Note
 }
 
 func TestIngestTwiceIsNoop(t *testing.T) {
@@ -528,7 +348,9 @@ func TestIngestAppendsAfterNewRound(t *testing.T) {
 	if _, err := f.WriteString(`{"ts":"2026-09-10T10:30:00.000Z","round":4,"direction":"to_builder","kind":"plan","path":"/work/fixture/004-plan.md","confirmed":true,"tier":"high"}` + "\n"); err != nil {
 		t.Fatalf("append log entry: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("close log.jsonl: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "004-plan.md"), []byte("round 4 plan"), 0o644); err != nil {
 		t.Fatalf("write 004-plan.md: %v", err)
 	}
@@ -537,7 +359,7 @@ func TestIngestAppendsAfterNewRound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Ingest: %v", err)
 	}
-	// 004-plan.md is no longer mirrored into an artifact row (D3b fence item 1).
+	// 004-plan.md is not mirrored into an artifact row.
 	want := Stats{Bindings: 1, Rounds: 1, Events: 1}
 	if stats2 != want {
 		t.Errorf("second Ingest Stats = %+v, want %+v", stats2, want)
@@ -553,16 +375,9 @@ func TestIngestAppendsAfterNewRound(t *testing.T) {
 	}
 }
 
-// TestIngestNoPhantomRoundFromBindRound pins the round-3, backfill-found
-// rule: bind.json's "round" field is the *next* round number after
-// finishRound's Round++, so it names a round that has no files and no
-// events on a fully finished binding. bind-round4.json is exactly
-// binding-three-rounds with "round": 4 while every file and event still
-// only names rounds 1-3; Ingest must not manufacture an empty round 4 from
-// that field alone.
-//
-// Mutation check: re-adding `if b.Round > 0 { roundSet[b.Round] = true }`
-// to the round union in ingest.go must make this fail with 4 rounds.
+// TestIngestNoPhantomRoundFromBindRound pins that bind.json's "round" field is the
+// next round number, so it must not manufacture an empty round with no files or
+// events.
 func TestIngestNoPhantomRoundFromBindRound(t *testing.T) {
 	dir := copyFixtureAs(t, "bind-round4.json")
 	d := openTestDB(t)
@@ -583,42 +398,21 @@ func TestIngestNoPhantomRoundFromBindRound(t *testing.T) {
 	}
 }
 
-// mapGitFacts answers RepoFacts per directory, erroring for any dir it was
-// not told about -- standing in for a gc'd worktree (RepoFacts fails
-// because the dir no longer exists) alongside a source checkout that still
-// resolves.
-type mapGitFacts map[string]struct{ originURL, commonDir string }
-
-func (m mapGitFacts) RepoFacts(ctx context.Context, dir string) (string, string, error) {
-	f, ok := m[dir]
-	if !ok {
-		return "", "", fmt.Errorf("no such repo: %s", dir)
-	}
-	return f.originURL, f.commonDir, nil
-}
-
-// TestIngestRepoFromSourceCheckoutWhenCWDGone pins the repo-fallback rule:
-// when bind.json carries no RepoRef and b.CWD's worktree is gone (the
-// archived-binding case -- RepoFacts(b.CWD) fails), Ingest falls back to
-// RepoFacts(b.Repo), the pre-existing source-checkout field. Exercised for
-// both a live and an archive source, since the old code gated the git
-// lookup on kind == "live" and skipped it entirely for archives.
+// TestIngestRepoFromSourceCheckoutWhenCWDGone pins the repo fallback: with no
+// RepoRef and b.CWD gone, Ingest falls back to RepoFacts(b.Repo), for a live and an
+// archive source alike.
 func TestIngestRepoFromSourceCheckoutWhenCWDGone(t *testing.T) {
 	deps := Deps{Git: mapGitFacts{
 		"/work/source-checkout": {originURL: "git@github.com:o/r.git", commonDir: "/work/source-checkout/.git"},
 	}}
 
-	dir := copyFixtureAs(t, "bind-cwd-gone.json")
 	d := openTestDB(t)
-	if _, err := Ingest(context.Background(), DirSource(dir), d, deps); err != nil {
+	if _, err := Ingest(context.Background(), DirSource(copyFixtureAs(t, "bind-cwd-gone.json")), d, deps); err != nil {
 		t.Fatalf("live Ingest: %v", err)
 	}
 	b := mustBinding(t, d, "fixture")
-	if b.RepoID == nil {
-		t.Fatal("live: RepoID is nil, want a repo row resolved from b.Repo (the source checkout) when b.CWD is gone")
-	}
-	if !strEq(b.RepoOrigin, "https://github.com/o/r") {
-		t.Errorf("live: RepoOrigin = %v, want https://github.com/o/r", b.RepoOrigin)
+	if b.RepoID == nil || !strEq(b.RepoOrigin, "https://github.com/o/r") {
+		t.Errorf("live: RepoID/RepoOrigin = %v/%v, want a repo row from b.Repo", b.RepoID, b.RepoOrigin)
 	}
 
 	archiveStore, recordID := archiveFixtureAs(t, "bind-cwd-gone.json")
@@ -627,19 +421,14 @@ func TestIngestRepoFromSourceCheckoutWhenCWDGone(t *testing.T) {
 		t.Fatalf("archive Ingest: %v", err)
 	}
 	archB := mustBinding(t, archiveDB, "fixture")
-	if archB.RepoID == nil {
-		t.Fatal("archive: RepoID is nil, want a repo row resolved from b.Repo even for an archive source")
-	}
-	if !strEq(archB.RepoOrigin, "https://github.com/o/r") {
-		t.Errorf("archive: RepoOrigin = %v, want https://github.com/o/r", archB.RepoOrigin)
+	if archB.RepoID == nil || !strEq(archB.RepoOrigin, "https://github.com/o/r") {
+		t.Errorf("archive: RepoID/RepoOrigin = %v/%v, want a repo row from b.Repo", archB.RepoID, archB.RepoOrigin)
 	}
 }
 
 func TestIngestLegacyBindJSON(t *testing.T) {
-	dir := copyLegacyFixture(t)
 	d := openTestDB(t)
-
-	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+	if _, err := Ingest(context.Background(), DirSource(copyLegacyFixture(t)), d, Deps{}); err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
 
@@ -650,27 +439,18 @@ func TestIngestLegacyBindJSON(t *testing.T) {
 	if b.Feature != nil {
 		t.Errorf("Feature = %v, want nil", b.Feature)
 	}
-
-	rounds := mustRounds(t, d, b.ID)
-	if len(rounds) != 3 {
+	if b.Ticket != nil {
+		t.Errorf("Ticket = %v, want nil", b.Ticket)
+	}
+	if rounds := mustRounds(t, d, b.ID); len(rounds) != 3 {
 		t.Errorf("len(rounds) = %d, want 3", len(rounds))
 	}
 }
 
-type fakeGitFacts struct {
-	originURL, commonDir string
-}
-
-func (f fakeGitFacts) RepoFacts(ctx context.Context, dir string) (string, string, error) {
-	return f.originURL, f.commonDir, nil
-}
-
 func TestIngestResolvesRepoWhenMissing(t *testing.T) {
-	dir := copyLegacyFixture(t)
 	d := openTestDB(t)
-
 	deps := Deps{Git: fakeGitFacts{originURL: "git@github.com:o/r.git", commonDir: "/work/fixture/.git"}}
-	if _, err := Ingest(context.Background(), DirSource(dir), d, deps); err != nil {
+	if _, err := Ingest(context.Background(), DirSource(copyLegacyFixture(t)), d, deps); err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
 
@@ -683,8 +463,7 @@ func TestIngestResolvesRepoWhenMissing(t *testing.T) {
 	}
 }
 
-func TestIngestPlannerTranscript(t *testing.T) {
-	dir := copyFixture(t)
+func TestIngestMasterMindTranscript(t *testing.T) {
 	d := openTestDB(t)
 
 	sessionPath := filepath.Join(t.TempDir(), "S1.jsonl")
@@ -699,16 +478,15 @@ func TestIngestPlannerTranscript(t *testing.T) {
 		return "", false
 	}
 
-	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{Sessions: fakeSessions}); err != nil {
+	if _, err := Ingest(context.Background(), DirSource(copyFixture(t)), d, Deps{Sessions: fakeSessions}); err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
 
 	b := mustBinding(t, d, "fixture")
-	if b.PlannerID == nil {
-		t.Fatal("PlannerID is nil")
+	if b.MasterMindID == nil {
+		t.Fatal("MasterMindID is nil")
 	}
-
-	recs, err := d.Transcript(db.OwnerPlanner, *b.PlannerID, 0, 0)
+	recs, err := d.Transcript(db.OwnerMasterMind, *b.MasterMindID, 0, 0)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}
@@ -723,18 +501,38 @@ func TestIngestPlannerTranscript(t *testing.T) {
 	}
 }
 
-// TestIngestWritesNoRoundFileMirror pins D3b's new behaviour: ingest no
-// longer mirrors round files into `artifact` rows or into round transcript
-// rows. Every artifact row that exists must be an answer, and no
-// `transcript` row may carry owner_kind='round'.
-//
-// Mutation: restore the plain round-file artifact loop and this fails.
+// TestIngestResolvesGitAndSessionsOutsideTheTransaction pins that the git facts and
+// the mastermind-session lookup run before Ingest opens its write transaction, so
+// neither holds the db's write lock while it shells out to git or searches the disk.
+func TestIngestResolvesGitAndSessionsOutsideTheTransaction(t *testing.T) {
+	d := openTestDB(t)
+
+	git := &txProbingGitFacts{d: d}
+	sessCalled := false
+	var sessTxErr error
+	sessions := func(kind, sessionID string) (string, bool) {
+		sessCalled = true
+		sessTxErr = d.Tx(func(*db.Tx) error { return nil })
+		return "", false
+	}
+
+	if _, err := Ingest(context.Background(), DirSource(copyLegacyFixture(t)), d, Deps{Git: git, Sessions: sessions}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	if !git.called || !sessCalled {
+		t.Errorf("called git=%v sessions=%v, want both", git.called, sessCalled)
+	}
+	if git.txErr != nil || sessTxErr != nil {
+		t.Errorf("Tx inside git/sessions = %v/%v, want nil (no write lock held)", git.txErr, sessTxErr)
+	}
+}
+
+// TestIngestWritesNoRoundFileMirror pins that every artifact row is an answer and no
+// transcript row carries owner_kind='round'.
 func TestIngestWritesNoRoundFileMirror(t *testing.T) {
-	dir := copyFixture(t)
 	d := openTestDB(t)
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
-
-	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{Now: func() time.Time { return now }}); err != nil {
+	if _, err := Ingest(context.Background(), DirSource(copyFixture(t)), d, Deps{Now: func() time.Time { return now }}); err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
 
@@ -742,20 +540,16 @@ func TestIngestWritesNoRoundFileMirror(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
-
 	b := mustBinding(t, d, "fixture")
 	rounds := mustRounds(t, d, b.ID)
 	if len(rounds) == 0 {
 		t.Fatal("no rounds ingested, cannot check the mirror")
 	}
 
-	// Every artifact kind except answer is a round-file mirror that D3b
-	// (fence items 1 and 2) must not write any more.
 	nonAnswerKinds := []string{
-		db.ArtifactPlan, db.ArtifactReport, db.ArtifactDiff, db.ArtifactDrift,
+		db.ArtifactPrompt, db.ArtifactReport, db.ArtifactDiff, db.ArtifactDrift,
 		db.ArtifactGateLog, db.ArtifactQuestion, db.ArtifactAsk, db.ArtifactFindings,
 	}
-
 	answers := 0
 	for _, r := range rounds {
 		for _, kind := range nonAnswerKinds {
@@ -774,7 +568,6 @@ func TestIngestWritesNoRoundFileMirror(t *testing.T) {
 		if found {
 			answers++
 		}
-
 		recs, err := d.Transcript(db.OwnerRound, r.ID, 0, 0)
 		if err != nil {
 			t.Fatalf("Transcript(round %d): %v", r.Number, err)
@@ -784,36 +577,30 @@ func TestIngestWritesNoRoundFileMirror(t *testing.T) {
 		}
 	}
 
-	// The round-scoped checks miss nothing only if these totals agree: every
-	// artifact row is one of the answers just counted, and every transcript
-	// row belongs to a planner, not to a round.
 	if dbStats.Rows["artifact"] != answers {
 		t.Errorf("artifact rows = %d, want %d (one per answer artifact)", dbStats.Rows["artifact"], answers)
 	}
-	plannerRows := 0
-	if b.PlannerID != nil {
-		recs, err := d.Transcript(db.OwnerPlanner, *b.PlannerID, 0, 0)
+	mastermindRows := 0
+	if b.MasterMindID != nil {
+		recs, err := d.Transcript(db.OwnerMasterMind, *b.MasterMindID, 0, 0)
 		if err != nil {
-			t.Fatalf("Transcript(planner): %v", err)
+			t.Fatalf("Transcript(mastermind): %v", err)
 		}
-		plannerRows = len(recs)
+		mastermindRows = len(recs)
 	}
-	if dbStats.Rows["transcript"] != plannerRows {
-		t.Errorf("transcript rows = %d, want %d (planner-owned only)", dbStats.Rows["transcript"], plannerRows)
+	if dbStats.Rows["transcript"] != mastermindRows {
+		t.Errorf("transcript rows = %d, want %d (mastermind-owned only)", dbStats.Rows["transcript"], mastermindRows)
 	}
 }
 
 func TestIngestBadBindIsErrSourceAndWritesNothing(t *testing.T) {
-	dir := t.TempDir()
 	d := openTestDB(t)
-
 	before, err := d.Stats()
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
 
-	_, err = Ingest(context.Background(), DirSource(dir), d, Deps{})
-	if err == nil {
+	if _, err := Ingest(context.Background(), DirSource(t.TempDir()), d, Deps{}); err == nil {
 		t.Fatal("Ingest over a directory with no bind.json must fail")
 	}
 
@@ -825,5 +612,171 @@ func TestIngestBadBindIsErrSourceAndWritesNothing(t *testing.T) {
 		if after.Rows[tbl] != n {
 			t.Errorf("Rows[%s] changed on a failed Ingest: before %d, after %d", tbl, n, after.Rows[tbl])
 		}
+	}
+}
+
+func TestStatsAdd(t *testing.T) {
+	a := Stats{Bindings: 1, Rounds: 2, Events: 3, Artifacts: 4, TranscriptRecords: 5, Skipped: 6}
+	b := Stats{Bindings: 1, Rounds: 1, Events: 1, Artifacts: 1, TranscriptRecords: 1, Skipped: 1}
+	want := Stats{Bindings: 2, Rounds: 3, Events: 4, Artifacts: 5, TranscriptRecords: 6, Skipped: 7}
+	if got := a.Add(b); got != want {
+		t.Errorf("Add = %+v, want %+v", got, want)
+	}
+}
+
+// TestUpsertAnswerIfChanged pins the answer artifact's write-on-change rule: a
+// new text writes and reports a change, the same text is a no-op.
+func TestUpsertAnswerIfChanged(t *testing.T) {
+	d := openTestDB(t)
+	bindingID := seedMirrorBinding(t, d, "webshop")
+	roundID := seedMirrorRound(t, d, bindingID, 1)
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+
+	if err := d.Tx(func(tx *db.Tx) error {
+		changed, err := upsertAnswerIfChanged(tx, roundID, "first", now)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			t.Error("first write = no change, want changed")
+		}
+		changed, err = upsertAnswerIfChanged(tx, roundID, "first", now)
+		if err != nil {
+			return err
+		}
+		if changed {
+			t.Error("same text = changed, want no change")
+		}
+		_, err = upsertAnswerIfChanged(tx, roundID, "second", now)
+		return err
+	}); err != nil {
+		t.Fatalf("Tx: %v", err)
+	}
+
+	a, ok, err := d.Artifact(roundID, db.ArtifactAnswer)
+	if err != nil || !ok {
+		t.Fatalf("Artifact(answer) = (ok %v, err %v)", ok, err)
+	}
+	if a.Text != "second" || a.Bytes != int64(len("second")) || a.SHA256 != sha256Hex([]byte("second")) {
+		t.Errorf("answer artifact = %+v, want the last text with its size and hash", a)
+	}
+}
+
+// TestLogEntryToEventOptionalFields pins the projection of the optional log-entry
+// fields onto the event row.
+func TestLogEntryToEventOptionalFields(t *testing.T) {
+	delivered := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	ev := logEntryToEvent("b1", 7, `{"round":1}`, store.LogEntry{
+		TS: dedupeAt, Kind: store.KindPrompt, Note: "n", Path: "/p",
+		Confirmed: true, Late: true, DeliveredAt: &delivered, Flagged: 3, FlaggedBy: "someone",
+	})
+	if ev.BindingID != "b1" || ev.Seq != 7 || ev.EntryJSON != `{"round":1}` {
+		t.Errorf("identity fields = %+v", ev)
+	}
+	if ev.DeliveredAt == nil || !ev.DeliveredAt.Equal(delivered) {
+		t.Errorf("DeliveredAt = %v, want the entry's", ev.DeliveredAt)
+	}
+	if ev.Flagged == nil || *ev.Flagged != 3 || ev.FlaggedBy == nil || *ev.FlaggedBy != "someone" {
+		t.Errorf("flagged/flaggedBy = %v/%v, want 3/someone", ev.Flagged, ev.FlaggedBy)
+	}
+	if ev.Note == nil || *ev.Note != "n" || ev.Path == nil || *ev.Path != "/p" {
+		t.Errorf("note/path = %v/%v, want n//p", ev.Note, ev.Path)
+	}
+	if !ev.Confirmed || !ev.Late {
+		t.Errorf("confirmed/late = %v/%v, want true/true", ev.Confirmed, ev.Late)
+	}
+}
+
+// writePickFixture writes a minimal live binding directory: bind.json for b and
+// a one-entry log.jsonl whose pick note is note.
+func writePickFixture(t *testing.T, b store.Binding, note string) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	bind, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("marshal bind.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bind.json"), bind, 0o644); err != nil {
+		t.Fatalf("write bind.json: %v", err)
+	}
+
+	entry := store.LogEntry{
+		TS:        time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC),
+		Round:     1,
+		Direction: store.DirToMasterMind,
+		Kind:      store.KindPick,
+		Confirmed: true,
+		Note:      note,
+	}
+	line, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("marshal log entry: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "log.jsonl"), append(line, '\n'), 0o644); err != nil {
+		t.Fatalf("write log.jsonl: %v", err)
+	}
+	return dir
+}
+
+// TestIngestCountsACustomWriterActorsOwnPicks pins the bug this round fixes: a
+// binding whose actor is designer owns "picked <tok> for designer: ...", so the
+// round is counted on <tok> and carries the actor designer.
+func TestIngestCountsACustomWriterActorsOwnPicks(t *testing.T) {
+	d := openTestDB(t)
+	dir := writePickFixture(t, store.Binding{
+		Name:             "fixture",
+		CWD:              "/work/fixture",
+		Builder:          store.Endpoint{Kind: "opencode", Mode: store.ModeHeadless},
+		Role:             "designer",
+		BuilderCandidate: "opencode/openrouter/z-ai/glm-5.3-flash",
+		CreatedAt:        time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC),
+		Round:            1,
+	}, "picked claude/anthropic/sonnet for designer: order #1")
+
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	rounds := mustRounds(t, d, mustBinding(t, d, "fixture").ID)
+	if len(rounds) != 1 {
+		t.Fatalf("len(rounds) = %d, want 1", len(rounds))
+	}
+	if !strEq(rounds[0].Candidate, "claude/anthropic/sonnet") {
+		t.Errorf("Candidate = %v, want claude/anthropic/sonnet (the actor's own pick counts)", rounds[0].Candidate)
+	}
+	if rounds[0].Actor != "designer" {
+		t.Errorf("Actor = %q, want designer", rounds[0].Actor)
+	}
+}
+
+// TestIngestSkipsAConsultPick pins that a builder binding's round does not take
+// a pick note naming another actor: "picked <tok> for reviewer: ..." is skipped
+// and the round falls back to the binding's own candidate.
+func TestIngestSkipsAConsultPick(t *testing.T) {
+	d := openTestDB(t)
+	dir := writePickFixture(t, store.Binding{
+		Name:             "fixture",
+		CWD:              "/work/fixture",
+		Builder:          store.Endpoint{Kind: "opencode", Mode: store.ModeHeadless},
+		Role:             "builder",
+		BuilderCandidate: "opencode/fallback/model",
+		CreatedAt:        time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC),
+		Round:            1,
+	}, "picked claude/anthropic/sonnet for reviewer: order #1")
+
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	rounds := mustRounds(t, d, mustBinding(t, d, "fixture").ID)
+	if len(rounds) != 1 {
+		t.Fatalf("len(rounds) = %d, want 1", len(rounds))
+	}
+	if !strEq(rounds[0].Candidate, "opencode/fallback/model") {
+		t.Errorf("Candidate = %v, want the binding's own candidate (the consult pick is skipped)", rounds[0].Candidate)
+	}
+	if rounds[0].Actor != "builder" {
+		t.Errorf("Actor = %q, want builder", rounds[0].Actor)
 	}
 }

@@ -5,10 +5,9 @@ import (
 	"strings"
 )
 
-// Spend is a binding's, or a group's, total. Measured and Estimated are
-// separate sums so an estimate never hides inside a measurement; Plan and
-// Unknown are round counts, never dollars. Steps and ToolCalls are the
-// model steps and tool calls the rounds' streams showed (#323, #324).
+// Spend is a binding's, or a group's, total. Measured and Estimated are separate
+// sums so an estimate never hides inside a measurement; Plan and Unknown are round
+// counts, never dollars.
 type Spend struct {
 	Rounds    int     `json:"rounds"`
 	Consults  int     `json:"consults"`
@@ -21,9 +20,8 @@ type Spend struct {
 	Tokens    Tokens  `json:"tokens"`
 }
 
-// Sum folds usages. isConsult[i] marks entry i as a consult rather than a
-// round; nil means every entry is a round. Dollars route by basis; a plan
-// lane counts under Plan and its dollars are not cash.
+// Sum folds usages. isConsult[i] marks entry i as a consult rather than a round;
+// nil means every entry is a round. A plan lane counts under Plan, not as cash.
 func Sum(us []Usage, isConsult []bool) Spend {
 	var s Spend
 	for i, u := range us {
@@ -49,7 +47,6 @@ func Sum(us []Usage, isConsult []bool) Spend {
 	return s
 }
 
-// Add is the field-wise sum.
 func (s Spend) Add(o Spend) Spend {
 	return Spend{
 		Rounds: s.Rounds + o.Rounds, Consults: s.Consults + o.Consults,
@@ -58,6 +55,21 @@ func (s Spend) Add(o Spend) Spend {
 		Plan: s.Plan + o.Plan, Unknown: s.Unknown + o.Unknown,
 		Tokens: s.Tokens.Add(o.Tokens),
 	}
+}
+
+func (s Spend) AddSegment(u Usage) Spend {
+	s.Steps += u.Steps
+	s.ToolCalls += u.ToolCalls
+	s.Tokens = s.Tokens.Add(u.Tokens)
+	if !u.Cost.Plan {
+		switch u.Cost.Basis {
+		case Measured:
+			s.Measured += u.Cost.USD
+		case Estimated:
+			s.Estimated += u.Cost.USD
+		}
+	}
+	return s
 }
 
 func moneyParts(s Spend) []string {
@@ -77,8 +89,8 @@ func moneyParts(s Spend) []string {
 	return p
 }
 
-// SpendLine: "4 rounds +2c · $1.23 · ~$0.40 · 1 plan · 2 unknown", with a
-// trailing tok cell (#234) when the sum moved tokens: " · 2.1M tok".
+// SpendLine: "4 rounds +2c · $1.23 · ~$0.40 · 1 plan · 2 unknown", with a trailing
+// tok cell when the sum moved tokens.
 func SpendLine(s Spend) string {
 	if s.Rounds == 0 && s.Consults == 0 {
 		return "no rounds"
@@ -97,9 +109,8 @@ func SpendLine(s Spend) string {
 	return out
 }
 
-// MoneyShort is SpendLine without the rounds part, for the rail card and
-// the statusline (#234): "$1.51 · 2.1M tok". Just the tok cell when the
-// sum has tokens but no dollars to name.
+// MoneyShort is SpendLine without the rounds part, for the rail card and the
+// statusline: "$1.51 · 2.1M tok".
 func MoneyShort(s Spend) string {
 	parts := moneyParts(s)
 	if total := s.Tokens.Total(); total > 0 {

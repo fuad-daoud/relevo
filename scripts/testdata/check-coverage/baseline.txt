@@ -1,0 +1,2 @@
+example.com/pkg/a 71.3
+example.com/pkg/b 50.0

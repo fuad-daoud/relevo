@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -25,10 +24,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
-	"github.com/fuad-daoud/relevo/internal/ui"
 )
 
 type hostSlice []string
@@ -219,19 +218,22 @@ func cmdServe(args []string) error {
 
 // serveTierRuntime is the Runtime cmdServeRun uses only to log the builder
 // tier at startup: candidates, policy, the server's gates and a clock.
-// Gates is the `serve.`-prefixed view of the machine database (P5 §4.3), so a
-// tier check that reads the gate record sees the server-wide one.
-func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string, d *db.DB) relevo.Runtime {
+// reg is passed so the logged tier is the tier served rounds get: they resolve
+// through the same registry. Gates is the `serve.`-prefixed view of the
+// machine database, so a tier check that reads the gate record sees the
+// server-wide one.
+func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, reg *roles.Registry, root string, d *db.DB) relevo.Runtime {
 	var gates db.KV
 	if d != nil {
 		gates = db.PrefixKV{KV: d, Prefix: "serve."}
 	}
 	return relevo.Runtime{
-		Candidates: candidates,
-		Policy:     pol,
-		Gates:      gates,
-		GatesDir:   root,
-		Now:        time.Now,
+		Candidates:    candidates,
+		Policy:        pol,
+		Registry:      reg,
+		Gates:         gates,
+		Now:           time.Now,
+		SessionReaper: relevo.NewSessionReaper(binExec{}),
 	}
 }
 
@@ -241,11 +243,11 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string,
 // or one present but silent on Enabled) scopes are on by default, with
 // CPUWeight defaulting to 100 and every other field passed through as
 // given (its own zero value means "omit" to ScopeArgv).
-func scopeFromPolicy(sc *policy.ScopePolicy) *relevo.ScopeSpec {
+func scopeFromPolicy(sc *policy.ScopePolicy) *spawn.ScopeSpec {
 	if sc != nil && sc.Enabled != nil && !*sc.Enabled {
 		return nil
 	}
-	spec := &relevo.ScopeSpec{CPUWeight: 100}
+	spec := &spawn.ScopeSpec{CPUWeight: 100}
 	if sc != nil {
 		spec.Slice = sc.Slice
 		if sc.CPUWeight != 0 {
@@ -266,7 +268,7 @@ func scopeFromPolicy(sc *policy.ScopePolicy) *relevo.ScopeSpec {
 // gains ", gate <quota>" inside the parentheses: "on (slice relevo.slice,
 // 200%, gate 300%)". A spec carrying an allowed_cpus pool (#314) gains
 // ", cpus <pool>, one per round": "on (cpus 0-2, one per round)".
-func scopeStatusText(sc *relevo.ScopeSpec) string {
+func scopeStatusText(sc *spawn.ScopeSpec) string {
 	if sc == nil {
 		return "off"
 	}
@@ -350,10 +352,35 @@ func loadServeConfig() (config.Loaded, *db.DB, string, error) {
 	return L, d, root, nil
 }
 
-// serveAdminConfigWithCandidates is serveAdminConfig plus the configured
-// candidates and policy, which the gate verbs need: `relevo serve gates`
-// projects the ledger onto the candidate set, and the two edit verbs refuse a
-// token no candidate names (#251).
+// serveAdminConfigFrom is serveAdminConfig plus the loaded policy and roles
+// registry, which the census needs: `serve status` reports the builder cap the
+// server enforces, and that cap comes from serve.max_builders. It takes an
+// already-loaded config so a caller that also needs the candidates loads once:
+// loading is not a pure read.
+func serveAdminConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
+	cfg := serveAdminConfig(root, d)
+	cfg.Policy = L.Policy
+	cfg.Registry = L.Registry
+	return cfg
+}
+
+// serveAdminConfigWithPolicy is serveAdminConfigFrom with the config loaded
+// here.
+//
+// Unlike serveAdminConfigWithCandidates, an empty candidates set is not an
+// error: the census is meaningful with no candidates.
+func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
+	L, err := loadConfig(d)
+	if err != nil {
+		return serve.Config{}, err
+	}
+	return serveAdminConfigFrom(root, d, L), nil
+}
+
+// serveAdminConfigWithCandidates is serveAdminConfigFrom plus the configured
+// candidates, which the gate verbs need: `relevo serve gates` projects the
+// ledger onto the candidate set, and the two edit verbs refuse a token no
+// candidate names.
 //
 // Unlike cmdServeRun, an empty candidates set is an error here: with no
 // candidate set to project onto, a ledger full of gates would render as
@@ -367,11 +394,8 @@ func serveAdminConfigWithCandidates(root string, d *db.DB) (serve.Config, error)
 	if L.Candidates.Len() == 0 {
 		return serve.Config{}, errors.New("no candidates configured")
 	}
-
-	cfg := serveAdminConfig(root, d)
+	cfg := serveAdminConfigFrom(root, d, L)
 	cfg.Candidates = L.Candidates
-	cfg.Policy = L.Policy
-	cfg.Registry = L.Registry
 	return cfg, nil
 }
 
@@ -390,7 +414,7 @@ func cmdServeRun(args []string) error {
 		return err
 	}
 
-	L, d, machineRoot, err := loadServeConfig()
+	L, d, _, err := loadServeConfig()
 	if err != nil {
 		return err
 	}
@@ -398,7 +422,7 @@ func cmdServeRun(args []string) error {
 
 	candidates, pol, reg := L.Candidates, L.Policy, L.Registry
 
-	builderTierRT := serveTierRuntime(candidates, pol, root, d)
+	builderTierRT := serveTierRuntime(candidates, pol, reg, root, d)
 	if builderTier := relevo.ServedBuilderTier(builderTierRT); builderTier == harness.TierHarness {
 		slog.Warn(relevo.ServerTierWarning(relevo.ServerProbe{TierAware: true, BuilderTier: string(builderTier)}))
 	} else {
@@ -423,9 +447,9 @@ func cmdServeRun(args []string) error {
 			continue
 		}
 		if missing := roles.Missing(r.Harness, spec.Definitions); len(missing) > 0 {
-			slog.Warn("candidate roles missing; those candidates will be skipped", "harness", r.Harness, "missing", missing, "fix", "relevo config agents --kind "+r.Harness)
+			slog.Warn("candidate agent definitions missing; those candidates will be skipped", "harness", r.Harness, "missing", missing, "fix", "relevo config agents --kind "+r.Harness)
 		} else {
-			slog.Info("roles present", "harness", r.Harness)
+			slog.Info("agent definitions present", "harness", r.Harness)
 		}
 	}
 
@@ -434,7 +458,7 @@ func cmdServeRun(args []string) error {
 	// The hooks dispatcher runs on the machine database's run log, the same
 	// kv `hooks.log` the daemon writes (P5 §4.3), so a served round's hook
 	// runs are visible beside the local ones.
-	hooksCfg, err := resolveHooksConfig(L.Hooks, hooks.NewKVLog(db.TxKV{DB: d}, machineRoot))
+	hooksCfg, err := resolveHooksConfig(L.Hooks, hooks.NewKVLog(db.TxKV{DB: d}))
 	if err != nil {
 		return err
 	}
@@ -473,6 +497,7 @@ func cmdServeRun(args []string) error {
 		MaxBuilders:    sf.maxBuilders,
 		Hooks:          dispatcher,
 		Scope:          scope,
+		SessionReaper:  relevo.NewSessionReaper(binExec{}),
 	}
 
 	srv, err := serve.New(cfg)
@@ -503,7 +528,7 @@ func cmdServeRun(args []string) error {
 	var cert *tls.Certificate
 	var fp string
 	if !sf.insecureHTTP {
-		c, err := serve.LoadTLS(serve.SecretStore{DB: d, Root: root})
+		c, err := serve.LoadTLS(serve.SecretStore{DB: d})
 		if err != nil {
 			return err
 		}
@@ -533,587 +558,4 @@ func cmdServeRun(args []string) error {
 		TLS:          cert,
 		InsecureHTTP: sf.insecureHTTP,
 	})
-}
-
-func cmdServeInit(args []string) error {
-	fs := flag.NewFlagSet("relevo serve init", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	var hosts hostSlice
-	fs.Var(&hosts, "host", "hostname or IP to include in certificate SANs")
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	root, err := serveRoot(fs)
-	if err != nil {
-		return err
-	}
-
-	d, _, err := openMachineDB()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-	secrets := serve.SecretStore{DB: d, Root: root}
-
-	fp, err := serve.InitTLS(secrets, hosts, time.Now())
-	if errors.Is(err, serve.ErrTLSExists) {
-		existingFP, fpErr := serve.Fingerprint(secrets)
-		if fpErr != nil {
-			return fpErr
-		}
-		fmt.Printf("already initialised; fingerprint %s\n", existingFP)
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("fingerprint %s\n", fp)
-	fmt.Println(`clients: run relevo serve enroll --label <who> --key "<their relevo config server key line>"`)
-	return nil
-}
-
-func cmdServeEnroll(args []string) error {
-	fs := flag.NewFlagSet("relevo serve enroll", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	label := fs.String("label", "", "client label")
-	key := fs.String("key", "", "client ed25519 public key line")
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	if *label == "" || *key == "" {
-		fmt.Fprintln(os.Stderr, "usage: relevo serve enroll --label <label> --key \"<ed25519 line>\" [--state <dir>]")
-		return exitCodeErr{code: 2}
-	}
-
-	root, err := serveRoot(fs)
-	if err != nil {
-		return err
-	}
-
-	d, _, err := openMachineDB()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	clients, err := serve.LoadClients(d, filepath.Join(root, "clients.json"))
-	if err != nil {
-		return err
-	}
-
-	cl, err := clients.Add(*label, *key, time.Now())
-	if errors.Is(err, serve.ErrAlreadyEnrolled) {
-		fmt.Fprintf(os.Stderr, "relevo serve enroll: client already enrolled: %s\n", *label)
-		return exitCodeErr{code: 1}
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo serve enroll: %v\n", err)
-		return exitCodeErr{code: 1}
-	}
-
-	fmt.Printf("enrolled %s %s\n", cl.Label, cl.ID)
-	return nil
-}
-
-func cmdServeClients(args []string) error {
-	fs := flag.NewFlagSet("relevo serve clients", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	root, d, err := adminRoot(fs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	clients, err := serve.LoadClients(d, filepath.Join(root, "clients.json"))
-	if err != nil {
-		return err
-	}
-
-	fmt.Print(serve.RenderClients(clients.List()))
-	return nil
-}
-
-func cmdServeRevoke(args []string) error {
-	fs := flag.NewFlagSet("relevo serve revoke", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo serve revoke <id> [--state <dir>]")
-		return exitCodeErr{code: 2}
-	}
-
-	id := fs.Arg(0)
-	root, d, err := adminRoot(fs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	clients, err := serve.LoadClients(d, filepath.Join(root, "clients.json"))
-	if err != nil {
-		return err
-	}
-
-	if err := clients.Revoke(remote.ClientID(id), time.Now()); err != nil {
-		if errors.Is(err, serve.ErrNoSuchClient) {
-			fmt.Fprintf(os.Stderr, "relevo serve revoke: no such client %s\n", id)
-			return exitCodeErr{code: 1}
-		}
-		return err
-	}
-	return nil
-}
-
-func cmdServeFingerprint(args []string) error {
-	fs := flag.NewFlagSet("relevo serve fingerprint", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	root, d, err := adminRoot(fs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	fp, err := serve.Fingerprint(serve.SecretStore{DB: d, Root: root})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo serve fingerprint: %v\n", err)
-		return exitCodeErr{code: 1}
-	}
-
-	fmt.Println(fp)
-	return nil
-}
-
-func cmdServeStatus(args []string) error {
-	fs := flag.NewFlagSet("relevo serve status", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
-	asJSON := fs.Bool("json", false, "print the census as JSON")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	root, d, err := adminRoot(fs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	srv, err := serve.New(serveAdminConfig(root, d))
-	if err != nil {
-		return err
-	}
-
-	owners, builders, err := serve.AdminStatus(context.Background(), srv)
-	if err != nil {
-		return err
-	}
-
-	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(serve.StatusDocument(owners, builders))
-	}
-
-	fmt.Print(serve.RenderAdminStatus(owners, builders))
-	return nil
-}
-
-// serveShowUsage is the removed `relevo serve show` usage line, updated to
-// the verb that carries the --owner route now (§4.1). cmdShow prints it when
-// an --owner invocation names more than one section.
-const serveShowUsage = "usage: relevo show <name> --owner <label|id> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json] [--state <dir>]"
-
-// serveLog is cmdServeLog's body, moved so `relevo show <name> --owner
-// <label> --log` calls it (§4.1). It takes the parsed values: state is the
-// resolved --state ("" for the default root). It prints one owner's binding
-// log from the server (#216): the read-only counterpart of `relevo log`. It
-// resolves the owner with the same resolver `serve unbind` uses, builds that
-// owner's runtime, and renders through the same printLog the client verb
-// uses, so the output reads exactly like a client's. It stamps nothing -- the
-// .viewed sidecar is the owner's, not the admin's -- and creates nothing.
-func serveLog(owner, state, name string, round, after int, asJSON, follow bool) error {
-	root, d, err := adminRootFor(state)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	srv, err := serve.New(serveAdminConfig(root, d))
-	if err != nil {
-		return err
-	}
-
-	rt, _, err := serve.AdminOwnerRuntime(srv, owner)
-	if err != nil {
-		if errors.Is(err, serve.ErrNoSuchClient) {
-			fmt.Fprintf(os.Stderr, "relevo serve log: no such client: %s\n", owner)
-		} else if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve log: %s/%s: binding not found\n", owner, name)
-		} else {
-			fmt.Fprintf(os.Stderr, "relevo serve log: %v\n", err)
-		}
-		return exitCodeErr{code: 1}
-	}
-
-	if err := printLog(rt, name, round, after, asJSON, follow, false); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve log: %s/%s: binding not found\n", owner, name)
-		} else {
-			fmt.Fprintf(os.Stderr, "relevo serve log: %v\n", err)
-		}
-		return exitCodeErr{code: 1}
-	}
-	return nil
-}
-
-// serveShow is cmdServeShow's body, moved so `relevo show <name> --owner
-// <label>` calls it (§4.1). It takes the parsed values: state is the resolved
-// --state ("" for the default root) and section the resolved section. It
-// prints one owner's round from the server (#216): the read-only counterpart
-// of `relevo show`. It reads live bindings only -- opening the database would
-// create it, and the database belongs to the client that ran the work, not to
-// the server admin's read -- and prefixes the stderr header with the owner's
-// label so the reader can see whose round it is.
-func serveShow(owner, state, name string, round int, section relevo.ShowSection, asJSON bool) error {
-	root, d, err := adminRootFor(state)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	srv, err := serve.New(serveAdminConfig(root, d))
-	if err != nil {
-		return err
-	}
-
-	rt, label, err := serve.AdminOwnerRuntime(srv, owner)
-	if err != nil {
-		if errors.Is(err, serve.ErrNoSuchClient) {
-			fmt.Fprintf(os.Stderr, "relevo serve show: no such client: %s\n", owner)
-		} else if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve show: %s/%s: binding not found (serve show reads live bindings only)\n", owner, name)
-		} else {
-			fmt.Fprintf(os.Stderr, "relevo serve show: %v\n", err)
-		}
-		return exitCodeErr{code: 1}
-	}
-
-	opts := relevo.ShowOptions{Name: name, Round: round, Section: section, JSON: asJSON}
-	if err := printShow(rt, opts, false, false, label+"/"); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve show: %s/%s: binding not found (serve show reads live bindings only)\n", owner, name)
-		} else {
-			fmt.Fprintf(os.Stderr, "relevo serve show: %v\n", err)
-		}
-		return exitCodeErr{code: 1}
-	}
-	return nil
-}
-
-// serveTab is cmdServeTab's body, moved so `relevo history --tab --owner
-// <label|all>` calls it (§4.2). It takes the parsed values: owner "" means
-// every owner (the caller maps `--owner all` to ""), state is the resolved
-// --state. It sums recorded usage across owners from the server (#216). With
-// an owner it sums that owner's bindings; without it sums every owner, and
-// the binding group is "<label>/<name>" while --by owner groups by label. It
-// is the spec's "`relevo tab --by owner` on the server", scoped to this verb.
-func serveTab(owner, state, since, by string, asJSON bool) error {
-	cut, err := relevo.ParseSince(since, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-
-	root, d, err := adminRootFor(state)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	srv, err := serve.New(serveAdminConfig(root, d))
-	if err != nil {
-		return err
-	}
-
-	entries, err := serve.AdminTabEntries(srv, owner, cut, func(msg string) {
-		fmt.Fprintf(os.Stderr, "relevo serve tab: skip %s\n", msg)
-	})
-	if err != nil {
-		if errors.Is(err, serve.ErrNoSuchClient) {
-			fmt.Fprintf(os.Stderr, "relevo serve tab: no such client: %s\n", owner)
-		} else if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve tab: %s: binding not found\n", owner)
-		} else {
-			fmt.Fprintf(os.Stderr, "relevo serve tab: %v\n", err)
-		}
-		return exitCodeErr{code: 1}
-	}
-
-	return renderTabReport(entries, by, cut, asJSON)
-}
-
-// serveGateList lists the gates on the server-wide ledger: `relevo serve
-// gates` was the answer to `relevo gate` printing "nothing was gating" on a
-// box whose gates live on the serve root's ledger, not the caller's (§4.3).
-func serveGateList(fs *flag.FlagSet) error {
-	root, d, err := adminRoot(fs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	cfg, err := serveAdminConfigWithCandidates(root, d)
-	if err != nil {
-		return fmt.Errorf("relevo gate --serve: %w", err)
-	}
-	srv, err := serve.New(cfg)
-	if err != nil {
-		return err
-	}
-
-	fmt.Print(serve.RenderGates(serve.AdminGates(srv), time.Now()))
-	return nil
-}
-
-// serveGateClear lifts the server-side gate on a provider, in place, with
-// no forwarding: the verb for the box that runs the daemon (§4.3).
-func serveGateClear(fs *flag.FlagSet, subject string) error {
-	root, d, err := adminRoot(fs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	cfg, err := serveAdminConfigWithCandidates(root, d)
-	if err != nil {
-		return fmt.Errorf("relevo gate --serve: %w", err)
-	}
-	srv, err := serve.New(cfg)
-	if err != nil {
-		return err
-	}
-
-	provider, removed, err := serve.AdminAvailable(srv, subject)
-	if err != nil {
-		return err
-	}
-
-	if removed == 0 {
-		fmt.Printf("nothing was gating %s\n", provider)
-		return nil
-	}
-	fmt.Printf("cleared %s (%d entries)\n", provider, removed)
-	return nil
-}
-
-// serveGateUnavailable records a server-side gate: the server ledger's
-// counterpart to gateUnavailable, with no daemon-switch line and no forwarding
-// (the gate is already on the ledger the daemon reads) (§4.3).
-func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string) error {
-	root, d, err := adminRoot(fs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	cfg, err := serveAdminConfigWithCandidates(root, d)
-	if err != nil {
-		return fmt.Errorf("relevo gate --serve: %w", err)
-	}
-	srv, err := serve.New(cfg)
-	if err != nil {
-		return err
-	}
-
-	until, err := parseFor(forFlag, time.Now())
-	if err != nil {
-		return err
-	}
-
-	provider, err := serve.AdminUnavailable(srv, token, until, reason)
-	if err != nil {
-		return err
-	}
-
-	count := 0
-	for _, ref := range cfg.Candidates.Refs() {
-		parsed, err := candidate.ParseRef(ref)
-		if err != nil {
-			continue
-		}
-		if parsed.Provider == provider {
-			count++
-		}
-	}
-
-	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, relevo.GateUntilText(until))
-	return nil
-}
-
-func cmdServeUI(args []string) error {
-	fs := flag.NewFlagSet("relevo serve ui", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
-	interval := fs.Duration("interval", 0, "poll interval (0 uses the ui default)")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	// The root resolves before any tty check, so an uninitialised --state
-	// dir reads as a state error and not a terminal one.
-	root, d, err := adminRoot(fs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	srv, err := serve.New(serveAdminConfig(root, d))
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	return ui.RunSource(ctx, ui.ServerSource(srv), ui.Options{
-		Interval: *interval,
-		Prefs: ui.PrefsStore{
-			KV:         srv.DB(),
-			Key:        "serve.ui",
-			LegacyPath: filepath.Join(root, "ui.json"),
-		},
-		PipeHint: "relevo serve ui needs a terminal; use relevo serve status when piping",
-	})
-}
-
-func cmdServeUnbind(args []string) error {
-	fs := flag.NewFlagSet("relevo serve unbind", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	owner := fs.String("owner", "", "client label or id")
-	force := fs.Bool("force", false, "unbind even if the round is running")
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	if *owner == "" || fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo serve unbind --owner <label|id> <name> [--state <dir>] [--force]")
-		return exitCodeErr{code: 2}
-	}
-
-	name := fs.Arg(0)
-	root, d, err := adminRoot(fs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	srv, err := serve.New(serveAdminConfig(root, d))
-	if err != nil {
-		return err
-	}
-
-	res, err := serve.AdminUnbind(context.Background(), srv, *owner, name, *force)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo serve unbind: %v\n", err)
-		return exitCodeErr{code: 1}
-	}
-
-	fmt.Printf("unbound %s/%s\n", *owner, name)
-	if txt := relevo.UnbindText(name, res); txt != "" {
-		fmt.Println(txt)
-	}
-	return nil
-}
-
-func cmdServeGC(args []string) error {
-	fs := flag.NewFlagSet("relevo serve gc", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	abandoned := fs.String("abandoned", "", "abandoned duration threshold")
-	dryRun := fs.Bool("dry-run", false, "dry run without unbinding")
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	if *abandoned == "" {
-		fmt.Fprintln(os.Stderr, "relevo serve gc: --abandoned <duration> is required")
-		return exitCodeErr{code: 2}
-	}
-
-	dur, err := time.ParseDuration(*abandoned)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo serve gc: invalid duration %q: %v\n", *abandoned, err)
-		return exitCodeErr{code: 2}
-	}
-
-	root, d, err := adminRoot(fs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	srv, err := serve.New(serveAdminConfig(root, d))
-	if err != nil {
-		return err
-	}
-
-	results, err := serve.GCAbandoned(context.Background(), srv, dur, time.Now(), *dryRun)
-	if err != nil {
-		return err
-	}
-
-	for _, r := range results {
-		if *dryRun {
-			fmt.Printf("%s  %s  abandoned (last seen %s)\n", r.Label, r.Name, r.LastSeen.Format("2006-01-02 15:04:05"))
-		} else {
-			fmt.Printf("%s  %s  archived\n", r.Label, r.Name)
-		}
-	}
-	return nil
 }

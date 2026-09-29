@@ -1,7 +1,10 @@
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "relevo planner init --hook claude" } ] }
+      { "hooks": [ { "type": "command", "command": "relevo mastermind init --hook claude" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "relevo mastermind notice --hook claude" } ] }
     ]
   }
 }

@@ -9,19 +9,30 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// command is one entry of the ':' command table (§4.7).
-type command struct{ name, args, help string }
+// command is one entry of the ':' command table (§4.7). done marks a
+// `round <key>` entry whose report row reads DONE, so live bindings sort
+// before done ones (§2.3).
+type command struct {
+	name, args, help string
+	done             bool
+}
 
-// commands is the table §4.7 fixes, in display order.
+// commands is the table §4.7 fixes, in display order. The trailing false is
+// command.done: no fixed command is a done binding (§2.3).
 var commands = []command{
-	{"fleet", "", "bindings on this machine"},
-	{"rounds", "[query…]", "every round, filtered"},
-	{"round", "<binding> [N]", "open one binding's round"},
-	{"stats", "[7d|30d|90d|all]", "rounds, cost and health"},
-	{"log", "", "this session's action results"},
-	{"ungate", "<provider|candidate>", "clear a recorded rate limit"},
-	{"help", "", "keys"},
-	{"quit", "", "leave"},
+	{"fleet", "", "bindings on this machine", false},
+	{"rounds", "[query…]", "every round, filtered", false},
+	{"round", "<binding> [N]", "open one binding's round", false},
+	{"stats", "[7d|30d|90d|all]", "rounds, cost and health", false},
+	{"candidates", "", "candidates, gates and who picks them", false},
+	{"actors", "", "who runs each job, and in what order", false},
+	{"agents", "", "agent definitions per harness", false},
+	{"settings", "", "limits, checks and timings", false},
+	{"audit", "", "config revisions, and roll back", false},
+	{"log", "", "this session's action results", false},
+	{"ungate", "<provider|candidate>", "clear a recorded rate limit", false},
+	{"help", "", "keys", false},
+	{"quit", "", "leave", false},
 }
 
 // cmdLine is the ':' command line: an open flag, its text input and the
@@ -34,7 +45,7 @@ type cmdLine struct {
 
 // newCmdLine builds the command line with its ':' prompt.
 func newCmdLine() cmdLine {
-	in := textinput.New()
+	in := newTextInput()
 	in.Prompt = ":"
 	return cmdLine{input: in}
 }
@@ -53,15 +64,37 @@ func (c cmdLine) opened() cmdLine {
 func (c cmdLine) typed() string { return strings.TrimSpace(c.input.Value()) }
 
 // matches is every completion candidate whose name has the typed text as a
-// case-insensitive subsequence, ranked by prefix, then length, then
-// alphabetical, capped at 8. Pure: the tests drive it directly.
+// case-insensitive subsequence, ranked by prefix, then live before done, then
+// length, then alphabetical, capped at 8. Pure: the tests drive it directly.
 func (c cmdLine) matches(env Env) []command {
+	out := c.allMatches(env)
+	if len(out) > 8 {
+		out = out[:8]
+	}
+	return out
+}
+
+// matchCount is how many completions match, before matches' cap of 8. It is
+// what the command modal's "+ N more match" row counts (§3.1).
+func (c cmdLine) matchCount(env Env) int {
+	return len(c.allMatches(env))
+}
+
+// allMatches is every completion candidate whose name has the typed text as a
+// case-insensitive subsequence, ranked by prefix, then live before done, then
+// length, then alphabetical, before matches' cap of 8. Pure: the tests drive
+// it directly.
+func (c cmdLine) allMatches(env Env) []command {
 	typed := strings.ToLower(c.typed())
 	cands := make([]command, 0, len(commands)+len(env.Report.Bindings)+len(env.Report.Gated))
 	cands = append(cands, commands...)
 	for i := range env.Report.Bindings {
 		key := env.Report.Bindings[i].Key()
-		cands = append(cands, command{name: "round " + key, help: "open " + key})
+		cands = append(cands, command{
+			name: "round " + key,
+			help: "open " + key,
+			done: env.Report.Bindings[i].Display == "DONE",
+		})
 	}
 	// `ungate` completes to the providers and names of the live gates
 	// (§4.3): the same subjects `relevo gate --clear` accepts.
@@ -86,15 +119,29 @@ func (c cmdLine) matches(env Env) []command {
 		if pi != pj {
 			return pi
 		}
+		if out[i].done != out[j].done {
+			return !out[i].done
+		}
 		if len(out[i].name) != len(out[j].name) {
 			return len(out[i].name) < len(out[j].name)
 		}
 		return out[i].name < out[j].name
 	})
-	if len(out) > 8 {
-		out = out[:8]
-	}
 	return out
+}
+
+// cmdSection names the modal section a completion belongs to (§3.1): the
+// commands table's own entries are VIEWS, `round <key>` entries are BINDINGS
+// and `ungate …` entries are GATES.
+func cmdSection(c command) string {
+	switch {
+	case strings.HasPrefix(c.name, "round "):
+		return "BINDINGS"
+	case strings.HasPrefix(c.name, "ungate "):
+		return "GATES"
+	default:
+		return "VIEWS"
+	}
 }
 
 // subsequence reports whether sub's runes appear, in order, in s.

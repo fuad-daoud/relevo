@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // histFixtureDir is the ingest package's own golden fixture -- three
@@ -26,6 +27,7 @@ import (
 const histFixtureDir = "../ingest/testdata/binding-three-rounds"
 
 var histFixtureBindFiles = map[string]bool{
+	"bind.json":          true,
 	"bind-legacy.json":   true,
 	"bind-round4.json":   true,
 	"bind-cwd-gone.json": true,
@@ -56,6 +58,17 @@ func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBindin
 		if err := os.WriteFile(filepath.Join(s.Dir("fixture"), e.Name()), data, 0o644); err != nil {
 			t.Fatalf("write %s: %v", e.Name(), err)
 		}
+	}
+	bindJSON, err := os.ReadFile(filepath.Join(histFixtureDir, "bind.json"))
+	if err != nil {
+		t.Fatalf("read fixture bind.json: %v", err)
+	}
+	sdb, err := s.DB()
+	if err != nil {
+		t.Fatalf("store db: %v", err)
+	}
+	if _, err := sdb.RecordPut(db.Record{Name: "fixture", JSON: string(bindJSON)}); err != nil {
+		t.Fatalf("RecordPut: %v", err)
 	}
 	if _, err := s.Archive("fixture"); err != nil {
 		t.Fatalf("Archive: %v", err)
@@ -94,7 +107,7 @@ func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBindin
 func TestPointAtArchivedRowLoadsPlanFromDB(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
 
-	v, cmd := newHistRoundView(testEnv(plannerSource{rt}, relevo.Report{}, 140, 40), h, 0)
+	v, cmd := newHistRoundView(testEnv(mastermindSource{rt}, view.Report{}, 140, 40), h, 0)
 	rv := v.(roundView)
 
 	if rv.pane.detail.live {
@@ -116,8 +129,8 @@ func TestPointAtArchivedRowLoadsPlanFromDB(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", cmd())
 	}
-	if tMsg.t != tabPlan {
-		t.Errorf("t = %v, want tabPlan (the default active tab)", tMsg.t)
+	if tMsg.t != tabPrompt {
+		t.Errorf("t = %v, want tabPrompt (the default active tab)", tMsg.t)
 	}
 	if tMsg.content.err != nil {
 		t.Fatalf("unexpected error: %v", tMsg.content.err)
@@ -143,7 +156,7 @@ func TestArchivedTerminalTabShowsTranscriptRows(t *testing.T) {
 		t.Fatalf("round = %d, want 2", rv.pane.detail.round)
 	}
 
-	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}, testEnv(plannerSource{rt}, relevo.Report{}, 140, 40))
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}, testEnv(mastermindSource{rt}, view.Report{}, 140, 40))
 	rv = next.(roundView)
 	if cmd == nil {
 		t.Fatal("expected a fetch command for the terminal tab")
@@ -168,7 +181,7 @@ func TestArchivedMissingDiffIsEmptyProse(t *testing.T) {
 	rv := newTestHistRound(t, rt, h, 0)
 	rv.pane.tabInFlight = false
 
-	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, testEnv(plannerSource{rt}, relevo.Report{}, 140, 40))
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, testEnv(mastermindSource{rt}, view.Report{}, 140, 40))
 	_ = next
 	if cmd == nil {
 		t.Fatal("expected a fetch command for the diff tab")
@@ -204,7 +217,7 @@ func TestArchivedStepRoundRefetches(t *testing.T) {
 	}
 	rv.pane.tabInFlight = false
 
-	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}, testEnv(plannerSource{rt}, relevo.Report{}, 140, 40))
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}, testEnv(mastermindSource{rt}, view.Report{}, 140, 40))
 	rv = next.(roundView)
 	if rv.pane.detail.round != 2 {
 		t.Fatalf("round = %d, want 2", rv.pane.detail.round)
@@ -323,7 +336,7 @@ func seedRoundMirror(t *testing.T, d *db.DB, dir string) {
 	}
 
 	roundFiles := []struct{ base, kind string }{
-		{"%03d-plan.md", db.ArtifactPlan},
+		{"%03d-plan.md", db.ArtifactPrompt},
 		{"%03d-report.md", db.ArtifactReport},
 		{"%03d-diff.patch", db.ArtifactDiff},
 		{"%03d-drift.patch", db.ArtifactDrift},

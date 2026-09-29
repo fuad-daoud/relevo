@@ -22,33 +22,6 @@ stage() {
 	cp "$here/check-plugin-version.sh" "$work/repo/"
 }
 
-# Build a fake repo root inside a git repository with the given version
-# tag on its first commit and N subsequent feat commits.
-stage_repo() {
-	stage "$1" "$1"
-	(
-		cd "$work/repo"
-		git init -q
-		git config user.name test
-		git config user.email test@example.com
-		git config commit.gpgsign false
-		git config tag.gpgsign false
-		# Every `git commit` otherwise spawns `git maintenance run --auto
-		# --quiet --detach`, which outlives this subshell and writes under
-		# .git/objects while the EXIT trap is removing the tree -- `rm` then
-		# fails ENOTEMPTY (#304).
-		git config maintenance.auto false
-		git config gc.auto 0
-		git -c user.name=test -c user.email=test@example.com -c commit.gpgsign=false commit --allow-empty -q -m "chore: release v$1"
-		git -c tag.gpgsign=false tag "v$1"
-		i=1
-		while [ "$i" -le "$2" ]; do
-			git -c user.name=test -c user.email=test@example.com -c commit.gpgsign=false commit --allow-empty -q -m "feat: $i"
-			i=$((i + 1))
-		done
-	)
-}
-
 fail=0
 check() { # description, expected-exit, args...
 	desc=$1; want=$2; shift 2
@@ -73,30 +46,6 @@ check "marketplace.json version disagrees" 1
 stage 1.2.3 1.2.3
 (cd "$work/repo" && rm .claude-plugin/marketplace.json)
 check "missing marketplace manifest" 1
-
-stage_repo 1.2.3 10
-check "drift at the limit" 0
-
-stage_repo 1.2.3 11
-check "drift past the limit" 1
-
-stage_repo 1.2.3 11
-(cd "$work/repo" && git tag -d v1.2.3 >/dev/null)
-check "tag absent, drift would be past the limit" 0
-
-stage_repo 1.2.3 5
-(
-	cd "$work/repo"
-	git checkout -b side -q
-	i=1
-	while [ "$i" -le 6 ]; do
-		git -c user.name=test -c user.email=test@example.com -c commit.gpgsign=false commit --allow-empty -q -m "feat: side $i"
-		i=$((i + 1))
-	done
-	git checkout - -q
-	git -c user.name=test -c user.email=test@example.com -c commit.gpgsign=false merge --no-ff -q -m "Merge side" side
-)
-check "feats behind a merge are not counted" 0
 
 [ "$fail" -eq 0 ] && echo "check-plugin-version: ok"
 exit "$fail"

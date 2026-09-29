@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 type screen int
@@ -18,7 +19,7 @@ const (
 
 // statusMsg is the list's rows, or why there are none.
 type statusMsg struct {
-	report relevo.Report
+	report view.Report
 	err    error
 }
 
@@ -40,7 +41,7 @@ type Model struct {
 	width, height int
 
 	// list screen
-	rows   []relevo.BindingStatus
+	rows   []view.BindingStatus
 	loaded bool // false until the first statusMsg
 	cursor int
 	top    int
@@ -48,7 +49,7 @@ type Model struct {
 	result resultModel
 	// confirm is the row a done/unbind is waiting on a `y` for (#103).
 	// Meaningful only while screen == screenConfirm.
-	confirm relevo.BindingStatus
+	confirm view.BindingStatus
 
 	// outcome is what Run returns: nil after a verb succeeded, else one of
 	// the sentinels in verb.go. Set exactly once, by quit.
@@ -175,7 +176,7 @@ func (m Model) listKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // pick acts on the chosen row. done and unbind run at once on a DONE row and
 // stop for a `y` on any other (#103, needsConfirm).
-func (m Model) pick(r relevo.BindingStatus) (tea.Model, tea.Cmd) {
+func (m Model) pick(r view.BindingStatus) (tea.Model, tea.Cmd) {
 	switch m.opts.Verb {
 	case VerbDone, VerbUnbind:
 		if needsConfirm(m.opts.Verb, r) {

@@ -9,7 +9,7 @@ import (
 
 // TestOffEntriesRanked pins A2 §3.4: an off entry keeps its position in
 // Ranked, Off is true, OffCount counts it, and Serves is still true -- an
-// explicit `--builder <off one>` is still served.
+// explicit `--candidate <off one>` is still served.
 func TestOffEntriesRanked(t *testing.T) {
 	set := setFromJSON(t, `[
 	  {"harness":"claude","provider":"test","model":"a","roles":["builder"]},

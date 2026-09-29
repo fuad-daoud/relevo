@@ -10,8 +10,7 @@ import (
 	"time"
 )
 
-// maxLine bounds one stream or transcript line; claude's tool results can
-// run to megabytes.
+// maxLine bounds one line; claude's tool results can run to megabytes.
 const maxLine = 16 << 20
 
 // ProjectSlug is the directory name claude keeps a cwd's transcripts under
@@ -31,7 +30,6 @@ func ProjectSlug(cwd string) string {
 	return b.String()
 }
 
-// claudeUsage is the usage object on assistant messages and result events.
 type claudeUsage struct {
 	Input      int64 `json:"input_tokens"`
 	CacheWrite int64 `json:"cache_creation_input_tokens"`
@@ -43,8 +41,6 @@ func (u claudeUsage) tokens() Tokens {
 	return Tokens{In: u.Input, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite, Out: u.Output}
 }
 
-// claudeEvent covers the fields read from both the headless stream and the
-// pane transcript; each record uses a subset.
 type claudeEvent struct {
 	Type      string `json:"type"`
 	Subtype   string `json:"subtype"`
@@ -73,23 +69,19 @@ func scanLines(r io.Reader, fn func(line []byte)) {
 	}
 }
 
-// claudeStream reads a headless round's stream-json. The result event's
-// usage is the sample (HasCost when total_cost_usd is present); with no
-// result event, the assistant events deduped by message.id are the
-// samples, tokens only. Model: last assistant message.model, else init.
-// The parser state lives on the carry (#234), so the same line loop feeds
-// the per-stream cache without drifting.
+// claudeStream reads a headless round's stream-json. The result event's usage is
+// the sample (HasCost when total_cost_usd is present); with no result event, the
+// assistant events deduped by message.id are the samples, tokens only.
 func claudeStream(r io.Reader, fallbackProvider string) []Sample {
 	c, _ := newCarry("claude", fallbackProvider, "")
 	scanLines(r, c.feed)
 	return c.samples()
 }
 
-// claudeProject reads every *.jsonl under fsys (subagents included) and
-// returns one sample per assistant message.id whose timestamp is inside
-// [start, end] and whose cwd equals worktree. Files whose modtime is
-// before start are skipped unread: a file untouched since before the
-// round cannot hold a record inside it.
+// claudeProject reads every *.jsonl under fsys (subagents included) and returns one
+// sample per assistant message.id inside [start, end] whose cwd equals worktree.
+// Files older than start are skipped unread: one untouched since before the round
+// cannot hold a record inside it.
 func claudeProject(fsys fs.FS, worktree string, start, end time.Time, provider string) []Sample {
 	var out []Sample
 	seen := map[string]bool{}
@@ -104,7 +96,7 @@ func claudeProject(fsys fs.FS, worktree string, start, end time.Time, provider s
 		if err != nil {
 			return nil
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		scanLines(f, func(line []byte) {
 			var ev claudeEvent
 			if json.Unmarshal(line, &ev) != nil || ev.Type != "assistant" || ev.Message == nil || ev.Message.Usage == nil {

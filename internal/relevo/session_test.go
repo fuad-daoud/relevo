@@ -8,6 +8,8 @@ import (
 )
 
 func TestHomeSessionLocatorGlobsAnySlug(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	slugA := filepath.Join(home, ".claude", "projects", "-a-slug")
 	slugB := filepath.Join(home, ".claude", "projects", "-b-slug")

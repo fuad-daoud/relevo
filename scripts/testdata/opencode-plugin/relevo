@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -n "${RELEVO_FAKE_LOG:-}" ]; then
+  echo "$*" >> "$RELEVO_FAKE_LOG"
+fi
+
+cmd="${1:-}"
+
+case "$cmd" in
+  mastermind)
+    if [ "${2:-}" = "init" ]; then
+      echo "MasterMind oc-smoke (mm_smoke000001) created"
+      echo "export RELEVO_MASTERMIND=mm_smoke000001"
+      exit 0
+    fi
+    if [ "${2:-}" = "guide" ]; then
+      echo '{"state":"disabled","text":"relevo: enabled for this session","id":"mm_smoke000001","name":"oc-smoke"}'
+      exit 0
+    fi
+    ;;
+  status)
+    STATE_DIR="${RELEVO_FAKE_STATE:-/tmp/relevo-fake-state}"
+    mkdir -p "$STATE_DIR"
+    COUNT_FILE="$STATE_DIR/status.count"
+    COUNT=0
+    if [ -f "$COUNT_FILE" ]; then
+      COUNT=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+    fi
+    COUNT=$((COUNT + 1))
+    echo "$COUNT" > "$COUNT_FILE"
+    if [ "$COUNT" -le 2 ]; then
+      sed -E "s/\"clock\": \"[^\"]*\"/\"clock\": \"${COUNT}s\"/g" "$DIR/status-1.json"
+    else
+      sed -E "s/\"clock\": \"[^\"]*\"/\"clock\": \"${COUNT}s\"/g" "$DIR/status-2.json"
+    fi
+    exit 0
+    ;;
+  history)
+    BINDING=""
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "--binding" ] && [ $# -ge 2 ]; then
+        BINDING="$2"
+        shift 2
+      else
+        shift 1
+      fi
+    done
+    if [ -n "$BINDING" ]; then
+      jq --arg b "$BINDING" '[.[] | select(.BindingName == $b)]' "$DIR/history.json"
+    else
+      cat "$DIR/history.json"
+    fi
+    exit 0
+    ;;
+  show)
+    TAB="report"
+    NAME="${2:-}"
+    for arg in "$@"; do
+      case "$arg" in
+        --prompt) TAB="prompt" ;;
+        --report) TAB="report" ;;
+        --diff) TAB="diff" ;;
+        --log) TAB="log" ;;
+        --transcript) TAB="transcript" ;;
+      esac
+    done
+    if [ "$NAME" = "ledger" ] && [ "$TAB" = "report" ]; then
+      STATE_DIR="${RELEVO_FAKE_STATE:-/tmp/relevo-fake-state}"
+      mkdir -p "$STATE_DIR"
+      LEDGER_REPORT_FILE="$STATE_DIR/ledger-report.called"
+      if [ ! -f "$LEDGER_REPORT_FILE" ]; then
+        touch "$LEDGER_REPORT_FILE"
+        cat <<'EOF'
+{
+  "Name": "ledger",
+  "Round": 2,
+  "Rounds": 2,
+  "Live": true,
+  "Archived": false,
+  "ArchivedAt": "0001-01-01T00:00:00Z",
+  "Section": "report",
+  "Text": "",
+  "Missing": true,
+  "Events": null
+}
+EOF
+        exit 0
+      fi
+      cat "$DIR/show-report-ledger.json"
+      exit 0
+    fi
+    cat "$DIR/show-$TAB.json"
+    exit 0
+    ;;
+  send|stop|done|gate)
+    echo "ok (fake)"
+    exit 0
+    ;;
+esac
+
+echo "fake relevo: unhandled: $*" >&2
+exit 2

@@ -1,0 +1,16 @@
+internal/relevo/bind.go
+internal/relevo/configedit.go
+internal/relevo/daemon.go
+internal/relevo/headless.go
+internal/relevo/reconcile.go
+internal/relevo/send.go
+internal/relevo/status.go
+internal/ui/confirm.go
+internal/ui/dash/render.go
+internal/ui/fetch.go
+internal/ui/view_agents.go
+internal/ui/view_candidates.go
+internal/ui/view_fleet.go
+internal/ui/view_log.go
+internal/ui/view_stats.go
+scripts/testdata/check-filesize/big.go

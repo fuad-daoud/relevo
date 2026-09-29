@@ -1,0 +1,197 @@
+{
+  "runners": {
+    "running": 0,
+    "queued": 0,
+    "cap": 7,
+    "scopes": false
+  },
+  "last_contact": null,
+  "owners": [
+    {
+      "owner": "SHA256:alice000000000000000000000000000000000000000",
+      "label": "alice",
+      "last_seen": null,
+      "report": {
+        "bindings": [
+          {
+            "name": "api",
+            "cwd": "/tmp/test-state/api",
+            "round": 2,
+            "plan_round": 1,
+            "state": "active",
+            "display": "ACTIVE",
+            "candidate": "",
+            "actor": "builder",
+            "mastermind_kind": "",
+            "mastermind_route": "pull",
+            "mastermind_route_live": false,
+            "harness": "",
+            "runner_status": "unknown",
+            "last": {
+              "ts": "2026-09-10T10:00:00Z",
+              "round": 1,
+              "direction": "to_planner",
+              "kind": "report"
+            },
+            "last_seq": 2,
+            "last_payload": {
+              "ts": "2026-09-10T10:00:00Z",
+              "round": 1,
+              "direction": "to_planner",
+              "kind": "report"
+            },
+            "last_usage": {
+              "harness": "opencode",
+              "provider": "anthropic",
+              "model": "claude-sonnet-5",
+              "duration_ms": 0,
+              "tokens": {
+                "in": 1000,
+                "cache_read": 3000,
+                "cache_write": 0,
+                "out": 100
+              },
+              "cost": {
+                "usd": 0.5,
+                "basis": "measured"
+              },
+              "samples": 1
+            },
+            "spend": {
+              "rounds": 1,
+              "consults": 0,
+              "steps": 0,
+              "tool_calls": 0,
+              "measured": 0.5,
+              "estimated": 0,
+              "plan": 0,
+              "unknown": 0,
+              "tokens": {
+                "in": 1000,
+                "cache_read": 3000,
+                "cache_write": 0,
+                "out": 100
+              }
+            },
+            "round_start": "2026-09-10T09:00:00Z",
+            "round_end": "2026-09-10T10:00:00Z",
+            "round_usage": {
+              "harness": "opencode",
+              "provider": "anthropic",
+              "model": "claude-sonnet-5",
+              "duration_ms": 0,
+              "tokens": {
+                "in": 1000,
+                "cache_read": 3000,
+                "cache_write": 0,
+                "out": 100
+              },
+              "cost": {
+                "usd": 0.5,
+                "basis": "measured"
+              },
+              "samples": 1
+            },
+            "dirty": false,
+            "landed_at": "0001-01-01T00:00:00Z",
+            "last_progress_at": "0001-01-01T00:00:00Z",
+            "unread": true
+          }
+        ]
+      }
+    },
+    {
+      "owner": "SHA256:bob0000000000000000000000000000000000000000",
+      "label": "bob",
+      "last_seen": null,
+      "report": {
+        "bindings": [
+          {
+            "name": "api",
+            "cwd": "/tmp/test-state/api",
+            "round": 2,
+            "plan_round": 1,
+            "state": "active",
+            "display": "ACTIVE",
+            "candidate": "",
+            "actor": "builder",
+            "mastermind_kind": "",
+            "mastermind_route": "pull",
+            "mastermind_route_live": false,
+            "harness": "",
+            "runner_status": "unknown",
+            "last": {
+              "ts": "2026-09-10T10:00:00Z",
+              "round": 1,
+              "direction": "to_planner",
+              "kind": "report"
+            },
+            "last_seq": 2,
+            "last_payload": {
+              "ts": "2026-09-10T10:00:00Z",
+              "round": 1,
+              "direction": "to_planner",
+              "kind": "report"
+            },
+            "last_usage": {
+              "harness": "opencode",
+              "provider": "anthropic",
+              "model": "claude-sonnet-5",
+              "duration_ms": 0,
+              "tokens": {
+                "in": 1000,
+                "cache_read": 3000,
+                "cache_write": 0,
+                "out": 100
+              },
+              "cost": {
+                "usd": 0.5,
+                "basis": "measured"
+              },
+              "samples": 1
+            },
+            "spend": {
+              "rounds": 1,
+              "consults": 0,
+              "steps": 0,
+              "tool_calls": 0,
+              "measured": 0.5,
+              "estimated": 0,
+              "plan": 0,
+              "unknown": 0,
+              "tokens": {
+                "in": 1000,
+                "cache_read": 3000,
+                "cache_write": 0,
+                "out": 100
+              }
+            },
+            "round_start": "2026-09-10T09:00:00Z",
+            "round_end": "2026-09-10T10:00:00Z",
+            "round_usage": {
+              "harness": "opencode",
+              "provider": "anthropic",
+              "model": "claude-sonnet-5",
+              "duration_ms": 0,
+              "tokens": {
+                "in": 1000,
+                "cache_read": 3000,
+                "cache_write": 0,
+                "out": 100
+              },
+              "cost": {
+                "usd": 0.5,
+                "basis": "measured"
+              },
+              "samples": 1
+            },
+            "dirty": false,
+            "landed_at": "0001-01-01T00:00:00Z",
+            "last_progress_at": "0001-01-01T00:00:00Z",
+            "unread": true
+          }
+        ]
+      }
+    }
+  ]
+}

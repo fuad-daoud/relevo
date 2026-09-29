@@ -5,130 +5,40 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// ownerEnv is a second (or third...) enrolled client with its own tiny git
-// repo, for tests that need more than setupTestEnv's single owner (#285's
-// admit tests need several bindings competing for the same builder cap).
-type ownerEnv struct {
-	kp        remote.Keypair
-	id        remote.ClientID
-	clientDir string
-	headSHA   string
-	repoID    string
-}
-
-// addOwner enrolls a fresh client against env's server and gives it its own
-// one-commit git repo to send rounds from, mirroring setupTestEnv's own
-// single-owner setup.
-func addOwner(t *testing.T, env *testEnv, label string) ownerEnv {
+// requireRoundState fails unless name's stored round state is want.
+func requireRoundState(t *testing.T, rt relevo.Runtime, name string, want remote.RoundState) {
 	t.Helper()
-	ctx := context.Background()
-
-	clientDir := t.TempDir()
-	runGit(t, clientDir, "init")
-	runGit(t, clientDir, "config", "user.name", label)
-	runGit(t, clientDir, "config", "user.email", label+"@example.com")
-	if err := os.WriteFile(filepath.Join(clientDir, "file.txt"), []byte(label+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, clientDir, "add", "file.txt")
-	runGit(t, clientDir, "commit", "-m", "initial commit")
-
-	headSHA, ok, err := env.gitClient.RefSHA(ctx, clientDir, "HEAD")
-	if err != nil || !ok {
-		t.Fatalf("headSHA: %v, ok=%v", err, ok)
-	}
-	rootSHA, err := env.gitClient.RootCommit(ctx, clientDir)
+	b, err := rt.Store.Load(name)
 	if err != nil {
-		t.Fatalf("rootCommit: %v", err)
+		t.Fatalf("load %s: %v", name, err)
 	}
-	repoID, err := remote.RepoID(rootSHA)
+	entries, err := rt.Store.ReadLog(name)
 	if err != nil {
-		t.Fatalf("repoID: %v", err)
+		t.Fatalf("ReadLog %s: %v", name, err)
 	}
-
-	kp, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
+	if got := relevo.RoundStateOf(b, entries); got != want {
+		t.Errorf("%s round_state = %v, want %v", name, got, want)
 	}
-	id := remote.IDOf(kp.Public)
-	if _, err := env.srv.clients.Add(label, remote.MarshalPublic(kp.Public, label), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-
-	return ownerEnv{kp: kp, id: id, clientDir: clientDir, headSHA: headSHA, repoID: repoID}
 }
 
-// sendRound creates binding name for the given owner and starts round 1 on
-// it with plan, returning the round-start response exactly as the client
-// would see it. No git identity rides on the create request (sendRoundAs
-// with nil does the same thing); the tests that care about #335 call
-// sendRoundAs directly.
-func sendRound(t *testing.T, env *testEnv, kp remote.Keypair, clientDir, repoID, headSHA, name, plan string) (*http.Response, []byte) {
-	t.Helper()
-	return sendRoundAs(t, env, kp, clientDir, repoID, headSHA, name, plan, nil)
-}
-
-// sendRoundAs is sendRound with the client's git identity carried on the
-// create request (#335), so a test can drive what the server stores and what
-// the builder it starts runs with.
-func sendRoundAs(t *testing.T, env *testEnv, kp remote.Keypair, clientDir, repoID, headSHA, name, plan string, author *remote.GitIdentity) (*http.Response, []byte) {
-	t.Helper()
-	ctx := context.Background()
-
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       name,
-		RepoID:     repoID,
-		BaseCommit: headSHA,
-		Author:     author,
-	})
-	resp, body := doSigned(t, env.ts, kp, "POST", "/v1/bindings", createBody, "application/json")
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create binding %s status = %d, want 201; body: %s", name, resp.StatusCode, string(body))
-	}
-
-	outRef := "refs/relevo/" + name + "/out"
-	if err := env.gitClient.UpdateRef(ctx, clientDir, outRef, headSHA, ""); err != nil {
-		t.Fatalf("updateRef out: %v", err)
-	}
-	snap, err := env.transport.Snapshot(ctx, clientDir, []string{outRef}, "")
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	bundleBytes, err := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-	if err != nil {
-		t.Fatalf("read snap body: %v", err)
-	}
-
-	formBytes, ct := makeRoundForm(t, 1, plan, bundleBytes)
-	return doSigned(t, env.ts, kp, "POST", "/v1/bindings/"+name+"/rounds", formBytes, ct)
-}
-
-// startedSpecs copies the runner's specs under its mutex, so a test can read
-// what a round started without racing the handler that started it.
-func startedSpecs(env *testEnv) []relevo.ProcSpec {
-	env.runner.mu.Lock()
-	defer env.runner.mu.Unlock()
-	return append([]relevo.ProcSpec(nil), env.runner.specs...)
-}
-
-// TestRoundSpawnCarriesAuthorEnv pins #335's last hop: the round a binding's
-// stored author starts runs the builder with that identity in its
-// environment, so every commit it makes is the client's. A binding with no
-// author gets no GIT_* additions at all.
+// TestRoundSpawnCarriesAuthorEnv: the round a binding's stored author starts runs
+// the builder with that identity in its environment, so every commit it makes is
+// the client's. A binding with no author gets no GIT_* additions at all.
 func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
 	authorEnv := []string{
 		"GIT_AUTHOR_NAME=Ada Lovelace",
@@ -159,6 +69,10 @@ func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
 				t.Errorf("spec.Env = %v, want it to contain %q", specs[0].Env, want)
 			}
 		}
+		want := append(append([]string{}, authorEnv...), "RELEVO_RUNNER=api")
+		if !reflect.DeepEqual(specs[0].Env, want) {
+			t.Errorf("spec.Env = %v, want exactly %v", specs[0].Env, want)
+		}
 	})
 
 	t.Run("no author", func(t *testing.T) {
@@ -170,15 +84,14 @@ func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
 		if len(specs) == 0 {
 			t.Fatal("round started no process")
 		}
-		if len(specs[0].Env) != 0 {
-			t.Errorf("spec.Env = %v, want nil or empty for a binding with no author", specs[0].Env)
+		if want := []string{"RELEVO_RUNNER=api"}; !reflect.DeepEqual(specs[0].Env, want) {
+			t.Errorf("spec.Env = %v, want exactly %v for a binding with no author", specs[0].Env, want)
 		}
 	})
 }
 
-// TestCreateBindingStoresAuthor pins #335's wire-to-store half: the git
-// identity a client sends on the create request lands on the owner's
-// ServeFacts, which is what the builder environment reads later.
+// TestCreateBindingStoresAuthor: the git identity a client sends on the create
+// request lands on the owner's ServeFacts, which the builder environment reads.
 func TestCreateBindingStoresAuthor(t *testing.T) {
 	env := setupTestEnv(t)
 
@@ -199,9 +112,9 @@ func TestCreateBindingStoresAuthor(t *testing.T) {
 	}
 }
 
-// TestCreateBindingRejectsBadAuthor pins #335's validation: a malformed
-// author is a 400 invalid and stores nothing, so a value that could forge a
-// line in the builder's environment never reaches the store.
+// TestCreateBindingRejectsBadAuthor: a malformed author is a 400 invalid and
+// stores nothing, so a value that could forge a line in the builder's
+// environment never reaches the store.
 func TestCreateBindingRejectsBadAuthor(t *testing.T) {
 	env := setupTestEnv(t)
 
@@ -243,53 +156,15 @@ func TestCreateBindingRejectsBadAuthor(t *testing.T) {
 	}
 }
 
-// closeRound writes round 1's report and completion marker for name, and
-// marks pid exited on runner without disturbing any other pid it is
-// tracking -- what a multi-owner test needs that the single-pid
-// runner.setAlive(false) used elsewhere cannot give it.
-func closeRound(t *testing.T, rt relevo.Runtime, name string, pid int, runner *scriptRunner) {
-	t.Helper()
-	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
-	if err := os.WriteFile(rt.Store.ReportPath(name, 1), []byte(reportText), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(rt.Store.DonePath(name, 1), []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runner.finish(pid)
-}
-
-func requireCreated(t *testing.T, resp *http.Response, body []byte, label string) {
-	t.Helper()
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("%s start status = %d, want 201; body: %s", label, resp.StatusCode, string(body))
-	}
-}
-
-func decodeView(t *testing.T, body []byte) remote.BindingView {
-	t.Helper()
-	var view remote.BindingView
-	if err := json.Unmarshal(body, &view); err != nil {
-		t.Fatalf("unmarshal binding view: %v; body: %s", err, string(body))
-	}
-	return view
-}
-
-// TestAdmitCapQueuesSecondOwner pins #285's cap: with MaxBuilders 1, a
-// second owner's round accepts (201) but is queued, not started, and the
-// wire carries its exact position.
-//
-// Mutation check: return true unconditionally from cap()'s "MaxBuilders >
-// 0" branch check (i.e. hardcode a large cap) and this fails on B's
-// round_state staying "running" instead of "queued".
+// TestAdmitCapQueuesSecondOwner: with MaxBuilders 1, a second owner's round
+// accepts (201) but is queued, not started, and the wire carries its position.
 func TestAdmitCapQueuesSecondOwner(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
 	ownerB := addOwner(t, env, "bob")
 
 	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
 	requireCreated(t, respA, bodyA, "A")
-	viewA := decodeView(t, bodyA)
-	if viewA.RoundState != remote.RoundRunning {
+	if viewA := decodeView(t, bodyA); viewA.RoundState != remote.RoundRunning {
 		t.Fatalf("A round_state = %q, want running", viewA.RoundState)
 	}
 
@@ -332,26 +207,22 @@ func TestAdmitCapQueuesSecondOwner(t *testing.T) {
 	if bB.Builder.PID != 0 {
 		t.Errorf("B PID = %d, want 0", bB.Builder.PID)
 	}
-
 	if len(env.runner.specs) != 1 {
 		t.Errorf("runner specs = %d, want 1 (only A started)", len(env.runner.specs))
 	}
 }
 
-// TestAdmitAfterSlotFrees continues TestAdmitCapQueuesSecondOwner's setup:
-// once A's round closes, the freed slot admits B on the next Tick, and the
-// log carries both halves of the wait as separate entries.
+// TestAdmitAfterSlotFrees: once A's round closes, the freed slot admits B on the
+// next Tick, and the log carries both halves of the wait as separate entries.
 func TestAdmitAfterSlotFrees(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
 	ownerB := addOwner(t, env, "bob")
 
 	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
 	requireCreated(t, respA, bodyA, "A")
-
 	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
 	requireCreated(t, respB, bodyB, "B")
-	viewB := decodeView(t, bodyB)
-	if viewB.RoundState != remote.RoundQueued {
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
 		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
 	}
 
@@ -366,34 +237,19 @@ func TestAdmitAfterSlotFrees(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	rtA2 := testRuntime(t, env.srv, env.id)
-	bA2, err := rtA2.Store.Load("api")
-	if err != nil {
-		t.Fatalf("reload A: %v", err)
-	}
-	entriesA, _ := rtA2.Store.ReadLog("api")
-	if relevo.RoundStateOf(bA2, entriesA) != remote.RoundClosed {
-		t.Errorf("A round_state = %v, want closed", relevo.RoundStateOf(bA2, entriesA))
-	}
-
+	requireRoundState(t, testRuntime(t, env.srv, env.id), "api", remote.RoundClosed)
 	rtB := testRuntime(t, env.srv, ownerB.id)
-	bB, err := rtB.Store.Load("api")
-	if err != nil {
-		t.Fatalf("reload B: %v", err)
-	}
-	entriesB, err := rtB.Store.ReadLog("api")
-	if err != nil {
-		t.Fatalf("ReadLog B: %v", err)
-	}
-	if relevo.RoundStateOf(bB, entriesB) != remote.RoundRunning {
-		t.Errorf("B round_state = %v, want running", relevo.RoundStateOf(bB, entriesB))
-	}
+	requireRoundState(t, rtB, "api", remote.RoundRunning)
 
 	if len(env.runner.specs) != 2 {
 		t.Errorf("runner specs = %d, want 2 (A then B)", len(env.runner.specs))
 	}
 
 	var queueNotes []string
+	entriesB, err := rtB.Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog B: %v", err)
+	}
 	for _, e := range entriesB {
 		if e.Kind == store.KindQueue {
 			queueNotes = append(queueNotes, e.Note)
@@ -410,13 +266,9 @@ func TestAdmitAfterSlotFrees(t *testing.T) {
 	}
 }
 
-// TestAdmitStrictFIFO pins #285's ordering: with MaxBuilders 1 and two
-// queued rounds, the older one is admitted first every time a slot frees,
-// never the newer one, and a round still queued reports its correct
-// (shrinking) position.
-//
-// Mutation check: sort census.Queued by Name instead of QueuedAt and this
-// fails on C running before B.
+// TestAdmitStrictFIFO: with MaxBuilders 1 and two queued rounds, the older one
+// is admitted first every time a slot frees, and a round still queued reports
+// its correct (shrinking) position.
 func TestAdmitStrictFIFO(t *testing.T) {
 	clock := time.Now()
 	env := setupTestEnv(t, func(cfg *Config) {
@@ -458,71 +310,28 @@ func TestAdmitStrictFIFO(t *testing.T) {
 	if err := env.srv.Tick(context.Background()); err != nil {
 		t.Fatalf("tick 1: %v", err)
 	}
-
 	rtB := testRuntime(t, env.srv, ownerB.id)
-	bB, err := rtB.Store.Load("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entriesB, _ := rtB.Store.ReadLog("api")
-	if relevo.RoundStateOf(bB, entriesB) != remote.RoundRunning {
-		t.Errorf("B round_state after tick 1 = %v, want running", relevo.RoundStateOf(bB, entriesB))
-	}
-
-	rtC := testRuntime(t, env.srv, ownerC.id)
-	bC, err := rtC.Store.Load("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entriesC, _ := rtC.Store.ReadLog("api")
-	if relevo.RoundStateOf(bC, entriesC) != remote.RoundQueued {
-		t.Errorf("C round_state after tick 1 = %v, want still queued", relevo.RoundStateOf(bC, entriesC))
-	}
+	requireRoundState(t, rtB, "api", remote.RoundRunning)
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundQueued)
 	if pos := queuePosition(t, env, ownerC.id); pos != 1 {
 		t.Errorf("C position after tick 1 = %d, want 1", pos)
 	}
 
+	bB, err := rtB.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
 	closeRound(t, rtB, "api", bB.Builder.PID, env.runner)
 	clock = clock.Add(time.Minute)
 	if err := env.srv.Tick(context.Background()); err != nil {
 		t.Fatalf("tick 2: %v", err)
 	}
-
-	rtC2 := testRuntime(t, env.srv, ownerC.id)
-	bC2, err := rtC2.Store.Load("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entriesC2, _ := rtC2.Store.ReadLog("api")
-	if relevo.RoundStateOf(bC2, entriesC2) != remote.RoundRunning {
-		t.Errorf("C round_state after tick 2 = %v, want running", relevo.RoundStateOf(bC2, entriesC2))
-	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundRunning)
 }
 
-// queuePosition is q's 1-based position in a fresh census, or 0 if it is
-// not currently queued.
-func queuePosition(t *testing.T, env *testEnv, owner remote.ClientID) int {
-	t.Helper()
-	c, err := env.srv.census()
-	if err != nil {
-		t.Fatalf("census: %v", err)
-	}
-	for i, q := range c.Queued {
-		if q.Owner == owner {
-			return i + 1
-		}
-	}
-	return 0
-}
-
-// TestAdmitFreeSlotButQueueNonEmpty pins #285's FIFO guarantee against a
-// stale-but-not-yet-reaped running slot: A's process is dead but no Tick
-// has observed it yet, so census still counts A as running (PID != 0,
-// State active) and a brand new send must never jump the existing queue.
-//
-// Mutation check: have handleStartRound's inline admit ignore an existing
-// non-empty queue and try to admit the newest send directly, and this
-// fails on C landing at position 1 instead of 2.
+// TestAdmitFreeSlotButQueueNonEmpty: A's process is dead but no Tick has observed
+// it yet, so census still counts A as running and a brand new send must never
+// jump the existing queue.
 func TestAdmitFreeSlotButQueueNonEmpty(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
 	ownerB := addOwner(t, env, "bob")
@@ -554,31 +363,15 @@ func TestAdmitFreeSlotButQueueNonEmpty(t *testing.T) {
 	if err := env.srv.Tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
-
-	rtB := testRuntime(t, env.srv, ownerB.id)
-	bB, err := rtB.Store.Load("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entriesB, _ := rtB.Store.ReadLog("api")
-	if relevo.RoundStateOf(bB, entriesB) != remote.RoundRunning {
-		t.Errorf("B round_state after tick = %v, want running", relevo.RoundStateOf(bB, entriesB))
-	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerB.id), "api", remote.RoundRunning)
 	if pos := queuePosition(t, env, ownerC.id); pos != 1 {
 		t.Errorf("C position after tick = %d, want 1", pos)
 	}
 }
 
-// TestRestartRequeuesDeadBuilder pins #285's server-side half of #244: a
-// new Server standing in for a daemon restart, with its own runner that
-// never started A's pid (so A's exit code is unknown, not "0" -- the
-// signature of a supervisor that died with its child), re-queues A instead
-// of relaunching it, then admits it again within the same Tick because the
-// cap allows it.
-//
-// Mutation check: drop the `b.Owner != ""` branch in headless.go's lost
-// handling (added in the relevo-package step of this plan) and this fails
-// on newRunner.specs staying empty.
+// TestRestartRequeuesDeadBuilder: a server standing in for a daemon restart,
+// with a runner that never started A's pid, re-queues A instead of relaunching
+// it, then admits it again within the same Tick because the cap allows it.
 func TestRestartRequeuesDeadBuilder(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
 
@@ -606,7 +399,6 @@ func TestRestartRequeuesDeadBuilder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	if err := restarted.Tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
@@ -621,9 +413,8 @@ func TestRestartRequeuesDeadBuilder(t *testing.T) {
 			queueNotes = append(queueNotes, e.Note)
 		}
 	}
-	// The original send/admit already logged its own "queued (...)" /
-	// "started after ..." pair; the restart adds a second pair on top of
-	// it, so only the last two entries are this test's concern.
+	// The original send/admit already logged its own pair; the restart adds a
+	// second pair on top, so only the last two entries are this test's concern.
 	if len(queueNotes) != 4 {
 		t.Fatalf("queue notes = %v, want 4 (send+admit, then re-queue+re-admit)", queueNotes)
 	}
@@ -652,16 +443,14 @@ func TestRestartRequeuesDeadBuilder(t *testing.T) {
 	}
 }
 
-// TestUnbindDropsQueued pins #285: unbinding a queued binding removes it
-// from the queue outright -- the census no longer counts it, and a Tick
-// afterwards has nothing new to admit.
+// TestUnbindDropsQueued: unbinding a queued binding removes it from the queue
+// outright, and a Tick afterwards has nothing new to admit.
 func TestUnbindDropsQueued(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
 	ownerB := addOwner(t, env, "bob")
 
 	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
 	requireCreated(t, respA, bodyA, "A")
-
 	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
 	requireCreated(t, respB, bodyB, "B")
 	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
@@ -690,11 +479,9 @@ func TestUnbindDropsQueued(t *testing.T) {
 	}
 }
 
-// TestWireUnbindStopsRunningRound pins #331's premise for the wire verb the
-// hints now name: POST /v1/bindings/{name}/unbind has no running-round guard
-// and no --force, yet it does stop a running remote round -- the server's
-// builder process is killed and the binding is archived out of the owner's
-// live store.
+// TestWireUnbindStopsRunningRound: POST /unbind has no running-round guard and
+// no --force, yet it does stop a running remote round -- the builder process is
+// killed and the binding is archived out of the owner's live store.
 func TestWireUnbindStopsRunningRound(t *testing.T) {
 	env := setupTestEnv(t)
 
@@ -725,22 +512,19 @@ func TestWireUnbindStopsRunningRound(t *testing.T) {
 	if alive {
 		t.Errorf("builder pid %d still alive after unbind, want killed", pid)
 	}
-
 	if _, err := rt.Store.Load("api"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Load after unbind: err = %v, want ErrNotFound", err)
 	}
 }
 
-// TestDoneRefusesQueuedRound pins #285's wire contract (§4.8): a queued
-// round has no process to stop and nothing to hand back, so done is
-// refused exactly like an open round.
+// TestDoneRefusesQueuedRound: a queued round has no process to stop and nothing
+// to hand back, so done is refused exactly like an open round.
 func TestDoneRefusesQueuedRound(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
 	ownerB := addOwner(t, env, "bob")
 
 	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
 	requireCreated(t, respA, bodyA, "A")
-
 	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
 	requireCreated(t, respB, bodyB, "B")
 	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
@@ -761,16 +545,14 @@ func TestDoneRefusesQueuedRound(t *testing.T) {
 	}
 }
 
-// TestStopDropsQueued pins #344's queued wire stop: with the cap taken, a
-// second owner's queued round stops with 200 as "dequeued" rather than being
-// refused, and the server's queue census no longer lists it.
+// TestStopDropsQueued: with the cap taken, a second owner's queued round stops
+// with 200 as "dequeued", and the queue census no longer lists it.
 func TestStopDropsQueued(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
 	ownerB := addOwner(t, env, "bob")
 
 	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
 	requireCreated(t, respA, bodyA, "A")
-
 	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
 	requireCreated(t, respB, bodyB, "B")
 	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
@@ -798,8 +580,8 @@ func TestStopDropsQueued(t *testing.T) {
 	}
 }
 
-// TestGetBindingQueuePosition pins #285's position math: three queued
-// rounds report positions 1, 2 and 3 in FIFO (QueuedAt) order.
+// TestGetBindingQueuePosition: three queued rounds report positions 1, 2 and 3
+// in FIFO (QueuedAt) order.
 func TestGetBindingQueuePosition(t *testing.T) {
 	clock := time.Now()
 	env := setupTestEnv(t, func(cfg *Config) {
@@ -824,22 +606,17 @@ func TestGetBindingQueuePosition(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("get binding status = %d, want 200; body: %s", resp.StatusCode, string(body))
 		}
-		view := decodeView(t, body)
-		if view.Queue == nil || view.Queue.Position != i+1 {
+		if view := decodeView(t, body); view.Queue == nil || view.Queue.Position != i+1 {
 			t.Errorf("owner %d Queue = %+v, want Position %d", i, view.Queue, i+1)
 		}
 	}
 }
 
-// TestHeldCPUsCrossOwnerCensus pins #314's server census: owner A's live round
-// pins core 0 in its own store, and owner B's round -- started through the
-// served runtime's HeldCPUs -- takes core 1.
-//
-// Mutation check: make heldCPUs read only the caller's tx (drop the other
-// owners) and B gets core 0: the distinct-core assertion fails.
+// TestHeldCPUsCrossOwnerCensus: owner A's live round pins core 0 in its own
+// store, and owner B's round -- started through HeldCPUs -- takes core 1.
 func TestHeldCPUsCrossOwnerCensus(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) {
-		cfg.Scope = &relevo.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
+		cfg.Scope = &spawn.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
 	})
 	ownerB := addOwner(t, env, "bob")
 
@@ -873,25 +650,33 @@ func TestHeldCPUsCrossOwnerCensus(t *testing.T) {
 	}
 }
 
-// TestHeldCPUsSkipsAFailingOwner pins #314's error rule: an owner whose store
-// cannot be listed is skipped and its error returned first, but the cores of
-// the owners that did list are still returned.
+// TestHeldCPUsSkipsAFailingOwner: an owner whose store cannot be listed is
+// skipped and its error returned first, but the cores of the owners that did
+// list are still returned.
 func TestHeldCPUsSkipsAFailingOwner(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) {
-		cfg.Scope = &relevo.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
+		cfg.Scope = &spawn.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
 	})
 	ownerB := addOwner(t, env, "bob")
 	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
 	requireCreated(t, respB, bodyB, "B")
 
-	// A third owner whose state lock is a directory: OpenFile on it fails for
-	// any uid, so its List errors where B's does not.
 	ownerC := addOwner(t, env, "carol")
 	cDir, ok := ownerC.id.Dir()
 	if !ok {
 		t.Fatal("carol's client id has no dir")
 	}
-	if err := os.MkdirAll(filepath.Join(env.srv.cfg.Root, "bindings", cDir, ".lock"), 0o755); err != nil {
+	// A record row that cannot be decoded, so carol's List errors where B's
+	// does not.
+	if err := os.MkdirAll(filepath.Join(env.srv.cfg.Root, "bindings", cDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.srv.cfg.DB.RecordPut(db.Record{
+		Owner: string(ownerC.id),
+		Name:  "broken",
+		Round: 1,
+		JSON:  "{",
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -906,15 +691,12 @@ func TestHeldCPUsSkipsAFailingOwner(t *testing.T) {
 		if herr == nil {
 			t.Error("heldCPUs: want the unreadable owner's error, got nil")
 		}
-		found := false
 		for _, c := range held {
 			if c == 0 {
-				found = true
+				return nil
 			}
 		}
-		if !found {
-			t.Errorf("held = %v, want B's core 0 despite the failing owner", held)
-		}
+		t.Errorf("held = %v, want B's core 0 despite the failing owner", held)
 		return nil
 	})
 	if err != nil {

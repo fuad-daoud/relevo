@@ -8,61 +8,32 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-func signedRequest(t *testing.T, kp remote.Keypair, method, target string, body []byte) *http.Request {
-	t.Helper()
-	var bodyReader io.Reader
-	var sum []byte
-	if body != nil {
-		bodyReader = bytes.NewReader(body)
-		s := sha256.Sum256(body)
-		sum = s[:]
-	}
-	req, err := http.NewRequest(method, target, bodyReader)
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
-	}
-	nonce, err := remote.NewNonce()
-	if err != nil {
-		t.Fatalf("NewNonce: %v", err)
-	}
-	hdr := remote.Sign(kp, method, target, sum, time.Now(), nonce)
-	for k, vv := range hdr {
-		for _, v := range vv {
-			req.Header.Add(k, v)
-		}
-	}
-	return req
-}
-
 func TestClientsAddRevokeLookup(t *testing.T) {
 	d := testServeDB(t)
-	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c, err := LoadClients(d, clientsPath)
+	c, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -74,13 +45,10 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 	id := remote.IDOf(kp.Public)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 
-	// 1. Unknown -> KeyUnknown
-	_, status := c.Lookup(id)
-	if status != remote.KeyUnknown {
+	if _, status := c.Lookup(id); status != remote.KeyUnknown {
 		t.Fatalf("Lookup unknown: got %v, want KeyUnknown", status)
 	}
 
-	// 2. Add -> KeyActive
 	cl, err := c.Add("client1", pubLine, time.Now())
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -89,34 +57,24 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 		t.Fatalf("Add result mismatch: %+v", cl)
 	}
 	pub, status := c.Lookup(id)
-	if status != remote.KeyActive {
-		t.Fatalf("Lookup after add: got %v, want KeyActive", status)
-	}
-	if !bytes.Equal(pub, kp.Public) {
-		t.Fatalf("Lookup returned wrong public key")
+	if status != remote.KeyActive || !bytes.Equal(pub, kp.Public) {
+		t.Fatalf("Lookup after add = (%v, %v), want the active key", status, pub)
 	}
 
-	// Adding already enrolled client without revocation -> ErrAlreadyEnrolled
-	_, err = c.Add("client1", pubLine, time.Now())
-	if !errors.Is(err, ErrAlreadyEnrolled) {
+	if _, err := c.Add("client1", pubLine, time.Now()); !errors.Is(err, ErrAlreadyEnrolled) {
 		t.Fatalf("Add duplicate: got %v, want ErrAlreadyEnrolled", err)
 	}
 
-	// 3. Revoke -> KeyRevoked
 	if err := c.Revoke(id, time.Now()); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
-	_, status = c.Lookup(id)
-	if status != remote.KeyRevoked {
+	if _, status = c.Lookup(id); status != remote.KeyRevoked {
 		t.Fatalf("Lookup after revoke: got %v, want KeyRevoked", status)
 	}
-
-	// Revoke unknown client -> ErrNoSuchClient
 	if err := c.Revoke("SHA256:unknown", time.Now()); !errors.Is(err, ErrNoSuchClient) {
 		t.Fatalf("Revoke unknown: got %v, want ErrNoSuchClient", err)
 	}
 
-	// 4. Re-add -> KeyActive
 	cl2, err := c.Add("client1-renewed", pubLine, time.Now())
 	if err != nil {
 		t.Fatalf("Re-add: %v", err)
@@ -124,22 +82,17 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 	if cl2.Label != "client1-renewed" {
 		t.Fatalf("Re-add label mismatch: %+v", cl2)
 	}
-	_, status = c.Lookup(id)
-	if status != remote.KeyActive {
+	if _, status = c.Lookup(id); status != remote.KeyActive {
 		t.Fatalf("Lookup after re-add: got %v, want KeyActive", status)
 	}
 
-	// 5. The row survives a reload
-	cLoaded, err := LoadClients(d, clientsPath)
+	cLoaded, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients reload: %v", err)
 	}
 	pubLoaded, statusLoaded := cLoaded.Lookup(id)
-	if statusLoaded != remote.KeyActive {
-		t.Fatalf("Lookup after reload: got %v, want KeyActive", statusLoaded)
-	}
-	if !bytes.Equal(pubLoaded, kp.Public) {
-		t.Fatalf("Loaded pub key mismatch")
+	if statusLoaded != remote.KeyActive || !bytes.Equal(pubLoaded, kp.Public) {
+		t.Fatalf("Lookup after reload = (%v, %v), want the active key", statusLoaded, pubLoaded)
 	}
 	if cLoaded.LabelOf(id) != "client1-renewed" {
 		t.Fatalf("LabelOf: got %q, want client1-renewed", cLoaded.LabelOf(id))
@@ -148,12 +101,11 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 
 func TestClientsLookupSeesEnrollFromAnotherInstance(t *testing.T) {
 	d := testServeDB(t)
-	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c1, err := LoadClients(d, clientsPath)
+	c1, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients 1: %v", err)
 	}
-	c2, err := LoadClients(d, clientsPath)
+	c2, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients 2: %v", err)
 	}
@@ -165,30 +117,22 @@ func TestClientsLookupSeesEnrollFromAnotherInstance(t *testing.T) {
 	id := remote.IDOf(kp.Public)
 	pubLine := remote.MarshalPublic(kp.Public, "client 1")
 
-	// c2 should not know id initially
 	if _, status := c2.Lookup(id); status != remote.KeyUnknown {
 		t.Fatalf("Lookup before add: got %v, want KeyUnknown", status)
 	}
-
-	// Add on c1
 	if _, err := c1.Add("client1", pubLine, time.Now()); err != nil {
 		t.Fatalf("Add on c1: %v", err)
 	}
 
-	// Lookup on c2 returns KeyActive without any reload call
 	pub, status := c2.Lookup(id)
-	if status != remote.KeyActive {
-		t.Fatalf("Lookup on c2: got %v, want KeyActive", status)
-	}
-	if !bytes.Equal(pub, kp.Public) {
-		t.Fatalf("Lookup returned wrong public key")
+	if status != remote.KeyActive || !bytes.Equal(pub, kp.Public) {
+		t.Fatalf("Lookup on c2 = (%v, %v), want the active key without a reload", status, pub)
 	}
 }
 
 func TestClientsRefreshKeepsListOnParseError(t *testing.T) {
 	d := testServeDB(t)
-	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c, err := LoadClients(d, clientsPath)
+	c, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -198,32 +142,25 @@ func TestClientsRefreshKeepsListOnParseError(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	pubLine := remote.MarshalPublic(kp.Public, "client 1")
-
-	if _, err := c.Add("client1", pubLine, time.Now()); err != nil {
+	if _, err := c.Add("client1", remote.MarshalPublic(kp.Public, "client 1"), time.Now()); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
-	// Corrupt the row. KVPut refuses invalid JSON, so a document the reader
-	// cannot parse is one of the wrong shape.
+	// KVPut refuses invalid JSON, so a document the reader cannot parse is one
+	// of the wrong shape.
 	if err := d.KVPut(clientsKVKey, []byte(`{"not":"a client list"}`)); err != nil {
 		t.Fatalf("corrupt serve.clients: %v", err)
 	}
 
-	// Lookup still answers from the old list
 	pub, status := c.Lookup(id)
-	if status != remote.KeyActive {
-		t.Fatalf("Lookup after corrupt file: got %v, want KeyActive", status)
-	}
-	if !bytes.Equal(pub, kp.Public) {
-		t.Fatalf("Lookup returned wrong public key")
+	if status != remote.KeyActive || !bytes.Equal(pub, kp.Public) {
+		t.Fatalf("Lookup after corrupt row = (%v, %v), want the old list", status, pub)
 	}
 }
 
 func TestClientsRefreshOnDelete(t *testing.T) {
 	d := testServeDB(t)
-	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c, err := LoadClients(d, clientsPath)
+	c, err := LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -233,39 +170,23 @@ func TestClientsRefreshOnDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	pubLine := remote.MarshalPublic(kp.Public, "client 1")
-
-	if _, err := c.Add("client1", pubLine, time.Now()); err != nil {
+	if _, err := c.Add("client1", remote.MarshalPublic(kp.Public, "client 1"), time.Now()); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-
-	pub, status := c.Lookup(id)
-	if status != remote.KeyActive {
+	if _, status := c.Lookup(id); status != remote.KeyActive {
 		t.Fatalf("Lookup before delete: got %v, want KeyActive", status)
 	}
-	if !bytes.Equal(pub, kp.Public) {
-		t.Fatalf("Lookup returned wrong public key")
-	}
 
-	// Remove the row
 	if err := d.KVDelete(clientsKVKey); err != nil {
 		t.Fatalf("KVDelete: %v", err)
 	}
-
-	// Lookup -> KeyUnknown
-	_, status = c.Lookup(id)
-	if status != remote.KeyUnknown {
+	if _, status := c.Lookup(id); status != remote.KeyUnknown {
 		t.Fatalf("Lookup after remove: got %v, want KeyUnknown", status)
 	}
 }
 
-// TestOwnerLabel checks the request log's owner field (#100 step 6): an
-// enrolled caller's label, and "-" -- not "" -- for a request that never
-// authenticated at all (the zero ClientID an auth failure leaves behind).
 func TestOwnerLabel(t *testing.T) {
-	d := testServeDB(t)
-	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c, err := LoadClients(d, clientsPath)
+	c, err := LoadClients(testServeDB(t))
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -281,36 +202,25 @@ func TestOwnerLabel(t *testing.T) {
 	if got := ownerLabel(c, id); got != "laptop" {
 		t.Errorf("ownerLabel(enrolled) = %q, want laptop", got)
 	}
-	// Mutation target: drop the caller == "" guard and this reads "" (via
-	// LabelOf's own fallback on an empty id) instead of "-".
 	if got := ownerLabel(c, ""); got != "-" {
 		t.Errorf(`ownerLabel(unauthenticated) = %q, want "-"`, got)
 	}
 }
 
-func newTestServer(t *testing.T, maxBundleBytes int64) (*Server, string) {
+func requireAuthError(t *testing.T, handler http.Handler, req *http.Request, wantCode remote.Code) {
 	t.Helper()
-	root := t.TempDir()
-	cfg := Config{
-		DB:             testServeDB(t),
-		Root:           root,
-		MaxBundleBytes: maxBundleBytes,
-		Now:            time.Now,
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
 	}
-	s, err := New(cfg)
-	if err != nil {
-		t.Fatalf("New server: %v", err)
+	var errBody remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+		t.Fatalf("decode body: %v", err)
 	}
-	return s, root
-}
-
-func testRuntime(t *testing.T, s *Server, id remote.ClientID) relevo.Runtime {
-	t.Helper()
-	rt, err := s.runtime(id)
-	if err != nil {
-		t.Fatalf("runtime(%s): %v", id, err)
+	if errBody.Code != wantCode {
+		t.Fatalf("error code = %q, want %q", errBody.Code, wantCode)
 	}
-	return rt
 }
 
 func TestAuthRejects(t *testing.T) {
@@ -331,20 +241,7 @@ func TestAuthRejects(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req := signedRequest(t, kpUnknown, "GET", "/v1/whoami", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401", rec.Code)
-		}
-		var errBody remote.ErrorBody
-		if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		if errBody.Code != remote.CodeNotEnrolled {
-			t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeNotEnrolled)
-		}
+		requireAuthError(t, handler, signedRequest(t, kpUnknown, "GET", "/v1/whoami", nil), remote.CodeNotEnrolled)
 	})
 
 	t.Run("revoked", func(t *testing.T) {
@@ -359,40 +256,13 @@ func TestAuthRejects(t *testing.T) {
 		if err := s.clients.Revoke(remote.IDOf(kpRevoked.Public), time.Now()); err != nil {
 			t.Fatal(err)
 		}
-
-		req := signedRequest(t, kpRevoked, "GET", "/v1/whoami", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401", rec.Code)
-		}
-		var errBody remote.ErrorBody
-		if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		if errBody.Code != remote.CodeRevoked {
-			t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeRevoked)
-		}
+		requireAuthError(t, handler, signedRequest(t, kpRevoked, "GET", "/v1/whoami", nil), remote.CodeRevoked)
 	})
 
 	t.Run("bad_signature", func(t *testing.T) {
 		req := signedRequest(t, kpEnrolled, "GET", "/v1/whoami", nil)
-		// Corrupt signature
 		req.Header.Set(remote.HeaderSignature, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401", rec.Code)
-		}
-		var errBody remote.ErrorBody
-		if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		if errBody.Code != remote.CodeBadSignature {
-			t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeBadSignature)
-		}
+		requireAuthError(t, handler, req, remote.CodeBadSignature)
 	})
 
 	t.Run("stale", func(t *testing.T) {
@@ -402,31 +272,16 @@ func TestAuthRejects(t *testing.T) {
 			t.Fatal(err)
 		}
 		sum := sha256.Sum256(nil)
-		hdr := remote.Sign(kpEnrolled, "GET", "/v1/whoami", sum[:], staleTime, nonce)
-
 		req, err := http.NewRequest("GET", "/v1/whoami", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for k, vv := range hdr {
+		for k, vv := range remote.Sign(kpEnrolled, "GET", "/v1/whoami", sum[:], staleTime, nonce) {
 			for _, v := range vv {
 				req.Header.Add(k, v)
 			}
 		}
-
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401", rec.Code)
-		}
-		var errBody remote.ErrorBody
-		if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		if errBody.Code != remote.CodeStale {
-			t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeStale)
-		}
+		requireAuthError(t, handler, req, remote.CodeStale)
 	})
 }
 
@@ -438,14 +293,12 @@ func TestAuthBodyCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pubLine := remote.MarshalPublic(kp.Public, "cap-tester")
-	if _, err := s.clients.Add("cap-tester", pubLine, time.Now()); err != nil {
+	if _, err := s.clients.Add("cap-tester", remote.MarshalPublic(kp.Public, "cap-tester"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
-	// 1025 bytes is 1 byte over 1024
-	body := make([]byte, 1025)
-	req := signedRequest(t, kp, "POST", "/v1/whoami", body)
+	// 1025 bytes is 1 byte over 1024.
+	req := signedRequest(t, kp, "POST", "/v1/whoami", make([]byte, 1025))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -475,10 +328,8 @@ func TestWhoAmI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := signedRequest(t, kp, "GET", "/v1/whoami", nil)
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
+	handler.ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
@@ -486,11 +337,8 @@ func TestWhoAmI(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&who); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if who.ID != id {
-		t.Fatalf("ID = %q, want %q", who.ID, id)
-	}
-	if who.Label != "alice" {
-		t.Fatalf("Label = %q, want alice", who.Label)
+	if who.ID != id || who.Label != "alice" {
+		t.Fatalf("who = %+v, want id %q label alice", who, id)
 	}
 	if who.ServerVersion != remote.Version {
 		t.Fatalf("ServerVersion = %d, want %d", who.ServerVersion, remote.Version)
@@ -498,67 +346,70 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	// TestWhoAmIAdvertisesRoles (#382 §5.3): the existing features test is
-	// extended rather than duplicated.
-	if len(who.Features) != 7 ||
-		who.Features[0] != remote.FeatureTier || who.Features[1] != remote.FeatureQueue ||
-		who.Features[2] != remote.FeatureStop || who.Features[3] != remote.FeatureBuilder ||
-		who.Features[4] != remote.FeatureIdempotentSend || who.Features[5] != remote.FeatureAuthor ||
-		who.Features[6] != remote.FeatureRoles {
-		t.Fatalf("Features = %v, want [%s %s %s %s %s %s %s]", who.Features,
-			remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder,
-			remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles)
+	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders}
+	if !slices.Equal(who.Features, wantFeatures) {
+		t.Fatalf("Features = %v, want %v", who.Features, wantFeatures)
 	}
 	if who.Builders == nil || who.Builders.Cap <= 0 {
 		t.Fatalf("Builders = %+v, want a positive Cap", who.Builders)
 	}
-	if who.BuilderTier != "harness" {
-		t.Fatalf("BuilderTier = %q, want harness", who.BuilderTier)
-	}
-	if who.MaxTier != "edit" {
-		t.Fatalf("MaxTier = %q, want edit", who.MaxTier)
+	if who.BuilderTier != "harness" || who.MaxTier != "edit" {
+		t.Fatalf("tiers = (%q, %q), want (harness, edit)", who.BuilderTier, who.MaxTier)
 	}
 	if who.Builders.Quota != "" {
 		t.Fatalf("Builders.Quota = %q, want empty without a scope", who.Builders.Quota)
 	}
+}
 
-	// With a scope configured, WhoAmI carries its slice and CPU quota (#295).
-	scoped, err := New(Config{
-		DB:    testServeDB(t),
-		Root:  t.TempDir(),
-		Now:   time.Now,
-		Scope: &relevo.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"},
-	})
+// TestServerRefusesACreateWithoutAnActor pins A4: a client of this release
+// always names the actor, so an empty one is a 400 naming the field and stores
+// nothing.
+func TestServerRefusesACreateWithoutAnActor(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	kp, err := remote.Generate()
 	if err != nil {
-		t.Fatalf("New scoped server: %v", err)
-	}
-	if _, err := scoped.clients.Add("alice", pubLine, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	scopedRec := httptest.NewRecorder()
-	scoped.Handler().ServeHTTP(scopedRec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
-	if scopedRec.Code != http.StatusOK {
-		t.Fatalf("scoped status = %d, want 200; body: %s", scopedRec.Code, scopedRec.Body.String())
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+		t.Fatal(err)
 	}
-	var scopedWho remote.WhoAmI
-	if err := json.NewDecoder(scopedRec.Body).Decode(&scopedWho); err != nil {
-		t.Fatalf("decode scoped body: %v", err)
+
+	rec := createBindingRequest(t, s, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
 	}
-	if scopedWho.Builders == nil || scopedWho.Builders.Quota != "200%" {
-		t.Fatalf("scoped Builders = %+v, want Quota 200%%", scopedWho.Builders)
+	var errBody remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+		t.Fatalf("decode error body: %v", err)
 	}
-	if scopedWho.Builders.Slice != "relevo.slice" {
-		t.Fatalf("scoped Builders.Slice = %q, want relevo.slice", scopedWho.Builders.Slice)
+	if !strings.Contains(errBody.Message, "actor") {
+		t.Fatalf("message = %q, want it to name actor", errBody.Message)
+	}
+	if _, err := testRuntime(t, s, id).Store.Load("api"); err == nil {
+		t.Fatal("binding was stored despite the missing actor")
 	}
 }
 
-func TestWhoAmIBuilderTierFromPolicy(t *testing.T) {
-	srv, kp := newTierTestServer(t, policy.Policy{Tier: map[string]string{"builder": "edit"}, MaxTier: "yolo"})
+// TestWhoAmIAdvertisesCandidateAndActors pins the A4 feature token values: the
+// per-round candidate token is "candidate" and the actor token is "actors", and
+// the old "builder"/"roles" tokens are gone.
+func TestWhoAmIAdvertisesCandidateAndActors(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
 
-	req := signedRequest(t, kp, "GET", "/v1/whoami", nil)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
+	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
@@ -566,24 +417,71 @@ func TestWhoAmIBuilderTierFromPolicy(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&who); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if who.BuilderTier != "edit" {
-		t.Fatalf("BuilderTier = %q, want edit", who.BuilderTier)
+	for _, want := range []string{"candidate", "actors"} {
+		if !slices.Contains(who.Features, want) {
+			t.Errorf("Features = %v, want %q", who.Features, want)
+		}
 	}
-	if who.MaxTier != "yolo" {
-		t.Fatalf("MaxTier = %q, want yolo", who.MaxTier)
+	for _, gone := range []string{"builder", "roles"} {
+		if slices.Contains(who.Features, gone) {
+			t.Errorf("Features = %v, must not carry %q", who.Features, gone)
+		}
+	}
+}
+
+func TestWhoAmIScope(t *testing.T) {
+	scoped, err := New(Config{
+		DB:    testServeDB(t),
+		Root:  t.TempDir(),
+		Now:   time.Now,
+		Scope: &spawn.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"},
+	})
+	if err != nil {
+		t.Fatalf("New scoped server: %v", err)
+	}
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scoped.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	scoped.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scoped status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var who remote.WhoAmI
+	if err := json.NewDecoder(rec.Body).Decode(&who); err != nil {
+		t.Fatalf("decode scoped body: %v", err)
+	}
+	if who.Builders == nil || who.Builders.Quota != "200%" || who.Builders.Slice != "relevo.slice" {
+		t.Fatalf("scoped Builders = %+v, want the slice and quota", who.Builders)
+	}
+}
+
+func TestWhoAmIBuilderTierFromPolicy(t *testing.T) {
+	srv, kp := newTierTestServer(t, policy.Policy{Tier: map[string]string{"builder": "edit"}, MaxTier: "yolo"})
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var who remote.WhoAmI
+	if err := json.NewDecoder(rec.Body).Decode(&who); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if who.BuilderTier != "edit" || who.MaxTier != "yolo" {
+		t.Fatalf("tiers = (%q, %q), want (edit, yolo)", who.BuilderTier, who.MaxTier)
 	}
 }
 
 func TestNonV1Is426(t *testing.T) {
 	s, _ := newTestServer(t, 0)
-	handler := s.Handler()
-
-	req, err := http.NewRequest("GET", "/v0/whoami", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	s.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/v0/whoami", nil))
 
 	if rec.Code != http.StatusUpgradeRequired {
 		t.Fatalf("status = %d, want 426", rec.Code)
@@ -592,11 +490,8 @@ func TestNonV1Is426(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if errBody.Code != remote.CodeVersion {
-		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeVersion)
-	}
-	if errBody.Message != "this server speaks v1" {
-		t.Fatalf("error message = %q, want %q", errBody.Message, "this server speaks v1")
+	if errBody.Code != remote.CodeVersion || errBody.Message != "this server speaks v1" {
+		t.Fatalf("error = (%q, %q), want version/this server speaks v1", errBody.Code, errBody.Message)
 	}
 }
 
@@ -609,8 +504,7 @@ func TestCreateBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	pubLine := remote.MarshalPublic(kp.Public, "creator")
-	if _, err := s.clients.Add("creator", pubLine, time.Now()); err != nil {
+	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -618,11 +512,11 @@ func TestCreateBinding(t *testing.T) {
 		Name:       "api",
 		RepoID:     "repo123",
 		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
 	})
 	req := signedRequest(t, kp, "POST", "/v1/bindings", createBody)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
 	}
@@ -634,7 +528,6 @@ func TestCreateBinding(t *testing.T) {
 		t.Fatalf("view mismatch: %+v", view)
 	}
 
-	// Bare repo exists at Serve.BareRepo
 	idDir, ok := id.Dir()
 	if !ok {
 		t.Fatalf("id.Dir() failed for %s", id)
@@ -644,7 +537,6 @@ func TestCreateBinding(t *testing.T) {
 		t.Fatalf("bare repo HEAD missing at %s: %v", bareRepoPath, err)
 	}
 
-	// binding.json has Owner
 	b, err := testRuntime(t, s, id).Store.Load("api")
 	if err != nil {
 		t.Fatalf("Load binding: %v", err)
@@ -656,15 +548,13 @@ func TestCreateBinding(t *testing.T) {
 
 func TestOwnerDirIsFlatHex(t *testing.T) {
 	s, root := newTestServer(t, 0)
-	handler := s.Handler()
 
 	kp, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	pubLine := remote.MarshalPublic(kp.Public, "creator")
-	if _, err := s.clients.Add("creator", pubLine, time.Now()); err != nil {
+	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -672,11 +562,10 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 		Name:       "api",
 		RepoID:     "repo123",
 		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
 	})
-	req := signedRequest(t, kp, "POST", "/v1/bindings", createBody)
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
+	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "POST", "/v1/bindings", createBody))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
 	}
@@ -686,11 +575,6 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir(%s): %v", bindingsDir, err)
 	}
-	t.Logf("ls %s:", bindingsDir)
-	for _, e := range entries {
-		t.Logf("  %s (isDir=%v)", e.Name(), e.IsDir())
-	}
-
 	if len(entries) != 1 {
 		t.Fatalf("len(entries) = %d, want 1", len(entries))
 	}
@@ -699,59 +583,30 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 	if !ok {
 		t.Fatalf("id.Dir() failed for %s", id)
 	}
-	if entry.Name() != expectedDir {
-		t.Fatalf("entry name = %q, want %q", entry.Name(), expectedDir)
-	}
-	if len(entry.Name()) != 64 {
-		t.Fatalf("len(entry.Name()) = %d, want 64", len(entry.Name()))
+	if entry.Name() != expectedDir || len(entry.Name()) != 64 || !entry.IsDir() {
+		t.Fatalf("entry = %q (dir %v), want the 64-char hex owner dir %q", entry.Name(), entry.IsDir(), expectedDir)
 	}
 	for _, c := range entry.Name() {
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			t.Fatalf("entry name %q contains non-lower-hex char: %c", entry.Name(), c)
 		}
 	}
-	if !entry.IsDir() {
-		t.Fatalf("entry %s is not a directory", entry.Name())
-	}
 
-	ownerSubDir := filepath.Join(bindingsDir, entry.Name())
-	subEntries, err := os.ReadDir(ownerSubDir)
-	if err != nil {
-		t.Fatalf("ReadDir(%s): %v", ownerSubDir, err)
-	}
-	t.Logf("ls %s:", ownerSubDir)
-	for _, sub := range subEntries {
-		t.Logf("  %s", sub.Name())
-	}
-
-	// The binding's record lives in the machine database, scoped to the
-	// owner, so the assertion is that the server's owner store for this root
-	// can load it (P5 §8).
-	if _, err := s.ownerStore(ownerSubDir).Load("api"); err != nil {
+	// The binding's record lives in the machine database, scoped to the owner.
+	if _, err := s.ownerStore(filepath.Join(bindingsDir, entry.Name())).Load("api"); err != nil {
 		t.Fatalf("owner store Load(api): %v", err)
 	}
 }
 
-// newTierTestServer builds a server with one builder candidate and the
-// given policy, for handleCreateBinding tier-resolution tests (#141 remote
-// half).
 func newTierTestServer(t *testing.T, pol policy.Policy) (*Server, remote.Keypair) {
 	t.Helper()
-	root := t.TempDir()
-
-	candPath := filepath.Join(root, "candidates.json")
-	candJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
-	if err := os.WriteFile(candPath, []byte(candJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cSet, err := candidate.Load(candPath)
+	cSet, err := builderCandidateSet(t)
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	srv, err := New(Config{
 		DB:         testServeDB(t),
-		Root:       root,
+		Root:       t.TempDir(),
 		Candidates: cSet,
 		Policy:     pol,
 		Now:        time.Now,
@@ -759,7 +614,6 @@ func newTierTestServer(t *testing.T, pol policy.Policy) (*Server, remote.Keypair
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	kp, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -773,31 +627,12 @@ func newTierTestServer(t *testing.T, pol policy.Policy) (*Server, remote.Keypair
 func createBindingRequest(t *testing.T, srv *Server, kp remote.Keypair, req remote.CreateBindingRequest) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(req)
-	httpReq := signedRequest(t, kp, "POST", "/v1/bindings", body)
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httpReq)
+	srv.Handler().ServeHTTP(rec, signedRequest(t, kp, "POST", "/v1/bindings", body))
 	return rec
 }
 
-// roleTestCandidateSet writes and loads the single claude/anthropic/haiku
-// candidate row newTierTestServer also uses, so a #382 role test can build the
-// server's registry over the same set.
-func roleTestCandidateSet(t *testing.T, root string) *candidate.Set {
-	t.Helper()
-	candPath := filepath.Join(root, "candidates.json")
-	candJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
-	if err := os.WriteFile(candPath, []byte(candJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cSet, err := candidate.Load(candPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return cSet
-}
-
-// roleTestRegistry is the server's own roles.json for the role tests: the
-// built-in builder plus a ui-builder writer whose claude definition is srv-ui.
+// roleTestRegistry builds the server's own roles.json for the role tests.
 func roleTestRegistry(t *testing.T, set *candidate.Set, pol policy.Policy) *roles.Registry {
 	t.Helper()
 	writer := "writer"
@@ -815,14 +650,16 @@ func roleTestRegistry(t *testing.T, set *candidate.Set, pol policy.Policy) *role
 	return reg
 }
 
-// newRoleTestServer builds a server whose Config.Registry is reg: that is how a
-// test gives the server a roles.json of its own (#382 §5.3).
-func newRoleTestServer(t *testing.T, set *candidate.Set, pol policy.Policy, reg *roles.Registry) (*Server, remote.Keypair) {
+func newRoleTestServer(t *testing.T, pol policy.Policy, reg *roles.Registry) (*Server, remote.Keypair) {
 	t.Helper()
+	cSet, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv, err := New(Config{
 		DB:         testServeDB(t),
 		Root:       t.TempDir(),
-		Candidates: set,
+		Candidates: cSet,
 		Policy:     pol,
 		Registry:   reg,
 		Now:        time.Now,
@@ -840,65 +677,172 @@ func newRoleTestServer(t *testing.T, set *candidate.Set, pol policy.Policy, reg 
 	return srv, kp
 }
 
-// TestCreateBindingRunsServerRole pins #382 §5.3: a create with Role resolves
-// the role against the server's own registry, that role's candidates drive the
-// pick, and the served binding stores the role.
-func TestCreateBindingRunsServerRole(t *testing.T) {
-	root := t.TempDir()
-	set := roleTestCandidateSet(t, root)
-	srv, kp := newRoleTestServer(t, set, policy.Policy{}, roleTestRegistry(t, set, policy.Policy{}))
-
-	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     "repo123",
-		BaseCommit: strings.Repeat("a", 40),
-		Role:       "ui-builder",
-	})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+func TestCreateBindingTier(t *testing.T) {
+	cases := []struct {
+		name       string
+		pol        policy.Policy
+		tier       string
+		wantStatus int
+		wantTier   string
+	}{
+		{"policy tier", policy.Policy{Tier: map[string]string{"builder": "edit"}}, "", http.StatusCreated, "edit"},
+		{"no policy defaults to harness", policy.Policy{}, "", http.StatusCreated, "harness"},
+		{"above max", policy.Policy{}, "yolo", http.StatusUnprocessableEntity, ""},
+		{"bogus tier", policy.Policy{}, "bogus", http.StatusBadRequest, ""},
 	}
-
-	id := remote.IDOf(kp.Public)
-	b, err := testRuntime(t, srv, id).Store.Load("api")
-	if err != nil {
-		t.Fatalf("Load binding: %v", err)
-	}
-	if b.Role != "ui-builder" {
-		t.Fatalf("stored binding Role = %q, want ui-builder", b.Role)
-	}
-	if b.BuilderCandidate != "claude/anthropic/haiku" {
-		t.Fatalf("BuilderCandidate = %q, want claude/anthropic/haiku (ui-builder's list)", b.BuilderCandidate)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, kp := newTierTestServer(t, tc.pol)
+			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+				Name:       "api",
+				RepoID:     "repo123",
+				BaseCommit: strings.Repeat("a", 40),
+				Role:       "builder",
+				Tier:       tc.tier,
+			})
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			id := remote.IDOf(kp.Public)
+			if tc.wantStatus != http.StatusCreated {
+				if _, err := testRuntime(t, srv, id).Store.Load("api"); err == nil {
+					t.Fatal("binding was stored despite the refusal")
+				}
+				return
+			}
+			var view remote.BindingView
+			if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+				t.Fatalf("decode view: %v", err)
+			}
+			if view.Tier != tc.wantTier {
+				t.Fatalf("view.Tier = %q, want %q", view.Tier, tc.wantTier)
+			}
+			b, err := testRuntime(t, srv, id).Store.Load("api")
+			if err != nil {
+				t.Fatalf("Load binding: %v", err)
+			}
+			if b.Tier != tc.wantTier {
+				t.Fatalf("stored binding Tier = %q, want %q", b.Tier, tc.wantTier)
+			}
+		})
 	}
 }
 
-// TestCreateBindingUnknownRoleRefused pins #382 §5.3's server refusal: an
-// unknown Role is a 400 before InitBare, so neither a binding nor a bare repo
-// is left behind.
-func TestCreateBindingUnknownRoleRefused(t *testing.T) {
-	root := t.TempDir()
-	set := roleTestCandidateSet(t, root)
-	srv, kp := newRoleTestServer(t, set, policy.Policy{}, roleTestRegistry(t, set, policy.Policy{}))
-
-	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     "repo123",
-		BaseCommit: strings.Repeat("a", 40),
-		Role:       "nope",
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+// TestCreateBindingLabels pins the server half: Feature and Ticket are
+// validated (400 on a malformed one), stored, and echoed in the view.
+func TestCreateBindingLabels(t *testing.T) {
+	cases := []struct {
+		name       string
+		feature    string
+		ticket     string
+		wantStatus int
+	}{
+		{"both labels", "auth", "o/r#607", http.StatusCreated},
+		{"ticket without a feature", "", "#607", http.StatusCreated},
+		{"bad feature", "a/b", "", http.StatusBadRequest},
+		{"bad ticket", "", "not a ticket", http.StatusBadRequest},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, kp := newTierTestServer(t, policy.Policy{})
+			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+				Name:       "api",
+				RepoID:     "repo123",
+				BaseCommit: strings.Repeat("a", 40),
+				Role:       "builder",
+				Feature:    tc.feature,
+				Ticket:     tc.ticket,
+			})
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			id := remote.IDOf(kp.Public)
+			if tc.wantStatus != http.StatusCreated {
+				if _, err := testRuntime(t, srv, id).Store.Load("api"); err == nil {
+					t.Fatal("binding was stored despite the refusal")
+				}
+				return
+			}
+			var view remote.BindingView
+			if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+				t.Fatalf("decode view: %v", err)
+			}
+			if view.Feature != tc.feature || view.Ticket != tc.ticket {
+				t.Fatalf("view labels = %q/%q, want %q/%q", view.Feature, view.Ticket, tc.feature, tc.ticket)
+			}
+			b, err := testRuntime(t, srv, id).Store.Load("api")
+			if err != nil {
+				t.Fatalf("Load binding: %v", err)
+			}
+			if b.Feature != tc.feature || b.Ticket != tc.ticket {
+				t.Fatalf("stored labels = %q/%q, want %q/%q", b.Feature, b.Ticket, tc.feature, tc.ticket)
+			}
+		})
+	}
+}
+
+func TestCreateBindingRole(t *testing.T) {
+	cases := []struct {
+		name       string
+		role       string
+		wantStatus int
+		wantMsg    string
+		wantCand   string
+		wantShape  string
+		wantNoRepo bool
+	}{
+		{"server role", "ui-builder", http.StatusCreated, "", "claude/anthropic/haiku", store.ShapeWriter, false},
+		{"unknown role", "nope", http.StatusBadRequest, `unknown actor "nope"`, "", "", true},
+		{"reader role", "reviewer", http.StatusCreated, "", "", store.ShapeReader, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			set, err := builderCandidateSet(t)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv, kp := newRoleTestServer(t, policy.Policy{}, roleTestRegistry(t, set, policy.Policy{}))
+			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+				Name:       "api",
+				RepoID:     "repo123",
+				BaseCommit: strings.Repeat("a", 40),
+				Role:       tc.role,
+			})
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.wantStatus != http.StatusCreated {
+				requireCreateRefused(t, srv, kp, rec, tc.wantMsg, tc.wantNoRepo)
+				return
+			}
+			var view remote.BindingView
+			if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+				t.Fatalf("decode view: %v", err)
+			}
+			if view.Shape != tc.wantShape {
+				t.Fatalf("view.Shape = %q, want %q", view.Shape, tc.wantShape)
+			}
+			requireRoleStored(t, srv, kp, tc.role, tc.wantCand, tc.wantShape)
+		})
+	}
+}
+
+// requireCreateRefused checks the refusal's message and that nothing was stored.
+func requireCreateRefused(t *testing.T, srv *Server, kp remote.Keypair, rec *httptest.ResponseRecorder, wantMsg string, wantNoRepo bool) {
+	t.Helper()
 	var errBody remote.ErrorBody
 	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
 		t.Fatalf("decode error body: %v", err)
 	}
-	if !strings.Contains(errBody.Message, `unknown actor "nope"`) {
-		t.Fatalf("message = %q, want it to contain unknown actor \"nope\"", errBody.Message)
+	if !strings.Contains(errBody.Message, wantMsg) {
+		t.Errorf("message = %q, want it to contain %q", errBody.Message, wantMsg)
 	}
-
 	id := remote.IDOf(kp.Public)
 	if _, err := testRuntime(t, srv, id).Store.Load("api"); err == nil {
-		t.Fatal("binding was stored despite the unknown-role refusal")
+		t.Fatal("binding was stored despite the refusal")
+	}
+	if !wantNoRepo {
+		return
 	}
 	repoRoot, err := srv.repoRoot(id)
 	if err != nil {
@@ -910,155 +854,40 @@ func TestCreateBindingUnknownRoleRefused(t *testing.T) {
 	}
 }
 
-// TestCreateBindingReaderRoleRefused pins #382 §5.3: a reader role is refused
-// with the same error the local path gives.
-func TestCreateBindingReaderRoleRefused(t *testing.T) {
-	root := t.TempDir()
-	set := roleTestCandidateSet(t, root)
-	srv, kp := newRoleTestServer(t, set, policy.Policy{}, roleTestRegistry(t, set, policy.Policy{}))
-
-	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     "repo123",
-		BaseCommit: strings.Repeat("a", 40),
-		Role:       "reviewer",
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "a reader actor runs through relevo ask") {
-		t.Fatalf("body = %s, want it to contain the reader-role refusal", rec.Body.String())
-	}
-}
-
-func TestCreateBindingResolvesTierFromPolicy(t *testing.T) {
-	srv, kp := newTierTestServer(t, policy.Policy{Tier: map[string]string{"builder": "edit"}})
-
-	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     "repo123",
-		BaseCommit: strings.Repeat("a", 40),
-	})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
-	}
-	var view remote.BindingView
-	if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
-		t.Fatalf("decode view: %v", err)
-	}
-	if view.Tier != "edit" {
-		t.Fatalf("view.Tier = %q, want edit", view.Tier)
-	}
-
-	id := remote.IDOf(kp.Public)
-	b, err := testRuntime(t, srv, id).Store.Load("api")
+func requireRoleStored(t *testing.T, srv *Server, kp remote.Keypair, role, wantCand, wantShape string) {
+	t.Helper()
+	b, err := testRuntime(t, srv, remote.IDOf(kp.Public)).Store.Load("api")
 	if err != nil {
 		t.Fatalf("Load binding: %v", err)
 	}
-	if b.Tier != "edit" {
-		t.Fatalf("stored binding Tier = %q, want edit", b.Tier)
+	if b.Role != role {
+		t.Fatalf("stored binding Role = %q, want %q", b.Role, role)
 	}
-}
-
-func TestCreateBindingNoPolicyTierDefaultsToHarness(t *testing.T) {
-	srv, kp := newTierTestServer(t, policy.Policy{})
-
-	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     "repo123",
-		BaseCommit: strings.Repeat("a", 40),
-	})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	if b.BuilderCandidate != wantCand {
+		t.Fatalf("BuilderCandidate = %q, want %q", b.BuilderCandidate, wantCand)
 	}
-	var view remote.BindingView
-	if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
-		t.Fatalf("decode view: %v", err)
-	}
-	if view.Tier != "harness" {
-		t.Fatalf("view.Tier = %q, want harness", view.Tier)
-	}
-
-	id := remote.IDOf(kp.Public)
-	b, err := testRuntime(t, srv, id).Store.Load("api")
-	if err != nil {
-		t.Fatalf("Load binding: %v", err)
-	}
-	if b.Tier != "harness" {
-		t.Fatalf("stored binding Tier = %q, want harness", b.Tier)
-	}
-}
-
-func TestCreateBindingTierAboveMaxRefused(t *testing.T) {
-	srv, kp := newTierTestServer(t, policy.Policy{})
-
-	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     "repo123",
-		BaseCommit: strings.Repeat("a", 40),
-		Tier:       "yolo",
-	})
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
-	}
-	var errBody remote.ErrorBody
-	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
-		t.Fatalf("decode error body: %v", err)
-	}
-	if errBody.Code != remote.CodeTierAboveMax {
-		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeTierAboveMax)
-	}
-
-	id := remote.IDOf(kp.Public)
-	if _, err := testRuntime(t, srv, id).Store.Load("api"); err == nil {
-		t.Fatal("binding was stored despite tier_above_max refusal")
-	}
-}
-
-func TestCreateBindingBogusTierInvalid(t *testing.T) {
-	srv, kp := newTierTestServer(t, policy.Policy{})
-
-	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     "repo123",
-		BaseCommit: strings.Repeat("a", 40),
-		Tier:       "bogus",
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-	var errBody remote.ErrorBody
-	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
-		t.Fatalf("decode error body: %v", err)
-	}
-	if errBody.Code != remote.CodeInvalid {
-		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeInvalid)
+	if b.Shape != wantShape {
+		t.Fatalf("stored binding Shape = %q, want %q", b.Shape, wantShape)
 	}
 }
 
 func TestCreateInvalid(t *testing.T) {
 	s, _ := newTestServer(t, 0)
-	handler := s.Handler()
-
 	kp, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	pubLine := remote.MarshalPublic(kp.Public, "user")
-	if _, err := s.clients.Add("user", pubLine, time.Now()); err != nil {
+	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
-	// Bad name
 	badNameBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "invalid/name",
 		RepoID:     "repo1",
 		BaseCommit: strings.Repeat("a", 40),
 	})
-	req := signedRequest(t, kp, "POST", "/v1/bindings", badNameBody)
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
+	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "POST", "/v1/bindings", badNameBody))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
@@ -1074,13 +903,11 @@ func TestCreateInvalid(t *testing.T) {
 func TestCreateDuplicate(t *testing.T) {
 	s, _ := newTestServer(t, 0)
 	handler := s.Handler()
-
 	kp, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	pubLine := remote.MarshalPublic(kp.Public, "user")
-	if _, err := s.clients.Add("user", pubLine, time.Now()); err != nil {
+	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1088,17 +915,15 @@ func TestCreateDuplicate(t *testing.T) {
 		Name:       "api",
 		RepoID:     "repo1",
 		BaseCommit: strings.Repeat("b", 40),
+		Role:       "builder",
 	})
-	req1 := signedRequest(t, kp, "POST", "/v1/bindings", body)
 	rec1 := httptest.NewRecorder()
-	handler.ServeHTTP(rec1, req1)
+	handler.ServeHTTP(rec1, signedRequest(t, kp, "POST", "/v1/bindings", body))
 	if rec1.Code != http.StatusCreated {
 		t.Fatalf("status 1 = %d, want 201", rec1.Code)
 	}
-
-	req2 := signedRequest(t, kp, "POST", "/v1/bindings", body)
 	rec2 := httptest.NewRecorder()
-	handler.ServeHTTP(rec2, req2)
+	handler.ServeHTTP(rec2, signedRequest(t, kp, "POST", "/v1/bindings", body))
 	if rec2.Code != http.StatusConflict {
 		t.Fatalf("status 2 = %d, want 409", rec2.Code)
 	}
@@ -1115,7 +940,6 @@ func TestListIsOwnerScoped(t *testing.T) {
 	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-
 	kpB, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -1124,23 +948,20 @@ func TestListIsOwnerScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Client A creates "api"
 	bodyA, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
 		RepoID:     "repo1",
 		BaseCommit: strings.Repeat("1", 40),
+		Role:       "builder",
 	})
-	reqCreate := signedRequest(t, kpA, "POST", "/v1/bindings", bodyA)
 	recCreate := httptest.NewRecorder()
-	handler.ServeHTTP(recCreate, reqCreate)
+	handler.ServeHTTP(recCreate, signedRequest(t, kpA, "POST", "/v1/bindings", bodyA))
 	if recCreate.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want 201; body: %s", recCreate.Code, recCreate.Body.String())
 	}
 
-	// Client B lists -> empty
-	reqList := signedRequest(t, kpB, "GET", "/v1/bindings", nil)
 	recList := httptest.NewRecorder()
-	handler.ServeHTTP(recList, reqList)
+	handler.ServeHTTP(recList, signedRequest(t, kpB, "GET", "/v1/bindings", nil))
 	if recList.Code != http.StatusOK {
 		t.Fatalf("list status = %d, want 200", recList.Code)
 	}
@@ -1152,10 +973,8 @@ func TestListIsOwnerScoped(t *testing.T) {
 		t.Fatalf("B's list returned %d views, want 0", len(views))
 	}
 
-	// Client B GETs "api" -> 404
-	reqGet := signedRequest(t, kpB, "GET", "/v1/bindings/api", nil)
 	recGet := httptest.NewRecorder()
-	handler.ServeHTTP(recGet, reqGet)
+	handler.ServeHTTP(recGet, signedRequest(t, kpB, "GET", "/v1/bindings/api", nil))
 	if recGet.Code != http.StatusNotFound {
 		t.Fatalf("B's GET of api status = %d, want 404", recGet.Code)
 	}
@@ -1164,7 +983,6 @@ func TestListIsOwnerScoped(t *testing.T) {
 func TestGetTouchesLastSeen(t *testing.T) {
 	s, _ := newTestServer(t, 0)
 	handler := s.Handler()
-
 	kp, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -1178,15 +996,14 @@ func TestGetTouchesLastSeen(t *testing.T) {
 		Name:       "api",
 		RepoID:     "repo1",
 		BaseCommit: strings.Repeat("2", 40),
+		Role:       "builder",
 	})
-	reqCreate := signedRequest(t, kp, "POST", "/v1/bindings", createBody)
 	recCreate := httptest.NewRecorder()
-	handler.ServeHTTP(recCreate, reqCreate)
+	handler.ServeHTTP(recCreate, signedRequest(t, kp, "POST", "/v1/bindings", createBody))
 	if recCreate.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want 201", recCreate.Code)
 	}
 
-	// Check initial LastSeen
 	b, err := testRuntime(t, s, id).Store.Load("api")
 	if err != nil {
 		t.Fatal(err)
@@ -1194,10 +1011,8 @@ func TestGetTouchesLastSeen(t *testing.T) {
 	initial := b.Serve.LastSeen
 
 	time.Sleep(10 * time.Millisecond)
-
-	reqGet := signedRequest(t, kp, "GET", "/v1/bindings/api", nil)
 	recGet := httptest.NewRecorder()
-	handler.ServeHTTP(recGet, reqGet)
+	handler.ServeHTTP(recGet, signedRequest(t, kp, "GET", "/v1/bindings/api", nil))
 	if recGet.Code != http.StatusOK {
 		t.Fatalf("get status = %d, want 200", recGet.Code)
 	}
@@ -1212,23 +1027,12 @@ func TestGetTouchesLastSeen(t *testing.T) {
 }
 
 func TestUnavailableGatesServerWide(t *testing.T) {
-	root := t.TempDir()
-	cJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
-	candPath := filepath.Join(t.TempDir(), "candidates.json")
-	if err := os.WriteFile(candPath, []byte(cJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cSet, err := candidate.Load(candPath)
+	cSet, err := builderCandidateSet(t)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	s, err := New(Config{
-		DB:         testServeDB(t),
-		Root:       root,
-		Candidates: cSet,
-		Now:        time.Now,
-	})
+	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Candidates: cSet, Now: time.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1243,75 +1047,6 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A calls unavailable on token
-	unavailBody, _ := json.Marshal(remote.UnavailableRequest{
-		Token:  "claude/anthropic/haiku",
-		Reason: "rate limited test",
-	})
-	req := signedRequest(t, kpA, "POST", "/v1/unavailable", unavailBody)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("unavailable status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-	}
-
-	// The server-wide gate lives in the machine database under the serve.
-	// prefix (P5 §4.3), not under this machine's own ledger key.
-	if _, ok, err := s.DB().KVGet("serve.ledger"); err != nil || !ok {
-		t.Fatalf("serve.ledger row = (_, %v, %v), want it present", ok, err)
-	}
-	if _, ok, err := s.DB().KVGet("ledger"); err != nil || ok {
-		t.Fatalf("local ledger row = (_, %v, %v), want none", ok, err)
-	}
-
-	// No per-owner database exists at all (P5 §4.3).
-	idADir, ok := idA.Dir()
-	if !ok {
-		t.Fatalf("idA.Dir() failed for %s", idA)
-	}
-	ownerDB := filepath.Join(root, "bindings", idADir, "relevo.db")
-	if _, err := os.Stat(ownerDB); !os.IsNotExist(err) {
-		t.Fatalf("owner database at %s (err %v), want none", ownerDB, err)
-	}
-}
-
-// TestAvailableClearsServerWideGate: POST /v1/available mirrors
-// /v1/unavailable. It clears the server-wide ledger's rate-limit gate for the
-// subject's provider, answers with that provider and how many entries went,
-// takes a bare provider (so a second call is a no-op, not an error), refuses
-// an empty subject, and reads an unknown token as the client mistake it is.
-func TestAvailableClearsServerWideGate(t *testing.T) {
-	root := t.TempDir()
-	cJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
-	candPath := filepath.Join(t.TempDir(), "candidates.json")
-	if err := os.WriteFile(candPath, []byte(cJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cSet, err := candidate.Load(candPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := New(Config{
-		DB:         testServeDB(t),
-		Root:       root,
-		Candidates: cSet,
-		Now:        time.Now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := s.Handler()
-
-	kpA, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-
-	// Gate the provider through the server-wide endpoint.
 	unavailBody, _ := json.Marshal(remote.UnavailableRequest{
 		Token:  "claude/anthropic/haiku",
 		Reason: "rate limited test",
@@ -1322,7 +1057,55 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 		t.Fatalf("unavailable status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
 
-	// Lift it by bare provider.
+	// The server-wide gate lives under the serve. prefix, not this machine's own
+	// ledger key, and there is no per-owner database at all.
+	if _, ok, err := s.DB().KVGet("serve.ledger"); err != nil || !ok {
+		t.Fatalf("serve.ledger row = (_, %v, %v), want it present", ok, err)
+	}
+	if _, ok, err := s.DB().KVGet("ledger"); err != nil || ok {
+		t.Fatalf("local ledger row = (_, %v, %v), want none", ok, err)
+	}
+	idADir, ok := idA.Dir()
+	if !ok {
+		t.Fatalf("idA.Dir() failed for %s", idA)
+	}
+	ownerDB := filepath.Join(s.cfg.Root, "bindings", idADir, "relevo.db")
+	if _, err := os.Stat(ownerDB); !os.IsNotExist(err) {
+		t.Fatalf("owner database at %s (err %v), want none", ownerDB, err)
+	}
+}
+
+func newAvailableServer(t *testing.T) (*Server, remote.Keypair) {
+	t.Helper()
+	cSet, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Candidates: cSet, Now: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	return s, kp
+}
+
+func TestAvailableClearsServerWideGate(t *testing.T) {
+	s, kpA := newAvailableServer(t)
+	handler := s.Handler()
+
+	unavailBody, _ := json.Marshal(remote.UnavailableRequest{Token: "claude/anthropic/haiku", Reason: "rate limited test"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/unavailable", unavailBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unavailable status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
 	availBody, _ := json.Marshal(remote.AvailableRequest{Subject: "anthropic"})
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/available", availBody))
@@ -1333,25 +1116,20 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode available response: %v", err)
 	}
-	if resp.Removed != 1 {
-		t.Errorf("removed = %d, want 1", resp.Removed)
-	}
-	if resp.Provider != "anthropic" {
-		t.Errorf("provider = %q, want anthropic", resp.Provider)
+	if resp.Removed != 1 || resp.Provider != "anthropic" {
+		t.Errorf("available = %+v, want provider anthropic removed 1", resp)
 	}
 
-	// The server-wide ledger has no rate_limited entry left.
-	l, err := ledger.LoadKV(s.DB(), "")
+	l, err := availability.LoadLedger(s.DB())
 	if err != nil {
-		t.Fatalf("ledger.LoadKV: %v", err)
+		t.Fatalf("ledger.LoadLedger: %v", err)
 	}
 	for _, e := range l.Entries {
-		if e.Kind == ledger.RateLimited {
+		if e.Kind == availability.RateLimited {
 			t.Errorf("ledger still holds %+v, want the rate-limit gate gone", e)
 		}
 	}
 
-	// A second call lifts nothing, and is not an error.
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/available", availBody))
 	if rec.Code != http.StatusOK {
@@ -1364,16 +1142,19 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 	if resp.Removed != 0 {
 		t.Errorf("second removed = %d, want 0", resp.Removed)
 	}
+}
 
-	// An empty subject is a bad request.
+func TestAvailableRejectsBadSubject(t *testing.T) {
+	s, kpA := newAvailableServer(t)
+	handler := s.Handler()
+
 	emptyBody, _ := json.Marshal(remote.AvailableRequest{Subject: ""})
-	rec = httptest.NewRecorder()
+	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/available", emptyBody))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("empty subject status = %d, want 400", rec.Code)
 	}
 
-	// An unknown token is a client mistake, not a server failure.
 	unknownBody, _ := json.Marshal(remote.AvailableRequest{Subject: "claude/anthropic/nope"})
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/available", unknownBody))
@@ -1382,41 +1163,9 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 	}
 }
 
-// TestAvailableRefusesUnknownProvider is #301 over the wire: the pre-check
-// handleAvailable used to carry only ever refused unknown *tokens* and let
-// any bare provider through, so `relevo gate --clear anthropc` forwarded to a
-// server read as a no-op. relevo.Available now refuses a typo itself, and the
-// 422 carries the local verb's words.
 func TestAvailableRefusesUnknownProvider(t *testing.T) {
-	root := t.TempDir()
-	cJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
-	candPath := filepath.Join(t.TempDir(), "candidates.json")
-	if err := os.WriteFile(candPath, []byte(cJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cSet, err := candidate.Load(candPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := New(Config{
-		DB:         testServeDB(t),
-		Root:       root,
-		Candidates: cSet,
-		Now:        time.Now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s, kpA := newAvailableServer(t)
 	handler := s.Handler()
-
-	kpA, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now()); err != nil {
-		t.Fatal(err)
-	}
 
 	body, _ := json.Marshal(remote.AvailableRequest{Subject: "anthropc"})
 	rec := httptest.NewRecorder()
@@ -1424,7 +1173,6 @@ func TestAvailableRefusesUnknownProvider(t *testing.T) {
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("unknown provider status = %d, want 422; body: %s", rec.Code, rec.Body.String())
 	}
-	// The message is read decoded: on the wire its quotes are JSON-escaped.
 	var errBody remote.ErrorBody
 	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
 		t.Fatalf("decode error body: %v", err)
@@ -1434,338 +1182,14 @@ func TestAvailableRefusesUnknownProvider(t *testing.T) {
 	}
 }
 
-func runGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=test",
-		"GIT_AUTHOR_EMAIL=test@example.com",
-		"GIT_COMMITTER_NAME=test",
-		"GIT_COMMITTER_EMAIL=test@example.com",
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
-	}
-
-	// A repo these tests create gets auto-maintenance off. Every `git commit`
-	// otherwise spawns `git maintenance run --auto --quiet --detach`, which
-	// outlives the command and writes under .git/objects while t.TempDir()'s
-	// RemoveAll is removing the tree -- and that cleanup failure fails the
-	// test, not just the teardown (#304). Repo-local config, so every later
-	// git command on it inherits it, including ones the code under test runs.
-	if len(args) > 0 && args[0] == "init" {
-		runGit(t, dir, "config", "maintenance.auto", "false")
-		runGit(t, dir, "config", "gc.auto", "0")
-	}
-	return string(out)
-}
-
-// scriptRunner is a fake relevo.Runner. Liveness is tracked per pid (#285):
-// two bindings' processes must be tellable apart, which a single shared
-// flag cannot do. setAlive(a) flips every pid this runner has ever started
-// to a -- the shape every pre-#285 test wants, since each of them tracks
-// exactly one binding's process, so "every pid" and "the one pid" agree.
-// finish(pid) flips exactly one pid dead, for a test with more than one
-// binding in flight at once.
-type scriptRunner struct {
-	mu           sync.Mutex
-	specs        []relevo.ProcSpec
-	aliveHandles []relevo.ProcHandle
-	alive        map[int]bool
-	nextPID      int
-	// startErr, when set, is returned by Start instead of starting anything
-	// -- a builder spawn failure (#250 items 1 and 3).
-	startErr error
-}
-
-func newScriptRunner() *scriptRunner {
-	return &scriptRunner{alive: map[int]bool{}, nextPID: 4242}
-}
-
-func (r *scriptRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.startErr != nil {
-		return relevo.ProcHandle{}, r.startErr
-	}
-	pid := r.nextPID
-	r.nextPID++
-	r.specs = append(r.specs, spec)
-	r.alive[pid] = true
-	if spec.LogPath != "" {
-		_ = os.WriteFile(spec.LogPath, []byte("builder started\n"), 0o644)
-	}
-	return relevo.ProcHandle{PID: pid, StartedAt: time.Now()}, nil
-}
-
-func (r *scriptRunner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.aliveHandles = append(r.aliveHandles, h)
-	return r.alive[h.PID], nil
-}
-
-func (r *scriptRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPath string) (code int, ok bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	alive, tracked := r.alive[h.PID]
-	if !tracked {
-		// A pid this runner never started (a fresh runner standing in for a
-		// daemon restart, #285) has no exit trailer to report: "unknown",
-		// the same as a real relevo-exit: trailer that was never written
-		// because the supervisor died with the process. This is what tells
-		// "confirmed dead, code 0" (tracked, not alive) apart from "lost,
-		// no idea" (never tracked) -- headless.go's restart-requeue check
-		// keys on exactly that difference.
-		return 0, false
-	}
-	return 0, !alive
-}
-
-func (r *scriptRunner) Kill(ctx context.Context, h relevo.ProcHandle) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.alive[h.PID] = false
-	return nil
-}
-
-func (r *scriptRunner) Rusage(ctx context.Context, h relevo.ProcHandle, streamPath string) (relevo.ProcRusage, bool) {
-	return relevo.ProcRusage{}, false
-}
-
-// setAlive flips every pid this runner has started to a. Kept for every
-// test that predates per-pid liveness and tracks exactly one binding's
-// process.
-func (r *scriptRunner) setAlive(a bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for pid := range r.alive {
-		r.alive[pid] = a
-	}
-}
-
-// finish marks pid exited without disturbing any other pid this runner is
-// tracking -- what a multi-binding test (#285's admit tests) needs that
-// setAlive cannot give it.
-func (r *scriptRunner) finish(pid int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.alive[pid] = false
-}
-
-func doSigned(t *testing.T, ts *httptest.Server, kp remote.Keypair, method, path string, body []byte, contentType string) (*http.Response, []byte) {
-	t.Helper()
-	req := signedRequest(t, kp, method, path, body)
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	req.URL.Scheme = "http"
-	req.URL.Host = strings.TrimPrefix(ts.URL, "http://")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("request %s %s: %v", method, path, err)
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	return resp, respBody
-}
-
-func makeRoundForm(t *testing.T, round int, plan string, bundleBytes []byte) ([]byte, string) {
-	t.Helper()
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
-		t.Fatal(err)
-	}
-	if err := mw.WriteField("plan", plan); err != nil {
-		t.Fatal(err)
-	}
-	if len(bundleBytes) > 0 {
-		part, err := mw.CreateFormFile("bundle", "bundle.bundle")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := part.Write(bundleBytes); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := mw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes(), mw.FormDataContentType()
-}
-
-// makeRoundFormTags is makeRoundForm with the optional "tags" field (#242).
-func makeRoundFormTags(t *testing.T, round int, plan string, bundleBytes []byte, tagsJSON string) ([]byte, string) {
-	t.Helper()
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
-		t.Fatal(err)
-	}
-	if err := mw.WriteField("plan", plan); err != nil {
-		t.Fatal(err)
-	}
-	if tagsJSON != "" {
-		if err := mw.WriteField("tags", tagsJSON); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(bundleBytes) > 0 {
-		part, err := mw.CreateFormFile("bundle", "bundle.bundle")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := part.Write(bundleBytes); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := mw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes(), mw.FormDataContentType()
-}
-
-type testEnv struct {
-	srv       *Server
-	ts        *httptest.Server
-	kp        remote.Keypair
-	id        remote.ClientID
-	clientDir string
-	rootSHA   string
-	headSHA   string
-	repoID    string
-	runner    *scriptRunner
-	gitClient *git.Client
-	transport *remote.BundleTransport
-}
-
-func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
-	t.Helper()
-	ctx := context.Background()
-	gitClient := git.NewClient("git", 0, 0)
-
-	clientDir := t.TempDir()
-	runGit(t, clientDir, "init")
-	runGit(t, clientDir, "config", "user.name", "test")
-	runGit(t, clientDir, "config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(clientDir, "file.txt"), []byte("initial\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, clientDir, "add", "file.txt")
-	runGit(t, clientDir, "commit", "-m", "initial commit")
-
-	headSHA, ok, err := gitClient.RefSHA(ctx, clientDir, "HEAD")
-	if err != nil || !ok {
-		t.Fatalf("headSHA: %v, ok=%v", err, ok)
-	}
-	rootSHA, err := gitClient.RootCommit(ctx, clientDir)
-	if err != nil {
-		t.Fatalf("rootCommit: %v", err)
-	}
-	repoID, err := remote.RepoID(rootSHA)
-	if err != nil {
-		t.Fatalf("repoID: %v", err)
-	}
-
-	serverRoot := t.TempDir()
-	cJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
-	candPath := filepath.Join(t.TempDir(), "candidates.json")
-	if err := os.WriteFile(candPath, []byte(cJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cSet, err := candidate.Load(candPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner := newScriptRunner()
-	srvCfg := Config{
-		DB:         testServeDB(t),
-		Root:       serverRoot,
-		Candidates: cSet,
-		Runner:     runner,
-		Git:        gitClient,
-		Now:        time.Now,
-	}
-	for _, opt := range cfgOpts {
-		opt(&srvCfg)
-	}
-	srv, err := New(srvCfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(ts.Close)
-
-	kp, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := remote.IDOf(kp.Public)
-	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-
-	transport := remote.NewBundleTransport(gitClient, t.TempDir())
-
-	return &testEnv{
-		srv:       srv,
-		ts:        ts,
-		kp:        kp,
-		id:        id,
-		clientDir: clientDir,
-		rootSHA:   rootSHA,
-		headSHA:   headSHA,
-		repoID:    repoID,
-		runner:    runner,
-		gitClient: gitClient,
-		transport: transport,
-	}
-}
-
-func (env *testEnv) runtime(t *testing.T) relevo.Runtime {
-	t.Helper()
-	return testRuntime(t, env.srv, env.id)
-}
-
 func TestRoundStartAbsorbsAndChecksOut(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
-
-	outRef := "refs/relevo/api/out"
-	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
-		t.Fatalf("updateRef out: %v", err)
-	}
-	snap, err := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	bundleBytes, err := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-	if err != nil {
-		t.Fatalf("read snap body: %v", err)
-	}
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Round 1 Plan\nDo stuff", bundleBytes)
-	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
 
 	rt := env.runtime(t)
 	b, err := rt.Store.Load("api")
@@ -1779,15 +1203,12 @@ func TestRoundStartAbsorbsAndChecksOut(t *testing.T) {
 	if err != nil || !ok || wtHead != env.headSHA {
 		t.Fatalf("worktree HEAD = (%q, %v, %v), want %q", wtHead, ok, err, env.headSHA)
 	}
-
-	planContent, err := os.ReadFile(rt.Store.PlanPath("api", 1))
+	planContent, err := os.ReadFile(rt.Store.PromptPath("api", 1))
 	if err != nil || string(planContent) != "# Round 1 Plan\nDo stuff" {
 		t.Fatalf("plan content: got (%q, %v)", string(planContent), err)
 	}
 
-	env.runner.mu.Lock()
-	specs := env.runner.specs
-	env.runner.mu.Unlock()
+	specs := startedSpecs(env)
 	if len(specs) != 1 {
 		t.Fatalf("runner specs count = %d, want 1", len(specs))
 	}
@@ -1798,37 +1219,13 @@ func TestRoundStartAbsorbsAndChecksOut(t *testing.T) {
 
 func TestRoundStartSetsShippedTags(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
+	bundleBytes := createAndAbsorb(t, env, "api")
 
 	// The client tags its base commit, and also ships a tag for a commit the
 	// server has never seen: the round must still start, that tag skipped.
 	runGit(t, env.clientDir, "-c", "tag.gpgsign=false", "tag", "v1.2.3", env.headSHA)
 	missingSHA := strings.Repeat("f", 40)
-
-	outRef := "refs/relevo/api/out"
-	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
-		t.Fatalf("updateRef out: %v", err)
-	}
-	snap, err := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	bundleBytes, err := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-	if err != nil {
-		t.Fatalf("read snap body: %v", err)
-	}
-
 	tagsJSON, err := json.Marshal([]remote.TagRef{
 		{Name: "v1.2.3", SHA: env.headSHA},
 		{Name: "unrelated", SHA: missingSHA},
@@ -1840,102 +1237,42 @@ func TestRoundStartSetsShippedTags(t *testing.T) {
 	}
 
 	formBytes, ct := makeRoundFormTags(t, 1, "# Round 1 Plan\nDo stuff", bundleBytes, string(tagsJSON))
-	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
 
 	rt := env.runtime(t)
 	b, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatalf("load binding: %v", err)
 	}
-
+	ctx := context.Background()
 	got, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/tags/v1.2.3")
-	if err != nil || !ok {
-		t.Fatalf("bare refs/tags/v1.2.3: %v, ok=%v", err, ok)
+	if err != nil || !ok || got != env.headSHA {
+		t.Fatalf("refs/tags/v1.2.3 = (%q, %v, %v), want the base sha %q", got, ok, err, env.headSHA)
 	}
-	if got != env.headSHA {
-		t.Fatalf("refs/tags/v1.2.3 = %q, want the base sha %q", got, env.headSHA)
-	}
-
 	if _, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/tags/unrelated"); err != nil || ok {
 		t.Fatalf("refs/tags/unrelated: ok=%v err=%v, want it absent", ok, err)
 	}
-
 	got, ok, err = env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/tags/release/1.0")
-	if err != nil || !ok {
-		t.Fatalf("bare refs/tags/release/1.0: %v, ok=%v", err, ok)
+	if err != nil || !ok || got != env.headSHA {
+		t.Fatalf("refs/tags/release/1.0 = (%q, %v, %v), want the base sha %q", got, ok, err, env.headSHA)
 	}
-	if got != env.headSHA {
-		t.Fatalf("refs/tags/release/1.0 = %q, want the base sha %q", got, env.headSHA)
-	}
-
 	if _, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/tags/.."); err != nil || ok {
 		t.Fatalf("refs/tags/..: ok=%v err=%v, want it absent (skipped, invalid tag)", ok, err)
 	}
 
-	// release/1.0 now shares headSHA with v1.2.3, so "describe --tags" is
-	// free to report either; check the worktree sees both tags instead.
 	pointsAtHead := strings.TrimSpace(runGit(t, b.Worktree, "tag", "--points-at", "HEAD"))
 	for _, want := range []string{"v1.2.3", "release/1.0"} {
-		found := false
-		for _, tag := range strings.Split(pointsAtHead, "\n") {
-			if tag == want {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(strings.Split(pointsAtHead, "\n"), want) {
 			t.Fatalf("worktree tag --points-at HEAD = %q, want it to include %q", pointsAtHead, want)
 		}
 	}
 }
 
-// makeRoundFormWithTier is makeRoundForm plus an optional "tier" field,
-// written after "plan" and before "bundle" per the wire contract (#141
-// remote half).
-func makeRoundFormWithTier(t *testing.T, round int, plan, tier string, bundleBytes []byte) ([]byte, string) {
-	t.Helper()
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
-		t.Fatal(err)
-	}
-	if err := mw.WriteField("plan", plan); err != nil {
-		t.Fatal(err)
-	}
-	if tier != "" {
-		if err := mw.WriteField("tier", tier); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(bundleBytes) > 0 {
-		part, err := mw.CreateFormFile("bundle", "bundle.bundle")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := part.Write(bundleBytes); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := mw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes(), mw.FormDataContentType()
-}
-
 func TestRoundStartHonoursTierField(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	rt := env.runtime(t)
 	before, err := rt.Store.Load("api")
 	if err != nil {
@@ -1945,21 +1282,11 @@ func TestRoundStartHonoursTierField(t *testing.T) {
 		t.Fatalf("binding stored at Tier = %q, want harness", before.Tier)
 	}
 
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
 	formBytes, ct := makeRoundFormWithTier(t, 1, "# Round 1 Plan\nDo stuff", "edit", bundleBytes)
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusCreated)
 
-	env.runner.mu.Lock()
-	specs := env.runner.specs
-	env.runner.mu.Unlock()
+	specs := startedSpecs(env)
 	if len(specs) != 1 {
 		t.Fatalf("runner specs count = %d, want 1", len(specs))
 	}
@@ -1978,26 +1305,12 @@ func TestRoundStartHonoursTierField(t *testing.T) {
 
 func TestRoundStartTierAboveMaxIs422(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundFormWithTier(t, 1, "# Round 1 Plan\nDo stuff", "yolo", bundleBytes)
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("start round status = %d, want 422; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusUnprocessableEntity)
+
 	var errBody remote.ErrorBody
 	_ = json.Unmarshal(body, &errBody)
 	if errBody.Code != remote.CodeTierAboveMax {
@@ -2016,46 +1329,24 @@ func TestRoundStartTierAboveMaxIs422(t *testing.T) {
 	if relevo.RoundStateOf(b, entries) != remote.RoundIdle {
 		t.Fatalf("round state = %v, want idle", relevo.RoundStateOf(b, entries))
 	}
-
-	env.runner.mu.Lock()
-	specsLen := len(env.runner.specs)
-	env.runner.mu.Unlock()
-	if specsLen != 0 {
-		t.Fatalf("runner specs count = %d, want 0", specsLen)
+	if n := len(startedSpecs(env)); n != 0 {
+		t.Fatalf("runner specs count = %d, want 0", n)
 	}
 }
 
 func TestRoundStartWhileRunningIs409(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("first start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
-	// The second request sends a different plan: since #373 §4.2 an identical
-	// retry for the open round is a no-op 200, so "a new start while a round
-	// runs is 409 round_open" is what this test pins.
+	// A different plan is what makes the second start refuse: an identical retry
+	// is a no-op 200.
 	changedBytes, changedCT := makeRoundForm(t, 1, "# Plan 1 (changed)", bundleBytes)
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", changedBytes, changedCT)
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("second start status = %d, want 409; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusConflict)
 	var errBody remote.ErrorBody
 	_ = json.Unmarshal(body, &errBody)
 	if errBody.Code != remote.CodeRoundOpen {
@@ -2063,32 +1354,46 @@ func TestRoundStartWhileRunningIs409(t *testing.T) {
 	}
 }
 
-// TestRoundStartRunningSamePlanIs200 is #373 §4.2's open-round idempotent
-// send: a repeated identical start-round request for the round that is
-// running returns 200 with the current view and changes nothing -- no new log
-// entry and no second Start on the runner.
+func TestRoundStartWithUndeliveredDoneMarkerIs409(t *testing.T) {
+	env := setupTestEnv(t)
+
+	bundleBytes := createAndAbsorb(t, env, "api")
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	requireStatus(t, resp, nil, http.StatusCreated)
+
+	rt := env.runtime(t)
+	finishRound(t, env, rt, "api", 1)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	if b.Round != 2 {
+		t.Fatalf("round = %d, want 2 after the close", b.Round)
+	}
+	// Round 2's marker is on disk with the daemon not yet ticked: the window a
+	// new start must refuse.
+	if err := os.WriteFile(rt.Store.DonePath("api", 2), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bytes2, ct2 := makeRoundForm(t, 2, "# Plan 2", nil)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", bytes2, ct2)
+	requireStatus(t, resp, body, http.StatusConflict)
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(body, &errBody)
+	if errBody.Code != remote.CodeRoundOpen {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeRoundOpen)
+	}
+}
+
 func TestRoundStartRunningSamePlanIs200(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("first start status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusCreated)
 	first := decodeView(t, body)
 	if first.RoundState != remote.RoundRunning {
 		t.Fatalf("first round_state = %q, want running", first.RoundState)
@@ -2102,15 +1407,10 @@ func TestRoundStartRunningSamePlanIs200(t *testing.T) {
 	before := startedSpecs(env)
 
 	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("resend status = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusOK)
 	got := decodeView(t, body)
-	if got.Round != first.Round {
-		t.Errorf("view Round = %d, want %d", got.Round, first.Round)
-	}
-	if got.RoundState != remote.RoundRunning {
-		t.Errorf("view RoundState = %q, want running", got.RoundState)
+	if got.Round != first.Round || got.RoundState != remote.RoundRunning {
+		t.Errorf("view = %+v, want round %d running", got, first.Round)
 	}
 
 	entriesAfter, err := rt.Store.ReadLog("api")
@@ -2125,36 +1425,17 @@ func TestRoundStartRunningSamePlanIs200(t *testing.T) {
 	}
 }
 
-// TestRoundStartRunningDifferentPlanIs409 pins the other half of #373 §4.2:
-// a different plan for the round that is running is still 409 round_open.
 func TestRoundStartRunningDifferentPlanIs409(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("first start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
 	otherBytes, otherCT := makeRoundForm(t, 1, "# A Different Plan", nil)
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", otherBytes, otherCT)
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("resend status = %d, want 409; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusConflict)
 	var errBody remote.ErrorBody
 	_ = json.Unmarshal(body, &errBody)
 	if errBody.Code != remote.CodeRoundOpen {
@@ -2162,16 +1443,12 @@ func TestRoundStartRunningDifferentPlanIs409(t *testing.T) {
 	}
 }
 
-// TestRoundStartQueuedSamePlanIs200 is the queued half of #373 §4.2: the
-// identical retry of a round waiting in the builder queue is a 200 that leaves
-// QueuedAt and the log alone.
 func TestRoundStartQueuedSamePlanIs200(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
 	ownerB := addOwner(t, env, "bob")
 
 	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
 	requireCreated(t, respA, bodyA, "A")
-
 	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
 	requireCreated(t, respB, bodyB, "B")
 	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
@@ -2191,22 +1468,10 @@ func TestRoundStartQueuedSamePlanIs200(t *testing.T) {
 		t.Fatalf("ReadLog B: %v", err)
 	}
 
-	outRef := "refs/relevo/api/out"
-	snap, err := env.transport.Snapshot(context.Background(), ownerB.clientDir, []string{outRef}, "")
-	if err != nil {
-		t.Fatalf("snapshot B: %v", err)
-	}
-	bundleBytes, err := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-	if err != nil {
-		t.Fatalf("read snapshot B: %v", err)
-	}
-
+	bundleBytes := snapshotRef(t, env, ownerB.clientDir, "refs/relevo/api/out")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan B", bundleBytes)
 	resp, body := doSigned(t, env.ts, ownerB.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("resend status = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusOK)
 
 	after, err := rtB.Store.Load("api")
 	if err != nil {
@@ -2232,105 +1497,42 @@ func TestRoundStartQueuedSamePlanIs200(t *testing.T) {
 
 func TestRoundResendSamePlanIs200(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
 	rt := env.runtime(t)
-	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
-	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
-	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
-	env.runner.setAlive(false)
-	if err := env.srv.Tick(ctx); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	finishRound(t, env, rt, "api", 1)
 
 	resendBytes, ct2 := makeRoundForm(t, 1, "# Plan 1", nil)
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", resendBytes, ct2)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("resend status = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusOK)
 }
 
-// TestRoundStartWithABrokenRunnerAcceptsThenHaltsAsync pins #285's async
-// admit contract, which supersedes #250 items 1 and 3's synchronous
-// guarantee (this test used to be TestRoundResendThatCannotStartIs409 and
-// asserted the opposite): Send now only stages a round (Defer); the spawn
-// happens in admit, after the round is already accepted, so a spawn
-// failure no longer fails the send itself. POST /rounds returns 201 and
-// the binding halts to needs_you -- visible on this very response because
-// a single binding under the cap admits synchronously within the same
-// request, and durably in the store either way. The round's plan log entry
-// stays: the round really was staged, only the spawn (a later, separate
-// step) failed.
-//
-// Mutation check: make admit's per-round spawn failure propagate out of
-// admit() as handleStartRound's send error, and this test must fail on
-// status != 201.
+// TestRoundStartWithABrokenRunnerAcceptsThenHaltsAsync: the spawn happens in
+// admit after the round is accepted, so its failure halts the binding instead of
+// failing the send.
 func TestRoundStartWithABrokenRunnerAcceptsThenHaltsAsync(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
-
-	outRef := "refs/relevo/api/out"
-	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
-		t.Fatalf("updateRef out: %v", err)
-	}
-	snap, err := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	bundleBytes, err := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-	if err != nil {
-		t.Fatalf("read snap body: %v", err)
-	}
+	bundleBytes := createAndAbsorb(t, env, "api")
 
 	env.runner.mu.Lock()
 	env.runner.startErr = errors.New("boom: no such binary")
 	env.runner.mu.Unlock()
 
 	formBytes, ct := makeRoundForm(t, 1, "# Round 1 Plan\nDo stuff", bundleBytes)
-	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
 
 	var view remote.BindingView
 	if err := json.Unmarshal(body, &view); err != nil {
 		t.Fatalf("unmarshal binding view: %v; body: %s", err, string(body))
 	}
-	if view.State != string(store.StateNeedsYou) {
-		t.Errorf("response state = %q, want needs_you", view.State)
-	}
-	if view.Halt == "" || !strings.Contains(view.Halt, "spawn failed") {
-		t.Errorf("response Halt = %q, want it to contain %q", view.Halt, "spawn failed")
+	if view.State != string(store.StateNeedsYou) || !strings.Contains(view.Halt, "spawn failed") {
+		t.Errorf("response = (state %q, halt %q), want needs_you with a spawn failure", view.State, view.Halt)
 	}
 
 	rt := env.runtime(t)
@@ -2338,20 +1540,17 @@ func TestRoundStartWithABrokenRunnerAcceptsThenHaltsAsync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load binding: %v", err)
 	}
-	if b.State != store.StateNeedsYou {
-		t.Errorf("binding state = %s, want needs_you", b.State)
-	}
-	if b.Halt == "" || !strings.Contains(b.Halt, "spawn failed") {
-		t.Errorf("binding Halt = %q, want it to contain %q", b.Halt, "spawn failed")
+	if b.State != store.StateNeedsYou || !strings.Contains(b.Halt, "spawn failed") {
+		t.Errorf("binding = (state %s, halt %q), want needs_you with a spawn failure", b.State, b.Halt)
 	}
 
 	entries, err := rt.Store.ReadLog("api")
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
-	var sawPlan bool
+	sawPlan := false
 	for _, e := range entries {
-		if e.Round == 1 && e.Kind == store.KindPlan {
+		if e.Round == 1 && e.Kind == store.KindPrompt {
 			sawPlan = true
 		}
 	}
@@ -2362,41 +1561,18 @@ func TestRoundStartWithABrokenRunnerAcceptsThenHaltsAsync(t *testing.T) {
 
 func TestRoundResendDifferentPlanIs409(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
 	rt := env.runtime(t)
-	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
-	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
-	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
-	env.runner.setAlive(false)
-	if err := env.srv.Tick(ctx); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	finishRound(t, env, rt, "api", 1)
 
 	resendBytes, ct2 := makeRoundForm(t, 1, "# Different Plan", nil)
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", resendBytes, ct2)
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("resend status = %d, want 409; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusConflict)
 	var errBody remote.ErrorBody
 	_ = json.Unmarshal(body, &errBody)
 	if errBody.Code != remote.CodeRoundStarted {
@@ -2408,24 +1584,10 @@ func TestRoundStartNotFastForward(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
 	rt := env.runtime(t)
 	b, err := rt.Store.Load("api")
@@ -2433,16 +1595,10 @@ func TestRoundStartNotFastForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	runGit(t, b.Worktree, "commit", "--allow-empty", "-m", "server commit")
+	finishRound(t, env, rt, "api", 1)
 
-	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
-	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
-	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
-	env.runner.setAlive(false)
-	if err := env.srv.Tick(ctx); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
-
-	// Client commits on top of initial commit (diverging from server branch)
+	// Client commits on top of the initial commit, diverging from the server
+	// branch.
 	clientFile := filepath.Join(env.clientDir, "client.txt")
 	if err := os.WriteFile(clientFile, []byte("client divergence\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -2453,19 +1609,15 @@ func TestRoundStartNotFastForward(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("client HEAD: %v, ok=%v", err, ok)
 	}
+	outRef := "refs/relevo/api/out"
 	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, clientHead, ""); err != nil {
 		t.Fatalf("updateRef out: %v", err)
 	}
 
-	snap2, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes2, _ := io.ReadAll(snap2.Body)
-	_ = snap2.Body.Close()
-
+	bundleBytes2 := snapshotRef(t, env, env.clientDir, outRef)
 	formBytes2, ct2 := makeRoundForm(t, 2, "# Plan 2", bundleBytes2)
 	resp2, body2 := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes2, ct2)
-	if resp2.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("start not-ff status = %d, want 422; body: %s", resp2.StatusCode, string(body2))
-	}
+	requireStatus(t, resp2, body2, http.StatusUnprocessableEntity)
 	var errBody remote.ErrorBody
 	_ = json.Unmarshal(body2, &errBody)
 	if errBody.Code != remote.CodeNotFastForward {
@@ -2473,73 +1625,38 @@ func TestRoundStartNotFastForward(t *testing.T) {
 	}
 }
 
-func TestRoundCloseServesFilesBundleAck(t *testing.T) {
+func TestRoundCloseServesFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
 	rt := env.runtime(t)
 	b, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	workFile := filepath.Join(b.Worktree, "result.txt")
-	if err := os.WriteFile(workFile, []byte("result\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(b.Worktree, "result.txt"), []byte("result\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, b.Worktree, "add", "result.txt")
 	runGit(t, b.Worktree, "commit", "-m", "round 1 result")
 
-	reportText := "# Report 1\nCompleted work.\n\n```relevo\nstatus: done\n```\n"
-	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	streamText := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n" +
 		`{"type":"error","message":"Unexpected server error"}` + "\n"
-	if err := os.WriteFile(rt.Store.BuilderStreamPath("api", 1), []byte(streamText), 0o644); err != nil {
+	if err := os.WriteFile(rt.Store.RunnerStreamPath("api", 1), []byte(streamText), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	env.runner.setAlive(false)
-
-	if err := env.srv.Tick(ctx); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	finishRound(t, env, rt, "api", 1)
 
 	resp, body := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get binding status = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
-	var view remote.BindingView
-	if err := json.Unmarshal(body, &view); err != nil {
-		t.Fatal(err)
-	}
-	if view.RoundState != remote.RoundClosed {
-		t.Fatalf("round_state = %q, want %q", view.RoundState, remote.RoundClosed)
-	}
-	if view.ClosedRound != 1 {
-		t.Fatalf("closed_round = %d, want 1", view.ClosedRound)
+	requireStatus(t, resp, body, http.StatusOK)
+	view := decodeView(t, body)
+	if view.RoundState != remote.RoundClosed || view.ClosedRound != 1 {
+		t.Fatalf("view = %+v, want closed round 1", view)
 	}
 	bareBranchSHA, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/heads/relevo/api")
 	if err != nil || !ok {
@@ -2550,36 +1667,48 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	}
 
 	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/report", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get report status = %d, want 200", resp.StatusCode)
-	}
+	requireStatus(t, resp, body, http.StatusOK)
 	if !strings.Contains(string(body), "status: done") {
 		t.Fatalf("report body missing status: done:\n%s", string(body))
 	}
-
-	resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/diff", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get diff status = %d, want 200", resp.StatusCode)
+	for _, kind := range []string{"diff", "log"} {
+		resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/"+kind, nil, "")
+		requireStatus(t, resp, body, http.StatusOK)
 	}
-
-	resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get log status = %d, want 200", resp.StatusCode)
-	}
-
 	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/stream", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get stream status = %d, want 200", resp.StatusCode)
-	}
+	requireStatus(t, resp, body, http.StatusOK)
 	if string(body) != streamText {
 		t.Fatalf("stream body = %q, want %q", string(body), streamText)
 	}
+}
+
+func TestRoundBundleAndAck(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	bundleBytes := createAndAbsorb(t, env, "api")
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	requireStatus(t, resp, nil, http.StatusCreated)
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b.Worktree, "result.txt"), []byte("result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, b.Worktree, "add", "result.txt")
+	runGit(t, b.Worktree, "commit", "-m", "round 1 result")
+	finishRound(t, env, rt, "api", 1)
+
+	resp, body := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	view := decodeView(t, body)
 
 	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/bundle?since="+env.headSHA, nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get bundle status = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
-
+	requireStatus(t, resp, body, http.StatusOK)
 	moved, err := env.transport.Absorb(ctx, env.clientDir, remote.ContentTypeGitBundle, bytes.NewReader(body), []string{"refs/heads/relevo/api"})
 	if err != nil {
 		t.Fatalf("client Absorb: %v", err)
@@ -2589,55 +1718,24 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	}
 	clientHeadSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/heads/relevo/api")
 	if err != nil || !ok || clientHeadSHA != view.ResultCommit {
-		t.Fatalf("client branch sha = %q, want %q", clientHeadSHA, view.ResultCommit)
+		t.Fatalf("client branch sha = (%q, %v, %v), want %q", clientHeadSHA, ok, err, view.ResultCommit)
 	}
 
 	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds/1/ack", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("ack status = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
-	var ackView remote.BindingView
-	_ = json.Unmarshal(body, &ackView)
-	if ackView.AckedRound != 1 {
+	requireStatus(t, resp, body, http.StatusOK)
+	if ackView := decodeView(t, body); ackView.AckedRound != 1 {
 		t.Fatalf("acked_round = %d, want 1", ackView.AckedRound)
 	}
 
 	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get binding status = %d, want 200", resp.StatusCode)
-	}
-	var idleView remote.BindingView
-	_ = json.Unmarshal(body, &idleView)
-	if idleView.RoundState != remote.RoundIdle {
-		t.Fatalf("round_state = %q, want %q", idleView.RoundState, remote.RoundIdle)
+	requireStatus(t, resp, body, http.StatusOK)
+	if idleView := decodeView(t, body); idleView.RoundState != remote.RoundIdle {
+		t.Fatalf("round_state = %q, want idle", idleView.RoundState)
 	}
 }
 
-// fakeStreamUsage is a usage.Reader fake: it answers a headless source
-// pointed at the round's stream with its samples, and nothing otherwise,
-// recording every source it was asked to read.
-type fakeStreamUsage struct {
-	samples []usage.Sample
-	note    string
-	sources []usage.Source
-}
-
-func (f *fakeStreamUsage) Read(ctx context.Context, src usage.Source) ([]usage.Sample, string) {
-	f.sources = append(f.sources, src)
-	if src.Mode == usage.ModeHeadless && strings.HasSuffix(src.StreamPath, "001-builder.jsonl") {
-		return f.samples, f.note
-	}
-	return nil, "not the round's stream"
-}
-
-func (f *fakeStreamUsage) Peek(ctx context.Context, src usage.Source) ([]usage.Sample, string) {
-	return nil, ""
-}
-
-// TestRoundCloseRecordsStreamUsage checks that the server measures a
-// closed remote round from the headless builder's stream (#216): the
-// report entry it queues at close carries the summed tokens and a
-// measured/estimated cost, not "no reader".
+// TestRoundCloseRecordsStreamUsage: the report entry carries the stream's summed
+// tokens and a measured/estimated cost, not "no reader".
 func TestRoundCloseRecordsStreamUsage(t *testing.T) {
 	prices := usage.Prices{Models: map[string]usage.ModelPrice{
 		"anthropic/haiku": {In: 1, Out: 5},
@@ -2652,57 +1750,18 @@ func TestRoundCloseRecordsStreamUsage(t *testing.T) {
 		c.Usage = fu
 		c.Prices = prices
 	})
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
 	rt := env.runtime(t)
-	b, err := rt.Store.Load("api")
-	if err != nil {
-		t.Fatal(err)
-	}
+	finishRound(t, env, rt, "api", 1)
 
-	workFile := filepath.Join(b.Worktree, "result.txt")
-	if err := os.WriteFile(workFile, []byte("result\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, b.Worktree, "add", "result.txt")
-	runGit(t, b.Worktree, "commit", "-m", "round 1 result")
-
-	reportText := "# Report 1\nCompleted work.\n\n```relevo\nstatus: done\n```\n"
-	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	env.runner.setAlive(false)
-
-	if err := env.srv.Tick(ctx); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
-
-	// The reader was asked about the round's stream, headless.
 	asked := false
 	for _, src := range fu.sources {
-		if src.Mode == usage.ModeHeadless && strings.HasSuffix(src.StreamPath, "001-builder.jsonl") {
+		if src.Mode == usage.ModeHeadless && strings.HasSuffix(src.StreamPath, "001-runner.jsonl") {
 			asked = true
 		}
 	}
@@ -2733,8 +1792,8 @@ func TestRoundCloseRecordsStreamUsage(t *testing.T) {
 	if u.Cost.Basis != usage.Estimated {
 		t.Fatalf("Usage.Cost.Basis = %q, want estimated", u.Cost.Basis)
 	}
-	// One measured sample (0.05) plus one estimated at 1/M input tokens
-	// over 1M input tokens (1.00).
+	// One measured sample (0.05) plus one estimated at 1/M input tokens over 1M
+	// input tokens (1.00).
 	if u.Cost.USD != 1.05 {
 		t.Fatalf("Usage.Cost.USD = %v, want 1.05", u.Cost.USD)
 	}
@@ -2747,62 +1806,30 @@ func TestRoundCloseDirtyShipsSideRef(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
 	rt := env.runtime(t)
 	b, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	if err := os.WriteFile(filepath.Join(b.Worktree, "untracked.txt"), []byte("dirty content\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
-	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	env.runner.setAlive(false)
-
-	if err := env.srv.Tick(ctx); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	finishRound(t, env, rt, "api", 1)
 
 	resp, body := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get binding status = %d, want 200", resp.StatusCode)
-	}
-	var view remote.BindingView
-	_ = json.Unmarshal(body, &view)
+	requireStatus(t, resp, body, http.StatusOK)
+	view := decodeView(t, body)
 	if view.DirtyCommit == "" {
 		t.Fatal("view.DirtyCommit is empty, want non-empty")
 	}
 
 	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/bundle?since="+env.headSHA, nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get bundle status = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusOK)
 
 	inboundRefs := []string{"refs/heads/relevo/api", "refs/relevo/api/round-1"}
 	moved, err := env.transport.Absorb(ctx, env.clientDir, remote.ContentTypeGitBundle, bytes.NewReader(body), inboundRefs)
@@ -2814,10 +1841,12 @@ func TestRoundCloseDirtyShipsSideRef(t *testing.T) {
 	}
 
 	clientBranchSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/heads/relevo/api")
+	if err != nil {
+		t.Fatalf("client branch: %v", err)
+	}
 	if ok && clientBranchSHA != env.headSHA {
 		t.Fatalf("client branch sha = %q, want %q", clientBranchSHA, env.headSHA)
 	}
-
 	sideSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/relevo/api/round-1")
 	if err != nil || !ok || sideSHA != view.DirtyCommit {
 		t.Fatalf("side ref sha = (%q, %v, %v), want %q", sideSHA, ok, err, view.DirtyCommit)
@@ -2828,10 +1857,8 @@ func TestRoundCloseDirtyShipsSideRef(t *testing.T) {
 	}
 }
 
-// TestStopRunningRoundKeepsBinding pins #344's wire stop: POST
-// /v1/bindings/{name}/stop kills the running builder, closes the round as
-// stopped, and leaves the binding active -- unlike unbind, which drops it. A
-// second stop is 409 nothing_to_stop.
+// TestStopRunningRoundKeepsBinding: stop kills the builder and closes the round
+// but leaves the binding active; a second stop is 409 nothing_to_stop.
 func TestStopRunningRoundKeepsBinding(t *testing.T) {
 	env := setupTestEnv(t)
 
@@ -2852,21 +1879,10 @@ func TestStopRunningRoundKeepsBinding(t *testing.T) {
 	}
 
 	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/stop", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("stop status = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusOK)
 	view := decodeView(t, body)
-	if view.State != string(store.StateActive) {
-		t.Errorf("state = %q, want active: a stop keeps the binding", view.State)
-	}
-	if view.RoundState != remote.RoundClosed {
-		t.Errorf("round_state = %q, want closed", view.RoundState)
-	}
-	if view.Stopped != "killed" {
-		t.Errorf("stopped = %q, want killed", view.Stopped)
-	}
-	if view.ClosedRound != 1 {
-		t.Errorf("closed_round = %d, want 1", view.ClosedRound)
+	if view.State != string(store.StateActive) || view.RoundState != remote.RoundClosed || view.Stopped != "killed" || view.ClosedRound != 1 {
+		t.Errorf("view = %+v, want active, closed round 1, killed", view)
 	}
 
 	env.runner.mu.Lock()
@@ -2875,26 +1891,19 @@ func TestStopRunningRoundKeepsBinding(t *testing.T) {
 	if alive {
 		t.Errorf("builder pid %d still alive after stop, want killed", pid)
 	}
-
 	if _, err := rt.Store.Load("api"); err != nil {
 		t.Fatalf("Load after stop: %v, want the binding to still exist", err)
 	}
 
 	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/stop", nil, "")
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("second stop status = %d, want 409; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusConflict)
 	var errBody remote.ErrorBody
-	if err := json.Unmarshal(body, &errBody); err != nil {
-		t.Fatalf("unmarshal error body: %v; body: %s", err, string(body))
-	}
+	_ = json.Unmarshal(body, &errBody)
 	if errBody.Code != remote.CodeNothingToStop {
 		t.Errorf("second stop code = %q, want %q", errBody.Code, remote.CodeNothingToStop)
 	}
 }
 
-// TestStopAnotherOwnersBindingIs404 pins the owner check: stopping a binding
-// that belongs to another client is a 404, exactly as done and unbind answer.
 func TestStopAnotherOwnersBindingIs404(t *testing.T) {
 	env := setupTestEnv(t)
 	ownerB := addOwner(t, env, "bob")
@@ -2927,58 +1936,32 @@ func TestGetBindingRunningHasLive(t *testing.T) {
 	}
 
 	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET status = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusOK)
 	view := decodeView(t, body)
-	if view.Live == nil {
-		t.Fatal("view.Live = nil, want non-nil for running round")
-	}
-	if view.Live.PID == 0 {
-		t.Fatal("view.Live.PID = 0, want non-zero")
+	if view.Live == nil || view.Live.PID == 0 {
+		t.Fatal("view.Live = nil or PID 0, want the running process")
 	}
 	if view.Live.PID != b.Builder.PID {
 		t.Errorf("view.Live.PID = %d, want stored PID %d", view.Live.PID, b.Builder.PID)
 	}
 
-	// Stop the round and GET again: view.Live must be nil
 	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/stop", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("stop status = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusOK)
 
 	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET status after stop = %d, want 200; body: %s", resp.StatusCode, string(body))
-	}
-	viewAfter := decodeView(t, body)
-	if viewAfter.Live != nil {
+	requireStatus(t, resp, body, http.StatusOK)
+	if viewAfter := decodeView(t, body); viewAfter.Live != nil {
 		t.Errorf("view.Live after stop = %+v, want nil", viewAfter.Live)
 	}
 }
 
 func TestFilesBeforeCloseIs404(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
 	for _, kind := range []string{"report", "diff", "plan", "stream"} {
 		resp, _ := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/"+kind, nil, "")
@@ -2990,33 +1973,14 @@ func TestFilesBeforeCloseIs404(t *testing.T) {
 
 func TestBundleWrongRoundIs404(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
 	rt := env.runtime(t)
-	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
-	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
-	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
-	env.runner.setAlive(false)
-	_ = env.srv.Tick(ctx)
+	finishRound(t, env, rt, "api", 1)
 
 	resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/2/bundle", nil, "")
 	if resp.StatusCode != http.StatusNotFound {
@@ -3026,31 +1990,14 @@ func TestBundleWrongRoundIs404(t *testing.T) {
 
 func TestAckUnclosedIs409(t *testing.T) {
 	env := setupTestEnv(t)
-	ctx := context.Background()
 
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "api",
-		RepoID:     env.repoID,
-		BaseCommit: env.headSHA,
-	})
-	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-
-	outRef := "refs/relevo/api/out"
-	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
-	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	bundleBytes, _ := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-
+	bundleBytes := createAndAbsorb(t, env, "api")
 	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
 	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start status = %d, want 201", resp.StatusCode)
-	}
+	requireStatus(t, resp, nil, http.StatusCreated)
 
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds/1/ack", nil, "")
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("ack status = %d, want 409; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusConflict)
 	var errBody remote.ErrorBody
 	_ = json.Unmarshal(body, &errBody)
 	if errBody.Code != remote.CodeRoundOpen {
@@ -3058,17 +2005,45 @@ func TestAckUnclosedIs409(t *testing.T) {
 	}
 }
 
+// seedRunningOwner enrolls label, creates its binding and starts round 1 on it.
+func seedRunningOwner(t *testing.T, srv *Server, ts *httptest.Server, gitClient *git.Client, label string) remote.ClientID {
+	t.Helper()
+	ctx := context.Background()
+	clientDir := t.TempDir()
+	runGit(t, clientDir, "init")
+	runGit(t, clientDir, "config", "user.name", label)
+	runGit(t, clientDir, "config", "user.email", label+"@example.com")
+	if err := os.WriteFile(filepath.Join(clientDir, "f.txt"), []byte(label+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, clientDir, "add", "f.txt")
+	runGit(t, clientDir, "commit", "-m", "init "+label)
+
+	head, _, _ := gitClient.RefSHA(ctx, clientDir, "HEAD")
+	root, _ := gitClient.RootCommit(ctx, clientDir)
+	repoID, _ := remote.RepoID(root)
+	kp, _ := remote.Generate()
+	id := remote.IDOf(kp.Public)
+	_, _ = srv.clients.Add(label, remote.MarshalPublic(kp.Public, label), time.Now())
+
+	name := "binding-" + label
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{Name: name, RepoID: repoID, BaseCommit: head, Role: "builder"})
+	doSigned(t, ts, kp, "POST", "/v1/bindings", createBody, "application/json")
+	_ = gitClient.UpdateRef(ctx, clientDir, "refs/relevo/"+name+"/out", head, "")
+	trans := remote.NewBundleTransport(gitClient, t.TempDir())
+	snap, _ := trans.Snapshot(ctx, clientDir, []string{"refs/relevo/" + name + "/out"}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+	form, ct := makeRoundForm(t, 1, "# Plan "+label, bundleBytes)
+	doSigned(t, ts, kp, "POST", "/v1/bindings/"+name+"/rounds", form, ct)
+	return id
+}
+
 func TestTickWalksEveryOwner(t *testing.T) {
 	ctx := context.Background()
 	gitClient := git.NewClient("git", 0, 0)
-
 	serverRoot := t.TempDir()
-	cJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
-	candPath := filepath.Join(t.TempDir(), "candidates.json")
-	if err := os.WriteFile(candPath, []byte(cJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cSet, err := candidate.Load(candPath)
+	cSet, err := builderCandidateSet(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3087,86 +2062,23 @@ func TestTickWalksEveryOwner(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
-	// Owner A
-	clientDirA := t.TempDir()
-	runGit(t, clientDirA, "init")
-	runGit(t, clientDirA, "config", "user.name", "testA")
-	runGit(t, clientDirA, "config", "user.email", "testA@example.com")
-	_ = os.WriteFile(filepath.Join(clientDirA, "f.txt"), []byte("a\n"), 0o644)
-	runGit(t, clientDirA, "add", "f.txt")
-	runGit(t, clientDirA, "commit", "-m", "init a")
-	headA, _, _ := gitClient.RefSHA(ctx, clientDirA, "HEAD")
-	rootA, _ := gitClient.RootCommit(ctx, clientDirA)
-	repoIDA, _ := remote.RepoID(rootA)
-
-	kpA, _ := remote.Generate()
-	idA := remote.IDOf(kpA.Public)
-	_, _ = srv.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now())
-
-	createBodyA, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "binding-a",
-		RepoID:     repoIDA,
-		BaseCommit: headA,
-	})
-	doSigned(t, ts, kpA, "POST", "/v1/bindings", createBodyA, "application/json")
-	_ = gitClient.UpdateRef(ctx, clientDirA, "refs/relevo/binding-a/out", headA, "")
-	transA := remote.NewBundleTransport(gitClient, t.TempDir())
-	snapA, _ := transA.Snapshot(ctx, clientDirA, []string{"refs/relevo/binding-a/out"}, "")
-	bytesA, _ := io.ReadAll(snapA.Body)
-	_ = snapA.Body.Close()
-	formA, ctA := makeRoundForm(t, 1, "# Plan A", bytesA)
-	doSigned(t, ts, kpA, "POST", "/v1/bindings/binding-a/rounds", formA, ctA)
-
-	// Owner B
-	clientDirB := t.TempDir()
-	runGit(t, clientDirB, "init")
-	runGit(t, clientDirB, "config", "user.name", "testB")
-	runGit(t, clientDirB, "config", "user.email", "testB@example.com")
-	_ = os.WriteFile(filepath.Join(clientDirB, "f.txt"), []byte("b\n"), 0o644)
-	runGit(t, clientDirB, "add", "f.txt")
-	runGit(t, clientDirB, "commit", "-m", "init b")
-	headB, _, _ := gitClient.RefSHA(ctx, clientDirB, "HEAD")
-	rootB, _ := gitClient.RootCommit(ctx, clientDirB)
-	repoIDB, _ := remote.RepoID(rootB)
-
-	kpB, _ := remote.Generate()
-	idB := remote.IDOf(kpB.Public)
-	_, _ = srv.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), time.Now())
-
-	createBodyB, _ := json.Marshal(remote.CreateBindingRequest{
-		Name:       "binding-b",
-		RepoID:     repoIDB,
-		BaseCommit: headB,
-	})
-	doSigned(t, ts, kpB, "POST", "/v1/bindings", createBodyB, "application/json")
-	_ = gitClient.UpdateRef(ctx, clientDirB, "refs/relevo/binding-b/out", headB, "")
-	transB := remote.NewBundleTransport(gitClient, t.TempDir())
-	snapB, _ := transB.Snapshot(ctx, clientDirB, []string{"refs/relevo/binding-b/out"}, "")
-	bytesB, _ := io.ReadAll(snapB.Body)
-	_ = snapB.Body.Close()
-	formB, ctB := makeRoundForm(t, 1, "# Plan B", bytesB)
-	doSigned(t, ts, kpB, "POST", "/v1/bindings/binding-b/rounds", formB, ctB)
-
-	// Owner C: enrolled client with no bindings
+	idA := seedRunningOwner(t, srv, ts, gitClient, "alice")
+	idB := seedRunningOwner(t, srv, ts, gitClient, "bob")
 	kpC, _ := remote.Generate()
 	_, _ = srv.clients.Add("charlie", remote.MarshalPublic(kpC.Public, "charlie"), time.Now())
 
-	// Both owners have 1 running binding. Check initial alive calls count.
 	runner.mu.Lock()
 	initialAliveCount := len(runner.aliveHandles)
 	runner.mu.Unlock()
 
-	// Call s.Tick
 	if err := srv.Tick(ctx); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 
-	// Assert runner.Alive was called for A and B only, not for C (exactly 2 calls)
 	runner.mu.Lock()
 	newAliveHandles := runner.aliveHandles[initialAliveCount:]
 	specsCount := len(runner.specs)
 	runner.mu.Unlock()
-
 	if len(newAliveHandles) != 2 {
 		t.Fatalf("new alive calls = %d, want exactly 2", len(newAliveHandles))
 	}
@@ -3174,11 +2086,8 @@ func TestTickWalksEveryOwner(t *testing.T) {
 		t.Fatalf("runner specs count = %d, want 2", specsCount)
 	}
 
-	rtA := testRuntime(t, srv, idA)
-	bA, _ := rtA.Store.Load("binding-a")
-	rtB := testRuntime(t, srv, idB)
-	bB, _ := rtB.Store.Load("binding-b")
-
+	bA, _ := testRuntime(t, srv, idA).Store.Load("binding-alice")
+	bB, _ := testRuntime(t, srv, idB).Store.Load("binding-bob")
 	seenA, seenB := false, false
 	for _, h := range newAliveHandles {
 		if h.PID == bA.Builder.PID {
@@ -3192,17 +2101,20 @@ func TestTickWalksEveryOwner(t *testing.T) {
 		t.Fatalf("seenA=%v, seenB=%v; want both true", seenA, seenB)
 	}
 
-	// P5 step 2: every owner's records live in the machine database, so a tick
-	// over several owners leaves no per-owner database behind.
-	if _, err := os.Stat(filepath.Join(serverRoot, "relevo.db")); !os.IsNotExist(err) {
+	requireNoOwnerDatabases(t, serverRoot, idA, idB, remote.IDOf(kpC.Public))
+}
+
+func requireNoOwnerDatabases(t *testing.T, root string, ids ...remote.ClientID) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(root, "relevo.db")); !os.IsNotExist(err) {
 		t.Errorf("serve-root database exists (err %v), want none", err)
 	}
-	for _, id := range []remote.ClientID{idA, idB, remote.IDOf(kpC.Public)} {
+	for _, id := range ids {
 		dir, ok := id.Dir()
 		if !ok {
 			t.Fatalf("id.Dir() failed for %s", id)
 		}
-		ownerDB := filepath.Join(serverRoot, "bindings", dir, "relevo.db")
+		ownerDB := filepath.Join(root, "bindings", dir, "relevo.db")
 		if _, err := os.Stat(ownerDB); !os.IsNotExist(err) {
 			t.Errorf("per-owner database at %s (err %v), want none", ownerDB, err)
 		}
@@ -3210,25 +2122,20 @@ func TestTickWalksEveryOwner(t *testing.T) {
 }
 
 func TestTickSkipsMissingBindingsDir(t *testing.T) {
-	ctx := context.Background()
-	serverRoot := t.TempDir()
-	srv, err := New(Config{
-		DB:   testServeDB(t),
-		Root: serverRoot,
-		Now:  time.Now,
-	})
+	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if err := srv.Tick(ctx); err != nil {
+	if err := srv.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick on missing bindings dir returned error: %v", err)
 	}
 }
 
-func TestCandidatesView(t *testing.T) {
+// candidatesViewServer builds a server with two builder candidates and a
+// spawn-failed gate on haiku, so the view has a gated and a picked row.
+func candidatesViewServer(t *testing.T) (*Server, remote.Keypair) {
+	t.Helper()
 	root := t.TempDir()
-
 	candPath := filepath.Join(root, "candidates.json")
 	candJSON := `[
 		{"harness": "claude", "provider": "anthropic", "model": "haiku", "roles": ["builder"]},
@@ -3241,29 +2148,20 @@ func TestCandidatesView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	pol := policy.Policy{
-		Order: map[string][]string{
-			"builder": {"claude/anthropic/haiku", "claude/anthropic/sonnet"},
-		},
-	}
-
+	pol := policy.Policy{Order: map[string][]string{
+		"builder": {"claude/anthropic/haiku", "claude/anthropic/sonnet"},
+	}}
 	now := time.Now()
-	// Write a gate on haiku to the server-wide ledger
-	l := ledger.Ledger{
-		Entries: []ledger.Entry{
-			{
-				Kind:    ledger.SpawnFailed,
-				Subject: "claude/anthropic/haiku",
-				Source:  "relevo",
-				At:      now,
-				Until:   now.Add(time.Hour),
-				Note:    "test failure",
-			},
-		},
-	}
+	l := availability.Ledger{Entries: []availability.Entry{{
+		Kind:    availability.SpawnFailed,
+		Subject: "claude/anthropic/haiku",
+		Source:  "relevo",
+		At:      now,
+		Until:   now.Add(time.Hour),
+		Note:    "test failure",
+	}}}
 	seedDB := testServeDB(t)
-	if err := ledger.SaveKV(db.PrefixKV{KV: seedDB, Prefix: "serve."}, l); err != nil {
+	if err := availability.SaveLedger(db.PrefixKV{KV: seedDB, Prefix: "serve."}, l); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3277,7 +2175,6 @@ func TestCandidatesView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	kp, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -3285,11 +2182,14 @@ func TestCandidatesView(t *testing.T) {
 	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
 		t.Fatal(err)
 	}
+	return srv, kp
+}
 
-	req := signedRequest(t, kp, "GET", "/v1/candidates", nil)
+func TestCandidatesView(t *testing.T) {
+	srv, kp := candidatesViewServer(t)
+
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
+	srv.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/candidates", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
@@ -3298,14 +2198,11 @@ func TestCandidatesView(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-
 	if len(resp.Candidates) != 2 {
 		t.Fatalf("got %d candidates, want 2", len(resp.Candidates))
 	}
 
-	haiku := resp.Candidates[0]
-	sonnet := resp.Candidates[1]
-
+	haiku, sonnet := resp.Candidates[0], resp.Candidates[1]
 	if haiku.Token != "claude/anthropic/haiku" || !haiku.Gated || haiku.Pick {
 		t.Errorf("haiku = %+v, want Token=claude/anthropic/haiku, Gated=true, Pick=false", haiku)
 	}
@@ -3324,8 +2221,7 @@ func TestCandidatesView(t *testing.T) {
 	}
 }
 
-// setupBuilderEnv is setupTestEnv with two builder candidates, so a round can
-// be moved from one to the other (#318).
+// setupBuilderEnv is setupTestEnv with two builder candidates.
 func setupBuilderEnv(t *testing.T) *testEnv {
 	t.Helper()
 	return setupTestEnv(t, func(c *Config) {
@@ -3345,80 +2241,29 @@ func setupBuilderEnv(t *testing.T) *testEnv {
 	})
 }
 
-// roundFormCandidate is makeRoundForm with the optional "candidate" field
-// (#318).
-func roundFormCandidate(t *testing.T, round int, plan string, bundleBytes []byte, candidate string) ([]byte, string) {
-	t.Helper()
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
-		t.Fatal(err)
-	}
-	if err := mw.WriteField("plan", plan); err != nil {
-		t.Fatal(err)
-	}
-	if candidate != "" {
-		if err := mw.WriteField("candidate", candidate); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(bundleBytes) > 0 {
-		part, err := mw.CreateFormFile("bundle", "bundle.bundle")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := part.Write(bundleBytes); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := mw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes(), mw.FormDataContentType()
-}
-
-// TestRoundStartWithCandidateChangesTheBuilder pins (#318): a POST carrying a
-// candidate moves the served binding to it, and the pick is recorded under the
-// round.
 func TestRoundStartWithCandidateChangesTheBuilder(t *testing.T) {
 	env := setupBuilderEnv(t)
-	ctx := context.Background()
 
 	createBody, _ := json.Marshal(remote.CreateBindingRequest{
 		Name:       "api",
 		RepoID:     env.repoID,
 		BaseCommit: env.headSHA,
+		Role:       "builder",
 		Candidate:  "claude/anthropic/haiku",
 	})
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusCreated)
 
 	outRef := "refs/relevo/api/out"
-	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
+	if err := env.gitClient.UpdateRef(context.Background(), env.clientDir, outRef, env.headSHA, ""); err != nil {
 		t.Fatalf("updateRef out: %v", err)
 	}
-	snap, err := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	bundleBytes, err := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-	if err != nil {
-		t.Fatalf("read snap body: %v", err)
-	}
+	bundleBytes := snapshotRef(t, env, env.clientDir, outRef)
 
 	formBytes, ct := roundFormCandidate(t, 1, "# Round 1 Plan", bundleBytes, "opencode/anthropic/haiku")
 	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
-	var view remote.BindingView
-	if err := json.Unmarshal(body, &view); err != nil {
-		t.Fatalf("unmarshal view: %v", err)
-	}
-	if view.Candidate != "opencode/anthropic/haiku" {
+	requireStatus(t, resp, body, http.StatusCreated)
+	if view := decodeView(t, body); view.Candidate != "opencode/anthropic/haiku" {
 		t.Errorf("view.Candidate = %q, want opencode/anthropic/haiku", view.Candidate)
 	}
 
@@ -3427,11 +2272,8 @@ func TestRoundStartWithCandidateChangesTheBuilder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load binding: %v", err)
 	}
-	if b.BuilderCandidate != "opencode/anthropic/haiku" {
-		t.Errorf("BuilderCandidate = %q, want opencode/anthropic/haiku", b.BuilderCandidate)
-	}
-	if b.Builder.Kind != "opencode" {
-		t.Errorf("Builder.Kind = %q, want opencode", b.Builder.Kind)
+	if b.BuilderCandidate != "opencode/anthropic/haiku" || b.Builder.Kind != "opencode" {
+		t.Errorf("binding = (candidate %q, kind %q), want opencode/anthropic/haiku opencode", b.BuilderCandidate, b.Builder.Kind)
 	}
 
 	entries, err := rt.Store.ReadLog("api")
@@ -3449,9 +2291,8 @@ func TestRoundStartWithCandidateChangesTheBuilder(t *testing.T) {
 	}
 }
 
-// TestRoundStartUnknownCandidateRefusesBeforeAbsorb pins (#318): a bad token is
-// 422 invalid and the outbound ref does not move -- validation runs before the
-// bundle is absorbed.
+// TestRoundStartUnknownCandidateRefusesBeforeAbsorb: validation runs before the
+// absorb, so a bad token leaves the outbound ref unmoved.
 func TestRoundStartUnknownCandidateRefusesBeforeAbsorb(t *testing.T) {
 	env := setupBuilderEnv(t)
 	ctx := context.Background()
@@ -3460,12 +2301,11 @@ func TestRoundStartUnknownCandidateRefusesBeforeAbsorb(t *testing.T) {
 		Name:       "api",
 		RepoID:     env.repoID,
 		BaseCommit: env.headSHA,
+		Role:       "builder",
 		Candidate:  "claude/anthropic/haiku",
 	})
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusCreated)
 
 	rt := env.runtime(t)
 	b, err := rt.Store.Load("api")
@@ -3487,19 +2327,10 @@ func TestRoundStartUnknownCandidateRefusesBeforeAbsorb(t *testing.T) {
 	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, secondSHA, ""); err != nil {
 		t.Fatalf("updateRef client out: %v", err)
 	}
-	snap, err := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	bundleBytes, err := io.ReadAll(snap.Body)
-	_ = snap.Body.Close()
-	if err != nil {
-		t.Fatalf("read snap body: %v", err)
-	}
+	bundleBytes := snapshotRef(t, env, env.clientDir, outRef)
 
-	// Seed the server's out ref (the bundle's objects must exist there), then
-	// rewind it to the base commit: an absorb during the refused request would
-	// visibly move it to secondSHA.
+	// Seed the server's out ref, then rewind it to the base commit: an absorb
+	// during the refused request would visibly move it to secondSHA.
 	if _, err := env.transport.Absorb(ctx, b.Serve.BareRepo, remote.ContentTypeGitBundle, bytes.NewReader(bundleBytes), []string{outRef}); err != nil {
 		t.Fatalf("seed server out ref: %v", err)
 	}
@@ -3509,9 +2340,7 @@ func TestRoundStartUnknownCandidateRefusesBeforeAbsorb(t *testing.T) {
 
 	formBytes, ct := roundFormCandidate(t, 1, "# Round 1 Plan", bundleBytes, "bogus/nope/x")
 	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("start round status = %d, want 422; body: %s", resp.StatusCode, string(body))
-	}
+	requireStatus(t, resp, body, http.StatusUnprocessableEntity)
 	var errBody remote.ErrorBody
 	if err := json.Unmarshal(body, &errBody); err != nil {
 		t.Fatalf("unmarshal error body: %v", err)
@@ -3529,9 +2358,6 @@ func TestRoundStartUnknownCandidateRefusesBeforeAbsorb(t *testing.T) {
 	}
 }
 
-// TestSweepTmp pins #373 §4.3: the startup sweep removes a stale req-body-*
-// and plan-*, and nothing else -- a fresh req-body-* and an old file with an
-// unrelated name stay.
 func TestSweepTmp(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
@@ -3573,11 +2399,6 @@ func TestSweepTmp(t *testing.T) {
 	}
 }
 
-// TestRequestLogClientVersion pins #373 §3's client-version logging: the
-// request log line carries client_version when Relevo-Client-Version is
-// present, and omits the attribute when it is not. The request logger is the
-// inline slog.Info in Handler and has no seam of its own, so this captures the
-// default slog logger.
 func TestRequestLogClientVersion(t *testing.T) {
 	s, _ := newTestServer(t, 0)
 
@@ -3602,5 +2423,299 @@ func TestRequestLogClientVersion(t *testing.T) {
 	}
 	if got := send(""); strings.Contains(got, "client_version") {
 		t.Errorf("log without the header = %q, want no client_version attribute", got)
+	}
+}
+
+func TestRoundFileLogFrom(t *testing.T) {
+	env := setupTestEnv(t)
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")
+	requireCreated(t, resp, body, "api")
+
+	rt := env.runtime(t)
+	logContent := []byte("line 1\nline 2\nline 3\n")
+	if err := os.WriteFile(rt.Store.BuilderLogPath("api", 1), logContent, 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	totalLenStr := strconv.Itoa(len(logContent))
+
+	// No from: whole body, size = len, from = 0.
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if got := resp.Header.Get(remote.HeaderFileSize); got != totalLenStr {
+		t.Fatalf("X-Relevo-Size = %q, want %q", got, totalLenStr)
+	}
+	if got := resp.Header.Get(remote.HeaderFileFrom); got != "0" {
+		t.Fatalf("X-Relevo-From = %q, want 0", got)
+	}
+	if string(body) != string(logContent) {
+		t.Fatalf("body = %q, want %q", string(body), string(logContent))
+	}
+
+	// ?from=k inside the file: suffix and From = k.
+	k := 7
+	kStr := strconv.Itoa(k)
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from="+kStr, nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if got := resp.Header.Get(remote.HeaderFileFrom); got != kStr {
+		t.Fatalf("X-Relevo-From = %q, want %q", got, kStr)
+	}
+	if string(body) != string(logContent[k:]) {
+		t.Fatalf("body = %q, want %q", string(body), string(logContent[k:]))
+	}
+
+	// ?from= past the end: empty body, size = len.
+	pastEnd := totalLen(env, t) + 100
+	pastEndStr := strconv.Itoa(pastEnd)
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from="+pastEndStr, nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if got := resp.Header.Get(remote.HeaderFileFrom); got != pastEndStr {
+		t.Fatalf("X-Relevo-From = %q, want %q", got, pastEndStr)
+	}
+	if len(body) != 0 {
+		t.Fatalf("body = %q, want empty", string(body))
+	}
+
+	// A negative or non-numeric from is a 400.
+	for _, from := range []string{"-1", "x"} {
+		resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from="+from, nil, "")
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("from=%s status = %d, want 400", from, resp.StatusCode)
+		}
+	}
+}
+
+// TestRoundFileStreamServesAPreRenameRound: a round whose stream is only
+// NNN-builder.jsonl still answers kind "stream" with the raw file and kind
+// "log" with the rendered file, resolved through the store and RoundTranscript.
+func TestRoundFileStreamServesAPreRenameRound(t *testing.T) {
+	env := setupTestEnv(t)
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")
+	requireCreated(t, resp, body, "api")
+
+	rt := env.runtime(t)
+	// The fake round start wrote its own stream at the new name; drop it so the
+	// round has the pre-rename file only.
+	if err := os.Remove(rt.Store.RunnerStreamPath("api", 1)); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove new-name stream: %v", err)
+	}
+	stream := "stream line 1\nstream line 2\n"
+	if err := os.WriteFile(rt.Store.BuilderStreamPath("api", 1), []byte(stream), 0o644); err != nil {
+		t.Fatalf("write pre-rename stream: %v", err)
+	}
+	finishRound(t, env, rt, "api", 1)
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/stream", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if string(body) != stream {
+		t.Fatalf("stream body = %q, want the pre-rename stream %q", string(body), stream)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if string(body) != stream {
+		t.Fatalf("log body = %q, want the rendered pre-rename stream %q", string(body), stream)
+	}
+	if got := resp.Header.Get(remote.HeaderFileSize); got != strconv.Itoa(len(stream)) {
+		t.Fatalf("X-Relevo-Size = %q, want %d", got, len(stream))
+	}
+}
+
+func totalLen(env *testEnv, t *testing.T) int {
+	t.Helper()
+	data, err := os.ReadFile(env.runtime(t).Store.BuilderLogPath("api", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(data)
+}
+
+// TestRoundFileLogRendersTheStream: a stream with no log answers the rendered
+// bytes, and a fetch from the old size returns exactly the new lines.
+func TestRoundFileLogRendersTheStream(t *testing.T) {
+	env := setupTestEnv(t)
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")
+	requireCreated(t, resp, body, "api")
+
+	rt := env.runtime(t)
+	streamPath := rt.Store.RunnerStreamPath("api", 1)
+	stream := "stream line 1\nstream line 2\n"
+	if err := os.WriteFile(streamPath, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	totalLenStr := strconv.Itoa(len(stream))
+	// The round start writes a "builder started" log; this case is the logless
+	// one, so drop it and let the stream answer.
+	if err := os.Remove(rt.Store.BuilderLogPath("api", 1)); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove log: %v", err)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if got := resp.Header.Get(remote.HeaderFileSize); got != totalLenStr {
+		t.Fatalf("X-Relevo-Size = %q, want %q", got, totalLenStr)
+	}
+	if string(body) != stream {
+		t.Fatalf("body = %q, want the rendered stream %q", string(body), stream)
+	}
+
+	k := 7
+	kStr := strconv.Itoa(k)
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from="+kStr, nil, "")
+	if got := resp.Header.Get(remote.HeaderFileFrom); got != kStr {
+		t.Fatalf("X-Relevo-From = %q, want %q", got, kStr)
+	}
+	if string(body) != stream[k:] {
+		t.Fatalf("body = %q, want %q", string(body), stream[k:])
+	}
+
+	// A fetch from the old size returns exactly the new rendered lines.
+	if err := os.WriteFile(streamPath, []byte(stream+"stream line 3\n"), 0o644); err != nil {
+		t.Fatalf("append stream: %v", err)
+	}
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from="+totalLenStr, nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if string(body) != "stream line 3\n" {
+		t.Fatalf("body = %q, want exactly the new rendered lines", string(body))
+	}
+}
+
+func TestRoundFileDriftRunning(t *testing.T) {
+	env := setupTestEnv(t)
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")
+	requireCreated(t, resp, body, "api")
+
+	rt := env.runtime(t)
+
+	// A missing drift file is 404 "file not found", not "round 1 is not closed".
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/drift", nil, "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "file not found") || strings.Contains(string(body), "not closed") {
+		t.Fatalf("body = %q, want 'file not found' and not 'not closed'", string(body))
+	}
+
+	driftContent := []byte("diff --git a/foo b/foo\n+drift\n")
+	if err := os.WriteFile(rt.Store.DriftPath("api", 1), driftContent, 0o644); err != nil {
+		t.Fatalf("write drift: %v", err)
+	}
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/drift", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if string(body) != string(driftContent) {
+		t.Fatalf("body = %q, want %q", string(body), string(driftContent))
+	}
+
+	// A report on a running round is still 404 "not closed".
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/report", nil, "")
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "not closed") {
+		t.Fatalf("report on running round = (%d, %q), want 404 not closed", resp.StatusCode, string(body))
+	}
+}
+
+func TestWireUnbindReleasesRefs(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	bare, _ := seedServedBinding(t, env, "target", store.ServeFacts{RepoID: env.repoID})
+	_, _ = seedServedBinding(t, env, "sibling", store.ServeFacts{RepoID: env.repoID})
+
+	rec := httptest.NewRecorder()
+	env.srv.Handler().ServeHTTP(rec, signedRequest(t, env.kp, "POST", "/v1/bindings/target/unbind", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /v1/bindings/target/unbind status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	requireRefGone(t, ctx, env.gitClient, bare, "refs/heads/relevo/target")
+	targetRefs, err := env.gitClient.ListRefs(ctx, bare, "refs/relevo/target/")
+	if err != nil {
+		t.Fatalf("list target refs: %v", err)
+	}
+	if len(targetRefs) != 0 {
+		t.Errorf("target refs = %v; want none", targetRefs)
+	}
+
+	requireRefPresent(t, ctx, env.gitClient, bare, "refs/heads/relevo/sibling")
+	siblingRefs, err := env.gitClient.ListRefs(ctx, bare, "refs/relevo/sibling/")
+	if err != nil {
+		t.Fatalf("list sibling refs: %v", err)
+	}
+	if len(siblingRefs) != 2 {
+		t.Errorf("sibling refs = %v; want 2 refs", siblingRefs)
+	}
+}
+
+func TestAdminUnbindAndGCAbandonedReleaseRefs(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	bareAdmin, _ := seedServedBinding(t, env, "admin-target", store.ServeFacts{RepoID: env.repoID})
+	res, err := AdminUnbind(ctx, env.srv, string(env.id), "admin-target", false)
+	if err != nil {
+		t.Fatalf("AdminUnbind: %v", err)
+	}
+	if !res.Archived {
+		t.Error("AdminUnbind res.Archived = false; want true")
+	}
+	requireRefGone(t, ctx, env.gitClient, bareAdmin, "refs/heads/relevo/admin-target")
+	adminRefs, err := env.gitClient.ListRefs(ctx, bareAdmin, "refs/relevo/admin-target/")
+	if err != nil {
+		t.Fatalf("list admin refs: %v", err)
+	}
+	if len(adminRefs) != 0 {
+		t.Errorf("admin refs = %v; want none", adminRefs)
+	}
+
+	bareGC, _ := seedServedBinding(t, env, "gc-target", store.ServeFacts{
+		RepoID:   env.repoID,
+		LastSeen: env.srv.cfg.Now().Add(-2 * time.Hour),
+	})
+	gcResults, err := GCAbandoned(ctx, env.srv, time.Hour, env.srv.cfg.Now(), true)
+	if err != nil {
+		t.Fatalf("GCAbandoned dry run: %v", err)
+	}
+	if len(gcResults) != 1 || gcResults[0].Name != "gc-target" || gcResults[0].Archive {
+		t.Fatalf("gcResults = %+v", gcResults)
+	}
+	requireRefPresent(t, ctx, env.gitClient, bareGC, "refs/heads/relevo/gc-target")
+
+	gcResults, err = GCAbandoned(ctx, env.srv, time.Hour, env.srv.cfg.Now(), false)
+	if err != nil {
+		t.Fatalf("GCAbandoned real run: %v", err)
+	}
+	if len(gcResults) != 1 || !gcResults[0].Archive {
+		t.Fatalf("gcResults = %+v", gcResults)
+	}
+	requireRefGone(t, ctx, env.gitClient, bareGC, "refs/heads/relevo/gc-target")
+	gcRefsAfter, err := env.gitClient.ListRefs(ctx, bareGC, "refs/relevo/gc-target/")
+	if err != nil {
+		t.Fatalf("list gc refs after: %v", err)
+	}
+	if len(gcRefsAfter) != 0 {
+		t.Errorf("gc refs after = %v; want none", gcRefsAfter)
+	}
+}
+
+func TestUnbindKeepingADirtyWorktreeKeepsItsRefs(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	bare, wt := seedServedBinding(t, env, "dirty-target", store.ServeFacts{RepoID: env.repoID})
+	if err := os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("dirty uncommitted content\n"), 0644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	env.srv.Handler().ServeHTTP(rec, signedRequest(t, env.kp, "POST", "/v1/bindings/dirty-target/unbind", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /v1/bindings/dirty-target/unbind status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	requireRefPresent(t, ctx, env.gitClient, bare, "refs/heads/relevo/dirty-target")
+	refs, err := env.gitClient.ListRefs(ctx, bare, "refs/relevo/dirty-target/")
+	if err != nil {
+		t.Fatalf("list refs: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Errorf("refs/relevo/dirty-target/* = %v; want 2 kept refs", refs)
 	}
 }

@@ -8,6 +8,8 @@ import (
 )
 
 func TestComposeFlagged(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name       string
 		regexLines []int
@@ -120,6 +122,8 @@ func TestComposeFlagged(t *testing.T) {
 }
 
 func TestFlaggedParenthetical(t *testing.T) {
+	t.Parallel()
+
 	if got := flaggedParenthetical(0, nil); got != "" {
 		t.Errorf("(0, nil) = %q, want empty", got)
 	}

@@ -1,0 +1,9 @@
+{
+  "name": "relevo",
+  "version": "0.0.0-dev",
+  "type": "module",
+  "exports": {
+    "./tui": "./tui.tsx",
+    "./server": "./server.ts"
+  }
+}

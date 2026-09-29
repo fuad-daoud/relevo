@@ -8,6 +8,8 @@ import (
 )
 
 func TestMatchDenial(t *testing.T) {
+	t.Parallel()
+
 	claudeHarness, _ := harness.Lookup("claude")
 	agyHarness, _ := harness.Lookup("agy")
 	opencodeHarness, _ := harness.Lookup("opencode")

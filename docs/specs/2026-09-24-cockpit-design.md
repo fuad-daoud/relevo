@@ -289,8 +289,17 @@ over `db.RoundRow` and the gate records, and shared with `relevo history --stats
 | Candidates | Scoped to one actor (`a` cycles; default `builder`). Per candidate: rounds; **done %** = reported / closed; **halt %** = halted / closed; median duration of closed rounds; ttft p50 over the window; **$/round** = mean over rounds with a known cost basis, or `plan`. Rows with fewer than 5 rounds are dimmed. `(unrecorded)` is excluded. |
 | Spend | Cost per day over the window as bars, all actors, with this week against last week. `p` splits the bars by provider. |
 | Reliability | Switches (count and % of rounds), gates, spawn failures, the by-hour limit heatmap per provider (what `relevo config` prints today), and the gates active now. |
-| Repos & features | Per repo, and per `--feature` label when present: rounds, cost, halts, and rounds per landed binding (a binding that reached DONE). |
+| Repos & features | Per repo, expanding in place to its features, each with its tickets nested beneath it, carrying the repo's own numbers: rounds, cost, halts, and rounds per landed binding (a binding that reached DONE); a label used by two repos appears under each. `(no feature)` is a feature row with its own tickets, and there are no `(no ticket)` rows. |
 | Outcomes | Counts of reported, halted, switched and no outcome. |
+
+On the repos tab `space` toggles a repo and `→`/`←` expand and collapse it in place;
+a repo with no features or tickets notices instead of expanding.
+A repo expands to its features by tokens desc, each with its tickets nested beneath it by
+tokens desc, then `(no feature)` with its tickets. A ticket two features use appears under
+each, counting only that feature's rows in that repo. `enter` on a feature filters `:rounds`
+to its repo and label; on a ticket under a feature it adds that feature's term; on a ticket
+under `(no feature)` it filters to the repo and the ticket; and on a `(no feature)` or
+`(no repo)` row it notices instead.
 
 ## 6. Architecture
 
@@ -343,6 +352,12 @@ session id `tui`.
   That planner's `relevo wait` returns exactly as it does after the CLI verb.
 
 ### 6.4 Drafts and revisions
+
+> **Amended 2026-09-26: drafts are dropped.** The config views save each edit at once
+> as its own revision (`source` `ui`), and `:audit` rolls any revision back. There is no
+> `config_draft`, no save step and no conflict list. `config_revision`, `config log` and
+> `config rollback` below stand as built. The draft parts of this section, and the
+> draft rows in §7 and §8, are kept for the record only.
 
 - **Tables:**
   - `config_draft`: one row with `base_version`, `changes` (JSON list of typed
@@ -421,7 +436,7 @@ Two tracks run in parallel on separate worktrees, then join. Each item is one pl
 |---|---|---|---|
 | A1 | Candidate names | §3.1: the `name` field, derivation, `Resolve` everywhere a token is accepted, `NameOf` on every display surface, `name` beside tokens in `--json`, the A1 migration | — |
 | A2 | Agents + actors | §3.2, §3.3, §3.5: `agents`/`actors` sections replace `roles`; `internal/agentsrc`; `internal/actors`; `--actor` on bind/ask; the A2 migration; `config init` seeds three actors | A1 |
-| A3 | Revisions + draft engine | §6.4 without the TUI: `config_revision`, `config_draft`, `internal/draft`, one commit path, `config log` / `config rollback` | A2 |
+| A3 | Revisions (drafts dropped, see §6.4) | §6.4 without the TUI: `config_revision`, `config_draft`, `internal/draft`, one commit path, `config log` / `config rollback` | A2 |
 | A4 | State rename | §3.7: the binding `actor` + round `candidate`; `--candidate`; artifact dirs for writers (`report.md`, `summary.md`); `wait` output, MCP tools, the plugin and `architect.*.md` "Handing off" in the new words; the A4 migration | A2 |
 | A5 | Reader rounds | §3.4: any actor can be bound; scratch worktrees; reader artifact dirs; the size cap; the e2e reader round | A4 |
 | B1 | Shell | §4.1, §4.2: the frame, `:` command line, view stack, keymap, `?` help; `fleet`, `rounds` and round detail moved onto it, still read-only; bare `relevo` and `relevo ui :view` | — |

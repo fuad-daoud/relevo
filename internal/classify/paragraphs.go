@@ -10,7 +10,6 @@ const (
 	MaxStateBytes = 96_000 // ~24k tokens at 4 bytes/token, under the documented 32k state ceiling
 )
 
-// IsFence returns true if line is exactly three or more backticks optionally followed by an info string.
 func IsFence(line string) bool {
 	trimmed := strings.TrimRight(line, " \t")
 	n := 0
@@ -21,19 +20,11 @@ func IsFence(line string) bool {
 		return false
 	}
 	rest := trimmed[n:]
-	if strings.Contains(rest, "`") {
-		return false
-	}
-	return true
+	return !strings.Contains(rest, "`")
 }
 
-// Split turns text into paragraphs. CR is stripped from every line. Outside a
-// fence, a paragraph is a maximal run of lines with non-whitespace content;
-// blank or whitespace-only lines separate paragraphs and belong to none. A
-// fence line opens a fenced paragraph that runs to the next fence line
-// (exclusive) or end of text (an unterminated fence); fence lines are in no
-// paragraph. An empty fenced body yields no paragraph. Index is the position
-// in the returned slice. Empty input -> nil.
+// Split turns text into paragraphs: CR stripped from every line; a fence line
+// opens a fenced paragraph that runs to the next fence line, and is in none.
 func Split(text []byte) []Paragraph {
 	if len(text) == 0 {
 		return nil
@@ -100,11 +91,8 @@ func Split(text []byte) []Paragraph {
 	return paras
 }
 
-// Trim keeps at most MaxParagraphs paragraphs whose Text lengths sum to at
-// most MaxStateBytes, taking from the head and the tail alternately (head
-// first) so the beginning and end of a long report are both seen. The
-// result preserves source order and original Index values. partial is
-// true when anything was dropped.
+// Trim keeps at most MaxParagraphs paragraphs within MaxStateBytes, taking from
+// the head and tail alternately so both ends of a long report are seen.
 func Trim(paras []Paragraph) (kept []Paragraph, partial bool) {
 	totalBytes := 0
 	for _, p := range paras {

@@ -1,0 +1,37 @@
+{
+  "rev": 1,
+  "at": "<TIME>",
+  "source": "cli",
+  "message": "config set candidates",
+  "version": 1,
+  "changes": [
+    {
+      "path": "candidates",
+      "op": "add",
+      "after": [
+        {
+          "harness": "claude",
+          "model": "m",
+          "name": "m",
+          "provider": "p",
+          "roles": [
+            "builder"
+          ]
+        }
+      ]
+    }
+  ],
+  "snapshot": {
+    "candidates": [
+      {
+        "harness": "claude",
+        "model": "m",
+        "name": "m",
+        "provider": "p",
+        "roles": [
+          "builder"
+        ]
+      }
+    ]
+  }
+}

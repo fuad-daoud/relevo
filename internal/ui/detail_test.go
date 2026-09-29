@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
 )
 
@@ -23,7 +24,7 @@ func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: name, Round: 2, Display: "ACTIVE"})
+	m := splitModel(t, 140, 40, view.BindingStatus{Name: name, Round: 2, Display: "ACTIVE"})
 
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = res.(Model)
@@ -36,10 +37,10 @@ func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
 	if rv.pane.detail.name != name {
 		t.Fatalf("expected detail.name %s, got %s", name, rv.pane.detail.name)
 	}
-	if rv.pane.detail.active != tabPlan {
-		t.Fatalf("expected active tabPlan, got %v", rv.pane.detail.active)
+	if rv.pane.detail.active != tabPrompt {
+		t.Fatalf("expected active tabPrompt, got %v", rv.pane.detail.active)
 	}
-	if !rv.pane.detail.cache[tabPlan].loaded {
+	if !rv.pane.detail.cache[tabPrompt].loaded {
 		t.Fatal("the plan tab's reply must have landed")
 	}
 }
@@ -50,12 +51,12 @@ func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabReport
 	rv.pane.tabInFlight = false
 	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "x"}
 
-	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	got := next.(roundView)
 	if got.pane.detail.active != tabDiff {
 		t.Fatalf("expected active tabDiff, got %v", got.pane.detail.active)
@@ -78,7 +79,7 @@ func TestScrollParkAndRestore(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabReport
 	rv.pane.detail.vp = viewport.New(140, 20)
 	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: strings.Repeat("report line\n", 50)}
@@ -137,7 +138,7 @@ func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.vp = viewport.New(80, 20)
 
 	rv.pane.detail.cache[tabDiff] = tabContent{loaded: true, err: errors.New("disk read failed")}
@@ -161,7 +162,7 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabDiff
 	rv.pane.detail.vp = viewport.New(80, 20)
 
@@ -171,8 +172,8 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	if got.pane.detail.active != tabDiff {
 		t.Fatalf("expected active tab to remain tabDiff, got %v", got.pane.detail.active)
 	}
-	if got.pane.detail.vp.Width != 100 {
-		t.Fatalf("expected vp.Width 100, got %d", got.pane.detail.vp.Width)
+	if got.pane.detail.vp.Width != got.pane.contentWidth() {
+		t.Fatalf("expected vp.Width %d (contentWidth), got %d", got.pane.contentWidth(), got.pane.detail.vp.Width)
 	}
 	if got.pane.detail.vp.Height != got.pane.viewportHeight() {
 		t.Fatalf("expected vp.Height %d, got %d", got.pane.viewportHeight(), got.pane.detail.vp.Height)
@@ -185,7 +186,7 @@ func TestPanicOnShrinkingContent(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabDiff
 	rv.pane.detail.vp = viewport.New(80, 20)
 	rv.pane.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
@@ -201,7 +202,7 @@ func TestPanicOnShrinkingContent(t *testing.T) {
 		},
 	})
 
-	view := rv.Body(testEnv(plannerSource{rt}, rv.pane.report, 80, 24), 80, 20)
+	view := rv.Body(testEnv(mastermindSource{rt}, rv.pane.report, 80, 24), 80, 20)
 	if view == "" {
 		t.Fatal("expected non-empty view")
 	}
@@ -213,7 +214,7 @@ func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabDiff
 	rv.pane.detail.vp = viewport.New(80, 20)
 	rv.pane.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
@@ -223,7 +224,7 @@ func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 	rv.pane.detail.cache[tabDiff] = tabContent{}
 	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
-	if view := rv.Body(testEnv(plannerSource{rt}, rv.pane.report, 80, 24), 80, 20); view == "" {
+	if view := rv.Body(testEnv(mastermindSource{rt}, rv.pane.report, 80, 24), 80, 20); view == "" {
 		t.Fatal("expected non-empty view")
 	}
 }
@@ -234,7 +235,7 @@ func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabTerminal
 	rv.pane.detail.follow = false
 	rv.pane.detail.vp = viewport.New(80, 20)
@@ -263,8 +264,8 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	ts := time.Now()
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
-		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts, Round: 3}},
+	rep := view.Report{Bindings: []view.BindingStatus{
+		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &view.LastEvent{TS: ts, Round: 3}},
 	}}
 	rv := newTestRound(t, rt, rep, "webshop", 0)
 	rv.pane.detail.active = tabTerminal
@@ -274,10 +275,10 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 	rv.pane.detail.scroll[tabLog] = 15
 	rv.pane.detail.scroll[tabTerminal] = 10
 
-	newRep := relevo.Report{Bindings: []relevo.BindingStatus{
-		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts.Add(5 * time.Second), Round: 3}},
+	newRep := view.Report{Bindings: []view.BindingStatus{
+		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &view.LastEvent{TS: ts.Add(5 * time.Second), Round: 3}},
 	}}
-	next, _ := rv.Update(statusMsg{report: newRep}, testEnv(plannerSource{rt}, newRep, 140, 40))
+	next, _ := rv.Update(statusMsg{report: newRep}, testEnv(mastermindSource{rt}, newRep, 140, 40))
 	got := next.(roundView)
 
 	if got.pane.detail.scroll[tabDiff] != 0 || got.pane.detail.scroll[tabReport] != 0 || got.pane.detail.scroll[tabLog] != 0 {
@@ -308,12 +309,12 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: name, Round: 4, Display: "ACTIVE"}}}, name, 0)
+			rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: name, Round: 4, Display: "ACTIVE"}}}, name, 0)
 			rv.pane.detail.round = 3
 			rv.pane.detail.active = tabReport
 			rv.pane.tabInFlight = false
 
-			next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.key)}, testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+			next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.key)}, testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 			got := next.(roundView)
 			if cmd == nil {
 				t.Fatalf("%s: expected non-nil cmd from switchTab", tc.name)
@@ -336,7 +337,7 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: name, Round: 4, Display: "ACTIVE"}}}, name, 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: name, Round: 4, Display: "ACTIVE"}}}, name, 0)
 	rv.pane.detail.round = 3
 	rv.pane.detail.active = tabReport
 	rv.pane.tabInFlight = false
@@ -345,7 +346,7 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 		key string
 		t   tab
 	}{
-		{"1", tabPlan},
+		{"1", tabPrompt},
 		{"2", tabReport},
 		{"3", tabTerminal},
 		{"4", tabDiff},
@@ -354,7 +355,7 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 	for _, tk := range tabKeys {
 		rv.pane.detail.cache[tk.t] = tabContent{}
 		rv.pane.tabInFlight = false
-		next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tk.key)}, testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+		next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tk.key)}, testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 		rv = next.(roundView)
 		if cmd == nil {
 			t.Fatalf("tab %v: expected non-nil cmd from switchTab", tk.t)
@@ -365,5 +366,65 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 		if !rv.pane.detail.cache[tk.t].loaded {
 			t.Fatalf("tab %v reply discarded: cache not loaded", tk.t)
 		}
+	}
+}
+
+func TestSanitizeText(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"vt", "a\x0bb", "a\uFFFDb"},
+		{"ff", "a\x0cb", "a\uFFFDb"},
+		{"crlf", "a\r\nb", "a\nb"},
+		{"lone cr", "a\rb", "ab"},
+		{"tab", "a\tb", "a    b"},
+		{"esc sequence", "a\x1b[2Jb", "a\uFFFD[2Jb"},
+		{"null and ack", "a\x00\x06b", "a\uFFFD\uFFFDb"},
+		{"invalid utf8", "a\xffb", "a\uFFFDb"},
+		{"c1 nel", "a\u0085b", "a\uFFFDb"},
+		{"unicode unchanged", "héllo — ✓", "héllo — ✓"},
+		{"newline unchanged", "line1\nline2", "line1\nline2"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeText(tc.in); got != tc.want {
+				t.Fatalf("sanitizeText(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBodyOfControlBytesKeepLineCount(t *testing.T) {
+	raw := "line 1\nmiddle \x0b \x0c \x1b[2J controls\nline 3"
+
+	cases := []struct {
+		name     string
+		tab      tab
+		headless bool
+	}{
+		{"transcript", tabTerminal, true},
+		{"log", tabLog, false},
+		{"diff", tabDiff, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := bodyOf(tc.tab, tabContent{loaded: true, body: raw}, tc.headless)
+			wrapped := wrapBody(rendered, 80)
+			stripped := stripANSI(wrapped)
+
+			for _, r := range stripped {
+				if r < 0x20 && r != '\n' {
+					t.Fatalf("%s: result contains control rune below 0x20: %q (%#x)", tc.name, r, r)
+				}
+			}
+
+			lines := strings.Split(stripped, "\n")
+			if len(lines) != 3 {
+				t.Fatalf("%s: expected 3 lines, got %d: %q", tc.name, len(lines), stripped)
+			}
+		})
 	}
 }

@@ -21,8 +21,8 @@ var (
 	ErrExtraArgsPermission = errors.New("extra_args carries a permission flag")
 )
 
-// ParseTier accepts exactly the four names; "" is an error (callers decide
-// their own default before calling).
+// ParseTier accepts exactly the four names; "" is an error, so callers decide
+// their own default before calling.
 func ParseTier(s string) (Tier, error) {
 	switch Tier(s) {
 	case TierHarness, TierRead, TierEdit, TierYolo:
@@ -32,8 +32,7 @@ func ParseTier(s string) (Tier, error) {
 	}
 }
 
-// Rank orders read < edit < yolo as 1 < 2 < 3; TierHarness is 0 and must
-// never be compared -- Above returns false when either side is harness.
+// Rank orders read < edit < yolo as 1 < 2 < 3; TierHarness is 0.
 func (t Tier) Rank() int {
 	switch t {
 	case TierRead:
@@ -55,11 +54,8 @@ func (t Tier) Above(u Tier) bool {
 	return t.Rank() > u.Rank()
 }
 
-// PermissionArgs is the table above. TierHarness -> (nil, nil) for every
-// kind. A refusal cell -> (nil, ErrTierUnsupported wrapped with kind and
-// tier: `opencode cannot honour tier read: it has no read-only flag; use
-// --tier harness (opencode.jsonc decides) or --tier yolo (--auto)`).
-// An unknown kind -> (nil, nil): Launch already returns an empty form for it.
+// PermissionArgs is the tier-to-flags table. TierHarness and an unknown kind
+// return nil; a refusal cell returns ErrTierUnsupported with kind and tier.
 func (h Harness) PermissionArgs(tier Tier) ([]string, error) {
 	if tier == TierHarness {
 		return nil, nil
@@ -114,21 +110,9 @@ func (h Harness) PermissionArgs(tier Tier) ([]string, error) {
 	}
 }
 
-// PermissionFlags are the flags relevo recognises as permission flags for
-// this kind, matched against extra_args as whole elements or as `flag=`
-// prefixes:
-//
-//	claude:   --permission-mode, --dangerously-skip-permissions,
-//	          --allow-dangerously-skip-permissions, --allowedTools, --allowed-tools,
-//	          --disallowedTools, --disallowed-tools, --permission-prompts
-//	agy:      --mode, --dangerously-skip-permissions, --sandbox
-//	opencode: --auto
-//	codex:    -s, --sandbox, -a, --ask-for-approval, --full-auto,
-//	          --approve-for-me, --dangerously-bypass-approvals-and-sandbox
-//
-// A `-c sandbox_mode=...` or `-c approval_policy=...` pair is not detected:
-// -c is a generic override and the two-element shape does not fit the
-// whole-element matcher.
+// PermissionFlags lists the flags relevo treats as permission flags for this
+// kind, matched against extra_args as whole elements or `flag=` prefixes. A
+// two-element `-c sandbox_mode=...` pair is not detected: -c is a generic override.
 func (h Harness) PermissionFlags() []string {
 	switch h.Kind {
 	case "claude":

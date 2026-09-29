@@ -1,8 +1,8 @@
- relevo · dashboard   (all rounds)   by:builder                                                                  / filter  b regroup  s sort  d fleet  r refresh
-rounds 3   cost $1.52 (1 unknown)   tokens 3.7M   halted 1 · exited 0   median 19m   bindings 2 · builders 2                                                    
-builder                               rounds  reported  halted  commits   tokens     cost        last                                                           
-▸ claude/anthropic/sonnet                  2         1       1        1     1.7M    $1.52  2026-09-20                                                           
-▸ agy/antigravity/claude-sonnet-4-6        1         1       0        3     2.0M   $0.00?  2026-09-18                                                           
+    relevo · dashboard   (all rounds)   by:candidate                                                          / filter  b regroup  s sort  d fleet  r refresh   
+   3 rounds   3.7M tokens   2 done   1 halted   19m median                                                                                                      
+   CANDIDATE                                                                      RNDS  BINDINGS   DONE  HALTED  COMMITS   TOKENS         % TOKENS       LAST   
+   agy/antigravity/claude-sonnet-4-6                                                 1         1      1       0        3       2M  ▇▇▇▇▇       54%     sep 18   
+   claude/anthropic/sonnet                                                           2         1      1       1        1     1.7M  ▇▇▇▇▇       46%     sep 20   
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 

@@ -3,6 +3,7 @@ package relevo
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,23 +15,41 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // ErrBuilderBusy reports a send against a headless binding whose previous
 // round's process is still running (headless spec §5.2). One process per
 // round is the model; two at once in one tree would race each other's
 // edits.
-var ErrBuilderBusy = errors.New("builder's previous process is still running; wait for its report, or relevo done")
+var ErrBuilderBusy = errors.New("the previous process is still running; wait for the round to close, or relevo done")
+
+// ErrReportPending reports a send refused because the current round already
+// has its completion marker or report on disk, but the daemon has not yet
+// ingested the close. The round is over: restaging its plan and starting a
+// second builder would make the daemon close on the stale marker and deliver
+// the old report. The caller retries once the report is delivered.
+var ErrReportPending = errors.New("the round's output is on disk but not yet delivered; relevo wait delivers it, then send the next round")
+
+// ErrScopeActive reports a send refused because this round's systemd scope
+// unit is still loaded: a builder for the round is already alive, most
+// likely started by an earlier send whose bookkeeping failed (#445). Nothing
+// was spawned and nothing was saved.
+var ErrScopeActive = errors.New("this round's builder scope is still running")
 
 // handleOf is the endpoint's stored process fields as the Runner's handle.
 // StartedAt is Unix seconds on the endpoint (store spec §3.1, amended).
-func handleOf(e store.Endpoint) ProcHandle {
-	return ProcHandle{PID: e.PID, StartedAt: time.Unix(e.StartedAt, 0)}
+func handleOf(e store.Endpoint) spawn.ProcHandle {
+	return spawn.ProcHandle{PID: e.PID, StartedAt: time.Unix(e.StartedAt, 0)}
 }
 
 // scopeKind is what a scoped spawn is: the word between "relevo-" and the
@@ -84,7 +103,7 @@ func scopeUnitName(b store.Binding) string {
 // non-empty. When kind is scopeGate and the template sets GateCPUQuota, the
 // gate's spec uses it as CPUQuota; every other kind keeps the template's
 // CPUQuota. It never mutates rt.Scope.
-func scopeFor(rt Runtime, kind scopeKind, unit, cpus string) *ScopeSpec {
+func scopeFor(rt Runtime, kind scopeKind, unit, cpus string) *spawn.ScopeSpec {
 	if rt.Scope == nil {
 		return nil
 	}
@@ -151,25 +170,14 @@ func builderEnv(b store.Binding) []string {
 	}
 }
 
-// headlessLaunch renders the argv for one headless round: the candidate's
-// binary, then its print form with the prompt, the budget, the round's
-// working tree and the binding's state directory filled in (headless spec
-// §4.2, #192, #230). Pure. An unknown kind is an error, not a panic: Load
-// validated the set, but a binding written by a future relevo could name a
-// kind this one does not know.
-func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.Tier, budget time.Duration, prompt, dir, state string) ([]string, error) {
-	h, ok := harness.Lookup(c.Harness)
-	if !ok {
-		return nil, fmt.Errorf("unknown harness kind %q", c.Harness)
-	}
-	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier)
-	if err != nil {
-		return nil, err
-	}
-	if l.PromptAt < 0 {
-		return nil, fmt.Errorf("harness %q has no print form", c.Harness)
-	}
-	return append([]string{h.Binary}, l.PrintArgs(prompt, budget, dir, state)...), nil
+// roundEnv is the environment a round's process runs with: builderEnv's git
+// identity plus the marker naming the binding this process is a runner for. A
+// harness session relevo spawns for a round must not read itself as a
+// MasterMind or planner, so the marker is what its consent hooks go silent on.
+// The spawn appends the marker after the deny filter, so a stale RELEVO_RUNNER
+// in the daemon's own environment cannot shadow it. Pure.
+func roundEnv(b store.Binding) []string {
+	return append(builderEnv(b), mastermind.RunnerEnvEntry(b.Name))
 }
 
 // startRound starts the round's process for a headless binding and records
@@ -188,7 +196,7 @@ func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.T
 // candidate could not be launched. The caller decides the binding's state.
 func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, prompt string) (store.Binding, error) {
 	if rt.Runner == nil {
-		return b, ErrRunnerUnavailable
+		return b, spawn.ErrRunnerUnavailable
 	}
 	b = assignRoundCPU(rt, tx, b)
 	ref, err := candidate.ParseRef(b.BuilderCandidate)
@@ -203,7 +211,7 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	argv, err := headlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
+	argv, err := spawn.HeadlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, roundTree(rt, b), rt.Store.Dir(b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -221,6 +229,16 @@ type spawnFailure struct{ err error }
 func (e spawnFailure) Error() string { return e.err.Error() }
 func (e spawnFailure) Unwrap() error { return e.err }
 
+// legacyLog reports whether a round has a builder log on disk (builder-log
+// spec §4.4): a round started by an older relevo has one, because that relevo
+// opened it for stderr at spawn, and nothing creates one any more. Every
+// decision in builder-log round 2 uses this one rule. Pure apart from one
+// os.Stat.
+func legacyLog(rt Runtime, name string, round int) bool {
+	_, err := os.Stat(rt.Store.BuilderLogPath(name, round))
+	return err == nil
+}
+
 // startProcess is the spawn half of a headless round, shared by startRound
 // and resumeRound (#370): argv is the complete command line, already built by
 // the caller, and c is the candidate it was built for. It does the
@@ -235,21 +253,70 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		// A new round is a new stream file; a mid-round switch (same
 		// round) keeps rendering the file both processes append to.
 		b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 0
+		b.Builder.StreamSegments = nil
+	}
+	if fi, err := os.Stat(rt.Store.StreamPath(b.Name, b.Round)); err == nil {
+		b.Builder.StreamStart = fi.Size()
+	} else {
+		b.Builder.StreamStart = 0
+	}
+	// Record which harness wrote from here on, so the drain renders each line
+	// with its own process's kind. A retried spawn at the same offset replaces
+	// its failed predecessor's entry rather than stacking a second segment
+	// there.
+	seg := store.StreamSegment{Start: b.Builder.StreamStart, Kind: b.Builder.Kind}
+	if n := len(b.Builder.StreamSegments); n > 0 && b.Builder.StreamSegments[n-1].Start == seg.Start {
+		b.Builder.StreamSegments[n-1] = seg
+	} else {
+		b.Builder.StreamSegments = append(b.Builder.StreamSegments, seg)
+	}
+	// Record the round's segment list as a round file, so a later round can
+	// still render this round's stream with the right harness per process
+	// (builder-log spec §4.6). A failure here is never a spawn failure: tests
+	// with no saved record hit ErrNotFound, which is fine.
+	if tx != nil {
+		body, err := json.Marshal(b.Builder.StreamSegments)
+		if err == nil {
+			err = tx.PutRoundFile(b.Name, b.Round, rt.Store.BuilderSegmentsPath(b.Name, b.Round), body)
+		}
+		if err != nil {
+			slog.Warn("record stream segments", "binding", b.Name, "round", b.Round, "err", err)
+		}
 	}
 	// A new process announces its own session on its own stream (#147);
 	// drainStream fills this in again from the first line it writes.
 	b.Builder.StreamSessionID = ""
-	logPath := rt.Store.BuilderLogPath(b.Name, b.Round)
-	spec := ProcSpec{
-		Dir: b.CWD, Argv: argv,
-		Env:        builderEnv(b),
+	// stderr joins the round's stream, as it does for consults and gates
+	// (#420): LogPath == StreamPath for a new round. A round that already had
+	// a NNN-builder.log when the process started -- history, or a round in
+	// flight across the upgrade -- keeps writing stderr to that log instead.
+	logPath := rt.Store.StreamPath(b.Name, b.Round)
+	if legacyLog(rt, b.Name, b.Round) {
+		logPath = rt.Store.BuilderLogPath(b.Name, b.Round)
+	}
+	// A reader round always runs in its scratch worktree (A5 R4a §2). The
+	// round's start (Send or Admit) created it from the captured baseline; a
+	// mid-round switch, a nudge or a relaunch reuses it. If a crash took it
+	// away, recreate it from the round's own baseline before launching: a
+	// missing scratch fails the round rather than running in the binding's
+	// tree, and never falls back to b.CWD.
+	if b.Shape == store.ShapeReader {
+		if _, err := os.Stat(roundTree(rt, b)); err != nil {
+			if _, err := CreateScratchFrom(ctx, rt, b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
+				return b, err
+			}
+		}
+	}
+	spec := spawn.ProcSpec{
+		Dir: roundTree(rt, b), Argv: argv,
+		Env:        roundEnv(b),
 		LogPath:    logPath,
-		StreamPath: rt.Store.BuilderStreamPath(b.Name, b.Round),
+		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}
 	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), cpuPinText(b))
 	h, err := rt.Runner.Start(ctx, spec)
 	if err != nil {
-		recordSpawnFailureLocked(rt, c.Ref().String(), b.Name, err)
+		availability.RecordSpawnFailureLocked(AvailabilityDeps(rt), c.Ref().String(), b.Name, err)
 		return b, spawnFailure{fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)}
 	}
 	// This daemon has now seen the process alive (#370): every successful
@@ -273,7 +340,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 // relaunch.
 func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, sessionID, prompt string) (store.Binding, error) {
 	if rt.Runner == nil {
-		return b, ErrRunnerUnavailable
+		return b, spawn.ErrRunnerUnavailable
 	}
 	ref, err := candidate.ParseRef(b.BuilderCandidate)
 	if err != nil {
@@ -298,7 +365,7 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if l.PromptAt < 0 {
 		return b, fmt.Errorf("harness %q has no print form", c.Harness)
 	}
-	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), b.CWD, rt.Store.Dir(b.Name))
+	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), roundTree(rt, b), rt.Store.Dir(b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -306,10 +373,41 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	return startProcess(ctx, rt, tx, b, argv, c)
 }
 
-// drainStream brings the round's builder log up to date with its stream
-// (transcript spec §4.2): every complete line of the stream file past the
-// endpoint's cursor is rendered with transcript.Render and appended to the
-// log in one write, and the cursor moves past the last newline consumed.
+// segmentKind is the harness kind that wrote the stream byte at off: the Kind
+// of the last segment whose Start is at or before off, or fallback when no
+// segment covers off (segs empty, or off before the first Start). The drain
+// asks it per line, so a mid-round switch renders the old process's lines with
+// the kind that wrote them. Pure.
+func segmentKind(segs []store.StreamSegment, off int64, fallback string) string {
+	kind := fallback
+	for _, s := range segs {
+		if s.Start <= off {
+			kind = s.Kind
+		}
+	}
+	return kind
+}
+
+// carryStream moves the round's stream cursor and its segment list from the
+// outgoing endpoint onto its replacement (from -> to) and returns to, so a
+// mid-round switch keeps rendering the same round's file from where it left
+// off instead of re-rendering it from byte 0 with the new harness's kind. The
+// fields it does not name -- Kind, AgentName, Mode, PID -- come from to. Pure:
+// from is not changed.
+func carryStream(from, to store.Endpoint) store.Endpoint {
+	to.StreamRound = from.StreamRound
+	to.StreamOffset = from.StreamOffset
+	to.StreamStart = from.StreamStart
+	to.StreamSegments = append([]store.StreamSegment(nil), from.StreamSegments...)
+	return to
+}
+
+// drainStream brings a legacy round's builder log up to date with its stream
+// (transcript spec §4.2) and, for a round with no log, only advances the
+// cursor and captures the session id: every complete line of the stream file
+// past the endpoint's cursor is rendered with transcript.Render and, when the
+// round has a log on disk (legacyLog), appended to it in one write. The cursor
+// moves past the last newline consumed either way.
 // A trailing partial line waits for the next tick. The cursor is keyed on
 // StreamRound, not b.Round, so a round that closed on its marker while the
 // builder was still flushing keeps draining until the next round starts.
@@ -327,30 +425,38 @@ func drainStream(rt Runtime, b store.Binding) store.Binding {
 	if round == 0 {
 		return b
 	}
+	logPath := ""
+	if legacyLog(rt, b.Name, round) {
+		logPath = rt.Store.BuilderLogPath(b.Name, round)
+	}
 	b.Builder.StreamOffset = drainFile(
-		rt.Store.BuilderLogPath(b.Name, round),
-		rt.Store.BuilderStreamPath(b.Name, round),
+		logPath,
+		rt.Store.StreamPath(b.Name, round),
 		b.Builder.StreamOffset,
-		func(line []byte) []string {
-			if b.Builder.StreamSessionID == "" {
-				if id := transcript.SessionID(b.Builder.Kind, line); id != "" {
+		func(off int64, line []byte) []string {
+			kind := segmentKind(b.Builder.StreamSegments, off, b.Builder.Kind)
+			if b.Builder.StreamSessionID == "" && off >= b.Builder.StreamStart {
+				if id := transcript.SessionID(kind, line); id != "" {
 					b.Builder.StreamSessionID = id
 				}
 			}
-			return transcript.Render(b.Builder.Kind, line)
+			return transcript.Render(kind, line)
 		},
 		"stream", "binding", b.Name, "round", round,
 	)
 	return b
 }
 
-// drainFile appends render(line) for every complete line of src past off
-// to logPath and returns the new offset. It is the shared body of
+// drainFile appends render(off, line) for every complete line of src past off
+// to logPath -- nothing when logPath is "", which still advances the offset --
+// and returns the new offset. off is the line's own absolute byte
+// offset in src, so a caller rendering per byte range knows where each line
+// came from. It is the shared body of
 // drainStream and drainSession (#184): it never fails the tick -- every
 // problem is a slog.Warn (with what) and the offset unchanged, except an
 // offset past EOF, which resets to 0. what names the source in warnings
 // ("stream", "session").
-func drainFile(logPath, src string, off int64, render func(line []byte) []string, what string, fields ...any) int64 {
+func drainFile(logPath, src string, off int64, render func(off int64, line []byte) []string, what string, fields ...any) int64 {
 	info, err := os.Stat(src)
 	if err != nil {
 		return off // not started yet, or gone with the round: nothing to drain
@@ -373,10 +479,12 @@ func drainFile(logPath, src string, off int64, render func(line []byte) []string
 		return off
 	}
 	var out []string
+	lineOff := off
 	for _, line := range bytes.Split(data[:end], []byte{'\n'}) {
-		out = append(out, render(line)...)
+		out = append(out, render(lineOff, line)...)
+		lineOff += int64(len(line)) + 1
 	}
-	if len(out) > 0 {
+	if logPath != "" && len(out) > 0 {
 		if err := appendLines(logPath, out); err != nil {
 			slog.Warn("builder "+what, append(append([]any{}, fields...), "err", err)...)
 			return off
@@ -399,8 +507,8 @@ func readFrom(path string, off int64) ([]byte, error) {
 }
 
 // appendLines appends lines, each newline-terminated, to the file at path
-// in one write, the same discipline as appendLogMarker: O_APPEND writes of
-// one buffer interleave with the supervisor's stderr at line boundaries.
+// in one write: O_APPEND writes of one buffer interleave with the
+// supervisor's stderr at line boundaries.
 func appendLines(path string, lines []string) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -445,17 +553,19 @@ func clearProcess(e store.Endpoint) store.Endpoint {
 // exitEntry is the log record of a headless builder that exited without a
 // report (spec §3.8): relevo → log only, Confirmed, never a pending payload.
 // codeText is the exit code, or "unknown" when the supervisor's trailer is
-// missing (killed, or the log unreadable). The payload is the log's last
-// logTailLines lines, for the human; relevo reads nothing out of it.
-func exitEntry(now time.Time, round int, logPath, codeText, suffix string) store.LogEntry {
+// missing (killed, or the log unreadable). payload is the builder's last
+// logTailLines of evidence, computed by the caller with builderTail, for the
+// human; relevo reads nothing out of it. shape picks the word for the missing
+// artifact: a reader's is an output.
+func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload, shape string) store.LogEntry {
 	return store.LogEntry{
 		TS:        now,
 		Round:     round,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindExit,
 		Path:      logPath,
-		Note:      fmt.Sprintf("builder exited (code %s) without a report%s", codeText, suffix),
-		Payload:   logTail(logPath, logTailLines),
+		Note:      fmt.Sprintf("builder exited (code %s) %s%s", codeText, withoutArtifact(shape), suffix),
+		Payload:   payload,
 		Confirmed: true,
 	}
 }
@@ -466,7 +576,7 @@ func exitEntry(now time.Time, round int, logPath, codeText, suffix string) store
 // yet counts from its start, and a stream that never appears for stall_after_ms
 // on a live process is exactly a stall.
 func streamLastActivity(rt Runtime, b store.Binding) time.Time {
-	st, err := os.Stat(rt.Store.BuilderStreamPath(b.Name, b.Round))
+	st, err := os.Stat(rt.Store.StreamPath(b.Name, b.Round))
 	if err != nil {
 		return b.RoundStartedAt
 	}
@@ -503,8 +613,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if err != nil {
 		return b, err
 	}
-	roundOpen := HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
-		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+	roundOpen := HasPromptEntry(entries, b.Round) &&
+		!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
 
 	if !roundOpen {
 		// Idle is normal (spec §5.1): between rounds there is no process.
@@ -513,10 +623,13 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// nobody is watching.
 		if b.Builder.PID != 0 {
 			if rt.Runner != nil {
-				if err := rt.Runner.Kill(ctx, handleOf(b.Builder)); err != nil {
+				// No round is open, nothing reads this handle's exit, and
+				// b.Round may be 0.
+				if err := rt.Runner.Kill(ctx, handleOf(b.Builder), ""); err != nil {
 					slog.Warn("stray headless process not killed", "binding", b.Name, "pid", b.Builder.PID, "err", err)
 				} else {
 					slog.Warn("killed stray headless process", "binding", b.Name, "pid", b.Builder.PID)
+					b = abandonSession(b)
 				}
 			}
 			b.Builder = clearProcess(b.Builder)
@@ -611,9 +724,15 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return deliverAndSettle(ctx, rt, tx, next)
 	}
 
+	// The runner exited, so whatever the round's scope still holds is an
+	// abandoned straggler: end it before anything below relaunches, switches
+	// or nudges under the same unit name. Best effort -- the round's close
+	// must not fail because a scope would not die.
+	endRoundScope(ctx, rt, b, b.Round)
+
 	// Exited. The exit code is read once, from the stream's trailer.
 	codeText := "unknown"
-	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), rt.Store.BuilderStreamPath(b.Name, b.Round)); ok {
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); ok {
 		codeText = strconv.Itoa(code)
 	}
 
@@ -637,24 +756,27 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// Exited after writing a report but without the marker: an exited
 	// process cannot be mid-write, so the report is trusted and the
 	// omission noted (spec §4.4).
-	reportPath := rt.Store.ReportPath(b.Name, b.Round)
+	reportPath, serr := writeReaderSummary(rt, b)
+	if serr != nil {
+		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
+	}
 	if _, err := os.Stat(reportPath); err == nil {
-		_, m, _, err := gateOnLimit(ctx, rt, tx, b, logTail(b.Builder.LogPath, limitScanLines), false)
+		_, m, _, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, availability.LimitScanLines), false)
 		if err != nil {
 			return b, err
 		}
 		slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
 		payload := fmt.Sprintf(
-			"Builder exited (code %s) after writing its report but never confirmed completion (no %s). Report: %s.",
-			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), showCommand(b.Name, b.Round, "report"))
+			"Builder exited (code %s) after writing its %s but never confirmed completion (no %s). %s.",
+			codeText, artifactNoun(rt, b), filepath.Base(rt.Store.DonePath(b.Name, b.Round)), closeClause(rt, b, b.Round))
 		if m.Line != "" {
-			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, GateTimeText(m.Until))
+			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, availability.GateTimeText(m.Until))
 		}
 		note := "unmarked"
 		if escapeCheck(ctx, rt, b, true) == EscapeNote {
 			note = joinNotes(note, escapeNote)
 		}
-		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil)
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "")
 		if err != nil {
 			return b, err
 		}
@@ -678,13 +800,20 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			c = cand
 		}
 	}
-	denialLine, isDenial := matchDenial(logTail(b.Builder.LogPath, limitScanLines), denialPatterns(c, h))
+	denialLine, isDenial := matchDenial(currentBuilderTail(rt, b, availability.LimitScanLines), denialPatterns(c, h))
 	suffix := ""
 	if isDenial {
 		suffix = "; permission-blocked: " + denialLine
 	}
 
-	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix)); err != nil {
+	// Detect the oom kill before the exit entry, so the entry says it. A
+	// requested stop still wins and is checked below.
+	oom := codeText == "unknown" && oomKilled(ctx, rt, b)
+	if oom {
+		suffix += "; killed by systemd-oomd (host out of memory)"
+	}
+
+	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix, builderTail(rt, b, logTailLines), b.Shape)); err != nil {
 		return b, err
 	}
 	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
@@ -706,6 +835,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			next = closeServedRound(ctx, rt, next)
 		}
 		return next, nil
+	}
+
+	// An oom kill is not the candidate's failure, so re-queue on the same
+	// candidate with no switch and no exclusion.
+	if oom {
+		return requeueOOM(ctx, rt, tx, b, now)
 	}
 
 	// A cgroup/group kill of the daemon (systemd restart, kill -9 of the
@@ -735,9 +870,10 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			// below.
 			b.QueuedAt = b.RoundStartedAt
 			b.RoundStartedAt = time.Time{}
+			b = abandonSession(b)
 			b.Builder = clearProcess(b.Builder)
 			if err := tx.AppendLog(b.Name, store.LogEntry{
-				TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindQueue, Confirmed: true,
+				TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true,
 				Note: "re-queued (builder lost to a restart)",
 			}); err != nil {
 				return b, err
@@ -746,7 +882,16 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			return b, nil
 		}
 
-		text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
+		// A candidate the configured set no longer holds cannot be resumed
+		// or relaunched: pick again the way a switch does. Accepted cost:
+		// switchBuilder restarts RoundStartedAt, unlike the same-candidate
+		// relaunch below.
+		if staleBuilder(rt, b) {
+			return switchBuilder(ctx, rt, tx, b,
+				"lost to a daemon restart; candidate "+b.BuilderCandidate+" is no longer configured", false, false)
+		}
+
+		text := composePrompt(rt, b, rt.Store.PromptPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
 			"\n\n" + interruptedNote(rt.StartedAt)
 		keep := b.RoundStartedAt
 		// Read the round's session before anything clears it (#370): the
@@ -754,6 +899,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// the fresh relaunch calls -- clears StreamSessionID, because a new
 		// process begins a new session.
 		sess := b.Builder.StreamSessionID
+		oldKind := b.Builder.Kind
+		prior := peekUsage(ctx, rt, b, now)
 		var (
 			next store.Binding
 			err  error
@@ -782,21 +929,25 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			next, err = startRound(ctx, rt, tx, b, text)
 		}
 		if err != nil {
+			b = abandonSessionID(b, oldKind, sess)
 			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder lost to a daemon restart and could not be relaunched: %v", b.Name, err))
 		}
 		b = next
+		// The new process has StreamSessionID "": reapable waits until it
+		// announces its own session, because the fork reads the old one.
+		b = abandonSessionID(b, oldKind, sess)
 		// The round's budget clock survives the restart (#370, spec §4.3):
 		// the interruption is relevo's, so it must not buy the round more
 		// time than it had.
 		b.RoundStartedAt = keep
 		if err := tx.AppendLog(b.Name, store.LogEntry{
-			TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindSwitch, Confirmed: true,
+			TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch, Confirmed: true,
+			Usage: prior,
 			Note: fmt.Sprintf("%s builder (lost to a daemon restart at %s): picked %s for builder: same candidate, not counted",
 				how, rt.StartedAt.UTC().Format(time.RFC3339), b.BuilderCandidate),
 		}); err != nil {
 			return b, err
 		}
-		appendLogMarker(rt.Store.BuilderLogPath(b.Name, b.Round), now, how+" "+b.BuilderCandidate+" (lost to a daemon restart)")
 		b.State = store.StateActive
 		slog.Info("headless builder relaunched after daemon restart", "binding", b.Name, "round", b.Round, "candidate", b.BuilderCandidate)
 		return b, nil
@@ -808,38 +959,117 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return haltBinding(ctx, rt, b, escapeDiagnosis(b, codeText))
 	}
 
-	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, logTail(b.Builder.LogPath, limitScanLines), false)
+	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, availability.LimitScanLines), false)
 	if handled {
 		return next, err
 	}
 
 	if isDenial {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
-			"%s: builder exited (code %s) without a report after a permission denial (%q); not switched -- re-send with a higher tier (relevo send --name %s --file <plan> --tier edit|yolo [--allow-yolo]) or extend the harness's allow list; log: %s",
-			b.Name, codeText, denialLine, b.Name, showCommand(b.Name, b.Round, "log")))
+			"%s: builder exited (code %s) %s after a permission denial (%q); not switched -- re-send with a higher tier (relevo send --name %s --file <plan> --tier edit|yolo [--allow-yolo]) or extend the harness's allow list; log: %s",
+			b.Name, codeText, withoutArtifact(b.Shape), denialLine, b.Name, showCommand(b.Name, b.Round, "log")))
+	}
+
+	// A builder that ended its turn cleanly without a report has left a
+	// session nothing will wake: resume it once with a nudge and hand the
+	// round back, rather than spend a switch on work that is nearly done.
+	if next, resumed, err := nudgeResume(ctx, rt, tx, b, entries, codeText, now); err != nil {
+		return next, err
+	} else if resumed {
+		slog.Info("headless builder nudged to finish", "binding", b.Name, "round", b.Round, "session", b.Builder.StreamSessionID)
+		return next, nil
 	}
 
 	if !switchable {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) without a report; see %s", b.Name, codeText, showCommand(b.Name, b.Round, "log")))
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) %s; see %s", b.Name, codeText, withoutArtifact(b.Shape), showCommand(b.Name, b.Round, "log")))
 	}
 	// The exclusion is appended to the b that switchBuilder receives so the
 	// replacement inherits it and the field is persisted with the switch
 	// (#191): a headless builder that exited without a report is excluded
 	// from the pick for the rest of this round.
 	b.RoundExcluded = appendUnique(b.RoundExcluded, b.BuilderCandidate)
-	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false, true)
+	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) %s", codeText, withoutArtifact(b.Shape)), false, true)
+}
+
+// readerFinalMessageGrace is how long a reader round whose marker is present
+// waits for its runner to exit before relevo gives up on it: a runner writes
+// its final message just after the marker and then exits, so two minutes is
+// generous, and a hung one must not hold the round forever.
+const readerFinalMessageGrace = 2 * time.Minute
+
+// readerSummaryEarlyNote is the note a reader round closes with when its
+// runner outlived readerFinalMessageGrace: the summary is the stream as it was,
+// not a completed final message.
+const readerSummaryEarlyNote = "runner still running after its marker; summary taken early"
+
+// holdReaderOnMarker reports whether a reader round whose marker is already on
+// disk must stay open instead of closing. A reader's marker is not the end of
+// its stream: the runner writes its final message just after the marker and
+// then exits, and that message is the round's summary. So the round waits for
+// the exit -- held is true while the process is alive inside
+// readerFinalMessageGrace -- and a runner still alive after the grace is
+// stopped the way `relevo stop` stops one, with early true so the caller closes
+// on the stream as it is.
+//
+// No marker, no pid and no Runner all leave the round to the ordinary close.
+// An unreadable liveness check holds this tick, as the unmarked path treats it
+// as alive.
+func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (held, early bool, err error) {
+	if b.Builder.PID == 0 || rt.Runner == nil {
+		return false, false, nil
+	}
+	fi, serr := os.Stat(rt.Store.DonePath(b.Name, b.Round))
+	if serr != nil {
+		return false, false, nil // no marker yet: nothing to hold on
+	}
+	alive, aerr := rt.Runner.Alive(ctx, handleOf(b.Builder))
+	if aerr != nil {
+		slog.Warn("reader liveness check failed; holding the round", "binding", b.Name, "pid", b.Builder.PID, "err", aerr)
+		return true, false, nil
+	}
+	if !alive {
+		return false, false, nil
+	}
+	// A sighting: this daemon now knows the process is alive, so a later tick
+	// never classifies it as lost to a restart.
+	rt.Watched.Mark(b.Builder.PID, b.Builder.StartedAt)
+	if rt.Now().Sub(fi.ModTime()) < readerFinalMessageGrace {
+		return true, false, nil
+	}
+	if _, err := stopProcess(ctx, rt, b, "stop"); err != nil {
+		return false, false, err
+	}
+	return false, true, nil
 }
 
 // markerClose is the marker branch of reconcileHeadless: it calls
 // closeOnMarker and, when the marker is present and the gate is done, runs the
 // post-close sequence (served-round close, process clear, verify consult,
-// edges, delivery, repair round). The normal read and the re-check in the
+// delivery, repair round). The normal read and the re-check in the
 // exited branch share it, so a marker that appears inside one tick is handled
 // by one implementation instead of a copy of the post-close block.
 //
 // closed and gating are reported so the caller returns exactly what the marker
 // branch does; a marker-absent read comes back unchanged with both false.
 func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string, wantVerify bool) (store.Binding, bool, bool, error) {
+	// A reader round closes on its runner's exit, not on the marker: the final
+	// message comes after the marker, so the summary is only complete once the
+	// process has gone. While the runner is alive the round stays open; past
+	// the grace the runner is stopped and the round closes with the summary
+	// taken early.
+	if b.Shape == store.ShapeReader {
+		held, early, err := holdReaderOnMarker(ctx, rt, b)
+		if err != nil {
+			return b, false, false, err
+		}
+		if held {
+			return b, false, false, nil
+		}
+		if early {
+			markerNote = joinNotes(markerNote, readerSummaryEarlyNote)
+		}
+	}
+	base := b.RoundBaselineTree
 	next, closed, gating, rec, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
 	if err != nil {
 		return b, false, false, err
@@ -853,27 +1083,27 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		next = closeServedRound(ctx, rt, next)
 	}
 	next.Builder = clearProcess(next.Builder)
+	// A runner that wrote its marker and then died inside the same tick is
+	// gone; end its scope now, best effort. A live runner is left alone:
+	// its own supervisor reaps the scope as it exits. The scope check leads,
+	// so a scopes-off close pays for no liveness read.
+	if rt.Scope != nil && !roundRunnerAlive(ctx, rt, b) {
+		endRoundScope(ctx, rt, b, closedRound)
+	}
 	next.StalledSince = time.Time{}
 	// The gate result -> report queued -> verify consult started ->
 	// delivery (#144), exactly as the pane path orders it: the reviewer
 	// sees the gate's output, so it starts after the gate and before the
-	// planner is told.
-	if wantVerify {
+	// mastermind is told.
+	if wantVerify && next.Shape != store.ShapeReader {
 		gateLogPath := ""
 		if rec != nil {
 			gateLogPath = rec.LogPath
 		}
-		next, err = startVerifyConsult(ctx, rt, tx, next, closedRound, gateLogPath)
+		next, err = consult.StartVerify(ctx, consultDeps(rt), tx, next, closedRound, consult.VerifyDiffCommand(base, next.RoundClosedTree), gateLogPath)
 		if err != nil {
 			return next, true, false, err
 		}
-	}
-	// Edges evaluate right after the verify hook and before delivery
-	// (#37), exactly as the pane path orders it: see reconcile.go's
-	// matching comment for why the pendings return value is discarded.
-	next, _, err = evaluateEdges(ctx, rt, tx, next, closedRound)
-	if err != nil {
-		return next, true, false, err
 	}
 	next, err = deliverAndSettle(ctx, rt, tx, next)
 	if err != nil {
@@ -920,41 +1150,22 @@ func interruptedNote(t time.Time) string {
 // human can find the process.
 var ErrStopFailed = errors.New("could not stop the builder process")
 
-// appendLogMarker writes a single relevo marker line to a builder's log file
-// without ever failing the caller (spec §4.1).
-func appendLogMarker(path string, now time.Time, text string) {
-	if path == "" {
-		return
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		slog.Warn("builder log marker", "path", path, "err", err)
-		return
-	}
-	defer f.Close()
-	line := "--- relevo " + now.Local().Format("15:04:05") + ": " + text + " ---\n"
-	if _, err := f.WriteString(line); err != nil {
-		slog.Warn("builder log marker", "path", path, "err", err)
-	}
-}
-
 // stopProcess kills a headless endpoint's live process, if it has one. It
 // returns the pid it addressed -- 0 when there was nothing to stop -- and
-// Kill's error. A pane endpoint, or a headless one between rounds, is a
-// no-op. Runner nil with a pid recorded is an error: relevo cannot say the
+// Kill's error. A binding with no headless process, or one between rounds, is
+// a no-op. Runner nil with a pid recorded is an error: relevo cannot say the
 // process is stopped.
-func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint, why string) (int, error) {
-	if !e.Headless() || e.PID == 0 {
+func stopProcess(ctx context.Context, rt Runtime, b store.Binding, why string) (int, error) {
+	if !b.Builder.Headless() || b.Builder.PID == 0 {
 		return 0, nil
 	}
 	if rt.Runner == nil {
-		return e.PID, ErrRunnerUnavailable
+		return b.Builder.PID, spawn.ErrRunnerUnavailable
 	}
-	if err := rt.Runner.Kill(ctx, handleOf(e)); err != nil {
-		return e.PID, err
+	if err := rt.Runner.Kill(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); err != nil {
+		return b.Builder.PID, err
 	}
-	appendLogMarker(e.LogPath, rt.Now(), "stopped: "+why)
-	return e.PID, nil
+	return b.Builder.PID, nil
 }
 
 // statusTailLines is how much of the log `relevo status` shows under a
@@ -966,14 +1177,14 @@ const statusTailLines = 3
 // Alive check, then, for an exited process, the trailer's code. No Runner
 // means relevo cannot say. A live process whose stream has gone quiet
 // (binding.StalledSince, #252) reads "stalled <age>" in place of "working".
-func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *HeadlessInfo) {
+func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *view.HeadlessInfo) {
 	e := b.Builder
-	info := &HeadlessInfo{PID: e.PID, LogPath: e.LogPath}
+	info := &view.HeadlessInfo{PID: e.PID, LogPath: e.LogPath}
 	if e.StartedAt != 0 {
 		info.StartedAt = time.Unix(e.StartedAt, 0)
 	}
 	if e.LogPath != "" {
-		if tail := logTail(e.LogPath, statusTailLines); tail != "" {
+		if tail := builderTail(rt, b, statusTailLines); tail != "" {
 			info.Tail = strings.Split(tail, "\n")
 		}
 	}
@@ -995,7 +1206,7 @@ func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *
 		}
 		return "working", info
 	}
-	if code, ok := rt.Runner.ExitCode(ctx, handleOf(e), e.LogPath); ok {
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(e), rt.Store.StreamPath(b.Name, b.Round)); ok {
 		info.ExitCode = strconv.Itoa(code)
 		return "exited " + info.ExitCode, info
 	}

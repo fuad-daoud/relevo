@@ -1,64 +1,24 @@
 package patch
 
-import "testing"
-
-// fixtureSingle is one file, one hunk: a context line followed by an added
-// line.
-const fixtureSingle = "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1,2 @@\n hello\n+world\n"
-
-// fixtureTwoFiles is two files: x.go has a context, a delete and two adds;
-// y.go (no "---"/"+++" lines, straight from "diff --git" to "@@") has a
-// delete and an add.
-const fixtureTwoFiles = "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,2 +1,3 @@\n context\n-old\n+new\n+more\ndiff --git a/y.go b/y.go\n@@ -1 +1 @@\n-a\n+b\n"
-
-func fileByPath(t *testing.T, p Patch, path string) File {
-	t.Helper()
-	for _, f := range p.Files {
-		if f.Path == path {
-			return f
-		}
-	}
-	t.Fatalf("no file %q in patch (files: %v)", path, p.Files)
-	return File{}
-}
-
-func newValues(f File) []int {
-	var got []int
-	for _, h := range f.Hunks {
-		for _, l := range h.Lines {
-			got = append(got, l.New)
-		}
-	}
-	return got
-}
+import (
+	"reflect"
+	"testing"
+)
 
 func TestParseNumbersPostImage(t *testing.T) {
 	p, err := Parse([]byte(fixtureTwoFiles))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-
-	x := fileByPath(t, p, "x.go")
-	gotX := newValues(x)
-	wantX := []int{1, 0, 2, 3}
-	if len(gotX) != len(wantX) {
-		t.Fatalf("x.go New values = %v, want %v", gotX, wantX)
-	}
-	for i := range wantX {
-		if gotX[i] != wantX[i] {
-			t.Fatalf("x.go New values = %v, want %v", gotX, wantX)
-		}
-	}
-
-	y := fileByPath(t, p, "y.go")
-	gotY := newValues(y)
-	wantY := []int{0, 1}
-	if len(gotY) != len(wantY) {
-		t.Fatalf("y.go New values = %v, want %v", gotY, wantY)
-	}
-	for i := range wantY {
-		if gotY[i] != wantY[i] {
-			t.Fatalf("y.go New values = %v, want %v", gotY, wantY)
+	for _, tt := range []struct {
+		path string
+		want []int
+	}{
+		{"x.go", []int{1, 0, 2, 3}},
+		{"y.go", []int{0, 1}},
+	} {
+		if got := newValues(fileByPath(t, p, tt.path)); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s New values = %v, want %v", tt.path, got, tt.want)
 		}
 	}
 
@@ -79,53 +39,57 @@ func TestParseNumbersPostImage(t *testing.T) {
 }
 
 func TestParseCountMismatchIsAnError(t *testing.T) {
-	// Header declares +1,3 (three new lines) but only two ('  hello' and
-	// '+world') are present.
-	bad := "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1,3 @@\n hello\n+world\n"
-
-	_, err := Parse([]byte(bad))
-	if err == nil {
-		t.Fatal("Parse: expected error for a hunk whose declared new-line count disagrees with its lines, got nil")
+	tests := []struct{ name, in, want string }{
+		{"at end of input", "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1,3 @@\n hello\n+world\n", "hunk at file.txt line 4: expected 3 new lines, found 2"},
+		{"at the next file's header", "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,2 @@\n hello\ndiff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n x\n", "hunk at a.txt line 4: expected 2 new lines, found 1"},
+		{"at the next hunk's header", "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,2 @@\n hello\n@@ -5 +5 @@\n world\n", "hunk at a.txt line 4: expected 2 new lines, found 1"},
 	}
-	const want = "hunk at file.txt line 4: expected 3 new lines, found 2"
-	if err.Error() != want {
-		t.Fatalf("Parse error = %q, want %q", err.Error(), want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.in))
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("Parse error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+	if _, err := Annotate([]byte(tests[0].in)); err == nil {
+		t.Error("Annotate: expected error for a hunk count mismatch, got nil")
+	}
+}
+
+func TestParsePathEdgeCases(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"text before the first file is ignored", "stray preamble\n" + fixtureSingle, "file.txt"},
+		{`a "diff --git" line with no " b/" marker falls back to the trimmed line`, "diff --git onlyfile\n@@ -1 +1 @@\n+x\n", "onlyfile"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := Parse([]byte(tt.in))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if len(p.Files) != 1 || p.Files[0].Path != tt.want {
+				t.Fatalf("Parse = %+v, want one file %q", p.Files, tt.want)
+			}
+		})
 	}
 }
 
 func TestAnnotateGutter(t *testing.T) {
-	got, err := Annotate([]byte(fixtureSingle))
-	if err != nil {
-		t.Fatalf("Annotate: %v", err)
+	tests := []struct{ name, in, want string }{
+		{"single file", fixtureSingle, "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\nfile.txt:1  @@ -1 +1,2 @@\nfile.txt:1  hello\nfile.txt:2 +world\n"},
+		{"two files", fixtureTwoFiles, "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\nx.go:1  @@ -1,2 +1,3 @@\nx.go:1  context\nx.go:-      -old\nx.go:2 +new\nx.go:3 +more\ndiff --git a/y.go b/y.go\ny.go:1  @@ -1 +1 @@\ny.go:-      -a\ny.go:1 +b\n"},
+		{"widest gutter forces padding", "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -8,3 +8,3 @@\n eight\n nine\n ten\n", "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\nf.txt:8   @@ -8,3 +8,3 @@\nf.txt:8   eight\nf.txt:9   nine\nf.txt:10  ten\n"},
 	}
-	want := "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\nfile.txt:1  @@ -1 +1,2 @@\nfile.txt:1  hello\nfile.txt:2 +world\n"
-	if string(got) != want {
-		t.Fatalf("Annotate(fixtureSingle) =\n%q\nwant\n%q", string(got), want)
-	}
-
-	got2, err := Annotate([]byte(fixtureTwoFiles))
-	if err != nil {
-		t.Fatalf("Annotate: %v", err)
-	}
-	// Derived from the rule in internal/patch/anchors.go: a header gets its
-	// gutter + two spaces + the original header line; a ' '/'+' line gets
-	// its gutter + one space + the raw line (kind byte included); a '-'
-	// line gets the file's "path:-" gutter + six spaces + the raw line.
-	// Gutter widths here: x.go's widest token is "x.go:3" (6 chars); y.go's
-	// is "y.go:1" (6 chars) -- so no padding is visible in either file.
-	want2 := "diff --git a/x.go b/x.go\n" +
-		"--- a/x.go\n" +
-		"+++ b/x.go\n" +
-		"x.go:1  @@ -1,2 +1,3 @@\n" +
-		"x.go:1  context\n" +
-		"x.go:-      -old\n" +
-		"x.go:2 +new\n" +
-		"x.go:3 +more\n" +
-		"diff --git a/y.go b/y.go\n" +
-		"y.go:1  @@ -1 +1 @@\n" +
-		"y.go:-      -a\n" +
-		"y.go:1 +b\n"
-	if string(got2) != want2 {
-		t.Fatalf("Annotate(fixtureTwoFiles) =\n%q\nwant\n%q", string(got2), want2)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Annotate([]byte(tt.in))
+			if err != nil {
+				t.Fatalf("Annotate: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Fatalf("Annotate =\n%q\nwant\n%q", string(got), tt.want)
+			}
+		})
 	}
 }

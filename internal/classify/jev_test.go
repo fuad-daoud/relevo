@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,374 +12,217 @@ import (
 	"time"
 )
 
-func TestJudgeRequestShape(t *testing.T) {
-	var capturedAuth string
-	var capturedContentType string
-	var capturedBody map[string]any
+func TestJudgeRequestEnvelope(t *testing.T) {
+	srv, captured := captureServer(t)
+	client := newTestClient(t, srv, nil)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedAuth = r.Header.Get("Authorization")
-		capturedContentType = r.Header.Get("Content-Type")
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &capturedBody)
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"model": "jev-latest",
-			"answers": map[string]any{
-				"p0": map[string]any{"type": "noul", "noul": 0.1},
-				"p1": map[string]any{"type": "noul", "noul": 0.8},
-			},
-			"usage": map[string]any{"input_tokens": 100},
-		})
-	}))
-	defer srv.Close()
-
-	client := NewClient("k", "jev-latest")
-	client.BaseURL = srv.URL
-	client.HTTP = srv.Client()
-
-	req := Request{
-		Source:  "report",
-		Harness: "claude",
-		Paragraphs: []Paragraph{
-			{Index: 0, Kind: KindProse, Text: "prose line", Line: 1, Lines: 1},
-			{Index: 1, Kind: KindFenced, Text: "fenced line", Line: 3, Lines: 1},
-		},
-	}
-
-	ans, err := client.Judge(context.Background(), req)
+	ans, err := client.Judge(context.Background(), twoParagraphRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ans.Model != "jev-latest" {
 		t.Errorf("model = %q, want %q", ans.Model, "jev-latest")
 	}
+	if captured.auth != "Bearer k" {
+		t.Errorf("Authorization = %q, want %q", captured.auth, "Bearer k")
+	}
+	if captured.contentType != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", captured.contentType, "application/json")
+	}
+	if captured.body["model"] != "jev-latest" {
+		t.Errorf("body model = %v, want jev-latest", captured.body["model"])
+	}
 
-	if capturedAuth != "Bearer k" {
-		t.Errorf("Authorization = %q, want %q", capturedAuth, "Bearer k")
-	}
-	if capturedContentType != "application/json" {
-		t.Errorf("Content-Type = %q, want %q", capturedContentType, "application/json")
-	}
-
-	if capturedBody["model"] != "jev-latest" {
-		t.Errorf("body model = %v, want jev-latest", capturedBody["model"])
-	}
-	state, ok := capturedBody["state"].(map[string]any)
+	state, ok := captured.body["state"].(map[string]any)
 	if !ok {
-		t.Fatalf("state missing or not object: %v", capturedBody["state"])
+		t.Fatalf("state missing or not object: %v", captured.body["state"])
 	}
-	if state["source"] != "report" {
-		t.Errorf("state.source = %v, want report", state["source"])
-	}
-	if state["harness"] != "claude" {
-		t.Errorf("state.harness = %v, want claude", state["harness"])
+	if state["source"] != "report" || state["harness"] != "claude" {
+		t.Errorf("state = %v, want source report, harness claude", state)
 	}
 	paras, ok := state["paragraphs"].([]any)
 	if !ok || len(paras) != 2 {
 		t.Fatalf("state.paragraphs invalid: %v", state["paragraphs"])
 	}
-	p1, ok := paras[1].(map[string]any)
-	if !ok || p1["kind"] != "fenced" {
-		t.Errorf("paras[1].kind = %v, want fenced", p1["kind"])
+	if p1, ok := paras[1].(map[string]any); !ok || p1["kind"] != "fenced" {
+		t.Errorf("paras[1].kind = %v, want fenced", paras[1])
+	}
+}
+
+func TestJudgeQuestionShape(t *testing.T) {
+	srv, captured := captureServer(t)
+	client := newTestClient(t, srv, nil)
+
+	if _, err := client.Judge(context.Background(), twoParagraphRequest()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	questions, ok := capturedBody["questions"].(map[string]any)
+	questions, ok := captured.body["questions"].(map[string]any)
 	if !ok {
-		t.Fatalf("questions missing: %v", capturedBody["questions"])
+		t.Fatalf("questions missing: %v", captured.body["questions"])
 	}
-	q0, ok := questions["p0"].(map[string]any)
-	if !ok || q0["type"] != "noul" {
-		t.Errorf("questions.p0 type = %v, want noul", q0["type"])
+	for _, qid := range []string{"p0", "p1"} {
+		q, ok := questions[qid].(map[string]any)
+		if !ok || q["type"] != "noul" {
+			t.Errorf("questions.%s type = %v, want noul", qid, questions[qid])
+		}
 	}
-	q1, ok := questions["p1"].(map[string]any)
-	if !ok || q1["type"] != "noul" {
-		t.Errorf("questions.p1 type = %v, want noul", q1["type"])
+	q1, _ := questions["p1"].(map[string]any)
+	instr, _ := q1["instructions"].(string)
+	if !strings.Contains(instr, "`paragraphs[1].text`") {
+		t.Errorf("q1 instructions does not contain `paragraphs[1].text`: %q", instr)
 	}
-	q1Instr, _ := q1["instructions"].(string)
-	if !strings.Contains(q1Instr, "`paragraphs[1].text`") {
-		t.Errorf("q1 instructions does not contain `paragraphs[1].text`: %q", q1Instr)
-	}
-	crit, ok := q1["criteria"].(map[string]any)
-	if !ok || crit["true"] == nil || crit["false"] == nil {
+	if crit, ok := q1["criteria"].(map[string]any); !ok || crit["true"] == nil || crit["false"] == nil {
 		t.Errorf("q1 criteria missing true or false: %v", q1["criteria"])
 	}
 }
 
-func TestJudgeMapsAnswersById(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"model": "jev-model-xyz",
-			"answers": map[string]any{
-				"p1": map[string]any{"type": "noul", "noul": 0.9},
-				"p0": map[string]any{"type": "noul", "noul": 0.1},
-			},
-			"usage": map[string]any{"input_tokens": 42},
+func TestJudgeAnswers(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        map[string]any
+		wantModel   string
+		wantTokens  int
+		wantProbs   []float64
+		wantMissing string
+	}{
+		{
+			name:       "answers are read by id in request order",
+			body:       answersBody("jev-model-xyz", 42, 0.1, 0.9),
+			wantModel:  "jev-model-xyz",
+			wantTokens: 42,
+			wantProbs:  []float64{0.1, 0.9},
+		},
+		{
+			name:        "an answer missing for a paragraph is an error naming it",
+			body:        answersBody("jev-latest", 0, 0.1),
+			wantMissing: "p1",
+		},
+		{
+			name:      "probabilities outside [0,1] clamp",
+			body:      answersBody("jev-latest", 0, -0.5, 1.5),
+			wantModel: "jev-latest",
+			wantProbs: []float64{0, 1},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newTestClient(t, jsonServer(t, tc.body), nil)
+			ans, err := client.Judge(context.Background(), twoParagraphRequest())
+			if tc.wantMissing != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantMissing) {
+					t.Fatalf("expected error mentioning %q, got: %v", tc.wantMissing, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ans.Model != tc.wantModel {
+				t.Errorf("Model = %q, want %q", ans.Model, tc.wantModel)
+			}
+			if ans.InputTokens != tc.wantTokens {
+				t.Errorf("InputTokens = %d, want %d", ans.InputTokens, tc.wantTokens)
+			}
+			if len(ans.Probabilities) != len(tc.wantProbs) || ans.Probabilities[0] != tc.wantProbs[0] || ans.Probabilities[1] != tc.wantProbs[1] {
+				t.Errorf("Probabilities = %v, want %v", ans.Probabilities, tc.wantProbs)
+			}
 		})
-	}))
-	defer srv.Close()
-
-	client := NewClient("k", "jev-latest")
-	client.BaseURL = srv.URL
-	client.HTTP = srv.Client()
-
-	req := Request{
-		Source: "report",
-		Paragraphs: []Paragraph{
-			{Index: 0, Kind: KindProse, Text: "para 0", Line: 1, Lines: 1},
-			{Index: 1, Kind: KindProse, Text: "para 1", Line: 2, Lines: 1},
-		},
-	}
-
-	ans, err := client.Judge(context.Background(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ans.Model != "jev-model-xyz" {
-		t.Errorf("Model = %q, want %q", ans.Model, "jev-model-xyz")
-	}
-	if len(ans.Probabilities) != 2 || ans.Probabilities[0] != 0.1 || ans.Probabilities[1] != 0.9 {
-		t.Errorf("Probabilities = %v, want [0.1, 0.9]", ans.Probabilities)
-	}
-	if ans.InputTokens != 42 {
-		t.Errorf("InputTokens = %d, want 42", ans.InputTokens)
 	}
 }
 
-func TestJudgeMissingAnswer(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"model": "jev-latest",
-			"answers": map[string]any{
-				"p0": map[string]any{"type": "noul", "noul": 0.1},
-			},
+func TestJudgeRetriesOnce(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		prob   float64
+	}{
+		{"429 then success", http.StatusTooManyRequests, 0.5},
+		{"529 then success", 529, 0.2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var count int32
+			var sleeps []time.Duration
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if atomic.AddInt32(&count, 1) == 1 {
+					w.Header().Set("Retry-After", "0")
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte("overloaded"))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(answersBody("jev-latest", 0, tc.prob))
+			}))
+			t.Cleanup(srv.Close)
+
+			client := newTestClient(t, srv, func(d time.Duration) { sleeps = append(sleeps, d) })
+			ans, err := client.Judge(context.Background(), proseRequest())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(ans.Probabilities) != 1 || ans.Probabilities[0] != tc.prob {
+				t.Errorf("Probabilities = %v, want [%v]", ans.Probabilities, tc.prob)
+			}
+			if got := atomic.LoadInt32(&count); got != 2 {
+				t.Errorf("requestCount = %d, want 2", got)
+			}
+			if len(sleeps) != 1 {
+				t.Errorf("len(sleeps) = %d, want 1", len(sleeps))
+			}
 		})
-	}))
-	defer srv.Close()
-
-	client := NewClient("k", "jev-latest")
-	client.BaseURL = srv.URL
-	client.HTTP = srv.Client()
-
-	req := Request{
-		Source: "report",
-		Paragraphs: []Paragraph{
-			{Index: 0, Kind: KindProse, Text: "para 0", Line: 1, Lines: 1},
-			{Index: 1, Kind: KindProse, Text: "para 1", Line: 2, Lines: 1},
-		},
-	}
-
-	_, err := client.Judge(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "p1") {
-		t.Errorf("expected error to mention 'p1', got: %v", err)
 	}
 }
 
-func TestJudgeRetriesOnce429(t *testing.T) {
-	var requestCount int32
-	var sleepCalls []time.Duration
+func TestJudgeStatusErrors(t *testing.T) {
+	cases := []struct {
+		name         string
+		status       int
+		body         string
+		wantErr      error
+		wantCode     int
+		wantContains string
+		wantRequests int32
+	}{
+		{"429 on every attempt gives up after one retry", http.StatusTooManyRequests, "rate limited", nil, 429, "", 2},
+		{"401 is not retried", http.StatusUnauthorized, "unauthorized", ErrUnauthorized, 0, "", 1},
+		{"422 is not retried and carries the body", http.StatusUnprocessableEntity, "unprocessable entity details", ErrBadRequest, 0, "unprocessable entity details", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var count int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&count, 1)
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&requestCount, 1)
-		if count == 1 {
-			w.Header().Set("Retry-After", "0")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = w.Write([]byte("rate limited"))
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"model": "jev-latest",
-			"answers": map[string]any{
-				"p0": map[string]any{"type": "noul", "noul": 0.5},
-			},
+			client := newTestClient(t, srv, func(time.Duration) {})
+			_, err := client.Judge(context.Background(), proseRequest())
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("expected %v, got: %v", tc.wantErr, err)
+			}
+			if tc.wantCode != 0 {
+				var statusErr *StatusError
+				if !errors.As(err, &statusErr) {
+					t.Fatalf("expected *StatusError, got %T: %v", err, err)
+				}
+				if statusErr.Code != tc.wantCode {
+					t.Errorf("statusErr.Code = %d, want %d", statusErr.Code, tc.wantCode)
+				}
+			}
+			if tc.wantContains != "" && !strings.Contains(err.Error(), tc.wantContains) {
+				t.Errorf("expected error to contain %q, got: %v", tc.wantContains, err)
+			}
+			if got := atomic.LoadInt32(&count); got != tc.wantRequests {
+				t.Errorf("requestCount = %d, want %d", got, tc.wantRequests)
+			}
 		})
-	}))
-	defer srv.Close()
-
-	client := NewClient("k", "jev-latest")
-	client.BaseURL = srv.URL
-	client.HTTP = srv.Client()
-	client.Sleep = func(d time.Duration) {
-		sleepCalls = append(sleepCalls, d)
-	}
-
-	req := Request{
-		Source: "report",
-		Paragraphs: []Paragraph{
-			{Index: 0, Kind: KindProse, Text: "para 0", Line: 1, Lines: 1},
-		},
-	}
-
-	ans, err := client.Judge(context.Background(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(ans.Probabilities) != 1 || ans.Probabilities[0] != 0.5 {
-		t.Errorf("unexpected probabilities: %v", ans.Probabilities)
-	}
-	if atomic.LoadInt32(&requestCount) != 2 {
-		t.Errorf("requestCount = %d, want 2", requestCount)
-	}
-	if len(sleepCalls) != 1 {
-		t.Errorf("len(sleepCalls) = %d, want 1", len(sleepCalls))
-	}
-}
-
-func TestJudgeRetriesOnce529(t *testing.T) {
-	var requestCount int32
-	var sleepCalls []time.Duration
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&requestCount, 1)
-		if count == 1 {
-			w.Header().Set("Retry-After", "0")
-			w.WriteHeader(529)
-			_, _ = w.Write([]byte("overloaded"))
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"model": "jev-latest",
-			"answers": map[string]any{
-				"p0": map[string]any{"type": "noul", "noul": 0.2},
-			},
-		})
-	}))
-	defer srv.Close()
-
-	client := NewClient("k", "jev-latest")
-	client.BaseURL = srv.URL
-	client.HTTP = srv.Client()
-	client.Sleep = func(d time.Duration) {
-		sleepCalls = append(sleepCalls, d)
-	}
-
-	req := Request{
-		Source: "report",
-		Paragraphs: []Paragraph{
-			{Index: 0, Kind: KindProse, Text: "para 0", Line: 1, Lines: 1},
-		},
-	}
-
-	ans, err := client.Judge(context.Background(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(ans.Probabilities) != 1 || ans.Probabilities[0] != 0.2 {
-		t.Errorf("unexpected probabilities: %v", ans.Probabilities)
-	}
-	if atomic.LoadInt32(&requestCount) != 2 {
-		t.Errorf("requestCount = %d, want 2", requestCount)
-	}
-	if len(sleepCalls) != 1 {
-		t.Errorf("len(sleepCalls) = %d, want 1", len(sleepCalls))
-	}
-}
-
-func TestJudge429Twice(t *testing.T) {
-	var requestCount int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requestCount, 1)
-		w.Header().Set("Retry-After", "0")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte("rate limited"))
-	}))
-	defer srv.Close()
-
-	client := NewClient("k", "jev-latest")
-	client.BaseURL = srv.URL
-	client.HTTP = srv.Client()
-	client.Sleep = func(time.Duration) {}
-
-	req := Request{
-		Source: "report",
-		Paragraphs: []Paragraph{
-			{Index: 0, Kind: KindProse, Text: "para 0", Line: 1, Lines: 1},
-		},
-	}
-
-	_, err := client.Judge(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	var statusErr *StatusError
-	if !errors.As(err, &statusErr) {
-		t.Fatalf("expected *StatusError, got %T: %v", err, err)
-	}
-	if statusErr.Code != 429 {
-		t.Errorf("statusErr.Code = %d, want 429", statusErr.Code)
-	}
-	if atomic.LoadInt32(&requestCount) != 2 {
-		t.Errorf("requestCount = %d, want 2", requestCount)
-	}
-}
-
-func TestJudge401NoRetry(t *testing.T) {
-	var requestCount int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requestCount, 1)
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte("unauthorized"))
-	}))
-	defer srv.Close()
-
-	client := NewClient("k", "jev-latest")
-	client.BaseURL = srv.URL
-	client.HTTP = srv.Client()
-
-	req := Request{
-		Source: "report",
-		Paragraphs: []Paragraph{
-			{Index: 0, Kind: KindProse, Text: "para 0", Line: 1, Lines: 1},
-		},
-	}
-
-	_, err := client.Judge(context.Background(), req)
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("expected ErrUnauthorized, got: %v", err)
-	}
-	if atomic.LoadInt32(&requestCount) != 1 {
-		t.Errorf("requestCount = %d, want 1", requestCount)
-	}
-}
-
-func TestJudge422NoRetry(t *testing.T) {
-	var requestCount int32
-	bodyMsg := "unprocessable entity details"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requestCount, 1)
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		_, _ = w.Write([]byte(bodyMsg))
-	}))
-	defer srv.Close()
-
-	client := NewClient("k", "jev-latest")
-	client.BaseURL = srv.URL
-	client.HTTP = srv.Client()
-
-	req := Request{
-		Source: "report",
-		Paragraphs: []Paragraph{
-			{Index: 0, Kind: KindProse, Text: "para 0", Line: 1, Lines: 1},
-		},
-	}
-
-	_, err := client.Judge(context.Background(), req)
-	if !errors.Is(err, ErrBadRequest) {
-		t.Fatalf("expected ErrBadRequest, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), bodyMsg) {
-		t.Errorf("expected error to contain %q, got: %v", bodyMsg, err)
-	}
-	if atomic.LoadInt32(&requestCount) != 1 {
-		t.Errorf("requestCount = %d, want 1", requestCount)
 	}
 }
 
@@ -391,26 +233,13 @@ func TestJudgeRetryDoesNotExceedDeadline(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte("too many requests"))
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
-	client := NewClient("k", "jev-latest")
-	client.BaseURL = srv.URL
-	client.HTTP = srv.Client()
-	client.Sleep = func(time.Duration) {
-		sleepCalled = true
-	}
-
+	client := newTestClient(t, srv, func(time.Duration) { sleepCalled = true })
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	req := Request{
-		Source: "report",
-		Paragraphs: []Paragraph{
-			{Index: 0, Kind: KindProse, Text: "para 0", Line: 1, Lines: 1},
-		},
-	}
-
-	_, err := client.Judge(ctx, req)
+	_, err := client.Judge(ctx, proseRequest())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -419,7 +248,7 @@ func TestJudgeRetryDoesNotExceedDeadline(t *testing.T) {
 		t.Fatalf("expected *StatusError, got %T: %v", err, err)
 	}
 	if sleepCalled {
-		t.Errorf("Sleep was called, expected immediate return without sleep")
+		t.Error("Sleep was called, expected immediate return without sleep")
 	}
 }
 
@@ -429,18 +258,15 @@ func TestJudgeEmpty(t *testing.T) {
 		atomic.AddInt32(&requestCount, 1)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
-	client := NewClient("k", "jev-latest")
-	client.BaseURL = srv.URL
-	client.HTTP = srv.Client()
-
-	_, err := client.Judge(context.Background(), Request{Source: "report", Paragraphs: nil})
+	client := newTestClient(t, srv, nil)
+	_, err := client.Judge(context.Background(), Request{Source: "report"})
 	if !errors.Is(err, ErrEmpty) {
 		t.Fatalf("expected ErrEmpty, got: %v", err)
 	}
-	if atomic.LoadInt32(&requestCount) != 0 {
-		t.Errorf("requestCount = %d, want 0", requestCount)
+	if got := atomic.LoadInt32(&requestCount); got != 0 {
+		t.Errorf("requestCount = %d, want 0", got)
 	}
 }
 
@@ -452,19 +278,15 @@ func TestJudgeContextCancelled(t *testing.T) {
 		case <-r.Context().Done():
 		}
 	}))
-	defer func() {
+	t.Cleanup(func() {
 		close(block)
 		srv.CloseClientConnections()
 		srv.Close()
-	}()
+	})
 
 	client := NewClient("k", "jev-latest")
 	client.BaseURL = srv.URL
-	client.HTTP = &http.Client{
-		Transport: &http.Transport{
-			DisableKeepAlives: true,
-		},
-	}
+	client.HTTP = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -472,14 +294,7 @@ func TestJudgeContextCancelled(t *testing.T) {
 		cancel()
 	}()
 
-	req := Request{
-		Source: "report",
-		Paragraphs: []Paragraph{
-			{Index: 0, Kind: KindProse, Text: "para 0", Line: 1, Lines: 1},
-		},
-	}
-
-	_, err := client.Judge(ctx, req)
+	_, err := client.Judge(ctx, proseRequest())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

@@ -24,39 +24,39 @@ func testRows() []db.RoundRow {
 			BindingID: "b1", BindingName: "persist",
 			Repo: p("git@github.com:x/persist.git"), Feature: p("auth"),
 			Number: 5, StartedAt: time.Date(2026, 9, 20, 22, 1, 0, 0, time.UTC),
-			Outcome:          db.OutcomeReported,
-			BuilderCandidate: p("claude/anthropic/sonnet"),
-			BuilderHarness:   p("claude"), BuilderProvider: p("anthropic"), BuilderModel: p("sonnet"),
+			Outcome:   db.OutcomeReported,
+			Candidate: p("claude/anthropic/sonnet"),
+			Harness:   p("claude"), Provider: p("anthropic"), Model: p("sonnet"),
 			Commits: p(1), Tree: p("clean"), GateResult: p("pass"),
 			InTokens: p(int64(1_000_000)), OutTokens: p(int64(200_000)),
 			CostUSD: p(0.42), CostBasis: p("measured"),
-			ReportOutcome: p("done"), BuilderMode: p("pane"),
+			ReportOutcome: p("done"), Mode: p("pane"),
 			DurationMS: p(int64(27 * 60_000)),
 		},
 		{
 			BindingID: "b1", BindingName: "persist",
 			Repo: p("git@github.com:x/persist.git"), Feature: p("auth"),
 			Number: 4, StartedAt: time.Date(2026, 9, 19, 9, 30, 0, 0, time.UTC),
-			Outcome:          db.OutcomeHalted,
-			BuilderCandidate: p("claude/anthropic/sonnet"),
-			BuilderHarness:   p("claude"), BuilderProvider: p("anthropic"), BuilderModel: p("sonnet"),
+			Outcome:   db.OutcomeHalted,
+			Candidate: p("claude/anthropic/sonnet"),
+			Harness:   p("claude"), Provider: p("anthropic"), Model: p("sonnet"),
 			Commits: p(0), Tree: p("dirty"), GateResult: p("fail"),
 			InTokens: p(int64(400_000)), CacheTokens: p(int64(100_000)),
 			CostUSD: p(1.10), CostBasis: p("measured"),
-			ReportOutcome: p("halted"), BuilderMode: p("pane"),
+			ReportOutcome: p("halted"), Mode: p("pane"),
 			DurationMS: p(int64(12 * 60_000)),
 		},
 		{
 			BindingID: "b2", BindingName: "api",
 			Repo:   p("git@github.com:x/api.git"),
 			Number: 2, StartedAt: time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC),
-			Outcome:          db.OutcomeReported,
-			BuilderCandidate: p("agy/antigravity/claude-sonnet-4-6"),
-			BuilderHarness:   p("agy"), BuilderProvider: p("antigravity"), BuilderModel: p("claude-sonnet-4-6"),
+			Outcome:   db.OutcomeReported,
+			Candidate: p("agy/antigravity/claude-sonnet-4-6"),
+			Harness:   p("agy"), Provider: p("antigravity"), Model: p("claude-sonnet-4-6"),
 			Commits: p(3), Tree: p("clean"), GateResult: p("pass"),
 			InTokens: p(int64(2_000_000)),
 			CostUSD:  p(9.10), CostBasis: p("unknown"),
-			ReportOutcome: p("done"), BuilderMode: p("headless"),
+			ReportOutcome: p("done"), Mode: p("headless"),
 		},
 	}
 }
@@ -89,9 +89,9 @@ func key(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []r
 func special(t tea.KeyType) tea.KeyMsg { return tea.KeyMsg{Type: t} }
 
 func TestInitFetchesAndGroups(t *testing.T) {
-	m := feed(t, newTestModel(t, "by:builder"))
+	m := feed(t, newTestModel(t, "by:candidate"))
 	if m.groups == nil {
-		t.Fatal("by:builder: groups = nil, want the regrouped buckets")
+		t.Fatal("by:candidate: groups = nil, want the regrouped buckets")
 	}
 	if len(m.groups) != 2 {
 		t.Fatalf("len(groups) = %d, want 2 (claude, agy)", len(m.groups))
@@ -126,17 +126,17 @@ func TestBCyclesAxes(t *testing.T) {
 		t.Errorf("second b: By = %q, want repo", m.query.By)
 	}
 	m = newTestModel(t, "")
-	for i := 0; i < 10; i++ {
+	for i := 0; i < len(histq.Axes()); i++ {
 		res, _ := m.Update(key("b"))
 		m = res
 	}
 	if m.query.By != histq.AxisNone {
-		t.Errorf("ten b presses: By = %q, want none", m.query.By)
+		t.Errorf("%d b presses: By = %q, want none", len(histq.Axes()), m.query.By)
 	}
 }
 
 func TestEnterTogglesGroup(t *testing.T) {
-	m := feed(t, newTestModel(t, "by:builder"))
+	m := feed(t, newTestModel(t, "by:candidate"))
 	lines := m.visible()
 	if len(lines) == 0 || lines[0].kind != lineGroup {
 		t.Fatalf("first visible line is not a group: %+v", lines)
@@ -251,7 +251,7 @@ func TestSortCyclesAndFlips(t *testing.T) {
 	if m.SortKey() != "started" {
 		t.Errorf("SortKey = %q, want started", m.SortKey())
 	}
-	for _, want := range []string{"cost", "tokens", "duration", "commits", "started"} {
+	for _, want := range []string{"tokens", "duration", "commits", "started"} {
 		res, _ := m.Update(key("s"))
 		m = res
 		if m.SortKey() != want {
@@ -267,22 +267,22 @@ func TestSortCyclesAndFlips(t *testing.T) {
 		t.Error("S did not flip the direction")
 	}
 
-	// The sort is real: by cost descending api's $9.10 (unknown basis, but
-	// still its recorded cost) leads; by cost ascending persist r5 ($0.42).
+	// The sort is real: by tokens descending api's 2.0M leads;
+	// by tokens ascending persist r4 (500k).
 	desc := feed(t, newTestModel(t, ""))
-	desc.sortKey, desc.sortDesc = "cost", true
+	desc.sortKey, desc.sortDesc = "tokens", true
 	if got := desc.visible()[0].row.BindingName; got != "api" {
-		t.Errorf("cost desc: first row %q, want api", got)
+		t.Errorf("tokens desc: first row %q, want api", got)
 	}
 	asc := feed(t, newTestModel(t, ""))
-	asc.sortKey, asc.sortDesc = "cost", false
-	if got := asc.visible()[0].row.Number; got != 5 {
-		t.Errorf("cost asc: first row r%d, want r5", got)
+	asc.sortKey, asc.sortDesc = "tokens", false
+	if got := asc.visible()[0].row.Number; got != 4 {
+		t.Errorf("tokens asc: first row r%d, want r4", got)
 	}
 
-	// Grouped, s cycles the group keys: the default is cost, so the first
+	// Grouped, s cycles the group keys: the default is tokens, so the first
 	// press lands on rounds.
-	g := feed(t, newTestModel(t, "by:builder"))
+	g := feed(t, newTestModel(t, "by:candidate"))
 	if g.groupedLevel() != true {
 		t.Fatal("grouped model's cursor is not on a group line")
 	}
@@ -300,41 +300,41 @@ func TestSortCyclesAndFlips(t *testing.T) {
 
 func TestCursorBoundsAndExpansion(t *testing.T) {
 	m := feed(t, newTestModel(t, ""))
-	if len(m.visible()) != 3 {
-		t.Fatalf("flat: %d visible lines, want 3", len(m.visible()))
+	if len(m.visible()) != 6 {
+		t.Fatalf("flat: %d visible lines, want 6", len(m.visible()))
 	}
 	res, _ := m.Update(special(tea.KeyUp))
 	m = res
-	if m.cursor != 0 {
-		t.Errorf("up at the top: cursor = %d, want 0", m.cursor)
+	if m.cursor != 1 {
+		t.Errorf("up at the top: cursor = %d, want 1", m.cursor)
 	}
 	res, _ = m.Update(special(tea.KeyEnd))
 	m = res
-	if m.cursor != 2 {
-		t.Errorf("end: cursor = %d, want 2", m.cursor)
+	if m.cursor != 5 {
+		t.Errorf("end: cursor = %d, want 5", m.cursor)
 	}
 	res, _ = m.Update(special(tea.KeyDown))
 	m = res
-	if m.cursor != 2 {
-		t.Errorf("down at the bottom: cursor = %d, want 2", m.cursor)
+	if m.cursor != 5 {
+		t.Errorf("down at the bottom: cursor = %d, want 5", m.cursor)
 	}
 	res, _ = m.Update(special(tea.KeyHome))
 	m = res
-	if m.cursor != 0 {
-		t.Errorf("home: cursor = %d, want 0", m.cursor)
+	if m.cursor != 1 {
+		t.Errorf("home: cursor = %d, want 1", m.cursor)
 	}
 	res, _ = m.Update(special(tea.KeyPgDown))
 	m = res
-	if m.cursor != 2 {
-		t.Errorf("pgdown: cursor = %d, want 2", m.cursor)
+	if m.cursor != 5 {
+		t.Errorf("pgdown: cursor = %d, want 5", m.cursor)
 	}
 	res, _ = m.Update(special(tea.KeyPgUp))
 	m = res
-	if m.cursor != 0 {
-		t.Errorf("pgup: cursor = %d, want 0", m.cursor)
+	if m.cursor != 1 {
+		t.Errorf("pgup: cursor = %d, want 1", m.cursor)
 	}
 
-	g := feed(t, newTestModel(t, "by:builder"))
+	g := feed(t, newTestModel(t, "by:candidate"))
 	if len(g.visible()) != 2 {
 		t.Fatalf("grouped: %d visible lines, want 2 groups", len(g.visible()))
 	}

@@ -9,9 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestSendToolSchemaHasBuilderProperty pins (#318) that the MCP send tool
-// advertises the builder argument.
-func TestSendToolSchemaHasBuilderProperty(t *testing.T) {
+func TestSendToolSchemaHasCandidateProperty(t *testing.T) {
 	for _, tool := range Tools() {
 		if tool.Name != "send" {
 			continue
@@ -20,22 +18,20 @@ func TestSendToolSchemaHasBuilderProperty(t *testing.T) {
 		if !ok {
 			t.Fatalf("send schema properties = %#v, want a map", tool.InputSchema["properties"])
 		}
-		prop, ok := props["builder"].(map[string]any)
+		prop, ok := props["candidate"].(map[string]any)
 		if !ok {
-			t.Fatalf("send schema has no builder property: %#v", props)
+			t.Fatalf("send schema has no candidate property: %#v", props)
 		}
 		if prop["type"] != "string" {
-			t.Errorf("builder property type = %v, want string", prop["type"])
+			t.Errorf("candidate property type = %v, want string", prop["type"])
 		}
 		return
 	}
 	t.Fatal("no send tool in Tools()")
 }
 
-// TestRelevoVerbsSendPassesBuilder pins (#318) that RelevoVerbs.Send forwards
-// SendArgs.Builder into SendOptions: a dry run reports the new candidate, while
-// the same call without it reports the binding's own.
-func TestRelevoVerbsSendPassesBuilder(t *testing.T) {
+// TestRelevoVerbsSendPassesCandidate: a dry run reports the new candidate; the same call without it reports the binding's own.
+func TestRelevoVerbsSendPassesCandidate(t *testing.T) {
 	s := store.New(t.TempDir())
 	set := writeCandidates(t, `[
 		{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]},
@@ -50,38 +46,37 @@ func TestRelevoVerbsSendPassesBuilder(t *testing.T) {
 	}
 	saveVerbBinding(t, s, store.Binding{
 		Name: "webshop", CWD: "/repo",
-		Planner:          store.Endpoint{PaneID: "w2:p3"},
+		MasterMind:       store.Endpoint{PaneID: "w2:p3"},
 		Builder:          store.Endpoint{Mode: store.ModeHeadless},
 		BuilderCandidate: "agy/test/m",
 		Round:            1, State: store.StateActive,
 	})
 
-	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
 	plan := writeTempPlan(t, "# do the thing")
 
-	res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, Builder: "claude/test/m", DryRun: true})
+	res, err := v.Send(context.Background(), "", SendArgs{Name: "webshop", File: plan, Candidate: "claude/test/m", DryRun: true})
 	if err != nil {
-		t.Fatalf("Send dry-run with builder: %v", err)
+		t.Fatalf("Send dry-run with candidate: %v", err)
 	}
 	d, ok := res.(relevo.DryRun)
 	if !ok {
 		t.Fatalf("result = %#v, want relevo.DryRun", res)
 	}
 	if d.Candidate != "claude/test/m" {
-		t.Errorf("Candidate = %q, want claude/test/m (Send must pass Builder through)", d.Candidate)
+		t.Errorf("Candidate = %q, want claude/test/m (Send must pass Candidate through)", d.Candidate)
 	}
 
-	// Control: the same call without a builder reports the binding's own
-	// candidate, so the assertion above is the forwarding and nothing else.
-	res, err = v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, DryRun: true})
+	// Control: without a candidate, the binding's own candidate comes back.
+	res, err = v.Send(context.Background(), "", SendArgs{Name: "webshop", File: plan, DryRun: true})
 	if err != nil {
-		t.Fatalf("Send dry-run without builder: %v", err)
+		t.Fatalf("Send dry-run without candidate: %v", err)
 	}
 	d, ok = res.(relevo.DryRun)
 	if !ok {
 		t.Fatalf("result = %#v, want relevo.DryRun", res)
 	}
 	if d.Candidate != "agy/test/m" {
-		t.Errorf("Candidate = %q, want agy/test/m without a builder", d.Candidate)
+		t.Errorf("Candidate = %q, want agy/test/m without a candidate", d.Candidate)
 	}
 }

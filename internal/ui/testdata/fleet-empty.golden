@@ -1,5 +1,6 @@
- relevo › fleet                                                                                                                       14:02 
-0 bindings · 0 need you · 0 active                                                                         sort attention · refreshed 0s ago
+  ◆ relevo    fleet                                                                                                    v0.13.0-28    14:02  
+                                                                                                                                            
+   0 live                                                                                                  sort attention · refreshed 0s ago
 no bindings                                                                                                                                 
                                                                                                                                             
   relevo bind                   put a builder on this tree                                                                                  
@@ -35,6 +36,5 @@ no bindings
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
-                                                                                                                                            
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ move   home/end first/last   enter open   a sort   / filter   : command   ? help   q quit                                                
+
+ enter  open      /  filter      a  sort      :  command      ?  all keys      q  quit                                                      

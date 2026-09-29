@@ -2,13 +2,21 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
+
+// actionEntry is one recorded cockpit action result for the session (:log).
+type actionEntry struct {
+	At   time.Time // when the result arrived (m.now())
+	Verb string    // actionMsg.verb
+	Key  string    // actionMsg.key (the binding key acted on; may be "")
+	Text string    // the result text, or the error text
+	Err  bool
+}
 
 // Model is the cockpit shell: a stack of views, status polling, global keys
 // and message routing (§4.2). It keeps its name because RunSource and the
@@ -22,9 +30,9 @@ type Model struct {
 	// after newModel.
 	stack []View
 
-	report relevo.Report // newest good status; kept on a failed refresh
-	err    error         // last refresh error
-	notice string        // sticky footer notice; cleared by the next key
+	report view.Report // newest good status; kept on a failed refresh
+	err    error       // last refresh error
+	notice string      // sticky footer notice; cleared by the next key
 
 	// statusInFlight is the status fetch's single-flight guard. It is
 	// separate from a view's own guards: a terminal read can block.
@@ -51,7 +59,7 @@ type Model struct {
 
 	// actionLog is ':log': every action result this session, newest last, no
 	// persistence (§4.3).
-	actionLog []string
+	actionLog []actionEntry
 
 	// noticeErr and noticeFaint pick the notice's style: a red failure, a
 	// faint captured stderr line, or the amber default (§4.3, §4.4).
@@ -119,17 +127,18 @@ func (m Model) top() View { return m.stack[len(m.stack)-1] }
 // env is what the shell lends a view on every call (§4.1).
 func (m Model) env() Env {
 	return Env{
-		Ctx:      m.ctx,
-		Src:      m.src,
-		Report:   m.report,
-		Loaded:   m.statusLoaded,
-		StatusAt: m.statusAt,
-		Now:      m.now(),
-		Width:    m.width,
-		Height:   m.height,
-		ErrRows:  errorRows(m.err, m.width),
-		Actions:  m.opts.Actions,
-		Running:  m.running,
+		Ctx:       m.ctx,
+		Src:       m.src,
+		Report:    m.report,
+		Loaded:    m.statusLoaded,
+		StatusAt:  m.statusAt,
+		Now:       m.now(),
+		Width:     m.width,
+		Height:    m.height,
+		ErrRows:   errorRows(m.err, m.width),
+		Actions:   m.opts.Actions,
+		Running:   m.running,
+		ActionLog: m.actionLog,
 	}
 }
 
@@ -153,6 +162,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.updateKey(msg)
 
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -175,7 +187,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pushMsg:
 		m.stack = append(m.stack, msg.v)
-		return m, nil
+		return m, msg.init
 
 	case popMsg:
 		if len(m.stack) > 1 {
@@ -187,7 +199,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.vs) > 0 {
 			m.stack = msg.vs
 		}
-		return m, nil
+		return m, msg.init
 
 	case noticeMsg:
 		m.notice = msg.text
@@ -213,15 +225,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notice = msg.line
 		m.noticeErr = false
 		m.noticeFaint = true
-		m.actionLog = append(m.actionLog, msg.line)
 		return m, nil
 
 	case logMsg:
+		v, cmd := newLogView(m.env())
 		m.stack = []View{
 			newFleetView(m.prefs.Sort != "name").withActions(m.opts.Actions != nil),
-			newLogView(m.actionLog),
+			v,
 		}
-		return m, nil
+		return m, cmd
 
 	case prefMsg:
 		m = m.setPref(msg.key, msg.value)
@@ -264,14 +276,23 @@ func (m Model) finishAction(msg actionMsg) (tea.Model, tea.Cmd) {
 	delete(m.running, msg.key)
 	m.noticeErr = false
 	m.noticeFaint = false
+	text := msg.res.Text
+	isErr := false
 	if msg.res.Err != nil {
 		m.notice = msg.res.Err.Error()
 		m.noticeErr = true
-		m.actionLog = append(m.actionLog, msg.res.Err.Error())
+		text = msg.res.Err.Error()
+		isErr = true
 	} else {
 		m.notice = firstLine(msg.res.Text)
-		m.actionLog = append(m.actionLog, msg.res.Text)
 	}
+	m.actionLog = append(m.actionLog, actionEntry{
+		At:   m.now(),
+		Verb: msg.verb,
+		Key:  msg.key,
+		Text: text,
+		Err:  isErr,
+	})
 	var cmd tea.Cmd
 	if msg.res.Refresh && !m.statusInFlight {
 		m.statusInFlight = true
@@ -342,6 +363,42 @@ func (m Model) updateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.updateTop(k)
 }
 
+// wheelStep is the number of up/down keys one wheel event becomes. It
+// matches the bubbles viewport's default MouseWheelDelta of 3.
+const wheelStep = 3
+
+// updateMouse turns one wheel event into wheelStep arrow keys for the top
+// view (§4), and throws away every other mouse event. It is never forwarded
+// to updateStack.
+func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	var k tea.KeyMsg
+	switch {
+	case msg.Action != tea.MouseActionPress:
+		return m, nil
+	case msg.Button == tea.MouseButtonWheelUp:
+		k = tea.KeyMsg{Type: tea.KeyUp}
+	case msg.Button == tea.MouseButtonWheelDown:
+		k = tea.KeyMsg{Type: tea.KeyDown}
+	default:
+		return m, nil
+	}
+	if m.cmd.open || m.overlay != nil || m.help || m.top().Capturing() {
+		return m, nil
+	}
+	var cmds []tea.Cmd
+	for range wheelStep {
+		next, cmd := m.updateTop(k)
+		m = next.(Model)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if len(cmds) == 0 {
+		return m, nil
+	}
+	return m, tea.Batch(cmds...)
+}
+
 // updateTop forwards one message to the top view alone.
 func (m Model) updateTop(msg tea.Msg) (tea.Model, tea.Cmd) {
 	i := len(m.stack) - 1
@@ -375,12 +432,12 @@ func (m Model) View() string {
 		return "loading…"
 	}
 	env := m.env()
-	rows := []string{m.headerView(env), m.contextView(env)}
+	rows := []string{m.headerView(env), fit("", env.Width), m.contextView(env)}
 	if m.err != nil {
 		rows = append(rows, strings.Split(m.errorBlock(env), "\n")...)
 	}
 	rows = append(rows, strings.Split(m.body(env), "\n")...)
-	rows = append(rows, m.ruleView(env), m.keysView(env))
+	rows = append(rows, "", m.keysView(env))
 	return joinLines(rows)
 }
 
@@ -394,67 +451,4 @@ func joinLines(rows []string) string {
 		out += r
 	}
 	return out
-}
-
-// logView is ':log': the shell's own scrollback of every action result this
-// session, newest last, with no persistence (§4.3).
-type logView struct {
-	lines  []string
-	scroll int
-}
-
-// newLogView builds the view over the shell's action log.
-func newLogView(lines []string) logView { return logView{lines: lines} }
-
-func (l logView) Crumbs() []string { return []string{"log"} }
-
-// Context is how many results the session has.
-func (l logView) Context(env Env) (string, string) {
-	return fmt.Sprintf("%d action results", len(l.lines)), ""
-}
-
-func (l logView) Keys() []KeyHelp {
-	return []KeyHelp{
-		{"↑↓", "scroll"},
-		{"esc", "back"},
-	}
-}
-
-func (l logView) Capturing() bool { return false }
-
-func (l logView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
-	if k, ok := msg.(tea.KeyMsg); ok {
-		switch k.String() {
-		case "up", "k":
-			if l.scroll > 0 {
-				l.scroll--
-			}
-		case "down", "j":
-			l.scroll++
-		}
-	}
-	return l, nil
-}
-
-// Body is the log's tail, newest last, scrolled by ↑↓.
-func (l logView) Body(env Env, width, height int) string {
-	if len(l.lines) == 0 {
-		return strings.Join(blockLines([]string{"no action results yet"}, width, height), "\n")
-	}
-	var all []string
-	for _, line := range l.lines {
-		all = append(all, wrapLine(line, width)...)
-	}
-	end := len(all) - l.scroll
-	if end > len(all) {
-		end = len(all)
-	}
-	if end < 0 {
-		end = 0
-	}
-	start := end - height
-	if start < 0 {
-		start = 0
-	}
-	return strings.Join(fitLines(all[start:end], width, height), "\n")
 }

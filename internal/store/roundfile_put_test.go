@@ -12,8 +12,7 @@ import (
 
 // TestPutRoundFileWritesARowWithNoFile pins the put's whole shape: a
 // drift-shaped patch for a saved binding becomes a round_file row, reads back
-// through ReadFile, is listed by RoundFiles, and never lands on disk (R1-lite
-// §3.1).
+// through ReadFile, is listed by RoundFiles, and never lands on disk.
 func TestPutRoundFileWritesARowWithNoFile(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("webshop", "/home/dev/webshop")
@@ -67,7 +66,7 @@ func TestPutRoundFileUnknownBindingIsErrNotFound(t *testing.T) {
 
 // TestPutRoundFileRefusesBadInput pins the validation: a path outside the
 // binding dir, a basename without the NNN- prefix, a round/base mismatch and a
-// basename whose NNN- is round 0 are all errors, and none of them writes a row.
+// basename whose NNN- is round 0 are all errors, and none writes a row.
 func TestPutRoundFileRefusesBadInput(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("webshop", "/home/dev/webshop")

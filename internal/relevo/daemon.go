@@ -7,14 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/ingest"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -27,13 +26,14 @@ const minInterval = 500 * time.Millisecond
 // an hour, not once a tick.
 const releaseRetryAfter = time.Hour
 
-// plannerPruneInterval is how often the daemon prunes dead planner records
+// mastermindPruneInterval is how often the daemon prunes dead mastermind records
 // (§4.4): at most once an hour, so a busy tick pays one kv read.
-const plannerPruneInterval = time.Hour
+const mastermindPruneInterval = time.Hour
 
-// plannerPrunedAtKey is the store database's kv row naming the last prune
-// (§4.4).
-const plannerPrunedAtKey = "planner.pruned_at"
+// mastermindPrunedAtKey is the store database's kv row naming the last prune
+// (§4.4). Its value is the historical "planner.pruned_at": state already
+// written.
+const mastermindPrunedAtKey = "planner.pruned_at"
 
 // ErrReexec reports that Run stopped because a new relevo binary is ready and
 // the caller should exec into it (#371). It is not a failure: the process
@@ -42,7 +42,7 @@ var ErrReexec = errors.New("relevo daemon: re-exec onto a new binary")
 
 // Daemon ticks on its interval and advances every binding. It is the only
 // reason relevo needs a background process: the inbound leg happens after the
-// planner's turn has ended, when no model is running to notice.
+// mastermind's turn has ended, when no model is running to notice.
 type Daemon struct {
 	rt       Runtime
 	interval time.Duration
@@ -143,13 +143,16 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		d.rt = d.refresh(d.rt)
 	}
 
-	// §4.4: the daemon prunes dead planner records itself, once an hour. It
+	// §4.4: the daemon prunes dead mastermind records itself, once an hour. It
 	// runs before the no-bindings early return: a machine whose sessions have
 	// all ended is exactly the one left carrying stale records.
-	d.safely("planner prune", func() { d.prunePlanners() })
-	// Before the first tick of this process, and after the tarball import
-	// ListArchived runs, every archived record the mirror has not seen is
-	// ingested (P3d §4.2, §4.5).
+	d.safely("mastermind prune", func() { d.pruneMasterMinds() })
+	// A reader round's scratch worktree is throwaway: leftovers from a crash
+	// go away here, before the no-bindings early return, because a machine
+	// whose readers are all gone is exactly the one left carrying them.
+	d.safely("scratch sweep", func() { sweepReaderScratch(ctx, d.rt) })
+	// Before the first tick of this process, every archived record the mirror
+	// has not seen is ingested (P3d §4.2, §4.5).
 	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })
 
 	bindings, err := d.rt.Store.List()
@@ -172,19 +175,18 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		return nil
 	}
 
-	// Edges evaluateEdges armed (Result "firing", Fired false) fire here,
-	// after every binding this tick reconciled has been saved (#37): a
-	// fire-mode edge armed by Reconcile above is in fresh already, and one
-	// left armed by a daemon that crashed between arming it and running it
-	// is picked back up the same way, since armedFires reads every
-	// binding's saved state rather than just what changed this tick. Firing
-	// happens here, outside every WithLock the per-binding loop took, so
-	// Send's own lock on the target never nests inside the source's.
+	// Abandoned harness sessions are deleted here, before ingest: the delete
+	// runs outside the state lock, so a harness that would resume the session
+	// on its own is stopped with the tick's own liveness read already in hand.
+	d.safely("reap sessions", func() { reapAll(ctx, d.rt, fresh) })
+
+	// Local oom-queued rounds are re-admitted here, because nothing else
+	// admits a local queue.
+	d.safely("admit oom-queued", func() { admitOOMQueued(ctx, d.rt, fresh) })
+
 	// Each of Tick's non-binding phases runs through safely, so a panic in
 	// one cannot take the whole daemon down (#370, spec §4.6): it is logged
 	// with a stack and the next tick tries again.
-	d.safely("fires", func() { runFires(ctx, d.rt, armedFires(fresh)) })
-
 	d.safely("ingest", func() { ingestLiveBindings(ctx, d.rt, fresh) })
 
 	d.safely("refresh", func() { d.refreshRelease(ctx) })
@@ -215,7 +217,6 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		d.releaseStore = store.New(root)
 		d.releaseRoot = root
 	}
-	root := d.releaseRoot
 
 	now := time.Now
 	if d.rt.Now != nil {
@@ -239,7 +240,7 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		return
 	}
 
-	cached, ok, err := release.Load(mdb, filepath.Join(root, "release-check.json"))
+	cached, ok, err := release.Load(mdb)
 	if err != nil {
 		slog.Debug("release check: read cache", "err", err)
 		return
@@ -268,22 +269,6 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 	d.releaseRetryAt = time.Time{}
 }
 
-// armedFires collects every fire-mode edge left armed across every binding:
-// Result == "firing" and Fired == false. evaluateEdges sets exactly that
-// pair on a fire-mode edge whose artifact was ready but whose Send has not
-// yet run (#37).
-func armedFires(bindings []store.Binding) []firePending {
-	var pendings []firePending
-	for _, b := range bindings {
-		for _, e := range b.Edges {
-			if !e.Fired && e.Result == "firing" {
-				pendings = append(pendings, firePending{Source: b.Name, Edge: e})
-			}
-		}
-	}
-	return pendings
-}
-
 // tickOne is the per-binding body Tick's whole-store pass uses: one critical
 // section that reads the binding fresh under the lock, reconciles it, and
 // writes it back without releasing the lock. Reconcile and everything it calls
@@ -301,7 +286,12 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 		}
 	}()
 
-	return d.rt.Store.WithLock(func(tx *store.Tx) error {
+	// The fetch runs unlocked, before the critical section: a slow or dead
+	// server must not hold the state lock against every writer.
+	pre := d.prefetchRemote(ctx, name)
+	defer pre.release()
+
+	err = d.rt.Store.WithLock(func(tx *store.Tx) error {
 		loaded, err := tx.Load(name)
 		if errors.Is(err, store.ErrNotFound) {
 			// A `relevo unbind` landed between the caller's binding list and
@@ -328,11 +318,11 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 		// P3c §4.3: before Reconcile, seal every closed round whose files
 		// nothing can still read. Errors are logged per binding and never
 		// fail the tick.
-		sealRounds(d.rt.Store, tx, loaded)
+		sealRounds(d.rt.Store, tx, loaded, d.rt.Policy.ArtifactMaxBytes())
 
-		fresh := backfillPlannerID(d.rt, loaded)
+		fresh := backfillMasterMindID(d.rt, loaded)
 
-		next, err := Reconcile(ctx, d.rt, tx, fresh)
+		next, err := reconcileWith(ctx, d.rt, tx, fresh, pre)
 		if err != nil {
 			return err
 		}
@@ -344,6 +334,37 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 
 		return tx.Save(next)
 	})
+	if err != nil {
+		return err
+	}
+	if pre != nil && pre.Settle != nil {
+		return settleCatchUp(ctx, d.rt, pre.Settle, true)
+	}
+	return nil
+}
+
+// prefetchRemote reads what a remote binding's next reconcile needs from the
+// server, before tickOne takes the state lock. It returns nil when the binding
+// cannot be loaded or is not a live remote binding; a failed server read
+// travels in the fetch's Err and is classified by the apply half. It runs
+// inside tickOne's deferred recover, so a panic in the fetch is contained
+// there.
+func (d *Daemon) prefetchRemote(ctx context.Context, name string) *remoteFetch {
+	if d.rt.Remote == nil {
+		return nil
+	}
+	b, err := d.rt.Store.Load(name)
+	if err != nil {
+		return nil
+	}
+	if !b.Builder.Remote() || b.State == store.StateDone || b.State == store.StatePaused {
+		return nil
+	}
+	if !store.KnownState(b.State) || b.Format > store.BindingFormat {
+		return nil
+	}
+	f := fetchRemote(ctx, d.rt, b)
+	return &f
 }
 
 // archivedMirrorOnce runs the archived-record mirror feed once per process,
@@ -351,9 +372,7 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 var archivedMirrorOnce sync.Once
 
 // mirrorArchived feeds every archived record the mirror has not seen into the
-// database. The tarball import runs inside ListArchived and therefore first, so
-// a root upgraded from a pre-P3d relevo has its tarballs imported before
-// anything looks for archived records.
+// database.
 //
 // Each record is keyed by the kv row "ingested.archive.<recordID>": the key is
 // put only after a successful ingest, so a failure is logged and retried by
@@ -396,11 +415,54 @@ func mirrorArchived(ctx context.Context, rt Runtime) {
 	}
 }
 
+// sweepReaderScratch removes the scratch worktrees whose reader round is no
+// longer needed -- the daemon's cleanup of leftovers a crash left behind. For
+// each reader binding that is not DONE it keeps the entries whose round is the
+// binding's current round or later. A scratch for the current round is kept
+// even before the round is open, because send makes the scratch before it logs
+// the plan. Every other entry goes, including one whose binding is gone, DONE,
+// or not a reader. A leftover for the current round that no round needs is
+// removed by the close, the done or the unbind that already calls
+// removeReaderScratch. Errors are logged per entry by SweepScratch's own join
+// and never fail the tick.
+func sweepReaderScratch(ctx context.Context, rt Runtime) {
+	if rt.Git == nil {
+		return
+	}
+	keep := map[string]int{}
+	bindings, err := rt.Store.List()
+	if err != nil {
+		slog.Warn("scratch sweep: list bindings", "err", err)
+		return
+	}
+	for _, b := range bindings {
+		if b.Shape != store.ShapeReader || b.State == store.StateDone {
+			continue
+		}
+		keep[b.Name] = b.Round
+	}
+
+	removed, err := SweepScratch(ctx, rt, func(name string, round int) bool {
+		r, ok := keep[name]
+		return ok && round >= r
+	})
+	if err != nil {
+		slog.Warn("scratch sweep", "err", err)
+	}
+	for _, path := range removed {
+		slog.Info("removed scratch worktree", "path", path)
+	}
+}
+
 // sealRounds seals every sealable closed round of one binding (P3c §4.3):
 // the round's NNN-* files become round_file rows and then leave the binding
 // directory. It never fails the tick -- each error is logged and the next
 // tick retries, which is also what makes a failed removal harmless.
-func sealRounds(st *store.Store, tx *store.Tx, b store.Binding) {
+//
+// artifactMaxBytes is policy.artifact_max_mb in bytes: a round whose artifact
+// directory is over it is left on disk (§3.4), so nothing is dropped, until a
+// later tick sees the cap raised.
+func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes int64) {
 	rounds, err := st.RoundsOnDisk(b.Name)
 	if err != nil {
 		slog.Warn("seal: list rounds", "binding", b.Name, "err", err)
@@ -409,6 +471,10 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding) {
 	for _, r := range rounds {
 		drained := st.StreamDrained(b, r)
 		if !store.Sealable(b, r, drained) {
+			continue
+		}
+		if over, total := artifactCapExceeded(st, b, r, artifactMaxBytes); over {
+			slog.Info("seal held: artifacts over the cap", "binding", b.Name, "round", r, "bytes", total)
 			continue
 		}
 		n, err := tx.SealRound(b.Name, r)
@@ -422,8 +488,8 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding) {
 	}
 
 	// A DONE binding is finished: once its rounds are sealed and the directory
-	// holds nothing else -- no round file left to seal, no non-NNN file, no
-	// .viewed sidecar -- the empty directory goes too, so a finished binding
+	// holds nothing else -- no round file left to seal, no non-NNN file -- the
+	// empty directory goes too, so a finished binding
 	// leaves nothing on disk. os.Remove, never RemoveAll: anything still in
 	// there means the directory stays. The error is ignored, like every other
 	// failure in this pass.
@@ -447,24 +513,24 @@ func (d *Daemon) safely(phase string, f func()) {
 	f()
 }
 
-// backfillPlannerID is §5.6's upgrade path (#303 §5.6, last paragraph): a
-// binding written before Binding.PlannerID existed has no id, but its
-// Planner.SessionID still names the harness session the planner registered
+// backfillMasterMindID is §5.6's upgrade path (#303 §5.6, last paragraph): a
+// binding written before Binding.MasterMindID existed has no id, but its
+// MasterMind.SessionID still names the harness session the mastermind registered
 // with. When the registry knows that (kind, session), the record's id is set
 // on the binding, under the lock tickOne already holds, so the channel lookup,
-// the forget guard and the status row all key on the planner. A miss, a DONE
+// the forget guard and the status row all key on the mastermind. A miss, a DONE
 // binding, an empty session and a Runtime with no registry all leave the
 // binding exactly as it was.
-func backfillPlannerID(rt Runtime, b store.Binding) store.Binding {
-	if b.PlannerID != "" || b.State == store.StateDone || b.Planner.SessionID == "" || rt.Planners == nil {
+func backfillMasterMindID(rt Runtime, b store.Binding) store.Binding {
+	if b.MasterMindID != "" || b.State == store.StateDone || b.MasterMind.SessionID == "" || rt.MasterMinds == nil {
 		return b
 	}
-	rec, err := rt.Planners.BySession(b.Planner.Kind, b.Planner.SessionID)
+	rec, err := rt.MasterMinds.BySession(b.MasterMind.Kind, b.MasterMind.SessionID)
 	if err != nil {
 		return b
 	}
-	b.PlannerID = rec.ID
-	slog.Debug("planner backfilled", "binding", b.Name, "planner", rec.ID)
+	b.MasterMindID = rec.ID
+	slog.Debug("mastermind backfilled", "binding", b.Name, "mastermind", rec.ID)
 	return b
 }
 
@@ -493,35 +559,35 @@ func ingestLiveBindings(ctx context.Context, rt Runtime, bindings []store.Bindin
 	}
 }
 
-// plannerPrunedAt is the kv row planner.pruned_at's document: when the daemon
-// last ran planner.Prune (§4.4).
-type plannerPrunedAt struct {
+// mastermindPrunedAt is the kv row planner.pruned_at's document: when the daemon
+// last ran mastermind.Prune (§4.4).
+type mastermindPrunedAt struct {
 	At time.Time `json:"pruned_at"`
 }
 
-// plannerPruneDue reports whether a prune last run at last (ok false when it
+// mastermindPruneDue reports whether a prune last run at last (ok false when it
 // never ran) is due again at now: the once-an-hour decision, pure so a test
 // can pin it without a daemon (§4.4).
-func plannerPruneDue(last time.Time, ok bool, now time.Time) bool {
+func mastermindPruneDue(last time.Time, ok bool, now time.Time) bool {
 	if !ok {
 		return true
 	}
-	return !now.Before(last.Add(plannerPruneInterval))
+	return !now.Before(last.Add(mastermindPruneInterval))
 }
 
-// prunePlanners forgets every planner record that is gone and that no non-DONE
-// binding names (planner.Prune), at most once an hour (§4.4). The last run is
+// pruneMasterMinds forgets every mastermind record that is gone and that no non-DONE
+// binding names (mastermind.Prune), at most once an hour (§4.4). The last run is
 // the store database's kv row planner.pruned_at; each forgotten record is
 // logged once. A Runtime with no registry, no usable database or a store whose
 // database will not open prunes nothing and logs why.
-func (d *Daemon) prunePlanners() {
+func (d *Daemon) pruneMasterMinds() {
 	rt := d.rt
-	if rt.Planners == nil || rt.Store == nil {
+	if rt.MasterMinds == nil || rt.Store == nil {
 		return
 	}
 	kv, err := rt.Store.DB()
 	if err != nil {
-		slog.Warn("planner prune: open store db", "err", err)
+		slog.Warn("mastermind prune: open store db", "err", err)
 		return
 	}
 
@@ -530,71 +596,79 @@ func (d *Daemon) prunePlanners() {
 		now = rt.Now
 	}
 
-	last, ok, err := plannerLastPruned(kv)
+	last, ok, err := mastermindLastPruned(kv)
 	if err != nil {
-		slog.Warn("planner prune: read last run", "err", err)
+		slog.Warn("mastermind prune: read last run", "err", err)
 		return
 	}
-	if !plannerPruneDue(last, ok, now()) {
-		return
-	}
-
-	counts, err := bindingPlannerCounts(rt.Store)
-	if err != nil {
-		slog.Warn("planner prune: list bindings", "err", err)
+	if !mastermindPruneDue(last, ok, now()) {
 		return
 	}
 
-	forgotten, err := planner.Prune(rt.Planners, rt.ProcStart, func(id string) int { return counts[id] }, false)
+	counts, err := bindingMasterMindCounts(rt.Store)
 	if err != nil {
-		slog.Warn("planner prune: forget", "err", err)
+		slog.Warn("mastermind prune: list bindings", "err", err)
+		return
+	}
+
+	forgotten, err := mastermind.Prune(rt.MasterMinds, rt.ProcStart, func(id string) int { return counts[id] }, false)
+	if err != nil {
+		slog.Warn("mastermind prune: forget", "err", err)
 	}
 	for _, rec := range forgotten {
-		slog.Info("forgot dead planner", "planner", rec.Name, "id", rec.ID)
+		slog.Info("forgot dead mastermind", "mastermind", rec.Name, "id", rec.ID)
 	}
 
-	if err := recordPlannerPruned(kv, now()); err != nil {
-		slog.Warn("planner prune: record last run", "err", err)
+	idle, err := mastermind.PruneIdle(rt.MasterMinds, func(id string) int { return counts[id] }, now(), false)
+	if err != nil {
+		slog.Warn("mastermind prune: idle", "err", err)
+	}
+	for _, rec := range idle {
+		slog.Info("forgot idle mastermind", "mastermind", rec.Name, "id", rec.ID)
+	}
+
+	if err := recordMasterMindPruned(kv, now()); err != nil {
+		slog.Warn("mastermind prune: record last run", "err", err)
 	}
 }
 
-// plannerLastPruned reads planner.pruned_at, reporting ok false when the row
+// mastermindLastPruned reads planner.pruned_at, reporting ok false when the row
 // is absent (never pruned) or the database predates the kv table.
-func plannerLastPruned(kv db.KV) (last time.Time, ok bool, err error) {
-	raw, ok, err := kv.KVGet(plannerPrunedAtKey)
+func mastermindLastPruned(kv db.KV) (last time.Time, ok bool, err error) {
+	raw, ok, err := kv.KVGet(mastermindPrunedAtKey)
 	if err != nil || !ok {
 		return time.Time{}, false, err
 	}
-	var v plannerPrunedAt
+	var v mastermindPrunedAt
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return time.Time{}, false, err
 	}
 	return v.At, true, nil
 }
 
-// recordPlannerPruned writes planner.pruned_at after a prune attempt.
-func recordPlannerPruned(kv db.KV, at time.Time) error {
-	raw, err := json.Marshal(plannerPrunedAt{At: at.UTC()})
+// recordMasterMindPruned writes planner.pruned_at after a prune attempt.
+func recordMasterMindPruned(kv db.KV, at time.Time) error {
+	raw, err := json.Marshal(mastermindPrunedAt{At: at.UTC()})
 	if err != nil {
 		return err
 	}
-	return kv.KVPut(plannerPrunedAtKey, raw)
+	return kv.KVPut(mastermindPrunedAtKey, raw)
 }
 
-// bindingPlannerCounts counts, per planner id, the bindings that are not DONE
-// and name that planner: the in-use guard planner.Prune needs (§4.4). It is
-// the same walk cmd/relevo's plannerBindingCounts does; the daemon cannot call
+// bindingMasterMindCounts counts, per mastermind id, the bindings that are not DONE
+// and name that mastermind: the in-use guard mastermind.Prune needs (§4.4). It is
+// the same walk cmd/relevo's mastermindBindingCounts does; the daemon cannot call
 // that one (it lives in package main). An unreadable store is an error, never
 // an empty map.
-func bindingPlannerCounts(st *store.Store) (map[string]int, error) {
+func bindingMasterMindCounts(st *store.Store) (map[string]int, error) {
 	bindings, err := st.List()
 	if err != nil {
 		return nil, err
 	}
 	counts := make(map[string]int)
 	for _, b := range bindings {
-		if b.State != store.StateDone && b.PlannerID != "" {
-			counts[b.PlannerID]++
+		if b.State != store.StateDone && b.MasterMindID != "" {
+			counts[b.MasterMindID]++
 		}
 	}
 	return counts, nil

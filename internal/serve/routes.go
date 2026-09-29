@@ -41,12 +41,9 @@ func orText(s, fallback string) string {
 	return fallback
 }
 
-// ownerLabel is the request log's owner field: the caller's enrolled label,
-// falling back to its id prefix (Clients.LabelOf), or "-" when the request
-// never authenticated at all -- caller is the zero ClientID on a signature
-// failure, since the auth middleware never reaches the point of setting one.
-// Without this, that case printed owner="" instead of naming the failure as
-// what it is: nobody.
+// ownerLabel is the request log's owner field: the caller's label, or "-" when
+// the request never authenticated at all -- the zero ClientID an auth failure
+// leaves behind.
 func ownerLabel(clients *Clients, caller remote.ClientID) string {
 	if caller == "" {
 		return "-"
@@ -68,13 +65,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/bindings/{name}/resume", s.handleResume)
 	mux.HandleFunc("POST /v1/bindings/{name}/rounds", s.handleStartRound)
 	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/files/{kind}", s.handleRoundFile)
+	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/artifacts", s.handleRoundArtifacts)
+	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/artifacts/{rel...}", s.handleRoundArtifact)
 	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/bundle", s.handleRoundBundle)
 	mux.HandleFunc("POST /v1/bindings/{name}/rounds/{n}/ack", s.handleAckRound)
 	mux.HandleFunc("POST /v1/bindings/{name}/unavailable", s.handleUnavailable)
 	mux.HandleFunc("POST /v1/unavailable", s.handleUnavailable)
 	mux.HandleFunc("POST /v1/available", s.handleAvailable)
 
-	// Fallback for unknown /v1/...
 	mux.HandleFunc("/v1/", s.handleNotFound)
 
 	authenticatedMux := s.authenticate(mux)
@@ -90,9 +88,7 @@ func (s *Server) Handler() http.Handler {
 
 		owner := ownerLabel(s.clients, callerOf(r))
 		attrs := []any{"method", r.Method, "path", r.URL.Path, "owner", owner, "status", rw.status}
-		// The client's buildVersion, when it sent one (#373): informational,
-		// so an absent header adds no attribute at all and the server never
-		// rejects a request on it.
+		// client_version is informational: an absent header adds no attribute.
 		if v := r.Header.Get(remote.HeaderClientVersion); v != "" {
 			attrs = append(attrs, "client_version", v)
 		}
@@ -110,7 +106,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		Transports:    []string{"git-bundle"},
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders}
 		who.BuilderTier = string(relevo.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()

@@ -1,12 +1,12 @@
- relevo · dashboard   (all rounds)   by:none                                                        
-rounds 3   cost $1.52 (1 unknown)   tokens 3.7M   halted 1 · exited 0   median 19m   bindings 2 · bu
-started           binding       rnd  builder               outcome        tokens   cost     duration
-2026-09-20 22:01  persist       r5   claude/anthropic/so…  reported       1.2M     $0.42    27m     
-2026-09-19 09:30  persist       r4   claude/anthropic/so…  halted         500k     $1.10    12m     
-2026-09-18 08:00  api           r2   agy/antigravity/cla…  reported       2.0M     ?        -       
-                                                                                                    
-                                                                                                    
-                                                                                                    
+    relevo · dashboard   (all rounds)   by:none                                                     
+   3 rounds   3.7M tokens   2 done   1 halted   19m median                                          
+   STARTED  BINDING       RND   CANDIDATE              OUTCOME     COMMITS  TREE    TOKENS   TOOK   
+   yesterday ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 round · 1.2M   
+   22:01    persist       r5    claude/anthropic/son…  done              1  clean     1.2M    27m   
+   sat 19 sep ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 round · 500k   
+   09:30    persist       r4    claude/anthropic/son…  halted            0  dirty     500k    12m   
+   fri 18 sep ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 round · 2M   
+   08:00    api           r2    agy/antigravity/clau…  done              3  clean       2M      ·   
                                                                                                     
                                                                                                     
                                                                                                     

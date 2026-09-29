@@ -12,13 +12,25 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/histq"
-	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // ErrNoDatabase is Bindings's error when rt.DB is nil: the caller (the ui's
 // "all" scope, today) has no database to read past bindings from and must
 // fall back to live-only, not fail.
-var ErrNoDatabase = errors.New("relevo: no database")
+var (
+	ErrNoDatabase = errors.New("relevo: no database")
+
+	// ErrBadSince is histq.ErrBadSince. ParseSince's body moved to
+	// internal/histq so the query language can share it; the alias keeps
+	// errors.Is(err, ErrBadSince) true for every caller written before.
+	ErrBadSince = histq.ErrBadSince
+)
+
+// ParseSince turns "" (zero: no cut), "24h", "7d" or "2026-09-01" into
+// the instant before which entries are ignored. The body lives in
+// internal/histq now, shared with `relevo history -q`; this wrapper is what
+// every existing caller and test in this package keeps using.
+func ParseSince(s string, now time.Time) (time.Time, error) { return histq.ParseSince(s, now) }
 
 // HistoryBinding is one binding, shaped for the ui's rail: enough to render
 // a row (name, round count, last activity, feature, repo, final state,
@@ -102,9 +114,12 @@ func Bindings(ctx context.Context, rt Runtime, here string) ([]HistoryBinding, e
 type HistoryOptions struct {
 	// Here is a cwd to resolve into a repo filter; "" means no such
 	// resolution is wanted (Repo, if set, is used as-is).
-	Here                                                                    string
-	Repo                                                                    string
-	Feature, Binding, Planner, Harness, Provider, Model, Candidate, Outcome string
+	Here                                                                       string
+	Repo                                                                       string
+	Feature, Binding, MasterMind, Harness, Provider, Model, Candidate, Outcome string
+	// Ticket is the --ticket filter (#637): a bare N/#N matches any stored
+	// ticket ending in #N, and owner/repo#N matches exactly (see db.Filter).
+	Ticket string
 	// Since/Until are relevo.ParseSince forms: "", "24h", "7d", "YYYY-MM-DD".
 	Since, Until string
 	// Archived: nil means both; true archived only; false live only.
@@ -169,8 +184,9 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 
 	set("repo", q.Filter.Repo, o.Repo, &f.Repo)
 	set("feature", q.Filter.Feature, o.Feature, &f.Feature)
+	set("ticket", q.Filter.Ticket, o.Ticket, &f.Ticket)
 	set("binding", q.Filter.Binding, o.Binding, &f.Binding)
-	set("planner", q.Filter.Planner, o.Planner, &f.Planner)
+	set("mastermind", q.Filter.MasterMind, o.MasterMind, &f.MasterMind)
 	set("harness", q.Filter.Harness, o.Harness, &f.Harness)
 	set("provider", q.Filter.Provider, o.Provider, &f.Provider)
 	set("model", q.Filter.Model, o.Model, &f.Model)
@@ -245,7 +261,7 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 	return f, notes, nil
 }
 
-// axisList is histq's ten axes as one comma-separated list, for --by errors.
+// axisList is histq's twelve axes as one comma-separated list, for --by errors.
 func axisList() string {
 	axes := histq.Axes()
 	names := make([]string, len(axes))
@@ -253,143 +269,4 @@ func axisList() string {
 		names[i] = string(a)
 	}
 	return strings.Join(names, ", ")
-}
-
-// HistoryLine formats one round exactly as `relevo history` prints it:
-//
-//	2026-09-15 14:02  api-auth      r3  agy/antigravity/opus         reported   +2 commits  clean  $0.42   (archived)
-//
-// started local time (in loc); the binding name, padded to 12 and
-// truncated with "…" past it; the round number as "rN"; the builder
-// candidate's short name (A1 §4.4), padded to 24; the outcome, padded to
-// 14; commits ("+N commits", "-" when nil); tree state ("-" when nil); cost
-// ("$0.42", "~$0.42" when the basis is estimated, "unknown" when the basis
-// is unknown, "-" when there is no cost at all); "(archived)" appended when
-// the binding is archived.
-//
-// names maps a stored token to the candidate's short name, or is nil to
-// print the token as stored.
-func HistoryLine(r db.RoundRow, loc *time.Location, names func(string) string) string {
-	started := r.StartedAt.In(loc).Format("2006-01-02 15:04")
-	nameCol := padTrunc(r.BindingName, 12)
-	candidateCol := padWidth(candidateName(r.BuilderCandidate, names), 24)
-	outcomeCol := padWidth(r.Outcome, 14)
-
-	commits := "-"
-	if r.Commits != nil {
-		commits = fmt.Sprintf("+%d commits", *r.Commits)
-	}
-
-	tree := "-"
-	if r.Tree != nil {
-		tree = *r.Tree
-	}
-
-	cost := formatHistoryCost(r.CostUSD, r.CostBasis)
-
-	line := fmt.Sprintf("%s  %s  r%d  %s  %s  %s  %s  %s",
-		started, nameCol, r.Number, candidateCol, outcomeCol, commits, tree, cost)
-	if r.Archived {
-		line += "  (archived)"
-	}
-	return line
-}
-
-// FormatHistory renders rows one HistoryLine per line (the caller controls
-// order via Filter.Newest), or "no rounds" when rows is empty.
-func FormatHistory(rows []db.RoundRow, loc *time.Location, names func(string) string) string {
-	if len(rows) == 0 {
-		return "no rounds\n"
-	}
-	var sb strings.Builder
-	for _, r := range rows {
-		sb.WriteString(HistoryLine(r, loc, names))
-		sb.WriteString("\n")
-	}
-	return sb.String()
-}
-
-// candidateName is a stored candidate token as a row prints it: the short
-// name when names resolves it, the token itself otherwise (A1 §4.4). A nil
-// names prints the token, so every pre-A1 caller reads as it always did.
-func candidateName(token *string, names func(string) string) string {
-	tok := derefStr(token)
-	if names == nil {
-		return tok
-	}
-	return names(tok)
-}
-
-// FormatGroups renders the `relevo history --by` table: one row per group,
-// the axis value first (padded to 40 and truncated with "…"), then rounds,
-// reported, halted, commits, tokens, cost and the last round's date. Cost is
-// nil-basis-safe money and carries a " (N unknown)" suffix when the group
-// holds rows the sum cannot trust. An empty view prints "no rounds", as
-// FormatHistory does (docs/specs/2026-09-21-dashboard-design.md §5).
-//
-// A1 §4.4: with by == builder the leading column prints the candidate's
-// short name through names (nil leaves the key as stored). The group key and
-// every sum stay the token.
-func FormatGroups(groups []histq.GroupRow, by histq.Axis, loc *time.Location, names func(string) string) string {
-	if len(groups) == 0 {
-		return "no rounds\n"
-	}
-	if loc == nil {
-		loc = time.Local
-	}
-
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s  %6s  %8s  %6s  %7s  %6s  %5s  %-10s\n",
-		padTrunc(string(by), 40), "rounds", "reported", "halted", "commits",
-		"tokens", "cost", "last")
-	for _, g := range groups {
-		cost := usage.Money(usage.Cost{USD: g.CostUSD, Basis: usage.Measured})
-		if g.Unknown > 0 {
-			cost += fmt.Sprintf(" (%d unknown)", g.Unknown)
-		}
-		key := g.Key
-		if by == histq.AxisBuilder && names != nil {
-			key = names(g.Key)
-		}
-		fmt.Fprintf(&sb, "%s  %6d  %8d  %6d  %7d  %6s  %5s  %-10s\n",
-			padTrunc(key, 40), g.Rounds, g.Reported, g.Halted, g.Commits,
-			usage.ShortTokens(g.Tokens), cost, g.Last.In(loc).Format("2006-01-02"))
-	}
-	return sb.String()
-}
-
-// padTrunc left-justifies s to width w, truncating with a trailing "…" when
-// s is longer than w.
-func padTrunc(s string, w int) string {
-	r := []rune(s)
-	if len(r) > w && w > 0 {
-		s = string(r[:w-1]) + "…"
-	}
-	return fmt.Sprintf("%-*s", w, s)
-}
-
-// padWidth left-justifies s to width w with no truncation.
-func padWidth(s string, w int) string {
-	return fmt.Sprintf("%-*s", w, s)
-}
-
-func derefStr(s *string) string {
-	if s == nil {
-		return "-"
-	}
-	return *s
-}
-
-// formatHistoryCost renders a round's cost the way `relevo tab` renders
-// money (internal/usage.Money), except a round with no usage at all prints
-// "-" rather than an empty cell.
-func formatHistoryCost(usd *float64, basis *string) string {
-	if usd == nil {
-		return "-"
-	}
-	b := usage.Measured
-	if basis != nil {
-		b = usage.Basis(*basis)
-	}
-	return usage.Money(usage.Cost{USD: *usd, Basis: b})
 }

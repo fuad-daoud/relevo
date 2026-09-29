@@ -14,7 +14,7 @@ import (
 
 // ErrAmbiguousTier reports candidates of one role carrying different tiers, so
 // no single tier can be written for the role (#374 §3.1). It stops `relevo
-// config roles-init` before anything is written.
+// config init` before anything is written.
 var ErrAmbiguousTier = errors.New("candidates of one role carry different tiers")
 
 // FromLegacy translates today's candidates.json roles/tier and policy.json
@@ -22,7 +22,7 @@ var ErrAmbiguousTier = errors.New("candidates of one role carry different tiers"
 // lines for the CLI to print, in harness.RoleNames() order.
 //
 // For every ordered role, the file it produces makes the registry pick exactly
-// what the legacy registry picks. Shape, Gate and Definitions stay nil: legacy
+// what the legacy registry picks. Shape, Check and Definitions stay nil: legacy
 // has no custom definitions, and the built-in shape is implied.
 func FromLegacy(set *candidate.Set, pol policy.Policy) (*File, []string, error) {
 	reg, _ := Build(nil, set, pol)
@@ -138,8 +138,8 @@ func (f *File) Encode() ([]byte, error) {
 		if row.Shape != nil {
 			out["shape"] = *row.Shape
 		}
-		if row.Gate != nil {
-			out["gate"] = *row.Gate
+		if row.Check != nil {
+			out["gate"] = *row.Check
 		}
 		if row.Definitions != nil {
 			out["definitions"] = row.Definitions

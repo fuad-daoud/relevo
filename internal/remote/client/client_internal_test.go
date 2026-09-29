@@ -1,7 +1,5 @@
-// This file is package client (not client_test) on purpose: the retry backoff
-// and the download deadline are the package-level knobs #373 §4.4 names, and
-// the existing external test file cannot replace an unexported variable. It
-// imports nothing from internal/relevo, so it adds no import cycle.
+// This file is package client, not client_test: it replaces the unexported retry
+// backoff and download deadline, which an external test cannot reach.
 package client
 
 import (
@@ -11,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,19 +19,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
-// testClient is a client pointed at ts, with no TLS pinning: an httptest
-// server of these tests speaks plain HTTP.
 func testClient(t *testing.T, ts *httptest.Server) *Client {
 	t.Helper()
 	kp, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(Servers{"zen": ServerEntry{URL: ts.URL, Insecure: true}}, kp, time.Now)
+	return New(remote.Servers{"zen": remote.ServerEntry{URL: ts.URL, Insecure: true}}, kp, time.Now)
 }
 
-// injectSleep replaces the package's backoff sleep for one test, so a retried
-// call does not wait out its real 1s, 2s, 4s. The returned function reports
+// injectSleep replaces the package's backoff sleep for one test and reports
 // what was asked for.
 func injectSleep(t *testing.T) func() []time.Duration {
 	t.Helper()
@@ -52,140 +49,141 @@ func injectSleep(t *testing.T) func() []time.Duration {
 	}
 }
 
-// TestGatewayStatusIsUnreachable pins #373 §4.4's 5xx-gateway mapping: a 502
-// with a CDN's HTML body becomes an ErrUnreachable that names the status, and
-// the body never reaches the caller as error text.
-//
-// Mutation: drop the isGatewayStatus arm from doRequest and this fails on the
-// HTML body (and on errors.Is).
-func TestGatewayStatusIsUnreachable(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte("<html><body>502 Bad gateway</body></html>"))
-	}))
-	defer ts.Close()
-	cl := testClient(t, ts)
-	injectSleep(t)
+type retryCase struct {
+	name         string
+	status       int
+	succeedAfter int // answer 200 from this attempt on; 0 never succeeds
+	call         func(*Client, context.Context) error
+	wantAttempts int
+	wantSleeps   []time.Duration
+	wantErr      error
+	wantInErr    []string
+	wantNoHTML   bool
+}
 
-	_, err := cl.WhoAmI(context.Background(), "zen")
-	if err == nil {
-		t.Fatal("WhoAmI against a 502 gateway succeeded")
+// retryPolicyCases pins each covered call's retry behaviour; wantSleeps is exact.
+func retryPolicyCases() []retryCase {
+	whoAmI := func(cl *Client, ctx context.Context) error {
+		_, err := cl.WhoAmI(ctx, "zen")
+		return err
 	}
-	if !errors.Is(err, ErrUnreachable) {
-		t.Fatalf("err = %v, want it to wrap ErrUnreachable", err)
+	getBinding := func(cl *Client, ctx context.Context) error {
+		_, err := cl.GetBinding(ctx, "zen", "api")
+		return err
 	}
-	if strings.Contains(err.Error(), "<html") {
-		t.Fatalf("err = %q, want no HTML body in the error text", err)
-	}
-	if !strings.Contains(err.Error(), "502") {
-		t.Fatalf("err = %q, want it to name the status", err)
+	return []retryCase{
+		{
+			name:         "a gateway body is an unreachable, never the CDN HTML",
+			status:       http.StatusBadGateway,
+			call:         whoAmI,
+			wantAttempts: retryAttempts,
+			wantSleeps:   []time.Duration{time.Second, 2 * time.Second, 4 * time.Second},
+			wantErr:      ErrUnreachable,
+			wantInErr:    []string{"502"},
+			wantNoHTML:   true,
+		},
+		{
+			name:         "a later attempt that succeeds ends the retry",
+			status:       http.StatusServiceUnavailable,
+			succeedAfter: 2,
+			call:         getBinding,
+			wantAttempts: 3,
+			wantSleeps:   []time.Duration{time.Second, 2 * time.Second},
+		},
+		{
+			name:         "attempts are exhausted at retryAttempts",
+			status:       http.StatusBadGateway,
+			call:         whoAmI,
+			wantAttempts: retryAttempts,
+			wantSleeps:   []time.Duration{time.Second, 2 * time.Second, 4 * time.Second},
+			wantErr:      ErrUnreachable,
+		},
+		{
+			name:         "Done is not idempotent and is never retried",
+			status:       http.StatusBadGateway,
+			call:         func(cl *Client, ctx context.Context) error { return cl.Done(ctx, "zen", "api") },
+			wantAttempts: 1,
+			wantErr:      ErrUnreachable,
+		},
+		{
+			name:   "StartRound without the idempotent flag is one attempt",
+			status: http.StatusBadGateway,
+			call: func(cl *Client, ctx context.Context) error {
+				_, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", nil, false)
+				return err
+			},
+			wantAttempts: 1,
+			wantErr:      ErrUnreachable,
+		},
 	}
 }
 
-// TestGatewayStatusRetriesThenSucceeds pins the retry's shape: a 503 twice,
-// then a 200, is one successful GetBinding after three attempts, with the
-// injected sleep recording exactly the 1s and 2s backoff.
-func TestGatewayStatusRetriesThenSucceeds(t *testing.T) {
+func TestRetryPolicy(t *testing.T) {
+	for _, tc := range retryPolicyCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, attempts := flakyGateway(tc)
+			ts := httptest.NewServer(handler)
+			defer ts.Close()
+			cl := testClient(t, ts)
+			slept := injectSleep(t)
+
+			err := tc.call(cl, context.Background())
+			checkRetryOutcome(t, tc, err, attempts(), slept())
+		})
+	}
+}
+
+func flakyGateway(tc retryCase) (http.HandlerFunc, func() int) {
 	var mu sync.Mutex
 	attempts := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		attempts++
 		n := attempts
 		mu.Unlock()
-		if n <= 2 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("<html>503</html>"))
+		if tc.succeedAfter > 0 && n > tc.succeedAfter {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"api","round_state":"idle"}`))
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"name":"api","round_state":"idle"}`))
-	}))
-	defer ts.Close()
-	cl := testClient(t, ts)
-	slept := injectSleep(t)
-
-	view, err := cl.GetBinding(context.Background(), "zen", "api")
-	if err != nil {
-		t.Fatalf("GetBinding: %v", err)
+		w.WriteHeader(tc.status)
+		_, _ = w.Write([]byte("<html>" + strconv.Itoa(tc.status) + "</html>"))
 	}
-	if view.Name != "api" {
-		t.Fatalf("view.Name = %q, want api", view.Name)
-	}
-	mu.Lock()
-	got := attempts
-	mu.Unlock()
-	if got != 3 {
-		t.Fatalf("attempts = %d, want 3", got)
-	}
-	waits := slept()
-	if len(waits) != 2 || waits[0] != time.Second || waits[1] != 2*time.Second {
-		t.Fatalf("sleeps = %v, want [1s 2s]", waits)
-	}
-}
-
-// TestGatewayStatusExhaustsRetries pins the other end: four 502s make four
-// attempts and the caller sees the ErrUnreachable of the last one.
-func TestGatewayStatusExhaustsRetries(t *testing.T) {
-	var mu sync.Mutex
-	attempts := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return handler, func() int {
 		mu.Lock()
-		attempts++
-		mu.Unlock()
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte("<html>502</html>"))
-	}))
-	defer ts.Close()
-	cl := testClient(t, ts)
-	injectSleep(t)
-
-	_, err := cl.WhoAmI(context.Background(), "zen")
-	if !errors.Is(err, ErrUnreachable) {
-		t.Fatalf("err = %v, want ErrUnreachable", err)
-	}
-	mu.Lock()
-	got := attempts
-	mu.Unlock()
-	if got != retryAttempts {
-		t.Fatalf("attempts = %d, want %d", got, retryAttempts)
+		defer mu.Unlock()
+		return attempts
 	}
 }
 
-// TestDoneIsNeverRetried pins #373 §4.4's not-idempotent list: a 502 on Done
-// gets one attempt, never the four a retried call makes.
-func TestDoneIsNeverRetried(t *testing.T) {
-	var mu sync.Mutex
-	attempts := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		attempts++
-		mu.Unlock()
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte("<html>502</html>"))
-	}))
-	defer ts.Close()
-	cl := testClient(t, ts)
-	injectSleep(t)
-
-	err := cl.Done(context.Background(), "zen", "api")
-	if !errors.Is(err, ErrUnreachable) {
-		t.Fatalf("err = %v, want ErrUnreachable", err)
+func checkRetryOutcome(t *testing.T, tc retryCase, err error, attempts int, sleeps []time.Duration) {
+	t.Helper()
+	if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+		t.Fatalf("err = %v, want it to wrap %v", err, tc.wantErr)
 	}
-	mu.Lock()
-	got := attempts
-	mu.Unlock()
-	if got != 1 {
-		t.Fatalf("attempts = %d, want 1: Done is not idempotent and must not be retried", got)
+	if tc.wantErr == nil && err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if tc.wantNoHTML && strings.Contains(err.Error(), "<html") {
+		t.Fatalf("err = %q, want no HTML body in the error text", err)
+	}
+	for _, want := range tc.wantInErr {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, want it to contain %q", err, want)
+		}
+	}
+	if attempts != tc.wantAttempts {
+		t.Fatalf("attempts = %d, want %d", attempts, tc.wantAttempts)
+	}
+	if !slices.Equal(sleeps, tc.wantSleeps) {
+		t.Fatalf("sleeps = %v, want %v", sleeps, tc.wantSleeps)
 	}
 }
 
-// TestStartRoundRetryReReadsTheSpooledBody pins #373 §4.4 for a retried
-// StartRound: a 502 then a 200, and the second request carries exactly the
-// plan and bundle bytes of the first.
+// TestStartRoundRetryReReadsTheSpooledBody pins a retried StartRound: the
+// second request carries the first's plan and bundle bytes.
 //
-// Mutation: drop the Seek(0, SeekStart) from StartRound's attempt and the
-// second request's parts come out empty, failing the byte comparison.
+// Mutation: drop startRoundAttempt's Seek(0, SeekStart) and they come out empty.
 func TestStartRoundRetryReReadsTheSpooledBody(t *testing.T) {
 	type seen struct{ plan, bundle string }
 	var mu sync.Mutex
@@ -238,36 +236,6 @@ func TestStartRoundRetryReReadsTheSpooledBody(t *testing.T) {
 	}
 }
 
-// TestStartRoundWithoutRetryIsOneAttempt is the other half of the flag: a
-// caller whose server never advertised idempotent_send gets one attempt.
-func TestStartRoundWithoutRetryIsOneAttempt(t *testing.T) {
-	var mu sync.Mutex
-	attempts := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		attempts++
-		mu.Unlock()
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte("<html>502</html>"))
-	}))
-	defer ts.Close()
-	cl := testClient(t, ts)
-	injectSleep(t)
-
-	_, err := cl.StartRound(context.Background(), "zen", "api", 1, []byte("# Plan"), nil, "", "", nil, false)
-	if !errors.Is(err, ErrUnreachable) {
-		t.Fatalf("err = %v, want ErrUnreachable", err)
-	}
-	mu.Lock()
-	got := attempts
-	mu.Unlock()
-	if got != 1 {
-		t.Fatalf("attempts = %d, want 1 without the retry option", got)
-	}
-}
-
-// TestClientVersionHeader pins #373 §4.4's informational header: every request
-// carries client.Version, whatever the method.
 func TestClientVersionHeader(t *testing.T) {
 	var mu sync.Mutex
 	var heads []string
@@ -309,21 +277,11 @@ func TestClientVersionHeader(t *testing.T) {
 	}
 }
 
-// TestRoundFileDeadline pins #373 §4.4's new per-call deadline on the two
-// downloads that had none: with a test-shortened deadline, a server that
-// answers slower than it fails the call instead of blocking, and the failure
-// is the retryable ErrUnreachable.
+// TestRoundFileDeadline pins RoundFile's per-attempt deadline: a server slower
+// than the test-shortened deadline is cut short with a retryable ErrUnreachable.
 //
-// The server waits for the client to give up instead of sleeping a fixed
-// time, so a late-firing deadline timer on a stalled CI machine cannot let
-// the reply win the race (the macOS flake).
-//
-// Mutation: drop the WithTimeout from RoundFile and this call waits out the
-// server's 10 s fallback and succeeds.
+// Mutation: drop the WithTimeout from RoundFile and the call succeeds.
 func TestRoundFileDeadline(t *testing.T) {
-	// slowServerFallback is how long the handler waits for the client to give
-	// up before it answers anyway. It must be comfortably above the elapsed
-	// bound below, so a mutated client fails on the "succeeded" assertion.
 	const slowServerFallback = 10 * time.Second
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -361,4 +319,72 @@ func TestRoundFileDeadline(t *testing.T) {
 	if elapsed > 2*time.Second {
 		t.Fatalf("RoundFile took %s: the deadline did not cut the call short", elapsed)
 	}
+}
+
+func TestRoundFileFrom(t *testing.T) {
+	t.Run("headers present", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/bindings/api/rounds/1/files/log" {
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+			if r.URL.Query().Get("from") != "10" {
+				t.Fatalf("unexpected from query: %s", r.URL.Query().Get("from"))
+			}
+			w.Header().Set(remote.HeaderFileSize, "42")
+			w.Header().Set(remote.HeaderFileFrom, "10")
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("remainder"))
+		}))
+		defer ts.Close()
+
+		cl := testClient(t, ts)
+		rc, fr, err := cl.RoundFileFrom(context.Background(), "zen", "api", 1, "log", 10)
+		if err != nil {
+			t.Fatalf("RoundFileFrom: %v", err)
+		}
+		defer func() { _ = rc.Close() }()
+
+		if !fr.Honored {
+			t.Fatal("fr.Honored = false, want true")
+		}
+		if fr.From != 10 {
+			t.Fatalf("fr.From = %d, want 10", fr.From)
+		}
+		if fr.Size != 42 {
+			t.Fatalf("fr.Size = %d, want 42", fr.Size)
+		}
+		body, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		if string(body) != "remainder" {
+			t.Fatalf("body = %q, want remainder", string(body))
+		}
+	})
+
+	t.Run("headers absent", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("whole file"))
+		}))
+		defer ts.Close()
+
+		cl := testClient(t, ts)
+		rc, fr, err := cl.RoundFileFrom(context.Background(), "zen", "api", 1, "log", 10)
+		if err != nil {
+			t.Fatalf("RoundFileFrom: %v", err)
+		}
+		defer func() { _ = rc.Close() }()
+
+		if fr.Honored {
+			t.Fatal("fr.Honored = true, want false")
+		}
+		body, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		if string(body) != "whole file" {
+			t.Fatalf("body = %q, want whole file", string(body))
+		}
+	})
 }

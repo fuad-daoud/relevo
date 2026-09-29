@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -48,7 +48,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 		return b, false, nil, err
 	}
 
-	h := ProcHandle{PID: b.GateRun.PID, StartedAt: time.Unix(b.GateRun.StartedAt, 0)}
+	h := spawn.ProcHandle{PID: b.GateRun.PID, StartedAt: time.Unix(b.GateRun.StartedAt, 0)}
 	alive, err := rt.Runner.Alive(ctx, h)
 	if err != nil {
 		// An OS hiccup is not evidence the gate stopped: treat it as alive
@@ -65,7 +65,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 
 	if alive {
 		if elapsed >= gateTimeoutFor(b, rt.Policy) {
-			if err := rt.Runner.Kill(ctx, h); err != nil {
+			if err := rt.Runner.Kill(ctx, h, log); err != nil {
 				slog.Warn("gate timeout kill failed", "binding", b.Name, "pid", b.GateRun.PID, "err", err)
 			}
 			rec := &store.GateRecord{Command: b.GateRun.Command, Result: "timeout", DurationMS: elapsed.Milliseconds(), LogPath: log}
@@ -117,8 +117,8 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 // exactly as the inlined branch did.
 func startGate(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, attempt int, note string) (store.Binding, *store.GateRecord, error) {
 	log := rt.Store.GateLogPath(b.Name, b.Round)
-	h, err := rt.Runner.Start(ctx, ProcSpec{
-		Dir:        b.CWD,
+	h, err := rt.Runner.Start(ctx, spawn.ProcSpec{
+		Dir:        roundTree(rt, b),
 		Argv:       []string{"sh", "-c", b.Gate + " 2>&1"},
 		LogPath:    log,
 		StreamPath: log,
@@ -134,7 +134,7 @@ func startGate(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	if err := tx.AppendLog(b.Name, store.LogEntry{
 		TS:        rt.Now().UTC(),
 		Round:     b.Round,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindGate,
 		Path:      log,
 		Note:      note,
@@ -155,7 +155,7 @@ func gateTimeoutFor(b store.Binding, pol policy.Policy) time.Duration {
 }
 
 // gateLine is the payload line describing a gate's result. name and round are
-// the binding and the round the gate ran for, so the line points the planner
+// the binding and the round the gate ran for, so the line points the mastermind
 // at `relevo show <name> --round <round> --gate` rather than the log's path
 // (P4a round 2 §4.2):
 //
@@ -191,8 +191,7 @@ func gateLine(name string, round int, rec store.GateRecord, tail []string) strin
 // tailLines returns the last n non-empty lines of the file at path, or nil
 // when it cannot be read; never an error (the log is a convenience). Lines
 // carrying the rusage trailer are skipped (#313): any scoped spawn prints one
-// before its exit trailer, and it is not gate output. A pre-rename log's
-// relay-rusage: line is skipped the same way (#292 §1). // name-guard: legacy
+// before its exit trailer, and it is not gate output.
 func tailLines(read func(string) ([]byte, error), path string, n int) []string {
 	data, err := read(path)
 	if err != nil {
@@ -200,7 +199,7 @@ func tailLines(read func(string) ([]byte, error), path string, n int) []string {
 	}
 	var nonEmpty []string
 	for _, l := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, RusageTrailerPrefix) || strings.HasPrefix(l, legacy.RusageTrailer) {
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, spawn.RusageTrailerPrefix) {
 			continue
 		}
 		nonEmpty = append(nonEmpty, l)

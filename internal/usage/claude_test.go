@@ -6,34 +6,6 @@ import (
 	"time"
 )
 
-func mustOpen(t *testing.T, path string) *os.File {
-	t.Helper()
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { f.Close() })
-	return f
-}
-
-// mustTemp writes body to a temp file and returns it open at offset 0,
-// plus its path.
-func mustTemp(t *testing.T, body string) (*os.File, string) {
-	t.Helper()
-	f, err := os.CreateTemp(t.TempDir(), "fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString(body); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { f.Close() })
-	return f, f.Name()
-}
-
 func TestProjectSlug(t *testing.T) {
 	cases := map[string]string{
 		"/home/fuad/projects/relevo":       "-home-fuad-projects-relevo",
@@ -94,7 +66,8 @@ func TestClaudeProjectWindowCwdAndDedupe(t *testing.T) {
 	start := time.Date(2026, 9, 18, 7, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC)
 	got := claudeProject(os.DirFS("testdata/claude-project"), "/wt", start, end, "anthropic")
-	// msg_p1, msg_p2 (once), msg_s1 from the subagent. Not p3 (outside), not p4 (other cwd).
+	// msg_p1, msg_p2 (once), msg_s1 from the subagent. Not p3 (outside), not p4
+	// (other cwd).
 	if len(got) != 3 {
 		t.Fatalf("samples = %d, want 3: %+v", len(got), got)
 	}

@@ -1,11 +1,6 @@
-// Package config is the one home of relevo's configuration and secrets. They
-// live in the machine database (schema v2's config_doc and secret tables), and
-// the files under ~/.config/relevo are imported into it once and removed
-// (docs/specs/2026-09-24-db-as-record-design.md §2, §4.6).
-//
-// This package imports candidate, policy, roles, usage, remote/client and db,
-// and none of them imports internal/relevo or this package, so the store stays
-// a leaf the runtime can hold.
+// Package config is the one home of relevo's configuration and secrets: they
+// live in the machine database and are imported once from the files under
+// ~/.config/relevo.
 package config
 
 import (
@@ -14,18 +9,16 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// Section names one config_doc row. Hooks, Agents and Actors are stored as a
-// JSON body rather than a file.
+// Section names one config_doc row. Hooks, Agents and Actors have no file:
+// they are stored as a JSON body.
 type Section string
 
 const (
@@ -39,13 +32,11 @@ const (
 	Hooks      Section = "hooks"
 )
 
-// Sections lists every section in the order an import checks and stores them,
-// and the order EncodeDoc and DiffDocs render them.
+// Sections is the order an import checks and stores the sections, and the
+// order EncodeDoc and DiffDocs render them.
 var Sections = []Section{Candidates, Agents, Actors, Policy, Roles, Prices, Servers, Hooks}
 
-// sectionFile maps a section to the file it is imported from. Hooks has none:
-// it is a directory of argv lists. Agents and Actors have none either: they
-// are DB-only in round 1.
+// sectionFile maps a section to the file it is imported from.
 var sectionFile = map[Section]string{
 	Candidates: "candidates.json",
 	Policy:     "policy.json",
@@ -54,16 +45,11 @@ var sectionFile = map[Section]string{
 	Servers:    "servers.json",
 }
 
-// FileName returns the on-disk file a section is imported from, or "" for a
-// section with no file (Hooks, Agents, Actors).
 func FileName(sec Section) string { return sectionFile[sec] }
 
-// Secret names, and the files they are imported from.
 const (
-	// SecretClientKey stores the PEM bytes remote.MarshalPrivate writes.
 	SecretClientKey = "client.key"
-	// SecretTypesafe stores the trimmed TypeSafe API key bytes.
-	SecretTypesafe = "typesafe"
+	SecretTypesafe  = "typesafe"
 )
 
 const (
@@ -73,8 +59,8 @@ const (
 	aliasesFile     = "aliases.json"
 )
 
-// Files returns the file names a config dir may hold and ImportFiles consumes.
-// Hooks is a directory and is not in the list.
+// Files returns the file names a config dir may hold and ImportFiles consumes;
+// the hooks directory is not in the list.
 func Files() []string {
 	files := make([]string, 0, len(Sections)+2)
 	for _, sec := range Sections {
@@ -85,37 +71,28 @@ func Files() []string {
 	return append(files, clientKeyFile, typesafeKeyFile)
 }
 
-// Hooks maps an event type to the argv lists run for it, in order.
 type HooksMap map[string][][]string
 
-// Loaded is one consistent read of every section and both secrets.
-//
-// An absent section reproduces the corresponding missing file exactly: an
-// absent candidates or servers section is an empty, non-nil collection, an
-// absent policy is the zero Policy, an absent roles section keeps the legacy
-// derivation, an absent prices section is the embedded default, and an absent
-// hooks section is an empty map.
+// Loaded is one consistent read of every section and both secrets. An absent
+// section reproduces the corresponding missing file: an empty non-nil
+// collection for candidates and servers, the zero values otherwise.
 type Loaded struct {
 	Candidates *candidate.Set
 	Policy     policy.Policy
 	RolesFile  *roles.File
 	Registry   *roles.Registry
 	Prices     usage.Prices
-	Servers    client.Servers
+	Servers    remote.Servers
 	Hooks      HooksMap
 	ClientKey  []byte
 	Typesafe   string
 	Warnings   []string
 	Version    int64
-	// Agents and Actors are the parsed agents and actors sections, for round
-	// 2's views. Each is nil when its section is absent.
-	Agents map[string]actors.AgentEntry
-	Actors map[string]actors.Actor
+	Agents     map[string]roles.AgentEntry
+	Actors     map[string]roles.Actor
 }
 
-// Store reads and writes the config sections and secrets of one database. Its
-// source, message and clock label every write's revision; Open gives a store
-// its default clock, and As/WithClock copy it with a label or a test clock.
+// Store reads and writes the config sections and secrets of one database.
 type Store struct {
 	db      *db.DB
 	source  string
@@ -123,148 +100,43 @@ type Store struct {
 	now     func() time.Time
 }
 
-// Open returns a Store over d.
 func Open(d *db.DB) *Store { return &Store{db: d, now: time.Now} }
 
 // Load reads every section and both secrets. A stored body that does not parse
-// is returned as an error: it cannot happen after a validated Put.
+// is an error: it cannot happen after a validated Put.
 func (s *Store) Load() (Loaded, error) {
 	var L Loaded
 
-	var candBody []byte
-	candOK := false
-	if body, ok, err := s.db.ConfigGet(string(Candidates)); err != nil {
+	candBody, candOK, err := s.loadCandidates(&L)
+	if err != nil {
 		return Loaded{}, err
-	} else if ok {
-		candBody, candOK = body, true
-		set, warnings, err := candidate.Parse(FileName(Candidates), body)
-		if err != nil {
-			return Loaded{}, err
-		}
-		L.Candidates = set
-		L.Warnings = append(L.Warnings, warnings...)
-	} else {
-		// An absent section is today's missing file: an empty set. Parse of an
-		// empty array is exactly candidate.Load's missing-file result.
-		set, _, err := candidate.Parse(FileName(Candidates), []byte("[]"))
-		if err != nil {
-			return Loaded{}, err
-		}
-		L.Candidates = set
 	}
-
-	var polBody []byte
-	polOK := false
-	if body, ok, err := s.db.ConfigGet(string(Policy)); err != nil {
+	polBody, polOK, err := s.loadPolicy(&L)
+	if err != nil {
 		return Loaded{}, err
-	} else if ok {
-		polBody, polOK = body, true
-		pol, warnings, err := policy.Parse(FileName(Policy), body)
-		if err != nil {
-			return Loaded{}, err
-		}
-		L.Policy = pol
-		L.Warnings = append(L.Warnings, warnings...)
 	}
-
-	rolesPresent := false
-	if body, ok, err := s.db.ConfigGet(string(Roles)); err != nil {
+	rolesPresent, err := s.loadRoles(&L)
+	if err != nil {
 		return Loaded{}, err
-	} else if ok {
-		f, warnings, err := roles.Parse(FileName(Roles), body)
-		if err != nil {
-			return Loaded{}, err
-		}
-		L.RolesFile = f
-		L.Warnings = append(L.Warnings, warnings...)
-		rolesPresent = true
 	}
-
-	// Agents and Actors are DB-only (A2 round 1). They exist to be converted
-	// into today's roles.File, which the registry is then built from; the
-	// conversion runs only when actors is present.
-	var agents map[string]actors.AgentEntry
-	if body, ok, err := s.db.ConfigGet(string(Agents)); err != nil {
+	agents, err := s.loadAgents(&L)
+	if err != nil {
 		return Loaded{}, err
-	} else if ok {
-		a, warnings, err := actors.ParseAgents(body)
-		if err != nil {
-			return Loaded{}, err
-		}
-		agents, L.Agents = a, a
-		L.Warnings = append(L.Warnings, warnings...)
 	}
-
-	if body, ok, err := s.db.ConfigGet(string(Actors)); err != nil {
+	if err := s.loadActors(&L, agents, rolesPresent, candBody, candOK, polBody, polOK); err != nil {
 		return Loaded{}, err
-	} else if ok {
-		a, warnings, err := actors.ParseActors(body)
-		if err != nil {
-			return Loaded{}, err
-		}
-		L.Actors = a
-		L.Warnings = append(L.Warnings, warnings...)
-
-		rf, warnings, err := actors.ToRolesFile(agents, a)
-		if err != nil {
-			return Loaded{}, err
-		}
-		L.RolesFile = rf
-		L.Warnings = append(L.Warnings, warnings...)
-		if rolesPresent {
-			L.Warnings = append(L.Warnings, "config: actors is set, so the roles section is ignored")
-		}
-		// The other pre-actors keys stop being read the moment actors decide
-		// (A2 round 2 R4).
-		L.Warnings = append(L.Warnings, ignoredLegacyWarnings(candBody, candOK, polBody, polOK)...)
 	}
-
-	if body, ok, err := s.db.ConfigGet(string(Prices)); err != nil {
+	if err := s.loadPrices(&L); err != nil {
 		return Loaded{}, err
-	} else if ok {
-		p, err := usage.ParsePrices(body)
-		if err != nil {
-			return Loaded{}, err
-		}
-		L.Prices = p
-	} else {
-		L.Prices = usage.DefaultPrices()
 	}
-
-	if body, ok, err := s.db.ConfigGet(string(Servers)); err != nil {
+	if err := s.loadServers(&L); err != nil {
 		return Loaded{}, err
-	} else if ok {
-		srv, err := client.ParseServers(body)
-		if err != nil {
-			return Loaded{}, err
-		}
-		L.Servers = srv
-	} else {
-		L.Servers = client.Servers{}
 	}
-
-	L.Hooks = HooksMap{}
-	if body, ok, err := s.db.ConfigGet(string(Hooks)); err != nil {
+	if err := s.loadHooks(&L); err != nil {
 		return Loaded{}, err
-	} else if ok {
-		if err := json.Unmarshal(body, &L.Hooks); err != nil {
-			return Loaded{}, fmt.Errorf("%s: %v", Hooks, err)
-		}
-		if L.Hooks == nil {
-			L.Hooks = HooksMap{}
-		}
 	}
-
-	if key, ok, err := s.db.SecretGet(SecretClientKey); err != nil {
+	if err := s.loadSecrets(&L); err != nil {
 		return Loaded{}, err
-	} else if ok {
-		L.ClientKey = key
-	}
-
-	if ts, ok, err := s.db.SecretGet(SecretTypesafe); err != nil {
-		return Loaded{}, err
-	} else if ok {
-		L.Typesafe = string(ts)
 	}
 
 	reg, err := roles.Build(L.RolesFile, L.Candidates, L.Policy)
@@ -278,11 +150,169 @@ func (s *Store) Load() (Loaded, error) {
 		return Loaded{}, err
 	}
 	L.Version = v
-
 	return L, nil
 }
 
-// Body returns the stored JSON body of sec, and ok false when it is absent.
+func (s *Store) loadCandidates(L *Loaded) ([]byte, bool, error) {
+	body, ok, err := s.db.ConfigGet(string(Candidates))
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		// An absent section is today's missing file: an empty set. Parsing an
+		// empty array is exactly candidate.Load's missing-file result.
+		set, _, err := candidate.Parse(FileName(Candidates), []byte("[]"))
+		if err != nil {
+			return nil, false, err
+		}
+		L.Candidates = set
+		return nil, false, nil
+	}
+	set, warnings, err := candidate.Parse(FileName(Candidates), body)
+	if err != nil {
+		return nil, false, err
+	}
+	L.Candidates = set
+	L.Warnings = append(L.Warnings, warnings...)
+	return body, true, nil
+}
+
+func (s *Store) loadPolicy(L *Loaded) ([]byte, bool, error) {
+	body, ok, err := s.db.ConfigGet(string(Policy))
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	pol, warnings, err := policy.Parse(FileName(Policy), body)
+	if err != nil {
+		return nil, false, err
+	}
+	L.Policy = pol
+	L.Warnings = append(L.Warnings, warnings...)
+	return body, true, nil
+}
+
+func (s *Store) loadRoles(L *Loaded) (bool, error) {
+	body, ok, err := s.db.ConfigGet(string(Roles))
+	if err != nil || !ok {
+		return false, err
+	}
+	f, warnings, err := roles.Parse(FileName(Roles), body)
+	if err != nil {
+		return false, err
+	}
+	L.RolesFile = f
+	L.Warnings = append(L.Warnings, warnings...)
+	return true, nil
+}
+
+func (s *Store) loadAgents(L *Loaded) (map[string]roles.AgentEntry, error) {
+	body, ok, err := s.db.ConfigGet(string(Agents))
+	if err != nil || !ok {
+		return nil, err
+	}
+	a, warnings, err := roles.ParseAgents(body)
+	if err != nil {
+		return nil, err
+	}
+	L.Agents = a
+	L.Warnings = append(L.Warnings, warnings...)
+	return a, nil
+}
+
+// loadActors parses the actors section and, when present, rebuilds the roles
+// file from it: actors win and the pre-actors keys stop being read.
+func (s *Store) loadActors(L *Loaded, agents map[string]roles.AgentEntry, rolesPresent bool, candBody []byte, candOK bool, polBody []byte, polOK bool) error {
+	body, ok, err := s.db.ConfigGet(string(Actors))
+	if err != nil || !ok {
+		return err
+	}
+	a, warnings, err := roles.ParseActors(body)
+	if err != nil {
+		return err
+	}
+	L.Actors = a
+	L.Warnings = append(L.Warnings, warnings...)
+
+	rf, warnings, err := roles.FromActors(agents, a)
+	if err != nil {
+		return err
+	}
+	L.RolesFile = rf
+	L.Warnings = append(L.Warnings, warnings...)
+	if rolesPresent {
+		L.Warnings = append(L.Warnings, "config: actors is set, so the roles section is ignored")
+	}
+	L.Warnings = append(L.Warnings, ignoredLegacyWarnings(candBody, candOK, polBody, polOK)...)
+	return nil
+}
+
+func (s *Store) loadPrices(L *Loaded) error {
+	body, ok, err := s.db.ConfigGet(string(Prices))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		L.Prices = usage.DefaultPrices()
+		return nil
+	}
+	p, err := usage.ParsePrices(body)
+	if err != nil {
+		return err
+	}
+	L.Prices = p
+	return nil
+}
+
+func (s *Store) loadServers(L *Loaded) error {
+	body, ok, err := s.db.ConfigGet(string(Servers))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		L.Servers = remote.Servers{}
+		return nil
+	}
+	srv, err := remote.ParseServers(body)
+	if err != nil {
+		return err
+	}
+	L.Servers = srv
+	return nil
+}
+
+func (s *Store) loadHooks(L *Loaded) error {
+	body, ok, err := s.db.ConfigGet(string(Hooks))
+	if err != nil || !ok {
+		L.Hooks = HooksMap{}
+		return err
+	}
+	if err := json.Unmarshal(body, &L.Hooks); err != nil {
+		return fmt.Errorf("%s: %w", Hooks, err)
+	}
+	if L.Hooks == nil {
+		L.Hooks = HooksMap{}
+	}
+	return nil
+}
+
+func (s *Store) loadSecrets(L *Loaded) error {
+	key, ok, err := s.db.SecretGet(SecretClientKey)
+	if err != nil {
+		return err
+	}
+	if ok {
+		L.ClientKey = key
+	}
+	ts, ok, err := s.db.SecretGet(SecretTypesafe)
+	if err != nil {
+		return err
+	}
+	if ok {
+		L.Typesafe = string(ts)
+	}
+	return nil
+}
+
 func (s *Store) Body(sec Section) ([]byte, bool, error) {
 	return s.db.ConfigGet(string(sec))
 }
@@ -293,17 +323,14 @@ func (s *Store) Has(sec Section) (bool, error) {
 	return ok, err
 }
 
-// Secret returns name's stored value, and ok false when it is absent.
-// PutSecret is its write side.
 func (s *Store) Secret(name string) ([]byte, bool, error) {
 	return s.db.SecretGet(name)
 }
 
-// Version returns config_meta.version, the counter Refresh compares against.
 func (s *Store) Version() (int64, error) { return s.db.ConfigVersion() }
 
-// Validate runs the §4.3 parser for sec over body, returning its warnings. A
-// section it does not know is an error.
+// Validate parses body for sec, returning its warnings; an unknown section is
+// an error.
 func Validate(sec Section, body []byte) ([]string, error) {
 	switch sec {
 	case Candidates:
@@ -316,21 +343,21 @@ func Validate(sec Section, body []byte) ([]string, error) {
 		_, warnings, err := roles.Parse(FileName(sec), body)
 		return warnings, err
 	case Agents:
-		_, warnings, err := actors.ParseAgents(body)
+		_, warnings, err := roles.ParseAgents(body)
 		return warnings, err
 	case Actors:
-		_, warnings, err := actors.ParseActors(body)
+		_, warnings, err := roles.ParseActors(body)
 		return warnings, err
 	case Prices:
 		_, err := usage.ParsePrices(body)
 		return nil, err
 	case Servers:
-		_, err := client.ParseServers(body)
+		_, err := remote.ParseServers(body)
 		return nil, err
 	case Hooks:
 		var h HooksMap
 		if err := json.Unmarshal(body, &h); err != nil {
-			return nil, fmt.Errorf("%s: %v", Hooks, err)
+			return nil, fmt.Errorf("%s: %w", Hooks, err)
 		}
 		return nil, nil
 	default:
@@ -338,8 +365,8 @@ func Validate(sec Section, body []byte) ([]string, error) {
 	}
 }
 
-// Put validates body and, when it is valid, stores it as sec in one
-// transaction. A refused body writes nothing.
+// Put validates body and stores it as sec in one transaction; a refused body
+// writes nothing.
 func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 	if sec == Candidates {
 		filled, _, err := fillCandidateNames(body)
@@ -368,8 +395,7 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 }
 
 // Delete removes sec's stored body, if any, in one transaction. The version
-// bumps even when sec was absent: it is a change counter for readers, not a
-// count of stored sections.
+// bumps even when sec was absent: it is a change counter, not a section count.
 func (s *Store) Delete(sec Section) error {
 	return s.db.Tx(func(t *db.Tx) error {
 		before, err := readSnapshot(t)
@@ -383,21 +409,12 @@ func (s *Store) Delete(sec Section) error {
 	})
 }
 
-// PutDoc stores every section in doc. It checks every name and validates every
-// body first: an unknown section or the first invalid body aborts with nothing
-// written. The store's ConfigPuts then run in one transaction, so the version
-// bumps once per section in the document rather than once per call. Sections
-// not named in doc are untouched.
+// PutDoc stores every section in doc in one transaction, validating every body
+// first; an unknown section or the first invalid body aborts with nothing
+// written. Sections not named in doc are untouched.
 func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
-	var unknown []string
-	for sec := range doc {
-		if !known(sec) {
-			unknown = append(unknown, string(sec))
-		}
-	}
-	if len(unknown) > 0 {
-		sort.Strings(unknown)
-		return nil, fmt.Errorf("unknown config section %q", unknown[0])
+	if err := checkDocSections(doc); err != nil {
+		return nil, err
 	}
 
 	if body, ok := doc[Candidates]; ok {
@@ -440,11 +457,23 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 	}); err != nil {
 		return nil, err
 	}
-
 	return warnings, nil
 }
 
-// known reports whether sec names a stored section.
+func checkDocSections(doc map[Section]json.RawMessage) error {
+	var unknown []string
+	for sec := range doc {
+		if !known(sec) {
+			unknown = append(unknown, string(sec))
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return fmt.Errorf("unknown config section %q", unknown[0])
+}
+
 func known(sec Section) bool {
 	for _, s := range Sections {
 		if s == sec {
@@ -454,8 +483,8 @@ func known(sec Section) bool {
 	return false
 }
 
-// PutSecret stores value under name. The client key is validated with
-// remote.ParsePrivate first, so a malformed PEM never reaches the database.
+// PutSecret stores value under name, validating the client key with
+// remote.ParsePrivate first so a malformed PEM never reaches the database.
 func (s *Store) PutSecret(name string, value []byte) error {
 	if name == SecretClientKey {
 		if _, err := remote.ParsePrivate(value); err != nil {
@@ -474,8 +503,8 @@ func (s *Store) PutSecret(name string, value []byte) error {
 	})
 }
 
-// SecretDelete removes name's stored value, if any. A name that was not stored
-// writes nothing: there is no change to record.
+// SecretDelete removes name's stored value, if any; an unstored name writes
+// nothing.
 func (s *Store) SecretDelete(name string) error {
 	return s.db.Tx(func(t *db.Tx) error {
 		before, err := readSnapshot(t)
@@ -494,6 +523,5 @@ func (s *Store) SecretDelete(name string) error {
 	})
 }
 
-// SecretNames returns every stored secret's name, sorted. It never returns a
-// value.
+// SecretNames returns every stored secret's name, sorted, never a value.
 func (s *Store) SecretNames() ([]string, error) { return s.db.SecretNames() }

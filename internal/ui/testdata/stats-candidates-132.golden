@@ -1,0 +1,34 @@
+  ◆ relevo    stats                                                                                            v0.13.0-28    14:02  
+                                                                                                                                    
+    overview     candidates     tokens     reliability     repos                                    window   7d   30d   90d   all   
+                                                                                                                                    
+   CANDIDATE                                                RNDS  DONE  HALTED   MED   TTFT   IN/RND  OUT/RND  CACHE   STATUS       
+   deepseek-v4.1-flash                                         6   80%       1   27m      ·       2M      60k    99%   ready        
+   gemini-3.8-flash-high                                       5  100%       0   27m      ·       1M      40k    88%   gated 1d     
+   glm-5.3-flash                                               5  100%       0   27m      ·     250k      20k    80%   ready        
+   kimi-k3                                                     2  100%       0   27m      ·     250k      20k    80%   ready        
+   qwen-4-coder                                                1  100%       0   27m      ·     250k      20k    80%   ready        
+                                                                                                                                    
+                                                                                                                                    
+   deepseek-v4.1-flash                                                                                                              
+   6 rounds on 1 binding   10.3M tokens, 58% of the window                                                                          
+   in 100k · cache 9.9M · out 300k   median 27m · 1 halted · 0 switches                                                             
+   5 of 6 rounds reported token usage                                                                                               
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ ↑↓  move      enter  its rounds      tab  next tab      w  window      :  command      ?  all keys      q  quit                    

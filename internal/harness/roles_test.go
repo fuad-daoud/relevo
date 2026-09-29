@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// TestMissingDefinitions pins #238: a harness kind whose shipped role files
-// are not (all) present on disk reports which are missing, by home-relative
-// path, so a candidate for that kind can be gated before it is picked.
 func TestMissingDefinitions(t *testing.T) {
 	role, ok := RoleByName("builder")
 	if !ok {
@@ -43,14 +40,6 @@ func TestMissingDefinitions(t *testing.T) {
 	})
 }
 
-// TestMissingDefinitionsCustomNames pins #374 §4.1: a definition relevo does
-// not ship resolves to its kind's path convention, so a missing custom name is
-// reported instead of silently skipped, and a shipped name still resolves to
-// its table path.
-//
-// Mutation check: restore the old h.Role(def) lookup -- whose !ok means
-// "continue" -- and "custom name missing" fails, because my-executor is not a
-// shipped row.
 func TestMissingDefinitionsCustomNames(t *testing.T) {
 	t.Run("custom name missing", func(t *testing.T) {
 		env := freshEnv()

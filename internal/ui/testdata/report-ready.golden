@@ -1,14 +1,27 @@
- relevo › fleet                                                                          ● 2 need you  ·  codex gated until 15:30  ·  14:02 
-7 bindings · 1 needs you · 4 active                                                                        sort attention · refreshed 0s ago
-   NAME            ACTOR         ON                      RND   STATE       NOW                       SPEND     PLANNER         REPO         
-   webshop         builder       -                       r4    NEEDS YOU   question · 2m             $9.40     architect-1                  
-     └ which branch should r4 target?                                                                                                       
-▎  inbox           builder       -                       r3    ACTIVE      report ready · 3m                   you                          
-   api             builder       -                       r2    ACTIVE      working                             architect-1                  
-   atlas           builder       -                       r4    ACTIVE      working                   $0.16     architect-1                  
-   worker          builder       opencode-1              r2    ACTIVE      working                             architect-1                  
-   ledger          builder       -                       r3    PAUSED      paused                    ~$1.63    architect-1                  
-   docs            builder       -                       r1    DONE        done · 3h                           architect-1     /home/x/docs 
+  ◆ relevo    fleet                                                                                   ● 2 need you     v0.13.0-28    14:02  
+                                                                                                                                            
+   6 live   2 need you   3 working   1 on hold   1 done                                                    sort attention · refreshed 0s ago
+                                                                                                                                            
+ ╭─ inbox  round 3 · report ready · 3m ───────────────────────────────────────────────────────────────────────────────────────────────────╮ 
+ │  MasterMind you  ·  -  ·  relevo/inbox                                                                                                 │ 
+ │                                                                                                                                        │ 
+ │    enter  open round       s  send the next plan       o  shell       x  stop                                                          │ 
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
+                                                                                                                                            
+     needs you   2    a builder is waiting on an answer                                                                                     
+   ●  webshop             r4 · question · 2m      -                       architect-1    $9.40                                              
+        ╰ which branch should r4 target?                                                                                                    
+ ▍ ●  inbox               r3 · report ready · 3m  -                       you                                                               
+                                                                                                                                            
+     working   3    a round is running                                                                                                      
+   ●  api                 r2 · working            -                       architect-1                                                       
+   ●  atlas               r4 · working            -                       architect-1    $0.16                                              
+   ●  worker              r2 · working            opencode-1              architect-1                                                       
+                                                                                                                                            
+     on hold   1    paused or held                                                                                                          
+   ◐  ledger              r3 · paused             -                       architect-1   ~$1.63                                              
+                                                                                                                                            
+   ✓  1 done  ·  1 today  ·  last docs 3h ago       .  show                                                                                 
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
@@ -22,19 +35,6 @@
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ move   home/end first/last   enter open   a sort   / filter   s send   b bind   x stop   D done   u unbind   : command   ? help   q quit 
+   ◌ gated  codex 1h  ·  the pick skips them                                                                                                
+
+ enter  open      s  send      x  stop      D  done      g  gate      /  filter      :  command      ?  all keys      q  quit               

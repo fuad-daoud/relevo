@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"io"
@@ -14,27 +15,130 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // TestMain points the whole package at a fresh temp root: HOME,
-// XDG_CONFIG_HOME and XDG_STATE_HOME all move here, so no test in cmd/relevo
-// reads the user's real config or state (#235). Tests that t.Setenv the same
-// variables keep working: t.Setenv restores to these values.
+// XDG_CONFIG_HOME, XDG_STATE_HOME and XDG_DATA_HOME all move here, and the
+// harness-identity and override variables are unset, so no test in cmd/relevo
+// reads the user's real config, state or data, nor sees the calling harness
+// (#235, #463). Tests that t.Setenv the same variables keep working: t.Setenv
+// restores to these values.
+//
+// It also clears the mastermind identity a harness injects into the shell that
+// runs the tests (a Claude Code session, an agy conversation, an OpenCode shell
+// marked by the relevo plugin's server hook), so no test resolves the mastermind
+// of whoever happens to run `go test`. isolateTestEnv holds the rule; a test
+// that needs one of these variables sets it itself.
 func TestMain(m *testing.M) {
 	root, err := os.MkdirTemp("", "relevo-cmd-test-")
 	if err != nil {
 		panic(err)
 	}
+	isolateTestEnv(root)
+	cleanup, err := dbtest.Install()
+	if err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	cleanup()
+	os.RemoveAll(root)
+	os.Exit(code)
+}
+
+// isolateTestEnv makes the package start from CI's environment whatever
+// harness runs `go test` (#463). It points HOME, XDG_CONFIG_HOME,
+// XDG_STATE_HOME and XDG_DATA_HOME at root, a temp directory, so no test reads
+// the user's real config, state or data (#235). It then unsets the
+// harness-identity and override variables, so a test never detects the calling
+// harness or picks up the caller's overrides; it unsets a variable when its
+// name is CLAUDECODE or TYPESAFE_API_KEY, or starts with CLAUDE_, RELEVO_ or
+// ANTIGRAVITY_. It never fails: it ignores os.Setenv and os.Unsetenv errors,
+// as TestMain did before.
+func isolateTestEnv(root string) {
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if matchesUnsetRule(name) {
+			os.Unsetenv(name)
+		}
+	}
 	os.Setenv("HOME", root)
 	os.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	os.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	code := m.Run()
-	os.RemoveAll(root)
-	os.Exit(code)
+	os.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
+}
+
+// matchesUnsetRule reports whether isolateTestEnv unsets the named variable.
+func matchesUnsetRule(name string) bool {
+	return name == "CLAUDECODE" ||
+		name == "TYPESAFE_API_KEY" ||
+		strings.HasPrefix(name, "CLAUDE_") ||
+		strings.HasPrefix(name, "RELEVO_") ||
+		strings.HasPrefix(name, "ANTIGRAVITY_")
+}
+
+// TestIsolateTestEnv pins isolateTestEnv: it must not see the caller's harness
+// or overrides, but must leave near-miss names and the build's own variables
+// alone. It is a pure environment test; it reaches no harness and no network.
+func TestIsolateTestEnv(t *testing.T) {
+	// t.Setenv restores the value from before its call, so every variable
+	// isolateTestEnv changes must be t.Setenv'd first.
+	for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+		t.Setenv(name, "/polluted")
+	}
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("CLAUDE_ENV_FILE", "/polluted/env")
+	t.Setenv("CLAUDE_PID", "1")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "x")
+	t.Setenv("RELEVO_HARNESS", "opencode")
+	t.Setenv("RELEVO_MASTERMIND", "p")
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "x")
+	t.Setenv("TYPESAFE_API_KEY", "k")
+	t.Setenv("CLAUDEX_KEEP", "1") // near-miss: no underscore after CLAUDE
+	t.Setenv("RELEVO", "1")       // near-miss: no trailing underscore
+
+	root := t.TempDir()
+	isolateTestEnv(root)
+
+	for name, want := range map[string]string{
+		"HOME":            root,
+		"XDG_CONFIG_HOME": filepath.Join(root, "config"),
+		"XDG_STATE_HOME":  filepath.Join(root, "state"),
+		"XDG_DATA_HOME":   filepath.Join(root, "data"),
+	} {
+		if got := os.Getenv(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	for _, name := range []string{
+		"CLAUDECODE", "CLAUDE_ENV_FILE", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID",
+		"RELEVO_HARNESS", "RELEVO_MASTERMIND", "RELEVO_PLANNER",
+		"ANTIGRAVITY_CONVERSATION_ID", "TYPESAFE_API_KEY",
+	} {
+		if _, ok := os.LookupEnv(name); ok {
+			t.Errorf("%s must be unset by isolateTestEnv", name)
+		}
+	}
+
+	for _, name := range []string{"CLAUDEX_KEEP", "RELEVO"} {
+		if _, ok := os.LookupEnv(name); !ok {
+			t.Errorf("%s must survive isolateTestEnv", name)
+		}
+	}
+
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if matchesUnsetRule(name) {
+			t.Errorf("%s matches the unset rule but is still present", name)
+		}
+	}
 }
 
 // TestHelpListsServeVerbs pins that the top-level usage names the server
@@ -52,6 +156,28 @@ func TestHelpListsServeVerbs(t *testing.T) {
 		if !strings.Contains(string(stdout), want) {
 			t.Errorf("expected the top-level usage to mention %q, got %q", want, string(stdout))
 		}
+	}
+}
+
+// TestUpdateHelp pins `relevo update`'s discovery: the top-level usage names
+// it, and `update -h` prints its own usage line and returns errHelpShown,
+// which main turns into exit 0. It reaches no network and needs no harness.
+func TestUpdateHelp(t *testing.T) {
+	for _, want := range []string{"update", "--release"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("the usage constant must mention %q", want)
+		}
+	}
+
+	_, stderr, runErr := captureOutput(t, func() error {
+		return run([]string{"update", "-h"})
+	})
+	if !errors.Is(runErr, errHelpShown) {
+		t.Fatalf("run(update -h) = %v, want errHelpShown", runErr)
+	}
+	const line = "usage: relevo update [--check] [--to vX.Y.Z] [--release]"
+	if !strings.Contains(string(stderr), line) {
+		t.Errorf("update -h stderr = %q, want it to contain %q", string(stderr), line)
 	}
 }
 
@@ -85,17 +211,22 @@ func TestSendDryRunRequiresFile(t *testing.T) {
 	}
 }
 
-// TestAskRoundNeedsAQuestion pins that `relevo ask --round` without a question
-// is refused before a runtime is built: a round ask takes --file or -q, and a
-// CI runner with no harness must fail on the missing flag, not on the
-// environment.
-func TestAskRoundNeedsAQuestion(t *testing.T) {
-	err := run([]string{"ask", "--round", "1", "x"})
-	if err == nil {
-		t.Fatal("relevo ask --round without a question must be rejected")
+// TestAskIsGone pins the removed verb's stub: `relevo ask` writes one line on
+// stderr naming the replacement workflow and exits 2. It dispatches through run
+// -- parsing and printing only, so nothing is spawned and no runtime is built.
+func TestAskIsGone(t *testing.T) {
+	initRoot(t)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return run([]string{"ask", "--actor", "reviewer", "--file", "q.md"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("relevo ask: run = %v, want exit code 2", err)
 	}
-	if !strings.Contains(err.Error(), "--file or -q") {
-		t.Errorf("error must point at --file or -q, got %q", err)
+	want := "relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan"
+	if !strings.Contains(string(stderr), want) {
+		t.Errorf("stderr = %q, want it to contain %q", stderr, want)
 	}
 }
 
@@ -144,24 +275,6 @@ func TestStopRefusesToGuessTheBinding(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--name") {
 		t.Errorf("error must point at --name, got %q", err)
-	}
-}
-
-// TestLandRefusesToGuessTheBinding pins #136: land pushes, so a bare `relevo
-// land` must refuse rather than act on whichever binding owns the cwd. The
-// check runs before any runtime is built, so this test touches neither the
-// state directory nor a harness, and a CI runner with no harness still fails on the
-// missing name, not on the environment.
-func TestLandRefusesToGuessTheBinding(t *testing.T) {
-	err := run([]string{"land"})
-	if err == nil {
-		t.Fatal("a bare relevo land must be refused")
-	}
-	if !strings.Contains(err.Error(), "--name") {
-		t.Fatalf("error must point at --name, got %q", err)
-	}
-	if !strings.Contains(err.Error(), "usage: relevo land") {
-		t.Fatalf("expected the usage line, got %v", err)
 	}
 }
 
@@ -251,7 +364,7 @@ func TestDiffCommand(t *testing.T) {
 	// Add log entries for round 1
 	if err := s.AppendLog("webshop", store.LogEntry{
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindDiff,
 		Note:      "1 file, +1 -0",
 		Confirmed: true,
@@ -290,7 +403,7 @@ func TestDiffCommand(t *testing.T) {
 		t.Fatalf("git apply --check failed: %v\nOutput: %s", err, string(applyOut))
 	}
 
-	// #143: a successful `diff` stamps the binding's .viewed sidecar.
+	// #143: a successful `diff` stamps the binding's viewed mark.
 	// Store-only -- reaches no harness.
 	if _, ok := s.ViewedAt("webshop"); !ok {
 		t.Fatal("diff must stamp .viewed on a successful print")
@@ -371,19 +484,6 @@ func TestDiffAnchorsCommand(t *testing.T) {
 	}
 }
 
-// TestReviewRequiresFile pins that `relevo review` without --file is refused
-// before a runtime is built, so a CI runner with no harness still fails on the
-// missing flag rather than on the environment.
-func TestReviewRequiresFile(t *testing.T) {
-	err := run([]string{"review", "--name", "webshop"})
-	if err == nil {
-		t.Fatal("relevo review without --file must be rejected")
-	}
-	if !strings.Contains(err.Error(), "--file") {
-		t.Errorf("error must point at --file, got %q", err)
-	}
-}
-
 func TestDiffDriftCommand(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
@@ -422,7 +522,7 @@ func TestDiffDriftCommand(t *testing.T) {
 	// Add KindDrift log entry for round 2
 	if err := s.AppendLog("webshop", store.LogEntry{
 		Round:     2,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindDrift,
 		Note:      "1 file, +5 -1",
 		Confirmed: true,
@@ -496,31 +596,6 @@ func TestDiffDriftCommand(t *testing.T) {
 	}
 	if !strings.Contains(errNoDriftStat.Error(), "--drift") || !strings.Contains(errNoDriftStat.Error(), "99") || !strings.Contains(errNoDriftStat.Error(), "webshop") {
 		t.Fatalf("error %q must name --drift, round 99, and webshop", errNoDriftStat.Error())
-	}
-}
-
-func TestForkHelp(t *testing.T) {
-	err := run([]string{"bind", "--from", "src", "-h"})
-	if !errors.Is(err, errHelpShown) {
-		t.Fatalf("got %v, want errHelpShown", err)
-	}
-}
-
-func TestForkValidation(t *testing.T) {
-	// Each assertion names the specific validation being exercised: the
-	// new binding's name is --name, and the round comes from --from's @ROUND
-	// or from --round.
-
-	// Missing --round: no @ROUND in --from and --round left at 0.
-	err := run([]string{"bind", "--from", "src", "--name", "fork-1"})
-	if err == nil || !strings.Contains(err.Error(), "relevo bind --from requires --round N") {
-		t.Fatalf("expected the --round validation, got %v", err)
-	}
-
-	// Missing --name, the new binding's name.
-	err = run([]string{"bind", "--from", "src", "--round", "1"})
-	if err == nil || !strings.Contains(err.Error(), "relevo bind --from requires --name NAME") {
-		t.Fatalf("expected the --name validation, got %v", err)
 	}
 }
 
@@ -632,7 +707,7 @@ func TestResolveHooksConfig(t *testing.T) {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	log := hooks.NewKVLog(db.TxKV{DB: d}, filepath.Join(tempHome, ".local", "state", "relevo"))
+	log := hooks.NewKVLog(db.TxKV{DB: d})
 
 	hooksMap := map[string][][]string{"state_changed": {{"/bin/true"}}}
 	cfg, err := resolveHooksConfig(hooksMap, log)
@@ -660,7 +735,7 @@ func TestAddHelp(t *testing.T) {
 
 func TestAddValidation(t *testing.T) {
 	// Missing --name
-	err := run([]string{"bind", "--worktree", "--builder", "claude/test/m"})
+	err := run([]string{"bind", "--worktree", "--no-feature", "--candidate", "claude/test/m"})
 	if err == nil || !strings.Contains(err.Error(), "--name") {
 		t.Fatalf("expected an error about --name, got %v", err)
 	}
@@ -669,7 +744,7 @@ func TestAddValidation(t *testing.T) {
 // TestAddBranchWithCwdIsRefusedBeforeRuntime pins the flag-pair refusal: it
 // happens in validation, before newRuntime, so it reaches no harness.
 func TestAddBranchWithCwdIsRefusedBeforeRuntime(t *testing.T) {
-	err := run([]string{"bind", "--branch", "x", "--cwd", "/tmp"})
+	err := run([]string{"bind", "--branch", "x", "--cwd", "/tmp", "--no-feature"})
 	if err == nil || !strings.Contains(err.Error(), "exclusive") {
 		t.Fatalf("expected an 'exclusive' refusal, got %v", err)
 	}
@@ -680,19 +755,19 @@ func TestAddBranchWithCwdIsRefusedBeforeRuntime(t *testing.T) {
 }
 
 // TestAddBranchDerivesName pins that a branch alone is enough for the name to
-// be derived: with no relevo planner for this session the run stops on the
-// no-planner error, before any harness call, so the derived name is never
+// be derived: with no relevo mastermind for this session the run stops on the
+// no-mastermind error, before any harness call, so the derived name is never
 // printed and no builder is reached.
 func TestAddBranchDerivesName(t *testing.T) {
-	t.Setenv("RELEVO_PLANNER", "")
+	t.Setenv("RELEVO_MASTERMIND", "")
 	t.Setenv("CLAUDECODE", "")
 
-	err := run([]string{"bind", "--branch", "feature/api-auth"})
+	err := run([]string{"bind", "--branch", "feature/api-auth", "--no-feature"})
 	if err == nil {
-		t.Fatal("add without a relevo planner must refuse")
+		t.Fatal("add without a relevo mastermind must refuse")
 	}
-	if !strings.Contains(err.Error(), "no relevo planner for this session") {
-		t.Fatalf("expected the no-planner error, got %v", err)
+	if !strings.Contains(err.Error(), "no relevo MasterMind for this session") {
+		t.Fatalf("expected the no-mastermind error, got %v", err)
 	}
 	if strings.Contains(err.Error(), "api-auth") {
 		t.Errorf("the derived name must not appear in the refusal: %v", err)
@@ -856,7 +931,7 @@ func TestResolveBindingStillFallsBackToCWD(t *testing.T) {
 }
 
 func TestFilterReportNarrowsToOneBinding(t *testing.T) {
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+	rep := view.Report{Bindings: []view.BindingStatus{
 		{Name: "api"}, {Name: "frontend"}, {Name: "backend"},
 	}}
 
@@ -870,7 +945,7 @@ func TestFilterReportNarrowsToOneBinding(t *testing.T) {
 }
 
 func TestFilterReportKeepsEverythingWhenUnnamed(t *testing.T) {
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+	rep := view.Report{Bindings: []view.BindingStatus{
 		{Name: "api"}, {Name: "frontend"},
 	}}
 
@@ -885,7 +960,7 @@ func TestFilterReportKeepsEverythingWhenUnnamed(t *testing.T) {
 }
 
 func TestFilterReportRejectsAnUnknownName(t *testing.T) {
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{{Name: "api"}}}
+	rep := view.Report{Bindings: []view.BindingStatus{{Name: "api"}}}
 
 	// Silence here would look identical to "that binding is fine".
 	if _, err := filterReport(rep, "nosuch"); err == nil {
@@ -898,7 +973,7 @@ func TestFilterReportRejectsAnUnknownName(t *testing.T) {
 // CI does not have and which made the first version of this test pass only on
 // the dev machine.
 func TestScopeReportHidesDoneUnlessAllOrNamed(t *testing.T) {
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+	rep := view.Report{Bindings: []view.BindingStatus{
 		{Name: "live", State: string(store.StateActive)},
 		{Name: "finished", State: string(store.StateDone)},
 	}}
@@ -915,7 +990,7 @@ func TestScopeReportHidesDoneUnlessAllOrNamed(t *testing.T) {
 
 	// filterReport has already narrowed to the named binding by the time
 	// scopeReport runs; what matters is that the name switches the filter off.
-	named := scopeReport(relevo.Report{Bindings: rep.Bindings[1:]}, "finished", false)
+	named := scopeReport(view.Report{Bindings: rep.Bindings[1:]}, "finished", false)
 	if len(named.Bindings) != 1 || named.DoneHidden != 0 {
 		t.Errorf("--name: got %+v, want the DONE row with DoneHidden 0", named)
 	}
@@ -954,8 +1029,7 @@ func TestBindRejectsTabFlag(t *testing.T) {
 	for _, args := range [][]string{
 		{"bind", "--tab"},
 		{"bind", "--worktree", "--name", "x", "--tab"},
-		{"bind", "--from", "x", "--round", "1", "--name", "y", "--tab"},
-		{"ask", "--actor", "reviewer", "--file", "q.md", "--new-tab"},
+		{"bind", "--branch", "b", "--name", "y", "--tab"},
 	} {
 		err := run(args)
 		if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
@@ -967,7 +1041,7 @@ func TestBindRejectsTabFlag(t *testing.T) {
 // TestBindRebindNeedsResume pins #92: --rebind only means something on a
 // resume. It is refused before newRuntime, so no harness is reached.
 func TestBindRebindNeedsResume(t *testing.T) {
-	err := run([]string{"bind", "--rebind", "--name", "x"})
+	err := run([]string{"bind", "--rebind", "--no-feature", "--name", "x"})
 	if err == nil || !strings.Contains(err.Error(), "--rebind") || !strings.Contains(err.Error(), "--resume") {
 		t.Fatalf("got %v, want an error naming --rebind and --resume", err)
 	}
@@ -999,15 +1073,111 @@ func TestBindFlagsHaveActorNotRole(t *testing.T) {
 	}
 }
 
-// TestAskFlagsHaveActorNotRole is TestBindFlagsHaveActorNotRole for ask.
-func TestAskFlagsHaveActorNotRole(t *testing.T) {
-	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
-	askFlagSet(fs)
-	if fs.Lookup("actor") == nil {
-		t.Error("ask does not define --actor")
+// TestBindFlagSetDefinesLabels pins #637: a fresh bind needs --no-feature as
+// the alternative to --feature, and --ticket is the new optional issue flag.
+func TestBindFlagSetDefinesLabels(t *testing.T) {
+	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
+	bindFlagSet(fs)
+	for _, name := range []string{"feature", "no-feature", "ticket"} {
+		if fs.Lookup(name) == nil {
+			t.Errorf("bind does not define --%s", name)
+		}
 	}
-	if fs.Lookup("role") != nil {
-		t.Error("ask still defines --role; it must be removed, not aliased")
+}
+
+// TestBindRequiresAFeatureChoice pins #637's exactly-one rule on the CLI: a
+// fresh bind with neither flag, on either route, exits 2 with one stderr line
+// naming both flags, before any runtime is built.
+func TestBindRequiresAFeatureChoice(t *testing.T) {
+	for _, args := range [][]string{
+		{"bind", "--name", "x"},
+		{"bind", "--worktree", "--name", "x"},
+	} {
+		_, stderr, err := captureOutput(t, func() error { return run(args) })
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("%v: run = %v, want exit code 2", args, err)
+			continue
+		}
+		for _, flag := range []string{"--feature", "--no-feature"} {
+			if !strings.Contains(string(stderr), flag) {
+				t.Errorf("%v: stderr = %q, want it to name %s", args, stderr, flag)
+			}
+		}
+	}
+}
+
+// TestBindRejectsBothFeatureFlags pins the other half: both flags together is
+// refused with the same one-line exit 2.
+func TestBindRejectsBothFeatureFlags(t *testing.T) {
+	_, stderr, err := captureOutput(t, func() error {
+		return run([]string{"bind", "--feature", "auth", "--no-feature", "--name", "x"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("run = %v, want exit code 2", err)
+	}
+	for _, flag := range []string{"--feature", "--no-feature"} {
+		if !strings.Contains(string(stderr), flag) {
+			t.Errorf("stderr = %q, want it to name %s", stderr, flag)
+		}
+	}
+}
+
+// TestBindRejectsABadFeatureStillExits2 pins the shared pre-route check the
+// two route-local store.ValidFeature blocks became: a malformed --feature is
+// still one stderr line and exit 2.
+func TestBindRejectsABadFeatureStillExits2(t *testing.T) {
+	_, stderr, err := captureOutput(t, func() error {
+		return run([]string{"bind", "--feature", "a/b", "--name", "x"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("run = %v, want exit code 2", err)
+	}
+	if !strings.Contains(string(stderr), "feature:") {
+		t.Errorf("stderr = %q, want the feature rule's own text", stderr)
+	}
+}
+
+// TestBindRejectsABadTicketExits2 pins #637: a malformed --ticket is refused
+// on the same one-line exit 2, before any runtime.
+func TestBindRejectsABadTicketExits2(t *testing.T) {
+	_, stderr, err := captureOutput(t, func() error {
+		return run([]string{"bind", "--no-feature", "--ticket", "not a ticket", "--name", "x"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("run = %v, want exit code 2", err)
+	}
+	if !strings.Contains(string(stderr), "ticket:") {
+		t.Errorf("stderr = %q, want the ticket rule's own text", stderr)
+	}
+}
+
+// TestRemovedFlagsAreUnknown pins D1's clean break: every flag A4 renamed is
+// removed, not aliased, so parsing it fails with the flag package's own
+// "flag provided but not defined" error. It parses through the verbs' flag
+// sets only -- no verb runs, so nothing touches the state directory and no
+// harness is spawned.
+func TestRemovedFlagsAreUnknown(t *testing.T) {
+	cases := []struct {
+		name  string
+		flags func(*flag.FlagSet)
+		args  []string
+	}{
+		{"bind", func(fs *flag.FlagSet) { bindFlagSet(fs) }, []string{"--builder", "x"}},
+		{"send", func(fs *flag.FlagSet) { sendFlagSet(fs) }, []string{"--builder", "x"}},
+		{"config agents", func(fs *flag.FlagSet) { agentFlagSet(fs) }, []string{"--role", "x"}},
+		{"config init", func(fs *flag.FlagSet) { initFlagSet(fs) }, []string{"--no-roles"}},
+	}
+	for _, c := range cases {
+		fs := flag.NewFlagSet(c.name, flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		c.flags(fs)
+		if err := parseFlags(fs, c.args); err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Errorf("%s %v: parse error = %v, want \"flag provided but not defined\"", c.name, c.args, err)
+		}
 	}
 }
 
@@ -1266,8 +1436,6 @@ func TestBindRoutesAndRefusals(t *testing.T) {
 		{"branch is add", bindFlags{branch: "b"}, routeAdd},
 		{"server is add", bindFlags{server: "s"}, routeAdd},
 		{"base is add", bindFlags{base: "main"}, routeAdd},
-		{"from is fork", bindFlags{from: "src@2", name: "new"}, routeFork},
-		{"from with cwd is fork", bindFlags{from: "src@2", name: "new", cwd: "/tmp"}, routeFork},
 	}
 	for _, c := range valid {
 		got, err := bindRouteFor(c.f)
@@ -1285,12 +1453,6 @@ func TestBindRoutesAndRefusals(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"from+resume", []string{"bind", "--from", "src@1", "--name", "x", "--resume"}, "--from cannot be combined with --resume/--rebind"},
-		{"from+rebind", []string{"bind", "--from", "src@1", "--name", "x", "--rebind"}, "--from cannot be combined with --resume/--rebind"},
-		{"from+worktree", []string{"bind", "--from", "src@1", "--name", "x", "--worktree"}, "--from cannot be combined with --worktree"},
-		{"from+branch", []string{"bind", "--from", "src@1", "--name", "x", "--branch", "b"}, "--from cannot be combined with --worktree"},
-		{"from+server", []string{"bind", "--from", "src@1", "--name", "x", "--server", "s"}, "--from cannot be combined with --worktree"},
-		{"from+base", []string{"bind", "--from", "src@1", "--name", "x", "--base", "main"}, "--from cannot be combined with --worktree"},
 		{"resume+worktree", []string{"bind", "--resume", "--name", "x", "--worktree"}, "--resume/--rebind cannot be combined with"},
 		{"resume+cwd", []string{"bind", "--resume", "--name", "x", "--cwd", "/tmp"}, "--resume/--rebind cannot be combined with"},
 		{"rebind+server", []string{"bind", "--resume", "--rebind", "--name", "x", "--server", "s"}, "--resume/--rebind cannot be combined with"},
@@ -1325,12 +1487,129 @@ func TestUnbindDoneTakesNoBinding(t *testing.T) {
 	}
 }
 
+// TestUnbindMasterMindFlags pins #482: --mastermind and --all-masterminds only make
+// sense with --done, and combining them exits 2 before a runtime is built
+// (except the --mastermind+--all-masterminds combo, which gcScope checks after
+// newRuntime and is pinned by TestGCScope instead).
+func TestUnbindMasterMindFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"unbind", "--mastermind", "x"},
+		{"unbind", "--all-masterminds"},
+		{"unbind", "--sweep", "--mastermind", "x"},
+		{"unbind", "--sweep", "--all-masterminds"},
+	} {
+		_, _, err := captureOutput(t, func() error { return run(args) })
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("%v: run = %v, want exit code 2", args, err)
+		}
+	}
+}
+
+// TestGCScope pins #482: gcScope turns --mastermind/--all-masterminds into a GC
+// scope with no fallback to "everything" when the mastermind fails to resolve.
+func TestGCScope(t *testing.T) {
+	t.Run("empty flag resolves via resolve", func(t *testing.T) {
+		resolve := func(ref string) (mastermind.Record, error) {
+			if ref != "" {
+				t.Errorf("resolve called with %q, want \"\"", ref)
+			}
+			return mastermind.Record{ID: "pl_aaa"}, nil
+		}
+		got, err := gcScope("", false, resolve)
+		if err != nil {
+			t.Fatalf("gcScope: %v", err)
+		}
+		if got != (relevo.GCOptions{MasterMindID: "pl_aaa"}) {
+			t.Fatalf("gcScope = %+v, want {MasterMindID: pl_aaa}", got)
+		}
+	})
+
+	t.Run("mastermind flag is passed to resolve", func(t *testing.T) {
+		resolve := func(ref string) (mastermind.Record, error) {
+			if ref != "architect-2" {
+				t.Errorf("resolve called with %q, want architect-2", ref)
+			}
+			return mastermind.Record{ID: "pl_bbb"}, nil
+		}
+		got, err := gcScope("architect-2", false, resolve)
+		if err != nil {
+			t.Fatalf("gcScope: %v", err)
+		}
+		if got != (relevo.GCOptions{MasterMindID: "pl_bbb"}) {
+			t.Fatalf("gcScope = %+v, want {MasterMindID: pl_bbb}", got)
+		}
+	})
+
+	t.Run("all-masterminds never calls resolve", func(t *testing.T) {
+		resolve := func(ref string) (mastermind.Record, error) {
+			t.Fatal("resolve must not be called when --all-masterminds is set")
+			return mastermind.Record{}, nil
+		}
+		got, err := gcScope("", true, resolve)
+		if err != nil {
+			t.Fatalf("gcScope: %v", err)
+		}
+		if got != (relevo.GCOptions{AllMasterMinds: true}) {
+			t.Fatalf("gcScope = %+v, want {AllMasterMinds: true}", got)
+		}
+	})
+
+	t.Run("mastermind and all-masterminds are exclusive", func(t *testing.T) {
+		resolve := func(ref string) (mastermind.Record, error) {
+			t.Fatal("resolve must not be called when both flags are set")
+			return mastermind.Record{}, nil
+		}
+		if _, err := gcScope("x", true, resolve); err == nil {
+			t.Fatal("gcScope with both flags: want a usage error, got nil")
+		}
+	})
+
+	t.Run("no fallback when the mastermind does not resolve", func(t *testing.T) {
+		resolve := func(ref string) (mastermind.Record, error) {
+			return mastermind.Record{}, errors.New("boom")
+		}
+		got, err := gcScope("", false, resolve)
+		if err == nil {
+			t.Fatal("gcScope with a resolve error: want a usage error, got nil")
+		}
+		if !strings.Contains(err.Error(), "--all-masterminds") {
+			t.Errorf("gcScope error = %q, want it to mention --all-masterminds", err.Error())
+		}
+		if got.MasterMindID != "" || got.AllMasterMinds {
+			t.Errorf("gcScope result = %+v, want the zero value on error (no fallback)", got)
+		}
+	})
+}
+
+// TestUnbindSweepTakesNoBinding pins §4.5: --sweep takes no binding and no other
+// flag except --dry-run, so invalid combinations exit 2 before a runtime is built.
+func TestUnbindSweepTakesNoBinding(t *testing.T) {
+	for _, args := range [][]string{
+		{"unbind", "--sweep", "--done"},
+		{"unbind", "--sweep", "--delete"},
+		{"unbind", "--sweep", "--archive"},
+		{"unbind", "--sweep", "--pick"},
+		{"unbind", "--sweep", "webshop"},
+		{"unbind", "--sweep", "--name", "webshop"},
+	} {
+		_, stderr, err := captureOutput(t, func() error { return run(args) })
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("%v: run = %v, want exit code 2", args, err)
+		}
+		wantMsg := "relevo: --sweep takes no binding and no other flag except --dry-run"
+		if !strings.Contains(string(stderr), wantMsg) {
+			t.Errorf("%v: stderr = %q, want to contain %q", args, string(stderr), wantMsg)
+		}
+	}
+}
+
 // TestRemovedVerbsNameTheirReplacement pins §4.6 and §4.1/§4.3: each removed
 // name exits 2 with one line naming the form that replaces it.
 func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 	cases := []struct{ verb, replacement string }{
 		{"add", "relevo bind --worktree"},
-		{"fork", "relevo bind --from <source>@<round>"},
 		{"diff", "relevo show --diff"},
 		{"log", "relevo show --log"},
 		{"gc", "relevo unbind --done"},
@@ -1351,4 +1630,58 @@ func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 			t.Errorf("%s: stderr = %q, want it to name %q", c.verb, stderr, c.replacement)
 		}
 	}
+}
+
+func TestStatusLineFlags(t *testing.T) {
+	t.Run("status --line --name x exits 2", func(t *testing.T) {
+		_, _, err := captureOutput(t, func() error {
+			return run([]string{"status", "--line", "--name", "x"})
+		})
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("status --line --name x: err = %v, want exit code 2", err)
+		}
+	})
+
+	t.Run("status --line --all exits 2", func(t *testing.T) {
+		_, _, err := captureOutput(t, func() error {
+			return run([]string{"status", "--line", "--all"})
+		})
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("status --line --all: err = %v, want exit code 2", err)
+		}
+	})
+
+	t.Run("status --line --json prints StatusLineDoc with null mastermind and empty rows", func(t *testing.T) {
+		t.Setenv("RELEVO_MASTERMIND", "")
+		t.Setenv("CLAUDECODE", "")
+		t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
+		t.Setenv("RELEVO_HARNESS", "")
+
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"status", "--line", "--json"})
+		})
+		if err != nil {
+			t.Fatalf("run status --line --json failed: %v (stderr: %s)", err, stderr)
+		}
+
+		var doc view.StatusLineDoc
+		if err := json.Unmarshal(stdout, &doc); err != nil {
+			t.Fatalf("unmarshal json %q: %v", stdout, err)
+		}
+		if doc.MasterMind != nil {
+			t.Errorf("doc.MasterMind = %+v, want nil", doc.MasterMind)
+		}
+		if doc.Rows == nil || len(doc.Rows) != 0 {
+			t.Errorf("doc.Rows = %+v, want empty []", doc.Rows)
+		}
+		s := string(stdout)
+		if !strings.Contains(s, `"mastermind":null`) {
+			t.Errorf("output %q does not contain '\"mastermind\":null'", s)
+		}
+		if !strings.Contains(s, `"rows":[]`) {
+			t.Errorf("output %q does not contain '\"rows\":[]'", s)
+		}
+	})
 }

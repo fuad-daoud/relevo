@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // rolesViewsCandidatesJSON is claude a on both roles, claude b and opencode m
@@ -51,28 +51,30 @@ func rolesViewsSection(t *testing.T, got, start, end string) string {
 // legacy "no policy configured" line is never printed.
 //
 // Mutation check: make FormatPolicyFor print FormatPolicy's "  (no order set)"
-// header instead of "  (config roles)" and this test fails on its first line.
+// header instead of "  (config actors)" and this test fails on its first line.
 func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesViewsCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder":  {Candidates: []string{"claude/test/b", "claude/test/a"}},
 		"reviewer": {},
 	})
 
-	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, history.History{}, baseTime, time.UTC)
+	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, availability.History{}, baseTime, time.UTC)
 
-	want := "builder  (config roles)\n" +
+	want := "builder  (config actors)\n" +
 		"  1  b  order     <- would pick\n" +
 		"  2  a  order\n" +
-		"reviewer  (config roles)\n" +
-		"  no candidate listed in config roles reviewer.candidates\n" +
-		"researcher  (config roles)\n" +
-		"  no candidate listed in config roles researcher.candidates\n"
+		"reviewer  (config actors)\n" +
+		"  no candidate listed in config actors reviewer.candidates\n" +
+		"researcher  (config actors)\n" +
+		"  no candidate listed in config actors researcher.candidates\n"
 	if got != want {
 		t.Errorf("FormatPolicyFor =\n%q\nwant:\n%q", got, want)
 	}
 
-	if !strings.Contains(got, "builder  (config roles)") {
+	if !strings.Contains(got, "builder  (config actors)") {
 		t.Errorf("output must carry the file-mode header, got:\n%s", got)
 	}
 	pick := strings.Index(got, "1  b  order     <- would pick")
@@ -80,7 +82,7 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 	if pick < 0 || second < 0 || pick > second {
 		t.Errorf("the row's first candidate must be row 1 with the pick, then the second:\n%s", got)
 	}
-	if !strings.Contains(got, "no candidate listed in config roles reviewer.candidates") {
+	if !strings.Contains(got, "no candidate listed in config actors reviewer.candidates") {
 		t.Errorf("a role with nothing listed must say so, got:\n%s", got)
 	}
 	if strings.Contains(got, "no policy configured") {
@@ -91,13 +93,15 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 // TestRolesViewsFormatPolicyForLegacyMatches pins §3.1's legacy half: with a
 // legacy registry the file-mode entry point is FormatPolicy byte for byte.
 func TestRolesViewsFormatPolicyForLegacyMatches(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testClaudeRef, testAgyRef)
-	gates := []ledger.Gate{{Token: testClaudeRef, Kind: ledger.RateLimited, Until: baseTime.Add(time.Hour)}}
+	gates := []availability.Gate{{Token: testClaudeRef, Kind: availability.RateLimited, Until: baseTime.Add(time.Hour)}}
 
 	legacy, _ := roles.Build(nil, set, pol)
-	want := FormatPolicy(set, pol, gates, history.History{}, baseTime, time.UTC)
-	got := FormatPolicyFor(legacy, set, pol, gates, history.History{}, baseTime, time.UTC)
+	want := FormatPolicy(set, pol, gates, availability.History{}, baseTime, time.UTC)
+	got := FormatPolicyFor(legacy, set, pol, gates, availability.History{}, baseTime, time.UTC)
 	if got != want {
 		t.Errorf("FormatPolicyFor(legacy) =\n%q\nwant FormatPolicy's:\n%q", got, want)
 	}
@@ -110,20 +114,22 @@ func TestRolesViewsFormatPolicyForLegacyMatches(t *testing.T) {
 // Mutation check: render the rows from every gate instead of gatesForRole and
 // the builder half fails.
 func TestRolesViewsPerRoleGateFiltering(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
-	gates := []ledger.Gate{{
-		Token: testClaudeRef, Kind: ledger.RolesMissing, Role: "reviewer",
-		Note: "roles missing for reviewer",
+	gates := []availability.Gate{{
+		Token: testClaudeRef, Kind: availability.RolesMissing, Role: "reviewer",
+		Note: "agents missing for reviewer",
 	}}
 
-	got := FormatPolicy(set, policy.Policy{}, gates, history.History{}, baseTime, time.UTC)
+	got := FormatPolicy(set, policy.Policy{}, gates, availability.History{}, baseTime, time.UTC)
 
 	builder := rolesViewsSection(t, got, "builder  (no order set)", "reviewer  (no order set)")
-	if strings.Contains(builder, "roles missing") {
+	if strings.Contains(builder, "agents missing") {
 		t.Errorf("a reviewer-scoped gate must not show on builder rows:\n%s", builder)
 	}
 	reviewer := rolesViewsSection(t, got, "reviewer  (no order set)", "researcher  (no order set)")
-	if !strings.Contains(reviewer, "roles missing") {
+	if !strings.Contains(reviewer, "agents missing") {
 		t.Errorf("a reviewer-scoped gate must show on reviewer rows:\n%s", reviewer)
 	}
 }
@@ -133,6 +139,8 @@ func TestRolesViewsPerRoleGateFiltering(t *testing.T) {
 // definition for the role, each give their exact text -- and nothing else,
 // since in file mode the list is the assignment.
 func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, `[
 	  {"harness":"claude","provider":"test","model":"m","roles":["builder"]}
 	]`)
@@ -144,11 +152,11 @@ func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
 	want := []PolicyWarning{
 		{
 			Role: "scout", Index: 0, Token: "claude/test/m",
-			Text: `config roles scout.candidates[0] "m": scout has no definition for claude`,
+			Text: `config actors scout.candidates[0] "m": scout has no definition for claude`,
 		},
 		{
 			Role: "scout", Index: 1, Token: "claude/test/ghost",
-			Text: `config roles scout.candidates[1] "claude/test/ghost" is not a configured candidate`,
+			Text: `config actors scout.candidates[1] "claude/test/ghost" is not a configured candidate`,
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -160,14 +168,16 @@ func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
 // listed candidate gated for builder only, builder has a refusal and reviewer
 // -- same candidates, same gates -- has none.
 func TestRolesViewsRoleRefusalsForFileMode(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder":  {Candidates: []string{testClaudeRef, testOpencodeRef}},
 		"reviewer": {Candidates: []string{testClaudeRef, testOpencodeRef}},
 	})
-	gates := []ledger.Gate{
-		{Token: testClaudeRef, Kind: ledger.RateLimited, Role: "builder", Until: baseTime.Add(time.Hour)},
-		{Token: testOpencodeRef, Kind: ledger.RateLimited, Role: "builder", Until: baseTime.Add(time.Hour)},
+	gates := []availability.Gate{
+		{Token: testClaudeRef, Kind: availability.RateLimited, Role: "builder", Until: baseTime.Add(time.Hour)},
+		{Token: testOpencodeRef, Kind: availability.RateLimited, Role: "builder", Until: baseTime.Add(time.Hour)},
 	}
 
 	got := RoleRefusalsFor(reg, set, policy.Policy{}, gates)
@@ -186,6 +196,8 @@ func TestRolesViewsRoleRefusalsForFileMode(t *testing.T) {
 // is the registry's answer, "(no role)" when no role lists the candidate, and
 // the tier segment is gone -- the role owns the tier in file mode.
 func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, `[
 	  {"harness":"claude","provider":"test","model":"m","roles":["builder"],"tier":"yolo"},
 	  {"harness":"opencode","provider":"test","model":"m","roles":["builder"]}
@@ -195,42 +207,20 @@ func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
 		"reviewer": {Candidates: []string{testClaudeRef}},
 	})
 
-	got := FormatCandidatesLatencyFor(reg, set, nil, nil)
+	got := view.FormatCandidatesLatencyFor(reg, set, nil, nil)
 	// claude's entry takes "m" first, so opencode's becomes "opencode-m".
 	want := "m" + strings.Repeat(" ", 11) + "claude/test/m  " + "  builder, reviewer\n" +
-		"opencode-m" + strings.Repeat(" ", 2) + "opencode/test/m" + "  (no role)\n"
+		"opencode-m" + strings.Repeat(" ", 2) + "opencode/test/m" + "  (no actor)\n"
 	if got != want {
-		t.Errorf("FormatCandidatesLatencyFor =\n%q\nwant:\n%q", got, want)
+		t.Errorf("view.FormatCandidatesLatencyFor =\n%q\nwant:\n%q", got, want)
 	}
 	if strings.Contains(got, "tier:") {
 		t.Errorf("file mode must not print the candidate's tier:\n%s", got)
 	}
 
 	legacy, _ := roles.Build(nil, set, policy.Policy{})
-	if a, b := FormatCandidatesLatencyFor(legacy, set, nil, nil), FormatCandidatesLatency(set, nil, nil); a != b {
-		t.Errorf("FormatCandidatesLatencyFor(legacy) = %q, want FormatCandidatesLatency's %q", a, b)
-	}
-}
-
-// TestRolesViewsConsultRolesTooLongFor pins §3.3: the note reads the registry,
-// so a reader role only roles.json knows is reported, while the legacy wrapper
-// keeps reporting only the built-in consult roles.
-func TestRolesViewsConsultRolesTooLongFor(t *testing.T) {
-	const newReader = "abcdefghijklmnopqrstuvwxyz0123" // 30 characters
-	set := candidateSet(t, testCandidatesJSON)
-	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
-		newReader: {Shape: ptr("reader")},
-	})
-
-	got := ConsultRolesTooLongFor(reg, "ab")
-	want := []string{newReader}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ConsultRolesTooLongFor = %v, want %v", got, want)
-	}
-
-	legacy, _ := roles.Build(nil, set, policy.Policy{})
-	if a, b := ConsultRolesTooLong("ab"), ConsultRolesTooLongFor(legacy, "ab"); !reflect.DeepEqual(a, b) || len(a) != 0 {
-		t.Errorf("ConsultRolesTooLong(\"ab\") = %v, want the legacy registry's empty result (got %v)", a, b)
+	if a, b := view.FormatCandidatesLatencyFor(legacy, set, nil, nil), view.FormatCandidatesLatency(set, nil, nil); a != b {
+		t.Errorf("view.FormatCandidatesLatencyFor(legacy) = %q, want view.FormatCandidatesLatency's %q", a, b)
 	}
 }
 
@@ -238,6 +228,8 @@ func TestRolesViewsConsultRolesTooLongFor(t *testing.T) {
 // file mode names each legacy field still set, in order, and legacy mode says
 // nothing -- without roles.json those fields are the source, not stale copies.
 func TestRolesViewsLegacyRoleFieldWarnings(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, `[
 	  {"harness":"claude","provider":"test","model":"m","roles":["builder"],"tier":"yolo"}
 	]`)
@@ -273,23 +265,25 @@ func TestRolesViewsLegacyRoleFieldWarnings(t *testing.T) {
 // Mutation check: render one part per gate instead of grouping by kind and
 // until, and the merged roles-missing part is gone.
 func TestRolesViewsMergedGateTexts(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	until := baseTime.Add(time.Hour)
-	gates := []ledger.Gate{
-		{Token: testClaudeRef, Kind: ledger.RolesMissing, Role: "reviewer"},
-		{Token: testClaudeRef, Kind: ledger.RolesMissing, Role: "builder"},
-		{Token: testClaudeRef, Kind: ledger.RateLimited, Until: until},
+	gates := []availability.Gate{
+		{Token: testClaudeRef, Kind: availability.RolesMissing, Role: "reviewer"},
+		{Token: testClaudeRef, Kind: availability.RolesMissing, Role: "builder"},
+		{Token: testClaudeRef, Kind: availability.RateLimited, Until: until},
 	}
 
-	got := FormatCandidates(set, gates)
+	got := view.FormatCandidates(set, gates)
 
-	want := "   unavailable: roles missing (builder, reviewer) until cleared; " +
-		GateKindText(ledger.RateLimited) + " " + GateUntilText(until)
+	want := "   unavailable: agents missing (builder, reviewer) until cleared; " +
+		availability.GateKindText(availability.RateLimited) + " " + availability.GateUntilText(until)
 	if !strings.Contains(got, want) {
-		t.Errorf("FormatCandidates =\n%q\nwant it to contain:\n%q", got, want)
+		t.Errorf("view.FormatCandidates =\n%q\nwant it to contain:\n%q", got, want)
 	}
-	if n := strings.Count(got, "roles missing"); n != 1 {
-		t.Errorf("roles missing appears %d times, want the merged part once:\n%s", n, got)
+	if n := strings.Count(got, "agents missing"); n != 1 {
+		t.Errorf("agents missing appears %d times, want the merged part once:\n%s", n, got)
 	}
 }
 
@@ -297,6 +291,8 @@ func TestRolesViewsMergedGateTexts(t *testing.T) {
 // whose row lists nothing gives the roles.json wording, and the error still
 // matches ErrRoleNotServed.
 func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder": {Candidates: []string{}},
@@ -304,10 +300,10 @@ func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
 
 	_, err := resolveRole(reg, set, nil, "", "builder")
 	if err == nil {
-		t.Fatal("resolveRole with an empty config roles builder.candidates = nil, want an error")
+		t.Fatal("resolveRole with an empty config actors builder.candidates = nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "config roles builder.candidates") {
-		t.Errorf("err = %q, want it to name config roles builder.candidates", err)
+	if !strings.Contains(err.Error(), "config actors builder.candidates") {
+		t.Errorf("err = %q, want it to name config actors builder.candidates", err)
 	}
 	if !errors.Is(err, ErrRoleNotServed) {
 		t.Errorf("err = %q, want errors.Is(err, ErrRoleNotServed)", err)
@@ -316,7 +312,7 @@ func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
 
 // statusRowForTest saves b and reads it back through statusRow, the function
 // `relevo status` builds its rows with.
-func statusRowForTest(t *testing.T, rt Runtime, b store.Binding) BindingStatus {
+func statusRowForTest(t *testing.T, rt Runtime, b store.Binding) view.BindingStatus {
 	t.Helper()
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save binding: %v", err)
@@ -331,12 +327,12 @@ func statusRowForTest(t *testing.T, rt Runtime, b store.Binding) BindingStatus {
 // customBuilderBinding is an ACTIVE binding whose builder kind is claude.
 func customBuilderBinding(name string) store.Binding {
 	return store.Binding{
-		Name:    name,
-		CWD:     "/repo",
-		Planner: store.Endpoint{PaneID: "w2:p3"},
-		Builder: store.Endpoint{Kind: "claude", AgentName: name},
-		Round:   1,
-		State:   store.StateActive,
+		Name:       name,
+		CWD:        "/repo",
+		MasterMind: store.Endpoint{PaneID: "w2:p3"},
+		Builder:    store.Endpoint{Kind: "claude", AgentName: name},
+		Round:      1,
+		State:      store.StateActive,
 	}
 }
 
@@ -361,8 +357,8 @@ func TestRolesViewsStatusNamesCustomBuilderDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal row: %v", err)
 	}
-	if !strings.Contains(string(raw), `"builder_definition":"my-executor"`) {
-		t.Errorf("JSON = %s, want it to contain %q", raw, `"builder_definition":"my-executor"`)
+	if !strings.Contains(string(raw), `"agent_definition":"my-executor"`) {
+		t.Errorf("JSON = %s, want it to contain %q", raw, `"agent_definition":"my-executor"`)
 	}
 }
 
@@ -382,7 +378,7 @@ func TestRolesViewsStatusOmitsShippedBuilderDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal row: %v", err)
 	}
-	if strings.Contains(string(raw), "builder_definition") {
-		t.Errorf("JSON = %s, want no builder_definition key", raw)
+	if strings.Contains(string(raw), "agent_definition") {
+		t.Errorf("JSON = %s, want no agent_definition key", raw)
 	}
 }

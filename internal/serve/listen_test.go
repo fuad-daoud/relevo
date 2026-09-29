@@ -27,55 +27,9 @@ func waitForAddr(s *Server) (net.Addr, error) {
 	return nil, errors.New("timed out waiting for server address")
 }
 
-func TestListenTLSWhoAmI(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now()
-
-	secrets := SecretStore{DB: testServeDB(t), Root: dir}
-	fp, err := InitTLS(secrets, []string{"127.0.0.1"}, now)
-	if err != nil {
-		t.Fatalf("InitTLS: %v", err)
-	}
-
-	cert, err := LoadTLS(secrets)
-	if err != nil {
-		t.Fatalf("LoadTLS: %v", err)
-	}
-
-	srv, err := New(Config{
-		DB:   testServeDB(t),
-		Root: dir,
-		Now:  func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	kp, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- srv.ListenAndServe(ctx, ListenConfig{
-			Addr: "127.0.0.1:0",
-			TLS:  &cert,
-		})
-	}()
-
-	addr, err := waitForAddr(srv)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	pinnedClient := &http.Client{
+// pinnedClient verifies the presented certificate against wantFP.
+func pinnedClient(wantFP string) *http.Client {
+	return &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
@@ -83,18 +37,38 @@ func TestListenTLSWhoAmI(t *testing.T) {
 					if len(rawCerts) == 0 {
 						return errors.New("no peer certificates presented")
 					}
-					gotFP := FingerprintOf(rawCerts[0])
-					if gotFP != fp {
-						return fmt.Errorf("fingerprint mismatch: got %s, want %s", gotFP, fp)
+					if gotFP := FingerprintOf(rawCerts[0]); gotFP != wantFP {
+						return fmt.Errorf("fingerprint mismatch: got %s, want %s", gotFP, wantFP)
 					}
 					return nil
 				},
 			},
 		},
 	}
+}
 
-	url := fmt.Sprintf("https://%s/v1/whoami", addr.String())
-	req, err := http.NewRequest("GET", url, nil)
+// listenTLSConfig initialises the server's TLS material and returns the
+// certificate plus a client that pins its fingerprint.
+func listenTLSConfig(t *testing.T, dir string, now time.Time) (*tls.Certificate, *http.Client) {
+	t.Helper()
+	secrets := SecretStore{DB: testServeDB(t)}
+	fp, err := InitTLS(secrets, []string{"127.0.0.1"}, now)
+	if err != nil {
+		t.Fatalf("InitTLS: %v", err)
+	}
+	cert, err := LoadTLS(secrets)
+	if err != nil {
+		t.Fatalf("LoadTLS: %v", err)
+	}
+	return &cert, pinnedClient(fp)
+}
+
+// whoAmILabel signs a whoami request with now -- the server's clock is pinned to
+// the same instant, so the signature's nonce window is valid -- and returns the
+// label it answers.
+func whoAmILabel(t *testing.T, client *http.Client, scheme string, addr net.Addr, kp remote.Keypair, now time.Time) string {
+	t.Helper()
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s://%s/v1/whoami", scheme, addr.String()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,19 +76,17 @@ func TestListenTLSWhoAmI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hdr := remote.Sign(kp, "GET", "/v1/whoami", nil, now, nonce)
-	for k, vv := range hdr {
+	for k, vv := range remote.Sign(kp, "GET", "/v1/whoami", nil, now, nonce) {
 		for _, v := range vv {
 			req.Header.Add(k, v)
 		}
 	}
 
-	resp, err := pinnedClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	defer resp.Body.Close()
-
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -123,32 +95,80 @@ func TestListenTLSWhoAmI(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&who); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if who.Label != "alice" {
-		t.Errorf("who.Label = %q, want alice", who.Label)
-	}
+	return who.Label
+}
 
-	cancel()
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("ListenAndServe returned error on cancel: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("ListenAndServe did not return within 5 seconds")
+// TestListenWhoAmI serves one signed whoami over TLS and over plain HTTP: both
+// must authenticate and answer the enrolled label.
+func TestListenWhoAmI(t *testing.T) {
+	cases := []struct {
+		name     string
+		insecure bool
+		label    string
+	}{
+		{"tls", false, "alice"},
+		{"insecure http", true, "bob"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			now := time.Now()
+
+			lc := ListenConfig{Addr: "127.0.0.1:0", InsecureHTTP: tc.insecure}
+			scheme := "http"
+			client := &http.Client{}
+			if !tc.insecure {
+				lc.TLS, client = listenTLSConfig(t, dir, now)
+				scheme = "https"
+			}
+
+			srv, err := New(Config{DB: testServeDB(t), Root: dir, Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			kp, err := remote.Generate()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := srv.clients.Add(tc.label, remote.MarshalPublic(kp.Public, tc.label), now); err != nil {
+				t.Fatal(err)
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			errCh := make(chan error, 1)
+			go func() { errCh <- srv.ListenAndServe(ctx, lc) }()
+
+			addr, err := waitForAddr(srv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := whoAmILabel(t, client, scheme, addr, kp, now); got != tc.label {
+				t.Errorf("who.Label = %q, want %q", got, tc.label)
+			}
+
+			cancel()
+			select {
+			case err := <-errCh:
+				if err != nil {
+					t.Fatalf("ListenAndServe returned error on cancel: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("ListenAndServe did not return within 5 seconds")
+			}
+		})
 	}
 }
 
 func TestListenRefusesWithoutTLS(t *testing.T) {
-	dir := t.TempDir()
-	srv, err := New(Config{DB: testServeDB(t), Root: dir, Now: time.Now})
+	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// The refusal has to be observed with a deadline, not by calling
-	// ListenAndServe straight: take the guard away and it binds the port and
-	// blocks in Serve until the context is cancelled, so a direct call hangs
-	// forever instead of failing and pins nothing (#216).
+	// The refusal has to be observed with a deadline: take the guard away and
+	// ListenAndServe binds the port and blocks in Serve until cancellation, so a
+	// direct call would hang instead of failing.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -163,97 +183,13 @@ func TestListenRefusesWithoutTLS(t *testing.T) {
 			t.Fatalf("ListenAndServe without TLS err = %v, want ErrNoTLS", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("ListenAndServe without TLS never returned: the no-certificate guard is gone and the server is serving")
+		t.Fatal("ListenAndServe without TLS never returned: the no-certificate guard is gone")
 	}
 }
 
-func TestListenInsecureHTTP(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now()
-
-	srv, err := New(Config{DB: testServeDB(t), Root: dir, Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	kp, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := srv.clients.Add("bob", remote.MarshalPublic(kp.Public, "bob"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- srv.ListenAndServe(ctx, ListenConfig{
-			Addr:         "127.0.0.1:0",
-			InsecureHTTP: true,
-		})
-	}()
-
-	addr, err := waitForAddr(srv)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	client := &http.Client{}
-	url := fmt.Sprintf("http://%s/v1/whoami", addr.String())
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonce, err := remote.NewNonce()
-	if err != nil {
-		t.Fatal(err)
-	}
-	hdr := remote.Sign(kp, "GET", "/v1/whoami", nil, now, nonce)
-	for k, vv := range hdr {
-		for _, v := range vv {
-			req.Header.Add(k, v)
-		}
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("Do: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-
-	var who remote.WhoAmI
-	if err := json.NewDecoder(resp.Body).Decode(&who); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if who.Label != "bob" {
-		t.Errorf("who.Label = %q, want bob", who.Label)
-	}
-
-	cancel()
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("ListenAndServe returned error on cancel: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("ListenAndServe did not return within 5 seconds")
-	}
-}
-
-// TestListenAndServeWaitsForRun pins #373 §4.1's drain: on cancel,
-// ListenAndServe shuts the HTTP server down and returns only after Run has
-// finished its in-flight tick. Tick cannot be held open through the real
-// implementation without a large refactor, so this uses the unexported tickFn
-// seam.
-//
-// Mutation check: take the `<-drained` wait out of ListenAndServe and this
-// fails: it returns before the held tick is released.
+// TestListenAndServeWaitsForRun: on cancel, ListenAndServe shuts the HTTP server
+// down and returns only after Run has finished its in-flight tick. Tick cannot
+// be held open through the real implementation, so this uses tickFn.
 func TestListenAndServeWaitsForRun(t *testing.T) {
 	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond})
 	if err != nil {

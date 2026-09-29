@@ -1,0 +1,34 @@
+  ◆ relevo    actors                                                                                           v0.13.0-28    14:02  
+                                                                                                                                    
+   3 actors   1 writer   2 readers                                                                                                  
+                                                                                                                                    
+   ACTOR                                                          AGENT          SHAPE   TIER   CANDIDATES  NEXT PICK               
+   builder                                                        plan-executor  writer  yolo            6  sonnet                  
+   reviewer                                                       reviewer       reader  yolo            2  sonnet                  
+   researcher                                                     researcher     reader  —               1  haiku                   
+                                                                                                                                    
+                                                                                                                                    
+   builder   plan-executor · writer · tier yolo                                                                                     
+    1  gemini-3.8-flash-high  gated                                                                                                 
+    2  claude-sonnet-4-6      gated 20h                                                                                             
+    3  deepseek-v4.1-flash    gated 1d                                                                                              
+    4  gpt-5.6-terra          gated 24d                                                                                             
+    5  sonnet                 ready       next pick                                                                                 
+    6  glm-5.3-flash          ready                                                                                                 
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ ↑↓  move      enter  open      a  add      d  delete      :  command      ?  all keys      q  quit                                 

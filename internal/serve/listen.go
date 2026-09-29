@@ -10,28 +10,24 @@ import (
 	"time"
 )
 
-// ErrNoTLS is returned when ListenAndServe is called without a TLS certificate and without InsecureHTTP.
 var ErrNoTLS = errors.New("no certificate; run relevo serve init or pass --insecure-http")
 
-// ListenConfig configures the server's network listener.
 type ListenConfig struct {
 	Addr         string           // e.g. ":7777"
 	TLS          *tls.Certificate // nil only with InsecureHTTP
 	InsecureHTTP bool
 }
 
-// Addr returns the bound address once listening, or nil before listening starts.
 func (s *Server) Addr() net.Addr {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.addr
 }
 
-// ListenAndServe starts the HTTP/HTTPS server and the daemon tick loop.
-// It requires a TLS certificate unless InsecureHTTP is set.
-// It runs until ctx is cancelled, then drains (#373 §4.1): it shuts the HTTP
-// server down with a 30-second budget so in-flight requests finish, waits for
-// Run to finish its in-flight tick, and only then returns.
+// ListenAndServe starts the HTTP/HTTPS server and the daemon tick loop. It
+// requires a TLS certificate unless InsecureHTTP is set, and on cancel drains:
+// it shuts the HTTP server down with a 30-second budget, waits for Run's
+// in-flight tick, and only then returns.
 func (s *Server) ListenAndServe(ctx context.Context, lc ListenConfig) error {
 	if lc.TLS == nil && !lc.InsecureHTTP {
 		return ErrNoTLS
@@ -58,7 +54,7 @@ func (s *Server) ListenAndServe(ctx context.Context, lc ListenConfig) error {
 		s.mu.Unlock()
 	}()
 
-	var listener net.Listener = ln
+	listener := net.Listener(ln)
 	if lc.TLS != nil {
 		tlsConfig := &tls.Config{
 			MinVersion:   tls.VersionTLS12,
@@ -81,9 +77,9 @@ func (s *Server) ListenAndServe(ctx context.Context, lc ListenConfig) error {
 	}()
 
 	// The drain: on cancel, stop accepting and let in-flight requests finish
-	// within Shutdown's budget, then wait for Run's in-flight tick (#373
-	// §4.1). Shutdown's own error (the budget ran out) is a Warn; the wait for
-	// Run happens either way.
+	// within Shutdown's budget, then wait for Run's in-flight tick. Shutdown's
+	// own error (the budget ran out) is a Warn; the wait for Run happens either
+	// way.
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)

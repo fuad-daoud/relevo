@@ -9,23 +9,33 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 type tab int
 
 const (
-	tabPlan tab = iota
+	tabPrompt tab = iota
 	tabReport
 	tabTerminal
 	tabDiff
 	tabLog
+	tabArtifacts
 	tabCount
 )
 
 // tabTitles indexes by tab and is used by both the tab bar and the tests.
-var tabTitles = [tabCount]string{"plan", "report", "terminal", "diff", "log"}
+var tabTitles = [tabCount]string{"prompt", "report", "transcript", "diff", "log", "artifacts"}
+
+// writerTabs is the tab bar a writer round draws: today's tabs, unchanged.
+var writerTabs = []tab{tabPrompt, tabReport, tabTerminal, tabDiff, tabLog}
+
+// readerTabs is the tab bar a reader round draws (round 5b): no report and
+// no diff, and the artifacts tab instead.
+var readerTabs = []tab{tabPrompt, tabArtifacts, tabLog, tabTerminal}
 
 // tabContent is one tab's rendered body plus why it might be empty.
 //
@@ -39,7 +49,7 @@ type tabContent struct {
 	err    error     // fetch failure, scoped to this tab alone
 	empty  string    // prose explaining expected emptiness
 	round  int       // the round the body belongs to (report, diff); 0 when not round-keyed
-	at     time.Time // when the body was read; the source line's "13:38" and "captured 1s ago"
+	at     time.Time // the event time for prompt and report (zero when unknown), the read time for the others
 
 	// transcript is true when the body is a rendered round log (headless
 	// stream or pane session record, #184): colour markers, show the log
@@ -48,6 +58,18 @@ type tabContent struct {
 	// logName is the base name of that log ("003-builder.log"); "" for a
 	// capture.
 	logName string
+
+	// The artifacts tab (round 5b): the files RoundArtifacts listed for
+	// the round, in its order; artifactRel the selected file, artifactBody
+	// its raw bytes, artifactActor the binding's actor and artifactOutput
+	// the actor's output rel (whose file, or summary.md, is the final
+	// message), and artifactErr a failed read of the selected file.
+	artifacts      []relevo.ArtifactFile
+	artifactRel    string
+	artifactBody   string
+	artifactActor  string
+	artifactOutput string
+	artifactErr    error
 }
 
 // headlessLogLines caps how much of a round log the terminal tab holds:
@@ -58,7 +80,7 @@ const headlessLogLines = 5000
 type tickMsg time.Time
 
 type statusMsg struct {
-	report relevo.Report
+	report view.Report
 	err    error
 }
 
@@ -92,20 +114,19 @@ func fetchStatus(ctx context.Context, src Source) tea.Cmd {
 	}
 }
 
-// fetchPlan reads round's plan file. It is small enough not to need
-// relevo.ReadDiff's stored-patch indirection: the file is either there or it
+// fetchPrompt reads round's prompt file. It is small enough not to need
+// capture.ReadDiff's stored-patch indirection: the file is either there or it
 // is not.
-func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
+func fetchPrompt(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
 		rt, name, ok := src.Runtime(key)
 		if !ok {
 			return tabMsg{
 				name:  key,
 				round: round,
-				t:     tabPlan,
+				t:     tabPrompt,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					round:  round,
 					err:    unresolvedKey(key),
 				},
@@ -115,49 +136,61 @@ func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 			return tabMsg{
 				name:  key,
 				round: round,
-				t:     tabPlan,
+				t:     tabPrompt,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					round:  round,
 					empty:  "no completed round yet",
 				},
 			}
 		}
-		data, err := rt.Store.ReadFile(rt.Store.PlanPath(name, round))
+		data, err := rt.Store.ReadFile(rt.Store.PromptPath(name, round))
 		if err != nil {
 			if os.IsNotExist(err) {
 				return tabMsg{
 					name:  key,
 					round: round,
-					t:     tabPlan,
+					t:     tabPrompt,
 					content: tabContent{
 						loaded: true,
-						at:     time.Now(),
 						round:  round,
-						empty:  fmt.Sprintf("no plan for round %d", round),
+						empty:  fmt.Sprintf("no prompt for round %d", round),
 					},
 				}
 			}
 			return tabMsg{
 				name:  key,
 				round: round,
-				t:     tabPlan,
+				t:     tabPrompt,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					round:  round,
 					err:    err,
 				},
 			}
 		}
+
+		// The prompt tab's time is when the prompt was sent, from the log
+		// entry that recorded it. A log read failure or a missing entry
+		// leaves the time unknown; it never fails the tab.
+		var at time.Time
+		if entries, lerr := rt.Store.ReadLog(name); lerr == nil {
+			for i := len(entries) - 1; i >= 0; i-- {
+				e := entries[i]
+				if e.Round == round && e.Direction == store.DirToBuilder && store.IsPromptKind(e.Kind) {
+					at = e.TS
+					break
+				}
+			}
+		}
+
 		return tabMsg{
 			name:  key,
 			round: round,
-			t:     tabPlan,
+			t:     tabPrompt,
 			content: tabContent{
 				loaded: true,
-				at:     time.Now(),
+				at:     at,
 				round:  round,
 				body:   string(data),
 			},
@@ -181,7 +214,6 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 				t:     tabReport,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					err:    unresolvedKey(key),
 				},
 			}
@@ -194,7 +226,6 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 				t:     tabReport,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					err:    err,
 				},
 			}
@@ -205,7 +236,7 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 			if e.Round != round {
 				continue
 			}
-			if e.Direction == store.DirToPlanner &&
+			if e.Direction == store.DirToMasterMind &&
 				(e.Kind == store.KindReport || e.Kind == store.KindQuestion || e.Kind == store.KindFindings) {
 				if e.Payload == "" {
 					return tabMsg{
@@ -214,7 +245,7 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 						t:     tabReport,
 						content: tabContent{
 							loaded: true,
-							at:     time.Now(),
+							at:     e.TS,
 							round:  round,
 							empty:  fmt.Sprintf("round %d report has no payload", round),
 						},
@@ -226,7 +257,7 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 					t:     tabReport,
 					content: tabContent{
 						loaded: true,
-						at:     time.Now(),
+						at:     e.TS,
 						round:  round,
 						body:   e.Payload,
 					},
@@ -241,7 +272,6 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 				t:     tabReport,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					empty:  "round 1 in flight; no report yet",
 				},
 			}
@@ -253,7 +283,6 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 			t:     tabReport,
 			content: tabContent{
 				loaded: true,
-				at:     time.Now(),
 				round:  round,
 				empty:  fmt.Sprintf("round %d is open; report arrives when it closes", round),
 			},
@@ -261,23 +290,13 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 	}
 }
 
-// logTab reads a round log for the terminal tab: the last headlessLogLines
-// lines, transcript true, logName the file's base name. read is
-// rt.Store.ReadFile, so a sealed round's log is found in the database too.
-// ok is false when the file cannot be read (missing or otherwise), so the
-// caller decides what the tab says instead: the pane branch falls back to the
-// capture, the headless branch keeps its own "log not written yet" prose.
-// (Extracted from the headless branch of fetchTerminal; that branch now calls
-// it.) key names the reply's row and name the store path the log was read
-// from.
-func logTab(key, name string, read func(string) ([]byte, error), logPath string) (tabMsg, bool) {
-	data, err := read(logPath)
-	if err != nil {
-		return tabMsg{}, false
-	}
-	body := strings.TrimRight(string(data), "\n")
-	if all := strings.Split(body, "\n"); len(all) > headlessLogLines {
-		body = strings.Join(all[len(all)-headlessLogLines:], "\n")
+// transcriptTab is the terminal tab for already-read transcript bytes: the
+// last headlessLogLines lines, transcript true, logName the source the bytes
+// came from. Every terminal read shares it.
+func transcriptTab(key string, body []byte, logName string) tabMsg {
+	text := strings.TrimRight(string(body), "\n")
+	if all := strings.Split(text, "\n"); len(all) > headlessLogLines {
+		text = strings.Join(all[len(all)-headlessLogLines:], "\n")
 	}
 	return tabMsg{
 		name: key,
@@ -285,11 +304,24 @@ func logTab(key, name string, read func(string) ([]byte, error), logPath string)
 		content: tabContent{
 			loaded:     true,
 			at:         time.Now(),
-			body:       body,
+			body:       text,
 			transcript: true,
-			logName:    filepath.Base(logPath),
+			logName:    logName,
 		},
-	}, true
+	}
+}
+
+// logTab reads a round log file for the terminal tab -- the remote-builder
+// branch's read. transcriptTab does the trimming and capping. ok is false
+// when the file cannot be read (missing or otherwise), so the caller decides
+// what the tab says instead: the remote branch falls back to its own prose.
+// key names the reply's row; name is the store path the log was read from.
+func logTab(key, name string, read func(string) ([]byte, error), logPath string) (tabMsg, bool) {
+	data, err := read(logPath)
+	if err != nil {
+		return tabMsg{}, false
+	}
+	return transcriptTab(key, data, filepath.Base(logPath)), true
 }
 
 // fetchTerminal resolves the binding's builder log for the terminal tab: for
@@ -331,13 +363,26 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 			}
 		}
 
-		// A headless builder (#99) has no pane; its output is a round's log
-		// file. Shown, never parsed.
+		// A headless builder (#99) has no pane; its output is a round's
+		// transcript -- its NNN-builder.log when one exists, otherwise its
+		// stream rendered per segment. Shown, never parsed.
 		if b.Builder.Headless() {
+			readBytes := func(p string) ([]byte, bool, error) {
+				data, rerr := rt.Store.ReadFile(p)
+				if rerr != nil {
+					if os.IsNotExist(rerr) {
+						return nil, false, nil
+					}
+					return nil, false, rerr
+				}
+				return data, true, nil
+			}
 			if round != b.Round {
-				// A past round: its own file, canonically named, is the
-				// only place it could be.
-				if msg, ok := logTab(key, name, rt.Store.ReadFile, rt.Store.BuilderLogPath(name, round)); ok {
+				// A past round: its own round files are the only place it
+				// could be.
+				text, source, found, rerr := relevo.RoundTranscript(rt.Store, name, round, b.Builder, readBytes)
+				if rerr == nil && found {
+					msg := transcriptTab(key, text, source)
 					msg.round = round
 					return msg
 				}
@@ -352,16 +397,12 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 					},
 				}
 			}
-			// The current round: the cursor names the exact file the
-			// process is writing (or, between rounds, last wrote) --
-			// between rounds clearProcess blanks LogPath, but the cursor
-			// still names the last round that ran (transcript spec §4.7),
-			// so fall back to that rather than a blank tab.
-			logPath := b.Builder.LogPath
-			if logPath == "" && b.Builder.StreamRound != 0 {
-				logPath = rt.Store.BuilderLogPath(name, b.Builder.StreamRound)
-			}
-			if logPath == "" {
+			// The current round: the cursor names the round the process is
+			// writing (or, between rounds, last wrote) -- between rounds
+			// clearProcess blanks LogPath, but the cursor still names the
+			// last round that ran (transcript spec §4.7), so fall back to
+			// the viewed round rather than a blank tab.
+			if b.Builder.LogPath == "" && b.Builder.StreamRound == 0 {
 				return tabMsg{
 					name:  key,
 					round: round,
@@ -373,7 +414,34 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 					},
 				}
 			}
-			if msg, ok := logTab(key, name, rt.Store.ReadFile, logPath); ok {
+			// Rule 1: the endpoint's own log. A live process that names a
+			// log which is not its round's stream reads that file, exactly
+			// as before. In 2b LogPath becomes the stream path itself, so
+			// this branch stops applying and rule 2 renders the stream.
+			if b.Builder.LogPath != "" && b.Builder.LogPath != rt.Store.StreamPath(name, b.Builder.StreamRound) {
+				if msg, ok := logTab(key, name, rt.Store.ReadFile, b.Builder.LogPath); ok {
+					msg.round = round
+					return msg
+				}
+				return tabMsg{
+					name:  key,
+					round: round,
+					t:     tabTerminal,
+					content: tabContent{
+						loaded: true,
+						at:     time.Now(),
+						empty:  "log not written yet: " + b.Builder.LogPath,
+					},
+				}
+			}
+			// Rule 2: otherwise the round's transcript (§4.5).
+			r := b.Builder.StreamRound
+			if r == 0 {
+				r = round
+			}
+			text, source, found, rerr := relevo.RoundTranscript(rt.Store, name, r, b.Builder, readBytes)
+			if rerr == nil && found {
+				msg := transcriptTab(key, text, source)
 				msg.round = round
 				return msg
 			}
@@ -384,7 +452,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 				content: tabContent{
 					loaded: true,
 					at:     time.Now(),
-					empty:  "log not written yet: " + logPath,
+					empty:  "log not written yet: " + rt.Store.StreamPath(name, r),
 				},
 			}
 		}
@@ -457,7 +525,7 @@ func fetchDiff(ctx context.Context, src Source, key string, round int) tea.Cmd {
 				},
 			}
 		}
-		patch, ok, err := relevo.ReadDiff(rt, name, round)
+		patch, ok, err := capture.ReadDiff(rt.Store, name, round)
 		if err != nil {
 			return tabMsg{
 				name:  key,
@@ -576,12 +644,106 @@ func fetchLog(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	}
 }
 
+// fetchArtifacts reads a reader round's artifact directory for the artifacts
+// tab (round 5b): the file list RoundArtifacts orders, and the sel-th file's
+// bytes through ReadArtifact. Both answer a live round's files on disk and a
+// sealed round's round_file rows, so the tab renders the same either way.
+func fetchArtifacts(ctx context.Context, src Source, key string, round, sel int) tea.Cmd {
+	return func() tea.Msg {
+		rt, name, ok := src.Runtime(key)
+		if !ok {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabArtifacts,
+				content: tabContent{
+					loaded: true,
+					round:  round,
+					err:    unresolvedKey(key),
+				},
+			}
+		}
+		if round < 1 {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabArtifacts,
+				content: tabContent{
+					loaded: true,
+					round:  round,
+					empty:  "no completed round yet",
+				},
+			}
+		}
+		b, err := rt.Store.Load(name)
+		if err != nil {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabArtifacts,
+				content: tabContent{
+					loaded: true,
+					round:  round,
+					err:    err,
+				},
+			}
+		}
+		actor := relevo.BindingRole(b)
+		output := relevo.OutputFile(rt, b)
+		files, err := relevo.RoundArtifacts(rt, name, round, actor, output)
+		if err != nil {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabArtifacts,
+				content: tabContent{
+					loaded: true,
+					round:  round,
+					err:    err,
+				},
+			}
+		}
+		if len(files) == 0 {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabArtifacts,
+				content: tabContent{
+					loaded: true,
+					round:  round,
+					at:     time.Now(),
+					empty:  fmt.Sprintf("no artifacts for round %d", round),
+				},
+			}
+		}
+		if sel < 0 || sel >= len(files) {
+			sel = 0
+		}
+		content := tabContent{
+			loaded:         true,
+			round:          round,
+			at:             time.Now(),
+			artifacts:      files,
+			artifactRel:    files[sel].Rel,
+			artifactActor:  actor,
+			artifactOutput: output,
+		}
+		data, rerr := relevo.ReadArtifact(rt, name, round, actor, files[sel].Rel)
+		if rerr != nil {
+			content.artifactErr = rerr
+		} else {
+			content.artifactBody = string(data)
+		}
+		return tabMsg{name: key, round: round, t: tabArtifacts, content: content}
+	}
+}
+
 // sectionForTab maps a ui tab to the relevo.ShowSection fetchShow reads for
 // it -- terminal -> transcript, everything else its own name (§5.8).
 func sectionForTab(t tab) relevo.ShowSection {
 	switch t {
-	case tabPlan:
-		return relevo.ShowPlan
+	case tabPrompt:
+		return relevo.ShowPrompt
 	case tabReport:
 		return relevo.ShowReport
 	case tabTerminal:
@@ -590,8 +752,10 @@ func sectionForTab(t tab) relevo.ShowSection {
 		return relevo.ShowDiff
 	case tabLog:
 		return relevo.ShowLog
+	case tabArtifacts:
+		return relevo.ShowArtifacts
 	default:
-		return relevo.ShowPlan
+		return relevo.ShowPrompt
 	}
 }
 
@@ -599,8 +763,8 @@ func sectionForTab(t tab) relevo.ShowSection {
 // the ui tab a reply routes to rather than the relevo.ShowSection it read.
 func tabForSection(s relevo.ShowSection) tab {
 	switch s {
-	case relevo.ShowPlan:
-		return tabPlan
+	case relevo.ShowPrompt:
+		return tabPrompt
 	case relevo.ShowReport:
 		return tabReport
 	case relevo.ShowTranscript:
@@ -609,8 +773,10 @@ func tabForSection(s relevo.ShowSection) tab {
 		return tabDiff
 	case relevo.ShowLog:
 		return tabLog
+	case relevo.ShowArtifacts:
+		return tabArtifacts
 	default:
-		return tabPlan
+		return tabPrompt
 	}
 }
 
@@ -624,20 +790,19 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 	return func() tea.Msg {
 		res, err := relevo.Show(ctx, rt, relevo.ShowOptions{Name: name, Round: round, Section: section})
 		if err != nil {
-			return tabMsg{
-				name:  name,
-				round: round,
-				t:     t,
-				content: tabContent{
-					loaded: true,
-					at:     time.Now(),
-					round:  round,
-					err:    err,
-				},
+			content := tabContent{loaded: true, round: round, err: err}
+			if t != tabPrompt && t != tabReport {
+				content.at = time.Now()
 			}
+			return tabMsg{name: name, round: round, t: t, content: content}
 		}
 
-		content := tabContent{loaded: true, at: time.Now(), round: round}
+		// Show carries no event time for a prompt or report section, so those
+		// source lines stay timeless rather than claiming the read time.
+		content := tabContent{loaded: true, round: round}
+		if t != tabPrompt && t != tabReport {
+			content.at = time.Now()
+		}
 		switch {
 		case section == relevo.ShowLog:
 			if len(res.Events) == 0 {
@@ -667,19 +832,20 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 // visibleTabFetch share one mapping instead of two switches that can drift.
 // live is false for a hist row's detail (#172, §5.8): every tab goes
 // through fetchShow instead of live's own fetchers. A hist row's key is
-// its bare name (hist rows are planner-only; the server never has them),
-// read through src.Base().
+// its bare name (hist rows are mastermind-only; the server never has them),
+// read through src.Base(). sel is the artifacts tab's cursor, ignored by
+// every other tab.
 //
 // It takes explicit parameters rather than a Model: fetch.go is built in
 // Step 2 and Model does not exist until Step 3, so a Model parameter here
 // would not compile in the step that introduces it.
-func fetchFor(ctx context.Context, src Source, t tab, key string, round, lines int, live bool) tea.Cmd {
+func fetchFor(ctx context.Context, src Source, t tab, key string, round, lines, sel int, live bool) tea.Cmd {
 	if !live {
 		return fetchShow(ctx, src.Base(), key, round, sectionForTab(t))
 	}
 	switch t {
-	case tabPlan:
-		return fetchPlan(ctx, src, key, round)
+	case tabPrompt:
+		return fetchPrompt(ctx, src, key, round)
 	case tabReport:
 		return fetchReport(ctx, src, key, round)
 	case tabTerminal:
@@ -688,6 +854,8 @@ func fetchFor(ctx context.Context, src Source, t tab, key string, round, lines i
 		return fetchDiff(ctx, src, key, round)
 	case tabLog:
 		return fetchLog(ctx, src, key, round)
+	case tabArtifacts:
+		return fetchArtifacts(ctx, src, key, round, sel)
 	default:
 		return nil
 	}

@@ -6,48 +6,49 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// fakeVerbs is a Verbs whose three methods are swappable per test; a nil
-// field returns (nil, nil).
+// fakeVerbs is a Verbs whose three methods are swappable per test; a nil field returns (nil, nil).
 type fakeVerbs struct {
-	statusFn func(ctx context.Context, a StatusArgs) (any, error)
-	sendFn   func(ctx context.Context, a SendArgs) (any, error)
-	doneFn   func(ctx context.Context, a DoneArgs) (any, error)
+	statusFn func(ctx context.Context, session string, a StatusArgs) (any, error)
+	sendFn   func(ctx context.Context, session string, a SendArgs) (any, error)
+	doneFn   func(ctx context.Context, session string, a DoneArgs) (any, error)
 }
 
-func (f *fakeVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
+func (f *fakeVerbs) Status(ctx context.Context, session string, a StatusArgs) (any, error) {
 	if f.statusFn == nil {
 		return nil, nil
 	}
-	return f.statusFn(ctx, a)
+	return f.statusFn(ctx, session, a)
 }
 
-func (f *fakeVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
+func (f *fakeVerbs) Send(ctx context.Context, session string, a SendArgs) (any, error) {
 	if f.sendFn == nil {
 		return nil, nil
 	}
-	return f.sendFn(ctx, a)
+	return f.sendFn(ctx, session, a)
 }
 
-func (f *fakeVerbs) Done(ctx context.Context, a DoneArgs) (any, error) {
+func (f *fakeVerbs) Done(ctx context.Context, session string, a DoneArgs) (any, error) {
 	if f.doneFn == nil {
 		return nil, nil
 	}
-	return f.doneFn(ctx, a)
+	return f.doneFn(ctx, session, a)
 }
 
-// runServer drives Serve over an in-memory pipe with one line per request,
-// closing the input after writing them (EOF), and returns everything Serve
-// wrote to out.
+// runServer drives Serve over an in-memory pipe, one line per request, and returns everything it wrote.
 func runServer(t *testing.T, verbs Verbs, requests []string) []byte {
 	t.Helper()
 	return runServerWith(t, &Server{Verbs: verbs, Version: "0.6.0-test"}, requests)
 }
 
-// runServerWith is runServer over a caller-built Server, for the tests that
-// need a Notice (#371 §4.10) or another field runServer leaves zero.
+// runServerWith is runServer over a caller-built Server, for tests that need a Notice or other field runServer leaves zero.
 func runServerWith(t *testing.T, srv *Server, requests []string) []byte {
 	t.Helper()
 	pr, pw := io.Pipe()
@@ -168,7 +169,7 @@ func TestServerToolsListHasThreeToolsInOrderNoAdditionalProperties(t *testing.T)
 
 func TestServerToolsCallDoneErrorBecomesIsError(t *testing.T) {
 	verbs := &fakeVerbs{
-		doneFn: func(ctx context.Context, a DoneArgs) (any, error) {
+		doneFn: func(ctx context.Context, _ string, a DoneArgs) (any, error) {
 			return nil, errors.New("boom")
 		},
 	}
@@ -198,7 +199,7 @@ func TestServerToolsCallDoneErrorBecomesIsError(t *testing.T) {
 
 func TestServerToolsCallDoneSuccess(t *testing.T) {
 	verbs := &fakeVerbs{
-		doneFn: func(ctx context.Context, a DoneArgs) (any, error) {
+		doneFn: func(ctx context.Context, _ string, a DoneArgs) (any, error) {
 			return map[string]any{"ok": true, "name": a.Name}, nil
 		},
 	}
@@ -324,18 +325,16 @@ func TestServerPushEmitsNotificationAndDropsBadKey(t *testing.T) {
 	}
 }
 
-// TestServerAppendsNoticeToToolResults pins §4.10: when Notice returns text it
-// is one more text content block on the tool result, on a verb error's result
-// exactly as on a success.
+// TestServerAppendsNoticeToToolResults: a verb error's result gets the notice block exactly as a success does.
 func TestServerAppendsNoticeToToolResults(t *testing.T) {
 	const notice = "note: relevo was upgraded to v0.8.0; this session's relevo MCP server is still v0.7.0. Reconnect it (/mcp) or restart the session to load the new version."
 
 	srv := &Server{
 		Verbs: &fakeVerbs{
-			statusFn: func(context.Context, StatusArgs) (any, error) {
+			statusFn: func(context.Context, string, StatusArgs) (any, error) {
 				return map[string]string{"state": "running"}, nil
 			},
-			doneFn: func(context.Context, DoneArgs) (any, error) {
+			doneFn: func(context.Context, string, DoneArgs) (any, error) {
 				return nil, errors.New("no binding")
 			},
 		},
@@ -381,12 +380,9 @@ func TestServerAppendsNoticeToToolResults(t *testing.T) {
 	}
 }
 
-// TestServerNoticeNilOrEmptyIsUnchanged pins the other half of §4.10: a nil
-// Notice and one that returns "" both leave the tool result byte-identical to
-// what the server wrote before notices existed.
 func TestServerNoticeNilOrEmptyIsUnchanged(t *testing.T) {
 	verbs := func() Verbs {
-		return &fakeVerbs{statusFn: func(context.Context, StatusArgs) (any, error) {
+		return &fakeVerbs{statusFn: func(context.Context, string, StatusArgs) (any, error) {
 			return map[string]string{"state": "running"}, nil
 		}}
 	}
@@ -411,5 +407,108 @@ func TestServerNoticeNilOrEmptyIsUnchanged(t *testing.T) {
 	content, _ := result["content"].([]any)
 	if len(content) != 1 {
 		t.Errorf("content blocks = %d, want 1: %#v", len(content), content)
+	}
+}
+
+// TestServerPassesCallSessionFromMeta pins the opencode contract: the harness
+// session in a tools/call's _meta reaches the verbs under opencode's
+// namespaced key, a bare sessionID is the fallback, the namespaced key wins
+// when both are present, and a call without _meta passes "".
+func TestServerPassesCallSessionFromMeta(t *testing.T) {
+	cases := []struct {
+		name string
+		meta string
+		want string
+	}{
+		{"namespaced key", `,"_meta":{"ai.opencode/sessionID":"ses_ns"}`, "ses_ns"},
+		{"bare key fallback", `,"_meta":{"sessionID":"ses_bare"}`, "ses_bare"},
+		{"namespaced wins with both keys", `,"_meta":{"sessionID":"ses_bare","ai.opencode/sessionID":"ses_ns"}`, "ses_ns"},
+		{"no meta", "", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			verbs := &fakeVerbs{statusFn: func(_ context.Context, session string, _ StatusArgs) (any, error) {
+				got = session
+				return map[string]string{"state": "running"}, nil
+			}}
+
+			params := `{"name":"status","arguments":{}` + tc.meta + `}`
+			runServer(t, verbs, []string{
+				`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":` + params + `}`,
+			})
+			if got != tc.want {
+				t.Errorf("verb session = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestServerStatusWithoutSessionIsAToolError pins the opencode server's
+// sessionless status: it is a tool error naming the key it looks for, never a
+// silently empty binding list, and the resolver is never called; all:true still
+// lists every binding without any identity.
+func TestServerStatusWithoutSessionIsAToolError(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
+
+	calls := 0
+	verbs := &RelevoVerbs{RT: rt, ResolveSession: func(string) (string, error) {
+		calls++
+		return mcpTestMasterMindA, nil
+	}}
+
+	out := runServer(t, verbs, []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}`,
+	})
+	resp := decodeResponse(t, splitLines(out)[0])
+	if resp.Error != nil {
+		t.Fatalf("want a tool error, not a JSON-RPC error, got %+v", resp.Error)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v, want an object", resp.Result)
+	}
+	if isErr, _ := result["isError"].(bool); !isErr {
+		t.Fatalf("result = %#v, want isError true", result)
+	}
+	content, ok := result["content"].([]any)
+	if !ok || len(content) != 1 {
+		t.Fatalf("content = %#v, want one block", result["content"])
+	}
+	text, _ := content[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "ai.opencode/sessionID") {
+		t.Errorf("tool error = %q, want it to name ai.opencode/sessionID", text)
+	}
+	if strings.Contains(text, "bindings") {
+		t.Errorf("a sessionless status must not carry a binding list, got %q", text)
+	}
+	if calls != 0 {
+		t.Errorf("resolver called %d times for a sessionless call, want 0", calls)
+	}
+
+	out = runServer(t, verbs, []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{"all":true}}}`,
+	})
+	resp = decodeResponse(t, splitLines(out)[0])
+	if resp.Error != nil {
+		t.Fatalf("all:true carried a JSON-RPC error: %+v", resp.Error)
+	}
+	result, ok = resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("all:true result = %#v, want an object", resp.Result)
+	}
+	if isErr, _ := result["isError"].(bool); isErr {
+		t.Fatalf("all:true result = %#v, want isError false", result)
+	}
+	content, ok = result["content"].([]any)
+	if !ok || len(content) != 1 {
+		t.Fatalf("all:true content = %#v, want one block", result["content"])
+	}
+	body, _ := content[0].(map[string]any)["text"].(string)
+	if !strings.Contains(body, `"bindings"`) || !strings.Contains(body, "mine") {
+		t.Errorf("all:true body = %q, want the seeded binding", body)
 	}
 }

@@ -10,9 +10,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// ExeIdentity identifies the file at path by device and inode, with size and
-// mtime, so a rewrite through a fresh inode (install's rename) changes it and a
-// no-op stat does not.
+// ExeIdentity identifies path by device, inode, size and mtime, so a rewrite
+// through a fresh inode (install's rename) changes it, a no-op stat does not.
 func ExeIdentity(path string) (store.FileID, error) {
 	info, err := os.Stat(path)
 	if err != nil {

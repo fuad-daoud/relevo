@@ -16,14 +16,10 @@ type codexEvent struct {
 	Usage *codexUsage `json:"usage"`
 }
 
-// codexStream reads a headless round's `codex exec --json` stream: one
-// sample per turn.completed event that carries usage. OpenAI's
-// input_tokens includes the cached part (probe 2026-09-19: 34933 input,
-// 26112 cached), hence the subtraction below; reasoning_output_tokens is a
-// subset of output_tokens and is not added; a sub-agent's tokens are
-// folded into the parent turn by codex and priced as the candidate's
-// model. The parser state lives on the carry (#234), so the same line
-// loop feeds the per-stream cache without drifting.
+// codexStream reads a headless round's `codex exec --json` stream: one sample per
+// turn.completed event that carries usage. OpenAI's input_tokens includes the
+// cached part (probe 2026-09-19: 34933 input, 26112 cached), hence the
+// subtraction; reasoning_output_tokens is a subset of output_tokens.
 func codexStream(r io.Reader, provider, model string) []Sample {
 	c, _ := newCarry("codex", provider, model)
 	scanLines(r, c.feed)

@@ -10,19 +10,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
-// tsKeys is the order in which a stream record's timestamp field is tried;
-// the first one present and RFC3339-parseable wins.
+// tsKeys is the order in which a stream record's timestamp field is tried.
 var tsKeys = []string{"ts", "timestamp", "time"}
 
-// streamTranscriptRecords turns raw builder-stream lines (NNN-builder.jsonl)
-// into TranscriptRecord rows starting at startSeq, one per line
-// (docs/specs/2026-09-20-persistence-design.md §5.2).
-//
-// A line that is not a JSON object is garbage: transcript.Render never
-// fails and would render it as itself verbatim, but that is not a useful
-// transcript row, so it is kept verbatim in RecordJSON with Rendered left
-// empty and counted in skipped instead. A JSON object line is rendered
-// with transcript.Render and its lines joined with "\n".
+// streamTranscriptRecords turns raw builder-stream lines into TranscriptRecord
+// rows starting at startSeq. A line that is not a JSON object is kept verbatim in
+// RecordJSON with Rendered empty and counted in skipped; transcript.Render never
+// fails and would otherwise render it as itself.
 func streamTranscriptRecords(kind string, lines [][]byte, startSeq int) (recs []db.TranscriptRecord, skipped int) {
 	recs = make([]db.TranscriptRecord, 0, len(lines))
 	for i, line := range lines {
@@ -50,8 +44,6 @@ func streamTranscriptRecords(kind string, lines [][]byte, startSeq int) (recs []
 	return recs, skipped
 }
 
-// tsFromRecord tries obj's known timestamp fields, RFC3339, in tsKeys
-// order; nil when none is present or parseable.
 func tsFromRecord(obj map[string]any) *time.Time {
 	for _, k := range tsKeys {
 		s, ok := obj[k].(string)
@@ -68,9 +60,8 @@ func tsFromRecord(obj map[string]any) *time.Time {
 	return nil
 }
 
-// logOnlyTranscriptRecords turns NNN-builder.log lines (no NNN-builder.jsonl
-// present -- a pane round, or an old archive, #228) into TranscriptRecord
-// rows starting at startSeq: already-rendered text, no record behind it.
+// logOnlyTranscriptRecords turns NNN-builder.log lines (a pane round or an old
+// archive, with no stream) into TranscriptRecord rows: already-rendered text.
 func logOnlyTranscriptRecords(lines [][]byte, startSeq int) []db.TranscriptRecord {
 	recs := make([]db.TranscriptRecord, 0, len(lines))
 	for i, line := range lines {
@@ -82,12 +73,10 @@ func logOnlyTranscriptRecords(lines [][]byte, startSeq int) []db.TranscriptRecor
 	return recs
 }
 
-// plannerTranscriptRecords turns a planner harness's own session-record
-// lines into TranscriptRecord rows starting at startSeq, rendered with
-// transcript.RenderRecord (#184). Rendered is often "" for a housekeeping
-// record RenderRecord recognises but has nothing to show for -- that is
-// not a parse failure, so it is not counted anywhere.
-func plannerTranscriptRecords(kind string, lines [][]byte, startSeq int) []db.TranscriptRecord {
+// mastermindTranscriptRecords turns a mastermind harness's own session-record lines
+// into TranscriptRecord rows, rendered with transcript.RenderRecord. Rendered is
+// often "" for a record RenderRecord recognises but has nothing to show for.
+func mastermindTranscriptRecords(kind string, lines [][]byte, startSeq int) []db.TranscriptRecord {
 	recs := make([]db.TranscriptRecord, 0, len(lines))
 	for i, line := range lines {
 		recs = append(recs, db.TranscriptRecord{

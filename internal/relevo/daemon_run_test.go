@@ -13,6 +13,8 @@ import (
 // Run with ErrReexec, and the hook is consulted exactly once -- there is no
 // second tick after the decision.
 func TestRunReturnsErrReexecAfterOneTick(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: store.New(t.TempDir())}
 
 	calls := 0

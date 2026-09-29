@@ -14,27 +14,36 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// ImportResult reports what one import did, by file name.
 type ImportResult struct {
 	Imported []string // files and "hooks" consumed
 	Removed  []string // paths deleted after the commit
 }
 
-// ImportFiles is the one-time migration and the way config is dropped in
-// (provisioning, tests). A file that is present is validated, stored with its
-// raw bytes, and removed; an invalid file aborts the whole import with that
-// file's error, before anything is written or deleted.
-//
-// Deletion happens only after the commit, so a crash leaves the files and the
-// next verb re-imports the same bytes idempotently.
-func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, error) {
-	var res ImportResult
+type pendingSection struct {
+	sec  Section
+	path string
+	data []byte
+}
 
+type pendingImport struct {
+	sections      []pendingSection
+	clientKey     []byte
+	haveClientKey bool
+	typesafe      string
+	haveTypesafe  bool
+	hooks         HooksMap
+	importHooks   bool
+}
+
+// ImportFiles is the one-time migration and the way config is dropped in
+// (provisioning, tests). A present file is validated and stored with its raw
+// bytes, and removed only after the commit, so a crash leaves the files and
+// the next verb re-imports the same bytes idempotently.
+func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, error) {
 	// Every revision this import writes is stamped with the time the caller
 	// gave, and labelled "import" unless the caller labelled it.
 	s = s.WithClock(func() time.Time { return now })
@@ -42,29 +51,9 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 		s.source = "import"
 	}
 
-	type pendingSection struct {
-		sec  Section
-		path string
-		data []byte
-	}
-	var sections []pendingSection
-	for _, sec := range Sections {
-		name := FileName(sec)
-		if name == "" {
-			continue
-		}
-		path := filepath.Join(configDir, name)
-		data, err := os.ReadFile(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return ImportResult{}, fmt.Errorf("%s: %w", path, err)
-		}
-		if _, err := Validate(sec, data); err != nil {
-			return ImportResult{}, fmt.Errorf("%s: %w", path, err)
-		}
-		sections = append(sections, pendingSection{sec: sec, path: path, data: data})
+	sections, err := readConfigSections(configDir)
+	if err != nil {
+		return ImportResult{}, err
 	}
 
 	clientKeyPath := filepath.Join(configDir, clientKeyFile)
@@ -90,20 +79,57 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 		return ImportResult{}, nil
 	}
 
-	var hooks HooksMap
+	pending := pendingImport{
+		sections:      sections,
+		clientKey:     clientKey,
+		haveClientKey: haveClientKey,
+		typesafe:      typesafe,
+		haveTypesafe:  haveTypesafe,
+		importHooks:   importHooks,
+	}
 	if importHooks {
-		hooks, err = readHooksDir(hooksDir)
+		pending.hooks, err = readHooksDir(hooksDir)
 		if err != nil {
 			return ImportResult{}, err
 		}
 	}
 
-	err = s.db.Tx(func(t *db.Tx) error {
+	if err := s.commitImport(pending, now); err != nil {
+		return ImportResult{}, err
+	}
+	return s.afterImport(configDir, pending, clientKeyPath, typesafePath)
+}
+
+func readConfigSections(configDir string) ([]pendingSection, error) {
+	var sections []pendingSection
+	for _, sec := range Sections {
+		name := FileName(sec)
+		if name == "" {
+			continue
+		}
+		path := filepath.Join(configDir, name)
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if _, err := Validate(sec, data); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		sections = append(sections, pendingSection{sec: sec, path: path, data: data})
+	}
+	return sections, nil
+}
+
+func (s *Store) commitImport(p pendingImport, now time.Time) error {
+	return s.db.Tx(func(t *db.Tx) error {
 		before, err := readSnapshot(t)
 		if err != nil {
 			return err
 		}
-		for _, sf := range sections {
+		for _, sf := range p.sections {
 			if err := t.ConfigPut(string(sf.sec), sf.data, now); err != nil {
 				return err
 			}
@@ -112,20 +138,20 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 			}
 		}
 		var extra []Change
-		if haveClientKey {
-			if err := t.SecretPut(SecretClientKey, clientKey, now); err != nil {
+		if p.haveClientKey {
+			if err := t.SecretPut(SecretClientKey, p.clientKey, now); err != nil {
 				return err
 			}
 			extra = append(extra, Change{Path: "secret." + SecretClientKey, Op: "set"})
 		}
-		if haveTypesafe {
-			if err := t.SecretPut(SecretTypesafe, []byte(typesafe), now); err != nil {
+		if p.haveTypesafe {
+			if err := t.SecretPut(SecretTypesafe, []byte(p.typesafe), now); err != nil {
 				return err
 			}
 			extra = append(extra, Change{Path: "secret." + SecretTypesafe, Op: "set"})
 		}
-		if importHooks {
-			body, err := json.Marshal(hooks)
+		if p.importHooks {
+			body, err := json.Marshal(p.hooks)
 			if err != nil {
 				return err
 			}
@@ -135,11 +161,10 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 		}
 		return s.record(t, before, extra)
 	})
-	if err != nil {
-		return ImportResult{}, err
-	}
+}
 
-	// After the commit only (§5).
+func (s *Store) afterImport(configDir string, p pendingImport, clientKeyPath, typesafePath string) (ImportResult, error) {
+	var res ImportResult
 	remove := func(path string) {
 		err := os.Remove(path)
 		if err == nil {
@@ -151,45 +176,41 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 		}
 	}
 
-	for _, sf := range sections {
+	for _, sf := range p.sections {
 		res.Imported = append(res.Imported, filepath.Base(sf.path))
 		remove(sf.path)
 	}
-	if haveClientKey {
+	if p.haveClientKey {
 		res.Imported = append(res.Imported, clientKeyFile)
 		remove(clientKeyPath)
 	}
-	if haveTypesafe {
+	if p.haveTypesafe {
 		res.Imported = append(res.Imported, typesafeKeyFile)
 		remove(typesafePath)
 	}
-	if importHooks {
+	if p.importHooks {
 		res.Imported = append(res.Imported, "hooks")
 	}
 
 	// client.pub is dead once the client key is in the database: remove it
 	// when this run imported the key, or when one is already stored.
-	_, keyInDB, err := s.db.SecretGet(SecretClientKey)
-	if err != nil {
+	if _, keyInDB, err := s.db.SecretGet(SecretClientKey); err != nil {
 		return ImportResult{}, err
-	}
-	if haveClientKey || keyInDB {
+	} else if p.haveClientKey || keyInDB {
 		remove(filepath.Join(configDir, clientPubFile))
 	}
 
-	// aliases.json is dead since #80: never read, never rewritten.
+	// aliases.json is never read or rewritten.
 	remove(filepath.Join(configDir, aliasesFile))
 
 	// The hooks scripts are never removed, so a config dir holding them stays.
 	// Remove the directory itself only when nothing is left in it.
 	_ = os.Remove(configDir)
-
 	return res, nil
 }
 
-// readClientKey reads and validates the client key file. It returns
-// ("", false, nil) when the file is absent, and its parse error when it is
-// present but invalid.
+// readClientKey validates the client key file; an absent file is ok with no
+// data.
 func readClientKey(path string) (data []byte, ok bool, err error) {
 	raw, rerr := os.ReadFile(path)
 	if errors.Is(rerr, os.ErrNotExist) {
@@ -204,8 +225,8 @@ func readClientKey(path string) (data []byte, ok bool, err error) {
 	return raw, true, nil
 }
 
-// readTypesafeKey reads the typesafe key file. A present but blank file is an
-// error: importing it would store no key at all.
+// readTypesafeKey rejects a present but blank key file: importing it would
+// store no key at all.
 func readTypesafeKey(path string) (string, bool, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -221,9 +242,8 @@ func readTypesafeKey(path string) (string, bool, error) {
 	return trimmed, true, nil
 }
 
-// LoadFiles is the read-only file load `daemon --preflight` and `--check` use:
-// today's file reads, with no import and no database. The result is what an
-// import of the same files would store.
+// LoadFiles is the read-only file load daemon --preflight and --check use:
+// today's file reads, with no import and no database.
 func LoadFiles(configDir string) (Loaded, error) {
 	var L Loaded
 
@@ -253,9 +273,9 @@ func LoadFiles(configDir string) (Loaded, error) {
 		return Loaded{}, err
 	}
 
-	L.Servers = client.Servers{}
+	L.Servers = remote.Servers{}
 	if raw, err := os.ReadFile(filepath.Join(configDir, FileName(Servers))); err == nil {
-		L.Servers, err = client.ParseServers(raw)
+		L.Servers, err = remote.ParseServers(raw)
 		if err != nil {
 			return Loaded{}, err
 		}
@@ -293,9 +313,7 @@ func LoadFiles(configDir string) (Loaded, error) {
 }
 
 // readHooksDir builds the hooks section from <hooksDir>/<event>.d, taking the
-// executable files in each directory in file-name order, the order the old
-// dispatcher's os.ReadDir used. A missing hooks dir is an empty map. The
-// scripts are never removed by an import.
+// executable files in each directory in file-name order.
 func readHooksDir(hooksDir string) (HooksMap, error) {
 	hooks := HooksMap{}
 	entries, err := os.ReadDir(hooksDir)

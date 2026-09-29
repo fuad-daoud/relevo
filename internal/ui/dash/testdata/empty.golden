@@ -1,7 +1,7 @@
- relevo · dashboard   harness:codex   by:none                                                                    / filter  b regroup  s sort  d fleet  r refresh
-rounds 0   cost $0.00   tokens 0   halted 0 · exited 0   median -   bindings 0 · builders 0                                                                     
-started           binding       rnd  builder                               outcome        commits  tree    gate   tokens   cost     duration                    
-no rounds                                                                                                                                                       
+    relevo · dashboard   harness:codex   by:none                                                              / filter  b regroup  s sort  d fleet  r refresh   
+   0 rounds   0 tokens   0 done                                                                                                                                 
+   STARTED  BINDING                                           RND   CANDIDATE              REPO                    OUTCOME     COMMITS  TREE    TOKENS   TOOK   
+   no rounds                                                                                                                                                    
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 

@@ -1,0 +1,114 @@
+{
+  "bindings": [
+    {
+      "name": "atlas",
+      "cwd": "<ROOT0>/work/atlas",
+      "round": 2,
+      "state": "active",
+      "display": "ACTIVE",
+      "candidate": "",
+      "actor": "planner",
+      "shape": "reader",
+      "mastermind_id": "<PLANNER>",
+      "mastermind_name": "architect-1",
+      "mastermind_kind": "",
+      "mastermind_route": "pull",
+      "mastermind_route_live": false,
+      "harness": "",
+      "runner_status": "unknown",
+      "last": {
+        "ts": "<TIME>",
+        "round": 1,
+        "direction": "to_planner",
+        "kind": "report"
+      },
+      "last_seq": 1,
+      "last_payload": {
+        "ts": "<TIME>",
+        "round": 1,
+        "direction": "to_planner",
+        "kind": "report"
+      },
+      "dirty": false,
+      "landed_at": "<TIME>",
+      "last_progress_at": "<TIME>",
+      "unread": true
+    },
+    {
+      "name": "webshop",
+      "cwd": "<ROOT0>/work/webshop",
+      "round": 2,
+      "state": "active",
+      "display": "ACTIVE",
+      "candidate": "",
+      "actor": "builder",
+      "mastermind_id": "<PLANNER>",
+      "mastermind_name": "architect-1",
+      "mastermind_kind": "",
+      "mastermind_route": "pull",
+      "mastermind_route_live": false,
+      "harness": "",
+      "runner_status": "unknown",
+      "last": {
+        "ts": "<TIME>",
+        "round": 1,
+        "direction": "to_planner",
+        "kind": "report"
+      },
+      "last_seq": 1,
+      "last_payload": {
+        "ts": "<TIME>",
+        "round": 1,
+        "direction": "to_planner",
+        "kind": "report"
+      },
+      "dirty": false,
+      "pending": {
+        "round": 1,
+        "kind": "report"
+      },
+      "landed_at": "<TIME>",
+      "last_progress_at": "<TIME>",
+      "unread": true
+    },
+    {
+      "name": "hosted",
+      "cwd": "<ROOT0>/work/hosted",
+      "round": 1,
+      "state": "active",
+      "display": "ACTIVE",
+      "candidate": "",
+      "actor": "builder",
+      "mastermind_kind": "",
+      "mastermind_route": "pull",
+      "mastermind_route_live": false,
+      "harness": "",
+      "runner_status": "unknown",
+      "last_seq": 0,
+      "server": "relevo.example.test",
+      "dirty": false,
+      "landed_at": "<TIME>",
+      "last_progress_at": "<TIME>",
+      "unread": false
+    },
+    {
+      "name": "archived",
+      "cwd": "<ROOT0>/work/archived",
+      "round": 1,
+      "state": "done",
+      "display": "DONE",
+      "candidate": "",
+      "actor": "builder",
+      "mastermind_kind": "",
+      "mastermind_route": "pull",
+      "mastermind_route_live": false,
+      "harness": "",
+      "runner_status": "unknown",
+      "last_seq": 0,
+      "dirty": false,
+      "landed_at": "<TIME>",
+      "last_progress_at": "<TIME>",
+      "unread": false
+    }
+  ]
+}

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/legacy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 func copyFixture(t *testing.T, src, dst string) {
@@ -80,8 +80,7 @@ func TestStreamClosed(t *testing.T) {
 }
 
 func TestReadHeadlessWaitsForTrailer(t *testing.T) {
-	// Start with everything but the result event and the trailer, append
-	// them 300 ms later, and expect the result-based sample.
+	// Everything but the result event and the trailer, appended 300 ms later.
 	raw, err := os.ReadFile("testdata/claude-stream.jsonl")
 	if err != nil {
 		t.Fatal(err)
@@ -96,8 +95,8 @@ func TestReadHeadlessWaitsForTrailer(t *testing.T) {
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-		f.WriteString(tail)
-		f.Close()
+		_, _ = f.WriteString(tail)
+		_ = f.Close()
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -123,11 +122,8 @@ func TestReadHeadlessTimesOutOnOpenStream(t *testing.T) {
 	}
 }
 
-// TestPeekOpenStreamReturnsPartial pins that Peek reads an open stream
-// without polling for the trailer (#234): two assistant events are two
-// samples with the open-stream note, back before one trailerPoll has
-// elapsed. After the trailer and the result event land, Read returns the
-// result sample.
+// TestPeekOpenStreamReturnsPartial pins that Peek reads an open stream without
+// polling for the trailer.
 func TestPeekOpenStreamReturnsPartial(t *testing.T) {
 	_, path := mustTemp(t,
 		`{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-5","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":0,"output_tokens":5}}}`+"\n"+
@@ -149,8 +145,8 @@ func TestPeekOpenStreamReturnsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Fprintf(f, "{\"type\":\"result\",\"total_cost_usd\":0.5,\"usage\":{\"input_tokens\":12,\"cache_creation_input_tokens\":100,\"cache_read_input_tokens\":100,\"output_tokens\":25}}\n%s0\n", ExitTrailerForTest())
-	f.Close()
+	_, _ = fmt.Fprintf(f, "{\"type\":\"result\",\"total_cost_usd\":0.5,\"usage\":{\"input_tokens\":12,\"cache_creation_input_tokens\":100,\"cache_read_input_tokens\":100,\"output_tokens\":25}}\n%s0\n", spawn.ExitTrailer)
+	_ = f.Close()
 	got, note = New().Read(context.Background(), Source{Harness: "claude", Mode: ModeHeadless, Provider: "anthropic", StreamPath: path})
 	if note != "" || len(got) != 1 || !got[0].HasCost {
 		t.Errorf("after the trailer: %d samples, note %q, %+v; want the measured result sample", len(got), note, got)
@@ -164,18 +160,14 @@ func TestPeekMissingStream(t *testing.T) {
 	}
 }
 
-// TestStreamClosedLegacyTrailer pins #292 §1: a stream whose last line is the
-// old relay-exit: marker counts as closed, so a pre-rename round's cost is // name-guard: legacy
-// read with its measured figures instead of "stream still open".
-func TestStreamClosedLegacyTrailer(t *testing.T) {
+// TestStreamClosedTrailer pins streamClosed against the trailer forms it must
+// recognise, the new spelling included.
+func TestStreamClosedTrailer(t *testing.T) {
 	dir := t.TempDir()
 	cases := map[string]struct {
 		body string
 		want bool
 	}{
-		"legacy trailer":       {"hello\n" + legacy.ExitTrailer + "3\n", true},
-		"legacy no newline":    {legacy.ExitTrailer + "0", true},
-		"legacy not last":      {legacy.ExitTrailer + "3\nmore output\n", false},
 		"new trailer":          {"hello\nrelevo-exit:3\n", true},
 		"no trailer":           {"hello\n", false},
 		"empty last line only": {"\n", false},
@@ -190,5 +182,70 @@ func TestStreamClosedLegacyTrailer(t *testing.T) {
 				t.Errorf("streamClosed() = %v, want %v for %q", got, c.want, c.body)
 			}
 		})
+	}
+}
+
+func TestStreamFromSkipsEarlierSegment(t *testing.T) {
+	seg1 := "{\"type\":\"step_finish\",\"timestamp\":1789589782193,\"part\":{\"type\":\"step-finish\",\"tokens\":{\"input\":1000,\"output\":50}}}\n"
+	seg2 := "{\"type\":\"step_finish\",\"timestamp\":1789589783193,\"part\":{\"type\":\"step-finish\",\"tokens\":{\"input\":2000,\"output\":100}}}\n"
+	trailer := "relevo-exit:0\n"
+	full := []byte(seg1 + seg2 + trailer)
+	offset2 := int64(len(seg1))
+
+	path := filepath.Join(t.TempDir(), "stream.jsonl")
+	if err := os.WriteFile(path, full, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := New()
+
+	samples0, note0 := r.Read(context.Background(), Source{
+		Harness: "opencode", Mode: ModeHeadless, StreamPath: path, StreamFrom: 0,
+	})
+	if note0 != "" || len(samples0) != 2 {
+		t.Fatalf("StreamFrom=0: got %d samples, note %q", len(samples0), note0)
+	}
+	var total0 int64
+	for _, s := range samples0 {
+		total0 += s.Tokens.Total()
+	}
+	if total0 != 3150 {
+		t.Errorf("StreamFrom=0: total tokens = %d, want 3150", total0)
+	}
+
+	samples1, note1 := r.Read(context.Background(), Source{
+		Harness: "opencode", Mode: ModeHeadless, StreamPath: path, StreamFrom: offset2,
+	})
+	if note1 != "" || len(samples1) != 1 {
+		t.Fatalf("StreamFrom=offset2: got %d samples, note %q", len(samples1), note1)
+	}
+	if samples1[0].Tokens.Total() != 2100 {
+		t.Errorf("StreamFrom=offset2: total tokens = %d, want 2100", samples1[0].Tokens.Total())
+	}
+
+	readFile := func(string) ([]byte, error) {
+		return full, nil
+	}
+	sealed0, noteS0 := r.Read(context.Background(), Source{
+		Harness: "opencode", Mode: ModeHeadless, StreamPath: "/not/on/disk", ReadFile: readFile, StreamFrom: 0,
+	})
+	if noteS0 != "" || len(sealed0) != 2 {
+		t.Fatalf("sealed StreamFrom=0: got %d samples, note %q", len(sealed0), noteS0)
+	}
+	var sealedTot0 int64
+	for _, s := range sealed0 {
+		sealedTot0 += s.Tokens.Total()
+	}
+	if sealedTot0 != 3150 {
+		t.Errorf("sealed StreamFrom=0: total tokens = %d, want 3150", sealedTot0)
+	}
+
+	sealed1, noteS1 := r.Read(context.Background(), Source{
+		Harness: "opencode", Mode: ModeHeadless, StreamPath: "/not/on/disk", ReadFile: readFile, StreamFrom: offset2,
+	})
+	if noteS1 != "" || len(sealed1) != 1 {
+		t.Fatalf("sealed StreamFrom=offset2: got %d samples, note %q", len(sealed1), noteS1)
+	}
+	if sealed1[0].Tokens.Total() != 2100 {
+		t.Errorf("sealed StreamFrom=offset2: total tokens = %d, want 2100", sealed1[0].Tokens.Total())
 	}
 }

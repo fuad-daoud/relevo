@@ -8,6 +8,10 @@ cell as `age · STATE`.
 (except four additive fields), and the `relevo ui` rail are unchanged.
 **Status:** approved 2026-09-24; plan at `docs/plans/2026-09-24-statusline-redesign.md`.
 
+**Amended 2026-09-28 by `docs/plans/2026-09-27-round-vocabulary.md`:** a
+round's input is now its prompt; the current words are `prompt sent` and
+`no prompt yet`, and the log kind is `prompt`. The sections below stay as
+written.
 ## 1. What was wrong
 
 Observed on a planner with seven bindings:
@@ -33,24 +37,41 @@ Observed on a planner with seven bindings:
 ## 2. The row
 
 ```
-○ ck-w1   r1 · agy@contabo · plan sent · 11.8M tok          16m
-○ ck-b1   r4 · opencode · report in · 8.2M tok              22m
-● ck-x    r2 · opencode · builder gone                        4m · NEEDS YOU
-○ docs    r2 · agy · report in                               23s · PAUSED
+○ planner-policy  r1 · builder on agy@contabo · 11.8M tok  plan sent             16m
+○ ck-b1           r4 · builder on opencode · 8.2M tok      REPORT IN            22m
+● ck-x            r2 · builder on opencode · builder gone  NEEDS YOU             4m
+○ docs            r2 · builder on agy                      PAUSED               23s
 ```
 
-- **Harness cell:** the candidate's harness segment, as today; for a remote
-  binding, `harness@server`, where server is the binding's configured server
-  name (`Builder.Server`).
-- **Waiting cell:** unchanged (`waiting()`).
+The row has three parts: the middle is identity, the status column is the one
+status, and the clock is last.
+
+- **Middle: identity.** The shown round (`r` + `report_round` when it is > 0,
+  else `round`), the actor (`row.Actor`: the binding's role, `builder` when it
+  stores none), and the harness cell (`on` + the candidate's harness segment;
+  for a remote binding, `harness@server`, where server is the binding's
+  configured server name, `Builder.Server`). Then the reason, when there is
+  one, and the token cell.
+- **Reason:** `waiting()` when the row needs you — `b.Detail` when it is set
+  (for example `round 1 was open …`), else `report in`, which is the why of a
+  stalled report. Otherwise `b.Detail` when it is set, else no reason at all.
 - **Token cell:** this round's tokens only, `N tok` via `usage.ShortTokens`.
   While the round is open: `LiveUsage` (when it has samples). Once it has
   closed: the usage on *that round's* report entry. No usage for the round →
   no cell; an older round's figure is never shown. No dollar figure, no
   `live` word.
-- **Right cell:** the round clock, then ` · STATE` only when the display
-  state is not ACTIVE (NEEDS YOU, PAUSED, or any other non-ACTIVE word).
-  NEEDS YOU keeps its colour; ACTIVE and its green colour are gone.
+- **Status column:** the row's one status, padded to the widest status among
+  the rows so the column lines up. The vocabulary:
+  - **Attention words** are uppercase and coloured: `NEEDS YOU`, `REPORT IN`,
+    `QUESTION IN`. A delivered report's qualifiers follow it, each prefixed
+    with ` · `: the note bare, then the outcome when it is set and is not
+    done — `REPORT IN`, `REPORT IN · halted`, `REPORT IN · unmarked · halted`.
+  - **relevo state words** (`PAUSED`, `HELD`, `DONE`) and **passive phases**
+    (`plan sent`, `no plan yet`, `question in`, `report in`, `answered`) keep
+    their case; the phases are lowercase and dim. `NEEDS YOU` (a stalled
+    report), a relevo state word and `REPORT IN` outrank the phase.
+- **Clock:** last, right-aligned in its own column, so it does not move when
+  another row's status or name changes length.
 
 ## 3. The round clock
 

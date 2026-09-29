@@ -1,6 +1,6 @@
- relevo › stats                                                                                                                                           14:02 
-0 rounds · $0.00 + 0 on plan · 0 tok · median 0m                                                                                                      window 30d
+  ◆ relevo    stats                                                                                                                        v0.13.0-28    14:02  
                                                                                                                                                                 
+    overview     candidates     tokens     reliability     repos                                                                window   7d   30d   90d   all   
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
@@ -36,5 +36,5 @@
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-w window   tab panel   ↑↓ move   enter open rounds   p providers   r refresh   pgup/pgdn scroll   : command   ? help   q quit                                   
+
+ ↑↓  move      ←→  table      enter  its rounds      tab  next tab      w  window      :  command      ?  all keys      q  quit                                 

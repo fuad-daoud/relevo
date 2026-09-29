@@ -15,22 +15,20 @@ import (
 
 // TestSettleServedConfirmsUpToRound pins the bound settleServed uses: every
 // unconfirmed to_planner entry with Round <= upTo is confirmed with route
-// "ack", and everything else -- a later round, a to_builder entry -- is left
-// alone. It also pins the returned count.
+// "ack"; everything else is left alone.
 func TestSettleServedConfirmsUpToRound(t *testing.T) {
 	st := store.New(t.TempDir())
 	name := "api"
-	// The log belongs to a saved binding: since P3a, AppendLog refuses a
-	// name with no record.
+	// AppendLog refuses a name with no record.
 	if err := st.Save(store.Binding{Name: name, CWD: t.TempDir()}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
 	for _, e := range []store.LogEntry{
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r1"},
-		{Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r2"},
-		{Round: 3, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r3"},
-		{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Payload: "plan"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r1"},
+		{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r2"},
+		{Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r3"},
+		{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Payload: "plan"},
 	} {
 		if err := st.AppendLog(name, e); err != nil {
 			t.Fatalf("append: %v", err)
@@ -74,9 +72,8 @@ func TestSettleServedConfirmsUpToRound(t *testing.T) {
 	}
 }
 
-// TestAckRoundSettlesPending drives a served binding's round to close, then
-// acks it over the wire: the report entry that showed as pending before the
-// ack must be confirmed afterwards.
+// TestAckRoundSettlesPending acks a closed round over the wire: the report entry
+// that showed as pending before must be confirmed afterwards.
 func TestAckRoundSettlesPending(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
@@ -85,6 +82,7 @@ func TestAckRoundSettlesPending(t *testing.T) {
 		Name:       "api",
 		RepoID:     env.repoID,
 		BaseCommit: env.headSHA,
+		Role:       "builder",
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
@@ -114,7 +112,7 @@ func TestAckRoundSettlesPending(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("api")
+	pending, found, err := rt.Store.PendingForMasterMind("api")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +125,7 @@ func TestAckRoundSettlesPending(t *testing.T) {
 		t.Fatalf("ack status = %d, want 200; body: %s", resp.StatusCode, string(body))
 	}
 
-	pending, found, err = rt.Store.PendingForPlanner("api")
+	pending, found, err = rt.Store.PendingForMasterMind("api")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,11 +134,8 @@ func TestAckRoundSettlesPending(t *testing.T) {
 	}
 }
 
-// TestDoneSettlesClosedRounds drives done through the HTTP handler for a DONE
-// served binding whose last acked round trails its last closed round: done
-// must settle up to the closed round, so nothing is left pending. The fake
-// runner means no harness process is needed: the binding carries no builder
-// pid and no worktree, so relevo.Done has nothing to stop or tear down.
+// TestDoneSettlesClosedRounds: done must settle up to the closed round for a
+// DONE binding whose last acked round trails it, so nothing is left pending.
 func TestDoneSettlesClosedRounds(t *testing.T) {
 	env := setupTestEnv(t)
 
@@ -157,16 +152,16 @@ func TestDoneSettlesClosedRounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range []store.LogEntry{
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r1"},
-		{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r2"},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r1"},
+		{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r2"},
 	} {
 		if err := rt.Store.AppendLog("api", e); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if _, found, err := rt.Store.PendingForPlanner("api"); err != nil {
+	if _, found, err := rt.Store.PendingForMasterMind("api"); err != nil {
 		t.Fatal(err)
 	} else if !found {
 		t.Fatal("expected a pending report before done")
@@ -177,7 +172,7 @@ func TestDoneSettlesClosedRounds(t *testing.T) {
 		t.Fatalf("done status = %d, want 200; body: %s", resp.StatusCode, string(body))
 	}
 
-	if e, found, err := rt.Store.PendingForPlanner("api"); err != nil {
+	if e, found, err := rt.Store.PendingForMasterMind("api"); err != nil {
 		t.Fatal(err)
 	} else if found {
 		t.Fatalf("pending report round %d remains after done", e.Round)
@@ -197,9 +192,8 @@ func TestDoneSettlesClosedRounds(t *testing.T) {
 	}
 }
 
-// TestSettleAllServedBackfills covers the daemon-startup backfill: two owners,
-// each holding an acked but never-confirmed report, must both read as settled
-// after one settleAllServed walk.
+// TestSettleAllServedBackfills: two owners, each holding an acked but never
+// confirmed report, both read as settled after one settleAllServed walk.
 func TestSettleAllServedBackfills(t *testing.T) {
 	srv, _ := newTestServer(t, 0)
 
@@ -227,12 +221,12 @@ func TestSettleAllServedBackfills(t *testing.T) {
 			t.Fatalf("save binding for owner %d: %v", i, err)
 		}
 		if err := rt.Store.AppendLog("api", store.LogEntry{
-			Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r1",
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "r1",
 		}); err != nil {
 			t.Fatalf("append log for owner %d: %v", i, err)
 		}
 
-		if _, found, err := rt.Store.PendingForPlanner("api"); err != nil {
+		if _, found, err := rt.Store.PendingForMasterMind("api"); err != nil {
 			t.Fatal(err)
 		} else if !found {
 			t.Fatalf("owner %d: expected a pending report before settleAllServed", i)
@@ -245,7 +239,7 @@ func TestSettleAllServedBackfills(t *testing.T) {
 	}
 
 	for i, st := range stores {
-		if e, found, err := st.PendingForPlanner("api"); err != nil {
+		if e, found, err := st.PendingForMasterMind("api"); err != nil {
 			t.Fatal(err)
 		} else if found {
 			t.Fatalf("owner %d: pending report round %d remains after settleAllServed", i, e.Round)

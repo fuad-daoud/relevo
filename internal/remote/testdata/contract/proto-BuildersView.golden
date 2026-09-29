@@ -1,0 +1,8 @@
+{
+  "running": 2,
+  "queued": 1,
+  "cap": 4,
+  "scopes": true,
+  "slice": "relevo.slice",
+  "quota": "200%"
+}

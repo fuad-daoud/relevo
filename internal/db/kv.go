@@ -6,40 +6,30 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
 	"strings"
 	"time"
 )
 
-// This file is the schema-v2 key-value surface (docs/specs/
-// 2026-09-24-db-as-record-design.md §3.2, §4.1). One kv row holds one whole
-// JSON document, exactly as the small state file it replaces held it: the
-// medium changes, the document does not. Reads come on both *DB and *Tx
-// through the same queryer the other readers use; writes are *Tx only, with
-// *DB wrappers that open their own short transaction.
+// The schema-v2 key-value surface: one kv row holds one whole JSON document,
+// exactly as the small state file it replaces held it. Reads come on both *DB
+// and *Tx; writes are *Tx only, with *DB wrappers that open a transaction.
 
-// KV is the minimal key-value surface the small stores share. *DB implements
-// it. Packages that must not import internal/store -- harness, reached through
-// usage from store -- take a db.KV instead.
+// KV is the minimal key-value surface the small stores share. Packages that
+// must not import internal/store take a db.KV instead.
 type KV interface {
 	KVGet(key string) ([]byte, bool, error)
 	KVPut(key string, value []byte) error
 	KVDelete(key string) error
 }
 
-// *DB is the production KV a Runtime carries.
 var _ KV = (*DB)(nil)
 
-// KVGet returns the JSON document stored for key, and ok false when the row is
-// absent. A database whose schema predates kv (< 2) reports every key as
-// absent -- via isMissingTable -- rather than erroring, so a read-only open of
-// a schema-1 file (daemon --check) sees no keys, not a failure.
+// KVGet returns the JSON document stored for key; ok is false when the row is
+// absent. A schema-1 database reports every key as absent rather than erroring.
 func (d *DB) KVGet(key string) ([]byte, bool, error) {
 	return kvGet(context.Background(), d.sqlDB, key)
 }
 
-// KVGet is the transaction form of *DB.KVGet.
 func (t *Tx) KVGet(key string) ([]byte, bool, error) { return kvGet(t.ctx, t.conn, key) }
 
 func kvGet(ctx context.Context, q queryer, key string) ([]byte, bool, error) {
@@ -55,14 +45,12 @@ func kvGet(ctx context.Context, q queryer, key string) ([]byte, bool, error) {
 }
 
 // KVPut upserts key's whole document in one short transaction. value must be
-// valid JSON, else ErrInvalid: the row's contract is "the exact JSON document
-// the file held", so a caller that marshalled a struct always satisfies it.
+// valid JSON, else ErrInvalid: the row's contract is the exact JSON document
+// the file held.
 func (d *DB) KVPut(key string, value []byte) error {
 	return d.Tx(func(t *Tx) error { return t.KVPut(key, value) })
 }
 
-// KVPut is the transaction form of *DB.KVPut. The caller owns the transaction,
-// so a multi-key write is atomic; a plain write is one short autocommit tx.
 func (t *Tx) KVPut(key string, value []byte) error {
 	if !json.Valid(value) {
 		return fmt.Errorf("db: kv put %s: value is not valid JSON: %w", key, ErrInvalid)
@@ -74,12 +62,10 @@ func (t *Tx) KVPut(key string, value []byte) error {
 	return nil
 }
 
-// KVDelete removes key's row. A key that is not there is not an error.
 func (d *DB) KVDelete(key string) error {
 	return d.Tx(func(t *Tx) error { return t.KVDelete(key) })
 }
 
-// KVDelete is the transaction form of *DB.KVDelete.
 func (t *Tx) KVDelete(key string) error {
 	if _, err := t.exec(`DELETE FROM kv WHERE key = ?`, key); err != nil {
 		return fmt.Errorf("db: kv delete %s: %w", key, mapBusy(err))
@@ -88,13 +74,11 @@ func (t *Tx) KVDelete(key string) error {
 }
 
 // KVKeys returns every key with the given prefix, sorted. A missing kv table
-// (schema < 2) is an empty list. Only the *DB form is exercised today; the Tx
-// form is here so a writer inside a transaction can read its own keys.
+// (schema < 2) is an empty list.
 func (d *DB) KVKeys(prefix string) ([]string, error) {
 	return kvKeys(context.Background(), d.sqlDB, prefix)
 }
 
-// KVKeys is the transaction form of *DB.KVKeys.
 func (t *Tx) KVKeys(prefix string) ([]string, error) { return kvKeys(t.ctx, t.conn, prefix) }
 
 func kvKeys(ctx context.Context, q queryer, prefix string) ([]string, error) {
@@ -105,29 +89,22 @@ func kvKeys(ctx context.Context, q queryer, prefix string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: kv keys: %w", mapBusy(err))
 	}
-	defer rows.Close()
-
+	keys, err := collectRows(rows, scanString)
+	if err != nil {
+		return nil, fmt.Errorf("db: kv keys: %w", mapBusy(err))
+	}
 	var out []string
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, fmt.Errorf("db: kv keys: %w", mapBusy(err))
-		}
+	for _, key := range keys {
 		if strings.HasPrefix(key, prefix) {
 			out = append(out, key)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("db: kv keys: %w", mapBusy(err))
-	}
 	return out, nil
 }
 
-// PrefixKV wraps a KV so every key is namespaced with Prefix (P5 §4.3). It is
-// how the serve-wide gate and availability records live in the one machine
-// database under `serve.` without colliding with this machine's own rows:
-// ledger.LoadKV(PrefixKV{...}, dir) reads and writes `serve.ledger`, while the
-// local planner's ledger stays `ledger`.
+// PrefixKV wraps a KV so every key is namespaced with Prefix, which is how the
+// serve-wide gate and availability records live under `serve.` in the one
+// machine database without colliding with this machine's own rows.
 type PrefixKV struct {
 	KV     KV
 	Prefix string
@@ -135,19 +112,16 @@ type PrefixKV struct {
 
 var _ KV = PrefixKV{}
 
-// KVGet implements KV: the key is read with Prefix prepended.
 func (p PrefixKV) KVGet(key string) ([]byte, bool, error) { return p.KV.KVGet(p.Prefix + key) }
 
-// KVPut implements KV: the key is written with Prefix prepended.
 func (p PrefixKV) KVPut(key string, value []byte) error { return p.KV.KVPut(p.Prefix+key, value) }
 
-// KVDelete implements KV: the prefixed key is removed.
 func (p PrefixKV) KVDelete(key string) error { return p.KV.KVDelete(p.Prefix + key) }
 
 // KVKeys returns every key whose full name starts with Prefix + prefix, with
 // Prefix stripped, so a caller sees the keys of its own namespace. The KV
-// interface carries no KVKeys, so the underlying store is asked through a
-// narrow assertion; a store that cannot list keys yields none.
+// interface carries no KVKeys, so the store is asked through a narrow
+// assertion; a store that cannot list keys yields none.
 func (p PrefixKV) KVKeys(prefix string) ([]string, error) {
 	lister, ok := p.KV.(interface {
 		KVKeys(prefix string) ([]string, error)
@@ -166,10 +140,8 @@ func (p PrefixKV) KVKeys(prefix string) ([]string, error) {
 	return out, nil
 }
 
-// KVTx is the kv surface inside one BEGIN IMMEDIATE transaction (P3b round 2
-// §4.1): the four calls a package needs to read, write and scan its rows
-// atomically. *Tx implements it; *DB implements it too, for the read paths
-// that need no transaction.
+// KVTx is the kv surface inside one BEGIN IMMEDIATE transaction. *Tx and *DB
+// both implement it.
 type KVTx interface {
 	KVGet(key string) ([]byte, bool, error)
 	KVPut(key string, value []byte) error
@@ -177,85 +149,27 @@ type KVTx interface {
 	KVKeys(prefix string) ([]string, error)
 }
 
-// DBTxKV is the transactional kv surface the planner registry and the channel
-// claims need: the four kv calls on the handle, and Tx to run a whole
-// read-modify-write inside one transaction. TxKV adapts a *DB to it.
+// DBTxKV is the transactional kv surface the mastermind registry and the channel
+// claims need: the four kv calls plus Tx to run a read-modify-write atomically.
 type DBTxKV interface {
 	KVTx
 	Tx(fn func(KVTx) error) error
 }
 
-// TxKV adapts a *DB to DBTxKV: the four kv calls pass straight through to the
-// handle's own short transactions, and Tx narrows db's *Tx callback to the
-// KVTx interface a caller's transaction body is written against.
+// TxKV adapts a *DB to DBTxKV: the four kv calls use the handle's own short
+// transactions, and Tx narrows db's *Tx callback to KVTx.
 type TxKV struct{ DB *DB }
 
 var _ DBTxKV = TxKV{}
 
-// KVGet implements DBTxKV.
 func (a TxKV) KVGet(key string) ([]byte, bool, error) { return a.DB.KVGet(key) }
 
-// KVPut implements DBTxKV.
 func (a TxKV) KVPut(key string, value []byte) error { return a.DB.KVPut(key, value) }
 
-// KVDelete implements DBTxKV.
 func (a TxKV) KVDelete(key string) error { return a.DB.KVDelete(key) }
 
-// KVKeys implements DBTxKV.
 func (a TxKV) KVKeys(prefix string) ([]string, error) { return a.DB.KVKeys(prefix) }
 
-// Tx implements DBTxKV: fn runs inside one BEGIN IMMEDIATE transaction, and
-// the *Tx it receives satisfies KVTx.
 func (a TxKV) Tx(fn func(KVTx) error) error {
 	return a.DB.Tx(func(t *Tx) error { return fn(t) })
-}
-
-// KVImportFile is the one import helper every package below uses
-// (docs/specs/2026-09-24-db-as-record-design.md §4.3). The rule is "a file
-// that is present is imported":
-//
-//   - the key's row wins when it exists: the row is returned unchanged, and a
-//     file still present beside it -- a leftover of a write that raced its
-//     read -- is removed, because nothing writes these files any more and the
-//     row is the record;
-//   - otherwise a present path is read, validated as JSON and put under key,
-//     and only then removed. A file that is not there is (nil, false, nil);
-//   - invalid JSON is an error naming path, and the file is not deleted, so a
-//     hand-edited file is reported rather than silently lost;
-//   - a remove failure is logged, not returned: the row is the record now, and
-//     a leftover file is harmless (the next read finds the row).
-//
-// The write happens before the delete on purpose: a crash between them leaves
-// the file, and the next read imports it again. Deleting first would lose the
-// document on a failed put.
-func KVImportFile(kv KV, key, path string) ([]byte, bool, error) {
-	v, ok, err := kv.KVGet(key)
-	if err != nil {
-		return nil, false, err
-	}
-	if ok {
-		if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-			slog.Warn("kv import: could not remove file for an existing row", "key", key, "path", path, "err", rerr)
-		}
-		return v, true, nil
-	}
-
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("read %s: %w", path, err)
-	}
-	if !json.Valid(data) {
-		return nil, false, fmt.Errorf("decode %s: invalid JSON: %w", path, ErrInvalid)
-	}
-
-	if err := kv.KVPut(key, data); err != nil {
-		return nil, false, err
-	}
-	if err := os.Remove(path); err != nil {
-		slog.Warn("kv import: could not remove imported file", "key", key, "path", path, "err", err)
-	}
-	return data, true, nil
 }

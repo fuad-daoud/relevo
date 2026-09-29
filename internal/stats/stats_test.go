@@ -4,9 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
 // stNow is the fixture's "now": every window below is relative to it.
@@ -17,25 +16,96 @@ func stInt(v int) *int         { return &v }
 func stI64(v int64) *int64     { return &v }
 func stF64(v float64) *float64 { return &v }
 
-// TestScorecardRates pins DonePct and HaltPct against Closed (an open round is
-// not closed) and the median for both an even and an odd count.
-func TestScorecardRates(t *testing.T) {
-	rows := []db.RoundRow{
-		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, DurationMS: stI64(600_000)},
-		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeOpen},
-		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeHalted, DurationMS: stI64(1_200_000)},
-		{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(100_000)},
-		{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(300_000)},
-		{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(500_000)},
-	}
-	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
+func stAt(y int, mo time.Month, d, h, mi int) time.Time {
+	return time.Date(y, mo, d, h, mi, 0, 0, time.UTC)
+}
 
-	byTok := map[string]ScoreRow{}
+func byToken(rep Report) map[string]ScoreRow {
+	by := map[string]ScoreRow{}
 	for _, s := range rep.Scorecard {
-		byTok[s.Token] = s
+		by[s.Token] = s
 	}
+	return by
+}
 
-	a := byTok["a"]
+// TestScorecard pins each scorecard field group against its own fixture.
+func TestScorecard(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		in    Inputs
+		check func(t *testing.T, rep Report)
+	}{
+		{
+			name: "rates and medians over closed rounds",
+			in: Inputs{Until: stNow, Loc: time.UTC, Rows: []db.RoundRow{
+				{Candidate: stStr("a"), Outcome: db.OutcomeReported, DurationMS: stI64(600_000)},
+				{Candidate: stStr("a"), Outcome: db.OutcomeOpen},
+				{Candidate: stStr("a"), Outcome: db.OutcomeHalted, DurationMS: stI64(1_200_000)},
+				{Candidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(100_000)},
+				{Candidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(300_000)},
+				{Candidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(500_000)},
+			}},
+			check: checkScorecardRates,
+		},
+		{
+			name: "unrecorded rows and Keep",
+			in: Inputs{Until: stNow, Loc: time.UTC, Rows: []db.RoundRow{
+				{Candidate: stStr("a"), Outcome: db.OutcomeReported},
+				{Candidate: nil, Outcome: db.OutcomeReported},
+				{Candidate: stStr("b"), Outcome: db.OutcomeReported},
+			}, Keep: func(r db.RoundRow) bool {
+				return r.Candidate != nil && *r.Candidate != "b"
+			}},
+			check: checkScorecardUnrecorded,
+		},
+		{
+			name: "plan rows report no cost",
+			in: Inputs{Until: stNow, Loc: time.UTC, IsPlan: func(tok string) bool { return tok == "plan/x" }, Rows: []db.RoundRow{
+				{Candidate: stStr("plan/x"), Outcome: db.OutcomeReported, CostUSD: stF64(9), CostBasis: stStr("measured")},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(1), CostBasis: stStr("measured")},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(3), CostBasis: stStr("measured")},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(2), CostBasis: stStr("unknown")},
+				// A cost with no basis at all: costKnown counts it.
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(5)},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported},
+			}},
+			check: checkScorecardPlanCost,
+		},
+		{
+			name: "bindings, report halts and switches",
+			in: Inputs{Until: stNow, Loc: time.UTC, Rows: []db.RoundRow{
+				{BindingID: "b1", Candidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 0},
+				{BindingID: "b2", Candidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2, ReportOutcome: stStr("halted")},
+				{BindingID: "b2", Candidate: stStr("a"), Outcome: db.OutcomeHalted, Switches: 1, ReportOutcome: stStr("done")},
+				{BindingID: "b3", Candidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 0},
+			}},
+			check: checkScorecardBindings,
+		},
+		{
+			name: "per-candidate token kinds leave the unrecorded bucket out",
+			in: Inputs{Until: stNow, Loc: time.UTC, Rows: []db.RoundRow{
+				{Candidate: stStr("a"), InTokens: stI64(100), CacheTokens: stI64(900), OutTokens: stI64(10)},
+				{Candidate: stStr("a"), OutTokens: stI64(90)},
+				{Candidate: stStr("b"), InTokens: stI64(7)},
+				{Candidate: nil, InTokens: stI64(1000)},
+			}},
+			check: checkScorecardTokens,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			c.check(t, Build(c.in))
+		})
+	}
+}
+
+func checkScorecardRates(t *testing.T, rep Report) {
+	by := byToken(rep)
+	a := by["a"]
 	if a.Closed != 2 || a.Reported != 1 || a.Halted != 1 {
 		t.Fatalf("a: closed/reported/halted = %d/%d/%d, want 2/1/1", a.Closed, a.Reported, a.Halted)
 	}
@@ -45,8 +115,7 @@ func TestScorecardRates(t *testing.T) {
 	if a.MedianMS != 900_000 {
 		t.Errorf("a: median = %d, want 900000 (mean of the two middles)", a.MedianMS)
 	}
-
-	b := byTok["b"]
+	b := by["b"]
 	if b.Closed != 3 || b.DonePct != 100 {
 		t.Fatalf("b: closed/done = %d/%v, want 3/100", b.Closed, b.DonePct)
 	}
@@ -55,24 +124,7 @@ func TestScorecardRates(t *testing.T) {
 	}
 }
 
-// TestScorecardUnrecordedAndKeep pins that a nil candidate never gets a
-// scorecard row but counts in Totals.Unrecorded, that Candidates counts the
-// distinct non-nil tokens, and that Keep drops a row.
-func TestScorecardUnrecordedAndKeep(t *testing.T) {
-	rows := []db.RoundRow{
-		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported},
-		{BuilderCandidate: nil, Outcome: db.OutcomeReported},
-		{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported},
-	}
-	rep := Build(Inputs{
-		Rows:  rows,
-		Until: stNow,
-		Loc:   time.UTC,
-		Keep: func(r db.RoundRow) bool {
-			return r.BuilderCandidate != nil && *r.BuilderCandidate != "b"
-		},
-	})
-
+func checkScorecardUnrecorded(t *testing.T, rep Report) {
 	if rep.Totals.Unrecorded != 1 {
 		t.Errorf("Totals.Unrecorded = %d, want 1: the nil candidate's rounds", rep.Totals.Unrecorded)
 	}
@@ -87,82 +139,125 @@ func TestScorecardUnrecordedAndKeep(t *testing.T) {
 	}
 }
 
-// TestScorecardPlanAndCost pins that a plan token reports no cost, that an
-// unknown basis and a missing cost are excluded from the mean, that a nil
-// basis counts as known, and that Few is set under five rounds.
-func TestScorecardPlanAndCost(t *testing.T) {
-	rows := []db.RoundRow{
-		{BuilderCandidate: stStr("plan/x"), Outcome: db.OutcomeReported, CostUSD: stF64(9), CostBasis: stStr("measured")},
-		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(1), CostBasis: stStr("measured")},
-		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(3), CostBasis: stStr("measured")},
-		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(2), CostBasis: stStr("unknown")},
-		// A cost with no basis at all: histq's costKnown rule counts it.
-		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(5)},
-		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported},
-		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported},
-	}
-	rep := Build(Inputs{
-		Rows:   rows,
-		Until:  stNow,
-		Loc:    time.UTC,
-		IsPlan: func(tok string) bool { return tok == "plan/x" },
-	})
-	byTok := map[string]ScoreRow{}
-	for _, s := range rep.Scorecard {
-		byTok[s.Token] = s
-	}
-
-	p := byTok["plan/x"]
+func checkScorecardPlanCost(t *testing.T, rep Report) {
+	by := byToken(rep)
+	p := by["plan/x"]
 	if !p.Plan || p.HasCost {
 		t.Errorf("plan row = plan %v / hasCost %v, want true/false", p.Plan, p.HasCost)
 	}
 	if !p.Few {
 		t.Errorf("plan row Few = false, want true (1 round)")
 	}
-
-	y := byTok["paid/y"]
+	y := by["paid/y"]
 	if !y.HasCost {
 		t.Fatalf("paid row HasCost = false, want true")
 	}
 	if y.CostPerRound != 3 {
-		t.Errorf("paid row cost = %v, want 3 (the two measured rows plus the nil-basis row)", y.CostPerRound)
+		t.Errorf("paid row cost = %v, want 3 (the measured rows plus the nil-basis row)", y.CostPerRound)
 	}
 	if y.Few {
 		t.Errorf("paid row Few = true, want false (6 rounds)")
 	}
 }
 
-// TestSpendDaysAndWeeks pins that zero days are present, that each day's
-// provider split sums to its USD, and that the week windows are exact at their
-// boundaries.
-func TestSpendDaysAndWeeks(t *testing.T) {
-	at := func(y int, mo time.Month, d, h, mi int) time.Time {
-		return time.Date(y, mo, d, h, mi, 0, 0, time.UTC)
+func checkScorecardBindings(t *testing.T, rep Report) {
+	if len(rep.Scorecard) != 1 {
+		t.Fatalf("scorecard = %+v, want one row", rep.Scorecard)
 	}
-	rows := []db.RoundRow{
-		// Exactly Until-7d: this week.
-		{StartedAt: stNow.Add(-7 * 24 * time.Hour), CostUSD: stF64(1), CostBasis: stStr("measured")},
-		// One millisecond earlier: last week.
-		{StartedAt: stNow.Add(-7*24*time.Hour - time.Millisecond), CostUSD: stF64(2), CostBasis: stStr("measured")},
-		// Exactly Until-14d: last week.
-		{StartedAt: stNow.Add(-14 * 24 * time.Hour), CostUSD: stF64(4), CostBasis: stStr("measured")},
-		// One millisecond earlier: neither week.
-		{StartedAt: stNow.Add(-14*24*time.Hour - time.Millisecond), CostUSD: stF64(8), CostBasis: stStr("measured")},
-		// Inside the day window, with a provider.
-		{StartedAt: at(2026, time.September, 23, 5, 0), BuilderProvider: stStr("p1"), CostUSD: stF64(16), CostBasis: stStr("measured")},
-		// Inside the day window, with no provider.
-		{StartedAt: at(2026, time.September, 24, 6, 0), CostUSD: stF64(32), CostBasis: stStr("measured")},
+	s := rep.Scorecard[0]
+	if s.Bindings != 3 {
+		t.Errorf("Bindings = %d, want 3 (b1, b2, b3)", s.Bindings)
 	}
-	since := at(2026, time.September, 22, 0, 0)
-	rep := Build(Inputs{Rows: rows, Since: since, Until: stNow, Loc: time.UTC})
+	if s.ReportHalted != 1 {
+		t.Errorf("ReportHalted = %d, want 1 (the harnessed halted report)", s.ReportHalted)
+	}
+	if s.Switches != 3 {
+		t.Errorf("Switches = %d, want 3 (0+2+1+0)", s.Switches)
+	}
+}
 
+func checkScorecardTokens(t *testing.T, rep Report) {
+	by := byToken(rep)
+	a := by["a"].TokenKinds
+	if a.In != 100 || a.Cache != 900 || a.Out != 100 || a.Measured != 2 || a.Total() != 1100 {
+		t.Errorf("a TokenKinds = %+v, want In 100, Cache 900, Out 100, Measured 2, Total 1100", a)
+	}
+	b := by["b"].TokenKinds
+	if b.In != 7 || b.Measured != 1 || b.Total() != 7 {
+		t.Errorf("b TokenKinds = %+v, want In 7, Measured 1, Total 7", b)
+	}
+	if rep.Totals.TokenKinds.In != 1107 {
+		t.Errorf("Totals In = %d, want 1107 (the unrecorded row's 1000 included)", rep.Totals.TokenKinds.In)
+	}
+}
+
+// TestSpend pins the day series, its splits and the two week windows.
+func TestSpend(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		in    Inputs
+		check func(t *testing.T, rep Report)
+	}{
+		{
+			name: "days and week windows",
+			in: Inputs{Since: stAt(2026, time.September, 22, 0, 0), Until: stNow, Loc: time.UTC, Rows: []db.RoundRow{
+				// Exactly Until-7d: this week.
+				{StartedAt: stNow.Add(-7 * 24 * time.Hour), CostUSD: stF64(1), CostBasis: stStr("measured")},
+				// One millisecond earlier: last week.
+				{StartedAt: stNow.Add(-7*24*time.Hour - time.Millisecond), CostUSD: stF64(2), CostBasis: stStr("measured")},
+				// Exactly Until-14d: last week.
+				{StartedAt: stNow.Add(-14 * 24 * time.Hour), CostUSD: stF64(4), CostBasis: stStr("measured")},
+				// One millisecond earlier: neither week.
+				{StartedAt: stNow.Add(-14*24*time.Hour - time.Millisecond), CostUSD: stF64(8), CostBasis: stStr("measured")},
+				// Inside the day window, with a provider.
+				{StartedAt: stAt(2026, time.September, 23, 5, 0), Provider: stStr("p1"), CostUSD: stF64(16), CostBasis: stStr("measured")},
+				// Inside the day window, with no provider.
+				{StartedAt: stAt(2026, time.September, 24, 6, 0), CostUSD: stF64(32), CostBasis: stStr("measured")},
+			}},
+			check: checkSpendDaysWeeks,
+		},
+		{
+			name: "day token breakdowns",
+			in: Inputs{Since: stAt(2026, time.September, 23, 0, 0), Until: stAt(2026, time.September, 24, 12, 0), Loc: time.UTC, Rows: []db.RoundRow{
+				{StartedAt: stAt(2026, time.September, 23, 9, 0), Candidate: stStr("A"), Provider: stStr("p1"),
+					InTokens: stI64(10), CacheTokens: stI64(100), OutTokens: stI64(5)},
+				{StartedAt: stAt(2026, time.September, 23, 10, 0), Candidate: stStr("B"), Provider: stStr("p2"),
+					OutTokens: stI64(7)},
+				{StartedAt: stAt(2026, time.September, 24, 9, 0), Candidate: stStr("A"), InTokens: stI64(1)},
+			}},
+			check: checkSpendBreakdowns,
+		},
+		{
+			name: "tokens bucket by local day",
+			in: Inputs{Since: stAt(2026, time.September, 22, 0, 0), Until: stAt(2026, time.September, 25, 12, 0),
+				Loc: time.FixedZone("X", 2*3600), Rows: []db.RoundRow{
+					// 23:30 UTC on the 23rd is 01:30 local on the 24th.
+					{StartedAt: stAt(2026, time.September, 23, 23, 30), InTokens: stI64(100)},
+					// 22:30 UTC on the 24th is 00:30 local on the 25th.
+					{StartedAt: stAt(2026, time.September, 24, 22, 30), InTokens: stI64(7)},
+					// 21:30 UTC on the 23rd is still the 23rd locally.
+					{StartedAt: stAt(2026, time.September, 23, 21, 30), InTokens: stI64(3)},
+				}},
+			check: checkSpendLocalDays,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			c.check(t, Build(c.in))
+		})
+	}
+}
+
+func checkSpendDaysWeeks(t *testing.T, rep Report) {
 	if rep.Spend.ThisWeek != 49 {
 		t.Errorf("ThisWeek = %v, want 49 (1 on the boundary plus the two in-window days)", rep.Spend.ThisWeek)
 	}
 	if rep.Spend.LastWeek != 6 {
 		t.Errorf("LastWeek = %v, want 6", rep.Spend.LastWeek)
 	}
-
 	if len(rep.Spend.Days) != 3 {
 		t.Fatalf("days = %d, want 3 (22nd, 23rd, 24th)", len(rep.Spend.Days))
 	}
@@ -192,29 +287,451 @@ func TestSpendDaysAndWeeks(t *testing.T) {
 	}
 }
 
-// TestReliabilityWindowAndHours pins that history events outside the window are
-// excluded, that the by-hour buckets use Loc, and that the active gates pass
-// through.
+func checkSpendBreakdowns(t *testing.T, rep Report) {
+	if len(rep.Spend.Days) != 2 {
+		t.Fatalf("days = %d, want 2", len(rep.Spend.Days))
+	}
+	d1, d2 := rep.Spend.Days[0], rep.Spend.Days[1]
+	if d1.Kinds.In != 10 || d1.Kinds.Cache != 100 || d1.Kinds.Out != 12 {
+		t.Errorf("day 1 Kinds = %+v, want In 10, Cache 100, Out 12", d1.Kinds)
+	}
+	if got := d1.ByCandidate; got["A"] != 115 || got["B"] != 7 || len(got) != 2 {
+		t.Errorf("day 1 ByCandidate = %v, want A 115, B 7", got)
+	}
+	if got := d1.TokensByProvider; got["p1"] != 115 || got["p2"] != 7 || len(got) != 2 {
+		t.Errorf("day 1 TokensByProvider = %v, want p1 115, p2 7", got)
+	}
+	if got := d2.ByCandidate; got["A"] != 1 || len(got) != 1 {
+		t.Errorf("day 2 ByCandidate = %v, want A 1", got)
+	}
+	for i, d := range rep.Spend.Days {
+		if d.Tokens != d.Kinds.Total() {
+			t.Errorf("day %d Tokens = %d, want Kinds.Total() = %d", i, d.Tokens, d.Kinds.Total())
+		}
+	}
+}
+
+func checkSpendLocalDays(t *testing.T, rep Report) {
+	want := map[string]int64{"2026-09-23": 3, "2026-09-24": 100, "2026-09-25": 7}
+	for _, d := range rep.Spend.Days {
+		if got, ok := want[d.Day]; ok && d.Tokens != got {
+			t.Errorf("%s Tokens = %d, want %d", d.Day, d.Tokens, got)
+		}
+	}
+	if got := rep.Spend.Days[0].Tokens; got != 0 {
+		t.Errorf("the zero day's Tokens = %d, want 0", got)
+	}
+}
+
+// TestGroupRows pins the repo buckets, their per-repo feature and ticket
+// children, and the per-repo feature-less and ticket-less buckets .
+func TestGroupRows(t *testing.T) {
+	t.Parallel()
+	for _, c := range groupRowCases() {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			c.check(t, Build(Inputs{Rows: c.rows, Landed: c.landed, Until: stNow, Loc: time.UTC}))
+		})
+	}
+}
+
+// groupRowCase is one TestGroupRows case.
+type groupRowCase struct {
+	name   string
+	rows   []db.RoundRow
+	landed map[string]bool
+	check  func(t *testing.T, rep Report)
+}
+
+// groupRowCases is TestGroupRows' table: the repo-scoping cases and the
+// breakdown cases a repo row carries.
+func groupRowCases() []groupRowCase {
+	return append(repoScopedRowCases(), breakdownRowCases()...)
+}
+
+// repoScopedRowCases pins the repo buckets, their per-repo children and the
+// per-repo (no feature) bucket with the tickets nested under each feature.
+func repoScopedRowCases() []groupRowCase {
+	return append([]groupRowCase{
+		{
+			name: "rounds per land and an unlanded group",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
+				{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
+				{BindingID: "b3", Repo: stStr("A"), Outcome: db.OutcomeHalted},
+				{BindingID: "b9", Repo: stStr("B"), Feature: stStr("f2"), Outcome: db.OutcomeHalted},
+			},
+			landed: map[string]bool{"b1": true, "b2": true},
+			check:  checkGroupLanded,
+		},
+		{
+			name: "one label under two repos",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("shared"), InTokens: stI64(10)},
+				{BindingID: "b2", Repo: stStr("A"), Feature: stStr("shared"), InTokens: stI64(5)},
+				{BindingID: "b3", Repo: stStr("B"), Feature: stStr("shared"), InTokens: stI64(100)},
+			},
+			check: checkGroupLabelAcrossRepos,
+		},
+		{
+			name: "per-repo (no feature) numbers and the feature's tickets",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Ticket: stStr("t1")},
+				{BindingID: "b2", Repo: stStr("A")},
+				{BindingID: "b3", Repo: stStr("A"), Feature: stStr("f1")},
+				{BindingID: "b4", Repo: stStr("B")},
+			},
+			check: checkGroupRepoNoneBuckets,
+		},
+		{
+			name: "a repo with no labels expands to nothing",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1")},
+				{BindingID: "b2", Repo: stStr("B")},
+				{BindingID: "b3", Repo: stStr("B")},
+			},
+			check: checkGroupUnlabelledRepo,
+		},
+	}, ticketScopedRowCases()...)
+}
+
+// ticketScopedRowCases pins the labelled tickets nested under a repo's features
+// and under its (no feature) bucket, each copy counting only its own feature's
+// rows in that repo.
+func ticketScopedRowCases() []groupRowCase {
+	return []groupRowCase{
+		{
+			name: "a feature with tickets keeps its ticketless rounds",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Ticket: stStr("t1"), InTokens: stI64(10)},
+				{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f1"), InTokens: stI64(5)},
+			},
+			check: checkGroupFeatureTickets,
+		},
+		{
+			name: "a ticket under (no feature)",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Ticket: stStr("t9"), InTokens: stI64(7)},
+			},
+			check: checkGroupNoFeatureTicket,
+		},
+		{
+			name: "one ticket under two features",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Ticket: stStr("t1"), InTokens: stI64(10)},
+				{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f2"), Ticket: stStr("t1"), InTokens: stI64(100)},
+			},
+			check: checkGroupTicketAcrossFeatures,
+		},
+		{
+			name: "one ticket label under two repos",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Ticket: stStr("t1"), InTokens: stI64(10)},
+				{BindingID: "b2", Repo: stStr("B"), Feature: stStr("f2"), Ticket: stStr("t1"), InTokens: stI64(100)},
+			},
+			check: checkGroupTicketAcrossRepos,
+		},
+		{
+			name: "a repo with no labels keeps every round in (no feature)",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("B")},
+				{BindingID: "b2", Repo: stStr("B")},
+			},
+			check: checkGroupNoLabelsRepo,
+		},
+	}
+}
+
+// breakdownRowCases pins the per-group breakdowns a repo row carries.
+func breakdownRowCases() []groupRowCase {
+	return []groupRowCase{
+		{
+			name: "bindings, reports, commits and candidates",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), ReportOutcome: stStr("done"), Commits: stInt(2), Candidate: stStr("A")},
+				{BindingID: "b2", Repo: stStr("A"), ReportOutcome: stStr("done"), Candidate: stStr("A")},
+				{BindingID: "b3", Repo: stStr("A"), ReportOutcome: stStr("halted"), Commits: stInt(1), Candidate: stStr("B")},
+				{BindingID: "b1", Repo: stStr("A"), Commits: stInt(0)},
+			},
+			check: checkGroupBreakdowns,
+		},
+		{
+			name: "tokens per repo and child",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), InTokens: stI64(10), OutTokens: stI64(5)},
+				{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f1"), CacheTokens: stI64(100)},
+				{BindingID: "b3", Repo: stStr("B"), Feature: stStr("f2"), WriteTokens: stI64(2)},
+				{BindingID: "b4"},
+			},
+			check: checkGroupTokens,
+		},
+		{
+			name:  "no rows builds no repos",
+			check: checkGroupNoRows,
+		},
+	}
+}
+
+func checkGroupLanded(t *testing.T, rep Report) {
+	if len(rep.Repos) != 2 {
+		t.Fatalf("repos = %+v, want A and B", rep.Repos)
+	}
+	a := rep.Repos[0]
+	if a.Key != "A" || a.Rounds != 4 || a.Halted != 1 || a.Landed != 2 {
+		t.Fatalf("repo A = %+v, want 4 rounds, 1 halted, 2 landed", a)
+	}
+	if a.RoundsPerLand != 1.5 {
+		t.Errorf("repo A rounds/land = %v, want 1.5 (3 rounds over 2 landed)", a.RoundsPerLand)
+	}
+	if len(a.Features) != 1 || a.Features[0].Key != "f1" || a.Features[0].Rounds != 3 ||
+		a.Features[0].Landed != 2 || a.Features[0].RoundsPerLand != 1.5 {
+		t.Errorf("repo A features = %+v, want f1 with 3 rounds, 2 landed, 1.5 rounds/land", a.Features)
+	}
+	if a.NoFeature.Key != "(none)" || a.NoFeature.Rounds != 1 {
+		t.Errorf("repo A NoFeature = %+v, want the one unlabelled halt", a.NoFeature)
+	}
+	b := rep.Repos[1]
+	if b.Landed != 0 || b.RoundsPerLand != 0 {
+		t.Errorf("repo B = %+v, want 0 landed and 0 rounds/land", b)
+	}
+	if len(b.Features) != 1 || b.Features[0].Key != "f2" {
+		t.Errorf("repo B features = %+v, want f2", b.Features)
+	}
+}
+
+// checkGroupLabelAcrossRepos pins the repo scoping: one label two repos use
+// appears under each with only that repo's rows counted.
+func checkGroupLabelAcrossRepos(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, r := range rep.Repos {
+		byKey[r.Key] = r
+	}
+	a := byKey["A"]
+	if len(a.Features) != 1 || a.Features[0].Key != "shared" {
+		t.Fatalf("repo A features = %+v, want one shared label", a.Features)
+	}
+	if a.Features[0].Rounds != 2 || a.Features[0].Tokens != 15 {
+		t.Errorf("A/shared = %+v, want 2 rounds and 15 tokens (its own rows only)", a.Features[0])
+	}
+	b := byKey["B"]
+	if len(b.Features) != 1 || b.Features[0].Key != "shared" {
+		t.Fatalf("repo B features = %+v, want one shared label", b.Features)
+	}
+	if b.Features[0].Rounds != 1 || b.Features[0].Tokens != 100 {
+		t.Errorf("B/shared = %+v, want 1 round and 100 tokens", b.Features[0])
+	}
+}
+
+// checkGroupRepoNoneBuckets pins the per-repo (no feature) numbers and the
+// tickets nested under the repo's labelled feature: a feature's numbers include
+// its ticketless rounds, and its ticket list holds only the labelled rounds.
+func checkGroupRepoNoneBuckets(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, r := range rep.Repos {
+		byKey[r.Key] = r
+	}
+	a := byKey["A"]
+	if a.NoFeature.Key != "(none)" || a.NoFeature.Rounds != 1 {
+		t.Errorf("A NoFeature = %+v, want 1 round keyed (none)", a.NoFeature)
+	}
+	if len(a.NoFeature.Tickets) != 0 {
+		t.Errorf("A (no feature) tickets = %+v, want none", a.NoFeature.Tickets)
+	}
+	if len(a.Features) != 1 || a.Features[0].Key != "f1" || a.Features[0].Rounds != 2 {
+		t.Fatalf("A features = %+v, want f1 with its ticketless round", a.Features)
+	}
+	if len(a.Features[0].Tickets) != 1 || a.Features[0].Tickets[0].Key != "t1" ||
+		a.Features[0].Tickets[0].Rounds != 1 {
+		t.Errorf("A/f1 tickets = %+v, want t1 with 1 round", a.Features[0].Tickets)
+	}
+	b := byKey["B"]
+	if b.NoFeature.Rounds != 1 {
+		t.Errorf("B NoFeature = %+v, want 1 round", b.NoFeature)
+	}
+	if len(b.Features) != 0 {
+		t.Errorf("B features = %+v, want none (no labels)", b.Features)
+	}
+}
+
+// checkGroupUnlabelledRepo pins the issue's "a repo with nothing to show
+// expands to nothing": no labelled children, the whole count in (no feature).
+func checkGroupUnlabelledRepo(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, r := range rep.Repos {
+		byKey[r.Key] = r
+	}
+	b := byKey["B"]
+	if b.Rounds != 2 {
+		t.Fatalf("repo B = %+v, want 2 rounds", b)
+	}
+	if len(b.Features) != 0 {
+		t.Errorf("repo B features = %+v, want empty", b.Features)
+	}
+	if b.NoFeature.Rounds != 2 || len(b.NoFeature.Tickets) != 0 {
+		t.Errorf("repo B (no feature) = %+v, want the whole 2 rounds and no tickets", b.NoFeature)
+	}
+}
+
+// checkGroupFeatureTickets pins that a feature's ticketless rounds count only
+// in the feature, not in its ticket list.
+func checkGroupFeatureTickets(t *testing.T, rep Report) {
+	a := rep.Repos[0]
+	if len(a.Features) != 1 || a.Features[0].Key != "f1" {
+		t.Fatalf("A features = %+v, want f1", a.Features)
+	}
+	f := a.Features[0]
+	if f.Rounds != 2 || f.Tokens != 15 {
+		t.Errorf("A/f1 = %+v, want 2 rounds and 15 tokens", f)
+	}
+	if len(f.Tickets) != 1 || f.Tickets[0].Key != "t1" || f.Tickets[0].Rounds != 1 ||
+		f.Tickets[0].Tokens != 10 {
+		t.Errorf("A/f1 tickets = %+v, want t1 with its one labelled round", f.Tickets)
+	}
+	if a.NoFeature.Rounds != 0 {
+		t.Errorf("A (no feature) = %+v, want zero: every round has a feature", a.NoFeature)
+	}
+}
+
+// checkGroupNoFeatureTicket pins a labelled ticket on a featureless round: it
+// nests under the repo's (no feature) bucket, not under a feature.
+func checkGroupNoFeatureTicket(t *testing.T, rep Report) {
+	a := rep.Repos[0]
+	if len(a.Features) != 0 {
+		t.Errorf("A features = %+v, want none", a.Features)
+	}
+	if a.NoFeature.Key != "(none)" || a.NoFeature.Rounds != 1 {
+		t.Fatalf("A (no feature) = %+v, want 1 round keyed (none)", a.NoFeature)
+	}
+	if len(a.NoFeature.Tickets) != 1 || a.NoFeature.Tickets[0].Key != "t9" ||
+		a.NoFeature.Tickets[0].Tokens != 7 {
+		t.Errorf("A (no feature) tickets = %+v, want t9 with its round", a.NoFeature.Tickets)
+	}
+}
+
+// checkGroupTicketAcrossFeatures pins a ticket one repo uses under two features:
+// it appears under each, counting only that feature's rows.
+func checkGroupTicketAcrossFeatures(t *testing.T, rep Report) {
+	byKey := map[string]FeatureRow{}
+	for _, f := range rep.Repos[0].Features {
+		byKey[f.Key] = f
+	}
+	if len(byKey) != 2 {
+		t.Fatalf("A features = %+v, want f1 and f2", rep.Repos[0].Features)
+	}
+	for key, want := range map[string]int64{"f1": 10, "f2": 100} {
+		f := byKey[key]
+		if len(f.Tickets) != 1 || f.Tickets[0].Key != "t1" || f.Tickets[0].Tokens != want {
+			t.Errorf("%s tickets = %+v, want t1 with %d tokens", key, f.Tickets, want)
+		}
+	}
+}
+
+// checkGroupTicketAcrossRepos pins a ticket label two repos use: it appears
+// under each repo's feature with only that repo's rows counted.
+func checkGroupTicketAcrossRepos(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, r := range rep.Repos {
+		byKey[r.Key] = r
+	}
+	for key, want := range map[string]int64{"A": 10, "B": 100} {
+		r := byKey[key]
+		if len(r.Features) != 1 || len(r.Features[0].Tickets) != 1 ||
+			r.Features[0].Tickets[0].Key != "t1" || r.Features[0].Tickets[0].Tokens != want {
+			t.Errorf("%s features = %+v, want t1 with %d tokens", key, r.Features, want)
+		}
+	}
+}
+
+// checkGroupNoLabelsRepo pins a repo with no labels at all: no features, and
+// (no feature) holds every round with no tickets.
+func checkGroupNoLabelsRepo(t *testing.T, rep Report) {
+	b := rep.Repos[0]
+	if len(b.Features) != 0 {
+		t.Errorf("repo B features = %+v, want none", b.Features)
+	}
+	if b.NoFeature.Key != "(none)" || b.NoFeature.Rounds != 2 || len(b.NoFeature.Tickets) != 0 {
+		t.Errorf("repo B (no feature) = %+v, want every round and no tickets", b.NoFeature)
+	}
+}
+
+// checkGroupNoRows pins that no rows builds no repos.
+func checkGroupNoRows(t *testing.T, rep Report) {
+	if len(rep.Repos) != 0 {
+		t.Errorf("Repos = %+v, want none with no rows", rep.Repos)
+	}
+}
+
+func checkGroupBreakdowns(t *testing.T, rep Report) {
+	if len(rep.Repos) != 1 {
+		t.Fatalf("repos = %+v, want one row", rep.Repos)
+	}
+	g := rep.Repos[0]
+	if g.Bindings != 3 {
+		t.Errorf("Bindings = %d, want 3 (b1, b2, b3)", g.Bindings)
+	}
+	if g.Done != 2 {
+		t.Errorf("Done = %d, want 2 (the two done reports)", g.Done)
+	}
+	if g.ReportHalted != 1 {
+		t.Errorf("ReportHalted = %d, want 1", g.ReportHalted)
+	}
+	if g.Commits != 3 {
+		t.Errorf("Commits = %d, want 3 (2 + nil + 1 + 0)", g.Commits)
+	}
+	if got := g.ByCandidate; got["A"] != 2 || got["B"] != 1 || len(got) != 2 {
+		t.Errorf("ByCandidate = %v, want A:2 B:1 (the nil candidate skipped)", got)
+	}
+}
+
+func checkGroupTokens(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, g := range rep.Repos {
+		byKey[g.Key] = g
+	}
+	if got := byKey["A"].Tokens; got != 115 {
+		t.Errorf("repo A Tokens = %d, want 115", got)
+	}
+	if got := byKey["B"].Tokens; got != 2 {
+		t.Errorf("repo B Tokens = %d, want 2", got)
+	}
+	if got := byKey["(none)"].Tokens; got != 0 {
+		t.Errorf("(none) Tokens = %d, want 0", got)
+	}
+	a := byKey["A"]
+	if len(a.Features) != 1 || a.Features[0].Key != "f1" || a.Features[0].Tokens != 115 {
+		t.Errorf("A/f1 = %+v, want 115 tokens", a.Features)
+	}
+	b := byKey["B"]
+	if len(b.Features) != 1 || b.Features[0].Key != "f2" || b.Features[0].Tokens != 2 {
+		t.Errorf("B/f2 = %+v, want 2 tokens", b.Features)
+	}
+}
+
+// TestReliabilityWindowAndHours pins the window, the local-hour buckets and the
+// active gates.
 func TestReliabilityWindowAndHours(t *testing.T) {
+	t.Parallel()
+
 	loc := time.FixedZone("X", 2*3600)
 	rows := []db.RoundRow{
-		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2},
-		{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported},
+		{Candidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2},
+		{Candidate: stStr("b"), Outcome: db.OutcomeReported},
 	}
-	gates := []ledger.Gate{{Token: "a"}}
-	hist := history.History{Events: []history.Event{
+	gates := []availability.Gate{{Token: "a"}}
+	hist := availability.History{Events: []availability.Event{
 		// In the window: 01:30 UTC is 03:30 local.
-		{At: time.Date(2026, 9, 24, 1, 30, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "google"},
+		{At: time.Date(2026, 9, 24, 1, 30, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "google"},
 		// After Until: excluded.
-		{At: time.Date(2026, 9, 24, 23, 30, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "google"},
+		{At: time.Date(2026, 9, 24, 23, 30, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "google"},
 		// Before Since: excluded.
-		{At: time.Date(2026, 9, 19, 23, 0, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "google"},
+		{At: time.Date(2026, 9, 19, 23, 0, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "google"},
 		// In the window: 08:00 UTC is 10:00 local.
-		{At: time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "openai"},
+		{At: time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "openai"},
 		// In the window.
-		{At: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC), Kind: ledger.SpawnFailed, Provider: "google"},
+		{At: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC), Kind: availability.SpawnFailed, Provider: "google"},
 		// Before Since: excluded.
-		{At: time.Date(2026, 9, 19, 23, 0, 0, 0, time.UTC), Kind: ledger.SpawnFailed, Provider: "openai"},
+		{At: time.Date(2026, 9, 19, 23, 0, 0, 0, time.UTC), Kind: availability.SpawnFailed, Provider: "openai"},
 	}}
 	rep := Build(Inputs{
 		Rows:    rows,
@@ -251,50 +768,10 @@ func TestReliabilityWindowAndHours(t *testing.T) {
 	}
 }
 
-// TestReposFeaturesLanded pins RoundsPerLand, and that a group with no landed
-// binding reports 0.
-func TestReposFeaturesLanded(t *testing.T) {
-	rows := []db.RoundRow{
-		{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
-		{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
-		{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
-		{BindingID: "b3", Repo: stStr("A"), Outcome: db.OutcomeHalted},
-		{BindingID: "b9", Repo: stStr("B"), Feature: stStr("f2"), Outcome: db.OutcomeHalted},
-	}
-	rep := Build(Inputs{
-		Rows:   rows,
-		Landed: map[string]bool{"b1": true, "b2": true},
-		Until:  stNow,
-		Loc:    time.UTC,
-	})
-
-	if len(rep.Repos) != 2 {
-		t.Fatalf("repos = %+v, want A and B", rep.Repos)
-	}
-	a := rep.Repos[0]
-	if a.Key != "A" || a.Rounds != 4 || a.Halted != 1 || a.Landed != 2 {
-		t.Fatalf("repo A = %+v, want 4 rounds, 1 halted, 2 landed", a)
-	}
-	if a.RoundsPerLand != 1.5 {
-		t.Errorf("repo A rounds/land = %v, want 1.5 (3 rounds over 2 landed)", a.RoundsPerLand)
-	}
-	b := rep.Repos[1]
-	if b.Landed != 0 || b.RoundsPerLand != 0 {
-		t.Errorf("repo B = %+v, want 0 landed and 0 rounds/land", b)
-	}
-
-	if len(rep.Features) != 2 {
-		t.Fatalf("features = %+v, want f1 and f2", rep.Features)
-	}
-	f1 := rep.Features[0]
-	if f1.Key != "f1" || f1.Rounds != 3 || f1.Landed != 2 || f1.RoundsPerLand != 1.5 {
-		t.Errorf("feature f1 = %+v, want 3 rounds, 2 landed, 1.5 rounds/land", f1)
-	}
-}
-
-// TestOutcomes pins that the unstructured report outcome is counted as
-// "no outcome".
+// TestOutcomes pins that the unstructured report outcome counts as "no outcome".
 func TestOutcomes(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{Outcome: db.OutcomeReported, ReportOutcome: stStr("done")},
 		{Outcome: db.OutcomeReported, ReportOutcome: stStr("unstructured")},
@@ -319,6 +796,8 @@ func TestOutcomes(t *testing.T) {
 
 // TestBuildEmpty pins that no rows builds a zero report without a panic.
 func TestBuildEmpty(t *testing.T) {
+	t.Parallel()
+
 	rep := Build(Inputs{Until: stNow, Loc: time.UTC})
 
 	if rep.Totals.Rounds != 0 || rep.Totals.CostUSD != 0 || len(rep.Scorecard) != 0 {
@@ -329,5 +808,67 @@ func TestBuildEmpty(t *testing.T) {
 	}
 	if len(rep.Outcomes.ByRound) != 0 || len(rep.Outcomes.ByReport) != 0 {
 		t.Errorf("outcomes = %+v, want empty maps", rep.Outcomes)
+	}
+}
+
+// TestBuildUndatedRowsKeepSinceAtUntil pins that an undated row does not pull
+// Since back to year 1 and allocate a spend day per day since then.
+func TestBuildUndatedRowsKeepSinceAtUntil(t *testing.T) {
+	t.Parallel()
+
+	rows := []db.RoundRow{{Outcome: db.OutcomeReported}, {Outcome: db.OutcomeOpen}}
+	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
+
+	if !rep.Since.Equal(stNow) {
+		t.Errorf("Since = %v, want Until when no row has a StartedAt", rep.Since)
+	}
+	if len(rep.Spend.Days) != 1 {
+		t.Errorf("len(Spend.Days) = %d, want 1", len(rep.Spend.Days))
+	}
+
+	dated := stNow.Add(-48 * time.Hour)
+	rows = append(rows, db.RoundRow{Outcome: db.OutcomeReported, StartedAt: dated})
+	if got := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC}).Since; !got.Equal(dated) {
+		t.Errorf("Since = %v, want the dated row's StartedAt %v", got, dated)
+	}
+}
+
+// TestTokenKindsSumAndCache pins TokenCounts over every row and the two ok
+// results that guard a zero denominator.
+func TestTokenKindsSumAndCache(t *testing.T) {
+	t.Parallel()
+
+	rows := []db.RoundRow{
+		{InTokens: stI64(100), CacheTokens: stI64(900), WriteTokens: stI64(50), OutTokens: stI64(10)},
+		{InTokens: stI64(100), CacheTokens: stI64(900)},
+		// No token field at all: not measured.
+		{Candidate: stStr("a")},
+	}
+	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
+
+	k := rep.Totals.TokenKinds
+	if k.In != 200 || k.Cache != 1800 || k.Write != 50 || k.Out != 10 {
+		t.Errorf("TokenKinds = %+v, want In 200, Cache 1800, Write 50, Out 10", k)
+	}
+	if k.Measured != 2 {
+		t.Errorf("Measured = %d, want 2 (the two rows with a token field)", k.Measured)
+	}
+	if k.Total() != 2060 {
+		t.Errorf("Total = %d, want 2060", k.Total())
+	}
+	if rep.Totals.Tokens != k.Total() {
+		t.Errorf("Totals.Tokens = %d, want TokenKinds.Total() = %d", rep.Totals.Tokens, k.Total())
+	}
+	if pct, ok := k.CachePct(); !ok || pct != 90 {
+		t.Errorf("CachePct = %v, %v; want 90, true (1800 of 2000 input)", pct, ok)
+	}
+	if per, ok := k.PerRound(k.Out); !ok || per != 5 {
+		t.Errorf("PerRound(Out) = %d, %v; want 5, true (10 over 2 measured)", per, ok)
+	}
+	if _, ok := (TokenCounts{Write: 5, Out: 5}).CachePct(); ok {
+		t.Error("CachePct with zero input = ok true, want false")
+	}
+	if _, ok := (TokenCounts{}).PerRound(10); ok {
+		t.Error("PerRound with zero measured = ok true, want false")
 	}
 }

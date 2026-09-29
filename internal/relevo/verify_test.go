@@ -6,119 +6,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/consult"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
-
-// relevoBlock wraps body in the fenced block a report or a findings file ends
-// with, so the tests below read as the artefact rather than the fence.
-func relevoBlock(body string) string {
-	return "findings in prose\n\n```relevo\n" + body + "\n```\n"
-}
-
-// TestVerifyQuestionNamesEveryFile pins what the reviewer is handed (#144):
-// the plan, the report, the diff and the gate log paths, "none" for a round
-// with no gate, and the block template it must answer with. Mutation check:
-// drop any one argument from the format string and this fails.
-func TestVerifyQuestionNamesEveryFile(t *testing.T) {
-	q := verifyQuestion("webshop", 1,
-		"/state/webshop/001-plan.md",
-		"/state/webshop/001-report.md",
-		"/state/webshop/001-diff.patch",
-		"/state/webshop/001-gate.log")
-
-	for _, want := range []string{
-		"Verify round 1 of binding \"webshop\"",
-		"/state/webshop/001-plan.md",
-		"/state/webshop/001-report.md",
-		"/state/webshop/001-diff.patch",
-		"/state/webshop/001-gate.log",
-		"verdict: accepted | rejected",
-		"reasons: [\"...\"]",
-		"```relevo",
-	} {
-		if !strings.Contains(q, want) {
-			t.Errorf("question does not name %q:\n%s", want, q)
-		}
-	}
-
-	if q := verifyQuestion("webshop", 1, "p", "r", "d", ""); !strings.Contains(q, "Gate:   none") {
-		t.Errorf("empty gate log must read \"Gate:   none\", got:\n%s", q)
-	}
-}
-
-// TestParseVerdict is the table for #144's block parser: the two verdicts,
-// both reason forms, and the unstructured answers that must not be read as a
-// judgement.
-func TestParseVerdict(t *testing.T) {
-	cases := []struct {
-		name        string
-		findings    string
-		wantVerdict string
-		wantReasons []string
-	}{
-		{
-			name:        "accepted",
-			findings:    relevoBlock("verdict: accepted"),
-			wantVerdict: "accepted",
-		},
-		{
-			name:        "rejected with a JSON reasons array",
-			findings:    relevoBlock("verdict: rejected\nreasons: [\"a\", \"b\"]"),
-			wantVerdict: "rejected",
-			wantReasons: []string{"a", "b"},
-		},
-		{
-			name:        "rejected with a YAML-ish reason list",
-			findings:    relevoBlock("verdict: rejected\nreasons:\n- a\n- b"),
-			wantVerdict: "rejected",
-			wantReasons: []string{"a", "b"},
-		},
-		{
-			name:        "no block at all",
-			findings:    "just prose, no verdict block",
-			wantVerdict: "unstructured",
-		},
-		{
-			name:        "a verdict that is neither word",
-			findings:    relevoBlock("verdict: maybe"),
-			wantVerdict: "unstructured",
-		},
-		{
-			name: "the last block wins",
-			findings: relevoBlock("verdict: rejected\nreasons: [\"stale\"]") +
-				"\nmore prose\n\n" + relevoBlock("verdict: accepted"),
-			wantVerdict: "accepted",
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			verdict, reasons := parseVerdict([]byte(c.findings))
-			if verdict != c.wantVerdict {
-				t.Errorf("verdict = %q, want %q", verdict, c.wantVerdict)
-			}
-			if !reflect.DeepEqual(reasons, c.wantReasons) {
-				t.Errorf("reasons = %v, want %v", reasons, c.wantReasons)
-			}
-		})
-	}
-
-	if v, _ := parseVerdict(nil); v != "unstructured" {
-		t.Errorf("parseVerdict(nil) = %q, want unstructured", v)
-	}
-}
 
 // TestVerifyConsultScope pins #313: the verify reviewer runs in its own
 // relevo-verify-* scope, with the template's CPUQuota and the gate quota left
 // behind in the template.
 func TestVerifyConsultScope(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Git = &fakeGit{headCommitID: "head1"}
 	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
 	rt.Policy.Order = map[string][]string{"reviewer": {testClaudeRef}}
 	rt.NewID = func() string { return verifyConsultID }
-	rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%", AllowedCPUs: "0-3"}
+	rt.Scope = &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%", AllowedCPUs: "0-3"}
 
 	b.RoundVerify = true
 	if err := rt.Store.Save(b); err != nil {
@@ -136,14 +41,14 @@ func TestVerifyConsultScope(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	var consult *store.Consult
+	var c *store.Consult
 	for i := range got.Consults {
-		if got.Consults[i].Role == verifyRole {
-			consult = &got.Consults[i]
+		if got.Consults[i].Role == consult.VerifyRole {
+			c = &got.Consults[i]
 		}
 	}
-	if consult == nil {
-		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	if c == nil {
+		t.Fatalf("no %q consult on the binding: %+v", consult.VerifyRole, got.Consults)
 	}
 
 	// specs[0] is the builder's own process; the verify consult is second.
@@ -157,8 +62,8 @@ func TestVerifyConsultScope(t *testing.T) {
 	if !strings.HasPrefix(spec.Scope.Unit, "relevo-verify-local-webshop-1-") {
 		t.Errorf("Scope.Unit = %q, want it to start relevo-verify-local-webshop-1-", spec.Scope.Unit)
 	}
-	if !strings.HasSuffix(spec.Scope.Unit, consult.ID) {
-		t.Errorf("Scope.Unit = %q, want it to end with the consult id %q", spec.Scope.Unit, consult.ID)
+	if !strings.HasSuffix(spec.Scope.Unit, c.ID) {
+		t.Errorf("Scope.Unit = %q, want it to end with the consult id %q", spec.Scope.Unit, c.ID)
 	}
 	if spec.Scope.CPUQuota != "150%" {
 		t.Errorf("Scope.CPUQuota = %q, want the template's 150%%, not the gate quota", spec.Scope.CPUQuota)
@@ -168,5 +73,94 @@ func TestVerifyConsultScope(t *testing.T) {
 	}
 	if spec.Scope.AllowedCPUs != "0-3" {
 		t.Errorf("Scope.AllowedCPUs = %q, want the whole pool 0-3: verify starts after the core is released", spec.Scope.AllowedCPUs)
+	}
+}
+
+// TestVerifyStillRunsTheReviewer pins that `send --verify` survives the
+// removal of `relevo ask`: closing a verify round still starts the reviewer
+// through consult.StartVerify, and that reviewer's final message is reconciled
+// into the round's findings like any consult's. Deleting StartVerify's call
+// site in the close path fails this test.
+func TestVerifyStillRunsTheReviewer(t *testing.T) {
+	t.Parallel()
+
+	rt, fr, _, closed := startVerifyRound(t)
+
+	// The close started the reviewer in its throwaway worktree.
+	if len(fr.handles) != 1 {
+		t.Fatalf("verify processes = %d, want 1: the close must start the reviewer", len(fr.handles))
+	}
+	var c *store.Consult
+	for i := range closed.Consults {
+		if closed.Consults[i].Role == consult.VerifyRole {
+			c = &closed.Consults[i]
+		}
+	}
+	if c == nil {
+		t.Fatalf("no %q consult on the binding: %+v", consult.VerifyRole, closed.Consults)
+	}
+	if c.State != store.ConsultRunning {
+		t.Fatalf("verify consult state = %q, want running", c.State)
+	}
+
+	// Its final message is reconciled into the round's findings.
+	leaveVerifyStream(t, rt, fr, "the reviewer's findings")
+	tickConsults(t, rt)
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var findings *store.LogEntry
+	for i := range entries {
+		if entries[i].Kind == store.KindFindings {
+			findings = &entries[i]
+		}
+	}
+	if findings == nil {
+		t.Fatalf("no findings entry queued: %+v", entries)
+	}
+	body, err := rt.Store.ReadFile(findings.Path)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	if !strings.Contains(string(body), "the reviewer's findings") {
+		t.Errorf("findings = %q, want the reviewer's final message", body)
+	}
+}
+
+// TestVerifyConsultStderrSharesTheStream is the surviving consult path's
+// version of the removed ask tests: a consult's stderr goes into its stream
+// file, and no separate -consult.log is written.
+func TestVerifyConsultStderrSharesTheStream(t *testing.T) {
+	t.Parallel()
+
+	_, fr, _, _ := startVerifyRound(t)
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %d, want 1", len(fr.specs))
+	}
+	spec := fr.specs[0]
+	if spec.LogPath != spec.StreamPath {
+		t.Errorf("LogPath = %q, StreamPath = %q; want the stderr on the stream file", spec.LogPath, spec.StreamPath)
+	}
+	if !strings.HasSuffix(spec.LogPath, "-consult.jsonl") {
+		t.Errorf("LogPath = %q, want it to end in -consult.jsonl", spec.LogPath)
+	}
+}
+
+// TestVerifyConsultCarriesRunnerMarker pins #662: the reviewer a verify close
+// starts is a runner too, so its spec carries exactly the one RELEVO_RUNNER
+// entry -- no GIT_* identity and no other variable it could inherit. Deleting
+// the Env from the verify spawn fails this test.
+func TestVerifyConsultCarriesRunnerMarker(t *testing.T) {
+	t.Parallel()
+
+	_, fr, _, _ := startVerifyRound(t)
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %d, want 1: the verify consult's own spawn", len(fr.specs))
+	}
+	want := []string{"RELEVO_RUNNER=webshop"}
+	if got := fr.specs[0].Env; !reflect.DeepEqual(got, want) {
+		t.Errorf("verify spec.Env = %v, want %v", got, want)
 	}
 }

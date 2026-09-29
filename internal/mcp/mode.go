@@ -9,14 +9,11 @@ import (
 	"strings"
 )
 
-// channelFlags are the argv elements that mean Claude Code loaded this
-// server under a channel-capable session (spec §7).
+// channelFlags mean Claude Code loaded this server under a channel-capable session.
 var channelFlags = []string{"--channels", "--dangerously-load-development-channels"}
 
-// DetectMode reports ModeChannel iff parentArgv contains one of
-// channelFlags exactly, or an element that starts with one of them
-// followed by "=" (e.g. "--channels=plugin:x"). Anything else -> ModeTools.
-// Pure: it looks at nothing but its argument.
+// DetectMode reports ModeChannel iff parentArgv contains one of channelFlags,
+// exactly or followed by "=". Anything else is ModeTools.
 func DetectMode(parentArgv []string) Mode {
 	for _, arg := range parentArgv {
 		for _, flag := range channelFlags {
@@ -29,10 +26,9 @@ func DetectMode(parentArgv []string) Mode {
 }
 
 // ParentArgv returns this process's parent's command line: on Linux,
-// /proc/<ppid>/cmdline, NUL-separated; on macOS, `ps -o args= -p <ppid>`,
-// space-separated. Any other platform, or a parent relevo cannot read,
-// returns an error -- DetectMode's caller then falls back to ModeTools and
-// logs why (spec §7 risk: mode detection fails closed).
+// /proc/<ppid>/cmdline; on macOS, `ps -o args= -p <ppid>`. Any other
+// platform, or a parent relevo cannot read, is an error, so DetectMode's
+// caller falls back to ModeTools rather than failing open.
 func ParentArgv() ([]string, error) {
 	ppid := os.Getppid()
 

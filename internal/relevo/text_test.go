@@ -1,12 +1,18 @@
 package relevo
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/store"
+)
 
 // These pin the exact bytes the CLI prints today (cmd/relevo/main.go before
 // this change), because the picker's result screen and the terminal must
 // never say different things (spec §5).
 
 func TestDoneText(t *testing.T) {
+	t.Parallel()
+
 	base := "webshop marked done; relaying stopped (relevo unbind --done archives it when you are finished with it)"
 	cases := []struct {
 		name string
@@ -32,6 +38,8 @@ func TestDoneText(t *testing.T) {
 }
 
 func TestUnbindText(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		res  UnbindResult
@@ -56,6 +64,8 @@ func TestUnbindText(t *testing.T) {
 }
 
 func TestUnbindTextProcessLines(t *testing.T) {
+	t.Parallel()
+
 	got := UnbindText("x", UnbindResult{ProcessStopped: 4242})
 	if got != "unbound x\nstopped builder process 4242" {
 		t.Errorf("stopped: %q", got)
@@ -71,6 +81,8 @@ func TestUnbindTextProcessLines(t *testing.T) {
 }
 
 func TestRestoreText(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		res  Resolution
@@ -83,6 +95,38 @@ func TestRestoreText(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := RestoreText(c.res); got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestStopText pins the exact bytes `relevo stop` prints for each action,
+// including the two new ones: a scope reaped after the runner was already gone,
+// and nothing left to stop at all.
+func TestStopText(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		res  StopResult
+		want string
+	}{
+		{"killed", StopResult{Round: 2, Action: "killed"},
+			"webshop round 2 stopped: process killed; round closed without a report unless one was on disk"},
+		{"reaped", StopResult{Round: 2, Action: "reaped"},
+			"webshop round 2 stopped: reaped the round's scope (its runner was already gone); round closed without a report unless one was on disk"},
+		{"gone", StopResult{Round: 2, Action: "gone"},
+			"webshop round 2 stopped: its runner was already gone and nothing was left running; round closed without a report unless one was on disk"},
+		{"dequeued", StopResult{Round: 3, Action: "dequeued"},
+			"webshop round 3 stopped: dropped from the server queue before it started; round closed without a report"},
+		{"default", StopResult{}, "webshop has no open round; nothing to stop"},
+		{"killed reader", StopResult{Round: 2, Action: "killed", Shape: store.ShapeReader},
+			"webshop round 2 stopped: process killed; round closed without an output unless one was on disk"},
+		{"dequeued reader", StopResult{Round: 3, Action: "dequeued", Shape: store.ShapeReader},
+			"webshop round 3 stopped: dropped from the server queue before it started; round closed without an output"},
+	}
+	for _, c := range cases {
+		if got := StopText("webshop", c.res); got != c.want {
 			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
 		}
 	}

@@ -9,6 +9,8 @@ import (
 // seen nothing, and Mark on it is a no-op -- which is what lets a CLI
 // one-shot leave Runtime.Watched nil.
 func TestWatchedNilSafety(t *testing.T) {
+	t.Parallel()
+
 	var w *Watched
 	w.Mark(4242, 1_700_000_000) // must not panic
 	if w.Seen(4242, 1_700_000_000) {
@@ -22,6 +24,8 @@ func TestWatchedNilSafety(t *testing.T) {
 // TestWatchedMarkThenSeen pins the set's identity: it is the (pid,
 // startedAt) pair that counts, so a reused pid is not the same process.
 func TestWatchedMarkThenSeen(t *testing.T) {
+	t.Parallel()
+
 	w := NewWatched()
 	if w.Seen(100, 5) {
 		t.Fatal("a fresh Watched must have seen nothing")
@@ -43,6 +47,8 @@ func TestWatchedMarkThenSeen(t *testing.T) {
 // measured. Recording either would make a later Seen answer for a process
 // relevo cannot actually identify.
 func TestWatchedIgnoresZeroValueInputs(t *testing.T) {
+	t.Parallel()
+
 	w := NewWatched()
 	w.Mark(0, 1_700_000_000)
 	w.Mark(-1, 1_700_000_000)
@@ -57,6 +63,8 @@ func TestWatchedIgnoresZeroValueInputs(t *testing.T) {
 // Watched has seen nothing, so it answers exactly as relevo did before this
 // round.
 func TestLostToRestart(t *testing.T) {
+	t.Parallel()
+
 	daemonStart := time.Unix(2_000_000_000, 0)
 	before := daemonStart.Add(-time.Hour).Unix()
 	after := daemonStart.Add(time.Hour).Unix()

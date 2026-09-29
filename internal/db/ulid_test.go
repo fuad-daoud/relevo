@@ -38,12 +38,3 @@ func TestNewIDShapeAndUniqueness(t *testing.T) {
 		t.Errorf("sorted order = %v, want %q before %q (time order)", sorted, first, second)
 	}
 }
-
-func isCrockford(c byte) bool {
-	for i := 0; i < len(crockford); i++ {
-		if crockford[i] == c {
-			return true
-		}
-	}
-	return false
-}

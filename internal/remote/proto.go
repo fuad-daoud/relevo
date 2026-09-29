@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -20,6 +22,39 @@ const ContentTypeGitBundle = "application/x-git-bundle"
 // (#373). It is informational -- the server logs it and never rejects a
 // request on it, and it is never part of the signature.
 const HeaderClientVersion = "Relevo-Client-Version"
+
+// HeaderFileSize is the file's total byte length on the server.
+const HeaderFileSize = "X-Relevo-Size"
+
+// HeaderFileFrom is the offset honoured by the server.
+const HeaderFileFrom = "X-Relevo-From"
+
+// FileRange describes the byte range honoured by a server for a round file route.
+// Honored is true only when both headers are present and parse as non-negative ints.
+type FileRange struct {
+	Honored bool
+	From    int64
+	Size    int64
+}
+
+// ParseFileRange extracts a FileRange from HTTP response headers.
+func ParseFileRange(h http.Header) FileRange {
+	fromStr := h.Get(HeaderFileFrom)
+	sizeStr := h.Get(HeaderFileSize)
+	if fromStr == "" || sizeStr == "" {
+		return FileRange{}
+	}
+	from, err1 := strconv.ParseInt(fromStr, 10, 64)
+	size, err2 := strconv.ParseInt(sizeStr, 10, 64)
+	if err1 != nil || err2 != nil || from < 0 || size < 0 {
+		return FileRange{}
+	}
+	return FileRange{
+		Honored: true,
+		From:    from,
+		Size:    size,
+	}
+}
 
 // RoundState represents the execution state of a round on the server.
 type RoundState string
@@ -45,13 +80,13 @@ type WhoAmI struct {
 	// pre-tier server omits them, so a client can tell the two apart before
 	// creating anything.
 	Features    []string `json:"features,omitempty"`     // ["tier"] on a server with this change
-	BuilderTier string   `json:"builder_tier,omitempty"` // ServedBuilderTier(rt): the tier a headless builder
+	BuilderTier string   `json:"default_tier,omitempty"` // ServedBuilderTier(rt): the tier a headless builder
 	// launches at when the client sends none
 	MaxTier string `json:"max_tier,omitempty"` // policy.MaxTierOrDefault()
 
 	// Builders is the server's builder census (#285); nil from a pre-queue
 	// server.
-	Builders *BuildersView `json:"builders,omitempty"`
+	Builders *BuildersView `json:"runners,omitempty"`
 }
 
 // GitIdentity is a client's git identity (#335): the name and email its own
@@ -71,8 +106,13 @@ type CreateBindingRequest struct {
 	Candidate      string `json:"candidate,omitempty"`
 	RoundCap       int    `json:"round_cap,omitempty"`
 	RoundTimeoutMS int    `json:"round_timeout_ms,omitempty"`
-	Tier           string `json:"tier,omitempty"` // "" = server's choice; else harness|read|edit|yolo
-	Role           string `json:"role,omitempty"` // "" = builder; resolved against the server's own roles.json
+	Tier           string `json:"tier,omitempty"`  // "" = server's choice; else harness|read|edit|yolo
+	Role           string `json:"actor,omitempty"` // the actor the runner plays; resolved against the server's own actors
+	// Feature and Ticket are the client binding's labels (#637). Both are
+	// additive: an old server ignores them, and a client setting either
+	// refuses a server that does not advertise remote.FeatureLabels.
+	Feature string `json:"feature,omitempty"`
+	Ticket  string `json:"ticket,omitempty"`
 
 	// Author is the client's git identity; the server runs this binding's
 	// builders as it (#335). nil means an old client that sent none.
@@ -88,6 +128,24 @@ type TagRef struct {
 	SHA  string `json:"sha"`  // the COMMIT the tag points at (annotated tags peeled); 40 hex
 }
 
+// ArtifactFile is one file a closed reader round left on the server, as the
+// artifact listing reports it. Rel is relative to the round's artifact
+// directory, uses "/" separators, and never escapes it.
+type ArtifactFile struct {
+	Rel   string    `json:"rel"`
+	Size  int64     `json:"size"`
+	MTime time.Time `json:"mtime"`
+}
+
+// ArtifactList is a closed reader round's artifact listing. Output is the
+// server's own relevo.OutputFile for the round (e.g. "findings.md"); Files are
+// sorted the way relevo.RoundArtifacts sorts them.
+type ArtifactList struct {
+	Actor  string         `json:"actor"`
+	Output string         `json:"output"`
+	Files  []ArtifactFile `json:"files"`
+}
+
 // BindingView is the server's wire representation of a binding's state.
 type BindingView struct {
 	Name          string     `json:"name"`
@@ -98,11 +156,14 @@ type BindingView struct {
 	Halt          string     `json:"halt,omitempty"`
 	ResultCommit  string     `json:"result_commit,omitempty"`
 	DirtyCommit   string     `json:"dirty_commit,omitempty"`
-	ReportOutcome string     `json:"report_outcome,omitempty"` // relevo.ReportTail.Status or "unstructured"
-	// Stopped is how the closed round (ClosedRound) was stopped: "killed"
-	// or "dequeued". It is "" when that round closed any other way, on a
-	// pre-stop server, or when ClosedRound is 0.
+	ReportOutcome string     `json:"report_outcome,omitempty"` // reporttail.Tail.Status or "unstructured"
+	// Stopped is how the closed round (ClosedRound) was stopped: "killed",
+	// "reaped", "gone" or "dequeued". It is "" when that round closed any
+	// other way, on a pre-stop server, or when ClosedRound is 0.
 	Stopped string `json:"stopped,omitempty"`
+	// Shape is the binding's actor shape: "reader" for a reader binding, ""
+	// for a writer -- the default, and what an older server sends.
+	Shape string `json:"shape,omitempty"`
 	// DiffNote, DiffCommits and DiffTree are the closed round's diff facts,
 	// from the newest KindDiff entry for Serve.ClosedRound -- the same facts
 	// DiffSummary wrote to the server's own log at close. Empty/zero on any
@@ -116,6 +177,10 @@ type BindingView struct {
 	RoundCap       int       `json:"round_cap"`
 	RoundTimeoutMS int       `json:"round_timeout_ms"`
 	Tier           string    `json:"tier,omitempty"` // effectiveTier(b) on the server; "" from a pre-tier server
+	// Feature and Ticket are the binding's labels (#637), echoed from the
+	// create request; "" from a pre-labels server or an unlabelled binding.
+	Feature string `json:"feature,omitempty"`
+	Ticket  string `json:"ticket,omitempty"`
 
 	// Usage is the closed round's usage as the server recorded it on its
 	// report entry (usage.Usage is already JSON-tagged; it is the same
@@ -128,6 +193,10 @@ type BindingView struct {
 	// server, a round that was not a scope, or when the closed round has
 	// no report entry.
 	Rusage *store.Rusage `json:"rusage,omitempty"`
+
+	// PriorTokens is the tokens the server's earlier builders in ClosedRound
+	// used. Nil when zero or when ClosedRound is 0.
+	PriorTokens *usage.Tokens `json:"prior_tokens,omitempty"`
 
 	// StalledSince is the server's stall stamp for a live-but-quiet headless
 	// round (#252), copied onto the client binding for a running round. Zero
@@ -169,6 +238,7 @@ type LiveView struct {
 	ExitCode       string       `json:"exit_code,omitempty"`
 	Tail           []string     `json:"tail,omitempty"`
 	Usage          *usage.Usage `json:"usage,omitempty"`
+	PriorTokens    usage.Tokens `json:"prior_tokens,omitzero"`
 	Diff           *DiffStat    `json:"diff,omitempty"`
 	LastProgressAt time.Time    `json:"last_progress_at,omitzero"`
 	ExploringSince time.Time    `json:"exploring_since,omitzero"`
@@ -209,7 +279,7 @@ type CandidateView struct {
 	Name  string `json:"name,omitempty"` // the candidate's short name, when the server knows one
 	Kind  string `json:"kind"`           // harness kind: agy | claude | opencode
 	Gated bool   `json:"gated"`          // a live limit gate on the ledger
-	Pick  bool   `json:"pick"`           // what the policy order would pick right now for the builder role
+	Pick  bool   `json:"pick"`           // what the policy order would pick right now for the builder actor
 }
 
 type CandidatesResponse struct {
@@ -257,15 +327,15 @@ const FeatureStop = "stop"
 
 // FeatureBuilder is the WhoAmI.Features token a server that accepts the
 // "candidate" multipart form value on POST /v1/bindings/{name}/rounds
-// advertises (#318). The field is a canonical candidate token that persists as
-// the binding's builder from that round on; absent or "" means keep the
-// binding's builder.
-const FeatureBuilder = "builder"
+// advertises. The field is a canonical candidate token that persists as the
+// binding's candidate from that round on; absent or "" keeps the binding's
+// candidate.
+const FeatureBuilder = "candidate"
 
 // FeatureRoles is the WhoAmI.Features token a server that honours
-// CreateBindingRequest.Role advertises (#382); a server without it would
-// ignore the field and run the builder.
-const FeatureRoles = "roles"
+// CreateBindingRequest.Role advertises; a server without it ignores the field
+// and runs the default actor.
+const FeatureRoles = "actors"
 
 // FeatureIdempotentSend is the WhoAmI.Features token a server that answers a
 // repeated identical start-round request for the open round with 200 and the
@@ -277,6 +347,18 @@ const FeatureIdempotentSend = "idempotent_send"
 // CreateBindingRequest.Author advertises (#335, #373). A client whose server
 // lacks it logs a Warn once per server and continues.
 const FeatureAuthor = "author"
+
+// FeatureLabels is the WhoAmI.Features token a server that honours
+// CreateBindingRequest.Feature and .Ticket advertises (#637). A client setting
+// either refuses a server without it: silently dropping the label on the
+// server is the laptop/server disagreement the labels exist to remove.
+const FeatureLabels = "labels"
+
+// FeatureReaders is the WhoAmI.Features token a server that accepts a reader
+// actor on a remote binding -- and serves the closed reader round's artifacts
+// -- advertises. A client binding a reader refuses a server without it: the
+// server would otherwise run the reader as a writer.
+const FeatureReaders = "readers"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // liveStatCacheTTL bounds how long a cached live diff stat is reused. ui
@@ -15,7 +16,7 @@ const liveStatCacheTTL = 5 * time.Second
 
 type liveStatEntry struct {
 	at   time.Time
-	diff LiveDiff
+	diff view.LiveDiff
 }
 
 // liveStatCache is keyed by binding name + "@" + the round's baseline tree,
@@ -33,7 +34,7 @@ var (
 // body. nil when there is nothing to diff -- no Git wired, no round open,
 // no recorded baseline, or no working tree -- or when the git read itself
 // fails; a status row degrades rather than fails because of it.
-func liveStat(ctx context.Context, rt Runtime, b store.Binding) *LiveDiff {
+func liveStat(ctx context.Context, rt Runtime, b store.Binding) *view.LiveDiff {
 	if rt.Git == nil || b.RoundStartedAt.IsZero() || b.RoundBaselineTree == "" || b.CWD == "" {
 		return nil
 	}
@@ -57,12 +58,12 @@ func liveStat(ctx context.Context, rt Runtime, b store.Binding) *LiveDiff {
 		return nil
 	}
 
-	d := LiveDiff{
+	d := view.LiveDiff{
 		Files:   stat.FilesChanged,
 		Added:   stat.Insertions,
 		Removed: stat.Deletions,
 		// A --cwd binding has no worktree of its own (#143 design question
-		// 1): its "live" diff is against the planner's own tree, shared
+		// 1): its "live" diff is against the mastermind's own tree, shared
 		// with whatever else is running there.
 		Shared: b.Worktree == "",
 	}

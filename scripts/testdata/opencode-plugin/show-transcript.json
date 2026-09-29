@@ -1,0 +1,12 @@
+{
+  "Name": "webshop",
+  "Round": 4,
+  "Rounds": 4,
+  "Live": true,
+  "Archived": false,
+  "ArchivedAt": "0001-01-01T00:00:00Z",
+  "Section": "transcript",
+  "Text": "● read file=src/index.ts\n  ⎿ ok: export const app = 1;\n● edit file=src/index.ts\n  ⎿ error: permission denied\n**Step 1:** `sleep 120` done\nbuilding next round",
+  "Missing": false,
+  "Events": null
+}

@@ -2,9 +2,8 @@
 
 package proc
 
-// InheritedReaper has no implementation off unix: there is no wait4, and relevo
-// does not re-exec there either. It keeps the same API so callers need no build
-// tag of their own.
+// InheritedReaper has no implementation off unix, where there is no wait4 and no
+// re-exec; it keeps the same API so callers need no build tag of their own.
 type InheritedReaper struct{}
 
 // NewInheritedReaper returns a reaper that inherits nothing.

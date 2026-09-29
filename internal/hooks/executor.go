@@ -11,33 +11,24 @@ import (
 	"time"
 )
 
-// hookOutputCap bounds the child output one HookRun keeps (P3b round 2 §4.4):
-// the first 64 KiB of the child's combined stdout and stderr. The file this
-// replaces grew without bound; past the cap nothing more is recorded.
+// hookOutputCap bounds a run's combined output to its first 64 KiB.
 const hookOutputCap = 64 << 10
 
-// Executor handles the actual OS-level process execution for a single hook.
+// Executor runs one configured argv with the event injected as environment
+// variables.
 type Executor interface {
-	// Execute runs one configured argv with the event data injected as
-	// environment variables.
 	Execute(ctx context.Context, argv []string, event Event) error
 }
 
-// OSExecutor executes argv lists as OS processes and records every run in its
-// run log.
+// OSExecutor runs argv lists as OS processes, recording every run in Log.
 type OSExecutor struct {
 	Log RunLog
 }
 
-// NewOSExecutor creates a new OSExecutor recording its runs in log.
-func NewOSExecutor(log RunLog) *OSExecutor {
-	return &OSExecutor{Log: log}
-}
+func NewOSExecutor(log RunLog) *OSExecutor { return &OSExecutor{Log: log} }
 
-// Execute runs argv[0] with argv[1:] as arguments and the event data injected
-// as environment variables, then appends one HookRun for the run -- the event,
-// the argv, the exit code, the error when it failed, and the child's combined
-// stdout and stderr, capped. An empty argv is recorded and skipped.
+// Execute runs argv[0] with argv[1:] and the event as RELEVO_* environment
+// variables, then records one HookRun. An empty argv is recorded and skipped.
 func (e *OSExecutor) Execute(ctx context.Context, argv []string, event Event) error {
 	if len(argv) == 0 {
 		e.appendRun(HookRun{
@@ -60,7 +51,6 @@ func (e *OSExecutor) Execute(ctx context.Context, argv []string, event Event) er
 		"RELEVO_ROUND="+strconv.Itoa(event.Round),
 	)
 
-	// The child's combined output, capped, where the log file used to be.
 	out := newCappedBuffer(hookOutputCap)
 	cmd.Stdout = out
 	cmd.Stderr = out
@@ -81,8 +71,8 @@ func (e *OSExecutor) Execute(ctx context.Context, argv []string, event Event) er
 	return err
 }
 
-// appendRun records one run. An Append error is dropped: the run log is
-// best-effort by contract and must never change a hook's outcome (§6).
+// appendRun drops any Append error: the run log is best-effort and must
+// never change a hook's outcome.
 func (e *OSExecutor) appendRun(run HookRun) {
 	if e.Log == nil {
 		return
@@ -90,8 +80,7 @@ func (e *OSExecutor) appendRun(run HookRun) {
 	_ = e.Log.Append(run)
 }
 
-// exitCodeOf is the child's exit status, -1 when no process ran to completion
-// (a start failure, or a timeout the kill left unreaped).
+// exitCodeOf is cmd's exit status, or -1 when no process ran to completion.
 func exitCodeOf(cmd *exec.Cmd) int {
 	if cmd.ProcessState == nil {
 		return -1
@@ -99,20 +88,17 @@ func exitCodeOf(cmd *exec.Cmd) int {
 	return cmd.ProcessState.ExitCode()
 }
 
-// cappedBuffer collects a child's combined output up to a limit. Writes past
-// the limit are accepted and dropped, so the pipe never blocks the child.
+// cappedBuffer collects output up to limit bytes, dropping the rest.
 type cappedBuffer struct {
 	mu    sync.Mutex
 	buf   bytes.Buffer
 	limit int
 }
 
-// newCappedBuffer returns a buffer keeping at most limit bytes.
 func newCappedBuffer(limit int) *cappedBuffer { return &cappedBuffer{limit: limit} }
 
-// Write implements io.Writer. It always reports the whole slice as written,
-// even when the bytes past the limit are dropped: a short write would make
-// os/exec report a copy error the child never caused.
+// Write always reports the full slice written, even past the limit, so
+// os/exec never sees a short-write error the child did not cause.
 func (b *cappedBuffer) Write(p []byte) (int, error) {
 	n := len(p)
 	b.mu.Lock()
@@ -126,7 +112,6 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// String is the output collected so far.
 func (b *cappedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

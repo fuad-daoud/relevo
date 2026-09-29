@@ -47,15 +47,15 @@ func TestGoldenViews(t *testing.T) {
 			build: func(t *testing.T) Model { return renderModel(t, 160, 40, "") },
 		},
 		{
-			// by:builder, groups collapsed and ordered by summed cost.
+			// by:candidate, groups collapsed and ordered by summed cost.
 			name: "grouped-builder", width: 160, height: 40,
-			build: func(t *testing.T) Model { return renderModel(t, 160, 40, "by:builder") },
+			build: func(t *testing.T) Model { return renderModel(t, 160, 40, "by:candidate") },
 		},
 		{
 			// The first group opened, its rounds indented beneath it.
 			name: "grouped-expanded", width: 160, height: 40,
 			build: func(t *testing.T) Model {
-				m := renderModel(t, 160, 40, "by:builder")
+				m := renderModel(t, 160, 40, "by:candidate")
 				res, _ := m.Update(special(tea.KeyEnter))
 				return res
 			},

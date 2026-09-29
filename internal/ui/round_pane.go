@@ -8,18 +8,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/usage"
-)
-
-// The pane's own furniture, in rows. Moved here from layout.go (X1), whose
-// only surviving users are the pane's viewport arithmetic and the round
-// view's geometry.
-const (
-	paneHeadRows = 5 // title, planner, builder, tree, blank
-	tabRows      = 2 // tab bar + rule
-	sourceRows   = 2 // source line + blank
+	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // roundPane is one binding's round detail: its state, its fetch
@@ -27,11 +18,12 @@ const (
 // holds exactly one and lends it the fields it cannot own -- src, ctx, now,
 // report, width and rows -- through syncPane on every call.
 type roundPane struct {
-	src    Source
-	ctx    context.Context
-	now    func() time.Time
-	report relevo.Report
-	detail detailModel
+	src     Source
+	ctx     context.Context
+	now     func() time.Time
+	report  view.Report
+	detail  detailModel
+	actions bool // Actions != nil: action keys are shown
 
 	// tabInFlight is the pane's own fetch guard, moved from
 	// Model.tabInFlight: true while a fetch is in flight for the tab on
@@ -39,17 +31,63 @@ type roundPane struct {
 	// can block.
 	tabInFlight bool
 
+	// reader is the row's shape: true for a reader round, whose tabs are
+	// prompt, artifacts, log and transcript (round 5b). artifactSel is the
+	// artifacts tab's cursor, an index into the fetched list, and
+	// baselineHead is the binding's RoundBaselineHead for line 1's scratch
+	// cell.
+	reader       bool
+	artifactSel  int
+	baselineHead string
+
 	// width and rows are the pane's geometry: today's Model.paneWidth()
 	// and Model.bodyRows().
 	width int
 	rows  int
 }
 
+// tabs is the tab bar's tabs in the order it draws them: a reader round shows
+// prompt, artifacts, log and transcript; a writer round keeps today's prompt,
+// report, transcript, diff and log.
+func (p roundPane) tabs() []tab {
+	if p.reader {
+		return readerTabs
+	}
+	return writerTabs
+}
+
+// tabLabel is one tab's label: the artifacts tab names the file count once its
+// list has been fetched ("artifacts 2"), every other tab is its own title.
+func (p roundPane) tabLabel(t tab) string {
+	if t == tabArtifacts {
+		if n := artifactCount(p.detail.cache[tabArtifacts]); n > 0 {
+			return fmt.Sprintf("%s %d", tabTitles[t], n)
+		}
+	}
+	return tabTitles[t]
+}
+
+// headRows returns the number of furniture rows before the viewport: the
+// tokens line, the tab bar and the source line. Both shapes of round draw
+// the same head (round 5b).
+func (p roundPane) headRows() int {
+	return 6
+}
+
+// contentWidth is the width allocated for viewport content, accounting for the
+// 5-space left indent (§2.5).
+func (p roundPane) contentWidth() int {
+	cw := p.width - 6
+	if cw < 20 {
+		return 20
+	}
+	return cw
+}
+
 // viewportHeight is the rows left for the viewport after the pane's own
-// furniture, floored at 0. The same formula as Model.viewportHeight
-// (layout.go:103-109).
+// furniture, floored at 0 (§2.5).
 func (p roundPane) viewportHeight() int {
-	h := p.rows - paneHeadRows - tabRows - sourceRows
+	h := p.rows - p.headRows()
 	if h < 0 {
 		return 0
 	}
@@ -67,12 +105,47 @@ func (p roundPane) visibleTabFetch() tea.Cmd {
 		// refetches on every visible tick regardless of cache; a hist
 		// row's terminal is transcript rows already in the database --
 		// static, fetched once like every other tab (not tail-following).
-		return fetchFor(p.ctx, p.src, tabTerminal, p.detail.name, p.detail.round, lines, p.detail.live)
+		return fetchFor(p.ctx, p.src, tabTerminal, p.detail.name, p.detail.round, lines, p.artifactSel, p.detail.live)
 	}
 	if !p.detail.cache[t].loaded {
-		return fetchFor(p.ctx, p.src, t, p.detail.name, p.detail.round, lines, p.detail.live)
+		return fetchFor(p.ctx, p.src, t, p.detail.name, p.detail.round, lines, p.artifactSel, p.detail.live)
 	}
 	return nil
+}
+
+// artifactsFetch is the reader round's artifact-list fetch, issued alongside
+// the visible tab's so the tab's label and the card know the count and the
+// total size before the human opens the tab. A writer round has none, and the
+// visible fetch already covers the artifacts tab when it is the one on
+// screen.
+func (p roundPane) artifactsFetch() tea.Cmd {
+	if !p.reader || p.detail.active == tabArtifacts || p.detail.cache[tabArtifacts].loaded {
+		return nil
+	}
+	return fetchFor(p.ctx, p.src, tabArtifacts, p.detail.name, p.detail.round, 1, p.artifactSel, p.detail.live)
+}
+
+// startFetch issues whatever the pane must read now: the visible tab's fetch,
+// and a reader round's artifact list, in one command. It is a no-op while a
+// fetch is in flight, and marks the pane in flight when it returns one.
+func (p *roundPane) startFetch() tea.Cmd {
+	if p.tabInFlight {
+		return nil
+	}
+	cmd := p.visibleTabFetch()
+	extra := p.artifactsFetch()
+	if cmd == nil && extra == nil {
+		return nil
+	}
+	p.tabInFlight = true
+	switch {
+	case cmd == nil:
+		return extra
+	case extra == nil:
+		return cmd
+	default:
+		return tea.Batch(cmd, extra)
+	}
 }
 
 // pointDetailAt re-targets the pane at the row keyed: key, round
@@ -94,26 +167,34 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 	// stamp is best-effort (each Source swallows its own errors) and must
 	// never block re-targeting the pane.
 	p.src.MarkViewed(key)
-	vp := viewport.New(p.width, p.viewportHeight())
+	vp := viewport.New(p.contentWidth(), p.viewportHeight())
 	p.detail = detailModel{
 		name:     key,
 		round:    paneRound(*r),
-		rounds:   r.Round,
+		rounds:   roundsOf(*r),
 		live:     true,
 		active:   p.detail.active,
 		vp:       vp,
 		headless: r.Headless != nil,
 		follow:   true,
 	}
+	// The row's shape and its round's baseline head live on the binding,
+	// not the status document: a reader round's tabs, card and context row
+	// are keyed on them (round 5b). A key the runtime cannot resolve, or a
+	// read that fails, leaves the pane a writer's.
+	p.reader, p.baselineHead = false, ""
+	if rt, name, ok := p.src.Runtime(key); ok && rt.Store != nil {
+		if b, err := rt.Store.Load(name); err == nil {
+			p.reader = b.Shape == store.ShapeReader
+			p.baselineHead = b.RoundBaselineHead
+		}
+	}
+	p.artifactSel = 0
 	if r.Last != nil {
 		p.detail.lastLogTS = r.Last.TS
 	}
 	p.fillViewport()
-	if p.tabInFlight {
-		return p, nil
-	}
-	if cmd := p.visibleTabFetch(); cmd != nil {
-		p.tabInFlight = true
+	if cmd := p.startFetch(); cmd != nil {
 		return p, cmd
 	}
 	return p, nil
@@ -129,7 +210,7 @@ func (p roundPane) pointDetailAtHist(h relevo.HistoryBinding) (roundPane, tea.Cm
 	if p.detail.name == h.Name {
 		return p, nil
 	}
-	vp := viewport.New(p.width, p.viewportHeight())
+	vp := viewport.New(p.contentWidth(), p.viewportHeight())
 	p.detail = detailModel{
 		name:       h.Name,
 		bindingID:  h.ID,
@@ -141,12 +222,11 @@ func (p roundPane) pointDetailAtHist(h relevo.HistoryBinding) (roundPane, tea.Cm
 		vp:         vp,
 		follow:     false,
 	}
+	p.reader = false
+	p.baselineHead = ""
+	p.artifactSel = 0
 	p.fillViewport()
-	if p.tabInFlight {
-		return p, nil
-	}
-	if cmd := p.visibleTabFetch(); cmd != nil {
-		p.tabInFlight = true
+	if cmd := p.startFetch(); cmd != nil {
 		return p, cmd
 	}
 	return p, nil
@@ -164,7 +244,11 @@ func (p *roundPane) fillViewport() {
 		return
 	}
 	c := p.detail.cache[p.detail.active]
-	p.detail.vp.SetContent(wrapBody(bodyOf(p.detail.active, c, p.detail.headless), p.detail.vp.Width))
+	w := p.detail.vp.Width
+	if w <= 0 {
+		w = p.contentWidth()
+	}
+	p.detail.vp.SetContent(wrapBody(bodyOf(p.detail.active, c, p.detail.headless), w))
 	p.detail.vp.SetYOffset(y)
 }
 
@@ -188,17 +272,17 @@ func (p roundPane) invalidate() (roundPane, tea.Cmd, bool) {
 
 	p.detail.lastLogTS = r.Last.TS
 	p.detail.round = paneRound(*r)
-	p.detail.rounds = r.Round
-	for _, t := range []tab{tabPlan, tabReport, tabDiff, tabLog} {
+	p.detail.rounds = roundsOf(*r)
+	for _, t := range p.tabs() {
+		if t == tabTerminal {
+			// A terminal refetches on every visible tick.
+			continue
+		}
 		p.detail.cache[t] = tabContent{} // loaded=false
 		p.detail.scroll[t] = 0           // reset parked offset on invalidation
 	}
-	if !p.tabInFlight {
-		cmd := p.visibleTabFetch()
-		if cmd != nil {
-			p.tabInFlight = true
-			return p, cmd, false
-		}
+	if cmd := p.startFetch(); cmd != nil {
+		return p, cmd, false
 	}
 	return p, nil, false
 }
@@ -214,16 +298,13 @@ func (p roundPane) stepRound(delta int) (roundPane, tea.Cmd) {
 		return p, nil
 	}
 	p.detail.round = next
+	p.artifactSel = 0
 	for t := tab(0); t < tabCount; t++ {
 		p.detail.cache[t] = tabContent{} // loaded=false
 		p.detail.scroll[t] = 0           // reset parked offset on invalidation
 	}
 	p.fillViewport()
-	if p.tabInFlight {
-		return p, nil
-	}
-	if cmd := p.visibleTabFetch(); cmd != nil {
-		p.tabInFlight = true
+	if cmd := p.startFetch(); cmd != nil {
 		return p, cmd
 	}
 	return p, nil
@@ -236,13 +317,23 @@ func (p roundPane) onTab(msg tabMsg) roundPane {
 	if msg.name != p.detail.name {
 		return p
 	}
-	// Every tab is round-keyed now (#183): plan, report, terminal and
+	// Every tab is round-keyed now (#183): prompt, report, terminal and
 	// log all read the specific round fetchFor was called with, the
 	// same way diff always has. A reply for a round that is no longer
 	// the one on screen -- a slow fetch outlived by two presses of "]"
 	// -- is stale and must never land in the cache.
 	if msg.round != p.detail.round {
 		return p
+	}
+	// A reader round's artifact reply carries the list in order; keep the
+	// cursor on the file it names, so a refetch never moves it.
+	if msg.t == tabArtifacts {
+		for i, f := range msg.content.artifacts {
+			if f.Rel == msg.content.artifactRel {
+				p.artifactSel = i
+				break
+			}
+		}
 	}
 	if msg.t != p.detail.active {
 		p.detail.cache[msg.t] = msg.content
@@ -256,12 +347,20 @@ func (p roundPane) onTab(msg tabMsg) roundPane {
 	return p
 }
 
-// cycleTab is tab / shift+tab.
+// cycleTab is tab / shift+tab, over the shape's own tabs.
 func (p roundPane) cycleTab(msg tea.KeyMsg) (roundPane, tea.Cmd) {
-	if msg.Type == tea.KeyShiftTab || msg.String() == "shift+tab" || msg.String() == "back_tab" {
-		return p.switchTab((p.detail.active - 1 + tabCount) % tabCount)
+	tabs := p.tabs()
+	i := 0
+	for j, t := range tabs {
+		if t == p.detail.active {
+			i = j
+			break
+		}
 	}
-	return p.switchTab((p.detail.active + 1) % tabCount)
+	if msg.Type == tea.KeyShiftTab || msg.String() == "shift+tab" || msg.String() == "back_tab" {
+		return p.switchTab(tabs[(i-1+len(tabs))%len(tabs)])
+	}
+	return p.switchTab(tabs[(i+1)%len(tabs)])
 }
 
 func (p roundPane) switchTab(next tab) (roundPane, tea.Cmd) {
@@ -280,7 +379,7 @@ func (p roundPane) switchTab(next tab) (roundPane, tea.Cmd) {
 			lines = 1
 		}
 		return p, fetchFor(p.ctx, p.src, next, p.detail.name,
-			p.detail.round, lines, p.detail.live)
+			p.detail.round, lines, p.artifactSel, p.detail.live)
 	}
 	return p, nil
 }
@@ -293,146 +392,13 @@ func (p roundPane) detailHeader() string {
 	s := fmt.Sprintf("%s · round %d of %d", p.detail.name, p.detail.round, p.detail.rounds)
 	if !p.detail.archivedAt.IsZero() {
 		s += " · archived " + p.detail.archivedAt.Format("2006-01-02")
-	}
-	if p.detail.live && p.detail.round == p.detail.rounds {
-		s += " · live"
+	} else {
+		b := row(p.report, p.detail.name)
+		if b != nil && p.detail.live && p.detail.round == p.detail.rounds && b.RoundEnd.IsZero() {
+			s += " · live"
+		}
 	}
 	return s
-}
-
-// paneHead is the pane's first rows: title with the state pill and the
-// last event, planner, builder, tree, blank -- plus a usage and a spend row
-// when the binding has them, which is why the caller measures it rather than
-// assuming paneHeadRows. Each row is unpadded; view fits them.
-func (p roundPane) paneHead(b *relevo.BindingStatus) []string {
-	label := func(s string) string { return dimStyle.Render(fmt.Sprintf("%-9s", s)) }
-	if b == nil {
-		return []string{"", "", "", "", ""}
-	}
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render(b.Name) +
-		dimStyle.Render(fmt.Sprintf("  round %d  ", b.Round)) + pillStyle(b.Display).Render(b.Display)
-	if b.Last != nil {
-		right := dimStyle.Render(fmt.Sprintf("%s r%d · %s ago", b.Last.Kind, b.Last.Round, ago(b.Last.TS, p.now())))
-		title = spread(title, right, p.width)
-	}
-
-	plannerName := b.PlannerName
-	if plannerName == "" {
-		plannerName = b.PlannerID
-	}
-	planner := label("planner") + fmt.Sprintf("%-4s %-9s route %s", plannerName, b.PlannerKind, b.PlannerRoute)
-	// On a serve box the pane belongs to a client, not to this planner: the
-	// client line replaces the planner line (empty OwnerLabel is a planner
-	// row, which renders today's line above).
-	if b.OwnerLabel != "" {
-		planner = label("client") + b.OwnerLabel + "  (" + dimStyle.Render(relevo.ShortOwner(b.Owner)) + ")"
-	}
-
-	var bparts []string
-	if b.Headless != nil {
-		bparts = append(bparts, stateStyle(b.Display).Render(b.BuilderStatus))
-		if b.Headless.PID != 0 {
-			bparts = append(bparts, dimStyle.Render(fmt.Sprintf("pid %d since %s", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))))
-		}
-		bparts = append(bparts, fgStyle.Render("`"+b.BuilderCandidate+"`"))
-	} else {
-		bparts = append(bparts, builderStatusStyle(b.BuilderStatus).Render(b.BuilderStatus))
-	}
-	if b.Consults > 0 {
-		bparts = append(bparts, dimStyle.Render(fmt.Sprintf("%d consults", b.Consults)))
-	}
-	if b.Switches > 0 {
-		bparts = append(bparts, dimStyle.Render(fmt.Sprintf("switched %dx", b.Switches)))
-	}
-	builder := label("builder") + fmt.Sprintf("%-9s ", b.BuilderKind) + strings.Join(bparts, sep)
-
-	rows := []string{title, planner, builder}
-
-	var tparts []string
-	if b.Branch != "" {
-		tparts = append(tparts, fgStyle.Render(b.Branch))
-	} else {
-		tparts = append(tparts, fgStyle.Render(b.CWD))
-	}
-	if b.Dirty {
-		tparts = append(tparts, stateNeedsYouStyle.Render("dirty"))
-	}
-	if lc := b.LastClose; lc != nil {
-		unit := "commits"
-		if lc.Commits == 1 {
-			unit = "commit"
-		}
-		s := fmt.Sprintf("last close r%d: %d %s", lc.Round, lc.Commits, unit)
-		if lc.Tree != "" {
-			s += ", " + lc.Tree
-		}
-		tparts = append(tparts, dimStyle.Render(s))
-	}
-	rows = append(rows, label("tree")+strings.Join(tparts, sep))
-	// usage and spend mirror `relevo status`'s rows (#142): the newest
-	// round's line, then the binding's total. A running round shows its
-	// live figure instead of the last closed one's (#234); spend is
-	// closed rounds only and never shares a cell with the live figure.
-	if b.LiveUsage != nil {
-		parts := usage.LiveParts(*b.LiveUsage)
-		styled := make([]string, len(parts))
-		for i, p := range parts {
-			switch {
-			case i == 0:
-				styled[i] = accentStyle.Render(p) // the word "live" is the point
-			case i == len(parts)-1:
-				styled[i] = fgStyle.Render(p) // the cost word is the point
-			default:
-				styled[i] = dimStyle.Render(p)
-			}
-		}
-		rows = append(rows, label("usage")+strings.Join(styled, sep))
-	} else if b.LastUsage != nil {
-		parts := usage.Parts(*b.LastUsage)
-		styled := make([]string, len(parts))
-		for i, p := range parts {
-			styled[i] = dimStyle.Render(p)
-		}
-		styled[len(styled)-1] = fgStyle.Render(parts[len(parts)-1]) // the cost word is the point
-		rows = append(rows, label("usage")+strings.Join(styled, sep))
-	}
-	if b.Spend != nil {
-		rows = append(rows, label("spend")+usage.SpendLine(*b.Spend))
-	}
-	rows = append(rows, "")
-	return rows
-}
-
-// histPaneHead is paneHead for a hist (archived) detail: the identity line
-// (detailHeader) alone, padded to paneHead's row budget -- an archived
-// binding carries no live planner/builder/tree facts to show.
-func (p roundPane) histPaneHead() []string {
-	return []string{fgStyle.Render(p.detailHeader()), "", "", "", ""}
-}
-
-// tabBar is the five tab words and, under them, a rule whose heavy accent
-// segment sits under the active word (spec §3.4). No numbers: 1-5 still
-// switch, the footer says so.
-func (p roundPane) tabBar() []string {
-	var words, rule []string
-	for i, t := range tabTitles {
-		label := " " + t + " "
-		if tab(i) == p.detail.active {
-			words = append(words, activeTabStyle.Render(label))
-			rule = append(rule, accentStyle.Render(strings.Repeat("━", lipgloss.Width(label))))
-		} else {
-			words = append(words, inactiveTabStyle.Render(label))
-			rule = append(rule, ruleStyle.Render(strings.Repeat("─", lipgloss.Width(label))))
-		}
-	}
-	gap := ruleStyle.Render("──")
-	line := strings.Join(rule, gap)
-	if pad := p.width - lipgloss.Width(line); pad > 0 {
-		line += ruleStyle.Render(strings.Repeat("─", pad))
-	}
-	// tabSpans (mouse.go) assumes this two-space join to compute each
-	// word's column span; change both together.
-	return []string{strings.Join(words, "  "), line}
 }
 
 // sourceLine says, in one faint line, what the viewport is showing.
@@ -444,12 +410,25 @@ func (p roundPane) sourceLine() string {
 	if !c.loaded {
 		return faintStyle.Render("loading…")
 	}
+	if p.detail.active == tabArtifacts {
+		// The header carries the count and the total size (round 5b); a
+		// source line here would only repeat them.
+		return ""
+	}
 	var s string
 	switch p.detail.active {
-	case tabPlan:
-		s = fmt.Sprintf("plan r%d · %s", c.round, c.at.Local().Format("15:04"))
+	case tabPrompt:
+		if c.at.IsZero() {
+			s = fmt.Sprintf("prompt r%d", c.round)
+		} else {
+			s = fmt.Sprintf("prompt r%d · %s", c.round, c.at.Local().Format("15:04"))
+		}
 	case tabReport:
-		s = fmt.Sprintf("report r%d · %s", c.round, c.at.Local().Format("15:04"))
+		if c.at.IsZero() {
+			s = fmt.Sprintf("report r%d", c.round)
+		} else {
+			s = fmt.Sprintf("report r%d · %s", c.round, c.at.Local().Format("15:04"))
+		}
 	case tabTerminal:
 		n := strings.Count(strings.TrimRight(c.body, "\n"), "\n") + 1
 		r := row(p.report, p.detail.name)
@@ -494,7 +473,7 @@ func (p roundPane) sourceLine() string {
 		// The viewport carries the prose; the source line says only where
 		// it looked.
 		switch p.detail.active {
-		case tabPlan:
+		case tabPrompt:
 			s = fmt.Sprintf("round %d", p.detail.round)
 		case tabReport:
 			s = "report"
@@ -510,28 +489,24 @@ func (p roundPane) sourceLine() string {
 // hintLine is the one rendered line under a blocked builder's dialog on
 // the terminal tab: the verb that resolves it (spec §3.4). The ui runs
 // nothing; it names the command.
-func (p roundPane) hintLine(b *relevo.BindingStatus) (string, bool) {
+func (p roundPane) hintLine(b *view.BindingStatus) (string, bool) {
 	if b == nil || b.Waiting == nil || b.Waiting.Cause != "blocked" || p.detail.active != tabTerminal {
 		return "", false
 	}
 	return accentStyle.Render("relevo: ") + fgStyle.Render(b.Waiting.Hint), true
 }
 
-// view draws exactly rows rows at width: head, tabs, source, blank,
-// viewport, with the hint replacing the last viewport row when it applies.
-// The viewport is resized to what is left after a head that grew by foreign
-// rows. Model.paneView keeps the empty-fleet branch.
+// view draws exactly rows rows at width (§2.5, §5).
 func (p roundPane) view(width int) string {
 	b := row(p.report, p.detail.name)
-	rows := []string{}
-	if p.detail.name != "" && !p.detail.live {
-		rows = append(rows, p.histPaneHead()...)
-	} else {
-		rows = append(rows, p.paneHead(b)...)
+	out := []string{p.tokensLine(b), "", p.tabsRow(), ""}
+	// A reader round's artifacts tab draws no source line: the header
+	// already carries the count and the size (round 5b).
+	if s := p.sourceLine(); s != "" {
+		out = append(out, "     "+s, "")
 	}
-	rows = append(rows, p.tabBar()...)
-	rows = append(rows, p.sourceLine(), "")
-	budget := p.rows - len(rows)
+
+	budget := p.rows - len(out)
 	if budget < 0 {
 		budget = 0
 	}
@@ -541,20 +516,23 @@ func (p roundPane) view(width int) string {
 		vpRows--
 	}
 	vp := p.detail.vp
-	vp.Width = width
+	vp.Width = p.contentWidth()
 	vp.Height = vpRows
 	if vpRows > 0 {
-		rows = append(rows, strings.Split(vp.View(), "\n")...)
+		vpLines := strings.Split(vp.View(), "\n")
+		for _, l := range vpLines {
+			out = append(out, "     "+l)
+		}
 	}
 	if hasHint && budget > 0 {
-		rows = append(rows, hint)
+		out = append(out, hint)
 	}
-	for len(rows) < p.rows {
-		rows = append(rows, "")
+	for len(out) < p.rows {
+		out = append(out, "")
 	}
-	rows = rows[:p.rows]
-	for i := range rows {
-		rows[i] = fit(rows[i], width)
+	out = out[:p.rows]
+	for i := range out {
+		out[i] = fit(out[i], width)
 	}
-	return strings.Join(rows, "\n")
+	return strings.Join(out, "\n")
 }

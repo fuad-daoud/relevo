@@ -11,6 +11,8 @@ import (
 )
 
 func TestResolveTier(t *testing.T) {
+	t.Parallel()
+
 	pol := policy.Policy{
 		Tier: map[string]string{
 			"builder": "read",
@@ -41,6 +43,8 @@ func TestResolveTier(t *testing.T) {
 }
 
 func TestCheckTierCap(t *testing.T) {
+	t.Parallel()
+
 	defaultPol := policy.Policy{} // MaxTierOrDefault() == edit
 	yoloPol := policy.Policy{MaxTier: "yolo"}
 
@@ -71,6 +75,8 @@ func TestCheckTierCap(t *testing.T) {
 }
 
 func TestEffectiveTier(t *testing.T) {
+	t.Parallel()
+
 	// RoundTier over Tier over harness
 	b := store.Binding{
 		Tier:      "read",

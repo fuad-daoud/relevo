@@ -7,39 +7,55 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// Default is the provider and model relevo config init seeds a harness with.
 type Default struct{ Provider, Model string }
 
-// Defaults is the README's documented example, one per harness kind. The values
-// are relevo's real defaults: they are the placeholders a clean machine edits,
-// and they pass candidate.Load as written.
+// Defaults maps each harness kind to its builder default. claude has none
+// because claude plans: it is seeded as a planner actor instead.
 var Defaults = map[string]Default{
-	"claude":   {"anthropic", "sonnet"},
 	"opencode": {"openrouter", "z-ai/glm-5.3-flash"},
 	"agy":      {"google", "gemini-3.8-flash-high"},
 	"codex":    {"openai", "gpt-5.6-terra:high"},
 }
 
-// Files is the starter configuration Plan produced, ready to store.
-type Files struct {
-	Kinds      []string // harness kinds found on PATH, in harness.All() order
-	Candidates []byte   // JSON, indented two spaces, trailing newline
-	Policy     []byte   // JSON, indented two spaces, trailing newline
-	Actors     []byte   // JSON, the builder actor over the plan's candidate names
+// BuilderKinds names the harness kinds Defaults can seed a builder for, in harness.All() order: a fixed order, so the note init prints reads the same on every run.
+func BuilderKinds() []string {
+	out := make([]string, 0, len(Defaults))
+	for _, h := range harness.All() {
+		if _, ok := Defaults[h.Kind]; ok {
+			out = append(out, h.Kind)
+		}
+	}
+	return out
 }
 
-// Plan builds starter candidates, a policy and a builder actor for every
-// harness binary on PATH, in harness.All() order. It is an error when none is
-// found: relevo config init has nothing to seed.
-//
-// The candidates carry no roles and no tier, and the policy is only max_tier:
-// the actors section decides who serves what (A2 round 2 R5).
+// PlannerDefault is a reader actor config init seeds beside the builder: the
+// actor name, the harness kind whose binary must be on PATH, and its one
+// candidate's provider and model.
+type PlannerDefault struct{ Actor, Kind, Provider, Model string }
+
+// PlannerDefaults are those actors in written order: planner, then lite-planner.
+var PlannerDefaults = []PlannerDefault{
+	{"planner", "claude", "anthropic", "opus:medium"},
+	{"lite-planner", "opencode", "openrouter", "deepseek/deepseek-v4.1-flash#max"},
+}
+
+// Files is the starter configuration Plan produced, ready to store.
+type Files struct {
+	Kinds          []string // harness kinds found on PATH, in harness.All() order
+	Candidates     []byte   // JSON, indented two spaces, trailing newline
+	Policy         []byte   // JSON, indented two spaces, trailing newline
+	Actors         []byte   // JSON, the builder actor plus the planner actors whose harness is on PATH
+	ActorOrder     []string // the actor names written: builder, then PlannerDefaults order (only those written)
+	CandidateNames []string // the names DeriveNames gave every candidate, in candidate order
+}
+
+// Plan builds starter candidates, a policy and starter actors for every harness binary on PATH, erroring when none is found.
 func Plan(env harness.InstallEnv) (Files, error) {
 	var kinds []string
 	var candidates []candidate.Candidate
@@ -47,8 +63,11 @@ func Plan(env harness.InstallEnv) (Files, error) {
 		if _, err := env.LookPath(h.Binary); err != nil {
 			continue
 		}
-		d := Defaults[h.Kind]
 		kinds = append(kinds, h.Kind)
+		d, ok := Defaults[h.Kind]
+		if !ok {
+			continue
+		}
 		candidates = append(candidates, candidate.Candidate{
 			Harness:  h.Kind,
 			Provider: d.Provider,
@@ -57,6 +76,26 @@ func Plan(env harness.InstallEnv) (Files, error) {
 	}
 	if len(kinds) == 0 {
 		return Files{}, errors.New("no harness binaries on PATH (agy, claude, codex, opencode); install one first")
+	}
+	builderCount := len(candidates)
+
+	order := []string{"builder"}
+	var planners []PlannerDefault
+	for _, p := range PlannerDefaults {
+		h, ok := harness.Lookup(p.Kind)
+		if !ok {
+			continue
+		}
+		if _, err := env.LookPath(h.Binary); err != nil {
+			continue
+		}
+		planners = append(planners, p)
+		order = append(order, p.Actor)
+		candidates = append(candidates, candidate.Candidate{
+			Harness:  p.Kind,
+			Provider: p.Provider,
+			Model:    p.Model,
+		})
 	}
 
 	candJSON, err := json.MarshalIndent(candidates, "", "  ")
@@ -73,16 +112,31 @@ func Plan(env harness.InstallEnv) (Files, error) {
 	polJSON = append(polJSON, '\n')
 
 	names := candidate.DeriveNames(candidates)
-	entries := make([]actors.Entry, 0, len(names))
-	for _, name := range names {
-		entries = append(entries, actors.Entry{Candidate: name})
-	}
-	actorsJSON, err := actors.EncodeActors(map[string]actors.Actor{
-		"builder": {Agent: "plan-executor", Candidates: entries, Tier: "yolo"},
-	})
+	actorsJSON, err := roles.EncodeActors(starterActors(names[:builderCount], planners, names[builderCount:]))
 	if err != nil {
 		return Files{}, fmt.Errorf("marshal actors: %w", err)
 	}
 
-	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON, Actors: actorsJSON}, nil
+	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON, Actors: actorsJSON, ActorOrder: order, CandidateNames: names}, nil
+}
+
+// starterActors assembles the builder actor and one reader actor per written
+// planner, each with the candidate names DeriveNames produced.
+func starterActors(builderNames []string, planners []PlannerDefault, plannerNames []string) map[string]roles.Actor {
+	actors := map[string]roles.Actor{
+		"builder": {Agent: "plan-executor", Tier: "yolo", Candidates: candidateEntries(builderNames)},
+	}
+	for i, p := range planners {
+		actors[p.Actor] = roles.Actor{Agent: "architect", Candidates: candidateEntries(plannerNames[i : i+1])}
+	}
+	return actors
+}
+
+// candidateEntries wraps names as an actor's candidates, each on.
+func candidateEntries(names []string) []roles.Entry {
+	entries := make([]roles.Entry, 0, len(names))
+	for _, name := range names {
+		entries = append(entries, roles.Entry{Candidate: name})
+	}
+	return entries
 }

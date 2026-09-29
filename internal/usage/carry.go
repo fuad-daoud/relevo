@@ -5,19 +5,16 @@ import (
 	"time"
 )
 
-// streamCarry is the parser state a resumable stream read needs between
-// calls (#234): what each harness's stream function kept in locals, held
-// so the per-stream cache can feed it the appended lines only and ask for
-// the fold so far. feed takes one JSON line and ignores what it cannot
-// parse; samples is the fold so far, where a result-style event replaces
-// the step samples.
+// streamCarry is the parser state a resumable stream read needs between calls, so
+// the per-stream cache can feed it appended lines only and ask for the fold so
+// far. feed ignores what it cannot parse.
 type streamCarry interface {
 	feed(line []byte)
 	samples() []Sample
 }
 
-// newCarry builds the harness's carry; false when the harness has no
-// stream reader.
+// newCarry builds the harness's carry; false when the harness has no stream
+// reader.
 func newCarry(harness, provider, model string) (streamCarry, bool) {
 	switch harness {
 	case "claude":
@@ -32,8 +29,8 @@ func newCarry(harness, provider, model string) (streamCarry, bool) {
 	return nil, false
 }
 
-// claudeCarry is claudeStream's state: the model seen, the assistant
-// samples deduped by message.id, and a pending result event, which wins.
+// claudeCarry: assistant samples deduped by message.id, and a pending result
+// event, which wins.
 type claudeCarry struct {
 	provider  string
 	model     string
@@ -86,8 +83,7 @@ func (c *claudeCarry) samples() []Sample {
 	return c.assistant
 }
 
-// agyCarry is agyStream's state: the init event's model, the step
-// samples, and a pending result event, which wins.
+// agyCarry: the step samples, and a pending result event, which wins.
 type agyCarry struct {
 	provider string
 	model    string
@@ -127,8 +123,7 @@ func (c *agyCarry) samples() []Sample {
 	return c.steps
 }
 
-// opencodeCarry is opencodeStream's state: one sample per step_finish
-// part. The stream names no model, so the candidate's stands in.
+// opencodeCarry: one sample per step_finish part.
 type opencodeCarry struct {
 	provider string
 	model    string
@@ -149,9 +144,7 @@ func (c *opencodeCarry) feed(line []byte) {
 
 func (c *opencodeCarry) samples() []Sample { return c.out }
 
-// codexCarry is codexStream's state: one sample per turn.completed event
-// that carries usage. The model is already effort-stripped by the caller,
-// as today.
+// codexCarry: one sample per turn.completed event that carries usage.
 type codexCarry struct {
 	provider string
 	model    string
@@ -173,9 +166,7 @@ func (c *codexCarry) feed(line []byte) {
 
 func (c *codexCarry) samples() []Sample { return c.out }
 
-// streamCache is one headless stream's parse state on the reader (#234):
-// where the file stood when it was last read, the carry that folded it,
-// and an incomplete trailing line kept for the next feed.
+// streamCache is one headless stream's parse state on the reader.
 type streamCache struct {
 	size   int64
 	mtime  time.Time

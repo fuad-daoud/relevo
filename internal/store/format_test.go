@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -17,16 +16,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/jsonshape"
 )
 
-// update rewrites the golden file, but only when BindingFormat was bumped:
-// see goldenDecision.
+// update rewrites the golden file, but only when BindingFormat was bumped: see
+// goldenDecision.
 var update = flag.Bool("update", false, "rewrite testdata/binding-shape.golden when BindingFormat was bumped")
 
-// bindingGoldenPath is the golden file TestBindingShapeMatchesFormat compares
-// against, and the one -update rewrites.
 const bindingGoldenPath = "testdata/binding-shape.golden"
 
-// The messages #372's spec §4.1 names, plus the stale-format-line case it
-// leaves open.
 const (
 	bindingShapeMsg   = "store.Binding's JSON shape changed: bump store.BindingFormat, then run go test ./internal/store -run TestBindingShapeMatchesFormat -update"
 	bindingRefusalMsg = "bump store.BindingFormat first; an older relevo would erase the new fields"
@@ -39,8 +34,6 @@ type goldenFile struct {
 	keys   []string
 }
 
-// parseGolden reads the golden file format: "format <N>" on the first line,
-// then one key path per line.
 func parseGolden(raw []byte) (goldenFile, error) {
 	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 	if len(lines) == 0 || lines[0] == "" {
@@ -57,7 +50,6 @@ func parseGolden(raw []byte) (goldenFile, error) {
 	return goldenFile{format: n, keys: lines[1:]}, nil
 }
 
-// marshalGolden writes the golden file format.
 func marshalGolden(format int, keys []string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "format %d\n", format)
@@ -68,13 +60,10 @@ func marshalGolden(format int, keys []string) []byte {
 	return []byte(b.String())
 }
 
-// goldenDecision is the -update rule as a pure function: write rewrites the
-// golden and a non-empty msg fails the test instead. same reports whether the
-// key paths already match the golden.
-//
-// A rewrite needs BindingFormat to be greater than the golden's format line,
-// so a mismatch with no bump fails rather than silently accepting a shape an
-// older relevo would erase.
+// goldenDecision is the -update rule as a pure function. A rewrite needs
+// BindingFormat to be greater than the golden's format line, so a mismatch
+// with no bump fails rather than accepting a shape an older relevo would
+// erase.
 func goldenDecision(goldenFormat, codeFormat int, same bool) (write bool, msg string) {
 	if same && goldenFormat == codeFormat {
 		return false, ""
@@ -86,8 +75,7 @@ func goldenDecision(goldenFormat, codeFormat int, same bool) (write bool, msg st
 }
 
 // checkBindingShape compares keys against the golden and returns the message
-// to fail with, or "" when all is well. When update is true it rewrites the
-// golden whenever goldenDecision allows it.
+// to fail with, or "" when all is well.
 func checkBindingShape(g goldenFile, codeFormat int, keys []string, update bool) string {
 	same := slices.Equal(g.keys, keys)
 	if update {
@@ -114,8 +102,6 @@ func checkBindingShape(g goldenFile, codeFormat int, keys []string, update bool)
 	return ""
 }
 
-// readBindingGolden reads the golden, treating a missing file as the
-// pre-creation state: format 0 and no keys, which any real shape differs from.
 func readBindingGolden(t *testing.T) goldenFile {
 	t.Helper()
 	raw, err := os.ReadFile(bindingGoldenPath)
@@ -132,9 +118,8 @@ func readBindingGolden(t *testing.T) goldenFile {
 	return g
 }
 
-// TestBindingShapeMatchesFormat pins Binding's JSON shape against the golden
-// file: a new field is a new key path, and that fails until BindingFormat is
-// bumped and the golden regenerated.
+// TestBindingShapeMatchesFormat pins that a new field is a new key path, which
+// fails until BindingFormat is bumped and the golden regenerated.
 func TestBindingShapeMatchesFormat(t *testing.T) {
 	g := readBindingGolden(t)
 	keys := jsonshape.Keys(reflect.TypeOf(Binding{}))
@@ -147,9 +132,8 @@ func TestBindingShapeMatchesFormat(t *testing.T) {
 	}
 }
 
-// TestBindingShapeFailurePath exercises the golden test's failure path without
-// mutating the real type: a struct with one extra field is a key-path mismatch
-// and fails with the bump message, and -update without a bump refuses.
+// TestBindingShapeFailurePath exercises the golden failure path without
+// mutating the real type.
 func TestBindingShapeFailurePath(t *testing.T) {
 	type bindingWithANewField struct {
 		Binding
@@ -204,29 +188,51 @@ func TestStoredFormat(t *testing.T) {
 	}
 }
 
-// TestSaveOmitsTheFormatKeyForFormat1 pins §3: format 1 is stored as an absent
-// field, so a binding saved today is byte-identical to one saved before the
-// field existed.
-func TestSaveOmitsTheFormatKeyForFormat1(t *testing.T) {
+// TestSaveWritesCurrentFormat pins that every record carries the current
+// format, so an older relevo refuses it rather than erasing the shape key.
+func TestSaveWritesCurrentFormat(t *testing.T) {
 	s := New(t.TempDir())
 	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	raw := bindingRecordJSON(t, s, "webshop")
-	if bytes.Contains(raw, []byte(`"format"`)) {
-		t.Errorf("a format-1 binding must carry no format key:\n%s", raw)
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format":%d`, BindingFormat))) {
+		t.Errorf("a binding must carry format %d:\n%s", BindingFormat, raw)
 	}
 }
 
-// TestSaveRefusesANewerFormat pins §4.1: a binding written by a newer relevo
-// is refused with ErrNewerFormat, both when Save is handed one and when the
-// import meets one on disk, leaving the file byte-for-byte as it was.
+// TestBindingShapeDefaultsToWriter pins the shape rule: a record with no shape
+// key (format 8 and earlier) decodes as a writer, because a reader could not be
+// bound then, and a record written now names its shape at the current format.
+func TestBindingShapeDefaultsToWriter(t *testing.T) {
+	var old Binding
+	if err := json.Unmarshal([]byte(`{"format":8,"name":"old","cwd":"/repo","actor":"builder"}`), &old); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if old.Shape != ShapeWriter {
+		t.Errorf("format-8 record Shape = %q, want %q", old.Shape, ShapeWriter)
+	}
+
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw := bindingRecordJSON(t, s, "webshop")
+	if !bytes.Contains(raw, []byte(`"shape":"writer"`)) {
+		t.Errorf("a binding must carry shape \"writer\":\n%s", raw)
+	}
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format":%d`, BindingFormat))) {
+		t.Errorf("a binding must carry format %d:\n%s", BindingFormat, raw)
+	}
+}
+
+// TestSaveRefusesANewerFormat pins that a binding written by a newer relevo is
+// refused, both by Save and by the read.
 func TestSaveRefusesANewerFormat(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("webshop", "/home/dev/projects/webshop")
 	b.Format = BindingFormat + 1
 
-	// Save refuses it outright, before it writes or imports anything.
 	err := s.Save(b)
 	var newer *ErrNewerFormat
 	if !errors.As(err, &newer) {
@@ -238,37 +244,22 @@ func TestSaveRefusesANewerFormat(t *testing.T) {
 	if newer.Kind != "binding" || newer.Name != b.Name || newer.Have != BindingFormat+1 || newer.Know != BindingFormat {
 		t.Errorf("ErrNewerFormat = %+v", newer)
 	}
-	wantText := fmt.Sprintf(`binding "webshop" was written by a newer relevo (format %d; this relevo knows %d): upgrade relevo; a planner session reconnects relevo mcp with /mcp`, BindingFormat+1, BindingFormat)
+	wantText := fmt.Sprintf(`binding "webshop" was written by a newer relevo (format %d; this relevo knows %d): upgrade relevo; a mastermind session reconnects relevo mcp with /mcp`, BindingFormat+1, BindingFormat)
 	if err.Error() != wantText {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}
 
-	// A bind.json a newer relevo left on disk is refused by the import, and
-	// the file is not touched.
-	if err := os.MkdirAll(s.Dir(b.Name), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.MarshalIndent(b, "", "  ")
+	// A record row a newer relevo wrote is refused.
+	raw, err := json.Marshal(b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format": %d`, BindingFormat+1))) {
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format":%d`, BindingFormat+1))) {
 		t.Fatalf("the fixture must carry format %d, got:\n%s", BindingFormat+1, raw)
 	}
-	path := filepath.Join(s.Dir(b.Name), "bind.json")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	putRecordJSON(t, s, b.Name, string(raw))
 	if _, err := s.Load(b.Name); !errors.As(err, &newer) {
-		t.Fatalf("Load of a newer-format bind.json = %v, want *ErrNewerFormat", err)
-	}
-
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(raw, after) {
-		t.Error("a refused import must leave the file byte-identical")
+		t.Fatalf("Load of a newer-format record = %v, want *ErrNewerFormat", err)
 	}
 }
 

@@ -42,8 +42,8 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		defer func() {
-			tmp.Close()
-			os.Remove(tmp.Name())
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
 		}()
 
 		hasher := sha256.New()

@@ -44,12 +44,25 @@ func TestShortDuration(t *testing.T) {
 	}
 }
 
+type lineCase struct {
+	name string
+	u    Usage
+	want string
+}
+
 func TestLine(t *testing.T) {
-	cases := []struct {
-		name string
-		u    Usage
-		want string
-	}{
+	cases := lineCases()
+	cases = append(cases, lineMoreCases()...)
+	cases = append(cases, lineStepCases()...)
+	for _, c := range cases {
+		if got := Line(c.u); got != c.want {
+			t.Errorf("%s:\n got  %q\n want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func lineCases() []lineCase {
+	return []lineCase{
 		{
 			name: "measured, the spec's example",
 			u: Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 14 * 60_000,
@@ -74,8 +87,11 @@ func TestLine(t *testing.T) {
 				Tokens: Tokens{In: 1_200, CacheRead: 88_000, CacheWrite: 4_000, Out: 6_000}, Cost: Cost{USD: 1, Basis: Estimated, Plan: true}, Samples: 1},
 			want: "claude/anthropic/opus  9m  in 1k  cache 88k (94%)  write 4k  out 6k  plan",
 		},
-		// The pre-#234 fixtures, updated to the four cells: the same inputs,
-		// the same money word -- the cells are the only shape change.
+	}
+}
+
+func lineMoreCases() []lineCase {
+	return []lineCase{
 		{
 			name: "estimated, the issue's example",
 			u: Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 14 * 60_000,
@@ -117,9 +133,12 @@ func TestLine(t *testing.T) {
 			u:    Usage{Harness: "claude", Provider: "anthropic", Model: "m", Tokens: Tokens{Out: 5}, Cost: Cost{USD: 0.01, Basis: Measured}, Samples: 1},
 			want: "claude/anthropic/m  in 0  cache 0  write 0  out 5  $0.01",
 		},
+	}
+}
+
+func lineStepCases() []lineCase {
+	return []lineCase{
 		{
-			// The step figures sit between the token cells and the money
-			// (#323, #324), in this order.
 			name: "steps, calls/step and step latency",
 			u: Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash", DurationMS: 14 * 60_000,
 				Tokens: Tokens{In: 2_100, CacheRead: 166_000, CacheWrite: 14_000, Out: 12_000},
@@ -128,19 +147,12 @@ func TestLine(t *testing.T) {
 			want: "opencode/cline-pass/glm-5.3-flash  14m  in 2k  cache 166k (91%)  write 14k  out 12k  157 steps  1.17 calls/step  step p50 3.1s  first out p50 640ms  $0.41",
 		},
 		{
-			// A harness whose stream shows tool calls but no steps names
-			// the calls, never a rate (#323 part 5: codex).
 			name: "tool calls without steps",
 			u: Usage{Harness: "codex", Provider: "openai", Model: "gpt-5", DurationMS: 60_000,
 				Tokens: Tokens{In: 100, Out: 50}, Cost: Cost{USD: 0.01, Basis: Measured}, Samples: 1,
 				ToolCalls: 4},
 			want: "codex/openai/gpt-5  1m  in 100  cache 0 (0%)  write 0  out 50  4 tool calls  $0.01",
 		},
-	}
-	for _, c := range cases {
-		if got := Line(c.u); got != c.want {
-			t.Errorf("%s:\n got  %q\n want %q", c.name, got, c.want)
-		}
 	}
 }
 

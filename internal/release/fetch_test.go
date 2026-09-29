@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// TestHTTPFetcherParsesTag uses httptest only: no test in this package may
-// reach api.github.com, and no test may reach the network at all.
+// TestHTTPFetcherParsesTag uses httptest only: no test here may reach the network.
 func TestHTTPFetcherParsesTag(t *testing.T) {
 	var gotPath, gotAuth, gotAccept string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,8 +32,7 @@ func TestHTTPFetcherParsesTag(t *testing.T) {
 	if gotPath != "/repos/fuad-daoud/relevo/releases/latest" {
 		t.Errorf("path = %q, want /repos/fuad-daoud/relevo/releases/latest", gotPath)
 	}
-	// No auth header: an unauthenticated read, so an air-gapped or
-	// rate-limited machine degrades to "not checked" rather than erroring.
+	// Unauthenticated: a rate-limited machine degrades to "not checked", not an error.
 	if gotAuth != "" {
 		t.Errorf("Authorization = %q, want empty", gotAuth)
 	}
@@ -43,8 +41,7 @@ func TestHTTPFetcherParsesTag(t *testing.T) {
 	}
 }
 
-// TestHTTPFetcherEndpointFromEnv pins the RELEVO_RELEASE_API override, which is
-// what lets a test or an air-gapped install point the check elsewhere.
+// TestHTTPFetcherEndpointFromEnv pins the RELEVO_RELEASE_API override.
 func TestHTTPFetcherEndpointFromEnv(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"tag_name":"v9.9.9"}`))
@@ -61,9 +58,7 @@ func TestHTTPFetcherEndpointFromEnv(t *testing.T) {
 	}
 }
 
-// TestHTTPFetcherFailures pins every failure mode as an error the caller
-// swallows: a dead endpoint is ErrOffline, a bad answer is its own error, and
-// neither is a panic or a hang.
+// TestHTTPFetcherFailures pins every failure mode as an error, never a panic or a hang.
 func TestHTTPFetcherFailures(t *testing.T) {
 	t.Run("prefix tags are kept verbatim", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

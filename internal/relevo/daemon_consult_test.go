@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -15,6 +16,8 @@ import (
 // post-reconcile bindings share the change and the tick's SameBinding gate
 // skips the save -- and the next tick queues the findings entry again.
 func TestTickPersistsFinishedConsultOnce(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, c := seedHeadlessConsult(t, fr)
 
@@ -57,8 +60,10 @@ func TestTickPersistsFinishedConsultOnce(t *testing.T) {
 }
 
 func TestTickPersistsAnExpiredReservation(t *testing.T) {
+	t.Parallel()
+
 	rt, clock := seedSpawning(t)
-	clock.Advance(consultSpawnTimeout + time.Second)
+	clock.Advance(consult.SpawnTimeout + time.Second)
 
 	d := NewDaemon(rt, time.Second)
 	for i := 0; i < 2; i++ {

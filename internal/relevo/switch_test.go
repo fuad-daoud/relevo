@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // runnerOf is the fakeRunner a fixture installed on rt.
@@ -50,8 +52,10 @@ func switches(t *testing.T, rt Runtime) []store.LogEntry {
 // Mutation check (run and report): break switchBuilder's gated-candidate walk
 // and this fails.
 func TestGatedSwitchesAtOnce(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -95,13 +99,15 @@ func TestGatedSwitchesAtOnce(t *testing.T) {
 // the top of switchBuilder still applies to it -- a binding already at the
 // limit still halts instead of switching again.
 func TestGatedSwitchDoesNotCount(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
 	limit := rt.Policy.SwitchLimit()
 	b.RoundSwitches = limit - 1
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -125,7 +131,7 @@ func TestGatedSwitchDoesNotCount(t *testing.T) {
 	if err := rt2.Store.Save(b2); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if _, err := Unavailable(rt2, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt2), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 	got2, err := reconcile(t, rt2, b2)
@@ -141,8 +147,10 @@ func TestGatedSwitchDoesNotCount(t *testing.T) {
 }
 
 func TestGatedIgnoresSpawnFailedGate(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
-	recordSpawnFailure(rt, "agy/other/m", "webshop", errors.New("x"))
+	availability.RecordSpawnFailure(AvailabilityDeps(rt), "agy/other/m", "webshop", errors.New("x"))
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -161,9 +169,11 @@ func TestGatedIgnoresSpawnFailedGate(t *testing.T) {
 }
 
 func TestNoOrderHalts(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
 	rt.Policy = policy.Policy{}
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -185,10 +195,12 @@ func TestNoOrderHalts(t *testing.T) {
 }
 
 func TestMaxSwitchesZeroHalts(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
 	zero := 0
 	rt.Policy.MaxSwitches = &zero
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -222,6 +234,8 @@ func TestMaxSwitchesZeroHalts(t *testing.T) {
 // the second halt below would leave Halt empty (HaltNotifiedRound is
 // already back at b.Round from the first halt's dedup).
 func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false)
@@ -322,6 +336,8 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 // first assertion below fails, since the second and third calls would each
 // advance it by a minute.
 func TestRepeatedHaltKeepsHaltAt(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 
 	first, err := haltBinding(context.Background(), rt, b, "webshop: same reason")
@@ -383,11 +399,13 @@ func TestRepeatedHaltKeepsHaltAt(t *testing.T) {
 }
 
 func TestAllGatedHalts(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
-	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testClaudeRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -407,5 +425,125 @@ func TestAllGatedHalts(t *testing.T) {
 	}
 	if !strings.Contains(got.Halt, `every candidate serving "builder" is gated`) {
 		t.Fatalf("Halt = %q, want it to contain the ErrAllGated text", got.Halt)
+	}
+}
+
+func TestSwitchRecordsOutgoingUsage(t *testing.T) {
+	t.Parallel()
+
+	rt, b := sentSwitchable(t)
+	b.Builder.StreamStart = 4200
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fu := &fakeUsage{
+		peekSamples: []usage.Sample{
+			{Provider: "other", Tokens: usage.Tokens{In: 500, Out: 200}, USD: 0.15, HasCost: true},
+		},
+	}
+	rt.Usage = fu
+
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "rate-limited"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	var out store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		out, err = switchBuilder(context.Background(), rt, tx, b, "rate-limited", false, true)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if out.BuilderCandidate == b.BuilderCandidate {
+		t.Fatal("switchBuilder did not switch candidate")
+	}
+
+	// Verify peek was called with StreamFrom == outgoing StreamStart
+	if len(fu.peeks) == 0 {
+		t.Fatal("peekUsage was not called")
+	}
+	if fu.peeks[0].StreamFrom != 4200 {
+		t.Errorf("peek StreamFrom = %d, want 4200", fu.peeks[0].StreamFrom)
+	}
+
+	// Verify appended KindSwitch entry's Usage has those tokens
+	sws := switches(t, rt)
+	if len(sws) == 0 {
+		t.Fatal("no KindSwitch entries found")
+	}
+	lastSw := sws[len(sws)-1]
+	if lastSw.Usage == nil {
+		t.Fatal("switch entry has nil Usage")
+	}
+	if lastSw.Usage.Tokens.In != 500 || lastSw.Usage.Tokens.Out != 200 {
+		t.Errorf("switch entry tokens = %+v, want in:500 out:200", lastSw.Usage.Tokens)
+	}
+}
+
+// TestSwitchKeepsTheStreamCursor is §7.2 N8: a mid-round switch to a builder
+// of another kind keeps the round's stream cursor and its segment list, and
+// the drain that follows renders only the bytes past the old offset -- the
+// old harness's lines are not rendered a second time (or with the new kind).
+func TestSwitchKeepsTheStreamCursor(t *testing.T) {
+	t.Parallel()
+
+	rt, b := sentSwitchable(t) // round 1 open on agy/other/m
+	seedLegacyLog(t, rt, "webshop", 1)
+
+	// Round 1 has produced and rendered one agy line.
+	streamWrite(t, rt, agyToolActive)
+	before, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if before.Builder.StreamRound != 1 || before.Builder.StreamOffset != int64(len(agyToolActive)) {
+		t.Fatalf("setup cursor = round %d offset %d, want 1/%d", before.Builder.StreamRound, before.Builder.StreamOffset, len(agyToolActive))
+	}
+	if len(before.Builder.StreamSegments) != 1 || before.Builder.StreamSegments[0].Kind != "agy" {
+		t.Fatalf("setup segments = %+v, want one agy segment", before.Builder.StreamSegments)
+	}
+	oldOffset := before.Builder.StreamOffset
+
+	// The switch replaces the endpoint mid-round with a different kind. Gate
+	// the provider first, exactly as the rate-limit path does, so
+	// resolveBuilder has to walk to a different candidate.
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "rate-limited"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	var switched store.Binding
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		switched, err = switchBuilder(context.Background(), rt, tx, before, "rate-limited", false, true)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if switched.Builder.Kind == "agy" {
+		t.Fatalf("switch kept kind %q; the test needs a different kind", switched.Builder.Kind)
+	}
+	if switched.Builder.StreamRound != 1 || switched.Builder.StreamOffset != oldOffset {
+		t.Errorf("cursor after the switch = round %d offset %d, want 1/%d", switched.Builder.StreamRound, switched.Builder.StreamOffset, oldOffset)
+	}
+	if len(switched.Builder.StreamSegments) != 2 {
+		t.Fatalf("segments after the switch = %+v, want two", switched.Builder.StreamSegments)
+	}
+	if last := switched.Builder.StreamSegments[1]; last.Start != int64(len(agyToolActive)) || last.Kind != switched.Builder.Kind {
+		t.Errorf("new segment = %+v, want {%d %s}", last, len(agyToolActive), switched.Builder.Kind)
+	}
+
+	// The replacement's own line arrives; a drain renders only bytes past
+	// the old offset, so the old agy line is not rendered twice.
+	streamWrite(t, rt, `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n")
+	drainStream(rt, switched)
+	log := readLog(t, rt)
+	if n := strings.Count(log, "● run_command go test ./..."); n != 1 {
+		t.Errorf("the old agy line appears %d time(s) in the log, want once:\n%s", n, log)
+	}
+	if !strings.Contains(log, "hi") {
+		t.Errorf("log = %q, want the replacement's rendered line", log)
 	}
 }

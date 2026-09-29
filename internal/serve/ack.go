@@ -10,16 +10,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// settleServed confirms every unconfirmed planner-bound log entry for name
-// whose round is at most upTo, using route "ack". It is the one helper the ack
-// handler, the done handler and the startup backfill share.
-//
-// The caller MUST hold the store lock (it is inside rt.Store.WithLock): the
-// indices handed to ConfirmIndex are stable only while nothing appends, and
-// ConfirmIndex rewrites a line in place without changing the entry count.
-//
-// upTo <= 0 is a no-op that returns 0: a binding with no closed round and no
-// ack has nothing to settle.
+// settleServed confirms every unconfirmed mastermind-bound log entry for name
+// whose round is at most upTo, using route "ack". The caller MUST hold the store
+// lock: ConfirmIndex's indices are stable only while nothing appends. upTo <= 0
+// is a no-op.
 func settleServed(tx *store.Tx, name string, upTo int) (int, error) {
 	if upTo <= 0 {
 		return 0, nil
@@ -32,7 +26,7 @@ func settleServed(tx *store.Tx, name string, upTo int) (int, error) {
 
 	n := 0
 	for i, e := range entries {
-		if e.Direction != store.DirToPlanner || e.Confirmed || e.Round > upTo {
+		if e.Direction != store.DirToMasterMind || e.Confirmed || e.Round > upTo {
 			continue
 		}
 		if err := tx.ConfirmIndex(name, i, "ack"); err != nil {
@@ -43,17 +37,11 @@ func settleServed(tx *store.Tx, name string, upTo int) (int, error) {
 	return n, nil
 }
 
-// settleAllServed backfills the ack older servers never wrote. For every owner
-// it settles each served binding's planner-bound log entries up to the round
-// the owner acked -- or, for a DONE binding, up to the round the daemon last
-// closed, whichever is further.
-//
-// Pre: the caller holds s.mu, or no request is being served yet.
-//
-// A per-owner failure is logged at Warn and the walk continues: one bad owner
-// must not keep the rest of the server's reports pending forever. The only
-// returned error is an unreadable bindings dir; a missing dir returns nil, as
-// Tick does.
+// settleAllServed backfills the ack older servers never wrote: for every owner
+// it settles each served binding's mastermind-bound entries up to the round the
+// owner acked -- or, for a DONE binding, the daemon's last closed round,
+// whichever is further. A per-owner failure is logged and the walk continues;
+// a missing bindings dir is nil.
 func (s *Server) settleAllServed() error {
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)

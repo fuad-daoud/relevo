@@ -2,10 +2,12 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -45,6 +47,10 @@ type deleteRefCall struct {
 
 type listRefsCall struct {
 	Dir, Prefix string
+}
+
+type refOnRemoteCall struct {
+	Dir, Ref string
 }
 
 type commitTreeCall struct {
@@ -152,8 +158,7 @@ type fakeGit struct {
 	removeWorktreeCalls []removeWorktreeCall
 
 	// materializeCalls records every MaterializeTree call; materializeErr
-	// makes each one fail. Both are the scratch worktree's two hooks
-	// (2026-09-24-cockpit-design.md §3.4).
+	// makes each one fail. Both are the scratch worktree's hooks.
 	materializeCalls []struct{ dir, tree string }
 	materializeErr   error
 
@@ -179,9 +184,14 @@ type fakeGit struct {
 	deleteRefCalls []deleteRefCall
 	deleteRefErr   error
 
-	listRefsCalls  []listRefsCall
-	listRefsResult []string
-	listRefsErr    error
+	listRefsCalls    []listRefsCall
+	listRefsResult   []string
+	listRefsByPrefix map[string][]string
+	listRefsErr      error
+
+	refOnRemoteCalls []refOnRemoteCall
+	refOnRemote      map[string]bool
+	refOnRemoteErr   error
 
 	commitTreeCalls []commitTreeCall
 	commitTreeSHA   string
@@ -355,7 +365,7 @@ func (f *fakeGit) AddDetachedWorktree(ctx context.Context, dir, path, commit str
 }
 
 // MaterializeTree records the call and touches no disk, like the other
-// worktree methods here (2026-09-24-cockpit-design.md §3.4).
+// worktree methods here.
 func (f *fakeGit) MaterializeTree(ctx context.Context, dir, tree string) error {
 	f.materializeCalls = append(f.materializeCalls, struct{ dir, tree string }{dir, tree})
 	return f.materializeErr
@@ -433,7 +443,18 @@ func (f *fakeGit) ListRefs(ctx context.Context, dir, prefix string) ([]string, e
 	if f.listRefsErr != nil {
 		return nil, f.listRefsErr
 	}
+	if f.listRefsByPrefix != nil {
+		return f.listRefsByPrefix[prefix], nil
+	}
 	return f.listRefsResult, nil
+}
+
+func (f *fakeGit) RefOnRemote(ctx context.Context, dir, ref string) (bool, error) {
+	f.refOnRemoteCalls = append(f.refOnRemoteCalls, refOnRemoteCall{Dir: dir, Ref: ref})
+	if f.refOnRemoteErr != nil {
+		return false, f.refOnRemoteErr
+	}
+	return f.refOnRemote[ref], nil
 }
 
 func (f *fakeGit) CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error) {
@@ -573,6 +594,8 @@ func (f *fakeGit) RemoteBranchExists(ctx context.Context, dir, remote, branch st
 }
 
 func TestFakeSatisfiesGit(t *testing.T) {
+	t.Parallel()
+
 	var _ Git = (*fakeGit)(nil)
 	var _ Git = (*git.Client)(nil)
 }
@@ -598,9 +621,10 @@ func withClock(rt Runtime, c *fakeClock) Runtime {
 // unscripted pid is alive until killed), and reports the exit code a test
 // set with exit(). Nothing here runs a process.
 type fakeRunner struct {
-	specs   []ProcSpec
-	handles []ProcHandle
-	kills   []ProcHandle
+	specs       []spawn.ProcSpec
+	handles     []spawn.ProcHandle
+	kills       []spawn.ProcHandle
+	killStreams []string
 
 	startErr error
 	aliveErr error
@@ -621,7 +645,26 @@ type fakeRunner struct {
 	exits     map[int]int
 	nextPID   int
 	exitPaths []string
-	rusages   map[int]ProcRusage
+	rusages   map[int]spawn.ProcRusage
+
+	// scopeActive is the answer ScopeActive gives per unit base name; a
+	// missing key is false. scopeQueries records every unit asked for, in
+	// order, so a test can prove that no probe ran.
+	scopeActive  map[string]bool
+	scopeQueries []string
+
+	// scopeResults is the answer ScopeResult gives per unit base name; a
+	// missing key returns "". scopeResultQueries records every unit asked for,
+	// in order, so a test can prove that no probe ran.
+	scopeResults       map[string]string
+	scopeResultQueries []string
+
+	// scopeStops records every unit StopScope was asked to end, in order, so
+	// a test can prove that a scope was reaped -- or that none was.
+	scopeStops []string
+	// scopeStopErr, when set, is what StopScope returns, so a test can pin
+	// the refusal when a scope cannot be ended.
+	scopeStopErr error
 }
 
 func newFakeRunner() *fakeRunner {
@@ -637,22 +680,22 @@ func (f *fakeRunner) script(pid int, answers ...bool) {
 func (f *fakeRunner) exit(pid, code int) { f.exits[pid] = code }
 
 // setRusage sets what Rusage reports for pid; an unset pid reports ok=false.
-func (f *fakeRunner) setRusage(pid int, r ProcRusage) {
+func (f *fakeRunner) setRusage(pid int, r spawn.ProcRusage) {
 	if f.rusages == nil {
-		f.rusages = map[int]ProcRusage{}
+		f.rusages = map[int]spawn.ProcRusage{}
 	}
 	f.rusages[pid] = r
 }
 
-func (f *fakeRunner) Start(_ context.Context, spec ProcSpec) (ProcHandle, error) {
+func (f *fakeRunner) Start(_ context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
 	if f.onStart != nil {
 		f.onStart()
 	}
 	if f.startErr != nil {
-		return ProcHandle{}, f.startErr
+		return spawn.ProcHandle{}, f.startErr
 	}
 	f.nextPID++
-	h := ProcHandle{PID: f.nextPID, StartedAt: time.Unix(1_700_000_000+int64(f.nextPID), 0)}
+	h := spawn.ProcHandle{PID: f.nextPID, StartedAt: time.Unix(1_700_000_000+int64(f.nextPID), 0)}
 	f.specs = append(f.specs, spec)
 	f.handles = append(f.handles, h)
 	if _, scripted := f.alive[h.PID]; !scripted {
@@ -661,7 +704,7 @@ func (f *fakeRunner) Start(_ context.Context, spec ProcSpec) (ProcHandle, error)
 	return h, nil
 }
 
-func (f *fakeRunner) Alive(_ context.Context, h ProcHandle) (bool, error) {
+func (f *fakeRunner) Alive(_ context.Context, h spawn.ProcHandle) (bool, error) {
 	if f.onAlive != nil {
 		f.onAlive()
 	}
@@ -678,24 +721,52 @@ func (f *fakeRunner) Alive(_ context.Context, h ProcHandle) (bool, error) {
 	return seq[0], nil
 }
 
-func (f *fakeRunner) ExitCode(_ context.Context, h ProcHandle, path string) (int, bool) {
+func (f *fakeRunner) ExitCode(_ context.Context, h spawn.ProcHandle, path string) (int, bool) {
 	f.exitPaths = append(f.exitPaths, path)
 	code, ok := f.exits[h.PID]
 	return code, ok
 }
 
-func (f *fakeRunner) Kill(_ context.Context, h ProcHandle) error {
+func (f *fakeRunner) Kill(_ context.Context, h spawn.ProcHandle, streamPath string) error {
 	if f.killErr != nil {
 		return f.killErr
 	}
 	f.kills = append(f.kills, h)
+	f.killStreams = append(f.killStreams, streamPath)
 	f.alive[h.PID] = []bool{false}
 	return nil
 }
 
-func (f *fakeRunner) Rusage(_ context.Context, h ProcHandle, _ string) (ProcRusage, bool) {
+func (f *fakeRunner) Rusage(_ context.Context, h spawn.ProcHandle, _ string) (spawn.ProcRusage, bool) {
 	r, ok := f.rusages[h.PID]
 	return r, ok
+}
+
+// ScopeActive implements ScopeProber: it records the unit and answers from
+// scopeActive, so a send test can prove both that the guard fired and that
+// scopes-off never probes.
+func (f *fakeRunner) ScopeActive(_ context.Context, unit string) (bool, error) {
+	f.scopeQueries = append(f.scopeQueries, unit)
+	return f.scopeActive[unit], nil
+}
+
+// ScopeResult implements ScopeResultProber: it records the unit and answers
+// from scopeResults, so a test can prove that oom detection ran or did not.
+func (f *fakeRunner) ScopeResult(_ context.Context, unit string) (string, error) {
+	f.scopeResultQueries = append(f.scopeResultQueries, unit)
+	return f.scopeResults[unit], nil
+}
+
+// StopScope implements ScopeStopper: it records every unit it is asked to end
+// and, unless a test scripted an error, clears that unit's active flag so a
+// later probe sees it gone.
+func (f *fakeRunner) StopScope(_ context.Context, unit string) error {
+	f.scopeStops = append(f.scopeStops, unit)
+	if f.scopeStopErr != nil {
+		return f.scopeStopErr
+	}
+	delete(f.scopeActive, unit)
+	return nil
 }
 
 // fakeUsage scripts what the usage reader returns and records the Source
@@ -722,4 +793,73 @@ func (f *fakeUsage) Read(ctx context.Context, src usage.Source) ([]usage.Sample,
 func (f *fakeUsage) Peek(ctx context.Context, src usage.Source) ([]usage.Sample, string) {
 	f.peeks = append(f.peeks, src)
 	return f.peekSamples, f.peekNote
+}
+
+func TestFakeRunnerScriptsAliveAndRecordsKills(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeRunner()
+	var _ spawn.Runner = f
+	var _ spawn.ScopeStopper = (*fakeRunner)(nil)
+
+	h, err := f.Start(context.Background(), spawn.ProcSpec{Dir: "/tree", Argv: []string{"agy", "-p", "x"}, LogPath: "/state/x/001-builder.log"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(f.specs) != 1 || f.specs[0].Dir != "/tree" || f.specs[0].LogPath != "/state/x/001-builder.log" {
+		t.Fatalf("specs = %+v", f.specs)
+	}
+	if h.PID == 0 || h.StartedAt.IsZero() {
+		t.Fatalf("handle = %+v; want a pid and a time", h)
+	}
+	// Unscripted: alive forever.
+	for i := 0; i < 3; i++ {
+		if alive, _ := f.Alive(context.Background(), h); !alive {
+			t.Fatalf("unscripted Alive #%d = false", i)
+		}
+	}
+	// Scripted: true, true, then false forever.
+	f.script(h.PID, true, true, false)
+	want := []bool{true, true, false, false}
+	for i, w := range want {
+		if alive, _ := f.Alive(context.Background(), h); alive != w {
+			t.Errorf("scripted Alive #%d = %v, want %v", i, alive, w)
+		}
+	}
+	// ExitCode is absent until set.
+	if _, ok := f.ExitCode(context.Background(), h, ""); ok {
+		t.Error("ExitCode before exit() must be ok=false")
+	}
+	f.exit(h.PID, 3)
+	if code, ok := f.ExitCode(context.Background(), h, ""); !ok || code != 3 {
+		t.Errorf("ExitCode = %d, %v; want 3, true", code, ok)
+	}
+
+	// A second Start gets a distinct pid; Kill records it and makes it dead.
+	h2, _ := f.Start(context.Background(), spawn.ProcSpec{Dir: "/tree", Argv: []string{"agy"}, LogPath: "/state/x/002-builder.log"})
+	if h2.PID == h.PID {
+		t.Fatal("two Starts returned the same pid")
+	}
+	if err := f.Kill(context.Background(), h2, "/state/webshop/002-builder.jsonl"); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if len(f.kills) != 1 || f.kills[0] != h2 {
+		t.Errorf("kills = %+v, want [h2]", f.kills)
+	}
+	if len(f.killStreams) != 1 || f.killStreams[0] != "/state/webshop/002-builder.jsonl" {
+		t.Errorf("killStreams = %+v, want [\"/state/webshop/002-builder.jsonl\"]", f.killStreams)
+	}
+	if alive, _ := f.Alive(context.Background(), h2); alive {
+		t.Error("a killed handle must read as not alive")
+	}
+
+	// Errors pass through.
+	f.startErr = errors.New("no binary")
+	if _, err := f.Start(context.Background(), spawn.ProcSpec{Argv: []string{"x"}}); err == nil {
+		t.Error("startErr not returned")
+	}
+	f.aliveErr = errors.New("ps refused")
+	if _, err := f.Alive(context.Background(), h); err == nil {
+		t.Error("aliveErr not returned")
+	}
 }

@@ -61,10 +61,14 @@ pane header, `relevo status`.
   `log_offset`, advertises this, because an older server would ignore the
   parameter and return the whole file. The client keeps an offset per
   (binding, round) and appends to the mirror instead of rewriting it.
-- The client mirrors the server's log entries for the running round (exit,
-  switch, gate), so `show --log` and the ui log tab show them live.
 - The server serves `drift` as a file kind, and the client fetches it once
   after the round starts.
+
+Mirroring the server's log entries is dropped: the server already writes
+relevo's own events (exit, switch, gate) into the builder log as
+`--- relevo HH:MM:SS: … ---` markers (`appendLogMarker`), so the tailed log
+shows them live. Injecting server entries into the client's own log would feed
+reconcile logic that keys on log entries (`HasEntry`, switch counting).
 
 ## 5. Not changed
 

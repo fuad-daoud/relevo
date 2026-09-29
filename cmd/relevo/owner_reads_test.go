@@ -21,7 +21,7 @@ func ownerTabEntry() store.LogEntry {
 	return store.LogEntry{
 		TS:        at,
 		Round:     1,
-		Direction: store.DirToPlanner,
+		Direction: store.DirToMasterMind,
 		Kind:      store.KindReport,
 		Confirmed: true,
 		Usage: &usagepkg.Usage{
@@ -45,7 +45,7 @@ func seedOwnerStore(t *testing.T, s *store.Store, owner string) {
 	}
 	if err := s.AppendLog("api", store.LogEntry{
 		TS: time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC), Round: 1,
-		Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog plan: %v", err)
 	}
@@ -80,7 +80,7 @@ func seedServeOwnerState(t *testing.T, label string) (*store.Store, string) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	clients, err := serve.LoadClients(d, filepath.Join(serveRoot, "clients.json"))
+	clients, err := serve.LoadClients(d)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -152,58 +152,5 @@ func TestShowOwnerLogIsTheOldServeLog(t *testing.T) {
 	}
 	if _, ok := owner.ViewedAt("api"); ok {
 		t.Error("show --owner --log must not stamp .viewed")
-	}
-}
-
-// TestHistoryTabOwnerIsTheOldServeTab pins §4.2: `history --tab --owner X`
-// sums that owner's bindings, byte-for-byte the way the old `serve tab
-// --owner X` did. The reference is the client `history --tab`, already pinned
-// byte-equal to the removed `relevo tab`, over an identically seeded local
-// binding: both render bare binding names through the same tail.
-func TestHistoryTabOwnerIsTheOldServeTab(t *testing.T) {
-	_, root := seedServeOwnerState(t, "alice")
-
-	local := store.New(root)
-	seedOwnerStore(t, local, "")
-
-	want, _, err := captureOutput(t, func() error { return cmdHistory([]string{"--tab"}) })
-	if err != nil {
-		t.Fatalf("history --tab: %v", err)
-	}
-	got, _, err := captureOutput(t, func() error {
-		return cmdHistory([]string{"--tab", "--owner", "alice"})
-	})
-	if err != nil {
-		t.Fatalf("history --tab --owner alice: %v", err)
-	}
-	if string(got) != string(want) {
-		t.Errorf("history --tab --owner alice =\n%q\nwant the client tab's\n%q", got, want)
-	}
-}
-
-// TestHistoryTabOwnerAllIsEveryOwner pins §4.2: `--owner all` covers every
-// owner, with the binding group reading `<label>/<name>`, and `--by owner`
-// groups by label.
-func TestHistoryTabOwnerAllIsEveryOwner(t *testing.T) {
-	seedServeOwnerState(t, "alice")
-
-	stdout, _, err := captureOutput(t, func() error {
-		return cmdHistory([]string{"--tab", "--owner", "all"})
-	})
-	if err != nil {
-		t.Fatalf("history --tab --owner all: %v", err)
-	}
-	if !strings.Contains(string(stdout), "alice/api") {
-		t.Errorf("history --tab --owner all =\n%q\nwant the alice/api binding group", stdout)
-	}
-
-	stdout, _, err = captureOutput(t, func() error {
-		return cmdHistory([]string{"--tab", "--owner", "alice", "--by", "owner"})
-	})
-	if err != nil {
-		t.Fatalf("history --tab --owner alice --by owner: %v", err)
-	}
-	if !strings.Contains(string(stdout), "alice") {
-		t.Errorf("history --tab --owner alice --by owner =\n%q\nwant the alice owner group", stdout)
 	}
 }

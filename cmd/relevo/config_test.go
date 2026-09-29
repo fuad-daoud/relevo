@@ -337,6 +337,48 @@ func TestConfigServerKeyIsStable(t *testing.T) {
 	}
 }
 
+func TestConfigServerKeyEnrollLinePrintsOnlyTheLine(t *testing.T) {
+	initRoot(t)
+
+	plain, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "server", "key"})
+	})
+	if err != nil {
+		t.Fatalf("server key: %v (stderr: %s)", err, stderr)
+	}
+	line, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "server", "key", "--enroll-line"})
+	})
+	if err != nil {
+		t.Fatalf("server key --enroll-line: %v", err)
+	}
+
+	if !strings.HasSuffix(string(line), "\n") || strings.Count(string(line), "\n") != 1 {
+		t.Errorf("--enroll-line output = %q, want exactly one line ending in a newline", line)
+	}
+	if !strings.HasPrefix(string(line), "ed25519 ") {
+		t.Errorf("--enroll-line output = %q, want an ed25519 line", line)
+	}
+	want := strings.Split(string(plain), "\n")[1] + "\n"
+	if string(line) != want {
+		t.Errorf("--enroll-line output = %q, want the plain output's second line %q", line, want)
+	}
+
+	t.Run("generates the key when run first", func(t *testing.T) {
+		initRoot(t)
+
+		out, _, err := captureOutput(t, func() error {
+			return run([]string{"config", "server", "key", "--enroll-line"})
+		})
+		if err != nil {
+			t.Fatalf("server key --enroll-line first: %v", err)
+		}
+		if !strings.HasPrefix(string(out), "ed25519 ") {
+			t.Errorf("--enroll-line first = %q, want an ed25519 line", out)
+		}
+	})
+}
+
 func TestConfigSecretSetListHidesValue(t *testing.T) {
 	initRoot(t)
 

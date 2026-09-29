@@ -1,22 +1,17 @@
 package db
 
 import (
-	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
-	"testing/fstest"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 func TestConfigRoundTrip(t *testing.T) {
 	d := openTestDB(t)
 	now := time.Now().UTC()
 
-	// Absent reads.
 	if _, ok, err := d.ConfigGet("policy"); err != nil || ok {
 		t.Fatalf("ConfigGet absent = (_, %v, %v), want (_, false, nil)", ok, err)
 	}
@@ -32,7 +27,6 @@ func TestConfigRoundTrip(t *testing.T) {
 		t.Errorf("body = %q, want {\"a\":1}", body)
 	}
 
-	// Upsert overwrites.
 	if err := d.Tx(func(tx *Tx) error { return tx.ConfigPut("policy", []byte(`{"b":2}`), now) }); err != nil {
 		t.Fatalf("ConfigPut overwrite: %v", err)
 	}
@@ -141,47 +135,6 @@ func TestConfigImportRecord(t *testing.T) {
 	}
 }
 
-// TestOpenReadOnlySchemaOne: a database migrated only to v1 has no config
-// tables, and every config read reports absent rather than erroring.
-func TestOpenReadOnlySchemaOne(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relevo.db")
-
-	one, err := migrationFiles.ReadFile("migrations/001_initial.sql")
-	if err != nil {
-		t.Fatalf("read migration 001: %v", err)
-	}
-	fsys := fstest.MapFS{
-		"migrations/001_initial.sql": &fstest.MapFile{Data: one},
-	}
-
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	if err := applyMigrations(sqlDB, fsys); err != nil {
-		t.Fatalf("applyMigrations: %v", err)
-	}
-	if err := sqlDB.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-
-	d, err := OpenReadOnly(path)
-	if err != nil {
-		t.Fatalf("OpenReadOnly: %v", err)
-	}
-	defer d.Close()
-
-	if _, ok, err := d.ConfigGet("policy"); err != nil || ok {
-		t.Fatalf("ConfigGet on schema 1 = (_, %v, %v), want (_, false, nil)", ok, err)
-	}
-	if v, err := d.ConfigVersion(); err != nil || v != 0 {
-		t.Fatalf("ConfigVersion on schema 1 = (%d, %v), want (0, nil)", v, err)
-	}
-	if _, ok, err := d.SecretGet("client.key"); err != nil || ok {
-		t.Fatalf("SecretGet on schema 1 = (_, %v, %v), want (_, false, nil)", ok, err)
-	}
-}
-
 func TestOpenReadOnlyMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "absent.db")
 	_, err := OpenReadOnly(path)
@@ -200,7 +153,7 @@ func TestOpenChmodsDBFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	info, err := os.Stat(path)
 	if err != nil {

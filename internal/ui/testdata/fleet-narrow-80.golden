@@ -1,30 +1,30 @@
- relevo › fleet             ● 1 needs you  ·  codex gated until 15:30  ·  14:02 
-6 bindings · 1 needs you · 3 active            sort attention · refreshed 0s ago
-   NAME            ON                      RND   STATE       NOW                
-▎  webshop         -                       r4    NEEDS YOU   question · 2m      
-     └ which branch should r4 target?                                           
-   api             -                       r2    ACTIVE      working            
-   atlas           -                       r4    ACTIVE      working            
-   worker          opencode-1              r2    ACTIVE      working            
-   ledger          -                       r3    PAUSED      paused             
-   docs            -                       r1    DONE        done · 3h          
+  ◆ relevo    fleet                      ● 1 needs you     v0.13.0-28    14:02  
+                                                                                
+   5 live   1 needs you   3 working   1 on hold   1 done                        
+                                                                                
+ ╭─ webshop  round 4 · question · 2m ─────────────────────────────────────────╮ 
+ │  MasterMind architect-1  ·  -  ·  relevo/webshop  ·  $9.40                 │ 
+ │                                                                            │ 
+ │    enter  open round                                                       │ 
+ ╰────────────────────────────────────────────────────────────────────────────╯ 
+                                                                                
+     needs you   1    a builder is waiting on an answer                         
+ ▍ ●  webshop             r4 · question · 2m      -                        $9.40
+        ╰ which branch should r4 target?                                        
+                                                                                
+     working   3    a round is running                                          
+   ●  api                 r2 · working            -                             
+   ●  atlas               r4 · working            -                        $0.16
+   ●  worker              r2 · working            opencode-1                    
+                                                                                
+     on hold   1    paused or held                                              
+   ◐  ledger              r3 · paused             -                       ~$1.63
+                                                                                
+   ✓  1 done  ·  1 today  ·  last docs 3h ago       .  show                     
                                                                                 
                                                                                 
                                                                                 
                                                                                 
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-                                                                                
-────────────────────────────────────────────────────────────────────────────────
-↑↓ move   home/end first/last   enter open   : command   ? help   q quit        
+   ◌ gated  codex 1h  ·  the pick skips them                                    
+
+ enter  open      /  filter      :  command      ?  all keys      q  quit       

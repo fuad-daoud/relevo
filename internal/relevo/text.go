@@ -3,12 +3,34 @@ package relevo
 import (
 	"fmt"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // The result lines of the three pick-able verbs live here, not in cmd/relevo,
 // because the picker's result screen (internal/pick) prints the same text the
 // terminal does. Each returns the exact bytes cmd/relevo printed before #15,
 // without a trailing newline; the caller adds one.
+
+// showCommand renders the `relevo show` command that prints one round's
+// artifact, the durable way to name a closed round whose files may be sealed
+// into the database.
+func showCommand(name string, round int, section string) string {
+	return fmt.Sprintf("relevo show %s --round %d --%s", name, round, section)
+}
+
+// brief reduces an error to one line, for a reason or note field where a
+// multi-line git message would break the line's shape.
+func brief(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := strings.TrimSpace(err.Error())
+	if idx := strings.Index(s, "\n"); idx != -1 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	return s
+}
 
 // DoneText is what `relevo done` says on success: one line for the binding,
 // then at most one for its worktree.
@@ -40,50 +62,21 @@ func RestoreText(res Resolution) string {
 	return strings.Join(lines, "\n")
 }
 
-// LandText is what `relevo land` says on success: what was landed and how far
-// it got, then the PR (or the exact command that would open one).
-func LandText(res LandResult) string {
-	how := "merged"
-	if res.Rebased {
-		how = "rebased"
-	}
-	line := fmt.Sprintf("landed %s -> %s (%s; gate %s; pushed)",
-		res.Branch, res.Base, how, res.GateResult)
-	switch {
-	case res.PRURL != "":
-		line += "\n  pr: " + res.PRURL
-	case res.PRCommand != "":
-		line += "\n  open the PR: " + res.PRCommand
-	}
-	return line
-}
-
 // StopText is what `relevo stop` says on success: what happened to the round.
 func StopText(name string, res StopResult) string {
+	clause := withoutArtifact(res.Shape)
 	switch res.Action {
 	case "killed":
-		return fmt.Sprintf("%s round %d stopped: process killed; round closed without a report unless one was on disk", name, res.Round)
+		return fmt.Sprintf("%s round %d stopped: process killed; round closed %s unless one was on disk", name, res.Round, clause)
+	case "reaped":
+		return fmt.Sprintf("%s round %d stopped: reaped the round's scope (its runner was already gone); round closed %s unless one was on disk", name, res.Round, clause)
+	case "gone":
+		return fmt.Sprintf("%s round %d stopped: its runner was already gone and nothing was left running; round closed %s unless one was on disk", name, res.Round, clause)
 	case "dequeued":
-		return fmt.Sprintf("%s round %d stopped: dropped from the server queue before it started; round closed without a report", name, res.Round)
+		return fmt.Sprintf("%s round %d stopped: dropped from the server queue before it started; round closed %s", name, res.Round, clause)
 	default:
 		return fmt.Sprintf("%s has no open round; nothing to stop", name)
 	}
-}
-
-// HumanBytes renders n as a binary (1024-based) human-readable size, e.g.
-// "512 B", "1.5 KiB", "3.0 MiB". It is the one implementation the CLI and the
-// dry run share, so `relevo db stats` and `relevo send --dry-run` never disagree.
-func HumanBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 // RenderDryRun is what `relevo send --dry-run` prints: the round it would open,
@@ -92,10 +85,10 @@ func HumanBytes(n int64) string {
 func RenderDryRun(d DryRun) string {
 	lines := []string{
 		fmt.Sprintf("would send round %d to %s", d.Round, d.Name),
-		fmt.Sprintf("  %-8s  %s", "builder", dryRunBuilderLine(d)),
+		fmt.Sprintf("  %-8s  %s", "runner", dryRunBuilderLine(d)),
 		fmt.Sprintf("  %-8s  %s", "where", d.Where),
 		fmt.Sprintf("  %-8s  %s", "tier", d.Tier),
-		fmt.Sprintf("  %-8s  %s  (staged from %s, %s)", "plan", d.PlanPath, d.PlanFrom, HumanBytes(d.PlanBytes)),
+		fmt.Sprintf("  %-8s  %s  (staged from %s, %s)", "prompt", d.PromptPath, d.PromptFrom, view.HumanBytes(d.PromptBytes)),
 		fmt.Sprintf("  %-8s  %s", "report", d.ReportPath),
 		fmt.Sprintf("  %-8s  %s", "marker", d.DonePath),
 	}
@@ -103,7 +96,7 @@ func RenderDryRun(d DryRun) string {
 	if len(d.PromptHead) > 0 {
 		first = d.PromptHead[0]
 	}
-	lines = append(lines, fmt.Sprintf("  %-8s  %s", "prompt", first))
+	lines = append(lines, fmt.Sprintf("  %-8s  %s", "head", first))
 	for _, cont := range d.PromptHead[1:] {
 		lines = append(lines, "            "+cont)
 	}

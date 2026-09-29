@@ -88,80 +88,39 @@ func TestServeChecksNoServerKey(t *testing.T) {
 	}
 }
 
+// TestServeChecksCertificate pins the certificate row's four outcomes: valid,
+// expiring within 30 days, expired, and unreadable (bad PEM).
 func TestServeChecksCertificate(t *testing.T) {
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	serveRoot := "/fake/serve"
+	env := &fakeEnv{existingFiles: map[string]bool{serveRoot: true}}
 
-	t.Run("valid certificate", func(t *testing.T) {
-		certPEM := makeTestCertPEM(t, now.Add(-time.Hour), now.Add(365*24*time.Hour))
-		env := &fakeEnv{
-			existingFiles: map[string]bool{serveRoot: true},
-		}
-		checks := ServeChecks(env, serveTestDB(t, true, certPEM, ""), serveRoot, now)
-		c := findCheck(Report{Checks: checks}, "serve", "certificate")
-		if c == nil {
-			t.Fatal("missing serve: certificate check")
-		}
-		if c.Severity != SevOK {
-			t.Errorf("severity = %v, want SevOK", c.Severity)
-		}
-		if !strings.Contains(c.Detail, "valid") {
-			t.Errorf("detail = %q, want containing 'valid'", c.Detail)
-		}
-	})
-
-	t.Run("expiring within 30d", func(t *testing.T) {
-		certPEM := makeTestCertPEM(t, now.Add(-time.Hour), now.Add(15*24*time.Hour))
-		env := &fakeEnv{
-			existingFiles: map[string]bool{serveRoot: true},
-		}
-		checks := ServeChecks(env, serveTestDB(t, true, certPEM, ""), serveRoot, now)
-		c := findCheck(Report{Checks: checks}, "serve", "certificate")
-		if c == nil {
-			t.Fatal("missing serve: certificate check")
-		}
-		if c.Severity != SevWarn {
-			t.Errorf("severity = %v, want SevWarn", c.Severity)
-		}
-		if !strings.Contains(c.Detail, "expires") {
-			t.Errorf("detail = %q, want containing 'expires'", c.Detail)
-		}
-	})
-
-	t.Run("expired certificate", func(t *testing.T) {
-		certPEM := makeTestCertPEM(t, now.Add(-48*time.Hour), now.Add(-24*time.Hour))
-		env := &fakeEnv{
-			existingFiles: map[string]bool{serveRoot: true},
-		}
-		checks := ServeChecks(env, serveTestDB(t, true, certPEM, ""), serveRoot, now)
-		c := findCheck(Report{Checks: checks}, "serve", "certificate")
-		if c == nil {
-			t.Fatal("missing serve: certificate check")
-		}
-		if c.Severity != SevFail {
-			t.Errorf("severity = %v, want SevFail", c.Severity)
-		}
-		if !strings.Contains(c.Detail, "expired") {
-			t.Errorf("detail = %q, want containing 'expired'", c.Detail)
-		}
-	})
-
-	t.Run("unreadable certificate", func(t *testing.T) {
-		env := &fakeEnv{
-			existingFiles: map[string]bool{serveRoot: true},
-		}
-		checks := ServeChecks(env, serveTestDB(t, true, "not a pem", ""), serveRoot, now)
-		c := findCheck(Report{Checks: checks}, "serve", "certificate")
-		if c == nil {
-			t.Fatal("missing serve: certificate check")
-		}
-		if c.Severity != SevFail {
-			t.Errorf("severity = %v, want SevFail", c.Severity)
-		}
-		if !strings.Contains(c.Detail, "unreadable") {
-			t.Errorf("detail = %q, want containing 'unreadable'", c.Detail)
-		}
-	})
+	tests := []struct {
+		name       string
+		certPEM    string
+		wantSev    Severity
+		wantDetail string
+	}{
+		{name: "valid certificate", certPEM: makeTestCertPEM(t, now.Add(-time.Hour), now.Add(365*24*time.Hour)), wantSev: SevOK, wantDetail: "valid"},
+		{name: "expiring within 30d", certPEM: makeTestCertPEM(t, now.Add(-time.Hour), now.Add(15*24*time.Hour)), wantSev: SevWarn, wantDetail: "expires"},
+		{name: "expired certificate", certPEM: makeTestCertPEM(t, now.Add(-48*time.Hour), now.Add(-24*time.Hour)), wantSev: SevFail, wantDetail: "expired"},
+		{name: "unreadable certificate", certPEM: "not a pem", wantSev: SevFail, wantDetail: "unreadable"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := ServeChecks(env, serveTestDB(t, true, tc.certPEM, ""), serveRoot, now)
+			c := findCheck(Report{Checks: checks}, "serve", "certificate")
+			if c == nil {
+				t.Fatal("missing serve: certificate check")
+			}
+			if c.Severity != tc.wantSev {
+				t.Errorf("severity = %v, want %v", c.Severity, tc.wantSev)
+			}
+			if !strings.Contains(c.Detail, tc.wantDetail) {
+				t.Errorf("detail = %q, want containing %q", c.Detail, tc.wantDetail)
+			}
+		})
+	}
 }
 
 func TestServeChecksClients(t *testing.T) {

@@ -1,0 +1,1 @@
+ok  example.com/pkg/b  0.003s  coverage: 50.0% of statements

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/consult"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -56,22 +58,24 @@ func tickConsults(t *testing.T, rt Runtime) store.Binding {
 		if err != nil {
 			return err
 		}
-		out, err = reconcileConsults(context.Background(), rt, tx, b)
+		out, err = consult.Reconcile(context.Background(), consultDeps(rt), tx, b)
 		if err != nil {
 			return err
 		}
 		return tx.Save(out)
 	})
 	if err != nil {
-		t.Fatalf("reconcileConsults: %v", err)
+		t.Fatalf("consult.Reconcile: %v", err)
 	}
 	return out
 }
 
 // This is the mutation-test target named in the spec: delete the
-// `State != ConsultRunning` guard at the top of reconcileConsults and this
+// `State != ConsultRunning` guard at the top of consult.Reconcile and this
 // fails. Without the guard every tick re-queues findings already delivered.
 func TestTerminalConsultsAreNeverRevisited(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, c := seedHeadlessConsult(t, fr)
 
@@ -129,7 +133,7 @@ func seedSpawning(t *testing.T) (Runtime, *fakeClock) {
 			Role:         "reviewer",
 			Round:        1,
 			AskPath:      "/repo/.relevo/consults/7f2a3c1d-ask.md",
-			FindingsPath: "/repo/.relevo/consults/7f2a3c1d-findings.md",
+			FindingsPath: rt.Store.FindingsPath("webshop", 1, "7f2a3c1d"),
 			Endpoint:     store.Endpoint{AgentName: "reviewer", Kind: "claude"},
 			State:        store.ConsultSpawning,
 			SpawnedAt:    baseTime,
@@ -142,6 +146,8 @@ func seedSpawning(t *testing.T) (Runtime, *fakeClock) {
 }
 
 func TestReconcileSkipsAFreshReservation(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedSpawning(t)
 
 	b := tickConsults(t, rt)
@@ -161,8 +167,10 @@ func TestReconcileSkipsAFreshReservation(t *testing.T) {
 }
 
 func TestReconcileExpiresAStaleReservation(t *testing.T) {
+	t.Parallel()
+
 	rt, clock := seedSpawning(t)
-	clock.Advance(consultSpawnTimeout + time.Second)
+	clock.Advance(consult.SpawnTimeout + time.Second)
 
 	b := tickConsults(t, rt)
 	if b.Consults[0].State != store.ConsultSilent {
@@ -194,70 +202,46 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 	}
 }
 
-// TestReconcileAbandonsLegacyPaneConsult pins #303's upgrade path: a consult
-// endpoint written before this round has Mode "" (a pane consult). relevo can
-// no longer drive a pane, so the next reconcile closes it silent with the
-// reason and reports it to the planner, instead of reconciling it as a pane.
-
-// TestReconcileAbandonsLegacyPaneConsult pins #303's upgrade path: a consult
-// endpoint written before this round has Mode "" (a pane consult). relevo can
-// no longer drive a pane, so the next reconcile closes it silent with the
-// reason and reports it to the planner, instead of reconciling it as a pane.
-func TestReconcileAbandonsLegacyPaneConsult(t *testing.T) {
+// seedHeadlessConsult puts a running headless consult on the webshop binding
+// and returns the runtime and the record relevo made. The record is seeded
+// directly -- the consult machinery no longer has a verb to drive it -- with
+// fr standing in as the runtime's Runner.
+func seedHeadlessConsult(t *testing.T, fr *fakeRunner) (Runtime, store.Consult) {
+	t.Helper()
 	rt, _ := seedBound(t)
+	rt.Runner = fr
+	rt.NewID = func() string { return "7f2a3c1d" }
+
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	b.Consults = []store.Consult{{
+	handle, err := fr.Start(context.Background(), spawn.ProcSpec{Dir: b.CWD, LogPath: rt.Store.ConsultStreamPath(b.Name, b.Round, "7f2a3c1d")})
+	if err != nil {
+		t.Fatalf("start fake consult: %v", err)
+	}
+	c := store.Consult{
 		ID:           "7f2a3c1d",
 		Role:         "reviewer",
-		Round:        1,
-		AskPath:      "/repo/.relevo/consults/7f2a3c1d-ask.md",
-		FindingsPath: "/repo/.relevo/consults/7f2a3c1d-findings.md",
-		Endpoint:     store.Endpoint{AgentName: "webshop-reviewer-7f2a3c1d", Kind: "claude", PaneID: "w2:p9"},
-		State:        store.ConsultRunning,
-		SpawnedAt:    baseTime,
-	}}
+		Round:        b.Round,
+		AskPath:      rt.Store.AskPath(b.Name, b.Round, "7f2a3c1d"),
+		FindingsPath: rt.Store.FindingsPath(b.Name, b.Round, "7f2a3c1d"),
+		Endpoint: store.Endpoint{
+			AgentName: b.Name + "-reviewer-7f2a3c1d",
+			Kind:      "claude",
+			Mode:      store.ModeHeadless,
+			PID:       handle.PID,
+			StartedAt: handle.StartedAt.Unix(),
+			LogPath:   rt.Store.ConsultStreamPath(b.Name, b.Round, "7f2a3c1d"),
+		},
+		State:     store.ConsultRunning,
+		SpawnedAt: rt.Now().UTC(),
+	}
+	b.Consults = append(b.Consults, c)
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-
-	got := tickConsults(t, rt)
-
-	if got.Consults[0].State != store.ConsultSilent {
-		t.Fatalf("state = %q, want silent", got.Consults[0].State)
-	}
-	if got.Consults[0].Note != "pane consults were removed (#303)" {
-		t.Errorf("note = %q, want the #303 reason", got.Consults[0].Note)
-	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
-	if err != nil || !found {
-		t.Fatalf("legacy consult was not reported: found=%v err=%v", found, err)
-	}
-	if pending.Kind != store.KindFindings {
-		t.Errorf("entry kind = %q, want findings", pending.Kind)
-	}
-}
-
-// seedHeadlessConsult asks for a consult as a process on the webshop binding
-// and returns the runtime and the record relevo made.
-
-// seedHeadlessConsult asks for a consult as a process on the webshop binding
-// and returns the runtime and the record relevo made.
-func seedHeadlessConsult(t *testing.T, fr *fakeRunner) (Runtime, store.Consult) {
-	t.Helper()
-	rt, _ := seedForAsk(t)
-	rt.Runner = fr
-	q := writeQuestion(t, "review it")
-
-	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
-	})
-	if err != nil {
-		t.Fatalf("Ask: %v", err)
-	}
-	return rt, res.Consult
+	return rt, c
 }
 
 // TestHeadlessConsultFinalMessageBecomesFindings: the process's last
@@ -265,9 +249,11 @@ func seedHeadlessConsult(t *testing.T, fr *fakeRunner) (Runtime, store.Consult) 
 // consult running and this fails.
 
 // TestHeadlessConsultFinalMessageBecomesFindings: the process's last
-// assistant message is the findings. Deleting the WriteFile leaves the
+// assistant message is the findings. Deleting the PutRoundFile leaves the
 // consult running and this fails.
 func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, c := seedHeadlessConsult(t, fr)
 
@@ -284,14 +270,17 @@ func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
 	if b.Consults[0].State != store.ConsultDone {
 		t.Fatalf("state = %q, want done", b.Consults[0].State)
 	}
-	body, err := os.ReadFile(c.FindingsPath)
+	if _, err := os.Stat(c.FindingsPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no findings file on disk, got err: %v", err)
+	}
+	body, err := rt.Store.ReadFile(c.FindingsPath)
 	if err != nil {
 		t.Fatalf("read findings: %v", err)
 	}
 	if !strings.Contains(string(body), "FINDINGS BODY") {
 		t.Errorf("findings = %q, want it to contain the final message", body)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("findings were not queued: found=%v err=%v", found, err)
 	}
@@ -306,6 +295,8 @@ func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
 // TestHeadlessConsultExitWithoutTextIsSilent: a process that died without a
 // final message is reported silent with its exit code and where to look.
 func TestHeadlessConsultExitWithoutTextIsSilent(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, c := seedHeadlessConsult(t, fr)
 
@@ -327,27 +318,32 @@ func TestHeadlessConsultExitWithoutTextIsSilent(t *testing.T) {
 	if !strings.Contains(note, c.Endpoint.LogPath) {
 		t.Errorf("note = %q, want it to point at the stream %s", note, c.Endpoint.LogPath)
 	}
-	if _, err := os.Stat(c.FindingsPath); err == nil {
+	if _, err := rt.Store.ReadFile(c.FindingsPath); err == nil {
 		t.Error("a silent consult must write no findings file")
 	}
 }
 
-// TestHeadlessConsultTimesOut: a process still alive past consultTimeout is
+// TestHeadlessConsultTimesOut: a process still alive past consult.Timeout is
 // killed and reported silent.
 
-// TestHeadlessConsultTimesOut: a process still alive past consultTimeout is
+// TestHeadlessConsultTimesOut: a process still alive past consult.Timeout is
 // killed and reported silent.
 func TestHeadlessConsultTimesOut(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, c := seedHeadlessConsult(t, fr)
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
 
-	clock.Advance(consultTimeout + time.Second)
+	clock.Advance(consult.Timeout + time.Second)
 	b := tickConsults(t, rt)
 
 	if len(fr.kills) != 1 {
 		t.Fatalf("kills = %d, want 1", len(fr.kills))
+	}
+	if len(fr.killStreams) < 1 || fr.killStreams[0] != c.Endpoint.LogPath {
+		t.Errorf("killStreams[0] = %q, want %q", fr.killStreams, c.Endpoint.LogPath)
 	}
 	if b.Consults[0].State != store.ConsultSilent {
 		t.Fatalf("state = %q, want silent", b.Consults[0].State)
@@ -369,6 +365,8 @@ func TestHeadlessConsultTimesOut(t *testing.T) {
 // Mutation check: move FinalText back before the trailer check and this fails:
 // the partial text becomes a findings file and the record is Done.
 func TestHeadlessConsultNoTrailerIsSilentDespiteText(t *testing.T) {
+	t.Parallel()
+
 	// run leaves an assistant message on the stream and kills the process
 	// without a trailer, then ticks the consults.
 	run := func(t *testing.T, rt Runtime, fr *fakeRunner, c store.Consult) store.Binding {
@@ -380,7 +378,7 @@ func TestHeadlessConsultNoTrailerIsSilentDespiteText(t *testing.T) {
 		return tickConsults(t, rt)
 	}
 
-	assertSilent := func(t *testing.T, c store.Consult, b store.Binding, wants ...string) {
+	assertSilent := func(t *testing.T, rt Runtime, c store.Consult, b store.Binding, wants ...string) {
 		t.Helper()
 		if b.Consults[0].State != store.ConsultSilent {
 			t.Fatalf("state = %q, want silent", b.Consults[0].State)
@@ -397,7 +395,7 @@ func TestHeadlessConsultNoTrailerIsSilentDespiteText(t *testing.T) {
 		if !strings.Contains(note, c.Endpoint.LogPath) {
 			t.Errorf("note = %q, want it to point at the partial output %s", note, c.Endpoint.LogPath)
 		}
-		if _, err := os.Stat(c.FindingsPath); err == nil {
+		if _, err := rt.Store.ReadFile(c.FindingsPath); err == nil {
 			t.Error("a consult with no exit trailer must write no findings file")
 		}
 	}
@@ -408,14 +406,14 @@ func TestHeadlessConsultNoTrailerIsSilentDespiteText(t *testing.T) {
 		rt.StartedAt = baseTime
 		rt.Watched = NewWatched()
 		b := run(t, rt, fr, c)
-		assertSilent(t, c, b, "lost to a daemon restart before it finished", "no exit trailer")
+		assertSilent(t, rt, c, b, "lost to a daemon restart before it finished", "no exit trailer")
 	})
 
 	t.Run("killed by anything else", func(t *testing.T) {
 		fr := newFakeRunner()
 		rt, c := seedHeadlessConsult(t, fr)
 		b := run(t, rt, fr, c)
-		assertSilent(t, c, b, "ended without an exit trailer (killed before it finished)")
+		assertSilent(t, rt, c, b, "ended without an exit trailer (killed before it finished)")
 	})
 }
 
@@ -525,6 +523,8 @@ func TestVerifyVerdictParsedOntoFindingsAndBinding(t *testing.T) {
 // TestVerifyUnstructuredWhenNoBlock pins #144's prose case: findings without
 // a readable block are delivered as unstructured rather than guessed at.
 func TestVerifyUnstructuredWhenNoBlock(t *testing.T) {
+	t.Parallel()
+
 	rt, fr, _, _ := startVerifyRound(t)
 	leaveVerifyStream(t, rt, fr, "I read it; it looks fine to me, no block here.\n")
 

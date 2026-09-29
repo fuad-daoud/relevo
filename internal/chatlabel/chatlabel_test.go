@@ -2,7 +2,9 @@ package chatlabel
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -10,8 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-// readFixture reads one synthetic transcript from testdata. Fixtures are
-// hand-written, never copied from a real session.
+// readFixture reads one synthetic transcript from testdata; never a real session.
 func readFixture(t *testing.T, name string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", name))
@@ -21,59 +22,63 @@ func readFixture(t *testing.T, name string) []byte {
 	return raw
 }
 
-func TestClaudeLatestPromptAndLink(t *testing.T) {
-	label := Claude(readFixture(t, "claude-prompt.jsonl"))
-
-	wantText := "\"The quick brown fox jumps over the lazy dog again…\""
-	if label.Text != wantText {
-		t.Errorf("Text = %q, want %q", label.Text, wantText)
+func TestClaudeTable(t *testing.T) {
+	tests := []struct {
+		name     string
+		tail     []byte
+		wantText string
+		wantLink string
+	}{
+		{
+			name:     "the last prompt is quoted, truncated, and paired with its bridge link",
+			tail:     readFixture(t, "claude-prompt.jsonl"),
+			wantText: "\"The quick brown fox jumps over the lazy dog again…\"",
+			wantLink: "https://claude.ai/code/session_01TESTTESTTESTTEST",
+		},
+		{
+			name:     "a custom title wins over the ai title and the last prompt",
+			tail:     readFixture(t, "claude-titled.jsonl"),
+			wantText: "new name",
+		},
+		{
+			name:     "an ai title beats the last prompt",
+			tail:     readFixture(t, "claude-aititle.jsonl"),
+			wantText: "auto title",
+		},
+		{
+			name: "no title source at all is the zero Label",
+			tail: readFixture(t, "claude-none.jsonl"),
+		},
+		{
+			name:     "a garbled line is skipped, not fatal",
+			tail:     readFixture(t, "claude-garbled.jsonl"),
+			wantText: "\"survivor prompt\"",
+		},
+		{
+			name: "a bridge session id without the cse_ prefix carries no link",
+			tail: []byte("{\"type\":\"bridge-session\",\"bridgeSessionId\":\"ses_01TEST\"}\n"),
+		},
 	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Claude(tc.tail)
+			if got.Text != tc.wantText {
+				t.Errorf("Text = %q, want %q", got.Text, tc.wantText)
+			}
+			if got.Link != tc.wantLink {
+				t.Errorf("Link = %q, want %q", got.Link, tc.wantLink)
+			}
+		})
+	}
+}
+
+// TestClaudePromptTruncatesToMaxTextRunes pins the cap so it can't drift
+// silently past TestClaudeTable's literal expected text.
+func TestClaudePromptTruncatesToMaxTextRunes(t *testing.T) {
+	label := Claude(readFixture(t, "claude-prompt.jsonl"))
 	if got := utf8.RuneCountInString(strings.Trim(label.Text, "\"")); got != MaxTextRunes {
 		t.Errorf("prompt text is %d runes, want the truncation cap %d", got, MaxTextRunes)
-	}
-	if want := "https://claude.ai/code/session_01TESTTESTTESTTEST"; label.Link != want {
-		t.Errorf("Link = %q, want %q", label.Link, want)
-	}
-}
-
-func TestClaudeCustomTitleWins(t *testing.T) {
-	label := Claude(readFixture(t, "claude-titled.jsonl"))
-	if want := "new name"; label.Text != want {
-		t.Errorf("Text = %q, want %q", label.Text, want)
-	}
-	if label.Link != "" {
-		t.Errorf("Link = %q, want empty when no bridge-session line is present", label.Link)
-	}
-}
-
-func TestClaudeAITitleBeatsPrompt(t *testing.T) {
-	label := Claude(readFixture(t, "claude-aititle.jsonl"))
-	if want := "auto title"; label.Text != want {
-		t.Errorf("Text = %q, want %q", label.Text, want)
-	}
-}
-
-func TestClaudeNothing(t *testing.T) {
-	label := Claude(readFixture(t, "claude-none.jsonl"))
-	if label != (Label{}) {
-		t.Errorf("Label = %+v, want the zero Label", label)
-	}
-	if got := label.String(); got != "-" {
-		t.Errorf("String() = %q, want %q", got, "-")
-	}
-}
-
-func TestClaudeGarbledLinesSkipped(t *testing.T) {
-	label := Claude(readFixture(t, "claude-garbled.jsonl"))
-	if want := "\"survivor prompt\""; label.Text != want {
-		t.Errorf("Text = %q, want %q", label.Text, want)
-	}
-}
-
-func TestClaudeBridgeWithoutPrefix(t *testing.T) {
-	label := Claude([]byte("{\"type\":\"bridge-session\",\"bridgeSessionId\":\"ses_01TEST\"}\n"))
-	if label.Link != "" {
-		t.Errorf("Link = %q, want empty for an id without the cse_ prefix", label.Link)
 	}
 }
 
@@ -86,8 +91,7 @@ func TestReadTail(t *testing.T) {
 		t.Fatalf("write %s: %v", big, err)
 	}
 
-	// The window opens mid-line: everything up to the first newline goes, so
-	// the bytes returned start at a line boundary.
+	// The window opens mid-line, so everything to the first newline is dropped.
 	got, err := ReadTail(big, 8)
 	if err != nil {
 		t.Fatalf("ReadTail(max 8): %v", err)
@@ -108,7 +112,6 @@ func TestReadTail(t *testing.T) {
 		t.Errorf("ReadTail(max 64) = %q, want the whole file", got)
 	}
 
-	// max <= 0 means DefaultTailBytes, which is larger than this file.
 	got, err = ReadTail(small, 0)
 	if err != nil {
 		t.Fatalf("ReadTail(max 0): %v", err)
@@ -149,13 +152,18 @@ func TestOpencode(t *testing.T) {
 	if got := Opencode(nil); got != (Label{}) {
 		t.Errorf("empty output gave %+v, want the zero Label", got)
 	}
-	if got, want := OpencodeQuery("ses_a'b"), "select title from session where id = 'ses_a''b'"; got != want {
+	if got, want := OpencodeQuery("ses_a'b"), "select title from session_v2 where id = 'ses_a''b' union all select title from session where id = 'ses_a''b' and not exists (select 1 from session_v2 where id = 'ses_a''b')"; got != want {
 		t.Errorf("OpencodeQuery = %q, want %q", got, want)
 	}
 }
 
-// fakeExec records every invocation and answers with fixed output, so a test
-// can prove what a Resolver asked sqlite3 for.
+func TestOpencodeLegacyQuery(t *testing.T) {
+	if got, want := OpencodeLegacyQuery("ses_a'b"), "select title from session where id = 'ses_a''b'"; got != want {
+		t.Errorf("OpencodeLegacyQuery = %q, want %q", got, want)
+	}
+}
+
+// fakeExec records every invocation and answers with fixed output.
 type fakeExec struct {
 	calls [][]string
 	out   []byte
@@ -171,12 +179,12 @@ func (f *fakeExec) Run(_ context.Context, bin string, args ...string) ([]byte, e
 }
 
 func TestResolveOpencode(t *testing.T) {
-	fake := &fakeExec{out: []byte("Planner round 2\n")}
+	fake := &fakeExec{out: []byte("MasterMind round 2\n")}
 	res := Resolver{Exec: fake, OpencodeDB: "/tmp/opencode.db"}
 
 	label := res.Resolve(context.Background(), "opencode", "ses_abc123", "")
-	if label.Text != "Planner round 2" {
-		t.Errorf("Text = %q, want %q", label.Text, "Planner round 2")
+	if label.Text != "MasterMind round 2" {
+		t.Errorf("Text = %q, want %q", label.Text, "MasterMind round 2")
 	}
 	if label.Link != "" {
 		t.Errorf("Link = %q, want empty", label.Link)
@@ -189,7 +197,6 @@ func TestResolveOpencode(t *testing.T) {
 		t.Errorf("Exec ran %q, want %q", fake.calls[0], wantArgs)
 	}
 
-	// An invalid session id never reaches sqlite3.
 	if got := res.Resolve(context.Background(), "opencode", "bad id", ""); got != (Label{}) {
 		t.Errorf("invalid session id gave %+v, want the zero Label", got)
 	}
@@ -197,10 +204,94 @@ func TestResolveOpencode(t *testing.T) {
 		t.Errorf("invalid session id reached Exec: %q", fake.calls[1:])
 	}
 
-	// A nil Exec means sqlite3 is not available.
 	noExec := Resolver{OpencodeDB: "/tmp/opencode.db"}
 	if got := noExec.Resolve(context.Background(), "opencode", "ses_abc123", ""); got != (Label{}) {
 		t.Errorf("nil Exec gave %+v, want the zero Label", got)
+	}
+}
+
+// fallbackExec fails its first Run and answers the second.
+type fallbackExec struct {
+	calls [][]string
+	out   []byte
+}
+
+func (f *fallbackExec) Run(_ context.Context, bin string, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string{bin}, args...))
+	if len(f.calls) == 1 {
+		return nil, errors.New("no such table: session_v2")
+	}
+	return f.out, nil
+}
+
+func TestResolveOpencodeLegacyFallback(t *testing.T) {
+	fake := &fallbackExec{out: []byte("Pre-2 title\n")}
+	res := Resolver{Exec: fake, OpencodeDB: "/tmp/opencode.db"}
+
+	label := res.Resolve(context.Background(), "opencode", "ses_old", "")
+	if label.Text != "Pre-2 title" {
+		t.Errorf("Text = %q, want %q", label.Text, "Pre-2 title")
+	}
+	if len(fake.calls) != 2 {
+		t.Fatalf("Exec ran %d times, want 2", len(fake.calls))
+	}
+	wantSecond := []string{"sqlite3", "-readonly", "/tmp/opencode.db", OpencodeLegacyQuery("ses_old")}
+	if !slices.Equal(fake.calls[1], wantSecond) {
+		t.Errorf("second Exec ran %q, want %q", fake.calls[1], wantSecond)
+	}
+}
+
+// cliExec is usage.Exec over the real sqlite3 binary.
+type cliExec struct{}
+
+func (cliExec) Run(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, bin, args...).Output()
+}
+
+// opencodeFixture builds a fixture db: no test may touch the real opencode.db.
+func opencodeFixture(t *testing.T, stmts ...string) string {
+	t.Helper()
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skipf("sqlite3 not on PATH: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "opencode.db")
+	for _, stmt := range stmts {
+		out, err := exec.Command("sqlite3", path, stmt).CombinedOutput()
+		if err != nil {
+			t.Fatalf("sqlite3 %q: %v: %s", stmt, err, out)
+		}
+	}
+	return path
+}
+
+// TestResolveOpencodeV2Title pins that OpenCode 2.0.14's session_v2 wins over the legacy table.
+func TestResolveOpencodeV2Title(t *testing.T) {
+	db := opencodeFixture(t,
+		"create table session (id text, title text)",
+		"create table session_v2 (id text, title text)",
+		"insert into session values ('ses_both', 'Legacy title')",
+		"insert into session values ('ses_legacyonly', 'Legacy-only title')",
+		"insert into session_v2 values ('ses_both', 'V2 title')",
+	)
+	res := Resolver{Exec: cliExec{}, OpencodeDB: db}
+
+	if got := res.Resolve(context.Background(), "opencode", "ses_both", ""); got.Text != "V2 title" {
+		t.Errorf("session_v2 title = %q, want %q", got.Text, "V2 title")
+	}
+	if got := res.Resolve(context.Background(), "opencode", "ses_legacyonly", ""); got.Text != "Legacy-only title" {
+		t.Errorf("legacy title = %q, want %q", got.Text, "Legacy-only title")
+	}
+}
+
+func TestResolveOpencodePre2(t *testing.T) {
+	db := opencodeFixture(t,
+		"create table session (id text, title text)",
+		"insert into session values ('ses_old', 'Pre-2 title')",
+	)
+	res := Resolver{Exec: cliExec{}, OpencodeDB: db}
+
+	if got := res.Resolve(context.Background(), "opencode", "ses_old", ""); got.Text != "Pre-2 title" {
+		t.Errorf("pre-2.0 title = %q, want %q", got.Text, "Pre-2 title")
 	}
 }
 

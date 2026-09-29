@@ -11,12 +11,11 @@ import (
 //go:embed prices_default.json
 var defaultPricesJSON []byte
 
-// ErrBadPrices reports a prices.json that does not validate. The caller
-// prints it and continues with the default: a bad price file must never
-// stop a round from closing.
+// ErrBadPrices reports a prices.json that does not validate. The caller prints it
+// and continues with the default: a bad price file must never stop a round from
+// closing.
 var ErrBadPrices = errors.New("prices.json does not validate")
 
-// ModelPrice is USD per million tokens.
 type ModelPrice struct {
 	In         float64 `json:"in"`
 	CacheRead  float64 `json:"cache_read"`
@@ -24,15 +23,14 @@ type ModelPrice struct {
 	Out        float64 `json:"out"`
 }
 
-// Prices is the table. Models is keyed "provider/model" in the form
-// candidate refs use, minus the harness.
+// Prices is the table. Models is keyed "provider/model", as candidate refs use
+// minus the harness.
 type Prices struct {
 	AsOf   string                `json:"as_of"`
 	Source string                `json:"source"`
 	Models map[string]ModelPrice `json:"models"`
 }
 
-// DefaultPrices is the embedded table shipped with relevo.
 func DefaultPrices() Prices {
 	var p Prices
 	if err := json.Unmarshal(defaultPricesJSON, &p); err != nil {
@@ -44,10 +42,9 @@ func DefaultPrices() Prices {
 	return p
 }
 
-// LoadPrices reads path over the embedded default: a missing file is the
-// default with no error; a present file's rows replace default rows of
-// the same key, and its as_of and source win; a malformed file is
-// ErrBadPrices.
+// LoadPrices reads path over the embedded default: a missing file is the default,
+// a present file's rows replace default rows of the same key, and a malformed file
+// is ErrBadPrices.
 func LoadPrices(path string) (Prices, error) {
 	base := DefaultPrices()
 	raw, err := os.ReadFile(path)
@@ -64,14 +61,13 @@ func LoadPrices(path string) (Prices, error) {
 	return p, nil
 }
 
-// ParsePrices returns the embedded default overlaid by the rows in data, the
-// same overlay LoadPrices applies. Errors wrap ErrBadPrices and carry no path:
-// LoadPrices adds the file's, and internal/config names the section.
+// ParsePrices returns the embedded default overlaid by the rows in data. Errors
+// wrap ErrBadPrices and carry no path: LoadPrices adds the file's.
 func ParsePrices(data []byte) (Prices, error) {
 	base := DefaultPrices()
 	var file Prices
 	if err := json.Unmarshal(data, &file); err != nil {
-		return base, fmt.Errorf("%v: %w", err, ErrBadPrices)
+		return base, fmt.Errorf("%w: %w", err, ErrBadPrices)
 	}
 	for k, m := range file.Models {
 		if m.In < 0 || m.CacheRead < 0 || m.CacheWrite < 0 || m.Out < 0 {
@@ -88,8 +84,7 @@ func ParsePrices(data []byte) (Prices, error) {
 	return base, nil
 }
 
-// Estimate prices t for provider/model. ok is false when there is no row;
-// a missing row is never a number.
+// Estimate prices t for provider/model; ok is false when there is no row.
 func (p Prices) Estimate(provider, model string, t Tokens) (float64, bool) {
 	m, ok := p.Models[provider+"/"+model]
 	if !ok {

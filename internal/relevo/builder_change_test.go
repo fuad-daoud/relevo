@@ -7,12 +7,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func TestResolveSendBuilderUnknownToken(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	_, err := ResolveSendBuilder(rt, testAgyRef, "agy/test/nope")
@@ -32,8 +35,10 @@ func TestResolveSendBuilderUnknownToken(t *testing.T) {
 
 // TestResolveSendBuilderRolesMissingRefused pins #238's explicit-pick half
 // through ResolveSendBuilder: roles_missing is the one gate that refuses an
-// explicit --builder pick, and the refusal is wrapped as ErrBadBuilder.
+// explicit --candidate pick, and the refusal is wrapped as ErrBadBuilder.
 func TestResolveSendBuilderRolesMissingRefused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
 
@@ -44,8 +49,8 @@ func TestResolveSendBuilderRolesMissingRefused(t *testing.T) {
 	if !errors.Is(err, ErrBadBuilder) {
 		t.Errorf("err = %v, want it to wrap ErrBadBuilder", err)
 	}
-	if !strings.Contains(err.Error(), "roles missing") {
-		t.Errorf("err = %q, want it to say roles missing", err.Error())
+	if !strings.Contains(err.Error(), "agent definitions missing") {
+		t.Errorf("err = %q, want it to say agent definitions missing", err.Error())
 	}
 }
 
@@ -53,8 +58,10 @@ func TestResolveSendBuilderRolesMissingRefused(t *testing.T) {
 // rate-limited candidate still resolves, and the live gate is recorded on the
 // Resolution so the pick line can name the bypass.
 func TestResolveSendBuilderGatedResolves(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
-	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testAgyRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -84,6 +91,8 @@ func TestResolveSendBuilderGatedResolves(t *testing.T) {
 // differently-spelled token can resolve to the same candidate. The
 // canonical-equal case is therefore the only one constructible.
 func TestResolveSendBuilderCurrentIsNoop(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	res, err := ResolveSendBuilder(rt, testAgyRef, testAgyRef)
@@ -96,6 +105,8 @@ func TestResolveSendBuilderCurrentIsNoop(t *testing.T) {
 }
 
 func TestApplyBuilderSetsCandidateKindTierAndClearsExcluded(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		BuilderCandidate: testAgyRef,
 		Tier:             "harness",
@@ -131,6 +142,8 @@ func TestApplyBuilderSetsCandidateKindTierAndClearsExcluded(t *testing.T) {
 }
 
 func TestApplyBuilderTierAboveCapRefused(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{BuilderCandidate: testAgyRef, Tier: "harness"}
 	res := Resolution{
 		How:       HowExplicit,
@@ -153,8 +166,10 @@ func TestApplyBuilderTierAboveCapRefused(t *testing.T) {
 }
 
 func TestRoundOpenIn(t *testing.T) {
-	plan := store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}
-	report := store.LogEntry{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport}
+	t.Parallel()
+
+	plan := store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}
+	report := store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport}
 
 	tests := []struct {
 		name    string
@@ -163,9 +178,10 @@ func TestRoundOpenIn(t *testing.T) {
 	}{
 		{"no entries", nil, false},
 		{"plan only", []store.LogEntry{plan}, true},
+		{"legacy plan only", []store.LogEntry{{Round: 1, Direction: store.DirToBuilder, Kind: store.Kind("plan")}}, true},
 		{"report only", []store.LogEntry{report}, false},
 		{"plan and report", []store.LogEntry{plan, report}, false},
-		{"another round's plan", []store.LogEntry{{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan}}, false},
+		{"another round's plan", []store.LogEntry{{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

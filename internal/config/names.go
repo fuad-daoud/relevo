@@ -7,13 +7,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 )
 
-// EnsureCandidateNames is A1's migration (cockpit spec §3.8): it derives and
-// stores names for candidates written before names existed. Writes on this
-// branch fill names on every Put, so EnsureCandidateNames only matters for
-// legacy data.
-//
-// It is idempotent: once every element has a non-empty "name" it returns
-// false and writes nothing.
+// EnsureCandidateNames derives and stores names for candidates written before
+// names existed; it is idempotent and only matters for legacy data.
 func (s *Store) EnsureCandidateNames() (bool, error) {
 	body, ok, err := s.Body(Candidates)
 	if err != nil || !ok {
@@ -34,14 +29,8 @@ func (s *Store) EnsureCandidateNames() (bool, error) {
 	return true, nil
 }
 
-// fillCandidateNames ensures every candidate object in body carries a "name",
-// deriving the missing ones with candidate.DeriveNames. It edits decoded JSON
-// objects rather than re-encoding candidate.Candidate, keeping every extra key
-// and the element order. When no candidate was missing a name, it returns the
-// input body unchanged and changed=false.
-//
-// A body that fails to decode is returned unchanged with changed=false, err=nil
-// so Validate reports the format error.
+// fillCandidateNames edits decoded objects, so every extra key and the
+// element order survive.
 func fillCandidateNames(body []byte) (filled []byte, changed bool, err error) {
 	var rows []map[string]json.RawMessage
 	if err := json.Unmarshal(body, &rows); err != nil {
@@ -89,14 +78,12 @@ func fillCandidateNames(body []byte) (filled []byte, changed bool, err error) {
 
 	encoded, err := json.MarshalIndent(rows, "", "  ")
 	if err != nil {
-		return nil, false, fmt.Errorf("%s: %v", FileName(Candidates), err)
+		return nil, false, fmt.Errorf("%s: %w", FileName(Candidates), err)
 	}
 	encoded = append(encoded, '\n')
 	return encoded, true, nil
 }
 
-// rowName returns the "name" a decoded candidate object carries, or "" when it
-// has none.
 func rowName(row map[string]json.RawMessage) (string, error) {
 	raw, ok := row["name"]
 	if !ok {

@@ -9,9 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // rolesGateCandidatesJSON is a claude candidate that can serve both roles and
@@ -22,12 +23,9 @@ const rolesGateCandidatesJSON = `[
   {"harness":"opencode","provider":"test","model":"m","roles":["builder"]}
 ]`
 
-// rolesGateBuilderDefs and rolesGateReviewerDefs are the shipped definition
-// lists the registry resolves for claude when a row overrides nothing.
-var (
-	rolesGateBuilderDefs  = []string{"plan-executor", "researcher"}
-	rolesGateReviewerDefs = []string{"reviewer"}
-)
+// rolesGateReviewerDefs is the shipped definition list the registry resolves
+// for claude's reviewer role when a row overrides nothing.
+var rolesGateReviewerDefs = []string{"reviewer"}
 
 // defsKey is the (kind, definition list) key a defsRoleChecker answers for.
 func defsKey(kind string, definitions []string) string {
@@ -56,6 +54,8 @@ func (c *defsRoleChecker) Missing(kind string, definitions []string) []string {
 // the reviewer half fails -- claude is sole reviewer, and the builder-scoped
 // gate would refuse it as all-gated.
 func TestRolesGateCustomBuilderGatesOnlyItsKindAndRole(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	set := candidateSet(t, rolesGateCandidatesJSON)
 	rt.Candidates = set
@@ -70,14 +70,14 @@ func TestRolesGateCustomBuilderGatesOnlyItsKindAndRole(t *testing.T) {
 		defsKey("claude", []string{"my-executor"}): {".claude/agents/my-executor.md"},
 	}}
 
-	gates := Gates(rt)
+	gates := availability.Gates(AvailabilityDeps(rt))
 	if len(gates) != 1 {
 		t.Fatalf("gates = %+v, want one builder gate for claude", gates)
 	}
-	if gates[0].Token != testClaudeRef || gates[0].Role != "builder" || gates[0].Kind != ledger.RolesMissing {
+	if gates[0].Token != testClaudeRef || gates[0].Role != "builder" || gates[0].Kind != availability.RolesMissing {
 		t.Fatalf("gate = %+v, want %s roles-missing for builder", gates[0], testClaudeRef)
 	}
-	if !strings.Contains(gates[0].Note, "roles missing for builder") || !strings.Contains(gates[0].Note, "yourself") {
+	if !strings.Contains(gates[0].Note, "agent definitions missing for builder") || !strings.Contains(gates[0].Note, "yourself") {
 		t.Errorf("note = %q, want it to name builder and the custom fix", gates[0].Note)
 	}
 
@@ -108,6 +108,8 @@ func TestRolesGateCustomBuilderGatesOnlyItsKindAndRole(t *testing.T) {
 // half: an explicit claude builder pick is refused by claude's builder gate,
 // while the same explicit pick for reviewer succeeds.
 func TestRolesGateExplicitPickRefusedOnlyForItsRole(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	set := candidateSet(t, rolesGateCandidatesJSON)
 	rt.Candidates = set
@@ -121,14 +123,14 @@ func TestRolesGateExplicitPickRefusedOnlyForItsRole(t *testing.T) {
 	rt.Roles = &defsRoleChecker{missing: map[string][]string{
 		defsKey("claude", []string{"my-executor"}): {".claude/agents/my-executor.md"},
 	}}
-	gates := Gates(rt)
+	gates := availability.Gates(AvailabilityDeps(rt))
 
 	_, err := resolveRole(rt.Registry, set, gates, testClaudeRef, "builder")
 	if err == nil {
 		t.Fatal("explicit claude builder pick succeeded, want a refusal")
 	}
-	if !strings.Contains(err.Error(), "roles missing") {
-		t.Errorf("err = %q, want it to say roles missing", err.Error())
+	if !strings.Contains(err.Error(), "agent definitions missing") {
+		t.Errorf("err = %q, want it to say agent definitions missing", err.Error())
 	}
 
 	res, err := resolveRole(rt.Registry, set, gates, testClaudeRef, "reviewer")
@@ -140,37 +142,12 @@ func TestRolesGateExplicitPickRefusedOnlyForItsRole(t *testing.T) {
 	}
 }
 
-// TestRolesMissingNoteWording pins §4.2's note: a shipped path's fix is `relevo
-// agent install`, a custom path's is a by-hand install, and a mixed list
-// carries both.
-func TestRolesMissingNoteWording(t *testing.T) {
-	shipped := rolesMissingNote("builder", "claude", rolesGateBuilderDefs, []string{".claude/agents/plan-executor.md"})
-	if !strings.Contains(shipped, "run relevo config agents --kind claude") {
-		t.Errorf("shipped note = %q, want the install fix", shipped)
-	}
-	if strings.Contains(shipped, "yourself") {
-		t.Errorf("shipped note = %q, want no custom fix", shipped)
-	}
-
-	custom := rolesMissingNote("builder", "claude", []string{"my-executor"}, []string{".claude/agents/my-executor.md"})
-	if !strings.Contains(custom, "yourself") {
-		t.Errorf("custom note = %q, want the custom fix", custom)
-	}
-	if strings.Contains(custom, "agent install") {
-		t.Errorf("custom note = %q, want no install fix", custom)
-	}
-
-	mixed := rolesMissingNote("builder", "claude", []string{"plan-executor", "my-executor"},
-		[]string{".claude/agents/plan-executor.md", ".claude/agents/my-executor.md"})
-	if !strings.Contains(mixed, "run relevo config agents --kind claude") || !strings.Contains(mixed, "yourself") {
-		t.Errorf("mixed note = %q, want both fixes", mixed)
-	}
-}
-
 // TestRolesGateChecksEachDefinitionListOnce pins §4.2's cache: three
 // candidates of one kind serving one role share a definition list, so the
 // checker is asked once, not three times.
 func TestRolesGateChecksEachDefinitionListOnce(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	set := candidateSet(t, `[
 	  {"harness":"claude","provider":"test","model":"a","roles":["builder"]},
@@ -184,7 +161,7 @@ func TestRolesGateChecksEachDefinitionListOnce(t *testing.T) {
 	checker := &defsRoleChecker{missing: map[string][]string{}}
 	rt.Roles = checker
 
-	if gates := Gates(rt); len(gates) != 0 {
+	if gates := availability.Gates(AvailabilityDeps(rt)); len(gates) != 0 {
 		t.Fatalf("gates = %+v, want none", gates)
 	}
 	if checker.calls != 1 {
@@ -196,15 +173,17 @@ func TestRolesGateChecksEachDefinitionListOnce(t *testing.T) {
 // candidate serving reviewer is gated for that role when the reviewer's file is
 // missing, and the builder pick of that same candidate is not blocked.
 func TestRolesGateLegacyChecksEachRole(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Roles = &defsRoleChecker{missing: map[string][]string{
 		defsKey("claude", rolesGateReviewerDefs): {".claude/agents/reviewer.md"},
 	}}
 
-	gates := Gates(rt)
-	var roleGates []ledger.Gate
+	gates := availability.Gates(AvailabilityDeps(rt))
+	var roleGates []availability.Gate
 	for _, g := range gates {
-		if g.Kind == ledger.RolesMissing {
+		if g.Kind == availability.RolesMissing {
 			roleGates = append(roleGates, g)
 		}
 	}
@@ -214,7 +193,7 @@ func TestRolesGateLegacyChecksEachRole(t *testing.T) {
 	if roleGates[0].Token != testClaudeRef || roleGates[0].Role != "reviewer" {
 		t.Errorf("gate = %+v, want %s scoped to reviewer", roleGates[0], testClaudeRef)
 	}
-	if !strings.Contains(roleGates[0].Note, "roles missing for reviewer") {
+	if !strings.Contains(roleGates[0].Note, "agent definitions missing for reviewer") {
 		t.Errorf("note = %q, want it to name reviewer", roleGates[0].Note)
 	}
 
@@ -232,7 +211,9 @@ func TestRolesGateLegacyChecksEachRole(t *testing.T) {
 // unscoped gate keeps every existing status document byte-identical and a
 // role-scoped one is visible.
 func TestGateRoleJSON(t *testing.T) {
-	rep := Report{Gated: []ledger.Gate{{Token: testClaudeRef, Kind: ledger.RolesMissing}}}
+	t.Parallel()
+
+	rep := view.Report{Gated: []availability.Gate{{Token: testClaudeRef, Kind: availability.RolesMissing}}}
 	raw, err := json.Marshal(rep)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

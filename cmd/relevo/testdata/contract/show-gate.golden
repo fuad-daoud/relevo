@@ -1,0 +1,12 @@
+{
+  "Name": "showsections",
+  "Round": 1,
+  "Rounds": 1,
+  "Live": true,
+  "Archived": false,
+  "ArchivedAt": "<TIME>",
+  "Section": "gate",
+  "Text": "make check -- PASS (exit 0, 1m40s)\n",
+  "Missing": false,
+  "Events": null
+}

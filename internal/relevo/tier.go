@@ -50,6 +50,32 @@ func checkTierCap(tier harness.Tier, pol policy.Policy, allowYolo bool) error {
 	return nil
 }
 
+// readerTier floors a reader's permission tier at edit (A5 §4): a reader must
+// be able to write its artifact directory, and shape does not change the tools
+// an agent gets (cockpit spec §3.2). A resolved harness or read tier becomes
+// edit. When the harness refuses edit, the lowest tier it does allow that can
+// write is used instead (opencode allows only yolo). A policy max_tier below
+// edit refuses the bind.
+func readerTier(tier harness.Tier, kind string, pol policy.Policy) (harness.Tier, error) {
+	if tier == harness.TierHarness || tier == harness.TierRead {
+		tier = harness.TierEdit
+	}
+	if pol.MaxTierOrDefault().Rank() < harness.TierEdit.Rank() {
+		return tier, fmt.Errorf("a reader actor needs tier edit; max_tier is %s", pol.MaxTierOrDefault())
+	}
+	if h, ok := harness.Lookup(kind); ok {
+		if _, err := h.PermissionArgs(tier); errors.Is(err, harness.ErrTierUnsupported) {
+			for _, t := range []harness.Tier{harness.TierEdit, harness.TierYolo} {
+				if _, err := h.PermissionArgs(t); err == nil {
+					tier = t
+					break
+				}
+			}
+		}
+	}
+	return tier, nil
+}
+
 // effectiveTier is RoundTier if set, else Tier, else harness.
 func effectiveTier(b store.Binding) harness.Tier {
 	if b.RoundTier != "" {

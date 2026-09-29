@@ -31,6 +31,8 @@ func (r *recordDispatcher) getEvents() []hooks.Event {
 }
 
 func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
@@ -75,6 +77,8 @@ func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
 }
 
 func TestReconcile_NoEventsWhenUnchanged(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
@@ -101,6 +105,8 @@ func TestReconcile_NoEventsWhenUnchanged(t *testing.T) {
 // builder_stalled event fires exactly once when a stall is first stamped,
 // never again while it persists, and never when it clears.
 func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	disp := &recordDispatcher{}
@@ -109,7 +115,7 @@ func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
 	now := baseTime.Add(10 * time.Minute)
 	rt = at(rt, 10*time.Minute)
 	b.RoundStartedAt = now.Add(-30 * time.Minute)
-	stream := rt.Store.BuilderStreamPath(b.Name, b.Round)
+	stream := rt.Store.RunnerStreamPath(b.Name, b.Round)
 	if err := os.WriteFile(stream, []byte("line\n"), 0o644); err != nil {
 		t.Fatalf("write stream: %v", err)
 	}
@@ -154,6 +160,8 @@ func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
 }
 
 func TestDone_EmitsStateChanged(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp

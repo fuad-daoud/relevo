@@ -20,7 +20,7 @@ func builtins() map[string]Role {
 		role := Role{
 			Name:        name,
 			Shape:       spec.Shape,
-			Gate:        spec.Shape == harness.ShapeBuilder,
+			Check:       spec.Shape == harness.ShapeBuilder,
 			Builtin:     true,
 			Definitions: make(map[string]Definition, len(harness.All())),
 		}

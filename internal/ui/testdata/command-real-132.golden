@@ -1,0 +1,34 @@
+  ◆ relevo    fleet                                                                          ● 1 needs you     v0.13.0-28    14:02  
+                                                                                                                                    
+   7 live   1 needs you   2 working   4 idle   27 done                                             sort attention · refreshed 0s ago
+                                                                                                                                    
+ ╭─ fix-433  round 2 · question · 3m ─────────────────────────────────────────────────────────────────────────────────────────────╮ 
+ │  MasterMind architect-3  ·  deepseek-v4.1-flash  ·  relevo/fix-433  ·  +2 commits  ·  $0.03                                    │ 
+ │                                                                                                                                │ 
+ │    enter  open round ╭─ command ────────────────────────────────────────────────────────────────────────╮                      │ 
+ ╰──────────────────────│ :r                                                                               │──────────────────────╯ 
+                        │                                                                                  │                        
+     needs you   1    a │ VIEWS                                                                            │                        
+ ▍ ●  fix-433           │ ▸ round  open one binding's round                                                │                        
+        ╰ “Should the de│   rounds  every round, filtered                                                  │                        
+                        │ BINDINGS                                                                         │                        
+     working   2    a ro│   round fix-433  needs you · r2 · deepseek-v4.1-flash                            │                        
+   ●  spool-db          │   round rl-tail  idle · r2 · gemini-3.8-flash-high                               │                        
+   ●  tok-seg           │   round tok-seg  working · r1 · gemini-3.8-flash-high                            │                        
+                        │   round oc-tui-a  idle · r6 · deepseek-v4.1-flash                                │                        
+     idle   4    finishe│   round spool-db  working · r1 · gemini-3.8-flash-high                           │                        
+   ○  oc-tui-a          │   round oc-tui-probe  idle · r4 · gemini-3.8-flash-high                          │                        
+   ○  oc-tui-probe      │ + 33 more match; keep typing                                                     │                        
+   ○  rl-tail           │                                              tab complete · enter go · esc close │                        
+   ○  serve-status-json ╰──────────────────────────────────────────────────────────────────────────────────╯                        
+                                                                                                                                    
+   ✓  27 done  ·  3 today  ·  last done-01 38m ago       .  show                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+   ◌ gated  antigravity 1d  ·  openai 25d  ·  the pick skips them                                                                   
+
+ ↑↓  move      tab  complete      enter  go      esc  close                                                                         

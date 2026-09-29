@@ -4,27 +4,16 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// TestEnsureCandidateNamesWritesOnce pins A1 §3.8's migration: the first run
-// writes a derived name into every element that lacks one, keeping every key
-// and the element order; the second run returns false and writes nothing.
 func TestEnsureCandidateNamesWritesOnce(t *testing.T) {
-	s := openStore(t)
+	t.Parallel()
 
-	body := `[
+	s := openStore(t)
+	seedNamelessCandidates(t, s, `[
 	  {"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"],"colour":"red"},
 	  {"harness":"agy","provider":"google","model":"gemini-3.8-flash-high","roles":["builder"]}
-	]`
-	// Seed nameless candidates directly into the database, simulating legacy
-	// data written before names were derived on Put.
-	if err := s.db.Tx(func(t *db.Tx) error {
-		return t.ConfigPut(string(Candidates), []byte(body), s.now().UTC())
-	}); err != nil {
-		t.Fatalf("ConfigPut: %v", err)
-	}
+	]`)
 	before, err := s.Version()
 	if err != nil {
 		t.Fatal(err)
@@ -59,32 +48,7 @@ func TestEnsureCandidateNamesWritesOnce(t *testing.T) {
 	if !strings.Contains(string(stored), `"colour": "red"`) {
 		t.Errorf("stored body lost the unknown key: %s", stored)
 	}
-
-	var rows []map[string]json.RawMessage
-	if err := json.Unmarshal(stored, &rows); err != nil {
-		t.Fatalf("decode stored body: %v", err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows, want 2", len(rows))
-	}
-
-	// The element order is the file's, and each element got its derived name.
-	wantNames := []string{"sonnet", "gemini-3.8-flash-high"}
-	for i, want := range wantNames {
-		var name, model string
-		if err := json.Unmarshal(rows[i]["name"], &name); err != nil {
-			t.Fatalf("row %d name: %v", i, err)
-		}
-		if name != want {
-			t.Errorf("row %d name = %q, want %q", i, name, want)
-		}
-		if err := json.Unmarshal(rows[i]["model"], &model); err != nil {
-			t.Fatalf("row %d model: %v", i, err)
-		}
-		if model == "" {
-			t.Errorf("row %d lost its model", i)
-		}
-	}
+	assertCandidateNames(t, stored, []string{"sonnet", "gemini-3.8-flash-high"})
 
 	after, err := s.Version()
 	if err != nil {
@@ -110,9 +74,37 @@ func TestEnsureCandidateNamesWritesOnce(t *testing.T) {
 	}
 }
 
-// TestEnsureCandidateNamesAbsentSection pins the no-op case: a store with no
-// candidates section has nothing to name.
+// assertCandidateNames checks each stored row kept its model and carries
+// want[i] as its name, in order.
+func assertCandidateNames(t *testing.T, stored []byte, want []string) {
+	t.Helper()
+	var rows []map[string]json.RawMessage
+	if err := json.Unmarshal(stored, &rows); err != nil {
+		t.Fatalf("decode stored body: %v", err)
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("got %d rows, want %d", len(rows), len(want))
+	}
+	for i, name := range want {
+		var gotName, model string
+		if err := json.Unmarshal(rows[i]["name"], &gotName); err != nil {
+			t.Fatalf("row %d name: %v", i, err)
+		}
+		if gotName != name {
+			t.Errorf("row %d name = %q, want %q", i, gotName, name)
+		}
+		if err := json.Unmarshal(rows[i]["model"], &model); err != nil {
+			t.Fatalf("row %d model: %v", i, err)
+		}
+		if model == "" {
+			t.Errorf("row %d lost its model", i)
+		}
+	}
+}
+
 func TestEnsureCandidateNamesAbsentSection(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 
 	changed, err := s.EnsureCandidateNames()
@@ -128,10 +120,9 @@ func TestEnsureCandidateNamesAbsentSection(t *testing.T) {
 	}
 }
 
-// TestFillCandidateNames verifies that missing names are filled, existing names
-// are preserved, and unparseable JSON passes through untouched.
 func TestFillCandidateNames(t *testing.T) {
-	// Missing names get filled
+	t.Parallel()
+
 	nameless := `[
   {
     "harness": "claude",
@@ -153,7 +144,6 @@ func TestFillCandidateNames(t *testing.T) {
 		t.Errorf("fillCandidateNames(nameless) = %s, want name sonnet", filled)
 	}
 
-	// Present names are kept
 	named := `[
   {
     "harness": "claude",
@@ -176,7 +166,6 @@ func TestFillCandidateNames(t *testing.T) {
 		t.Errorf("fillCandidateNames(named) = %s, want unchanged %s", filled, named)
 	}
 
-	// Bad JSON passes through
 	badJSON := `[{bad json`
 	filled, changed, err = fillCandidateNames([]byte(badJSON))
 	if err != nil {
@@ -190,10 +179,9 @@ func TestFillCandidateNames(t *testing.T) {
 	}
 }
 
-// TestPutCandidatesRecordsOneRevision pins W1: one Put of a nameless candidates
-// body produces exactly one revision whose changes include the candidates add
-// with names.
 func TestPutCandidatesRecordsOneRevision(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 
 	nameless := `[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`

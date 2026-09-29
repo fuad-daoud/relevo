@@ -8,9 +8,122 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR supersedes its running CI; main is never cancelled,
+# so every commit that lands on main gets a complete run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  check:
-    name: check (${{ matrix.os }}, go ${{ matrix.go }})
+  # Docs gate: skip heavy CI when a PR only touches docs/plans, specs, or superpowers.
+  # See scripts/ci-code-changed.sh for the prefix rules.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.gate.outputs.code }}
+    steps:
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "code=true (push to main)"
+            exit 0
+          fi
+
+          if ! paths=$(git diff --name-only "$BASE...$HEAD" 2>/dev/null); then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "code=true (git diff failed)"
+            exit 0
+          fi
+
+          if [ -z "$paths" ]; then
+            count=0
+          else
+            count=$(printf '%s\n' "$paths" | wc -l | tr -d ' ')
+          fi
+
+          code=$(printf '%s\n' "$paths" | sh scripts/ci-code-changed.sh)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code=$code ($count changed paths)"
+
+  # The static checks run once, on ubuntu with go stable, instead of on every
+  # os x go leg: gofmt, vet, the linter, the mod-tidy guard and the shell
+  # lints. The test legs keep go test's own vet subset.
+  lint:
+    name: lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    env:
+      GOLANGCI_LINT_VERSION: 2.14.0
+      # Outside the checkout (runner.temp is not available in job-level env),
+      # so gofmt, git ls-files and check-name never see the cache.
+      GOLANGCI_LINT_CACHE: ${{ github.workspace }}/../golangci-lint-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: install shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y shellcheck
+          fi
+
+      # The linter is installed only on the leg that must run it, and only that
+      # leg requires it (RELEVO_REQUIRE_LINT). CI has no network at test time,
+      # so the install is a setup step, not something make check fetches. The
+      # prebuilt release archive replaces `go install`, which compiled about 100
+      # modules from source on every run.
+      - name: install golangci-lint
+        run: |
+          url="https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}"
+          curl -sSfLO "$url/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz"
+          curl -sSfLO "$url/golangci-lint-${GOLANGCI_LINT_VERSION}-checksums.txt"
+          sha256sum --check --ignore-missing "golangci-lint-${GOLANGCI_LINT_VERSION}-checksums.txt"
+          tar -xzf "golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz"
+          mkdir -p "$(go env GOPATH)/bin"
+          install -m755 "golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64/golangci-lint" "$(go env GOPATH)/bin/golangci-lint"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # The linter's analysis cache lives outside the checkout, so gofmt, git
+      # ls-files and check-name never see it. The key ends in the commit sha so
+      # every run saves a fresh entry; the restore-keys fall back to the newest
+      # entry for the same linter version and module/config hashes.
+      - name: cache golangci-lint
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.GOLANGCI_LINT_CACHE }}
+          key: golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}-${{ hashFiles('go.sum', '.golangci.yml') }}-${{ github.sha }}
+          restore-keys: |
+            golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}-${{ hashFiles('go.sum', '.golangci.yml') }}-
+            golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}-
+
+      - name: make check-static
+        env:
+          RELEVO_REQUIRE_LINT: '1'
+        run: make check-static
+
+      # The darwin cross-vet replaces the vet the macOS legs used to run.
+      - name: vet for darwin
+        run: CGO_ENABLED=0 GOOS=darwin go vet ./...
+
+  test:
+    name: test (${{ matrix.os }}, go ${{ matrix.go }}, ${{ matrix.shard }}/3)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     env:
       # Go < 1.24 does not emit an LC_UUID load command on darwin unless
@@ -26,21 +139,26 @@ jobs:
         # ubuntu and macos are the supported platforms; 1.25 is the floor
         # declared in go.mod, and stable catches anything the newest toolchain
         # starts complaining about.
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
         go: ['1.25', 'stable']
+        # Each leg runs 3 shards: a third of the packages and a third of
+        # internal/relevo's tests, which is what fits the race run in the job's
+        # wall time.
+        shard: [0, 1, 2]
     steps:
-      # The plugin-version drift check in make check needs the release tags,
-      # and the default depth of 1 has none, which would make the check skip on
-      # every run.
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go }}
 
+      - name: test shard
+        run: sh scripts/test-shard.sh ${{ matrix.shard }} 3 .shard
+
+      # Shellcheck and the scripts' own tests stay on every os x go leg, run by
+      # shard 0, so the BSD userland on macOS keeps exercising them.
       - name: install shellcheck
+        if: matrix.shard == 0
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
             brew install shellcheck
@@ -48,14 +166,121 @@ jobs:
             sudo apt-get update && sudo apt-get install -y shellcheck
           fi
 
-      - name: make check
-        run: make check
+      - name: check scripts
+        if: matrix.shard == 0
+        run: make check-scripts
 
-      - name: race detector
-        run: go test -race -count=1 ./...
+      # Only the ubuntu/stable leg uploads, so the coverage job's `shard-*`
+      # download matches exactly these 3 artifacts. The default `if` uploads a
+      # passing shard only, so a red shard never feeds the coverage guard.
+      - name: upload shard coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: .shard/
+          # upload-artifact skips dot-paths unless told otherwise.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  # macOS is its own job so the coverage job, which only reads ubuntu/stable
+  # shards, never waits behind the free plan's 5-job macOS queue.
+  test-macos:
+    name: test (${{ matrix.os }}, go ${{ matrix.go }}, ${{ matrix.shard }}/3)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ matrix.os }}
+    env:
+      # Go < 1.24 does not emit an LC_UUID load command on darwin unless
+      # told to, and the current macOS dyld refuses to load a binary
+      # without one -- the race-test binary of any package that imports
+      # net dies with "dyld: missing LC_UUID load command" before its
+      # tests start. -B gobuildid is the opt-in the 1.22/1.23 backports
+      # added (golang/go#68678); on 1.24+ it is already the default.
+      GOFLAGS: -ldflags=-B=gobuildid
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu and macos are the supported platforms; 1.25 is the floor
+        # declared in go.mod, and stable catches anything the newest toolchain
+        # starts complaining about.
+        os: [macos-latest]
+        go: ['1.25', 'stable']
+        # Each leg runs 3 shards: a third of the packages and a third of
+        # internal/relevo's tests, which is what fits the race run in the job's
+        # wall time. On main the two macOS legs make 6 macOS jobs, one over the
+        # free plan's cap of 5 concurrent macOS jobs, so one of them queues.
+        # Main is never cancelled, so queueing only costs time.
+        shard: [0, 1, 2]
+        # PRs skip macOS on the 1.25 floor to stay under the free plan's
+        # 5-concurrent-macOS-job cap; main still runs the full matrix.
+        exclude:
+          - go: ${{ github.event_name == 'pull_request' && '1.25' || 'none' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: test shard
+        run: sh scripts/test-shard.sh ${{ matrix.shard }} 3 .shard
+
+      # Shellcheck and the scripts' own tests stay on every os x go leg, run by
+      # shard 0, so the BSD userland on macOS keeps exercising them.
+      - name: install shellcheck
+        if: matrix.shard == 0
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install shellcheck
+          else
+            sudo apt-get update && sudo apt-get install -y shellcheck
+          fi
+
+      - name: check scripts
+        if: matrix.shard == 0
+        run: make check-scripts
+
+  # Merges the shards' coverage and runs the unchanged baseline guard on it.
+  # `needs` includes test, so a red test is never reported as a coverage
+  # verdict, and a missing artifact download makes cover-merge.sh exit 1 rather
+  # than let the guard pass vacuously.
+  coverage:
+    name: coverage
+    needs: [changes, test]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # pattern matches only the ubuntu/stable leg's artifacts, the only leg
+      # that uploads. Its go-version: stable resolves to the same Go as this
+      # job's, so check-coverage.sh's baseline header comparison holds.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          path: shards
+
+      - name: merge coverage
+        run: sh scripts/cover-merge.sh shards > .coverage.txt
+
+      - name: show merged coverage
+        run: cat .coverage.txt
+
+      - name: check coverage
+        env:
+          RELEVO_REQUIRE_COVERAGE: '1'
+        run: sh scripts/check-coverage.sh
 
   portability:
     name: cross-compile
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

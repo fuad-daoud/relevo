@@ -10,24 +10,18 @@ import (
 	"time"
 )
 
-// rfc3339Nano is how a sealed file's mtime is stored. It is not rfc3339Milli:
-// mtime stands in for the os.Stat a caller used to do, so it keeps the
-// file's own precision (store.StatFile). Parsing accepts a shorter fraction
-// too, so a millisecond stamp reads back unchanged.
+// rfc3339Nano is how a sealed file's mtime is stored: it keeps the file's own
+// precision, and parsing accepts a shorter fraction.
 const rfc3339Nano = time.RFC3339Nano
 
 func formatMTime(t time.Time) string { return t.UTC().Format(rfc3339Nano) }
 
 func parseMTime(s string) (time.Time, error) { return time.Parse(rfc3339Nano, s) }
 
-// RoundFilePut inserts or replaces one sealed round file: the file's exact
-// bytes, its byte count and sha256, its round's NNN prefix, the file's own
-// mtime and the seal's stamp. (record_id, name) is the primary key, so a
-// second put of the same file is idempotent -- which is what lets a seal pass
-// that failed to remove the file retry with the same bytes (P3c §4.2, §6).
+// RoundFilePut inserts or replaces one sealed round file; (record_id, name) is
+// the primary key, so a retry writes the same bytes under the same row.
 func (t *Tx) RoundFilePut(recordID, name string, round int, body []byte, mtime, now time.Time) error {
-	// A nil body binds as SQL NULL, which round_file.body NOT NULL refuses.
-	// An empty file's bytes are empty, not absent.
+	// A nil body binds as SQL NULL, which the body column refuses.
 	if body == nil {
 		body = []byte{}
 	}
@@ -46,9 +40,8 @@ func (t *Tx) RoundFilePut(recordID, name string, round int, body []byte, mtime, 
 	return nil
 }
 
-// RoundFileGet returns one sealed file's bytes and its mtime; ok is false
-// when the record has no such row. A read error other than a miss is
-// returned, so a caller can tell "never sealed" from "the database failed".
+// RoundFileGet returns one sealed file's bytes and its mtime; ok is false when
+// the record has no such row, so "never sealed" is told from a failure.
 func (d *DB) RoundFileGet(recordID, name string) (body []byte, mtime time.Time, ok bool, err error) {
 	var mtimeText string
 	err = d.sqlDB.QueryRowContext(context.Background(),
@@ -64,33 +57,22 @@ func (d *DB) RoundFileGet(recordID, name string) (body []byte, mtime time.Time, 
 	if err != nil {
 		return nil, time.Time{}, false, fmt.Errorf("db: round file get %s/%s: parse mtime: %w", recordID, name, err)
 	}
-	// A zero-length blob scans back as a nil slice. An existing empty row
-	// has an empty body, not an absent one.
+	// A zero-length blob scans back as a nil slice, not an absent body.
 	if body == nil {
 		body = []byte{}
 	}
 	return body, mtime, true, nil
 }
 
-// RoundFileList returns the basenames of recordID's sealed files, sorted.
 func (d *DB) RoundFileList(recordID string) ([]string, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
 		`SELECT name FROM round_file WHERE record_id = ? ORDER BY name ASC`, recordID)
 	if err != nil {
 		return nil, fmt.Errorf("db: round file list %s: %w", recordID, mapBusy(err))
 	}
-	defer rows.Close()
-
-	var out []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("db: round file list %s: %w", recordID, err)
-		}
-		out = append(out, name)
-	}
-	if err := rows.Err(); err != nil {
+	names, err := collectRows(rows, scanString)
+	if err != nil {
 		return nil, fmt.Errorf("db: round file list %s: %w", recordID, mapBusy(err))
 	}
-	return out, nil
+	return names, nil
 }

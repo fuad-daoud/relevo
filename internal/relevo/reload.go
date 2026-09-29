@@ -1,12 +1,15 @@
 package relevo
 
 import (
+	"bytes"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
 // ConfigSource is the database-backed config the daemon reloads and imports
@@ -23,8 +26,8 @@ type ConfigSource interface {
 	Load() (config.Loaded, error)
 }
 
-// ConfigWatcher reloads the candidates, policy and roles sections when the
-// config store's version changes. Prices, servers and hooks keep today's
+// ConfigWatcher reloads the candidates, policy, roles and servers sections when
+// the config store's version changes. Prices and hooks keep today's
 // "loaded once at start" behaviour.
 type ConfigWatcher struct {
 	source    ConfigSource
@@ -36,17 +39,41 @@ type ConfigWatcher struct {
 	loaded   bool   // false until the first successful load through Refresh
 	loadedAt time.Time
 
+	// servers and key are what the installed client was built from; both are
+	// nil before the first install, and each load is compared against them to
+	// decide whether the client has to be rebuilt.
+	servers remote.Servers
+	key     []byte
+
 	// seams; production values set by NewConfigWatcher, tests replace them
-	resolve func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier
-	warn    func(msg string, args ...any) // slog.Warn
+	resolve   func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier
+	remoteFor func(remote.Servers, []byte) (RemoteClient, error) // nil leaves rt.Remote untouched
+	warn      func(msg string, args ...any)                      // slog.Warn
 
 	// logged is the set of config warning texts already logged this process,
 	// so the daemon logs each distinct warning once (#372 §4.4).
 	logged map[string]bool
 }
 
+// sameServers reports whether two servers sections name the same servers with
+// the same entries. Two absent sections and one empty section are the same
+// set, so a machine with no servers never builds a client.
+func sameServers(a, b remote.Servers) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for name, ea := range a {
+		eb, ok := b[name]
+		if !ok || eb != ea {
+			return false
+		}
+	}
+	return true
+}
+
 // NewConfigWatcher returns a watcher over source, importing from configDir.
-// Its production seams are classify.Resolve (first return only) and
+// Its production seams are classify.Resolve (first return only), the
+// NewRemoteClient rule for the servers section and the client key, and
 // slog.Warn. It does not read anything yet.
 func NewConfigWatcher(source ConfigSource, configDir string, getenv func(string) string) *ConfigWatcher {
 	return &ConfigWatcher{
@@ -57,7 +84,8 @@ func NewConfigWatcher(source ConfigSource, configDir string, getenv func(string)
 			cls, _ := classify.Resolve(cfg, key, getenv)
 			return cls
 		},
-		warn: slog.Warn,
+		remoteFor: NewRemoteClient,
+		warn:      slog.Warn,
 	}
 }
 
@@ -66,6 +94,12 @@ func NewConfigWatcher(source ConfigSource, configDir string, getenv func(string)
 // version differs from the version at the last successful load, or when no
 // load has happened yet through this watcher. An unchanged version returns rt
 // as given (no load).
+//
+// A load whose servers section or client key differs from the installed
+// client's rebuilds rt.Remote through the construction seam: a successful
+// build installs the new client, ErrNoClientKey clears it, and any other build
+// error keeps the client already installed. Either way the version advances,
+// so a failed build waits for the next change rather than retrying every tick.
 //
 // Failure: an import error, a version error or a load error keeps rt's current
 // values and calls warn once per distinct error string: "config reload failed;
@@ -100,6 +134,27 @@ func (w *ConfigWatcher) Refresh(rt Runtime) Runtime {
 	w.logWarnings(rt.ConfigWarnings)
 	if w.resolve != nil {
 		rt.Classify = w.resolve(L.Policy.Classify, L.Typesafe, w.getenv)
+	}
+
+	if w.remoteFor != nil && (!sameServers(w.servers, L.Servers) || !bytes.Equal(w.key, L.ClientKey)) {
+		client, cerr := w.remoteFor(L.Servers, L.ClientKey)
+		switch {
+		case cerr == nil:
+			rt.Remote = client
+			w.servers = L.Servers
+			w.key = L.ClientKey
+		case errors.Is(cerr, ErrNoClientKey):
+			rt.Remote = nil
+			w.servers = L.Servers
+			w.key = L.ClientKey
+			if w.warn != nil {
+				w.warn(ErrNoClientKey.Error())
+			}
+		default:
+			if w.warn != nil {
+				w.warn("config reload: remote client not built; keeping the installed one", "err", cerr)
+			}
+		}
 	}
 
 	w.version = v

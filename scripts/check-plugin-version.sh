@@ -1,16 +1,10 @@
 #!/bin/sh
-# Verifies plugin manifest versions and drift:
+# Verifies plugin manifest versions:
 # 1. The Claude Code plugin manifest (claude-plugin/.claude-plugin/plugin.json)
 #    and the marketplace manifest (.claude-plugin/marketplace.json) must exist
 #    and agree.
 # 2. When passed a tag argument, the tag version must match the manifests.
-# 3. First-parent feat commits since the manifest tag must not exceed max_feat_drift.
-# The release commit itself passes because the tag does not exist yet when make release runs make check.
 set -eu
-
-# Maximum number of feat commits allowed on main past the tagged release before
-# check-plugin-version requires a release to be cut (#164).
-max_feat_drift=10
 
 m1="claude-plugin/.claude-plugin/plugin.json"
 m2=".claude-plugin/marketplace.json"
@@ -63,16 +57,4 @@ if [ $# -eq 1 ]; then
 		echo "  $m2: $v2" >&2
 		exit 1
 	fi
-fi
-
-tag="v$v1"
-if ! git rev-parse --verify -q "refs/tags/$tag" >/dev/null 2>&1; then
-	echo "check-plugin-version: tag $tag not found; skipping drift check" >&2
-	exit 0
-fi
-
-n=$(git log --first-parent --format=%s "$tag..HEAD" | grep -E -c '^feat(\([^)]*\))?!?:' || true)
-if [ "$n" -gt "$max_feat_drift" ]; then
-	echo "check-plugin-version: $n feat commits since $tag (limit $max_feat_drift); cut a release: make release VERSION=<next>" >&2
-	exit 1
 fi

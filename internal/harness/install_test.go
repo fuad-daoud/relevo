@@ -3,119 +3,18 @@ package harness
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// testKV is a real t.TempDir() database, the medium the role manifest lives in
-// from this round (P3b plan §7).
-func testKV(t *testing.T) *db.DB {
-	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
-	return d
-}
-
-type fakeInstallEnv struct {
-	lookPaths   map[string]string
-	home        string
-	homeErr     error
-	files       map[string][]byte
-	readErr     error
-	dirs        []string
-	mkdirErr    error
-	writes      map[string][]byte
-	writeErrFor map[string]error
-
-	// manifest is the role manifest (#371 §4.10): what LoadManifest returns
-	// and what SaveManifest stores. manifestErr makes LoadManifest fail,
-	// saveErr makes SaveManifest fail; saves counts the calls.
-	manifest    map[string]string
-	manifestErr error
-	saveErr     error
-	saves       int
-}
-
-func (e *fakeInstallEnv) LookPath(binary string) (string, error) {
-	if p, ok := e.lookPaths[binary]; ok {
-		return p, nil
-	}
-	return "", fmt.Errorf("binary not found: %s", binary)
-}
-
-func (e *fakeInstallEnv) HomePath(rel string) (string, error) {
-	if e.homeErr != nil {
-		return "", e.homeErr
-	}
-	return filepath.Join(e.home, rel), nil
-}
-
-func (e *fakeInstallEnv) ReadFile(path string) ([]byte, error) {
-	if e.readErr != nil {
-		return nil, e.readErr
-	}
-	if b, ok := e.files[path]; ok {
-		return b, nil
-	}
-	return nil, fs.ErrNotExist
-}
-
-func (e *fakeInstallEnv) MkdirAll(dir string) error {
-	if e.mkdirErr != nil {
-		return e.mkdirErr
-	}
-	e.dirs = append(e.dirs, dir)
-	return nil
-}
-
-func (e *fakeInstallEnv) WriteFile(path string, data []byte) error {
-	if err, ok := e.writeErrFor[path]; ok {
-		return err
-	}
-	e.writes[path] = data
-	e.files[path] = data
-	return nil
-}
-
-func (e *fakeInstallEnv) LoadManifest() (map[string]string, error) {
-	if e.manifestErr != nil {
-		return nil, e.manifestErr
-	}
-	if e.manifest == nil {
-		e.manifest = make(map[string]string)
-	}
-	return e.manifest, nil
-}
-
-func (e *fakeInstallEnv) SaveManifest(m map[string]string) error {
-	e.saves++
-	if e.saveErr != nil {
-		return e.saveErr
-	}
-	e.manifest = m
-	return nil
-}
-
-func freshEnv() *fakeInstallEnv {
-	return &fakeInstallEnv{
-		home:        "/home/u",
-		lookPaths:   make(map[string]string),
-		files:       make(map[string][]byte),
-		writes:      make(map[string][]byte),
-		writeErrFor: make(map[string]error),
-		manifest:    make(map[string]string),
-	}
-}
+const (
+	researcherClaudePath = ".claude/agents/researcher.md"
+	researcherClaudeFull = "/home/u/.claude/agents/researcher.md"
+)
 
 func TestInstallFreshHomeWritesEveryRoleOfPathKinds(t *testing.T) {
 	env := freshEnv()
@@ -129,165 +28,58 @@ func TestInstallFreshHomeWritesEveryRoleOfPathKinds(t *testing.T) {
 
 	hAgy, _ := Lookup("agy")
 	hClaude, _ := Lookup("claude")
-	expectedLen := len(hAgy.Roles) + len(hClaude.Roles)
-	if len(results) != expectedLen {
-		t.Fatalf("expected %d results, got %d", expectedLen, len(results))
+	if want := len(hAgy.Roles) + len(hClaude.Roles); len(results) != want {
+		t.Fatalf("expected %d results, got %d", want, len(results))
 	}
 
-	idx := 0
-	for _, r := range hAgy.Roles {
-		res := results[idx]
-		if res.Kind != "agy" || res.Role != r.Name {
-			t.Errorf("result %d: want agy/%s, got %s/%s", idx, r.Name, res.Kind, res.Role)
-		}
-		if res.Outcome != OutcomeWrote {
-			t.Errorf("result %d: want OutcomeWrote, got %v", idx, res.Outcome)
-		}
-		expectedDoc, err := AgentDoc(r.Name, "agy")
-		if err != nil {
-			t.Fatalf("unexpected AgentDoc error: %v", err)
-		}
-		fullPath := "/home/u/" + res.Path
-		if !bytes.Equal(env.files[fullPath], expectedDoc) {
-			t.Errorf("result %d (%s): file content mismatch with AgentDoc", idx, fullPath)
-		}
-		idx++
-	}
-
-	for _, r := range hClaude.Roles {
-		res := results[idx]
-		if res.Kind != "claude" || res.Role != r.Name {
-			t.Errorf("result %d: want claude/%s, got %s/%s", idx, r.Name, res.Kind, res.Role)
-		}
-		if res.Outcome != OutcomeWrote {
-			t.Errorf("result %d: want OutcomeWrote, got %v", idx, res.Outcome)
-		}
-		expectedDoc, err := AgentDoc(r.Name, "claude")
-		if err != nil {
-			t.Fatalf("unexpected AgentDoc error: %v", err)
-		}
-		fullPath := "/home/u/" + res.Path
-		if !bytes.Equal(env.files[fullPath], expectedDoc) {
-			t.Errorf("result %d (%s): file content mismatch with AgentDoc", idx, fullPath)
-		}
-		idx++
-	}
+	idx := checkWroteKind(t, env, results, 0, "agy", hAgy.Roles)
+	checkWroteKind(t, env, results, idx, "claude", hClaude.Roles)
 
 	for _, res := range results {
 		if res.Kind == "opencode" {
 			t.Errorf("expected no opencode results, found: %+v", res)
 		}
 	}
-
-	hasAgyDir := false
-	hasClaudeDir := false
-	for _, d := range env.dirs {
-		if d == "/home/u/.gemini/config/agents" {
-			hasAgyDir = true
-		}
-		if d == "/home/u/.claude/agents" {
-			hasClaudeDir = true
+	for _, d := range []string{"/home/u/.gemini/config/agents", "/home/u/.claude/agents"} {
+		if !contains(env.dirs, d) {
+			t.Errorf("expected dirs to contain %s, got %v", d, env.dirs)
 		}
 	}
-	if !hasAgyDir {
-		t.Errorf("expected dirs to contain /home/u/.gemini/config/agents, got %v", env.dirs)
-	}
-	if !hasClaudeDir {
-		t.Errorf("expected dirs to contain /home/u/.claude/agents, got %v", env.dirs)
-	}
 }
 
-func TestInstallKeepsIdenticalEvenWithForce(t *testing.T) {
-	env := freshEnv()
-	shipped, err := AgentDoc("researcher", "claude")
-	if err != nil {
-		t.Fatalf("AgentDoc error: %v", err)
+func checkWroteKind(t *testing.T, env *fakeInstallEnv, results []InstallResult, idx int, kind string, roles []Role) int {
+	t.Helper()
+	for _, r := range roles {
+		res := results[idx]
+		if res.Kind != kind || res.Role != r.Name {
+			t.Errorf("result %d: want %s/%s, got %s/%s", idx, kind, r.Name, res.Kind, res.Role)
+		}
+		if res.Outcome != OutcomeWrote {
+			t.Errorf("result %d: want OutcomeWrote, got %v", idx, res.Outcome)
+		}
+		expectedDoc, err := AgentDoc(r.Name, kind)
+		if err != nil {
+			t.Fatalf("unexpected AgentDoc error: %v", err)
+		}
+		fullPath := "/home/u/" + res.Path
+		if !bytes.Equal(env.files[fullPath], expectedDoc) {
+			t.Errorf("result %d (%s): file content mismatch with AgentDoc", idx, fullPath)
+		}
+		idx++
 	}
-	path := "/home/u/.claude/agents/researcher.md"
-	env.files[path] = append(append([]byte(nil), shipped...), []byte("\n\n")...)
-
-	results, err := Install(env, InstallOptions{
-		Kind:  "claude",
-		Role:  "researcher",
-		Force: true,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Outcome != OutcomeKeptIdentical {
-		t.Errorf("expected OutcomeKeptIdentical, got %v", results[0].Outcome)
-	}
-	if len(env.writes) != 0 {
-		t.Errorf("expected len(writes) == 0, got %d", len(env.writes))
-	}
-}
-
-func TestInstallKeepsDifferingWithoutForce(t *testing.T) {
-	env := freshEnv()
-	path := "/home/u/.claude/agents/researcher.md"
-	env.files[path] = []byte("---\nmodel: haiku\n---\nmine\n")
-
-	results, err := Install(env, InstallOptions{
-		Kind: "claude",
-		Role: "researcher",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Outcome != OutcomeKeptDiffers {
-		t.Errorf("expected OutcomeKeptDiffers, got %v", results[0].Outcome)
-	}
-	if len(env.writes) != 0 {
-		t.Errorf("expected len(writes) == 0, got %d", len(env.writes))
-	}
-}
-
-func TestInstallOverwritesDifferingWithForce(t *testing.T) {
-	env := freshEnv()
-	path := "/home/u/.claude/agents/researcher.md"
-	env.files[path] = []byte("---\nmodel: haiku\n---\nmine\n")
-
-	results, err := Install(env, InstallOptions{
-		Kind:  "claude",
-		Role:  "researcher",
-		Force: true,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Outcome != OutcomeOverwrote {
-		t.Errorf("expected OutcomeOverwrote, got %v", results[0].Outcome)
-	}
-	shipped, err := AgentDoc("researcher", "claude")
-	if err != nil {
-		t.Fatalf("AgentDoc error: %v", err)
-	}
-	if !bytes.Equal(env.files[path], shipped) {
-		t.Errorf("expected files[%s] to equal shipped doc", path)
-	}
+	return idx
 }
 
 func TestInstallDryRunTouchesNothing(t *testing.T) {
-	env := freshEnv()
 	claudePE, _ := AgentDoc("plan-executor", "claude")
-	env.files["/home/u/.claude/agents/plan-executor.md"] = claudePE
-	env.files["/home/u/.claude/agents/researcher.md"] = []byte("---\nmodel: haiku\n---\nmine\n")
+	writeBoth := func(env *fakeInstallEnv) {
+		env.files["/home/u/.claude/agents/plan-executor.md"] = claudePE
+		env.files["/home/u/.claude/agents/researcher.md"] = []byte("---\nmodel: haiku\n---\nmine\n")
+	}
 
-	// reviewer and architect absent
-	results, err := Install(env, InstallOptions{
-		Kind:   "claude",
-		DryRun: true,
-		Force:  true,
-	})
+	env := freshEnv()
+	writeBoth(env)
+	results, err := Install(env, InstallOptions{Kind: "claude", DryRun: true, Force: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -312,15 +104,9 @@ func TestInstallDryRunTouchesNothing(t *testing.T) {
 		t.Errorf("expected len(writes) == 0, got %d", len(env.writes))
 	}
 
-	// Then the same without Force: researcher is OutcomeKeptDiffers
 	env2 := freshEnv()
-	env2.files["/home/u/.claude/agents/plan-executor.md"] = claudePE
-	env2.files["/home/u/.claude/agents/researcher.md"] = []byte("---\nmodel: haiku\n---\nmine\n")
-	results2, err := Install(env2, InstallOptions{
-		Kind:   "claude",
-		DryRun: true,
-		Force:  false,
-	})
+	writeBoth(env2)
+	results2, err := Install(env2, InstallOptions{Kind: "claude", DryRun: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -349,7 +135,7 @@ func TestInstallNamedKindIgnoresPath(t *testing.T) {
 }
 
 func TestInstallNoKindNoBinariesIsEmpty(t *testing.T) {
-	env := freshEnv() // empty lookPaths
+	env := freshEnv()
 	results, err := Install(env, InstallOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -386,9 +172,8 @@ func TestInstallUnknownRole(t *testing.T) {
 		t.Errorf("expected nil results, got %v", results)
 	}
 
-	// Then with Kind: "" and empty lookPaths, Role: "nope": still ErrUnknownRole
 	env2 := freshEnv()
-	results2, err2 := Install(env2, InstallOptions{Kind: "", Role: "nope"})
+	results2, err2 := Install(env2, InstallOptions{Role: "nope"})
 	if !errors.Is(err2, ErrUnknownRole) {
 		t.Fatalf("expected ErrUnknownRole, got %v", err2)
 	}
@@ -416,10 +201,8 @@ func TestInstallWriteFailureIsPerFile(t *testing.T) {
 			if res.Err != "read-only" {
 				t.Errorf("researcher: want Err 'read-only', got %q", res.Err)
 			}
-		} else {
-			if res.Outcome != OutcomeWrote {
-				t.Errorf("%s: want OutcomeWrote, got %v", res.Role, res.Outcome)
-			}
+		} else if res.Outcome != OutcomeWrote {
+			t.Errorf("%s: want OutcomeWrote, got %v", res.Role, res.Outcome)
 		}
 	}
 }
@@ -444,10 +227,7 @@ func TestInstallUnreadableCountsAsDiffers(t *testing.T) {
 	env := freshEnv()
 	env.readErr = errors.New("permission denied")
 
-	results, err := Install(env, InstallOptions{
-		Kind: "claude",
-		Role: "reviewer",
-	})
+	results, err := Install(env, InstallOptions{Kind: "claude", Role: "reviewer"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -458,14 +238,9 @@ func TestInstallUnreadableCountsAsDiffers(t *testing.T) {
 		t.Errorf("expected OutcomeKeptDiffers, got %v", results[0].Outcome)
 	}
 
-	// with Force: true, OutcomeOverwrote
 	env2 := freshEnv()
 	env2.readErr = errors.New("permission denied")
-	results2, err2 := Install(env2, InstallOptions{
-		Kind:  "claude",
-		Role:  "reviewer",
-		Force: true,
-	})
+	results2, err2 := Install(env2, InstallOptions{Kind: "claude", Role: "reviewer", Force: true})
 	if err2 != nil {
 		t.Fatalf("unexpected error: %v", err2)
 	}
@@ -477,10 +252,9 @@ func TestInstallUnreadableCountsAsDiffers(t *testing.T) {
 	}
 }
 
-// olderArchitectDoc is the exact bytes of the architect.claude.md definition
-// from commit 9b837e64 of this repository: an older shipped copy whose sha256
-// scripts/agents-shipped.sh recorded under "architect.claude.md". It is what an
-// existing install with no role manifest has on disk (#371 round 3 §7 step 3).
+// olderArchitectDoc is an older shipped architect.claude.md whose sha256 is
+// recorded in agents/shipped.sha256, so an install that predates the role
+// manifest recognises it as relevo's own older release.
 const olderArchitectDoc = `---
 name: architect
 description: >-
@@ -589,15 +363,7 @@ Before finalizing any architectural plan, verify:
 If any answer is "no," revise before presenting the plan.
 `
 
-// TestInstallRecognizesOlderShippedBlob is §7 step 3's first row: a definition
-// whose bytes are an older shipped blob, with no manifest at all, is refreshed
-// -- the upgrade path an existing install needs (#371 round 3 §1). Every
-// install that predates round 2 has no manifest, so this row is the whole point.
-//
-// Mutation: drop the ShippedBefore clause from installOne's third case and this
-// test fails -- OutcomeKeptDiffers instead of OutcomeUpdated.
 func TestInstallRecognizesOlderShippedBlob(t *testing.T) {
-	const path = ".claude/agents/architect.md"
 	const full = "/home/u/.claude/agents/architect.md"
 	if !ShippedBefore("architect.claude.md", docSHA([]byte(olderArchitectDoc))) {
 		t.Fatal("the fixture sha is not in agents/shipped.sha256; regenerate the fixture")
@@ -609,8 +375,6 @@ func TestInstallRecognizesOlderShippedBlob(t *testing.T) {
 
 	env := freshEnv()
 	env.files[full] = []byte(olderArchitectDoc)
-	// No manifest: a machine that predates round 2 entirely.
-
 	results, err := Install(env, InstallOptions{Kind: "claude", Role: "architect"})
 	if err != nil {
 		t.Fatalf("Install: %v", err)
@@ -621,14 +385,13 @@ func TestInstallRecognizesOlderShippedBlob(t *testing.T) {
 	if !bytes.Equal(env.files[full], shipped) {
 		t.Error("the older shipped copy was not refreshed with the shipped definition")
 	}
-	if got := env.manifest[path]; got != docSHA(shipped) {
-		t.Errorf("manifest[%s] = %q, want the shipped sha", path, got)
+	if got := env.manifest[".claude/agents/architect.md"]; got != docSHA(shipped) {
+		t.Errorf("manifest sha = %q, want the shipped sha", got)
 	}
 	if env.saves != 1 {
 		t.Errorf("manifest saves = %d, want 1", env.saves)
 	}
 
-	// The same decision under DryRun reports without writing.
 	dry := freshEnv()
 	dry.files[full] = []byte(olderArchitectDoc)
 	dryResults, err := Install(dry, InstallOptions{Kind: "claude", Role: "architect", DryRun: true})
@@ -643,198 +406,164 @@ func TestInstallRecognizesOlderShippedBlob(t *testing.T) {
 	}
 }
 
-// TestInstallKeepsAnArbitraryEdit is §7 step 3's second row: bytes that are no
-// version relevo ever shipped are the user's own, and stay.
-func TestInstallKeepsAnArbitraryEdit(t *testing.T) {
-	const full = "/home/u/.claude/agents/architect.md"
-	env := freshEnv()
-	env.files[full] = []byte("---\nname: architect\n---\nmy own architect\n")
-
-	results, err := Install(env, InstallOptions{Kind: "claude", Role: "architect"})
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if len(results) != 1 || results[0].Outcome != OutcomeKeptDiffers {
-		t.Fatalf("results = %+v, want one OutcomeKeptDiffers", results)
-	}
-	if len(env.writes) != 0 {
-		t.Errorf("Install wrote %v, want no write", env.writes)
-	}
+type manifestRow struct {
+	name         string
+	existing     []byte // nil = the file is absent
+	manifest     map[string]string
+	force        bool
+	dryRun       bool
+	wantOutcome  InstallOutcome
+	wantManifest map[string]string
+	wantWrote    bool
 }
 
-// TestInstallManifestDecisions covers §5's decision table row by row, over the
-// role manifest (#371 §4.10): what lands, and what the manifest records.
-func TestInstallManifestDecisions(t *testing.T) {
-	shipped, err := AgentDoc("researcher", "claude")
+var (
+	researcherClaudeShipped = mustAgentDoc("researcher", "claude")
+	manifestOlder           = []byte("---\nmodel: haiku\n---\nan older relevo copy\n")
+	manifestEdited          = []byte("---\nmodel: sonnet\n---\nthe user's own copy\n")
+	manifestIdentical       = append(append([]byte(nil), researcherClaudeShipped...), []byte("\n\n")...)
+)
+
+func mustAgentDoc(name, kind string) []byte {
+	b, err := AgentDoc(name, kind)
 	if err != nil {
-		t.Fatalf("AgentDoc: %v", err)
+		panic(err)
 	}
-	const path = ".claude/agents/researcher.md"
-	const full = "/home/u/.claude/agents/researcher.md"
-	// An older relevo release wrote these bytes and recorded their sha.
-	older := []byte("---\nmodel: haiku\n---\nan older relevo copy\n")
-	// The user's own edit: never in the manifest under this sha.
-	edited := []byte("---\nmodel: sonnet\n---\nthe user's own copy\n")
-	// Identical under DocEqual's trailing-whitespace rule, not byte-identical.
-	identical := append(append([]byte(nil), shipped...), []byte("\n\n")...)
+	return b
+}
 
-	tests := []struct {
-		name         string
-		existing     []byte // nil = the file is absent
-		manifest     map[string]string
-		force        bool
-		dryRun       bool
-		wantOutcome  InstallOutcome
-		wantManifest map[string]string
-		wantWrote    bool
-	}{
-		{
-			name:         "missing file is written and recorded",
-			wantOutcome:  OutcomeWrote,
-			wantManifest: map[string]string{path: docSHA(shipped)},
-			wantWrote:    true,
-		},
-		{
-			name:         "missing file under DryRun only reports",
-			dryRun:       true,
-			wantOutcome:  OutcomeWouldWrite,
-			wantManifest: map[string]string{},
-		},
-		{
-			name:         "identical records the bytes on disk",
-			existing:     identical,
-			wantOutcome:  OutcomeKeptIdentical,
-			wantManifest: map[string]string{path: docSHA(identical)},
-		},
-		{
-			name:         "differing but unchanged since relevo wrote it is updated",
-			existing:     older,
-			manifest:     map[string]string{path: docSHA(older)},
-			wantOutcome:  OutcomeUpdated,
-			wantManifest: map[string]string{path: docSHA(shipped)},
-			wantWrote:    true,
-		},
-		{
-			name:         "differing but unchanged since relevo wrote it under DryRun only reports",
-			existing:     older,
-			manifest:     map[string]string{path: docSHA(older)},
-			dryRun:       true,
-			wantOutcome:  OutcomeWouldUpdate,
-			wantManifest: map[string]string{path: docSHA(older)},
-		},
-		{
-			name:         "edited by the user is kept",
-			existing:     edited,
-			manifest:     map[string]string{path: docSHA(older)},
-			wantOutcome:  OutcomeKeptDiffers,
-			wantManifest: map[string]string{path: docSHA(older)},
-		},
-		{
-			name:         "a path not in the manifest is kept",
-			existing:     edited,
-			wantOutcome:  OutcomeKeptDiffers,
-			wantManifest: map[string]string{},
-		},
-		{
-			name:         "edited by the user with Force is overwritten and recorded",
-			existing:     edited,
-			manifest:     map[string]string{path: docSHA(older)},
-			force:        true,
-			wantOutcome:  OutcomeOverwrote,
-			wantManifest: map[string]string{path: docSHA(shipped)},
-			wantWrote:    true,
-		},
-		{
-			name:         "edited by the user with Force under DryRun only reports",
-			existing:     edited,
-			manifest:     map[string]string{path: docSHA(older)},
-			force:        true,
-			dryRun:       true,
-			wantOutcome:  OutcomeWouldOverwrite,
-			wantManifest: map[string]string{path: docSHA(older)},
-		},
-	}
+// manifestDecisionRows is the install decision table: a missing file, an
+// identical file (with and without Force), a copy relevo last wrote, and a user
+// edit, with the manifest each one records.
+var manifestDecisionRows = []manifestRow{
+	{
+		name:         "missing file is written and recorded",
+		wantOutcome:  OutcomeWrote,
+		wantManifest: map[string]string{researcherClaudePath: docSHA(researcherClaudeShipped)},
+		wantWrote:    true,
+	},
+	{
+		name:         "missing file under DryRun only reports",
+		dryRun:       true,
+		wantOutcome:  OutcomeWouldWrite,
+		wantManifest: map[string]string{},
+	},
+	{
+		name:         "identical records the bytes on disk",
+		existing:     manifestIdentical,
+		wantOutcome:  OutcomeKeptIdentical,
+		wantManifest: map[string]string{researcherClaudePath: docSHA(manifestIdentical)},
+	},
+	{
+		name:         "identical under Force is still kept",
+		existing:     manifestIdentical,
+		force:        true,
+		wantOutcome:  OutcomeKeptIdentical,
+		wantManifest: map[string]string{researcherClaudePath: docSHA(manifestIdentical)},
+	},
+	{
+		name:         "differing but unchanged since relevo wrote it is updated",
+		existing:     manifestOlder,
+		manifest:     map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		wantOutcome:  OutcomeUpdated,
+		wantManifest: map[string]string{researcherClaudePath: docSHA(researcherClaudeShipped)},
+		wantWrote:    true,
+	},
+	{
+		name:         "differing but unchanged since relevo wrote it under DryRun only reports",
+		existing:     manifestOlder,
+		manifest:     map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		dryRun:       true,
+		wantOutcome:  OutcomeWouldUpdate,
+		wantManifest: map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+	},
+	{
+		name:         "edited by the user is kept",
+		existing:     manifestEdited,
+		manifest:     map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		wantOutcome:  OutcomeKeptDiffers,
+		wantManifest: map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+	},
+	{
+		name:         "a path not in the manifest is kept",
+		existing:     manifestEdited,
+		wantOutcome:  OutcomeKeptDiffers,
+		wantManifest: map[string]string{},
+	},
+	{
+		name:         "edited by the user with Force is overwritten and recorded",
+		existing:     manifestEdited,
+		manifest:     map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		force:        true,
+		wantOutcome:  OutcomeOverwrote,
+		wantManifest: map[string]string{researcherClaudePath: docSHA(researcherClaudeShipped)},
+		wantWrote:    true,
+	},
+	{
+		name:         "Force overwrites a file with no manifest entry",
+		existing:     manifestEdited,
+		force:        true,
+		wantOutcome:  OutcomeOverwrote,
+		wantManifest: map[string]string{researcherClaudePath: docSHA(researcherClaudeShipped)},
+		wantWrote:    true,
+	},
+	{
+		name:         "edited by the user with Force under DryRun only reports",
+		existing:     manifestEdited,
+		manifest:     map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		force:        true,
+		dryRun:       true,
+		wantOutcome:  OutcomeWouldOverwrite,
+		wantManifest: map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+	},
+}
 
-	for _, tc := range tests {
+func TestInstallManifestDecisions(t *testing.T) {
+	for _, tc := range manifestDecisionRows {
 		t.Run(tc.name, func(t *testing.T) {
-			env := freshEnv()
-			if tc.existing != nil {
-				env.files[full] = tc.existing
-			}
-			env.manifest = tc.manifest
-
-			results, err := Install(env, InstallOptions{
-				Kind:   "claude",
-				Role:   "researcher",
-				Force:  tc.force,
-				DryRun: tc.dryRun,
-			})
-			if err != nil {
-				t.Fatalf("Install: %v", err)
-			}
-			if len(results) != 1 {
-				t.Fatalf("results = %d, want 1", len(results))
-			}
-			if got := results[0].Outcome; got != tc.wantOutcome {
-				t.Errorf("outcome = %v, want %v", got, tc.wantOutcome)
-			}
-			if !reflect.DeepEqual(env.manifest, tc.wantManifest) {
-				t.Errorf("manifest = %v, want %v", env.manifest, tc.wantManifest)
-			}
-			if tc.wantWrote && !bytes.Equal(env.files[full], shipped) {
-				t.Errorf("file on disk = %q, want the shipped definition", env.files[full])
-			}
-			if tc.dryRun {
-				if len(env.writes) != 0 {
-					t.Errorf("DryRun wrote %v", env.writes)
-				}
-				if env.saves != 0 {
-					t.Errorf("DryRun saved the manifest %d times, want 0", env.saves)
-				}
-			}
+			checkManifestRow(t, tc, researcherClaudeShipped)
 		})
 	}
 }
 
-// TestInstallUpdatesDefinitionUnchangedSinceRelevoWroteIt is §5's third row on
-// its own: the bytes on disk are exactly what relevo last wrote, so a newer
-// shipped definition refreshes them and records the new sha.
-//
-// Mutation: make the `manifest[path] == docSHA(existing)` row always false and
-// this test fails -- OutcomeKeptDiffers instead of OutcomeUpdated.
-func TestInstallUpdatesDefinitionUnchangedSinceRelevoWroteIt(t *testing.T) {
-	shipped, err := AgentDoc("researcher", "claude")
-	if err != nil {
-		t.Fatalf("AgentDoc: %v", err)
-	}
-	const path = ".claude/agents/researcher.md"
-	const full = "/home/u/.claude/agents/researcher.md"
-	older := []byte("---\nmodel: haiku\n---\nan older relevo copy\n")
-
+func checkManifestRow(t *testing.T, tc manifestRow, shipped []byte) {
+	t.Helper()
 	env := freshEnv()
-	env.files[full] = older
-	env.manifest = map[string]string{path: docSHA(older)}
+	if tc.existing != nil {
+		env.files[researcherClaudeFull] = tc.existing
+	}
+	env.manifest = tc.manifest
 
-	results, err := Install(env, InstallOptions{Kind: "claude", Role: "researcher"})
+	results, err := Install(env, InstallOptions{
+		Kind:   "claude",
+		Role:   "researcher",
+		Force:  tc.force,
+		DryRun: tc.dryRun,
+	})
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if len(results) != 1 || results[0].Outcome != OutcomeUpdated {
-		t.Fatalf("results = %+v, want one OutcomeUpdated", results)
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
 	}
-	if !bytes.Equal(env.files[full], shipped) {
-		t.Errorf("file = %q, want the shipped definition refreshed", env.files[full])
+	if got := results[0].Outcome; got != tc.wantOutcome {
+		t.Errorf("outcome = %v, want %v", got, tc.wantOutcome)
 	}
-	if got := env.manifest[path]; got != docSHA(shipped) {
-		t.Errorf("manifest[%s] = %q, want the shipped sha", path, got)
+	if !reflect.DeepEqual(env.manifest, tc.wantManifest) {
+		t.Errorf("manifest = %v, want %v", env.manifest, tc.wantManifest)
 	}
-	if env.saves != 1 {
-		t.Errorf("manifest saves = %d, want 1", env.saves)
+	if tc.wantWrote {
+		if !bytes.Equal(env.files[researcherClaudeFull], shipped) {
+			t.Errorf("file on disk = %q, want the shipped definition", env.files[researcherClaudeFull])
+		}
+	} else if len(env.writes) != 0 {
+		t.Errorf("wrote %v, want no write", env.writes)
+	}
+	if tc.dryRun && env.saves != 0 {
+		t.Errorf("DryRun saved the manifest %d times, want 0", env.saves)
 	}
 }
 
-// TestInstallSavesManifestOnce pins §4's rule: one save per Install call, with
-// every written path recorded, never one save per file.
 func TestInstallSavesManifestOnce(t *testing.T) {
 	env := freshEnv()
 
@@ -862,9 +591,6 @@ func TestInstallSavesManifestOnce(t *testing.T) {
 	}
 }
 
-// TestInstallReportsManifestLoadErrorOnce pins §3: a malformed manifest is an
-// error Install reports once, and the definitions still land -- the manifest is
-// treated as empty rather than blocking the install.
 func TestInstallReportsManifestLoadErrorOnce(t *testing.T) {
 	env := freshEnv()
 	env.manifestErr = errors.New("decode role manifest: unexpected end of JSON input")
@@ -886,8 +612,6 @@ func TestInstallReportsManifestLoadErrorOnce(t *testing.T) {
 	}
 }
 
-// TestInstallReportsManifestSaveError keeps the results when only the record of
-// them failed: the definitions landed, and the caller reports the error once.
 func TestInstallReportsManifestSaveError(t *testing.T) {
 	env := freshEnv()
 	env.saveErr = errors.New("read-only file system")
@@ -904,14 +628,10 @@ func TestInstallReportsManifestSaveError(t *testing.T) {
 	}
 }
 
-// TestReadWriteManifestRoundTrip pins the manifest record itself (#371 §3; P3b
-// plan §4.4): missing is empty, a write is one kv row, and malformed JSON in a
-// legacy file is an error.
 func TestReadWriteManifestRoundTrip(t *testing.T) {
 	kv := testKV(t)
-	legacyPath := filepath.Join(t.TempDir(), "agents-manifest.json")
 
-	empty, err := ReadManifest(kv, legacyPath)
+	empty, err := ReadManifest(kv)
 	if err != nil {
 		t.Fatalf("ReadManifest(missing): %v", err)
 	}
@@ -926,7 +646,7 @@ func TestReadWriteManifestRoundTrip(t *testing.T) {
 	if err := WriteManifest(kv, want); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
-	got, err := ReadManifest(kv, "")
+	got, err := ReadManifest(kv)
 	if err != nil {
 		t.Fatalf("ReadManifest: %v", err)
 	}
@@ -937,12 +657,11 @@ func TestReadWriteManifestRoundTrip(t *testing.T) {
 		t.Errorf("KVGet(agents-manifest) = (_, %v, %v), want the row", ok, err)
 	}
 
-	// A malformed legacy file is refused by the import, which names the path.
-	badPath := filepath.Join(t.TempDir(), "agents-manifest.json")
-	if err := os.WriteFile(badPath, []byte("{not json"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	// A row that is valid JSON but not a role manifest is an error.
+	if err := kv.KVPut(manifestKey, []byte(`{"a":1}`)); err != nil {
+		t.Fatalf("KVPut: %v", err)
 	}
-	if _, err := ReadManifest(testKV(t), badPath); err == nil {
+	if _, err := ReadManifest(kv); err == nil {
 		t.Error("ReadManifest(malformed) = nil error, want an error")
 	}
 }
@@ -1108,4 +827,180 @@ func TestOSInstallEnvRoundTrip(t *testing.T) {
 	if _, err := env.LookPath("definitely-not-a-binary-relevo-test"); err == nil {
 		t.Error("expected error for non-existent binary, got nil")
 	}
+}
+
+func pluginRows(results []InstallResult) []InstallResult {
+	var out []InstallResult
+	for _, r := range results {
+		if strings.HasPrefix(r.Role, "opencode-plugin/") {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func TestInstallPluginFilesOptInProducesNoRowsWithoutFiles(t *testing.T) {
+	env := freshEnv()
+	results, err := Install(env, InstallOptions{Kind: "opencode"})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if got := pluginRows(results); len(got) != 0 {
+		t.Errorf("plugin rows = %+v, want none while the plugin is not opted in", got)
+	}
+}
+
+func TestInstallPluginFilesOptInWritesTheShippedFiles(t *testing.T) {
+	env := freshEnv()
+	results, err := Install(env, InstallOptions{Kind: "opencode", Files: true})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	rows := pluginRows(results)
+	if len(rows) != 3 {
+		t.Fatalf("plugin rows = %+v, want 3", rows)
+	}
+	h, _ := Lookup("opencode")
+	for i, f := range h.Files {
+		if rows[i].Outcome != OutcomeWrote {
+			t.Errorf("%s outcome = %v, want %v", f.Name, rows[i].Outcome, OutcomeWrote)
+		}
+		if rows[i].Role != f.Name || rows[i].Path != f.Path {
+			t.Errorf("row %d = %+v, want role %q path %q", i, rows[i], f.Name, f.Path)
+		}
+		want, err := ShippedFileBytes("opencode", f.Name)
+		if err != nil {
+			t.Fatalf("ShippedFileBytes(%s): %v", f.Name, err)
+		}
+		if got := env.files["/home/u/"+f.Path]; !bytes.Equal(got, want) {
+			t.Errorf("%s on disk = %d bytes, want the embedded bytes", f.Path, len(got))
+		}
+		if got := env.manifest[f.Path]; got != docSHA(want) {
+			t.Errorf("manifest[%s] = %q, want the shipped sha", f.Path, got)
+		}
+	}
+	if env.saves != 1 {
+		t.Errorf("manifest saves = %d, want 1", env.saves)
+	}
+}
+
+func TestInstallPluginFilesSecondRunKeepsThem(t *testing.T) {
+	env := freshEnv()
+	if _, err := Install(env, InstallOptions{Kind: "opencode", Files: true}); err != nil {
+		t.Fatalf("first Install: %v", err)
+	}
+	results, err := Install(env, InstallOptions{Kind: "opencode"})
+	if err != nil {
+		t.Fatalf("second Install: %v", err)
+	}
+	rows := pluginRows(results)
+	if len(rows) != 3 {
+		t.Fatalf("plugin rows = %+v, want 3", rows)
+	}
+	for _, r := range rows {
+		if r.Outcome != OutcomeKeptIdentical {
+			t.Errorf("%s outcome = %v, want %v", r.Role, r.Outcome, OutcomeKeptIdentical)
+		}
+	}
+}
+
+func TestInstallPluginFilesDryRunWritesNothing(t *testing.T) {
+	env := freshEnv()
+	results, err := Install(env, InstallOptions{Kind: "opencode", Files: true, DryRun: true})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	rows := pluginRows(results)
+	if len(rows) != 3 {
+		t.Fatalf("plugin rows = %+v, want 3", rows)
+	}
+	for _, r := range rows {
+		if r.Outcome != OutcomeWouldWrite {
+			t.Errorf("%s outcome = %v, want %v", r.Role, r.Outcome, OutcomeWouldWrite)
+		}
+	}
+	if len(env.writes) != 0 {
+		t.Errorf("DryRun wrote %v, want nothing", env.writes)
+	}
+	if env.saves != 0 {
+		t.Errorf("DryRun saved the manifest %d times, want 0", env.saves)
+	}
+}
+
+func TestInstallPluginFilesRoleSkipsThem(t *testing.T) {
+	env := freshEnv()
+	results, err := Install(env, InstallOptions{Kind: "opencode", Role: "plan-executor", Files: true})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(results) != 1 || results[0].Role != "plan-executor" {
+		t.Fatalf("results = %+v, want only the plan-executor role", results)
+	}
+	if got := pluginRows(results); len(got) != 0 {
+		t.Errorf("plugin rows = %+v, want none under --role", got)
+	}
+}
+
+func TestInstallPluginFilesFollowDefinitionRules(t *testing.T) {
+	const pkgPath = ".config/opencode/plugins/relevo/package.json"
+	const pkgFull = "/home/u/.config/opencode/plugins/relevo/package.json"
+
+	shipped, err := ShippedFileBytes("opencode", "opencode-plugin/package.json")
+	if err != nil {
+		t.Fatalf("ShippedFileBytes: %v", err)
+	}
+
+	t.Run("an unmodified older copy is updated even with Files false", func(t *testing.T) {
+		env := freshEnv()
+		older := []byte("{\n  \"name\": \"relevo\",\n  \"version\": \"0.0.0-old\"\n}\n")
+		env.files[pkgFull] = older
+		env.manifest[pkgPath] = docSHA(older)
+
+		results, err := Install(env, InstallOptions{Kind: "opencode"})
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		rows := pluginRows(results)
+		if len(rows) != 1 || rows[0].Outcome != OutcomeUpdated {
+			t.Fatalf("plugin rows = %+v, want one %v", rows, OutcomeUpdated)
+		}
+		if !bytes.Equal(env.files[pkgFull], shipped) {
+			t.Error("the older plugin copy was not refreshed with the shipped one")
+		}
+		if got := env.manifest[pkgPath]; got != docSHA(shipped) {
+			t.Errorf("manifest[%s] = %q, want the shipped sha", pkgPath, got)
+		}
+	})
+
+	t.Run("a user edit is kept, and Force overwrites it", func(t *testing.T) {
+		edited := []byte("{\n  \"version\": \"mine\"\n}\n")
+
+		env := freshEnv()
+		env.files[pkgFull] = edited
+		results, err := Install(env, InstallOptions{Kind: "opencode"})
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		rows := pluginRows(results)
+		if len(rows) != 1 || rows[0].Outcome != OutcomeKeptDiffers {
+			t.Fatalf("plugin rows = %+v, want one %v", rows, OutcomeKeptDiffers)
+		}
+		if !bytes.Equal(env.files[pkgFull], edited) {
+			t.Error("an edited plugin file must stay as the user wrote it")
+		}
+
+		env2 := freshEnv()
+		env2.files[pkgFull] = edited
+		results2, err := Install(env2, InstallOptions{Kind: "opencode", Force: true})
+		if err != nil {
+			t.Fatalf("Install(Force): %v", err)
+		}
+		rows2 := pluginRows(results2)
+		if len(rows2) != 1 || rows2[0].Outcome != OutcomeOverwrote {
+			t.Fatalf("plugin rows = %+v, want one %v", rows2, OutcomeOverwrote)
+		}
+		if !bytes.Equal(env2.files[pkgFull], shipped) {
+			t.Error("Force did not replace the edited plugin file with the shipped one")
+		}
+	})
 }

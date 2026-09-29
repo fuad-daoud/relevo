@@ -11,63 +11,11 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
-func openStore(t *testing.T) *Store {
-	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	return Open(d)
-}
-
-func writeFile(t *testing.T, path, body string, mode os.FileMode) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
-	}
-	if err := os.WriteFile(path, []byte(body), mode); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
-// seedConfigDir writes one of every file an import consumes, plus a client.pub
-// and a hooks directory.
-func seedConfigDir(t *testing.T, dir string) {
-	t.Helper()
-
-	writeFile(t, filepath.Join(dir, "candidates.json"),
-		`[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`, 0o644)
-	writeFile(t, filepath.Join(dir, "policy.json"),
-		`{"order":{"builder":["claude/anthropic/sonnet"]}}`, 0o644)
-	writeFile(t, filepath.Join(dir, "roles.json"), `{}`, 0o644)
-	writeFile(t, filepath.Join(dir, "prices.json"),
-		`{"as_of":"2026-01-01","source":"file","models":{}}`, 0o644)
-	writeFile(t, filepath.Join(dir, "servers.json"),
-		`{"zen":{"url":"https://zen:7777","fingerprint":"sha256:abcd"}}`, 0o644)
-
-	kp, err := remote.Generate()
-	if err != nil {
-		t.Fatalf("remote.Generate: %v", err)
-	}
-	pem, err := remote.MarshalPrivate(kp)
-	if err != nil {
-		t.Fatalf("remote.MarshalPrivate: %v", err)
-	}
-	writeFile(t, filepath.Join(dir, "client.key"), string(pem), 0o600)
-	writeFile(t, filepath.Join(dir, "client.pub"), "ed25519 fake\n", 0o644)
-	writeFile(t, filepath.Join(dir, "typesafe.key"), "  test-key  \n", 0o600)
-
-	writeFile(t, filepath.Join(dir, "hooks", "state_changed.d", "10-first"), "#!/bin/sh\n", 0o755)
-	writeFile(t, filepath.Join(dir, "hooks", "state_changed.d", "05-zero"), "#!/bin/sh\n", 0o755)
-	writeFile(t, filepath.Join(dir, "hooks", "state_changed.d", "20-data"), "not executable\n", 0o644)
-	writeFile(t, filepath.Join(dir, "hooks", "round_started.d", "only"), "#!/bin/sh\n", 0o755)
-}
-
 func TestImportAllFiles(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	seedConfigDir(t, dir)
@@ -139,6 +87,8 @@ func TestImportAllFiles(t *testing.T) {
 }
 
 func TestImportInvalidPolicyWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	writeFile(t, filepath.Join(dir, "candidates.json"),
@@ -172,6 +122,8 @@ func TestImportInvalidPolicyWritesNothing(t *testing.T) {
 }
 
 func TestImportEmptyDirIsNoOp(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -191,6 +143,8 @@ func TestImportEmptyDirIsNoOp(t *testing.T) {
 }
 
 func TestImportLeavesBakFilesAlone(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	writeFile(t, filepath.Join(dir, "candidates.json"),
@@ -210,6 +164,8 @@ func TestImportLeavesBakFilesAlone(t *testing.T) {
 }
 
 func TestLoadFilesEqualsLoadAfterImport(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	seedConfigDir(t, dir)
@@ -245,7 +201,7 @@ func TestLoadFilesEqualsLoadAfterImport(t *testing.T) {
 		t.Errorf("Hooks differ: %#v vs %#v", fromFiles.Hooks, fromDB.Hooks)
 	}
 	if !reflect.DeepEqual(fromFiles.ClientKey, fromDB.ClientKey) {
-		t.Errorf("ClientKey differs")
+		t.Error("ClientKey differs")
 	}
 	if fromFiles.Typesafe != fromDB.Typesafe {
 		t.Errorf("Typesafe differs: %q vs %q", fromFiles.Typesafe, fromDB.Typesafe)
@@ -255,13 +211,13 @@ func TestLoadFilesEqualsLoadAfterImport(t *testing.T) {
 	}
 }
 
-// TestImportTxFailureKeepsFiles is the §8 step 3 mutation guard: a failed
-// import transaction must leave every file in place. The test holds a write
-// transaction on the same database while ImportFiles runs, so its own
-// BEGIN IMMEDIATE cannot take the write lock. Moving the file removal before
-// the transaction makes this test fail.
+// TestImportTxFailureKeepsFiles holds a write transaction on the same database
+// while ImportFiles runs, so its own BEGIN IMMEDIATE cannot take the write
+// lock; a failed transaction must leave every file in place.
 func TestImportTxFailureKeepsFiles(t *testing.T) {
-	s := openStore(t)
+	t.Parallel()
+
+	s := openStoreWith(t, db.Options{BusyTimeout: 20 * time.Millisecond, BeginRetry: time.Millisecond})
 	dir := filepath.Join(t.TempDir(), "relevo")
 	writeFile(t, filepath.Join(dir, "candidates.json"),
 		`[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`, 0o644)
@@ -287,6 +243,8 @@ func TestImportTxFailureKeepsFiles(t *testing.T) {
 }
 
 func TestStoreDeleteRemovesAndBumpsVersion(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	if _, err := s.Put(Candidates, []byte(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`)); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -327,90 +285,130 @@ func TestStoreDeleteRemovesAndBumpsVersion(t *testing.T) {
 	}
 }
 
-func TestPutDocWritesEverySectionAndWarnings(t *testing.T) {
-	s := openStore(t)
-	doc := map[Section]json.RawMessage{
-		Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
-		Policy:     json.RawMessage(`{"order":{"builder":["claude/p/m"]}}`),
-		Hooks:      json.RawMessage(`{"state_changed":[["/bin/true"]]}`),
+type putDocCase struct {
+	name        string
+	seed        map[Section]string
+	doc         Doc
+	wantErr     bool
+	errContains string
+	present     []Section
+	absent      []Section
+	keep        map[Section]string
+	wantVersion int64
+}
+
+func TestPutDoc(t *testing.T) {
+	t.Parallel()
+
+	cases := []putDocCase{
+		{
+			name: "writes every named section",
+			doc: Doc{
+				Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
+				Policy:     json.RawMessage(`{"order":{"builder":["claude/p/m"]}}`),
+				Hooks:      json.RawMessage(`{"state_changed":[["/bin/true"]]}`),
+			},
+			present:     []Section{Candidates, Policy, Hooks},
+			absent:      []Section{Roles},
+			wantVersion: 3,
+		},
+		{
+			name: "leaves unmentioned sections alone",
+			seed: map[Section]string{
+				Servers: `{"zen":{"url":"https://zen:7777","insecure":true}}`,
+			},
+			doc: Doc{
+				Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
+			},
+			present:     []Section{Candidates},
+			absent:      []Section{Roles},
+			keep:        map[Section]string{Servers: "zen"},
+			wantVersion: 2,
+		},
+		{
+			name: "unknown section writes nothing",
+			doc: Doc{
+				Candidates:          json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
+				Section("nonesuch"): json.RawMessage(`{}`),
+			},
+			wantErr:     true,
+			errContains: "nonesuch",
+			absent:      []Section{Candidates},
+			wantVersion: 0,
+		},
+		{
+			name: "invalid section writes nothing",
+			doc: Doc{
+				Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
+				Policy:     json.RawMessage(`{"max_switches":-1}`),
+			},
+			wantErr:     true,
+			absent:      []Section{Candidates, Policy},
+			wantVersion: 0,
+		},
 	}
-	if _, err := s.PutDoc(doc); err != nil {
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := openStore(t)
+			seedPutDoc(t, s, tc.seed)
+			checkPutDoc(t, s, tc)
+		})
+	}
+}
+
+func seedPutDoc(t *testing.T, s *Store, seed map[Section]string) {
+	t.Helper()
+	for sec, body := range seed {
+		if _, err := s.Put(sec, []byte(body)); err != nil {
+			t.Fatalf("seed Put(%s): %v", sec, err)
+		}
+	}
+}
+
+func checkPutDoc(t *testing.T, s *Store, tc putDocCase) {
+	t.Helper()
+	_, err := s.PutDoc(tc.doc)
+	if tc.wantErr {
+		if err == nil {
+			t.Fatal("PutDoc: want error, got nil")
+		}
+		if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
+			t.Errorf("error %v does not name %q", err, tc.errContains)
+		}
+	} else if err != nil {
 		t.Fatalf("PutDoc: %v", err)
 	}
-	if _, ok, err := s.Body(Candidates); err != nil || !ok {
-		t.Errorf("candidates after PutDoc = ok %v, err %v", ok, err)
-	}
-	if _, ok, err := s.Body(Policy); err != nil || !ok {
-		t.Errorf("policy after PutDoc = ok %v, err %v", ok, err)
-	}
-	if _, ok, err := s.Body(Hooks); err != nil || !ok {
-		t.Errorf("hooks after PutDoc = ok %v, err %v", ok, err)
-	}
-	// A section not in the document is untouched.
-	if _, ok, err := s.Body(Roles); err != nil || ok {
-		t.Errorf("roles after PutDoc = ok %v, err %v, want absent", ok, err)
-	}
-}
 
-func TestPutDocLeavesUnmentionedSectionsAlone(t *testing.T) {
-	s := openStore(t)
-	if _, err := s.Put(Servers, []byte(`{"zen":{"url":"https://zen:7777","insecure":true}}`)); err != nil {
-		t.Fatalf("Put(servers): %v", err)
+	for _, sec := range tc.present {
+		if ok, err := s.Has(sec); err != nil || !ok {
+			t.Errorf("Has(%s) = %v/%v, want present", sec, ok, err)
+		}
 	}
-
-	if _, err := s.PutDoc(map[Section]json.RawMessage{
-		Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
-	}); err != nil {
-		t.Fatalf("PutDoc: %v", err)
+	for _, sec := range tc.absent {
+		if ok, err := s.Has(sec); err != nil || ok {
+			t.Errorf("Has(%s) = %v/%v, want absent", sec, ok, err)
+		}
 	}
-
-	body, ok, err := s.Body(Servers)
-	if err != nil || !ok {
-		t.Fatalf("servers after PutDoc = ok %v, err %v, want present", ok, err)
+	for sec, want := range tc.keep {
+		body, ok, err := s.Body(sec)
+		if err != nil || !ok {
+			t.Fatalf("Body(%s) = ok %v err %v, want present", sec, ok, err)
+		}
+		if !strings.Contains(string(body), want) {
+			t.Errorf("Body(%s) = %s, want %q left in place", sec, body, want)
+		}
 	}
-	if !strings.Contains(string(body), "zen") {
-		t.Errorf("servers body = %s, want it left untouched", body)
-	}
-}
-
-func TestPutDocUnknownSectionWritesNothing(t *testing.T) {
-	s := openStore(t)
-	_, err := s.PutDoc(map[Section]json.RawMessage{
-		Candidates:          json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
-		Section("nonesuch"): json.RawMessage(`{}`),
-	})
-	if err == nil {
-		t.Fatal("PutDoc with an unknown section: want error, got nil")
-	}
-	if !strings.Contains(err.Error(), "nonesuch") {
-		t.Errorf("error %v does not name the unknown section", err)
-	}
-	if ok, _ := s.Has(Candidates); ok {
-		t.Error("candidates written despite the unknown section in the same document")
-	}
-	if v, _ := s.Version(); v != 0 {
-		t.Errorf("Version = %d, want 0: nothing was written", v)
-	}
-}
-
-func TestPutDocInvalidSectionWritesNothing(t *testing.T) {
-	s := openStore(t)
-	_, err := s.PutDoc(map[Section]json.RawMessage{
-		Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
-		Policy:     json.RawMessage(`{"max_switches":-1}`),
-	})
-	if err == nil {
-		t.Fatal("PutDoc with an invalid policy: want error, got nil")
-	}
-	if ok, _ := s.Has(Candidates); ok {
-		t.Error("candidates written despite the invalid policy in the same document")
-	}
-	if v, _ := s.Version(); v != 0 {
-		t.Errorf("Version = %d, want 0: nothing was written", v)
+	if v, err := s.Version(); err != nil || v != tc.wantVersion {
+		t.Errorf("Version = (%d, %v), want (%d, nil)", v, err, tc.wantVersion)
 	}
 }
 
 func TestSecretDeleteAndNames(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	if err := s.PutSecret(SecretTypesafe, []byte("ts-key")); err != nil {
 		t.Fatalf("PutSecret: %v", err)
@@ -429,13 +427,4 @@ func TestSecretDeleteAndNames(t *testing.T) {
 	if _, ok, err := s.Secret(SecretTypesafe); err != nil || ok {
 		t.Errorf("secret after delete = ok %v, err %v, want absent", ok, err)
 	}
-}
-
-func contains(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }

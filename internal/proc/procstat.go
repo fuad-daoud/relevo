@@ -5,10 +5,9 @@ import (
 	"strings"
 )
 
-// ParseProcStatPPID reads the parent pid out of one /proc/<pid>/stat line. The
-// command name is field 2 in parentheses and may itself contain spaces and
-// parentheses, so the fields are counted from after the last ')': state, then
-// ppid. Pure, so the awkward shapes are table-tested without a process.
+// ParseProcStatPPID reads the parent pid out of one /proc/<pid>/stat line; the
+// command name is parenthesised and may contain spaces and parentheses, so the
+// fields are counted from after the last ')'.
 func ParseProcStatPPID(stat string) (ppid int, ok bool) {
 	i := strings.LastIndexByte(stat, ')')
 	if i < 0 {
@@ -27,9 +26,8 @@ func ParseProcStatPPID(stat string) (ppid int, ok bool) {
 	return ppid, true
 }
 
-// ParsePSChildren reads `ps -A -o pid=,ppid=` output and returns every pid
-// whose parent is self, in the order ps printed them. It is the fallback for a
-// host with no readable procRoot (darwin).
+// ParsePSChildren returns every pid in `ps -A -o pid=,ppid=` output whose parent
+// is self, in ps's order; it is the fallback for a host with no readable root.
 func ParsePSChildren(out string, self int) []int {
 	var pids []int
 	for _, line := range strings.Split(out, "\n") {

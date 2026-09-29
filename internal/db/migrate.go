@@ -17,11 +17,7 @@ import (
 var migrationFiles embed.FS
 
 // applyMigrations runs every *.sql file under "migrations" in fsys, in name
-// order. Each file runs in its own BEGIN IMMEDIATE transaction on a dedicated
-// connection, and re-reads schema_version inside that transaction, skipping
-// the file if its number is already recorded there. It is unexported and
-// takes fsys as a parameter so tests can inject a second migration without
-// touching the embedded set.
+// order. fsys is a parameter so a test can inject a migration.
 func applyMigrations(sqlDB *sql.DB, fsys fs.FS) error {
 	names, err := migrationNames(fsys)
 	if err != nil {
@@ -43,8 +39,7 @@ func applyMigrations(sqlDB *sql.DB, fsys fs.FS) error {
 }
 
 // maxVersion returns the highest applied schema_version, or 0 when the
-// schema_version table does not exist yet (a fresh database). It never
-// creates or writes anything.
+// schema_version table does not exist yet. It never creates or writes anything.
 func maxVersion(sqlDB *sql.DB) (int, error) {
 	var name string
 	err := sqlDB.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'`).Scan(&name)
@@ -55,18 +50,16 @@ func maxVersion(sqlDB *sql.DB) (int, error) {
 		return 0, fmt.Errorf("read schema_version: %w", err)
 	}
 
-	var v sql.NullInt64
+	var v sql.Null[int64]
 	if err := sqlDB.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil {
 		return 0, fmt.Errorf("read schema_version: %w", err)
 	}
 	if !v.Valid {
 		return 0, nil
 	}
-	return int(v.Int64), nil
+	return int(v.V), nil
 }
 
-// maxEmbedded returns the highest migration number fsys ships, or 0 when it
-// ships none.
 func maxEmbedded(fsys fs.FS) (int, error) {
 	names, err := migrationNames(fsys)
 	if err != nil {
@@ -103,8 +96,7 @@ func migrationNames(fsys fs.FS) ([]string, error) {
 	return names, nil
 }
 
-// migrationNumber parses the leading integer of a migration file name, e.g.
-// "001_initial.sql" -> 1.
+// migrationNumber parses the leading integer of a migration file name.
 func migrationNumber(name string) (int, error) {
 	i := strings.IndexByte(name, '_')
 	if i < 0 {
@@ -128,18 +120,20 @@ func applyOneMigration(sqlDB *sql.DB, fsys fs.FS, name string, n int) (err error
 	if err != nil {
 		return fmt.Errorf("begin migration %s: %w", name, err)
 	}
-	defer conn.Close()
+	defer func() {
+		if cerr := conn.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
-	// schema_version is created outside the immediate transaction so a fresh
-	// database has somewhere to record versions; IF NOT EXISTS makes the
-	// concurrent first-open race a no-op.
+	// schema_version is created outside the migration transaction, so a fresh
+	// database has somewhere to record versions.
 	if _, err = conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)`); err != nil {
 		return fmt.Errorf("create schema_version: %w", err)
 	}
 
 	// BEGIN IMMEDIATE takes the write lock up front, so two processes opening
-	// the same fresh database serialise here rather than both applying the
-	// migration (#372 §4.5).
+	// the same fresh database serialise rather than both migrating it.
 	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("begin migration %s: %w", name, mapBusy(err))
 	}
@@ -149,12 +143,11 @@ func applyOneMigration(sqlDB *sql.DB, fsys fs.FS, name string, n int) (err error
 			return
 		}
 		if _, rerr := conn.ExecContext(ctx, "ROLLBACK"); rerr != nil {
-			err = fmt.Errorf("migration %s: %v, and rollback failed: %w", name, err, rerr)
+			err = fmt.Errorf("migration %s: rollback failed: %w", name, errors.Join(err, rerr))
 		}
 	}()
 
-	// Re-select inside the transaction: another process may have applied this
-	// migration while this one waited for the write lock.
+	// Re-select inside the transaction in case another process applied it.
 	var applied bool
 	if err = conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_version WHERE version = ?)`, n).Scan(&applied); err != nil {
 		return fmt.Errorf("check migration %s: %w", name, err)

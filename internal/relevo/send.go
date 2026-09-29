@@ -9,11 +9,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// plannerAgent is the definition whose actor answers with a plan.
+const plannerAgent = "architect"
+
+// seedMaxBytes caps a planner actor's send: a planner's input is a seed; it
+// reads the code itself.
+const seedMaxBytes = 4 << 10
 
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
@@ -23,7 +33,7 @@ import (
 //
 // It opens by naming the working tree and a halt rule (#192): a headless
 // agy builder has been observed to run its shell somewhere else and execute
-// a round against the planner's main checkout instead of its own worktree.
+// a round against the mastermind's main checkout instead of its own worktree.
 // Telling the builder which tree is its own, and to check with `git status`
 // before doing anything else, is relevo's second line of defence alongside
 // pinning the process's workspace with --add-dir.
@@ -48,6 +58,34 @@ not_done: []            # adjacent work you deliberately left
 ` + "```" + `
 Reply here with only the report path.`
 
+// readerPrompt is a reader round's handoff template (A5 R4a): the reader works
+// in a throwaway scratch copy and its final message is the actor's output
+// label, saved as that label's file in the round's artifact directory. relevo
+// writes nothing on the reader's behalf: it saves the final message itself. The
+// first line is exactly `Your working tree is: ` because the e2e fake parses it,
+// as it does for builderPrompt.
+//
+// It is a format string: scratch tree, b.CWD, prompt path, output label, output
+// path, done marker.
+const readerPrompt = `Your working tree is: %s
+It is a throwaway copy of %s for this round: read anything in it, run
+anything read-only, change nothing you need to keep -- it is discarded when
+the round ends, and nothing in it is ever committed.
+
+Read: %s
+Your final message is your %s: it is saved as %s.
+End that final message with this block, filled in honestly:
+
+` + "```relevo" + `
+status: done            # done | halted | blocked | deferred
+halted_at: ""           # which step, when halted or blocked
+changed_paths: []       # files you changed in the throwaway tree
+commands_run: []        # commands you ran
+not_done: []            # what you deliberately left
+` + "```" + `
+Then create this empty file: %s
+Your final message comes after it: relevo saves it once you finish.`
+
 // SendResult is what one successful Send produced.
 type SendResult struct {
 	Round int    // the round the plan was filed under
@@ -62,7 +100,7 @@ type SendOptions struct {
 	Tier      string // "" means the binding's Tier; else a one-round override (headless only)
 	AllowYolo bool
 	// Builder is a candidate token that persists as the binding's builder from
-	// this round on, until another --builder or a mid-round switch changes it.
+	// this round on, until another --candidate or a mid-round switch changes it.
 	// "" means the binding's current builder. In contrast to Tier, it is not a
 	// one-round override: the issue's failure was a plain send silently going
 	// to the builder the binding was bound to (#318).
@@ -72,12 +110,15 @@ type SendOptions struct {
 	Regate *int
 	// Verify marks the round for a read-only reviewer at round close (#144).
 	// nil takes policy.json verify.default, so a plain send honours the
-	// planner's configured default and --verify/--no-verify overrides it.
+	// mastermind's configured default and --verify/--no-verify overrides it.
 	Verify *bool
 	// Defer stages the round -- plan written, log entry appended, State ==
 	// active -- but does not spawn a builder; the caller (serve.admit or
 	// relevo.Admit) starts it later (#285, server only).
 	Defer bool
+	// Force sends a planner actor's seed even when it is over seedMaxBytes: a
+	// planner's input is a seed, and forcing is the explicit escape.
+	Force bool
 }
 
 // preflight is everything Send checks before it takes the state lock and
@@ -87,21 +128,39 @@ type SendOptions struct {
 // about the state of the world (#149). A failed precondition is an error in
 // Send's exact wording.
 type preflight struct {
-	b    store.Binding // the binding as loaded (read-only; Send re-loads under the lock)
-	body []byte        // the plan file's bytes
-	tier harness.Tier  // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
-	argv []string      // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
-	gate *ledger.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
-	pick *Resolution   // --builder's resolution to apply under the lock; nil when the builder does not change
+	b    store.Binding      // the binding as loaded (read-only; Send re-loads under the lock)
+	body []byte             // the plan file's bytes
+	tier harness.Tier       // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
+	argv []string           // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
+	gate *availability.Gate // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
+	pick *Resolution        // --candidate's resolution to apply under the lock; nil when the builder does not change
+	// staleToken is the binding's old BuilderCandidate when the preflight
+	// re-picked because the token was stale; "" otherwise. When it is
+	// non-empty, pick is non-nil.
+	staleToken string
 
-	planPath, reportPath, donePath string
-	prompt                         string // composePrompt(...) -- computed, never sent
+	promptPath, reportPath, donePath string
+	prompt                           string // composePrompt(...) -- computed, never sent
 
 	remoteSHA string // remote: the resolved branch tip, for the dry run's Where
 	// remoteBuilder is the value Send hands sendRemote for a remote binding:
-	// --builder's canonical token when the argument resolved to one, or the
+	// --candidate's canonical token when the argument resolved to one, or the
 	// argument unchanged ("" included) when it did not.
 	remoteBuilder string
+}
+
+// pendingRoundFile returns the round's completion marker or report if either
+// is already on disk: the round's work is finished and the daemon has not yet
+// ingested the close, so a send into this round would race it. The done marker
+// is checked first because the close keys on it. Any stat error, not-exist
+// included, counts as absent: an unreadable directory must not block a send.
+func pendingRoundFile(rt Runtime, name string, round int) (string, bool) {
+	for _, path := range []string{rt.Store.DonePath(name, round), rt.Store.ReportPath(name, round)} {
+		if _, err := os.Stat(path); err == nil {
+			return path, true
+		}
+	}
+	return "", false
 }
 
 // sendPreflight runs Send's read-only preconditions in Send's exact order and
@@ -115,7 +174,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// on binding state.
 	body, err := os.ReadFile(file)
 	if err != nil {
-		return preflight{}, fmt.Errorf("read plan %s: %w", file, err)
+		return preflight{}, fmt.Errorf("read prompt %s: %w", file, err)
 	}
 
 	var tier harness.Tier
@@ -137,16 +196,22 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if b.State == store.StatePaused {
 		return preflight{}, fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
 	}
+	// A reader round has no check, so --verify, which only a writer's gate
+	// round has, names its flag. It stands before any spawn.
+	if b.Shape == store.ShapeReader && opts.Verify != nil {
+		return preflight{}, errors.New("--verify: a reader round has no check")
+	}
 
-	// --builder resolves the new candidate read-only and substitutes it in
+	// --candidate resolves the new candidate read-only and substitutes it in
 	// memory, so every later precondition (the argv, the advisory gate note,
 	// the dry run) is computed against the builder this round will actually
 	// use. Nothing is saved here: Send re-applies the change under its lock.
 	// A remote binding's candidates decide on the server, so only the token's
 	// shape is checked here (§5.1).
 	var pick *Resolution
+	var staleToken string
 	// remoteBuilder is what a remote binding's sendRemote is handed: the
-	// canonical token when --builder resolved to one, else the argument as
+	// canonical token when --candidate resolved to one, else the argument as
 	// typed (A1 §4.2).
 	remoteBuilder := opts.Builder
 	if opts.Builder != "" {
@@ -155,7 +220,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 			return preflight{}, err
 		}
 		if roundOpenIn(entries, b.Round) {
-			return preflight{}, fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --builder", name, b.Round, name)
+			return preflight{}, fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --candidate", name, b.Round, name)
 		}
 		if b.Builder.Remote() {
 			// A remote binding's candidates decide on the server, so a
@@ -189,19 +254,42 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		}
 	}
 
+	// A binding whose candidate was edited or deleted holds a stale token:
+	// the configured set no longer serves the triple the running round is
+	// on. Pick again by the actor's order, exactly as a switch does, so
+	// every precondition below is computed against the builder this round
+	// will actually use.
+	if pick == nil && staleBuilder(rt, b) {
+		old := b.BuilderCandidate
+		var res *Resolution
+		b, res, err = repickStale(rt, b, opts.AllowYolo)
+		if err != nil {
+			return preflight{}, err
+		}
+		pick = res
+		staleToken = old
+	}
+
 	if tier == "" {
 		tier = effectiveTier(b)
 	}
 
-	planPath := rt.Store.PlanPath(name, b.Round)
+	// A planner actor answers with a plan, so its prompt is a seed: cap it
+	// here, in the read-only preflight, so a --dry-run refuses identically
+	// and a refusal writes nothing. --force is the explicit escape.
+	if !opts.Force && len(body) > seedMaxBytes && actorRunsPlanner(rt, b) {
+		return preflight{}, fmt.Errorf("binding %q: the seed is %d bytes; a planner actor takes at most %d bytes -- pass --force to send it anyway", name, len(body), seedMaxBytes)
+	}
+
+	promptPath := rt.Store.PromptPath(name, b.Round)
 	reportPath := rt.Store.ReportPath(name, b.Round)
 	donePath := rt.Store.DonePath(name, b.Round)
-	prompt := composePrompt(b, planPath, reportPath, donePath)
+	prompt := composePrompt(rt, b, promptPath, reportPath, donePath)
 
 	pf := preflight{
 		b: b, body: body, tier: tier,
-		planPath: planPath, reportPath: reportPath, donePath: donePath,
-		prompt: prompt, pick: pick,
+		promptPath: promptPath, reportPath: reportPath, donePath: donePath,
+		prompt: prompt, pick: pick, staleToken: staleToken,
 		remoteBuilder: remoteBuilder,
 	}
 
@@ -244,7 +332,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// runner must exist and no previous process may still be alive -- and both
 	// are checked here, before Send stages anything.
 	if rt.Runner == nil {
-		return preflight{}, fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
+		return preflight{}, fmt.Errorf("binding %q: %w", name, spawn.ErrRunnerUnavailable)
 	}
 	if b.Builder.PID != 0 {
 		alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
@@ -254,6 +342,12 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		if alive {
 			return preflight{}, fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
 		}
+	}
+	// A round whose marker or report is already on disk is finished: the
+	// daemon has simply not closed it yet (it is busy, or the process that
+	// wrote the file just exited).
+	if path, found := pendingRoundFile(rt, name, b.Round); found {
+		return preflight{}, fmt.Errorf("binding %q round %d: %s exists: %w", name, b.Round, filepath.Base(path), ErrReportPending)
 	}
 	ref, err := candidate.ParseRef(b.BuilderCandidate)
 	if err != nil {
@@ -267,7 +361,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	argv, err := headlessLaunch(c, role, tier, roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
+	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.Dir(b.Name))
 	if err != nil {
 		return preflight{}, err
 	}
@@ -275,8 +369,8 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 
 	// The gate is advisory only: a gated candidate can still be sent to, it
 	// just tells the human the daemon would switch away after the start.
-	for _, g := range Gates(rt) {
-		if g.Token == b.BuilderCandidate && (g.Kind == ledger.RateLimited || g.Kind == ledger.RolesMissing) {
+	for _, g := range availability.Gates(AvailabilityDeps(rt)) {
+		if g.Token == b.BuilderCandidate && (g.Kind == availability.RateLimited || g.Kind == availability.RolesMissing) {
 			gate := g
 			pf.gate = &gate
 			break
@@ -286,7 +380,21 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	return pf, nil
 }
 
-// Send copies the planner's plan into relevo state and hands it to the builder
+// actorRunsPlanner reports whether b's actor resolves to the planner
+// definition: the actor whose prompt is a seed. A role that no longer
+// resolves is not this check's business: the existing error surfaces where it
+// does today.
+func actorRunsPlanner(rt Runtime, b store.Binding) bool {
+	spec, err := bindingSpec(rt, b, b.Builder.Kind)
+	return err == nil && spec.Definition == plannerAgent
+}
+
+// sendAfterSpawn is a test seam: nil in production. When non-nil, Send calls
+// it right after startRound succeeds, and a non-nil return fails the send
+// from that point. It exists only so a test can inject a post-spawn failure.
+var sendAfterSpawn func(name string) error
+
+// Send copies the mastermind's plan into relevo state and hands it to the builder
 // as the prompt of a fresh process started in the binding's tree (#99). It
 // returns a SendResult describing the round and any between-rounds drift.
 //
@@ -307,8 +415,13 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 	// The baseline snapshot adds git objects, so it stays out of the
 	// read-only preflight and is taken here, before the lock.
-	baseline, baselineHead := CaptureBaseline(ctx, rt, pf.b)
+	baseline, baselineHead := capture.Baseline(ctx, captureDeps(rt), pf.b)
 	hintRound := pf.b.Round
+
+	// spawned is the process startRound launched, if any: the deferred
+	// failure path after the lock stops a builder this send started but
+	// could not finish recording (#436).
+	var spawned *spawn.ProcHandle
 
 	var round int
 	var driftLineOut string
@@ -319,6 +432,10 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// the builder already has. Spawning a process does not wait on it, so
 	// holding the lock across it costs milliseconds, not the length of a turn.
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		// pending collects this round's log entries, so the binding and all of
+		// them are written in one transaction (#471).
+		var pending []store.LogEntry
+
 		b, err := tx.Load(name)
 		if err != nil {
 			return err
@@ -337,7 +454,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// should start a second builder in the same tree.
 		if b.Builder.PID != 0 {
 			if rt.Runner == nil {
-				return fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
+				return fmt.Errorf("binding %q: %w", name, spawn.ErrRunnerUnavailable)
 			}
 			alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
 			if err != nil {
@@ -348,16 +465,29 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			}
 		}
 
-		// --builder is re-applied under the lock, against the fresh binding:
+		// Re-check under the lock: the daemon may have closed the round
+		// between the preflight and this lock, in which case b.Round here is
+		// already the next round and its files do not exist, so the send
+		// proceeds. The other order -- a marker appearing after the preflight
+		// -- is what this guards: the round is over and nothing may be staged
+		// or spawned for it.
+		if path, found := pendingRoundFile(rt, name, b.Round); found {
+			return fmt.Errorf("binding %q round %d: %s exists: %w", name, b.Round, filepath.Base(path), ErrReportPending)
+		}
+
+		// --candidate is re-applied under the lock, against the fresh binding:
 		// the preflight's resolution must not be trusted over a round that
 		// opened in between. The re-check writes nothing when it fires (§5.2).
+		// A stale re-pick is not a --candidate change, so it skips the refusal.
 		if pf.pick != nil {
-			entries, err := tx.ReadLog(name)
-			if err != nil {
-				return err
-			}
-			if roundOpenIn(entries, b.Round) {
-				return fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --builder", name, b.Round, name)
+			if pf.staleToken == "" {
+				entries, err := tx.ReadLog(name)
+				if err != nil {
+					return err
+				}
+				if roundOpenIn(entries, b.Round) {
+					return fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --candidate", name, b.Round, name)
+				}
 			}
 			b, err = applyBuilder(b, *pf.pick, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)
 			if err != nil {
@@ -369,28 +499,48 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			b.RoundTier = opts.Tier
 		}
 
-		planPath := rt.Store.PlanPath(name, b.Round)
+		// The round before this one must not still hold a scope: a supervisor
+		// that died before its own reap leaves one behind, and the new round
+		// would then run beside it. Nothing is staged yet, so a refusal here
+		// leaves no plan file and no NEEDS YOU.
+		if err := endEarlierRoundScope(ctx, rt, b); err != nil {
+			return err
+		}
+
+		planPath := rt.Store.PromptPath(name, b.Round)
 		reportPath := rt.Store.ReportPath(name, b.Round)
 		donePath := rt.Store.DonePath(name, b.Round)
 		if err := os.WriteFile(planPath, pf.body, 0o644); err != nil {
 			return fmt.Errorf("stage plan at %s: %w", planPath, err)
 		}
 
-		text := composePrompt(b, planPath, reportPath, donePath)
+		text := composePrompt(rt, b, planPath, reportPath, donePath)
 
 		// Defer stages the round without spawning: the caller (serve.admit
 		// or relevo.Admit) starts the builder later (#285).
 		deferred := opts.Defer
 
-		// The builder changed: say so in the new round's log before the
-		// process starts appending to it. A deferred round never spawns here,
-		// so it writes no marker.
-		if pf.pick != nil && !deferred {
-			appendLogMarker(rt.Store.BuilderLogPath(name, b.Round), rt.Now(), "builder changed to "+pf.pick.Token()+" (send --builder)")
-		}
-
 		late := false
 		if !deferred {
+			// A live scope for this round means a builder for it is already
+			// alive -- most likely an earlier send started one whose writes
+			// failed (#445). Refuse before spawning a second one; nothing is
+			// saved and the staged plan is removed, like the tier-unsupported
+			// branch below.
+			if unit := scopeUnitName(b); scopeRunning(ctx, rt, unit) {
+				_ = os.Remove(planPath)
+				return fmt.Errorf("binding %q round %d: scope %s.scope is still running -- a builder for this round is already alive (an earlier send may have started it); inspect it with systemctl --user status %s.scope, and relevo stop %s ends it: %w",
+					name, b.Round, unit, unit, name, ErrScopeActive)
+			}
+			// A reader round runs in a throwaway scratch worktree, never in
+			// b.CWD (A5 §2, D6). Create it from the round's captured baseline
+			// before anything is spawned; if it cannot be created, the round
+			// does not start, and there is never a fallback to b.CWD.
+			if b.Shape == store.ShapeReader {
+				if _, err := CreateScratchFrom(ctx, rt, b, b.Round, baselineHead, baseline); err != nil {
+					return err
+				}
+			}
 			started, err := startRound(ctx, rt, tx, b, text)
 			if err != nil {
 				if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
@@ -406,17 +556,23 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				b.HaltAt = rt.Now().UTC()
 				// The builder change is still recorded first, so the log
 				// explains why the round was sent to the new candidate.
+				var failEntries []store.LogEntry
 				if pf.pick != nil {
-					if appendErr := tx.AppendLog(name, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick)); appendErr != nil {
-						return fmt.Errorf("%v; and appending the builder pick failed: %w", err, appendErr)
-					}
+					failEntries = append(failEntries, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
 				}
-				if saveErr := tx.Save(b); saveErr != nil {
+				if saveErr := tx.SaveWithLog(b, failEntries...); saveErr != nil {
 					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
 				}
 				return err
 			}
 			b = started
+			h := handleOf(started.Builder)
+			spawned = &h
+			if sendAfterSpawn != nil {
+				if err := sendAfterSpawn(name); err != nil {
+					return err
+				}
+			}
 		}
 
 		// The pick entry is filed under the new round, before its plan entry,
@@ -425,36 +581,34 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// ErrExtraArgsPermission early return saves nothing, so a builder
 		// change that did not happen must not be recorded.
 		if pf.pick != nil {
-			if err := tx.AppendLog(name, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick)); err != nil {
-				return err
+			pending = append(pending, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
+			if pf.staleToken != "" {
+				pickLine = "note: builder " + pf.staleToken + " is no longer configured; " + PickText("builder", *pf.pick, rt.Candidates)
+			} else {
+				pickLine = PickText("builder", *pf.pick, rt.Candidates)
 			}
-			pickLine = PickText("builder", *pf.pick, rt.Candidates)
 		}
 
 		entry := store.LogEntry{
 			TS: rt.Now().UTC(), Round: b.Round,
-			Direction: store.DirToBuilder, Kind: store.KindPlan,
+			Direction: store.DirToBuilder, Kind: store.KindPrompt,
 			Path: planPath, Confirmed: true, Late: late,
 			Tier: string(effectiveTier(b)),
 		}
-		if err := tx.AppendLog(name, entry); err != nil {
-			return err
-		}
+		pending = append(pending, entry)
 
 		driftLine := ""
-		if b.Round == hintRound {
-			res := CaptureDrift(ctx, rt, tx, b, baseline)
+		if b.Shape != store.ShapeReader && b.Round == hintRound {
+			res := capture.Drift(ctx, captureDeps(rt), tx, b, baseline)
 			if (res.Available && !res.Stat.Empty()) || res.Reason != "" {
 				driftEntry := store.LogEntry{
 					TS: rt.Now().UTC(), Round: b.Round,
-					Direction: store.DirToPlanner, Kind: store.KindDrift,
-					Path: res.Path, Note: DriftSummary(res),
+					Direction: store.DirToMasterMind, Kind: store.KindDrift,
+					Path: res.Path, Note: capture.DriftSummary(res),
 					Confirmed: true,
 				}
-				if err := tx.AppendLog(name, driftEntry); err != nil {
-					return err
-				}
-				driftLine = DriftLine(res, b.Name, b.Round)
+				pending = append(pending, driftEntry)
+				driftLine = capture.DriftLine(res, b.Name, b.Round)
 			}
 		}
 
@@ -477,6 +631,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		b.HaltNotifiedRound = 0
 		b.RoundSwitches = 0
 		b.RoundExcluded = nil
+		b.RoundOOMKills = 0
 		// A fresh send is a fresh process: any stall stamp from the previous
 		// round is gone (#252), and so is the whole progress clock -- the
 		// tree, the output and the stale stamp all describe the round that
@@ -505,16 +660,35 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 		// Whether this round gets a reviewer at its close (#144): the flag,
 		// else policy.json verify.default. Persisted with the round, and
-		// cleared by queueReport once the close has acted on it.
-		if opts.Verify != nil {
+		// cleared by queueReport once the close has acted on it. A reader
+		// takes no verify (A5 §5), whatever the policy says.
+		if b.Shape == store.ShapeReader {
+			b.RoundVerify = false
+		} else if opts.Verify != nil {
 			b.RoundVerify = *opts.Verify
 		} else {
 			b.RoundVerify = rt.Policy.VerifyDefault()
 		}
 
-		return tx.Save(b)
+		return tx.SaveWithLog(b, pending...)
 	})
 	if err != nil {
+		if spawned != nil {
+			// The process is running but the send could not record it: stop
+			// it, and say so in its log, before returning (#436). The binding
+			// and its log entries are one transaction, so nothing of this
+			// round was recorded: the previous state stands and the mastermind
+			// may resend.
+			stream := ""
+			if round > 0 {
+				stream = rt.Store.StreamPath(name, round)
+			}
+			kerr := rt.Runner.Kill(context.WithoutCancel(ctx), *spawned, stream)
+			if kerr != nil {
+				return SendResult{}, fmt.Errorf("%w; and stopping the builder it started (pid %d) failed: %v", err, spawned.PID, kerr)
+			}
+			return SendResult{}, fmt.Errorf("%w; the builder it started (pid %d) was stopped", err, spawned.PID)
+		}
 		return SendResult{}, err
 	}
 
@@ -533,10 +707,10 @@ type DryRun struct {
 	// candidate is no longer configured, in which case Candidate is shown.
 	CandidateName string   `json:"candidate_name,omitempty"`
 	Where         string   `json:"where"`               // headless: the harness binary + first arg; remote: "server contabo, branch relevo/x @ <sha12>; server not contacted"
-	GateNote      string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "roles missing: ...; the daemon would switch after start"
-	PlanPath      string   `json:"plan_path"`
-	PlanFrom      string   `json:"plan_from"`
-	PlanBytes     int64    `json:"plan_bytes"`
+	GateNote      string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "agents missing: ...; the daemon would switch after start"
+	PromptPath    string   `json:"prompt_path"`
+	PromptFrom    string   `json:"prompt_from"`
+	PromptBytes   int64    `json:"prompt_bytes"`
 	ReportPath    string   `json:"report_path"`
 	DonePath      string   `json:"done_path"`
 	Tier          string   `json:"tier"`
@@ -555,18 +729,18 @@ func SendDryRun(ctx context.Context, rt Runtime, name, file string, opts SendOpt
 	}
 
 	d := DryRun{
-		Name:       pf.b.Name,
-		Round:      pf.b.Round,
-		Mode:       dryRunMode(pf.b),
-		Candidate:  pf.b.BuilderCandidate,
-		Where:      dryRunWhere(pf),
-		PlanPath:   pf.planPath,
-		PlanFrom:   absoluteOr(file),
-		PlanBytes:  int64(len(pf.body)),
-		ReportPath: pf.reportPath,
-		DonePath:   pf.donePath,
-		Tier:       string(pf.tier),
-		PromptHead: promptHead(pf.prompt),
+		Name:        pf.b.Name,
+		Round:       pf.b.Round,
+		Mode:        dryRunMode(pf.b),
+		Candidate:   pf.b.BuilderCandidate,
+		Where:       dryRunWhere(pf),
+		PromptPath:  pf.promptPath,
+		PromptFrom:  absoluteOr(file),
+		PromptBytes: int64(len(pf.body)),
+		ReportPath:  pf.reportPath,
+		DonePath:    pf.donePath,
+		Tier:        string(pf.tier),
+		PromptHead:  promptHead(pf.prompt),
 	}
 	// A1 §4.4, round 3 F3: CandidateName is set only when the set holds the
 	// token; otherwise the text falls back to printing Candidate.
@@ -609,11 +783,11 @@ func dryRunWhere(pf preflight) string {
 
 // dryRunGateNote is the advisory sentence for a gated candidate: what the gate
 // is, and that the daemon would switch the builder once the round started.
-func dryRunGateNote(g *ledger.Gate) string {
-	if g.Kind == ledger.RolesMissing {
+func dryRunGateNote(g *availability.Gate) string {
+	if g.Kind == availability.RolesMissing {
 		return g.Note + "; the daemon would switch after start"
 	}
-	return GateKindText(g.Kind) + " " + GateUntilText(g.Until) + "; the daemon would switch after start"
+	return availability.GateKindText(g.Kind) + " " + availability.GateUntilText(g.Until) + "; the daemon would switch after start"
 }
 
 // promptHead is the prompt's first two non-empty lines: enough for a human to
@@ -642,11 +816,29 @@ func absoluteOr(path string) string {
 	return path
 }
 
-// composePrompt renders the builder prompt for this round. Line 1 is the
-// origin line naming the round and builder, followed by a blank line and the
-// handoff text (#139).
-func composePrompt(b store.Binding, planPath, reportPath, donePath string) string {
-	origin := OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPlan)
-	body := fmt.Sprintf(builderPrompt, b.CWD, planPath, reportPath, donePath)
+// composePrompt renders this round's handoff prompt: the reader template for a
+// reader binding, the builder template for a writer. Line 1 is the origin line
+// naming the round and actor, followed by a blank line and the handoff text
+// (#139). rt is needed to name a reader's scratch tree, artifact dir and output
+// label.
+func composePrompt(rt Runtime, b store.Binding, promptPath, reportPath, donePath string) string {
+	origin := delivery.OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPrompt)
+	if b.Shape == store.ShapeReader {
+		return origin + "\n\n" + readerPromptFor(rt, b, promptPath, donePath)
+	}
+	body := fmt.Sprintf(builderPrompt, b.CWD, promptPath, reportPath, donePath)
 	return origin + "\n\n" + body
+}
+
+// readerPromptFor renders readerPrompt for one reader round. The output label
+// is the actor's resolved agent definition's label (ActorOutput), which
+// defaults to "notes" when nothing names one. The definition falls back to the
+// actor name when the role's spec cannot be resolved, so a shipped actor still
+// gets its own label. The saved path is the output path reportPathFor records,
+// so the prompt and the close cannot drift.
+func readerPromptFor(rt Runtime, b store.Binding, promptPath, donePath string) string {
+	actor := bindingRole(b)
+	label := readerOutputLabel(rt, b)
+	outputPath := rt.Store.OutputPath(b.Name, b.Round, actor, label)
+	return fmt.Sprintf(readerPrompt, roundTree(rt, b), b.CWD, promptPath, label, outputPath, donePath)
 }

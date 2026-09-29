@@ -1,0 +1,83 @@
+relevo is running in tools mode: no events arrive on their own. Everything
+relevo tells you arrives as the output of a command you started.
+
+After every send, start the background wait for that binding and end your
+turn. The send tool's result carries the exact command; it looks like this:
+
+  background wait (run with run_in_background, then end your turn):
+    relevo wait --name <binding> --timeout <budget>
+
+Run that with the Bash tool's run_in_background, then end your turn. Claude
+Code re-invokes you when the command exits, with its output in the new turn.
+The wait's output is the round's output text -- the same payload a channel event
+would have carried -- and it marks the entry delivered. An unmarked or halted
+round's output is printed by relevo wait too.
+
+Act on the wait's output after every wait exit except WaitTimeout.
+
+  - Output text: a runner's round closed. Run the project's check command
+    and compare the diff against the plan before calling done -- do not call
+    done on the output's arrival alone.
+  - A needs-you outcome: relevo wait's own line gives the reason; run
+    relevo status --name <binding> and decide: send the next round,
+    gate, or stop.
+  - WaitTimeout (the round is still running): run
+    relevo status --name <binding>, and start the background wait again if
+    the round is still open.
+  - An outcome line with no output text: another route already delivered the
+    output; nothing is owed.
+
+An output or a needs_you for a binding you did not personally send still
+belongs to you -- every binding on this MasterMind is yours. Do not ignore a
+payload because you do not recognize the binding name; run relevo status to
+catch up.
+
+Three verbs are tools here, callable directly instead of through the shell:
+
+  - status(name?, all?): one binding, or every binding on this MasterMind, or
+    (all: true) every binding relevo knows about.
+  - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
+    runner a new round.
+  - done(name): mark a binding done once its round is verified.
+
+Every other relevo verb -- bind, show, wait, gate, config, and the rest --
+is not a tool here; run it with Bash.
+
+# The relevo guide
+
+This is the guide to relevo, the tool that hands work between you and a runner.
+
+## Using relevo
+
+- `relevo bind [--worktree] --name <n> --feature <label>|--no-feature
+  [--ticket <ref>]` starts a fresh runner on the current tree or its own git
+  worktree; a fresh bind must name exactly one of `--feature`/`--no-feature`,
+  and `--ticket` names the issue it serves (a number, `#N`, `owner/repo#N` or
+  an issue URL, with or without a feature). `relevo status` shows what is bound
+  and what it is doing.
+- `relevo send --name <n> --file <path>` hands a runner a round; a round's
+  input is its prompt, and a planner actor's prompt is a small seed.
+- `relevo wait --name <n> --timeout <budget>` waits for a round: 0 closes with
+  the round's output, 3 is NEEDS YOU -- ask the human, 4 is DONE.
+- `relevo show <n> [--round N] --prompt|--report|--output|--diff|--transcript`
+  reads a round; a reader's artifact is `<label>.md`, printed with `--output`.
+
+## The recommended loop
+
+- Seed a planner actor (`planner`, `lite-planner`) with the task and the
+  decisions already made.
+- Review its plan with `relevo show <name> --output`.
+- Hand that file to a builder with
+  `relevo send --name <builder> --file <the output path>`.
+- When the round closes, run the project's own check and compare the diff
+  against the plan before `relevo done`.
+
+## When something is stuck
+
+- `relevo gate <token> --reason '<what it said>'` when a runner reports a usage
+  limit: relevo switches and resends; `relevo gate --clear <provider>` when it
+  lifts.
+- `relevo stop <name>` ends an open round.
+- `relevo bind --resume --name <n>` restores a released worktree; `--feature`
+  sets its label, `--no-feature` clears it, and naming neither keeps it.
+- A binding that says NEEDS YOU is waiting on a human.

@@ -12,7 +12,7 @@ func TestAcquireDaemonLockExcludesSecondHolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
-	defer first.Close()
+	defer func() { _ = first.Close() }()
 
 	if _, err := s.AcquireDaemonLock(); !errors.Is(err, ErrDaemonRunning) {
 		t.Fatalf("second acquire: got %v, want ErrDaemonRunning", err)
@@ -56,9 +56,9 @@ func TestDaemonRunningReflectsTheLock(t *testing.T) {
 	}
 }
 
-// The daemon holds its lock for its whole life. If AcquireDaemonLock took the
-// in-process mutex that WithLock uses, every state operation the daemon made
-// would deadlock. This test is the regression guard for that.
+// TestDaemonLockDoesNotBlockStateOperations guards the regression that
+// AcquireDaemonLock must not take the mutex WithLock uses: the daemon holds
+// its lock for its whole life, so it would deadlock every state operation.
 func TestDaemonLockDoesNotBlockStateOperations(t *testing.T) {
 	s := New(t.TempDir())
 
@@ -66,7 +66,7 @@ func TestDaemonLockDoesNotBlockStateOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	defer held.Close()
+	defer func() { _ = held.Close() }()
 
 	if err := s.WithLock(func(tx *Tx) error { return nil }); err != nil {
 		t.Fatalf("WithLock while the daemon lock was held: %v", err)

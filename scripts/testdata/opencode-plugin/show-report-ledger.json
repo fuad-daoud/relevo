@@ -1,0 +1,12 @@
+{
+  "Name": "ledger",
+  "Round": 2,
+  "Rounds": 2,
+  "Live": true,
+  "Archived": false,
+  "ArchivedAt": "0001-01-01T00:00:00Z",
+  "Section": "report",
+  "Text": "# Report\n\nledger r2: checkout flow implementation is ready for review\n\n| Step | Text | Status |\n| --- | --- | --- |\n| 1 | `sleep 120` | done |\n| 2 | **write** the ledger | done |\n\n```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: [\"ledger.txt\"]\ncommands_run:\n  - git status\nnot_done: []\n```",
+  "Missing": false,
+  "Events": null
+}

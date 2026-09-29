@@ -1,84 +1,18 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// seedSections stores each section's raw body, in Sections order, so a
-// migration test starts from a config with revisions behind it (so the
-// migration does not also record a baseline).
-func seedSections(t *testing.T, s *Store, sections map[Section]string) {
-	t.Helper()
-	for _, sec := range Sections {
-		body, ok := sections[sec]
-		if !ok {
-			continue
-		}
-		if _, err := s.As("test", "seed "+string(sec)).Put(sec, []byte(body)); err != nil {
-			t.Fatalf("Put(%s): %v", sec, err)
-		}
-	}
-}
-
-// assertEquivalent applies round 2's equivalence rule: for every role name and
-// every kind, the registry after the migration must give the same Spec, the
-// same Ranked tokens in order, and the same RoleTier as the registry before
-// it. Ranked positions are deliberately not compared: a legacy unlisted entry
-// (Position 0) becomes an ordinary position.
-func assertEquivalent(t *testing.T, before, after *roles.Registry) {
-	t.Helper()
-	if !reflect.DeepEqual(before.Names(), after.Names()) {
-		t.Fatalf("names = %v, want %v", after.Names(), before.Names())
-	}
-	for _, name := range before.Names() {
-		for _, h := range harness.All() {
-			bs, berr := before.Spec(name, h.Kind)
-			as, aerr := after.Spec(name, h.Kind)
-			if (berr == nil) != (aerr == nil) {
-				t.Errorf("%s/%s: Spec error before = %v, after = %v", name, h.Kind, berr, aerr)
-				continue
-			}
-			if berr == nil && !reflect.DeepEqual(bs, as) {
-				t.Errorf("%s/%s: Spec before = %+v, after = %+v", name, h.Kind, bs, as)
-			}
-		}
-
-		br, _ := before.Role(name)
-		ar, _ := after.Role(name)
-		if bt, at := rankedTokens(br.Ranked), rankedTokens(ar.Ranked); !reflect.DeepEqual(bt, at) {
-			t.Errorf("%s: Ranked before = %v, after = %v", name, bt, at)
-		}
-
-		btier, bok := before.RoleTier(name)
-		atier, aok := after.RoleTier(name)
-		if bok != aok || btier != atier {
-			t.Errorf("%s: RoleTier before = %q/%v, after = %q/%v", name, btier, bok, atier, aok)
-		}
-	}
-}
-
-// rankedTokens returns a ranked list's canonical tokens, in order.
-func rankedTokens(ranked []roles.Ranked) []string {
-	out := make([]string, 0, len(ranked))
-	for _, r := range ranked {
-		out = append(out, r.Token)
-	}
-	return out
-}
-
-// TestMigrateLegacyEquivalent pins the equivalence rule for the legacy
-// fixtures: the registry Load builds after migrating the candidates and policy
-// they describe is the one it built before.
 func TestMigrateLegacyEquivalent(t *testing.T) {
+	t.Parallel()
+
 	candBody := readFixture(t, "legacy-candidates.json")
 	polBody := readFixture(t, "legacy-policy.json")
 
@@ -116,10 +50,9 @@ func TestMigrateLegacyEquivalent(t *testing.T) {
 	assertEquivalent(t, before, L.Registry)
 }
 
-// TestMigrateFileModeEquivalent pins the equivalence rule for a roles file: a
-// custom writer on a custom claude definition becomes a native agent, and a
-// reader stays the shipped one.
 func TestMigrateFileModeEquivalent(t *testing.T) {
+	t.Parallel()
+
 	candBody := `[
 	  {"harness":"claude","provider":"test","model":"a"},
 	  {"harness":"claude","provider":"test","model":"b"},
@@ -182,10 +115,9 @@ func TestMigrateFileModeEquivalent(t *testing.T) {
 	}
 }
 
-// TestMigrateNamesCandidates pins the candidate rewrite: a resolvable token
-// becomes its candidate's short name, and one that does not resolve is kept as
-// written, with a note on the migration revision.
 func TestMigrateNamesCandidates(t *testing.T) {
+	t.Parallel()
+
 	candBody := `[{"harness":"claude","provider":"anthropic","model":"sonnet"}]`
 	rolesBody := `{"builder":{"candidates":["claude/anthropic/sonnet","claude/anthropic/ghost"]}}`
 
@@ -218,10 +150,9 @@ func TestMigrateNamesCandidates(t *testing.T) {
 	}
 }
 
-// TestMigrateStripsLegacyKeys pins step 3: policy.order and policy.tier are
-// gone, and so are each candidate's roles and tier, while every other key and
-// its value survive.
 func TestMigrateStripsLegacyKeys(t *testing.T) {
+	t.Parallel()
+
 	candBody := `[{"harness":"claude","provider":"p","model":"m","roles":["builder"],"tier":"yolo","extra":"keep-me"}]`
 	polBody := `{"order":{"builder":["claude/p/m"]},"tier":{"builder":"yolo"},"max_switches":2,"max_tier":"yolo","extra_key":"keep"}`
 
@@ -261,9 +192,9 @@ func TestMigrateStripsLegacyKeys(t *testing.T) {
 	}
 }
 
-// TestMigrateOneRevision pins the write: the migration adds exactly one
-// revision, its source is "migration", and the roles section is deleted.
 func TestMigrateOneRevision(t *testing.T) {
+	t.Parallel()
+
 	candBody := `[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`
 	rolesBody := `{"builder":{"candidates":["claude/p/m"]}}`
 
@@ -297,9 +228,9 @@ func TestMigrateOneRevision(t *testing.T) {
 	}
 }
 
-// TestMigrateIdempotent pins the second call: with actors stored, there is
-// nothing left to do.
 func TestMigrateIdempotent(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	seedSections(t, s, map[Section]string{
 		Candidates: `[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`,
@@ -317,9 +248,9 @@ func TestMigrateIdempotent(t *testing.T) {
 	}
 }
 
-// TestMigrateNothingToDo pins the fresh store: nothing to migrate, nothing
-// written.
 func TestMigrateNothingToDo(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 
 	migrated, err := s.MigrateToActors()
@@ -334,10 +265,12 @@ func TestMigrateNothingToDo(t *testing.T) {
 	}
 }
 
-// TestRollbackThenRemigrate pins R4's round trip: rolling back to a
-// pre-migration revision restores the old keys and removes actors, and the
-// next MigrateToActors writes them again as a new revision.
+// TestRollbackThenRemigrate pins the round trip: rolling back to a
+// pre-migration revision restores the old keys and removes actors, and the next
+// MigrateToActors writes them again as a new revision.
 func TestRollbackThenRemigrate(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	seedSections(t, s, map[Section]string{
 		Candidates: `[{"harness":"claude","provider":"p","model":"m","roles":["builder"],"tier":"yolo"}]`,
@@ -376,14 +309,4 @@ func TestRollbackThenRemigrate(t *testing.T) {
 	if newest[0].Source != "migration" {
 		t.Errorf("newest source = %q, want migration", newest[0].Source)
 	}
-}
-
-// readFixture reads a file under internal/roles/testdata.
-func readFixture(t *testing.T, name string) []byte {
-	t.Helper()
-	body, err := os.ReadFile(filepath.Join("..", "roles", "testdata", name))
-	if err != nil {
-		t.Fatalf("read fixture %s: %v", name, err)
-	}
-	return body
 }

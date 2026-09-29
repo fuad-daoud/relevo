@@ -8,99 +8,112 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
+type resolveCase struct {
+	name           string
+	cfg            *policy.Classify
+	key            string
+	getenv         func(string) string
+	wantConfigured bool
+	wantKeySource  string
+	wantModel      string
+	wantClientKey  string
+	wantUnavail    bool
+}
+
+func envKey(v string) func(string) string {
+	return func(key string) string {
+		if key == "TYPESAFE_API_KEY" {
+			return v
+		}
+		return ""
+	}
+}
+
+var resolveCases = []resolveCase{
+	{
+		name:   "nil cfg -> nil classifier, Configured false",
+		getenv: osGetenv,
+	},
+	{
+		name:           "env key wins and is trimmed",
+		cfg:            &policy.Classify{Provider: "jev"},
+		getenv:         envKey("  test-env-key  \n"),
+		wantConfigured: true,
+		wantKeySource:  "env",
+		wantModel:      "jev-latest",
+		wantClientKey:  "test-env-key",
+	},
+	{
+		name:           "db key is trimmed",
+		cfg:            &policy.Classify{Provider: "jev", Model: "custom-model"},
+		key:            "  db-secret-key  \n",
+		getenv:         osGetenv,
+		wantConfigured: true,
+		wantKeySource:  "db",
+		wantModel:      "custom-model",
+		wantClientKey:  "db-secret-key",
+	},
+	{
+		name:           "env key wins over the db key",
+		cfg:            &policy.Classify{Provider: "jev"},
+		key:            "db-secret-key",
+		getenv:         envKey("env-secret-key"),
+		wantConfigured: true,
+		wantKeySource:  "env",
+		wantModel:      "jev-latest",
+		wantClientKey:  "env-secret-key",
+	},
+	{
+		name:           "no key -> Unavailable",
+		cfg:            &policy.Classify{Provider: "jev"},
+		getenv:         osGetenv,
+		wantConfigured: true,
+		wantUnavail:    true,
+	},
+	{
+		name:           "blank db key is no key",
+		cfg:            &policy.Classify{Provider: "jev"},
+		key:            "   \n\t  \n",
+		getenv:         osGetenv,
+		wantConfigured: true,
+		wantUnavail:    true,
+	},
+}
+
 func TestResolve(t *testing.T) {
-	t.Run("nil cfg -> nil classifier, Configured false", func(t *testing.T) {
-		cls, st := Resolve(nil, "", osGetenv)
-		if cls != nil {
-			t.Errorf("expected nil classifier, got %v", cls)
-		}
-		if st.Configured {
-			t.Errorf("expected Configured false, got true")
-		}
-	})
+	for _, tc := range resolveCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cls, st := Resolve(tc.cfg, tc.key, tc.getenv)
+			assertResolve(t, tc, cls, st)
+		})
+	}
+}
 
-	t.Run("env key -> *Client with Key, Model from cfg, KeySource env", func(t *testing.T) {
-		cfg := &policy.Classify{Provider: "jev"}
-		getenv := func(key string) string {
-			if key == "TYPESAFE_API_KEY" {
-				return "  test-env-key  \n"
-			}
-			return ""
-		}
-		cls, st := Resolve(cfg, "", getenv)
-		if !st.Configured {
-			t.Fatal("expected Configured true")
-		}
-		if st.KeySource != "env" {
-			t.Errorf("KeySource = %q, want env", st.KeySource)
-		}
-		if st.Model != "jev-latest" {
-			t.Errorf("Model = %q, want jev-latest", st.Model)
-		}
+func assertResolve(t *testing.T, tc resolveCase, cls Classifier, st Status) {
+	t.Helper()
+	if st.Configured != tc.wantConfigured {
+		t.Errorf("Configured = %v, want %v", st.Configured, tc.wantConfigured)
+	}
+	if st.KeySource != tc.wantKeySource {
+		t.Errorf("KeySource = %q, want %q", st.KeySource, tc.wantKeySource)
+	}
+	if tc.wantModel != "" && st.Model != tc.wantModel {
+		t.Errorf("Model = %q, want %q", st.Model, tc.wantModel)
+	}
+
+	switch {
+	case tc.wantClientKey != "":
 		client, ok := cls.(*Client)
 		if !ok {
 			t.Fatalf("expected *Client, got %T", cls)
 		}
-		if client.Key != "test-env-key" {
-			t.Errorf("client.Key = %q, want test-env-key", client.Key)
+		if client.Key != tc.wantClientKey {
+			t.Errorf("client.Key = %q, want %q", client.Key, tc.wantClientKey)
 		}
-		if client.Model != "jev-latest" {
-			t.Errorf("client.Model = %q, want jev-latest", client.Model)
+		if client.Model != tc.wantModel {
+			t.Errorf("client.Model = %q, want %q", client.Model, tc.wantModel)
 		}
-	})
-
-	t.Run("db key (trailing newline) -> KeySource db, key trimmed", func(t *testing.T) {
-		cfg := &policy.Classify{Provider: "jev", Model: "custom-model"}
-		cls, st := Resolve(cfg, "  db-secret-key  \n", osGetenv)
-		if !st.Configured {
-			t.Fatal("expected Configured true")
-		}
-		if st.KeySource != "db" {
-			t.Errorf("KeySource = %q, want db", st.KeySource)
-		}
-		client, ok := cls.(*Client)
-		if !ok {
-			t.Fatalf("expected *Client, got %T", cls)
-		}
-		if client.Key != "db-secret-key" {
-			t.Errorf("client.Key = %q, want db-secret-key", client.Key)
-		}
-		if client.Model != "custom-model" {
-			t.Errorf("client.Model = %q, want custom-model", client.Model)
-		}
-	})
-
-	t.Run("env wins over the db key when both", func(t *testing.T) {
-		cfg := &policy.Classify{Provider: "jev"}
-		getenv := func(key string) string {
-			if key == "TYPESAFE_API_KEY" {
-				return "env-secret-key"
-			}
-			return ""
-		}
-		cls, st := Resolve(cfg, "db-secret-key", getenv)
-		if st.KeySource != "env" {
-			t.Errorf("KeySource = %q, want env", st.KeySource)
-		}
-		client, ok := cls.(*Client)
-		if !ok {
-			t.Fatalf("expected *Client, got %T", cls)
-		}
-		if client.Key != "env-secret-key" {
-			t.Errorf("client.Key = %q, want env-secret-key", client.Key)
-		}
-	})
-
-	t.Run("neither -> Unavailable, KeySource empty, Judge returns ErrUnavailable", func(t *testing.T) {
-		cfg := &policy.Classify{Provider: "jev"}
-		cls, st := Resolve(cfg, "", osGetenv)
-		if !st.Configured {
-			t.Fatal("expected Configured true")
-		}
-		if st.KeySource != "" {
-			t.Errorf("KeySource = %q, want empty", st.KeySource)
-		}
-
+	case tc.wantUnavail:
 		unavail, ok := cls.(Unavailable)
 		if !ok {
 			t.Fatalf("expected Unavailable, got %T", cls)
@@ -108,22 +121,18 @@ func TestResolve(t *testing.T) {
 		if unavail.Reason != "no classifier key" {
 			t.Errorf("Reason = %q, want %q", unavail.Reason, "no classifier key")
 		}
-		_, err := unavail.Judge(context.Background(), Request{Source: "report", Paragraphs: []Paragraph{{Index: 0, Kind: KindProse, Text: "t", Line: 1, Lines: 1}}})
-		if !errors.Is(err, ErrUnavailable) {
-			t.Errorf("expected ErrUnavailable, got %v", err)
+	default:
+		if cls != nil {
+			t.Errorf("expected nil classifier, got %T", cls)
 		}
-	})
+	}
+}
 
-	t.Run("blank db key -> treated as no key", func(t *testing.T) {
-		cfg := &policy.Classify{Provider: "jev"}
-		cls, st := Resolve(cfg, "   \n\t  \n", osGetenv)
-		if st.KeySource != "" {
-			t.Errorf("KeySource = %q, want empty", st.KeySource)
-		}
-		if _, ok := cls.(Unavailable); !ok {
-			t.Fatalf("expected Unavailable, got %T", cls)
-		}
-	})
+func TestUnavailableJudge(t *testing.T) {
+	_, err := Unavailable{Reason: "no classifier key"}.Judge(context.Background(), Request{})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("expected ErrUnavailable, got %v", err)
+	}
 }
 
 func osGetenv(string) string { return "" }

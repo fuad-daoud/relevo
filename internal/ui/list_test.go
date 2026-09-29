@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
 )
 
@@ -27,7 +28,7 @@ func TestFleetWindowTopLines(t *testing.T) {
 	// 10 two-line rows (each row has a question line under it).
 	var two []fleetLine
 	for i := 0; i < 10; i++ {
-		two = append(two, fleetLine{text: fmt.Sprintf("row %d", i), row: i}, fleetLine{text: "  └ q", row: i})
+		two = append(two, fleetLine{text: fmt.Sprintf("row %d", i), row: i}, fleetLine{text: "  ╰ q", row: i})
 	}
 
 	cases := []struct {
@@ -60,12 +61,12 @@ func TestFleetWindowTopLines(t *testing.T) {
 // TestBodyHeight ports the old bodyRows budget to frame.bodyHeight.
 func TestBodyHeight(t *testing.T) {
 	env := Env{Height: 24}
-	if got := bodyHeight(env); got != 20 {
-		t.Errorf("height 24, no error: bodyHeight = %d, want 20", got)
+	if got := bodyHeight(env); got != 19 {
+		t.Errorf("height 24, no error: bodyHeight = %d, want 19", got)
 	}
 	env.ErrRows = 2
-	if got := bodyHeight(env); got != 18 {
-		t.Errorf("height 24, two-line error: bodyHeight = %d, want 18", got)
+	if got := bodyHeight(env); got != 17 {
+		t.Errorf("height 24, two-line error: bodyHeight = %d, want 17", got)
 	}
 	env = Env{Height: 2}
 	if got := bodyHeight(env); got != 0 {
@@ -82,20 +83,20 @@ func tenBindings(t *testing.T, height, count int) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(count)}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: bindingStatuses(count)}})
 	return res.(Model)
 }
 
 // bindingStatuses builds Display:"ACTIVE" bindings named b00..b{count-1}.
-func bindingStatuses(count int) []relevo.BindingStatus {
-	bs := make([]relevo.BindingStatus, count)
+func bindingStatuses(count int) []view.BindingStatus {
+	bs := make([]view.BindingStatus, count)
 	for i := range bs {
-		bs[i] = relevo.BindingStatus{Name: fmt.Sprintf("b%02d", i), Display: "ACTIVE"}
+		bs[i] = view.BindingStatus{Name: fmt.Sprintf("b%02d", i), Display: "ACTIVE"}
 	}
 	return bs
 }
@@ -112,7 +113,14 @@ func press(t *testing.T, m Model, r rune) Model {
 func assertCursorVisible(t *testing.T, m Model, name string) {
 	t.Helper()
 	view := m.View()
-	if !strings.Contains(plain(view), "▎ "+name) {
+	found := false
+	for _, line := range strings.Split(plain(view), "\n") {
+		if strings.Contains(line, "▍") && strings.Contains(line, name) {
+			found = true
+			break
+		}
+	}
+	if !found {
 		t.Errorf("view must show the cursor row for %s, got:\n%s", name, view)
 	}
 	if !strings.Contains(plain(view), "relevo") {
@@ -170,7 +178,7 @@ func TestFleetRewindowsWhenBindingRemoved(t *testing.T) {
 	for i := 0; i < 9; i++ {
 		m = press(t, m, 'j')
 	}
-	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(5)}})
+	res, _ := m.Update(statusMsg{report: view.Report{Bindings: bindingStatuses(5)}})
 	m = res.(Model)
 	if got := fleet(m).cursor; got != 4 {
 		t.Errorf("cursor must clamp to 4 (b04) when bindings are removed, got %d", got)
@@ -181,10 +189,10 @@ func TestFleetRewindowsWhenBindingRemoved(t *testing.T) {
 func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 
-	initial := relevo.Report{Bindings: []relevo.BindingStatus{
+	initial := view.Report{Bindings: []view.BindingStatus{
 		{Name: "bravo", Display: "ACTIVE"},
 		{Name: "charlie", Display: "ACTIVE"},
 	}}
@@ -195,7 +203,7 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 		t.Fatalf("expected cursor at 0 (bravo), got %d (%s)", fv.cursor, fv.sticky)
 	}
 
-	updated := relevo.Report{Bindings: []relevo.BindingStatus{
+	updated := view.Report{Bindings: []view.BindingStatus{
 		{Name: "alpha", Display: "ACTIVE"},
 		{Name: "bravo", Display: "ACTIVE"},
 		{Name: "charlie", Display: "ACTIVE"},
@@ -214,10 +222,10 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 
-	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{
+	res, _ := m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{
 		{Name: "alpha", Display: "ACTIVE"},
 		{Name: "bravo", Display: "ACTIVE"},
 	}}})
@@ -229,7 +237,7 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 		t.Fatalf("expected cursor on bravo (1), got %d (%s)", fv.cursor, fv.sticky)
 	}
 
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{
 		{Name: "alpha", Display: "ACTIVE"},
 	}}})
 	m = res.(Model)
@@ -245,12 +253,12 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 func TestEmptyBindingsList(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = res.(Model)
 
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: nil}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: nil}})
 	m = res.(Model)
 
 	if !strings.Contains(m.View(), "no bindings") {
@@ -270,7 +278,7 @@ func TestEmptyBindingsList(t *testing.T) {
 func TestQuitFromList(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
@@ -310,7 +318,7 @@ func TestFleetThreeStates(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = res.(Model)
@@ -330,14 +338,14 @@ func TestFleetThreeStates(t *testing.T) {
 		t.Errorf("a failing statusMsg before any success must NOT render 'no bindings', got:\n%s", m.View())
 	}
 
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: nil}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: nil}})
 	m = res.(Model)
 	if !strings.Contains(m.View(), "no bindings") {
 		t.Errorf("successful empty report must render 'no bindings', got:\n%s", m.View())
 	}
 
-	b := relevo.BindingStatus{Name: "webshop", Round: 1, Display: "ACTIVE"}
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{b}}})
+	b := view.BindingStatus{Name: "webshop", Round: 1, Display: "ACTIVE"}
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{b}}})
 	m = res.(Model)
 	if !strings.Contains(m.View(), "webshop") {
 		t.Fatalf("expected 'webshop' in the fleet, got:\n%s", m.View())
@@ -361,13 +369,13 @@ func TestRenderErrorAndErrorBlock(t *testing.T) {
 
 	// 1. A three-line error renders as three lines, none wider than width.
 	threeLineErr := errors.New("error line one\nerror line two\nerror line three")
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
 	m = res.(Model)
 	res, _ = m.Update(statusMsg{err: threeLineErr})
 	m = res.(Model)
-	view := m.View()
+	rendered := m.View()
 
 	errRendered := renderError(threeLineErr, 60)
 	errLines := strings.Split(errRendered, "\n")
@@ -378,7 +386,7 @@ func TestRenderErrorAndErrorBlock(t *testing.T) {
 		if w := lipgloss.Width(l); w > 60 {
 			t.Errorf("error line %d width %d > 60: %q", i, w, l)
 		}
-		if !strings.Contains(view, l) {
+		if !strings.Contains(rendered, l) {
 			t.Errorf("expected view to contain error line %q", l)
 		}
 	}
@@ -415,7 +423,7 @@ func TestRenderErrorAndErrorBlock(t *testing.T) {
 	}
 
 	// 5. A nil error adds no error block and no marker.
-	res, _ = m.Update(statusMsg{report: relevo.Report{}})
+	res, _ = m.Update(statusMsg{report: view.Report{}})
 	m = res.(Model)
 	if strings.Contains(m.View(), "refresh failed") || strings.Contains(m.View(), "client protocol") {
 		t.Errorf("nil err must not add an error block or marker, got:\n%s", m.View())

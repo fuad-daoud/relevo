@@ -3,15 +3,21 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/classify"
+	"github.com/fuad-daoud/relevo/internal/consult"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -64,6 +70,8 @@ func touch(t *testing.T, path string) {
 // no session cursor to drain and no agent list to compare a session against.
 // Their headless equivalents live in headless_test.go.
 func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
@@ -93,7 +101,7 @@ func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 		t.Errorf("RoundSwitches = %d, want 0 on a fresh round", got.RoundSwitches)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -106,6 +114,8 @@ func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 // independence for the first seconds of a round: the marker closes the round
 // even though very little time has passed since the process started.
 func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
@@ -122,7 +132,7 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 	if got.Round != 2 {
 		t.Errorf("round = %d, want 2 after a report", got.Round)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -139,6 +149,8 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 // TestReconcileSkipsPaused: Reconcile returns immediately for a PAUSED
 // binding, exactly as it does for DONE.
 func TestReconcileSkipsPaused(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	b.State = store.StatePaused
 	b.Builder = store.Endpoint{Kind: "agy", Mode: store.ModeHeadless} // pause cleared the identity
@@ -160,6 +172,8 @@ func TestReconcileSkipsPaused(t *testing.T) {
 }
 
 func TestReconcileDiffCapture(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	fg := &fakeGit{
 		snapshotTreeID: "tree-end",
@@ -206,7 +220,7 @@ func TestReconcileDiffCapture(t *testing.T) {
 			if !entry.Confirmed {
 				t.Error("KindDiff entry must be confirmed")
 			}
-			if entry.Direction != store.DirToPlanner {
+			if entry.Direction != store.DirToMasterMind {
 				t.Errorf("KindDiff direction = %s, want to_planner", entry.Direction)
 			}
 			if entry.Path != rt.Store.DiffPath("webshop", 1) {
@@ -231,10 +245,10 @@ func TestReconcileDiffCapture(t *testing.T) {
 		t.Fatalf("report payload %q does not contain %q", reportEntry.Payload, wantLine)
 	}
 
-	// PendingForPlanner still returns the report
-	pending, ok, err := rt.Store.PendingForPlanner("webshop")
+	// PendingForMasterMind still returns the report
+	pending, ok, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !ok {
-		t.Fatalf("PendingForPlanner: ok=%v, err=%v", ok, err)
+		t.Fatalf("PendingForMasterMind: ok=%v, err=%v", ok, err)
 	}
 	if pending.Kind != store.KindReport {
 		t.Fatalf("pending kind = %s, want report", pending.Kind)
@@ -261,6 +275,8 @@ func TestReconcileDiffCapture(t *testing.T) {
 }
 
 func TestQueueReportRecordsCommitFacts(t *testing.T) {
+	t.Parallel()
+
 	closeRound := func(t *testing.T, fg *fakeGit, head string) (store.Binding, []store.LogEntry) {
 		t.Helper()
 		rt, b := sentBinding(t)
@@ -358,14 +374,16 @@ func TestQueueReportRecordsCommitFacts(t *testing.T) {
 	})
 }
 
-// TestReconcileRefreshesPlannerEndpoint refreshed a planner pane id from
+// TestReconcileRefreshesMasterMindEndpoint refreshed a mastermind pane id from
 // the agent list. Both halves are gone (#303; closed-list items 6 and 8):
-// there is no agent list and Planner.PaneID is written by nothing.
+// there is no agent list and MasterMind.PaneID is written by nothing.
 
 // TestQueueReportRecordsRusage: a headless round's report entry gets
 // Rusage from rt.Runner.Rusage when the runner has one, and stays nil
 // when it does not (#244, #216).
 func TestQueueReportRecordsRusage(t *testing.T) {
+	t.Parallel()
+
 	setup := func(t *testing.T) (Runtime, store.Binding, *fakeRunner) {
 		t.Helper()
 		fr := newFakeRunner()
@@ -391,7 +409,7 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil)
+			next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil, "")
 			if err != nil {
 				return err
 			}
@@ -415,7 +433,7 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 
 	t.Run("ok true", func(t *testing.T) {
 		rt, b, fr := setup(t)
-		fr.setRusage(b.Builder.PID, ProcRusage{CPUMS: 12300, PeakMemBytes: 850 << 20})
+		fr.setRusage(b.Builder.PID, spawn.ProcRusage{CPUMS: 12300, PeakMemBytes: 850 << 20})
 		entry := closeRound(t, rt, b)
 		if entry.Rusage == nil || entry.Rusage.CPUMS != 12300 || entry.Rusage.PeakMemBytes != 850<<20 {
 			t.Errorf("report entry Rusage = %+v, want {12300 %d}", entry.Rusage, int64(850<<20))
@@ -431,6 +449,8 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 }
 
 func TestQueueReport_RoundClosedTree(t *testing.T) {
+	t.Parallel()
+
 	t.Run("ordinary close", func(t *testing.T) {
 		rt, b := sentBinding(t)
 		fg := &fakeGit{
@@ -481,7 +501,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 			return tx.AppendLog(b.Name, store.LogEntry{
 				TS:        rt.Now().UTC(),
 				Round:     b.Round,
-				Direction: store.DirToPlanner,
+				Direction: store.DirToMasterMind,
 				Kind:      store.KindDiff,
 				Confirmed: true,
 			})
@@ -541,6 +561,8 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 // and the session cursor are gone.
 
 func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
@@ -559,14 +581,14 @@ func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
 	if !got.HaltAt.IsZero() {
 		t.Errorf("HaltAt = %v, want zero after a round close", got.HaltAt)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
 	if pending.Note != "" {
 		t.Errorf("note = %q, want empty on a marked close", pending.Note)
 	}
-	if !strings.Contains(pending.Payload, "Builder finished round 1. Report: relevo show webshop --round 1 --report") {
+	if !strings.Contains(pending.Payload, "The runner finished round 1. Report: relevo show webshop --round 1 --report") {
 		t.Errorf("payload = %q", pending.Payload)
 	}
 }
@@ -576,6 +598,8 @@ func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
 // waiting for idle and scraping a worse artefact. Mutation: fall through to
 // scrapeReport -> the note is "scraped".
 func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	touch(t, rt.Store.DonePath("webshop", 1))
 
@@ -583,7 +607,7 @@ func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
 	if !closed || got.Round != 2 {
 		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("entry must be queued: found=%v err=%v", found, err)
 	}
@@ -600,6 +624,8 @@ func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
 }
 
 func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
@@ -627,6 +653,8 @@ func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
 // move the closeOnMarker call behind a live-process check -> this fails
 // because the process below is alive (an unscripted pid is alive forever).
 func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
@@ -640,7 +668,7 @@ func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
 	if got.Round != 2 {
 		t.Errorf("round = %d, want 2: the marker closes the round regardless of the process", got.Round)
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found || pending.Note != "" {
 		t.Errorf("want a normal report queued: found=%v note=%q err=%v", found, pending.Note, err)
 	}
@@ -650,6 +678,8 @@ func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
 // not evidence the builder is finished. Mutation: gate on the report instead
 // of the marker -> the round advances on the first tick.
 func TestReconcileReportWithoutMarkerIsNotAClose(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
@@ -662,7 +692,7 @@ func TestReconcileReportWithoutMarkerIsNotAClose(t *testing.T) {
 	if got.Round != 1 {
 		t.Errorf("round = %d, want 1: a report alone is not a close", got.Round)
 	}
-	if _, found, _ := rt.Store.PendingForPlanner("webshop"); found {
+	if _, found, _ := rt.Store.PendingForMasterMind("webshop"); found {
 		t.Error("nothing may be queued off a report without a marker")
 	}
 }
@@ -676,6 +706,8 @@ func TestReconcileReportWithoutMarkerIsNotAClose(t *testing.T) {
 // (TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked and
 // TestReconcileHeadlessMarkerClosesAndClearsTheHandle).
 func TestReconcileReportTailAndOrigin(t *testing.T) {
+	t.Parallel()
+
 	t.Run("status halted with halted_at", func(t *testing.T) {
 		rt, b := sentBinding(t)
 		reportContent := "Some report content\n\n```relevo\nstatus: halted\nhalted_at: \"Task 2 step 3\"\n```\n"
@@ -696,8 +728,8 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				report = e
 			}
 		}
-		if report.Outcome != OutcomeHalted {
-			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeHalted)
+		if report.Outcome != reporttail.OutcomeHalted {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, reporttail.OutcomeHalted)
 		}
 		if report.HaltedAt != "Task 2 step 3" {
 			t.Errorf("HaltedAt = %q, want %q", report.HaltedAt, "Task 2 step 3")
@@ -727,10 +759,10 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				report = e
 			}
 		}
-		if report.Outcome != OutcomeDone {
-			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeDone)
+		if report.Outcome != reporttail.OutcomeDone {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, reporttail.OutcomeDone)
 		}
-		wantOrigin := OriginLine("webshop", 1, store.DirToPlanner, store.KindReport)
+		wantOrigin := delivery.OriginLine("webshop", 1, store.DirToMasterMind, store.KindReport)
 		lines := strings.Split(report.Payload, "\n")
 		if len(lines) < 3 {
 			t.Fatalf("unexpected payload lines: %q", report.Payload)
@@ -741,9 +773,51 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if lines[1] != "" {
 			t.Errorf("line 1 = %q, want empty line", lines[1])
 		}
-		wantBodyFirst := "Builder finished round 1. Report: relevo show webshop --round 1 --report"
+		wantBodyFirst := "The runner finished round 1. Report: relevo show webshop --round 1 --report"
 		if lines[2] != wantBodyFirst {
 			t.Errorf("line 2 = %q, want %q", lines[2], wantBodyFirst)
+		}
+	})
+
+	t.Run("legacy finished prefix is annotated in place", func(t *testing.T) {
+		rt, _ := sentBinding(t)
+		reportPath := rt.Store.ReportPath("webshop", 1)
+		reportContent := "Some report content\n\n```relevo\nstatus: halted\nhalted_at: \"Task 2 step 3\"\n```\n"
+		if err := os.WriteFile(reportPath, []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var payload string
+		err := rt.Store.WithLock(func(tx *store.Tx) error {
+			cur, err := tx.Load("webshop")
+			if err != nil {
+				return err
+			}
+			entries, err := tx.ReadLog("webshop")
+			if err != nil {
+				return err
+			}
+			legacy := fmt.Sprintf("Builder finished round %d. Report: relevo show webshop --round %d --report", cur.Round, cur.Round)
+			next, err := queueReport(context.Background(), rt, tx, cur, entries, reportPath, legacy, "", nil, nil, nil, nil, "")
+			if err != nil {
+				return err
+			}
+			entries, err = tx.ReadLog("webshop")
+			if err != nil {
+				return err
+			}
+			for _, e := range entries {
+				if e.Round == cur.Round && e.Kind == store.KindReport {
+					payload = e.Payload
+				}
+			}
+			return tx.Save(next)
+		})
+		if err != nil {
+			t.Fatalf("queueReport: %v", err)
+		}
+		want := `Builder finished round 1 -- halted at "Task 2 step 3"`
+		if !strings.Contains(payload, want) {
+			t.Errorf("payload = %q, want it to contain %q", payload, want)
 		}
 	})
 
@@ -767,8 +841,8 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				report = e
 			}
 		}
-		if report.Outcome != OutcomeUnstructured {
-			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeUnstructured)
+		if report.Outcome != reporttail.OutcomeUnstructured {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, reporttail.OutcomeUnstructured)
 		}
 		if !strings.Contains(report.Note, "tail: line 3 has no ':'") {
 			t.Errorf("Note = %q, want tail: line 3 has no ':'", report.Note)
@@ -795,8 +869,8 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				report = e
 			}
 		}
-		if report.Outcome != OutcomeUnstructured {
-			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeUnstructured)
+		if report.Outcome != reporttail.OutcomeUnstructured {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, reporttail.OutcomeUnstructured)
 		}
 		if report.HaltedAt != "" {
 			t.Errorf("HaltedAt = %q, want empty", report.HaltedAt)
@@ -874,7 +948,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if !strings.HasSuffix(diff.Note, "paths: report 2, diff 3") {
 			t.Errorf("diff.Note = %q, want suffix 'paths: report 2, diff 3'", diff.Note)
 		}
-		if want := PathsLine(2, 3); !strings.Contains(report.Payload, want) {
+		if want := capture.PathsLine(2, 3); !strings.Contains(report.Payload, want) {
 			t.Errorf("payload = %q, want it to contain %q", report.Payload, want)
 		}
 	})
@@ -919,7 +993,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if !strings.HasSuffix(diff.Note, "paths: report 0, diff 3") {
 			t.Errorf("diff.Note = %q, want suffix 'paths: report 0, diff 3'", diff.Note)
 		}
-		if want := PathsLine(0, 3); !strings.Contains(report.Payload, want) {
+		if want := capture.PathsLine(0, 3); !strings.Contains(report.Payload, want) {
 			t.Errorf("payload = %q, want it to contain %q", report.Payload, want)
 		}
 	})
@@ -1247,6 +1321,8 @@ func gates(t *testing.T, rt Runtime) []store.LogEntry {
 // exactly as it did before the gate existed -- no process is started and the
 // payload is unchanged.
 func TestGateNotConfiguredIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1265,14 +1341,14 @@ func TestGateNotConfiguredIsUnchanged(t *testing.T) {
 	if len(fr.specs) != 0 {
 		t.Fatalf("Start calls = %d, want 0 with no gate configured", len(fr.specs))
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
 	if pending.Note != "" {
 		t.Errorf("note = %q, want empty", pending.Note)
 	}
-	want := "Builder finished round 1. Report: relevo show webshop --round 1 --report"
+	want := "The runner finished round 1. Report: relevo show webshop --round 1 --report"
 	if !strings.HasSuffix(pending.Payload, want) {
 		t.Errorf("payload = %q, want it to end with %q (unchanged by the gate)", pending.Payload, want)
 	}
@@ -1289,6 +1365,8 @@ func TestGateNotConfiguredIsUnchanged(t *testing.T) {
 // through to the marker close instead of returning early); this test fails
 // because the second tick's round has advanced and a second process started.
 func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1339,7 +1417,7 @@ func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
 	if len(gates(t, rt)) != 1 {
 		t.Fatalf("KindGate entries = %d, want 1", len(gates(t, rt)))
 	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1377,6 +1455,8 @@ func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
 // round with a gate=pass annotation, a Gate record on the entry, and the
 // gate's payload line.
 func TestGatePassClosesWithAnnotation(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1410,7 +1490,7 @@ func TestGatePassClosesWithAnnotation(t *testing.T) {
 		t.Errorf("GateRun = %+v, want nil after the round closes", got.GateRun)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -1431,6 +1511,8 @@ func TestGatePassClosesWithAnnotation(t *testing.T) {
 // round with gate=fail, and the payload carries the log's last
 // gateTailLines non-empty lines, not the first.
 func TestGateFailAddsTail(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1465,7 +1547,7 @@ func TestGateFailAddsTail(t *testing.T) {
 		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -1491,6 +1573,8 @@ func TestGateFailAddsTail(t *testing.T) {
 // TestGateTimeoutKills pins #132: a gate that outlives its timeout is
 // killed and the round closes with gate=timeout.
 func TestGateTimeoutKills(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1537,7 +1621,7 @@ func TestGateTimeoutKills(t *testing.T) {
 		t.Fatalf("kills = %+v, want exactly one kill of pid %d", fr.kills, fr.handles[0].PID)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -1556,6 +1640,8 @@ func TestGateTimeoutKills(t *testing.T) {
 // with no Runner cannot hang the round -- it closes this tick with a
 // gate=error annotation instead.
 func TestGateNoRunnerIsErrorNotHang(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	rt.Runner = nil
 	b.Gate = "make check"
@@ -1575,7 +1661,7 @@ func TestGateNoRunnerIsErrorNotHang(t *testing.T) {
 		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -1593,7 +1679,7 @@ func TestGateNoRunnerIsErrorNotHang(t *testing.T) {
 // gateRecordFor finds a binding's report entry for one round and returns its
 // gate record, failing the test when the round has no report entry. It is how
 // the regate tests inspect a round that closed earlier than the one currently
-// in flight: PendingForPlanner only ever hands back the oldest.
+// in flight: PendingForMasterMind only ever hands back the oldest.
 func gateRecordFor(t *testing.T, rt Runtime, name string, round int) *store.GateRecord {
 	t.Helper()
 	entries, err := rt.Store.ReadLog(name)
@@ -1601,7 +1687,7 @@ func gateRecordFor(t *testing.T, rt Runtime, name string, round int) *store.Gate
 		t.Fatalf("ReadLog(%s): %v", name, err)
 	}
 	for _, e := range entries {
-		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindReport {
 			return e.Gate
 		}
 	}
@@ -1651,6 +1737,8 @@ func failRoundWithGate(t *testing.T, rt Runtime, b store.Binding, fr *fakeRunner
 // budget stages round N+1 as a repair plan, hands it to the builder exactly as
 // Send would, and logs `repair k/M` on the new round's plan entry.
 func TestRegateFailOpensRepairRound(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1665,7 +1753,7 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 	if got.Round != 2 {
 		t.Fatalf("Round = %d, want 2", got.Round)
 	}
-	planPath := rt.Store.PlanPath("webshop", 2)
+	planPath := rt.Store.PromptPath("webshop", 2)
 	body, err := os.ReadFile(planPath)
 	if err != nil {
 		t.Fatalf("round 2 plan must exist: %v", err)
@@ -1674,8 +1762,8 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 		t.Errorf("round 2 plan does not name the failed check:\n%s", body)
 	}
 
-	if !anySpecArgv(fr, "002-plan.md") {
-		t.Errorf("no process was handed round 2's repair plan (002-plan.md)")
+	if !anySpecArgv(fr, "002-prompt.md") {
+		t.Errorf("no process was handed round 2's repair plan (002-prompt.md)")
 	}
 
 	entries, err := rt.Store.ReadLog("webshop")
@@ -1684,7 +1772,7 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 	}
 	var repairEntry *store.LogEntry
 	for i := range entries {
-		if entries[i].Round == 2 && entries[i].Direction == store.DirToBuilder && entries[i].Kind == store.KindPlan {
+		if entries[i].Round == 2 && entries[i].Direction == store.DirToBuilder && entries[i].Kind == store.KindPrompt {
 			repairEntry = &entries[i]
 		}
 	}
@@ -1716,6 +1804,8 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 // budget is spent, the next failing gate ends the loop with NEEDS YOU instead
 // of another repair round.
 func TestRegateBoundHaltsNeedsYou(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1729,8 +1819,8 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 	if got.State != store.StateActive || got.RepairCount != 1 {
 		t.Fatalf("after the first failure: state=%q repairs=%d, want active/1", got.State, got.RepairCount)
 	}
-	if !anySpecArgv(fr, "002-plan.md") {
-		t.Fatalf("no process was handed round 2's repair plan (002-plan.md)")
+	if !anySpecArgv(fr, "002-prompt.md") {
+		t.Fatalf("no process was handed round 2's repair plan (002-prompt.md)")
 	}
 
 	// Round 2's gate fails with different content, so the stall bound cannot
@@ -1743,10 +1833,10 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 	if !strings.Contains(got.Halt, "after 1 repair") {
 		t.Errorf("Halt = %q, want it to mention \"after 1 repair\"", got.Halt)
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 3)); err == nil {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 3)); err == nil {
 		t.Error("no round-3 plan may be staged once the budget is spent")
 	}
-	if anySpecArgv(fr, "003-plan.md") {
+	if anySpecArgv(fr, "003-prompt.md") {
 		t.Error("no round-3 hand-off may happen once the budget is spent")
 	}
 }
@@ -1755,6 +1845,8 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 // a second identical failure -- same content modulo the clock -- means the
 // repair changed nothing that mattered, so the loop ends early.
 func TestRegateIdenticalSignatureHaltsEarly(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1787,6 +1879,8 @@ func TestRegateIdenticalSignatureHaltsEarly(t *testing.T) {
 // TestRegatePassResetsCount pins #132 part 2's reset: a passing gate clears
 // the repair bookkeeping, so the next failing gate gets a fresh budget.
 func TestRegatePassResetsCount(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1843,6 +1937,8 @@ func TestRegatePassResetsCount(t *testing.T) {
 // TestNoRegateUnchanged pins the off switch (#132 part 2): Regate 0 is
 // exactly today's behaviour -- the failure is reported, nothing is re-sent.
 func TestNoRegateUnchanged(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1859,14 +1955,14 @@ func TestNoRegateUnchanged(t *testing.T) {
 	if got.RepairCount != 0 || got.LastGateSig != "" {
 		t.Errorf("repair bookkeeping moved with regate 0: repairs=%d sig=%q", got.RepairCount, got.LastGateSig)
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("webshop", 2)); err == nil {
+	if _, err := os.Stat(rt.Store.PromptPath("webshop", 2)); err == nil {
 		t.Error("no round-2 plan may be staged when regate is 0")
 	}
 	if got := len(runnerOf(t, rt).specs); got != 1 {
 		t.Errorf("processes started = %d, want 1 (the gate only, nothing re-sent)", got)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
@@ -1882,6 +1978,8 @@ func TestNoRegateUnchanged(t *testing.T) {
 // start -- it clears the repair bookkeeping and, when --regate is given, sets
 // the binding's budget.
 func TestSendResetsRepairBookkeeping(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	b.RepairCount = 1
 	b.LastGateSig = "x"
@@ -1929,6 +2027,8 @@ func TestSendResetsRepairBookkeeping(t *testing.T) {
 // what this test now pins. A human Send clears the stamp and the notification
 // bookkeeping.
 func TestReconcileNeedsYouGoesStale(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
@@ -2002,12 +2102,15 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 // TestVerifyRoundStartsAReviewerInAThrowawayWorktree pins #144's close path:
 // a round sent with --verify closes exactly as before, and the close then
 // creates a detached worktree at the builder's HEAD and launches one read-only
-// headless reviewer in it -- with a question that names the ask file, whose
-// content asks the reviewer to verify round 1 with no gate.
+// headless reviewer in it -- with a question carried in the reviewer's prompt
+// and recorded at the ask path, that asks the reviewer to verify round 1 with
+// no gate.
 //
 // Mutation check (run and report): delete the wantVerify block from
 // Reconcile's close path and this fails on addDetachedWorktreeCalls.
 func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	fg := &fakeGit{headCommitID: "head1"}
 	rt, _ := seedBound(t)
@@ -2062,41 +2165,44 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 	}
 
 	askPath := rt.Store.AskPath("webshop", 1, verifyConsultID)
-	if argv := strings.Join(reviewer.Argv, " "); !strings.Contains(argv, askPath) {
-		t.Errorf("reviewer argv does not name the ask file %s:\n%s", askPath, argv)
+	if argv := strings.Join(reviewer.Argv, " "); !strings.Contains(argv, "Verify round 1") {
+		t.Errorf("reviewer argv does not carry the question:\n%s", argv)
 	}
-	question, err := os.ReadFile(askPath)
+	if _, err := os.Stat(askPath); !os.IsNotExist(err) {
+		t.Errorf("ask file exists on disk at %s (err %v), want no file", askPath, err)
+	}
+	question, err := rt.Store.ReadFile(askPath)
 	if err != nil {
-		t.Fatalf("read ask file: %v", err)
+		t.Fatalf("read recorded question: %v", err)
 	}
 	for _, want := range []string{"Verify round 1", "Gate:   none"} {
 		if !strings.Contains(string(question), want) {
-			t.Errorf("ask file does not contain %q:\n%s", want, question)
+			t.Errorf("recorded question does not contain %q:\n%s", want, question)
 		}
 	}
 
-	var consult *store.Consult
+	var vc *store.Consult
 	for i := range got.Consults {
-		if got.Consults[i].Role == verifyRole {
-			consult = &got.Consults[i]
+		if got.Consults[i].Role == consult.VerifyRole {
+			vc = &got.Consults[i]
 		}
 	}
-	if consult == nil {
-		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	if vc == nil {
+		t.Fatalf("no %q consult on the binding: %+v", consult.VerifyRole, got.Consults)
 	}
-	if consult.Round != 1 {
-		t.Errorf("consult round = %d, want 1", consult.Round)
+	if vc.Round != 1 {
+		t.Errorf("consult round = %d, want 1", vc.Round)
 	}
-	if consult.State != store.ConsultRunning {
-		t.Errorf("consult state = %q, want running", consult.State)
+	if vc.State != store.ConsultRunning {
+		t.Errorf("consult state = %q, want running", vc.State)
 	}
 
-	// The report was queued for the planner: with no live claim it waits for
+	// The report was queued for the mastermind: with no live claim it waits for
 	// `relevo wait`, which is the whole delivery route since #303.
-	if pending, found, err := rt.Store.PendingForPlanner("webshop"); err != nil {
+	if pending, found, err := rt.Store.PendingForMasterMind("webshop"); err != nil {
 		t.Fatal(err)
 	} else if !found {
-		t.Error("the closed round's report must be queued for the planner")
+		t.Error("the closed round's report must be queued for the mastermind")
 	} else if pending.Kind != store.KindReport {
 		t.Errorf("pending kind = %q, want report", pending.Kind)
 	}
@@ -2106,6 +2212,8 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 // where the closed round's gate log is, because seeing the gate's own output
 // is the point of running verify after the gate.
 func TestVerifyGateLogIsPassed(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -2142,9 +2250,9 @@ func TestVerifyGateLogIsPassed(t *testing.T) {
 		t.Fatalf("round = %d, want 2 after the gate passed", got.Round)
 	}
 
-	question, err := os.ReadFile(rt.Store.AskPath("webshop", 1, verifyConsultID))
+	question, err := rt.Store.ReadFile(rt.Store.AskPath("webshop", 1, verifyConsultID))
 	if err != nil {
-		t.Fatalf("read ask file: %v", err)
+		t.Fatalf("read recorded question: %v", err)
 	}
 	wantLog := rt.Store.GateLogPath("webshop", 1)
 	if !strings.Contains(string(question), "Gate:   "+wantLog) {
@@ -2163,6 +2271,8 @@ const candidateSetWithoutReviewerJSON = `[
 // round with no reviewer candidate closes normally, logs one "verify skipped:"
 // note, starts nothing, and leaves no throwaway worktree behind.
 func TestVerifySkippedWhenNoReviewerCandidate(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -2219,109 +2329,6 @@ func TestVerifySkippedWhenNoReviewerCandidate(t *testing.T) {
 	}
 }
 
-// retiredEntries returns the binding's KindRetired entries.
-func retiredEntries(t *testing.T, rt Runtime, name string) []store.LogEntry {
-	t.Helper()
-	entries, err := rt.Store.ReadLog(name)
-	if err != nil {
-		t.Fatalf("ReadLog: %v", err)
-	}
-	var out []store.LogEntry
-	for _, e := range entries {
-		if e.Kind == store.KindRetired {
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-// TestReconcileRetiresLegacyPaneBinding pins #303 §5.6: a legacy pane binding
-// still active at upgrade becomes DONE with one `retired` entry, its worktree
-// left exactly as it is; a second tick adds none; a remote binding is
-// untouched; and a PAUSED pane binding is retired too.
-func TestReconcileRetiresLegacyPaneBinding(t *testing.T) {
-	rt := newRuntime(t)
-
-	legacy := store.Binding{
-		Name: "pane", CWD: "/repo", Round: 2, State: store.StateActive,
-		Worktree: "/wt/pane", Branch: "relevo/pane",
-		Planner: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
-		Builder: store.Endpoint{PaneID: "w2:p4", Kind: "agy"}, // Mode "" = pre-#303 pane
-	}
-	paused := legacy
-	paused.Name, paused.State, paused.Worktree = "parked", store.StatePaused, ""
-	paused.CWD = "/repo-parked"
-	paused.Builder.Mode = store.ModePane
-	remote := store.Binding{
-		Name: "api", CWD: "/repo", Round: 1, State: store.StateActive,
-		Planner: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
-		Builder: store.Endpoint{Kind: "claude", Mode: store.ModeRemote, Server: "contabo"},
-	}
-	for _, b := range []store.Binding{legacy, paused, remote} {
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatalf("Save %s: %v", b.Name, err)
-		}
-	}
-
-	got, err := reconcile(t, rt, legacy)
-	if err != nil {
-		t.Fatalf("Reconcile legacy: %v", err)
-	}
-	if got.State != store.StateDone {
-		t.Errorf("legacy state = %s, want done", got.State)
-	}
-	entries := retiredEntries(t, rt, "pane")
-	if len(entries) != 1 {
-		t.Fatalf("retired entries = %d, want 1", len(entries))
-	}
-	if want := "pane builders were removed (#303); rebind with relevo bind --worktree"; entries[0].Note != want {
-		t.Errorf("retired note = %q, want %q", entries[0].Note, want)
-	}
-	if got.Worktree != "/wt/pane" || got.Branch != "relevo/pane" {
-		t.Errorf("worktree fields changed: %+v", got)
-	}
-
-	// A second tick adds nothing: the binding is DONE now.
-	if _, err := reconcile(t, rt, got); err != nil {
-		t.Fatalf("second Reconcile: %v", err)
-	}
-	if n := len(retiredEntries(t, rt, "pane")); n != 1 {
-		t.Errorf("retired entries after a second tick = %d, want 1", n)
-	}
-
-	// A PAUSED pane binding is retired too.
-	gotPaused, err := reconcile(t, rt, paused)
-	if err != nil {
-		t.Fatalf("Reconcile paused: %v", err)
-	}
-	if gotPaused.State != store.StateDone {
-		t.Errorf("paused state = %s, want done", gotPaused.State)
-	}
-	if n := len(retiredEntries(t, rt, "parked")); n != 1 {
-		t.Errorf("paused retired entries = %d, want 1", n)
-	}
-
-	// A remote binding is never a legacy pane binding: it is left alone, not
-	// retired.
-	remoteGot, err := reconcile(t, rt, remote)
-	if err != nil {
-		t.Fatalf("Reconcile remote: %v", err)
-	}
-	if remoteGot.State != store.StateActive {
-		t.Errorf("remote state = %s, want active (never retired)", remoteGot.State)
-	}
-	after, err := rt.Store.Load("api")
-	if err != nil {
-		t.Fatalf("Load api: %v", err)
-	}
-	if after.State != store.StateActive {
-		t.Errorf("stored remote state = %s, want active (never retired)", after.State)
-	}
-	if n := len(retiredEntries(t, rt, "api")); n != 0 {
-		t.Errorf("remote retired entries = %d, want 0", n)
-	}
-}
-
 // roundReportEntry is webshop's queued report entry for round. It is the
 // non-e2e form of e2e_test.go's reportEntry, which is behind the e2e tag.
 func roundReportEntry(t *testing.T, rt Runtime, round int) store.LogEntry {
@@ -2331,7 +2338,7 @@ func roundReportEntry(t *testing.T, rt Runtime, round int) store.LogEntry {
 		t.Fatalf("ReadLog: %v", err)
 	}
 	for _, e := range entries {
-		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindReport {
 			return e
 		}
 	}
@@ -2344,6 +2351,8 @@ func roundReportEntry(t *testing.T, rt Runtime, round int) store.LogEntry {
 // returns the binding unchanged and drives nothing -- even a written report
 // and done marker are left for the newer relevo.
 func TestReconcileLeavesAnUnknownStateAlone(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	fr := rt.Runner.(*fakeRunner)
 	if err := os.WriteFile(rt.Store.ReportPath(b.Name, 1), []byte("done"), 0o644); err != nil {

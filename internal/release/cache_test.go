@@ -1,7 +1,6 @@
 package release
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -9,8 +8,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// testKV is a real t.TempDir() database, the medium the cache lives in from
-// this round (P3b plan §7).
 func testKV(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -21,35 +18,28 @@ func testKV(t *testing.T) *db.DB {
 	return d
 }
 
-// TestLoadMissingAndMalformed pins §4.3's promise: neither a missing record nor
-// a corrupt one is an error, because a cache that cannot be read must only fail
-// to inform, never fail a caller. Return an error for malformed and this test
-// fails. The corrupt document arrives as a legacy release-check.json, which the
-// import refuses to store (P3b plan §4.4).
+// TestLoadMissingAndMalformed pins that neither a missing nor an unreadable
+// cache is an error: a cache that cannot be read must only fail to inform.
 func TestLoadMissingAndMalformed(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
 		write   bool
 	}{
-		{name: "missing file"},
-		{name: "empty file", write: true, content: ""},
-		{name: "not json", write: true, content: "{ not json"},
-		{name: "truncated json", write: true, content: `{"latest": "v0.7.0"`},
+		{name: "missing row"},
 		{name: "wrong shape", write: true, content: `{"latest": 7}`},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			kv := testKV(t)
-			path := filepath.Join(t.TempDir(), "release-check.json")
 			if tc.write {
-				if err := os.WriteFile(path, []byte(tc.content), 0o644); err != nil {
-					t.Fatalf("write cache fixture: %v", err)
+				if err := kv.KVPut(cacheKey, []byte(tc.content)); err != nil {
+					t.Fatalf("put cache fixture: %v", err)
 				}
 			}
 
-			c, ok, err := Load(kv, path)
+			c, ok, err := Load(kv)
 			if err != nil {
 				t.Fatalf("Load = error %v, want nil: a corrupt cache must never fail a caller", err)
 			}
@@ -74,7 +64,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got, ok, err := Load(kv, "")
+	got, ok, err := Load(kv)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -85,14 +75,12 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Errorf("round trip = %+v, want %+v", got, want)
 	}
 
-	// The whole document is one row, and only that row.
 	if _, ok, err := kv.KVGet("release-check"); err != nil || !ok {
 		t.Errorf("KVGet(release-check) = (_, %v, %v), want the row", ok, err)
 	}
 }
 
-// TestStaleTTL is a fake clock either side of TTL: the daemon must ask for a
-// refresh only once the day is up.
+// TestStaleTTL is a fake clock either side of TTL.
 func TestStaleTTL(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 

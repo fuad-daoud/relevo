@@ -20,6 +20,8 @@ func progressRt() Runtime { return Runtime{Policy: policy.Policy{}} }
 // output has been still the whole time. The sample before the change is the
 // negative half: with the tree quiet for 25m the stall must already be set.
 func TestProgressTreeChangeResetsEverything(t *testing.T) {
+	t.Parallel()
+
 	rt := progressRt()
 	start := progressStart
 	// The tree has already been quiet for 15m when the round's first sample is
@@ -53,6 +55,8 @@ func TestProgressTreeChangeResetsEverything(t *testing.T) {
 // at stall_after_ms the stamp lands on the last change (the round's start) and
 // the exploring label stays zero -- a stall outranks exploring.
 func TestProgressNothingIsStalled(t *testing.T) {
+	t.Parallel()
+
 	rt := progressRt()
 	start := progressStart
 
@@ -75,6 +79,8 @@ func TestProgressNothingIsStalled(t *testing.T) {
 // tree that has not moved for explore_after_ms while the stream moves is
 // exploring.
 func TestProgressHeadlessStreamMtimeStillCounts(t *testing.T) {
+	t.Parallel()
+
 	rt := progressRt()
 	start := progressStart
 
@@ -97,6 +103,8 @@ func TestProgressHeadlessStreamMtimeStillCounts(t *testing.T) {
 // TestProgressNoSignalsNoLabel pins the empty case: no git, no pane and no
 // stream is no evidence at all, so no label is ever set (#135 §6).
 func TestProgressNoSignalsNoLabel(t *testing.T) {
+	t.Parallel()
+
 	rt := progressRt()
 	start := progressStart
 
@@ -116,6 +124,8 @@ func TestProgressNoSignalsNoLabel(t *testing.T) {
 // TestProgressSampleCadence pins the 30s throttle: a second call inside the
 // interval returns the binding unchanged, so the daemon samples once.
 func TestProgressSampleCadence(t *testing.T) {
+	t.Parallel()
+
 	rt := progressRt()
 	start := progressStart
 

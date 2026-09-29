@@ -12,10 +12,8 @@ var agentFS embed.FS
 var ErrNoAgentDoc = errors.New("no embedded agent definition")
 
 // AgentDoc returns the embedded definition for one role of one harness kind.
-//
-// The filename is built from the TABLE's Doc field, never from the caller's
-// role string, so a caller cannot steer the read with path syntax. A pair
-// absent from the table returns ErrNoAgentDoc without touching the embed FS.
+// The filename comes from the table's Doc field, never the caller's role, so a
+// caller cannot steer the read with path syntax.
 func AgentDoc(role, kind string) ([]byte, error) {
 	h, ok := Lookup(kind)
 	if !ok {

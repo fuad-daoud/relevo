@@ -10,8 +10,7 @@ import (
 	"time"
 )
 
-// runLogFake is a RunLog that keeps every run it is given, safe to read after
-// the executor returned.
+// runLogFake is a RunLog safe to read after the executor returned.
 type runLogFake struct {
 	mu   sync.Mutex
 	runs []HookRun
@@ -24,15 +23,13 @@ func (f *runLogFake) Append(run HookRun) error {
 	return nil
 }
 
-// all is every recorded run, oldest first.
 func (f *runLogFake) all() []HookRun {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]HookRun(nil), f.runs...)
 }
 
-// only is the single recorded run, failing the test when there is not exactly
-// one.
+// only is the single recorded run; it fails the test otherwise.
 func (f *runLogFake) only(t *testing.T) HookRun {
 	t.Helper()
 	runs := f.all()

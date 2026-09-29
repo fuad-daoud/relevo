@@ -1,28 +1,26 @@
- relevo › fleet                                                                         ● 1 needs you  ·  codex gated until 15:30  ·  14:02 
-6 bindings · 1 needs you · 3 active                                                                        sort attention · refreshed 0s ago
-global                                                                                                                                      
-:            command                                                                                                                        
-/            filter                                                                                                                         
-?            help                                                                                                                           
-esc          back                                                                                                                           
-q            quit / back                                                                                                                    
+  ◆ relevo    fleet                                                                                  ● 1 needs you     v0.13.0-28    14:02  
                                                                                                                                             
-view                                                                                                                                        
-↑↓           move                                                                                                                           
-home/end     first/last                                                                                                                     
-enter        open                                                                                                                           
-a            sort                                                                                                                           
-/            filter                                                                                                                         
+   5 live   1 needs you   3 working   1 on hold   1 done                                                   sort attention · refreshed 0s ago
                                                                                                                                             
+ ╭─ webshop  round 4 · question · 2m ─────────────────────────────────────────────────────────────────────────────────────────────────────╮ 
+ │  MasterMind architect-1  ·  -  ·  relevo/webshop  ·  $9.40                                                                             │ 
+ │                                                                                                                                        │ 
+ │    enter  open round                                                                                                                   │ 
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
                                                                                                                                             
+     needs you   1    a builder is waiting on an answer                                                                                     
+ ▍ ●  webshop ╭─ keys · fleet ───────────────────────────────────────────────────────────────────────────────────────────────╮              
+        ╰ whic│ MOVE & VIEW                         ACT ON THE ROW                      ANYWHERE                             │              
+              │  ↑↓          move                                                        :           command                 │              
+     working  │  home/end    first/last                                                  ?           help                    │              
+   ●  api     │  enter       open                                                        esc         back                    │              
+   ●  atlas   │  a           sort                                                        q           quit / back             │              
+   ●  worker  │  .           done rows                                                   wheel       scroll                  │              
+              │  /           filter                                                      shift+drag  select text             │              
+     on hold  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯              
+   ◐  ledger              r3 · paused             -                       architect-1   ~$1.63                                              
                                                                                                                                             
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
+   ✓  1 done  ·  1 today  ·  last docs 3h ago       .  show                                                                                 
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
@@ -36,5 +34,7 @@ a            sort
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ move   home/end first/last   enter open   a sort   / filter   : command   ? help   q quit                                                
+                                                                                                                                            
+   ◌ gated  codex 1h  ·  the pick skips them                                                                                                
+
+ esc  close                                                                                                                                 

@@ -23,8 +23,7 @@ func load(t *testing.T, body string) (Policy, error) {
 	return Load(path)
 }
 
-// loadWarnings writes body to a temp policy.json and loads it with
-// LoadWithWarnings, failing on any error.
+// loadWarnings loads body with LoadWithWarnings, failing on any error.
 func loadWarnings(t *testing.T, body string) (Policy, []string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "policy.json")
@@ -38,9 +37,8 @@ func loadWarnings(t *testing.T, body string) (Policy, []string) {
 	return p, warnings
 }
 
-// TestLoadUnknownKeysWarn pins #372 §4.4: an unknown key is a warning and the
-// policy still loads; its dotted path names where the key was; a key under a
-// map-typed field is never unknown; a bad value is still an error.
+// TestLoadUnknownKeysWarn pins that an unknown key is a warning, not an
+// error, unless it is also an invalid value.
 func TestLoadUnknownKeysWarn(t *testing.T) {
 	t.Run("unknown top-level key", func(t *testing.T) {
 		p, warnings := loadWarnings(t, `{"orders":{"builder":["a/b/c"]}}`)
@@ -305,167 +303,58 @@ func TestLimitGateDefault(t *testing.T) {
 	}
 }
 
-// TestStallAfterDefaultAndOverride pins #252's policy key: nil is the 15m
-// default, a present value is that many milliseconds, and 0 is a load error
-// naming the key.
-func TestStallAfterDefaultAndOverride(t *testing.T) {
-	p, err := load(t, `{}`)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := p.StallAfter(); got != DefaultStallAfter {
-		t.Fatalf("StallAfter() with no key = %v, want %v", got, DefaultStallAfter)
-	}
-	if DefaultStallAfter != 15*time.Minute {
-		t.Fatalf("DefaultStallAfter = %v, want 15m", DefaultStallAfter)
-	}
-
-	p, err = load(t, `{"stall_after_ms":60000}`)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := p.StallAfter(); got != time.Minute {
-		t.Fatalf("StallAfter() with 60000 = %v, want 1m", got)
-	}
-
-	_, err = load(t, `{"stall_after_ms":0}`)
-	if err == nil {
-		t.Fatalf("Load with stall_after_ms 0: got nil error, want one wrapping ErrBadPolicy")
-	}
-	if !errors.Is(err, ErrBadPolicy) {
-		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
-	}
-	for _, want := range []string{"stall_after_ms", "must be > 0"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("Load error %q does not contain %q", err.Error(), want)
-		}
-	}
-
-	if got := (Policy{}).StallAfter(); got != DefaultStallAfter {
-		t.Fatalf("Policy{}.StallAfter() = %v, want %v", got, DefaultStallAfter)
-	}
+// msDurationCases is the shared shape of every *_ms policy knob: nil is a
+// pinned default, a present value converts from milliseconds, and 0 is a
+// load error naming the key.
+var msDurationCases = []struct {
+	key        string
+	literal    time.Duration // the default's documented value, pinned independently of the const
+	overrideMS int
+	get        func(Policy) time.Duration
+}{
+	{"stall_after_ms", 15 * time.Minute, 60000, Policy.StallAfter},
+	{"progress_interval_ms", 30 * time.Second, 5000, Policy.ProgressInterval},
+	{"explore_after_ms", 20 * time.Minute, 600000, Policy.ExploreAfter},
+	{"stale_after_ms", 4 * time.Hour, 1800000, Policy.StaleAfter},
 }
 
-// TestProgressIntervalDefaultAndOverride pins #135's sampling key: nil is the
-// 30s default, a present value is that many milliseconds, and 0 is a load error
-// naming the key.
-func TestProgressIntervalDefaultAndOverride(t *testing.T) {
-	p, err := load(t, `{}`)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := p.ProgressInterval(); got != DefaultProgressInterval {
-		t.Fatalf("ProgressInterval() with no key = %v, want %v", got, DefaultProgressInterval)
-	}
-	if DefaultProgressInterval != 30*time.Second {
-		t.Fatalf("DefaultProgressInterval = %v, want 30s", DefaultProgressInterval)
-	}
+func TestMSDurationDefaultsAndOverrides(t *testing.T) {
+	for _, tc := range msDurationCases {
+		t.Run(tc.key, func(t *testing.T) {
+			if got := tc.get(Policy{}); got != tc.literal {
+				t.Fatalf("%s default = %v, want %v", tc.key, got, tc.literal)
+			}
 
-	p, err = load(t, `{"progress_interval_ms":5000}`)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := p.ProgressInterval(); got != 5*time.Second {
-		t.Fatalf("ProgressInterval() with 5000 = %v, want 5s", got)
-	}
+			p, err := load(t, `{}`)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := tc.get(p); got != tc.literal {
+				t.Fatalf("%s() with no key = %v, want %v", tc.key, got, tc.literal)
+			}
 
-	_, err = load(t, `{"progress_interval_ms":0}`)
-	if err == nil {
-		t.Fatalf("Load with progress_interval_ms 0: got nil error, want one wrapping ErrBadPolicy")
-	}
-	if !errors.Is(err, ErrBadPolicy) {
-		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
-	}
-	for _, want := range []string{"progress_interval_ms", "must be > 0"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("Load error %q does not contain %q", err.Error(), want)
-		}
-	}
+			p, err = load(t, fmt.Sprintf(`{%q:%d}`, tc.key, tc.overrideMS))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			want := time.Duration(tc.overrideMS) * time.Millisecond
+			if got := tc.get(p); got != want {
+				t.Fatalf("%s() with %d = %v, want %v", tc.key, tc.overrideMS, got, want)
+			}
 
-	if got := (Policy{}).ProgressInterval(); got != DefaultProgressInterval {
-		t.Fatalf("Policy{}.ProgressInterval() = %v, want %v", got, DefaultProgressInterval)
-	}
-}
-
-// TestExploreAfterDefaultAndOverride pins #135's exploring key: nil is the 20m
-// default, a present value is that many milliseconds, and 0 is a load error
-// naming the key.
-func TestExploreAfterDefaultAndOverride(t *testing.T) {
-	p, err := load(t, `{}`)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := p.ExploreAfter(); got != DefaultExploreAfter {
-		t.Fatalf("ExploreAfter() with no key = %v, want %v", got, DefaultExploreAfter)
-	}
-	if DefaultExploreAfter != 20*time.Minute {
-		t.Fatalf("DefaultExploreAfter = %v, want 20m", DefaultExploreAfter)
-	}
-
-	p, err = load(t, `{"explore_after_ms":600000}`)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := p.ExploreAfter(); got != 10*time.Minute {
-		t.Fatalf("ExploreAfter() with 600000 = %v, want 10m", got)
-	}
-
-	_, err = load(t, `{"explore_after_ms":0}`)
-	if err == nil {
-		t.Fatalf("Load with explore_after_ms 0: got nil error, want one wrapping ErrBadPolicy")
-	}
-	if !errors.Is(err, ErrBadPolicy) {
-		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
-	}
-	for _, want := range []string{"explore_after_ms", "must be > 0"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("Load error %q does not contain %q", err.Error(), want)
-		}
-	}
-
-	if got := (Policy{}).ExploreAfter(); got != DefaultExploreAfter {
-		t.Fatalf("Policy{}.ExploreAfter() = %v, want %v", got, DefaultExploreAfter)
-	}
-}
-
-// TestStaleAfterDefaultAndOverride pins #135's stale key: nil is the 4h default,
-// a present value is that many milliseconds, and 0 is a load error naming the
-// key.
-func TestStaleAfterDefaultAndOverride(t *testing.T) {
-	p, err := load(t, `{}`)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := p.StaleAfter(); got != DefaultStaleAfter {
-		t.Fatalf("StaleAfter() with no key = %v, want %v", got, DefaultStaleAfter)
-	}
-	if DefaultStaleAfter != 4*time.Hour {
-		t.Fatalf("DefaultStaleAfter = %v, want 4h", DefaultStaleAfter)
-	}
-
-	p, err = load(t, `{"stale_after_ms":1800000}`)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := p.StaleAfter(); got != 30*time.Minute {
-		t.Fatalf("StaleAfter() with 1800000 = %v, want 30m", got)
-	}
-
-	_, err = load(t, `{"stale_after_ms":0}`)
-	if err == nil {
-		t.Fatalf("Load with stale_after_ms 0: got nil error, want one wrapping ErrBadPolicy")
-	}
-	if !errors.Is(err, ErrBadPolicy) {
-		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
-	}
-	for _, want := range []string{"stale_after_ms", "must be > 0"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("Load error %q does not contain %q", err.Error(), want)
-		}
-	}
-
-	if got := (Policy{}).StaleAfter(); got != DefaultStaleAfter {
-		t.Fatalf("Policy{}.StaleAfter() = %v, want %v", got, DefaultStaleAfter)
+			_, err = load(t, fmt.Sprintf(`{%q:0}`, tc.key))
+			if err == nil {
+				t.Fatalf("Load with %s 0: got nil error, want one wrapping ErrBadPolicy", tc.key)
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+			}
+			for _, want := range []string{tc.key, "must be > 0"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("Load error %q does not contain %q", err.Error(), want)
+				}
+			}
+		})
 	}
 }
 
@@ -559,69 +448,10 @@ func TestScanPatterns(t *testing.T) {
 }
 
 func TestClassifyPolicy(t *testing.T) {
-	t.Run("nil receiver accessors return defaults", func(t *testing.T) {
-		var c *Classify
-		if got := c.ModelName(); got != DefaultClassifyModel {
-			t.Errorf("ModelName() = %q, want %q", got, DefaultClassifyModel)
-		}
-		if got := c.Threshold(); got != DefaultInjectionThreshold {
-			t.Errorf("Threshold() = %v, want %v", got, DefaultInjectionThreshold)
-		}
-		if got := c.Timeout(); got != DefaultClassifyTimeout {
-			t.Errorf("Timeout() = %v, want %v", got, DefaultClassifyTimeout)
-		}
-	})
-
-	t.Run("valid block with defaults", func(t *testing.T) {
-		body := `{"classify":{"provider":"jev"}}`
-		p, err := load(t, body)
-		if err != nil {
-			t.Fatalf("Load: unexpected error %v", err)
-		}
-		if p.Classify == nil {
-			t.Fatal("Classify is nil")
-		}
-		if got := p.Classify.ModelName(); got != "jev-latest" {
-			t.Errorf("ModelName() = %q, want jev-latest", got)
-		}
-		if got := p.Classify.Threshold(); got != 0.7 {
-			t.Errorf("Threshold() = %v, want 0.7", got)
-		}
-		if got := p.Classify.Timeout(); got != 4*time.Second {
-			t.Errorf("Timeout() = %v, want 4s", got)
-		}
-	})
-
-	t.Run("explicit values honoured", func(t *testing.T) {
-		body := `{"classify":{"provider":"jev","model":"jev-v2","injection_threshold":0.85,"timeout_ms":2500}}`
-		p, err := load(t, body)
-		if err != nil {
-			t.Fatalf("Load: unexpected error %v", err)
-		}
-		if p.Classify == nil {
-			t.Fatal("Classify is nil")
-		}
-		if got := p.Classify.ModelName(); got != "jev-v2" {
-			t.Errorf("ModelName() = %q, want jev-v2", got)
-		}
-		if got := p.Classify.Threshold(); got != 0.85 {
-			t.Errorf("Threshold() = %v, want 0.85", got)
-		}
-		if got := p.Classify.Timeout(); got != 2500*time.Millisecond {
-			t.Errorf("Timeout() = %v, want 2.5s", got)
-		}
-	})
-
-	t.Run("1.0 accepted", func(t *testing.T) {
-		body := `{"classify":{"provider":"jev","injection_threshold":1.0}}`
-		p, err := load(t, body)
-		if err != nil {
-			t.Fatalf("Load: unexpected error %v", err)
-		}
-		if got := p.Classify.Threshold(); got != 1.0 {
-			t.Errorf("Threshold() = %v, want 1.0", got)
-		}
-	})
+	t.Run("nil receiver accessors return defaults", checkClassifyNilDefaults)
+	t.Run("valid block with defaults", checkClassifyBlockDefaults)
+	t.Run("explicit values honoured", checkClassifyExplicitValues)
+	t.Run("1.0 accepted", checkClassifyThresholdOne)
 
 	badCases := []struct {
 		name     string
@@ -653,108 +483,131 @@ func TestClassifyPolicy(t *testing.T) {
 	}
 }
 
-func TestTierPolicy(t *testing.T) {
-	t.Run("max_tier default is edit", func(t *testing.T) {
-		p := Policy{}
-		if p.MaxTierOrDefault() != harness.TierEdit {
-			t.Errorf("Policy{}.MaxTierOrDefault() = %v, want %v", p.MaxTierOrDefault(), harness.TierEdit)
-		}
-		pLoaded, err := load(t, `{}`)
-		if err != nil {
-			t.Fatalf("Load({}) err: %v", err)
-		}
-		if pLoaded.MaxTierOrDefault() != harness.TierEdit {
-			t.Errorf("pLoaded.MaxTierOrDefault() = %v, want %v", pLoaded.MaxTierOrDefault(), harness.TierEdit)
-		}
-	})
-
-	t.Run("max_tier yolo and tier builder yolo loads", func(t *testing.T) {
-		p, err := load(t, `{"max_tier":"yolo","tier":{"builder":"yolo"}}`)
-		if err != nil {
-			t.Fatalf("Load unexpected err: %v", err)
-		}
-		if p.MaxTierOrDefault() != harness.TierYolo {
-			t.Errorf("MaxTierOrDefault() = %v, want %v", p.MaxTierOrDefault(), harness.TierYolo)
-		}
-		got, ok := p.TierFor("builder")
-		if !ok || got != harness.TierYolo {
-			t.Errorf("TierFor(\"builder\") = (%v, %v), want (yolo, true)", got, ok)
-		}
-		_, ok = p.TierFor("reviewer")
-		if ok {
-			t.Errorf("TierFor(\"reviewer\") ok = true, want false")
-		}
-	})
-
-	t.Run("tier builder yolo with default cap exceeds max_tier", func(t *testing.T) {
-		_, err := load(t, `{"tier":{"builder":"yolo"}}`)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if !errors.Is(err, ErrBadPolicy) {
-			t.Fatalf("error %v does not wrap ErrBadPolicy", err)
-		}
-		if !strings.Contains(err.Error(), "exceeds max_tier") {
-			t.Errorf("error %q does not contain \"exceeds max_tier\"", err.Error())
-		}
-	})
-
-	t.Run("max_tier harness is rejected", func(t *testing.T) {
-		_, err := load(t, `{"max_tier":"harness"}`)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if !errors.Is(err, ErrBadPolicy) {
-			t.Fatalf("error %v does not wrap ErrBadPolicy", err)
-		}
-		if !strings.Contains(err.Error(), `"harness" is not a cap`) {
-			t.Errorf("error %q does not contain '\"harness\" is not a cap'", err.Error())
-		}
-	})
-
-	t.Run("unknown role key in tier is rejected", func(t *testing.T) {
-		_, err := load(t, `{"tier":{"wizard":"read"}}`)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if !errors.Is(err, ErrBadPolicy) {
-			t.Fatalf("error %v does not wrap ErrBadPolicy", err)
-		}
-		if !strings.Contains(err.Error(), "unknown role") {
-			t.Errorf("error %q does not contain \"unknown role\"", err.Error())
-		}
-	})
-
-	t.Run("invalid max_tier string is rejected", func(t *testing.T) {
-		_, err := load(t, `{"max_tier":"god"}`)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if !errors.Is(err, ErrBadPolicy) {
-			t.Fatalf("error %v does not wrap ErrBadPolicy", err)
-		}
-		if !strings.Contains(err.Error(), "max_tier:") {
-			t.Errorf("error %q does not contain \"max_tier:\"", err.Error())
-		}
-	})
-
-	t.Run("invalid tier value string is rejected", func(t *testing.T) {
-		_, err := load(t, `{"tier":{"builder":"invalid"}}`)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if !errors.Is(err, ErrBadPolicy) {
-			t.Fatalf("error %v does not wrap ErrBadPolicy", err)
-		}
-		if !strings.Contains(err.Error(), "tier.builder:") {
-			t.Errorf("error %q does not contain \"tier.builder:\"", err.Error())
-		}
-	})
+func checkClassifyNilDefaults(t *testing.T) {
+	var c *Classify
+	if got := c.ModelName(); got != DefaultClassifyModel {
+		t.Errorf("ModelName() = %q, want %q", got, DefaultClassifyModel)
+	}
+	if got := c.Threshold(); got != DefaultInjectionThreshold {
+		t.Errorf("Threshold() = %v, want %v", got, DefaultInjectionThreshold)
+	}
+	if got := c.Timeout(); got != DefaultClassifyTimeout {
+		t.Errorf("Timeout() = %v, want %v", got, DefaultClassifyTimeout)
+	}
 }
 
-// TestGateRegateDefaultAndValidation pins #132 part 2's policy key: nil is 0
-// (no automatic repair), a present value is that many repair rounds, and a
-// negative value is a load error naming gate.regate.
+func checkClassifyBlockDefaults(t *testing.T) {
+	p, err := load(t, `{"classify":{"provider":"jev"}}`)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if p.Classify == nil {
+		t.Fatal("Classify is nil")
+	}
+	if got := p.Classify.ModelName(); got != "jev-latest" {
+		t.Errorf("ModelName() = %q, want jev-latest", got)
+	}
+	if got := p.Classify.Threshold(); got != 0.7 {
+		t.Errorf("Threshold() = %v, want 0.7", got)
+	}
+	if got := p.Classify.Timeout(); got != 4*time.Second {
+		t.Errorf("Timeout() = %v, want 4s", got)
+	}
+}
+
+func checkClassifyExplicitValues(t *testing.T) {
+	body := `{"classify":{"provider":"jev","model":"jev-v2","injection_threshold":0.85,"timeout_ms":2500}}`
+	p, err := load(t, body)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if p.Classify == nil {
+		t.Fatal("Classify is nil")
+	}
+	if got := p.Classify.ModelName(); got != "jev-v2" {
+		t.Errorf("ModelName() = %q, want jev-v2", got)
+	}
+	if got := p.Classify.Threshold(); got != 0.85 {
+		t.Errorf("Threshold() = %v, want 0.85", got)
+	}
+	if got := p.Classify.Timeout(); got != 2500*time.Millisecond {
+		t.Errorf("Timeout() = %v, want 2.5s", got)
+	}
+}
+
+func checkClassifyThresholdOne(t *testing.T) {
+	p, err := load(t, `{"classify":{"provider":"jev","injection_threshold":1.0}}`)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if got := p.Classify.Threshold(); got != 1.0 {
+		t.Errorf("Threshold() = %v, want 1.0", got)
+	}
+}
+
+func TestTierPolicy(t *testing.T) {
+	t.Run("max_tier default is edit", checkTierDefaultIsEdit)
+	t.Run("max_tier yolo and tier builder yolo loads", checkTierYoloLoads)
+
+	badCases := []struct {
+		name     string
+		body     string
+		contains string
+	}{
+		{"tier builder yolo with default cap exceeds max_tier", `{"tier":{"builder":"yolo"}}`, "exceeds max_tier"},
+		{"max_tier harness is rejected", `{"max_tier":"harness"}`, `"harness" is not a cap`},
+		{"unknown role key in tier is rejected", `{"tier":{"wizard":"read"}}`, "unknown role"},
+		{"invalid max_tier string is rejected", `{"max_tier":"god"}`, "max_tier:"},
+		{"invalid tier value string is rejected", `{"tier":{"builder":"invalid"}}`, "tier.builder:"},
+	}
+	for _, bc := range badCases {
+		t.Run(bc.name, func(t *testing.T) {
+			_, err := load(t, bc.body)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+			}
+			if !strings.Contains(err.Error(), bc.contains) {
+				t.Errorf("error %q does not contain %q", err.Error(), bc.contains)
+			}
+		})
+	}
+}
+
+func checkTierDefaultIsEdit(t *testing.T) {
+	p := Policy{}
+	if p.MaxTierOrDefault() != harness.TierEdit {
+		t.Errorf("Policy{}.MaxTierOrDefault() = %v, want %v", p.MaxTierOrDefault(), harness.TierEdit)
+	}
+	pLoaded, err := load(t, `{}`)
+	if err != nil {
+		t.Fatalf("Load({}) err: %v", err)
+	}
+	if pLoaded.MaxTierOrDefault() != harness.TierEdit {
+		t.Errorf("pLoaded.MaxTierOrDefault() = %v, want %v", pLoaded.MaxTierOrDefault(), harness.TierEdit)
+	}
+}
+
+func checkTierYoloLoads(t *testing.T) {
+	p, err := load(t, `{"max_tier":"yolo","tier":{"builder":"yolo"}}`)
+	if err != nil {
+		t.Fatalf("Load unexpected err: %v", err)
+	}
+	if p.MaxTierOrDefault() != harness.TierYolo {
+		t.Errorf("MaxTierOrDefault() = %v, want %v", p.MaxTierOrDefault(), harness.TierYolo)
+	}
+	got, ok := p.TierFor("builder")
+	if !ok || got != harness.TierYolo {
+		t.Errorf("TierFor(\"builder\") = (%v, %v), want (yolo, true)", got, ok)
+	}
+	if _, ok = p.TierFor("reviewer"); ok {
+		t.Errorf("TierFor(\"reviewer\") ok = true, want false")
+	}
+}
+
+// TestGateRegateDefaultAndValidation pins gate.regate: nil is 0.
 func TestGateRegateDefaultAndValidation(t *testing.T) {
 	if got := (Policy{}).GateRegate(); got != 0 {
 		t.Fatalf("Policy{}.GateRegate() = %d, want 0", got)
@@ -797,9 +650,7 @@ func TestGateRegateDefaultAndValidation(t *testing.T) {
 	}
 }
 
-// TestVerifyDefault pins #144's policy knob: verify.default is the value
-// Send uses when neither --verify nor --no-verify was given, and a policy
-// with no verify key is false (no reviewer) rather than an error.
+// TestVerifyDefault pins that a policy with no verify key is false.
 func TestVerifyDefault(t *testing.T) {
 	if got := (Policy{}).VerifyDefault(); got {
 		t.Fatalf("Policy{}.VerifyDefault() = true, want false")
@@ -820,87 +671,35 @@ func TestVerifyDefault(t *testing.T) {
 	}
 }
 
+var notifyBadCases = []struct {
+	name     string
+	body     string
+	contains string
+}{
+	{"bad scheme", `{"notify":{"webhooks":[{"url":"ftp://example.com/hook"}]}}`, "notify.webhooks[0].url"},
+	{"missing url", `{"notify":{"webhooks":[{"url":""}]}}`, "notify.webhooks[0].url"},
+	{
+		"bad format",
+		`{"notify":{"webhooks":[{"url":"https://example.com/hook","format":"teams"}]}}`,
+		"notify.webhooks[0].format: unknown \"teams\"",
+	},
+	{
+		"unknown event",
+		`{"notify":{"webhooks":[{"url":"https://example.com/hook","events":["frobnicated"]}]}}`,
+		"notify.webhooks[0].events[0]: unknown event \"frobnicated\"",
+	},
+	{
+		"state suffix on the wrong event",
+		`{"notify":{"webhooks":[{"url":"https://example.com/hook","events":["round_started:x"]}]}}`,
+		"notify.webhooks[0].events[0]",
+	},
+}
+
 func TestNotifyPolicy(t *testing.T) {
-	t.Run("nil Notify is fine", func(t *testing.T) {
-		p, err := load(t, `{}`)
-		if err != nil {
-			t.Fatalf("Load: unexpected error %v", err)
-		}
-		if p.Notify != nil {
-			t.Fatalf("Notify = %v, want nil", p.Notify)
-		}
-	})
+	t.Run("nil Notify is fine", checkNotifyNil)
+	t.Run("two webhooks load", checkNotifyTwoWebhooks)
 
-	t.Run("two webhooks load", func(t *testing.T) {
-		body := `{"notify":{"webhooks":[
-			{"url":"https://hooks.slack.com/services/x","format":"slack","events":["state_changed:needs_you","binding_stale"]},
-			{"url":"https://example.com/hook","format":"json"}
-		]}}`
-		p, err := load(t, body)
-		if err != nil {
-			t.Fatalf("Load: unexpected error %v", err)
-		}
-		if p.Notify == nil {
-			t.Fatalf("Notify = nil, want populated")
-		}
-		if len(p.Notify.Webhooks) != 2 {
-			t.Fatalf("len(Webhooks) = %d, want 2", len(p.Notify.Webhooks))
-		}
-
-		first := p.Notify.Webhooks[0]
-		if first.URL != "https://hooks.slack.com/services/x" {
-			t.Errorf("Webhooks[0].URL = %q", first.URL)
-		}
-		if first.Format != "slack" {
-			t.Errorf("Webhooks[0].Format = %q, want slack", first.Format)
-		}
-		wantEvents := []string{"state_changed:needs_you", "binding_stale"}
-		if !reflect.DeepEqual(first.Events, wantEvents) {
-			t.Errorf("Webhooks[0].Events = %v, want %v", first.Events, wantEvents)
-		}
-
-		second := p.Notify.Webhooks[1]
-		if second.Format != "json" {
-			t.Errorf("Webhooks[1].Format = %q, want json", second.Format)
-		}
-		if len(second.Events) != 0 {
-			t.Errorf("Webhooks[1].Events = %v, want empty (no filter)", second.Events)
-		}
-	})
-
-	badCases := []struct {
-		name     string
-		body     string
-		contains string
-	}{
-		{
-			"bad scheme",
-			`{"notify":{"webhooks":[{"url":"ftp://example.com/hook"}]}}`,
-			"notify.webhooks[0].url",
-		},
-		{
-			"missing url",
-			`{"notify":{"webhooks":[{"url":""}]}}`,
-			"notify.webhooks[0].url",
-		},
-		{
-			"bad format",
-			`{"notify":{"webhooks":[{"url":"https://example.com/hook","format":"teams"}]}}`,
-			"notify.webhooks[0].format: unknown \"teams\"",
-		},
-		{
-			"unknown event",
-			`{"notify":{"webhooks":[{"url":"https://example.com/hook","events":["frobnicated"]}]}}`,
-			"notify.webhooks[0].events[0]: unknown event \"frobnicated\"",
-		},
-		{
-			"state suffix on the wrong event",
-			`{"notify":{"webhooks":[{"url":"https://example.com/hook","events":["round_started:x"]}]}}`,
-			"notify.webhooks[0].events[0]",
-		},
-	}
-
-	for _, bc := range badCases {
+	for _, bc := range notifyBadCases {
 		t.Run(bc.name, func(t *testing.T) {
 			_, err := load(t, bc.body)
 			if err == nil {
@@ -913,6 +712,53 @@ func TestNotifyPolicy(t *testing.T) {
 				t.Errorf("error %q does not contain %q", err.Error(), bc.contains)
 			}
 		})
+	}
+}
+
+func checkNotifyNil(t *testing.T) {
+	p, err := load(t, `{}`)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if p.Notify != nil {
+		t.Fatalf("Notify = %v, want nil", p.Notify)
+	}
+}
+
+func checkNotifyTwoWebhooks(t *testing.T) {
+	body := `{"notify":{"webhooks":[
+		{"url":"https://hooks.slack.com/services/x","format":"slack","events":["state_changed:needs_you","binding_stale"]},
+		{"url":"https://example.com/hook","format":"json"}
+	]}}`
+	p, err := load(t, body)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if p.Notify == nil {
+		t.Fatalf("Notify = nil, want populated")
+	}
+	if len(p.Notify.Webhooks) != 2 {
+		t.Fatalf("len(Webhooks) = %d, want 2", len(p.Notify.Webhooks))
+	}
+
+	first := p.Notify.Webhooks[0]
+	if first.URL != "https://hooks.slack.com/services/x" {
+		t.Errorf("Webhooks[0].URL = %q", first.URL)
+	}
+	if first.Format != "slack" {
+		t.Errorf("Webhooks[0].Format = %q, want slack", first.Format)
+	}
+	wantEvents := []string{"state_changed:needs_you", "binding_stale"}
+	if !reflect.DeepEqual(first.Events, wantEvents) {
+		t.Errorf("Webhooks[0].Events = %v, want %v", first.Events, wantEvents)
+	}
+
+	second := p.Notify.Webhooks[1]
+	if second.Format != "json" {
+		t.Errorf("Webhooks[1].Format = %q, want json", second.Format)
+	}
+	if len(second.Events) != 0 {
+		t.Errorf("Webhooks[1].Events = %v, want empty (no filter)", second.Events)
 	}
 }
 
@@ -1010,9 +856,7 @@ func TestServeScopeValidation(t *testing.T) {
 	}
 }
 
-// TestScopeQuotaValidation pins #295's cpu_quota rule in both blocks: a good
-// quota is accepted, and a bad one is rejected with a message naming the
-// block it came from (scope vs serve.scope).
+// TestScopeQuotaValidation pins cpu_quota in both scope blocks.
 func TestScopeQuotaValidation(t *testing.T) {
 	blocks := []struct {
 		name   string
@@ -1051,9 +895,7 @@ func TestScopeQuotaValidation(t *testing.T) {
 	}
 }
 
-// TestScopeGateQuotaValidation pins #313's gate_cpu_quota rule in both blocks:
-// a good quota is accepted, and a bad one is rejected with a message naming the
-// field and the block it came from (scope vs serve.scope).
+// TestScopeGateQuotaValidation pins gate_cpu_quota in both scope blocks.
 func TestScopeGateQuotaValidation(t *testing.T) {
 	blocks := []struct {
 		name   string
@@ -1092,10 +934,8 @@ func TestScopeGateQuotaValidation(t *testing.T) {
 	}
 }
 
-// TestScopeForWholeBlockOverride pins #295's resolution rule: serve.scope
-// replaces the top-level block entirely for a served round, with none of the
-// top-level fields leaking in; an absent serve.scope falls back to the
-// top-level block; a plain (unserved) context always uses the top-level one.
+// TestScopeForWholeBlockOverride pins that serve.scope replaces the
+// top-level block entirely for a served round, with nothing leaking in.
 func TestScopeForWholeBlockOverride(t *testing.T) {
 	top := &ScopePolicy{Slice: "top.slice", CPUWeight: 111, MemoryMax: "1G", CPUQuota: "10%", TasksMax: 11}
 	served := &ScopePolicy{Slice: "serve.slice", CPUWeight: 222, MemoryMax: "2G", CPUQuota: "20%", TasksMax: 22}
@@ -1143,10 +983,8 @@ func TestScopeForWholeBlockOverride(t *testing.T) {
 	})
 }
 
-// TestParseCPUList pins #314's cpu-list grammar: the pool of cores relevo hands
-// out, one per round. Numbers and ranges are comma-separated with no spaces;
-// the result is sorted and de-duplicated; a backwards range and any core above
-// 1023 are errors.
+// TestParseCPUList pins the cpu-list grammar: sorted, de-duplicated cores;
+// a backwards range or a core above 1023 is an error.
 func TestParseCPUList(t *testing.T) {
 	good := []struct {
 		in   string
@@ -1178,9 +1016,8 @@ func TestParseCPUList(t *testing.T) {
 	}
 }
 
-// TestScopeAllowedCPUsValidation pins #314's allowed_cpus rule in both blocks:
-// a good cpu-list loads and reaches the block, and a backwards range is
-// refused with ErrBadPolicy, naming the field, the block and the reason.
+// TestScopeAllowedCPUsValidation pins allowed_cpus in both blocks: a good
+// cpu-list loads, a backwards range is refused.
 func TestScopeAllowedCPUsValidation(t *testing.T) {
 	blocks := []struct {
 		name   string
@@ -1220,8 +1057,8 @@ func TestScopeAllowedCPUsValidation(t *testing.T) {
 	}
 }
 
-// TestServeUnknownKeyWarns pins #372 §4.4: an unknown key inside serve or
-// scope no longer rejects the file; it warns with its dotted path.
+// TestServeUnknownKeyWarns pins that an unknown key inside serve or scope
+// warns rather than rejecting the file.
 func TestServeUnknownKeyWarns(t *testing.T) {
 	for _, body := range []string{`{"serve":{"frobnicate":true}}`, `{"scope":{"frobnicate":true}}`} {
 		_, warnings := loadWarnings(t, body)
@@ -1234,8 +1071,8 @@ func TestServeUnknownKeyWarns(t *testing.T) {
 	}
 }
 
-// TestLoadAcceptsNameOrder pins A1 §4.2 for policy.json's order: an entry is a
-// candidate name or a harness/provider/model token.
+// TestLoadAcceptsNameOrder pins that an order entry is a candidate name or a
+// harness/provider/model token.
 func TestLoadAcceptsNameOrder(t *testing.T) {
 	for _, body := range []string{
 		`{"order":{"builder":["sonnet"]}}`,
@@ -1257,5 +1094,42 @@ func TestLoadAcceptsNameOrder(t *testing.T) {
 	}
 	if !errors.Is(err, ErrBadPolicy) {
 		t.Errorf("Load(A/b) err = %v, want ErrBadPolicy", err)
+	}
+}
+
+// TestArtifactMaxMBValidates pins the artifact size cap's policy rule: a
+// negative artifact_max_mb is refused, and unset or 0 both mean the 25 MB
+// default (ArtifactMaxBytes).
+func TestArtifactMaxMBValidates(t *testing.T) {
+	t.Parallel()
+
+	if _, err := load(t, `{"artifact_max_mb":-1}`); !errors.Is(err, ErrBadPolicy) {
+		t.Errorf("negative artifact_max_mb err = %v, want ErrBadPolicy", err)
+	}
+	if _, err := load(t, `{"artifact_max_mb":-1}`); err == nil || !strings.Contains(err.Error(), "artifact_max_mb") {
+		t.Errorf("negative artifact_max_mb err = %v, want it to name artifact_max_mb", err)
+	}
+
+	cases := []struct {
+		name string
+		body string
+		want int64
+	}{
+		{"unset falls back to the default", `{}`, DefaultArtifactMaxMB << 20},
+		{"0 falls back to the default", `{"artifact_max_mb":0}`, DefaultArtifactMaxMB << 20},
+		{"1 is 1 MB", `{"artifact_max_mb":1}`, 1 << 20},
+		{"explicit 25", `{"artifact_max_mb":25}`, 25 << 20},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := load(t, tc.body)
+			if err != nil {
+				t.Fatalf("load(%s): %v", tc.body, err)
+			}
+			if got := p.ArtifactMaxBytes(); got != tc.want {
+				t.Errorf("ArtifactMaxBytes(%s) = %d, want %d", tc.body, got, tc.want)
+			}
+		})
 	}
 }

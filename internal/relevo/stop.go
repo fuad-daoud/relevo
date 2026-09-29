@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -31,17 +33,11 @@ type StopOptions struct{}
 // StopResult is what Stop did.
 type StopResult struct {
 	Round  int
-	Action string        // "killed" | "dequeued" | "nothing"
+	Action string        // "killed" | "reaped" | "gone" | "dequeued" | "nothing"
 	Grace  time.Duration // always zero since #303; the pane wrap-up is gone
-}
-
-// stopGrace is the grace a binding was stopped with, or the default when it
-// records none. Kept for bindings written before #303.
-func stopGrace(b store.Binding) time.Duration {
-	if b.StopGraceMS <= 0 {
-		return DefaultStopGrace
-	}
-	return time.Duration(b.StopGraceMS) * time.Millisecond
+	// Shape is the stopped binding's shape, so StopText can word the close
+	// without a second store read.
+	Shape string
 }
 
 // stopAction is what a binding's stop bookkeeping implies should happen next.
@@ -123,6 +119,7 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 			}
 
 			out.Round = b.Round
+			out.Shape = b.Shape
 			out.Action = view.Stopped
 			if out.Action == "" {
 				out.Action = "killed"
@@ -142,20 +139,31 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 		}
 
 		out.Round = b.Round
+		out.Shape = b.Shape
 
 		how := ""
 		switch stopDecision(b, rt.Now().UTC()) {
 		case stopNothing:
 			return ErrNothingToStop
 		case stopKill:
-			// No stdin to type into: kill now, then close the round without a
-			// report. Ordered so a failed kill leaves the round open and nothing
-			// recorded, exactly as `done` does.
-			if _, err := stopProcess(ctx, rt, b.Builder, "stop"); err != nil {
+			// A stop is not a failure: signal the round's live process, then
+			// end the scope a straggler may still hold, and report what
+			// actually happened. Ordered so a failed stop leaves the round
+			// open and nothing recorded, exactly as `done` does.
+			killed, reaped, err := stopOpenRound(ctx, rt, b)
+			if err != nil {
 				return err
 			}
 			b.Builder = clearProcess(b.Builder)
-			how = "killed"
+			b = abandonSession(b)
+			switch {
+			case killed:
+				how = "killed"
+			case reaped:
+				how = "reaped"
+			default:
+				how = "gone"
+			}
 		case stopDequeue:
 			// Nothing to kill: the server's queue is derived from QueuedAt, so
 			// clearing it drops the round (#285).
@@ -176,30 +184,71 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 		out.Action = how
 		return tx.Save(b)
 	})
+	if err == nil && out.Action == "killed" {
+		// The delete runs outside the lock, and its failure only logs: it
+		// never changes what Stop did.
+		reapAbandoned(ctx, rt, name)
+	}
 	return out, err
 }
 
-// stopPayload is the report payload and note a stopped close writes, local or
-// remote. how names the close ("killed" or "dequeued"), where is "" for a
-// local stop and " on <server>" for a remote one, and haveReport says whether
-// a report file was on disk. Pure.
-func stopPayload(how, name string, round int, where string, haveReport bool) (payload, note string) {
-	if haveReport {
-		return fmt.Sprintf("Builder was stopped (%s) for round %d%s. Report: %s", how, round, where, showCommand(name, round, "report")), "stopped"
+// stopOpenRound stops what an open headless round still has running: its
+// recorded process when that is alive, then its scope when that is still
+// loaded, which is where a straggler the runner abandoned holds on. It reports
+// what it did -- killed for a live process signalled, reaped for a scope ended
+// -- so the close can say what happened instead of claiming a kill that never
+// was. An error means the round may still have something running and the
+// caller leaves the round open.
+func stopOpenRound(ctx context.Context, rt Runtime, b store.Binding) (killed, reaped bool, err error) {
+	if b.Builder.PID != 0 {
+		if rt.Runner == nil {
+			return false, false, spawn.ErrRunnerUnavailable
+		}
+		alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+		if err != nil {
+			return false, false, fmt.Errorf("binding %q: check previous process %d: %w", b.Name, b.Builder.PID, err)
+		}
+		if alive {
+			if _, err := stopProcess(ctx, rt, b, "stop"); err != nil {
+				return false, false, err
+			}
+			killed = true
+		}
 	}
-	return fmt.Sprintf("Builder was stopped (%s) for round %d%s; no report was written.", how, round, where), "noreport stopped"
+	reaped, err = endScope(ctx, rt, scopeUnitName(b))
+	if err != nil {
+		return killed, false, err
+	}
+	return killed, reaped, nil
+}
+
+// stopPayload is the report payload and note a stopped close writes, local or
+// remote. how names the close ("killed", "reaped", "gone" or "dequeued"),
+// where is "" for a local stop and " on <server>" for a remote one,
+// haveReport says whether a report file was on disk, clause is the artifact
+// clause closeClause resolved for the close's binding, and shape picks the
+// noun the missing-artifact arm names. Pure.
+func stopPayload(how, name string, round int, where string, haveReport bool, clause, shape string) (payload, note string) {
+	if haveReport {
+		return fmt.Sprintf("The runner was stopped (%s) for round %d%s. %s", how, round, where, clause), "stopped"
+	}
+	return fmt.Sprintf("The runner was stopped (%s) for round %d%s; no %s was written.", how, round, where, outputWord(shape)), "noreport stopped"
 }
 
 // closeStopped closes an open round whose builder was stopped (#138): the
 // report is queued if one is on disk, and the round closes without the
 // switch a builder's own exit-without-report would trigger -- a stop is not
-// a failure. how names the close for the log ("killed", "dequeued").
+// a failure. how names the close for the log ("killed", "reaped", "gone" or
+// "dequeued").
 //
 // queueReport does the round advance and clears the stop bookkeeping, so the
 // entry appended after it is filed under the round that was stopped.
 func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, how string) (store.Binding, error) {
 	stoppedRound := b.Round
-	reportPath := rt.Store.ReportPath(b.Name, stoppedRound)
+	reportPath, serr := writeReaderSummary(rt, b)
+	if serr != nil {
+		slog.Warn("reader output not written", "binding", b.Name, "round", stoppedRound, "err", serr)
+	}
 
 	entries, err := tx.ReadLog(b.Name)
 	if err != nil {
@@ -210,15 +259,15 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	if _, err := os.Stat(reportPath); err == nil {
 		haveReport = true
 	}
-	payload, note := stopPayload(how, b.Name, stoppedRound, "", haveReport)
+	payload, note := stopPayload(how, b.Name, stoppedRound, "", haveReport, closeClause(rt, b, stoppedRound), b.Shape)
 
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil)
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "")
 	if err != nil {
 		return b, err
 	}
 
 	if err := tx.AppendLog(b.Name, store.LogEntry{
-		TS: rt.Now().UTC(), Round: stoppedRound, Direction: store.DirToPlanner,
+		TS: rt.Now().UTC(), Round: stoppedRound, Direction: store.DirToMasterMind,
 		Kind: store.KindStop, Note: "stopped/" + how, Confirmed: true,
 	}); err != nil {
 		return next, err

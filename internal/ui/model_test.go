@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 func extractBatch(cmd tea.Cmd) []tea.Cmd {
@@ -48,7 +49,7 @@ func hasTabMsg(batch []tea.Cmd) bool {
 func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = true
 
@@ -68,7 +69,7 @@ func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = false
 
@@ -94,11 +95,11 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	rt := relevo.Runtime{Store: st}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabTerminal
 	rv.pane.tabInFlight = true
 
-	next, cmd := rv.Update(tickMsg(time.Now()), testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+	next, cmd := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	_ = next
 	if cmd != nil {
 		if hasTabMsg(extractBatch(cmd)) {
@@ -110,10 +111,10 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 func TestStatusMsgErrorPreservesReport(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
-	initialReport := relevo.Report{
-		Bindings: []relevo.BindingStatus{
+	initialReport := view.Report{
+		Bindings: []view.BindingStatus{
 			{Name: "webshop", Round: 2, State: "active", Display: "ACTIVE"},
 		},
 	}
@@ -138,13 +139,13 @@ func TestStatusMsgErrorPreservesReport(t *testing.T) {
 func TestStatusMsgSuccessClearsError(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	m.err = errors.New("transient error")
 	m.statusInFlight = true
 
-	goodReport := relevo.Report{
-		Bindings: []relevo.BindingStatus{
+	goodReport := view.Report{
+		Bindings: []view.BindingStatus{
 			{Name: "webshop", Round: 3, State: "active", Display: "ACTIVE"},
 		},
 	}
@@ -170,7 +171,7 @@ func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	rt := relevo.Runtime{Store: st}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabReport
 	rv.pane.tabInFlight = true
 
@@ -195,7 +196,7 @@ func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 func TestWindowSizeMsgSetsReady(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	m.ready = false
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
@@ -209,7 +210,7 @@ func TestWindowSizeMsgSetsReady(t *testing.T) {
 	}
 
 	// A round view resizes its viewport from the same message (R2.4).
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	next, _ := rv.Update(tea.WindowSizeMsg{Width: 100, Height: 40}, Env{Width: 100, Height: 40, Now: railNow, Report: rv.pane.report})
 	got := next.(roundView)
 	if got.pane.width != 100 {
@@ -218,14 +219,14 @@ func TestWindowSizeMsgSetsReady(t *testing.T) {
 	if want := bodyHeight(Env{Height: 40}); got.pane.rows != want {
 		t.Errorf("round view rows = %d, want %d", got.pane.rows, want)
 	}
-	if got.pane.detail.vp.Width != 100 {
-		t.Errorf("expected vp width 100, got %d", got.pane.detail.vp.Width)
+	if got.pane.detail.vp.Width != got.pane.contentWidth() {
+		t.Errorf("expected vp.Width %d (contentWidth), got %d", got.pane.contentWidth(), got.pane.detail.vp.Width)
 	}
 }
 
 func TestRowHelper(t *testing.T) {
-	rep := relevo.Report{
-		Bindings: []relevo.BindingStatus{
+	rep := view.Report{
+		Bindings: []view.BindingStatus{
 			{Name: "a", Round: 1},
 			{Name: "b", Round: 2},
 		},
@@ -248,7 +249,7 @@ func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	rt := relevo.Runtime{Store: st}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 5, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 5, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.round = 4
 	rv.pane.detail.active = tabDiff
 
@@ -276,7 +277,7 @@ func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	rt := relevo.Runtime{Store: st}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 5, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 5, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.round = 4
 	rv.pane.detail.active = tabReport
 
@@ -304,15 +305,15 @@ func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 	name := "webshop"
 	ts := time.Now()
 
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
-		{Name: name, Round: 3, Last: &relevo.LastEvent{TS: ts.Add(5 * time.Second), Round: 3}},
+	rep := view.Report{Bindings: []view.BindingStatus{
+		{Name: name, Round: 3, Last: &view.LastEvent{TS: ts.Add(5 * time.Second), Round: 3}},
 	}}
 	rv := newTestRound(t, rt, rep, name, 0)
 	rv.pane.detail.active = tabReport
 	rv.pane.detail.lastLogTS = ts
 	rv.pane.tabInFlight = true
 
-	next, cmd := rv.Update(statusMsg{report: rep}, testEnv(plannerSource{rt}, rep, 140, 40))
+	next, cmd := rv.Update(statusMsg{report: rep}, testEnv(mastermindSource{rt}, rep, 140, 40))
 	got := next.(roundView)
 	if cmd != nil {
 		t.Error("maybeInvalidate must issue no fetch while tabInFlight is set")
@@ -331,16 +332,16 @@ func TestRoundPaneIssuesOneFetchAtATime(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	rt := relevo.Runtime{Store: st}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.tabInFlight = false
 
-	_, cmd1 := rv.Update(tickMsg(time.Now()), testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+	_, cmd1 := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	if cmd1 == nil {
 		t.Fatal("first tick must return non-nil cmd")
 	}
 	// The tick set tabInFlight; a second tick must issue nothing.
 	rv.pane.tabInFlight = true
-	_, cmd2 := rv.Update(tickMsg(time.Now()), testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+	_, cmd2 := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	if cmd2 != nil {
 		t.Fatal("second tick while tabInFlight is set must return nil cmd")
 	}
@@ -349,7 +350,7 @@ func TestRoundPaneIssuesOneFetchAtATime(t *testing.T) {
 func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 
 	if !m.statusInFlight {
 		t.Fatal("newModel must initialize statusInFlight = true to guard the Init fetch")
@@ -368,7 +369,7 @@ func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 func TestLoadingThenEmptyFleet(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), mastermindSource{rt}, Options{Interval: time.Millisecond})
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = res.(Model)
 
@@ -380,7 +381,7 @@ func TestLoadingThenEmptyFleet(t *testing.T) {
 	}
 
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relevo.Report{}})
+	res, _ = m.Update(statusMsg{report: view.Report{}})
 	loaded := res.(Model)
 	if !loaded.statusLoaded {
 		t.Fatal("statusMsg must set statusLoaded = true")
@@ -417,7 +418,7 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: name, Round: 3, Display: "ACTIVE"}}}, name, 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: name, Round: 3, Display: "ACTIVE"}}}, name, 0)
 
 	if rv.pane.detail.round != 2 || rv.pane.detail.rounds != 3 {
 		t.Fatalf("after pointing: round=%d rounds=%d, want round=2 rounds=3", rv.pane.detail.round, rv.pane.detail.rounds)
@@ -449,11 +450,11 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 		t.Fatalf("after \"]\" three times: round = %d, want 3 (the open round)", rv.pane.detail.round)
 	}
 
-	reportMsg := fetchReport(context.Background(), plannerSource{rt}, name, rv.pane.detail.round)().(tabMsg)
+	reportMsg := fetchReport(context.Background(), mastermindSource{rt}, name, rv.pane.detail.round)().(tabMsg)
 	if want := "round 3 is open; report arrives when it closes"; reportMsg.content.empty != want {
 		t.Errorf("report empty = %q, want %q", reportMsg.content.empty, want)
 	}
-	diffMsg := fetchDiff(context.Background(), plannerSource{rt}, name, rv.pane.detail.round)().(tabMsg)
+	diffMsg := fetchDiff(context.Background(), mastermindSource{rt}, name, rv.pane.detail.round)().(tabMsg)
 	if want := "diff is captured when round 3 closes"; diffMsg.content.empty != want {
 		t.Errorf("diff empty = %q, want %q", diffMsg.content.empty, want)
 	}
@@ -469,7 +470,7 @@ func TestStepRoundEdgesNoop(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.round = 1
 	rv.pane.detail.rounds = 3
 	rv.pane.detail.active = tabReport
@@ -494,7 +495,7 @@ func TestStepRoundEdgesNoop(t *testing.T) {
 }
 
 // TestPointDetailAtMarksViewed ports #143: opening a live binding's round
-// view stamps its .viewed sidecar through the Source.
+// view stamps its viewed mark through the Source.
 func TestPointDetailAtMarksViewed(t *testing.T) {
 	st := store.New(t.TempDir())
 	if err := st.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateActive}); err != nil {
@@ -506,7 +507,7 @@ func TestPointDetailAtMarksViewed(t *testing.T) {
 		t.Fatal("ViewedAt before the round view: got ok true, want false")
 	}
 
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 
 	if _, ok := st.ViewedAt("webshop"); !ok {
 		t.Fatal("opening the round view did not stamp .viewed through the Source")
@@ -518,14 +519,14 @@ func TestPointDetailAtMarksViewed(t *testing.T) {
 
 func TestPaneRound(t *testing.T) {
 	tests := []struct {
-		r    relevo.BindingStatus
+		r    view.BindingStatus
 		want int
 	}{
-		{r: relevo.BindingStatus{Round: 1, PlanRound: 1}, want: 1},
-		{r: relevo.BindingStatus{Round: 5, PlanRound: 5}, want: 5},
-		{r: relevo.BindingStatus{Round: 5, PlanRound: 4}, want: 4},
-		{r: relevo.BindingStatus{Round: 1, PlanRound: 0}, want: 0},
-		{r: relevo.BindingStatus{Round: 3, PlanRound: 0}, want: 2},
+		{r: view.BindingStatus{Round: 1, PlanRound: 1}, want: 1},
+		{r: view.BindingStatus{Round: 5, PlanRound: 5}, want: 5},
+		{r: view.BindingStatus{Round: 5, PlanRound: 4}, want: 4},
+		{r: view.BindingStatus{Round: 1, PlanRound: 0}, want: 0},
+		{r: view.BindingStatus{Round: 3, PlanRound: 0}, want: 2},
 	}
 	for _, tc := range tests {
 		if got := paneRound(tc.r); got != tc.want {
@@ -544,7 +545,7 @@ func TestPointDetailAtOpensOnPlanRound(t *testing.T) {
 	}
 	rt := relevo.Runtime{Store: st}
 
-	rvInflight := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{
+	rvInflight := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{
 		{Name: "inflight", Round: 1, PlanRound: 1, Display: "ACTIVE"},
 	}}, "inflight", 0)
 	if rvInflight.pane.detail.round != 1 {
@@ -554,13 +555,13 @@ func TestPointDetailAtOpensOnPlanRound(t *testing.T) {
 		t.Errorf("inflight detail.rounds = %d, want 1", rvInflight.pane.detail.rounds)
 	}
 
-	rvIdle := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{
+	rvIdle := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{
 		{Name: "idle", Round: 3, PlanRound: 2, Display: "ACTIVE"},
 	}}, "idle", 0)
 	if rvIdle.pane.detail.round != 2 {
 		t.Errorf("idle detail.round = %d, want 2", rvIdle.pane.detail.round)
 	}
-	if rvIdle.pane.detail.rounds != 3 {
-		t.Errorf("idle detail.rounds = %d, want 3", rvIdle.pane.detail.rounds)
+	if rvIdle.pane.detail.rounds != 2 {
+		t.Errorf("idle detail.rounds = %d, want 2 (§2.2)", rvIdle.pane.detail.rounds)
 	}
 }

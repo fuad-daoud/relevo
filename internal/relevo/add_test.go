@@ -14,7 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// addRepo makes a directory to stand in for the planner's repository.
+// addRepo makes a directory to stand in for the mastermind's repository.
 func addRepo(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "repo")
@@ -41,12 +41,14 @@ func refusedAdd(t *testing.T, rt Runtime, fg *fakeGit) {
 // branch that checkout had checked out, asked of the source repo -- not of
 // the fresh worktree -- so `relevo land` knows what to rebase onto.
 func TestAddRecordsBaseRef(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123", currentBranchResult: "main"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -76,14 +78,16 @@ func TestAddRecordsBaseRef(t *testing.T) {
 // rather than the literal "HEAD", so land asks for --onto instead of
 // fetching a ref that does not exist.
 func TestAddRecordsNoBaseRefWithoutBranch(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		headCommitID:     "commit-head-123",
 		currentBranchErr: errors.New("detached"),
 	}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: addRepo(t),
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -99,16 +103,18 @@ func TestAddRecordsNoBaseRefWithoutBranch(t *testing.T) {
 // is nothing to capture facts about at all, and afterwards would merely
 // report the same facts back over an extra git call).
 func TestAddRecordsRepoFromCWDNotWorktree(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		headCommitID:       "commit-head-123",
 		repoFactsOrigin:    "git@github.com:o/r.git",
 		repoFactsCommonDir: "/repo/.git",
 	}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -128,12 +134,14 @@ func TestAddRecordsRepoFromCWDNotWorktree(t *testing.T) {
 }
 
 func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -194,11 +202,13 @@ func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
 }
 
 func TestAddRefusesAnAmbiguousCandidateBeforeCuttingAWorktree(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: "", PlannerID: testPlannerName, Repo: addRepo(t),
+		Name: "frontend", Candidate: "", MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if !errors.Is(err, ErrAmbiguousCandidate) {
 		t.Fatalf("want ErrAmbiguousCandidate, got %v", err)
@@ -209,12 +219,14 @@ func TestAddRefusesAnAmbiguousCandidateBeforeCuttingAWorktree(t *testing.T) {
 }
 
 func TestAddResolvesTheOnlyBuilderCandidate(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
 
 	res, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: "", PlannerID: testPlannerName, Repo: addRepo(t),
+		Name: "frontend", Candidate: "", MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -225,18 +237,20 @@ func TestAddResolvesTheOnlyBuilderCandidate(t *testing.T) {
 }
 
 func TestAddRefusesADuplicateName(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
 
 	if _, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
 	}); err != nil {
 		t.Fatalf("first Add: %v", err)
 	}
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err == nil {
 		t.Fatal("a name already in use must be refused")
@@ -247,13 +261,15 @@ func TestAddRefusesADuplicateName(t *testing.T) {
 // builds a 33-character builder agent name, and Add must refuse it before the
 // worktree is cut -- a refused name leaves nothing behind.
 func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 
 	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: name, Candidate: testAgyRef, PlannerID: testPlannerName, Repo: addRepo(t),
+		Name: name, Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if len(fg.addWorktreeCalls) != 0 {
 		t.Errorf("a refused name must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
@@ -271,12 +287,14 @@ func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 }
 
 func TestAddBindsAPreparedDirectoryWithCWD(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	prepared := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "legacy", Candidate: testAgyRef, PlannerID: testPlannerName,
+		Name: "legacy", Candidate: testAgyRef, MasterMindID: testMasterMindName,
 		Repo: addRepo(t), CWD: prepared,
 	})
 	if err != nil {
@@ -297,8 +315,10 @@ func TestAddBindsAPreparedDirectoryWithCWD(t *testing.T) {
 }
 
 func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	prepared := addRepo(t)
 
 	if err := rt.Store.Save(store.Binding{
@@ -309,21 +329,57 @@ func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
 	}
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName,
 		Repo: addRepo(t), CWD: prepared,
 	})
 	if !errors.Is(err, store.ErrCWDTaken) {
 		t.Fatalf("want ErrCWDTaken, got %v", err)
 	}
+	if len(fg.deleteBranchCalls) != 0 {
+		t.Errorf("--cwd adopts a pre-existing tree, so rollback must delete no branch: %+v", fg.deleteBranchCalls)
+	}
+}
+
+// TestAddRollbackDeletesTheBranchItCreated pins #437: when Add cut a worktree
+// and created relevo/<name>, a later refusal rolls both back, so a retry does
+// not fail with "branch already exists".
+func TestAddRollbackDeletesTheBranchItCreated(t *testing.T) {
+	t.Parallel()
+
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newTestRuntime(t, fg)
+
+	if err := rt.Store.Save(store.Binding{
+		Name: "incumbent", CWD: rt.Store.WorktreePath("frontend"), Round: 1, State: store.StateActive,
+		Builder: store.Endpoint{Mode: store.ModeHeadless},
+	}); err != nil {
+		t.Fatalf("seed incumbent: %v", err)
+	}
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName,
+		Repo: addRepo(t),
+	})
+	if !errors.Is(err, store.ErrCWDTaken) {
+		t.Fatalf("want ErrCWDTaken, got %v", err)
+	}
+	if len(fg.removeWorktreeCalls) != 1 {
+		t.Errorf("removeWorktreeCalls = %+v, want 1", fg.removeWorktreeCalls)
+	}
+	if len(fg.deleteBranchCalls) != 1 || fg.deleteBranchCalls[0].Branch != "relevo/frontend" {
+		t.Errorf("deleteBranchCalls = %+v, want one with Branch %q", fg.deleteBranchCalls, "relevo/frontend")
+	}
 }
 
 func TestAddHeadlessCutsTheWorktreeAndSpawnsNothing(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName, Repo: repo, Headless: true,
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo, Headless: true,
 	})
 	if err != nil {
 		t.Fatalf("Add --headless: %v", err)
@@ -350,16 +406,18 @@ func TestAddHeadlessCutsTheWorktreeAndSpawnsNothing(t *testing.T) {
 // `add --branch`: a branch that already exists locally is checked out into
 // relevo's own worktree, with no worktree cut and no branch created.
 func TestAddBranchLocalChecksOutWithoutCutting(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		branchExists: true,
 		refSHA:       map[string]string{"refs/heads/feature/api-auth": "tip123"},
 	}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
 		Name: "api-auth", Branch: "feature/api-auth", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: repo,
+		MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add --branch: %v", err)
@@ -396,6 +454,8 @@ func TestAddBranchLocalChecksOutWithoutCutting(t *testing.T) {
 // TestAddBranchOriginOnlyTracksFirst pins the origin half: when only
 // origin/<branch> exists, relevo first makes a local tracking branch.
 func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		branchExists: false,
 		refSHA: map[string]string{
@@ -403,12 +463,12 @@ func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
 			"refs/heads/feature/x":          "o1",
 		},
 	}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
 		Name: "x", Branch: "feature/x", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: repo,
+		MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add --branch: %v", err)
@@ -435,12 +495,14 @@ func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
 // TestAddBranchMissingRefuses pins that a branch on neither the local repo nor
 // origin is a refusal before any git write.
 func TestAddBranchMissingRefuses(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{branchExists: false, refSHA: map[string]string{}}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "x", Branch: "feature/x", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: addRepo(t),
+		MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err == nil || !strings.Contains(err.Error(), "not found locally or on origin") {
 		t.Fatalf("got %v, want a 'not found locally or on origin' refusal", err)
@@ -457,16 +519,18 @@ func TestAddBranchMissingRefuses(t *testing.T) {
 // TestAddBranchCheckedOutRefuses pins the refusal when the existing branch is
 // checked out in another worktree, before any builder is resolved or started.
 func TestAddBranchCheckedOutRefuses(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		branchExists:        true,
 		refSHA:              map[string]string{"refs/heads/feature/x": "tip"},
 		checkoutWorktreeErr: git.ErrBranchCheckedOut,
 	}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "x", Branch: "feature/x", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: addRepo(t),
+		MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err == nil || !strings.Contains(err.Error(), "checked out in another worktree") {
 		t.Fatalf("got %v, want a 'checked out in another worktree' refusal", err)
@@ -482,11 +546,13 @@ func TestAddBranchCheckedOutRefuses(t *testing.T) {
 // TestAddBranchDrivenByLiveBindingRefuses pins the guard: a branch a live
 // binding already drives cannot be adopted, while a DONE binding does not block.
 func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		branchExists: true,
 		refSHA:       map[string]string{"refs/heads/feature/x": "tip"},
 	}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
 
 	if err := rt.Store.Save(store.Binding{
@@ -497,7 +563,7 @@ func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "other", Branch: "feature/x", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: repo,
+		MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err == nil || !strings.Contains(err.Error(), "incumbent") {
 		t.Fatalf("a branch driven by a live binding must refuse, got %v", err)
@@ -514,7 +580,7 @@ func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
 	}
 	got, err := Add(context.Background(), rt, AddOptions{
 		Name: "other", Branch: "feature/x", Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: repo,
+		MasterMindID: testMasterMindName, Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("a DONE binding must not block: %v", err)
@@ -527,12 +593,14 @@ func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
 // TestAddBranchWithCwdRefused pins that Add itself refuses the flag pair, not
 // only the CLI.
 func TestAddBranchWithCwdRefused(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "x", Branch: "feature/x", CWD: addRepo(t), Candidate: testAgyRef,
-		PlannerID: testPlannerName, Repo: addRepo(t),
+		MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
 	if err == nil || !strings.Contains(err.Error(), "exclusive") {
 		t.Fatalf("got %v, want an 'exclusive' refusal", err)
@@ -545,6 +613,8 @@ func TestAddBranchWithCwdRefused(t *testing.T) {
 // TestDefaultBindingName pins the derivation store.ValidName accepts, and that
 // an underivable branch returns ValidName's own error.
 func TestDefaultBindingName(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		branch  string
 		want    string
@@ -580,15 +650,17 @@ func TestDefaultBindingName(t *testing.T) {
 // deletes a branch in zero places, so neither unbind nor done+gc may remove an
 // ExistingBranch binding's adopted branch.
 func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	setup := func(t *testing.T, fg *fakeGit) (Runtime, string) {
 		t.Helper()
-		rt := newForkRuntime(t, fg, nil)
+		rt := newTestRuntime(t, fg)
 		repo := addRepo(t)
 		if _, err := Add(ctx, rt, AddOptions{
 			Name: "api-auth", Branch: "feature/api-auth", Candidate: testAgyRef,
-			PlannerID: testPlannerName, Repo: repo,
+			MasterMindID: testMasterMindName, Repo: repo,
 		}); err != nil {
 			t.Fatalf("Add --branch: %v", err)
 		}
@@ -628,7 +700,7 @@ func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
 		if _, err := Done(ctx, rt, "api-auth"); err != nil {
 			t.Fatalf("Done: %v", err)
 		}
-		if _, err := GC(ctx, rt, GCOptions{}); err != nil {
+		if _, err := GC(ctx, rt, GCOptions{AllMasterMinds: true}); err != nil {
 			t.Fatalf("GC: %v", err)
 		}
 		if len(fg.deleteBranchCalls) != 0 {
@@ -643,12 +715,14 @@ func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
 // that cannot honour the tier is refused and the worktree Add just cut is
 // rolled back -- no binding, no kept tree.
 func TestAddRefusesUnsupportedTierBeforeWorktree(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testOpencodeRef, PlannerID: testPlannerName, Repo: repo, Tier: "read",
+		Name: "frontend", Candidate: testOpencodeRef, MasterMindID: testMasterMindName, Repo: repo, Tier: "read",
 	})
 	if !errors.Is(err, harness.ErrTierUnsupported) {
 		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
@@ -661,5 +735,35 @@ func TestAddRefusesUnsupportedTierBeforeWorktree(t *testing.T) {
 	}
 	if _, err := rt.Store.Load("frontend"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("binding must not exist, got %v", err)
+	}
+}
+
+// TestAddStoresTicketWithRepoHint pins #637's local add half: Add parses
+// --ticket once against opts.Repo, so the binding carries the canonical form.
+func TestAddStoresTicketWithRepoHint(t *testing.T) {
+	t.Parallel()
+
+	fg := &fakeGit{headCommitID: "commit-head-123", repoFactsOrigin: "git@github.com:o/r.git"}
+	rt := newTestRuntime(t, fg)
+
+	got, err := Add(context.Background(), rt, AddOptions{
+		Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName,
+		Repo: addRepo(t), Feature: "auth", Ticket: "607",
+	})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if got.Binding.Ticket != "o/r#607" {
+		t.Errorf("Ticket = %q, want o/r#607", got.Binding.Ticket)
+	}
+	if got.Binding.Feature != "auth" {
+		t.Errorf("Feature = %q, want auth", got.Binding.Feature)
+	}
+	stored, err := rt.Store.Load("frontend")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.Ticket != "o/r#607" {
+		t.Errorf("stored Ticket = %q, want o/r#607", stored.Ticket)
 	}
 }

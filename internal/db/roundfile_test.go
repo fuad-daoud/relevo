@@ -56,7 +56,6 @@ func TestRoundFilePutGetList(t *testing.T) {
 		t.Fatalf("RoundFileList = %v, want [003-builder.log 003-report.md]", names)
 	}
 
-	// A second put replaces the row: same key, new bytes, still one row.
 	next := []byte("rewritten\n")
 	if err := d.Tx(func(tx *Tx) error {
 		return tx.RoundFilePut(id, "003-report.md", 3, next, mtime, now)
@@ -77,7 +76,7 @@ func TestRoundFilePutGetList(t *testing.T) {
 
 // TestRoundFileListScopedToRecord pins that a sealed file is keyed by the
 // binding record: another record's row is invisible, and deleting the record
-// takes its sealed files with it (ON DELETE CASCADE).
+// takes its sealed files with it.
 func TestRoundFileListScopedToRecord(t *testing.T) {
 	d := openTestDB(t)
 
@@ -119,12 +118,9 @@ func TestRoundFileListScopedToRecord(t *testing.T) {
 	}
 }
 
-// TestRoundFileEmptyBodyRoundTrips pins the R3b contract: an existing empty
-// row reads back as a non-nil empty body, so a sealed empty file (NNN-done is
-// the common one) can be read and put again, and a nil body is stored as an
-// empty blob rather than NULL.
-//
-// Mutation: return the scanned body as-is and the first assertion fails (nil).
+// TestRoundFileEmptyBodyRoundTrips pins that an existing empty row reads back
+// as a non-nil empty body, so a sealed empty file can be read and put again,
+// and that a nil body is stored as an empty blob rather than NULL.
 func TestRoundFileEmptyBodyRoundTrips(t *testing.T) {
 	d := openTestDB(t)
 
@@ -136,7 +132,6 @@ func TestRoundFileEmptyBodyRoundTrips(t *testing.T) {
 	now := time.Now().UTC()
 	mtime := time.Date(2026, 9, 24, 10, 11, 12, 0, time.UTC)
 
-	// Put an empty body; it reads back non-nil, with length 0, and found.
 	if err := d.Tx(func(tx *Tx) error {
 		return tx.RoundFilePut(id, "001-done", 1, []byte{}, mtime, now)
 	}); err != nil {
@@ -156,15 +151,13 @@ func TestRoundFileEmptyBodyRoundTrips(t *testing.T) {
 		t.Errorf("RoundFileGet(empty) len = %d, want 0", len(got))
 	}
 
-	// Putting the Get's result under another name is the fork's copy loop: it
-	// must not error.
+	// Putting the Get's result under another name is the fork's copy loop.
 	if err := d.Tx(func(tx *Tx) error {
 		return tx.RoundFilePut(id, "002-done", 2, got, mtime, now)
 	}); err != nil {
 		t.Fatalf("RoundFilePut(round-tripped): %v", err)
 	}
 
-	// A literal nil is stored as an empty blob, never NULL.
 	if err := d.Tx(func(tx *Tx) error {
 		return tx.RoundFilePut(id, "003-done", 3, nil, mtime, now)
 	}); err != nil {

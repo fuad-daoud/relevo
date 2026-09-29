@@ -7,115 +7,303 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // paneModel builds a roundPane directly (R2.10): the pane is the same type
 // round 1 extracted, only the wrapper Model is gone.
-func paneModel(t *testing.T, b relevo.BindingStatus, active tab) roundPane {
+func paneModel(t *testing.T, b view.BindingStatus, active tab) roundPane {
 	t.Helper()
 	p := roundPane{width: 140, rows: 36, now: func() time.Time { return railNow },
-		report: relevo.Report{Bindings: []relevo.BindingStatus{b}}}
-	p.detail = detailModel{name: b.Name, round: paneRound(b), active: active,
-		vp: viewport.New(p.width, p.viewportHeight())}
+		report: view.Report{Bindings: []view.BindingStatus{b}}}
+	p.detail = detailModel{name: b.Key(), round: paneRound(b), rounds: roundsOf(b), live: true, active: active,
+		vp: viewport.New(p.contentWidth(), p.viewportHeight())}
 	p.fillViewport()
 	return p
 }
 
 func TestPaneHeadRows(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
+		MasterMindID: "mastermind-9f2", MasterMindName: "architect-1", MasterMindKind: "claude", MasterMindRoute: "channel",
 		BuilderKind: "agy", BuilderStatus: "blocked", Consults: 2,
 		Branch: "relevo/webshop", Dirty: true,
-		LastClose: &relevo.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
-		Last:      &relevo.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
+		LastClose: &view.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
+		Last:      &view.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
 	}
 	p := paneModel(t, b, tabReport)
-	head := p.paneHead(&b)
-	if len(head) != paneHeadRows {
-		t.Fatalf("%d head rows, want %d:\n%s", len(head), paneHeadRows, strings.Join(head, "\n"))
+	if p.headRows() != 6 {
+		t.Fatalf("headRows() = %d, want 6", p.headRows())
 	}
-	want := []string{
-		"webshop  round 4   NEEDS YOU ",
-		"planner  architect-1",
-		"builder  agy",
-		"tree     relevo/webshop · dirty · last close r3: 2 commits, clean",
-	}
-	for i, w := range want {
-		if got := stripANSI(head[i]); !strings.HasPrefix(got, w) {
-			t.Errorf("head[%d]:\n got %q\nwant prefix %q", i, got, w)
-		}
-	}
-	if got := stripANSI(head[1]); !strings.Contains(got, "route channel") {
-		t.Errorf("planner row must name the name and the route: %q", got)
-	}
-	if got := stripANSI(head[2]); !strings.Contains(got, "blocked · 2 consults") {
-		t.Errorf("builder row = %q", got)
-	}
-	if !strings.Contains(stripANSI(head[0]), "question r4 · 2m ago") {
-		t.Errorf("title row lacks the last event: %q", stripANSI(head[0]))
+	tokens := stripANSI(p.tokensLine(&b))
+	if !strings.Contains(tokens, "+2 commits") {
+		t.Errorf("tokensLine missing commits: %q", tokens)
 	}
 
-	oneCommit := relevo.BindingStatus{
-		Name: "ledger", Round: 2, Display: "ACTIVE",
-		LastClose: &relevo.CloseInfo{Round: 1, Commits: 1, Tree: "dirty"},
+	oneCommit := view.BindingStatus{
+		Name: "ledger", Round: 2, Display: "ACTIVE", Dirty: true,
+		LastClose: &view.CloseInfo{Round: 1, Commits: 1, Tree: "dirty"},
 	}
-	if got := stripANSI(p.paneHead(&oneCommit)[3]); !strings.Contains(got, "last close r1: 1 commit, dirty") {
-		t.Errorf("one-commit tree row = %q", got)
+	pOne := paneModel(t, oneCommit, tabReport)
+	tokensOne := stripANSI(pOne.tokensLine(&oneCommit))
+	if !strings.Contains(tokensOne, "+1 commit") {
+		t.Errorf("tokensLine missing +1 commit: %q", tokensOne)
+	}
+	rv := roundView{pane: pOne}
+	ctxLeft, _ := rv.Context(testEnv(pOne.src, view.Report{Bindings: []view.BindingStatus{oneCommit}}, pOne.width, pOne.rows))
+	if !strings.Contains(stripANSI(ctxLeft), "dirty") {
+		t.Errorf("context row missing dirty: %q", ctxLeft)
 	}
 }
 
 func TestPaneHeadHeadlessAndCwd(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "api", Round: 2, Display: "ACTIVE", CWD: "/home/x/api",
 		BuilderKind: "opencode", BuilderStatus: "working", BuilderCandidate: "opencode-1",
-		Headless: &relevo.HeadlessInfo{PID: 48211, StartedAt: railNow.Add(-21 * time.Minute)},
+		Headless: &view.HeadlessInfo{PID: 48211, StartedAt: railNow.Add(-21 * time.Minute)},
 	}
 	p := paneModel(t, b, tabReport)
-	head := p.paneHead(&b)
-	if got := stripANSI(head[2]); !strings.Contains(got, "pid 48211 since") || !strings.Contains(got, "`opencode-1`") {
-		t.Errorf("builder row = %q", got)
+	tokens := stripANSI(p.tokensLine(&b))
+	if !strings.Contains(tokens, "pid 48211 since") {
+		t.Errorf("tokensLine missing pid: %q", tokens)
 	}
-	if got := stripANSI(head[3]); !strings.HasPrefix(got, "tree     /home/x/api") {
-		t.Errorf("--cwd tree row = %q", got)
+	rv := roundView{pane: p}
+	ctxLeft, _ := rv.Context(testEnv(p.src, view.Report{Bindings: []view.BindingStatus{b}}, p.width, p.rows))
+	if !strings.Contains(stripANSI(ctxLeft), "/home/x/api") {
+		t.Errorf("context row missing cwd: %q", ctxLeft)
 	}
 }
 
 func TestTabBarWordsAndUnderline(t *testing.T) {
-	p := paneModel(t, relevo.BindingStatus{Name: "a", Round: 1, Display: "ACTIVE"}, tabDiff)
-	bar := p.tabBar()
-	if len(bar) != tabRows {
-		t.Fatalf("%d tab rows", len(bar))
+	p := paneModel(t, view.BindingStatus{Name: "a", Round: 1, Display: "ACTIVE"}, tabDiff)
+	tabs := p.tabsRow()
+	plain := stripANSI(tabs)
+	words := plain
+	if idx := strings.Index(plain, "round"); idx != -1 {
+		words = plain[:idx]
 	}
-	words := stripANSI(bar[0])
-	if strings.ContainsAny(words, "1234") {
+	if strings.ContainsAny(words, "12345") {
 		t.Errorf("tabs must not carry numbers: %q", words)
 	}
-	if !strings.Contains(words, " report ") || !strings.Contains(words, " diff ") {
-		t.Errorf("tab words = %q", words)
+	// A writer round draws today's five tabs; the artifacts tab is a
+	// reader round's (round 5b), so it is not among them.
+	for _, tb := range writerTabs {
+		if title := tabTitles[tb]; !strings.Contains(plain, title) {
+			t.Errorf("tabs missing %q: %q", title, plain)
+		}
 	}
-	if !strings.Contains(bar[0], lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render(" diff ")) {
-		t.Errorf("active tab not bold white: %q", bar[0])
+	if strings.Contains(plain, tabTitles[tabArtifacts]) {
+		t.Errorf("writer tabs must not carry the artifacts tab: %q", plain)
 	}
-	rule := stripANSI(bar[1])
-	if lipgloss.Width(rule) != p.width {
-		t.Errorf("rule is %d wide, pane is %d", lipgloss.Width(rule), p.width)
+	if !strings.Contains(tabs, chip(chipAccentStyle, "diff")) {
+		t.Errorf("active tab not chipAccentStyle: %q", tabs)
 	}
-	// The heavy segment sits exactly under the active word.
-	start := strings.Index(words, " diff ")
-	seg := []rune(rule)[start : start+lipgloss.Width(" diff ")]
-	if string(seg) != strings.Repeat("━", len(seg)) {
-		t.Errorf("underline under diff = %q", string(seg))
+	if !strings.Contains(plain, "round") || !strings.Contains(plain, "[") || !strings.Contains(plain, "]") {
+		t.Errorf("tabs missing stepper: %q", plain)
 	}
-	before := []rune(rule)[:start]
-	if strings.ContainsRune(string(before), '━') {
-		t.Errorf("heavy rule outside the active word: %q", rule)
+}
+
+func TestRoundContextByGroup(t *testing.T) {
+	cases := []struct {
+		name     string
+		b        view.BindingStatus
+		pillWord string
+	}{
+		{
+			name:     "needs you",
+			b:        view.BindingStatus{Name: "b1", Round: 1, Display: "NEEDS YOU"},
+			pillWord: "needs you",
+		},
+		{
+			name:     "working",
+			b:        view.BindingStatus{Name: "b2", Round: 1, Display: "ACTIVE", BuilderStatus: "working"},
+			pillWord: "working",
+		},
+		{
+			name:     "idle",
+			b:        view.BindingStatus{Name: "b3", Round: 1, Display: "ACTIVE", BuilderStatus: "idle"},
+			pillWord: "idle",
+		},
+		{
+			name:     "on hold",
+			b:        view.BindingStatus{Name: "b4", Round: 1, Display: "HELD"},
+			pillWord: "on hold",
+		},
+		{
+			name:     "other",
+			b:        view.BindingStatus{Name: "b5", Round: 1, Display: "CUSTOM"},
+			pillWord: "custom",
+		},
+		{
+			name:     "done",
+			b:        view.BindingStatus{Name: "b6", Round: 1, Display: "DONE"},
+			pillWord: "done",
+		},
 	}
-	if !strings.Contains(bar[1], accentStyle.Render(strings.Repeat("━", len(seg)))) {
-		t.Errorf("underline not in accent: %q", bar[1])
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := paneModel(t, tc.b, tabPrompt)
+			rv := roundView{pane: p, actions: true}
+			env := testEnv(p.src, view.Report{Bindings: []view.BindingStatus{tc.b}}, p.width, p.rows)
+			left, _ := rv.Context(env)
+			plain := stripANSI(left)
+			if !strings.Contains(plain, tc.pillWord) {
+				t.Errorf("context row missing pill word %q: %q", tc.pillWord, plain)
+			}
+
+			// The action-key labels move to Keys(): with actions it has x stop, g gate and o shell; without actions none of them.
+			var keyStrings []string
+			for _, k := range rv.Keys() {
+				keyStrings = append(keyStrings, k.Key+" "+k.Help)
+			}
+			keysJoined := strings.Join(keyStrings, " ")
+			for _, wantKey := range []string{"x stop", "g gate", "o shell"} {
+				if !strings.Contains(keysJoined, wantKey) {
+					t.Errorf("Keys() with actions missing %q: %q", wantKey, keysJoined)
+				}
+			}
+
+			rvNoActions := roundView{pane: p, actions: false}
+			var keyStringsNoActions []string
+			for _, k := range rvNoActions.Keys() {
+				keyStringsNoActions = append(keyStringsNoActions, k.Key+" "+k.Help)
+			}
+			noActionsJoined := strings.Join(keyStringsNoActions, " ")
+			for _, unwantedKey := range []string{"x stop", "g gate", "o shell"} {
+				if strings.Contains(noActionsJoined, unwantedKey) {
+					t.Errorf("Keys() without actions must not contain %q: %q", unwantedKey, noActionsJoined)
+				}
+			}
+		})
+	}
+}
+
+func TestRoundTokensLineHist(t *testing.T) {
+	p := paneModel(t, view.BindingStatus{Name: "archived-binding"}, tabPrompt)
+	p.detail.live = false
+	p.detail.round = 2
+	p.detail.rounds = 5
+	p.detail.archivedAt = time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	line := stripANSI(p.tokensLine(nil))
+	if !strings.Contains(line, "no live facts for a released binding") {
+		t.Errorf("hist tokensLine missing 'no live facts for a released binding': %q", line)
+	}
+}
+
+func TestRoundHeadRowsMatchView(t *testing.T) {
+	for _, h := range []int{12, 18, 40} {
+		t.Run(fmt.Sprintf("height-%d", h), func(t *testing.T) {
+			b := view.BindingStatus{Name: "srv", Round: 1, Display: "ACTIVE", BuilderStatus: "working"}
+			p := paneModel(t, b, tabPrompt)
+			p.rows = h
+			p.detail.cache[tabPrompt] = tabContent{loaded: true, body: "VP_TEST_LINE_1\nVP_TEST_LINE_2\nVP_TEST_LINE_3"}
+			p.fillViewport()
+
+			if p.viewportHeight() != p.rows-p.headRows() {
+				t.Errorf("viewportHeight = %d, want %d", p.viewportHeight(), p.rows-p.headRows())
+			}
+
+			rendered := p.view(p.width)
+			lines := strings.Split(rendered, "\n")
+			firstVP := -1
+			for i, l := range lines {
+				if strings.Contains(l, "VP_TEST_LINE_1") {
+					firstVP = i
+					break
+				}
+			}
+			if firstVP != p.headRows() {
+				t.Errorf("first viewport line at %d, want headRows() = %d", firstVP, p.headRows())
+			}
+		})
+	}
+}
+
+func TestRoundTokensLineKeepsOnlyCounts(t *testing.T) {
+	b := view.BindingStatus{
+		Name: "api", Round: 2, Display: "ACTIVE",
+		LiveUsage: &usage.Usage{
+			Harness: "opencode", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
+			Tokens:  usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3, Out: 8_200},
+			Cost:    usage.Cost{USD: 0.04, Basis: usage.Measured},
+			Samples: 3,
+		},
+	}
+	p := paneModel(t, b, tabReport)
+	line := stripANSI(p.tokensLine(&b))
+
+	for _, want := range []string{"in ", "out ", "write 3", "$0.04"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("tokensLine missing %q: %q", want, line)
+		}
+	}
+	for _, dontWant := range []string{"glm-5.3-flash", "write 0", "4m"} {
+		if strings.Contains(line, dontWant) {
+			t.Errorf("tokensLine should not contain %q: %q", dontWant, line)
+		}
+	}
+
+	bZero := view.BindingStatus{
+		Name: "api", Round: 2, Display: "ACTIVE",
+		LiveUsage: &usage.Usage{
+			Harness: "opencode", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
+			Tokens:  usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 0, Out: 8_200},
+			Cost:    usage.Cost{USD: 0.04, Basis: usage.Measured},
+			Samples: 3,
+		},
+	}
+	pZero := paneModel(t, bZero, tabReport)
+	lineZero := stripANSI(pZero.tokensLine(&bZero))
+	if strings.Contains(lineZero, "write 0") {
+		t.Errorf("tokensLine should not contain write 0: %q", lineZero)
+	}
+	if !strings.Contains(lineZero, "in ") || !strings.Contains(lineZero, "out ") || !strings.Contains(lineZero, "$0.04") {
+		t.Errorf("tokensLine missing counts or cost: %q", lineZero)
+	}
+}
+
+func TestRoundNoRawToken(t *testing.T) {
+	b := view.BindingStatus{
+		Name:             "api",
+		Round:            2,
+		Display:          "ACTIVE",
+		BuilderName:      "gemini-3.8-flash-high",
+		BuilderCandidate: "opencode-1",
+		Headless:         &view.HeadlessInfo{PID: 1234, StartedAt: railNow.Add(-5 * time.Minute)},
+	}
+	p := paneModel(t, b, tabPrompt)
+	rv := roundView{pane: p, actions: true}
+	env := testEnv(p.src, view.Report{Bindings: []view.BindingStatus{b}}, p.width, p.rows)
+	view := rv.Body(env, 140, 40)
+	if strings.Contains(view, "`") {
+		t.Errorf("view contains backtick: %q", view)
+	}
+	if strings.Contains(view, "opencode-1") {
+		t.Errorf("view contains candidate token: %q", view)
+	}
+}
+
+func TestSourceLineOmitsTimeWhenUnknown(t *testing.T) {
+	b := view.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	p := paneModel(t, b, tabPrompt)
+	p.detail.cache[tabPrompt] = tabContent{loaded: true, body: "x", round: 2}
+	if got := stripANSI(p.sourceLine()); got != "prompt r2" {
+		t.Errorf("prompt source = %q, want %q", got, "prompt r2")
+	}
+	p.detail.active = tabReport
+	p.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2}
+	got := stripANSI(p.sourceLine())
+	if got != "report r2" {
+		t.Errorf("report source = %q, want %q", got, "report r2")
+	}
+	if strings.Contains(got, " · ") {
+		t.Errorf("a source line with an unknown time must have no separator, got %q", got)
 	}
 }
 
@@ -144,7 +332,7 @@ func TestDiffStatAndColour(t *testing.T) {
 }
 
 func TestSourceLinePerTab(t *testing.T) {
-	b := relevo.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	b := view.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	p := paneModel(t, b, tabReport)
 	p.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2, at: railNow.Add(-time.Hour)}
 	if got := stripANSI(p.sourceLine()); got != "report r2 · 13:02" {
@@ -155,8 +343,8 @@ func TestSourceLinePerTab(t *testing.T) {
 	if got := stripANSI(p.sourceLine()); got != "remote · captured 1s ago · 3 lines" {
 		t.Errorf("terminal source = %q", got)
 	}
-	b.Headless = &relevo.HeadlessInfo{LogPath: "/x/002-builder.log"}
-	p.report = relevo.Report{Bindings: []relevo.BindingStatus{b}}
+	b.Headless = &view.HeadlessInfo{LogPath: "/x/002-builder.log"}
+	p.report = view.Report{Bindings: []view.BindingStatus{b}}
 	p.detail.headless = true
 	p.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
 		transcript: true, logName: "002-builder.log"}
@@ -194,8 +382,8 @@ func TestSourceLinePerTab(t *testing.T) {
 }
 
 func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
-	b := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
+	b := view.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
+		Waiting: &view.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
 	p := paneModel(t, b, tabTerminal)
 	line, ok := p.hintLine(&b)
 	if !ok || stripANSI(line) != "relevo: relevo status --name webshop" {
@@ -217,8 +405,8 @@ func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
 }
 
 func TestPaneViewRowsAndWidth(t *testing.T) {
-	b := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
+	b := view.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
+		Waiting: &view.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
 	p := paneModel(t, b, tabTerminal)
 	p.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("screen line\n", 50)}
 	p.detail.vp.SetContent(bodyOf(tabTerminal, p.detail.cache[tabTerminal], false))
@@ -294,6 +482,23 @@ func TestColourTranscript(t *testing.T) {
 	}
 }
 
+func TestColourTranscriptDimsThinking(t *testing.T) {
+	body := "∴ considering\n● Bash ls"
+	out := strings.Split(colourTranscript(body), "\n")
+	if p := stripANSI(out[0]); p != "∴ considering" {
+		t.Errorf("thinking text changed: %q", p)
+	}
+	if out[0] != dimStyle.Italic(true).Render("∴ considering") {
+		t.Errorf("thinking line not dim italic: %q", out[0])
+	}
+	if p := stripANSI(out[1]); p != "● Bash(ls)" {
+		t.Errorf("call = %q", p)
+	}
+	if !strings.Contains(out[1], stateActiveStyle.Render("●")) || !strings.Contains(out[1], lipgloss.NewStyle().Bold(true).Render("Bash")) {
+		t.Errorf("call not styled: %q", out[1])
+	}
+}
+
 func TestBodyOfStylesOnlyHeadlessTerminal(t *testing.T) {
 	c := tabContent{loaded: true, body: "● Bash ls"}
 	if got := bodyOf(tabTerminal, c, false); got != "● Bash ls" {
@@ -312,7 +517,7 @@ func TestBodyOfStylesOnlyHeadlessTerminal(t *testing.T) {
 }
 
 func TestViewportReachesBottomOfLongLines(t *testing.T) {
-	b := relevo.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	b := view.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	p := paneModel(t, b, tabLog)
 	p.detail.vp.Width = 40
 	p.detail.vp.Height = 3
@@ -328,5 +533,189 @@ func TestViewportReachesBottomOfLongLines(t *testing.T) {
 	}
 	if p.detail.vp.TotalLineCount() <= 5 {
 		t.Errorf("wrapped content must have more logical lines than raw (%d)", p.detail.vp.TotalLineCount())
+	}
+}
+
+func TestRoundTokensLineCostWord(t *testing.T) {
+	// A LiveUsage whose cost part is unknown: no price for x/y; stream still open; timed out
+	// renders "no price" and not "stream".
+	bUnknown := view.BindingStatus{
+		Name:    "worker",
+		Round:   1,
+		Display: "ACTIVE",
+		LiveUsage: &usage.Usage{
+			Model:    "gemini-3.8-flash-high",
+			Provider: "google",
+			Tokens:   usage.Tokens{In: 100, Out: 50},
+			Cost:     usage.Cost{Basis: usage.Unknown},
+			Note:     "no price for google/gemini-3.8-flash-high; stream still open; timed out",
+		},
+	}
+	pUnknown := paneModel(t, bUnknown, tabPrompt)
+	tlUnknown := stripANSI(pUnknown.tokensLine(&bUnknown))
+	if !strings.Contains(tlUnknown, "no price") {
+		t.Errorf("tokensLine missing 'no price': %q", tlUnknown)
+	}
+	if strings.Contains(tlUnknown, "stream") {
+		t.Errorf("tokensLine should not contain 'stream': %q", tlUnknown)
+	}
+
+	// A measured cost word stays as it is.
+	bMeasured := view.BindingStatus{
+		Name:    "worker",
+		Round:   1,
+		Display: "ACTIVE",
+		LiveUsage: &usage.Usage{
+			Model:    "gemini-3.8-flash-high",
+			Provider: "google",
+			Tokens:   usage.Tokens{In: 100, Out: 50},
+			Cost:     usage.Cost{Basis: usage.Measured, USD: 0.12},
+		},
+	}
+	pMeasured := paneModel(t, bMeasured, tabPrompt)
+	tlMeasured := stripANSI(pMeasured.tokensLine(&bMeasured))
+	if !strings.Contains(tlMeasured, "$0.12") {
+		t.Errorf("tokensLine missing '$0.12': %q", tlMeasured)
+	}
+}
+
+func TestRoundsOfIdleAfterReport(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+	end := railNow.Add(-10 * time.Minute)
+	b := view.BindingStatus{
+		Name:          "idle-b",
+		Round:         6,
+		PlanRound:     5,
+		BuilderStatus: "idle",
+		Display:       "IDLE",
+		RoundEnd:      end,
+	}
+	if err := st.Save(store.Binding{Name: b.Name, CWD: "/repo/" + b.Name, Round: 6, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rep := view.Report{Bindings: []view.BindingStatus{b}}
+	env := testEnv(mastermindSource{rt}, rep, 140, 40)
+
+	v, _ := newRoundView(env, b.Name, 0)
+	rv := v.(roundView)
+
+	if rv.pane.detail.rounds != 5 {
+		t.Errorf("opening gives detail.rounds = %d, want 5", rv.pane.detail.rounds)
+	}
+	if rv.pane.detail.round != 5 {
+		t.Errorf("opening gives detail.round = %d, want 5", rv.pane.detail.round)
+	}
+
+	_, right := rv.Context(env)
+	plainRight := stripANSI(right)
+	if !strings.Contains(plainRight, "round 5 of 5") {
+		t.Errorf("Context right missing 'round 5 of 5': %q", plainRight)
+	}
+	if strings.Contains(plainRight, "live") {
+		t.Errorf("Context right must not contain 'live': %q", plainRight)
+	}
+
+	// ] stays on 5
+	vNext, _ := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}}, env)
+	rvNext := vNext.(roundView)
+	if rvNext.pane.detail.round != 5 {
+		t.Errorf("expected round to stay on 5 after ']', got %d", rvNext.pane.detail.round)
+	}
+}
+
+func TestRoundsOfWorking(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+	b := view.BindingStatus{
+		Name:          "work-b",
+		Round:         3,
+		PlanRound:     3,
+		RoundStart:    railNow.Add(-2 * time.Minute),
+		BuilderStatus: "working",
+		Display:       "ACTIVE",
+	}
+	if err := st.Save(store.Binding{Name: b.Name, CWD: "/repo/" + b.Name, Round: 3, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rep := view.Report{Bindings: []view.BindingStatus{b}}
+	env := testEnv(mastermindSource{rt}, rep, 140, 40)
+
+	v, _ := newRoundView(env, b.Name, 0)
+	rv := v.(roundView)
+
+	_, right := rv.Context(env)
+	plainRight := stripANSI(right)
+	if !strings.Contains(plainRight, "round 3 of 3 · live") {
+		t.Errorf("Context right = %q, want 'round 3 of 3 · live'", plainRight)
+	}
+}
+
+func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+	b := view.BindingStatus{
+		Name:           "narrow-b",
+		Round:          1,
+		PlanRound:      1,
+		Display:        "ACTIVE",
+		BuilderStatus:  "working",
+		BuilderName:    "gemini-3.8-flash-high",
+		MasterMindName: "architect-2",
+		Branch:         "relevo/spool-db",
+		RoundStart:     railNow.Add(-5 * time.Minute),
+		Dirty:          true,
+	}
+	if err := st.Save(store.Binding{Name: b.Name, CWD: "/repo/" + b.Name, Round: 1, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rep := view.Report{Bindings: []view.BindingStatus{b}}
+
+	widths := []int{132, 100, 80, 60}
+	for _, w := range widths {
+		env := testEnv(mastermindSource{rt}, rep, w, 30)
+		v, _ := newRoundView(env, b.Name, 0)
+		rv := v.(roundView)
+		left, _ := rv.Context(env)
+		plain := stripANSI(left)
+
+		// The pill and age are always present.
+		if !strings.Contains(plain, "working") {
+			t.Errorf("width %d: missing pill 'working': %q", w, plain)
+		}
+		if !strings.Contains(plain, "5m") {
+			t.Errorf("width %d: missing age '5m': %q", w, plain)
+		}
+
+		// The stripped left never ends inside a word of the branch or mastermind.
+		// Each part is either whole or absent.
+		if strings.Contains(plain, "relevo/spool-db") {
+			// whole
+		} else if strings.Contains(plain, "relevo") || strings.Contains(plain, "spool") {
+			t.Errorf("width %d: branch partially present in %q", w, plain)
+		}
+
+		if strings.Contains(plain, "architect-2") {
+			// whole
+		} else if strings.Contains(plain, "architect") {
+			t.Errorf("width %d: mastermind partially present in %q", w, plain)
+		}
+
+		if strings.Contains(plain, "gemini-3.8-flash-high") {
+			// whole
+		} else if strings.Contains(plain, "gemini") {
+			t.Errorf("width %d: candidate partially present in %q", w, plain)
+		}
+
+		if strings.Contains(plain, "dirty") {
+			// whole
+		} else if strings.Contains(plain, "dirt") {
+			t.Errorf("width %d: dirty partially present in %q", w, plain)
+		}
+
+		// Never ends with a dangling separator
+		if strings.HasSuffix(plain, "·") || strings.HasSuffix(plain, "· ") {
+			t.Errorf("width %d: dangling separator at end: %q", w, plain)
+		}
 	}
 }

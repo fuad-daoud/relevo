@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,19 +13,19 @@ import (
 )
 
 // TestShowSectionFlagsConflict pins `relevo show`'s section-flag rules:
-// none given defaults to plan, exactly one wins, more than one is a usage
+// none given defaults to prompt, exactly one wins, more than one is a usage
 // error. showSectionFlags is a pure function, so this never executes the
 // subcommand -- CI launches no harness.
 func TestShowSectionFlagsConflict(t *testing.T) {
-	section, err := showSectionFlags(false, false, false, false, false, false, false, "")
+	section, err := showSectionFlags(showSectionArgs{})
 	if err != nil {
 		t.Fatalf("no flags: err = %v, want nil", err)
 	}
-	if section != relevo.ShowPlan {
-		t.Errorf("no flags: section = %q, want %q (default)", section, relevo.ShowPlan)
+	if section != relevo.ShowPrompt {
+		t.Errorf("no flags: section = %q, want %q (default)", section, relevo.ShowPrompt)
 	}
 
-	section, err = showSectionFlags(false, true, false, false, false, false, false, "")
+	section, err = showSectionFlags(showSectionArgs{report: true})
 	if err != nil {
 		t.Fatalf("--report: err = %v, want nil", err)
 	}
@@ -31,8 +33,20 @@ func TestShowSectionFlagsConflict(t *testing.T) {
 		t.Errorf("--report: section = %q, want %q", section, relevo.ShowReport)
 	}
 
-	if _, err := showSectionFlags(true, true, false, false, false, false, false, ""); err == nil {
-		t.Error("--plan --report: err = nil, want a usage error (more than one section)")
+	if _, err := showSectionFlags(showSectionArgs{prompt: true, report: true}); err == nil {
+		t.Error("--prompt --report: err = nil, want a usage error (more than one section)")
+	}
+}
+
+// TestShowRetiredFlagsAreUnknown pins that a retired section spelling is the
+// flag package's own error, before any runtime is built: --plan is no longer
+// registered. It fails at the parse, so no harness is reached.
+func TestShowRetiredFlagsAreUnknown(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"show", "api", "--round", "1", "--plan"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Errorf("show --plan: err = %v, want \"flag provided but not defined\"", err)
 	}
 }
 
@@ -55,8 +69,8 @@ func seedShowDiffStore(t *testing.T, name string) (*store.Store, relevo.Runtime)
 		t.Fatalf("write diff: %v", err)
 	}
 	for _, e := range []store.LogEntry{
-		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
-		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindDiff, Note: "1 file, +1 -0", Confirmed: true},
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindDiff, Note: "1 file, +1 -0", Confirmed: true},
 	} {
 		if err := s.AppendLog(name, e); err != nil {
 			t.Fatalf("AppendLog: %v", err)
@@ -104,7 +118,7 @@ func TestShowAbsorbedFlagCombinations(t *testing.T) {
 	for _, args := range [][]string{
 		{"show", "api", "--stat"},
 		{"show", "api", "--anchors"},
-		{"show", "api", "--plan", "--stat"},
+		{"show", "api", "--prompt", "--stat"},
 		{"show", "api", "--follow"},
 		{"show", "api", "--after", "2"},
 	} {
@@ -120,18 +134,46 @@ func TestShowAbsorbedFlagCombinations(t *testing.T) {
 // resolver: --gate is a section, a non-empty --findings id is another, and
 // either with --report is a usage error.
 func TestShowSectionFlagsGateAndFindings(t *testing.T) {
-	section, err := showSectionFlags(false, false, false, false, false, false, true, "")
+	section, err := showSectionFlags(showSectionArgs{gate: true})
 	if err != nil || section != relevo.ShowGate {
 		t.Errorf("--gate: section = %q err = %v, want %q", section, err, relevo.ShowGate)
 	}
 
-	section, err = showSectionFlags(false, false, false, false, false, false, false, "7f2a3c1d")
+	section, err = showSectionFlags(showSectionArgs{findingsID: "7f2a3c1d"})
 	if err != nil || section != relevo.ShowFindings {
 		t.Errorf("--findings: section = %q err = %v, want %q", section, err, relevo.ShowFindings)
 	}
 
-	if _, err := showSectionFlags(false, true, false, false, false, false, false, "7f2a3c1d"); err == nil {
+	if _, err := showSectionFlags(showSectionArgs{report: true, findingsID: "7f2a3c1d"}); err == nil {
 		t.Error("--report --findings: err = nil, want a usage error (more than one section)")
+	}
+}
+
+// TestShowSectionFlagsSummaryAndArtifacts pins §2's two new sections in the
+// pure resolver: --output and --artifacts each name one, a non-empty
+// --artifact rel names the artifacts section too, and either with --report is
+// a usage error.
+func TestShowSectionFlagsSummaryAndArtifacts(t *testing.T) {
+	section, err := showSectionFlags(showSectionArgs{output: true})
+	if err != nil || section != relevo.ShowOutput {
+		t.Errorf("--output: section = %q err = %v, want %q", section, err, relevo.ShowOutput)
+	}
+
+	section, err = showSectionFlags(showSectionArgs{artifacts: true})
+	if err != nil || section != relevo.ShowArtifacts {
+		t.Errorf("--artifacts: section = %q err = %v, want %q", section, err, relevo.ShowArtifacts)
+	}
+
+	section, err = showSectionFlags(showSectionArgs{artifactRel: "summary.md"})
+	if err != nil || section != relevo.ShowArtifacts {
+		t.Errorf("--artifact: section = %q err = %v, want %q", section, err, relevo.ShowArtifacts)
+	}
+
+	if _, err := showSectionFlags(showSectionArgs{report: true, output: true}); err == nil {
+		t.Error("--report --output: err = nil, want a usage error (more than one section)")
+	}
+	if _, err := showSectionFlags(showSectionArgs{report: true, artifacts: true}); err == nil {
+		t.Error("--report --artifacts: err = nil, want a usage error (more than one section)")
 	}
 }
 
@@ -148,7 +190,7 @@ func TestShowGateAndFindings(t *testing.T) {
 	if err := s.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 2, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := s.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true}); err != nil {
+	if err := s.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
@@ -178,5 +220,96 @@ func TestShowGateAndFindings(t *testing.T) {
 	}
 	if string(got) != findingsBody {
 		t.Errorf("show --findings = %q, want %q", got, findingsBody)
+	}
+}
+
+// TestShowOutputArtifactsCLI pins §2's new output: --output prints the
+// round's output file, --artifacts one line per file (the output first),
+// --artifact <rel> the file's raw bytes with nothing added, --json the
+// rel/size/mtime fields, and a writer round answers Missing. It is store-only
+// -- no harness and no network.
+func TestShowOutputArtifactsCLI(t *testing.T) {
+	const name = "showsummary"
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	if err := s.Save(store.Binding{
+		Name: name, CWD: t.TempDir(), Round: 2, State: store.StateActive,
+		Shape: store.ShapeReader, Role: "reviewer",
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for _, e := range []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
+	} {
+		if err := s.AppendLog(name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+	dir := s.ArtifactDir(name, 1, "reviewer")
+	if err := os.MkdirAll(filepath.Join(dir, "site"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const summary = "# the summary\n"
+	const site = "<html>\n"
+	if err := os.WriteFile(filepath.Join(dir, "summary.md"), []byte(summary), 0o644); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "site", "index.html"), []byte(site), 0o644); err != nil {
+		t.Fatalf("write site: %v", err)
+	}
+
+	got, _, err := captureOutput(t, func() error { return run([]string{"show", name, "--round", "1", "--output"}) })
+	if err != nil || string(got) != summary {
+		t.Errorf("show --output = %q (err %v), want %q", got, err, summary)
+	}
+
+	got, _, err = captureOutput(t, func() error { return run([]string{"show", name, "--round", "1", "--artifacts"}) })
+	if err != nil {
+		t.Fatalf("show --artifacts: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
+	if len(lines) != 2 || !strings.HasSuffix(lines[0], "summary.md") || !strings.HasSuffix(lines[1], "site/index.html") {
+		t.Errorf("show --artifacts = %q, want one line each, summary.md first", got)
+	}
+
+	got, _, err = captureOutput(t, func() error {
+		return run([]string{"show", name, "--round", "1", "--artifact", "site/index.html"})
+	})
+	if err != nil || string(got) != site {
+		t.Errorf("show --artifact = %q (err %v), want the raw bytes %q", got, err, site)
+	}
+
+	got, _, err = captureOutput(t, func() error {
+		return run([]string{"show", name, "--round", "1", "--json", "--artifacts"})
+	})
+	if err != nil {
+		t.Fatalf("show --json --artifacts: %v", err)
+	}
+	for _, want := range []string{`"rel": "summary.md"`, `"size":`, `"mtime":`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("show --json --artifacts is missing %s:\n%s", want, got)
+		}
+	}
+
+	// A writer round with no artifact dir answers Missing, not an error.
+	const writer = "showsummary-writer"
+	if err := s.Save(store.Binding{Name: writer, CWD: t.TempDir(), Round: 2, State: store.StateActive}); err != nil {
+		t.Fatalf("Save(writer): %v", err)
+	}
+	for _, e := range []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
+	} {
+		if err := s.AppendLog(writer, e); err != nil {
+			t.Fatalf("AppendLog(writer): %v", err)
+		}
+	}
+	got, _, err = captureOutput(t, func() error { return run([]string{"show", writer, "--round", "1", "--output"}) })
+	if err != nil || string(got) != "no output for round 1\n" {
+		t.Errorf("show --output on a writer = %q (err %v), want %q", got, err, "no output for round 1\n")
 	}
 }

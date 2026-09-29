@@ -1,6 +1,6 @@
 // Package relevo implements the handoff policy: which text moves between a
-// planner and a builder, when, and when to stop. It holds no intelligence --
-// every judgement stays with the planner agent.
+// mastermind and a builder, when, and when to stop. It holds no intelligence --
+// every judgement stays with the mastermind agent.
 package relevo
 
 import (
@@ -9,19 +9,24 @@ import (
 	"io"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/ingest"
-	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -29,6 +34,9 @@ import (
 // Git is the slice of the git CLI relevo needs. *git.Client satisfies it.
 type Git interface {
 	SnapshotTree(ctx context.Context, dir string) (string, error)
+	// MaterializeTree writes tree into dir's working files without committing,
+	// leaving every difference unstaged and files outside HEAD untracked.
+	MaterializeTree(ctx context.Context, dir, tree string) error
 	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
 	// DiffWorktreeStat compares tree against dir's current working tree and
 	// returns just the stat, no patch (#143): the live "+N/-M in F" a status
@@ -52,10 +60,6 @@ type Git interface {
 	// AddDetachedWorktree is AddWorktree without a branch: a throwaway tree
 	// at commit with a detached HEAD (#144).
 	AddDetachedWorktree(ctx context.Context, dir, path, commit string) error
-	// MaterializeTree writes tree into dir's files without committing, the
-	// step that fills a reader round's scratch worktree with the binding's
-	// whole working state (2026-09-24-cockpit-design.md §3.4).
-	MaterializeTree(ctx context.Context, dir, tree string) error
 	// CheckoutWorktree is the existing-branch form of git worktree add; AddWorktree creates the branch, this one checks it out.
 	CheckoutWorktree(ctx context.Context, dir, path, branch string) error
 	RemoveWorktree(ctx context.Context, dir, path string, force bool) error
@@ -68,6 +72,8 @@ type Git interface {
 	// ListRefs returns every ref in dir beginning with prefix, the server
 	// cleanup's worklist of a binding's refs/relevo/<name>/* refs.
 	ListRefs(ctx context.Context, dir, prefix string) ([]string, error)
+	// RefOnRemote is the ref cleanup's safety check (nothing unpushed is deleted).
+	RefOnRemote(ctx context.Context, dir, ref string) (bool, error)
 	CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error)
 	// CommitAll stages the whole working tree (git add -A) and commits it
 	// with relevo's fixed identity, returning the new HEAD sha, or ("", nil)
@@ -115,7 +121,7 @@ type Runtime struct {
 	// Runner starts and stops headless builder processes (#99). cmd/relevo
 	// wires proc.New(); tests wire fakeRunner. Nil means no headless path
 	// can run, and reports ErrRunnerUnavailable.
-	Runner     Runner
+	Runner     spawn.Runner
 	Store      *store.Store
 	Candidates *candidate.Set
 
@@ -124,11 +130,6 @@ type Runtime struct {
 	// store is configured -- gates read as empty, and every write is dropped
 	// with an error.
 	Gates db.KV
-
-	// GatesDir is the legacy directory holding ledger.json, availability.json
-	// and history.json, which LoadKV imports on the first read of their kv
-	// rows. It is normally the store root. "" skips the import.
-	GatesDir string
 
 	// Latency is where the per-candidate latency history lives (#324 part 1;
 	// P3b plan §4.5): time to first output per candidate, recorded by `relevo
@@ -149,7 +150,7 @@ type Runtime struct {
 	// only for a runtime built by newRuntimePeek, which opens no database.
 	Config *config.Store
 
-	// Policy is ~/.config/relevo/policy.json: the planner's candidate order
+	// Policy is ~/.config/relevo/policy.json: the mastermind's candidate order
 	// per role (#61 step 2). The zero value means nothing is ordered, so
 	// tests that do not set it behave as a machine with no policy file.
 	Policy policy.Policy
@@ -174,8 +175,8 @@ type Runtime struct {
 	Usage usage.Reader
 
 	// Sessions locates a session record so a round's transcript can be
-	// recorded (#184). plannerLocator (bind.go) also calls it at bind time
-	// to fill Planner.TranscriptLocator (#172), the same file path, for the
+	// recorded (#184). mastermindLocator (bind.go) also calls it at bind time
+	// to fill MasterMind.TranscriptLocator (#172), the same file path, for the
 	// coming history database.
 	Sessions SessionLocator
 
@@ -232,7 +233,7 @@ type Runtime struct {
 	// filled from (#244, #216); its Unit is always empty here, since
 	// startRound fills in the per-round unit name. Nil means no scopes
 	// (the local daemon, CI, or a server whose scope probe failed).
-	Scope *ScopeSpec
+	Scope *spawn.ScopeSpec
 
 	// HeldCPUs returns the cores held by live rounds other than the binding
 	// named self, in every store that shares this host's pool (#314). Nil
@@ -241,29 +242,43 @@ type Runtime struct {
 	// owners.
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)
 
-	// Channels arbitrates a planner's mailbox between the daemon and a live
-	// `relevo mcp` channel (docs/specs/2026-09-21-planner-channel-design.md).
+	// Channels arbitrates a mastermind's mailbox between the daemon and a live
+	// `relevo mcp` channel (docs/specs/2026-09-21-mastermind-channel-design.md).
 	// Nil means no claims exist, so DeliverPending leaves the entry pending
-	// for `relevo wait`; cmd/relevo wires
-	// relevo.FileClaims{Root: st.ChannelsDir()}.
-	Channels ClaimStore
+	// for `relevo wait`; cmd/relevo wires delivery.KVClaims.
+	Channels delivery.ClaimStore
 
-	// Planners is the planner registry (#303 step 1a). bind, add, fork and
-	// ask resolve their planner through it, and the daemon back-fills a
-	// binding written before PlannerID existed. Nil means no registry is
+	// MasterMinds is the mastermind registry (#303 step 1a). bind, add, fork and
+	// ask resolve their mastermind through it, and the daemon back-fills a
+	// binding written before MasterMindID existed. Nil means no registry is
 	// configured -- tests, and any embedded caller that predates it -- and
-	// resolution then fails with ErrNoPlanner.
-	Planners planner.Registry
+	// resolution then fails with ErrNoMasterMind.
+	MasterMinds mastermind.Registry
 
 	// ProcStart reads a process's start time in Unix seconds, the pid-reuse
-	// defence planner.Resolve's host step needs. Nil means the host step
+	// defence mastermind.Resolve's host step needs. Nil means the host step
 	// cannot run, and resolution falls through to the session.
 	ProcStart func(pid int) (int64, error)
 
-	// Deliverers routes a planner-bound payload to that planner kind's own
+	// OpencodeSession finds an opencode session id for the working directory (#393).
+	// Nil when sqlite3 is not on PATH or not configured.
+	OpencodeSession func(cwd string, now time.Time) (string, error)
+
+	// OpencodeSessionDir returns the working directory opencode recorded for
+	// one session, so a caller holding only the session id can resolve its
+	// repository. Nil when sqlite3 is not on PATH or not configured.
+	OpencodeSessionDir func(sessionID string) (string, error)
+
+	// Deliverers routes a mastermind-bound payload to that mastermind kind's own
 	// push path (docs/specs/2026-09-22-opencode-delivery-design.md). A kind
 	// with no entry, and a nil map, leave the entry pending for `relevo wait`.
-	Deliverers map[string]PlannerDeliverer
+	Deliverers map[string]delivery.MasterMindDeliverer
+
+	// SessionReaper deletes harness sessions relevo abandoned, so a harness
+	// that resumes its own sessions cannot restart a round relevo wrote off.
+	// Nil means deletes are skipped and the abandoned entries stay on the
+	// binding; cmd/relevo wires the real one.
+	SessionReaper SessionDeleter
 }
 
 // legacyRegistry is the registry derived from candidates.json and
@@ -299,6 +314,90 @@ func IngestDeps(rt Runtime) ingest.Deps {
 	}
 }
 
+// AvailabilityDeps builds internal/availability's Deps from rt. Now carries
+// through nil-safe as time.Now, since a zero Runtime (a test) has no clock; the
+// roles registry is passed as the lazy builder rt.RoleRegistry, so availability
+// never builds it eagerly.
+func AvailabilityDeps(rt Runtime) availability.Deps {
+	now := rt.Now
+	if now == nil {
+		now = time.Now
+	}
+	return availability.Deps{
+		Store:        rt.Store,
+		Candidates:   rt.Candidates,
+		Gates:        rt.Gates,
+		Latency:      rt.Latency,
+		Now:          now,
+		Roles:        rt.Roles,
+		RoleRegistry: rt.RoleRegistry,
+	}
+}
+
+// captureDeps builds internal/capture's Deps from rt. Git carries through
+// nil-safe: a nil rt.Git converts to a nil capture.Git, since both are true
+// nil interfaces at the assignment.
+func captureDeps(rt Runtime) capture.Deps {
+	return capture.Deps{Git: rt.Git, Store: rt.Store}
+}
+
+// consultDeps builds internal/consult's Deps from rt. Git carries through
+// nil-safe (both are true nil interfaces at the assignment); Seen and
+// LostToRestart close over the daemon's watch set, so a runtime with none reads
+// as "never seen" exactly as lostToRestart's nil rule does.
+func consultDeps(rt Runtime) consult.Deps {
+	now := rt.Now
+	if now == nil {
+		now = time.Now
+	}
+	return consult.Deps{
+		Store:  rt.Store,
+		Runner: rt.Runner,
+		Git:    rt.Git,
+		Now:    now,
+		NewID:  rt.NewID,
+		Seen: func(pid int, startedAt int64) {
+			rt.Watched.Mark(pid, startedAt)
+		},
+		LostToRestart: func(pid int, startedAt int64) bool {
+			return lostToRestart(rt, pid, startedAt)
+		},
+		Scope: func(kind, owner, name string, round int, id string) *spawn.ScopeSpec {
+			k := scopeKind(kind)
+			return scopeFor(rt, k, scopeUnitNameFor(k, owner, name, round, id), "")
+		},
+		Usage: func(ctx context.Context, b store.Binding, c store.Consult, end time.Time) *usage.Usage {
+			return recordUsage(ctx, rt, consultSource(rt, b, c, end))
+		},
+		Delivery: deliveryDeps(rt),
+		ResolveReviewer: func() (candidate.Candidate, harness.RoleSpec, harness.Tier, error) {
+			res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", "reviewer")
+			if err != nil {
+				return candidate.Candidate{}, harness.RoleSpec{}, "", err
+			}
+			c := res.Candidate
+			role, err := rt.RoleRegistry().Spec("reviewer", c.Harness)
+			if err != nil {
+				return candidate.Candidate{}, harness.RoleSpec{}, "", err
+			}
+			return c, role, verifyTier(rt, c), nil
+		},
+	}
+}
+
+// deliveryDeps builds internal/delivery's Deps from rt. The Channels interface
+// carries through nil-safe: a nil rt.Channels stays a nil delivery.ClaimStore,
+// since the assignment is between identical interface types.
+func deliveryDeps(rt Runtime) delivery.Deps {
+	return delivery.Deps{
+		Store:       rt.Store,
+		Now:         rt.Now,
+		Channels:    rt.Channels,
+		Deliverers:  rt.Deliverers,
+		MasterMinds: rt.MasterMinds,
+	}
+}
+
 // ErrRemoteUnavailable is returned when a remote operation is attempted without a configured remote client.
 var ErrRemoteUnavailable = errors.New("no remote client configured; run relevo config server key and relevo config server add")
 
@@ -313,6 +412,11 @@ type RemoteClient interface {
 	// dedupes a repeated send may be sent the same round twice (#373 §4.4).
 	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error)
 	RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
+	RoundFileFrom(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error)
+	// RoundArtifacts and RoundArtifact read a closed reader round's artifacts;
+	// a server that does not advertise remote.FeatureReaders answers 404.
+	RoundArtifacts(ctx context.Context, server, name string, round int) (remote.ArtifactList, error)
+	RoundArtifact(ctx context.Context, server, name string, round int, rel string) (io.ReadCloser, error)
 	RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
 	Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error)
 	Unavailable(ctx context.Context, server, name, token, reason string) error

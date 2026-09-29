@@ -1,8 +1,7 @@
 package transcript
 
-// renderOpencode is the table for `opencode run --format json`. It was
-// pinned from the 2026-09-17 capture (#173). A tool_use event carries call
-// and result in one event.
+// renderOpencode is the table for `opencode run --format json`: a tool_use
+// event carries the call and its result in one event.
 func renderOpencode(obj map[string]any) []string {
 	switch str(obj["type"]) {
 	case "step_start", "step_finish":
@@ -26,6 +25,8 @@ func renderOpencode(obj map[string]any) []string {
 		}
 	case "error":
 		return []string{errLine(str(asMap(obj["error"])["message"]))}
+	case "reasoning":
+		return thinkingLines(str(asMap(obj["part"])["text"]))
 	default:
 		return []string{unknown(obj)}
 	}

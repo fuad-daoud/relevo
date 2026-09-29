@@ -11,8 +11,6 @@ import (
 
 var update = flag.Bool("update", false, "rewrite testdata/*.log from the renderer")
 
-// TestFixtures renders every testdata/<kind>.jsonl line by line and compares
-// the joined output to testdata/<kind>.log. Add a kind by adding its pair.
 func TestFixtures(t *testing.T) {
 	streams, err := filepath.Glob(filepath.Join("testdata", "*.jsonl"))
 	if err != nil || len(streams) == 0 {
@@ -56,13 +54,21 @@ func TestRenderRules(t *testing.T) {
 	}{
 		"empty":               {"claude", "", nil},
 		"blank":               {"claude", "   ", nil},
-		"non-json":            {"claude", "relevo-exit:0", []string{"relevo-exit:0"}},
+		"non-json":            {"claude", "plain text", []string{"plain text"}},
 		"json but not object": {"claude", `["a"]`, []string{`["a"]`}},
 		"broken json":         {"agy", `{"event":`, []string{`{"event":`}},
 		"unknown type":        {"claude", `{"type":"brand_new"}`, []string{"[brand_new]"}},
 		"unknown event":       {"agy", `{"event":"brand_new"}`, []string{"[brand_new]"}},
 		"no type at all":      {"claude", `{"x":1}`, []string{"[?]"}},
 		"unknown kind":        {"droid", `{"type":"item"}`, []string{"[item]"}},
+
+		// Only a line that starts with a trailer prefix after trimming is
+		// dropped; the prefix inside a line is the builder's own text.
+		"indented exit trailer":  {"claude", "   relevo-exit:0", nil},
+		"rusage trailer":         {"claude", "relevo-rusage:cpu_usec=1", nil},
+		"trailing whitespace":    {"claude", "relevo-exit:3  \t", nil},
+		"prefix in the middle":   {"claude", "the builder echoed relevo-exit:0", []string{"the builder echoed relevo-exit:0"}},
+		"exit word is not a hit": {"claude", "exiting:0", []string{"exiting:0"}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -70,6 +76,31 @@ func TestRenderRules(t *testing.T) {
 				t.Errorf("Render(%q, %q) = %q, want %q", c.kind, c.line, got, c.want)
 			}
 		})
+	}
+}
+
+func TestRenderDropsSupervisorTrailers(t *testing.T) {
+	body := map[string]string{
+		"claude":   `{"type":"assistant","message":{"content":[{"type":"text","text":"the answer"}]}}`,
+		"agy":      `{"event":"result","result":{"status":"SUCCESS","response":"the answer","denied_actions":[]}}`,
+		"opencode": `{"type":"text","part":{"type":"text","text":"the answer"}}`,
+		"codex":    `{"type":"item.completed","item":{"type":"agent_message","text":"the answer"}}`,
+	}
+	trailers := map[string][]string{
+		"relevo": {"relevo-rusage:cpu_usec=4982568 mem_peak=348131328", "relevo-exit:0"},
+	}
+	for _, kind := range []string{"claude", "agy", "opencode", "codex"} {
+		for name, lines := range trailers {
+			t.Run(kind+"/"+name, func(t *testing.T) {
+				var got []string
+				for _, line := range append([]string{body[kind]}, lines...) {
+					got = append(got, Render(kind, []byte(line))...)
+				}
+				if want := Render(kind, []byte(body[kind])); !reflect.DeepEqual(got, want) {
+					t.Errorf("rendered = %q, want %q without the trailers", got, want)
+				}
+			})
+		}
 	}
 }
 
@@ -81,6 +112,14 @@ func TestClaudeTable(t *testing.T) {
 		"text and tool in one message": {
 			`{"type":"assistant","message":{"content":[{"type":"text","text":"Reading it.\nTwo lines."},{"type":"tool_use","name":"Read","input":{"file_path":"internal/doctor/doctor.go"}}]}}`,
 			[]string{"Reading it.\nTwo lines.", "● Read internal/doctor/doctor.go"},
+		},
+		"thinking then text in one message": {
+			`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"weigh it"},{"type":"text","text":"done"}]}}`,
+			[]string{"∴ weigh it", "done"},
+		},
+		"empty thinking block is nothing": {
+			`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"","signature":"sig"}]}}`,
+			nil,
 		},
 		"tool with no argument": {
 			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"ListAgents","input":{}}]}}`,
@@ -222,8 +261,6 @@ func TestAgyTable(t *testing.T) {
 	}
 }
 
-// opencode's table is pinned from the 2026-09-17 capture (#173). This test
-// covers the branches the fixture cannot (the fixture covers the happy shapes).
 func TestOpencodeTable(t *testing.T) {
 	cases := map[string]struct {
 		line string
@@ -253,6 +290,14 @@ func TestOpencodeTable(t *testing.T) {
 			`{"type":"text","part":{"type":"text","text":""}}`,
 			nil,
 		},
+		"reasoning with several lines": {
+			`{"type":"reasoning","part":{"type":"reasoning","text":"plan\nthen act"}}`,
+			[]string{"∴ plan", "∴ then act"},
+		},
+		"reasoning with empty text is nothing": {
+			`{"type":"reasoning","part":{"type":"reasoning","text":""}}`,
+			nil,
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -263,88 +308,92 @@ func TestOpencodeTable(t *testing.T) {
 	}
 }
 
-// codex's table is pinned from the 2026-09-19 capture (spec §7). This test
-// covers the branches the fixture cannot (the fixture covers the happy
-// shapes).
+type lineCase struct {
+	line string
+	want []string
+}
+
+var codexCases = map[string]lineCase{
+	"thread.started is noise": {
+		`{"type":"thread.started","thread_id":"t1"}`,
+		nil,
+	},
+	"turn.started is noise": {
+		`{"type":"turn.started"}`,
+		nil,
+	},
+	"item.started is noise": {
+		`{"type":"item.started","item":{"id":"i1","type":"command_execution"}}`,
+		nil,
+	},
+	"turn.failed": {
+		`{"type":"turn.failed","error":{"message":"boom"}}`,
+		[]string{"  ⎿ error: boom"},
+	},
+	"top-level error": {
+		`{"type":"error","message":"top level boom"}`,
+		[]string{"  ⎿ error: top level boom"},
+	},
+	"item.completed agent_message": {
+		`{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}`,
+		[]string{"hi"},
+	},
+	"item.completed agent_message with empty text": {
+		`{"type":"item.completed","item":{"type":"agent_message","text":""}}`,
+		nil,
+	},
+	"item.completed reasoning renders as thinking": {
+		`{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}`,
+		[]string{"∴ thinking"},
+	},
+	"item.completed reasoning with empty text": {
+		`{"type":"item.completed","item":{"type":"reasoning","text":""}}`,
+		nil,
+	},
+	"item.completed error": {
+		`{"type":"item.completed","item":{"type":"error","message":"item boom"}}`,
+		[]string{"  ⎿ error: item boom"},
+	},
+	"command_execution success": {
+		`{"type":"item.completed","item":{"type":"command_execution","command":"ls","aggregated_output":"a\nb\n","exit_code":0}}`,
+		[]string{"● bash ls", "  ⎿ ok: a"},
+	},
+	"command_execution failure": {
+		`{"type":"item.completed","item":{"type":"command_execution","command":"ls","aggregated_output":"nope","exit_code":2}}`,
+		[]string{"● bash ls", "  ⎿ error: exit 2: nope"},
+	},
+	"file_change with two changes": {
+		`{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"a.go"},{"path":"b.go"}]}}`,
+		[]string{"● edit a.go", "● edit b.go"},
+	},
+	"file_change with no changes": {
+		`{"type":"item.completed","item":{"type":"file_change","changes":[]}}`,
+		[]string{"[file_change]"},
+	},
+	"collab_tool_call spawn_agent": {
+		`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"spawn_agent","prompt":"go do it"}}`,
+		[]string{"● spawn_agent go do it"},
+	},
+	"collab_tool_call wait with a completed state": {
+		`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"wait","agents_states":{"a1":{"status":"completed","message":"done"}}}}`,
+		[]string{"  ⎿ ok: done"},
+	},
+	"collab_tool_call wait with no completed states": {
+		`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"wait","agents_states":{"a1":{"status":"pending_init","message":null}}}}`,
+		[]string{"[collab_tool_call wait]"},
+	},
+	"collab_tool_call other tool": {
+		`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"frobnicate"}}`,
+		[]string{"[collab_tool_call frobnicate]"},
+	},
+	"item.completed unknown item type": {
+		`{"type":"item.completed","item":{"type":"foo"}}`,
+		[]string{"[foo]"},
+	},
+}
+
 func TestCodexTable(t *testing.T) {
-	cases := map[string]struct {
-		line string
-		want []string
-	}{
-		"thread.started is noise": {
-			`{"type":"thread.started","thread_id":"t1"}`,
-			nil,
-		},
-		"turn.started is noise": {
-			`{"type":"turn.started"}`,
-			nil,
-		},
-		"item.started is noise": {
-			`{"type":"item.started","item":{"id":"i1","type":"command_execution"}}`,
-			nil,
-		},
-		"turn.failed": {
-			`{"type":"turn.failed","error":{"message":"boom"}}`,
-			[]string{"  ⎿ error: boom"},
-		},
-		"top-level error": {
-			`{"type":"error","message":"top level boom"}`,
-			[]string{"  ⎿ error: top level boom"},
-		},
-		"item.completed agent_message": {
-			`{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}`,
-			[]string{"hi"},
-		},
-		"item.completed agent_message with empty text": {
-			`{"type":"item.completed","item":{"type":"agent_message","text":""}}`,
-			nil,
-		},
-		"item.completed reasoning is noise": {
-			`{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}`,
-			nil,
-		},
-		"item.completed error": {
-			`{"type":"item.completed","item":{"type":"error","message":"item boom"}}`,
-			[]string{"  ⎿ error: item boom"},
-		},
-		"command_execution success": {
-			`{"type":"item.completed","item":{"type":"command_execution","command":"ls","aggregated_output":"a\nb\n","exit_code":0}}`,
-			[]string{"● bash ls", "  ⎿ ok: a"},
-		},
-		"command_execution failure": {
-			`{"type":"item.completed","item":{"type":"command_execution","command":"ls","aggregated_output":"nope","exit_code":2}}`,
-			[]string{"● bash ls", "  ⎿ error: exit 2: nope"},
-		},
-		"file_change with two changes": {
-			`{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"a.go"},{"path":"b.go"}]}}`,
-			[]string{"● edit a.go", "● edit b.go"},
-		},
-		"file_change with no changes": {
-			`{"type":"item.completed","item":{"type":"file_change","changes":[]}}`,
-			[]string{"[file_change]"},
-		},
-		"collab_tool_call spawn_agent": {
-			`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"spawn_agent","prompt":"go do it"}}`,
-			[]string{"● spawn_agent go do it"},
-		},
-		"collab_tool_call wait with a completed state": {
-			`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"wait","agents_states":{"a1":{"status":"completed","message":"done"}}}}`,
-			[]string{"  ⎿ ok: done"},
-		},
-		"collab_tool_call wait with no completed states": {
-			`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"wait","agents_states":{"a1":{"status":"pending_init","message":null}}}}`,
-			[]string{"[collab_tool_call wait]"},
-		},
-		"collab_tool_call other tool": {
-			`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"frobnicate"}}`,
-			[]string{"[collab_tool_call frobnicate]"},
-		},
-		"item.completed unknown item type": {
-			`{"type":"item.completed","item":{"type":"foo"}}`,
-			[]string{"[foo]"},
-		},
-	}
-	for name, c := range cases {
+	for name, c := range codexCases {
 		t.Run(name, func(t *testing.T) {
 			if got := Render("codex", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("got %q, want %q", got, c.want)

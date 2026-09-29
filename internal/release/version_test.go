@@ -2,8 +2,7 @@ package release
 
 import "testing"
 
-// mustParse is the test's ParseVersion: a version that does not parse is a
-// bug in the test's own fixture, not a case under test.
+// mustParse fails the test if s does not parse: a bug in the fixture, not the case under test.
 func mustParse(t *testing.T, s string) Version {
 	t.Helper()
 	v, ok := ParseVersion(s)
@@ -51,24 +50,52 @@ func TestParseVersion(t *testing.T) {
 	}
 }
 
-// TestNewerOrdersDescribeSuffix pins §4.2's ordering: a describe-suffixed
-// running version is newer than the tag it describes and older than the next
-// patch. Make a suffix always older and the first case fails.
+// TestIsReleaseTag pins the strict predicate: IsReleaseTag stands between a
+// tag and a download URL's path, so a suffix, separator or missing "v" fails it.
+func TestIsReleaseTag(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"v1.2.3", true},
+		{"v01.2.3", true},
+		{"v10.20.30", true},
+		{"", false},
+		{"1.2.3", false},
+		{"v1.2", false},
+		{"v1.2.3.4", false},
+		{"v1.2.3-rc1", false},
+		{"v1.2.3+meta", false},
+		{"v1.2.3-2-gabc", false},
+		{"v1.2.3/", false},
+		{"v1.2.3/../x", false},
+		{" v1.2.3", false},
+		{"v1.2.3\n", false},
+		{"V1.2.3", false},
+		{"v1..3", false},
+	}
+
+	for _, tc := range tests {
+		if got := IsReleaseTag(tc.in); got != tc.want {
+			t.Errorf("IsReleaseTag(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestNewerOrdersDescribeSuffix pins that a describe-suffixed running version
+// is newer than the tag it describes and older than the next patch.
 func TestNewerOrdersDescribeSuffix(t *testing.T) {
 	tests := []struct {
 		running string
 		latest  string
 		want    bool
 	}{
-		// The case that must fail under the "suffix is older" mutation.
+		// Mutation: a "suffix is always older" bug fails this case.
 		{"v0.6.0-2-gddf3d4f", "v0.6.0", false},
-		// ... and the other half of the same fact.
 		{"v0.6.0-2-gddf3d4f", "v0.6.1", true},
 		{"v0.6.0-dirty", "v0.6.0", false},
-		// This worktree's own `git describe`.
 		{"v0.7.0-8-gbd8aed0", "v0.7.0", false},
 		{"v0.7.0-8-gbd8aed0", "v0.7.1", true},
-		// Plain number ordering.
 		{"v0.6.0", "v0.6.1", true},
 		{"v0.6.1", "v0.6.0", false},
 		{"v0.6.0", "v0.6.0", false},
@@ -82,8 +109,7 @@ func TestNewerOrdersDescribeSuffix(t *testing.T) {
 	}
 }
 
-// TestNewerRefusesUnparseable pins the refusal: "(devel)" on either side is
-// false, so an untagged local build is never told it is behind.
+// TestNewerRefusesUnparseable pins that "(devel)" on either side is false.
 func TestNewerRefusesUnparseable(t *testing.T) {
 	if _, ok := ParseVersion("(devel)"); ok {
 		t.Fatal(`ParseVersion("(devel)") must not parse`)

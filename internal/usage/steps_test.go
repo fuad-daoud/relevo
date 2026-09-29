@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// stepStream joins JSON lines the way a round's builder stream file holds
-// them: one per line, with a blank line and the round's trailer after them.
+// stepStream joins JSON lines the way a round's builder stream file holds them:
+// one per line, then a blank line and the round's trailer.
 func stepStream(lines ...string) []byte {
 	return []byte(strings.Join(lines, "\n") + "\n\nrelevo-exit:0\n")
 }
@@ -38,44 +38,34 @@ func TestStreamStepsOpencode(t *testing.T) {
 }
 
 func TestStreamStepsClaude(t *testing.T) {
-	ts := func(sec int) string {
+	stamp := func(sec int) string {
 		return time.Date(2026, 9, 23, 10, 0, sec, 0, time.UTC).Format(time.RFC3339Nano)
 	}
-	s := stepStream(
-		`{"type":"system","subtype":"init","timestamp":"`+ts(0)+`","model":"claude-sonnet-5"}`,
-		`{"type":"assistant","timestamp":"`+ts(2)+`","message":{"id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash"}]}}`,
-		`{"type":"assistant","timestamp":"`+ts(3)+`","message":{"id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash"},{"type":"text","text":"ok"}]}}`,
-		`{"type":"user","timestamp":"`+ts(4)+`","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`,
-		`{"type":"assistant","timestamp":"`+ts(6)+`","message":{"id":"m2","content":[{"type":"tool_use","id":"tu2","name":"Bash"}]}}`,
-		`{"type":"assistant","timestamp":"`+ts(7)+`","parent_tool_use_id":"tu2","message":{"id":"m9","content":[{"type":"tool_use","id":"tu9","name":"Bash"}]}}`,
-	)
-	got := StreamSteps("claude", s)
-	if got.Steps != 2 || got.ToolCalls != 2 {
-		t.Errorf("Steps/ToolCalls = %d/%d, want 2/2 (tu9 excluded, tu1 deduped)", got.Steps, got.ToolCalls)
+	cases := []struct {
+		name       string
+		at         func(int) string
+		wantStepMS int64
+		wantFirst  int64
+	}{
+		{"timestamps", stamp, 2000, 2000},
+		{"no timestamps", func(int) string { return "" }, 0, 0},
 	}
-	if got.FirstOutputP50MS != 2000 {
-		t.Errorf("FirstOutputP50MS = %d, want 2000 (lower median of 2000, 2000)", got.FirstOutputP50MS)
-	}
-	if got.StepP50MS != 2000 {
-		t.Errorf("StepP50MS = %d, want 2000 (lower median of 3000, 2000)", got.StepP50MS)
-	}
-}
-
-func TestStreamStepsClaudeNoTimestamps(t *testing.T) {
-	s := stepStream(
-		`{"type":"system","subtype":"init","model":"claude-sonnet-5"}`,
-		`{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash"}]}}`,
-		`{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash"},{"type":"text","text":"ok"}]}}`,
-		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`,
-		`{"type":"assistant","message":{"id":"m2","content":[{"type":"tool_use","id":"tu2","name":"Bash"}]}}`,
-		`{"type":"assistant","parent_tool_use_id":"tu2","message":{"id":"m9","content":[{"type":"tool_use","id":"tu9","name":"Bash"}]}}`,
-	)
-	got := StreamSteps("claude", s)
-	if got.Steps != 2 || got.ToolCalls != 2 {
-		t.Errorf("Steps/ToolCalls = %d/%d, want 2/2", got.Steps, got.ToolCalls)
-	}
-	if got.StepP50MS != 0 || got.FirstOutputP50MS != 0 {
-		t.Errorf("P50s = %d/%d, want 0/0 without timestamps", got.StepP50MS, got.FirstOutputP50MS)
+	for _, c := range cases {
+		s := stepStream(
+			`{"type":"system","subtype":"init","timestamp":"`+c.at(0)+`","model":"claude-sonnet-5"}`,
+			`{"type":"assistant","timestamp":"`+c.at(2)+`","message":{"id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash"}]}}`,
+			`{"type":"assistant","timestamp":"`+c.at(3)+`","message":{"id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash"},{"type":"text","text":"ok"}]}}`,
+			`{"type":"user","timestamp":"`+c.at(4)+`","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`,
+			`{"type":"assistant","timestamp":"`+c.at(6)+`","message":{"id":"m2","content":[{"type":"tool_use","id":"tu2","name":"Bash"}]}}`,
+			`{"type":"assistant","timestamp":"`+c.at(7)+`","parent_tool_use_id":"tu2","message":{"id":"m9","content":[{"type":"tool_use","id":"tu9","name":"Bash"}]}}`,
+		)
+		got := StreamSteps("claude", s)
+		if got.Steps != 2 || got.ToolCalls != 2 {
+			t.Errorf("%s: Steps/ToolCalls = %d/%d, want 2/2 (tu9 excluded, tu1 deduped)", c.name, got.Steps, got.ToolCalls)
+		}
+		if got.StepP50MS != c.wantStepMS || got.FirstOutputP50MS != c.wantFirst {
+			t.Errorf("%s: P50s = %d/%d, want %d/%d", c.name, got.StepP50MS, got.FirstOutputP50MS, c.wantStepMS, c.wantFirst)
+		}
 	}
 }
 

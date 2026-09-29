@@ -3,6 +3,7 @@ package serve
 import (
 	"net/http"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -16,7 +17,7 @@ func (s *Server) handleCandidates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gates := relevo.Gates(rt)
+	gates := availability.Gates(relevo.AvailabilityDeps(rt))
 	gatedMap := make(map[string]bool, len(gates))
 	for _, g := range gates {
 		gatedMap[g.Token] = true

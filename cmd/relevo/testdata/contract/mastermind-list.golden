@@ -1,0 +1,16 @@
+[
+  {
+    "id": "<PLANNER>",
+    "name": "architect-1",
+    "harness_kind": "claude",
+    "session_id": "sess-fixture",
+    "sessions": null,
+    "host_pid": 0,
+    "host_started_at": 0,
+    "cwd": "/repo/architect-1",
+    "created_at": "<TIME>",
+    "seen_at": "<TIME>",
+    "state": "-",
+    "bindings": 0
+  }
+]

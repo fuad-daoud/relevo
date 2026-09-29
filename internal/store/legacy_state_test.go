@@ -2,62 +2,47 @@ package store
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
-// TestLoadMapsHeldAndOrphanedToActive is the plan's required case for #303
-// §1: the states this version deleted still load. A bind.json written with
-// state "held" (a pane payload in flight) or "orphaned" (the planner's
-// session gone) reads back as active, so an old binding keeps working instead
-// of being refused.
-func TestLoadMapsHeldAndOrphanedToActive(t *testing.T) {
-	for _, legacy := range []string{"held", "orphaned"} {
-		t.Run(legacy, func(t *testing.T) {
-			root := t.TempDir()
-			s := New(root)
+// TestLoadLegacyStates pins the states this version deleted still loading:
+// "held" (a payload in flight) and "orphaned" (the mastermind's session gone)
+// read back as active, while a state the version does know is not rewritten.
+func TestLoadLegacyStates(t *testing.T) {
+	s := New(t.TempDir())
 
-			// A bind.json written before those states were deleted, holding
-			// the legacy word as an older relevo wrote it. The import is what
-			// reads it now (P3a plan §4.3).
+	for _, tc := range []struct {
+		name string
+		set  *string
+		want State
+	}{
+		{"held", ptr("held"), StateActive},
+		{"orphaned", ptr("orphaned"), StateActive},
+		{"a known state is kept", nil, StateNeedsYou},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			b := newBinding("webshop", "/repo/webshop")
 			b.Round = 2
-			b.State = State(legacy)
-			raw, err := json.MarshalIndent(b, "", "  ")
+			if tc.set != nil {
+				b.State = State(*tc.set)
+			} else {
+				b.State = StateNeedsYou
+			}
+			raw, err := json.Marshal(b)
 			if err != nil {
-				t.Fatalf("encode bind.json: %v", err)
+				t.Fatalf("encode record JSON: %v", err)
 			}
-			if err := os.MkdirAll(s.Dir("webshop"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(root, "webshop", "bind.json"), raw, 0o644); err != nil {
-				t.Fatalf("write bind.json: %v", err)
-			}
+			putRecordJSON(t, s, "webshop", string(raw))
 
 			got, err := s.Load("webshop")
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if got.State != StateActive {
-				t.Errorf("state %q loaded as %q, want active", legacy, got.State)
+			if got.State != tc.want {
+				t.Errorf("state %v loaded as %q, want %q", tc.set, got.State, tc.want)
 			}
 		})
 	}
 }
 
-// TestLoadKeepsKnownStates is the other side of that mapping: a state this
-// version does know is not rewritten on load.
-func TestLoadKeepsKnownStates(t *testing.T) {
-	s := New(t.TempDir())
-	if err := s.Save(Binding{Name: "webshop", CWD: "/repo/webshop", State: StateNeedsYou}); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	got, err := s.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.State != StateNeedsYou {
-		t.Errorf("State = %q, want the stored needs_you", got.State)
-	}
-}
+func ptr[T any](v T) *T { return &v }

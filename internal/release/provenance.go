@@ -1,6 +1,9 @@
 package release
 
-import "strings"
+import (
+	"runtime/debug"
+	"strings"
+)
 
 // Kind is how the running binary was installed.
 type Kind string
@@ -9,47 +12,42 @@ const (
 	KindGoInstall  Kind = "go-install"
 	KindLocalBuild Kind = "local-build"
 	// KindRelease is a binary built by release.yml and unpacked from a
-	// published archive. It is the only kind that carries the distribution
-	// stamp with a clean tag.
+	// published archive, the only kind carrying the distribution stamp with a
+	// clean tag.
 	KindRelease Kind = "release"
 	KindUnknown Kind = "unknown"
 )
 
 // DistributionRelease is the only value of main.distribution Detect
-// recognises. Any other non-empty value, such as a future "homebrew", falls
-// through to the existing rules.
+// recognises; any other non-empty value falls through to the existing rules.
 const DistributionRelease = "release"
 
-// Inputs is every fact Detect reads. The caller gathers them; Detect
-// touches no disk and no environment, so the table in the test is the
-// whole truth about this decision.
+// Inputs is every fact Detect reads; Detect touches no disk and no
+// environment, so this is the whole truth about the decision.
 type Inputs struct {
-	// Version is buildVersion(): a git describe, a module version, or "(devel)".
-	Version string
-	// ExeDir is filepath.Dir of the resolved executable path. Detect does not
-	// read it -- it records where the executable lives, so a caller can see
-	// at a glance which directory the classification is about.
-	ExeDir string
-	// FromModule is true when debug.ReadBuildInfo gave the version, i.e.
-	// there was no ldflags stamp.
-	FromModule bool
-	// Distribution is the main.distribution ldflags stamp. Only release.yml
-	// sets it, and it is empty in every other build. It is optional, and the
-	// zero value means "no claim".
+	Version    string // buildVersion(): a git describe, a module version, or "(devel)"
+	ExeDir     string // filepath.Dir of the resolved executable path
+	FromModule bool   // true when debug.ReadBuildInfo gave the version (no ldflags stamp)
+	// VCS is true when the build info carries vcs.revision: built from a VCS
+	// checkout, not the module cache. Meaningful only when FromModule is true.
+	VCS bool
+	// Distribution is the main.distribution ldflags stamp; only release.yml
+	// sets it. "" means no claim.
 	Distribution string
 }
 
-// Detect classifies the install. Pure. A binary that sits next to an old
-// plugin manifest is no longer special: with no manifest input it reads as
-// the kind it otherwise is.
+// Detect classifies the install. Pure.
 func Detect(in Inputs) Kind {
+	// Rule 1: the module supplied the version -- a VCS stamp or "(devel)"
+	// means a checkout, not the module cache.
 	if in.FromModule {
+		if in.VCS || in.Version == "(devel)" {
+			return KindLocalBuild
+		}
 		return KindGoInstall
 	}
-	// Rule 2: the release stamp together with a clean tag. A stamped
-	// non-clean version -- a describe suffix, -dirty or (devel) -- is not a
-	// release, and falls through to rule 3, which classifies it as a local
-	// build.
+	// Rule 2: the release stamp with a clean tag; a dirty or suffixed version
+	// falls through to rule 3 as a local build.
 	if in.Distribution == DistributionRelease {
 		if v, ok := ParseVersion(in.Version); ok && v.Suffix == "" {
 			return KindRelease
@@ -64,9 +62,20 @@ func Detect(in Inputs) Kind {
 	return KindUnknown
 }
 
-// hasDescribeSuffix reports whether v ends in the tail a build made inside a
-// git checkout gets: `git describe --tags --dirty` writes "-<N>-g<sha>", and
-// a dirty checkout appends "-dirty" to that.
+// HasVCSRevision reports whether settings carries a non-empty vcs.revision:
+// the signal that separates `go build` in a checkout from `go install
+// ...@v0.13.0` from the module cache, which has no settings at all.
+func HasVCSRevision(settings []debug.BuildSetting) bool {
+	for _, s := range settings {
+		if s.Key == "vcs.revision" && s.Value != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasDescribeSuffix reports whether v ends in the tail `git describe --tags
+// --dirty` produces: "-<N>-g<sha>", possibly with "-dirty" appended.
 func hasDescribeSuffix(v string) bool {
 	if strings.HasSuffix(v, "-dirty") {
 		return true

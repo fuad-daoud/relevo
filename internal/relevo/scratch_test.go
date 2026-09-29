@@ -46,6 +46,8 @@ func (g *orderedGit) RemoveWorktree(ctx context.Context, dir, path string, force
 }
 
 func TestCreateScratchOrder(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1"}
 	og := &orderedGit{fakeGit: fg}
@@ -81,6 +83,8 @@ func TestCreateScratchOrder(t *testing.T) {
 }
 
 func TestCreateScratchMaterializeFailureRemoves(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1", materializeErr: errors.New("boom")}
 	rt := Runtime{Git: fg, Store: store.New(t.TempDir())}
@@ -110,6 +114,8 @@ func TestCreateScratchMaterializeFailureRemoves(t *testing.T) {
 }
 
 func TestCreateScratchRemovesLeftover(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1"}
 	og := &orderedGit{fakeGit: fg}
@@ -141,6 +147,8 @@ func TestCreateScratchRemovesLeftover(t *testing.T) {
 }
 
 func TestScratchPathShape(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	got := st.ScratchWorktreePath("api", 7)
 	want := filepath.Join(".worktrees", ".scratch", "api-007")
@@ -149,11 +157,13 @@ func TestScratchPathShape(t *testing.T) {
 	}
 }
 
-// TestScratchRealGit drives the lifecycle against real git: a dirty edit
+// TestCreateScratchRealGit drives the lifecycle against real git: a dirty edit
 // survives into the scratch tree, RemoveScratch takes the tree away (twice),
 // and a sweep over three leftovers removes exactly the two whose round is
 // closed.
 func TestScratchRealGit(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	repo := t.TempDir()
@@ -234,5 +244,65 @@ func TestScratchRealGit(t *testing.T) {
 	}
 	if _, err := os.Stat(st.ScratchWorktreePath("web", 4)); err != nil {
 		t.Errorf("kept scratch %s is gone: %v", st.ScratchWorktreePath("web", 4), err)
+	}
+}
+
+// TestCreateScratchFromUsesTheGivenTree snapshots an earlier working state,
+// moves the tree on, then creates from the earlier snapshot: the scratch holds
+// the earlier state, not what is on disk at creation time.
+func TestCreateScratchFromUsesTheGivenTree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.name", "Test")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "a.txt")
+	runGit(t, repo, "commit", "-m", "first")
+
+	st := store.New(t.TempDir())
+	rt := Runtime{Git: git.NewClient("git", 0, 0), Store: st}
+	b := store.Binding{Name: "api", CWD: repo}
+
+	// The earlier state: a.txt holds "two".
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	head, err := rt.Git.HeadCommit(ctx, repo)
+	if err != nil {
+		t.Fatalf("HeadCommit: %v", err)
+	}
+	tree, err := rt.Git.SnapshotTree(ctx, repo)
+	if err != nil {
+		t.Fatalf("SnapshotTree: %v", err)
+	}
+
+	// The tree moves on; the snapshot taken above must win.
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("three\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := CreateScratchFrom(ctx, rt, b, 1, head, tree)
+	if err != nil {
+		t.Fatalf("CreateScratchFrom: %v", err)
+	}
+	if s.Head != head || s.Tree != tree {
+		t.Errorf("Scratch = %+v, want Head=%s Tree=%s", s, head, tree)
+	}
+	got, err := os.ReadFile(filepath.Join(s.Path, "a.txt"))
+	if err != nil {
+		t.Fatalf("read scratch a.txt: %v", err)
+	}
+	if string(got) != "two\n" {
+		t.Errorf("scratch a.txt = %q, want the earlier state %q", got, "two\n")
+	}
+
+	if err := RemoveScratch(ctx, rt, b, 1); err != nil {
+		t.Fatalf("RemoveScratch: %v", err)
 	}
 }

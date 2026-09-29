@@ -10,19 +10,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// headSampleBytes is how much of an append-only member's start is hashed
-// to detect a rewrite (docs/specs/2026-09-20-persistence-design.md §5.2).
+// headSampleBytes is how much of an append-only member's start is hashed to
+// detect a rewrite.
 const headSampleBytes = 4096
 
-// sha256Hex is the hex-encoded sha256 of data.
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 
-// cursorSourceKey is the ingest_cursor natural key for member of src:
-// "<abs dir>/<member>" for a live source, "<tarball>::<member>" for an
-// archive.
+// cursorSourceKey is the ingest_cursor natural key for member of src.
 func cursorSourceKey(src Source, member string) string {
 	kind, path := src.Origin()
 	if kind == "archive" {
@@ -31,33 +28,24 @@ func cursorSourceKey(src Source, member string) string {
 	return filepath.Join(path, member)
 }
 
-// readAppendOnly reads the content opener produces in full and returns
-// every complete line (without its trailing newline) added since cur --
-// from cur's byte offset when it is still valid, from the start otherwise
-// -- plus the cursor to save under sourceKey. A trailing partial line is
-// left for the next read. startSeq is how many complete lines precede the
-// first returned line (0 when reading from the start), so a caller
-// numbering rows by absolute line index in the file can continue from it.
+// readAppendOnly returns every complete line added since cur, plus the cursor to
+// save. A trailing partial line waits for the next read; startSeq counts the
+// complete lines preceding the first returned one.
 //
-// The rewrite check hashes only the bytes already confirmed read by the
-// saved cursor -- the first min(headSampleBytes, cur.ByteOffset) bytes --
-// never the current file's own first headSampleBytes: for a file still
-// under headSampleBytes long, comparing against the live head would make
-// every ordinary append look like a rewrite, since appending grows what
-// "the first headSampleBytes" contains. Hashing only the confirmed prefix
-// is stable under append and still catches a rewrite that changes it.
+// The rewrite check hashes only the bytes the saved cursor already confirmed --
+// min(headSampleBytes, cur.ByteOffset) -- never the current file's own first
+// headSampleBytes: for a file still shorter than headSampleBytes, comparing
+// against the live head would make every ordinary append look like a rewrite.
 //
-// reset is true when the content shrank below cur.ByteOffset or that
-// prefix's hash no longer matches cur.HeadSHA: the caller logs that at
-// Info. It is not an error -- readAppendOnly always returns every line
-// from wherever it started reading, and the UNIQUE keys on event and
-// transcript make re-appending already-known rows a no-op.
+// reset is true when the content shrank below cur.ByteOffset or that prefix's
+// hash changed. It is not an error: the caller logs at Info, and the UNIQUE keys
+// on event and transcript make re-appending known rows a no-op.
 func readAppendOnly(opener func() (io.ReadCloser, error), sourceKey string, cur db.Cursor, hasCursor bool) (lines [][]byte, startSeq int, next db.Cursor, reset bool, err error) {
 	rc, err := opener()
 	if err != nil {
 		return nil, 0, db.Cursor{}, false, err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
@@ -82,10 +70,7 @@ func readAppendOnly(opener func() (io.ReadCloser, error), sourceKey string, cur 
 	newOffset := offset
 	tail := data[offset:]
 	if end := bytes.LastIndexByte(tail, '\n'); end >= 0 {
-		complete := tail[:end]
-		for _, line := range bytes.Split(complete, []byte{'\n'}) {
-			lines = append(lines, line)
-		}
+		lines = append(lines, bytes.Split(tail[:end], []byte{'\n'})...)
 		newOffset = offset + int64(end) + 1
 	}
 

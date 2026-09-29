@@ -1,0 +1,81 @@
+{
+  "tools": [
+    {
+      "description": "One binding, or every binding on this MasterMind, or (all: true) every binding relevo knows about. Calls relevo.Status.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "all": {
+            "description": "include every binding relevo knows about, not just this MasterMind's",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "show only this binding",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "status"
+    },
+    {
+      "description": "Hand a binding's runner a new round: stage file as the round's plan and prompt the runner. Calls relevo.Send, or relevo.SendDryRun when dry_run is true.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "description": "candidate name or token to run this round and later ones on (persists); refused while a round is open",
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "check preconditions and report what send would do, without sending",
+            "type": "boolean"
+          },
+          "file": {
+            "description": "path to the plan file",
+            "type": "string"
+          },
+          "name": {
+            "description": "binding name",
+            "type": "string"
+          },
+          "regate": {
+            "description": "automatic repair rounds after a failing gate; 0 disables",
+            "type": "integer"
+          },
+          "tier": {
+            "description": "permission tier override: harness|read|edit|yolo",
+            "type": "string"
+          },
+          "verify": {
+            "description": "run a read-only reviewer when the round closes",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "file"
+        ],
+        "type": "object"
+      },
+      "name": "send"
+    },
+    {
+      "description": "Mark a binding done once its round is verified; relaying stops. Calls relevo.Done.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "binding name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "done"
+    }
+  ]
+}

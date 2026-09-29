@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
@@ -64,22 +64,24 @@ func orderOf(role string, toks ...string) policy.Policy {
 	return policy.Policy{Order: map[string][]string{role: toks}}
 }
 
-// spawn is a SpawnFailed gate on token, for tests.
-func spawn(token string) ledger.Gate {
-	return ledger.Gate{Token: token, Kind: ledger.SpawnFailed, Until: baseTime.Add(10 * time.Minute)}
+// spawnGate is a SpawnFailed gate on token, for tests.
+func spawnGate(token string) availability.Gate {
+	return availability.Gate{Token: token, Kind: availability.SpawnFailed, Until: baseTime.Add(10 * time.Minute)}
 }
 
 // limit is a RateLimited gate on token with no Until, for tests.
-func limit(token string) ledger.Gate {
-	return ledger.Gate{Token: token, Kind: ledger.RateLimited}
+func limit(token string) availability.Gate {
+	return availability.Gate{Token: token, Kind: availability.RateLimited}
 }
 
 func TestResolveCandidate(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name            string
 		setBody         string
 		pol             policy.Policy
-		gates           []ledger.Gate
+		gates           []availability.Gate
 		token           string
 		role            string
 		wantRef         string
@@ -175,7 +177,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:         "order, first gated",
 			setBody:      testCandidatesJSON,
 			pol:          orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef),
-			gates:        []ledger.Gate{spawn(testAgyRef)},
+			gates:        []availability.Gate{spawnGate(testAgyRef)},
 			token:        "",
 			role:         "builder",
 			wantRef:      testClaudeRef,
@@ -187,7 +189,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:        "order, two gated, unlisted wins",
 			setBody:     testCandidatesJSON,
 			pol:         orderOf("builder", testAgyRef, testClaudeRef),
-			gates:       []ledger.Gate{spawn(testAgyRef), spawn(testClaudeRef)},
+			gates:       []availability.Gate{spawnGate(testAgyRef), spawnGate(testClaudeRef)},
 			token:       "",
 			role:        "builder",
 			wantRef:     testOpencodeRef,
@@ -198,14 +200,14 @@ func TestResolveCandidate(t *testing.T) {
 			name:    "order, all gated",
 			setBody: testCandidatesJSON,
 			pol:     orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef),
-			gates:   []ledger.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)},
+			gates:   []availability.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)},
 			token:   "",
 			role:    "builder",
 			wantErr: ErrAllGated,
 			messageContains: []string{
 				`every candidate serving "builder" is gated`,
 				"agy/test/m (rate-limited until cleared)",
-				"--builder",
+				"--candidate",
 				"relevo gate --clear",
 			},
 		},
@@ -242,7 +244,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:         "order, two gates on one token",
 			setBody:      testCandidatesJSON,
 			pol:          orderOf("builder", testAgyRef, testClaudeRef),
-			gates:        []ledger.Gate{spawn(testAgyRef), limit(testAgyRef)},
+			gates:        []availability.Gate{spawnGate(testAgyRef), limit(testAgyRef)},
 			token:        "",
 			role:         "builder",
 			wantRef:      testClaudeRef,
@@ -253,7 +255,7 @@ func TestResolveCandidate(t *testing.T) {
 		{
 			name:    "sole, gated",
 			setBody: testCandidatesJSON,
-			gates:   []ledger.Gate{limit(testClaudeRef)},
+			gates:   []availability.Gate{limit(testClaudeRef)},
 			token:   "",
 			role:    "reviewer",
 			wantErr: ErrAllGated,
@@ -261,7 +263,7 @@ func TestResolveCandidate(t *testing.T) {
 		{
 			name:    "explicit, gated, proceeds",
 			setBody: testCandidatesJSON,
-			gates:   []ledger.Gate{limit(testAgyRef)},
+			gates:   []availability.Gate{limit(testAgyRef)},
 			token:   testAgyRef,
 			role:    "builder",
 			wantRef: testAgyRef,
@@ -278,7 +280,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:         "order with gate on other provider",
 			setBody:      testTwoProviderJSON,
 			pol:          orderOf("builder", "agy/other/m", testClaudeRef),
-			gates:        []ledger.Gate{limit("agy/other/m")},
+			gates:        []availability.Gate{limit("agy/other/m")},
 			token:        "",
 			role:         "builder",
 			wantRef:      testClaudeRef,
@@ -337,6 +339,8 @@ func TestResolveCandidate(t *testing.T) {
 }
 
 func TestResolveCandidateIsDeterministic(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 
 	c1, err1 := resolveCandidate(set, policy.Policy{}, nil, "", "reviewer")
@@ -359,6 +363,8 @@ func TestResolveCandidateIsDeterministic(t *testing.T) {
 }
 
 func TestExplainResolution(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	lookup := func(tok string) candidate.Candidate {
 		ref, err := candidate.ParseRef(tok)
@@ -376,7 +382,7 @@ func TestExplainResolution(t *testing.T) {
 	opencode := lookup(testOpencodeRef)
 
 	until := baseTime.Add(10 * time.Minute)
-	untilText := GateUntilText(until)
+	untilText := availability.GateUntilText(until)
 
 	tests := []struct {
 		name string
@@ -397,7 +403,7 @@ func TestExplainResolution(t *testing.T) {
 				How:       HowOrder,
 				Position:  2,
 				Candidate: claude,
-				Skipped:   []Skip{{Token: testAgyRef, Kind: ledger.SpawnFailed, Until: until}},
+				Skipped:   []Skip{{Token: testAgyRef, Kind: availability.SpawnFailed, Until: until}},
 			},
 			want: "picked claude/test/m for builder: order #2; skipped " + testAgyRef + " (spawn failed " + untilText + ")",
 		},
@@ -408,8 +414,8 @@ func TestExplainResolution(t *testing.T) {
 				How:       HowUnlisted,
 				Candidate: opencode,
 				Skipped: []Skip{
-					{Token: testAgyRef, Kind: ledger.SpawnFailed, Until: until},
-					{Token: testClaudeRef, Kind: ledger.RateLimited},
+					{Token: testAgyRef, Kind: availability.SpawnFailed, Until: until},
+					{Token: testClaudeRef, Kind: availability.RateLimited},
 				},
 			},
 			want: "picked opencode/test/m for builder: unlisted, after order; skipped " + testAgyRef + " (spawn failed " + untilText + "), " + testClaudeRef + " (rate-limited until cleared)",
@@ -424,9 +430,9 @@ func TestExplainResolution(t *testing.T) {
 				Position:  2,
 				Candidate: claude,
 				Skipped: []Skip{
-					{Token: testAgyRef, Kind: ledger.RateLimited},
-					{Token: testAgyRef, Kind: ledger.RateLimited},
-					{Token: testAgyRef, Kind: ledger.RateLimited},
+					{Token: testAgyRef, Kind: availability.RateLimited},
+					{Token: testAgyRef, Kind: availability.RateLimited},
+					{Token: testAgyRef, Kind: availability.RateLimited},
 				},
 			},
 			want: "picked claude/test/m for builder: order #2; skipped " + testAgyRef + " (rate-limited until cleared)",
@@ -438,8 +444,8 @@ func TestExplainResolution(t *testing.T) {
 				How:       HowExplicit,
 				Candidate: agy,
 				Gates: []Skip{
-					{Token: testAgyRef, Kind: ledger.RateLimited},
-					{Token: testAgyRef, Kind: ledger.RateLimited},
+					{Token: testAgyRef, Kind: availability.RateLimited},
+					{Token: testAgyRef, Kind: availability.RateLimited},
 				},
 			},
 			want: "picked agy/test/m for builder: explicit, policy bypassed; gated: rate-limited until cleared",
@@ -457,7 +463,7 @@ func TestExplainResolution(t *testing.T) {
 				How:           HowExplicit,
 				Candidate:     agy,
 				InheritedFrom: "source",
-				Gates:         []Skip{{Token: testAgyRef, Kind: ledger.RateLimited}},
+				Gates:         []Skip{{Token: testAgyRef, Kind: availability.RateLimited}},
 			},
 			want: "picked agy/test/m for builder: explicit, inherited from source, policy bypassed; gated: rate-limited until cleared",
 		},
@@ -478,6 +484,8 @@ func TestExplainResolution(t *testing.T) {
 // byte-identical to its pre-A1 text, while PickText, the line a human reads,
 // names each candidate.
 func TestPickTextUsesNamesStoredNoteUnchanged(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	ref, err := candidate.ParseRef(testClaudeRef)
 	if err != nil {
@@ -489,15 +497,15 @@ func TestPickTextUsesNamesStoredNoteUnchanged(t *testing.T) {
 	}
 
 	until := baseTime.Add(10 * time.Minute)
-	untilText := GateUntilText(until)
+	untilText := availability.GateUntilText(until)
 
 	res := Resolution{
 		How:       HowOrder,
 		Position:  2,
 		Candidate: claude,
 		Skipped: []Skip{
-			{Token: testAgyRef, Kind: ledger.SpawnFailed, Until: until},
-			{Token: testOpencodeRef, Kind: ledger.RateLimited},
+			{Token: testAgyRef, Kind: availability.SpawnFailed, Until: until},
+			{Token: testOpencodeRef, Kind: availability.RateLimited},
 		},
 	}
 
@@ -527,6 +535,8 @@ func TestPickTextUsesNamesStoredNoteUnchanged(t *testing.T) {
 }
 
 func TestCandidateKind(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{
 		Candidates: candidateSet(t, testCandidatesJSON),
 		Gates:      testGateKV(t),
@@ -557,26 +567,28 @@ func (f fakeRoleChecker) Missing(kind string, _ []string) []string { return f[ki
 // makes rolesMissingGates run even when rt.Roles is nil would make this
 // control assertion fail.
 func TestRolesMissingSkipsInOrder(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testOpencodeRef, testClaudeRef)
 	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
 
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), "", "builder")
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, availability.Gates(AvailabilityDeps(rt)), "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate: %v", err)
 	}
 	if res.Token() != testClaudeRef {
 		t.Errorf("picked %q, want %q", res.Token(), testClaudeRef)
 	}
-	if explain := ExplainResolution("builder", res); !strings.Contains(explain, "skipped "+testOpencodeRef+" (roles missing") {
-		t.Errorf("ExplainResolution = %q, want it to contain %q", explain, "skipped "+testOpencodeRef+" (roles missing")
+	if explain := ExplainResolution("builder", res); !strings.Contains(explain, "skipped "+testOpencodeRef+" (agents missing") {
+		t.Errorf("ExplainResolution = %q, want it to contain %q", explain, "skipped "+testOpencodeRef+" (agents missing")
 	}
 
 	// Control: rt.Roles == nil means no check is configured, so nothing is
 	// gated and the first candidate in order is picked -- today's
 	// behaviour.
 	rt.Roles = nil
-	res2, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), "", "builder")
+	res2, err := resolveCandidate(rt.Candidates, rt.Policy, availability.Gates(AvailabilityDeps(rt)), "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate (rt.Roles == nil): %v", err)
 	}
@@ -587,23 +599,27 @@ func TestRolesMissingSkipsInOrder(t *testing.T) {
 
 // TestRolesMissingRefusesExplicit pins #238's explicit-pick half: unlike
 // every other gate (recorded, but the pick proceeds), roles_missing refuses
-// an explicit --builder pick outright, because it cannot succeed.
+// an explicit --candidate pick outright, because it cannot succeed.
 func TestRolesMissingRefusesExplicit(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
 
-	_, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), testOpencodeRef, "builder")
+	_, err := resolveCandidate(rt.Candidates, rt.Policy, availability.Gates(AvailabilityDeps(rt)), testOpencodeRef, "builder")
 	if err == nil {
 		t.Fatal("resolveCandidate succeeded, want a refusal")
 	}
-	if !strings.Contains(err.Error(), "roles missing") || !strings.Contains(err.Error(), "relevo config agents --kind") {
-		t.Errorf("err = %q, want it to contain %q and %q", err.Error(), "roles missing", "relevo config agents --kind")
+	if !strings.Contains(err.Error(), "agent definitions missing") || !strings.Contains(err.Error(), "relevo config agents --kind") {
+		t.Errorf("err = %q, want it to contain %q and %q", err.Error(), "agent definitions missing", "relevo config agents --kind")
 	}
 }
 
 // TestResolveRoleByName pins A1 §4.2: an explicit candidate may be named by
 // its short name, and the refusals name the candidate by that name.
 func TestResolveRoleByName(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 
 	res, err := resolveCandidate(set, policy.Policy{}, nil, "claude-m", "builder")

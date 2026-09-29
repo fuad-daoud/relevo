@@ -1,0 +1,10 @@
+{
+  "bindings": [
+    {
+      "cwd": "/repo/webshop",
+      "name": "webshop",
+      "round": 2,
+      "state": "active"
+    }
+  ]
+}

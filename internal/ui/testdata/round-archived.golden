@@ -1,20 +1,15 @@
- relevo › fleet › oldapi › r3                                                                                                         14:02 
-oldapi · round 3 of 3 · archived 2026-08-01                                                                                                 
-oldapi · round 3 of 3 · archived 2026-08-01                                                                                                 
+  ◆ relevo   fleet › oldapi ›  r3                                                                                      v0.13.0-28    14:02  
                                                                                                                                             
+   oldapi · round 3 of 3 · archived 2026-08-01                                                           round 3 of 3 · archived 2026-08-01 
+   no live facts for a released binding                                                                                                     
                                                                                                                                             
+   prompt     report     transcript     diff     log                                                              round   [   r3 of 3   ]   
                                                                                                                                             
+     prompt r3                                                                                                                              
                                                                                                                                             
- plan    report    terminal    diff    log                                                                                                  
-━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-plan r3 · 14:02                                                                                                                             
+     Round 3 plan                                                                                                                           
                                                                                                                                             
-# Round 3 plan                                                                                                                              
-                                                                                                                                            
-Do the thing.                                                                                                                               
-                                                                                                                                            
-                                                                                                                                            
-                                                                                                                                            
+     Do the thing.                                                                                                                          
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
@@ -36,5 +31,10 @@ Do the thing.
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-tab next tab   1-5 tab   [ ] round   ↑↓ scroll   : command   ? help   esc back                                                              
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+
+ tab  next tab      [ ]  round      :  command      ?  all keys      esc  back                                                              

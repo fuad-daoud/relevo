@@ -1,0 +1,3 @@
+ok  	example.com/pkg/a	0.010s	coverage: 71.3% of statements
+ok  	example.com/pkg/b	0.005s	coverage: 50.0% of statements
+ok  	example.com/pkg/c	0.002s	coverage: 10.0% of statements

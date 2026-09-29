@@ -1,10 +1,14 @@
- relevo › rounds                                                                                                                                          14:02 
-all rounds                                                                                                                                                      
-rounds 3   cost $1.52 (1 unknown)   tokens 3.7M   halted 1 · exited 0   median 19m   bindings 2 · builders 2                                                    
-started           binding       rnd  builder                               outcome        commits  tree    gate   tokens   cost     duration                    
-2026-09-17 12:02  persist       r5   claude/anthropic/sonnet               reported       +1       clean   pass   1.2M     $0.42    27m                         
-2026-09-16 12:02  persist       r4   claude/anthropic/sonnet               halted         +0       dirty   fail   500k     $1.10    12m                         
-2026-09-15 12:02  api           r2   agy/antigravity/claude-sonnet-4-6     reported       +3       clean   pass   2.0M     ?        -                           
+  ◆ relevo    rounds                                                                                                                       v0.13.0-28    14:02  
+                                                                                                                                                                
+   3 rounds   3.7M tokens   0 done   1 halted   19m median                                                                                        sort newest   
+
+   STARTED  BINDING                                           RND   CANDIDATE              REPO                    OUTCOME     COMMITS  TREE    TOKENS   TOOK   
+   today ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 round · 1.2M   
+   12:02    persist                                           r5    claude/anthropic/son…  (no repo)               no outcome        1  clean     1.2M    27m   
+   yesterday ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 round · 500k   
+   12:02    persist                                           r4    claude/anthropic/son…  (no repo)               halted            0  dirty     500k    12m   
+   tue 15 sep ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 round · 2M   
+   12:02    api                                               r2    agy/antigravity/clau…  (no repo)               no outcome        3  clean       2M      ·   
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
@@ -32,9 +36,5 @@ started           binding       rnd  builder                               outco
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
-                                                                                                                                                                
-                                                                                                                                                                
-                                                                                                                                                                
-                                                                                                                                                                
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-/ filter   b regroup   s sort   S flip   enter open   r refresh   : command   ? help   q quit                                                                   
+
+ ↑↓  move      enter  open round      /  filter      b  regroup      s  sort      S  flip      r  refresh      :  command      ?  all keys      q  quit         

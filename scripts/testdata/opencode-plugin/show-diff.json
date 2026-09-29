@@ -1,0 +1,12 @@
+{
+  "Name": "webshop",
+  "Round": 4,
+  "Rounds": 4,
+  "Live": true,
+  "Archived": false,
+  "ArchivedAt": "0001-01-01T00:00:00Z",
+  "Section": "diff",
+  "Text": "diff --git a/cart.go b/cart.go\n+func ValidateCart() bool { return true }",
+  "Missing": false,
+  "Events": null
+}

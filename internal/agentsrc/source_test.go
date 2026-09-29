@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// The two fixtures §7 names: a writer with requires: [researcher] and
-// kinds: [], and a reader with kinds: [claude, agy].
-
 const writerBody = "Implement the plan exactly as written. Run the check before reporting.\n"
 
 const readerBody = "Design the page as static HTML and CSS.\n" +
@@ -85,8 +82,6 @@ func TestParseFormatRoundTrip(t *testing.T) {
 	}
 }
 
-// fmText builds a source text with the canonical key order, so a test can
-// vary exactly one line.
 func fmText(name, desc, shape, output, requires, kinds, body string) string {
 	return "---\n" +
 		"name: " + name + "\n" +
@@ -102,109 +97,110 @@ func goodText() string {
 	return fmText("feature-builder", "Builds the feature.", "writer", "report", "[]", "[]", "Do the work.\n")
 }
 
+var parseErrorCases = []struct {
+	name string
+	text string
+	want string
+}{
+	{
+		name: "missing opening fence",
+		text: strings.TrimPrefix(goodText(), "---\n"),
+		want: "line 1",
+	},
+	{
+		name: "missing closing fence",
+		text: "---\nname: feature-builder\ndescription: Builds the feature.\n",
+		want: "line",
+	},
+	{
+		name: "unknown key",
+		text: "---\nname: feature-builder\ndescription: Builds the feature.\nshape: writer\noutput: report\ncolour: blue\n---\n\nDo the work.\n",
+		want: "unknown key",
+	},
+	{
+		name: "duplicate key",
+		text: "---\nname: feature-builder\ndescription: Builds the feature.\nname: feature-builder\nshape: writer\noutput: report\n---\n\nDo the work.\n",
+		want: "duplicate key",
+	},
+	{
+		name: "missing name",
+		text: "---\ndescription: Builds the feature.\nshape: writer\noutput: report\n---\n\nDo the work.\n",
+		want: "name",
+	},
+	{
+		name: "missing description",
+		text: "---\nname: feature-builder\nshape: writer\noutput: report\n---\n\nDo the work.\n",
+		want: "description",
+	},
+	{
+		name: "missing shape",
+		text: "---\nname: feature-builder\ndescription: Builds the feature.\noutput: report\n---\n\nDo the work.\n",
+		want: "shape",
+	},
+	{
+		name: "missing output",
+		text: "---\nname: feature-builder\ndescription: Builds the feature.\nshape: writer\n---\n\nDo the work.\n",
+		want: "output",
+	},
+	{
+		name: "bad list",
+		text: fmText("feature-builder", "Builds the feature.", "writer", "report", "researcher", "[]", "Do the work.\n"),
+		want: "line",
+	},
+	{
+		name: "blank frontmatter line",
+		text: "---\nname: feature-builder\n\ndescription: Builds the feature.\nshape: writer\noutput: report\n---\n\nDo the work.\n",
+		want: "line",
+	},
+	{
+		name: "bad name",
+		text: fmText("Bad Name", "Builds the feature.", "writer", "report", "[]", "[]", "Do the work.\n"),
+		want: "name",
+	},
+	{
+		name: "bad output",
+		text: fmText("feature-builder", "Builds the feature.", "writer", "Report!", "[]", "[]", "Do the work.\n"),
+		want: "output",
+	},
+	{
+		name: "bad shape",
+		text: fmText("feature-builder", "Builds the feature.", "wizard", "report", "[]", "[]", "Do the work.\n"),
+		want: "shape",
+	},
+	{
+		name: "unknown kind",
+		text: fmText("feature-builder", "Builds the feature.", "writer", "report", "[]", "[nosuch]", "Do the work.\n"),
+		want: "kinds",
+	},
+	{
+		name: "duplicate require",
+		text: fmText("feature-builder", "Builds the feature.", "writer", "report", "[researcher, researcher]", "[]", "Do the work.\n"),
+		want: "requires",
+	},
+	{
+		name: "self-require",
+		text: fmText("feature-builder", "Builds the feature.", "writer", "report", "[feature-builder]", "[]", "Do the work.\n"),
+		want: "requires",
+	},
+	{
+		name: "shipped name",
+		text: fmText("plan-executor", "Builds the feature.", "writer", "report", "[]", "[]", "Do the work.\n"),
+		want: "shipped",
+	},
+	{
+		name: "codex fence in body",
+		text: fmText("feature-builder", "Builds the feature.", "writer", "report", "[]", "[]", "Use ''' to quote.\n"),
+		want: "body",
+	},
+	{
+		name: "blank body",
+		text: fmText("feature-builder", "Builds the feature.", "writer", "report", "[]", "[]", "   \n"),
+		want: "body",
+	},
+}
+
 func TestParseErrors(t *testing.T) {
-	cases := []struct {
-		name string
-		text string
-		want string
-	}{
-		{
-			name: "missing opening fence",
-			text: strings.TrimPrefix(goodText(), "---\n"),
-			want: "line 1",
-		},
-		{
-			name: "missing closing fence",
-			text: "---\nname: feature-builder\ndescription: Builds the feature.\n",
-			want: "line",
-		},
-		{
-			name: "unknown key",
-			text: "---\nname: feature-builder\ndescription: Builds the feature.\nshape: writer\noutput: report\ncolour: blue\n---\n\nDo the work.\n",
-			want: "unknown key",
-		},
-		{
-			name: "duplicate key",
-			text: "---\nname: feature-builder\ndescription: Builds the feature.\nname: feature-builder\nshape: writer\noutput: report\n---\n\nDo the work.\n",
-			want: "duplicate key",
-		},
-		{
-			name: "missing name",
-			text: "---\ndescription: Builds the feature.\nshape: writer\noutput: report\n---\n\nDo the work.\n",
-			want: "name",
-		},
-		{
-			name: "missing description",
-			text: "---\nname: feature-builder\nshape: writer\noutput: report\n---\n\nDo the work.\n",
-			want: "description",
-		},
-		{
-			name: "missing shape",
-			text: "---\nname: feature-builder\ndescription: Builds the feature.\noutput: report\n---\n\nDo the work.\n",
-			want: "shape",
-		},
-		{
-			name: "missing output",
-			text: "---\nname: feature-builder\ndescription: Builds the feature.\nshape: writer\n---\n\nDo the work.\n",
-			want: "output",
-		},
-		{
-			name: "bad list",
-			text: fmText("feature-builder", "Builds the feature.", "writer", "report", "researcher", "[]", "Do the work.\n"),
-			want: "line",
-		},
-		{
-			name: "blank frontmatter line",
-			text: "---\nname: feature-builder\n\ndescription: Builds the feature.\nshape: writer\noutput: report\n---\n\nDo the work.\n",
-			want: "line",
-		},
-		{
-			name: "bad name",
-			text: fmText("Bad Name", "Builds the feature.", "writer", "report", "[]", "[]", "Do the work.\n"),
-			want: "name",
-		},
-		{
-			name: "bad output",
-			text: fmText("feature-builder", "Builds the feature.", "writer", "Report!", "[]", "[]", "Do the work.\n"),
-			want: "output",
-		},
-		{
-			name: "bad shape",
-			text: fmText("feature-builder", "Builds the feature.", "wizard", "report", "[]", "[]", "Do the work.\n"),
-			want: "shape",
-		},
-		{
-			name: "unknown kind",
-			text: fmText("feature-builder", "Builds the feature.", "writer", "report", "[]", "[nosuch]", "Do the work.\n"),
-			want: "kinds",
-		},
-		{
-			name: "duplicate require",
-			text: fmText("feature-builder", "Builds the feature.", "writer", "report", "[researcher, researcher]", "[]", "Do the work.\n"),
-			want: "requires",
-		},
-		{
-			name: "self-require",
-			text: fmText("feature-builder", "Builds the feature.", "writer", "report", "[feature-builder]", "[]", "Do the work.\n"),
-			want: "requires",
-		},
-		{
-			name: "shipped name",
-			text: fmText("plan-executor", "Builds the feature.", "writer", "report", "[]", "[]", "Do the work.\n"),
-			want: "shipped",
-		},
-		{
-			name: "codex fence in body",
-			text: fmText("feature-builder", "Builds the feature.", "writer", "report", "[]", "[]", "Use ''' to quote.\n"),
-			want: "body",
-		},
-		{
-			name: "blank body",
-			text: fmText("feature-builder", "Builds the feature.", "writer", "report", "[]", "[]", "   \n"),
-			want: "body",
-		},
-	}
-	for _, tc := range cases {
+	for _, tc := range parseErrorCases {
 		_, err := Parse([]byte(tc.text))
 		if err == nil {
 			t.Errorf("%s: Parse succeeded, want an error", tc.name)
@@ -219,7 +215,6 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
-// The same body with kinds: [claude] is valid: codex is not rendered.
 func TestParseCodexFenceAllowedWithoutCodexKind(t *testing.T) {
 	text := fmText("feature-builder", "Builds the feature.", "writer", "report", "[]", "[claude]", "Use ''' to quote.\n")
 	if _, err := Parse([]byte(text)); err != nil {

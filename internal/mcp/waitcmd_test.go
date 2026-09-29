@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// serveOnce drives a fully-built Server over an in-memory pipe with one line
-// per request, so a test can set Mode as well as Verbs.
+// serveOnce drives a fully-built Server, so a test can set Mode as well as Verbs.
 func serveOnce(t *testing.T, srv *Server, requests []string) []byte {
 	t.Helper()
 	pr, pw := io.Pipe()
@@ -38,7 +38,7 @@ func serveOnce(t *testing.T, srv *Server, requests []string) []byte {
 // callSend drives one tools/call send and returns the tool result's text.
 func callSend(t *testing.T, mode Mode, res any) string {
 	t.Helper()
-	verbs := &fakeVerbs{sendFn: func(context.Context, SendArgs) (any, error) { return res, nil }}
+	verbs := &fakeVerbs{sendFn: func(context.Context, string, SendArgs) (any, error) { return res, nil }}
 	srv := &Server{Verbs: verbs, Version: "test", Mode: mode}
 	out := serveOnce(t, srv, []string{
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"send","arguments":{"name":"webshop","file":"/tmp/plan.md"}}}`,
@@ -62,37 +62,39 @@ func callSend(t *testing.T, mode Mode, res any) string {
 	return result.Content[0].Text
 }
 
-// TestMCPToolsModeSendResultCarriesBackgroundWait is the plan's required case
-// for #303 §4.5: in tools mode the send tool's result ends with the exact
-// background-wait command, carrying this binding's name and its round budget.
-func TestMCPToolsModeSendResultCarriesBackgroundWait(t *testing.T) {
-	text := callSend(t, ModeTools, sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"})
-
-	want := "background wait (run with run_in_background, then end your turn):\n" +
-		"  relevo wait --name webshop --timeout 24h0m0s"
-	if !strings.HasSuffix(text, want) {
-		t.Fatalf("send result text = %q, want it to end with:\n%s", text, want)
+// TestMCPSendResultDependsOnMode covers the two mode-specific shapes of a
+// send tool result, replacing TestMCPToolsModeSendResultCarriesBackgroundWait
+// and TestMCPChannelModeSendResultHasNoWaitLine.
+func TestMCPSendResultDependsOnMode(t *testing.T) {
+	res := sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"}
+	tests := []struct {
+		name  string
+		mode  Mode
+		check func(t *testing.T, text string)
+	}{
+		{"tools mode carries the background wait", ModeTools, func(t *testing.T, text string) {
+			want := "background wait (run with run_in_background, then end your turn):\n" +
+				"  relevo wait --name webshop --timeout 24h0m0s"
+			if !strings.HasSuffix(text, want) {
+				t.Fatalf("send result text = %q, want it to end with:\n%s", text, want)
+			}
+		}},
+		{"channel mode has no wait line", ModeChannel, func(t *testing.T, text string) {
+			if strings.Contains(text, "background wait") || strings.Contains(text, "relevo wait") {
+				t.Fatalf("channel-mode send result must carry no wait line, got %q", text)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.check(t, callSend(t, tt.mode, res))
+		})
 	}
 }
 
-// TestMCPChannelModeSendResultHasNoWaitLine is the other half of §4.5: in
-// channel mode the event arrives by itself, so the result carries no wait
-// command -- a report must not arrive twice, once by channel and once by pull.
-func TestMCPChannelModeSendResultHasNoWaitLine(t *testing.T) {
-	text := callSend(t, ModeChannel, sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"})
-
-	if strings.Contains(text, "background wait") || strings.Contains(text, "relevo wait") {
-		t.Fatalf("channel-mode send result must carry no wait line, got %q", text)
-	}
-}
-
-// TestMCPInstructionsDependOnMode is §4.5's mode-dependent instructions: the
-// mode is known before initialize is answered, and the two texts say
-// different things. The channel text keeps no broken/orphaned mention, and
-// the tools text is where the background wait is explained.
 func TestMCPInstructionsDependOnMode(t *testing.T) {
-	channel := InstructionsFor(ModeChannel)
-	tools := InstructionsFor(ModeTools)
+	channel := InstructionsFor(ModeChannel, "")
+	tools := InstructionsFor(ModeTools, "")
 
 	if channel == tools {
 		t.Fatal("the two modes must be told different things")
@@ -111,7 +113,14 @@ func TestMCPInstructionsDependOnMode(t *testing.T) {
 		}
 	}
 	if strings.Contains(tools, "this pane") || strings.Contains(channel, "this pane") {
-		t.Error(`instructions must say "this planner", not "this pane"`)
+		t.Error(`instructions must say "this mastermind", not "this pane"`)
+	}
+	for _, tt := range []struct {
+		name, text string
+	}{{"channel", channel}, {"tools", tools}} {
+		if !strings.HasSuffix(tt.text, mastermind.Guide()) {
+			t.Errorf("%s instructions do not end with the guide", tt.name)
+		}
 	}
 
 	// initialize serves the mode's text when no override is set.
@@ -119,5 +128,57 @@ func TestMCPInstructionsDependOnMode(t *testing.T) {
 	res := srv.initializeResult()
 	if res["instructions"] != tools {
 		t.Error("initialize must serve the tools-mode text when Mode is ModeTools")
+	}
+}
+
+// TestMCPSendResultOpencodeHasNoWaitLine: an opencode tools server appends no
+// background wait; its report arrives as a new turn.
+func TestMCPSendResultOpencodeHasNoWaitLine(t *testing.T) {
+	res := sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"}
+	verbs := &fakeVerbs{sendFn: func(context.Context, string, SendArgs) (any, error) { return res, nil }}
+	srv := &Server{Verbs: verbs, Version: "test", Mode: ModeTools, Kind: "opencode"}
+	out := serveOnce(t, srv, []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"send","arguments":{"name":"webshop","file":"/tmp/plan.md"}}}`,
+	})
+	lines := splitLines(out)
+	if len(lines) != 1 {
+		t.Fatalf("want one response line, got %d: %q", len(lines), string(out))
+	}
+	resp := decodeResponse(t, lines[0])
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("marshal tool result: %v", err)
+	}
+	var result ToolResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("decode tool result: %v", err)
+	}
+	if len(result.Content) == 0 {
+		t.Fatal("tool result has no content")
+	}
+	if text := result.Content[0].Text; strings.Contains(text, "background wait") || strings.Contains(text, "relevo wait") {
+		t.Errorf("opencode send result must carry no wait line, got %q", text)
+	}
+}
+
+// TestMCPInstructionsOpencode pins the opencode prelude: reports arrive as new
+// turns, no wait to start, and initialize serves it for an opencode server.
+func TestMCPInstructionsOpencode(t *testing.T) {
+	text := InstructionsFor(ModeTools, "opencode")
+	if !strings.Contains(text, "new turns") {
+		t.Error("opencode instructions must say reports arrive as new turns")
+	}
+	for _, word := range []string{"run_in_background", "background wait"} {
+		if strings.Contains(text, word) {
+			t.Errorf("opencode instructions must not mention %q", word)
+		}
+	}
+	if !strings.HasSuffix(text, mastermind.Guide()) {
+		t.Error("opencode instructions do not end with the guide")
+	}
+
+	srv := &Server{Verbs: &fakeVerbs{}, Version: "test", Mode: ModeTools, Kind: "opencode"}
+	if res := srv.initializeResult(); res["instructions"] != text {
+		t.Error("initialize must serve the opencode text for an opencode server")
 	}
 }

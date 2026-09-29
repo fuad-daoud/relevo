@@ -1,0 +1,34 @@
+  ◆ relevo   actors ›  builder                                                                                 v0.13.0-28    14:02  
+                                                                                                                                    
+   plan-executor · writer   tier yolo   6 candidates   next pick sonnet                                                             
+                                                                                                                                    
+    #  CANDIDATE                                                                         HARNESS   PROVIDER    STATUS               
+    1  gemini-3.8-flash-high                                                             agy       google      gated                
+    2  claude-sonnet-4-6                                                                 agy       agy-extra   gated 20h            
+    3  deepseek-v4.1-flash                                                               opencode  cline-pass  gated 1d             
+    4  gpt-5.6-terr╭─ edit builder ─────────────────────────────────────────────────────────────────────────────╮ted 24d            
+    5  sonnet      │                                                                                            │ady  next pick     
+    6  glm-5.3-flas│ name       builder                                                                         │ady                
+                   │                                                                                            │                   
+                   │ agent       plan-executor                                                                  │                   
+   check after each│            writer                                                                          │                   
+                   │                                                                                            │                   
+                   │ tier        read    edit    yolo    harness                                                │                   
+                   │                                                                                            │                   
+                   │ check       on    off                                                                      │                   
+                   │                                                                                            │                   
+                   │                                                                                            │                   
+                   │  enter  save       tab  next field       esc  cancel                                       │                   
+                   ╰────────────────────────────────────────────────────────────────────────────────────────────╯                   
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ enter  save      tab  next field      esc  cancel                                                                                  

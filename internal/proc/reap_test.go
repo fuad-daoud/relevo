@@ -10,8 +10,7 @@ import (
 	"time"
 )
 
-// TestWithoutPID covers the pure exclusion that keeps ps's own pid out of the
-// inherited set (#371 §4.6).
+// TestWithoutPID covers the pure exclusion of ps's own pid.
 func TestWithoutPID(t *testing.T) {
 	tests := []struct {
 		name string
@@ -34,9 +33,9 @@ func TestWithoutPID(t *testing.T) {
 	}
 }
 
-// TestInheritedReaperDropsANonChild covers the drop half of the reap contract:
-// a pid in the set that is not our child (os.Getppid() never is) is dropped and
-// never reported as reaped, so a second Reap has nothing left to try.
+// TestInheritedReaperDropsANonChild covers the drop half of the contract: a pid
+// that is not our child is never reported as reaped, so a second Reap has
+// nothing left to try.
 func TestInheritedReaperDropsANonChild(t *testing.T) {
 	r := &InheritedReaper{pids: []int{os.Getppid()}}
 
@@ -49,17 +48,15 @@ func TestInheritedReaperDropsANonChild(t *testing.T) {
 }
 
 // TestScanChildrenPSExcludesItself runs the darwin path on Linux: an empty
-// procRoot forces scanPS, which starts ps as a child of this process. With no
-// other children running, the only candidate is ps itself, and the result must
-// be empty. Without the exclusion, ps's own pid is in the set.
+// procRoot forces scanPS, which starts ps as a child of this process.
 func TestScanChildrenPSExcludesItself(t *testing.T) {
 	if got := scanChildren(os.Getpid(), ""); len(got) != 0 {
 		t.Errorf("scanChildren(self, \"\") = %v, want nothing (ps must not list itself into the set)", got)
 	}
 }
 
-// TestInheritedReaperReapsAnInheritedChild covers §4.6: a child started before
-// the reaper is constructed is inherited, and Reap must collect it.
+// TestInheritedReaperReapsAnInheritedChild covers a child started before the
+// reaper is constructed; Reap must collect it, once.
 func TestInheritedReaperReapsAnInheritedChild(t *testing.T) {
 	cmd := exec.Command("sleep", "0.2")
 	if err := cmd.Start(); err != nil {
@@ -81,8 +78,7 @@ func TestInheritedReaperReapsAnInheritedChild(t *testing.T) {
 }
 
 // TestInheritedReaperLeavesNewChildrenAlone is the safety half: a child started
-// after construction is not in the inherited set, so Reap must not wait on it
-// and steal its status from exec.Cmd.
+// after construction is not in the inherited set, so Reap must not wait on it.
 func TestInheritedReaperLeavesNewChildrenAlone(t *testing.T) {
 	r := NewInheritedReaper(os.Getpid(), "/proc")
 

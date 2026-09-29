@@ -1,0 +1,318 @@
+index artifact_round_kind_consult_uidx artifact
+CREATE UNIQUE INDEX artifact_round_kind_consult_uidx ON artifact(round_id, kind, consult_id)
+
+index binding_feature_idx binding
+CREATE INDEX binding_feature_idx ON binding(feature)
+
+index binding_mastermind_id_idx binding
+CREATE INDEX binding_mastermind_id_idx ON binding(mastermind_id)
+
+index binding_name_created_at_uidx binding
+CREATE UNIQUE INDEX binding_name_created_at_uidx ON binding(name, created_at)
+
+index binding_record_owner_name_uidx binding_record
+CREATE UNIQUE INDEX binding_record_owner_name_uidx
+    ON binding_record(owner, name) WHERE archived_at IS NULL
+
+index binding_repo_id_idx binding
+CREATE INDEX binding_repo_id_idx ON binding(repo_id)
+
+index event_binding_round_seq_idx event
+CREATE INDEX event_binding_round_seq_idx ON event(binding_id, round_id, seq)
+
+index event_binding_seq_uidx event
+CREATE UNIQUE INDEX event_binding_seq_uidx ON event(binding_id, seq)
+
+index mastermind_harness_session_uidx mastermind
+CREATE UNIQUE INDEX mastermind_harness_session_uidx ON mastermind(harness_kind, session_id)
+
+index repo_common_dir_uidx repo
+CREATE UNIQUE INDEX repo_common_dir_uidx ON repo(common_dir) WHERE common_dir IS NOT NULL
+
+index repo_origin_url_uidx repo
+CREATE UNIQUE INDEX repo_origin_url_uidx ON repo(origin_url) WHERE origin_url IS NOT NULL
+
+index round_binding_number_uidx round
+CREATE UNIQUE INDEX round_binding_number_uidx ON round(binding_id, number)
+
+index round_candidate_idx round
+CREATE INDEX round_candidate_idx ON round(harness, provider, model)
+
+index round_started_at_idx round
+CREATE INDEX round_started_at_idx ON round(started_at)
+
+index sqlite_autoindex_artifact_1 artifact
+
+
+index sqlite_autoindex_binding_1 binding
+
+
+index sqlite_autoindex_binding_event_1 binding_event
+
+
+index sqlite_autoindex_binding_record_1 binding_record
+
+
+index sqlite_autoindex_config_doc_1 config_doc
+
+
+index sqlite_autoindex_event_1 event
+
+
+index sqlite_autoindex_ingest_cursor_1 ingest_cursor
+
+
+index sqlite_autoindex_kv_1 kv
+
+
+index sqlite_autoindex_mastermind_1 mastermind
+
+
+index sqlite_autoindex_repo_1 repo
+
+
+index sqlite_autoindex_round_1 round
+
+
+index sqlite_autoindex_round_file_1 round_file
+
+
+index sqlite_autoindex_secret_1 secret
+
+
+index sqlite_autoindex_session_consent_1 session_consent
+
+
+index sqlite_autoindex_transcript_1 transcript
+
+
+index transcript_owner_seq_uidx transcript
+CREATE UNIQUE INDEX transcript_owner_seq_uidx ON transcript(owner_kind, owner_id, seq)
+
+table artifact artifact
+CREATE TABLE artifact (
+    id TEXT PRIMARY KEY,
+    round_id TEXT NOT NULL REFERENCES round(id),
+    kind TEXT NOT NULL,
+    consult_id TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    captured_at TEXT NOT NULL
+)
+
+table binding binding
+CREATE TABLE binding (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    repo_id TEXT REFERENCES repo(id),
+    mastermind_id TEXT REFERENCES "mastermind"(id),
+    feature TEXT,
+    forked_from_binding_id TEXT REFERENCES binding(id),
+    forked_from_round INTEGER,
+    cwd TEXT NOT NULL,
+    worktree TEXT,
+    branch TEXT,
+    base_commit TEXT,
+    tier TEXT,
+    gate TEXT,
+    builder_mode TEXT NOT NULL,
+    server TEXT,
+    created_at TEXT NOT NULL,
+    final_state TEXT,
+    archived_at TEXT,
+    archive_path TEXT,
+    ingest_source TEXT NOT NULL
+, ticket TEXT)
+
+table binding_event binding_event
+CREATE TABLE binding_event (
+    record_id TEXT NOT NULL REFERENCES binding_record(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    direction TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    confirmed INTEGER NOT NULL,
+    delivered_at TEXT,
+    route TEXT,
+    entry_json TEXT NOT NULL,
+    PRIMARY KEY (record_id, seq)
+)
+
+table binding_record binding_record
+CREATE TABLE binding_record (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    state TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    cwd TEXT NOT NULL,
+    record_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    viewed_at TEXT,
+    archived_at TEXT
+)
+
+table config_doc config_doc
+CREATE TABLE config_doc (
+    name TEXT PRIMARY KEY,
+    body TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+
+table config_import config_import
+CREATE TABLE config_import (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    body BLOB NOT NULL,
+    imported_at TEXT NOT NULL
+)
+
+table config_meta config_meta
+CREATE TABLE config_meta (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL
+)
+
+table config_revision config_revision
+CREATE TABLE config_revision (
+    rev      INTEGER PRIMARY KEY,   -- rowid alias: 1, 2, 3 ... (never reused)
+    at       TEXT NOT NULL,         -- RFC3339 UTC milli (db.formatTime)
+    source   TEXT NOT NULL,         -- see internal/config §3.3
+    message  TEXT NOT NULL,         -- "" allowed
+    version  INTEGER NOT NULL,      -- config_meta.version after this write
+    changes  TEXT NOT NULL,         -- JSON array of config.Change; "[]" only for a baseline
+    snapshot TEXT NOT NULL          -- JSON object: the whole config document after the write
+)
+
+table event event
+CREATE TABLE event (
+    id TEXT PRIMARY KEY,
+    binding_id TEXT NOT NULL REFERENCES binding(id),
+    round_id TEXT REFERENCES round(id),
+    seq INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    note TEXT,
+    path TEXT,
+    delivered_at TEXT,
+    confirmed INTEGER NOT NULL,
+    late INTEGER NOT NULL,
+    flagged INTEGER,
+    flagged_by TEXT,
+    entry_json TEXT NOT NULL
+)
+
+table ingest_cursor ingest_cursor
+CREATE TABLE ingest_cursor (
+    source TEXT PRIMARY KEY,
+    byte_offset INTEGER NOT NULL,
+    head_sha TEXT NOT NULL,
+    whole_sha TEXT,
+    updated_at TEXT NOT NULL
+)
+
+table kv kv
+CREATE TABLE kv (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+
+table mastermind mastermind
+CREATE TABLE "mastermind" (
+    id TEXT PRIMARY KEY,
+    harness_kind TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    transcript_locator TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL
+)
+
+table repo repo
+CREATE TABLE repo (
+    id TEXT PRIMARY KEY,
+    origin_url TEXT,
+    common_dir TEXT,
+    first_seen TEXT NOT NULL
+, mastermind_consent TEXT, consent_at TEXT)
+
+table round round
+CREATE TABLE round (
+    id TEXT PRIMARY KEY,
+    binding_id TEXT NOT NULL REFERENCES binding(id),
+    number INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    closed_at TEXT,
+    outcome TEXT NOT NULL,
+    candidate TEXT,
+    harness TEXT,
+    provider TEXT,
+    model TEXT,
+    mode TEXT,
+    tier TEXT,
+    commits INTEGER,
+    tree TEXT,
+    gate_result TEXT,
+    gate_exit INTEGER,
+    gate_duration_ms INTEGER,
+    in_tokens INTEGER,
+    cache_tokens INTEGER,
+    write_tokens INTEGER,
+    out_tokens INTEGER,
+    cost_usd REAL,
+    cost_basis TEXT,
+    report_outcome TEXT,
+    switches INTEGER NOT NULL
+, actor TEXT NOT NULL DEFAULT 'builder')
+
+table round_file round_file
+CREATE TABLE round_file (
+    record_id TEXT NOT NULL REFERENCES binding_record(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    body BLOB NOT NULL,
+    bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    mtime TEXT NOT NULL,
+    sealed_at TEXT NOT NULL,
+    PRIMARY KEY (record_id, name)
+)
+
+table schema_version schema_version
+CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)
+
+table secret secret
+CREATE TABLE secret (
+    name TEXT PRIMARY KEY,
+    value BLOB NOT NULL,
+    updated_at TEXT NOT NULL
+)
+
+table session_consent session_consent
+CREATE TABLE session_consent (
+    harness_kind TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    answer TEXT,
+    answer_at TEXT,
+    told TEXT,
+    told_at TEXT,
+    PRIMARY KEY (harness_kind, session_id)
+)
+
+table transcript transcript
+CREATE TABLE transcript (
+    id TEXT PRIMARY KEY,
+    owner_kind TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    ts TEXT,
+    record_json TEXT NOT NULL,
+    rendered TEXT NOT NULL
+)
+
+schema_versions have=12 know=12

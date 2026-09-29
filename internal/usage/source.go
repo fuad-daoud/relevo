@@ -5,62 +5,49 @@ import (
 	"context"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/legacy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
-// Mode is how the builder ran.
 type Mode string
 
 const (
-	// ModePane is history only since #303: the db's history rows carry
-	// builder_mode='pane' and readers must still parse it, but nothing runs a
-	// pane any more.
-	ModePane     Mode = "pane"
 	ModeHeadless Mode = "headless"
 )
 
-// Source is everything a reader needs to find one round's record. It is
-// built by internal/relevo from a binding; this package never sees one.
+// Source is everything a reader needs to find one round's record.
 type Source struct {
 	Harness    string // "claude" | "agy" | "opencode" | "codex"
 	Mode       Mode
 	Provider   string // the candidate's; "" for an adopted builder
 	Model      string // the candidate's; "" for an adopted builder
 	Plan       bool   // the candidate's subscription flag
-	StreamPath string // headless: the round's NNN-builder.jsonl
-	// ReadFile, when set, reads a stream path that is no longer on disk: a
-	// sealed round's file, held in the store's database (P3c §4.5). nil keeps
-	// today's behaviour -- a path that is not on disk is "no stream".
+	StreamPath string // headless: the round's stream, NNN-runner.jsonl, or NNN-builder.jsonl for a round from before the rename
+	StreamFrom int64  // parse only bytes at or after this offset; 0 means whole stream
+	// ReadFile, when set, reads a sealed round's stream from the store's database.
 	ReadFile   func(string) ([]byte, error)
 	Worktree   string // pane: the binding's worktree; "" for a --cwd binding
 	Start, End time.Time
 }
 
-// Reader turns a Source into samples. It never errors: an unreadable
-// source is zero samples and a note saying why, and the round closes
-// regardless.
+// Reader turns a Source into samples; it never errors.
 type Reader interface {
 	Read(ctx context.Context, src Source) (samples []Sample, note string)
-	// Peek is Read without waiting for the record to close (#234): what
-	// is on disk now, for a surface that shows a running round. It never
-	// blocks past ctx and never errors.
+	// Peek is Read without waiting for the record to close.
 	Peek(ctx context.Context, src Source) (samples []Sample, note string)
 }
 
-// reader is a value type; mu and cache are pointers so every copy shares
-// them (#234): the cache maps a StreamPath to its parse state, so Peek on
-// every ui tick parses the appended bytes only. Not persisted.
+// reader's mu and cache are pointers, so every copy shares them.
 type reader struct {
 	mu    *sync.Mutex
 	cache map[string]*streamCache
 }
 
-// New returns the production reader.
 func New() Reader {
 	return reader{mu: &sync.Mutex{}, cache: map[string]*streamCache{}}
 }
@@ -73,8 +60,6 @@ func (r reader) Read(ctx context.Context, src Source) ([]Sample, string) {
 	return nil, "no reader for mode " + string(src.Mode)
 }
 
-// Peek is Read without the wait for the exit trailer (#234): a headless
-// stream is read as it stands (it may still be open).
 func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
 	switch src.Mode {
 	case ModeHeadless:
@@ -83,43 +68,18 @@ func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
 	return nil, "no reader for mode " + string(src.Mode)
 }
 
-// exitTrailer is proc.ExitTrailer: the last line relevo's supervisor
-// writes to a headless stream, after the harness has exited. Copied, not
-// imported, so this package stays free of relevo's process model;
-// TestExitTrailerMatchesProc in internal/relevo pins the two equal.
-const exitTrailer = "relevo-exit:"
+const trailerPoll = 200 * time.Millisecond // how often a still-open stream is re-checked
 
-// legacyExitTrailer is legacy.ExitTrailer: the same line a stream written
-// before the rename ends in (#292 §1). Taken from legacy rather than copied,
-// so the old name lives in one place; TestExitTrailerMatchesUsage in
-// internal/proc still pins it, and legacy is a stdlib-only leaf, so this
-// package keeps its independence from relevo's process model.
-const legacyExitTrailer = legacy.ExitTrailer
+const tailProbe = 256 // bytes of the file's end read to find the last line
 
-// ExitTrailerForTest exposes exitTrailer so internal/relevo can pin it to
-// proc.ExitTrailer; nothing else calls it.
-func ExitTrailerForTest() string { return exitTrailer }
-
-// LegacyExitTrailerForTest exposes legacyExitTrailer so internal/proc can
-// pin it to legacy.ExitTrailer; nothing else calls it.
-func LegacyExitTrailerForTest() string { return legacyExitTrailer }
-
-// trailerPoll is how often a still-open stream is re-checked.
-const trailerPoll = 200 * time.Millisecond
-
-// tailProbe is how much of the file's end is read to find the last line.
-const tailProbe = 256
-
-// streamClosed reports whether path's last non-empty line is the exit
-// trailer -- the harness has exited and its final event is on disk. A stream
-// written before the rename ends in the relay-exit: form instead, which // name-guard: legacy
-// closes the same way (#292 §1).
+// streamClosed reports whether path's last non-empty line is the exit trailer: the
+// harness has exited.
 func streamClosed(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return false
@@ -135,13 +95,10 @@ func streamClosed(path string) bool {
 	}
 	lines := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
 	last := lines[len(lines)-1]
-	return strings.HasPrefix(last, exitTrailer) || strings.HasPrefix(last, legacyExitTrailer)
+	return strings.HasPrefix(last, spawn.ExitTrailer)
 }
 
-// waitClosed blocks until the stream is closed or ctx is done, and
-// reports which. A round closes on the builder's done marker, which the
-// harness writes before its final event: the wait is what turns a race
-// into a measured figure.
+// waitClosed blocks until the stream is closed or ctx is done.
 func waitClosed(ctx context.Context, path string) bool {
 	for {
 		if streamClosed(path) {
@@ -178,10 +135,7 @@ func (r reader) readStream(ctx context.Context, src Source, wait bool) ([]Sample
 	return samples, ""
 }
 
-// readSealed reads a stream that is no longer on disk through Source.ReadFile:
-// a sealed round's stream, held as a row in the store's database (P3c §4.5).
-// A sealed file is complete by definition -- a round seals only once nothing
-// can still write it -- so it is read whole, never waited on and never cached.
+// readSealed reads a sealed round's stream through Source.ReadFile, whole.
 func readSealed(src Source) ([]Sample, string) {
 	if src.ReadFile == nil {
 		return nil, "no stream"
@@ -194,8 +148,12 @@ func readSealed(src Source) ([]Sample, string) {
 	if !ok {
 		return nil, "no reader for " + src.Harness
 	}
-	// Only whole lines are fed, exactly as parseCached does: a trailing
-	// partial line is not an event.
+	if src.StreamFrom <= int64(len(data)) {
+		data = data[src.StreamFrom:]
+	} else {
+		data = nil
+	}
+	// Only whole lines are fed, as parseCached does.
 	if i := bytes.LastIndexByte(data, '\n'); i >= 0 {
 		data = data[:i+1]
 	} else {
@@ -213,8 +171,7 @@ func readSealed(src Source) ([]Sample, string) {
 	return samples, ""
 }
 
-// newSourceCarry returns a fresh carry for src, resolving a codex model's
-// effort the way every reader path must.
+// newSourceCarry resolves a codex model's effort the way every reader path must.
 func newSourceCarry(src Source) (streamCarry, bool) {
 	model := src.Model
 	if src.Harness == "codex" {
@@ -225,11 +182,9 @@ func newSourceCarry(src Source) (streamCarry, bool) {
 	return newCarry(src.Harness, src.Provider, model)
 }
 
-// parseCached reads src's stream through the per-stream cache (#234):
-// stat first; an unchanged (size, mtime) is answered from the carry
-// without opening the file, an appended file is parsed from where the
-// last read stopped, and a file that shrank (truncated, or a new round
-// reusing the path) resets the entry.
+// parseCached reads src's stream through the per-stream cache: an unchanged (size,
+// mtime) is answered from the carry, an appended file from where the last read
+// stopped, and a shrunken file resets.
 func (r reader) parseCached(src Source) ([]Sample, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -237,18 +192,16 @@ func (r reader) parseCached(src Source) ([]Sample, string) {
 	if err != nil {
 		return nil, "no stream"
 	}
-	// Keyed by path and harness: a different harness reading the same
-	// path must never pick up the previous harness's carry (a round's
-	// stream belongs to one builder, but a test -- and a mid-round
-	// builder switch -- can point two harnesses at one path).
-	key := src.StreamPath + "\x00" + src.Harness
+	// Keyed by path, harness and stream offset: a different harness on the same path
+	// must not reuse the previous carry.
+	key := src.StreamPath + "\x00" + src.Harness + "\x00" + strconv.FormatInt(src.StreamFrom, 10)
 	e := r.cache[key]
-	if e == nil || info.Size() < e.offset {
+	if e == nil || info.Size() < e.offset || info.Size() < src.StreamFrom {
 		c, ok := newSourceCarry(src)
 		if !ok {
 			return nil, "no reader for " + src.Harness
 		}
-		e = &streamCache{carry: c}
+		e = &streamCache{carry: c, offset: src.StreamFrom}
 		r.cache[key] = e
 	}
 	if info.Size() == e.size && info.ModTime().Equal(e.mtime) {
@@ -258,7 +211,7 @@ func (r reader) parseCached(src Source) ([]Sample, string) {
 	if err != nil {
 		return nil, "no stream"
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Seek(e.offset, io.SeekStart); err != nil {
 		return nil, "no stream"
 	}
@@ -280,14 +233,10 @@ func (r reader) parseCached(src Source) ([]Sample, string) {
 	}
 	e.tail = append([]byte(nil), buf[last:]...)
 	if len(e.tail) > maxLine {
-		// A pathological line: dropped, as scanLines drops one today.
-		e.tail = nil
+		e.tail = nil // a pathological line, dropped as scanLines drops one
 	}
-	// offset is the bytes of the file already read from disk, tail bytes
-	// included: the next parse seeks here, so the held tail is never
-	// re-read, and buf above (tail + new bytes) is the file's own
-	// sequence. (Reading from size-len(tail) instead would re-read the
-	// tail and double it inside buf.)
+	// offset is the bytes already read from disk, tail included, so the held tail is
+	// never re-read.
 	e.offset = info.Size()
 	e.size, e.mtime = info.Size(), info.ModTime()
 	return e.carry.samples(), ""

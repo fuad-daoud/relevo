@@ -1,5 +1,6 @@
- relevo › fleet                                                                                                                       14:02 
-0 bindings · 0 need you · 0 active                                                                                            sort attention
+  ◆ relevo    fleet                                                                                                    v0.13.0-28    14:02  
+                                                                                                                                            
+   0 live                                                                                                                     sort attention
 status unavailable
 loading…                                                                                                                                    
                                                                                                                                             
@@ -35,6 +36,5 @@ loading…
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
-                                                                                                                                            
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ move   home/end first/last   enter open   a sort   / filter   : command   ? help   q quit                     ! refresh failed (retrying)
+
+ enter  open      /  filter      a  sort      :  command      ?  all keys      q  quit                           ! refresh failed (retrying)

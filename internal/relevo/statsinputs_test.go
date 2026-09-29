@@ -12,6 +12,8 @@ import (
 // windowed rows, the DONE bindings and the availability history from rt.DB,
 // and a latency read failure is a warning, never an error.
 func TestStatsInputsAssemblesFromDB(t *testing.T) {
+	t.Parallel()
+
 	d := openTestHistoryDB(t)
 
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
@@ -35,7 +37,7 @@ func TestStatsInputsAssemblesFromDB(t *testing.T) {
 	tok := "opencode/test/model"
 	if _, err := d.UpsertRound(db.Round{
 		BindingID: doneID, Number: 1, StartedAt: now.Add(-time.Hour),
-		Outcome: db.OutcomeReported, BuilderCandidate: ptr(tok),
+		Outcome: db.OutcomeReported, Candidate: ptr(tok),
 	}); err != nil {
 		t.Fatalf("UpsertRound in-window: %v", err)
 	}
@@ -83,6 +85,8 @@ func TestStatsInputsAssemblesFromDB(t *testing.T) {
 // TestStatsInputsEmptyLatencyIsNoWarning: an absent latency record is not an
 // error and not a warning -- a fresh install has probed nothing yet.
 func TestStatsInputsEmptyLatencyIsNoWarning(t *testing.T) {
+	t.Parallel()
+
 	d := openTestHistoryDB(t)
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	rt := Runtime{DB: d, Latency: testGateKV(t), Now: func() time.Time { return now }}

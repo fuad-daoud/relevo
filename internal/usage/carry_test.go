@@ -29,31 +29,26 @@ func appendBytes(t *testing.T, path, body string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString(body); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// cachedEntry digs the cache entry out through the same-package reader
-// value, so the tests can assert on its internals.
 func cachedEntry(t *testing.T, r Reader, path, harness string) *streamCache {
 	t.Helper()
 	rd, ok := r.(reader)
 	if !ok {
 		t.Fatal("production reader expected")
 	}
-	return rd.cache[path+"\x00"+harness]
+	return rd.cache[path+"\x00"+harness+"\x000"]
 }
 
-// TestParseCachedFeedsOnlyAppendedBytes pins the cache's reason to exist
-// (#234): a second Peek after the stream grows parses the appended bytes
-// only -- e.offset advances by exactly what was appended -- and returns
-// the whole fold.
+// TestParseCachedFeedsOnlyAppendedBytes pins that a second Peek after the stream
+// grows parses the appended bytes only and returns the whole fold.
 func TestParseCachedFeedsOnlyAppendedBytes(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "s.jsonl")
+	path := filepath.Join(t.TempDir(), "s.jsonl")
 	writeLines(t, path, stepFinish(1, 1), stepFinish(1, 1), stepFinish(1, 1))
 	r := New()
 	src := Source{Harness: "opencode", Mode: ModeHeadless, Provider: "p", Model: "m", StreamPath: path}
@@ -77,13 +72,11 @@ func TestParseCachedFeedsOnlyAppendedBytes(t *testing.T) {
 	}
 }
 
-// TestParseCachedPartialLineWaits pins that an incomplete trailing line is
-// held in the cache's tail, not fed half-parsed: no new samples until the
-// line completes, then the whole line's event.
+// TestParseCachedPartialLineWaits pins that an incomplete trailing line is held in
+// the cache's tail, not fed half-parsed.
 func TestParseCachedPartialLineWaits(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "s.jsonl")
+	path := filepath.Join(t.TempDir(), "s.jsonl")
 	writeLines(t, path, stepFinish(1, 1), stepFinish(1, 1), stepFinish(1, 1))
 	r := New()
 	src := Source{Harness: "opencode", Mode: ModeHeadless, Provider: "p", Model: "m", StreamPath: path}
@@ -108,12 +101,9 @@ func TestParseCachedPartialLineWaits(t *testing.T) {
 	}
 }
 
-// TestParseCachedTruncatedFileResets pins the shrink reset: a file that
-// lost bytes (a truncated or reused path) starts over.
 func TestParseCachedTruncatedFileResets(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "s.jsonl")
+	path := filepath.Join(t.TempDir(), "s.jsonl")
 	writeLines(t, path, stepFinish(1, 1), stepFinish(1, 1), stepFinish(1, 1), stepFinish(1, 1), stepFinish(1, 1))
 	r := New()
 	src := Source{Harness: "opencode", Mode: ModeHeadless, Provider: "p", Model: "m", StreamPath: path}
@@ -130,14 +120,11 @@ func TestParseCachedTruncatedFileResets(t *testing.T) {
 	}
 }
 
-// TestParseCachedUnchangedFileIsNoRead pins the stat short-circuit: with
-// no write between two Peeks the second opens nothing -- proven by taking
-// the file's read permission away between the calls (skipped as root,
-// where permissions do not stop the reader).
+// TestParseCachedUnchangedFileIsNoRead pins the stat short-circuit: with no write
+// between two Peeks the second opens nothing.
 func TestParseCachedUnchangedFileIsNoRead(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "s.jsonl")
+	path := filepath.Join(t.TempDir(), "s.jsonl")
 	writeLines(t, path, stepFinish(1, 1), stepFinish(1, 1))
 	r := New()
 	src := Source{Harness: "opencode", Mode: ModeHeadless, Provider: "p", Model: "m", StreamPath: path}
@@ -155,7 +142,7 @@ func TestParseCachedUnchangedFileIsNoRead(t *testing.T) {
 	if err := os.Chmod(path, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(path, 0o644) })
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
 	got, _ := r.Peek(ctx, src)
 	if len(got) != 2 {
 		t.Errorf("second Peek must be served from the cache: %d samples", len(got))
@@ -165,13 +152,11 @@ func TestParseCachedUnchangedFileIsNoRead(t *testing.T) {
 	}
 }
 
-// TestClaudeCarryDedupesAcrossFeeds pins that the claude carry's dedupe
-// survives the resumable form: the same message.id fed in two separate
-// Peek passes is still one sample.
+// TestClaudeCarryDedupesAcrossFeeds pins that the carry's dedupe survives the
+// resumable form: the same message.id fed in two Peek passes is one sample.
 func TestClaudeCarryDedupesAcrossFeeds(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "s.jsonl")
+	path := filepath.Join(t.TempDir(), "s.jsonl")
 	line := `{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-5","usage":{"input_tokens":10,"cache_read_input_tokens":0,"output_tokens":5}}}`
 	writeLines(t, path, line)
 	r := New()

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func TestServeUsageOnNoArgs(t *testing.T) {
@@ -85,26 +90,6 @@ func TestShowStateWithoutOwnerExits2(t *testing.T) {
 	}
 }
 
-// TestHistoryOwnerWithoutTabExits2 is TestServeShowWithoutOwnerExits2's port
-// to the new form (§8): `--owner` reads the server through the tab form, so
-// `history --owner` without `--tab` refuses, naming --tab, exit 2.
-func TestHistoryOwnerWithoutTabExits2(t *testing.T) {
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"history", "--owner", "alice"})
-	})
-
-	var ec exitCodeErr
-	if !errors.As(runErr, &ec) || ec.code != 2 {
-		t.Fatalf("expected exit code 2, got %v", runErr)
-	}
-	if len(stdout) != 0 {
-		t.Errorf("expected nothing on stdout, got %q", string(stdout))
-	}
-	if !strings.Contains(string(stderr), "--tab") {
-		t.Errorf("expected mention of --tab on stderr, got %q", string(stderr))
-	}
-}
-
 func TestServeFlagDefaults(t *testing.T) {
 	fs, sf := serveFlagSet()
 
@@ -157,11 +142,11 @@ func TestScopeFromPolicy(t *testing.T) {
 	enabledFalse := false
 	cases := map[string]struct {
 		sc   *policy.ScopePolicy
-		want *relevo.ScopeSpec
+		want *spawn.ScopeSpec
 	}{
 		"nil block defaults on": {
 			sc:   nil,
-			want: &relevo.ScopeSpec{CPUWeight: 100},
+			want: &spawn.ScopeSpec{CPUWeight: 100},
 		},
 		"enabled false is nil": {
 			sc:   &policy.ScopePolicy{Enabled: &enabledFalse},
@@ -169,25 +154,25 @@ func TestScopeFromPolicy(t *testing.T) {
 		},
 		"zero weight defaults to 100": {
 			sc:   &policy.ScopePolicy{},
-			want: &relevo.ScopeSpec{CPUWeight: 100},
+			want: &spawn.ScopeSpec{CPUWeight: 100},
 		},
 		"quota passes through": {
 			sc:   &policy.ScopePolicy{CPUQuota: "200%"},
-			want: &relevo.ScopeSpec{CPUWeight: 100, CPUQuota: "200%"},
+			want: &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "200%"},
 		},
 		"gate quota passes through": {
 			sc:   &policy.ScopePolicy{CPUQuota: "200%", GateCPUQuota: "300%"},
-			want: &relevo.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", GateCPUQuota: "300%"},
+			want: &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", GateCPUQuota: "300%"},
 		},
 		"slice and limits pass through": {
 			sc: &policy.ScopePolicy{
 				Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64,
 			},
-			want: &relevo.ScopeSpec{Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64},
+			want: &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64},
 		},
 		"allowed cpus passes through": {
 			sc:   &policy.ScopePolicy{CPUQuota: "200%", AllowedCPUs: "0-2"},
-			want: &relevo.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", AllowedCPUs: "0-2"},
+			want: &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", AllowedCPUs: "0-2"},
 		},
 	}
 	for name, c := range cases {
@@ -204,19 +189,19 @@ func TestScopeFromPolicy(t *testing.T) {
 // scope (#285, #295) and the gate quota suffix (#313).
 func TestScopeStatusText(t *testing.T) {
 	cases := map[string]struct {
-		sc   *relevo.ScopeSpec
+		sc   *spawn.ScopeSpec
 		want string
 	}{
 		"nil is off":            {sc: nil, want: "off"},
-		"bare is on":            {sc: &relevo.ScopeSpec{}, want: "on"},
-		"quota":                 {sc: &relevo.ScopeSpec{CPUQuota: "200%"}, want: "on (200%)"},
-		"slice":                 {sc: &relevo.ScopeSpec{Slice: "relevo.slice"}, want: "on (slice relevo.slice)"},
-		"slice and quota":       {sc: &relevo.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"}, want: "on (slice relevo.slice, 200%)"},
-		"gate only":             {sc: &relevo.ScopeSpec{GateCPUQuota: "300%"}, want: "on (gate 300%)"},
-		"quota and gate":        {sc: &relevo.ScopeSpec{CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (200%, gate 300%)"},
-		"slice and gate":        {sc: &relevo.ScopeSpec{Slice: "relevo.slice", GateCPUQuota: "300%"}, want: "on (slice relevo.slice, gate 300%)"},
-		"slice, quota and gate": {sc: &relevo.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (slice relevo.slice, 200%, gate 300%)"},
-		"cpus":                  {sc: &relevo.ScopeSpec{AllowedCPUs: "0-2"}, want: "on (cpus 0-2, one per round)"},
+		"bare is on":            {sc: &spawn.ScopeSpec{}, want: "on"},
+		"quota":                 {sc: &spawn.ScopeSpec{CPUQuota: "200%"}, want: "on (200%)"},
+		"slice":                 {sc: &spawn.ScopeSpec{Slice: "relevo.slice"}, want: "on (slice relevo.slice)"},
+		"slice and quota":       {sc: &spawn.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"}, want: "on (slice relevo.slice, 200%)"},
+		"gate only":             {sc: &spawn.ScopeSpec{GateCPUQuota: "300%"}, want: "on (gate 300%)"},
+		"quota and gate":        {sc: &spawn.ScopeSpec{CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (200%, gate 300%)"},
+		"slice and gate":        {sc: &spawn.ScopeSpec{Slice: "relevo.slice", GateCPUQuota: "300%"}, want: "on (slice relevo.slice, gate 300%)"},
+		"slice, quota and gate": {sc: &spawn.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (slice relevo.slice, 200%, gate 300%)"},
+		"cpus":                  {sc: &spawn.ScopeSpec{AllowedCPUs: "0-2"}, want: "on (cpus 0-2, one per round)"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -250,13 +235,39 @@ func TestServeTierRuntimeHasClock(t *testing.T) {
 		t.Fatalf("policy.Load: %v", err)
 	}
 
-	rt := serveTierRuntime(candidates, pol, root, nil)
+	rt := serveTierRuntime(candidates, pol, nil, root, nil)
 	if rt.Now == nil {
 		t.Fatal("serveTierRuntime returned a Runtime without a clock")
 	}
 	tier := relevo.ServedBuilderTier(rt) // this is the line that panicked in production
 	if tier == "" {
 		t.Fatal("expected a tier")
+	}
+}
+
+// TestServeTierRuntimeCarriesTheRegistry pins that the runtime cmdServeRun
+// logs the builder tier from carries the same registry the served rounds
+// resolve through, so the log cannot name a tier the rounds do not run at.
+func TestServeTierRuntimeCarriesTheRegistry(t *testing.T) {
+	root := t.TempDir()
+	candidatesJSON := `[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`
+	candidatesPath := filepath.Join(root, "candidates.json")
+	if err := os.WriteFile(candidatesPath, []byte(candidatesJSON), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	set, err := candidate.Load(candidatesPath)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+	pol := policy.Policy{MaxTier: "yolo"}
+	reg, err := roles.Build(nil, set, pol)
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+
+	rt := serveTierRuntime(set, pol, reg, root, nil)
+	if rt.Registry != reg {
+		t.Fatal("serveTierRuntime dropped the registry: the startup log would resolve the tier without it")
 	}
 }
 
@@ -392,4 +403,218 @@ func TestServeFlagAfterPositionalIsHonoured(t *testing.T) {
 	if !strings.Contains(runErr.Error(), dir) {
 		t.Errorf("error = %q, want it to contain %q", runErr, dir)
 	}
+}
+
+// runServeInit runs `relevo serve init` with args and returns its stdout. It
+// is fixture-only: init spawns nothing and reaches nothing but the state
+// directory and the machine database.
+func runServeInit(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	stdout, _, err := captureOutput(t, func() error {
+		return run(append([]string{"serve", "init"}, args...))
+	})
+	return string(stdout), err
+}
+
+// serveSecret reads a secret from the machine database the serve verbs use.
+func serveSecret(t *testing.T, name string) []byte {
+	t.Helper()
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	d, err := openDB(filepath.Join(root, "relevo.db"))
+	if err != nil {
+		t.Fatalf("openDB: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	val, ok, err := d.SecretGet(name)
+	if err != nil {
+		t.Fatalf("SecretGet(%s): %v", name, err)
+	}
+	if !ok {
+		t.Fatalf("secret %s is missing", name)
+	}
+	return val
+}
+
+// TestServeInitFreshLeavesARoot pins case 1 of the plan: a fresh run (no TLS
+// secrets, no root) creates <state>/serve/bindings before the secrets and
+// prints the fingerprint line, exit 0. Fixture-only: local key generation,
+// no harness, no network, no server.
+func TestServeInitFreshLeavesARoot(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	stdout, err := runServeInit(t, "--state", state)
+	if err != nil {
+		t.Fatalf("runServeInit: %v", err)
+	}
+	first := strings.SplitN(stdout, "\n", 2)[0]
+	if !regexp.MustCompile(`^fingerprint sha256:[0-9a-f]{64}$`).MatchString(first) {
+		t.Errorf("stdout first line = %q, want %q", first, "fingerprint sha256:<64 hex>")
+	}
+
+	info, err := os.Stat(filepath.Join(state, "serve", "bindings"))
+	if err != nil {
+		t.Fatalf("stat <state>/serve/bindings: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("<state>/serve/bindings is not a directory")
+	}
+	if len(serveSecret(t, "serve.tls.key")) == 0 {
+		t.Error("machine DB is missing serve.tls.key")
+	}
+	if len(serveSecret(t, "serve.tls.cert")) == 0 {
+		t.Error("machine DB is missing serve.tls.cert")
+	}
+}
+
+// TestServeInitRepairsAMissingRoot pins case 2 of the plan (the laptop's
+// case): with the TLS identity present and the root removed, the next run
+// leaves the identity untouched, recreates <root>/bindings, and prints
+// `already initialised; fingerprint <fp1>`.
+func TestServeInitRepairsAMissingRoot(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	first, err := runServeInit(t, "--state", state)
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	fp1 := strings.TrimPrefix(strings.SplitN(first, "\n", 2)[0], "fingerprint ")
+	keyBefore := serveSecret(t, "serve.tls.key")
+	certBefore := serveSecret(t, "serve.tls.cert")
+
+	if err := os.RemoveAll(filepath.Join(state, "serve")); err != nil {
+		t.Fatalf("RemoveAll <state>/serve: %v", err)
+	}
+
+	stdout, err := runServeInit(t, "--state", state)
+	if err != nil {
+		t.Fatalf("repair run: %v", err)
+	}
+	if !strings.HasPrefix(stdout, "already initialised; fingerprint "+fp1+"\n") {
+		t.Errorf("repair run stdout = %q, want already initialised with %s", stdout, fp1)
+	}
+
+	info, err := os.Stat(filepath.Join(state, "serve", "bindings"))
+	if err != nil {
+		t.Fatalf("stat bindings after repair: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("bindings is not a directory after repair")
+	}
+	if got := serveSecret(t, "serve.tls.key"); !bytes.Equal(got, keyBefore) {
+		t.Error("key bytes changed on the repair run")
+	}
+	if got := serveSecret(t, "serve.tls.cert"); !bytes.Equal(got, certBefore) {
+		t.Error("cert bytes changed on the repair run")
+	}
+}
+
+// TestServeInitSecondRunChangesNothing pins case 3 of the plan: with the root
+// present, the second run exits 0 with the same line, and a sentinel inside
+// bindings and the key/cert bytes are unchanged.
+func TestServeInitSecondRunChangesNothing(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	first, err := runServeInit(t, "--state", state)
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	fp := strings.TrimPrefix(strings.SplitN(first, "\n", 2)[0], "fingerprint ")
+
+	sentinel := filepath.Join(state, "serve", "bindings", "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	keyBefore := serveSecret(t, "serve.tls.key")
+	certBefore := serveSecret(t, "serve.tls.cert")
+
+	stdout, err := runServeInit(t, "--state", state)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if !strings.HasPrefix(stdout, "already initialised; fingerprint "+fp+"\n") {
+		t.Errorf("second run stdout = %q, want already initialised with %s", stdout, fp)
+	}
+	got, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("read sentinel: %v", err)
+	}
+	if string(got) != "keep me\n" {
+		t.Errorf("sentinel = %q, want it untouched", got)
+	}
+	if got := serveSecret(t, "serve.tls.key"); !bytes.Equal(got, keyBefore) {
+		t.Error("key bytes changed on the second run")
+	}
+	if got := serveSecret(t, "serve.tls.cert"); !bytes.Equal(got, certBefore) {
+		t.Error("cert bytes changed on the second run")
+	}
+}
+
+// TestServeInitRootFailureIsAnError pins case 4 of the plan: a root that
+// cannot be created makes cmdServeInit return before InitTLS, with no success
+// line and -- on the fresh path -- no secrets written.
+func TestServeInitRootFailureIsAnError(t *testing.T) {
+	t.Run("fresh", func(t *testing.T) {
+		state := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+		// A regular file where the root must be: MkdirAll(<state>/serve/bindings) fails.
+		if err := os.WriteFile(filepath.Join(state, "serve"), []byte("not a dir\n"), 0o644); err != nil {
+			t.Fatalf("write file at root: %v", err)
+		}
+
+		stdout, err := runServeInit(t, "--state", state)
+		if err == nil {
+			t.Fatal("runServeInit = nil, want an error when the root cannot be created")
+		}
+		if strings.Contains(stdout, "fingerprint") {
+			t.Errorf("stdout = %q, want no success line", stdout)
+		}
+
+		root, err := store.DefaultRoot()
+		if err != nil {
+			t.Fatalf("DefaultRoot: %v", err)
+		}
+		d, err := openDB(filepath.Join(root, "relevo.db"))
+		if err != nil {
+			t.Fatalf("openDB: %v", err)
+		}
+		defer func() { _ = d.Close() }()
+		if _, ok, err := d.SecretGet("serve.tls.key"); err != nil {
+			t.Fatalf("SecretGet(serve.tls.key): %v", err)
+		} else if ok {
+			t.Error("fresh failure run wrote serve.tls.key")
+		}
+	})
+
+	t.Run("already initialised", func(t *testing.T) {
+		state := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+		if _, err := runServeInit(t, "--state", state); err != nil {
+			t.Fatalf("seed run: %v", err)
+		}
+		// Replace <root>/bindings (a directory) with a regular file.
+		bindings := filepath.Join(state, "serve", "bindings")
+		if err := os.RemoveAll(bindings); err != nil {
+			t.Fatalf("RemoveAll bindings: %v", err)
+		}
+		if err := os.WriteFile(bindings, []byte("not a dir\n"), 0o644); err != nil {
+			t.Fatalf("write file at bindings: %v", err)
+		}
+
+		stdout, err := runServeInit(t, "--state", state)
+		if err == nil {
+			t.Fatal("runServeInit = nil, want an error when bindings cannot be created")
+		}
+		if strings.Contains(stdout, "already initialised") {
+			t.Errorf("stdout = %q, want no success line", stdout)
+		}
+	})
 }

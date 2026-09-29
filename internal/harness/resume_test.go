@@ -9,14 +9,9 @@ import (
 )
 
 // TestResumePerKind pins the resume argv for every kind that has one: the
-// print form's shape, the harness's own session flag, and the tier's
-// permission args appended after the base form exactly as Launch appends
-// them. opencode has no read-only form, so a resume at read is refused and
-// the caller asks at harness (--fork keeps the original session untouched);
-// codex has no verified resume form at all.
-//
-// Mutation check: rendering the plain headless print form instead of the
-// resume form leaves out --resume/--conversation/--session and fails here.
+// session flag and the tier's permission args appended exactly as Launch
+// appends them. opencode has no read-only form, so a resume at read is
+// refused; codex has no verified resume form at all.
 func TestResumePerKind(t *testing.T) {
 	const prompt = "you built round 1"
 	tests := []struct {
@@ -40,7 +35,7 @@ func TestResumePerKind(t *testing.T) {
 		},
 		{
 			name: "opencode", kind: "opencode", id: "ses-1", tier: TierHarness,
-			want: []string{"run", prompt, "--session", "ses-1", "--fork", "--format", "json", "--standalone"},
+			want: []string{"run", prompt, "--session", "ses-1", "--fork", "--format", "json", "--thinking", "--standalone"},
 		},
 		{
 			name: "opencode read", kind: "opencode", id: "ses-1", tier: TierRead,
@@ -87,9 +82,6 @@ func TestResumePerKind(t *testing.T) {
 	}
 }
 
-// TestResumeRefusalNamesTheKind keeps the refusal actionable: the caller
-// passes ErrResumeUnsupported through with the session's kind in it, and a
-// bare sentinel would say only that "some harness" cannot resume.
 func TestResumeRefusalNamesTheKind(t *testing.T) {
 	h, ok := Lookup("codex")
 	if !ok {
@@ -104,8 +96,6 @@ func TestResumeRefusalNamesTheKind(t *testing.T) {
 	}
 }
 
-// TestResumeRefusesWhitespace keeps the session id out of any position where
-// it could split into two argv elements: the id becomes one argument.
 func TestResumeRefusesWhitespace(t *testing.T) {
 	h, _ := Lookup("claude")
 	for _, id := range []string{"a b", "a\tb", "a\nb"} {
@@ -115,15 +105,73 @@ func TestResumeRefusesWhitespace(t *testing.T) {
 	}
 }
 
-// TestResumeBuildPerKind pins the lost builder's resume argv (#370, spec
-// §4.10): the builder-grade print form the round was started with, model flag
-// included, followed by the harness's own selector. The Launch is built by
-// Launch itself, so a selector that could not be combined with the round's
-// own flags would show up here.
-//
-// Mutation check: returning the plain print form instead of PrintArgs plus
-// the selector leaves --resume/--conversation/--session out and fails every
-// ok case; claiming a selector for codex fails the codex row.
+// TestDeleteSessionPerKind pins the delete argv for the one kind relevo can
+// delete sessions for: opencode's own delete, with --standalone so the delete
+// never starts the background service that would resume the session.
+func TestDeleteSessionPerKind(t *testing.T) {
+	t.Parallel()
+
+	h, ok := Lookup("opencode")
+	if !ok {
+		t.Fatal("Lookup(\"opencode\") not found")
+	}
+	got, err := h.DeleteSession("ses-1")
+	if err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	want := []string{"session", "delete", "--standalone", "ses-1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("DeleteSession() = %v, want %v", got, want)
+	}
+}
+
+// TestDeleteSessionUnsupportedNamesTheKind pins the refusal for every kind
+// whose sessions end with their process: claude and agy continue a session in
+// place, codex has no verified delete.
+func TestDeleteSessionUnsupportedNamesTheKind(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []string{"claude", "agy", "codex"} {
+		h, ok := Lookup(kind)
+		if !ok {
+			t.Fatalf("Lookup(%q) not found", kind)
+		}
+		argv, err := h.DeleteSession("sess-1")
+		if !errors.Is(err, ErrSessionDeleteUnsupported) {
+			t.Errorf("DeleteSession(%q) error = %v, want ErrSessionDeleteUnsupported", kind, err)
+		}
+		if err == nil || !strings.Contains(err.Error(), kind) {
+			t.Errorf("DeleteSession(%q) error = %q, want it to name the kind", kind, err)
+		}
+		if argv != nil {
+			t.Errorf("DeleteSession(%q) = %v, want nil alongside the refusal", kind, argv)
+		}
+	}
+}
+
+func TestDeleteSessionRefusesAnEmptyOrFlagShapedID(t *testing.T) {
+	t.Parallel()
+
+	h, _ := Lookup("opencode")
+	for _, id := range []string{"", "-x"} {
+		if argv, err := h.DeleteSession(id); err == nil {
+			t.Errorf("DeleteSession(%q) = %v, want a refusal", id, argv)
+		}
+	}
+}
+
+type resumeBuildCase struct {
+	name    string
+	kind    string
+	id      string
+	want    []string
+	wantErr error
+	refuse  bool
+}
+
+// TestResumeBuildPerKind pins the lost builder's resume argv: the builder-grade
+// print form the round was started with, model flag included, followed by the
+// harness's own selector.
 func TestResumeBuildPerKind(t *testing.T) {
 	const (
 		provider = "test"
@@ -138,14 +186,7 @@ func TestResumeBuildPerKind(t *testing.T) {
 		t.Fatal("RoleByName(\"builder\") not found")
 	}
 
-	tests := []struct {
-		name    string
-		kind    string
-		id      string
-		want    []string
-		wantErr error
-		refuse  bool
-	}{
+	tests := []resumeBuildCase{
 		{
 			name: "claude", kind: "claude", id: "sess-1",
 			want: []string{"-p", prompt, "--model", model, "--agent", "plan-executor",
@@ -160,66 +201,55 @@ func TestResumeBuildPerKind(t *testing.T) {
 		{
 			name: "opencode", kind: "opencode", id: "ses-1",
 			want: []string{"run", prompt, "-m", provider + "/" + model, "--agent", "plan-executor",
-				"--format", "json", "--standalone", "--session", "ses-1", "--fork"},
+				"--format", "json", "--thinking", "--standalone", "--session", "ses-1", "--fork"},
 		},
-		{
-			name: "codex", kind: "codex", id: "thread-1",
-			wantErr: ErrResumeUnsupported,
-		},
-		{
-			name: "unknown kind", kind: "future", id: "id-1",
-			wantErr: ErrResumeUnsupported,
-		},
-		{
-			name: "empty id", kind: "claude", id: "",
-			refuse: true,
-		},
-		{
-			name: "whitespace id", kind: "claude", id: "a b",
-			refuse: true,
-		},
-		{
-			name: "flag-shaped id", kind: "claude", id: "-x",
-			refuse: true,
-		},
+		{name: "codex", kind: "codex", id: "thread-1", wantErr: ErrResumeUnsupported},
+		{name: "unknown kind", kind: "future", id: "id-1", wantErr: ErrResumeUnsupported},
+		{name: "empty id", kind: "claude", id: "", refuse: true},
+		{name: "whitespace id", kind: "claude", id: "a b", refuse: true},
+		{name: "flag-shaped id", kind: "claude", id: "-x", refuse: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := Harness{Kind: tt.kind}
-			if known, ok := Lookup(tt.kind); ok {
-				h = known
-			}
-			l, err := h.Launch(provider, model, nil, builder, TierHarness)
-			if err != nil {
-				t.Fatalf("Launch(%s): %v", tt.kind, err)
-			}
-			got, err := h.ResumeBuild(tt.id, l, prompt, budget, dir, state)
-			switch {
-			case tt.wantErr != nil:
-				if !errors.Is(err, tt.wantErr) {
-					t.Fatalf("ResumeBuild() error = %v, want %v", err, tt.wantErr)
-				}
-				if got != nil {
-					t.Errorf("ResumeBuild() = %v, want nil alongside the refusal", got)
-				}
-			case tt.refuse:
-				if err == nil {
-					t.Fatalf("ResumeBuild(%q) = %v, want a refusal", tt.id, got)
-				}
-			default:
-				if err != nil {
-					t.Fatalf("ResumeBuild() error = %v", err)
-				}
-				if !reflect.DeepEqual(got, tt.want) {
-					t.Errorf("ResumeBuild() = %v, want %v", got, tt.want)
-				}
-				// The result is the round's print form and then the
-				// selector -- nothing else, and in that order.
-				base := l.PrintArgs(prompt, budget, dir, state)
-				if len(got) < len(base) || !reflect.DeepEqual(got[:len(base)], base) {
-					t.Errorf("ResumeBuild() = %v, want it to start with PrintArgs %v", got, base)
-				}
-			}
+			checkResumeBuild(t, tt, builder, provider, model, prompt, budget, dir, state)
 		})
+	}
+}
+
+func checkResumeBuild(t *testing.T, tt resumeBuildCase, builder RoleSpec, provider, model, prompt string, budget time.Duration, dir, state string) {
+	t.Helper()
+	h := Harness{Kind: tt.kind}
+	if known, ok := Lookup(tt.kind); ok {
+		h = known
+	}
+	l, err := h.Launch(provider, model, nil, builder, TierHarness)
+	if err != nil {
+		t.Fatalf("Launch(%s): %v", tt.kind, err)
+	}
+	got, err := h.ResumeBuild(tt.id, l, prompt, budget, dir, state)
+	switch {
+	case tt.wantErr != nil:
+		if !errors.Is(err, tt.wantErr) {
+			t.Fatalf("ResumeBuild() error = %v, want %v", err, tt.wantErr)
+		}
+		if got != nil {
+			t.Errorf("ResumeBuild() = %v, want nil alongside the refusal", got)
+		}
+	case tt.refuse:
+		if err == nil {
+			t.Fatalf("ResumeBuild(%q) = %v, want a refusal", tt.id, got)
+		}
+	default:
+		if err != nil {
+			t.Fatalf("ResumeBuild() error = %v", err)
+		}
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("ResumeBuild() = %v, want %v", got, tt.want)
+		}
+		// The result is the round's print form and then the selector.
+		base := l.PrintArgs(prompt, budget, dir, state)
+		if len(got) < len(base) || !reflect.DeepEqual(got[:len(base)], base) {
+			t.Errorf("ResumeBuild() = %v, want it to start with PrintArgs %v", got, base)
+		}
 	}
 }

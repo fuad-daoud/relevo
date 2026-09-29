@@ -1,0 +1,7 @@
+{"event":"result","result":{"conversation_id":"c1","status":"ERROR","response":"","error":"API error (attempt 8): RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h39m27s."}}
+{"event":"result","result":{"conversation_id":"c2","status":"ERROR","response":"","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h43m8s."}}
+{"event":"result","result":{"conversation_id":"c3","status":"ERROR","response":"","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 20m48s."}}
+{"event":"result","result":{"conversation_id":"c4","status":"ERROR","response":"","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h38m7s."}}
+{"event":"result","result":{"conversation_id":"c5","status":"ERROR","response":"","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 43h27m30s."}}
+{"event":"result","result":{"conversation_id":"c6","status":"ERROR","response":"/state/ck-d2-round/001-report.md\n","error":"API error (attempt 1): request failed: Post \"https://example.invalid/v1:streamGenerateContent\": read tcp: connection reset by peer"}}
+{"event":"result","result":{"conversation_id":"c7","status":"ERROR","response":"/state/spaceapi-ingest/001-report.md\n","error":"API error (attempt 1): UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server"}}

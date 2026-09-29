@@ -34,15 +34,39 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 		}
 		b = loaded
 
-		prompt := composePrompt(b, rt.Store.PlanPath(name, b.Round), rt.Store.ReportPath(name, b.Round), rt.Store.DonePath(name, b.Round))
+		prompt := composePrompt(rt, b, rt.Store.PromptPath(name, b.Round), rt.Store.ReportPath(name, b.Round), rt.Store.DonePath(name, b.Round))
+
+		// Add the oom note because the worktree may hold partial work.
+		if b.OOMRequeue != nil {
+			prompt += "\n\n" + oomNote(b.OOMRequeue.At)
+			b.OOMRequeue = nil
+		}
+
+		reason := ""
+		if _, gated := gatedBuilder(rt, b); gated {
+			reason = "gated while queued"
+		} else if staleBuilder(rt, b) {
+			reason = "candidate " + b.BuilderCandidate + " is no longer configured"
+		}
 
 		var switched bool
 		var startErr error
-		if _, gated := gatedBuilder(rt, b); gated {
-			switched = true
-			b, startErr = switchBuilder(ctx, rt, tx, b, "gated while queued", false /*closeOld*/, false /*counted*/)
-		} else {
-			b, startErr = startRound(ctx, rt, tx, b, prompt)
+		// A queued reader round runs in its scratch worktree (A5 §2): create it
+		// before the admit spawns anything, from the baseline the deferred Send
+		// captured. A failure leaves the binding NEEDS YOU below, like any
+		// other admit failure, and never falls back to b.CWD.
+		if b.Shape == store.ShapeReader {
+			if _, err := CreateScratchFrom(ctx, rt, b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
+				startErr = err
+			}
+		}
+		if startErr == nil {
+			if reason != "" {
+				switched = true
+				b, startErr = switchBuilder(ctx, rt, tx, b, reason, false /*closeOld*/, false /*counted*/)
+			} else {
+				b, startErr = startRound(ctx, rt, tx, b, prompt)
+			}
 		}
 
 		if startErr != nil {
@@ -63,12 +87,12 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 		age := rt.Now().Sub(b.QueuedAt).Round(time.Second)
 		note := fmt.Sprintf("started after %s queued", age)
 		if switched {
-			note = fmt.Sprintf("started after %s queued (switched: %s)", age, "gated while queued")
+			note = fmt.Sprintf("started after %s queued (switched: %s)", age, reason)
 		}
 		b.RoundStartedAt = rt.Now()
 		b.QueuedAt = time.Time{}
 		if err := tx.AppendLog(name, store.LogEntry{
-			TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindQueue, Confirmed: true,
+			TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true,
 			Note: note,
 		}); err != nil {
 			return err

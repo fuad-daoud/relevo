@@ -6,9 +6,8 @@ import (
 	"errors"
 )
 
-// ToolSpec is one entry of the tools/list document: a JSON Schema object
-// input, additionalProperties always false so an unexpected argument is a
-// client-visible mistake rather than silently ignored.
+// ToolSpec is one entry of the tools/list document: additionalProperties is
+// always false so an unexpected argument is a visible mistake, not ignored.
 type ToolSpec struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
@@ -21,43 +20,37 @@ type StatusArgs struct {
 	All  bool   `json:"all,omitempty"`
 }
 
-// SendArgs is send's input: {name, file, tier?, builder?, verify?, regate?,
-// dry_run?}. Name and File are required.
+// SendArgs is send's input; Name and File are required.
 type SendArgs struct {
-	Name    string `json:"name"`
-	File    string `json:"file"`
-	Tier    string `json:"tier,omitempty"`
-	Builder string `json:"builder,omitempty"`
-	Verify  *bool  `json:"verify,omitempty"`
-	Regate  *int   `json:"regate,omitempty"`
-	DryRun  bool   `json:"dry_run,omitempty"`
+	Name      string `json:"name"`
+	File      string `json:"file"`
+	Tier      string `json:"tier,omitempty"`
+	Candidate string `json:"candidate,omitempty"`
+	Verify    *bool  `json:"verify,omitempty"`
+	Regate    *int   `json:"regate,omitempty"`
+	DryRun    bool   `json:"dry_run,omitempty"`
 }
 
-// DoneArgs is done's input: {name}. Name is required.
 type DoneArgs struct {
 	Name string `json:"name"`
 }
 
-// ToolResult is the result of a tools/call request.
 type ToolResult struct {
 	Content []Content `json:"content"`
 	IsError bool      `json:"isError,omitempty"`
 }
 
-// Content is one block of a ToolResult; every tool here emits exactly one,
-// of type "text".
+// Content is one block of a ToolResult; every tool here emits exactly one, of type "text".
 type Content struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
 
-// textResult wraps s as a single-block ToolResult.
 func textResult(s string, isError bool) ToolResult {
 	return ToolResult{Content: []Content{{Type: "text", Text: s}}, IsError: isError}
 }
 
-// jsonResult marshals v (indented, for a human skimming the transcript) into
-// a single-block ToolResult.
+// jsonResult marshals v, indented for a human skimming the transcript.
 func jsonResult(v any) (ToolResult, error) {
 	raw, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -78,19 +71,14 @@ func schemaObject(required []string, props map[string]any) map[string]any {
 	return s
 }
 
-// WaitCommand is the tools-mode background wait (#303 §4.5), rendered
-// exactly as the model must run it: with run_in_background, ending its turn,
-// while the round runs. budget is the binding's round budget in a form
-// `relevo wait --timeout` accepts. The wait itself prints the report, so
-// there is no second command to run (P4a round 2 §4.1).
+// WaitCommand is the tools-mode background wait, run with run_in_background
+// while the round runs; budget is the round timeout for `relevo wait --timeout`.
 func WaitCommand(name, budget string) string {
 	return "background wait (run with run_in_background, then end your turn):\n" +
 		"  relevo wait --name " + name + " --timeout " + budget
 }
 
-// appendWaitCommand appends the background-wait block to a tool result's
-// text, so the result ends with the command. A result with no text, or no
-// budget to wait for, is returned unchanged.
+// appendWaitCommand appends the background-wait block, unless there is no text or no budget.
 func appendWaitCommand(r ToolResult, name, budget string) ToolResult {
 	if budget == "" || len(r.Content) == 0 {
 		return r
@@ -104,23 +92,23 @@ func Tools() []ToolSpec {
 	return []ToolSpec{
 		{
 			Name:        "status",
-			Description: "One binding, or every binding on this planner, or (all: true) every binding relevo knows about. Calls relevo.Status.",
+			Description: "One binding, or every binding on this MasterMind, or (all: true) every binding relevo knows about. Calls relevo.Status.",
 			InputSchema: schemaObject(nil, map[string]any{
 				"name": map[string]any{"type": "string", "description": "show only this binding"},
-				"all":  map[string]any{"type": "boolean", "description": "include every binding relevo knows about, not just this planner's"},
+				"all":  map[string]any{"type": "boolean", "description": "include every binding relevo knows about, not just this MasterMind's"},
 			}),
 		},
 		{
 			Name:        "send",
-			Description: "Hand a binding's builder a new round: stage file as the round's plan and prompt the builder. Calls relevo.Send, or relevo.SendDryRun when dry_run is true.",
+			Description: "Hand a binding's runner a new round: stage file as the round's plan and prompt the runner. Calls relevo.Send, or relevo.SendDryRun when dry_run is true.",
 			InputSchema: schemaObject([]string{"name", "file"}, map[string]any{
-				"name":    map[string]any{"type": "string", "description": "binding name"},
-				"file":    map[string]any{"type": "string", "description": "path to the plan file"},
-				"tier":    map[string]any{"type": "string", "description": "permission tier override: harness|read|edit|yolo"},
-				"builder": map[string]any{"type": "string", "description": "candidate token to run this round and later ones on (persists); refused while a round is open"},
-				"verify":  map[string]any{"type": "boolean", "description": "run a read-only reviewer when the round closes"},
-				"regate":  map[string]any{"type": "integer", "description": "automatic repair rounds after a failing gate; 0 disables"},
-				"dry_run": map[string]any{"type": "boolean", "description": "check preconditions and report what send would do, without sending"},
+				"name":      map[string]any{"type": "string", "description": "binding name"},
+				"file":      map[string]any{"type": "string", "description": "path to the plan file"},
+				"tier":      map[string]any{"type": "string", "description": "permission tier override: harness|read|edit|yolo"},
+				"candidate": map[string]any{"type": "string", "description": "candidate name or token to run this round and later ones on (persists); refused while a round is open"},
+				"verify":    map[string]any{"type": "boolean", "description": "run a read-only reviewer when the round closes"},
+				"regate":    map[string]any{"type": "integer", "description": "automatic repair rounds after a failing gate; 0 disables"},
+				"dry_run":   map[string]any{"type": "boolean", "description": "check preconditions and report what send would do, without sending"},
 			}),
 		},
 		{
@@ -133,8 +121,7 @@ func Tools() []ToolSpec {
 	}
 }
 
-// decodeArgs strictly decodes raw (empty treated as {}) into dst, rejecting
-// unknown fields so a typo in a tool call is visible rather than ignored.
+// decodeArgs strictly decodes raw (empty treated as {}) into dst, so a typo in a tool call is visible.
 func decodeArgs(raw json.RawMessage, dst any) error {
 	if len(raw) == 0 {
 		raw = []byte("{}")

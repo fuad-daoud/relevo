@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // This file holds the internal/relevo test fixtures (#303 step 3). Before
 // #303 every one of them seeded its world through a fake pane client and
-// BindOptions.PlannerPane; both are gone, so each fixture now builds on
-// newRuntime's planner registry and on the store. No pane type appears here
+// BindOptions.MasterMindPane; both are gone, so each fixture now builds on
+// newRuntime's mastermind registry and on the store. No pane type appears here
 // at all: a local builder is a headless process relevo runs, and the tests
 // drive it through fakeRunner.
 
@@ -23,7 +24,7 @@ func seedBound(t *testing.T) (Runtime, store.Binding) {
 	t.Helper()
 	rt := newRuntime(t)
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -38,7 +39,7 @@ func seedHeadless(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	rt := newRuntime(t)
 	rt.Runner = fr
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind --headless: %v", err)
@@ -68,7 +69,7 @@ func seedClaudeHeadless(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	rt := newRuntime(t)
 	rt.Runner = fr
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testClaudeRef, PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: testClaudeRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	}); err != nil {
 		t.Fatalf("Bind --headless: %v", err)
 	}
@@ -82,19 +83,19 @@ func seedClaudeHeadless(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	return rt, b
 }
 
-// queuedBinding is seedBound with one planner-bound report entry already
-// queued and nothing sent: a payload is waiting on the planner.
+// queuedBinding is seedBound with one mastermind-bound report entry already
+// queued and nothing sent: a payload is waiting on the mastermind.
 func queuedBinding(t *testing.T) (Runtime, store.Binding) {
 	t.Helper()
 	rt, b := seedBound(t)
 
 	entry := store.LogEntry{
-		Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
 		Path:    "/x/001-report.md",
-		Payload: "Builder finished round 1. Report: /x/001-report.md",
+		Payload: "The runner finished round 1. Report: /x/001-report.md",
 	}
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return Queue(context.Background(), rt, tx, b.Name, entry)
+		return delivery.Queue(context.Background(), deliveryDeps(rt), tx, b.Name, entry)
 	})
 	if err != nil {
 		t.Fatalf("Queue: %v", err)
@@ -103,7 +104,7 @@ func queuedBinding(t *testing.T) (Runtime, store.Binding) {
 }
 
 // timedOutBinding is a binding whose round is well past its budget, with a
-// payload already waiting on the planner. The waiting payload is what made the
+// payload already waiting on the mastermind. The waiting payload is what made the
 // halt and the held-payload notice overwrite each other's state and each
 // re-notify on every poll.
 func timedOutBinding(t *testing.T) (Runtime, store.Binding) {
@@ -123,7 +124,7 @@ func sentSwitchable(t *testing.T) (Runtime, store.Binding) {
 	rt.Candidates = candidateSet(t, testTwoProviderJSON)
 	rt.Policy = orderOf("builder", "agy/other/m", testClaudeRef, testOpencodeRef)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "agy/other/m", PlannerID: testPlannerName, CWD: "/repo",
+		Name: "webshop", Candidate: "agy/other/m", MasterMindID: testMasterMindName, CWD: "/repo",
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -193,7 +194,7 @@ func gateOnLimitSetup(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	rt.Candidates = candidateSet(t, testTwoProviderJSON)
 	rt.Policy = orderOf("builder", "agy/other/m", testClaudeRef, testOpencodeRef)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "agy/other/m", PlannerID: testPlannerName, CWD: "/repo", Headless: true,
+		Name: "webshop", Candidate: "agy/other/m", MasterMindID: testMasterMindName, CWD: "/repo", Headless: true,
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -205,4 +206,15 @@ func gateOnLimitSetup(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 		t.Fatalf("Load: %v", err)
 	}
 	return rt, b
+}
+
+// containsAdjacentPair reports whether args contains a, b as consecutive
+// elements, in that order.
+func containsAdjacentPair(args []string, a, b string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == a && args[i+1] == b {
+			return true
+		}
+	}
+	return false
 }

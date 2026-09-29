@@ -1,0 +1,3 @@
+# measured with go0.1 plan9/386
+example.com/pkg/a 71.3
+example.com/pkg/b 50.0

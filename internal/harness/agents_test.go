@@ -22,13 +22,17 @@ func TestAgentDocResolvesEveryTableRole(t *testing.T) {
 	}
 }
 
-func TestAgentDocRejectsUnknownPairs(t *testing.T) {
+func TestAgentDocRejectsBadArguments(t *testing.T) {
 	tests := []struct{ role, kind string }{
-		{role: "plan-executor", kind: "nosuch"},
-		{role: "nosuch", kind: "claude"},
-		{role: "", kind: "claude"},
-		{role: "plan-executor", kind: ""},
-		{role: "", kind: ""},
+		{"plan-executor", "nosuch"},
+		{"nosuch", "claude"},
+		{"", "claude"},
+		{"plan-executor", ""},
+		{"", ""},
+		{"../../etc/passwd", "claude"},
+		{"../plan-executor", "claude"},
+		{"plan-executor/../plan-executor", "claude"},
+		{"plan-executor.claude", "claude"},
 	}
 	for _, tc := range tests {
 		if _, err := AgentDoc(tc.role, tc.kind); !errors.Is(err, ErrNoAgentDoc) {
@@ -37,27 +41,8 @@ func TestAgentDocRejectsUnknownPairs(t *testing.T) {
 	}
 }
 
-// The filename is built from the table's Doc field, so a caller cannot steer
-// the read with path syntax in the role argument.
-func TestAgentDocRejectsPathTraversal(t *testing.T) {
-	for _, role := range []string{
-		"../../etc/passwd",
-		"../plan-executor",
-		"plan-executor/../plan-executor",
-		"plan-executor.claude",
-	} {
-		if _, err := AgentDoc(role, "claude"); !errors.Is(err, ErrNoAgentDoc) {
-			t.Errorf("AgentDoc(%q, \"claude\") error = %v, want ErrNoAgentDoc", role, err)
-		}
-	}
-}
-
 func TestPlanExecutorDefinitionsForbidWritingSubAgents(t *testing.T) {
-	// The load-bearing sentence. Deleting it from either shipped definition
-	// must fail this test: relevo ships the role its own loop depends on, and
-	// a second writer in one tree destroys work rather than stalling.
 	const oneWriter = "Exactly one agent writes to this working tree, and it is you."
-
 	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
 		doc, err := AgentDoc("plan-executor", kind)
 		if err != nil {
@@ -70,12 +55,8 @@ func TestPlanExecutorDefinitionsForbidWritingSubAgents(t *testing.T) {
 }
 
 func TestPlanExecutorGateRunsInForegroundOnEveryKind(t *testing.T) {
-	// #241: an agy builder launched the plan's gate command as a background
-	// task, reported that it was waiting, and exited without ever reading an
-	// exit code. A gate command is a fact only once it has exited.
 	const waits = "runs in the foreground: you wait for it to finish and read its exit code"
 	const neverReportsPassed = "never report it as passed before it has exited"
-
 	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
 		doc, err := AgentDoc("plan-executor", kind)
 		if err != nil {
@@ -90,11 +71,7 @@ func TestPlanExecutorGateRunsInForegroundOnEveryKind(t *testing.T) {
 }
 
 func TestPlanExecutorVerifiesAHalfDoneTree(t *testing.T) {
-	// #241: a replacement builder started from scratch on a tree that already
-	// carried the first builder's uncommitted edit. The tree part-way through
-	// a plan is verified, not redone.
 	const fragment = "do not redo the step: verify what is there against the step's text"
-
 	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
 		doc, err := AgentDoc("plan-executor", kind)
 		if err != nil {
@@ -107,9 +84,6 @@ func TestPlanExecutorVerifiesAHalfDoneTree(t *testing.T) {
 }
 
 func TestOpencodeDefinitionsDeclareMode(t *testing.T) {
-	// #252 side note: opencode 2.x refuses to run a subagent whose definition
-	// carries no mode:, so the researcher the plan-executor dispatches through
-	// the Task tool must declare itself one.
 	cases := []struct {
 		role string
 		mode string
@@ -130,10 +104,6 @@ func TestOpencodeDefinitionsDeclareMode(t *testing.T) {
 	}
 }
 
-// TestAgentDocCodexIsToml pins the string-level shape of every codex role
-// profile: no TOML parser is used (spec §11), so the checks are the plain
-// string invariants that make the file valid TOML with developer_instructions
-// as a top-level key.
 func TestAgentDocCodexIsToml(t *testing.T) {
 	const marker = "developer_instructions = '''\n"
 	for _, role := range []string{"plan-executor", "researcher", "reviewer", "architect"} {
@@ -152,31 +122,39 @@ func TestAgentDocCodexIsToml(t *testing.T) {
 		}
 		switch role {
 		case "plan-executor":
-			for _, want := range []string{"[agents.researcher]", `config_file = "researcher.config.toml"`, "spawn_agent"} {
-				if !strings.Contains(s, want) {
-					t.Errorf("plan-executor doc must contain %q", want)
-				}
-			}
-			for _, banned := range []string{"subagent_type", "Agent tool"} {
-				if strings.Contains(s, banned) {
-					t.Errorf("plan-executor doc must not contain %q", banned)
-				}
-			}
-			if di, tbl := strings.Index(s, "developer_instructions"), strings.Index(s, "[agents.researcher]"); di < 0 || tbl < 0 || di >= tbl {
-				t.Errorf("plan-executor doc: developer_instructions (%d) must come before [agents.researcher] (%d)", di, tbl)
-			}
+			checkCodexPlanExecutor(t, s)
 		case "researcher":
-			for _, want := range []string{`model = "gpt-5.6-luna"`, `model_reasoning_effort = "medium"`} {
-				if !strings.Contains(s, want) {
-					t.Errorf("researcher doc must contain %q", want)
-				}
-			}
+			checkCodexResearcher(t, s)
 		}
 	}
 }
 
-// agy enforces what the other kinds only say: a tools allowlist with
-// no write tool, and subagent: false on the one writer (spec §7.3, §7.4).
+func checkCodexPlanExecutor(t *testing.T, s string) {
+	t.Helper()
+	for _, want := range []string{"[agents.researcher]", `config_file = "researcher.config.toml"`, "spawn_agent"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("plan-executor doc must contain %q", want)
+		}
+	}
+	for _, banned := range []string{"subagent_type", "Agent tool"} {
+		if strings.Contains(s, banned) {
+			t.Errorf("plan-executor doc must not contain %q", banned)
+		}
+	}
+	if di, tbl := strings.Index(s, "developer_instructions"), strings.Index(s, "[agents.researcher]"); di < 0 || tbl < 0 || di >= tbl {
+		t.Errorf("plan-executor doc: developer_instructions (%d) must come before [agents.researcher] (%d)", di, tbl)
+	}
+}
+
+func checkCodexResearcher(t *testing.T, s string) {
+	t.Helper()
+	for _, want := range []string{`model = "gpt-5.6-luna"`, `model_reasoning_effort = "medium"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("researcher doc must contain %q", want)
+		}
+	}
+}
+
 func TestAgyDefinitionsFrontmatter(t *testing.T) {
 	forbidden := regexp.MustCompile(`(?m)^\s*-\s*(write_to_file|replace_file_content|create_file|delete_file|notebook_edit|invoke_subagent|send_command_input|multi_replace_file_content|sed_file|manage_subagents|define_subagent)\s*$`)
 	for _, role := range []string{"plan-executor", "researcher", "reviewer"} {
@@ -191,42 +169,43 @@ func TestAgyDefinitionsFrontmatter(t *testing.T) {
 		if !strings.Contains(fm, "\nmodel: inherit\n") {
 			t.Errorf("%s: frontmatter must pin model: inherit", role)
 		}
-		switch role {
-		case "plan-executor":
-			if !strings.Contains(fm, "\nsubagent: false\n") {
-				t.Errorf("plan-executor must be subagent: false")
-			}
-			if !strings.Contains(fm, "\ntools:\n") {
-				t.Errorf("plan-executor must carry a tools allowlist")
-			}
-			for _, name := range []string{"write_to_file", "replace_file_content", "run_command"} {
-				m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)
-				if !m.MatchString(fm) {
-					t.Errorf("plan-executor allowlist must include %s; without it the builder cannot build", name)
-				}
-			}
-			// #191: plan-executor never dispatches a sub-agent of any kind on
-			// agy, since an idle root agent there is an exit relevo treats as a
-			// failed builder.
-			for _, name := range []string{"invoke_subagent", "manage_subagents"} {
-				m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)
-				if m.MatchString(fm) {
-					t.Errorf("plan-executor allowlist must not include %s (#191)", name)
-				}
-			}
-		default:
-			if !strings.Contains(fm, "\ntools:\n") {
-				t.Errorf("%s must carry a tools allowlist", role)
-			}
-			if m := forbidden.FindString(fm); m != "" {
-				t.Errorf("%s allowlist contains a writing tool: %q", role, strings.TrimSpace(m))
-			}
+		if role == "plan-executor" {
+			checkAgyPlanExecutor(t, fm)
+			continue
+		}
+		if !strings.Contains(fm, "\ntools:\n") {
+			t.Errorf("%s must carry a tools allowlist", role)
+		}
+		if m := forbidden.FindString(fm); m != "" {
+			t.Errorf("%s allowlist contains a writing tool: %q", role, strings.TrimSpace(m))
 		}
 	}
 }
 
-// frontmatter returns the text between the first two --- fences,
-// with a leading newline so callers can match "\nkey: value\n".
+func checkAgyPlanExecutor(t *testing.T, fm string) {
+	t.Helper()
+	if !strings.Contains(fm, "\nsubagent: false\n") {
+		t.Errorf("plan-executor must be subagent: false")
+	}
+	if !strings.Contains(fm, "\ntools:\n") {
+		t.Errorf("plan-executor must carry a tools allowlist")
+	}
+	for _, name := range []string{"write_to_file", "replace_file_content", "run_command"} {
+		m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)
+		if !m.MatchString(fm) {
+			t.Errorf("plan-executor allowlist must include %s; without it the builder cannot build", name)
+		}
+	}
+	// An idle root agent on agy is an exit relevo treats as a failed builder,
+	// so plan-executor never dispatches a sub-agent there.
+	for _, name := range []string{"invoke_subagent", "manage_subagents"} {
+		m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)
+		if m.MatchString(fm) {
+			t.Errorf("plan-executor allowlist must not include %s", name)
+		}
+	}
+}
+
 func frontmatter(t *testing.T, doc []byte) string {
 	t.Helper()
 	s := string(doc)
@@ -241,10 +220,9 @@ func frontmatter(t *testing.T, doc []byte) string {
 	return "\n" + rest[:end] + "\n"
 }
 
-// Tool names agy 1.2.1 resolves for a definition in
-// ~/.gemini/config/agents. An unknown name stops the agent from starting
-// (#91). Extend only from a live agy run, never from the stream-json init
-// event's tools array, which advertises names the registry refuses.
+// Tool names agy 1.2.1 resolves for a definition in ~/.gemini/config/agents;
+// an unknown name stops the agent from starting. Extend only from a live agy
+// run, never from the stream-json init event's tools array.
 var agyKnownTools = map[string]bool{
 	"view_file":                  true,
 	"grep_search":                true,
@@ -266,9 +244,6 @@ var agyKnownTools = map[string]bool{
 	"ask_question":               true,
 }
 
-// agyAllowlist collects every tools: list item in fm -- each line matching
-// ^\s*-\s*([a-z_]+)\s*$ that appears after a tools: line and before the next
-// non-list line.
 func agyAllowlist(fm string) []string {
 	itemRe := regexp.MustCompile(`^\s*-\s*([a-z_]+)\s*$`)
 	var names []string

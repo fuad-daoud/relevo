@@ -8,10 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // uiBuilderRow is the custom writer row this file's tests add: shape writer,
@@ -29,6 +31,8 @@ func uiBuilderRow(candidates ...string) roles.Row {
 // runs. An empty stored role and the literal "builder" both mean builder, and
 // normRole is the inverse for the stored form.
 func TestBindingRole(t *testing.T) {
+	t.Parallel()
+
 	if got := bindingRole(store.Binding{}); got != "builder" {
 		t.Errorf("bindingRole(Role \"\") = %q, want builder", got)
 	}
@@ -50,10 +54,12 @@ func TestBindingRole(t *testing.T) {
 	}
 }
 
-// TestCheckWriterRole pins #382 §6: a writer role (or the builder default) is
-// accepted, a reader is refused with ErrNotAWriterRole naming `relevo ask
-// --actor`, and an unknown name is refused with ErrUnknownRole.
-func TestCheckWriterRole(t *testing.T) {
+// TestActorShape pins A5 §2: a writer role (or the builder default) reads as
+// a writer, a reader as a reader, and an unknown name is refused with
+// ErrUnknownRole.
+func TestActorShape(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder":    {Candidates: []string{testClaudeRef}},
@@ -61,32 +67,38 @@ func TestCheckWriterRole(t *testing.T) {
 	})
 
 	for _, role := range []string{"builder", "", "ui-builder"} {
-		if err := checkWriterRole(reg, role); err != nil {
-			t.Errorf("checkWriterRole(%q) = %v, want nil", role, err)
+		shape, err := actorShape(reg, role)
+		if err != nil {
+			t.Errorf("actorShape(%q) = %v, want nil", role, err)
+			continue
+		}
+		if shape != store.ShapeWriter {
+			t.Errorf("actorShape(%q) = %q, want writer", role, shape)
 		}
 	}
 
-	err := checkWriterRole(reg, "reviewer")
-	if !errors.Is(err, ErrNotAWriterRole) {
-		t.Fatalf("checkWriterRole(reviewer) err = %v, want ErrNotAWriterRole", err)
+	shape, err := actorShape(reg, "reviewer")
+	if err != nil {
+		t.Fatalf("actorShape(reviewer) err = %v, want nil", err)
 	}
-	if !strings.Contains(err.Error(), "relevo ask --actor reviewer") {
-		t.Errorf("err = %q, want it to name relevo ask --actor reviewer", err.Error())
+	if shape != store.ShapeReader {
+		t.Errorf("actorShape(reviewer) = %q, want reader", shape)
 	}
 
-	err = checkWriterRole(reg, "nope")
-	if !errors.Is(err, ErrUnknownRole) {
-		t.Fatalf("checkWriterRole(nope) err = %v, want ErrUnknownRole", err)
+	if _, err := actorShape(reg, "nope"); !errors.Is(err, ErrUnknownRole) {
+		t.Fatalf("actorShape(nope) err = %v, want ErrUnknownRole", err)
 	}
 }
 
 // TestBindUnknownRoleRefused pins #382 §6: an unknown role is refused before
 // any candidate resolution or launch. The plan asked for this through the
-// cmd/relevo CLI, but cmdBind resolves this session's planner (in BindResolved)
-// before create runs checkWriterRole, so a CLI run without a planner stops on
-// ErrNoPlannerSession -- the role refusal is only reachable through
+// cmd/relevo CLI, but cmdBind resolves this session's mastermind (in BindResolved)
+// before create runs actorShape, so a CLI run without a mastermind stops on
+// ErrNoMasterMindSession -- the role refusal is only reachable through
 // relevo.Bind, which is what this test drives (the plan's §7 test 3 fallback).
 func TestBindUnknownRoleRefused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
 		"builder": {Candidates: []string{testClaudeRef}},
@@ -94,7 +106,7 @@ func TestBindUnknownRoleRefused(t *testing.T) {
 
 	_, err := Bind(context.Background(), rt, BindOptions{
 		Name: "n", Role: "nope", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/nope-repo",
+		MasterMindID: testMasterMindName, CWD: "/nope-repo",
 	})
 	if err == nil {
 		t.Fatal("Bind(--actor nope) = nil, want an error")
@@ -107,6 +119,8 @@ func TestBindUnknownRoleRefused(t *testing.T) {
 // TestBindCustomWriterLaunchesItsDefinition pins #382 §2: a binding's round
 // runs its own role's definition, and the role is persisted.
 func TestBindCustomWriterLaunchesItsDefinition(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	set := rt.Candidates
 	rt.Registry = rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
@@ -118,7 +132,7 @@ func TestBindCustomWriterLaunchesItsDefinition(t *testing.T) {
 	rt.Runner = fr
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name: "ui-bound", Role: "ui-builder", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/ui-repo", Headless: true,
+		MasterMindID: testMasterMindName, CWD: "/ui-repo", Headless: true,
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -146,6 +160,8 @@ func TestBindCustomWriterLaunchesItsDefinition(t *testing.T) {
 // and no --candidate, the pick comes from the role's own candidates list, not
 // the builder's.
 func TestBindCustomWriterPicksFromItsList(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, rolesRuntimeCandidatesJSON)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
@@ -154,7 +170,7 @@ func TestBindCustomWriterPicksFromItsList(t *testing.T) {
 	})
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "picked", Role: "ui-builder", PlannerID: testPlannerName, CWD: "/picked-repo",
+		Name: "picked", Role: "ui-builder", MasterMindID: testMasterMindName, CWD: "/picked-repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -164,18 +180,134 @@ func TestBindCustomWriterPicksFromItsList(t *testing.T) {
 	}
 }
 
-// TestBindReaderRoleRefused pins #382 §6: a reader role is not a writer role
-// and no binding is stored.
-func TestBindReaderRoleRefused(t *testing.T) {
+// TestBindAReaderRecordsItsShape pins A5 §1 and §2: a reader actor can be
+// bound locally, and the binding records shape "reader".
+func TestBindAReaderRecordsItsShape(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "reader-bind", Role: "reviewer", Candidate: testClaudeRef,
+		MasterMindID: testMasterMindName, CWD: "/reader-repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind(--actor reviewer): %v", err)
+	}
+	if b.Shape != store.ShapeReader {
+		t.Errorf("Shape = %q, want reader", b.Shape)
+	}
+	stored, err := rt.Store.Load("reader-bind")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.Shape != store.ShapeReader {
+		t.Errorf("stored Shape = %q, want reader", stored.Shape)
+	}
+}
+
+// TestReaderSharesAWritersTree pins A5 §3: a reader is never blocked by, and
+// never blocks, another binding on the same CWD, while two writers are still
+// refused.
+func TestReaderSharesAWritersTree(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "reader-bind", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/reader-repo",
-	}); !errors.Is(err, ErrNotAWriterRole) {
-		t.Fatalf("Bind(--role reviewer) err = %v, want ErrNotAWriterRole", err)
+		Name: "writer", Candidate: testClaudeRef, MasterMindID: testMasterMindName, CWD: "/shared-tree",
+	}); err != nil {
+		t.Fatalf("bind writer: %v", err)
 	}
-	if _, err := rt.Store.Load("reader-bind"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("a refused bind stored a binding: err = %v, want ErrNotFound", err)
+
+	reader, err := Bind(context.Background(), rt, BindOptions{
+		Name: "reviewer-bind", Role: "reviewer", Candidate: testClaudeRef,
+		MasterMindID: testMasterMindName, CWD: "/shared-tree",
+	})
+	if err != nil {
+		t.Fatalf("bind a reader on a writer's tree: %v", err)
+	}
+	if reader.CWD != "/shared-tree" {
+		t.Errorf("reader CWD = %q, want the writer's tree", reader.CWD)
+	}
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "writer2", Candidate: testClaudeRef, MasterMindID: testMasterMindName, CWD: "/shared-tree",
+	}); !errors.Is(err, store.ErrCWDTaken) {
+		t.Fatalf("second writer err = %v, want ErrCWDTaken", err)
+	}
+}
+
+// TestReaderRefusesGateRegateAndVerify pins A5 §2: the writer-only knobs are
+// refused for a reader, each error naming its flag, and the policy defaults
+// gate.default and verify.default do not reach a reader binding.
+func TestReaderRefusesGateRegateAndVerify(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Policy.Gate = &policy.GatePolicy{Default: "make check"}
+	rt.Policy.Verify = &policy.VerifyPolicy{Default: true}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "rev-gate", Role: "reviewer", Candidate: testClaudeRef,
+		MasterMindID: testMasterMindName, CWD: "/rev-gate", Gate: "make check",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--gate") || !strings.Contains(err.Error(), "a reader round has no check") {
+		t.Fatalf("Bind(--gate on a reader) = %v, want the --gate refusal", err)
+	}
+
+	_, err = Bind(context.Background(), rt, BindOptions{
+		Name: "rev-regate", Role: "reviewer", Candidate: testClaudeRef,
+		MasterMindID: testMasterMindName, CWD: "/rev-regate", Regate: ptr(3),
+	})
+	if err == nil || !strings.Contains(err.Error(), "--regate") || !strings.Contains(err.Error(), "a reader round has no check") {
+		t.Fatalf("Bind(--regate on a reader) = %v, want the --regate refusal", err)
+	}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "rev-plain", Role: "reviewer", Candidate: testClaudeRef,
+		MasterMindID: testMasterMindName, CWD: "/rev-plain",
+	})
+	if err != nil {
+		t.Fatalf("Bind(a plain reader): %v", err)
+	}
+	if b.Gate != "" {
+		t.Errorf("reader Gate = %q, want gate.default not to apply", b.Gate)
+	}
+	if b.RoundVerify {
+		t.Error("reader RoundVerify = true, want verify.default not to apply")
+	}
+
+	_, err = Send(context.Background(), rt, "rev-plain", writePlan(t, "do it"), SendOptions{Verify: ptr(true)})
+	if err == nil || !strings.Contains(err.Error(), "--verify") || !strings.Contains(err.Error(), "a reader round has no check") {
+		t.Fatalf("Send(--verify on a reader) = %v, want the --verify refusal", err)
+	}
+}
+
+// TestRemoteReaderRefusedByAPreReadersServer pins #607's client rule: a
+// remote add of a reader is refused, with the old local-only wording, when the
+// server does not advertise remote.FeatureReaders -- after the WhoAmI probe,
+// and before any create call.
+func TestRemoteReaderRefusedByAPreReadersServer(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Git = &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{}
+	rt.Remote = fr
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: "remote-reader", Role: "reviewer", Server: "s",
+		MasterMindID: testMasterMindName, Repo: "/repo",
+	})
+	if err == nil || !strings.Contains(err.Error(), "reader actors run locally only; bind without --server") {
+		t.Fatalf("Add(--server --actor reviewer) = %v, want the reader refusal", err)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateBinding") {
+			t.Errorf("calls = %v, want no CreateBinding", fr.calls)
+		}
 	}
 }
 
@@ -183,12 +315,14 @@ func TestBindReaderRoleRefused(t *testing.T) {
 // takes no policy default, a writer with no gate key takes it, builder keeps
 // taking it, and an explicit --gate still wins.
 func TestGateFollowsRole(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy.Gate = &policy.GatePolicy{Default: "make check"}
 
 	noGateWriter := roles.Row{
 		Shape:       ptr("writer"),
-		Gate:        ptr(false),
+		Check:       ptr(false),
 		Candidates:  []string{testClaudeRef},
 		Definitions: map[string]roles.DefRow{"claude": {Agent: "my-ui"}},
 	}
@@ -207,7 +341,7 @@ func TestGateFollowsRole(t *testing.T) {
 		t.Helper()
 		b, err := Bind(context.Background(), rt, BindOptions{
 			Name: name, Role: role, Candidate: testClaudeRef,
-			PlannerID: testPlannerName, CWD: "/" + name, Gate: gate,
+			MasterMindID: testMasterMindName, CWD: "/" + name, Gate: gate,
 		})
 		if err != nil {
 			t.Fatalf("Bind(%s, role %q): %v", name, role, err)
@@ -229,61 +363,14 @@ func TestGateFollowsRole(t *testing.T) {
 	}
 }
 
-// TestForkInheritsRole pins #382 §2: a fork inherits the source binding's
-// role, and its first round runs that role's definition.
-func TestForkInheritsRole(t *testing.T) {
-	rt := newRuntime(t)
-	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
-		"builder":    {Candidates: []string{testClaudeRef}},
-		"ui-builder": uiBuilderRow(testClaudeRef),
-	})
-
-	srcCWD := t.TempDir()
-	src := store.Binding{
-		Name: "source", CWD: srcCWD, PlannerID: testPlannerID,
-		BuilderCandidate: testClaudeRef, Role: "ui-builder",
-		Round: 1, State: store.StateActive,
-	}
-	if err := rt.Store.Save(src); err != nil {
-		t.Fatalf("Save(source): %v", err)
-	}
-	if err := rt.Store.AppendLog("source", store.LogEntry{
-		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan,
-		Path: rt.Store.PlanPath("source", 1), Confirmed: true,
-	}); err != nil {
-		t.Fatalf("AppendLog: %v", err)
-	}
-
-	res, err := Fork(context.Background(), rt, ForkOptions{
-		Source: "source", Round: 1, NewName: "alt",
-		PlannerID: testPlannerName, CWD: t.TempDir(), Headless: true,
-	})
-	if err != nil {
-		t.Fatalf("Fork: %v", err)
-	}
-	if res.Binding.Role != "ui-builder" {
-		t.Errorf("fork Role = %q, want ui-builder", res.Binding.Role)
-	}
-
-	fr := newFakeRunner()
-	rt.Runner = fr
-	if _, err := startRound(context.Background(), rt, nil, res.Binding, "the prompt"); err != nil {
-		t.Fatalf("startRound: %v", err)
-	}
-	if len(fr.specs) != 1 {
-		t.Fatalf("specs = %+v, want one Start", fr.specs)
-	}
-	if !containsAdjacentPair(fr.specs[0].Argv, "--agent", "my-ui") {
-		t.Errorf("argv = %v, want --agent my-ui", fr.specs[0].Argv)
-	}
-}
-
 // TestSwitchPicksFromRoleList pins #382 §5.1: a mid-round switch takes the
 // next candidate from the binding's own role's list, never a builder-only one.
 //
 // The candidates sit on distinct providers so the rate limit gates only the
 // one that ran.
 func TestSwitchPicksFromRoleList(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, `[
 	  {"harness":"claude","provider":"p1","model":"b","roles":["builder"]},
@@ -299,7 +386,7 @@ func TestSwitchPicksFromRoleList(t *testing.T) {
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Role: "ui-builder", Candidate: "claude/p1/b",
-		PlannerID: testPlannerName, CWD: "/repo", Headless: true,
+		MasterMindID: testMasterMindName, CWD: "/repo", Headless: true,
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -314,7 +401,7 @@ func TestSwitchPicksFromRoleList(t *testing.T) {
 		t.Fatalf("BuilderCandidate = %q, want claude/p1/b", b.BuilderCandidate)
 	}
 
-	if _, err := Unavailable(rt, "claude/p1/b", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "claude/p1/b", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 	got, err := reconcile(t, rt, b)
@@ -333,12 +420,14 @@ func TestSwitchPicksFromRoleList(t *testing.T) {
 // roles.json no longer defines fails at round start with ErrUnknownRole, and
 // no process is started -- there is no fallback to builder.
 func TestVanishedRoleFailsRoundStart(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	fr := newFakeRunner()
 	rt.Runner = fr
 
 	if err := rt.Store.Save(store.Binding{
-		Name: "gone-bind", CWD: "/gone-repo", PlannerID: testPlannerID,
+		Name: "gone-bind", CWD: "/gone-repo", MasterMindID: testMasterMindID,
 		BuilderCandidate: testClaudeRef, Role: "gone",
 		Round: 1, State: store.StateActive,
 	}); err != nil {
@@ -356,7 +445,7 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 	if !errors.Is(err, ErrUnknownRole) {
 		t.Errorf("err = %v, want ErrUnknownRole", err)
 	}
-	if !strings.Contains(err.Error(), "which config roles no longer defines") {
+	if !strings.Contains(err.Error(), "which config actors no longer defines") {
 		t.Errorf("err = %q, want it to name the vanished role", err.Error())
 	}
 	if len(fr.specs) != 0 {
@@ -371,6 +460,8 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 // builder. The client's own registry knows ui-builder, which must not matter:
 // the server's roles never come from here.
 func TestAddCustomRoleOnServerRefused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
 		"builder":    {Candidates: []string{testClaudeRef}},
@@ -385,12 +476,12 @@ func TestAddCustomRoleOnServerRefused(t *testing.T) {
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "remote-ui", Role: "ui-builder", Server: "s",
-		PlannerID: testPlannerName, Repo: "/repo",
+		MasterMindID: testMasterMindName, Repo: "/repo",
 	})
 	if err == nil {
 		t.Fatal("Add(--server with a custom role) = nil, want the upgrade-it error")
 	}
-	want := `server s does not run custom roles (role "ui-builder"); upgrade it`
+	want := `server s does not run custom actors (actor "ui-builder"); upgrade it`
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("err = %q, want %q", err.Error(), want)
 	}
@@ -401,23 +492,23 @@ func TestAddCustomRoleOnServerRefused(t *testing.T) {
 	}
 }
 
-// TestStatusShowsRole pins #382 §4 and §5: a non-builder role is on the status
-// row and printed on the builder line, while a builder row's JSON has no role
-// key and its builder line has no role suffix.
+// TestStatusShowsRole pins #382 §4 and §5: a non-builder actor is on the
+// status row and printed on the runner line, while a builder row's runner line
+// has no actor suffix and its JSON names the actor "builder".
 func TestStatusShowsRole(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
-		"builder":    {Candidates: []string{testClaudeRef}},
-		"ui-builder": uiBuilderRow(testClaudeRef),
+		"builder":  {Candidates: []string{testClaudeRef}},
+		"designer": uiBuilderRow(testClaudeRef),
 	})
 
 	if err := rt.Store.Save(store.Binding{
-		Name: "ui-status", CWD: "/ui-status-repo",
+		Name: "designer-status", CWD: "/designer-status-repo",
 		Builder:          store.Endpoint{Kind: "claude", Mode: store.ModeHeadless},
-		BuilderCandidate: testClaudeRef, Role: "ui-builder",
+		BuilderCandidate: testClaudeRef, Role: "designer",
 		Round: 1, State: store.StateActive,
 	}); err != nil {
-		t.Fatalf("Save(ui): %v", err)
+		t.Fatalf("Save(designer): %v", err)
 	}
 	if err := rt.Store.Save(store.Binding{
 		Name: "plain-status", CWD: "/plain-status-repo",
@@ -432,24 +523,24 @@ func TestStatusShowsRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	rows := map[string]BindingStatus{}
+	rows := map[string]view.BindingStatus{}
 	for _, row := range rep.Bindings {
 		rows[row.Name] = row
 	}
-	if rows["ui-status"].Role != "ui-builder" {
-		t.Errorf("ui-status row Role = %q, want ui-builder", rows["ui-status"].Role)
+	if rows["designer-status"].Role != "designer" {
+		t.Errorf("designer-status row Role = %q, want designer", rows["designer-status"].Role)
 	}
-	if rows["plain-status"].Role != "" {
-		t.Errorf("plain-status row Role = %q, want empty", rows["plain-status"].Role)
+	if rows["plain-status"].Role != "builder" {
+		t.Errorf("plain-status row Role = %q, want builder", rows["plain-status"].Role)
 	}
 
-	uiOnly := RenderStatus(Report{Bindings: []BindingStatus{rows["ui-status"]}})
-	if !strings.Contains(uiOnly, "role ui-builder") {
-		t.Errorf("ui builder line = %q, want `role ui-builder`", uiOnly)
+	designerOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["designer-status"]}})
+	if !strings.Contains(designerOnly, "actor designer") {
+		t.Errorf("designer row line = %q, want `actor designer`", designerOnly)
 	}
-	plainOnly := RenderStatus(Report{Bindings: []BindingStatus{rows["plain-status"]}})
-	if strings.Contains(plainOnly, "role ui-builder") {
-		t.Errorf("builder builder line = %q, want no role suffix", plainOnly)
+	plainOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["plain-status"]}})
+	if strings.Contains(plainOnly, "actor ") {
+		t.Errorf("builder row line = %q, want no actor suffix", plainOnly)
 	}
 
 	plainJSON, err := json.Marshal(rows["plain-status"])
@@ -459,11 +550,14 @@ func TestStatusShowsRole(t *testing.T) {
 	if strings.Contains(string(plainJSON), `"role"`) {
 		t.Errorf("builder row JSON = %s, want no role key", plainJSON)
 	}
-	uiJSON, err := json.Marshal(rows["ui-status"])
+	if !strings.Contains(string(plainJSON), `"actor":"builder"`) {
+		t.Errorf("builder row JSON = %s, want an actor key of builder", plainJSON)
+	}
+	designerJSON, err := json.Marshal(rows["designer-status"])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(uiJSON), `"role":"ui-builder"`) {
-		t.Errorf("ui row JSON = %s, want a role key", uiJSON)
+	if !strings.Contains(string(designerJSON), `"actor":"designer"`) {
+		t.Errorf("designer row JSON = %s, want an actor key", designerJSON)
 	}
 }

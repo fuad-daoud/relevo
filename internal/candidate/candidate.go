@@ -1,5 +1,5 @@
 // Package candidate loads the harness/provider/model triples relevo may start,
-// and nothing else: which one to start is the caller's choice (#80).
+// and nothing else: which one to start is the caller's choice.
 package candidate
 
 import (
@@ -15,21 +15,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// ErrBadRef reports a candidate reference that is not a harness/provider/model triple.
 var ErrBadRef = errors.New("bad candidate reference")
 
-// ErrUnknownCandidate reports a candidate reference not present in the set.
 var ErrUnknownCandidate = errors.New("unknown candidate")
 
-// Ref identifies one candidate as a harness/provider/model triple.
 type Ref struct {
 	Harness  string
 	Provider string
 	Model    string
 }
 
-// ParseRef splits a candidate reference string on its first two slashes into its
-// harness, provider, and model parts. Fewer than 3 parts, or any empty part, is an error.
 func ParseRef(s string) (Ref, error) {
 	parts := strings.SplitN(s, "/", 3)
 	if len(parts) < 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
@@ -42,16 +37,14 @@ func ParseRef(s string) (Ref, error) {
 	}, nil
 }
 
-// String returns the canonical harness/provider/model reference string.
 func (r Ref) String() string {
 	return r.Harness + "/" + r.Provider + "/" + r.Model
 }
 
-// Candidate describes one concrete way to fill a role.
 type Candidate struct {
-	// Name is the candidate's short name (cockpit A1 §3.1): unique among
-	// candidates, at most 24 characters, and never containing "/". It is
-	// optional in stored JSON: a missing name is derived at parse time.
+	// Name is unique among candidates, at most 24 characters and never
+	// containing "/"; it is optional in stored JSON and derived at parse time
+	// when missing.
 	Name          string   `json:"name,omitempty"`
 	Harness       string   `json:"harness"`
 	Provider      string   `json:"provider"`
@@ -60,22 +53,20 @@ type Candidate struct {
 	Tree          string   `json:"tree,omitempty"`
 	ExtraArgs     []string `json:"extra_args,omitempty"`
 	LimitPatterns []string `json:"limit_patterns,omitempty"`
-	// DialogPatterns is ignored since #303: pane dialogs were deleted. The
-	// field stays decodable so existing candidates.json files still load.
+	// DialogPatterns is no longer used: pane dialogs were deleted. The field
+	// stays decodable so existing candidates.json files still load.
 	DialogPatterns []string `json:"dialog_patterns,omitempty"`
-	// Tier is the candidate's default permission tier (#141); "" means "use the
-	// role default from policy, else harness". Validated by ParseTier.
+	// Tier is the candidate's default permission tier; "" means the role default
+	// from policy, else harness.
 	Tier string `json:"tier,omitempty"`
-	// DenialPatterns replace the harness's default denial regexes for this
-	// candidate (#141), like LimitPatterns and DialogPatterns.
+	// DenialPatterns replace the harness's default denial regexes for this candidate.
 	DenialPatterns []string `json:"denial_patterns,omitempty"`
 
-	// Plan marks a subscription lane (#142): the round's cost is a quota
-	// draw, and printers say "plan", never "$0" and never "free".
+	// Plan marks a subscription lane: the round's cost is a quota draw, and
+	// printers say "plan", never "$0" and never "free".
 	Plan bool `json:"plan,omitempty"`
 }
 
-// Ref returns the candidate's canonical reference triple.
 func (c Candidate) Ref() Ref {
 	return Ref{
 		Harness:  c.Harness,
@@ -84,7 +75,6 @@ func (c Candidate) Ref() Ref {
 	}
 }
 
-// Serves reports whether this candidate lists the given role.
 func (c Candidate) Serves(role string) bool {
 	for _, r := range c.Roles {
 		if r == role {
@@ -94,12 +84,9 @@ func (c Candidate) Serves(role string) bool {
 	return false
 }
 
-// Set is an immutable collection of validated candidates keyed by their
-// canonical reference strings.
+// Set is an immutable collection of validated candidates keyed by canonical ref.
 type Set struct {
-	byRef map[string]Candidate
-	// byName maps every candidate's name to its canonical token. Parse fills
-	// it, so every candidate in a parsed set has exactly one entry.
+	byRef  map[string]Candidate
 	byName map[string]string
 }
 
@@ -110,7 +97,6 @@ func newSet() *Set {
 	}
 }
 
-// Lookup finds a candidate by its reference, returning ErrUnknownCandidate on a miss.
 func (s *Set) Lookup(ref Ref) (Candidate, error) {
 	c, ok := s.byRef[ref.String()]
 	if !ok {
@@ -119,10 +105,7 @@ func (s *Set) Lookup(ref Ref) (Candidate, error) {
 	return c, nil
 }
 
-// Resolve takes a user string to a candidate (cockpit A1 §3.1): a string
-// containing "/" is parsed as a token and looked up by its triple; anything
-// else is looked up by name. An unknown string errors with the known names
-// listed, wrapping ErrUnknownCandidate.
+// Resolve takes a name or a harness/provider/model token to a candidate.
 func (s *Set) Resolve(str string) (Candidate, error) {
 	if s == nil {
 		return Candidate{}, fmt.Errorf("unknown candidate %q (no candidates configured): %w", str, ErrUnknownCandidate)
@@ -140,9 +123,7 @@ func (s *Set) Resolve(str string) (Candidate, error) {
 	return Candidate{}, fmt.Errorf("unknown candidate %q (known: %s): %w", str, strings.Join(s.Names(), ", "), ErrUnknownCandidate)
 }
 
-// NameOf returns the name of the candidate whose canonical token is token, or
-// token unchanged when the set does not hold it (including a nil set). It
-// never errors.
+// NameOf returns token unchanged when the set does not hold it, nil included.
 func (s *Set) NameOf(token string) string {
 	if s == nil {
 		return token
@@ -154,11 +135,8 @@ func (s *Set) NameOf(token string) string {
 	return c.Name
 }
 
-// NameFor returns the name of the candidate whose canonical token is token.
-// ok reports whether the set holds that token: it is false for a token no
-// longer configured, and for a nil set (A1 §4.4, round 3 F3). A caller uses
-// it to leave a name field unset rather than carry a token in it. NameOf
-// stays the never-failing display form.
+// NameFor is like NameOf but reports whether the set holds token. A caller uses
+// it to leave a name field unset rather than carry a token in it.
 func (s *Set) NameFor(token string) (string, bool) {
 	if s == nil {
 		return "", false
@@ -170,7 +148,6 @@ func (s *Set) NameFor(token string) (string, bool) {
 	return c.Name, true
 }
 
-// Names returns every candidate's name, sorted.
 func (s *Set) Names() []string {
 	if s == nil {
 		return nil
@@ -183,8 +160,6 @@ func (s *Set) Names() []string {
 	return names
 }
 
-// ForRole returns every candidate configured to serve the given role, sorted
-// by their canonical reference strings.
 func (s *Set) ForRole(role string) []Candidate {
 	var matches []Candidate
 	for _, c := range s.byRef {
@@ -198,7 +173,6 @@ func (s *Set) ForRole(role string) []Candidate {
 	return matches
 }
 
-// Refs returns every configured candidate reference string, sorted for stable output.
 func (s *Set) Refs() []string {
 	refs := make([]string, 0, len(s.byRef))
 	for k := range s.byRef {
@@ -208,14 +182,12 @@ func (s *Set) Refs() []string {
 	return refs
 }
 
-// Len returns the number of configured candidates in the set.
 func (s *Set) Len() int {
 	return len(s.byRef)
 }
 
-// Providers returns every distinct provider the configured candidates use,
-// sorted. A nil *Set returns nil: callers hold a possibly-nil set (a server
-// with no candidates.json), and this must not panic on one.
+// Providers returns the distinct providers the configured candidates use,
+// sorted; a nil *Set returns nil.
 func (s *Set) Providers() []string {
 	if s == nil {
 		return nil
@@ -235,23 +207,17 @@ func (s *Set) Providers() []string {
 }
 
 // Load reads and validates candidate definitions from a JSON file, discarding
-// the warnings LoadWithWarnings returns. A missing file is zero candidates and
-// not an error, because relevo ships none (spec §1 point 3); a present file that
-// does not validate is an error at startup for every subcommand, because a
-// daemon running on config it cannot parse is worse than one that refuses to
-// start (spec §6).
+// the warnings. A missing file is zero candidates, not an error, because relevo
+// ships none; a present file that does not validate fails startup.
 func Load(path string) (*Set, error) {
 	set, _, err := LoadWithWarnings(path)
 	return set, err
 }
 
-// LoadWithWarnings reads and validates candidate definitions, returning a
-// warning for every candidate this relevo drops because its harness or one of
-// its roles is unknown (#372 §4.4). A newer relevo's candidate must not stop
-// this relevo, and the drop surfaces in `relevo doctor`.
-//
-// Only an unknown harness and an unknown role are skipped: duplicates, a bad
-// tree, tier or pattern, and every other validation failure still fail the load.
+// LoadWithWarnings returns a warning for every candidate this relevo drops
+// because its harness or one of its roles is unknown, so a newer relevo's
+// candidate does not stop this one. Only those two are skipped; every other
+// validation failure still fails the load.
 func LoadWithWarnings(path string) (*Set, []string, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -263,15 +229,10 @@ func LoadWithWarnings(path string) (*Set, []string, error) {
 	return Parse(path, raw)
 }
 
-// Parse validates candidate definitions from data, naming them by name in
-// every message. name is the file path when LoadWithWarnings calls it, so an
-// existing message is unchanged; internal/config passes the stored section's
-// file name. It returns the same warnings LoadWithWarnings documents.
-//
-// Every entry gets a name: an explicit one kept verbatim when valid, else the
-// deterministic one DeriveNames computes. A skipped entry (unknown harness or
-// role) still takes part in DeriveNames, so the names of the others do not
-// shift when it is fixed.
+// Parse validates candidate definitions from data, naming them by name in every
+// message. Every entry gets a name: an explicit one kept when valid, else the
+// deterministic one DeriveNames computes. A skipped entry still takes part in
+// DeriveNames, so the other names do not shift when it is fixed.
 func Parse(name string, data []byte) (*Set, []string, error) {
 	var entries []Candidate
 	if err := json.Unmarshal(data, &entries); err != nil {
@@ -284,13 +245,7 @@ func Parse(name string, data []byte) (*Set, []string, error) {
 	base := filepath.Base(name)
 	var warnings []string
 	names := DeriveNames(entries)
-
-	providers := make(map[string]bool, len(entries))
-	for _, e := range entries {
-		if e.Provider != "" {
-			providers[e.Provider] = true
-		}
-	}
+	providers := providerNames(entries)
 
 	for i, c := range entries {
 		if c.Name != "" && !IsName(c.Name) {
@@ -298,69 +253,114 @@ func Parse(name string, data []byte) (*Set, []string, error) {
 		}
 		c.Name = names[i]
 
-		if c.Harness == "" || c.Provider == "" || c.Model == "" {
-			return nil, nil, fmt.Errorf("candidates %s: candidate %d: harness, provider and model are required", name, i)
+		warn, err := validateCandidate(name, base, i, c)
+		if err != nil {
+			return nil, nil, err
 		}
-		if strings.Contains(c.Provider, "/") {
-			return nil, nil, fmt.Errorf("candidates %s: candidate %d: provider must be a single segment", name, i)
-		}
-		h, ok := harness.Lookup(c.Harness)
-		if !ok {
-			warnings = append(warnings, fmt.Sprintf("%s: %s: unknown harness %q (skipped)", base, c.Ref().String(), c.Harness))
+		if warn != "" {
+			warnings = append(warnings, warn)
 			continue
 		}
-		unknownRole := ""
-		for _, r := range c.Roles {
-			if _, ok := harness.RoleByName(r); !ok {
-				unknownRole = r
-				break
-			}
-			if !h.CanServe(r) {
-				return nil, nil, fmt.Errorf("candidates %s: candidate %d: harness %q has no definition for role %q", name, i, c.Harness, r)
-			}
+		if err := registerCandidate(name, i, c, set, seen, seenNames, providers); err != nil {
+			return nil, nil, err
 		}
-		if unknownRole != "" {
-			warnings = append(warnings, fmt.Sprintf("%s: %s: unknown role %q (skipped)", base, c.Ref().String(), unknownRole))
-			continue
-		}
-		if c.Tree != "" && c.Tree != "binding" && c.Tree != "none" {
-			return nil, nil, fmt.Errorf("candidates %s: candidate %d: tree must be \"binding\" or \"none\"", name, i)
-		}
-		for j, pat := range c.LimitPatterns {
-			if _, err := regexp.Compile(pat); err != nil {
-				return nil, nil, fmt.Errorf("candidates %s: candidate %d: limit_patterns[%d]: %w", name, i, j, err)
-			}
-		}
-		for j, pat := range c.DialogPatterns {
-			if _, err := regexp.Compile(pat); err != nil {
-				return nil, nil, fmt.Errorf("candidates %s: candidate %d: dialog_patterns[%d]: %w", name, i, j, err)
-			}
-		}
-		if c.Tier != "" {
-			if _, err := harness.ParseTier(c.Tier); err != nil {
-				return nil, nil, fmt.Errorf("candidates %s: candidate %d: tier: %v", name, i, err)
-			}
-		}
-		for j, pat := range c.DenialPatterns {
-			if _, err := regexp.Compile(pat); err != nil {
-				return nil, nil, fmt.Errorf("candidates %s: candidate %d: denial_patterns[%d]: %w", name, i, j, err)
-			}
-		}
-		key := c.Ref().String()
-		if first, exists := seen[key]; exists {
-			return nil, nil, fmt.Errorf("candidates %s: candidate %d: duplicate candidate %s at index %d and %d", name, i, key, first, i)
-		}
-		seen[key] = i
-		if first, exists := seenNames[c.Name]; exists {
-			return nil, nil, fmt.Errorf("candidates %s: candidate %d: duplicate name %q at index %d and %d", name, i, c.Name, first, i)
-		}
-		seenNames[c.Name] = i
-		if providers[c.Name] {
-			return nil, nil, fmt.Errorf("candidates %s: candidate %d: name %q is also a provider name", name, i, c.Name)
-		}
-		set.byRef[key] = c
-		set.byName[c.Name] = key
 	}
 
 	return set, warnings, nil
+}
+
+func providerNames(entries []Candidate) map[string]bool {
+	providers := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if e.Provider != "" {
+			providers[e.Provider] = true
+		}
+	}
+	return providers
+}
+
+// validateCandidate checks one entry before it joins the set. A non-empty
+// warning means the entry is skipped, not that the load fails; field checks that
+// must fail the load come first, so their errors report ahead of a skip.
+func validateCandidate(name, base string, i int, c Candidate) (string, error) {
+	if err := checkRequired(name, i, c); err != nil {
+		return "", err
+	}
+	h, ok := harness.Lookup(c.Harness)
+	if !ok {
+		return fmt.Sprintf("%s: %s: unknown harness %q (skipped)", base, c.Ref().String(), c.Harness), nil
+	}
+	warn, err := checkRoles(name, base, i, c, h)
+	if warn != "" || err != nil {
+		return warn, err
+	}
+	return "", checkRest(name, i, c)
+}
+
+func checkRequired(name string, i int, c Candidate) error {
+	if c.Harness == "" || c.Provider == "" || c.Model == "" {
+		return fmt.Errorf("candidates %s: candidate %d: harness, provider and model are required", name, i)
+	}
+	if strings.Contains(c.Provider, "/") {
+		return fmt.Errorf("candidates %s: candidate %d: provider must be a single segment", name, i)
+	}
+	return nil
+}
+
+func checkRoles(name, base string, i int, c Candidate, h harness.Harness) (string, error) {
+	for _, r := range c.Roles {
+		if _, ok := harness.RoleByName(r); !ok {
+			return fmt.Sprintf("%s: %s: unknown role %q (skipped)", base, c.Ref().String(), r), nil
+		}
+		if !h.CanServe(r) {
+			return "", fmt.Errorf("candidates %s: candidate %d: harness %q has no definition for role %q", name, i, c.Harness, r)
+		}
+	}
+	return "", nil
+}
+
+// checkRest validates the remaining fields, in the order their errors are reported.
+func checkRest(name string, i int, c Candidate) error {
+	if c.Tree != "" && c.Tree != "binding" && c.Tree != "none" {
+		return fmt.Errorf("candidates %s: candidate %d: tree must be \"binding\" or \"none\"", name, i)
+	}
+	if err := compilePatterns(name, i, "limit_patterns", c.LimitPatterns); err != nil {
+		return err
+	}
+	if err := compilePatterns(name, i, "dialog_patterns", c.DialogPatterns); err != nil {
+		return err
+	}
+	if c.Tier != "" {
+		if _, err := harness.ParseTier(c.Tier); err != nil {
+			return fmt.Errorf("candidates %s: candidate %d: tier: %w", name, i, err)
+		}
+	}
+	return compilePatterns(name, i, "denial_patterns", c.DenialPatterns)
+}
+
+func compilePatterns(name string, i int, field string, patterns []string) error {
+	for j, pat := range patterns {
+		if _, err := regexp.Compile(pat); err != nil {
+			return fmt.Errorf("candidates %s: candidate %d: %s[%d]: %w", name, i, field, j, err)
+		}
+	}
+	return nil
+}
+
+func registerCandidate(name string, i int, c Candidate, set *Set, seen, seenNames map[string]int, providers map[string]bool) error {
+	key := c.Ref().String()
+	if first, exists := seen[key]; exists {
+		return fmt.Errorf("candidates %s: candidate %d: duplicate candidate %s at index %d and %d", name, i, key, first, i)
+	}
+	seen[key] = i
+	if first, exists := seenNames[c.Name]; exists {
+		return fmt.Errorf("candidates %s: candidate %d: duplicate name %q at index %d and %d", name, i, c.Name, first, i)
+	}
+	seenNames[c.Name] = i
+	if providers[c.Name] {
+		return fmt.Errorf("candidates %s: candidate %d: name %q is also a provider name", name, i, c.Name)
+	}
+	set.byRef[key] = c
+	set.byName[c.Name] = key
+	return nil
 }

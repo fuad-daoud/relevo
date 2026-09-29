@@ -6,47 +6,47 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // TestWhatAge ports the rail's whatAge assertions to view_fleet.go (R2.10).
 func TestWhatAge(t *testing.T) {
 	cases := []struct {
 		name     string
-		b        relevo.BindingStatus
+		b        view.BindingStatus
 		wantWhat string
 		wantAge  string
 	}{
 		{
 			name: "needs you blocked",
-			b: relevo.BindingStatus{Display: "NEEDS YOU",
-				Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)}},
+			b: view.BindingStatus{Display: "NEEDS YOU",
+				Waiting: &view.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)}},
 			wantWhat: "question", wantAge: "2m",
 		},
 		{
 			name:     "needs you detail",
-			b:        relevo.BindingStatus{Display: "NEEDS YOU", Detail: "broken: no space"},
+			b:        view.BindingStatus{Display: "NEEDS YOU", Detail: "broken: no space"},
 			wantWhat: "broken: no space",
 		},
 		{
 			name:     "needs you bare",
-			b:        relevo.BindingStatus{Display: "NEEDS YOU"},
+			b:        view.BindingStatus{Display: "NEEDS YOU"},
 			wantWhat: "needs you",
 		},
 		{
 			name:     "active working",
-			b:        relevo.BindingStatus{Display: "ACTIVE", BuilderStatus: "working"},
+			b:        view.BindingStatus{Display: "ACTIVE", BuilderStatus: "working"},
 			wantWhat: "working",
 		},
 		{
 			name:     "done",
-			b:        relevo.BindingStatus{Display: "DONE", Last: &relevo.LastEvent{TS: railNow.Add(-3 * time.Hour)}},
+			b:        view.BindingStatus{Display: "DONE", Last: &view.LastEvent{TS: railNow.Add(-3 * time.Hour)}},
 			wantWhat: "done", wantAge: "3h",
 		},
 		{
 			name:     "paused",
-			b:        relevo.BindingStatus{Display: "PAUSED", Last: &relevo.LastEvent{TS: railNow.Add(-time.Hour), Kind: "pause"}},
+			b:        view.BindingStatus{Display: "PAUSED", Last: &view.LastEvent{TS: railNow.Add(-time.Hour), Kind: "pause"}},
 			wantWhat: "paused", wantAge: "1h",
 		},
 	}
@@ -63,10 +63,10 @@ func TestWhatAge(t *testing.T) {
 // TestNowCellCarriesTheStaleLabel is the stale-label port (#135): a NEEDS
 // YOU row carries its stale age in the NOW cell.
 func TestNowCellCarriesTheStaleLabel(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy",
 		Stale:   "stale 4h 0m",
-		Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
+		Waiting: &view.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
 	}
 	if got := nowCell(b, railNow); !strings.Contains(got, "· stale 4h 0m") {
 		t.Errorf("nowCell = %q, want it to carry %q", got, "· stale 4h 0m")
@@ -82,7 +82,7 @@ func TestCandidateText(t *testing.T) {
 		"":                                    "-",
 	}
 	for in, want := range cases {
-		if got := candidateText(relevo.BindingStatus{BuilderCandidate: in}); got != want {
+		if got := candidateText(view.BindingStatus{BuilderCandidate: in}); got != want {
 			t.Errorf("candidateText(%q) = %q, want %q", in, got, want)
 		}
 	}
@@ -117,56 +117,46 @@ func TestSpendText(t *testing.T) {
 }
 
 // TestFleetBodyHeader pins A1: the table's first body line is the header, and
-// neither the loading nor the empty body has one.
+// TestFleetBodyHeader pins D4: the table's first list lines are section lines,
+// and neither the loading nor the empty body has one.
 func TestFleetBodyHeader(t *testing.T) {
-	rows := []relevo.BindingStatus{{Name: "webshop", Round: 4, Display: "ACTIVE"}}
-	loaded := Env{Loaded: true, Now: railNow, Report: relevo.Report{Bindings: rows}, Width: 140, Height: 40}
+	rows := []view.BindingStatus{{Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working"}}
+	loaded := Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: rows}, Width: 140, Height: 40}
 	f := newFleetView(true)
 
-	lines := strings.Split(f.Body(loaded, 140, 40), "\n")
-	if !strings.Contains(stripANSI(lines[0]), "NAME") {
-		t.Errorf("the first body line must be the header, got %q", stripANSI(lines[0]))
+	body := stripANSI(f.Body(loaded, 140, 40))
+	if !strings.Contains(body, "working") {
+		t.Errorf("body must contain the working section line, got:\n%s", body)
 	}
-	if !strings.Contains(stripANSI(lines[1]), "webshop") {
-		t.Errorf("the header must not scroll the rows away, line 1 = %q", stripANSI(lines[1]))
+	if !strings.Contains(body, "webshop") {
+		t.Errorf("body must contain the binding row, got:\n%s", body)
 	}
 
 	loading := loaded
 	loading.Loaded = false
-	if lines := strings.Split(f.Body(loading, 140, 40), "\n"); strings.Contains(stripANSI(lines[0]), "NAME") {
-		t.Errorf("the loading body must have no header: %q", stripANSI(lines[0]))
+	if body := stripANSI(f.Body(loading, 140, 40)); strings.Contains(body, "working") {
+		t.Errorf("the loading body must have no section line: %q", body)
 	}
 	empty := loaded
-	empty.Report = relevo.Report{}
-	if lines := strings.Split(f.Body(empty, 140, 40), "\n"); strings.Contains(stripANSI(lines[0]), "NAME") {
-		t.Errorf("the empty body must have no header: %q", stripANSI(lines[0]))
+	empty.Report = view.Report{}
+	if body := stripANSI(f.Body(empty, 140, 40)); strings.Contains(body, "working") {
+		t.Errorf("the empty body must have no section line: %q", body)
 	}
 }
 
-// TestFleetHeaderSurvivesNarrowing pins A1: the header uses the rows' own
-// widths, gutter and drop rule, so at 80 columns it shows exactly
-// NAME ON RND STATE NOW.
+// TestFleetHeaderSurvivesNarrowing pins D4: at 80 columns, name and now survive.
 func TestFleetHeaderSurvivesNarrowing(t *testing.T) {
-	line := stripANSI(fleetHeaderLine(80))
-	if w := len([]rune(line)); w != 80 {
-		t.Errorf("the header at 80 is %d cells wide, want 80: %q", w, line)
+	b := view.BindingStatus{
+		Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working",
+		BuilderCandidate: "cline/deepseek", MasterMindName: "architect-1",
+		Spend: &usage.Spend{Measured: 1.23},
 	}
-	for _, want := range []string{"NAME", "ON", "RND", "STATE", "NOW"} {
-		if !strings.Contains(line, want) {
-			t.Errorf("the header at 80 = %q, want %s", line, want)
-		}
+	line := stripANSI(fleetRowLine(b, groupWorking, false, railNow, 80))
+	if !strings.Contains(line, "webshop") {
+		t.Errorf("name must survive at 80, got %q", line)
 	}
-	for _, not := range []string{"ACTOR", "SPEND", "PLANNER", "REPO"} {
-		if strings.Contains(line, not) {
-			t.Errorf("the header at 80 = %q, must not name the dropped %s column", line, not)
-		}
-	}
-
-	wide := stripANSI(fleetHeaderLine(140))
-	for _, want := range []string{"NAME", "ACTOR", "ON", "RND", "STATE", "NOW", "SPEND", "PLANNER", "REPO"} {
-		if !strings.Contains(wide, want) {
-			t.Errorf("the header at 140 = %q, want %s", wide, want)
-		}
+	if !strings.Contains(line, "working") {
+		t.Errorf("now must survive at 80, got %q", line)
 	}
 }
 
@@ -174,7 +164,7 @@ func TestFleetHeaderSurvivesNarrowing(t *testing.T) {
 // line read "1 needs you" for one and "N need you" for more, from the one
 // helper, so they cannot drift.
 func TestNeedsYouGrammarIsShared(t *testing.T) {
-	one := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 1, Display: "NEEDS YOU"})
+	one := splitModel(t, 140, 40, view.BindingStatus{Name: "webshop", Round: 1, Display: "NEEDS YOU"})
 	if h := stripANSI(one.headerView(one.env())); !strings.Contains(h, "● 1 needs you") {
 		t.Errorf("header = %q, want the singular", h)
 	}
@@ -184,8 +174,8 @@ func TestNeedsYouGrammarIsShared(t *testing.T) {
 	}
 
 	two := splitModel(t, 140, 40,
-		relevo.BindingStatus{Name: "webshop", Round: 1, Display: "NEEDS YOU"},
-		relevo.BindingStatus{Name: "docs", Round: 1, Display: "NEEDS YOU"},
+		view.BindingStatus{Name: "webshop", Round: 1, Display: "NEEDS YOU"},
+		view.BindingStatus{Name: "docs", Round: 1, Display: "NEEDS YOU"},
 	)
 	if h := stripANSI(two.headerView(two.env())); !strings.Contains(h, "● 2 need you") {
 		t.Errorf("header = %q, want the plural", h)
@@ -200,13 +190,14 @@ func TestNeedsYouGrammarIsShared(t *testing.T) {
 // only matching rows, the selection survives, enter keeps the filter, and
 // esc clears it.
 func TestFleetFilter(t *testing.T) {
-	rows := []relevo.BindingStatus{
+	rows := []view.BindingStatus{
 		{Name: "webshop", Round: 4, Display: "ACTIVE", CWD: "/home/x/web"},
 		{Name: "docs", Round: 1, Display: "DONE"},
 		{Name: "api", Round: 2, Display: "ACTIVE"},
 	}
-	env := Env{Loaded: true, Now: railNow, Report: relevo.Report{Bindings: rows}, Width: 140, Height: 40, StatusAt: railNow}
+	env := Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: rows}, Width: 140, Height: 40, StatusAt: railNow}
 	f := newFleetView(true)
+	f.showDone = true
 	key := func(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
 	// Put the selection on "docs" first: it must survive the filter.
@@ -281,12 +272,12 @@ func TestFleetFilter(t *testing.T) {
 }
 
 // TestFleetFilterMatchesEveryShownField pins A4's field list: key, actor,
-// candidate, planner, repo and state all match, case-insensitively.
+// candidate, mastermind, repo and state all match, case-insensitively.
 func TestFleetFilterMatchesEveryShownField(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "PAUSED", Role: "reviewer",
 		BuilderCandidate: "cline-pass/deepseek-v4.1-flash#high",
-		PlannerName:      "architect-1", CWD: "/home/x/relevo",
+		MasterMindName:   "architect-1", CWD: "/home/x/relevo",
 	}
 	for _, q := range []string{"WEBSHOP", "reviewer", "deepseek", "architect-1", "relevo", "paused"} {
 		if !fleetRowMatches(b, q) {
@@ -298,74 +289,69 @@ func TestFleetFilterMatchesEveryShownField(t *testing.T) {
 	}
 }
 
-// TestFleetColumnsAndNarrowDropOrder pins §4.3's columns and the drop order
-// REPO, PLANNER, SPEND, ACTOR at widths 140, 110, 95 and 80 (R2.11).
+// TestFleetColumnsAndNarrowDropOrder pins D4: the new drop order mastermind first,
+// then spend, then candidate.
 func TestFleetColumnsAndNarrowDropOrder(t *testing.T) {
-	b := relevo.BindingStatus{
-		Name: "webshop", Round: 4, Display: "ACTIVE", Role: "reviewer", CWD: "/home/x/very/long/repo/path",
+	b := view.BindingStatus{
+		Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working",
 		BuilderCandidate: "cline-pass/deepseek-v4.1-flash#high",
-		PlannerName:      "architect-1",
+		MasterMindName:   "architect-1",
+		Spend:            &usage.Spend{Measured: 1.23},
 	}
 	cases := []struct {
 		width     int
-		wantRepo  bool
 		wantPlan  bool
-		wantActor bool
 		wantSpend bool
+		wantCand  bool
 	}{
-		// 140: everything fits, REPO takes the rest.
-		{140, true, true, true, true},
-		// 110: REPO then PLANNER drop.
-		{110, false, false, true, true},
-		// 95: REPO, PLANNER, SPEND then ACTOR drop.
-		{95, false, false, false, false},
-		// 80: REPO, PLANNER, SPEND and ACTOR all drop.
-		{80, false, false, false, false},
+		{132, true, true, true},
+		{90, false, true, true},
+		{70, false, false, true},
+		{50, false, false, false},
 	}
 	for _, tc := range cases {
-		cells := strings.Join(fleetCells(b, railNow, tc.width), "|")
-		if got := strings.Contains(cells, "repo/path"); got != tc.wantRepo {
-			t.Errorf("width %d: repo present = %v, want %v: %s", tc.width, got, tc.wantRepo, cells)
+		cand, spend, plan := fleetRowPlan(tc.width)
+		if plan != tc.wantPlan || spend != tc.wantSpend || cand != tc.wantCand {
+			t.Errorf("width %d: plan=%v spend=%v cand=%v, want plan=%v spend=%v cand=%v",
+				tc.width, plan, spend, cand, tc.wantPlan, tc.wantSpend, tc.wantCand)
 		}
-		if got := strings.Contains(cells, "architect-1"); got != tc.wantPlan {
-			t.Errorf("width %d: planner present = %v, want %v: %s", tc.width, got, tc.wantPlan, cells)
+		line := stripANSI(fleetRowLine(b, groupWorking, false, railNow, tc.width))
+		if got := strings.Contains(line, "architect-1"); got != tc.wantPlan {
+			t.Errorf("width %d: mastermind present = %v, want %v: %s", tc.width, got, tc.wantPlan, line)
 		}
-		if got := strings.Contains(cells, "reviewer"); got != tc.wantActor {
-			t.Errorf("width %d: actor present = %v, want %v: %s", tc.width, got, tc.wantActor, cells)
+		if got := strings.Contains(line, "$1.23"); got != tc.wantSpend {
+			t.Errorf("width %d: spend present = %v, want %v: %s", tc.width, got, tc.wantSpend, line)
 		}
-		if got := strings.Contains(cells, "│"); got {
-			t.Errorf("width %d: separators leak into the cells: %s", tc.width, cells)
-		}
-		if got := strings.Contains(cells, "deepseek-v4.1-flash"); !got {
-			t.Errorf("width %d: the ON cell must survive: %s", tc.width, cells)
+		if got := strings.Contains(line, "deepseek-v4.1-flash"); got != tc.wantCand {
+			t.Errorf("width %d: the ON cell present = %v, want %v: %s", tc.width, got, tc.wantCand, line)
 		}
 	}
 }
 
-// TestFleetNeedsYouSecondLine pins §4.3: a NEEDS YOU row with a Waiting
-// line gets a second line, five spaces, "└ ", then the question in dim.
+// TestFleetNeedsYouSecondLine pins §2.3 and D4: a NEEDS YOU row with a Waiting
+// line gets a second line with the quote glyph "╰ ".
 func TestFleetNeedsYouSecondLine(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		Waiting: &relevo.Waiting{Cause: "blocked", Line: "which database should r4 use?"},
+		Waiting: &view.Waiting{Cause: "blocked", Line: "which database should r4 use?"},
 	}
-	f := fleetView{}
-	env := Env{Loaded: true, Now: railNow, Report: relevo.Report{Bindings: []relevo.BindingStatus{b}}, Width: 140}
-	lines := f.fleetLines(env, 140)
-	if len(lines) != 2 {
-		t.Fatalf("%d lines, want 2 (row + question)", len(lines))
+	f := newFleetView(true)
+	env := Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: []view.BindingStatus{b}}, Width: 140, Height: 40}
+	lines := f.fleetListLines(env, 140)
+	if len(lines) != 4 {
+		t.Fatalf("%d lines, want 4 (section + row + question + blank)", len(lines))
 	}
-	if !strings.Contains(stripANSI(lines[1].text), "└ which database should r4 use?") {
-		t.Errorf("second line = %q", stripANSI(lines[1].text))
+	if !strings.Contains(stripANSI(lines[2].text), "╰ which database should r4 use?") {
+		t.Errorf("question line = %q", stripANSI(lines[2].text))
 	}
-	if lines[1].row != 0 {
-		t.Errorf("the question line belongs to row 0, got %d", lines[1].row)
+	if lines[2].row != 0 {
+		t.Errorf("the question line belongs to row 0, got %d", lines[2].row)
 	}
 
 	// No Waiting line: no second line.
-	b.Waiting = &relevo.Waiting{Cause: "blocked"}
-	env.Report = relevo.Report{Bindings: []relevo.BindingStatus{b}}
-	if got := len(f.fleetLines(env, 140)); got != 1 {
-		t.Errorf("without a Waiting line: %d lines, want 1", got)
+	b.Waiting = &view.Waiting{Cause: "blocked"}
+	env.Report = view.Report{Bindings: []view.BindingStatus{b}}
+	if got := len(f.fleetListLines(env, 140)); got != 3 {
+		t.Errorf("without a Waiting line: %d lines, want 3", got)
 	}
 }

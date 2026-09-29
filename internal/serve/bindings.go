@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,13 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// Allowed reports whether caller is authorized to perform verb on binding b (spec §2.5).
-// Exported for testing and for future grants lookup (#203).
+// Allowed reports whether caller may perform verb on binding b. Exported for
+// testing and a future grants lookup.
 func Allowed(caller remote.ClientID, verb string, b store.Binding) bool {
 	if verb == "create" {
 		return true
@@ -48,11 +50,10 @@ func (s *Server) loadBinding(caller remote.ClientID, name string) (store.Binding
 	return b, rt, nil
 }
 
-// validAuthor reports whether a wire author is storable (#335): a non-empty
-// name and email of at most 256 bytes each, with no newline, carriage
-// return, NUL, < or >. The server puts both values in a builder's
-// environment, so anything that could forge a line there is refused up
-// front.
+// validAuthor reports whether a wire author is storable: a non-empty name and
+// email of at most 256 bytes each, with no newline, carriage return, NUL, < or
+// >. The server puts both values in a builder's environment, so anything that
+// could forge a line there is refused up front.
 func validAuthor(a remote.GitIdentity) bool {
 	return validAuthorPart(a.Name) && validAuthorPart(a.Email)
 }
@@ -64,31 +65,45 @@ func validAuthorPart(s string) bool {
 	return !strings.ContainsAny(s, "\n\r\x00<>")
 }
 
+// parseCreateRequest decodes and validates the wire create request; the returned
+// message is the 400 to answer, empty when it is well formed.
+func parseCreateRequest(r *http.Request) (remote.CreateBindingRequest, string) {
+	var req remote.CreateBindingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return req, err.Error()
+	}
+	if err := store.ValidName(req.Name); err != nil {
+		return req, err.Error()
+	}
+	if req.RepoID == "" {
+		return req, "repo_id is required"
+	}
+	if len(req.BaseCommit) != 40 || !isHex(req.BaseCommit) {
+		return req, "base_commit must be 40 hex characters"
+	}
+	if req.Author != nil && !validAuthor(*req.Author) {
+		return req, "author: name and email must be 1-256 bytes with no newline, NUL, < or >"
+	}
+	if req.Feature != "" {
+		if err := store.ValidFeature(req.Feature); err != nil {
+			return req, err.Error()
+		}
+	}
+	if req.Ticket != "" {
+		if err := store.ValidTicket(req.Ticket); err != nil {
+			return req, err.Error()
+		}
+	}
+	return req, ""
+}
+
 func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var req remote.CreateBindingRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
-		return
-	}
-
-	if err := store.ValidName(req.Name); err != nil {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
-		return
-	}
-	if req.RepoID == "" {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "repo_id is required")
-		return
-	}
-	if len(req.BaseCommit) != 40 || !isHex(req.BaseCommit) {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "base_commit must be 40 hex characters")
-		return
-	}
-	if req.Author != nil && !validAuthor(*req.Author) {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid,
-			"author: name and email must be 1-256 bytes with no newline, NUL, < or >")
+	req, bad := parseCreateRequest(r)
+	if bad != "" {
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, bad)
 		return
 	}
 
@@ -98,56 +113,87 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
 		return
 	}
-
 	if _, err := rt.Store.Load(req.Name); err == nil {
 		writeErr(w, http.StatusConflict, remote.CodeInvalid, "binding exists")
 		return
 	}
 
-	// A binding runs one writer role (#382 §5.3). Resolve it against this
-	// server's own registry -- the client's roles.json never travels -- and
-	// refuse before InitBare, so a refused create leaves no bare repo behind.
-	role := relevo.NormRole(req.Role)
-	if role != "" {
-		if err := relevo.CheckWriterRole(rt, role); err != nil {
-			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
-			return
+	b, ok := s.buildServedBinding(w, r.Context(), rt, caller, req)
+	if !ok {
+		return
+	}
+	if err := rt.Store.Save(b); err != nil {
+		writeErr(w, http.StatusInternalServerError, "", err.Error())
+		return
+	}
+	if reloaded, err := rt.Store.Load(req.Name); err == nil {
+		b = reloaded
+	}
+	entries, _ := rt.Store.ReadLog(req.Name)
+	writeJSON(w, http.StatusCreated, relevo.ServedView(b, entries))
+}
+
+// pickServedTier resolves role's candidate and tier for a create. It writes the
+// failure itself and returns ok=false.
+func pickServedTier(w http.ResponseWriter, rt relevo.Runtime, roleName, candidate, explicit string) (token, kind, tier string, ok bool) {
+	token, kind = relevo.PickServedCandidateFor(rt, roleName, candidate)
+	resolved, err := relevo.ResolveServedTierFor(rt, roleName, token, explicit)
+	if err != nil {
+		if errors.Is(err, relevo.ErrTierAboveMax) {
+			offending := explicit
+			format := "tier %s exceeds this server's max_tier %s; raise max_tier in the server's config policy"
+			if offending == "" {
+				format = "policy tier." + roleName + " %s exceeds max_tier %s"
+				offending = string(resolved)
+			}
+			writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax,
+				fmt.Sprintf(format, offending, rt.Policy.MaxTierOrDefault()))
+			return "", "", "", false
 		}
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+		return "", "", "", false
+	}
+	return token, kind, string(resolved), true
+}
+
+// buildServedBinding resolves the request's role against this server's own
+// registry -- the client's roles.json never travels -- creates the bare repo and
+// picks the role's candidate and tier. It writes the failure itself and returns
+// ok=false, so a refused create leaves no bare repo behind.
+func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, rt relevo.Runtime, caller remote.ClientID, req remote.CreateBindingRequest) (store.Binding, bool) {
+	if req.Role == "" {
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "actor is required")
+		return store.Binding{}, false
+	}
+	role := relevo.NormRole(req.Role)
+	shape := store.ShapeWriter
+	if role != "" {
+		s, err := relevo.ActorShape(rt, role)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+			return store.Binding{}, false
+		}
+		shape = s
 	}
 
 	repoRoot, err := s.repoRoot(caller)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
-		return
+		return store.Binding{}, false
 	}
 	bare := filepath.Join(repoRoot, req.RepoID+".git")
-	if err := s.cfg.Git.InitBare(r.Context(), bare); err != nil {
+	if err := s.cfg.Git.InitBare(ctx, bare); err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
-		return
+		return store.Binding{}, false
 	}
 
-	now := s.cfg.Now()
 	roleName := role
 	if roleName == "" {
 		roleName = "builder"
 	}
-	candidateToken, harnessKind := relevo.PickServedCandidateFor(rt, roleName, req.Candidate)
-
-	tier, err := relevo.ResolveServedTierFor(rt, roleName, candidateToken, req.Tier)
-	if err != nil {
-		if errors.Is(err, relevo.ErrTierAboveMax) {
-			offending := req.Tier
-			format := "tier %s exceeds this server's max_tier %s; raise max_tier in the server's config policy"
-			if offending == "" {
-				format = "policy tier." + roleName + " %s exceeds max_tier %s"
-				offending = string(tier)
-			}
-			writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax,
-				fmt.Sprintf(format, offending, rt.Policy.MaxTierOrDefault()))
-			return
-		}
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
-		return
+	candidateToken, harnessKind, tier, ok := pickServedTier(w, rt, roleName, req.Candidate, req.Tier)
+	if !ok {
+		return store.Binding{}, false
 	}
 
 	authorName, authorEmail := "", ""
@@ -155,8 +201,9 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		authorName, authorEmail = req.Author.Name, req.Author.Email
 	}
 
+	now := s.cfg.Now()
 	cwd := rt.Store.WorktreePath(req.Name)
-	b := store.Binding{
+	return store.Binding{
 		Name:             req.Name,
 		Owner:            string(caller),
 		CWD:              cwd,
@@ -168,10 +215,13 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		BuilderCandidate: candidateToken,
 		Tier:             string(tier),
 		Role:             role,
+		Shape:            shape,
 		Round:            1,
 		State:            store.StateActive,
 		RoundCap:         req.RoundCap,
 		RoundTimeoutMS:   req.RoundTimeoutMS,
+		Feature:          req.Feature,
+		Ticket:           req.Ticket,
 		Serve: &store.ServeFacts{
 			RepoID:      req.RepoID,
 			BareRepo:    bare,
@@ -179,19 +229,7 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 			AuthorName:  authorName,
 			AuthorEmail: authorEmail,
 		},
-	}
-
-	if err := rt.Store.Save(b); err != nil {
-		writeErr(w, http.StatusInternalServerError, "", err.Error())
-		return
-	}
-
-	if reloaded, err := rt.Store.Load(req.Name); err == nil {
-		b = reloaded
-	}
-
-	entries, _ := rt.Store.ReadLog(req.Name)
-	writeJSON(w, http.StatusCreated, relevo.ServedView(b, entries))
+	}, true
 }
 
 func (s *Server) handleListBindings(w http.ResponseWriter, r *http.Request) {
@@ -363,20 +401,22 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = relevo.Unbind(r.Context(), rt, name, true)
+	res, err := relevo.Unbind(r.Context(), rt, name, true)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return
+	}
+	if res.WorktreeKept == "" {
+		if err := releaseServedRefs(r.Context(), rt, b); err != nil {
+			slog.Warn("release served refs", "owner", caller, "binding", b.Name, "err", err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
-// handleStop ends the binding's open round on the server, leaving the binding
-// in place (#344). An idle or already-closed binding is 409 nothing_to_stop, a
-// halted one is 409 round_halted (message is the binding's Halt), and another
-// client's binding is 404 -- the states the verbs around it refuse, plus
-// nothing_to_stop.
+// handleStop ends the binding's open round, leaving the binding in place: an
+// idle or closed one is 409 nothing_to_stop, a halted one 409 round_halted.
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -506,7 +546,7 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := relevo.Unavailable(rt, req.Token, time.Time{}, req.Reason); err != nil {
+	if _, err := availability.Unavailable(relevo.AvailabilityDeps(rt), req.Token, time.Time{}, req.Reason); err != nil {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 		return
 	}
@@ -514,13 +554,10 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
-// handleAvailable lifts the server-wide ledger's rate-limit gate on a
-// subject's provider. It is handleUnavailable minus the binding-scoped
-// branch: the ledger is server-wide, so there is nothing binding-scoped to
-// check and no /v1/bindings/{name}/available route. relevo.Available itself
-// decides what the subject names (#301): a bare provider that gates nothing
-// is still a 200 with Removed 0 when it is known, while a subject relevo
-// knows nothing about is a 422 carrying the local verb's message.
+// handleAvailable lifts the server-wide ledger's rate-limit gate on a subject's
+// provider. It is handleUnavailable minus the binding-scoped branch: the ledger
+// is server-wide, so there is no /v1/bindings/{name}/available route.
+// relevo.Available decides what the subject names.
 func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -542,7 +579,7 @@ func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider, removed, err := relevo.Available(rt, req.Subject, relevo.ClearedByPlanner)
+	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), req.Subject, availability.ClearedByMasterMind)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
 		return

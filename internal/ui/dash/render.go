@@ -3,80 +3,244 @@ package dash
 import (
 	"fmt"
 	"math"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/stats"
 )
 
-// dashHeaderRows is the screen's fixed furniture: the identity line, the
-// tiles, and the editor or column header. Everything under them is the
-// grid, which is what scrolls (§5).
-const dashHeaderRows = 3
+// ShortRepo trims prefixes, suffixes, and returns the last two segments
+// (or the key itself when fewer than two).
+func ShortRepo(key string) string {
+	key = strings.TrimRight(key, "/")
+	if strings.HasSuffix(key, "/.git") {
+		key = strings.TrimSuffix(key, "/.git")
+	} else if strings.HasSuffix(key, ".git") {
+		key = strings.TrimSuffix(key, ".git")
+	}
+	if at := strings.Index(key, "@"); at >= 0 {
+		if colon := strings.Index(key[at+1:], ":"); colon >= 0 {
+			key = key[at+1+colon+1:]
+		}
+	}
+	parts := strings.Split(key, "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2] + "/" + parts[len(parts)-1]
+	}
+	return key
+}
 
-// Column widths §5 fixes. `builder` is the widest, and the one that shrinks
-// when the terminal cannot hold the whole line (§5's "builder (36, …)").
-const (
-	colStarted  = 16
-	colBinding  = 12
-	colRound    = 3
-	colBuilder  = 36
-	colOutcome  = 13
-	colCommits  = 7
-	colTree     = 6
-	colGate     = 5
-	colTokens   = 7
-	colCost     = 7
-	colDuration = 8
-
-	colKey = 36 // the group key column, expand marker included
-)
-
-// Width tiers §5: < 140 drops gate; < 120 drops tree and commits; < 100
-// drops tokens; < 80 drops duration. cost is never dropped.
-const (
-	tierGate    = 140
-	tierTree    = 120
-	tierTokens  = 100
-	tierDur     = 80
-	tierHintBar = 120 // the line-1 key hints
-)
-
-// lineKind separates the grid's two row shapes.
+// lineKind separates the grid's row shapes.
 type lineKind int
 
 const (
 	lineGroup lineKind = iota
 	lineRound
+	lineDay
 )
 
-// line is one visible grid row: a group, or a round (the query's rows when
-// ungrouped, or an expanded group's rows when grouped).
+type dayRule struct {
+	label  string
+	rounds int
+	tokens int64
+}
+
+// line is one visible grid row: a group, a day rule, or a round.
 type line struct {
 	kind  lineKind
 	group histq.GroupRow
 	row   db.RoundRow
+	day   dayRule
 }
 
-// col is one grid column: its header label, its width, and its value.
-type col struct {
-	label string
-	width int
-	value string
-	style lipgloss.Style
+// Summary is a pure summary over rows.
+type Summary struct {
+	Rounds   int
+	Tokens   int64
+	ByWord   map[string]int // outcome word (§3.5) -> rounds
+	MedianMS int64          // median of rows with DurationMS; 0 when none
+}
+
+// outcomeWord maps a round's outcome fields to its display word and style (§3.5).
+func (m Model) outcomeWord(r db.RoundRow) (string, lipgloss.Style) {
+	switch r.Outcome {
+	case db.OutcomeOpen:
+		if m.Running != nil && m.Running(r.BindingName, r.Number) {
+			return "running", m.styles.Accent
+		}
+		return "open", m.styles.Dim
+	case db.OutcomeExited:
+		return "exited", m.styles.Danger
+	case db.OutcomeHalted:
+		return "halted", m.styles.Warn
+	case db.OutcomeSwitched:
+		return "switched", m.styles.Warn
+	case db.OutcomeDoneNoReport:
+		return "no output", m.styles.Faint
+	case db.OutcomeReported:
+		if r.ReportOutcome != nil {
+			switch *r.ReportOutcome {
+			case "done":
+				return "done", m.styles.Ok
+			case "halted":
+				return "halted", m.styles.Warn
+			case "blocked":
+				return "blocked", m.styles.Warn
+			}
+		}
+		return "no outcome", m.styles.Faint
+	default:
+		return r.Outcome, m.styles.Faint
+	}
+}
+
+// Summary calculates a Summary over m.rows (the whole query result, unsorted).
+func (m Model) Summary() Summary {
+	s := Summary{
+		Rounds: len(m.rows),
+		ByWord: make(map[string]int),
+	}
+	var durations []int64
+	for _, r := range m.rows {
+		s.Tokens += tokenValue(r)
+		word, _ := m.outcomeWord(r)
+		s.ByWord[word]++
+		if r.DurationMS != nil {
+			durations = append(durations, *r.DurationMS)
+		}
+	}
+	s.MedianMS = median(durations)
+	return s
+}
+
+// SummaryLine produces the styled summary items (§5.4), joined by 3 spaces,
+// with no margin and no padding. When maxWidth > 0, items are dropped from the
+// end until lipgloss.Width(joined) <= maxWidth. The first two items (rounds, tokens)
+// are never dropped; if even those do not fit, they are returned clipped.
+// maxWidth <= 0 means no limit.
+func (m Model) SummaryLine(maxWidth int) string {
+	s := m.Summary()
+	var items []string
+
+	item := func(num string, label string) string {
+		return m.styles.Strong.Render(num) + " " + m.styles.Dim.Render(label)
+	}
+
+	items = append(items, item(strconv.Itoa(s.Rounds), "rounds"))
+	items = append(items, item(shortTokens(s.Tokens), "tokens"))
+	items = append(items, item(strconv.Itoa(s.ByWord["done"]), "done"))
+
+	for _, word := range []string{"halted", "blocked", "exited", "switched", "running", "open"} {
+		if cnt := s.ByWord[word]; cnt > 0 {
+			items = append(items, item(strconv.Itoa(cnt), word))
+		}
+	}
+
+	if s.MedianMS > 0 {
+		items = append(items, item(shortDuration(s.MedianMS), "median"))
+	}
+
+	if maxWidth <= 0 {
+		return strings.Join(items, "   ")
+	}
+
+	for len(items) > 2 {
+		joined := strings.Join(items, "   ")
+		if lipgloss.Width(joined) <= maxWidth {
+			return joined
+		}
+		items = items[:len(items)-1]
+	}
+
+	joined := strings.Join(items, "   ")
+	if lipgloss.Width(joined) <= maxWidth {
+		return joined
+	}
+	return clip(joined, maxWidth)
+}
+
+// Problem returns Notice if set, else "query failed: " + fetchErr if set, else "".
+func (m Model) Problem() string {
+	if m.Notice != "" {
+		return m.Notice
+	}
+	if m.fetchErr != "" {
+		return "query failed: " + m.fetchErr
+	}
+	return ""
+}
+
+// FilterText returns stripBy(m.text).
+func (m Model) FilterText() string {
+	return stripBy(m.text)
+}
+
+// SortLabel returns the round sort key when ungrouped, group sort key when grouped.
+func (m Model) SortLabel() string {
+	key := m.roundSortKey()
+	if m.grouped() {
+		key = m.groupSortKey()
+	}
+	if key == "started" {
+		if m.sortDesc {
+			return "newest"
+		}
+		return "oldest"
+	}
+	if m.sortDesc {
+		return key + " ↓"
+	}
+	return key + " ↑"
 }
 
 // visible is the flattened list the cursor addresses: one line per row
 // when By == none (sorted), else one line per group (sorted) with an
-// expanded group's rows -- newest first, or the round sort -- indented
-// beneath it. Rebuilt on every call, exactly as render does (§3).
+// expanded group's rows indented beneath it.
 func (m Model) visible() []line {
 	if !m.grouped() {
 		rows := m.sortedRows(m.rows)
-		out := make([]line, len(rows))
-		for i := range rows {
-			out[i] = line{kind: lineRound, row: rows[i]}
+		if m.roundSortKey() != "started" {
+			out := make([]line, len(rows))
+			for i := range rows {
+				out[i] = line{kind: lineRound, row: rows[i]}
+			}
+			return out
+		}
+		var out []line
+		i := 0
+		for i < len(rows) {
+			j := i + 1
+			y0, m0, d0 := rows[i].StartedAt.In(m.loc).Date()
+			for j < len(rows) {
+				yj, mj, dj := rows[j].StartedAt.In(m.loc).Date()
+				if yj != y0 || mj != m0 || dj != d0 {
+					break
+				}
+				j++
+			}
+			run := rows[i:j]
+			var runTokens int64
+			for _, r := range run {
+				runTokens += tokenValue(r)
+			}
+			lbl := m.dayLabel(run[0].StartedAt)
+			out = append(out, line{
+				kind: lineDay,
+				day: dayRule{
+					label:  lbl,
+					rounds: len(run),
+					tokens: runTokens,
+				},
+			})
+			for _, r := range run {
+				out = append(out, line{kind: lineRound, row: r})
+			}
+			i = j
 		}
 		return out
 	}
@@ -97,8 +261,12 @@ func (m Model) visible() []line {
 // empty state is prose, never an error.
 func (m Model) gridContent() string {
 	lines := m.visible()
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
+	}
 	if len(lines) == 0 {
-		return m.styles.Empty.Render("no rounds")
+		return "   " + fit(m.styles.Empty.Render("no rounds"), cw) + "   "
 	}
 	out := make([]string, len(lines))
 	for i, l := range lines {
@@ -108,8 +276,7 @@ func (m Model) gridContent() string {
 }
 
 // windowTop is the first grid line to draw so the cursor stays visible: it
-// sits mid-window, clamped to the ends. The grid scrolls, the header does
-// not (§5).
+// sits mid-window, clamped to the ends.
 func (m Model) windowTop() int {
 	n := len(m.visible())
 	h := m.gridHeight()
@@ -126,137 +293,494 @@ func (m Model) windowTop() int {
 	return top
 }
 
-// renderLine draws one grid row, the cursor line in the rail's selected
-// style.
+// renderLine draws one grid row.
 func (m Model) renderLine(l line, cursor bool) string {
-	if l.kind == lineGroup {
+	switch l.kind {
+	case lineGroup:
 		return m.groupLine(l.group, cursor)
+	case lineDay:
+		return m.dayRuleLine(l.day)
+	default:
+		return m.roundLine(l.row, cursor, m.grouped())
 	}
-	return m.roundLine(l.row, cursor, m.grouped())
 }
 
-// roundColumns is the round grid's columns for this terminal width: §5's
-// columns in §5's order, the tier columns present, builder fitted to what
-// is left.
-func (m Model) roundColumns(r db.RoundRow) []col {
-	outcome, outcomeStyle := m.outcomeCell(r)
-	cols := []col{
-		{"started", colStarted, r.StartedAt.In(m.loc).Format("2006-01-02 15:04"), m.styles.Fg},
-		{"binding", colBinding, r.BindingName, m.styles.Fg},
-		{"rnd", colRound, fmt.Sprintf("r%d", r.Number), m.styles.Dim},
-		{"builder", m.builderWidth(), m.nameOf(deref(r.BuilderCandidate)), m.styles.Fg},
-		{"outcome", colOutcome, outcome, outcomeStyle},
+// dayRuleLine renders one day rule line.
+func (m Model) dayRuleLine(d dayRule) string {
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
 	}
-	if m.width >= tierTree {
-		cols = append(cols,
-			col{"commits", colCommits, commitsCell(r), m.styles.Fg},
-			col{"tree", colTree, treeCell(r), m.styles.Fg})
+	label := d.label
+	rightText := " " + plural(d.rounds, "round") + " · " + shortTokens(d.tokens)
+	leftWidth := lipgloss.Width(label) + 1
+	rightWidth := lipgloss.Width(rightText)
+	fill := cw - leftWidth - rightWidth
+	if fill < 0 {
+		fill = 0
 	}
-	if m.width >= tierGate {
-		cols = append(cols, col{"gate", colGate, gateCell(r), m.styles.Fg})
-	}
-	if m.width >= tierTokens {
-		cols = append(cols, col{"tokens", colTokens, tokensCell(r), m.styles.Fg})
-	}
-	cols = append(cols, col{"cost", colCost, costCell(r), m.styles.Fg})
-	if m.width >= tierDur {
-		cols = append(cols, col{"duration", colDuration, durationCell(r), m.styles.Fg})
-	}
-	return cols
+	content := m.styles.Dim.Render(label) + " " + m.styles.Grid.Render(strings.Repeat("┈", fill)) + m.styles.Faint.Render(rightText)
+	return "   " + fit(content, cw) + "   "
 }
 
-// roundLine is one round (§5):
-//
-//	2026-09-20 22:01  persist  r5  claude/anthropic/sonnet  reported  +1  clean  pass  1.2M  $0.42  27m
-//
-// An expanded group's rounds are indented two cells.
-func (m Model) roundLine(r db.RoundRow, cursor, indented bool) string {
-	cells := make([]string, 0, 11)
-	for _, c := range m.roundColumns(r) {
-		cells = append(cells, c.style.Render(pad(c.value, c.width)))
+type roundColLayout struct {
+	hasRepo    bool
+	hasTreeCom bool
+	hasTokens  bool
+	bindWidth  int
+}
+
+func (m Model) roundLayout(indented bool) roundColLayout {
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
 	}
-	line := strings.Join(cells, "  ")
+	avail := cw
 	if indented {
-		line = "  " + line
+		avail -= 2
 	}
-	if r.Archived {
-		line = m.styles.Archived.Render(line)
+	layout := roundColLayout{
+		hasRepo:    true,
+		hasTreeCom: true,
+		hasTokens:  true,
 	}
-	if cursor {
-		line = m.styles.Selected.Render(fit(line, m.width))
+	if avail-106 >= 12 {
+		layout.bindWidth = avail - 106
+		return layout
 	}
-	return line
+	layout.hasRepo = false
+	if avail-82 >= 12 {
+		layout.bindWidth = avail - 82
+		return layout
+	}
+	layout.hasTreeCom = false
+	if avail-66 >= 12 {
+		layout.bindWidth = avail - 66
+		return layout
+	}
+	layout.hasTokens = false
+	w := avail - 57
+	if w < 12 {
+		w = 12
+	}
+	layout.bindWidth = w
+	return layout
 }
 
-// groupLine is one group row (§5), sums right-aligned under the header.
-func (m Model) groupLine(g histq.GroupRow, cursor bool) string {
-	marker := "▸ "
-	if m.expanded[g.Key] {
-		marker = "▾ "
+// roundLine is one round row (§5.2).
+func (m Model) roundLine(r db.RoundRow, cursor, indented bool) string {
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
 	}
-	key := g.Key
-	if m.query.By == histq.AxisBuilder {
-		key = m.nameOf(g.Key)
+	layout := m.roundLayout(indented)
+	var parts []string
+
+	add := func(text string, width int, alignRight bool, s lipgloss.Style) {
+		text = clip(text, width)
+		var cell string
+		if alignRight {
+			if w := lipgloss.Width(text); w < width {
+				cell = strings.Repeat(" ", width-w) + text
+			} else {
+				cell = text
+			}
+		} else {
+			cell = pad(text, width)
+		}
+		if cursor {
+			s = s.Background(m.styles.Selected.GetBackground())
+		}
+		parts = append(parts, s.Render(cell))
 	}
-	parts := []string{pad(marker+clip(key, colKey-2), colKey)}
-	parts = append(parts, fmt.Sprintf("%6d", g.Rounds))
-	parts = append(parts, fmt.Sprintf("%8d", g.Reported))
-	parts = append(parts, fmt.Sprintf("%6d", g.Halted))
-	if m.width >= tierTree {
-		parts = append(parts, fmt.Sprintf("%7d", g.Commits))
+
+	// STARTED: StartedAt.In(loc).Format("15:04"), Dim, width 7
+	add(r.StartedAt.In(m.loc).Format("15:04"), 7, false, m.styles.Dim)
+
+	// BINDING: binding name, Fg (Strong on cursor row), width layout.bindWidth
+	bStyle := m.styles.Fg
+	if cursor {
+		bStyle = m.styles.Strong
 	}
-	if m.width >= tierTokens {
-		parts = append(parts, fmt.Sprintf("%7s", shortTokens(g.Tokens)))
+	add(r.BindingName, layout.bindWidth, false, bStyle)
+
+	// RND: r<n>, Dim, width 4
+	add(fmt.Sprintf("r%d", r.Number), 4, false, m.styles.Dim)
+
+	// CANDIDATE: nameOf(Candidate), · when nil, Dim, width 21
+	candText := "·"
+	if r.Candidate != nil {
+		candText = m.nameOf(*r.Candidate)
 	}
-	parts = append(parts, fmt.Sprintf("%7s", groupCostCell(g)))
-	parts = append(parts, fmt.Sprintf("%10s", g.Last.In(m.loc).Format("2006-01-02")))
+	add(candText, 21, false, m.styles.Dim)
+
+	// REPO: ShortRepo(*Repo), (no repo) when nil, Dim, width 22
+	if layout.hasRepo {
+		repoText := "(no repo)"
+		if r.Repo != nil {
+			repoText = ShortRepo(*r.Repo)
+		}
+		add(repoText, 22, false, m.styles.Dim)
+	}
+
+	// OUTCOME: outcomeWord, outcomeStyle, width 10
+	outWord, outStyle := m.outcomeWord(r)
+	add(outWord, 10, false, outStyle)
+
+	// COMMITS & TREE
+	if layout.hasTreeCom {
+		if r.Commits != nil {
+			cStyle := m.styles.Fg
+			if *r.Commits == 0 {
+				cStyle = m.styles.Faint
+			}
+			add(strconv.Itoa(*r.Commits), 7, true, cStyle)
+		} else {
+			add("·", 7, true, m.styles.Faint)
+		}
+
+		if r.Tree != nil {
+			tStyle := m.styles.Faint
+			if *r.Tree == "dirty" {
+				tStyle = m.styles.Warn
+			}
+			add(*r.Tree, 5, false, tStyle)
+		} else {
+			add("·", 5, false, m.styles.Faint)
+		}
+	}
+
+	// TOKENS: shortTokens(sum); · when all four token columns are nil, Fg, width 7
+	if layout.hasTokens {
+		if r.InTokens == nil && r.CacheTokens == nil && r.WriteTokens == nil && r.OutTokens == nil {
+			add("·", 7, true, m.styles.Fg)
+		} else {
+			add(shortTokens(tokenValue(r)), 7, true, m.styles.Fg)
+		}
+	}
+
+	// TOOK: shortDuration; for running round now-StartedAt; for nil DurationMS it is ·, Dim, width 5
+	tookText := "·"
+	if outWord == "running" {
+		durMS := m.now().Sub(r.StartedAt).Milliseconds()
+		tookText = shortDuration(durMS)
+	} else if r.DurationMS != nil {
+		tookText = shortDuration(*r.DurationMS)
+	}
+	add(tookText, 5, true, m.styles.Dim)
+
+	sep := "  "
+	if cursor {
+		sep = m.styles.Selected.Render("  ")
+	}
+	line := strings.Join(parts, sep)
+	if indented {
+		indent := "  "
+		if cursor {
+			indent = m.styles.Selected.Render("  ")
+		}
+		line = indent + line
+	}
+	if cursor {
+		if lipgloss.Width(line) > cw {
+			line = lipgloss.NewStyle().MaxWidth(cw).Render(line)
+		}
+		if w := lipgloss.Width(line); w < cw {
+			line += m.styles.Selected.Render(strings.Repeat(" ", cw-w))
+		}
+		return "   " + line + "   "
+	}
+	content := fit(line, cw)
+	return "   " + content + "   "
+}
+
+// roundHeader labels the round grid's columns.
+func (m Model) roundHeader() string {
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
+	}
+	layout := m.roundLayout(false)
+	var parts []string
+	add := func(label string, width int, alignRight bool) {
+		if alignRight {
+			parts = append(parts, fmt.Sprintf("%*s", width, label))
+		} else {
+			parts = append(parts, pad(label, width))
+		}
+	}
+	add("STARTED", 7, false)
+	add("BINDING", layout.bindWidth, false)
+	add("RND", 4, false)
+	add("CANDIDATE", 21, false)
+	if layout.hasRepo {
+		add("REPO", 22, false)
+	}
+	add("OUTCOME", 10, false)
+	if layout.hasTreeCom {
+		add("COMMITS", 7, true)
+		add("TREE", 5, false)
+	}
+	if layout.hasTokens {
+		add("TOKENS", 7, true)
+	}
+	add("TOOK", 5, true)
+
 	line := strings.Join(parts, "  ")
+	styled := m.styles.Faint.Bold(true).Render(line)
+	return "   " + fit(styled, cw) + "   "
+}
+
+type groupColLayout struct {
+	hasBindings  bool
+	hasCommits   bool
+	hasTokensPct bool
+	keyWidth     int
+}
+
+func (m Model) groupLayout() groupColLayout {
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
+	}
+	hasTokensPct := m.width >= 110
+	hasCommits := m.width >= 90
+	hasBindings := m.width >= 90 && m.query.By != histq.AxisBinding
+
+	numCols := 6                    // KEY, RNDS, DONE, HALTED, TOKENS, LAST
+	fixedWidth := 5 + 5 + 6 + 7 + 9 // 32
+	if hasBindings {
+		numCols++
+		fixedWidth += 8
+	}
+	if hasCommits {
+		numCols++
+		fixedWidth += 7
+	}
+	if hasTokensPct {
+		numCols++
+		fixedWidth += 15
+	}
+	seps := 2 * (numCols - 1)
+	kw := cw - fixedWidth - seps
+	if kw < 12 {
+		kw = 12
+	}
+	return groupColLayout{
+		hasBindings:  hasBindings,
+		hasCommits:   hasCommits,
+		hasTokensPct: hasTokensPct,
+		keyWidth:     kw,
+	}
+}
+
+// groupHeader labels the group grid's columns.
+func (m Model) groupHeader() string {
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
+	}
+	layout := m.groupLayout()
+	var parts []string
+	add := func(label string, width int, alignRight bool) {
+		if alignRight {
+			parts = append(parts, fmt.Sprintf("%*s", width, label))
+		} else {
+			parts = append(parts, pad(label, width))
+		}
+	}
+
+	keyLabel := strings.ToUpper(string(m.query.By))
+	if m.query.By == histq.AxisCandidate {
+		keyLabel = "CANDIDATE"
+	}
+	add(keyLabel, layout.keyWidth, false)
+	add("RNDS", 5, true)
+	if layout.hasBindings {
+		add("BINDINGS", 8, true)
+	}
+	add("DONE", 5, true)
+	add("HALTED", 6, true)
+	if layout.hasCommits {
+		add("COMMITS", 7, true)
+	}
+	add("TOKENS", 7, true)
+	if layout.hasTokensPct {
+		add("% TOKENS", 15, true)
+	}
+	add("LAST", 9, true)
+
+	line := strings.Join(parts, "  ")
+	styled := m.styles.Faint.Bold(true).Render(line)
+	return "   " + fit(styled, cw) + "   "
+}
+
+// groupKeyLabel formats a group key display string.
+func (m Model) groupKeyLabel(key string) string {
+	if key == "-" || key == "" {
+		switch m.query.By {
+		case histq.AxisRepo:
+			return "(no repo)"
+		case histq.AxisFeature:
+			return "(no feature)"
+		case histq.AxisTicket:
+			return "(no ticket)"
+		default:
+			return "(none)"
+		}
+	}
+	switch m.query.By {
+	case histq.AxisRepo:
+		return ShortRepo(key)
+	case histq.AxisCandidate:
+		return m.nameOf(key)
+	default:
+		return key
+	}
+}
+
+// tokensBar formats a 15-cell tokens bar.
+func (m Model) tokensBar(pct int, band bool) string {
+	barCount := int(math.Round(float64(pct) / 10.0))
+	if barCount < 0 {
+		barCount = 0
+	}
+	if barCount > 10 {
+		barCount = 10
+	}
+	barStr := strings.Repeat("▇", barCount)
+	barPadded := pad(barStr, 10)
+	accent := m.styles.Accent
+	fg := m.styles.Fg
+	space := " "
+	if band {
+		bg := m.styles.Selected.GetBackground()
+		accent = accent.Background(bg)
+		fg = fg.Background(bg)
+		space = m.styles.Selected.Render(" ")
+	}
+	return accent.Render(barPadded) + space + fg.Render(fmt.Sprintf("%3d%%", pct))
+}
+
+// groupLine is one group row (§5.3).
+func (m Model) groupLine(g histq.GroupRow, cursor bool) string {
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
+	}
+	layout := m.groupLayout()
+	var parts []string
+
+	add := func(text string, width int, alignRight bool, s lipgloss.Style) {
+		text = clip(text, width)
+		var cell string
+		if alignRight {
+			if w := lipgloss.Width(text); w < width {
+				cell = strings.Repeat(" ", width-w) + text
+			} else {
+				cell = text
+			}
+		} else {
+			cell = pad(text, width)
+		}
+		if cursor {
+			s = s.Background(m.styles.Selected.GetBackground())
+		}
+		parts = append(parts, s.Render(cell))
+	}
+
+	// KEY
+	kStyle := m.styles.Fg
 	if cursor {
-		line = m.styles.Selected.Render(fit(line, m.width))
+		kStyle = m.styles.Strong
 	}
-	return line
-}
+	add(m.groupKeyLabel(g.Key), layout.keyWidth, false, kStyle)
 
-// builderWidth is the builder column's drawn width: 36 where it fits, less
-// when the terminal cannot hold the whole line, so nothing is silently cut
-// off at the right edge and the header stays aligned with the rows.
-func (m Model) builderWidth() int {
-	if m.width <= 0 {
-		return colBuilder
-	}
-	room := m.width - (colStarted + 2 + colBinding + 2 + colRound + 2 + colOutcome) - 2 - m.tailWidth()
-	if room < 10 {
-		room = 10
-	}
-	if room > colBuilder {
-		room = colBuilder
-	}
-	return room
-}
+	// RNDS
+	add(strconv.Itoa(g.Rounds), 5, true, m.styles.Dim)
 
-// tailWidth is the columns after builder, widths and separators, for the
-// tier this terminal earns. It is the sum builderWidth leaves room for.
-func (m Model) tailWidth() int {
-	w := 2 + colCost
-	if m.width >= tierDur {
-		w += 2 + colDuration
+	// BINDINGS
+	if layout.hasBindings {
+		distinct := make(map[string]bool)
+		for _, r := range g.Rows {
+			distinct[r.BindingName] = true
+		}
+		add(strconv.Itoa(len(distinct)), 8, true, m.styles.Dim)
 	}
-	if m.width >= tierTokens {
-		w += 2 + colTokens
+
+	// DONE & HALTED
+	doneCnt := 0
+	haltCnt := 0
+	for _, r := range g.Rows {
+		w, _ := m.outcomeWord(r)
+		if w == "done" {
+			doneCnt++
+		} else if w == "halted" {
+			haltCnt++
+		}
 	}
-	if m.width >= tierTree {
-		w += 2 + colCommits + 2 + colTree
+	add(strconv.Itoa(doneCnt), 5, true, m.styles.Dim)
+	add(strconv.Itoa(haltCnt), 6, true, m.styles.Dim)
+
+	// COMMITS
+	if layout.hasCommits {
+		add(strconv.Itoa(g.Commits), 7, true, m.styles.Dim)
 	}
-	if m.width >= tierGate {
-		w += 2 + colGate
+
+	// TOKENS
+	if g.Tokens == 0 {
+		add("·", 7, true, m.styles.Faint)
+	} else {
+		add(shortTokens(g.Tokens), 7, true, m.styles.Dim)
 	}
-	return w
+
+	// % TOKENS
+	if layout.hasTokensPct {
+		var total int64
+		for _, grp := range m.groups {
+			total += grp.Tokens
+		}
+		var pct int
+		if total > 0 {
+			pct = int(math.Round(float64(100*g.Tokens) / float64(total)))
+		}
+		parts = append(parts, m.tokensBar(pct, cursor))
+	}
+
+	// LAST
+	var lastStr string
+	if isToday(g.Last, m.loc, m.now()) {
+		lastStr = "today"
+	} else {
+		lastStr = strings.ToLower(g.Last.In(m.loc).Format("Jan 02"))
+	}
+	add(lastStr, 9, true, m.styles.Dim)
+
+	sep := "  "
+	if cursor {
+		sep = m.styles.Selected.Render("  ")
+	}
+	line := strings.Join(parts, sep)
+	if cursor {
+		if lipgloss.Width(line) > cw {
+			line = lipgloss.NewStyle().MaxWidth(cw).Render(line)
+		}
+		if w := lipgloss.Width(line); w < cw {
+			line += m.styles.Selected.Render(strings.Repeat(" ", cw-w))
+		}
+		return "   " + line + "   "
+	}
+	content := fit(line, cw)
+	return "   " + content + "   "
 }
 
 // headerLine is §5's line 1: identity, the applied query, the axis, and the
-// key hints, which drop below 120 columns. The applied text's own `by:`
-// token is dropped from the display: the axis is shown in its own clause.
+// key hints, which drop below 120 columns.
 func (m Model) headerLine() string {
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
+	}
 	q := stripBy(m.text)
 	if q == "" {
 		q = "(all rounds)"
@@ -268,55 +792,37 @@ func (m Model) headerLine() string {
 	left := " relevo · dashboard   "
 	right := "/ filter  b regroup  s sort  d fleet  r refresh"
 
-	avail := m.width - lipgloss.Width(left) - lipgloss.Width("   by:"+axis)
-	if m.width >= tierHintBar {
+	avail := cw - lipgloss.Width(left) - lipgloss.Width("   by:"+axis)
+	if cw >= 120 {
 		avail -= lipgloss.Width(right) + 1
 	}
 	left += clip(q, avail) + "   by:" + axis
 
-	if m.width >= tierHintBar {
-		return fit(spread(left, right, m.width), m.width)
+	var content string
+	if cw >= 120 {
+		content = fit(spread(left, right, cw), cw)
+	} else {
+		content = fit(left, cw)
 	}
-	return fit(left, m.width)
-}
-
-// tilesLine is §5's line 2. A host notice and a fetch failure both replace
-// it, in the error style; "fetching…" is appended while a fetch is out.
-func (m Model) tilesLine() string {
-	if m.Notice != "" {
-		return m.styles.Error.Render(fit(m.Notice, m.width))
-	}
-	if m.fetchErr != "" {
-		return m.styles.Error.Render(fit("query failed: "+m.fetchErr, m.width))
-	}
-	t := m.tiles
-	cost := fmt.Sprintf("$%.2f", t.CostUSD)
-	if t.Unknown > 0 {
-		cost += fmt.Sprintf(" (%d unknown)", t.Unknown)
-	}
-	s := fmt.Sprintf("rounds %d   cost %s   tokens %s   halted %d · exited %d   median %s   bindings %d · builders %d",
-		t.Rounds, cost, shortTokens(t.Tokens), t.Halted, t.Exited,
-		shortDuration(t.MedianDurationMS), t.Bindings, t.Builders)
-	if m.fetching {
-		s += "   fetching…"
-	}
-	return m.styles.Fg.Render(fit(s, m.width))
+	return "   " + content + "   "
 }
 
 // thirdLine is §5's line 3: the editor while editing (with any parse error
 // beside it), the column header otherwise.
 func (m Model) thirdLine() string {
+	cw := m.width - 6
+	if cw < 0 {
+		cw = 0
+	}
 	if m.editing {
-		// textinput.View pads to its Width, which would push any parse
-		// error past the right edge; trim it back first.
 		line := "/ " + strings.TrimRight(m.input.View(), " ")
 		if m.parseErr != "" {
-			room := m.width - lipgloss.Width(line) - 3
+			room := cw - lipgloss.Width(line) - 3
 			if room > 0 {
 				line += "   " + m.styles.Error.Render(clip(m.parseErr, room))
 			}
 		}
-		return fit(line, m.width)
+		return "   " + fit(line, cw) + "   "
 	}
 	if m.grouped() {
 		return m.groupHeader()
@@ -324,112 +830,63 @@ func (m Model) thirdLine() string {
 	return m.roundHeader()
 }
 
-// roundHeader labels the round grid's columns, matching roundLine's tiers.
-func (m Model) roundHeader() string {
-	cols := m.roundColumns(db.RoundRow{})
-	labels := make([]string, len(cols))
-	for i, c := range cols {
-		labels[i] = pad(c.label, c.width)
-	}
-	return fit(m.styles.Faint.Render(strings.Join(labels, "  ")), m.width)
+func isToday(t time.Time, loc *time.Location, now time.Time) bool {
+	tIn := t.In(loc)
+	nowIn := now.In(loc)
+	y1, m1, d1 := tIn.Date()
+	y2, m2, d2 := nowIn.Date()
+	return y1 == y2 && m1 == m2 && d1 == d2
 }
 
-// groupHeader labels the group grid's columns, matching groupLine's tiers.
-func (m Model) groupHeader() string {
-	cells := []string{
-		pad(string(m.query.By), colKey),
-		fmt.Sprintf("%6s", "rounds"),
-		fmt.Sprintf("%8s", "reported"),
-		fmt.Sprintf("%6s", "halted"),
+// DayLabel formats a timestamp as "today", "yesterday", or "mon 02 jan" in loc relative to now.
+func DayLabel(t, now time.Time, loc *time.Location) string {
+	if loc == nil {
+		loc = time.Local
 	}
-	if m.width >= tierTree {
-		cells = append(cells, fmt.Sprintf("%7s", "commits"))
-	}
-	if m.width >= tierTokens {
-		cells = append(cells, fmt.Sprintf("%7s", "tokens"))
-	}
-	cells = append(cells, fmt.Sprintf("%7s", "cost"), fmt.Sprintf("%10s", "last"))
-	return fit(m.styles.Faint.Render(strings.Join(cells, "  ")), m.width)
-}
-
-// outcomeCell is a round's outcome word and the colour §5 asks for:
-// halted and exited are attention, open is live, the rest normal.
-func (m Model) outcomeCell(r db.RoundRow) (string, lipgloss.Style) {
-	switch r.Outcome {
-	case db.OutcomeHalted, db.OutcomeExited:
-		return r.Outcome, m.styles.Attention
-	case db.OutcomeOpen:
-		return r.Outcome, m.styles.Live
-	}
-	return r.Outcome, m.styles.Fg
-}
-
-// commitsCell is "+N" or "-" when the round recorded no commit facts.
-func commitsCell(r db.RoundRow) string {
-	if r.Commits == nil {
-		return "-"
-	}
-	return fmt.Sprintf("+%d", *r.Commits)
-}
-
-func treeCell(r db.RoundRow) string { return deref(r.Tree) }
-
-func gateCell(r db.RoundRow) string { return deref(r.GateResult) }
-
-// tokensCell is the four token columns summed and shortened, "-" when the
-// round recorded none.
-func tokensCell(r db.RoundRow) string {
-	if r.InTokens == nil && r.CacheTokens == nil && r.WriteTokens == nil && r.OutTokens == nil {
-		return "-"
-	}
-	return shortTokens(tokenValue(r))
-}
-
-// costCell is "$X.XX" measured, "~$X.XX" estimated, "?" unknown, and "-"
-// when the round recorded no usage at all (§6).
-func costCell(r db.RoundRow) string {
+	nowIn := now.In(loc)
+	tl := t.In(loc)
+	nowY, nowM, nowD := nowIn.Date()
+	tY, tM, tD := tl.Date()
+	today := time.Date(nowY, nowM, nowD, 0, 0, 0, 0, loc)
+	tDate := time.Date(tY, tM, tD, 0, 0, 0, 0, loc)
 	switch {
-	case r.CostUSD == nil:
-		return "-"
-	case r.CostBasis != nil && *r.CostBasis == "unknown":
-		return "?"
-	case r.CostBasis != nil && *r.CostBasis == "estimated":
-		return fmt.Sprintf("~$%.2f", *r.CostUSD)
-	}
-	return fmt.Sprintf("$%.2f", *r.CostUSD)
-}
-
-// groupCostCell is a group's summed cost, "?" beside it when some of its
-// rounds' costs were unknown and so not summed.
-func groupCostCell(g histq.GroupRow) string {
-	if g.Unknown > 0 {
-		return fmt.Sprintf("$%.2f?", g.CostUSD)
-	}
-	return fmt.Sprintf("$%.2f", g.CostUSD)
-}
-
-// durationCell is "Nm"/"1h05m", "-" when the round has no closed_at.
-func durationCell(r db.RoundRow) string {
-	if r.DurationMS == nil {
-		return "-"
-	}
-	return shortDuration(*r.DurationMS)
-}
-
-// shortTokens is usage.ShortTokens's rule, spelled here because dash does
-// not import internal/usage (§2): < 1000 as-is, < 1M "182k", else "2.3M".
-func shortTokens(n int64) string {
-	switch {
-	case n < 1000:
-		return fmt.Sprintf("%d", n)
-	case n < 999_500:
-		return fmt.Sprintf("%dk", int64(math.Round(float64(n)/1000)))
+	case tDate.Equal(today):
+		return "today"
+	case tDate.Equal(today.AddDate(0, 0, -1)):
+		return "yesterday"
 	default:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+		return strings.ToLower(tl.Format("Mon 02 Jan"))
 	}
 }
 
-// shortDuration is "-" for 0, "<1m" under a minute, "14m", "1h05m".
+func (m Model) dayLabel(t time.Time) string {
+	return DayLabel(t, m.now(), m.loc)
+}
+
+func plural(n int, unit string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", unit)
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
+}
+
+func median(xs []int64) int64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	sorted := append([]int64(nil), xs...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	n := len(sorted)
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return (sorted[n/2-1] + sorted[n/2]) / 2
+}
+
+func shortTokens(n int64) string {
+	return stats.ShortTokens(n)
+}
+
 func shortDuration(ms int64) string {
 	switch {
 	case ms <= 0:
@@ -444,8 +901,6 @@ func shortDuration(ms int64) string {
 	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 
-// stripBy drops a `by:<axis>` token from a query's text, so the header can
-// show the filter and the axis as separate clauses without repeating it.
 func stripBy(text string) string {
 	fields := strings.Fields(text)
 	out := fields[:0]
@@ -458,15 +913,6 @@ func stripBy(text string) string {
 	return strings.Join(out, " ")
 }
 
-// deref is a nullable string column, "-" when null.
-func deref(s *string) string {
-	if s == nil {
-		return "-"
-	}
-	return *s
-}
-
-// pad pads s to width cells, truncating with an ellipsis past it.
 func pad(s string, width int) string {
 	if w := lipgloss.Width(s); w < width {
 		return s + strings.Repeat(" ", width-w)
@@ -474,7 +920,6 @@ func pad(s string, width int) string {
 	return clip(s, width)
 }
 
-// clip truncates s to width cells, ellipsis included.
 func clip(s string, width int) string {
 	if width <= 0 {
 		return ""
@@ -488,8 +933,6 @@ func clip(s string, width int) string {
 	return lipgloss.NewStyle().MaxWidth(width-1).Render(s) + "…"
 }
 
-// fit pads or truncates s to width cells (the host's fit, spelled here
-// because dash may not import internal/ui).
 func fit(s string, width int) string {
 	if width <= 0 {
 		return s
@@ -504,8 +947,6 @@ func fit(s string, width int) string {
 	return lipgloss.NewStyle().MaxWidth(width).Render(s)
 }
 
-// spread puts right at the right edge of a width-wide line, after left,
-// dropping the gap when they would overlap.
 func spread(left, right string, width int) string {
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
@@ -514,8 +955,6 @@ func spread(left, right string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// nameOf resolves token with Names when set, returning token unchanged when
-// Names is nil or token is "-" or empty.
 func (m Model) nameOf(token string) string {
 	if token == "" || token == "-" {
 		return token

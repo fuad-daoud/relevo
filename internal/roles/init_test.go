@@ -83,8 +83,8 @@ func TestFromLegacyFixtures(t *testing.T) {
 		if !reflect.DeepEqual(row.Tier, wantTier[name]) {
 			t.Errorf("%s tier = %v, want %v", name, derefTier(row.Tier), derefTier(wantTier[name]))
 		}
-		if row.Shape != nil || row.Gate != nil || row.Definitions != nil {
-			t.Errorf("%s row sets shape/gate/definitions; legacy has none of them: %+v", name, row)
+		if row.Shape != nil || row.Check != nil || row.Definitions != nil {
+			t.Errorf("%s row sets shape/check/definitions; legacy has none of them: %+v", name, row)
 		}
 	}
 }
@@ -212,7 +212,7 @@ func TestFileEncodeRoundTrip(t *testing.T) {
 	f := &File{Rows: map[string]Row{
 		"builder": {
 			Shape: strPtr("writer"),
-			Gate:  boolPtr(true),
+			Check: boolPtr(true),
 			Definitions: map[string]DefRow{
 				"claude": {Agent: "my-executor", Requires: []string{"my-scout"}},
 			},

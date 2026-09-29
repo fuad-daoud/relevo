@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // The picker's own styles. internal/ui has near-identical ones; they are
@@ -64,7 +64,7 @@ func styleDisplay(display string) string {
 // renderRow is one binding line (spec §4):
 //
 //	> webshop        NEEDS YOU  r3  builder agy blocked
-func renderRow(b relevo.BindingStatus, selected bool) string {
+func renderRow(b view.BindingStatus, selected bool) string {
 	cursor := " "
 	if selected {
 		cursor = cursorStyle.Render(">")

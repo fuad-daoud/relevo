@@ -1,0 +1,73 @@
+{
+  "runners": {
+    "running": 1,
+    "queued": 2,
+    "cap": 4,
+    "scopes": true,
+    "slice": "relevo.slice",
+    "quota": "150%"
+  },
+  "last_contact": "2026-01-02T05:04:05Z",
+  "owners": [
+    {
+      "owner": "SHA256:alice11111111111111111111111111111111111111",
+      "label": "alice",
+      "last_seen": "2026-01-02T03:04:05Z",
+      "report": {
+        "bindings": [
+          {
+            "name": "active-task",
+            "cwd": "",
+            "round": 2,
+            "state": "ACTIVE",
+            "display": "",
+            "candidate": "",
+            "actor": "",
+            "mastermind_kind": "",
+            "mastermind_route": "",
+            "mastermind_route_live": false,
+            "harness": "",
+            "runner_status": "running",
+            "last_seq": 0,
+            "dirty": false,
+            "landed_at": "0001-01-01T00:00:00Z",
+            "last_progress_at": "0001-01-01T00:00:00Z",
+            "unread": false,
+            "owner": "SHA256:alice11111111111111111111111111111111111111",
+            "owner_label": "alice"
+          }
+        ]
+      }
+    },
+    {
+      "owner": "SHA256:bob2222222222222222222222222222222222222222",
+      "label": "bob",
+      "last_seen": "2026-01-02T05:04:05Z",
+      "report": {
+        "bindings": [
+          {
+            "name": "done-task",
+            "cwd": "",
+            "round": 1,
+            "state": "DONE",
+            "display": "",
+            "candidate": "",
+            "actor": "",
+            "mastermind_kind": "",
+            "mastermind_route": "",
+            "mastermind_route_live": false,
+            "harness": "",
+            "runner_status": "closed",
+            "last_seq": 0,
+            "dirty": false,
+            "landed_at": "0001-01-01T00:00:00Z",
+            "last_progress_at": "0001-01-01T00:00:00Z",
+            "unread": false,
+            "owner": "SHA256:bob2222222222222222222222222222222222222222",
+            "owner_label": "bob"
+          }
+        ]
+      }
+    }
+  ]
+}
