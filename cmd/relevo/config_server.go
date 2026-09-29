@@ -94,7 +94,7 @@ func configServerKey(args []string) error {
 		}
 		return printDoc(serverKeyDoc{ID: string(remote.IDOf(kp.Public)), EnrollLine: client.EnrollLine(kp)})
 	}
-	return printClientKey(pem, *enrollOnly)
+	return printClientKey(os.Stdout, pem, *enrollOnly)
 }
 
 // configSecretFlagSet declares the bare `config secret` dispatcher's flags:
@@ -128,34 +128,47 @@ func configSecret(args []string) error {
 	}
 }
 
-// checkSecretName refuses a name other than the two secrets relevo stores. It
-// names both allowed names, on stderr and in the coded error, so a pipe sees
-// the same words the frame carries.
+// checkSecretName refuses a name other than the two secrets relevo stores. The
+// coded error names both allowed names, so the frame carries the same words a
+// human needs.
 func checkSecretName(name string) error {
 	if name != config.SecretTypesafe && name != config.SecretClientKey {
-		msg := fmt.Sprintf("unknown secret %q (allowed: %s, %s)",
+		return fail(codeUsage, "unknown secret %q (allowed: %s, %s)",
 			name, config.SecretTypesafe, config.SecretClientKey)
-		fmt.Fprintln(os.Stderr, "relevo config secret: "+msg)
-		return fail(codeUsage, "%s", msg)
 	}
 	return nil
 }
 
-// configSecretSetFlagSet declares `config secret set`'s flags: none today.
-func configSecretSetFlagSet(*flag.FlagSet) {}
+// configSecretSetFlagValues holds the pointer `config secret set` parses into.
+type configSecretSetFlagValues struct {
+	asJSON *bool
+}
+
+// configSecretSetFlagSet defines that flag on fs and returns what it parses
+// into.
+func configSecretSetFlagSet(fs *flag.FlagSet) *configSecretSetFlagValues {
+	v := &configSecretSetFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
+	return v
+}
 
 // configSecretSet reads the value from stdin, trimmed, and stores it. The
 // client key is validated by PutSecret.
 func configSecretSet(args []string) error {
+	return outcomeError(configSecretSetRun(args))
+}
+
+func configSecretSetRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config secret set", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	v := configSecretSetFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config secret set <typesafe|client.key>")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config secret set wants <typesafe|client.key>")
 	}
 	name := rest[0]
 	if err := checkSecretName(name); err != nil {
@@ -175,24 +188,42 @@ func configSecretSet(args []string) error {
 	if err := rt.Config.As("cli", "config secret set "+name).PutSecret(name, []byte(value)); err != nil {
 		return err
 	}
+	if *asJSON {
+		return printDoc(configSecretDocOf(name))
+	}
 	fmt.Printf("stored secret %s\n", name)
 	return nil
 }
 
-// configSecretRmFlagSet declares `config secret rm`'s flags: none today.
-func configSecretRmFlagSet(*flag.FlagSet) {}
+// configSecretRmFlagValues holds the pointer `config secret rm` parses into.
+type configSecretRmFlagValues struct {
+	asJSON *bool
+}
+
+// configSecretRmFlagSet defines that flag on fs and returns what it parses
+// into.
+func configSecretRmFlagSet(fs *flag.FlagSet) *configSecretRmFlagValues {
+	v := &configSecretRmFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
+	return v
+}
 
 // configSecretRm removes a stored secret.
 func configSecretRm(args []string) error {
+	return outcomeError(configSecretRmRun(args))
+}
+
+func configSecretRmRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config secret rm", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	v := configSecretRmFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config secret rm <typesafe|client.key>")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config secret rm wants <typesafe|client.key>")
 	}
 	name := rest[0]
 	if err := checkSecretName(name); err != nil {
@@ -205,6 +236,9 @@ func configSecretRm(args []string) error {
 	}
 	if err := rt.Config.As("cli", "config secret rm "+name).SecretDelete(name); err != nil {
 		return err
+	}
+	if *asJSON {
+		return printDoc(configSecretDocOf(name))
 	}
 	fmt.Printf("removed secret %s\n", name)
 	return nil
@@ -278,18 +312,19 @@ func ensureClientKey(rt relevo.Runtime) (pem []byte, generated bool, err error) 
 }
 
 // printClientKey prints the client id and the enrolment line a server admin
-// runs `relevo serve enroll --key "<line>"` with. With enrollOnly it prints the
-// enrolment line alone.
-func printClientKey(pem []byte, enrollOnly bool) error {
+// runs `relevo serve enroll --key "<line>"` with, to w. With enrollOnly it
+// prints the enrolment line alone. w is stdout for the read verb and the
+// notice stream for `config server add`, whose document owns stdout.
+func printClientKey(w io.Writer, pem []byte, enrollOnly bool) error {
 	kp, err := remote.ParsePrivate(pem)
 	if err != nil {
 		return err
 	}
 	if enrollOnly {
-		fmt.Println(client.EnrollLine(kp))
+		fmt.Fprintln(w, client.EnrollLine(kp))
 		return nil
 	}
-	fmt.Printf("client id %s\n", remote.IDOf(kp.Public))
-	fmt.Println(client.EnrollLine(kp))
+	fmt.Fprintf(w, "client id %s\n", remote.IDOf(kp.Public))
+	fmt.Fprintln(w, client.EnrollLine(kp))
 	return nil
 }

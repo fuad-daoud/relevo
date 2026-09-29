@@ -41,6 +41,7 @@ func TestServeGCWithoutAbandonedExits2(t *testing.T) {
 		return run([]string{"serve", "gc"})
 	})
 
+	ce := requireCLIError(t, runErr, codeUsage, "relevo help")
 	var ec exitCodeErr
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("expected exit code 2, got %v", runErr)
@@ -48,8 +49,11 @@ func TestServeGCWithoutAbandonedExits2(t *testing.T) {
 	if len(stdout) != 0 {
 		t.Errorf("expected nothing on stdout, got %q", string(stdout))
 	}
-	if !strings.Contains(string(stderr), "--abandoned") {
-		t.Errorf("expected mention of --abandoned on stderr, got %q", string(stderr))
+	if len(stderr) != 0 {
+		t.Errorf("expected empty stderr before report, got %q", string(stderr))
+	}
+	if !strings.Contains(ce.message, "--abandoned") {
+		t.Errorf("expected mention of --abandoned, got %q", ce.message)
 	}
 }
 
@@ -58,6 +62,7 @@ func TestServeUnbindWithoutOwnerExits2(t *testing.T) {
 		return run([]string{"serve", "unbind", "some-binding"})
 	})
 
+	ce := requireCLIError(t, runErr, codeUsage, "relevo help")
 	var ec exitCodeErr
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("expected exit code 2, got %v", runErr)
@@ -65,8 +70,11 @@ func TestServeUnbindWithoutOwnerExits2(t *testing.T) {
 	if len(stdout) != 0 {
 		t.Errorf("expected nothing on stdout, got %q", string(stdout))
 	}
-	if !strings.Contains(string(stderr), "--owner") {
-		t.Errorf("expected mention of --owner on stderr, got %q", string(stderr))
+	if len(stderr) != 0 {
+		t.Errorf("expected empty stderr before report, got %q", string(stderr))
+	}
+	if !strings.Contains(ce.message, "--owner") {
+		t.Errorf("expected mention of --owner, got %q", ce.message)
 	}
 }
 

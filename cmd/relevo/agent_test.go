@@ -161,6 +161,7 @@ func TestAgentInstallUnknownKindExits2(t *testing.T) {
 		return run([]string{"config", "agents", "--kind", "unknown-kind"})
 	})
 
+	ce := requireCLIError(t, runErr, codeUsage, "relevo help")
 	var ec exitCodeErr
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("expected exit code 2, got %v", runErr)
@@ -168,8 +169,11 @@ func TestAgentInstallUnknownKindExits2(t *testing.T) {
 	if len(stdout) != 0 {
 		t.Errorf("expected empty stdout, got %q", string(stdout))
 	}
-	if !strings.Contains(string(stderr), "unknown-kind") {
-		t.Errorf("expected stderr to contain 'unknown-kind', got %q", string(stderr))
+	if len(stderr) != 0 {
+		t.Errorf("expected empty stderr before report, got %q", string(stderr))
+	}
+	if !strings.Contains(ce.message, "unknown-kind") {
+		t.Errorf("expected the message to contain 'unknown-kind', got %q", ce.message)
 	}
 }
 
@@ -181,6 +185,7 @@ func TestAgentInstallUnknownRoleExits2(t *testing.T) {
 		return run([]string{"config", "agents", "--kind", "claude", "--agent", "nope"})
 	})
 
+	ce := requireCLIError(t, runErr, codeUsage, "relevo help")
 	var ec exitCodeErr
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("expected exit code 2, got %v", runErr)
@@ -188,8 +193,11 @@ func TestAgentInstallUnknownRoleExits2(t *testing.T) {
 	if len(stdout) != 0 {
 		t.Errorf("expected empty stdout, got %q", string(stdout))
 	}
-	if !strings.Contains(string(stderr), "nope") || !strings.Contains(string(stderr), "plan-executor") {
-		t.Errorf("expected stderr to contain 'nope' and 'plan-executor', got %q", string(stderr))
+	if len(stderr) != 0 {
+		t.Errorf("expected empty stderr before report, got %q", string(stderr))
+	}
+	if !strings.Contains(ce.message, "nope") || !strings.Contains(ce.message, "plan-executor") {
+		t.Errorf("expected the message to contain 'nope' and 'plan-executor', got %q", ce.message)
 	}
 }
 

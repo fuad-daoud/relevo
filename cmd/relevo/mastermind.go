@@ -99,6 +99,7 @@ type mastermindInitFlagValues struct {
 	kind    *string
 	session *string
 	hook    *string
+	asJSON  *bool
 }
 
 // mastermindInitFlagSet defines those flags on fs and returns what they parse
@@ -109,25 +110,30 @@ func mastermindInitFlagSet(fs *flag.FlagSet) *mastermindInitFlagValues {
 	v.kind = fs.String("kind", "", "harness kind for an explicit registration (e.g. opencode)")
 	v.session = fs.String("session", "", "harness session id for an explicit registration")
 	v.hook = fs.String("hook", "", "read a Claude Code SessionStart payload from stdin (only \"claude\")")
+	v.asJSON = fs.Bool("json", false, "print the document init produced")
 	return v
 }
 
 func cmdMasterMindInit(args []string) error {
+	return outcomeError(cmdMasterMindInitRun(args))
+}
+
+func cmdMasterMindInitRun(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	v := mastermindInitFlagSet(fs)
-	name, kind, session, hook := v.name, v.kind, v.session, v.hook
+	name, kind, session, hook, asJSON := v.name, v.kind, v.session, v.hook, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	if *hook != "" {
+		// The hook form's stdout is Claude's hook contract, so --json is
+		// accepted and has no effect here.
 		if *hook != "claude" {
-			fmt.Fprintf(os.Stderr, "relevo: relevo mastermind init --hook supports only \"claude\", got %q\n", *hook)
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "relevo mastermind init --hook supports only \"claude\", got %q", *hook)
 		}
 		if *kind != "" || *session != "" {
-			fmt.Fprintln(os.Stderr, "relevo: relevo mastermind init --hook reads its kind and session from the hook payload, not --kind/--session")
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "relevo mastermind init --hook reads its kind and session from the hook payload, not --kind/--session")
 		}
 		return mastermindInitHook(*name)
 	}
@@ -164,9 +170,27 @@ func cmdMasterMindInit(args []string) error {
 		return err
 	}
 
+	if *asJSON {
+		fmt.Fprintf(os.Stderr, "export RELEVO_MASTERMIND=%s\n", rec.ID)
+		return printDoc(mastermindDocOf(rec.ID, rec.Name, string(res), mastermindRepoLabel(rt, cwd)))
+	}
 	fmt.Printf("MasterMind %s (%s) %s\n", rec.Name, rec.ID, res)
 	fmt.Printf("export RELEVO_MASTERMIND=%s\n", rec.ID)
 	return nil
+}
+
+// mastermindRepoLabel is the repository label a mastermind document names: the
+// normalised origin URL, else the canonical common dir, else "" when cwd is
+// not inside a repository.
+func mastermindRepoLabel(rt relevo.Runtime, cwd string) string {
+	ref := mastermindRepoOf(context.Background(), rt, cwd)
+	if ref.OriginURL != nil {
+		return *ref.OriginURL
+	}
+	if ref.CommonDir != nil {
+		return *ref.CommonDir
+	}
+	return ""
 }
 
 // mastermindHostStart reads a host process's start time in Unix seconds, the
@@ -341,18 +365,34 @@ func annotateMasterMindChat(rt relevo.Runtime, rep *view.Report, res chatlabel.R
 	}
 }
 
-// mastermindRenameFlagSet declares `mastermind rename`'s flags: none today.
-func mastermindRenameFlagSet(*flag.FlagSet) {}
+// mastermindRenameFlagValues holds the pointer `mastermind rename` parses into.
+type mastermindRenameFlagValues struct {
+	asJSON *bool
+}
+
+// mastermindRenameFlagSet defines that flag on fs and returns what it parses
+// into.
+func mastermindRenameFlagSet(fs *flag.FlagSet) *mastermindRenameFlagValues {
+	v := &mastermindRenameFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the rename produced")
+	return v
+}
 
 func cmdMasterMindRename(args []string) error {
+	return outcomeError(cmdMasterMindRenameRun(args))
+}
+
+func cmdMasterMindRenameRun(args []string) error {
 	fs := flag.NewFlagSet("rename", flag.ContinueOnError)
+	v := mastermindRenameFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	positional := fs.Args()
 	if len(positional) != 2 {
-		return fmt.Errorf("usage: relevo mastermind rename <id|name> <new-name>")
+		return fail(codeUsage, "mastermind rename wants <id|name> <new-name>")
 	}
 
 	rt, err := newRuntime()
@@ -374,22 +414,41 @@ func cmdMasterMindRename(args []string) error {
 		return err
 	}
 
+	if *asJSON {
+		return printDoc(mastermindRenameDocOf(rec.ID, rec.Name, updated.Name))
+	}
 	fmt.Printf("renamed mastermind %s (%s) to %s\n", rec.Name, rec.ID, updated.Name)
 	return nil
 }
 
-// mastermindForgetFlagSet declares `mastermind forget`'s flags: none today.
-func mastermindForgetFlagSet(*flag.FlagSet) {}
+// mastermindForgetFlagValues holds the pointer `mastermind forget` parses into.
+type mastermindForgetFlagValues struct {
+	asJSON *bool
+}
+
+// mastermindForgetFlagSet defines that flag on fs and returns what it parses
+// into.
+func mastermindForgetFlagSet(fs *flag.FlagSet) *mastermindForgetFlagValues {
+	v := &mastermindForgetFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the forget produced")
+	return v
+}
 
 func cmdMasterMindForget(args []string) error {
+	return outcomeError(cmdMasterMindForgetRun(args))
+}
+
+func cmdMasterMindForgetRun(args []string) error {
 	fs := flag.NewFlagSet("forget", flag.ContinueOnError)
+	v := mastermindForgetFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	positional := fs.Args()
 	if len(positional) != 1 {
-		return fmt.Errorf("usage: relevo mastermind forget <id|name>")
+		return fail(codeUsage, "mastermind forget wants <id|name>")
 	}
 
 	rt, err := newRuntime()
@@ -410,6 +469,9 @@ func cmdMasterMindForget(args []string) error {
 		return err
 	}
 
+	if *asJSON {
+		return printDoc(mastermindDocOf(rec.ID, rec.Name, "forgotten", ""))
+	}
 	fmt.Printf("forgot mastermind %s (%s)\n", rec.Name, rec.ID)
 	return nil
 }
@@ -423,7 +485,7 @@ func mastermindLookup(reg mastermind.Registry, ref string) (mastermind.Record, e
 		case err == nil:
 			return rec, nil
 		case errors.Is(err, mastermind.ErrNotFound):
-			return mastermind.Record{}, fmt.Errorf("no mastermind with id %s", ref)
+			return mastermind.Record{}, failWrap(codeMastermindNotFound, err, "no mastermind with id %s", ref)
 		default:
 			return mastermind.Record{}, err
 		}
@@ -434,7 +496,7 @@ func mastermindLookup(reg mastermind.Registry, ref string) (mastermind.Record, e
 	case err == nil:
 		return rec, nil
 	case errors.Is(err, mastermind.ErrNotFound):
-		return mastermind.Record{}, fmt.Errorf("no mastermind named %s", ref)
+		return mastermind.Record{}, failWrap(codeMastermindNotFound, err, "no mastermind named %s", ref)
 	default:
 		return mastermind.Record{}, err
 	}

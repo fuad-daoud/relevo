@@ -336,7 +336,15 @@ func TestContractWriteNoticeRouting(t *testing.T) {
 // It fails when a row names a code whose exit the row cannot produce, and on
 // any added code without a matching exit.
 func TestContractWriteRegistryExits(t *testing.T) {
-	for _, name := range []string{"bind", "send", "stop", "done", "unbind", "gate"} {
+	for _, name := range []string{
+		"bind", "send", "stop", "done", "unbind", "gate",
+		"config agents", "config import", "config init", "config secret rm",
+		"config secret set", "config server add", "config server rm", "config set",
+		"config unset", "mastermind disable", "mastermind enable", "mastermind forget",
+		"mastermind init", "mastermind rename", "mastermind reset",
+		"serve enroll", "serve gc", "serve init", "serve revoke", "serve unbind",
+		"update",
+	} {
 		e, ok := registryEntry(name)
 		if !ok {
 			t.Errorf("no registry entry for %q", name)

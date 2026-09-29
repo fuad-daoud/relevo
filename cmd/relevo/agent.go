@@ -25,6 +25,7 @@ type agentFlagValues struct {
 	agent  *string
 	force  *bool
 	dryRun *bool
+	asJSON *bool
 }
 
 // agentFlagSet defines `relevo config agents`' flags on fs and returns the
@@ -36,6 +37,7 @@ func agentFlagSet(fs *flag.FlagSet) *agentFlagValues {
 	v.agent = fs.String("agent", "", "agent name")
 	v.force = fs.Bool("force", false, "force overwrite")
 	v.dryRun = fs.Bool("dry-run", false, "dry run")
+	v.asJSON = fs.Bool("json", false, "print the document the install produced")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: relevo config agents [--kind <agy|claude|opencode>] [--agent <name>] [--force] [--dry-run]")
 		fmt.Fprintln(fs.Output(), "Installs relevo's shipped agents and the custom agents in your config.")
@@ -47,10 +49,14 @@ func agentFlagSet(fs *flag.FlagSet) *agentFlagValues {
 // cmdAgentInstall installs embedded agent definitions, the body
 // `relevo config agents` had (now `relevo config agents`).
 func cmdAgentInstall(args []string) error {
+	return outcomeError(cmdAgentInstallRun(args))
+}
+
+func cmdAgentInstallRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config agents", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := agentFlagSet(fs)
-	kind, agent, force, dryRun := v.kind, v.agent, v.force, v.dryRun
+	kind, agent, force, dryRun, asJSON := v.kind, v.agent, v.force, v.dryRun, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -99,8 +105,7 @@ func cmdAgentInstall(args []string) error {
 	} else {
 		shipped, serr := harness.Install(env, opts)
 		if serr != nil {
-			fmt.Fprintf(os.Stderr, "relevo: %v\n", serr)
-			return exitCodeErr{code: 2}
+			return fail(codeUsage, "%v", serr)
 		}
 		results = append(results, shipped...)
 		if cfgErr == nil && *agent == "" {
@@ -117,20 +122,30 @@ func cmdAgentInstall(args []string) error {
 		}
 	}
 
+	// The human lines keep stdout in the default mode and move to stderr under
+	// --json, where stdout carries the document alone.
+	w := noticeWriter(*asJSON)
+
 	if len(results) == 0 {
-		fmt.Println("no harness binaries on PATH (agy, claude, opencode); nothing to install")
+		fmt.Fprintln(w, "no harness binaries on PATH (agy, claude, opencode); nothing to install")
+		if *asJSON {
+			return printDoc(configAgentsDocOf(nil))
+		}
 		return nil
 	}
 
 	failed := false
 	for _, r := range results {
-		fmt.Println(r.Line())
+		fmt.Fprintln(w, r.Line())
 		if r.Outcome == harness.OutcomeError {
 			failed = true
 		}
 	}
 	if failed {
-		return exitCodeErr{code: 1}
+		return fail(codeInternal, "one or more agent definitions failed to install")
+	}
+	if *asJSON {
+		return printDoc(configAgentsDocOf(results))
 	}
 	return nil
 }

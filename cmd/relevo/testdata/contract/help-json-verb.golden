@@ -1,1 +1,1 @@
-{"name":"config server add","summary":"record a remote-builder server","args":"\u003cname\u003e \u003curl\u003e (--fingerprint F | --ca system | --insecure)","flags":["--ca","--fingerprint","--insecure"],"output":"","exit":[0,1,2],"errors":["usage"]}
+{"name":"config server add","summary":"record a remote-builder server","args":"\u003cname\u003e \u003curl\u003e (--fingerprint F | --ca system | --insecure) [--json]","flags":["--ca","--fingerprint","--insecure","--json"],"output":"json:ConfigServerAddDoc","exit":[0,1,2],"errors":["internal","remote_unreachable","usage"]}

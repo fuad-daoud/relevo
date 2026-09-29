@@ -458,12 +458,16 @@ func TestConfigSecretUnknownNameExits2(t *testing.T) {
 	initRoot(t)
 
 	_, stderr, err := runWithStdin(t, "x", "config", "secret", "set", "bogus")
+	ce := requireCLIError(t, err, codeUsage, "relevo help")
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 2 {
 		t.Fatalf("secret set bogus: exit = %v, want exit code 2", err)
 	}
-	if !strings.Contains(string(stderr), "typesafe") || !strings.Contains(string(stderr), "client.key") {
-		t.Errorf("stderr = %q, want both allowed names", stderr)
+	if len(stderr) != 0 {
+		t.Errorf("stderr = %q, want empty before report", stderr)
+	}
+	if !strings.Contains(ce.message, "typesafe") || !strings.Contains(ce.message, "client.key") {
+		t.Errorf("message = %q, want both allowed names", ce.message)
 	}
 }
 

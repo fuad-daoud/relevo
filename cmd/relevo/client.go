@@ -26,6 +26,7 @@ type clientAddServerFlagValues struct {
 	fingerprint *string
 	ca          *string
 	insecure    *bool
+	asJSON      *bool
 }
 
 // clientAddServerFlagSet defines those flags on fs, in the usage text's order,
@@ -36,22 +37,30 @@ func clientAddServerFlagSet(fs *flag.FlagSet) *clientAddServerFlagValues {
 	v.fingerprint = fs.String("fingerprint", "", "pin the server's certificate fingerprint (sha256:<hex>)")
 	v.ca = fs.String("ca", "", `trust the system CA pool instead of pinning ("system")`)
 	v.insecure = fs.Bool("insecure", false, "allow plain http (no TLS)")
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
 	return v
 }
 
 func cmdClientAddServer(args []string) error {
+	return outcomeError(cmdClientAddServerRun(args))
+}
+
+func cmdClientAddServerRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config server add", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := clientAddServerFlagSet(fs)
-	fingerprint, ca, insecure := v.fingerprint, v.ca, v.insecure
+	fingerprint, ca, insecure, asJSON := v.fingerprint, v.ca, v.insecure, v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
+	// The human lines keep stdout in the default mode and move to stderr under
+	// --json, where stdout carries the document alone.
+	w := noticeWriter(*asJSON)
+
 	rest := fs.Args()
 	if len(rest) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config server add <name> <url> (--fingerprint sha256:... | --ca system | --insecure)")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config server add wants <name> <url> (--fingerprint sha256:... | --ca system | --insecure)")
 	}
 	name, rawURL := rest[0], rest[1]
 
@@ -66,13 +75,12 @@ func cmdClientAddServer(args []string) error {
 		set++
 	}
 	if set > 1 {
-		fmt.Fprintln(os.Stderr, "relevo config server add: --fingerprint, --ca and --insecure are mutually exclusive")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "--fingerprint, --ca and --insecure are mutually exclusive")
 	}
 
 	entry := remote.ServerEntry{URL: rawURL, Fingerprint: *fingerprint, CA: *ca, Insecure: *insecure}
 	if err := remote.ValidateEntry(entry); err != nil {
-		return err
+		return fail(codeUsage, "%v", err)
 	}
 
 	rt, err := newRuntime()
@@ -87,7 +95,7 @@ func cmdClientAddServer(args []string) error {
 		return err
 	}
 	if generated {
-		if err := printClientKey(pem, false); err != nil {
+		if err := printClientKey(w, pem, false); err != nil {
 			return err
 		}
 	}
@@ -105,12 +113,12 @@ func cmdClientAddServer(args []string) error {
 	if _, err := rt.Config.As("cli", "config server add "+name).Put(config.Servers, body); err != nil {
 		return err
 	}
-	fmt.Printf("added server %s (%s)\n", name, rawURL)
+	fmt.Fprintf(w, "added server %s (%s)\n", name, rawURL)
 
 	if *fingerprint == "" {
 		// Pinned by --ca or plain --insecure: there is no fingerprint to pin
 		// the transport to, so there is nothing to enrollment-check yet.
-		return nil
+		return addServerDoc(*asJSON, name, rawURL)
 	}
 
 	key, err := remote.ParsePrivate(pem)
@@ -123,33 +131,56 @@ func cmdClientAddServer(args []string) error {
 	if werr != nil {
 		var httpErr *client.HTTPError
 		if errors.As(werr, &httpErr) && httpErr.Status == 401 {
-			fmt.Printf("not enrolled on %s: give the admin: %s\n", name, client.EnrollLine(key))
-			return nil
+			fmt.Fprintf(w, "not enrolled on %s: give the admin: %s\n", name, client.EnrollLine(key))
+			return addServerDoc(*asJSON, name, rawURL)
 		}
 		return fmt.Errorf("%s: %w", name, werr)
 	}
-	fmt.Printf("enrolled as %s\n", who.Label)
-	return nil
+	fmt.Fprintf(w, "enrolled as %s\n", who.Label)
+	return addServerDoc(*asJSON, name, rawURL)
+}
+
+// addServerDoc prints config server add's document in --json mode, or nothing
+// in the human default, whose lines were the whole answer.
+func addServerDoc(asJSON bool, name, url string) error {
+	if !asJSON {
+		return nil
+	}
+	return printDoc(configServerAddDocOf(name, url))
 }
 
 // cmdClientRmServer refuses while any binding in the store still names the
 // server (relevo.ServerInUse is the pure rule this checks; it is tested in
 // internal/relevo so this thin wrapper needs no harness or network access to
 // test the refusal shape -- see CLAUDE.md's CI rule).
-// clientRmServerFlagSet declares `config server rm`'s flags: none today. It
-// exists so the registry's parity test finds exactly one installer per verb.
-func clientRmServerFlagSet(*flag.FlagSet) {}
+// clientRmServerFlagValues holds the pointer `config server rm` parses into.
+type clientRmServerFlagValues struct {
+	asJSON *bool
+}
+
+// clientRmServerFlagSet defines that flag on fs and returns what it parses
+// into, so the registry's parity test finds exactly one installer per verb.
+func clientRmServerFlagSet(fs *flag.FlagSet) *clientRmServerFlagValues {
+	v := &clientRmServerFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
+	return v
+}
 
 func cmdClientRmServer(args []string) error {
+	return outcomeError(cmdClientRmServerRun(args))
+}
+
+func cmdClientRmServerRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config server rm", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	v := clientRmServerFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config server rm <name>")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config server rm wants <name>")
 	}
 	name := rest[0]
 
@@ -162,7 +193,7 @@ func cmdClientRmServer(args []string) error {
 		return err
 	}
 	if inUse := relevo.ServerInUse(bindings, name); len(inUse) > 0 {
-		return fmt.Errorf("server %q is used by %s; unbind them first", name, strings.Join(inUse, ", "))
+		return fail(codeConflict, "server %q is used by %s; unbind them first", name, strings.Join(inUse, ", "))
 	}
 
 	L, err := rt.Config.Load()
@@ -171,7 +202,7 @@ func cmdClientRmServer(args []string) error {
 	}
 	servers := L.Servers
 	if _, ok := servers[name]; !ok {
-		return fmt.Errorf("no such server %q", name)
+		return fail(codeServerNotFound, "no such server %q", name)
 	}
 	delete(servers, name)
 	body, err := client.EncodeServers(servers)
@@ -180,6 +211,9 @@ func cmdClientRmServer(args []string) error {
 	}
 	if _, err := rt.Config.As("cli", "config server rm "+name).Put(config.Servers, body); err != nil {
 		return err
+	}
+	if *asJSON {
+		return printDoc(configServerRmDocOf(name))
 	}
 	fmt.Printf("removed server %s\n", name)
 	return nil

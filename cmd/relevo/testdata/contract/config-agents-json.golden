@@ -1,0 +1,17 @@
+{
+  "installed": [
+    {
+      "kind": "claude",
+      "role": "plan-executor",
+      "path": "~/.claude/agents/plan-executor.md",
+      "outcome": "wrote"
+    },
+    {
+      "kind": "opencode",
+      "role": "researcher",
+      "path": "~/.config/opencode/agent/researcher.md",
+      "outcome": "error",
+      "error": "permission denied"
+    }
+  ]
+}

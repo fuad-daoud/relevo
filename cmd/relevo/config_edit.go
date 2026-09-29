@@ -68,26 +68,41 @@ func configGet(args []string) error {
 
 // configSet sets a JSON value at a path, creating intermediate objects. A
 // value that is not valid JSON is stored as a JSON string. A path through a
-// non-object exits 1. With no key the whole section is replaced.
-// configSetFlagSet declares `config set`'s flags: none today.
-func configSetFlagSet(*flag.FlagSet) {}
+// non-object is config_invalid. With no key the whole section is replaced.
+// configSetFlagValues holds the pointer `config set` parses into.
+type configSetFlagValues struct {
+	asJSON *bool
+}
+
+// configSetFlagSet defines that flag on fs and returns what it parses into, so
+// the registry's parity test finds exactly one installer per verb.
+func configSetFlagSet(fs *flag.FlagSet) *configSetFlagValues {
+	v := &configSetFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
+	return v
+}
 
 func configSet(args []string) error {
+	return outcomeError(configSetRun(args))
+}
+
+func configSetRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config set", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	v := configSetFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config set <section>[.<key>...] <json>")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config set wants <section>[.<key>...] <json>")
 	}
 	path, raw := rest[0], rest[1]
 
 	sec, keys, ok := configPath(path)
 	if !ok {
-		return fmt.Errorf("%s: unknown section", path)
+		return fail(codeConfigInvalid, "%s: unknown section", path)
 	}
 	value := rawJSONOrString(raw)
 
@@ -97,45 +112,70 @@ func configSet(args []string) error {
 	}
 
 	if len(keys) == 0 {
-		_, err := rt.Config.As("cli", "config set "+path).Put(sec, value)
-		return err
+		if _, err := rt.Config.As("cli", "config set "+path).Put(sec, value); err != nil {
+			return err
+		}
+	} else {
+		body := []byte("{}")
+		if stored, present, err := rt.Config.Body(sec); err != nil {
+			return err
+		} else if present {
+			body = stored
+		}
+		updated, err := setJSON(body, keys, value)
+		if err != nil {
+			return fail(codeConfigInvalid, "%s: %v", path, err)
+		}
+		if _, err := rt.Config.As("cli", "config set "+path).Put(sec, updated); err != nil {
+			return err
+		}
 	}
 
-	body := []byte("{}")
-	if stored, present, err := rt.Config.Body(sec); err != nil {
-		return err
-	} else if present {
-		body = stored
-	}
-	updated, err := setJSON(body, keys, value)
+	version, err := rt.Config.Version()
 	if err != nil {
-		return fmt.Errorf("%s: %v", path, err)
+		return err
 	}
-	_, err = rt.Config.As("cli", "config set "+path).Put(sec, updated)
-	return err
+	if *asJSON {
+		return printDoc(configWriteDocOf(path, string(sec), version))
+	}
+	return nil
 }
 
 // configUnset removes a key, or, with no key, deletes the whole section. A
-// path through a non-object, or a key that is not set, exits 1.
-// configUnsetFlagSet declares `config unset`'s flags: none today.
-func configUnsetFlagSet(*flag.FlagSet) {}
+// path through a non-object, or a key that is not set, is config_invalid.
+// configUnsetFlagValues holds the pointer `config unset` parses into.
+type configUnsetFlagValues struct {
+	asJSON *bool
+}
+
+// configUnsetFlagSet defines that flag on fs and returns what it parses into.
+func configUnsetFlagSet(fs *flag.FlagSet) *configUnsetFlagValues {
+	v := &configUnsetFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the write produced")
+	return v
+}
 
 func configUnset(args []string) error {
+	return outcomeError(configUnsetRun(args))
+}
+
+func configUnsetRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config unset", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	v := configUnsetFlagSet(fs)
+	asJSON := v.asJSON
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config unset <section>[.<key>...]")
-		return exitCodeErr{code: 2}
+		return fail(codeUsage, "config unset wants <section>[.<key>...]")
 	}
 	path := rest[0]
 
 	sec, keys, ok := configPath(path)
 	if !ok {
-		return fmt.Errorf("%s: unknown section", path)
+		return fail(codeConfigInvalid, "%s: unknown section", path)
 	}
 
 	rt, err := newRuntime()
@@ -143,25 +183,37 @@ func configUnset(args []string) error {
 		return err
 	}
 	if len(keys) == 0 {
-		return rt.Config.As("cli", "config unset "+path).Delete(sec)
+		if err := rt.Config.As("cli", "config unset "+path).Delete(sec); err != nil {
+			return err
+		}
+	} else {
+		body, present, err := rt.Config.Body(sec)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return fail(codeConfigInvalid, "%s: not set", path)
+		}
+		updated, removed, err := unsetJSON(body, keys)
+		if err != nil {
+			return fail(codeConfigInvalid, "%s: %v", path, err)
+		}
+		if !removed {
+			return fail(codeConfigInvalid, "%s: not set", path)
+		}
+		if _, err := rt.Config.As("cli", "config unset "+path).Put(sec, updated); err != nil {
+			return err
+		}
 	}
 
-	body, present, err := rt.Config.Body(sec)
+	version, err := rt.Config.Version()
 	if err != nil {
 		return err
 	}
-	if !present {
-		return fmt.Errorf("%s: not set", path)
+	if *asJSON {
+		return printDoc(configWriteDocOf(path, string(sec), version))
 	}
-	updated, removed, err := unsetJSON(body, keys)
-	if err != nil {
-		return fmt.Errorf("%s: %v", path, err)
-	}
-	if !removed {
-		return fmt.Errorf("%s: not set", path)
-	}
-	_, err = rt.Config.As("cli", "config unset "+path).Put(sec, updated)
-	return err
+	return nil
 }
 
 // configEdit opens the whole-config document in $VISUAL, else $EDITOR, else

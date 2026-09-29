@@ -1,0 +1,9 @@
+{
+  "owner": "alice",
+  "name": "webshop",
+  "released": true,
+  "archived": true,
+  "worktree": "/s/work/webshop",
+  "kept_reason": "",
+  "process_stopped": 4242
+}
