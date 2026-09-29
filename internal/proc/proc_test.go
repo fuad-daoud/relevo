@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -266,6 +267,80 @@ func TestStartRefusesADirThatIsNotADirectory(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "is not a directory") {
 		t.Fatalf("Start with a file as Dir = %v; want a not-a-directory error", err)
+	}
+}
+
+// A symlink planted at the log path must be refused, and its target never
+// created: the state directory is runner-writable.
+func TestStartRefusesASymlinkedLog(t *testing.T) {
+	r := New()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "001-builder.log")
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	target := filepath.Join(t.TempDir(), "pwned")
+	if err := os.Symlink(target, log); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.Start(context.Background(), spawn.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "true"}, LogPath: log, StreamPath: stream,
+	})
+	if err == nil {
+		t.Fatal("Start with a symlinked log must fail")
+	}
+	if _, statErr := os.Lstat(target); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("Lstat(%q) = %v, want fs.ErrNotExist: a refused Start must not create the link's target", target, statErr)
+	}
+}
+
+// A symlink planted at the stream path must be refused too, and its target
+// never created.
+func TestStartRefusesASymlinkedStream(t *testing.T) {
+	r := New()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "001-builder.log")
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	target := filepath.Join(t.TempDir(), "pwned")
+	if err := os.Symlink(target, stream); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.Start(context.Background(), spawn.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "true"}, LogPath: log, StreamPath: stream,
+	})
+	if err == nil {
+		t.Fatal("Start with a symlinked stream must fail")
+	}
+	if _, statErr := os.Lstat(target); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("Lstat(%q) = %v, want fs.ErrNotExist: a refused Start must not create the link's target", target, statErr)
+	}
+}
+
+// A symlink to an existing file must be refused without a byte written through
+// it, so the target a runner aimed at is left alone.
+func TestStartRefusesASymlinkedStreamToAnExistingFile(t *testing.T) {
+	r := New()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "001-builder.log")
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	target := filepath.Join(t.TempDir(), "existing.log")
+	const planted = "keep me\n"
+	if err := os.WriteFile(target, []byte(planted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, stream); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.Start(context.Background(), spawn.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "true"}, LogPath: log, StreamPath: stream,
+	})
+	if err == nil {
+		t.Fatal("Start with a symlinked stream must fail")
+	}
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("read the link's target: %v", readErr)
+	}
+	if string(got) != planted {
+		t.Errorf("link target = %q, want it byte-unchanged at %q", got, planted)
 	}
 }
 

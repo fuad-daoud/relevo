@@ -1756,3 +1756,38 @@ func TestPlannerSeedCapDryRunRefuses(t *testing.T) {
 		t.Errorf("SendDryRun refusal %q, Send refusal %q; want the same", dryErr, sendErr)
 	}
 }
+
+// TestSendRefusesStoredTierAboveMaxWithoutAllowYolo pins that a stored tier
+// above max_tier never launches without the explicit allowance: the no-flag
+// send refuses from the read-only preflight, stages nothing and starts
+// nothing, and only the send that carries the allowance launches, at the
+// stored tier.
+func TestSendRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	b := seedOverCapClaude(t, rt)
+
+	src := writePlan(t, "# over cap")
+	if _, err := Send(context.Background(), rt, "over-cap", src, SendOptions{}); !errors.Is(err, ErrTierAboveMax) {
+		t.Fatalf("Send without --allow-yolo = %v, want errors.Is(..., ErrTierAboveMax)", err)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("the refused send started %d processes, want none", len(fr.specs))
+	}
+	if _, err := os.Stat(rt.Store.PromptPath("over-cap", b.Round)); !os.IsNotExist(err) {
+		t.Errorf("the refused send staged a plan at %s (stat err = %v), want nothing staged", rt.Store.PromptPath("over-cap", b.Round), err)
+	}
+
+	if _, err := Send(context.Background(), rt, "over-cap", src, SendOptions{AllowYolo: true}); err != nil {
+		t.Fatalf("Send with --allow-yolo: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("the allowance send started %d processes, want exactly 1", len(fr.specs))
+	}
+	if !argvHasFlag(fr.specs[0].Argv, "--dangerously-skip-permissions") {
+		t.Errorf("argv = %v, want --dangerously-skip-permissions", fr.specs[0].Argv)
+	}
+}

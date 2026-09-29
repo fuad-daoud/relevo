@@ -65,7 +65,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 				switched = true
 				b, startErr = switchBuilder(ctx, rt, tx, b, reason, false /*closeOld*/, false /*counted*/)
 			} else {
-				b, startErr = startRound(ctx, rt, tx, b, prompt)
+				b, startErr = startRound(ctx, rt, tx, b, prompt, false)
 			}
 		}
 

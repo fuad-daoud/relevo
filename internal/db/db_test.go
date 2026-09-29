@@ -573,6 +573,50 @@ func TestOpenCreatesPrivateFiles(t *testing.T) {
 	}
 }
 
+// TestOpenPathWithHashOrQuestionUsesThatFile pins that a path containing a `#`
+// or a `?` is escaped inside the `file:` DSN, so Open and OpenReadOnly touch
+// that exact file and never the truncated prefix a bare path would resolve to.
+func TestOpenPathWithHashOrQuestionUsesThatFile(t *testing.T) {
+	cases := []struct{ name, rel string }{
+		{"hash", "a#b/relevo.db"},
+		{"question", "a?b/relevo.db"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, filepath.FromSlash(tc.rel))
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatalf("mkdir parent: %v", err)
+			}
+			truncated := filepath.Join(dir, "a")
+
+			d, err := Open(path)
+			if err != nil {
+				t.Fatalf("Open(%s): %v", path, err)
+			}
+			t.Cleanup(func() { _ = d.Close() })
+
+			if _, err := os.Stat(truncated); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("truncated prefix %s exists after Open, want absent (stat err = %v)", truncated, err)
+			}
+
+			ro, err := OpenReadOnly(path)
+			if err != nil {
+				t.Fatalf("OpenReadOnly(%s): %v", path, err)
+			}
+			t.Cleanup(func() { _ = ro.Close() })
+
+			have, know := ro.SchemaVersions()
+			if have != know || have <= 0 {
+				t.Errorf("OpenReadOnly SchemaVersions() = (%d, %d), want have == know > 0", have, know)
+			}
+			if _, err := os.Stat(truncated); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("truncated prefix %s exists after OpenReadOnly, want absent (stat err = %v)", truncated, err)
+			}
+		})
+	}
+}
+
 // TestBackupToCreatesPrivateTarget pins that the backup target is created
 // owner-only before VACUUM INTO writes it, and stays 0600 after.
 func TestBackupToCreatesPrivateTarget(t *testing.T) {

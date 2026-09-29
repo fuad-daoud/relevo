@@ -194,7 +194,7 @@ func openReadOnly(path string) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open readonly %s: %w", path, serr)
 	}
 
-	dsn := "file:" + path + "?mode=ro&_pragma=busy_timeout(5000)"
+	dsn := fileDSN(path, "mode=ro&_pragma=busy_timeout(5000)")
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("db: open readonly %s: %w: %w", path, ErrOpen, err)

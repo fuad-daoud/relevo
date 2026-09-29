@@ -137,7 +137,7 @@ func TestBindCustomWriterLaunchesItsDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if _, err := startRound(context.Background(), rt, nil, b, "the prompt"); err != nil {
+	if _, err := startRound(context.Background(), rt, nil, b, "the prompt", false); err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
 	if len(fr.specs) != 1 {
@@ -438,7 +438,7 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	_, err = startRound(context.Background(), rt, nil, b, "the prompt")
+	_, err = startRound(context.Background(), rt, nil, b, "the prompt", false)
 	if err == nil {
 		t.Fatal("startRound on a vanished role = nil, want an error")
 	}

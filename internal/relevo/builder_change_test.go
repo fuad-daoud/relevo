@@ -191,3 +191,47 @@ func TestRoundOpenIn(t *testing.T) {
 		})
 	}
 }
+
+// TestCandidateSendRefusedExceptOnAHaltedServedBinding pins the one exception
+// to the --candidate refusal: an open round is refused on every binding
+// except a served one halted in NEEDS YOU, where `stop` is refused and the
+// candidate is the only lever that continues the round.
+func TestCandidateSendRefusedExceptOnAHaltedServedBinding(t *testing.T) {
+	t.Parallel()
+
+	plan := store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}
+	report := store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport}
+
+	localActive := store.Binding{Round: 1, State: store.StateActive}
+	servedActive := store.Binding{Round: 1, State: store.StateActive, Owner: "owner-1"}
+	clientActive := store.Binding{Round: 1, State: store.StateActive, Builder: store.Endpoint{Mode: store.ModeRemote}}
+	queued := store.Binding{Round: 1, State: store.StateActive, QueuedAt: time.Now()}
+	localHalted := store.Binding{Round: 1, State: store.StateNeedsYou, Halt: "builder exited"}
+	servedHalted := store.Binding{Round: 1, State: store.StateNeedsYou, Halt: "builder exited", Owner: "owner-1"}
+	clientHalted := store.Binding{Round: 1, State: store.StateNeedsYou, Halt: "builder exited", Builder: store.Endpoint{Mode: store.ModeRemote}}
+
+	tests := []struct {
+		name    string
+		b       store.Binding
+		entries []store.LogEntry
+		want    bool
+	}{
+		{"no prompt", localActive, nil, false},
+		{"closed by a report", localActive, []store.LogEntry{plan, report}, false},
+		{"another round's prompt", localActive, []store.LogEntry{{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt}}, false},
+		{"open, active local", localActive, []store.LogEntry{plan}, true},
+		{"open, active served (owner)", servedActive, []store.LogEntry{plan}, true},
+		{"open, active served (client copy)", clientActive, []store.LogEntry{plan}, true},
+		{"open, queued", queued, []store.LogEntry{plan}, true},
+		{"open, needs_you local", localHalted, []store.LogEntry{plan}, true},
+		{"open, needs_you served (owner)", servedHalted, []store.LogEntry{plan}, false},
+		{"open, needs_you served (client copy)", clientHalted, []store.LogEntry{plan}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := candidateSendRefused(tt.b, tt.entries); got != tt.want {
+				t.Errorf("candidateSendRefused(%+v, %v) = %v, want %v", tt.b, tt.entries, got, tt.want)
+			}
+		})
+	}
+}

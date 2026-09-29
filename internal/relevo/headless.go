@@ -188,13 +188,14 @@ func roundEnv(b store.Binding) []string {
 // the spawn itself is startProcess, which resumeRound shares (#370).
 //
 // Preconditions:  b.Builder.Headless(); no live process on the endpoint
-// (Send checks with Runner.Alive first); rt.Runner non-nil.
+// (Send checks with Runner.Alive first); rt.Runner non-nil; the stored tier is
+// at or below max_tier unless allowYolo.
 // Postconditions: on success PID, StartedAt and LogPath describe the new
 // process. On failure the endpoint is returned as it was (cursor moved to this
 // round), PID 0, and the candidate's spawn_failed is in the ledger -- the same
 // record a pane spawn failure leaves, because it is the same failure: the
 // candidate could not be launched. The caller decides the binding's state.
-func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, prompt string) (store.Binding, error) {
+func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, prompt string, allowYolo bool) (store.Binding, error) {
 	if rt.Runner == nil {
 		return b, spawn.ErrRunnerUnavailable
 	}
@@ -211,7 +212,11 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	argv, err := spawn.HeadlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, roundTree(rt, b), rt.Store.Dir(b.Name))
+	tier, err := launchTier(b, rt.Policy, allowYolo)
+	if err != nil {
+		return b, err
+	}
+	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.Dir(b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -338,7 +343,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 // It has startRound's pre- and postconditions. ErrResumeUnsupported comes
 // back wrapped and unchanged, so the caller can fall back to a fresh
 // relaunch.
-func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, sessionID, prompt string) (store.Binding, error) {
+func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, sessionID, prompt string, allowYolo bool) (store.Binding, error) {
 	if rt.Runner == nil {
 		return b, spawn.ErrRunnerUnavailable
 	}
@@ -358,7 +363,11 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, effectiveTier(b))
+	tier, err := launchTier(b, rt.Policy, allowYolo)
+	if err != nil {
+		return b, err
+	}
+	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier)
 	if err != nil {
 		return b, err
 	}
@@ -912,14 +921,14 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			how  = "relaunched"
 		)
 		if sess != "" {
-			next, err = resumeRound(ctx, rt, tx, b, sess, text)
+			next, err = resumeRound(ctx, rt, tx, b, sess, text, false)
 			switch {
 			case err == nil:
 				how = "resumed session " + sess
 			case errors.Is(err, harness.ErrResumeUnsupported):
 				// codex, and any kind relevo cannot resume: the fresh
 				// relaunch is round 1's behaviour and needs no note.
-				next, err = startRound(ctx, rt, tx, b, text)
+				next, err = startRound(ctx, rt, tx, b, text, false)
 			default:
 				var sf spawnFailure
 				if errors.As(err, &sf) {
@@ -927,11 +936,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 					// selector. One fresh attempt, then the halt below if
 					// that fails too (spec §6).
 					slog.Warn("resume failed; relaunching fresh", "binding", b.Name, "round", b.Round, "session", sess, "err", err)
-					next, err = startRound(ctx, rt, tx, b, text)
+					next, err = startRound(ctx, rt, tx, b, text, false)
 				}
 			}
 		} else {
-			next, err = startRound(ctx, rt, tx, b, text)
+			next, err = startRound(ctx, rt, tx, b, text, false)
 		}
 		if err != nil {
 			b = abandonSessionID(b, oldKind, sess)

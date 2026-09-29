@@ -2485,6 +2485,114 @@ func TestRoundStartWithCandidateChangesTheBuilder(t *testing.T) {
 	}
 }
 
+// startBuilderRound1 creates binding api on the first candidate, absorbs its out
+// ref and starts round 1, returning the bundle bytes a later start ships.
+func startBuilderRound1(t *testing.T, env *testEnv) []byte {
+	t.Helper()
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+		Role:       "builder",
+		Candidate:  "claude/anthropic/haiku",
+	})
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+	requireStatus(t, resp, body, http.StatusCreated)
+
+	outRef := "refs/relevo/api/out"
+	if err := env.gitClient.UpdateRef(context.Background(), env.clientDir, outRef, env.headSHA, ""); err != nil {
+		t.Fatalf("updateRef out: %v", err)
+	}
+	bundleBytes := snapshotRef(t, env, env.clientDir, outRef)
+
+	formBytes, ct := roundFormCandidate(t, 1, "# Round 1 Plan", bundleBytes, "")
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
+	return bundleBytes
+}
+
+// TestRoundStartWithCandidateRepointsAHaltedRound pins the served half of the
+// re-point: a halted served round accepts a candidate, starts exactly that one,
+// and keeps its round and its plan history -- no switch, no advance.
+func TestRoundStartWithCandidateRepointsAHaltedRound(t *testing.T) {
+	env := setupBuilderEnv(t)
+	ctx := context.Background()
+	bundleBytes := startBuilderRound1(t, env)
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	// Spend the switch budget so the exit halts instead of switching.
+	b.RoundSwitches = rt.Policy.SwitchLimit()
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save binding: %v", err)
+	}
+
+	// The builder exits without a report: the tick halts the round.
+	env.runner.setAlive(false)
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	halted, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load halted binding: %v", err)
+	}
+	if halted.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you after the spent budget", halted.State)
+	}
+	specsBefore := len(startedSpecs(env))
+
+	repointBytes, repointCT := roundFormCandidate(t, 1, "# Round 1 Plan (continued)", bundleBytes, "opencode/anthropic/haiku")
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", repointBytes, repointCT)
+	requireStatus(t, resp, body, http.StatusCreated)
+	view := decodeView(t, body)
+	if view.State != string(store.StateActive) || view.RoundState != remote.RoundRunning {
+		t.Errorf("view = (state %q, round_state %q), want active/running", view.State, view.RoundState)
+	}
+	if view.Candidate != "opencode/anthropic/haiku" {
+		t.Errorf("view.Candidate = %q, want opencode/anthropic/haiku", view.Candidate)
+	}
+
+	got, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	if got.Round != 1 {
+		t.Errorf("Round = %d, want 1", got.Round)
+	}
+	if got.BuilderCandidate != "opencode/anthropic/haiku" || got.Builder.Kind != "opencode" {
+		t.Errorf("binding = (candidate %q, kind %q), want opencode/anthropic/haiku opencode", got.BuilderCandidate, got.Builder.Kind)
+	}
+	if got.State != store.StateActive || got.Halt != "" || !got.HaltAt.IsZero() {
+		t.Errorf("binding = (state %s, halt %q, haltAt %v), want active and cleared", got.State, got.Halt, got.HaltAt)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0", got.RoundSwitches)
+	}
+	if n := len(startedSpecs(env)) - specsBefore; n != 1 {
+		t.Errorf("new runner specs = %d, want exactly 1 (no switch, no failed-candidate spawn)", n)
+	}
+}
+
+// TestRoundStartWithCandidateLeavesARunningRoundRefused pins the boundary the
+// re-point does not cross: a live round with a different plan and a candidate
+// is still 409 round_open.
+func TestRoundStartWithCandidateLeavesARunningRoundRefused(t *testing.T) {
+	env := setupBuilderEnv(t)
+	bundleBytes := startBuilderRound1(t, env)
+
+	changedBytes, changedCT := roundFormCandidate(t, 1, "# Round 1 Plan (changed)", bundleBytes, "opencode/anthropic/haiku")
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", changedBytes, changedCT)
+	requireStatus(t, resp, body, http.StatusConflict)
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(body, &errBody)
+	if errBody.Code != remote.CodeRoundOpen {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeRoundOpen)
+	}
+}
+
 // TestRoundStartUnknownCandidateRefusesBeforeAbsorb: validation runs before the
 // absorb, so a bad token leaves the outbound ref unmoved.
 func TestRoundStartUnknownCandidateRefusesBeforeAbsorb(t *testing.T) {
