@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -194,4 +195,86 @@ func TestReadFilePrefersDiskForPromptAndStream(t *testing.T) {
 			}
 		})
 	}
+}
+
+// sealRound runs SealRound under the state lock and returns how many files it
+// sealed.
+func sealRound(t *testing.T, s *Store, binding string, round int) int {
+	t.Helper()
+	var n int
+	if err := s.WithLock(func(tx *Tx) error {
+		var err error
+		n, err = tx.SealRound(binding, round)
+		return err
+	}); err != nil {
+		t.Fatalf("SealRound(%s, %d): %v", binding, round, err)
+	}
+	return n
+}
+
+// TestSealRoundLeavesAReservedRoundFileAlone pins the disk side: the round-file
+// walk never treats a reserved name as a round file. A plant is not read, not
+// sealed and not removed, the row the name belongs to keeps its bytes, and a
+// plant alone neither becomes a row nor makes its round appear on disk.
+func TestSealRoundLeavesAReservedRoundFileAlone(t *testing.T) {
+	t.Run("a row plus a plant", func(t *testing.T) {
+		s, binding := seedReservedStore(t)
+		const row = "the row's bytes\n"
+		const plant = "the plant's bytes\n"
+
+		path := s.DiffPath(binding, 1)
+		putRow(t, s, binding, 1, path, []byte(row))
+		writePlant(t, path, plant)
+
+		if n := sealRound(t, s, binding, 1); n != 0 {
+			t.Errorf("SealRound sealed %d files, want 0", n)
+		}
+
+		body, err := s.ReadFile(path)
+		if err != nil || string(body) != row {
+			t.Errorf("ReadFile(%s) = %q (err %v), want the row's %q", path, body, err, row)
+		}
+		onDisk, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("the plant must stay on disk: %v", err)
+		}
+		if string(onDisk) != plant {
+			t.Errorf("plant bytes = %q, want them byte-identical %q", onDisk, plant)
+		}
+		names, err := s.RoundFiles(binding)
+		if err != nil {
+			t.Fatalf("RoundFiles: %v", err)
+		}
+		if !slices.Contains(names, "001-diff.patch") {
+			t.Errorf("RoundFiles = %v, want 001-diff.patch from the row", names)
+		}
+	})
+
+	t.Run("a plant with no row", func(t *testing.T) {
+		s, binding := seedReservedStore(t)
+		path := s.DiffPath(binding, 1)
+		writePlant(t, path, "the plant's bytes\n")
+
+		if n := sealRound(t, s, binding, 1); n != 0 {
+			t.Errorf("SealRound sealed %d files, want 0", n)
+		}
+
+		if body, err := s.ReadFile(path); !errors.Is(err, fs.ErrNotExist) || body != nil {
+			t.Errorf("ReadFile(%s) = %q (err %v), want a miss: no row was created", path, body, err)
+		}
+		names, err := s.RoundFiles(binding)
+		if err != nil {
+			t.Fatalf("RoundFiles: %v", err)
+		}
+		if slices.Contains(names, "001-diff.patch") {
+			t.Errorf("RoundFiles = %v, want the plant unlisted", names)
+		}
+		rounds, err := s.RoundsOnDisk(binding)
+		if err != nil {
+			t.Fatalf("RoundsOnDisk: %v", err)
+		}
+		if len(rounds) != 0 {
+			t.Errorf("RoundsOnDisk = %v, want empty: a plant is not a round", rounds)
+		}
+	})
 }
