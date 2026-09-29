@@ -38,7 +38,7 @@ type Report struct {
 	Scorecard    []ScoreRow
 	Spend        Spend
 	Reliability  Reliability
-	Repos        []RepoRow // key = RoundRow.Repo, "(none)" when nil, each with its feature and ticket children
+	Repos        []RepoRow // key = RoundRow.Repo, "(none)" when nil, each with its features and their tickets
 	Outcomes     Outcomes
 }
 

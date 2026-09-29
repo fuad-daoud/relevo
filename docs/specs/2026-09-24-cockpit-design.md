@@ -289,11 +289,16 @@ over `db.RoundRow` and the gate records, and shared with `relevo history --stats
 | Candidates | Scoped to one actor (`a` cycles; default `builder`). Per candidate: rounds; **done %** = reported / closed; **halt %** = halted / closed; median duration of closed rounds; ttft p50 over the window; **$/round** = mean over rounds with a known cost basis, or `plan`. Rows with fewer than 5 rounds are dimmed. `(unrecorded)` is excluded. |
 | Spend | Cost per day over the window as bars, all actors, with this week against last week. `p` splits the bars by provider. |
 | Reliability | Switches (count and % of rounds), gates, spawn failures, the by-hour limit heatmap per provider (what `relevo config` prints today), and the gates active now. |
-| Repos & features | Per repo, expanding in place to its features then its tickets with the repo's own numbers: rounds, cost, halts, and rounds per landed binding (a binding that reached DONE); a label used by two repos appears under each. |
+| Repos & features | Per repo, expanding in place to its features, each with its tickets nested beneath it, carrying the repo's own numbers: rounds, cost, halts, and rounds per landed binding (a binding that reached DONE); a label used by two repos appears under each. `(no feature)` is a feature row with its own tickets, and there are no `(no ticket)` rows. |
 | Outcomes | Counts of reported, halted, switched and no outcome. |
 
-On the repos tab `space` toggles a repo and `→`/`←` expand and collapse it in place,
-and `enter` on a child filters `:rounds` to that repo and label.
+On the repos tab `space` toggles a repo and `→`/`←` expand and collapse it in place.
+A repo expands to its features by tokens desc, each with its tickets nested beneath it by
+tokens desc, then `(no feature)` with its tickets. A ticket two features use appears under
+each, counting only that feature's rows in that repo. `enter` on a feature filters `:rounds`
+to its repo and label; on a ticket under a feature it adds that feature's term; on a ticket
+under `(no feature)` it filters to the repo and the ticket; and on a `(no feature)` or
+`(no repo)` row it notices instead.
 
 ## 6. Architecture
 

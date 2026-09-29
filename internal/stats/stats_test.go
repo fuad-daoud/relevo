@@ -350,9 +350,9 @@ func groupRowCases() []groupRowCase {
 }
 
 // repoScopedRowCases pins the repo buckets, their per-repo children and the
-// per-repo (no feature)/(no ticket) buckets .
+// per-repo (no feature) bucket with the tickets nested under each feature.
 func repoScopedRowCases() []groupRowCase {
-	return []groupRowCase{
+	return append([]groupRowCase{
 		{
 			name: "rounds per land and an unlanded group",
 			rows: []db.RoundRow{
@@ -375,7 +375,7 @@ func repoScopedRowCases() []groupRowCase {
 			check: checkGroupLabelAcrossRepos,
 		},
 		{
-			name: "per-repo (no feature) and (no ticket) numbers",
+			name: "per-repo (no feature) numbers and the feature's tickets",
 			rows: []db.RoundRow{
 				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Ticket: stStr("t1")},
 				{BindingID: "b2", Repo: stStr("A")},
@@ -392,6 +392,53 @@ func repoScopedRowCases() []groupRowCase {
 				{BindingID: "b3", Repo: stStr("B")},
 			},
 			check: checkGroupUnlabelledRepo,
+		},
+	}, ticketScopedRowCases()...)
+}
+
+// ticketScopedRowCases pins the labelled tickets nested under a repo's features
+// and under its (no feature) bucket, each copy counting only its own feature's
+// rows in that repo.
+func ticketScopedRowCases() []groupRowCase {
+	return []groupRowCase{
+		{
+			name: "a feature with tickets keeps its ticketless rounds",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Ticket: stStr("t1"), InTokens: stI64(10)},
+				{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f1"), InTokens: stI64(5)},
+			},
+			check: checkGroupFeatureTickets,
+		},
+		{
+			name: "a ticket under (no feature)",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Ticket: stStr("t9"), InTokens: stI64(7)},
+			},
+			check: checkGroupNoFeatureTicket,
+		},
+		{
+			name: "one ticket under two features",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Ticket: stStr("t1"), InTokens: stI64(10)},
+				{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f2"), Ticket: stStr("t1"), InTokens: stI64(100)},
+			},
+			check: checkGroupTicketAcrossFeatures,
+		},
+		{
+			name: "one ticket label under two repos",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Ticket: stStr("t1"), InTokens: stI64(10)},
+				{BindingID: "b2", Repo: stStr("B"), Feature: stStr("f2"), Ticket: stStr("t1"), InTokens: stI64(100)},
+			},
+			check: checkGroupTicketAcrossRepos,
+		},
+		{
+			name: "a repo with no labels keeps every round in (no feature)",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("B")},
+				{BindingID: "b2", Repo: stStr("B")},
+			},
+			check: checkGroupNoLabelsRepo,
 		},
 	}
 }
@@ -476,8 +523,9 @@ func checkGroupLabelAcrossRepos(t *testing.T, rep Report) {
 	}
 }
 
-// checkGroupRepoNoneBuckets pins the per-repo (no feature) and (no ticket)
-// numbers and the repo's own labelled tickets.
+// checkGroupRepoNoneBuckets pins the per-repo (no feature) numbers and the
+// tickets nested under the repo's labelled feature: a feature's numbers include
+// its ticketless rounds, and its ticket list holds only the labelled rounds.
 func checkGroupRepoNoneBuckets(t *testing.T, rep Report) {
 	byKey := map[string]RepoRow{}
 	for _, r := range rep.Repos {
@@ -487,24 +535,27 @@ func checkGroupRepoNoneBuckets(t *testing.T, rep Report) {
 	if a.NoFeature.Key != "(none)" || a.NoFeature.Rounds != 1 {
 		t.Errorf("A NoFeature = %+v, want 1 round keyed (none)", a.NoFeature)
 	}
-	if a.NoTicket.Key != "(none)" || a.NoTicket.Rounds != 2 {
-		t.Errorf("A NoTicket = %+v, want 2 rounds keyed (none)", a.NoTicket)
+	if len(a.NoFeature.Tickets) != 0 {
+		t.Errorf("A (no feature) tickets = %+v, want none", a.NoFeature.Tickets)
 	}
-	if len(a.Tickets) != 1 || a.Tickets[0].Key != "t1" || a.Tickets[0].Rounds != 1 {
-		t.Errorf("A tickets = %+v, want t1 with 1 round", a.Tickets)
+	if len(a.Features) != 1 || a.Features[0].Key != "f1" || a.Features[0].Rounds != 2 {
+		t.Fatalf("A features = %+v, want f1 with its ticketless round", a.Features)
+	}
+	if len(a.Features[0].Tickets) != 1 || a.Features[0].Tickets[0].Key != "t1" ||
+		a.Features[0].Tickets[0].Rounds != 1 {
+		t.Errorf("A/f1 tickets = %+v, want t1 with 1 round", a.Features[0].Tickets)
 	}
 	b := byKey["B"]
-	if b.NoFeature.Rounds != 1 || b.NoTicket.Rounds != 1 {
-		t.Errorf("B none buckets = %+v/%+v, want 1 round each", b.NoFeature, b.NoTicket)
+	if b.NoFeature.Rounds != 1 {
+		t.Errorf("B NoFeature = %+v, want 1 round", b.NoFeature)
 	}
-	if len(b.Features) != 0 || len(b.Tickets) != 0 {
-		t.Errorf("B children = %+v/%+v, want none (no labels)", b.Features, b.Tickets)
+	if len(b.Features) != 0 {
+		t.Errorf("B features = %+v, want none (no labels)", b.Features)
 	}
 }
 
 // checkGroupUnlabelledRepo pins the issue's "a repo with nothing to show
-// expands to nothing": no labelled children, the whole count in each (none)
-// bucket.
+// expands to nothing": no labelled children, the whole count in (no feature).
 func checkGroupUnlabelledRepo(t *testing.T, rep Report) {
 	byKey := map[string]RepoRow{}
 	for _, r := range rep.Repos {
@@ -514,11 +565,93 @@ func checkGroupUnlabelledRepo(t *testing.T, rep Report) {
 	if b.Rounds != 2 {
 		t.Fatalf("repo B = %+v, want 2 rounds", b)
 	}
-	if len(b.Features) != 0 || len(b.Tickets) != 0 {
-		t.Errorf("repo B children = %+v/%+v, want empty", b.Features, b.Tickets)
+	if len(b.Features) != 0 {
+		t.Errorf("repo B features = %+v, want empty", b.Features)
 	}
-	if b.NoFeature.Rounds != 2 || b.NoTicket.Rounds != 2 {
-		t.Errorf("repo B none buckets = %+v/%+v, want the whole 2 rounds each", b.NoFeature, b.NoTicket)
+	if b.NoFeature.Rounds != 2 || len(b.NoFeature.Tickets) != 0 {
+		t.Errorf("repo B (no feature) = %+v, want the whole 2 rounds and no tickets", b.NoFeature)
+	}
+}
+
+// checkGroupFeatureTickets pins that a feature's ticketless rounds count only
+// in the feature, not in its ticket list.
+func checkGroupFeatureTickets(t *testing.T, rep Report) {
+	a := rep.Repos[0]
+	if len(a.Features) != 1 || a.Features[0].Key != "f1" {
+		t.Fatalf("A features = %+v, want f1", a.Features)
+	}
+	f := a.Features[0]
+	if f.Rounds != 2 || f.Tokens != 15 {
+		t.Errorf("A/f1 = %+v, want 2 rounds and 15 tokens", f)
+	}
+	if len(f.Tickets) != 1 || f.Tickets[0].Key != "t1" || f.Tickets[0].Rounds != 1 ||
+		f.Tickets[0].Tokens != 10 {
+		t.Errorf("A/f1 tickets = %+v, want t1 with its one labelled round", f.Tickets)
+	}
+	if a.NoFeature.Rounds != 0 {
+		t.Errorf("A (no feature) = %+v, want zero: every round has a feature", a.NoFeature)
+	}
+}
+
+// checkGroupNoFeatureTicket pins a labelled ticket on a featureless round: it
+// nests under the repo's (no feature) bucket, not under a feature.
+func checkGroupNoFeatureTicket(t *testing.T, rep Report) {
+	a := rep.Repos[0]
+	if len(a.Features) != 0 {
+		t.Errorf("A features = %+v, want none", a.Features)
+	}
+	if a.NoFeature.Key != "(none)" || a.NoFeature.Rounds != 1 {
+		t.Fatalf("A (no feature) = %+v, want 1 round keyed (none)", a.NoFeature)
+	}
+	if len(a.NoFeature.Tickets) != 1 || a.NoFeature.Tickets[0].Key != "t9" ||
+		a.NoFeature.Tickets[0].Tokens != 7 {
+		t.Errorf("A (no feature) tickets = %+v, want t9 with its round", a.NoFeature.Tickets)
+	}
+}
+
+// checkGroupTicketAcrossFeatures pins a ticket one repo uses under two features:
+// it appears under each, counting only that feature's rows.
+func checkGroupTicketAcrossFeatures(t *testing.T, rep Report) {
+	byKey := map[string]FeatureRow{}
+	for _, f := range rep.Repos[0].Features {
+		byKey[f.Key] = f
+	}
+	if len(byKey) != 2 {
+		t.Fatalf("A features = %+v, want f1 and f2", rep.Repos[0].Features)
+	}
+	for key, want := range map[string]int64{"f1": 10, "f2": 100} {
+		f := byKey[key]
+		if len(f.Tickets) != 1 || f.Tickets[0].Key != "t1" || f.Tickets[0].Tokens != want {
+			t.Errorf("%s tickets = %+v, want t1 with %d tokens", key, f.Tickets, want)
+		}
+	}
+}
+
+// checkGroupTicketAcrossRepos pins a ticket label two repos use: it appears
+// under each repo's feature with only that repo's rows counted.
+func checkGroupTicketAcrossRepos(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, r := range rep.Repos {
+		byKey[r.Key] = r
+	}
+	for key, want := range map[string]int64{"A": 10, "B": 100} {
+		r := byKey[key]
+		if len(r.Features) != 1 || len(r.Features[0].Tickets) != 1 ||
+			r.Features[0].Tickets[0].Key != "t1" || r.Features[0].Tickets[0].Tokens != want {
+			t.Errorf("%s features = %+v, want t1 with %d tokens", key, r.Features, want)
+		}
+	}
+}
+
+// checkGroupNoLabelsRepo pins a repo with no labels at all: no features, and
+// (no feature) holds every round with no tickets.
+func checkGroupNoLabelsRepo(t *testing.T, rep Report) {
+	b := rep.Repos[0]
+	if len(b.Features) != 0 {
+		t.Errorf("repo B features = %+v, want none", b.Features)
+	}
+	if b.NoFeature.Key != "(none)" || b.NoFeature.Rounds != 2 || len(b.NoFeature.Tickets) != 0 {
+		t.Errorf("repo B (no feature) = %+v, want every round and no tickets", b.NoFeature)
 	}
 }
 
