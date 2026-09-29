@@ -5,9 +5,10 @@ import (
 	"sort"
 )
 
-// renderCodex is the table for `codex exec --json`: a spawned [agents.*] role
+// codex is the table for `codex exec --json`: a spawned [agents.*] role
 // is a thread inside the same process, reported as collab_tool_call items.
-func renderCodex(obj map[string]any) []string {
+// The stream carries no time field, so nothing here is ever stamped.
+func (r *Renderer) codex(obj map[string]any) []string {
 	switch str(obj["type"]) {
 	case "thread.started", "turn.started", "turn.completed", "item.started":
 		return nil

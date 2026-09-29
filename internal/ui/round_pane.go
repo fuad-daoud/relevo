@@ -520,8 +520,13 @@ func (p roundPane) view(width int) string {
 	vp.Height = vpRows
 	if vpRows > 0 {
 		vpLines := strings.Split(vp.View(), "\n")
-		for _, l := range vpLines {
-			out = append(out, "     "+l)
+		bar := barCells(vp.TotalLineCount(), vp.Height, vp.YOffset)
+		for i, l := range vpLines {
+			cell := ""
+			if i < len(bar) {
+				cell = bar[i]
+			}
+			out = append(out, "     "+l+cell)
 		}
 	}
 	if hasHint && budget > 0 {

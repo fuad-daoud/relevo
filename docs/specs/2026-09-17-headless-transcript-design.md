@@ -186,14 +186,20 @@ harmless, and only once.
 
 ## 4. Interface definitions and component contracts
 
-### 4.1 `transcript.Render` (new package)
+### 4.1 `transcript.Renderer` (new package)
 
 Single responsibility: one raw line of a harness's stream in, the human
 lines for it out. Knows harness kinds; knows nothing about rounds, files or
-bindings. Stateless: a daemon restart loses nothing.
+bindings. One renderer per pass: it carries nothing between passes, and one
+piece of state within one -- claude's tool results carry the span from the
+call that asked for them, so the renderer remembers the calls it has seen and
+not yet answered. The one real cost of that state: a claude duration whose
+call and result fall either side of a restart, a tick, or a tail window is
+not shown.
 
 ```
-func Render(kind string, line []byte) []string
+func NewRenderer() *Renderer
+func (*Renderer) Render(kind string, line []byte) []string
 ```
 
 Preconditions: `line` is one line without its trailing newline; it may be
@@ -232,6 +238,41 @@ starts with either marker unless the model typed one.
 | assistant text | the text, verbatim |
 | denied action | `denied: <what the harness names>` |
 | final result | the result text, verbatim; preceded by `result: <status>` when the harness says it was not a success |
+
+Amended 2026-09-29: every element a table renders from an event that carries
+a time or a duration is prefixed with one plain-text stamp -- never ANSI --
+`<clock> <duration> <entry>`, exactly one space between the parts and before
+the element's own bytes:
+
+- `12:41:03 +4.2s ● shell go test ./...` -- both
+- `12:41:03 ● shell go test ./...` -- clock only
+- `+0.9s   ⎿ ok: ok  github.com/… 0.4s` -- duration only (the result's own
+  two-space indent is untouched)
+
+`clock` is the event's own time in the rendering machine's local zone,
+`15:04:05` (8 cells); `duration` is `+`, the span in seconds to one decimal,
+and `s`. One stamp per rendered element; a multi-line element (assistant
+prose, a thinking block) carries it on the first physical line only. Neither
+part means the entry is byte-for-byte what the table produced before: no
+`--:--:--`, no zero, no placeholder. Non-JSON lines, supervisor trailers and
+unknown kinds get no stamp; an unknown event of a known kind carries its
+event's clock. A duration is omitted when either end is absent, unparseable,
+or the end precedes the start; an equal pair is a measurement and reads
+`+0.0s`.
+
+| kind | clock from | duration from | line carrying the duration |
+|---|---|---|---|
+| claude | event `timestamp` (RFC3339Nano string) | the matching `tool_result` event's `timestamp` minus the `tool_use` block's event `timestamp` | the `  ⎿ ok`/`  ⎿ error` line; the `●` call line carries the clock only |
+| opencode | event `timestamp` (epoch ms) | `part.state.time.end - start` (ms), same event | the `●` call line; its result line carries the clock only |
+| agy | none -- the stream has no wall clock | `step_update.duration_seconds`, same event | the `  ⎿ ok`/`  ⎿ error` line; the `ACTIVE` call line gets nothing |
+| codex | none | none | -- |
+
+A claude call is paired to its result by `tool_use_id`, and the pairing lives
+in the pass: a pair split across passes loses that one duration and nothing
+else, because the renderer's state is earlier-lines-only. `SplitStamp(line)
+(stamp, body string)` splits a rendered line for readers that match on the
+markers: `IsThinking` tests the body for `∴`, and `colourTranscript` matches
+its markers on the body and renders the stamp faint.
 
 The *main argument* of a tool call is the first of these that is a
 non-empty string, checked in order: `command`, `file_path`, `path`,

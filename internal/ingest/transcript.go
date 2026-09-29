@@ -14,11 +14,14 @@ import (
 var tsKeys = []string{"ts", "timestamp", "time"}
 
 // streamTranscriptRecords turns raw builder-stream lines into TranscriptRecord
-// rows starting at startSeq. A line that is not a JSON object is kept verbatim in
-// RecordJSON with Rendered empty and counted in skipped; transcript.Render never
-// fails and would otherwise render it as itself.
+// rows starting at startSeq. The batch owns one transcript renderer, so a
+// claude call and its result in the same batch keep the span between their two
+// events. A line that is not a JSON object is kept verbatim in RecordJSON with
+// Rendered empty and counted in skipped; the renderer never fails and would
+// otherwise render it as itself.
 func streamTranscriptRecords(kind string, lines [][]byte, startSeq int) (recs []db.TranscriptRecord, skipped int) {
 	recs = make([]db.TranscriptRecord, 0, len(lines))
+	r := transcript.NewRenderer()
 	for i, line := range lines {
 		trimmed := bytes.TrimSpace(line)
 
@@ -28,7 +31,7 @@ func streamTranscriptRecords(kind string, lines [][]byte, startSeq int) (recs []
 		var rendered string
 		var ts *time.Time
 		if isJSONObject {
-			rendered = strings.Join(transcript.Render(kind, line), "\n")
+			rendered = strings.Join(r.Render(kind, line), "\n")
 			ts = tsFromRecord(obj)
 		} else {
 			skipped++

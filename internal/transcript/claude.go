@@ -1,57 +1,85 @@
 package transcript
 
-// renderClaude is the table for claude -p --output-format stream-json --verbose:
-// an assistant message's blocks render in order; tool results are user events.
-func renderClaude(obj map[string]any) []string {
+import "time"
+
+// claude is the table for claude -p --output-format stream-json --verbose: an
+// assistant message's blocks render in order; tool results are user events.
+// Every element carries its event's clock; a tool result also carries the span
+// from the tool_use event that made the call, when this pass saw that call.
+func (r *Renderer) claude(obj map[string]any) []string {
+	at := claudeAt(obj)
+	s := r.at(at)
 	switch str(obj["type"]) {
 	case "assistant":
-		var out []string
-		for _, blk := range contentBlocks(obj) {
-			switch str(blk["type"]) {
-			case "tool_use":
-				out = append(out, toolLine(str(blk["name"]), asMap(blk["input"])))
-			case "text":
-				if t := str(blk["text"]); t != "" {
-					out = append(out, t)
-				}
-			case "thinking":
-				out = append(out, thinkingLines(str(blk["thinking"]))...)
-			}
-		}
-		return out
+		return r.claudeAssistant(obj, at, s)
 	case "user":
-		var out []string
-		for _, blk := range contentBlocks(obj) {
-			if str(blk["type"]) != "tool_result" {
-				continue
-			}
-			if isErr, _ := blk["is_error"].(bool); isErr {
-				out = append(out, errLine(resultText(blk["content"])))
-			} else {
-				out = append(out, okLine(resultText(blk["content"])))
-			}
-		}
-		return out
+		return r.claudeUser(obj, at)
 	case "result":
-		var out []string
-		for _, d := range asList(obj["permission_denials"]) {
-			if name := str(asMap(d)["tool_name"]); name != "" {
-				out = append(out, "denied: "+name)
-			}
-		}
-		if isErr, _ := obj["is_error"].(bool); isErr {
-			out = append(out, "result: "+str(obj["subtype"]))
-		}
-		if r := str(obj["result"]); r != "" {
-			out = append(out, r)
-		}
-		return out
+		return claudeResult(obj, s)
 	case "error":
-		return []string{errLine(firstNonEmpty(str(obj["message"]), str(asMap(obj["error"])["message"])))}
+		return []string{s.line(errLine(firstNonEmpty(str(obj["message"]), str(asMap(obj["error"])["message"]))))}
 	case "system", "rate_limit_event":
 		return nil
 	}
-	return []string{unknown(obj)}
+	return []string{s.line(unknown(obj))}
+}
+
+// claudeAssistant renders an assistant message's blocks in order: each tool_use
+// block registers its id for the result that answers it; text and thinking
+// blocks render as the stream renders them.
+func (r *Renderer) claudeAssistant(obj map[string]any, at time.Time, s stamp) []string {
+	var out []string
+	for _, blk := range contentBlocks(obj) {
+		switch str(blk["type"]) {
+		case "tool_use":
+			if id := str(blk["id"]); r.stamps && id != "" && !at.IsZero() {
+				r.pending[id] = at
+			}
+			out = append(out, s.line(toolLine(str(blk["name"]), asMap(blk["input"]))))
+		case "text":
+			if t := str(blk["text"]); t != "" {
+				out = append(out, s.line(t))
+			}
+		case "thinking":
+			out = append(out, s.thinking(str(blk["thinking"]))...)
+		}
+	}
+	return out
+}
+
+// claudeUser renders a user event's tool_result blocks, each consuming the call
+// this pass recorded under its id.
+func (r *Renderer) claudeUser(obj map[string]any, at time.Time) []string {
+	var out []string
+	for _, blk := range contentBlocks(obj) {
+		if str(blk["type"]) != "tool_result" {
+			continue
+		}
+		line := okLine(resultText(blk["content"]))
+		if isErr, _ := blk["is_error"].(bool); isErr {
+			line = errLine(resultText(blk["content"]))
+		}
+		out = append(out, r.callSpan(str(blk["tool_use_id"]), at).line(line))
+	}
+	return out
+}
+
+// claudeResult renders the final result event: denied permissions, a failure
+// subtype, then the result text.
+func claudeResult(obj map[string]any, s stamp) []string {
+	var out []string
+	for _, d := range asList(obj["permission_denials"]) {
+		if name := str(asMap(d)["tool_name"]); name != "" {
+			out = append(out, s.line("denied: "+name))
+		}
+	}
+	if isErr, _ := obj["is_error"].(bool); isErr {
+		out = append(out, s.line("result: "+str(obj["subtype"])))
+	}
+	if res := str(obj["result"]); res != "" {
+		out = append(out, s.line(res))
+	}
+	return out
 }
 
 func contentBlocks(obj map[string]any) []map[string]any {

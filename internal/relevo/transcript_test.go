@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -54,12 +55,19 @@ func transcriptRead(s *store.Store) func(string) ([]byte, bool, error) {
 }
 
 // N1: renderStream must be byte-for-byte what the drain appends for the same
-// stream, and stable as a prefix when the stream grows.
+// stream, and stable as a prefix when the stream grows. The claude pair pins
+// the duration the pass's renderer carries.
 func TestRenderStreamMatchesTheDrain(t *testing.T) {
-	t.Parallel()
+	// The claude lines carry clocks, so the assertion pins the zone; the test
+	// is not parallel, so the write cannot race another test's render.
+	prev := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = prev })
 
 	agy := jsonlLine(t, "agy.jsonl", 5) + jsonlLine(t, "agy.jsonl", 6)
-	claude := jsonlLine(t, "claude.jsonl", 5) + jsonlLine(t, "claude.jsonl", 6)
+	call := `{"type":"assistant","timestamp":"2026-09-26T20:16:21Z","message":{"content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"ls"}}]}}` + "\n"
+	result := `{"type":"user","timestamp":"2026-09-26T20:16:25.2Z","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","is_error":false,"content":"ok"}]}}` + "\n"
+	claude := call + result
 	// A trailing partial line: the stream ends mid-event.
 	stream := agy + claude + `{"type":"assistant","message":{"content":[{"type":"text"`
 	segs := []store.StreamSegment{{Start: 0, Kind: "agy"}, {Start: int64(len(agy)), Kind: "claude"}}
@@ -84,6 +92,9 @@ func TestRenderStreamMatchesTheDrain(t *testing.T) {
 	if !bytes.Equal(log, want) {
 		t.Fatalf("drained log = %q, want renderStream = %q", log, want)
 	}
+	if !strings.Contains(string(want), "20:16:25 +4.2s   ⎿ ok: ok") {
+		t.Fatalf("renderStream = %q, want the claude result's duration in one pass", want)
+	}
 	if !bytes.HasSuffix(want, []byte("\n")) || bytes.HasSuffix(want, []byte("\n\n")) {
 		t.Fatalf("renderStream = %q, want complete lines only", want)
 	}
@@ -101,6 +112,52 @@ func TestRenderStreamMatchesTheDrain(t *testing.T) {
 	}
 	if bytes.Equal(after, want) {
 		t.Errorf("renderStream did not grow after a complete line was appended")
+	}
+}
+
+// N1b: a window that starts between a claude call and its result renders the
+// result without the duration -- the pair's two events are in different
+// passes, the accepted cost of the renderer's per-pass state.
+func TestStreamTailSplitClaudePairLosesTheDuration(t *testing.T) {
+	prev := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = prev })
+
+	call := `{"type":"assistant","timestamp":"2026-09-26T20:16:21Z","message":{"content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"ls"}}]}}` + "\n"
+	result := `{"type":"user","timestamp":"2026-09-26T20:16:25.2Z","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","is_error":false,"content":"ok"}]}}` + "\n"
+	path := filepath.Join(t.TempDir(), "001-runner.jsonl")
+	if err := os.WriteFile(path, []byte(call+result), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	read := func(string) ([]byte, error) { return nil, os.ErrNotExist }
+
+	if got, want := streamTail(path, read, nil, "claude", 5, 0), "20:16:21 ● Bash ls\n20:16:25 +4.2s   ⎿ ok: ok"; got != want {
+		t.Errorf("whole file = %q, want %q", got, want)
+	}
+	if got, want := streamTail(path, read, nil, "claude", 5, int64(len(call))), "20:16:25   ⎿ ok: ok"; got != want {
+		t.Errorf("window from the result = %q, want %q without the duration", got, want)
+	}
+}
+
+// N1c: the rendering from byte 0 never moves as the stream grows, including
+// for opencode, whose every rendered line carries a clock of its own.
+func TestRenderStreamPrefixStability(t *testing.T) {
+	prev := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = prev })
+
+	one := jsonlLine(t, "opencode.jsonl", 2)
+	two := jsonlLine(t, "opencode.jsonl", 5)
+	first := renderStream([]byte(one), nil, "opencode")
+	grown := renderStream([]byte(one+two), nil, "opencode")
+	if !bytes.HasPrefix(grown, first) {
+		t.Errorf("grown = %q, want %q as a prefix", grown, first)
+	}
+	if bytes.Equal(grown, first) {
+		t.Errorf("the rendering did not grow after a complete line was appended")
+	}
+	if !strings.HasPrefix(string(first), "20:16:21 ") {
+		t.Errorf("first = %q, want the opencode clock first", first)
 	}
 }
 

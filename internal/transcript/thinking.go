@@ -9,9 +9,10 @@ const ThinkingMarker = "∴"
 
 // IsThinking reports whether line is one of the transcript's rendered thinking
 // lines, so a scan can ignore the model reasoning about a limit rather than
-// hitting one.
+// hitting one. The marker is tested on the body after the stamp.
 func IsThinking(line string) bool {
-	return strings.HasPrefix(line, ThinkingMarker)
+	_, body := SplitStamp(line)
+	return strings.HasPrefix(body, ThinkingMarker)
 }
 
 // thinkingLines renders text as thinking lines: each carries ThinkingMarker, a

@@ -719,11 +719,12 @@ func mirrorTranscriptRecords(t *testing.T, dir string, n int, builderKind string
 	if err == nil {
 		lines := mirrorLines(stream)
 		recs := make([]db.TranscriptRecord, 0, len(lines))
+		r := transcript.NewRenderer()
 		for i, line := range lines {
 			rec := db.TranscriptRecord{Seq: i, RecordJSON: string(line)}
 			trimmed := bytes.TrimSpace(line)
 			if len(trimmed) > 0 && trimmed[0] == '{' {
-				rec.Rendered = strings.Join(transcript.Render(builderKind, line), "\n")
+				rec.Rendered = strings.Join(r.Render(builderKind, line), "\n")
 			}
 			recs = append(recs, rec)
 		}

@@ -38,14 +38,14 @@ func TestAgyErrorResults(t *testing.T) {
 		if obj.Result.Response != "" {
 			want = append(want, obj.Result.Response)
 		}
-		if got := Render("agy", []byte(line)); !reflect.DeepEqual(got, want) {
+		if got := NewRenderer().Render("agy", []byte(line)); !reflect.DeepEqual(got, want) {
 			t.Errorf("line %d:\n got %q\nwant %q", i+1, got, want)
 		}
 	}
 
 	noError := `{"event":"result","result":{"status":"ERROR","response":"could not continue","denied_actions":[]}}`
 	want := []string{"result: ERROR", "could not continue"}
-	if got := Render("agy", []byte(noError)); !reflect.DeepEqual(got, want) {
+	if got := NewRenderer().Render("agy", []byte(noError)); !reflect.DeepEqual(got, want) {
 		t.Errorf("a result with no error = %q, want %q", got, want)
 	}
 }

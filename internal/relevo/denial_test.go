@@ -30,6 +30,17 @@ func TestMatchDenial(t *testing.T) {
 		t.Errorf("opencode fixture: got (%q, %v), want (\"Permission denied: read operation rejected\", true)", line, ok)
 	}
 
+	// A stamped line is split before the marker test: a stamped musing is still
+	// skipped, and a stamped result still matches.
+	stampedThinking := "12:41:03 ∴ Permission to use Bash was denied by the user.\n"
+	if line, ok := matchDenial(stampedThinking, denialPatterns(candidate.Candidate{}, claudeHarness)); ok {
+		t.Errorf("stamped thinking line matched unexpectedly: %q", line)
+	}
+	stampedDenial := "12:41:03 +0.2s   ⎿ error: Permission to use Bash was denied by the user."
+	if line, ok := matchDenial(stampedDenial+"\n", denialPatterns(candidate.Candidate{}, claudeHarness)); !ok || line != stampedDenial {
+		t.Errorf("stamped denial: got (%q, %v), want (%q, true)", line, ok, stampedDenial)
+	}
+
 	// a tail with an earlier denial and a later benign line -> the denial line (scan finds the latest matching, not the last line)
 	earlierDenialTail := "Permission denied: access refused\nI apologize for that.\nHow can I help further?\n"
 	if line, ok := matchDenial(earlierDenialTail, denialPatterns(candidate.Candidate{}, opencodeHarness)); !ok || line != "Permission denied: access refused" {

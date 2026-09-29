@@ -16,10 +16,10 @@ func TestRenderRecord(t *testing.T) {
 		want []string
 	}{
 		"assistant matches the stream renderer": {
-			"claude", assistantLine, Render("claude", assistantLine),
+			"claude", assistantLine, NewRenderer().Render("claude", assistantLine),
 		},
 		"user tool_result matches the stream renderer": {
-			"claude", userToolResultLine, Render("claude", userToolResultLine),
+			"claude", userToolResultLine, NewRenderer().Render("claude", userToolResultLine),
 		},
 		"user prompt string, first line only": {
 			"claude",
@@ -77,5 +77,17 @@ func TestRenderRecordSanitizesControlBytes(t *testing.T) {
 	}
 	if !strings.Contains(got[0], "\uFFFD[2J\uFFFD") {
 		t.Errorf("RenderRecord = %q, want the control bytes replaced with U+FFFD", got[0])
+	}
+}
+
+// TestRenderRecordIsNeverStamped: the session-record path (RenderRecord, behind
+// show --owner) is out of the stamp's scope. A record that carries a stream
+// timestamp still renders today's bytes.
+func TestRenderRecordIsNeverStamped(t *testing.T) {
+	utc(t)
+	line := []byte(`{"type":"assistant","timestamp":"2026-09-26T20:16:21.719Z","message":{"content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"go test ./..."}}]}}`)
+	want := []string{"● Bash go test ./..."}
+	if got := RenderRecord("claude", line); !reflect.DeepEqual(got, want) {
+		t.Errorf("RenderRecord = %q, want %q", got, want)
 	}
 }

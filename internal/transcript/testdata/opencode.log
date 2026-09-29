@@ -1,8 +1,8 @@
-● read ./probe.txt
-  ⎿ ok: Read file ./probe.txt, lines 1-1
-● shell echo probe
-  ⎿ ok: probe
-done
-  ⎿ error: Session interrupted: shutdown
-● read /etc/hostname
-  ⎿ error: The user declined this tool call
+20:16:21 ● read ./probe.txt
+20:16:21   ⎿ ok: Read file ./probe.txt, lines 1-1
+20:16:21 ● shell echo probe
+20:16:21   ⎿ ok: probe
+20:16:21 done
+20:16:21   ⎿ error: Session interrupted: shutdown
+20:16:21 ● read /etc/hostname
+20:16:21   ⎿ error: The user declined this tool call

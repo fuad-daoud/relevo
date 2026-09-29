@@ -30,3 +30,18 @@ func TestIsThinking(t *testing.T) {
 		}
 	}
 }
+
+// TestIsThinkingAcrossTheStamp: the marker is tested on the body after the
+// stamp, so a stamped musing is still skipped by both scans.
+func TestIsThinkingAcrossTheStamp(t *testing.T) {
+	for _, line := range []string{"12:41:03 ∴ x", "+0.9s ∴ x", "12:41:03 +4.2s ∴ x"} {
+		if !IsThinking(line) {
+			t.Errorf("IsThinking(%q) = false, want true", line)
+		}
+	}
+	for _, line := range []string{"12:41:03 ● bash ls", "12:41:03 +4.2s   ⎿ ok"} {
+		if IsThinking(line) {
+			t.Errorf("IsThinking(%q) = true, want false", line)
+		}
+	}
+}

@@ -34,14 +34,16 @@ func renderRecord(kind string, line []byte) []string {
 // renderClaudeRecord is RenderRecord's table for kind "claude": an assistant,
 // or a user record carrying a tool_result, renders as the stream renders it; a
 // typed prompt renders as "> " plus its first line; every housekeeping record
-// type and anything else renders as nothing.
+// type and anything else renders as nothing. A record render never carries the
+// stamp: the streaming renderer's table is reused through a renderer that does
+// not stamp, so a record with a stream timestamp still shows today's bytes.
 func renderClaudeRecord(obj map[string]any) []string {
 	switch str(obj["type"]) {
 	case "assistant":
-		return renderClaude(obj)
+		return recordRenderer().claude(obj)
 	case "user":
 		if hasToolResult(obj) {
-			return renderClaude(obj)
+			return recordRenderer().claude(obj)
 		}
 		return renderClaudePrompt(obj)
 	}
