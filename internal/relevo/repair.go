@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -114,7 +113,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 
 	text := repairPlan(b, failedRound, rt.Store.PromptPath(b.Name, failedRound), rec.LogPath, tailLines(rt.Store.ReadFile, rec.LogPath, repairTailLines))
 	planPath := rt.Store.PromptPath(b.Name, b.Round)
-	if err := os.WriteFile(planPath, []byte(text), 0o644); err != nil {
+	if err := stagePlan(planPath, []byte(text)); err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not stage its plan: %v", b.Name, b.Round, err))
 	}
 
