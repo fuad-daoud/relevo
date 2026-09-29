@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"modernc.org/sqlite"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
 
 func nullableString(s *string) any {
@@ -216,13 +216,14 @@ func (t *Tx) assertMasterMindKeyFree(id, kind, session string) error {
 // byte.
 const sqliteConstraint = 19
 
-// mapMasterMindKey turns a sqlite constraint violation into ErrInvalid.
+// mapMasterMindKey turns a sqlite constraint violation into ErrInvalid. It
+// matches any error carrying the code, so a value rebuilt on the client from
+// the wire maps the same way the driver's own error does.
 func mapMasterMindKey(err error) error {
 	if err == nil {
 		return nil
 	}
-	var sqliteErr *sqlite.Error
-	if errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqliteConstraint {
+	if code, ok := wire.CodeOf(err); ok && code&0xff == sqliteConstraint {
 		return fmt.Errorf("mastermind (harness_kind, session_id) already exists: %w", ErrInvalid)
 	}
 	if strings.Contains(err.Error(), "UNIQUE constraint failed") {

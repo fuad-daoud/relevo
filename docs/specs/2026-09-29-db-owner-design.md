@@ -132,14 +132,16 @@ owner, which interrupts the statement.
 
 **Errors.** `error{id, code, extended_code, message}`. The client rebuilds an
 error carrying `Code()`, so `ErrBusy`, `ErrInvalid` and `retryBusy` work
-unchanged. Owner refusals have their own codes: `wrong_proto`, `schema_newer`,
+unchanged. Owner refusals have their own codes: `wrong_proto`,
 `shutting_down`, `restarting`.
 
-**Handshake.** The client sends `hello{proto, version, exe_id}`. The owner
-answers `welcome{proto, min_client, version, pid, started_at, schema_have,
-schema_know, features}` -- the identity fields are `DaemonInfo`'s -- or
-`refuse{code, message}`. The client answers `Newer()` from `welcome`, never
-from the file. `features` is where typed endpoints announce themselves later.
+**Handshake.** The client sends `hello{proto, version, exe_id, schema_know}`.
+The owner answers `welcome{proto, min_client, version, schema_have, schema_know,
+origin, features}` -- `origin` is the installation id a scoped handle needs and
+must not read from the file -- or `refuse{code, message}`. The client answers
+`Newer()` by comparing `welcome`'s `schema_have` with its own embedded maximum,
+exactly as `db.Open` does, so a client older than the database opens and its
+callers decide. `features` is where typed endpoints announce themselves later.
 
 **Owner-only work.** Migrations, minting `installation.json`, the 0600 chmod,
 and the one-shot startup passes (dedupe, compression) happen in the daemon.
