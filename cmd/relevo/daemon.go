@@ -171,9 +171,8 @@ func cmdDaemon(args []string) error {
 		slog.Warn("re-exec disabled", "err", reason)
 	}
 
-	// rt.Config is nil on the --check / --preflight peek path, which never
-	// refreshes. A daemon that opened a real store hands the watcher a
-	// labelled copy, so the import it runs is recorded as source "import".
+	// The watcher gets a labelled copy, so the import it runs is recorded as
+	// source "import".
 	var configSource relevo.ConfigSource
 	if rt.Config != nil {
 		configSource = rt.Config.As("import", "imported "+configDirPath)

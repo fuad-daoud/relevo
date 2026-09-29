@@ -74,17 +74,10 @@ func read(path string) (Installation, error) {
 	return inst, nil
 }
 
-// mint creates the installation file at path. The id is written to a fresh
-// temp file in the same directory, synced and closed, then linked into place:
-// os.Link leaves the winner untouched, so a racing loader sees either no file
-// or the winner's whole file -- never the zero-length or partial file an
-// O_EXCL create-then-write leaves readable -- and every loser re-reads the
-// winner's id instead of overwriting it with a second one. os.Rename would be
-// wrong: it clobbers the winner, and each caller would return its own id. Sync
-// is what makes "whole file" true after a crash, not just under scheduling.
-// The temp file is removed by one deferred cleanup on every path; a crash
-// between the write and the link may leave one stray installation.json.tmp-*,
-// which read ignores. There is no history and no sweeper.
+// mint creates the installation file at path. The id is written to a temp
+// file and linked into place, so a racing loader sees no file or the whole
+// file, never a partial one. Link rather than rename: a link fails on an
+// existing file, so every loser keeps the winner's id instead of replacing it.
 func mint(path string) (Installation, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, dirMode); err != nil {
