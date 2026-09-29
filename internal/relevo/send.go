@@ -130,7 +130,7 @@ type SendOptions struct {
 type preflight struct {
 	b    store.Binding      // the binding as loaded (read-only; Send re-loads under the lock)
 	body []byte             // the plan file's bytes
-	tier harness.Tier       // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
+	tier harness.Tier       // effective tier for this round (opts.Tier parsed, or launchTier(b)); the cap is checked as it is derived
 	argv []string           // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
 	gate *availability.Gate // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
 	pick *Resolution        // --candidate's resolution to apply under the lock; nil when the builder does not change
@@ -271,7 +271,11 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	}
 
 	if tier == "" {
-		tier = effectiveTier(b)
+		t, err := launchTier(b, rt.Policy, opts.AllowYolo)
+		if err != nil {
+			return preflight{}, err
+		}
+		tier = t
 	}
 
 	// A planner actor answers with a plan, so its prompt is a seed: cap it
@@ -541,7 +545,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 					return err
 				}
 			}
-			started, err := startRound(ctx, rt, tx, b, text)
+			started, err := startRound(ctx, rt, tx, b, text, opts.AllowYolo)
 			if err != nil {
 				if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
 					_ = os.Remove(planPath)

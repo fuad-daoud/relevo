@@ -89,7 +89,7 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	keep := b.RoundStartedAt
 	prior := peekUsage(ctx, rt, b, now)
 	prompt := nudgePromptFor(rt, b)
-	next, err := resumeRound(ctx, rt, tx, b, sess, prompt)
+	next, err := resumeRound(ctx, rt, tx, b, sess, prompt, false)
 	if err != nil {
 		slog.Warn("nudge resume failed; falling through to the exit path",
 			"binding", b.Name, "round", b.Round, "session", sess, "err", err)
