@@ -14,8 +14,13 @@ ever done** -- every repo, planner, binding, round, builder, token, event,
 artifact and transcript -- so that `relay ui`, the CLI and later statistics
 can render a round from a year ago exactly as they render one from today.
 
-The store is SQLite now and Turso soon. Nothing outside one package knows
-which; the schema is written so the move is a driver swap, not a migration.
+The store is SQLite (`modernc.org/sqlite`) behind `internal/db`, and the
+schema stays movable, but the move to Turso is **not** a driver swap:
+checked 2026-09-25 (#466), Turso's embedded driver cannot host one file
+shared by several processes, and its opt-in multi-process mode is still
+experimental. Decision 2 and `internal/db/migrations/README.md` hold the
+dialect rules; #466 holds the findings and the conditions that start the
+swap.
 
 ## 2. Direction, in three phases
 
@@ -36,15 +41,26 @@ for anything not live.
 
 1. **Driver: `modernc.org/sqlite`** behind `internal/db`; pure Go, keeps
    `CGO_ENABLED=0` and the cross-compile matrix. Turso's own Go driver
-   (`turso.tech/database/tursogo`, purego FFI over an embedded native
-   library, beta) or `tursogo-serverless` replaces it later by changing
-   `Open` and the import. Current `modernc.org/sqlite` needs Go 1.25, so
-   `go.mod` moves to `go 1.25` and CI's matrix to `['1.25', 'stable']`.
-2. **Turso-safe dialect.** `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT
-   EXISTS`, `ALTER TABLE ... ADD COLUMN` only. No FTS, triggers, views,
-   virtual tables, generated columns, `RETURNING`, `AUTOINCREMENT`, or
-   `WITHOUT ROWID`. Ids are text ULIDs; timestamps are RFC3339 UTC text with
-   millisecond precision; booleans are `INTEGER 0/1`; JSON is `TEXT`.
+   (`turso.tech/database/tursogo`) still replaces it one day by changing
+   `Open` and the import, but the move is bigger than a driver swap
+   (checked 2026-09-25, #466): several processes cannot open one file
+   without the experimental `multiprocess_wal` mode, the binary stops
+   being static (a native library of 16-21 MB per target), and the dialect
+   rules needed correcting. #466 lists the conditions that start the swap;
+   until then the driver stays. Current `modernc.org/sqlite` needs Go 1.25,
+   so `go.mod` moves to `go 1.25` and CI's matrix to `['1.25', 'stable']`.
+2. **A movable dialect.** The list that matters lives in one place,
+   `internal/db/migrations/README.md`, checked against Turso v0.8.0-pre.12
+   and re-checked at v0.8.1 (2026-09-29). It binds the schema to: no
+   dependence on in-place `VACUUM` (`VACUUM INTO` is fine), no pragmas
+   outside Turso's compatibility list, and driver errors mapped only
+   through `mapBusy` and `mapPlannerKey`. `RETURNING`, `AUTOINCREMENT`,
+   triggers and plain views are supported by Turso and are no longer
+   banned on its account; whether to use them is a separate question. The
+   schema's own conventions stay separate: text ULIDs as ids; RFC3339 UTC
+   text with millisecond precision for timestamps; `INTEGER 0/1` booleans;
+   JSON as `TEXT`; and no FTS, virtual tables or generated columns in the
+   phase-1 schema.
 3. **Files stay the write side in phase 1.** One ingester reads a binding
    directory (live, or a tarball) and upserts rows. The backfill and the
    daemon's per-tick ingest are the same function. New facts the db needs
@@ -205,8 +221,11 @@ every field maps to one indexed column or a join, and the zero value means
 "no constraint".
 
 Multi-process: CLI verbs and the daemon both `Open` the file; WAL plus
-`busy_timeout` covers concurrent use. On Turso the daemon becomes the one
-process that syncs; that is phase 2's concern and is noted, not built.
+`busy_timeout` covers concurrent use today. This is exactly what Turso's
+embedded driver does not allow (decision 1, #466): the swap needs either
+the daemon as the only opener, with the CLI reaching it over its socket,
+or stable multi-process support upstream. Turso sync is phase 2's concern,
+noted, not built.
 
 ### 5.2 `internal/ingest` -- files to rows, one function
 
@@ -430,7 +449,7 @@ phase 2:
 Retention or pruning of any kind. Changing what `done`/`unbind`/`gc` do
 (phase 3). Any reader other than `history`, `show` and the ui `all` scope
 moving to the db (phase 2). The dashboard/grid and filters in the ui
-(next spec). Turso sync (phase 2). Searching transcript content. Cross-
+(next spec). Turso sync (phase 2, #473). Searching transcript content. Cross-
 machine history. Statistics verbs beyond `db stats`. #184's opencode
 transcript.
 
