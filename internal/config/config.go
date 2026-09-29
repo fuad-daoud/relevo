@@ -105,45 +105,17 @@ func Open(d *db.DB) *Store { return &Store{db: d, now: time.Now} }
 // Load reads every section and both secrets. A stored body that does not parse
 // is an error: it cannot happen after a validated Put.
 func (s *Store) Load() (Loaded, error) {
-	var L Loaded
-
-	candBody, candOK, err := s.loadCandidates(&L)
+	doc, err := s.currentDoc()
 	if err != nil {
 		return Loaded{}, err
 	}
-	polBody, polOK, err := s.loadPolicy(&L)
+	L, err := decodeDoc(doc)
 	if err != nil {
-		return Loaded{}, err
-	}
-	rolesPresent, err := s.loadRoles(&L)
-	if err != nil {
-		return Loaded{}, err
-	}
-	agents, err := s.loadAgents(&L)
-	if err != nil {
-		return Loaded{}, err
-	}
-	if err := s.loadActors(&L, agents, rolesPresent, candBody, candOK, polBody, polOK); err != nil {
-		return Loaded{}, err
-	}
-	if err := s.loadPrices(&L); err != nil {
-		return Loaded{}, err
-	}
-	if err := s.loadServers(&L); err != nil {
-		return Loaded{}, err
-	}
-	if err := s.loadHooks(&L); err != nil {
 		return Loaded{}, err
 	}
 	if err := s.loadSecrets(&L); err != nil {
 		return Loaded{}, err
 	}
-
-	reg, err := roles.Build(L.RolesFile, L.Candidates, L.Policy)
-	if err != nil {
-		return Loaded{}, err
-	}
-	L.Registry = reg
 
 	v, err := s.db.ConfigVersion()
 	if err != nil {
@@ -153,11 +125,8 @@ func (s *Store) Load() (Loaded, error) {
 	return L, nil
 }
 
-func (s *Store) loadCandidates(L *Loaded) ([]byte, bool, error) {
-	body, ok, err := s.db.ConfigGet(string(Candidates))
-	if err != nil {
-		return nil, false, err
-	}
+func loadCandidates(doc Doc, L *Loaded) ([]byte, bool, error) {
+	body, ok := doc[Candidates]
 	if !ok {
 		// An absent section is today's missing file: an empty set. Parsing an
 		// empty array is exactly candidate.Load's missing-file result.
@@ -177,10 +146,10 @@ func (s *Store) loadCandidates(L *Loaded) ([]byte, bool, error) {
 	return body, true, nil
 }
 
-func (s *Store) loadPolicy(L *Loaded) ([]byte, bool, error) {
-	body, ok, err := s.db.ConfigGet(string(Policy))
-	if err != nil || !ok {
-		return nil, false, err
+func loadPolicy(doc Doc, L *Loaded) ([]byte, bool, error) {
+	body, ok := doc[Policy]
+	if !ok {
+		return nil, false, nil
 	}
 	pol, warnings, err := policy.Parse(FileName(Policy), body)
 	if err != nil {
@@ -191,10 +160,10 @@ func (s *Store) loadPolicy(L *Loaded) ([]byte, bool, error) {
 	return body, true, nil
 }
 
-func (s *Store) loadRoles(L *Loaded) (bool, error) {
-	body, ok, err := s.db.ConfigGet(string(Roles))
-	if err != nil || !ok {
-		return false, err
+func loadRoles(doc Doc, L *Loaded) (bool, error) {
+	body, ok := doc[Roles]
+	if !ok {
+		return false, nil
 	}
 	f, warnings, err := roles.Parse(FileName(Roles), body)
 	if err != nil {
@@ -205,10 +174,10 @@ func (s *Store) loadRoles(L *Loaded) (bool, error) {
 	return true, nil
 }
 
-func (s *Store) loadAgents(L *Loaded) (map[string]roles.AgentEntry, error) {
-	body, ok, err := s.db.ConfigGet(string(Agents))
-	if err != nil || !ok {
-		return nil, err
+func loadAgents(doc Doc, L *Loaded) (map[string]roles.AgentEntry, error) {
+	body, ok := doc[Agents]
+	if !ok {
+		return nil, nil
 	}
 	a, warnings, err := roles.ParseAgents(body)
 	if err != nil {
@@ -221,10 +190,10 @@ func (s *Store) loadAgents(L *Loaded) (map[string]roles.AgentEntry, error) {
 
 // loadActors parses the actors section and, when present, rebuilds the roles
 // file from it: actors win and the pre-actors keys stop being read.
-func (s *Store) loadActors(L *Loaded, agents map[string]roles.AgentEntry, rolesPresent bool, candBody []byte, candOK bool, polBody []byte, polOK bool) error {
-	body, ok, err := s.db.ConfigGet(string(Actors))
-	if err != nil || !ok {
-		return err
+func loadActors(doc Doc, L *Loaded, agents map[string]roles.AgentEntry, rolesPresent bool, candBody []byte, candOK bool, polBody []byte, polOK bool) error {
+	body, ok := doc[Actors]
+	if !ok {
+		return nil
 	}
 	a, warnings, err := roles.ParseActors(body)
 	if err != nil {
@@ -246,11 +215,8 @@ func (s *Store) loadActors(L *Loaded, agents map[string]roles.AgentEntry, rolesP
 	return nil
 }
 
-func (s *Store) loadPrices(L *Loaded) error {
-	body, ok, err := s.db.ConfigGet(string(Prices))
-	if err != nil {
-		return err
-	}
+func loadPrices(doc Doc, L *Loaded) error {
+	body, ok := doc[Prices]
 	if !ok {
 		L.Prices = usage.DefaultPrices()
 		return nil
@@ -263,11 +229,8 @@ func (s *Store) loadPrices(L *Loaded) error {
 	return nil
 }
 
-func (s *Store) loadServers(L *Loaded) error {
-	body, ok, err := s.db.ConfigGet(string(Servers))
-	if err != nil {
-		return err
-	}
+func loadServers(doc Doc, L *Loaded) error {
+	body, ok := doc[Servers]
 	if !ok {
 		L.Servers = remote.Servers{}
 		return nil
@@ -280,11 +243,11 @@ func (s *Store) loadServers(L *Loaded) error {
 	return nil
 }
 
-func (s *Store) loadHooks(L *Loaded) error {
-	body, ok, err := s.db.ConfigGet(string(Hooks))
-	if err != nil || !ok {
+func loadHooks(doc Doc, L *Loaded) error {
+	body, ok := doc[Hooks]
+	if !ok {
 		L.Hooks = HooksMap{}
-		return err
+		return nil
 	}
 	if err := json.Unmarshal(body, &L.Hooks); err != nil {
 		return fmt.Errorf("%s: %w", Hooks, err)
@@ -366,7 +329,7 @@ func Validate(sec Section, body []byte) ([]string, error) {
 }
 
 // Put validates body and stores it as sec in one transaction; a refused body
-// writes nothing.
+// writes nothing. A write the next Load would refuse is refused here.
 func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 	if sec == Candidates {
 		filled, _, err := fillCandidateNames(body)
@@ -384,6 +347,11 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 		if err != nil {
 			return err
 		}
+		prospective := copyDoc(before.doc)
+		prospective[sec] = body
+		if err := validateProspective(prospective); err != nil {
+			return err
+		}
 		if err := t.ConfigPut(string(sec), body, s.now().UTC()); err != nil {
 			return err
 		}
@@ -396,10 +364,14 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 
 // Delete removes sec's stored body, if any, in one transaction. The version
 // bumps even when sec was absent: it is a change counter, not a section count.
+// A removal the next Load would refuse is refused here.
 func (s *Store) Delete(sec Section) error {
 	return s.db.Tx(func(t *db.Tx) error {
 		before, err := readSnapshot(t)
 		if err != nil {
+			return err
+		}
+		if err := validateProspective(docWithout(before.doc, sec)); err != nil {
 			return err
 		}
 		if err := t.ConfigDelete(string(sec)); err != nil {
@@ -411,7 +383,8 @@ func (s *Store) Delete(sec Section) error {
 
 // PutDoc stores every section in doc in one transaction, validating every body
 // first; an unknown section or the first invalid body aborts with nothing
-// written. Sections not named in doc are untouched.
+// written. Sections not named in doc are untouched. A write the next Load
+// would refuse is refused here.
 func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 	if err := checkDocSections(doc); err != nil {
 		return nil, err
@@ -442,6 +415,17 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 	if err := s.db.Tx(func(t *db.Tx) error {
 		before, err := readSnapshot(t)
 		if err != nil {
+			return err
+		}
+		prospective := copyDoc(before.doc)
+		for _, sec := range Sections {
+			body, ok := doc[sec]
+			if !ok {
+				continue
+			}
+			prospective[sec] = body
+		}
+		if err := validateProspective(prospective); err != nil {
 			return err
 		}
 		for _, sec := range Sections {

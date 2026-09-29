@@ -156,6 +156,62 @@ func TestConfigSetGetUnsetRoundTrip(t *testing.T) {
 	}
 }
 
+// TestConfigUnsetRefusesAgentInUse is the issue's repro: unsetting an agent an
+// actor still names is refused, the refusal names the actor, and the document
+// still loads so the entry is still readable. Only config verbs run here: no
+// harness is spawned and no network is touched.
+func TestConfigUnsetRefusesAgentInUse(t *testing.T) {
+	initRoot(t)
+
+	for _, args := range [][]string{
+		{"config", "set", "candidates", `[{"harness":"claude","provider":"p","model":"m"}]`},
+		{"config", "set", "agents.sec-consult", `{"shape":"reader","native":{"claude":{"agent":"sec-consult"}}}`},
+		{"config", "set", "actors.security", `{"agent":"sec-consult","candidates":["m"]}`},
+	} {
+		if _, stderr, err := captureOutput(t, func() error { return run(args) }); err != nil {
+			t.Fatalf("%v: %v (stderr: %s)", args, err, stderr)
+		}
+	}
+
+	_, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "unset", "agents.sec-consult"})
+	})
+	if err == nil {
+		t.Fatal("unset of an agent an actor names: want a refusal, got nil")
+	}
+	if !strings.Contains(err.Error(), "actor security") || !strings.Contains(err.Error(), "sec-consult") {
+		t.Errorf("unset error = %q, want it to name actor security and sec-consult (stderr: %s)", err, stderr)
+	}
+
+	// The refusal wrote nothing, so the document still loads and the entry is
+	// still readable.
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "get", "agents.sec-consult"})
+	})
+	if err != nil {
+		t.Fatalf("get agents.sec-consult after the refusal: %v", err)
+	}
+	if !strings.Contains(string(stdout), "sec-consult") {
+		t.Errorf("get agents.sec-consult = %q, want the stored entry", stdout)
+	}
+
+	// Unset the actor first, then the agent.
+	for _, args := range [][]string{
+		{"config", "unset", "actors.security"},
+		{"config", "unset", "agents.sec-consult"},
+	} {
+		if _, stderr, err := captureOutput(t, func() error { return run(args) }); err != nil {
+			t.Fatalf("%v: %v (stderr: %s)", args, err, stderr)
+		}
+	}
+	_, _, err = captureOutput(t, func() error {
+		return run([]string{"config", "get", "agents.sec-consult"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "agents.sec-consult: not set") {
+		t.Errorf("get after unset = %v, want agents.sec-consult: not set", err)
+	}
+}
+
 func TestConfigSetRefusesInvalidPolicy(t *testing.T) {
 	initRoot(t)
 
