@@ -1190,6 +1190,36 @@ func TestGetTouchesLastSeen(t *testing.T) {
 	}
 }
 
+// TestGetBindingRefusesAnInvalidName pins that a {name} no binding can ever
+// carry is answered as not-found, not as an unreadable client: the mux hands a
+// percent-encoded slash over as "foo/bar" and an uppercase name through as-is.
+func TestGetBindingRefusesAnInvalidName(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	handler := s.Handler()
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, target := range []string{"/v1/bindings/foo%2Fbar", "/v1/bindings/UPPER"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, signedRequest(t, kp, "GET", target, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404; body: %s", target, rec.Code, rec.Body.String())
+		}
+		var errBody remote.ErrorBody
+		if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+			t.Fatalf("GET %s decode error body: %v", target, err)
+		}
+		if errBody.Code != remote.CodeNotFound {
+			t.Errorf("GET %s error code = %q, want %q", target, errBody.Code, remote.CodeNotFound)
+		}
+	}
+}
+
 func TestUnavailableGatesServerWide(t *testing.T) {
 	cSet, err := builderCandidateSet(t)
 	if err != nil {

@@ -2,6 +2,9 @@ package relevo
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -37,18 +40,52 @@ func writeReaderSummary(rt Runtime, b store.Binding) (string, error) {
 	if b.Shape != store.ShapeReader {
 		return path, nil
 	}
-	if _, err := os.Stat(path); err == nil {
-		return path, nil
+	// A regular file at the output path is the runner's own report and is left
+	// alone. Anything else there -- a symlink a runner planted, a directory, a
+	// fifo -- must not be followed: it is refused and nothing is created.
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode().IsRegular() {
+			return path, nil
+		}
+		return path, fmt.Errorf("reader output %s is not a regular file", path)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return path, err
 	}
 	stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
 	text := transcript.FinalText(lastStreamKind(b), stream)
 	if text == "" {
 		return path, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// The artifact directory is created only when it is absent: a symlink (even
+	// one pointing at a real directory) or any other non-directory is refused,
+	// so MkdirAll never descends one.
+	dir := filepath.Dir(path)
+	if fi, err := os.Lstat(dir); err == nil {
+		if !fi.IsDir() {
+			return path, fmt.Errorf("reader artifact path %s is not a directory", dir)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return path, err
+	} else if err := os.MkdirAll(dir, 0o755); err != nil {
 		return path, err
 	}
-	return path, os.WriteFile(path, []byte(text+"\n"), 0o644)
+	return path, writeReaderOutput(path, text)
+}
+
+// writeReaderOutput creates path and writes text with a trailing newline. The
+// Lstat checks in writeReaderSummary are the refusal; O_EXCL and O_NOFOLLOW are
+// the race backstop behind them, so a link swapped in after the check cannot be
+// followed either.
+func writeReaderOutput(path, text string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(text + "\n"); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // lastStreamKind is the harness kind of the round's last stream segment: the

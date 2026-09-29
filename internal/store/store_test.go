@@ -284,6 +284,131 @@ func TestValidName(t *testing.T) {
 	}
 }
 
+// TestReadRefusesAnInvalidName pins that every read reached through the shared
+// boundary answers with ValidName's own error for a name that cannot be a
+// binding, rather than treating it as an unknown one.
+func TestReadRefusesAnInvalidName(t *testing.T) {
+	s := New(t.TempDir())
+
+	for _, name := range []string{"../escape", "UPPER"} {
+		want := ValidName(name)
+		if want == nil {
+			t.Fatalf("ValidName(%q) = nil, want the rule to refuse it", name)
+		}
+		calls := []struct {
+			label string
+			run   func() error
+		}{
+			{"Load", func() error { _, err := s.Load(name); return err }},
+			{"ReadLog", func() error { _, err := s.ReadLog(name); return err }},
+			{"ReadLogAfter", func() error { _, err := s.ReadLogAfter(name, 0); return err }},
+			{"PendingForMasterMind", func() error { _, _, err := s.PendingForMasterMind(name); return err }},
+		}
+		for _, c := range calls {
+			err := c.run()
+			if err == nil || err.Error() != want.Error() {
+				t.Errorf("%s(%q) = %v, want ValidName's own %v", c.label, name, err, want)
+			}
+		}
+	}
+
+	if _, err := s.Load("ghost"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Load(ghost) = %v, want ErrNotFound", err)
+	}
+	entries, err := s.ReadLog("ghost")
+	if err != nil || entries != nil {
+		t.Errorf("ReadLog(ghost) = (%v, %v), want (nil, nil)", entries, err)
+	}
+}
+
+// TestConfirmIndexRefusesAnInvalidName pins that the confirm write, which
+// reaches the log without going through read, refuses a malformed name with
+// ValidName's own error.
+func TestConfirmIndexRefusesAnInvalidName(t *testing.T) {
+	s := New(t.TempDir())
+	want := ValidName("../escape")
+	if want == nil {
+		t.Fatal(`ValidName("../escape") = nil, want the rule to refuse it`)
+	}
+
+	err := s.ConfirmIndex("../escape", 0, "")
+	if err == nil || err.Error() != want.Error() {
+		t.Errorf("ConfirmIndex = %v, want ValidName's own %v", err, want)
+	}
+}
+
+// TestLoadIgnoresABindFileOnDisk pins that a bind.json a runner plants in a
+// binding's directory is inert: reads and lists answer from the record, the
+// record's own fields win, and the file is neither read, consumed nor deleted.
+func TestLoadIgnoresABindFileOnDisk(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	path := filepath.Join(s.Dir("webshop"), "bind.json")
+	planted := `{"name":"webshop","cwd":"/evil","gate":"rm -rf","tier":"yolo",` +
+		`"round_tier":"yolo","shape":"reader","candidate":"evil"}`
+	if err := os.WriteFile(path, []byte(planted), 0o644); err != nil {
+		t.Fatalf("plant bind.json: %v", err)
+	}
+
+	assertRecordWins := func(t *testing.T, b Binding) {
+		t.Helper()
+		if b.CWD != "/repo" || b.Tier != "" || b.RoundTier != "" || b.Gate != "" ||
+			b.Shape != ShapeWriter || b.BuilderCandidate != "builder" {
+			t.Errorf("binding = %+v, want the record's own fields, not the planted file's", b)
+		}
+	}
+
+	t.Run("Load", func(t *testing.T) {
+		b, err := s.Load("webshop")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		assertRecordWins(t, b)
+	})
+
+	t.Run("List", func(t *testing.T) {
+		bindings, err := s.List()
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(bindings) != 1 {
+			t.Fatalf("List = %d bindings, want 1", len(bindings))
+		}
+		assertRecordWins(t, bindings[0])
+	})
+
+	t.Run("Save", func(t *testing.T) {
+		if err := s.Save(newBinding("webshop", "/repo")); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	})
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("bind.json was consumed: %v", err)
+	}
+	if string(after) != planted {
+		t.Errorf("bind.json = %q, want it byte-identical %q", after, planted)
+	}
+
+	t.Run("planted other name", func(t *testing.T) {
+		if err := os.WriteFile(path, []byte(`{"name":"other","cwd":"/evil"}`), 0o644); err != nil {
+			t.Fatalf("plant bind.json: %v", err)
+		}
+		bindings, err := s.List()
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		for _, b := range bindings {
+			if b.Name == "other" {
+				t.Errorf("List returned a record for the planted name other: %+v", b)
+			}
+		}
+	})
+}
+
 func TestConcurrentSaveRaceRefusesDuplicateCWD(t *testing.T) {
 	s := New(t.TempDir())
 	cwd := "/repo"
