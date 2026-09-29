@@ -122,6 +122,13 @@ func (d *AgyDeliverer) home() (string, error) {
 
 // Deliver implements MasterMindDeliverer for agy masterminds.
 //
+// The step order is fixed and non-obvious: guards, conversation id, origin,
+// inbox scan, pastFallback, creds/loopback, send, confirm. The inbox scan runs
+// before the give-up gate, so a message already in the inbox is confirmed at
+// any age -- a late-read message must not be failed by the fallback before it
+// is ever looked at. The gate stays above the creds check, so a conversation
+// past the window still gives up.
+//
 // It never sends a payload twice: the inbox is scanned before every send, so a
 // retry after a crash between sending and confirming finds the message and
 // reports its state instead. It never puts a credential in the reason: the
@@ -139,6 +146,20 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, p
 	if !validConversationID(conv) {
 		return OutcomeNotMine, "agy mastermind session is not a conversation id; run relevo mastermind init inside agy", nil
 	}
+
+	origin := firstPayloadLine(payload)
+
+	// Already there? A previous tick may have sent and crashed before
+	// confirming. Check before the give-up gate, so a message already in the
+	// inbox is confirmed at any age, and so a retry never sends twice.
+	if state := d.inbox(conv, origin, queuedAt); state.read {
+		return OutcomeDelivered, "already present", nil
+	} else if state.undelivered {
+		return OutcomeUnavailable, "agy reports the message undelivered", nil
+	} else if state.sent {
+		return OutcomeUnavailable, "sent to agy but not yet read", nil
+	}
+
 	if out, reason, gave := d.pastFallback(conv, payload, queuedAt); gave {
 		return out, reason, nil
 	}
@@ -149,18 +170,6 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, p
 	}
 	if !loopbackAgyAddress(creds.LSAddress) {
 		return OutcomeUnavailable, "agy language server address is not loopback", nil
-	}
-
-	origin := firstPayloadLine(payload)
-
-	// Already there? A previous tick may have sent and crashed before
-	// confirming. Check first, so a retry never sends twice.
-	if state := d.inbox(conv, origin, queuedAt); state.read {
-		return OutcomeDelivered, "already present", nil
-	} else if state.undelivered {
-		return OutcomeUnavailable, "agy reports the message undelivered", nil
-	} else if state.sent {
-		return OutcomeUnavailable, "sent to agy but not yet read", nil
 	}
 
 	content := payload

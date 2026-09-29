@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -54,6 +55,11 @@ type ShowOptions struct {
 	Round   int
 	Section ShowSection
 	JSON    bool
+	// Peek suppresses the pending-payload claim a non-peek live read makes
+	// (#673): `show --peek` is the `wait --peek` contract, a read that leaves
+	// the payload for the route that pushes it. `show --owner` sets it too,
+	// so the admin's read of another owner's binding stays read-only.
+	Peek bool
 	// FindingsID is the consult whose findings --findings names (§4.2). It is
 	// meaningful only with Section == ShowFindings.
 	FindingsID string
@@ -99,7 +105,25 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 
 	b, err := rt.Store.Load(opts.Name)
 	if err == nil {
-		return showLive(rt, b, opts)
+		res, err := showLive(rt, b, opts)
+		if err != nil {
+			return ShowResult{}, err
+		}
+		// #673: a non-peek live read claims the oldest pending
+		// mastermind-bound payload with route "show", so nothing is pushed
+		// afterwards that this read already printed. The pulled text is
+		// discarded -- the caller asked for the section -- and the claim runs
+		// only once the section resolved: a failed read must not consume a
+		// payload. A failed claim is the show error, because a silent failure
+		// would leave the payload to be pushed after it was read. --peek
+		// skips the claim, and the archived and database branches below never
+		// claim: nothing is pending there.
+		if !opts.Peek {
+			if _, _, perr := delivery.Pull(ctx, rt.Store, opts.Name, "show"); perr != nil {
+				return ShowResult{}, perr
+			}
+		}
+		return res, nil
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		return ShowResult{}, err

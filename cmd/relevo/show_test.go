@@ -313,3 +313,83 @@ func TestShowOutputArtifactsCLI(t *testing.T) {
 		t.Errorf("show --output on a writer = %q (err %v), want %q", got, err, "no output for round 1\n")
 	}
 }
+
+// seedShowPendingStore seeds a live binding under the default state root with
+// one completed round, the report file --report prints, and one pending
+// mastermind-bound report entry. Store-only: no harness, no network. It
+// returns the store so a test can inspect the entry's route after the run.
+func seedShowPendingStore(t *testing.T, name string) *store.Store {
+	t.Helper()
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	if err := s.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 2, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.WriteFile(s.ReportPath(name, 1), []byte("# round 1 report\n"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	for _, e := range []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+			Payload: "round 1 report", Path: s.ReportPath(name, 1),
+		},
+	} {
+		if err := s.AppendLog(name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+	return s
+}
+
+// claimedRoute returns the route of name's confirmed mastermind-bound entry and
+// whether one exists.
+func claimedRoute(t *testing.T, s *store.Store, name string) (string, bool) {
+	t.Helper()
+	entries, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && e.Confirmed {
+			return e.Route, true
+		}
+	}
+	return "", false
+}
+
+// TestShowPeekFlagLeavesPendingMasterMindPayload pins #673's verb: a plain
+// `show --report` claims the binding's pending payload with route "show", and
+// `show --report --peek` prints the same section but leaves it pending. Both
+// are store-only: no harness, no network.
+func TestShowPeekFlagLeavesPendingMasterMindPayload(t *testing.T) {
+	t.Run("plain report claims with show's route", func(t *testing.T) {
+		const name = "showpeekclaim"
+		s := seedShowPendingStore(t, name)
+
+		if _, _, err := captureOutput(t, func() error { return run([]string{"show", name, "--report"}) }); err != nil {
+			t.Fatalf("show --report: %v", err)
+		}
+		route, confirmed := claimedRoute(t, s, name)
+		if !confirmed || route != "show" {
+			t.Errorf("confirmed/route = %v/%q, want true/\"show\"", confirmed, route)
+		}
+	})
+
+	t.Run("peek leaves it pending", func(t *testing.T) {
+		const name = "showpeekleave"
+		s := seedShowPendingStore(t, name)
+
+		if _, _, err := captureOutput(t, func() error {
+			return run([]string{"show", name, "--report", "--peek"})
+		}); err != nil {
+			t.Fatalf("show --report --peek: %v", err)
+		}
+		if route, confirmed := claimedRoute(t, s, name); confirmed {
+			t.Errorf("show --report --peek confirmed the pending payload (route %q); want it left pending", route)
+		}
+	})
+}

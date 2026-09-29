@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
@@ -1079,5 +1080,76 @@ func TestShowArchivedFindingsOnBindingWithNoRounds(t *testing.T) {
 		if res.Round != 1 {
 			t.Errorf("Show(round %d): Round = %d, want 1", round, res.Round)
 		}
+	}
+}
+
+// seedShowClaimStore is the routeRuntime seed the two claim tests share: a
+// live binding with one pending mastermind-bound report entry and the report
+// file the section prints.
+func seedShowClaimStore(t *testing.T, rt Runtime) {
+	t.Helper()
+	seedPending(t, rt, "webshop", testClaimMasterMind, "opencode")
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("# round 1 report\n"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+}
+
+// TestShowLiveClaimsPendingMasterMindPayload pins #673: a plain (non-peek)
+// live read claims the oldest pending mastermind-bound payload through the
+// same delivery.Pull the cockpit calls with "tui", stamped with route "show",
+// and discards the pulled text -- the requested section is still what Show
+// returns.
+func TestShowLiveClaimsPendingMasterMindPayload(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedShowClaimStore(t, rt)
+
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Section: ShowReport})
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	if res.Text != "# round 1 report\n" {
+		t.Errorf("Text = %q, want the report section", res.Text)
+	}
+
+	// The claim consumed the entry and stamped it with show's route.
+	if _, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "probe"); err != nil || found {
+		t.Errorf("Pull after a plain show = found %v, err %v; want nothing pending", found, err)
+	}
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	route := ""
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && e.Confirmed {
+			route = e.Route
+		}
+	}
+	if route != "show" {
+		t.Errorf("confirmed route = %q, want %q", route, "show")
+	}
+}
+
+// TestShowLivePeekLeavesPendingMasterMindPayload pins #673's --peek contract: a
+// peeked live read still prints the section but claims nothing, so the payload
+// is left for the route that pushes it.
+func TestShowLivePeekLeavesPendingMasterMindPayload(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedShowClaimStore(t, rt)
+
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Section: ShowReport, Peek: true})
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	if res.Text != "# round 1 report\n" {
+		t.Errorf("Text = %q, want the report section", res.Text)
+	}
+
+	if _, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "tui"); err != nil || !found {
+		t.Errorf("Pull after a peeked show = found %v, err %v; want the payload still pending", found, err)
 	}
 }

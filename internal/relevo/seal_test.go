@@ -111,7 +111,9 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 		t.Errorf("ReadFile(report) = %q (err %v), want %q", got, err, report)
 	}
 
-	res, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Round: 1, Section: ShowReport})
+	// Peek: this read only checks the sealed section; it must not claim the
+	// pending payload the pullPending assertion below expects to find (#673).
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Round: 1, Section: ShowReport, Peek: true})
 	if err != nil {
 		t.Fatalf("Show: %v", err)
 	}

@@ -243,6 +243,34 @@ func TestAgyDeliverGaveUpAfterFallback(t *testing.T) {
 	}
 }
 
+// TestAgyDeliverConfirmsAReadMessagePastFallback proves the inbox scan precedes
+// the give-up gate: a message matching the payload that is already marked read
+// confirms past FallbackAfter, and never sends.
+func TestAgyDeliverConfirmsAReadMessagePastFallback(t *testing.T) {
+	t.Parallel()
+
+	d, fake, home := newAgyRig(t)
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	d.Now = func() time.Time { return now }
+	d.FallbackAfter = time.Second
+
+	queuedAt := now.Add(-2 * time.Second)
+	writeAgyMessage(t, home, "m-late", agyTestConv, agyTestPayload, now, false)
+	markAgyRead(t, home, "m-late")
+
+	out, reason, err := d.Deliver(context.Background(),
+		store.Endpoint{Kind: "agy", SessionID: agyTestConv}, agyTestPayload, "/x/001-report.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeDelivered || reason != "already present" {
+		t.Fatalf("outcome/reason = %v/%q, want OutcomeDelivered/\"already present\"", out, reason)
+	}
+	if fake.calls != 0 {
+		t.Errorf("sent %d times for a message already read; want 0", fake.calls)
+	}
+}
+
 func TestAgyDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 	var logged bytes.Buffer
 	prev := slog.Default()
