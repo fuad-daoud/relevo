@@ -419,6 +419,11 @@ func (s *Store) pendingForMasterMindThrough(name string, round int) ([]PendingEn
 // re-deriving "the entry we must have meant", so callers holding the lock
 // across pendingForMasterMind and this call confirm exactly the entry they read.
 func (s *Store) confirmIndex(name string, idx int, route string) error {
+	// This write does not pass through read, and the name still becomes a path
+	// in the sibling helpers, so it takes the same first-line refusal.
+	if err := ValidName(name); err != nil {
+		return err
+	}
 	d, err := s.dbForWrite()
 	if err != nil {
 		return err

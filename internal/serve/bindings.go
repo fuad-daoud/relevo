@@ -39,6 +39,11 @@ func (s *Server) loadBinding(caller remote.ClientID, name string) (store.Binding
 	if caller == "" {
 		return store.Binding{}, relevo.Runtime{}, store.ErrNotFound
 	}
+	// A name no binding can carry is answered as not-found: every handler maps
+	// that to its own 404, and validating first would surface a 500 instead.
+	if err := store.ValidName(name); err != nil {
+		return store.Binding{}, relevo.Runtime{}, store.ErrNotFound
+	}
 	rt, err := s.runtime(caller)
 	if err != nil {
 		return store.Binding{}, relevo.Runtime{}, err

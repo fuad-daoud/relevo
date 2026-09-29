@@ -106,7 +106,14 @@ func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
 
 // read runs fn on a Tx. The database gives a reader a consistent snapshot, so
 // no flock is needed.
+//
+// The name is refused here, before fn runs, because this is the one boundary
+// every name-taking read shares and the name becomes a path in the sibling
+// helpers; a name that cannot be a binding must not read as a missing one.
 func (s *Store) read(name string, fn func(tx *Tx) error) error {
+	if err := ValidName(name); err != nil {
+		return err
+	}
 	return fn(&Tx{s: s})
 }
 
