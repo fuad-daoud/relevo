@@ -136,7 +136,12 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 // pickServedTier resolves role's candidate and tier for a create. It writes the
 // failure itself and returns ok=false.
 func pickServedTier(w http.ResponseWriter, rt relevo.Runtime, roleName, candidate, explicit string) (token, kind, tier string, ok bool) {
-	token, kind = relevo.PickServedCandidateFor(rt, roleName, candidate)
+	token, kind, err := relevo.PickServedCandidateFor(rt, roleName, candidate)
+	if err != nil {
+		// The role refused the pick the tenant named: answer it, never serve someone else.
+		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
+		return "", "", "", false
+	}
 	resolved, err := relevo.ResolveServedTierFor(rt, roleName, token, explicit)
 	if err != nil {
 		if errors.Is(err, relevo.ErrTierAboveMax) {
@@ -191,10 +196,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		return store.Binding{}, false
 	}
 
-	roleName := role
-	if roleName == "" {
-		roleName = "builder"
-	}
+	roleName := orText(role, "builder")
 	candidateToken, harnessKind, tier, ok := pickServedTier(w, rt, roleName, req.Candidate, req.Tier)
 	if !ok {
 		return store.Binding{}, false

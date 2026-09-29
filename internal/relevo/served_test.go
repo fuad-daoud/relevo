@@ -155,6 +155,43 @@ func TestServedBuilderTierFollowsTheRoleRegistry(t *testing.T) {
 	}
 }
 
+// TestPickServedCandidateRefusesAnUnservedExplicitToken pins the pick's
+// explicit refusal: a token the role refuses comes back as that refusal
+// instead of being resolved outside the role's list, so the create that named
+// it must answer rather than serve a different candidate. The omitted token
+// still resolves to the role's ranked pick.
+func TestPickServedCandidateRefusesAnUnservedExplicitToken(t *testing.T) {
+	t.Parallel()
+
+	set := candidateSet(t, rolesRuntimeCandidatesJSON)
+	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
+		"builder": {Candidates: []string{"claude/test/b", "claude/test/a"}},
+	})
+	rt := Runtime{
+		Candidates: set,
+		Registry:   reg,
+		Gates:      testGateKV(t),
+		Now:        func() time.Time { return baseTime },
+	}
+
+	// c is configured, but the row does not list it for builder.
+	if _, _, err := PickServedCandidate(rt, "claude/test/c"); !errors.Is(err, ErrRoleNotServed) {
+		t.Fatalf("unserved explicit token: err = %v, want ErrRoleNotServed", err)
+	}
+
+	// A listed explicit token still resolves.
+	token, kind, err := PickServedCandidate(rt, "claude/test/a")
+	if err != nil || token != "claude/test/a" || kind != "claude" {
+		t.Fatalf("served explicit token: got %q/%q, err %v; want claude/test/a/claude, nil", token, kind, err)
+	}
+
+	// The omitted token is the ranked pick, first in the row's list.
+	token, kind, err = PickServedCandidate(rt, "")
+	if err != nil || token != "claude/test/b" || kind != "claude" {
+		t.Fatalf("omitted token: got %q/%q, err %v; want claude/test/b/claude, nil", token, kind, err)
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)

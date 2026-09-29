@@ -24,6 +24,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -367,10 +368,11 @@ func TestWhoAmI(t *testing.T) {
 	}
 }
 
-// TestWhoAmIAndCandidatesDoNotRaceWithCreate pins #656: create, whoami and
-// candidates all touch s.stores, so they take s.mu and run concurrently under
-// -race without a report. Every request is built on the test goroutine --
-// signedRequest calls t.Fatalf -- and the workers only call ServeHTTP.
+// TestWhoAmIAndCandidatesDoNotRaceWithCreate pins the owner-store lock: create,
+// whoami and candidates all touch s.stores, so they take s.mu and run
+// concurrently under -race without a report. Every request is built on the test
+// goroutine -- signedRequest calls t.Fatalf -- and the workers only call
+// ServeHTTP.
 func TestWhoAmIAndCandidatesDoNotRaceWithCreate(t *testing.T) {
 	env := setupTestEnv(t)
 	handler := env.srv.Handler()
@@ -922,6 +924,114 @@ func requireRoleStored(t *testing.T, srv *Server, kp remote.Keypair, role, wantC
 	}
 	if b.Shape != wantShape {
 		t.Fatalf("stored binding Shape = %q, want %q", b.Shape, wantShape)
+	}
+}
+
+// twoBuilderCandidatesJSON is the two-candidate set the explicit-refusal create
+// test needs: both can serve builder, so one of them can be named while the
+// requested role's own list omits it.
+const twoBuilderCandidatesJSON = `[
+	{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]},
+	{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}
+]`
+
+// allDefinitionsMissing is a stub harness.RoleChecker that reports every
+// definition it is asked about as missing, so a candidate that serves the role
+// still carries a roles_missing gate.
+type allDefinitionsMissing struct{}
+
+func (allDefinitionsMissing) Missing(_ string, definitions []string) []string {
+	return definitions
+}
+
+// roleRefusalServer builds a server whose ui-builder role lists only haiku, so
+// naming sonnet is a candidate that exists but the role does not serve.
+func roleRefusalServer(t *testing.T, checker harness.RoleChecker) (*Server, remote.Keypair) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(path, []byte(twoBuilderCandidatesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set, err := candidate.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := "writer"
+	reg, err := roles.Build(&roles.File{Rows: map[string]roles.Row{
+		"ui-builder": {
+			Shape:       &writer,
+			Candidates:  []string{"claude/anthropic/haiku"},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "srv-ui"}},
+		},
+	}}, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+	srv, err := New(Config{
+		DB:         testServeDB(t),
+		Root:       t.TempDir(),
+		Candidates: set,
+		Registry:   reg,
+		Roles:      checker,
+		Now:        time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	return srv, kp
+}
+
+// TestCreateRefusesACandidateTheRoleDoesNotServe pins the explicit pick's
+// refusal at the create: naming a candidate the requested role refuses answers
+// 422 invalid with the refusal's own message and stores nothing, rather than
+// falling back to the actor's ranked pick. Two refusals are covered: a token
+// the role's list does not contain, and a candidate a roles_missing gate
+// refuses.
+func TestCreateRefusesACandidateTheRoleDoesNotServe(t *testing.T) {
+	cases := []struct {
+		name      string
+		checker   harness.RoleChecker
+		candidate string
+		wantMsg   string
+	}{
+		{"not in the role's list", nil, "claude/anthropic/sonnet", "sonnet"},
+		{"roles_missing gate", allDefinitionsMissing{}, "claude/anthropic/haiku", "haiku"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, kp := roleRefusalServer(t, tc.checker)
+			rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+				Name:       "api",
+				RepoID:     testRepoID,
+				BaseCommit: strings.Repeat("a", 40),
+				Role:       "ui-builder",
+				Candidate:  tc.candidate,
+			})
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+			}
+			var errBody remote.ErrorBody
+			if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+				t.Fatalf("decode error body: %v", err)
+			}
+			if errBody.Code != remote.CodeInvalid {
+				t.Errorf("code = %q, want %q", errBody.Code, remote.CodeInvalid)
+			}
+			if !strings.Contains(errBody.Message, tc.wantMsg) {
+				t.Errorf("message = %q, want it to name %q", errBody.Message, tc.wantMsg)
+			}
+			id := remote.IDOf(kp.Public)
+			if _, err := testRuntime(t, srv, id).Store.Load("api"); err == nil {
+				t.Fatal("binding was stored despite the refusal")
+			}
+		})
 	}
 }
 
