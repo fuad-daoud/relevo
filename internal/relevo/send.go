@@ -130,7 +130,7 @@ type SendOptions struct {
 type preflight struct {
 	b    store.Binding      // the binding as loaded (read-only; Send re-loads under the lock)
 	body []byte             // the plan file's bytes
-	tier harness.Tier       // effective tier for this round (opts.Tier parsed, or launchTier(b)); the cap is checked as it is derived
+	tier harness.Tier       // effective tier for this round (opts.Tier parsed, or the stored tier); the cap is checked as it is derived for a local launch, while a served round's tier is capped by the server
 	argv []string           // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
 	gate *availability.Gate // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
 	pick *Resolution        // --candidate's resolution to apply under the lock; nil when the builder does not change
@@ -271,11 +271,18 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	}
 
 	if tier == "" {
-		t, err := launchTier(b, rt.Policy, opts.AllowYolo)
-		if err != nil {
-			return preflight{}, err
+		if b.Builder.Remote() {
+			// A served round is launched by the server, which caps its tier
+			// against the server's own policy; the client's max_tier must not
+			// refuse the send.
+			tier = effectiveTier(b)
+		} else {
+			t, err := launchTier(b, rt.Policy, opts.AllowYolo)
+			if err != nil {
+				return preflight{}, err
+			}
+			tier = t
 		}
-		tier = t
 	}
 
 	// A planner actor answers with a plan, so its prompt is a seed: cap it
