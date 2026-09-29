@@ -384,10 +384,13 @@ func TestDedupeMirrorLeavesABindingMatchingTwoRecordsUnmapped(t *testing.T) {
 	bindingID := seedMirrorBinding(t, d, name)
 	round3 := seedMirrorRound(t, d, bindingID, 3)
 
-	liveID := seedRecordAt(t, d, name, "claude", dedupeAt)
+	// The archived row is minted before the live one: RecordPut answers a
+	// second row for the same owner and name by updating that live row, so
+	// seeding the live record first would archive it instead of adding the
+	// second record this case needs.
 	archivedJSON := recordJSON(t, name, "claude")
 	if err := d.Tx(func(tx *db.Tx) error {
-		_, aerr := tx.RecordPutArchived(db.Record{
+		rec := db.Record{
 			Owner:     "",
 			Name:      name,
 			State:     "archived",
@@ -396,11 +399,15 @@ func TestDedupeMirrorLeavesABindingMatchingTwoRecordsUnmapped(t *testing.T) {
 			JSON:      archivedJSON,
 			CreatedAt: dedupeAt,
 			UpdatedAt: dedupeAt,
-		}, dedupeAt.Add(time.Hour))
-		return aerr
+		}
+		if _, perr := tx.RecordPut(rec); perr != nil {
+			return perr
+		}
+		return tx.RecordArchive(rec.Owner, rec.Name, dedupeAt.Add(time.Hour))
 	}); err != nil {
-		t.Fatalf("RecordPutArchived: %v", err)
+		t.Fatalf("RecordPut/RecordArchive: %v", err)
 	}
+	liveID := seedRecordAt(t, d, name, "claude", dedupeAt)
 
 	body := "003-report.md: the builder's report\n"
 	putRoundFile(t, d, liveID, "003-report.md", 3, body)

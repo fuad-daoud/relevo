@@ -81,9 +81,8 @@ func cmdMasterMind(args []string) error {
 }
 
 // mastermindRegistry is the CLI's registry: the state root's database kv rows
-// `<root>/relevo.db` (P3b round 2 §4.1) on the runtime's clock, importing the
-// pre-database masterminds directory the first time a record is touched. A store
-// whose database cannot be opened is fatal for the verb.
+// `<root>/relevo.db` (P3b round 2 §4.1) on the runtime's clock. A store whose
+// database cannot be opened is fatal for the verb.
 func mastermindRegistry(rt relevo.Runtime) (*mastermind.DBRegistry, error) {
 	d, err := rt.Store.DB()
 	if err != nil {

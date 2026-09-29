@@ -51,7 +51,7 @@ const SpawnFailedCooldown = 10 * time.Minute
 
 // mutateLedgerLocked loads, prunes, applies fn and saves the ledger for a
 // caller that already holds the state lock, so every ledger write serialises on
-// the flock that already serialises bind.json. It does not take Store.WithLock
+// the state lock the caller already holds. It does not take Store.WithLock
 // itself: that lock is a plain mutex and is not reentrant, so a second Lock from
 // the goroutine that already holds it blocks forever rather than erroring.
 func mutateLedgerLocked(d Deps, fn func(Ledger) Ledger) error {

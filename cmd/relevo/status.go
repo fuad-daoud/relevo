@@ -144,8 +144,8 @@ func cmdStatus(args []string) error {
 	}
 
 	// #371: the daemon's own version state, read from its record rather than
-	// probed. A read error prints nothing: a status must never fail because a
-	// sidecar file could not be read.
+	// probed. A read error prints nothing: a status must never fail because its
+	// record could not be read.
 	if daemonRunning, derr := rt.Store.DaemonRunning(); derr == nil {
 		if info, iok, ierr := rt.Store.ReadDaemonInfo(); ierr == nil {
 			if notice := daemonNotice(buildVersion(), info, iok, daemonRunning); notice != "" {

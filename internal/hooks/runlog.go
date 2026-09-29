@@ -40,7 +40,7 @@ func (l *KVLog) Append(run HookRun) error {
 	})
 }
 
-// Runs returns the stored runs, oldest first, adopting a legacy file first.
+// Runs returns the stored runs, oldest first.
 func (l *KVLog) Runs() ([]HookRun, error) {
 	return l.read(l.KV)
 }

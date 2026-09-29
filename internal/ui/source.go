@@ -29,12 +29,12 @@ type Source interface {
 	// the mastermind's own runtime. On the server it carries no DB, so scope
 	// all is refused there with the existing "no database" notice.
 	Base() relevo.Runtime
-	// MarkViewed stamps key's .viewed sidecar (#143), the moment a human
-	// points the detail pane at it. A mastermind source writes through its own
-	// store; a server source is a no-op -- ui never mutates bind.json, and
-	// the sidecar lives on whichever machine's disk actually holds the
-	// binding, never the server's. Errors are swallowed: a stamp must never
-	// fail a read-only screen.
+	// MarkViewed stamps key's viewed mark (#143), the moment a human points
+	// the detail pane at it. A mastermind source writes through its own
+	// store; a server source is a no-op -- the mark is a record field on
+	// whichever client machine holds the binding, and a server never writes
+	// into a client's database. Errors are swallowed: a stamp must never fail
+	// a read-only screen.
 	MarkViewed(key string)
 }
 
@@ -106,8 +106,8 @@ func (s serverSource) Base() relevo.Runtime {
 	return relevo.Runtime{Now: time.Now}
 }
 
-// MarkViewed is a no-op on a server source: the .viewed sidecar belongs to
-// whichever client machine actually holds the binding's store, and a
+// MarkViewed is a no-op on a server source: the viewed mark is a record field
+// on whichever client machine actually holds the binding's store, and a
 // server box never writes into a client's state directory.
 func (s serverSource) MarkViewed(key string) {}
 

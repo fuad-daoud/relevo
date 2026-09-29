@@ -25,7 +25,7 @@ type Source interface {
 	// Open returns member's content and size; os.ErrNotExist when absent.
 	Open(member string) (io.ReadCloser, int64, error)
 	List() ([]string, error)
-	// Origin reports "live" and the directory, or "archive" and the tarball path.
+	// Origin reports "live" and the directory, or "archive" and an empty path.
 	Origin() (kind, path string)
 }
 
@@ -248,7 +248,7 @@ func (s archivedSource) List() ([]string, error) {
 }
 
 // Origin reports the kind the mirror records; the path is empty, since an
-// archived record has no directory or tarball behind it.
+// archived record has no directory behind it.
 func (s archivedSource) Origin() (string, string) { return "archive", "" }
 
 func (s archivedSource) ArchivedAt() (time.Time, bool) {

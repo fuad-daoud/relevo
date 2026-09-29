@@ -22,7 +22,7 @@ const serveShowUsage = "usage: relevo show <name> --owner <label|id> [--round N]
 // resolves the owner with the same resolver `serve unbind` uses, builds that
 // owner's runtime, and renders through the same printLog the client verb
 // uses, so the output reads exactly like a client's. It stamps nothing -- the
-// .viewed sidecar is the owner's, not the admin's -- and creates nothing.
+// viewed mark is the owner's, not the admin's -- and creates nothing.
 func serveLog(owner, state, name string, round, after int, asJSON, follow bool) error {
 	root, d, err := adminRootFor(state)
 	if err != nil {

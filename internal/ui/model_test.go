@@ -495,7 +495,7 @@ func TestStepRoundEdgesNoop(t *testing.T) {
 }
 
 // TestPointDetailAtMarksViewed ports #143: opening a live binding's round
-// view stamps its .viewed sidecar through the Source.
+// view stamps its viewed mark through the Source.
 func TestPointDetailAtMarksViewed(t *testing.T) {
 	st := store.New(t.TempDir())
 	if err := st.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateActive}); err != nil {

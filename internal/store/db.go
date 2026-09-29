@@ -42,8 +42,7 @@ func (s *Store) dbForWrite() (*db.DB, error) {
 
 // dbForRead returns the store's database handle without creating the database:
 // (nil, nil) when <root>/relevo.db does not exist, which every read path treats
-// as "no rows". Only a write, or the import of a present legacy file, creates
-// it.
+// as "no rows". Only a write creates it.
 func (s *Store) dbForRead() (*db.DB, error) {
 	if s.shared != nil {
 		return s.shared, nil

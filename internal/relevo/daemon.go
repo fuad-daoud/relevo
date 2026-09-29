@@ -151,9 +151,8 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// go away here, before the no-bindings early return, because a machine
 	// whose readers are all gone is exactly the one left carrying them.
 	d.safely("scratch sweep", func() { sweepReaderScratch(ctx, d.rt) })
-	// Before the first tick of this process, and after the tarball import
-	// ListArchived runs, every archived record the mirror has not seen is
-	// ingested (P3d §4.2, §4.5).
+	// Before the first tick of this process, every archived record the mirror
+	// has not seen is ingested (P3d §4.2, §4.5).
 	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })
 
 	bindings, err := d.rt.Store.List()
@@ -373,9 +372,7 @@ func (d *Daemon) prefetchRemote(ctx context.Context, name string) *remoteFetch {
 var archivedMirrorOnce sync.Once
 
 // mirrorArchived feeds every archived record the mirror has not seen into the
-// database. The tarball import runs inside ListArchived and therefore first, so
-// a root upgraded from a pre-P3d relevo has its tarballs imported before
-// anything looks for archived records.
+// database.
 //
 // Each record is keyed by the kv row "ingested.archive.<recordID>": the key is
 // put only after a successful ingest, so a failure is logged and retried by
@@ -491,8 +488,8 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes
 	}
 
 	// A DONE binding is finished: once its rounds are sealed and the directory
-	// holds nothing else -- no round file left to seal, no non-NNN file, no
-	// .viewed sidecar -- the empty directory goes too, so a finished binding
+	// holds nothing else -- no round file left to seal, no non-NNN file -- the
+	// empty directory goes too, so a finished binding
 	// leaves nothing on disk. os.Remove, never RemoveAll: anything still in
 	// there means the directory stays. The error is ignored, like every other
 	// failure in this pass.

@@ -45,7 +45,7 @@ func (s *Store) ForkState(src string, dst Binding, throughRound int) error {
 // with Round <= throughRound and every round file whose leading number is
 // <= throughRound. Copied entries are all marked Confirmed, so a fork begins
 // with nothing pending, and an entry whose Path pointed into src's directory
-// is rewritten into dst's. dst's bind.json is NOT written -- the caller owns
+// is rewritten into dst's. dst's record is NOT written here -- the caller owns
 // the new Binding.
 //
 // The history goes straight into the database: the record Save writes, the
