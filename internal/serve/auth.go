@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 type contextKey string
@@ -35,7 +36,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			r.Body = http.NoBody
 		}
 		tmpDir := filepath.Join(s.cfg.Root, "tmp")
-		_ = os.MkdirAll(tmpDir, 0o755)
+		_ = os.MkdirAll(tmpDir, store.StateRootMode)
 		tmp, err := os.CreateTemp(tmpDir, "req-body-*")
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "", err.Error())
