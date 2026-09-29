@@ -74,12 +74,14 @@ func read(path string) (Installation, error) {
 	return inst, nil
 }
 
-// mint creates the installation file at path. O_EXCL is what makes a racing
-// first open keep one winner: the loser re-reads the winner's file instead of
-// overwriting it with a second id.
+// mint creates the installation file at path. The id is written to a temp
+// file and linked into place, so a racing loader sees no file or the whole
+// file, never a partial one. Link rather than rename: a link fails on an
+// existing file, so every loser keeps the winner's id instead of replacing it.
 func mint(path string) (Installation, error) {
-	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
-		return Installation{}, fmt.Errorf("installation: create %s: %w", filepath.Dir(path), err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, dirMode); err != nil {
+		return Installation{}, fmt.Errorf("installation: create %s: %w", dir, err)
 	}
 
 	inst := Installation{ID: db.NewID(), Label: hostname(), CreatedAt: time.Now().UTC()}
@@ -88,19 +90,32 @@ func mint(path string) (Installation, error) {
 		return Installation{}, fmt.Errorf("installation: encode %s: %w", path, err)
 	}
 
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
+	// os.CreateTemp opens 0600, the same mode the final file needs.
+	f, err := os.CreateTemp(dir, FileName+".tmp-*")
 	if err != nil {
+		return Installation{}, fmt.Errorf("installation: create temp in %s: %w", dir, err)
+	}
+	tmp := f.Name()
+	defer func() {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+	}()
+
+	if _, err := f.Write(raw); err != nil {
+		return Installation{}, fmt.Errorf("installation: write %s: %w", tmp, err)
+	}
+	if err := f.Sync(); err != nil {
+		return Installation{}, fmt.Errorf("installation: sync %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		return Installation{}, fmt.Errorf("installation: write %s: %w", tmp, err)
+	}
+
+	if err := os.Link(tmp, path); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return read(path)
 		}
-		return Installation{}, fmt.Errorf("installation: create %s: %w", path, err)
-	}
-	if _, err := f.Write(raw); err != nil {
-		_ = f.Close()
-		return Installation{}, fmt.Errorf("installation: write %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		return Installation{}, fmt.Errorf("installation: write %s: %w", path, err)
+		return Installation{}, fmt.Errorf("installation: link %s: %w", path, err)
 	}
 	return inst, nil
 }

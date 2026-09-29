@@ -245,9 +245,27 @@ func newRuntimePeek() (relevo.Runtime, error) {
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
-	dir := filepath.Join(configDir, "relevo")
 
-	var L config.Loaded
+	L, err := loadConfigReadOnly(root, filepath.Join(configDir, "relevo"))
+	if err != nil {
+		return relevo.Runtime{}, err
+	}
+
+	// buildRuntime with openGates false: preflight and check open no database
+	// and carry nil Gates/Latency, so they touch no gate record (P3b plan §4.5).
+	return buildRuntime(root, L, false)
+}
+
+// loadConfigReadOnly reads config without creating, migrating or writing
+// anything: the config files when any is present, else the database read-only
+// when one exists, else the files again (a load of defaults). It is the one
+// read-only load the `--preflight`/`--check` peek and the daemon's pre-lock
+// phase share (#4.6).
+func loadConfigReadOnly(root, dir string) (config.Loaded, error) {
+	var (
+		L   config.Loaded
+		err error
+	)
 	switch {
 	case configFilesPresent(dir):
 		L, err = config.LoadFiles(dir)
@@ -262,12 +280,9 @@ func newRuntimePeek() (relevo.Runtime, error) {
 		L, err = config.LoadFiles(dir)
 	}
 	if err != nil {
-		return relevo.Runtime{}, err
+		return config.Loaded{}, err
 	}
-
-	// buildRuntime with openGates false: preflight and check open no database
-	// and carry nil Gates/Latency, so they touch no gate record (P3b plan §4.5).
-	return buildRuntime(root, L, false)
+	return L, nil
 }
 
 // configFilesPresent reports whether any file the import consumes, or a hooks
