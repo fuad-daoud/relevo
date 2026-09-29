@@ -329,6 +329,46 @@ func TestOpencodeDeliverFallsBackAfterFallbackAfter(t *testing.T) {
 	}
 }
 
+// TestOpencodeDeliverConfirmsAPayloadSeenPastFallback proves the read-back
+// precedes the give-up gate: a payload whose text is already in the session is
+// confirmed past FallbackAfter, and never POSTs.
+func TestOpencodeDeliverConfirmsAPayloadSeenPastFallback(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
+	exec := &fakeSqliteExec{seenFrom: 1}
+
+	queuedAt := time.Unix(1000, 0)
+	now := queuedAt.Add(31 * time.Second) // past the 30s default
+
+	d := &OpencodeDeliverer{
+		StateFiles: []string{stateFile},
+		DBPath:     filepath.Join(dir, "opencode.db"),
+		Exec:       exec,
+		Alive:      aliveAlways,
+		Now:        func() time.Time { return now },
+	}
+
+	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/001-report.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeDelivered || reason != "already present" {
+		t.Fatalf("out = %v, reason = %q, want OutcomeDelivered/\"already present\"", out, reason)
+	}
+	if requests != 0 {
+		t.Fatalf("requests = %d, want zero: the read-back must skip the POST", requests)
+	}
+}
+
 func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 	var logged bytes.Buffer
 	prev := slog.Default()

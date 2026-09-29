@@ -115,6 +115,13 @@ func (d *OpencodeDeliverer) fallbackAfter() time.Duration {
 }
 
 // Deliver implements MasterMindDeliverer for opencode masterminds.
+//
+// The step order is fixed and non-obvious: guards, origin, seen, pastFallback,
+// service resolution, hasPosted, POST, confirm. The read-back runs before the
+// give-up gate, so a payload whose text is already in the session is confirmed
+// at any age -- a late-admitted payload must not be failed by the fallback
+// before it is ever read. The gate stays above the service checks, so a dead
+// service past the window still gives up.
 func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, payload, path string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "opencode" {
 		return OutcomeNotMine, "", nil
@@ -125,6 +132,20 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoi
 	if !validSessionID(mastermind.SessionID) {
 		return OutcomeNotMine, "no opencode session id", nil
 	}
+
+	origin := firstPayloadLine(payload)
+
+	// Already there? A previous tick may have delivered and crashed before
+	// confirming. Check before the give-up gate, so a payload admitted late is
+	// still confirmed, and so a retry never double-posts.
+	alreadySeen, err := d.seen(ctx, mastermind.SessionID, origin)
+	if err != nil {
+		return OutcomeUnavailable, "sqlite3: " + firstErrorLine(err), nil
+	}
+	if alreadySeen {
+		return OutcomeDelivered, "already present", nil
+	}
+
 	if out, reason, gave := d.pastFallback(mastermind.SessionID, payload, queuedAt); gave {
 		return out, reason, nil
 	}
@@ -146,18 +167,6 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoi
 	}
 	if !loopbackOpencodeURL(svc.URL) {
 		return OutcomeUnavailable, "opencode service url is not loopback", nil
-	}
-
-	origin := firstPayloadLine(payload)
-
-	// Already there? A previous tick may have delivered and crashed before
-	// confirming. Check first, so a retry never double-posts.
-	alreadySeen, err := d.seen(ctx, mastermind.SessionID, origin)
-	if err != nil {
-		return OutcomeUnavailable, "sqlite3: " + firstErrorLine(err), nil
-	}
-	if alreadySeen {
-		return OutcomeDelivered, "already present", nil
 	}
 
 	if d.hasPosted(mastermind.SessionID, origin) {
