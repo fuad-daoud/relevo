@@ -44,6 +44,8 @@ type Welcome struct {
 	SchemaHave int      `json:"schema_have"`
 	SchemaKnow int      `json:"schema_know"`
 	Origin     string   `json:"origin"`
+	PID        int      `json:"pid"`
+	Conns      int      `json:"conns"`
 	Features   []string `json:"features"`
 }
 

@@ -6,10 +6,12 @@
 package owner
 
 import (
+	"context"
 	"database/sql"
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
@@ -35,8 +37,12 @@ type Server struct {
 
 	mu     sync.Mutex
 	closed bool
-	ln     net.Listener
-	conns  map[*conn]struct{}
+	// draining is set for the life of a drain: the accept loop stops, a request
+	// on a connection with no open transaction is refused, and a connection
+	// already inside one is let through so it can commit.
+	draining bool
+	ln       net.Listener
+	conns    map[*conn]struct{}
 	// sem holds one slot per pinned connection; a request that needs one waits
 	// on it inside pin, and cleanup returns it when that connection is
 	// discarded. Idle handshaken connections never take a slot.
@@ -67,13 +73,112 @@ func (s *Server) Serve(l net.Listener) error {
 	for {
 		nc, err := l.Accept()
 		if err != nil {
-			if s.isClosed() {
+			// A drain unblocks Accept without closing the listener: the caller
+			// keeps it open to hand the fd to the next image.
+			if s.isClosed() || s.isDraining() {
 				return nil
 			}
 			return err
 		}
 		go s.handle(nc)
 	}
+}
+
+// drainDeadline bounds how long Drain lets an open transaction finish before it
+// drops the clients.
+const drainDeadline = 5 * time.Second
+
+// drainPoll is how often Drain re-checks whether a connection still holds an
+// open transaction.
+const drainPoll = 20 * time.Millisecond
+
+// Drain stops admitting new work and lets the work already inside a transaction
+// finish before it drops the clients. It never closes the listener: the caller
+// may hand it to the next image. A transaction that outlasts the deadline is
+// cut off at its next statement when the clients are dropped.
+func (s *Server) Drain(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, drainDeadline)
+	defer cancel()
+
+	s.beginDrain()
+	s.quiet()
+	s.waitTransactions(ctx)
+	s.dropClients()
+	return nil
+}
+
+// beginDrain marks the server draining under the lock, so every later request
+// on a connection with no open transaction is refused rather than run.
+func (s *Server) beginDrain() {
+	s.mu.Lock()
+	s.draining = true
+	s.mu.Unlock()
+}
+
+// quiet stops the accept loop while keeping the listener open: the deadline
+// unblocks Accept, and Serve returns without closing the listener when it sees
+// the drain flag. A connection that arrives after this sits in the kernel
+// backlog for the next image to accept.
+func (s *Server) quiet() {
+	s.mu.Lock()
+	l := s.ln
+	s.mu.Unlock()
+	if dl, ok := l.(interface{ SetDeadline(time.Time) error }); ok {
+		_ = dl.SetDeadline(time.Now())
+	}
+}
+
+// waitTransactions returns when no connection still holds an open transaction,
+// or when ctx is done.
+func (s *Server) waitTransactions(ctx context.Context) {
+	for {
+		if !s.anyInTx() {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(drainPoll):
+		}
+	}
+}
+
+// anyInTx reports whether any live connection is still inside a transaction.
+func (s *Server) anyInTx() bool {
+	s.mu.Lock()
+	conns := make([]*conn, 0, len(s.conns))
+	for c := range s.conns {
+		conns = append(conns, c)
+	}
+	s.mu.Unlock()
+
+	for _, c := range conns {
+		if c.transactionOpen() {
+			return true
+		}
+	}
+	return false
+}
+
+// dropClients closes every live client connection. Each connection's cleanup
+// rolls its pinned connection back; the listener is untouched.
+func (s *Server) dropClients() {
+	s.mu.Lock()
+	conns := make([]*conn, 0, len(s.conns))
+	for c := range s.conns {
+		conns = append(conns, c)
+	}
+	s.mu.Unlock()
+
+	for _, c := range conns {
+		c.shutdown()
+	}
+}
+
+func (s *Server) isDraining() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.draining
 }
 
 // Close stops the server: it closes the listener and every live client. A
@@ -101,6 +206,14 @@ func (s *Server) isClosed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.closed
+}
+
+// connCount is the number of live connections, read for the welcome a client
+// sees so its answer names the owner's real load.
+func (s *Server) connCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.conns)
 }
 
 func (s *Server) handle(nc net.Conn) {

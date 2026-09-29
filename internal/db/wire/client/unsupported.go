@@ -17,6 +17,8 @@ type info struct {
 	Have   int
 	Know   int
 	Origin string
+	PID    int
+	Conns  int
 }
 
 // Info refuses: the owner protocol is a unix socket, and relevo serves the

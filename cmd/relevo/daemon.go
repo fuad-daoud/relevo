@@ -10,11 +10,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/installation"
@@ -123,6 +125,27 @@ func cmdDaemon(args []string) error {
 	// into an error that matters.
 	defer lock.Close()
 
+	// The socket path is checked before newRuntime mints anything, so a start
+	// whose path could never bind refuses with one clear line and leaves no
+	// half-created root. The listener is bound here, under the lock, so a
+	// connection made while the startup passes run waits in the backlog instead
+	// of finding no socket; Serve starts once the handle is ready.
+	if err := checkSocketPath(root); err != nil {
+		return err
+	}
+	ln, err := openOwnerListener(root)
+	if err != nil {
+		return err
+	}
+	var srv *owner.Server
+	defer func() {
+		if srv != nil {
+			_ = srv.Close()
+			return
+		}
+		_ = ln.Close()
+	}()
+
 	// newRuntime is the one constructor, called under the lock: it mints a
 	// whole installation.json, opens and migrates relevo.db, imports config
 	// and builds the runtime with gates. Nothing before this point touches
@@ -187,14 +210,28 @@ func cmdDaemon(args []string) error {
 	// Closing is explicit rather than a bare defer: the re-exec path closes
 	// the DB itself before syscall.Exec, and the deferred pass must then do
 	// nothing. *db.DB.Close is not idempotent.
-	var dbClosed bool
+	var (
+		dbClosed bool
+		// serveDB is the handle the owner serves. It is rt.DB when the daemon's
+		// own work runs, and a separate handle when the schema is newer: the
+		// owner is a SQL pipe, so it still serves that database while rt.DB
+		// stays nil to pause the daemon's own ingest.
+		serveDB *db.DB
+	)
 	closeDB := func() {
-		if dbClosed || rt.DB == nil {
+		if dbClosed {
 			return
 		}
 		dbClosed = true
-		if cerr := rt.DB.Close(); cerr != nil {
-			slog.Warn("relevo daemon: close db", "err", cerr)
+		if rt.DB != nil {
+			if cerr := rt.DB.Close(); cerr != nil {
+				slog.Warn("relevo daemon: close db", "err", cerr)
+			}
+		}
+		if serveDB != nil && serveDB != rt.DB {
+			if cerr := serveDB.Close(); cerr != nil {
+				slog.Warn("relevo daemon: close db", "err", cerr)
+			}
 		}
 	}
 	defer closeDB()
@@ -204,12 +241,14 @@ func cmdDaemon(args []string) error {
 	} else if d.Newer() {
 		// A schema a newer relevo wrote is never migrated or written by this
 		// binary: leave rt.DB nil so every ingest call site treats it as a
-		// machine with no database, and say why once (#372 §4.5).
+		// machine with no database, and say why once (#372 §4.5). The owner
+		// still serves it, so a dialled client gets its schema answer.
 		have, know := d.SchemaVersions()
 		slog.Warn(fmt.Sprintf("relevo.db schema v%d is newer than this relevo (v%d); ingest paused until relevo is upgraded", have, know))
-		_ = d.Close()
+		serveDB = d
 	} else {
 		rt.DB = d
+		serveDB = d
 	}
 
 	// The ingest mirror's proven duplicates are removed once, before daemon.json
@@ -297,6 +336,12 @@ func cmdDaemon(args []string) error {
 	// daemon.json: what this image runs. Written under the lock, so its
 	// presence with the lock held means a #371 daemon; removed on a clean
 	// shutdown, kept across a re-exec (#371 §4.7).
+	if serveDB != nil {
+		srv, err = serveOwner(serveDB, ln)
+		if err != nil {
+			slog.Warn("relevo daemon: owner socket not served", "err", err)
+		}
+	}
 	info := store.DaemonInfo{
 		Version:    buildVersion(),
 		PID:        os.Getpid(),
@@ -389,17 +434,27 @@ func cmdDaemon(args []string) error {
 	slog.Info("relevo daemon starting", "interval", *interval)
 	err = relevo.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).WithUpgrade(hook).Run(ctx)
 	if errors.Is(err, relevo.ErrReexec) {
-		// Close explicitly what must not survive the exec -- the DB, the
-		// signal context and the lock -- rather than relying on CLOEXEC
-		// (#371 §4.7).
+		// Drain the owner first: an open transaction must be able to commit
+		// before closeDB takes the handle away. Then close explicitly what must
+		// not survive the exec -- the DB, the signal context and the lock --
+		// and pass the listener's descriptor with close-on-exec cleared so the
+		// next image adopts it instead of rebinding.
+		fd, herr := drainAndHandoff(srv, ln)
+		if herr != nil {
+			slog.Warn("relevo daemon: listener handoff failed", "err", herr)
+		}
 		closeDB()
 		stop()
 		_ = lock.Close()
 
 		env := withEnv(os.Environ(), "RELEVO_REEXEC_FROM", buildVersion())
+		if fd >= 0 {
+			env = withEnv(env, listenFDEnv, strconv.Itoa(fd))
+		}
 		execErr := reexec(exe, append([]string{exe}, os.Args[1:]...), env)
 		// Only reached when the exec itself failed: a non-zero exit lets
 		// systemd's Restart=on-failure start the new binary anyway.
+		closeHandoff()
 		return fmt.Errorf("re-exec %s: %w", exe, execErr)
 	}
 

@@ -8,6 +8,8 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +31,10 @@ type conn struct {
 	mu     sync.Mutex
 	pinned *sql.Conn
 	cur    *request
+	// inTx tracks whether this connection is inside a transaction, read from
+	// the SQL already on the wire because relevo's Tx sends BEGIN/COMMIT as
+	// plain statements rather than through database/sql's BeginTx.
+	inTx bool
 }
 
 type request struct {
@@ -81,6 +87,8 @@ func (c *conn) serve() error {
 		SchemaHave: c.s.have,
 		SchemaKnow: c.s.know,
 		Origin:     c.s.origin,
+		PID:        os.Getpid(),
+		Conns:      c.s.connCount(),
 	}
 	if err := c.send(wire.KindWelcome, w, nil); err != nil {
 		return err
@@ -144,6 +152,50 @@ func (c *conn) current() *request {
 	return c.cur
 }
 
+// transactionOpen reports whether this connection is inside a transaction,
+// which is what Drain waits for before it drops the clients.
+func (c *conn) transactionOpen() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.inTx
+}
+
+// recordTransaction moves this connection's transaction membership from the
+// statement that just succeeded. A failed COMMIT leaves the flag set: SQLite
+// keeps that transaction open, so the connection still counts as in one.
+func (c *conn) recordTransaction(query string) {
+	open, closeTx := txEffect(query)
+	if !open && !closeTx {
+		return
+	}
+	c.mu.Lock()
+	c.inTx = open
+	c.mu.Unlock()
+}
+
+// txEffect reads a statement's leading keyword for the transaction state it
+// leaves behind. BEGIN (and BEGIN IMMEDIATE) opens; COMMIT, END and ROLLBACK
+// close.
+func txEffect(query string) (open, closeTx bool) {
+	switch firstKeyword(query) {
+	case "BEGIN":
+		return true, false
+	case "COMMIT", "END", "ROLLBACK":
+		return false, true
+	}
+	return false, false
+}
+
+// firstKeyword returns the statement's first word, upper-cased, so BEGIN
+// IMMEDIATE is seen as BEGIN and the keyword match is case-insensitive.
+func firstKeyword(query string) string {
+	query = strings.TrimLeft(query, " \t\r\n")
+	if i := strings.IndexAny(query, " \t\r\n("); i >= 0 {
+		return strings.ToUpper(query[:i])
+	}
+	return strings.ToUpper(query)
+}
+
 // start launches one request so the read loop can keep receiving cancel and
 // next while the statement runs.
 func (c *conn) start(kind byte, frame []byte) error {
@@ -154,6 +206,13 @@ func (c *conn) start(kind byte, frame []byte) error {
 	raw, err := wire.Decode(frame, &m)
 	if err != nil {
 		return err
+	}
+
+	// A drain refuses a request on a connection with no open transaction: the
+	// owner guarantees it was never executed, so the client may retry it. A
+	// request inside an open transaction runs, so the transaction can commit.
+	if c.s.isDraining() && !c.transactionOpen() {
+		return c.refuse(wire.RefuseRestarting, "the owner is restarting")
 	}
 
 	r, ctx, err := c.claim(m.ID)
@@ -254,6 +313,7 @@ func (c *conn) exec(ctx context.Context, r *request, pinned *sql.Conn, query str
 		c.sendError(r.id, err)
 		return
 	}
+	c.recordTransaction(query)
 	rows, _ := res.RowsAffected()
 	id, _ := res.LastInsertId()
 	_ = c.send(wire.KindDone, &wire.Done{
@@ -269,6 +329,7 @@ func (c *conn) query(ctx context.Context, r *request, pinned *sql.Conn, query st
 		c.sendError(r.id, err)
 		return
 	}
+	c.recordTransaction(query)
 	defer func() { _ = rows.Close() }()
 
 	cols, err := rows.Columns()
