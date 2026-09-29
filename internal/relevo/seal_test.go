@@ -38,12 +38,17 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	logText := []byte("builder output\n")
 	for path, body := range map[string][]byte{
 		rt.Store.ReportPath("webshop", 1):     report,
-		rt.Store.DiffPath("webshop", 1):       diff,
 		rt.Store.BuilderLogPath("webshop", 1): logText,
 	} {
 		if err := os.WriteFile(path, body, 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
 		}
+	}
+	// A diff is row-only, so round 1's patch is authored as a round_file row.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("webshop", 1, rt.Store.DiffPath("webshop", 1), diff)
+	}); err != nil {
+		t.Fatalf("PutRoundFile diff: %v", err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 

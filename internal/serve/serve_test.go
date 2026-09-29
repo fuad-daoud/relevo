@@ -2898,8 +2898,10 @@ func TestRoundFileDriftRunning(t *testing.T) {
 	}
 
 	driftContent := []byte("diff --git a/foo b/foo\n+drift\n")
-	if err := os.WriteFile(rt.Store.DriftPath("api", 1), driftContent, 0o644); err != nil {
-		t.Fatalf("write drift: %v", err)
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("api", 1, rt.Store.DriftPath("api", 1), driftContent)
+	}); err != nil {
+		t.Fatalf("PutRoundFile drift: %v", err)
 	}
 	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/drift", nil, "")
 	requireStatus(t, resp, body, http.StatusOK)

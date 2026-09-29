@@ -51,9 +51,9 @@ func TestShowRetiredFlagsAreUnknown(t *testing.T) {
 }
 
 // seedShowDiffStore builds a binding under the default state root with one
-// completed round: a diff patch on disk and the log entries that name it. It
-// is store-only -- no harness and no network -- so the run-based assertions
-// below reach no builder.
+// completed round: a diff patch as a round_file row and the log entries that
+// name it. It is store-only -- no harness and no network -- so the run-based
+// assertions below reach no builder.
 func seedShowDiffStore(t *testing.T, name string) (*store.Store, relevo.Runtime) {
 	t.Helper()
 	root, err := store.DefaultRoot()
@@ -65,8 +65,10 @@ func seedShowDiffStore(t *testing.T, name string) (*store.Store, relevo.Runtime)
 		t.Fatalf("Save: %v", err)
 	}
 	patch := "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1,2 @@\n hello\n+world\n"
-	if err := os.WriteFile(s.DiffPath(name, 1), []byte(patch), 0o644); err != nil {
-		t.Fatalf("write diff: %v", err)
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile(name, 1, s.DiffPath(name, 1), []byte(patch))
+	}); err != nil {
+		t.Fatalf("PutRoundFile diff: %v", err)
 	}
 	for _, e := range []store.LogEntry{
 		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
@@ -200,8 +202,10 @@ func TestShowGateAndFindings(t *testing.T) {
 	}
 	const id = "7f2a3c1d"
 	findingsBody := "verdict: accepted\n"
-	if err := os.WriteFile(s.FindingsPath(name, 1, id), []byte(findingsBody), 0o644); err != nil {
-		t.Fatalf("write findings: %v", err)
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile(name, 1, s.FindingsPath(name, 1, id), []byte(findingsBody))
+	}); err != nil {
+		t.Fatalf("PutRoundFile findings: %v", err)
 	}
 
 	got, _, err := captureOutput(t, func() error { return run([]string{"show", name, "--round", "1", "--gate"}) })

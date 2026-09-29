@@ -109,6 +109,11 @@ func archiveShowFixture(t *testing.T, extra map[string]string) *store.Store {
 	if err != nil {
 		t.Fatalf("ReadDir fixture: %v", err)
 	}
+	// A patch is row-only, so the fixture's own diff and drift become
+	// round_file rows rather than files: the archive seals what is on disk, and
+	// these two are never there.
+	reserved := map[string]int{"001-diff.patch": 1, "002-drift.patch": 2}
+	reservedBodies := map[string][]byte{}
 	for _, e := range entries {
 		if e.IsDir() || showFixtureBindFiles[e.Name()] {
 			continue
@@ -116,6 +121,10 @@ func archiveShowFixture(t *testing.T, extra map[string]string) *store.Store {
 		data, err := os.ReadFile(filepath.Join(showFixtureDir, e.Name()))
 		if err != nil {
 			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		if _, ok := reserved[e.Name()]; ok {
+			reservedBodies[e.Name()] = data
+			continue
 		}
 		if err := os.WriteFile(filepath.Join(s.Dir("fixture"), e.Name()), data, 0o644); err != nil {
 			t.Fatalf("write %s: %v", e.Name(), err)
@@ -139,6 +148,17 @@ func archiveShowFixture(t *testing.T, extra map[string]string) *store.Store {
 		t.Fatalf("RecordPut: %v", err)
 	}
 	seedArchivedLog(t, sdb, recID)
+	for base, round := range reserved {
+		body, ok := reservedBodies[base]
+		if !ok {
+			continue
+		}
+		if err := s.WithLock(func(tx *store.Tx) error {
+			return tx.PutRoundFile("fixture", round, filepath.Join(s.Dir("fixture"), base), body)
+		}); err != nil {
+			t.Fatalf("PutRoundFile %s: %v", base, err)
+		}
+	}
 	if _, err := s.Archive("fixture"); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
@@ -198,7 +218,11 @@ func newShowLiveStore(t *testing.T) *store.Store {
 	}
 	write(s.PromptPath("fixture", 1), "# Round 1 plan\n")
 	write(s.ReportPath("fixture", 1), "# Round 1 report\n")
-	write(s.DiffPath("fixture", 1), "diff --git a/x b/x\n")
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("fixture", 1, s.DiffPath("fixture", 1), []byte("diff --git a/x b/x\n"))
+	}); err != nil {
+		t.Fatalf("PutRoundFile diff: %v", err)
+	}
 	write(s.PromptPath("fixture", 2), "# Round 2 plan\n")
 	write(s.ReportPath("fixture", 2), "# Round 2 report\n")
 	write(s.BuilderLogPath("fixture", 2), "round 2 builder log line 1\nround 2 builder log line 2\n")

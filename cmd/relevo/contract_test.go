@@ -303,18 +303,25 @@ func seedShowSectionsFixture(t *testing.T) (name string, roots []string) {
 		t.Fatalf("write report: %v", err)
 	}
 	diffPatch := "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1,2 @@\n hello\n+world\n"
-	if err := os.WriteFile(s.DiffPath(name, 1), []byte(diffPatch), 0o644); err != nil {
-		t.Fatalf("write diff: %v", err)
-	}
 	driftPatch := "diff --git a/drift.txt b/drift.txt\n--- a/drift.txt\n+++ b/drift.txt\n@@ -1 +1,2 @@\n drift\n+round1\n"
-	if err := os.WriteFile(s.DriftPath(name, 1), []byte(driftPatch), 0o644); err != nil {
-		t.Fatalf("write drift: %v", err)
+	// A patch and a consult's findings are row-only: the fixture authors them
+	// as round_file rows, and the gate log stays a file.
+	for _, row := range []struct {
+		path string
+		body string
+	}{
+		{s.DiffPath(name, 1), diffPatch},
+		{s.DriftPath(name, 1), driftPatch},
+		{s.FindingsPath(name, 1, showFixtureFindingsID), "verdict: accepted\n"},
+	} {
+		if err := s.WithLock(func(tx *store.Tx) error {
+			return tx.PutRoundFile(name, 1, row.path, []byte(row.body))
+		}); err != nil {
+			t.Fatalf("PutRoundFile %s: %v", row.path, err)
+		}
 	}
 	if err := os.WriteFile(s.GateLogPath(name, 1), []byte("make check -- PASS (exit 0, 1m40s)\n"), 0o644); err != nil {
 		t.Fatalf("write gate log: %v", err)
-	}
-	if err := os.WriteFile(s.FindingsPath(name, 1, showFixtureFindingsID), []byte("verdict: accepted\n"), 0o644); err != nil {
-		t.Fatalf("write findings: %v", err)
 	}
 
 	fixedTS := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)

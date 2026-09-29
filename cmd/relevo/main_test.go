@@ -358,8 +358,10 @@ func TestDiffCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write round 1 diff patch
-	if err := os.WriteFile(s.DiffPath("webshop", 1), []byte(patchContent), 0o644); err != nil {
+	// Author round 1's diff patch as a round_file row.
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("webshop", 1, s.DiffPath("webshop", 1), []byte(patchContent))
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -469,7 +471,9 @@ func TestDiffAnchorsCommand(t *testing.T) {
 	if err := s.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(s.DiffPath("webshop", 1), []byte(patchContent), 0o644); err != nil {
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("webshop", 1, s.DiffPath("webshop", 1), []byte(patchContent))
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -512,12 +516,16 @@ func TestDiffDriftCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write round 2 drift patch
-	if err := os.WriteFile(s.DriftPath("webshop", 2), []byte(driftPatchRound2), 0o644); err != nil {
+	// Author round 2's drift patch as a round_file row.
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("webshop", 2, s.DriftPath("webshop", 2), []byte(driftPatchRound2))
+	}); err != nil {
 		t.Fatal(err)
 	}
-	// Write round 1 drift patch
-	if err := os.WriteFile(s.DriftPath("webshop", 1), []byte(driftPatchRound1), 0o644); err != nil {
+	// Author round 1's drift patch as a round_file row.
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("webshop", 1, s.DriftPath("webshop", 1), []byte(driftPatchRound1))
+	}); err != nil {
 		t.Fatal(err)
 	}
 
