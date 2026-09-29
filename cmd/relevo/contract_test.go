@@ -657,8 +657,8 @@ func TestContractConfigExport(t *testing.T) {
 
 // ---------------------------------------------------------------------
 // C12: every `relevo <verb> ...` command line in internal/harness/agents/*.md,
-// claude-plugin/commands/*.md, internal/mcp/instructions.go and
-// internal/delivery/push.go.
+// claude-plugin/commands/*.md, claude-plugin/skills/*/SKILL.md,
+// internal/mcp/instructions.go and internal/delivery/push.go.
 // ---------------------------------------------------------------------
 
 // relevoCommandLinePattern is the plan's own extraction regexp.
@@ -696,6 +696,7 @@ func c12Sources(t *testing.T) []string {
 	for _, pattern := range []string{
 		filepath.Join("..", "..", "internal", "harness", "agents", "*.md"),
 		filepath.Join("..", "..", "claude-plugin", "commands", "*.md"),
+		filepath.Join("..", "..", "claude-plugin", "skills", "*", "SKILL.md"),
 	} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
@@ -750,11 +751,12 @@ func checkCommandLineMatch(t *testing.T, path string, line int, m []string, verb
 }
 
 // TestContractCommandLineReferences pins C12: every `relevo <verb> [--flag
-// ...]` line in the four listed sources names a verb relevo actually
-// dispatches, and, where the verb's flags are reachable from a test, every
-// flag on that line is one the verb's FlagSet defines. A failing case names
-// the file and line rather than a golden -- the contract is "every reference
-// still resolves", not one fixed rendering.
+// ...]` line in the sources c12Sources lists -- the agent definitions, the
+// plugin commands, the planner-loop skill, instructions.go and push.go --
+// names a verb relevo actually dispatches, and, where the verb's flags are
+// reachable from a test, every flag on that line is one the verb's FlagSet
+// defines. A failing case names the file and line rather than a golden -- the
+// contract is "every reference still resolves", not one fixed rendering.
 //
 // A markdown file's command examples are backtick-quoted (its docs'
 // convention throughout this repo); the pattern runs only inside those

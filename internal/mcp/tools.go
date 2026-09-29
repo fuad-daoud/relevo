@@ -35,6 +35,23 @@ type DoneArgs struct {
 	Name string `json:"name"`
 }
 
+// ShowArgs is show's input: Name is required, Round 0 reads the newest
+// completed round, and an empty Section reads the prompt.
+type ShowArgs struct {
+	Name    string `json:"name"`
+	Round   int    `json:"round,omitempty"`
+	Section string `json:"section,omitempty"`
+}
+
+// GateArgs is gate's input: Token is required, Clear lifts the gate instead of
+// setting one, and For is how long a set gate holds.
+type GateArgs struct {
+	Token  string `json:"token"`
+	For    string `json:"for,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	Clear  bool   `json:"clear,omitempty"`
+}
+
 type ToolResult struct {
 	Content []Content `json:"content"`
 	IsError bool      `json:"isError,omitempty"`
@@ -87,7 +104,8 @@ func appendWaitCommand(r ToolResult, name, budget string) ToolResult {
 	return r
 }
 
-// Tools is the tools/list document: status, send, done, in that order.
+// Tools is the tools/list document: status, send, done, show, gate, in that
+// order.
 func Tools() []ToolSpec {
 	return []ToolSpec{
 		{
@@ -116,6 +134,27 @@ func Tools() []ToolSpec {
 			Description: "Mark a binding done once its round is verified; relaying stops. Calls relevo.Done.",
 			InputSchema: schemaObject([]string{"name"}, map[string]any{
 				"name": map[string]any{"type": "string", "description": "binding name"},
+			}),
+		},
+		// show's sections are the round's own files; findings and artifact are
+		// left to the CLI because their ids have no argument in this schema.
+		{
+			Name:        "show",
+			Description: "One round of a binding: its prompt (the default), report, diff, drift, log, transcript, gate log, output or artifact list. Calls relevo.Show.",
+			InputSchema: schemaObject([]string{"name"}, map[string]any{
+				"name":    map[string]any{"type": "string", "description": "binding name"},
+				"round":   map[string]any{"type": "integer", "description": "the round to read; omit for the newest completed round"},
+				"section": map[string]any{"type": "string", "description": "prompt (the default) | report | diff | drift | log | transcript | gate | output | artifacts"},
+			}),
+		},
+		{
+			Name:        "gate",
+			Description: "Record that a provider hit a usage limit -- relevo switches and resends -- or clear the gate again. Calls relevo's gate ledger.",
+			InputSchema: schemaObject([]string{"token"}, map[string]any{
+				"token":  map[string]any{"type": "string", "description": "candidate name or token to gate, or the subject to clear"},
+				"for":    map[string]any{"type": "string", "description": "how long the gate holds, as a Go duration (e.g. 2h); omit to hold until cleared"},
+				"reason": map[string]any{"type": "string", "description": "why, for the record"},
+				"clear":  map[string]any{"type": "boolean", "description": "clear the gate instead of setting one"},
 			}),
 		},
 	}
@@ -150,6 +189,20 @@ func validateSendArgs(a SendArgs) error {
 func validateDoneArgs(a DoneArgs) error {
 	if a.Name == "" {
 		return errors.New("done requires name")
+	}
+	return nil
+}
+
+func validateShowArgs(a ShowArgs) error {
+	if a.Name == "" {
+		return errors.New("show requires name")
+	}
+	return nil
+}
+
+func validateGateArgs(a GateArgs) error {
+	if a.Token == "" {
+		return errors.New("gate requires token")
 	}
 	return nil
 }

@@ -14,11 +14,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// fakeVerbs is a Verbs whose three methods are swappable per test; a nil field returns (nil, nil).
+// fakeVerbs is a Verbs whose five methods are swappable per test; a nil field returns (nil, nil).
 type fakeVerbs struct {
 	statusFn func(ctx context.Context, session string, a StatusArgs) (any, error)
 	sendFn   func(ctx context.Context, session string, a SendArgs) (any, error)
 	doneFn   func(ctx context.Context, session string, a DoneArgs) (any, error)
+	showFn   func(ctx context.Context, session string, a ShowArgs) (any, error)
+	gateFn   func(ctx context.Context, session string, a GateArgs) (any, error)
 }
 
 func (f *fakeVerbs) Status(ctx context.Context, session string, a StatusArgs) (any, error) {
@@ -40,6 +42,20 @@ func (f *fakeVerbs) Done(ctx context.Context, session string, a DoneArgs) (any, 
 		return nil, nil
 	}
 	return f.doneFn(ctx, session, a)
+}
+
+func (f *fakeVerbs) Show(ctx context.Context, session string, a ShowArgs) (any, error) {
+	if f.showFn == nil {
+		return nil, nil
+	}
+	return f.showFn(ctx, session, a)
+}
+
+func (f *fakeVerbs) Gate(ctx context.Context, session string, a GateArgs) (any, error) {
+	if f.gateFn == nil {
+		return nil, nil
+	}
+	return f.gateFn(ctx, session, a)
 }
 
 // runServer drives Serve over an in-memory pipe, one line per request, and returns everything it wrote.
@@ -137,18 +153,18 @@ func TestServerInitializeSameVersionAnswersSame(t *testing.T) {
 	}
 }
 
-func TestServerToolsListHasThreeToolsInOrderNoAdditionalProperties(t *testing.T) {
+func TestServerToolsListHasFiveToolsInOrderNoAdditionalProperties(t *testing.T) {
 	out := runServer(t, &fakeVerbs{}, []string{
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
 	})
 	resp := decodeResponse(t, splitLines(out)[0])
 	result := resp.Result.(map[string]any)
 	tools, ok := result["tools"].([]any)
-	if !ok || len(tools) != 3 {
-		t.Fatalf("tools = %#v, want exactly 3", result["tools"])
+	if !ok || len(tools) != 5 {
+		t.Fatalf("tools = %#v, want exactly 5", result["tools"])
 	}
 
-	wantOrder := []string{"status", "send", "done"}
+	wantOrder := []string{"status", "send", "done", "show", "gate"}
 	for i, raw := range tools {
 		tool, ok := raw.(map[string]any)
 		if !ok {
@@ -213,6 +229,28 @@ func TestServerToolsCallDoneSuccess(t *testing.T) {
 	result := resp.Result.(map[string]any)
 	if isErr, _ := result["isError"].(bool); isErr {
 		t.Fatalf("result = %#v, want isError false/absent", result)
+	}
+}
+
+// TestServerToolsCallShowAndGateValidateArgs pins the two new tools' required
+// argument: a missing name or token is an invalid-params error before any verb
+// is called.
+func TestServerToolsCallShowAndGateValidateArgs(t *testing.T) {
+	cases := []struct {
+		name    string
+		request string
+	}{
+		{"show without a name", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"show","arguments":{}}}`},
+		{"gate without a token", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"gate","arguments":{}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runServer(t, &fakeVerbs{}, []string{tc.request})
+			resp := decodeResponse(t, splitLines(out)[0])
+			if resp.Error == nil || resp.Error.Code != CodeInvalidParams {
+				t.Fatalf("error = %+v, want code %d", resp.Error, CodeInvalidParams)
+			}
+		})
 	}
 }
 

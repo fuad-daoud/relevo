@@ -26,16 +26,21 @@ An event for a binding you did not personally send still belongs to you --
 every binding on this MasterMind shares this one channel. Do not ignore an event
 because you do not recognize the binding name; run relevo status to catch up.
 
-Three verbs are tools here, callable directly instead of through the shell:
+Five verbs are tools here, callable directly instead of through the shell:
 
   - status(name?, all?): one binding, or every binding on this MasterMind, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
     runner a new round.
   - done(name): mark a binding done once its round is verified.
+  - show(name, round?, section?): read one round -- prompt (the default),
+    report, diff, drift, log, transcript, gate log, output or artifacts.
+  - gate(token, for?, reason?, clear?): record a provider rate limit, or clear
+    it with clear: true.
 
-Every other relevo verb -- bind, show, wait, gate, config, and the rest --
-is not a tool here; run it with Bash.
+Every other relevo verb -- bind, wait, config, and the rest -- is not a tool
+here; run it with Bash. relevo help --json lists every verb, its flags, its
+output document and its error codes.
 `
 
 // InstructionsTools is the model-facing prelude for tools mode: nothing is
@@ -74,21 +79,26 @@ belongs to you -- every binding on this MasterMind is yours. Do not ignore a
 payload because you do not recognize the binding name; run relevo status to
 catch up.
 
-Three verbs are tools here, callable directly instead of through the shell:
+Five verbs are tools here, callable directly instead of through the shell:
 
   - status(name?, all?): one binding, or every binding on this MasterMind, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
     runner a new round.
   - done(name): mark a binding done once its round is verified.
+  - show(name, round?, section?): read one round -- prompt (the default),
+    report, diff, drift, log, transcript, gate log, output or artifacts.
+  - gate(token, for?, reason?, clear?): record a provider rate limit, or clear
+    it with clear: true.
 
-Every other relevo verb -- bind, show, wait, gate, config, and the rest --
-is not a tool here; run it with Bash.
+Every other relevo verb -- bind, wait, config, and the rest -- is not a tool
+here; run it with Bash. relevo help --json lists every verb, its flags, its
+output document and its error codes.
 `
 
 // InstructionsOpencode is the model-facing prelude for an OpenCode MasterMind.
 // Outputs arrive as new turns pushed by relevo's opencode deliverer; there is
-// no wait to start, and the tools are the three verbs.
+// no wait to start, and the tools are the five verbs.
 const InstructionsOpencode = `relevo is running as your tools server. Outputs and needs-you payloads arrive
 as new turns in this session, pushed by relevo itself: after a send, end your
 turn and the output comes on its own. Do not start a wait.
@@ -103,16 +113,21 @@ belongs to you -- every binding on this MasterMind is yours. Do not ignore a
 turn because you do not recognize the binding name; call relevo_status to
 catch up.
 
-Three verbs are tools here, callable directly instead of through the shell:
+Five verbs are tools here, callable directly instead of through the shell:
 
   - status(name?, all?): one binding, or every binding on this MasterMind, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
     runner a new round.
   - done(name): mark a binding done once its round is verified.
+  - show(name, round?, section?): read one round -- prompt (the default),
+    report, diff, drift, log, transcript, gate log, output or artifacts.
+  - gate(token, for?, reason?, clear?): record a provider rate limit, or clear
+    it with clear: true.
 
-Every other relevo verb -- bind, show, wait, gate, config, and the rest --
-is not a tool here; run it with the shell.
+Every other relevo verb -- bind, wait, config, and the rest -- is not a tool
+here; run it with the shell. relevo help --json lists every verb, its flags,
+its output document and its error codes.
 `
 
 // InstructionsFor picks the kind's or mode's prelude and appends the shared

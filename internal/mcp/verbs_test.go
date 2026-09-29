@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -325,5 +327,195 @@ func TestRelevoVerbsStatusWithoutIdentityErrors(t *testing.T) {
 
 	if _, err := v.Status(context.Background(), "", StatusArgs{All: true}); err != nil {
 		t.Fatalf("Status --all must not need an identity, got %v", err)
+	}
+}
+
+// newShowVerbStore seeds a live binding "webshop" with two rounds: round 1
+// closed with a report, round 2 the open round (its prompt only). Round 1 is
+// therefore the newest completed round.
+func newShowVerbStore(t *testing.T) *store.Store {
+	t.Helper()
+	s := store.New(t.TempDir())
+	saveVerbBinding(t, s, store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateActive})
+
+	write := func(path, content string) {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(s.PromptPath("webshop", 1), "# Round 1 plan\n")
+	write(s.ReportPath("webshop", 1), "# Round 1 report\n")
+	write(s.PromptPath("webshop", 2), "# Round 2 plan\n")
+
+	for _, e := range []store.LogEntry{
+		{TS: time.Date(2026, 9, 29, 9, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{TS: time.Date(2026, 9, 29, 9, 1, 0, 0, time.UTC), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
+		{TS: time.Date(2026, 9, 29, 9, 2, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+	} {
+		if err := s.AppendLog("webshop", e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+	return s
+}
+
+// TestRelevoVerbsShowSectionAndRound covers show's three shapes: the prompt
+// default on the newest completed round, a named section and round, and an
+// open round's prompt named explicitly.
+func TestRelevoVerbsShowSectionAndRound(t *testing.T) {
+	s := newShowVerbStore(t)
+	v := &RelevoVerbs{RT: relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}}
+
+	res, err := v.Show(context.Background(), "", ShowArgs{Name: "webshop"})
+	if err != nil {
+		t.Fatalf("Show default: %v", err)
+	}
+	sr, ok := res.(relevo.ShowResult)
+	if !ok {
+		t.Fatalf("result = %#v, want relevo.ShowResult", res)
+	}
+	if sr.Round != 1 || sr.Section != relevo.ShowPrompt {
+		t.Errorf("default = round %d section %q, want round 1 prompt", sr.Round, sr.Section)
+	}
+	if sr.Text != "# Round 1 plan\n" {
+		t.Errorf("default text = %q, want round 1's plan", sr.Text)
+	}
+
+	res, err = v.Show(context.Background(), "", ShowArgs{Name: "webshop", Round: 1, Section: "report"})
+	if err != nil {
+		t.Fatalf("Show report: %v", err)
+	}
+	sr, ok = res.(relevo.ShowResult)
+	if !ok {
+		t.Fatalf("report result = %#v, want relevo.ShowResult", res)
+	}
+	if sr.Section != relevo.ShowReport || sr.Round != 1 || sr.Text != "# Round 1 report\n" {
+		t.Errorf("report = round %d section %q text %q, want round 1's report", sr.Round, sr.Section, sr.Text)
+	}
+
+	res, err = v.Show(context.Background(), "", ShowArgs{Name: "webshop", Round: 2, Section: "prompt"})
+	if err != nil {
+		t.Fatalf("Show round 2 prompt: %v", err)
+	}
+	sr, ok = res.(relevo.ShowResult)
+	if !ok {
+		t.Fatalf("round 2 result = %#v, want relevo.ShowResult", res)
+	}
+	if sr.Round != 2 || sr.Text != "# Round 2 plan\n" {
+		t.Errorf("round 2 = round %d text %q, want the open round's plan", sr.Round, sr.Text)
+	}
+
+	if _, err := v.Show(context.Background(), "", ShowArgs{Name: "webshop", Section: "bogus"}); err == nil {
+		t.Error("Show with an invalid section must error")
+	}
+}
+
+// assertGateSetDoc checks a set document: the provider, the candidate count,
+// the mode, the expiry `until` names and the absence of removed.
+func assertGateSetDoc(t *testing.T, doc gateDoc, provider string, candidates int, until time.Time) {
+	t.Helper()
+	if doc.Subject != provider || doc.Candidates != candidates || doc.Mode != "gated" {
+		t.Errorf("set doc = %+v, want subject %s, %d candidates, mode gated", doc, provider, candidates)
+	}
+	if want := until.Format(time.RFC3339); doc.Until != want {
+		t.Errorf("until = %q, want %q", doc.Until, want)
+	}
+	if doc.Removed != nil {
+		t.Errorf("a set document omits removed, got %d", *doc.Removed)
+	}
+}
+
+// TestRelevoVerbsGateSetAndClear drives both gate routes against a seeded
+// candidate set and a real gates database: the ledger entry a set writes, and
+// the removed count a clear reports and prints.
+func TestRelevoVerbsGateSetAndClear(t *testing.T) {
+	s := store.New(t.TempDir())
+	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]},
+		{"harness":"claude","provider":"test","model":"n","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
+	kv := testGateKV(t)
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	rt := relevo.Runtime{Store: s, Candidates: set, Gates: kv, Now: func() time.Time { return now }}
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
+
+	res, err := v.Gate(context.Background(), "", GateArgs{Token: "agy/test/m", For: "2h", Reason: "429 from the provider"})
+	if err != nil {
+		t.Fatalf("Gate set: %v", err)
+	}
+	doc, ok := res.(gateDoc)
+	if !ok {
+		t.Fatalf("result = %#v, want gateDoc", res)
+	}
+	assertGateSetDoc(t, doc, "test", 2, now.Add(2*time.Hour))
+
+	ledger, err := availability.LoadLedger(kv)
+	if err != nil {
+		t.Fatalf("LoadLedger: %v", err)
+	}
+	if len(ledger.Entries) != 1 {
+		t.Fatalf("ledger entries = %d, want 1: %+v", len(ledger.Entries), ledger.Entries)
+	}
+	e := ledger.Entries[0]
+	if e.Kind != availability.RateLimited || e.Subject != "test" {
+		t.Errorf("ledger entry = %+v, want a rate_limited gate on test", e)
+	}
+	if !e.Until.Equal(now.Add(2 * time.Hour)) {
+		t.Errorf("entry until = %v, want %v (for -> until)", e.Until, now.Add(2*time.Hour))
+	}
+	if e.Note != "429 from the provider" {
+		t.Errorf("entry note = %q, want the reason", e.Note)
+	}
+
+	res, err = v.Gate(context.Background(), "", GateArgs{Token: "test", Clear: true})
+	if err != nil {
+		t.Fatalf("Gate clear: %v", err)
+	}
+	cleared, ok := res.(gateDoc)
+	if !ok {
+		t.Fatalf("clear result = %#v, want gateDoc", res)
+	}
+	if cleared.Removed == nil || *cleared.Removed != 1 {
+		t.Fatalf("clear removed = %v, want 1", cleared.Removed)
+	}
+	if cleared.Subject != "test" || cleared.Until != "" || cleared.Candidates != 2 || cleared.Mode != "gated" {
+		t.Errorf("clear doc = %+v, want subject test, no until, 2 candidates, mode gated", cleared)
+	}
+	raw, err := json.Marshal(cleared)
+	if err != nil {
+		t.Fatalf("marshal clear doc: %v", err)
+	}
+	if !strings.Contains(string(raw), `"removed"`) {
+		t.Errorf("cleared JSON = %s, want a removed field", raw)
+	}
+
+	ledger, err = availability.LoadLedger(kv)
+	if err != nil {
+		t.Fatalf("LoadLedger after clear: %v", err)
+	}
+	if len(ledger.Entries) != 0 {
+		t.Errorf("ledger after clear = %+v, want empty", ledger.Entries)
+	}
+}
+
+// TestRelevoVerbsGateRejectsNonPositiveFor pins that a zero or negative
+// duration is refused before anything is written.
+func TestRelevoVerbsGateRejectsNonPositiveFor(t *testing.T) {
+	s := store.New(t.TempDir())
+	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
+	kv := testGateKV(t)
+	rt := relevo.Runtime{Store: s, Candidates: set, Gates: kv, Now: func() time.Time { return time.Unix(0, 0) }}
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
+
+	for _, forFlag := range []string{"0s", "-1h"} {
+		if _, err := v.Gate(context.Background(), "", GateArgs{Token: "agy/test/m", For: forFlag}); err == nil {
+			t.Errorf("Gate with for %q must error", forFlag)
+		}
+	}
+
+	ledger, err := availability.LoadLedger(kv)
+	if err != nil {
+		t.Fatalf("LoadLedger: %v", err)
+	}
+	if len(ledger.Entries) != 0 {
+		t.Errorf("a refused for must write nothing, got %+v", ledger.Entries)
 	}
 }

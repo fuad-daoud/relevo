@@ -322,7 +322,7 @@ async function registerTools(api: any): Promise<void> {
       editor.set("relevo", {
         type: "local",
         command: ["relevo", "mcp", "--kind", "opencode"],
-        // Three tools read better than a Code Mode group.
+        // Five tools read better than a Code Mode group.
         codemode: false,
       });
     });

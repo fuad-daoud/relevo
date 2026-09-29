@@ -1,0 +1,12 @@
+{
+  "Name": "webshop",
+  "Round": 1,
+  "Rounds": 2,
+  "Live": true,
+  "Archived": false,
+  "ArchivedAt": "0001-01-01T00:00:00Z",
+  "Section": "prompt",
+  "Text": "# Round 1 plan\n",
+  "Missing": false,
+  "Events": null
+}

@@ -14,18 +14,20 @@ import (
 // --json would, or an error the caller turns into an isError result. session is
 // the calling harness session from the call's _meta, opencode's namespaced
 // ai.opencode/sessionID, "" when the harness sends none; only Status resolves
-// it, and send/done address a binding by name.
+// it, and send, done, show and gate address a binding by name.
 type Verbs interface {
 	Status(ctx context.Context, session string, a StatusArgs) (any, error)
 	Send(ctx context.Context, session string, a SendArgs) (any, error)
 	Done(ctx context.Context, session string, a DoneArgs) (any, error)
+	Show(ctx context.Context, session string, a ShowArgs) (any, error)
+	Gate(ctx context.Context, session string, a GateArgs) (any, error)
 }
 
 // RelevoVerbs adapts internal/relevo's functions to Verbs. MasterMind is the
 // fallback identity for a harness that carries none per call (Claude Code);
 // ResolveSession, when set, maps a call's harness session to a MasterMind id
 // (opencode sends its session in _meta under ai.opencode/sessionID). Only
-// Status consults either: send and done address a binding by name.
+// Status consults either: send, done, show and gate address a binding by name.
 type RelevoVerbs struct {
 	RT             relevo.Runtime
 	MasterMind     string
@@ -163,4 +165,14 @@ func (v *RelevoVerbs) Done(ctx context.Context, _ string, a DoneArgs) (any, erro
 		return nil, err
 	}
 	return doneResult{DoneResult: res, Text: relevo.DoneText(a.Name, res)}, nil
+}
+
+// Show calls relevo.Show for one round: an empty section reads the prompt, and
+// round 0 the newest completed round.
+func (v *RelevoVerbs) Show(ctx context.Context, _ string, a ShowArgs) (any, error) {
+	section := relevo.ShowSection(a.Section)
+	if section == "" {
+		section = relevo.ShowPrompt
+	}
+	return relevo.Show(ctx, v.RT, relevo.ShowOptions{Name: a.Name, Round: a.Round, Section: section})
 }

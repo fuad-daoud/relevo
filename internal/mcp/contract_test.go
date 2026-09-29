@@ -9,6 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // update rewrites every testdata/contract/*.golden file this test binary touches.
@@ -114,6 +118,62 @@ func TestContractToolResults(t *testing.T) {
 			&fakeVerbs{doneFn: func(context.Context, string, DoneArgs) (any, error) {
 				return map[string]any{"branch": "feature/webshop", "worktree_removed": "/tmp/webshop"}, nil
 			}},
+		},
+	}
+
+	for _, c := range cases {
+		out := runServer(t, c.verbs, []string{c.request})
+		lines := splitLines(out)
+		if len(lines) != 1 {
+			t.Fatalf("%s: responses = %d, want 1: %s", c.golden, len(lines), out)
+		}
+		resp := decodeResponse(t, lines[0])
+		raw, err := json.Marshal(resp.Result)
+		if err != nil {
+			t.Fatalf("%s: marshal tool result: %v", c.golden, err)
+		}
+		var result ToolResult
+		if err := json.Unmarshal(raw, &result); err != nil {
+			t.Fatalf("%s: decode tool result: %v", c.golden, err)
+		}
+		if len(result.Content) == 0 {
+			t.Fatalf("%s: tool result has no content", c.golden)
+		}
+		assertGolden(t, c.golden, []byte(result.Content[0].Text))
+	}
+}
+
+// TestContractShowAndGateToolResults pins the two new tools' result text over
+// real RelevoVerbs: a seeded store, candidate set and gates database are the
+// only inputs -- no harness, no network.
+func TestContractShowAndGateToolResults(t *testing.T) {
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+
+	showVerbs := &RelevoVerbs{RT: relevo.Runtime{Store: newShowVerbStore(t), Now: func() time.Time { return now }}}
+	gateVerbs := &RelevoVerbs{
+		RT: relevo.Runtime{
+			Store:      store.New(t.TempDir()),
+			Candidates: writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`),
+			Gates:      testGateKV(t),
+			Now:        func() time.Time { return now },
+		},
+		MasterMind: mcpTestMasterMindA,
+	}
+
+	cases := []struct {
+		golden  string
+		request string
+		verbs   *RelevoVerbs
+	}{
+		{
+			"tool-show",
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"show","arguments":{"name":"webshop"}}}`,
+			showVerbs,
+		},
+		{
+			"tool-gate",
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"gate","arguments":{"token":"agy/test/m","for":"2h","reason":"429 from the provider"}}}`,
+			gateVerbs,
 		},
 	}
 
