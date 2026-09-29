@@ -74,12 +74,21 @@ func read(path string) (Installation, error) {
 	return inst, nil
 }
 
-// mint creates the installation file at path. O_EXCL is what makes a racing
-// first open keep one winner: the loser re-reads the winner's file instead of
-// overwriting it with a second id.
+// mint creates the installation file at path. The id is written to a fresh
+// temp file in the same directory, synced and closed, then linked into place:
+// os.Link leaves the winner untouched, so a racing loader sees either no file
+// or the winner's whole file -- never the zero-length or partial file an
+// O_EXCL create-then-write leaves readable -- and every loser re-reads the
+// winner's id instead of overwriting it with a second one. os.Rename would be
+// wrong: it clobbers the winner, and each caller would return its own id. Sync
+// is what makes "whole file" true after a crash, not just under scheduling.
+// The temp file is removed by one deferred cleanup on every path; a crash
+// between the write and the link may leave one stray installation.json.tmp-*,
+// which read ignores. There is no history and no sweeper.
 func mint(path string) (Installation, error) {
-	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
-		return Installation{}, fmt.Errorf("installation: create %s: %w", filepath.Dir(path), err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, dirMode); err != nil {
+		return Installation{}, fmt.Errorf("installation: create %s: %w", dir, err)
 	}
 
 	inst := Installation{ID: db.NewID(), Label: hostname(), CreatedAt: time.Now().UTC()}
@@ -88,19 +97,32 @@ func mint(path string) (Installation, error) {
 		return Installation{}, fmt.Errorf("installation: encode %s: %w", path, err)
 	}
 
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
+	// os.CreateTemp opens 0600, the same mode the final file needs.
+	f, err := os.CreateTemp(dir, FileName+".tmp-*")
 	if err != nil {
+		return Installation{}, fmt.Errorf("installation: create temp in %s: %w", dir, err)
+	}
+	tmp := f.Name()
+	defer func() {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+	}()
+
+	if _, err := f.Write(raw); err != nil {
+		return Installation{}, fmt.Errorf("installation: write %s: %w", tmp, err)
+	}
+	if err := f.Sync(); err != nil {
+		return Installation{}, fmt.Errorf("installation: sync %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		return Installation{}, fmt.Errorf("installation: write %s: %w", tmp, err)
+	}
+
+	if err := os.Link(tmp, path); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return read(path)
 		}
-		return Installation{}, fmt.Errorf("installation: create %s: %w", path, err)
-	}
-	if _, err := f.Write(raw); err != nil {
-		_ = f.Close()
-		return Installation{}, fmt.Errorf("installation: write %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		return Installation{}, fmt.Errorf("installation: write %s: %w", path, err)
+		return Installation{}, fmt.Errorf("installation: link %s: %w", path, err)
 	}
 	return inst, nil
 }

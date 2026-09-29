@@ -54,32 +54,82 @@ func cmdDaemon(args []string) error {
 		return err
 	}
 
-	var (
-		rt  relevo.Runtime
-		err error
-	)
+	// --preflight and --check are the read-only peek. §4.6: neither writes;
+	// each reads config files and a database read-only and opens nothing that
+	// migrates. They return here, before the daemon path resolves a root,
+	// takes the lock or opens the database.
 	if *preflight || *check {
-		// §4.6: --preflight and --check never write. They read config files
-		// and a database read-only, and open nothing that migrates.
-		rt, err = newRuntimePeek()
-	} else {
-		rt, err = newRuntime()
-	}
-	if err != nil {
+		rt, err := newRuntimePeek()
+		if err != nil {
+			if *preflight {
+				// §4.4: the error on stderr, exit 1. Returning rather than
+				// os.Exit keeps the path a plain function call a test can make.
+				fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
+				return exitCodeErr{code: 1}
+			}
+			return err
+		}
 		if *preflight {
-			// §4.4: the error on stderr, exit 1. Returning rather than
-			// os.Exit keeps the path a plain function call a test can make.
-			fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
+			// newRuntimePeek read and validated config only: it took no lock,
+			// opened no DB (which would migrate), started no process and made
+			// no network call, and this returns before the DB open below.
+			fmt.Printf("ok %s\n", buildVersion())
+			return nil
+		}
+
+		// --check is the plugin startup hook's probe. It prints nothing on
+		// either path: the exit status is the whole answer, and a hook that
+		// printed would only fill a log with noise on every server start.
+		// Returning exitCodeErr rather than calling os.Exit keeps the
+		// no-db-yet ordering a test can call (#372 §4.5): main maps the code
+		// to the same exit status.
+		running, err := rt.Store.DaemonRunning()
+		if err != nil {
+			return err
+		}
+		if !running {
 			return exitCodeErr{code: 1}
 		}
+		return nil
+	}
+
+	// The daemon path: the read-only config load runs first, exactly as
+	// --preflight's does, so a malformed config fails before the lock and the
+	// root stays read-only until then. The loaded value is discarded --
+	// newRuntime reloads config from the database it imports into.
+	root, err := store.DefaultRoot()
+	if err != nil {
 		return err
 	}
-	if *preflight {
-		// newRuntime read and validated config only: it took no lock,
-		// opened no DB (which would migrate), started no process and made no
-		// network call, and this returns before the DB open below.
-		fmt.Printf("ok %s\n", buildVersion())
-		return nil
+	configDir, err := userConfigRoot()
+	if err != nil {
+		return err
+	}
+	configDirPath := filepath.Join(configDir, "relevo")
+	if _, err := loadConfigReadOnly(root, configDirPath); err != nil {
+		return err
+	}
+
+	// The lock is the first effect of a daemon start: a daemon that loses it
+	// exits "already running" before it opens, migrates or mints anything, so
+	// a losing start leaves no relevo.db, -wal, -shm or installation.json.
+	// `relevo serve`'s state root is its own and stays out of scope.
+	lock, err := store.New(root).AcquireDaemonLock()
+	if err != nil {
+		return err
+	}
+	// DaemonLock.Close is already idempotent (it nils its file), so the
+	// explicit close on the re-exec path and this defer cannot double-close
+	// into an error that matters.
+	defer lock.Close()
+
+	// newRuntime is the one constructor, called under the lock: it mints a
+	// whole installation.json, opens and migrates relevo.db, imports config
+	// and builds the runtime with gates. Nothing before this point touches
+	// the database.
+	rt, err := newRuntime()
+	if err != nil {
+		return err
 	}
 
 	// Nowhere else: a CLI one-shot (any other command) must not relaunch a
@@ -121,15 +171,6 @@ func cmdDaemon(args []string) error {
 		slog.Warn("re-exec disabled", "err", reason)
 	}
 
-	// The database is opened only after --check has returned and after
-	// AcquireDaemonLock (#372 §4.5): the plugin's --check probe must not
-	// create or migrate the db, and only the lock holder writes it.
-	// `relevo serve`'s state root is its own and stays out of scope.
-	configDir, err := userConfigRoot()
-	if err != nil {
-		return err
-	}
-	configDirPath := filepath.Join(configDir, "relevo")
 	// rt.Config is nil on the --check / --preflight peek path, which never
 	// refreshes. A daemon that opened a real store hands the watcher a
 	// labelled copy, so the import it runs is recorded as source "import".
@@ -139,35 +180,10 @@ func cmdDaemon(args []string) error {
 	}
 	watcher := relevo.NewConfigWatcher(configSource, configDirPath, os.Getenv)
 
-	// --check is the plugin startup hook's probe. It prints nothing on either
-	// path: the exit status is the whole answer, and a hook that printed would
-	// only fill a log with noise on every server start. Returning exitCodeErr
-	// rather than calling os.Exit keeps the no-db-yet ordering a test can call
-	// (#372 §4.5): main maps the code to the same exit status.
-	if *check {
-		running, err := rt.Store.DaemonRunning()
-		if err != nil {
-			return err
-		}
-		if !running {
-			return exitCodeErr{code: 1}
-		}
-		return nil
-	}
-
-	lock, err := rt.Store.AcquireDaemonLock()
-	if err != nil {
-		return err
-	}
-	// DaemonLock.Close is already idempotent (it nils its file), so the
-	// explicit close on the re-exec path and this defer cannot double-close
-	// into an error that matters.
-	defer lock.Close()
-
-	// The database is opened only here (and by `relevo db *`): the daemon is
-	// the process that writes it every tick. An open failure never blocks the
-	// daemon from starting -- every ingest call site treats DB == nil like a
-	// machine with no database.
+	// The database is opened only here, under the lock (and by `relevo db *`):
+	// the daemon is the process that writes it every tick. An open failure
+	// never blocks the daemon from starting -- every ingest call site treats
+	// DB == nil like a machine with no database.
 	//
 	// Closing is explicit rather than a bare defer: the re-exec path closes
 	// the DB itself before syscall.Exec, and the deferred pass must then do

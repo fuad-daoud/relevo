@@ -3,6 +3,7 @@ package installation
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -59,5 +60,62 @@ func TestLoadTwoRootsGetDifferentIDs(t *testing.T) {
 	}
 	if a.ID == b.ID {
 		t.Errorf("two roots share the id %q", a.ID)
+	}
+}
+
+// TestConcurrentLoadsNeverSeeAPartialFile pins the mint's whole-file
+// visibility: many Loads raced on a fresh root see either no file or the whole
+// file, never the zero-length or partial one a create-then-write leaves
+// readable, and they all agree on one id. Without the atomic mint a loader
+// that creates the final path before writing lets a peer decode a partial file
+// and fail.
+func TestConcurrentLoadsNeverSeeAPartialFile(t *testing.T) {
+	const (
+		loaders = 32
+		rounds  = 50
+	)
+
+	for round := 0; round < rounds; round++ {
+		root := t.TempDir()
+
+		start := make(chan struct{})
+		ids := make([]string, loaders)
+		errs := make([]error, loaders)
+		var wg sync.WaitGroup
+		for i := 0; i < loaders; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				inst, err := Load(root)
+				ids[i] = inst.ID
+				errs[i] = err
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: loader %d: Load: %v", round, i, err)
+			}
+		}
+		for i, id := range ids {
+			if id != ids[0] {
+				t.Fatalf("round %d: loader %d id = %q, want %q (one id per root)", round, i, id, ids[0])
+			}
+		}
+
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatalf("round %d: read root: %v", round, err)
+		}
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		if len(names) != 1 || names[0] != FileName {
+			t.Fatalf("round %d: root holds %v, want exactly [%s] (one file, no .tmp-* residue)", round, names, FileName)
+		}
 	}
 }
