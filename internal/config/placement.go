@@ -5,19 +5,22 @@ import (
 	"sort"
 )
 
-// checkActorPlacement cross-checks every actor's placement against the servers
+// checkActorPlacement cross-checks every role's placement against the servers
 // section: each entry is the local sentinel or the name of a configured server.
-// It runs inside decodeDoc after loadServers and loadActors, so the read path
-// and a writer's prospective check refuse the same documents.
+// It reads the built registry rather than the actors section directly, so it
+// covers the actors path and a placement a legacy roles row carried alike, and
+// it runs inside decodeDoc once the registry exists, so the read path and a
+// writer's prospective check refuse the same documents.
 func checkActorPlacement(L *Loaded) error {
-	names := make([]string, 0, len(L.Actors))
-	for name := range L.Actors {
-		names = append(names, name)
-	}
+	names := L.Registry.Names()
 	sort.Strings(names)
 
 	for _, name := range names {
-		for i, entry := range L.Actors[name].Placement {
+		role, ok := L.Registry.Role(name)
+		if !ok {
+			continue
+		}
+		for i, entry := range role.Placement {
 			if entry == "local" {
 				continue
 			}

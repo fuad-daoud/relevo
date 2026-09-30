@@ -215,3 +215,27 @@ func TestToRolesFileOffPinsTheCandidateList(t *testing.T) {
 
 // actorBoolPtr returns a pointer to b, for an Actor's optional check.
 func actorBoolPtr(b bool) *bool { return &b }
+
+// TestToRolesFileCarriesPlacement pins the actors path: the conversion copies
+// an actor's placement into its row, so the registry the config build makes
+// carries it, and an actor that names none leaves the key absent.
+func TestToRolesFileCarriesPlacement(t *testing.T) {
+	agents := map[string]AgentEntry{
+		"my-exec": {Shape: "writer", Native: map[string]DefRow{"claude": {Agent: "my-exec"}}},
+	}
+	actors := map[string]Actor{
+		"helper": {Agent: "my-exec", Candidates: []Entry{{Candidate: "claude/test/a"}}, Placement: []string{"zen", "local"}},
+		"plain":  {Agent: "my-exec", Candidates: []Entry{{Candidate: "claude/test/a"}}},
+	}
+
+	f, _, err := FromActors(agents, actors)
+	if err != nil {
+		t.Fatalf("FromActors: %v", err)
+	}
+	if want := []string{"zen", "local"}; !reflect.DeepEqual(f.Rows["helper"].Placement, want) {
+		t.Errorf("helper.placement = %v, want %v", f.Rows["helper"].Placement, want)
+	}
+	if got := f.Rows["plain"].Placement; got != nil {
+		t.Errorf("plain.placement = %v, want nil", got)
+	}
+}

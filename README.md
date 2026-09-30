@@ -256,7 +256,7 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
 
 ## Command surface
 
-- `relevo bind [--name N] [--candidate CANDIDATE] [--actor R] [--tier T [--allow-yolo]] [--gate CMD|--no-gate] [--regate N] [--resume [--rebind]] [--timeout D] --feature L|--no-feature [--ticket REF] [--mastermind P]`
+- `relevo bind [--name N] [--candidate CANDIDATE] [--actor R] [--tier T [--allow-yolo]] [--gate CMD|--no-gate] [--regate N] [--resume [--rebind]] [--local] [--timeout D] --feature L|--no-feature [--ticket REF] [--mastermind P]`
   — start a binding between the calling MasterMind and a builder. A fresh bind
   must name exactly one of `--feature <label>` (a label grouping it with other
   bindings) and `--no-feature` (it serves no feature); naming neither or both is
@@ -1433,7 +1433,8 @@ Actor entries:
 - `tier` -- the actor's permission tier.
 - `placement` -- where the actor's rounds run, most preferred first: `local`
   names this machine, and every other entry must name a `servers` section entry,
-  checked when the config loads. Absent or empty means `["local"]`.
+  checked when the config loads. Absent or empty means `["local"]`. `bind`
+  probes the list in order and `--server`/`--local` override it.
 - `check` -- writers only: whether a round closes on a gate; defaults to true.
   An actor whose agent is a reader must not set it.
 

@@ -55,6 +55,8 @@ type fakeRemote struct {
 
 	whoAmIResp          remote.WhoAmI
 	whoAmIErr           error
+	actorResp           map[string]remote.ActorView
+	actorErr            map[string]error
 	candidatesResp      remote.CandidatesResponse
 	candidatesErr       error
 	createBindingResp   remote.BindingView
@@ -112,6 +114,21 @@ func (f *fakeRemote) WhoAmI(ctx context.Context, server string) (remote.WhoAmI, 
 func (f *fakeRemote) Candidates(ctx context.Context, server string) (remote.CandidatesResponse, error) {
 	f.calls = append(f.calls, "Candidates:"+server)
 	return f.candidatesResp, f.candidatesErr
+}
+
+// Actor answers from the per-server canned view, and defaults to accepted:
+// a server a test configured is a server that serves the actor unless the
+// case says otherwise. The same server-keyed error map lets a case make one
+// placement unreachable while another answers.
+func (f *fakeRemote) Actor(ctx context.Context, server, actor, candidate string) (remote.ActorView, error) {
+	f.calls = append(f.calls, "Actor:"+server+":"+actor+":"+candidate)
+	if err, ok := f.actorErr[server]; ok {
+		return remote.ActorView{}, err
+	}
+	if view, ok := f.actorResp[server]; ok {
+		return view, nil
+	}
+	return remote.ActorView{Actor: actor, Accepted: true}, nil
 }
 
 func (f *fakeRemote) CreateBinding(ctx context.Context, server string, req remote.CreateBindingRequest) (remote.BindingView, error) {
@@ -607,7 +624,8 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	// #100 step 6: the server picked the candidate (opts.Candidate == ""),
 	// so the pick entry must say so rather than ExplainResolution's
 	// "explicit, policy bypassed", which would misdescribe a token nobody
-	// on this side named.
+	// on this side named. The placement clause names the explicit server,
+	// which --server always records as a placement of one.
 	entries, err := st.ReadLog("api")
 	if err != nil {
 		t.Fatal(err)
@@ -618,8 +636,8 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 			pickNote = e.Note
 		}
 	}
-	if pickNote != "picked claude/anthropic/haiku on zen: server's pick" {
-		t.Fatalf("pick note = %q, want it to name the server's own pick", pickNote)
+	if pickNote != "picked claude/anthropic/haiku on zen: server's pick; placement zen (explicit)" {
+		t.Fatalf("pick note = %q, want it to name the server's own pick and the explicit placement", pickNote)
 	}
 }
 
