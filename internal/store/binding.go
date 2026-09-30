@@ -279,6 +279,12 @@ type Binding struct {
 	RemoteUnreachableSince time.Time `json:"remote_unreachable_since,omitempty"`
 	RemoteAbsorbFailures   int       `json:"remote_absorb_failures,omitempty"`
 
+	// RemoteBundleFailures counts the consecutive round-bundle fetches that
+	// failed. The apply half owns it -- the fetch half runs without the state
+	// lock and cannot write binding state -- and it stays separate from the
+	// absorb counter so a halt names the stage that actually failed.
+	RemoteBundleFailures int `json:"remote_bundle_failures,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

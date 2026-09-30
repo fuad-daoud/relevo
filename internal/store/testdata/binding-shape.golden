@@ -184,6 +184,7 @@ progress.tree_at
 queued_at
 regate
 remote_absorb_failures
+remote_bundle_failures
 remote_unreachable_since
 repair_count
 repo
