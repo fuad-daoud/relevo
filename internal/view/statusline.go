@@ -17,11 +17,6 @@ import (
 // COLUMNS: measured at 141 of 146 rendered before its own ellipsis.
 const claudeCodeMargin = 4
 
-// PendingNeedsYouAfter is how long an undelivered report/question may wait on a
-// route relevo can push before it counts as NEEDS YOU: a push in flight
-// must not flash NEEDS YOU, but one that has waited this long is stalled.
-const PendingNeedsYouAfter = 60 * time.Second
-
 var (
 	ansiDim      = "\x1b[38;5;245m"
 	ansiNeedsYou = "\x1b[1;38;5;214m"
@@ -421,11 +416,12 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		(b.LastPayload.Kind == store.KindReport || b.LastPayload.Kind == store.KindQuestion)
 
 	// A payload still waiting on the mastermind is only a fault when relevo
-	// cannot push it (pull, or no live route) or it has waited longer than
-	// PendingNeedsYouAfter; a push in flight must not flash NEEDS YOU.
+	// cannot push it: a pull route, or a route that is not live right now. A
+	// live push route stays non-alarming however long the session takes to
+	// pick the payload up -- the elapsed time says nothing about whether a
+	// human must act.
 	pending := b.Pending != nil
-	stalled := pending && (b.MasterMindRoute == "pull" || !b.MasterMindRouteLive ||
-		(b.LastPayload != nil && now.Sub(b.LastPayload.TS) > PendingNeedsYouAfter))
+	stalled := pending && (b.MasterMindRoute == "pull" || !b.MasterMindRouteLive)
 
 	needsYou := b.Display == "NEEDS YOU" || stalled
 	reportRound := 0

@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -41,34 +40,8 @@ type OpencodeDeliverer struct {
 	Alive         func(pid int) bool // nil -> the same rule the claim store uses
 	FallbackAfter time.Duration      // zero -> DefaultFallbackAfter
 
-	postedMu sync.Mutex
-	posted   map[opencodeKey]time.Time
 	// gaveUp rate-limits the give-up log line.
 	gaveUp giveUpLog
-}
-
-type opencodeKey struct {
-	sessionID string
-	origin    string
-}
-
-func (d *OpencodeDeliverer) hasPosted(sessionID, origin string) bool {
-	d.postedMu.Lock()
-	defer d.postedMu.Unlock()
-	if d.posted == nil {
-		return false
-	}
-	_, ok := d.posted[opencodeKey{sessionID: sessionID, origin: origin}]
-	return ok
-}
-
-func (d *OpencodeDeliverer) recordPosted(sessionID, origin string, t time.Time) {
-	d.postedMu.Lock()
-	defer d.postedMu.Unlock()
-	if d.posted == nil {
-		d.posted = make(map[opencodeKey]time.Time)
-	}
-	d.posted[opencodeKey{sessionID: sessionID, origin: origin}] = t
 }
 
 // opencodeService is $XDG_CONFIG_HOME/opencode/service.json. Verified shape
@@ -114,14 +87,21 @@ func (d *OpencodeDeliverer) fallbackAfter() time.Duration {
 	return DefaultFallbackAfter
 }
 
-// Deliver implements MasterMindDeliverer for opencode masterminds.
+// Deliver implements MasterMindDeliverer's push half for opencode
+// masterminds.
 //
 // The step order is fixed and non-obvious: guards, origin, seen, pastFallback,
-// service resolution, hasPosted, POST, confirm. The read-back runs before the
-// give-up gate, so a payload whose text is already in the session is confirmed
-// at any age -- a late-admitted payload must not be failed by the fallback
-// before it is ever read. The gate stays above the service checks, so a dead
-// service past the window still gives up.
+// service resolution, POST. The read-back runs before the give-up gate, so a
+// payload whose text is already in the session is confirmed at any age -- a
+// late-admitted payload must not be failed by the fallback before it is ever
+// read. The gate stays above the service checks, so a dead service past the
+// window still gives up.
+//
+// A 2xx is admission, not delivery: Deliver returns OutcomeAdmitted without
+// reading the session back, and the caller records that admit before calling
+// Confirm. An in-memory "already posted" map used to stand in for this; the
+// entry's own AdmittedAt is the fact now, so a restarted daemon and a second
+// process agree on it.
 func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, payload, path string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "opencode" {
 		return OutcomeNotMine, "", nil
@@ -169,10 +149,6 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoi
 		return OutcomeUnavailable, "opencode service url is not loopback", nil
 	}
 
-	if d.hasPosted(mastermind.SessionID, origin) {
-		return OutcomeUnavailable, "posted but not seen in the session", nil
-	}
-
 	req, err := d.buildRequest(ctx, svc, mastermind.SessionID, payload)
 	if err != nil {
 		return OutcomeNotMine, "", fmt.Errorf("build opencode request: %w", err)
@@ -188,12 +164,25 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoi
 		return OutcomeUnavailable, fmt.Sprintf("post: %d", resp.StatusCode), nil
 	}
 
-	d.recordPosted(mastermind.SessionID, origin, d.now())
+	// The 2xx only proves the service queued the prompt: the caller marks
+	// the entry admitted and reads the session back through Confirm.
+	return OutcomeAdmitted, "posted; awaiting the session", nil
+}
 
-	// 200 means admitted, not delivered: confirm by reading the
-	// session back, polling briefly since the owning process's event bus
-	// takes a moment to record the turn.
-	return d.confirm(ctx, mastermind.SessionID, origin)
+// Confirm implements MasterMindDeliverer's read-back half for opencode
+// masterminds: it polls the session for the payload's origin and never POSTs,
+// so a payload admitted by an earlier tick is confirmed rather than sent twice.
+func (d *OpencodeDeliverer) Confirm(ctx context.Context, mastermind store.Endpoint, payload string, _ time.Time) (Outcome, string, error) {
+	if mastermind.Kind != "opencode" {
+		return OutcomeNotMine, "", nil
+	}
+	if d.Exec == nil {
+		return OutcomeNotMine, "no sqlite3", nil
+	}
+	if !validSessionID(mastermind.SessionID) {
+		return OutcomeNotMine, "no opencode session id", nil
+	}
+	return d.confirm(ctx, mastermind.SessionID, firstPayloadLine(payload))
 }
 
 // pastFallback reports whether the payload has waited past the fallback
@@ -211,7 +200,9 @@ func (d *OpencodeDeliverer) pastFallback(sessionID, payload string, queuedAt tim
 }
 
 // confirm polls the session until the origin is seen in it, the confirm
-// window closes, or the context ends.
+// window closes, or the context ends. A window that closes without the origin
+// is not a failed delivery: the payload is already admitted, so it reports
+// OutcomeAdmitted and the caller keeps the admit for a later read-back.
 func (d *OpencodeDeliverer) confirm(ctx context.Context, sessionID, origin string) (Outcome, string, error) {
 	deadline := time.Now().Add(OpencodeConfirmWindow)
 	for {
@@ -224,11 +215,11 @@ func (d *OpencodeDeliverer) confirm(ctx context.Context, sessionID, origin strin
 			return OutcomeDelivered, "", nil
 		}
 		if !time.Now().Before(deadline) {
-			return OutcomeUnavailable, "posted but not seen in the session", nil
+			return OutcomeAdmitted, "posted; awaiting the session", nil
 		}
 		select {
 		case <-ctx.Done():
-			return OutcomeUnavailable, "posted but not seen in the session", nil
+			return OutcomeAdmitted, "posted; awaiting the session", nil
 		case <-time.After(OpencodeConfirmPoll):
 		}
 	}

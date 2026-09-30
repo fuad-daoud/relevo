@@ -103,8 +103,8 @@ func TestOpencodeDeliverHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	if out != OutcomeDelivered {
-		t.Fatalf("out = %v, reason = %q, want OutcomeDelivered", out, reason)
+	if out != OutcomeAdmitted {
+		t.Fatalf("out = %v, reason = %q, want OutcomeAdmitted", out, reason)
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)
@@ -119,13 +119,30 @@ func TestOpencodeDeliverHappyPath(t *testing.T) {
 	if gotAuth != wantAuth {
 		t.Errorf("Authorization = %q, want %q", gotAuth, wantAuth)
 	}
+	assertOpencodePromptBody(t, gotBody, payload)
 
+	// The read-back, not the 2xx, is what confirms the payload.
+	out, reason, err = d.Confirm(context.Background(), opencodeMasterMind("ses_abc123"), payload, time.Time{})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if out != OutcomeDelivered {
+		t.Fatalf("Confirm = %v, reason = %q, want OutcomeDelivered", out, reason)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1: the read-back must not POST", requests)
+	}
+}
+
+// assertOpencodePromptBody checks the JSON body one POST carried.
+func assertOpencodePromptBody(t *testing.T, raw []byte, payload string) {
+	t.Helper()
 	var body struct {
 		Text     string `json:"text"`
 		Delivery string `json:"delivery"`
 		Resume   bool   `json:"resume"`
 	}
-	if err := json.Unmarshal(gotBody, &body); err != nil {
+	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("unmarshal request body: %v", err)
 	}
 	if body.Text != payload {
@@ -141,7 +158,8 @@ func TestOpencodeDeliverHappyPath(t *testing.T) {
 
 // TestOpencodeDeliverSilentTwoHundred is the test the design exists for
 // a 2xx from the wrong server process must never be treated as
-// delivery. The fake Exec always answers 0, so the origin is never seen.
+// delivery. The fake Exec always answers 0, so the origin is never seen: the
+// POST is admission only, and only the read-back may ever confirm it.
 func TestOpencodeDeliverSilentTwoHundred(t *testing.T) {
 	t.Parallel()
 
@@ -167,10 +185,10 @@ func TestOpencodeDeliverSilentTwoHundred(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	if out != OutcomeUnavailable {
-		t.Fatalf("out = %v, reason = %q, want OutcomeUnavailable", out, reason)
+	if out != OutcomeAdmitted {
+		t.Fatalf("out = %v, reason = %q, want OutcomeAdmitted", out, reason)
 	}
-	if reason != "posted but not seen in the session" {
+	if reason != "posted; awaiting the session" {
 		t.Errorf("reason = %q", reason)
 	}
 	if requests != 1 {
@@ -242,6 +260,47 @@ func TestOpencodeDeliverNotMineCases(t *testing.T) {
 			out, reason, err := d.Deliver(context.Background(), tc.mastermind, "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
 			if err != nil {
 				t.Fatalf("Deliver: %v", err)
+			}
+			if out != OutcomeNotMine {
+				t.Fatalf("out = %v, want OutcomeNotMine", out)
+			}
+			if reason != tc.reason {
+				t.Errorf("reason = %q, want %q", reason, tc.reason)
+			}
+		})
+	}
+}
+
+// TestOpencodeConfirmRefusesWhatItCannotRead pins Confirm's guards: the
+// read-back half answers "not mine" for exactly what Deliver answers it for.
+func TestOpencodeConfirmRefusesWhatItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, "http://127.0.0.1:1", "pw", 1)
+
+	cases := []struct {
+		name       string
+		mastermind store.Endpoint
+		noExec     bool
+		reason     string
+	}{
+		{name: "claude mastermind", mastermind: store.Endpoint{Kind: "claude", SessionID: "ses_abc123"}, reason: ""},
+		{name: "empty session id", mastermind: store.Endpoint{Kind: "opencode", SessionID: ""}, reason: "no opencode session id"},
+		{name: "malformed session id", mastermind: store.Endpoint{Kind: "opencode", SessionID: "ses_bad!id"}, reason: "no opencode session id"},
+		{name: "nil Exec", mastermind: store.Endpoint{Kind: "opencode", SessionID: "ses_abc123"}, noExec: true, reason: "no sqlite3"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &OpencodeDeliverer{StateFiles: []string{stateFile}, Alive: aliveAlways}
+			if !tc.noExec {
+				d.Exec = &fakeSqliteExec{}
+			}
+
+			out, reason, err := d.Confirm(context.Background(), tc.mastermind, "relevo: round 1\n\nbody", time.Time{})
+			if err != nil {
+				t.Fatalf("Confirm: %v", err)
 			}
 			if out != OutcomeNotMine {
 				t.Fatalf("out = %v, want OutcomeNotMine", out)
@@ -548,8 +607,8 @@ func TestOpencodeDeliverStateFilesPreference(t *testing.T) {
 			Alive:      aliveAlways,
 		}
 		out, reason := opencodeDeliverOnce(t, d)
-		if out != OutcomeDelivered {
-			t.Fatalf("out = %v, reason = %q, want OutcomeDelivered", out, reason)
+		if out != OutcomeAdmitted {
+			t.Fatalf("out = %v, reason = %q, want OutcomeAdmitted", out, reason)
 		}
 		if f.stateRequests != 1 || f.configRequests != 0 {
 			t.Errorf("stateRequests = %d, configRequests = %d; want 1 and 0", f.stateRequests, f.configRequests)
@@ -565,8 +624,8 @@ func TestOpencodeDeliverStateFilesPreference(t *testing.T) {
 			Alive:      aliveAlways,
 		}
 		out, reason := opencodeDeliverOnce(t, d)
-		if out != OutcomeDelivered {
-			t.Fatalf("out = %v, reason = %q, want OutcomeDelivered", out, reason)
+		if out != OutcomeAdmitted {
+			t.Fatalf("out = %v, reason = %q, want OutcomeAdmitted", out, reason)
 		}
 		if f.stateRequests != 0 || f.configRequests != 1 {
 			t.Errorf("stateRequests = %d, configRequests = %d; want 0 and 1", f.stateRequests, f.configRequests)
@@ -678,6 +737,18 @@ func opencodeDeliverWant(t *testing.T, d *OpencodeDeliverer, payload, ref string
 	}
 }
 
+// opencodeConfirmWant runs one Confirm and asserts its outcome and reason.
+func opencodeConfirmWant(t *testing.T, d *OpencodeDeliverer, payload string, queuedAt time.Time, want Outcome, wantReason string) {
+	t.Helper()
+	out, reason, err := d.Confirm(context.Background(), opencodeMasterMind("ses_abc123"), payload, queuedAt)
+	if err != nil {
+		t.Fatalf("Confirm(%s): %v", firstPayloadLine(payload), err)
+	}
+	if out != want || reason != wantReason {
+		t.Fatalf("Confirm(%s) = (%v, %q), want (%v, %q)", firstPayloadLine(payload), out, reason, want, wantReason)
+	}
+}
+
 // opencodePosts reports the POST count under mu.
 func opencodePosts(mu *sync.Mutex, posts *int) int {
 	mu.Lock()
@@ -685,6 +756,10 @@ func opencodePosts(mu *sync.Mutex, posts *int) int {
 	return *posts
 }
 
+// TestOpencodeDeliverPostsOnce pins the split between the push and the
+// read-back: one Deliver POSTs once and reports the payload admitted, every
+// following Confirm POSTs nothing, and the read-back alone reports delivered
+// once the session holds the turn.
 func TestOpencodeDeliverPostsOnce(t *testing.T) {
 	t.Parallel()
 
@@ -718,32 +793,39 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 	}
 	payload1 := "relevo: round 1 · to MasterMind · payload 1\n\nbody 1"
 
-	// The same payload five times POSTs once: the recorded post is the
-	// answer while the session has not taken the turn.
-	for i := 1; i <= 5; i++ {
-		opencodeDeliverWant(t, d, payload1, "/x/001-report.md", startTime, OutcomeUnavailable, "posted but not seen in the session")
-		if got := opencodePosts(&mu, &posts); got != 1 {
-			t.Fatalf("after call %d, got %d POSTs, want 1", i, got)
-		}
-		curTime = curTime.Add(2 * time.Second)
+	// The first Deliver admits the payload with exactly one POST.
+	opencodeDeliverWant(t, d, payload1, "/x/001-report.md", startTime, OutcomeAdmitted, "posted; awaiting the session")
+	if got := opencodePosts(&mu, &posts); got != 1 {
+		t.Fatalf("after the admitting Deliver, got %d POSTs, want 1", got)
 	}
 
-	// Once the row appears in session_inbox, the next call reports delivered
+	// While the session has not taken the turn, a read-back reports the payload
+	// still admitted and never POSTs again.
+	for i := 1; i <= 2; i++ {
+		curTime = curTime.Add(2 * time.Second)
+		opencodeConfirmWant(t, d, payload1, startTime, OutcomeAdmitted, "posted; awaiting the session")
+		if got := opencodePosts(&mu, &posts); got != 1 {
+			t.Fatalf("after confirm %d, got %d POSTs, want 1", i, got)
+		}
+	}
+
+	// Once the row appears in session_inbox, the read-back reports delivered
 	// with no new POST.
 	out, err := exec.Command("sqlite3", db,
 		"insert into session_inbox values ('inbox1', 'ses_abc123', 'message', '"+payload1+"', 'queue', 0, 100)").CombinedOutput()
 	if err != nil {
 		t.Fatalf("insert session_inbox: %v: %s", err, out)
 	}
-	opencodeDeliverWant(t, d, payload1, "/x/001-report.md", startTime, OutcomeDelivered, "already present")
+	curTime = curTime.Add(2 * time.Second)
+	opencodeConfirmWant(t, d, payload1, startTime, OutcomeDelivered, "")
 	if got := opencodePosts(&mu, &posts); got != 1 {
-		t.Fatalf("after the delivered call, got %d POSTs, want 1", got)
+		t.Fatalf("after the delivered read-back, got %d POSTs, want 1", got)
 	}
 
-	// A second payload, with its own origin, POSTs once on its own.
+	// A second payload, with its own origin, is admitted by its own POST.
 	curTime = curTime.Add(2 * time.Second)
 	payload2 := "relevo: round 1 · to MasterMind · payload 2\n\nbody 2"
-	opencodeDeliverWant(t, d, payload2, "/x/002-report.md", startTime, OutcomeUnavailable, "posted but not seen in the session")
+	opencodeDeliverWant(t, d, payload2, "/x/002-report.md", startTime, OutcomeAdmitted, "posted; awaiting the session")
 	if got := opencodePosts(&mu, &posts); got != 2 {
 		t.Fatalf("after payload 2, got %d POSTs, want 2", got)
 	}

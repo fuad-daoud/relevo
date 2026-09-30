@@ -81,9 +81,15 @@ type LogEntry struct {
 	Confirmed   bool       `json:"confirmed"`
 	// Route is empty while the entry is still pending.
 	Route string `json:"route,omitempty"`
-	Note  string `json:"note,omitempty"`
-	Late  bool   `json:"late,omitempty"`
-	Tier  string `json:"tier,omitempty"`
+	// AdmittedAt is when a push route accepted the entry into its own queue
+	// without the session having been read back yet. It is nil while nobody
+	// has pushed the entry. An admitted entry is no longer claimable or
+	// printable by any reader, and the deliverer may only read it back: it
+	// must never be pushed again.
+	AdmittedAt *time.Time `json:"admitted_at,omitempty"`
+	Note       string     `json:"note,omitempty"`
+	Late       bool       `json:"late,omitempty"`
+	Tier       string     `json:"tier,omitempty"`
 
 	// Gate is nil when the binding has no gate.
 	Gate *GateRecord `json:"gate,omitempty"`
@@ -243,6 +249,14 @@ func (s *Store) ConfirmIndex(name string, idx int, route string) error {
 	return s.WithLock(func(tx *Tx) error { return tx.ConfirmIndex(name, idx, route) })
 }
 
+// AdmitIndex marks one pending mastermind entry as admitted by a push route,
+// under the same state lock ConfirmIndex takes. Admit and confirm must exclude
+// each other, because a reader's claim and a push route's admit are answers to
+// the one question "may I deliver this entry?".
+func (s *Store) AdmitIndex(name string, idx int) error {
+	return s.WithLock(func(tx *Tx) error { return tx.AdmitIndex(name, idx) })
+}
+
 func (t *Tx) AppendLog(name string, e LogEntry) error {
 	return t.s.appendLog(name, e)
 }
@@ -269,6 +283,24 @@ func (t *Tx) PendingForMasterMindThrough(name string, round int) ([]PendingEntry
 
 func (t *Tx) ConfirmIndex(name string, idx int, route string) error {
 	return t.s.confirmIndex(name, idx, route)
+}
+
+// AdmitIndex marks the idx'th event in Seq order as admitted by a push route:
+// the route's own queue holds the payload and no reader may claim it again.
+func (t *Tx) AdmitIndex(name string, idx int) error {
+	return t.s.admitIndex(name, idx)
+}
+
+// ClaimableForMasterMind reads the oldest mastermind payload no reader has
+// claimed and no push route has admitted, under the held lock.
+func (t *Tx) ClaimableForMasterMind(name string) (LogEntry, int, bool, error) {
+	return t.s.claimableForMasterMind(name)
+}
+
+// ClaimableForMasterMindThrough reads every claimable mastermind payload whose
+// round is at most round -- every round when round <= 0 -- in log order.
+func (t *Tx) ClaimableForMasterMindThrough(name string, round int) ([]PendingEntry, error) {
+	return t.s.claimableForMasterMindThrough(name, round)
 }
 
 // The unexported methods below assume the lock is already held via Tx.

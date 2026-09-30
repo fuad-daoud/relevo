@@ -120,18 +120,20 @@ func (d *AgyDeliverer) home() (string, error) {
 	return filepath.Join(dir, ".gemini", "antigravity-cli"), nil
 }
 
-// Deliver implements MasterMindDeliverer for agy masterminds.
+// Deliver implements MasterMindDeliverer's push half for agy masterminds.
 //
 // The step order is fixed and non-obvious: guards, conversation id, origin,
-// inbox scan, pastFallback, creds/loopback, send, confirm. The inbox scan runs
+// inbox scan, pastFallback, creds/loopback, send. The inbox scan runs
 // before the give-up gate, so a message already in the inbox is confirmed at
 // any age -- a late-read message must not be failed by the fallback before it
 // is ever looked at. The gate stays above the creds check, so a conversation
 // past the window still gives up.
 //
-// It never sends a payload twice: the inbox is scanned before every send, so a
-// retry after a crash between sending and confirming finds the message and
-// reports its state instead. It never puts a credential in the reason: the
+// A successful send-message is admission, not delivery: Deliver returns
+// OutcomeAdmitted and the caller records that admit before calling Confirm. It
+// never sends a payload twice: the inbox is scanned before every send, so a
+// retry after a crash between sending and admitting finds the message and
+// reports it admitted instead. It never puts a credential in the reason: the
 // token passes only through the extraEnv of one exec, and any text that came
 // back from agy is redacted before it becomes a reason.
 func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, payload, ref string, queuedAt time.Time) (Outcome, string, error) {
@@ -157,7 +159,7 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, p
 	} else if state.undelivered {
 		return OutcomeUnavailable, "agy reports the message undelivered", nil
 	} else if state.sent {
-		return OutcomeUnavailable, "sent to agy but not yet read", nil
+		return OutcomeAdmitted, "sent to agy but not yet read", nil
 	}
 
 	if out, reason, gave := d.pastFallback(conv, payload, queuedAt); gave {
@@ -191,8 +193,33 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, p
 		return OutcomeUnavailable, redactAgy("send-message: "+msg, creds.CSRFToken), nil
 	}
 
-	// Accepted is not read: confirm by finding the message in the inbox
-	// and the mark in read.json, polling briefly because agy writes both.
+	// The message is now in agy's inbox: that is admission, not delivery.
+	// The caller records the admit and reads the read mark back through
+	// Confirm.
+	return OutcomeAdmitted, "sent to agy but not yet read", nil
+}
+
+// Confirm implements MasterMindDeliverer's read-back half for agy masterminds:
+// it reads the conversation's inbox for the payload's read mark and never
+// sends, so a payload admitted by an earlier tick is confirmed rather than
+// delivered again.
+func (d *AgyDeliverer) Confirm(ctx context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error) {
+	if mastermind.Kind != "agy" {
+		return OutcomeNotMine, "", nil
+	}
+	if d.Exec == nil || d.Creds == nil {
+		return OutcomeNotMine, "no exec", nil
+	}
+
+	conv := mastermind.SessionID
+	if !validConversationID(conv) {
+		return OutcomeNotMine, "agy mastermind session is not a conversation id; run relevo mastermind init inside agy", nil
+	}
+
+	origin := firstPayloadLine(payload)
+	if state := d.inbox(conv, origin, queuedAt); state.read {
+		return OutcomeDelivered, "already present", nil
+	}
 	return d.confirm(ctx, conv, origin, queuedAt)
 }
 
@@ -211,7 +238,10 @@ func (d *AgyDeliverer) pastFallback(conv, payload string, queuedAt time.Time) (O
 }
 
 // confirm polls the conversation's inbox until the message is marked read,
-// the confirm window closes, or the context ends.
+// the confirm window closes, or the context ends. A window that closes without
+// the mark is not a failed delivery: the message is already in the inbox, so
+// it reports OutcomeAdmitted and the caller keeps the admit for a later
+// read-back.
 func (d *AgyDeliverer) confirm(ctx context.Context, conv, origin string, queuedAt time.Time) (Outcome, string, error) {
 	deadline := d.now().Add(d.confirmWindow())
 	for {
@@ -224,11 +254,11 @@ func (d *AgyDeliverer) confirm(ctx context.Context, conv, origin string, queuedA
 			return OutcomeUnavailable, "agy reports the message undelivered", nil
 		}
 		if !d.now().Before(deadline) {
-			return OutcomeUnavailable, "sent to agy but not yet read", nil
+			return OutcomeAdmitted, "sent to agy but not yet read", nil
 		}
 		select {
 		case <-ctx.Done():
-			return OutcomeUnavailable, "sent to agy but not yet read", nil
+			return OutcomeAdmitted, "sent to agy but not yet read", nil
 		case <-time.After(d.confirmPoll()):
 		}
 	}
