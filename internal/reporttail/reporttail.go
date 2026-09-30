@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
@@ -278,48 +279,119 @@ func setList(tail *Tail, key string, vals []string) {
 	}
 }
 
+// scalarRune is one rune of a scanned string plus the two facts the escape
+// rules give it: whether it lies outside every quoted scalar, and whether it
+// opens a YAML escape instead of standing for itself.
+type scalarRune struct {
+	// Index and Size locate the rune in the scanned string.
+	Index int
+	Size  int
+	Rune  rune
+	// Outside marks a rune no quote encloses. Only such a rune may act as
+	// syntax; a rune inside a scalar is content.
+	Outside bool
+	// Escape marks the rune that opens a YAML escape rather than producing
+	// itself: the backslash of a double-quoted scalar, or the first of a
+	// doubled pair in a single-quoted one.
+	Escape bool
+}
+
+// scanScalars walks s and calls fn for every rune until fn says stop. This is
+// the one place the YAML escape rules live, so every caller agrees on where a
+// scalar ends: inside a " scalar a backslash escapes the next rune, which makes
+// an escaped quote and an escaped backslash literal, and inside a ' scalar a
+// doubled single quote is one literal quote. A caller therefore never mistakes
+// an escaped quote for a closer.
+func scanScalars(s string, fn func(scalarRune) bool) {
+	var quote rune
+	literal := false
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		sr := scalarRune{Index: i, Size: size, Rune: r, Outside: quote == 0}
+		switch {
+		case quote == '"' && r == '\\' && !literal:
+			sr.Escape = true
+			literal = true
+		case quote == '\'' && r == '\'' && !literal:
+			// A doubled '' is the escaped pair: the first quote marks the
+			// escape and the second clears it. Any other ' closes the scalar,
+			// exactly as a lone " closes a double-quoted one, so the rune after
+			// it is syntax again.
+			if i+size < len(s) && s[i+size] == '\'' {
+				sr.Escape = true
+				literal = true
+			} else {
+				quote = 0
+			}
+		case quote == '\'' && r == '\'' && literal:
+			literal = false
+		case literal:
+			literal = false
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote == 0 && (r == '"' || r == '\''):
+			quote = r
+		}
+		if !fn(sr) {
+			return
+		}
+		i += size
+	}
+}
+
 // StripComment drops a trailing # comment, honouring quotes and a bracketed
 // flow list so a # inside either is content.
 func StripComment(line string) string {
-	var inQuote rune
 	inBracket := false
-	for i, r := range line {
-		switch {
-		case inQuote != 0:
-			if r == inQuote {
-				inQuote = 0
-			}
-		case inBracket:
-			switch r {
-			case '"', '\'':
-				inQuote = r
-			case ']':
-				inBracket = false
-			}
-		default:
-			switch r {
-			case '"', '\'':
-				inQuote = r
-			case '[':
-				inBracket = true
-			case '#':
-				return line[:i]
+	cut := -1
+	scanScalars(line, func(r scalarRune) bool {
+		if !r.Outside {
+			return true
+		}
+		switch r.Rune {
+		case '[':
+			inBracket = true
+		case ']':
+			inBracket = false
+		case '#':
+			if !inBracket {
+				cut = r.Index
+				return false
 			}
 		}
+		return true
+	})
+	if cut < 0 {
+		return line
 	}
-	return line
+	return line[:cut]
 }
 
 // UnquoteScalar removes one layer of matching single or double quotes around a
-// trimmed scalar.
+// trimmed scalar and resolves the escapes inside it: an escaped quote and an
+// escaped backslash in a double-quoted scalar, a doubled single quote in a
+// single-quoted one.
 func UnquoteScalar(s string) string {
 	s = strings.TrimSpace(s)
-	if len(s) >= 2 {
-		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
-			return s[1 : len(s)-1]
-		}
+	if len(s) < 2 {
+		return s
 	}
-	return s
+	double := s[0] == '"' && s[len(s)-1] == '"'
+	single := s[0] == '\'' && s[len(s)-1] == '\''
+	if !double && !single {
+		return s
+	}
+	var b strings.Builder
+	scanScalars(s, func(r scalarRune) bool {
+		if r.Index == 0 || r.Index == len(s)-1 {
+			return true
+		}
+		if !r.Escape {
+			b.WriteString(s[r.Index : r.Index+r.Size])
+		}
+		return true
+	})
+	return b.String()
 }
 
 // ParseListValue reads a value as a list: a bracketed flow list is split on
@@ -350,57 +422,36 @@ func ParseListValue(s string) []string {
 	return []string{elem}
 }
 
+// splitListElements splits s on the commas outside scalars, keeping each
+// element raw because ParseListValue unquotes it next.
 func splitListElements(s string) []string {
 	var elements []string
-	var current strings.Builder
-	var inQuote rune
-
-	for _, r := range s {
-		switch {
-		case inQuote != 0:
-			if r == inQuote {
-				inQuote = 0
-			}
-			current.WriteRune(r)
-		default:
-			switch r {
-			case '"', '\'':
-				inQuote = r
-				current.WriteRune(r)
-			case ',':
-				elements = append(elements, current.String())
-				current.Reset()
-			default:
-				current.WriteRune(r)
-			}
+	start := 0
+	scanScalars(s, func(r scalarRune) bool {
+		if r.Outside && r.Rune == ',' {
+			elements = append(elements, s[start:r.Index])
+			start = r.Index + r.Size
 		}
-	}
-	elements = append(elements, current.String())
-	return elements
+		return true
+	})
+	return append(elements, s[start:])
 }
 
-// flowListDepth counts unclosed [ in s, ignoring brackets inside quotes. A
+// flowListDepth counts unclosed [ in s, ignoring brackets inside scalars. A
 // value with depth > 0 is a flow list continued on later lines.
 func flowListDepth(s string) int {
 	var depth int
-	var inQuote rune
-
-	for _, r := range s {
-		switch {
-		case inQuote != 0:
-			if r == inQuote {
-				inQuote = 0
-			}
-		default:
-			switch r {
-			case '"', '\'':
-				inQuote = r
-			case '[':
-				depth++
-			case ']':
-				depth--
-			}
+	scanScalars(s, func(r scalarRune) bool {
+		if !r.Outside {
+			return true
 		}
-	}
+		switch r.Rune {
+		case '[':
+			depth++
+		case ']':
+			depth--
+		}
+		return true
+	})
 	return depth
 }
