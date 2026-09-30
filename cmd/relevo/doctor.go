@@ -400,6 +400,11 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 
 	rep.Checks = append(rep.Checks, doctor.MasterMindChecks(mastermindCheckInput(rt, kinds))...)
 
+	// One row per configured login, saying whether its home exists and holds a
+	// login, so a round cannot fail to authenticate with no surface naming
+	// which account was checked. No accounts means no rows.
+	rep.Checks = append(rep.Checks, accountChecks(context.Background(), rt.Accounts, env)...)
+
 	// The hooks row: how many runs the machine database's run log holds, how
 	// many failed in the last day and what the last failure was (P3b round 2
 	// §4.4). A database relevo cannot read leaves the row off, as every other

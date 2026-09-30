@@ -162,14 +162,18 @@ type Filter struct {
 }
 
 type RoundRow struct {
-	BindingID, BindingName                        string
-	Repo, Feature, Ticket                         *string
-	Number                                        int
-	StartedAt                                     time.Time
-	ClosedAt                                      *time.Time
-	Outcome                                       string
-	Actor                                         string
-	Candidate, Harness, Provider, Model           *string
+	BindingID, BindingName              string
+	Repo, Feature, Ticket               *string
+	Number                              int
+	StartedAt                           time.Time
+	ClosedAt                            *time.Time
+	Outcome                             string
+	Actor                               string
+	Candidate, Harness, Provider, Model *string
+	// Account is the login the round's candidate pool drew from, nil when the
+	// round recorded none. Tagged omitempty so an account-less round keeps the
+	// history document it always had.
+	Account                                       *string `json:"Account,omitempty"`
 	Commits                                       *int
 	Tree, GateResult                              *string
 	CostUSD                                       *float64
