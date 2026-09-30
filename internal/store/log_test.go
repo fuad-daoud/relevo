@@ -497,6 +497,108 @@ func TestConfirmIndexClearsPending(t *testing.T) {
 	}
 }
 
+// TestAdmitIndexMarksButDoesNotConfirm pins the admit marker: it is written
+// into the entry's JSON, it is not a confirmation, a later confirm keeps it,
+// and a second admit leaves the original stamp alone.
+func TestAdmitIndexMarksButDoesNotConfirm(t *testing.T) {
+	s, name := seedBinding(t)
+	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x"}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	if err := s.AdmitIndex(name, 0); err != nil {
+		t.Fatalf("AdmitIndex: %v", err)
+	}
+
+	entries, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if entries[0].AdmittedAt == nil {
+		t.Error("AdmittedAt = nil, want the entry stamped admitted")
+	}
+	if entries[0].Confirmed {
+		t.Error("an admit must not confirm the entry: only a session read-back may")
+	}
+
+	// The admit is not a confirmation, so a later confirm still writes its own
+	// keys and keeps the admit with them.
+	if err := s.ConfirmIndex(name, 0, "channel"); err != nil {
+		t.Fatalf("ConfirmIndex: %v", err)
+	}
+	stored := bindingEvents(t, s, name)
+	if len(stored) != 1 {
+		t.Fatalf("stored events = %d, want 1", len(stored))
+	}
+	if !strings.Contains(stored[0].JSON, `"admitted_at"`) {
+		t.Errorf("confirmed entry = %s, want the admitted key kept", stored[0].JSON)
+	}
+	if !strings.Contains(stored[0].JSON, `"confirmed":true`) {
+		t.Errorf("confirmed entry = %s, want it confirmed", stored[0].JSON)
+	}
+	if !strings.Contains(stored[0].JSON, `"seq":1`) {
+		t.Errorf("confirmed entry = %s, want the seq written through", stored[0].JSON)
+	}
+
+	// A second admit is idempotent: the original stamp stands.
+	if err := s.AdmitIndex(name, 0); err != nil {
+		t.Fatalf("second AdmitIndex: %v", err)
+	}
+}
+
+// TestClaimableSkipsAdmitted pins the split: the claimable scans skip an entry a
+// push route admitted, while the pending scans -- which the deliverer and the
+// status row use -- still see it.
+func TestClaimableSkipsAdmitted(t *testing.T) {
+	s, name := seedBinding(t)
+
+	for _, e := range []LogEntry{
+		{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "first"},
+		{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "second"},
+	} {
+		if err := s.AppendLog(name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+
+	if err := s.AdmitIndex(name, 0); err != nil {
+		t.Fatalf("AdmitIndex: %v", err)
+	}
+
+	var (
+		got LogEntry
+		idx int
+		ok  bool
+	)
+	if err := s.WithLock(func(tx *Tx) error {
+		var err error
+		got, idx, ok, err = tx.ClaimableForMasterMind(name)
+		return err
+	}); err != nil {
+		t.Fatalf("ClaimableForMasterMind: %v", err)
+	}
+	if !ok || got.Payload != "second" || idx != 1 {
+		t.Fatalf("claimable = (%q, idx %d, ok %v), want second at index 1", got.Payload, idx, ok)
+	}
+
+	var through []PendingEntry
+	if err := s.WithLock(func(tx *Tx) error {
+		var err error
+		through, err = tx.ClaimableForMasterMindThrough(name, 0)
+		return err
+	}); err != nil {
+		t.Fatalf("ClaimableForMasterMindThrough: %v", err)
+	}
+	if len(through) != 1 || through[0].Entry.Payload != "second" {
+		t.Fatalf("claimable through = %+v, want only the second payload", through)
+	}
+
+	pending, found, err := s.PendingForMasterMind(name)
+	if err != nil || !found || pending.Payload != "first" {
+		t.Errorf("PendingForMasterMind = (%q, %v, %v), want the admitted first payload", pending.Payload, found, err)
+	}
+}
+
 func TestConfirmIndexRejectsAnIndexOutsideTheLog(t *testing.T) {
 	s, name := seedBinding(t)
 	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x"}); err != nil {

@@ -91,6 +91,10 @@ func (notMineDeliverer) Deliver(context.Context, store.Endpoint, string, string,
 	return OutcomeNotMine, "not mine to deliver", nil
 }
 
+func (notMineDeliverer) Confirm(context.Context, store.Endpoint, string, time.Time) (Outcome, string, error) {
+	return OutcomeNotMine, "not mine to deliver", nil
+}
+
 // TestDeliverPendingNoRouteStaysPendingAsPull is the plan's required case:
 // with no live claim and no deliverer for the mastermind's kind, the entry
 // stays pending with route=pull. For a Claude Code mastermind in tools mode
@@ -195,6 +199,87 @@ func (deliveredDeliverer) Deliver(context.Context, store.Endpoint, string, strin
 	return OutcomeDelivered, "handed to the session", nil
 }
 
+func (deliveredDeliverer) Confirm(context.Context, store.Endpoint, string, time.Time) (Outcome, string, error) {
+	return OutcomeDelivered, "handed to the session", nil
+}
+
+// TestDeliverPendingAdmitsThenConfirmsWithoutResending pins the two ticks of an
+// admitted push: the first admits the payload (one Deliver plus the admit
+// write), the entry is no longer claimable by a reader, and every later tick
+// only reads the session back -- it never calls Deliver for that payload again.
+func TestDeliverPendingAdmitsThenConfirmsWithoutResending(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "opencode")
+	stub := &stubDeliverer{
+		outcome:        OutcomeAdmitted,
+		reason:         "posted; awaiting the session",
+		confirmOutcome: OutcomeAdmitted,
+		confirmReason:  "posted; awaiting the session",
+	}
+	rt.Deliverers = map[string]MasterMindDeliverer{"opencode": stub}
+
+	// Tick 1: the deliverer admits the payload. The entry is admitted, not
+	// confirmed, and the read-back that ran with it saw nothing yet.
+	_, got := deliverOnce(t, rt, b)
+	if got.Delivered {
+		t.Fatalf("Delivery = %+v, want admitted, not delivered", got)
+	}
+	if stub.calls != 1 || stub.confirmCalls != 1 {
+		t.Fatalf("deliverer calls = %d, confirm calls = %d; want 1 each", stub.calls, stub.confirmCalls)
+	}
+
+	entries, err := rt.Store.ReadLog(b.Name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	admitted := false
+	for _, e := range entries {
+		if e.Direction != store.DirToMasterMind {
+			continue
+		}
+		admitted = e.AdmittedAt != nil
+		if e.Confirmed {
+			t.Error("an entry that was only admitted must not be confirmed")
+		}
+	}
+	if !admitted {
+		t.Fatal("the entry was not marked admitted")
+	}
+
+	// A reader can neither claim nor print it any more.
+	if _, found, err := pullPending(context.Background(), rt.Store, b.Name, "wait"); err != nil || found {
+		t.Errorf("pullPending after an admit = found %v, err %v; want nothing claimable", found, err)
+	}
+
+	// Tick 2: a read-back only -- no Deliver at all.
+	_, got = deliverOnce(t, rt, b)
+	if got.Delivered {
+		t.Fatalf("Delivery = %+v, want still admitted", got)
+	}
+	if stub.calls != 1 {
+		t.Fatalf("deliverer calls = %d, want 1: an admitted payload must never be pushed again", stub.calls)
+	}
+	if stub.confirmCalls != 2 {
+		t.Fatalf("confirm calls = %d, want 2", stub.confirmCalls)
+	}
+
+	// Once the session records it, the read-back confirms the entry.
+	stub.confirmOutcome = OutcomeDelivered
+	stub.confirmReason = ""
+	_, got = deliverOnce(t, rt, b)
+	if !got.Delivered || got.Route != "deliverer:opencode" {
+		t.Fatalf("Delivery = %+v, want delivered by deliverer:opencode", got)
+	}
+	if stub.calls != 1 {
+		t.Fatalf("deliverer calls = %d, want 1 after the confirming read-back", stub.calls)
+	}
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || pending {
+		t.Errorf("the entry must be confirmed once the session took it: pending=%v err=%v", pending, err)
+	}
+}
+
 // TestDeliverPendingWithNothingPendingIsNoop keeps the empty case: nothing
 // queued reads as nothing to do, never an error.
 func TestDeliverPendingWithNothingPendingIsNoop(t *testing.T) {
@@ -215,17 +300,28 @@ func TestDeliverPendingWithNothingPendingIsNoop(t *testing.T) {
 
 // stubDeliverer is the MasterMindDeliverer test double deliver_test.go controls
 // directly, so DeliverPending's consult step can be exercised without a
-// real opencode service.
+// real opencode service. Its Deliver and Confirm answers are separate, so a
+// test can have one tick admit and the next read back.
 type stubDeliverer struct {
 	outcome Outcome
 	reason  string
 	err     error
 	calls   int
+
+	confirmOutcome Outcome
+	confirmReason  string
+	confirmErr     error
+	confirmCalls   int
 }
 
 func (s *stubDeliverer) Deliver(_ context.Context, _ store.Endpoint, _, _ string, _ time.Time) (Outcome, string, error) {
 	s.calls++
 	return s.outcome, s.reason, s.err
+}
+
+func (s *stubDeliverer) Confirm(_ context.Context, _ store.Endpoint, _ string, _ time.Time) (Outcome, string, error) {
+	s.confirmCalls++
+	return s.confirmOutcome, s.confirmReason, s.confirmErr
 }
 
 // TestDeliverConsultsDelivererForMatchingKind proves DeliverPending routes a

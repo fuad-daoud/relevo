@@ -388,8 +388,8 @@ func TestAgyDeliverSentNotReadDoesNotResend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	if out != OutcomeUnavailable {
-		t.Errorf("outcome = %v, want OutcomeUnavailable", out)
+	if out != OutcomeAdmitted {
+		t.Errorf("outcome = %v, want OutcomeAdmitted", out)
 	}
 	if want := "sent to agy but not yet read"; reason != want {
 		t.Errorf("reason = %q, want %q", reason, want)
@@ -399,6 +399,9 @@ func TestAgyDeliverSentNotReadDoesNotResend(t *testing.T) {
 	}
 }
 
+// TestAgyDeliverConfirmsViaReadJSON pins the two halves: the send admits the
+// message, and the read mark in read.json, seen by Confirm, is what delivers
+// it. Confirm itself never sends.
 func TestAgyDeliverConfirmsViaReadJSON(t *testing.T) {
 	t.Parallel()
 
@@ -410,18 +413,34 @@ func TestAgyDeliverConfirmsViaReadJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	if out != OutcomeDelivered {
-		t.Errorf("outcome = %v (reason %q), want OutcomeDelivered", out, reason)
-	}
-	if reason != "" {
-		t.Errorf("reason = %q, want empty on delivery", reason)
+	if out != OutcomeAdmitted {
+		t.Errorf("Deliver outcome = %v (reason %q), want OutcomeAdmitted", out, reason)
 	}
 	if fake.calls != 1 {
 		t.Errorf("sent %d times, want exactly 1", fake.calls)
 	}
+
+	out, reason, err = d.Confirm(context.Background(),
+		store.Endpoint{Kind: "agy", SessionID: agyTestConv}, agyTestPayload, time.Time{})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if out != OutcomeDelivered {
+		t.Errorf("Confirm outcome = %v (reason %q), want OutcomeDelivered", out, reason)
+	}
+	if reason != "already present" {
+		t.Errorf("Confirm reason = %q, want %q", reason, "already present")
+	}
+	if fake.calls != 1 {
+		t.Errorf("Confirm sent %d times, want no send at all", fake.calls)
+	}
 }
 
-func TestAgyDeliverSentButNeverReadIsUnavailable(t *testing.T) {
+// TestAgyDeliverSentButNeverReadIsAdmitted pins that a send with no read mark
+// is an admit, not a failed delivery: the message is in agy's inbox, so
+// relevo must report it admitted and read the mark back later rather than
+// treating the missing receipt as a fault.
+func TestAgyDeliverSentButNeverReadIsAdmitted(t *testing.T) {
 	t.Parallel()
 
 	d, fake, home := newAgyRig(t)
@@ -432,8 +451,8 @@ func TestAgyDeliverSentButNeverReadIsUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	if out != OutcomeUnavailable {
-		t.Errorf("outcome = %v, want OutcomeUnavailable", out)
+	if out != OutcomeAdmitted {
+		t.Errorf("outcome = %v, want OutcomeAdmitted", out)
 	}
 	if want := "sent to agy but not yet read"; reason != want {
 		t.Errorf("reason = %q, want %q", reason, want)
@@ -573,8 +592,8 @@ func TestAgyDeliverOversizeSendsPointer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	if out != OutcomeDelivered {
-		t.Fatalf("outcome = %v (reason %q), want OutcomeDelivered", out, reason)
+	if out != OutcomeAdmitted {
+		t.Fatalf("outcome = %v (reason %q), want OutcomeAdmitted", out, reason)
 	}
 
 	content := fake.lastArgs()[4]
@@ -609,9 +628,134 @@ func TestAgyDeliverOlderMessageDoesNotMatch(t *testing.T) {
 	if fake.calls != 1 {
 		t.Fatalf("sent %d times, want 1: an older message is not this payload", fake.calls)
 	}
-	if out != OutcomeUnavailable || reason != "sent to agy but not yet read" {
-		t.Errorf("outcome/reason = %v/%q, want Unavailable and the sent-not-read reason", out, reason)
+	if out != OutcomeAdmitted || reason != "sent to agy but not yet read" {
+		t.Errorf("outcome/reason = %v/%q, want Admitted and the sent-not-read reason", out, reason)
 	}
+}
+
+// TestAgyConfirmRefusesWhatItCannotRead pins Confirm's guards: it is the
+// read-back half, so it refuses exactly what Deliver refuses and never sends.
+func TestAgyConfirmRefusesWhatItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	d, fake, _ := newAgyRig(t)
+
+	cases := []struct {
+		name       string
+		mastermind store.Endpoint
+		reason     string
+	}{
+		{
+			name:       "another kind",
+			mastermind: store.Endpoint{Kind: "claude", SessionID: agyTestConv},
+			reason:     "",
+		},
+		{
+			name:       "bad conversation id",
+			mastermind: store.Endpoint{Kind: "agy", SessionID: "not-a-conversation"},
+			reason:     "agy mastermind session is not a conversation id; run relevo mastermind init inside agy",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, reason, err := d.Confirm(context.Background(), tc.mastermind, agyTestPayload, time.Time{})
+			if err != nil {
+				t.Fatalf("Confirm: %v", err)
+			}
+			if out != OutcomeNotMine {
+				t.Fatalf("outcome = %v, want OutcomeNotMine", out)
+			}
+			if reason != tc.reason {
+				t.Errorf("reason = %q, want %q", reason, tc.reason)
+			}
+		})
+	}
+
+	t.Run("no exec", func(t *testing.T) {
+		bare := &AgyDeliverer{}
+		out, reason, err := bare.Confirm(context.Background(),
+			store.Endpoint{Kind: "agy", SessionID: agyTestConv}, agyTestPayload, time.Time{})
+		if err != nil {
+			t.Fatalf("Confirm: %v", err)
+		}
+		if out != OutcomeNotMine || reason != "no exec" {
+			t.Errorf("Confirm = (%v, %q), want OutcomeNotMine and no exec", out, reason)
+		}
+	})
+
+	if fake.calls != 0 {
+		t.Errorf("Confirm sent %d times, want none", fake.calls)
+	}
+}
+
+// TestAgyConfirmPollsTheInbox pins Confirm's read-back against the three states
+// the inbox can be in: an unread message past the window stays admitted, an
+// undelivered one is unavailable, and a read mark that lands during the poll
+// delivers. Confirm never sends, whatever it finds.
+func TestAgyConfirmPollsTheInbox(t *testing.T) {
+	t.Parallel()
+
+	confirm := func(t *testing.T, d *AgyDeliverer) (Outcome, string) {
+		t.Helper()
+		out, reason, err := d.Confirm(context.Background(),
+			store.Endpoint{Kind: "agy", SessionID: agyTestConv}, agyTestPayload, time.Time{})
+		if err != nil {
+			t.Fatalf("Confirm: %v", err)
+		}
+		return out, reason
+	}
+
+	t.Run("an unread message past the window stays admitted", func(t *testing.T) {
+		d, fake, home := newAgyRig(t)
+		writeAgyMessage(t, home, "m-unread", agyTestConv, agyTestPayload, time.Now().UTC(), false)
+
+		out, reason := confirm(t, d)
+		if out != OutcomeAdmitted {
+			t.Errorf("outcome = %v (reason %q), want OutcomeAdmitted", out, reason)
+		}
+		if want := "sent to agy but not yet read"; reason != want {
+			t.Errorf("reason = %q, want %q", reason, want)
+		}
+		if fake.calls != 0 {
+			t.Errorf("Confirm sent %d times, want none", fake.calls)
+		}
+	})
+
+	t.Run("an undelivered message is unavailable", func(t *testing.T) {
+		d, fake, home := newAgyRig(t)
+		writeAgyMessage(t, home, "m-undelivered", agyTestConv, agyTestPayload, time.Now().UTC(), true)
+
+		out, reason := confirm(t, d)
+		if out != OutcomeUnavailable {
+			t.Errorf("outcome = %v (reason %q), want OutcomeUnavailable", out, reason)
+		}
+		if want := "agy reports the message undelivered"; reason != want {
+			t.Errorf("reason = %q, want %q", reason, want)
+		}
+		if fake.calls != 0 {
+			t.Errorf("Confirm sent %d times, want none", fake.calls)
+		}
+	})
+
+	t.Run("a read mark that lands during the poll delivers", func(t *testing.T) {
+		d, fake, home := newAgyRig(t)
+		d.ConfirmWindow = 3 * time.Second
+		d.ConfirmPoll = time.Millisecond
+		writeAgyMessage(t, home, "m-late-mark", agyTestConv, agyTestPayload, time.Now().UTC(), false)
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			markAgyRead(t, home, "m-late-mark")
+		}()
+
+		out, reason := confirm(t, d)
+		if out != OutcomeDelivered {
+			t.Errorf("outcome = %v (reason %q), want OutcomeDelivered", out, reason)
+		}
+		if fake.calls != 0 {
+			t.Errorf("Confirm sent %d times, want none", fake.calls)
+		}
+	})
 }
 
 // TestDeliverPendingAgyDeliversViaDeliverer is the routing test the plan asks

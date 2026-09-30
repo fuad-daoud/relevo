@@ -54,6 +54,46 @@ func TestPullPendingWithNothingPending(t *testing.T) {
 	}
 }
 
+// TestPullPendingSkipsAdmitted pins the reader's half of exactly-once: an entry
+// a push route already admitted is not claimable, so pullPending prints nothing
+// and leaves it unconfirmed for the deliverer's own read-back.
+func TestPullPendingSkipsAdmitted(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
+
+	if err := rt.Store.AdmitIndex("webshop", 0); err != nil {
+		t.Fatalf("AdmitIndex: %v", err)
+	}
+
+	payload, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
+	if err != nil {
+		t.Fatalf("pullPending: %v", err)
+	}
+	if found || payload != "" {
+		t.Fatalf("pullPending = (%q, %v), want nothing: the entry is admitted", payload, found)
+	}
+
+	text, found, err := PullPendingThrough(context.Background(), rt.Store, "webshop", "wait", 0)
+	if err != nil {
+		t.Fatalf("PullPendingThrough: %v", err)
+	}
+	if found || text != "" {
+		t.Fatalf("PullPendingThrough = (%q, %v), want nothing: the entry is admitted", text, found)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && e.Confirmed {
+			t.Error("an admitted entry must not be confirmed by a reader")
+		}
+	}
+}
+
 // TestPullPendingMarksDeliveredRoute: pullPending marks the entry delivered
 // with the route the caller passed -- "wait" from Wait.
 func TestPullPendingMarksDeliveredRoute(t *testing.T) {

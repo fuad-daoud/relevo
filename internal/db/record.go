@@ -347,6 +347,18 @@ func (t *Tx) EventConfirm(recordID string, seq int, at time.Time, route, newJSON
 	return nil
 }
 
+// EventAdmit replaces recordID's seq'th event's JSON with the caller's patched
+// map. The admit lives only in the entry's JSON, which is authoritative, so the
+// confirmed, delivered_at and route columns are untouched: a later EventConfirm
+// still writes them.
+func (t *Tx) EventAdmit(recordID string, seq int, newJSON string) error {
+	if _, err := t.exec(`UPDATE binding_event SET entry_json = ? WHERE record_id = ? AND seq = ?`,
+		newJSON, recordID, seq); err != nil {
+		return fmt.Errorf("db: event admit %s#%d: %w", recordID, seq, mapBusy(err))
+	}
+	return nil
+}
+
 func (t *Tx) EventMaxSeq(recordID string) (int, error) {
 	n, err := eventMaxSeq(t.queryRow(`SELECT MAX(seq) FROM binding_event WHERE record_id = ?`, recordID))
 	if err != nil {
@@ -409,4 +421,8 @@ func (d *DB) EventReplaceAll(recordID string, evs []RecordEvent) error {
 
 func (d *DB) EventConfirm(recordID string, seq int, at time.Time, route, newJSON string) error {
 	return d.Tx(func(t *Tx) error { return t.EventConfirm(recordID, seq, at, route, newJSON) })
+}
+
+func (d *DB) EventAdmit(recordID string, seq int, newJSON string) error {
+	return d.Tx(func(t *Tx) error { return t.EventAdmit(recordID, seq, newJSON) })
 }

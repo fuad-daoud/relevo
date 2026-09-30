@@ -631,9 +631,8 @@ var rowStatusCases = []struct {
 			Pending:             &PendingInfo{Round: 1, Kind: store.KindReport},
 			LastPayload:         &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, TS: rsNow.Add(-2 * time.Minute)},
 		},
-		wantStatus: "NEEDS YOU",
-		wantTone:   "needs",
-		wantReason: "artifact in",
+		wantStatus: "artifact in",
+		wantTone:   "phase",
 	},
 	{
 		name: "delivered question",
@@ -674,9 +673,8 @@ var rowStatusCases = []struct {
 			Pending:             &PendingInfo{Round: 1, Kind: store.KindReport},
 			LastPayload:         &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, TS: rsNow.Add(-2 * time.Minute)},
 		},
-		wantStatus: "NEEDS YOU",
-		wantTone:   "needs",
-		wantReason: "report in",
+		wantStatus: "report in",
+		wantTone:   "phase",
 	},
 	{
 		name:       "paused display",
@@ -1447,38 +1445,45 @@ func TestStatusLineRowsPending(t *testing.T) {
 
 }
 
-func TestStatusLineRowsStalled(t *testing.T) {
+// TestStatusLineRowsLiveRouteNeverStalls pins the inverted rule: a pending
+// payload on a live push route is never NEEDS YOU, however old it is. Only a
+// route relevo cannot push (pull, or a route that is not live) needs the human.
+func TestStatusLineRowsLiveRouteNeverStalls(t *testing.T) {
 	t.Parallel()
 
 	now := baseTime
 
-	t.Run("pending report, deliverer live, 61s old -> needs_you true", func(t *testing.T) {
-		b := BindingStatus{
-			Name:                "worker",
-			Round:               4,
-			Display:             "ACTIVE",
-			MasterMindRoute:     "deliverer",
-			MasterMindRouteLive: true,
-			Pending:             &PendingInfo{Round: 3, Kind: store.KindReport},
-			LastPayload: &LastEvent{
-				Round:     3,
-				Kind:      store.KindReport,
-				Direction: store.DirToMasterMind,
-				TS:        now.Add(-61 * time.Second),
-			},
-		}
-		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
-		if len(rows) != 1 {
-			t.Fatalf("len(rows) = %d, want 1", len(rows))
-		}
-		if !rows[0].NeedsYou {
-			t.Errorf("NeedsYou = %v, want true (waited longer than PendingNeedsYouAfter)", rows[0].NeedsYou)
-		}
-		if rows[0].ReportIn {
-			t.Errorf("ReportIn = %v, want false (still pending)", rows[0].ReportIn)
-		}
-	})
-
+	for _, age := range []time.Duration{61 * time.Second, 30 * time.Minute} {
+		t.Run("pending report, deliverer live, "+AgeText(age)+" old -> needs_you false", func(t *testing.T) {
+			b := BindingStatus{
+				Name:                "worker",
+				Round:               4,
+				Display:             "ACTIVE",
+				MasterMindRoute:     "deliverer",
+				MasterMindRouteLive: true,
+				Pending:             &PendingInfo{Round: 3, Kind: store.KindReport},
+				LastPayload: &LastEvent{
+					Round:     3,
+					Kind:      store.KindReport,
+					Direction: store.DirToMasterMind,
+					TS:        now.Add(-age),
+				},
+			}
+			rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+			if len(rows) != 1 {
+				t.Fatalf("len(rows) = %d, want 1", len(rows))
+			}
+			if rows[0].NeedsYou {
+				t.Errorf("NeedsYou = %v, want false: a live push route is never the human's problem", rows[0].NeedsYou)
+			}
+			if rows[0].ReportIn {
+				t.Errorf("ReportIn = %v, want false (still pending)", rows[0].ReportIn)
+			}
+			if rows[0].Status != "report in" {
+				t.Errorf("Status = %q, want %q", rows[0].Status, "report in")
+			}
+		})
+	}
 }
 
 func TestStatusLineRowsPull(t *testing.T) {
@@ -1598,8 +1603,8 @@ var srrRep = Report{Bindings: []BindingStatus{
 		Round:               7,
 		Display:             "ACTIVE",
 		BuilderCandidate:    "agy",
-		MasterMindRoute:     "deliverer",
-		MasterMindRouteLive: true,
+		MasterMindRoute:     "pull",
+		MasterMindRouteLive: false,
 		Pending:             &PendingInfo{Round: 6, Kind: store.KindReport},
 		RoundStart:          srrNow.Add(-7 * time.Minute),
 		LastPayload:         &LastEvent{TS: srrNow.Add(-2 * time.Minute), Round: 6, Kind: store.KindReport, Direction: store.DirToMasterMind},
