@@ -274,6 +274,7 @@ func applyDrift(rt Runtime, tx *store.Tx, name string, round int, data []byte) {
 type catchUpFetch struct {
 	Round         int               // view.ClosedRound
 	Abort         bool              // a read failed and the whole-branch retry did too: the apply returns b unchanged (retry next tick)
+	BundleErr     error             // set with Abort when the bundle request itself failed: the apply counts it (halt at the budget)
 	ReportMissing bool              // RoundFile(report), or the listing's output, was absent
 	ReportTemp    string            // temp file holding the report or the reader's output, "" if none
 	Diff          []byte            // nil: none (404, or over cap -- logged at fetch as today)
@@ -490,6 +491,9 @@ func fetchCatchUpStream(ctx context.Context, rt Runtime, b store.Binding, view r
 // absorb outcome, then the settle the caller owes once it gives the lock up.
 func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, *catchUpAck, error) {
 	if cf.Abort {
+		if cf.BundleErr != nil {
+			return applyCatchUpBundleFailure(ctx, rt, b, view, cf)
+		}
 		return b, nil, nil
 	}
 	// A reader's listing was over the cap: nothing was downloaded, so the
@@ -516,6 +520,7 @@ func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	b = next
 	b.Builder.LastKnown = view.ResultCommit
 	b.RemoteAbsorbFailures = 0
+	b.RemoteBundleFailures = 0
 	return b, &catchUpAck{
 		Server:       b.Builder.Server,
 		Name:         b.Name,

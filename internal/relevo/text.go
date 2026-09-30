@@ -62,6 +62,18 @@ func RestoreText(res Resolution) string {
 	return strings.Join(lines, "\n")
 }
 
+// PlacementText is the clause a fresh create's line appends when the actor's own
+// placement list chose the server: exactly the bytes the pick note already
+// appends. A placement a flag named, and one nothing named, render nothing, so
+// an explicit --server reads as it always did. placementClause stays unexported
+// and unedited, which is what keeps the pick note byte-identical.
+func PlacementText(p PlacementResolution) string {
+	if p.How != placementHowActor {
+		return ""
+	}
+	return placementClause(p)
+}
+
 // StopText is what `relevo stop` says on success: what happened to the round.
 func StopText(name string, res StopResult) string {
 	clause := withoutArtifact(res.Shape)

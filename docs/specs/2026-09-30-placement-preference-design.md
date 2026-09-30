@@ -217,3 +217,13 @@ Docs (README command list, `relevo help`) ride each stage.
 - Placement on `resume`/`rebind`, or changing an existing binding's placement
   (a future `relevo rehome`, if wanted).
 - A global default placement for actors that name none.
+
+## 11. Operational notes
+
+Never amend or rebase a commit that is already on a remote binding's branch.
+The client fetches each closed round as an incremental bundle based on the last
+commit it absorbed, so a rewrite makes that base a non-ancestor of what the
+server ships. The client survives that only by re-fetching the whole branch and
+re-basing its own mirror onto it; when the binding adopted the branch rather
+than mirroring `relevo/<name>`, the rewrite still ends in a `NEEDS YOU` halt.
+A plan must not order an amend or rebase on such a branch.

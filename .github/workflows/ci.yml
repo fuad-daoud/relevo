@@ -225,6 +225,9 @@ jobs:
           go-version: ${{ matrix.go }}
 
       - name: test shard
+        # darwin's coverage report intermittently fails after a passing run, and only the ubuntu/stable shards feed the coverage job.
+        env:
+          SHARD_COVER: '0'
         run: sh scripts/test-shard.sh ${{ matrix.shard }} 3 .shard
 
       # Shellcheck and the scripts' own tests stay on every os x go leg, run by

@@ -4830,6 +4830,9 @@ func TestCatchUpClosesRoundAfterHistoryRewrite(t *testing.T) {
 	if got.RemoteAbsorbFailures != 0 {
 		t.Fatalf("RemoteAbsorbFailures = %d, want 0", got.RemoteAbsorbFailures)
 	}
+	if got.RemoteBundleFailures != 0 {
+		t.Fatalf("RemoteBundleFailures = %d, want 0: the stale-base retry is not a failure", got.RemoteBundleFailures)
+	}
 
 	// The rewritten round's own requests: the refused incremental one, then the
 	// whole branch. One ack closes it.
@@ -6116,6 +6119,70 @@ func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
 	}
 }
 
+// TestCatchUpBundleFailuresHaltAtTen pins the bound on a failing round-bundle
+// fetch: the count climbs once per tick, the first failure warns and the rest
+// stay quiet, and the tenth asks for a human instead of warning forever.
+func TestCatchUpBundleFailuresHaltAtTen(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleErr: &client.HTTPError{Status: 500, Body: remote.ErrorBody{Code: "boom", Message: "bundle read failed"}},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	h := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	got := b
+	var err error
+	for i := 1; i <= 10; i++ {
+		got, err = reconcile(t, rt, got)
+		if err != nil {
+			t.Fatalf("Reconcile iteration %d: %v", i, err)
+		}
+		if got.Round != 1 {
+			t.Fatalf("iteration %d: Round = %d, want 1: a halt does not advance the round", i, got.Round)
+		}
+		if i < 10 {
+			if got.State == store.StateNeedsYou {
+				t.Fatalf("halted after only %d bundle failures", i)
+			}
+			if got.RemoteBundleFailures != i {
+				t.Fatalf("iteration %d: RemoteBundleFailures = %d, want %d", i, got.RemoteBundleFailures, i)
+			}
+		}
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you at 10 bundle failures", got.State)
+	}
+	if !strings.Contains(got.Halt, "cannot fetch round bundle 1 from zen") {
+		t.Fatalf("Halt = %q, want the failure named with its round and server", got.Halt)
+	}
+
+	warns := 0
+	for _, r := range h.snapshot() {
+		if r.Level == slog.LevelWarn && r.Message == "fetch round bundle failed" {
+			warns++
+		}
+	}
+	if warns != 1 {
+		t.Fatalf("'fetch round bundle failed' warnings = %d, want exactly 1 across the ten ticks", warns)
+	}
+}
+
 // TestCatchUpAbsorbIgnoresAFailureWhenTheBranchHoldsTheRound pins the
 // verified-store gate: an absorb error for a round the binding's branch
 // already holds is not counted, because the catch-up can still ack, report
@@ -6245,6 +6312,126 @@ func TestCatchUpAbsorbRecoveryClearsTheHaltWithoutAdvancingTheRound(t *testing.T
 	}
 	if got.Round != 1 {
 		t.Fatalf("Round = %d, want 1: the clear does not advance the round", got.Round)
+	}
+}
+
+// TestCatchUpBundleFailureRecoveryClearsTheHalt is the bundle half of the
+// recovery rule: a fetch that succeeds after the binding was halted on bundle
+// failures clears the halt at the absorb step, so the binding relays again even
+// when the ack is lost and the round cannot close.
+//
+// Mutation: drop the bundle counter from clearAbsorbHalt and State/Halt stay
+// NEEDS YOU.
+func TestCatchUpBundleFailureRecoveryClearsTheHalt(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	b.State = store.StateNeedsYou
+	b.Halt = "cannot fetch round bundle 1 from zen: the server is angry"
+	b.HaltAt = baseTime
+	b.HaltNotifiedRound = 1
+	b.RemoteBundleFailures = 10
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle, headSHA := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relevo/api", c1)
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: headSHA},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleResp: bundle,
+		ackErr:          errors.New("ack reply lost"),
+	}
+	rt := Runtime{
+		Store:     st,
+		Remote:    fr,
+		Transport: remote.NewBundleTransport(g, t.TempDir()),
+		Now:       func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Fatalf("State = %q, want %q: the halt clears at the absorb step", got.State, store.StateActive)
+	}
+	if got.Halt != "" || !got.HaltAt.IsZero() || got.HaltNotifiedRound != 0 {
+		t.Fatalf("halt not cleared: Halt=%q HaltAt=%v HaltNotifiedRound=%d", got.Halt, got.HaltAt, got.HaltNotifiedRound)
+	}
+	if got.RemoteBundleFailures != 0 {
+		t.Fatalf("RemoteBundleFailures = %d, want 0", got.RemoteBundleFailures)
+	}
+	if got.Round != 1 {
+		t.Fatalf("Round = %d, want 1: the clear does not advance the round", got.Round)
+	}
+}
+
+// TestCatchUpAdoptedRewriteHaltsNamingTheRewrite pins the adopted binding's
+// rewrite end to end: the fetch names the rewrite because the branch is not the
+// client's mirror, the apply counts it with the absorb counter, and the halt
+// carries that message instead of git's own non-fast-forward text.
+func TestCatchUpAdoptedRewriteHaltsNamingTheRewrite(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Branch = "feature/x"
+	b.Builder.LastKnown = "r1"
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleFunc: func(_ context.Context, _, _ string, _ int, since string) (io.ReadCloser, error) {
+			if since == "r1" {
+				return nil, staleBase()
+			}
+			return io.NopCloser(strings.NewReader("bundle")), nil
+		},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got := b
+	var err error
+	for i := 1; i <= 10; i++ {
+		got, err = reconcile(t, rt, got)
+		if err != nil {
+			t.Fatalf("Reconcile iteration %d: %v", i, err)
+		}
+		if got.Round != 1 {
+			t.Fatalf("iteration %d: Round = %d, want 1", i, got.Round)
+		}
+		if i < 10 && got.State == store.StateNeedsYou {
+			t.Fatalf("halted after only %d rewrite failures", i)
+		}
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you at 10", got.State)
+	}
+	if !strings.Contains(got.Halt, "the server branch was rewritten") {
+		t.Fatalf("Halt = %q, want it to name the rewrite", got.Halt)
+	}
+	if !strings.Contains(got.Halt, "feature/x") {
+		t.Fatalf("Halt = %q, want it to name the adopted branch", got.Halt)
 	}
 }
 
