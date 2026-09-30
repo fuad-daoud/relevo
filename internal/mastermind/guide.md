@@ -47,6 +47,11 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 - `relevo stop <name>` ends an open round.
 - `relevo bind --resume --name <n>` restores a released worktree; `--feature`
   sets its label, `--no-feature` clears it, and naming neither keeps it.
-- An `internal` failure's next is `relevo bugreport`: run it, and pass the printed
-  `gh issue create` line to the human.
+- Something wrong in relevo itself -- an `internal` failure (its next is
+  `relevo bugreport`), a stuck round, a status that lies -- is a bug: run
+  `relevo bugreport`, with `--name <binding>` and `--round N` when one round is
+  involved. The bundle is local and redacted and nothing is sent. Review it,
+  then hand the human the printed `gh issue create` line -- never file as them.
+  `--logs` adds that round's report, diff and transcript, for content the human
+  agrees to share.
 - A binding that says NEEDS YOU is waiting on a human.
