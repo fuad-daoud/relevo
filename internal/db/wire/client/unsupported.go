@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"runtime"
+	"time"
 )
 
 // DriverName is the name the wire driver would register under; nothing is
@@ -15,6 +16,9 @@ const DriverName = "relevo-owner"
 
 // SetDialer is a no-op off unix: there is no socket to dial.
 func SetDialer(func(context.Context, string) (net.Conn, error)) {}
+
+// SetHandshakeTimeout is a no-op off unix: there is no socket to dial.
+func SetHandshakeTimeout(time.Duration) {}
 
 // info is the handshake answer, unavailable off unix.
 type info struct {

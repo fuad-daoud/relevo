@@ -324,6 +324,8 @@ func assertServing(t *testing.T, loadDB *sql.DB) {
 // inside the drain window.
 func TestListenerSurvivesARealReexecUnderLoad(t *testing.T) {
 	root, sock, dbPath, ready, adopted := reexecRoots(t)
+	client.SetHandshakeTimeout(10 * time.Second)
+	t.Cleanup(func() { client.SetHandshakeTimeout(0) })
 	self, err := filepath.Abs(os.Args[0])
 	if err != nil {
 		t.Fatalf("resolve test binary: %v", err)
@@ -342,6 +344,8 @@ func TestListenerSurvivesARealReexecUnderLoad(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = loadDB.Close() })
 
+	holder := holdTransaction(t, sock)
+
 	stop := make(chan struct{})
 	fails := make(chan loadFailure, 4096)
 	var wg sync.WaitGroup
@@ -351,7 +355,6 @@ func TestListenerSurvivesARealReexecUnderLoad(t *testing.T) {
 		runLoadLoop(stop, loadDB, fails)
 	}()
 
-	holder := holdTransaction(t, sock)
 	signalAt := time.Now()
 	if err := cmd.Process.Signal(syscall.SIGUSR1); err != nil {
 		t.Fatalf("signal helper: %v", err)

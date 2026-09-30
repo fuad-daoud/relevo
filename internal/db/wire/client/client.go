@@ -65,7 +65,7 @@ func dialSock(ctx context.Context, sock string) (net.Conn, error) {
 }
 
 func openConn(sock string) (driver.Conn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), handshakeBudget)
 	defer cancel()
 	nc, err := dialSock(ctx, sock)
 	if err != nil {
