@@ -66,8 +66,11 @@ that does not exist. `make release` does both in the right order.
 
 ## Reporting bugs
 
-Use the issue templates. `relevo version` and `relevo status --json` answer most
-of the questions a maintainer would otherwise have to ask.
+Run `relevo bugreport`: it assembles a redacted diagnostic bundle locally, writes
+it under the state root, and prints the `gh issue create` line that files it. Add
+`--logs` for a round's report, diff and transcript when those can be shared.
+`relevo version` and `relevo status --json` remain the short answers a maintainer
+may ask for.
 
 ## License
 

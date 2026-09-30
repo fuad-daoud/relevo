@@ -40,6 +40,10 @@ A halted or blocked round, or a NEEDS YOU, is a decision, not a retry:
   `relevo gate <token> --reason '<what it said>'`, and lift it with
   `relevo gate --clear <provider>` when it passes.
 - Repair it: `relevo send --name <n> --file <repair plan>`.
+- A bug in relevo itself -- an `internal` failure, a stuck round, a wrong
+  status -- runs `relevo bugreport` (`--name`, `--round`, and `--logs` only for
+  content the human agrees to share). It writes a local, redacted bundle and
+  prints a `gh issue create` line: hand it to the human, never file as them.
 - Abandon it: `relevo stop <n>`.
 
 ## 4. Reading the CLI
