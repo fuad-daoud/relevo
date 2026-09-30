@@ -173,6 +173,11 @@ type Runtime struct {
 	// test gets, since tests don't set it.
 	Registry *roles.Registry
 
+	// Accounts is the configured account pools, in config order. An empty set
+	// is no accounts configured: every account-aware path skips, and a round
+	// spawns with the single default home it always used.
+	Accounts account.Set
+
 	// ConfigWarnings collects the unknown-key and skipped-candidate warnings
 	// the last config load produced (candidates.json then policy.json). They
 	// never fail a command: `relevo doctor` renders them in a `config` row and
@@ -344,6 +349,7 @@ func AvailabilityDeps(rt Runtime) availability.Deps {
 		Now:          now,
 		Roles:        rt.Roles,
 		RoleRegistry: rt.RoleRegistry,
+		Accounts:     rt.Accounts,
 	}
 }
 

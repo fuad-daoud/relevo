@@ -16,6 +16,55 @@ const (
 	researcherClaudeFull = "/home/u/.claude/agents/researcher.md"
 )
 
+// TestInstallAccountHomeWritesTheAccountSpelling pins the account-home install:
+// a claude account's definitions land under its own home at the
+// account-relative spelling (agents/<name>.md), the second run keeps them, and
+// a kind with no per-process home (opencode) produces no rows.
+func TestInstallAccountHomeWritesTheAccountSpelling(t *testing.T) {
+	env := freshEnv()
+	home := "/homes/work"
+
+	results, err := InstallAccountHome(env, InstallOptions{Kind: "claude"}, "claude", home)
+	if err != nil {
+		t.Fatalf("InstallAccountHome: %v", err)
+	}
+	h, _ := Lookup("claude")
+	if len(results) != len(h.Roles) {
+		t.Fatalf("results = %d, want %d", len(results), len(h.Roles))
+	}
+	for _, r := range results {
+		want := filepath.Join(home, "agents", r.Role+".md")
+		if r.Outcome != OutcomeWrote || r.Path != want {
+			t.Errorf("result %+v, want wrote at %q", r, want)
+		}
+		doc, err := AgentDoc(r.Role, "claude")
+		if err != nil {
+			t.Fatalf("AgentDoc(%s): %v", r.Role, err)
+		}
+		if !bytes.Equal(env.files[want], doc) {
+			t.Errorf("file %s is not the shipped %s definition", want, r.Role)
+		}
+	}
+	if !contains(env.dirs, filepath.Join(home, "agents")) {
+		t.Errorf("dirs = %v, want the account agents directory", env.dirs)
+	}
+
+	again, err := InstallAccountHome(env, InstallOptions{Kind: "claude"}, "claude", home)
+	if err != nil {
+		t.Fatalf("InstallAccountHome (second run): %v", err)
+	}
+	for _, r := range again {
+		if r.Outcome != OutcomeKeptIdentical {
+			t.Errorf("second run %+v, want kept (identical)", r)
+		}
+	}
+
+	oc, err := InstallAccountHome(env, InstallOptions{Kind: "opencode"}, "opencode", "/homes/oc")
+	if err != nil || oc != nil {
+		t.Errorf("InstallAccountHome(opencode) = %v, %v; want no rows and no error", oc, err)
+	}
+}
+
 func TestInstallFreshHomeWritesEveryRoleOfPathKinds(t *testing.T) {
 	env := freshEnv()
 	env.lookPaths["agy"] = "/bin/agy"

@@ -13,8 +13,8 @@ import (
 
 // Deps is what the gate, probe and limit code reads from its caller: the store
 // that serialises writes, the configured candidates, the gate and latency
-// records, the clock and the roles checker. A nil field means that facility is
-// not configured and reads as empty.
+// records, the clock, the roles checker and the account pools. A nil field
+// means that facility is not configured and reads as empty.
 type Deps struct {
 	Store      *store.Store
 	Candidates *candidate.Set
@@ -26,4 +26,5 @@ type Deps struct {
 	Now          func() time.Time
 	Roles        harness.RoleChecker
 	RoleRegistry func() *roles.Registry
+	Accounts     account.Set
 }

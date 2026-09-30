@@ -5,9 +5,40 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/fuad-daoud/relevo/internal/account"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
+
+// installAccountHomes installs each configured claude and codex account's role
+// definitions into that account's own home, which is where a round pinned to
+// the account reads them. opts.Kind, when set, limits the walk to that kind; an
+// account of another kind (opencode) has no per-process home and is skipped.
+func installAccountHomes(env harness.InstallEnv, accounts account.Set, opts harness.InstallOptions) ([]harness.InstallResult, error) {
+	var out []harness.InstallResult
+	for _, a := range accounts {
+		kind := string(a.Harness)
+		if opts.Kind != "" && opts.Kind != kind {
+			continue
+		}
+		home, ok := harness.AccountHome(a)
+		if !ok {
+			continue
+		}
+		res, err := harness.InstallAccountHome(env, harness.InstallOptions{
+			Kind:   kind,
+			Role:   opts.Role,
+			Force:  opts.Force,
+			DryRun: opts.DryRun,
+		}, kind, home)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, res...)
+	}
+	return out, nil
+}
 
 // agentInstallEnv is the InstallEnv `relevo config agents` uses -- and the
 // same one the daemon's once-per-image role refresh uses (#371 §4.10). It
@@ -78,14 +109,14 @@ func cmdAgentInstallRun(args []string) error {
 
 	// The custom agents live in the machine config, which may be unreadable;
 	// that must not stop the shipped install, so a config failure is one
-	// warning on stderr and nothing more.
+	// warning on stderr and nothing more. The same read supplies the account
+	// pools a per-account home install walks.
 	cfg, cfgErr := relevo.MachineConfig()
+	var loaded config.Loaded
 	sourceRole := false
-	if cfgErr == nil && *agent != "" {
-		loaded, lerr := cfg.Load()
-		if lerr != nil {
-			cfgErr = lerr
-		} else {
+	if cfgErr == nil {
+		loaded, cfgErr = cfg.Load()
+		if cfgErr == nil && *agent != "" {
 			sourceRole = relevo.IsSourceAgent(loaded.Agents, *agent)
 		}
 	}
@@ -120,6 +151,16 @@ func cmdAgentInstallRun(args []string) error {
 			}
 			results = append(results, custom...)
 		}
+	}
+	if cfgErr == nil {
+		// Every configured claude and codex account reads its own home, so the
+		// definitions land there too; a failure is reported once, like the
+		// custom walk, and never fails the default install.
+		acct, aerr := installAccountHomes(env, loaded.Accounts, opts)
+		if aerr != nil {
+			fmt.Fprintf(os.Stderr, "relevo: account homes not installed: %v\n", aerr)
+		}
+		results = append(results, acct...)
 	}
 
 	// The human lines keep stdout in the default mode and move to stderr under

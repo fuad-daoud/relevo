@@ -262,6 +262,13 @@ func installBytes(env InstallEnv, opts InstallOptions, res InstallResult, homeRe
 	if err != nil {
 		return InstallResult{}, false, err
 	}
+	return installAt(env, opts, res, full, homeRel, shipped, manifest, shippedBeforeKey)
+}
+
+// installAt is installBytes with the destination and the manifest key chosen by
+// the caller, so an account-home install follows exactly the decision table a
+// $HOME install does while recording its own manifest entry.
+func installAt(env InstallEnv, opts InstallOptions, res InstallResult, full, manifestKey string, shipped []byte, manifest map[string]string, shippedBeforeKey string) (InstallResult, bool, error) {
 	existing, rerr := env.ReadFile(full)
 	existingSHA := docSHA(existing)
 	switch {
@@ -274,11 +281,11 @@ func installBytes(env InstallEnv, opts InstallOptions, res InstallResult, homeRe
 		if res.Outcome != OutcomeWrote {
 			return res, false, nil
 		}
-		return res, record(manifest, homeRel, docSHA(shipped)), nil
+		return res, record(manifest, manifestKey, docSHA(shipped)), nil
 	case rerr == nil && DocEqual(shipped, existing):
 		res.Outcome = OutcomeKeptIdentical
-		return res, record(manifest, homeRel, existingSHA), nil
-	case rerr == nil && (manifest[homeRel] == existingSHA || (shippedBeforeKey != "" && ShippedBefore(shippedBeforeKey, existingSHA))):
+		return res, record(manifest, manifestKey, existingSHA), nil
+	case rerr == nil && (manifest[manifestKey] == existingSHA || (shippedBeforeKey != "" && ShippedBefore(shippedBeforeKey, existingSHA))):
 		// The bytes are what relevo last wrote, or a blob some past relevo
 		// shipped before manifests existed, so the difference is relevo's own
 		// older release, not the user's edit: safe to refresh.
@@ -290,12 +297,12 @@ func installBytes(env InstallEnv, opts InstallOptions, res InstallResult, homeRe
 		if res.Outcome != OutcomeUpdated {
 			return res, false, nil
 		}
-		return res, record(manifest, homeRel, docSHA(shipped)), nil
+		return res, record(manifest, manifestKey, docSHA(shipped)), nil
 	default:
 		// The manifest holds what relevo last wrote here. A record that is not
 		// the definition relevo ships now means the user's edit sits on an
 		// older copy, which a reset replaces with the newer one.
-		res.NewerShipped = manifest[homeRel] != "" && manifest[homeRel] != docSHA(shipped)
+		res.NewerShipped = manifest[manifestKey] != "" && manifest[manifestKey] != docSHA(shipped)
 		if !opts.Force {
 			res.Outcome = OutcomeKeptDiffers
 			return res, false, nil
@@ -308,8 +315,60 @@ func installBytes(env InstallEnv, opts InstallOptions, res InstallResult, homeRe
 		if res.Outcome != OutcomeOverwrote {
 			return res, false, nil
 		}
-		return res, record(manifest, homeRel, docSHA(shipped)), nil
+		return res, record(manifest, manifestKey, docSHA(shipped)), nil
 	}
+}
+
+// InstallAccountHome installs kind's shipped role definitions into one account
+// home -- the directory CLAUDE_CONFIG_DIR or CODEX_HOME names -- so a round
+// pinned to that account reads the same roles a default home holds. opts.Role
+// limits it to one definition, exactly as Install does. It returns no results
+// for a kind with no per-process home: opencode and agy accounts hold no
+// definitions there.
+func InstallAccountHome(env InstallEnv, opts InstallOptions, kind, home string) ([]InstallResult, error) {
+	h, ok := Lookup(kind)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownKind, kind)
+	}
+	if _, ok := HomeEnv(kind); !ok {
+		return nil, nil
+	}
+	manifest, merr := env.LoadManifest()
+	if merr != nil || manifest == nil {
+		manifest = map[string]string{}
+	}
+
+	var results []InstallResult
+	changed := false
+	for _, r := range h.Roles {
+		if opts.Role != "" && r.Name != opts.Role {
+			continue
+		}
+		rel, ok := AccountDefinitionPath(kind, r.Name)
+		if !ok {
+			continue
+		}
+		shipped, err := AgentDoc(r.Name, kind)
+		if err != nil {
+			results = append(results, InstallResult{Kind: kind, Role: r.Name, Path: rel, Outcome: OutcomeError, Err: err.Error()})
+			continue
+		}
+		// The home is part of the manifest key: two accounts of one kind hold
+		// the same home-relative path, and each one's edits are its own.
+		key := home + "\x00" + rel
+		res, rchanged, err := installAt(env, opts, InstallResult{Kind: kind, Role: r.Name, Path: filepath.Join(home, rel)}, filepath.Join(home, rel), key, shipped, manifest, agentDocBase(r, kind))
+		if err != nil {
+			return nil, err
+		}
+		changed = changed || rchanged
+		results = append(results, res)
+	}
+	if changed && !opts.DryRun {
+		if serr := env.SaveManifest(manifest); serr != nil {
+			return results, serr
+		}
+	}
+	return results, merr
 }
 
 // record stores path's sha and reports whether that changed the map.
@@ -337,12 +396,17 @@ func writeDoc(env InstallEnv, full string, data []byte, res InstallResult, succe
 }
 
 // Line renders one output line: "<outcome>  ~/<path>", or for an error
-// outcome "error  ~/<path>: <err>".
+// outcome "error  ~/<path>: <err>". An absolute path (an account home) is
+// printed as it is, since it is not home-relative.
 func (r InstallResult) Line() string {
-	if r.Outcome == OutcomeError {
-		return fmt.Sprintf("error  ~/%s: %s", r.Path, r.Err)
+	path := r.Path
+	if !filepath.IsAbs(path) {
+		path = "~/" + path
 	}
-	return fmt.Sprintf("%s  ~/%s", r.Outcome, r.Path)
+	if r.Outcome == OutcomeError {
+		return fmt.Sprintf("error  %s: %s", path, r.Err)
+	}
+	return fmt.Sprintf("%s  %s", r.Outcome, path)
 }
 
 type osInstallEnv struct {
