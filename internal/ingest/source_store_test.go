@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -60,6 +61,42 @@ func TestIngestStoreSourceFillsTheMirror(t *testing.T) {
 	// Round files still come from the binding directory, not from Load.
 	if rounds := mustRounds(t, storeDB, storeBinding.ID); len(rounds) != 3 {
 		t.Errorf("StoreSource ingested %d rounds, want 3 (the round files)", len(rounds))
+	}
+}
+
+// TestIngestAdoptsTheSessionMasterMindID pins the stale-id path: a binding
+// naming a mastermind id the session no longer answers to (its record was
+// forgotten and registered anew) mirrors under the id that holds the session,
+// instead of failing every run with the natural-key refusal.
+func TestIngestAdoptsTheSessionMasterMindID(t *testing.T) {
+	ctx := context.Background()
+
+	st := store.New(t.TempDir())
+	b := store.Binding{Name: "webshop", CWD: "/repo", State: store.StateActive, Round: 1}
+	b.MasterMind.Kind = "claude"
+	b.MasterMind.SessionID = "sess-live"
+	b.MasterMindID = "pl_stale"
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	d := openTestDB(t)
+	if _, err := d.UpsertMasterMind(db.MasterMind{ID: "pl_live", HarnessKind: "claude", SessionID: "sess-live"}); err != nil {
+		t.Fatalf("seed mastermind: %v", err)
+	}
+	if _, err := Ingest(ctx, StoreSource(st, "webshop"), d, Deps{}); err != nil {
+		t.Fatalf("Ingest over a stale mastermind id: %v", err)
+	}
+
+	row, found, err := d.Binding("webshop")
+	if err != nil || !found {
+		t.Fatalf("mirror Binding: found=%v err=%v", found, err)
+	}
+	if row.MasterMindID == nil || *row.MasterMindID != "pl_live" {
+		t.Errorf("mirror mastermind id = %v, want pl_live (the session's own id)", row.MasterMindID)
+	}
+	if _, ok, err := d.MasterMindBySession("claude", "sess-live"); err != nil || !ok {
+		t.Errorf("MasterMindBySession = ok %v, err %v; want the session's row", ok, err)
 	}
 }
 
