@@ -109,7 +109,7 @@ func retryPolicyCases() []retryCase {
 			name:   "StartRound without the idempotent flag is one attempt",
 			status: http.StatusBadGateway,
 			call: func(cl *Client, ctx context.Context) error {
-				_, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", nil, false)
+				_, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, nil, false)
 				return err
 			},
 			wantAttempts: 1,
@@ -214,7 +214,7 @@ func TestStartRoundRetryReReadsTheSpooledBody(t *testing.T) {
 
 	plan := []byte("# Round 1 plan\n")
 	bundle := []byte("bundle-bytes-0123456789")
-	view, err := cl.StartRound(context.Background(), "zen", "api", 1, plan, bytes.NewReader(bundle), "", "", nil, true)
+	view, err := cl.StartRound(context.Background(), "zen", "api", 1, plan, bytes.NewReader(bundle), "", "", false, nil, true)
 	if err != nil {
 		t.Fatalf("StartRound: %v", err)
 	}

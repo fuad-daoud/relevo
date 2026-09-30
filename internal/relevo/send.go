@@ -425,7 +425,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// A remote binding's preflight stops at the read-only checks; the round
 	// itself is still shipped by sendRemote, which contacts the server.
 	if pf.b.Builder.Remote() {
-		return sendRemote(ctx, rt, pf.b, pf.body, opts.Tier, pf.remoteBuilder)
+		return sendRemote(ctx, rt, pf.b, pf.body, opts.Tier, pf.remoteBuilder, opts.Force)
 	}
 
 	// The baseline snapshot adds git objects, so it stays out of the

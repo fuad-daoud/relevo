@@ -38,6 +38,7 @@ type roundRequest struct {
 	Plan      string
 	Tier      string
 	Candidate string
+	Force     bool
 	Bundle    io.Reader
 }
 
@@ -66,6 +67,7 @@ func parseRoundRequest(r *http.Request) (req roundRequest, close func(), bad str
 		req.Tier = tier
 	}
 	req.Candidate = r.FormValue("candidate")
+	req.Force = r.FormValue("force") != ""
 
 	file, _, fileErr := r.FormFile("bundle")
 	if fileErr != nil {
@@ -364,7 +366,7 @@ func (s *Server) finishRoundStart(w http.ResponseWriter, r *http.Request, rt rel
 	}
 	defer func() { _ = os.Remove(tmpFilePath) }()
 
-	if _, sendErr := relevo.Send(r.Context(), rt, name, tmpFilePath, relevo.SendOptions{Tier: req.Tier, Builder: req.Candidate, Defer: true}); sendErr != nil {
+	if _, sendErr := relevo.Send(r.Context(), rt, name, tmpFilePath, relevo.SendOptions{Tier: req.Tier, Builder: req.Candidate, Force: req.Force, Defer: true}); sendErr != nil {
 		writeSendError(w, rt, name, b, sendErr)
 		return
 	}
