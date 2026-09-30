@@ -223,6 +223,28 @@ func (d *AgyDeliverer) Confirm(ctx context.Context, mastermind store.Endpoint, p
 	return d.confirm(ctx, conv, origin, queuedAt)
 }
 
+// ConfirmOnce is the read-back for a repeat tick: one inbox scan, no poll and
+// never a send. A message that is not marked read leaves the payload admitted
+// for the next tick.
+func (d *AgyDeliverer) ConfirmOnce(_ context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error) {
+	if mastermind.Kind != "agy" {
+		return OutcomeNotMine, "", nil
+	}
+	if d.Exec == nil || d.Creds == nil {
+		return OutcomeNotMine, "no exec", nil
+	}
+
+	conv := mastermind.SessionID
+	if !validConversationID(conv) {
+		return OutcomeNotMine, "agy mastermind session is not a conversation id; run relevo mastermind init inside agy", nil
+	}
+
+	if state := d.inbox(conv, firstPayloadLine(payload), queuedAt); state.read {
+		return OutcomeDelivered, "already present", nil
+	}
+	return OutcomeAdmitted, "sent to agy but not yet read", nil
+}
+
 // pastFallback reports whether the payload has waited past the fallback
 // window, logging once per payload when it has.
 func (d *AgyDeliverer) pastFallback(conv, payload string, queuedAt time.Time) (Outcome, string, bool) {

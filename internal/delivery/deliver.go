@@ -113,7 +113,7 @@ func deliverViaDeliverer(ctx context.Context, d Deps, tx *store.Tx, b store.Bind
 	text, _ := PushText(pending, b, d.Store.ReadFile)
 
 	if pending.AdmittedAt != nil {
-		out, reason, err := del.Confirm(ctx, b.MasterMind, text, pending.TS)
+		out, reason, err := del.ConfirmOnce(ctx, b.MasterMind, text, pending.TS)
 		if err != nil {
 			return b, Delivery{}, fmt.Errorf("confirm to mastermind: %w", err)
 		}

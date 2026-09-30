@@ -95,6 +95,10 @@ func (notMineDeliverer) Confirm(context.Context, store.Endpoint, string, time.Ti
 	return OutcomeNotMine, "not mine to deliver", nil
 }
 
+func (notMineDeliverer) ConfirmOnce(context.Context, store.Endpoint, string, time.Time) (Outcome, string, error) {
+	return OutcomeNotMine, "not mine to deliver", nil
+}
+
 // TestDeliverPendingNoRouteStaysPendingAsPull is the plan's required case:
 // with no live claim and no deliverer for the mastermind's kind, the entry
 // stays pending with route=pull. For a Claude Code mastermind in tools mode
@@ -203,6 +207,10 @@ func (deliveredDeliverer) Confirm(context.Context, store.Endpoint, string, time.
 	return OutcomeDelivered, "handed to the session", nil
 }
 
+func (deliveredDeliverer) ConfirmOnce(context.Context, store.Endpoint, string, time.Time) (Outcome, string, error) {
+	return OutcomeDelivered, "handed to the session", nil
+}
+
 // TestDeliverPendingAdmitsThenConfirmsWithoutResending pins the two ticks of an
 // admitted push: the first admits the payload (one Deliver plus the admit
 // write), the entry is no longer claimable by a reader, and every later tick
@@ -253,7 +261,8 @@ func TestDeliverPendingAdmitsThenConfirmsWithoutResending(t *testing.T) {
 		t.Errorf("pullPending after an admit = found %v, err %v; want nothing claimable", found, err)
 	}
 
-	// Tick 2: a read-back only -- no Deliver at all.
+	// Tick 2: a single read-back only -- no Deliver at all, and no second
+	// full poll.
 	_, got = deliverOnce(t, rt, b)
 	if got.Delivered {
 		t.Fatalf("Delivery = %+v, want still admitted", got)
@@ -261,13 +270,16 @@ func TestDeliverPendingAdmitsThenConfirmsWithoutResending(t *testing.T) {
 	if stub.calls != 1 {
 		t.Fatalf("deliverer calls = %d, want 1: an admitted payload must never be pushed again", stub.calls)
 	}
-	if stub.confirmCalls != 2 {
-		t.Fatalf("confirm calls = %d, want 2", stub.confirmCalls)
+	if stub.confirmCalls != 1 {
+		t.Fatalf("confirm calls = %d, want 1: a repeat tick reads back once, it does not re-run the poll", stub.confirmCalls)
+	}
+	if stub.onceCalls != 1 {
+		t.Fatalf("confirmOnce calls = %d, want 1", stub.onceCalls)
 	}
 
 	// Once the session records it, the read-back confirms the entry.
-	stub.confirmOutcome = OutcomeDelivered
-	stub.confirmReason = ""
+	stub.onceOutcome = OutcomeDelivered
+	stub.onceReason = ""
 	_, got = deliverOnce(t, rt, b)
 	if !got.Delivered || got.Route != "deliverer:opencode" {
 		t.Fatalf("Delivery = %+v, want delivered by deliverer:opencode", got)
@@ -312,6 +324,10 @@ type stubDeliverer struct {
 	confirmReason  string
 	confirmErr     error
 	confirmCalls   int
+
+	onceOutcome Outcome
+	onceReason  string
+	onceCalls   int
 }
 
 func (s *stubDeliverer) Deliver(_ context.Context, _ store.Endpoint, _, _ string, _ time.Time) (Outcome, string, error) {
@@ -322,6 +338,11 @@ func (s *stubDeliverer) Deliver(_ context.Context, _ store.Endpoint, _, _ string
 func (s *stubDeliverer) Confirm(_ context.Context, _ store.Endpoint, _ string, _ time.Time) (Outcome, string, error) {
 	s.confirmCalls++
 	return s.confirmOutcome, s.confirmReason, s.confirmErr
+}
+
+func (s *stubDeliverer) ConfirmOnce(_ context.Context, _ store.Endpoint, _ string, _ time.Time) (Outcome, string, error) {
+	s.onceCalls++
+	return s.onceOutcome, s.onceReason, nil
 }
 
 // TestDeliverConsultsDelivererForMatchingKind proves DeliverPending routes a

@@ -184,6 +184,30 @@ func (d *OpencodeDeliverer) Confirm(ctx context.Context, mastermind store.Endpoi
 	return d.confirm(ctx, mastermind.SessionID, firstPayloadLine(payload))
 }
 
+// ConfirmOnce is the read-back for a repeat tick: one look at the session, no
+// poll and never a POST. An origin the single query does not find leaves the
+// payload admitted for the next tick.
+func (d *OpencodeDeliverer) ConfirmOnce(ctx context.Context, mastermind store.Endpoint, payload string, _ time.Time) (Outcome, string, error) {
+	if mastermind.Kind != "opencode" {
+		return OutcomeNotMine, "", nil
+	}
+	if d.Exec == nil {
+		return OutcomeNotMine, "no sqlite3", nil
+	}
+	if !validSessionID(mastermind.SessionID) {
+		return OutcomeNotMine, "no opencode session id", nil
+	}
+
+	seen, err := d.seen(ctx, mastermind.SessionID, firstPayloadLine(payload))
+	if err != nil {
+		return OutcomeUnavailable, "sqlite3: " + firstErrorLine(err), nil
+	}
+	if seen {
+		return OutcomeDelivered, "", nil
+	}
+	return OutcomeAdmitted, "posted; awaiting the session", nil
+}
+
 // pastFallback reports whether the payload has waited past the fallback
 // window, logging once per payload when it has.
 func (d *OpencodeDeliverer) pastFallback(sessionID, payload string, queuedAt time.Time) (Outcome, string, bool) {
