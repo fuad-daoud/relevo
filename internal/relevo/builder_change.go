@@ -34,7 +34,7 @@ func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) 
 //
 // Precondition: token != "". It is a pure read of the ledger and candidates.
 func ResolveSendBuilderFor(rt Runtime, role, current, token string) (*Resolution, error) {
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), token, role)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), token, role, pickFor(rt))
 	if err != nil {
 		return nil, fmt.Errorf("%w %s: %w", ErrBadBuilder, token, err)
 	}
@@ -58,6 +58,7 @@ func applyBuilder(b store.Binding, res Resolution, reg *roles.Registry, pol poli
 		return b, fmt.Errorf("%w %s: %w", ErrBadBuilder, res.Token(), err)
 	}
 	b.BuilderCandidate = res.Token()
+	b.BuilderAccount = res.Account
 	b.Builder.Kind = res.Candidate.Harness
 	b.Tier = string(tier)
 	b.RoundExcluded = nil

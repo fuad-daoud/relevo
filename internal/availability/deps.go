@@ -3,6 +3,7 @@ package availability
 import (
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -15,8 +16,11 @@ import (
 // records, the clock and the roles checker. A nil field means that facility is
 // not configured and reads as empty.
 type Deps struct {
-	Store        *store.Store
-	Candidates   *candidate.Set
+	Store      *store.Store
+	Candidates *candidate.Set
+	// Accounts is the configured login pool. Empty on every host with no
+	// accounts, where a gate is a bare group and nothing here changes.
+	Accounts     account.Set
 	Gates        db.KV
 	Latency      db.KV
 	Now          func() time.Time

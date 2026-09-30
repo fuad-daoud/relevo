@@ -400,6 +400,8 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		Runner:         proc.New(),
 		Store:          st,
 		Candidates:     L.Candidates,
+		Accounts:       L.Accounts,
+		OpencodeAuth:   relevo.OSOpencodeAuth(),
 		Gates:          gates,
 		Latency:        gates,
 		Policy:         pol,
