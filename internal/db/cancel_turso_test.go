@@ -5,6 +5,7 @@ package db
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 )
@@ -16,6 +17,12 @@ import (
 // query opens a fresh connection -- while the owner finishes the statement and
 // then discards the connection it ran on, returning the live count to baseline.
 func TestCancelReturnsToTheClientWhileTheEngineFinishes(t *testing.T) {
+	if os.Getenv("RELEVO_DBTEST_OWNER") != "" {
+		// The owner-mode switch already dials every handle through an owner, so
+		// the directly-opened served database this test counts is not the shape
+		// under test: skip rather than assert a count the hop changes.
+		t.Skip("owner mode dials the handle, which changes the live-connection count")
+	}
 	d := openTestDB(t)
 	execOn(t, d, `CREATE TABLE t (n INTEGER)`)
 	sock := startOwner(t, d)
