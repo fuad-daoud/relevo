@@ -59,10 +59,26 @@ build tag rather than a `runtime.GOOS` check.
 
 ## Releasing
 
-The Claude Code plugin manifests (`claude-plugin/.claude-plugin/plugin.json`
-and `.claude-plugin/marketplace.json`) are bumped and merged *before* the tag is
-created. Tagging first leaves that tag's own manifest pointing at a release
-that does not exist. `make release` does both in the right order.
+Releases go through a PR, so both manifests are on `main` before the tag
+exists: tagging first would leave the tag's own manifest pointing at a release
+that does not exist.
+
+```sh
+git checkout -b release-vX.Y.Z
+make release-bump VERSION=X.Y.Z   # bumps both plugin manifests and commits them
+git push -u origin release-vX.Y.Z
+gh pr create --fill               # CI's make check gates the bump
+# merge once green, then
+git checkout main && git pull --ff-only
+make release-tag VERSION=X.Y.Z    # tags the merged commit; refuses a manifest mismatch
+git push origin vX.Y.Z
+```
+
+Pushing `vX.Y.Z` starts `release.yml`, which re-runs `make check`, matches the
+tag against both manifests, and publishes the binaries.
+
+`make release VERSION=X.Y.Z` still cuts directly on `main` — bump, check and
+tag in one step — when a PR round-trip is not wanted.
 
 ## Reporting bugs
 
