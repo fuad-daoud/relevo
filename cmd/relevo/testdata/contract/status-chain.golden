@@ -1,0 +1,56 @@
+{
+  "bindings": [
+    {
+      "name": "x",
+      "cwd": "<ROOT0>/work/x",
+      "round": 0,
+      "state": "needs_you",
+      "display": "NEEDS YOU",
+      "candidate": "",
+      "actor": "chain",
+      "mastermind_id": "<PLANNER>",
+      "mastermind_kind": "",
+      "mastermind_route": "pull",
+      "mastermind_route_live": false,
+      "harness": "",
+      "runner_status": "",
+      "detail": "reviewer still wants changes after 1 corrections",
+      "last_seq": 0,
+      "dirty": false,
+      "landed_at": "<TIME>",
+      "last_progress_at": "<TIME>",
+      "unread": false,
+      "chain": {
+        "status": "halted",
+        "phase": "build",
+        "step": "reviewing",
+        "plan": 2,
+        "plans": 4,
+        "corrections": 1,
+        "awaiting": "reviewer",
+        "reason": "reviewer still wants changes after 1 corrections"
+      }
+    },
+    {
+      "name": "plain",
+      "cwd": "<ROOT0>/work/plain",
+      "round": 1,
+      "state": "active",
+      "display": "ACTIVE",
+      "candidate": "",
+      "actor": "builder",
+      "mastermind_id": "<PLANNER>",
+      "mastermind_name": "architect-1",
+      "mastermind_kind": "",
+      "mastermind_route": "pull",
+      "mastermind_route_live": false,
+      "harness": "",
+      "runner_status": "unknown",
+      "last_seq": 0,
+      "dirty": false,
+      "landed_at": "<TIME>",
+      "last_progress_at": "<TIME>",
+      "unread": false
+    }
+  ]
+}

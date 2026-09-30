@@ -244,7 +244,7 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		// sent none rather than reading a record the client does not have.
 		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
 	}
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPathFor(rt, b), payload, note, nil, u, a.View.Rusage, a.View.PriorTokens, a.View.ReportOutcome)
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPathFor(rt, b), payload, note, nil, u, a.View.Rusage, a.View.PriorTokens, a.View.ReportOutcome, false)
 	if err != nil {
 		return b, err
 	}

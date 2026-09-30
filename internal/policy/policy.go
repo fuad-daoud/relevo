@@ -61,6 +61,8 @@ type Policy struct {
 	// Scope is the systemd scope template for rounds this host runs;
 	// Serve.Scope replaces it entirely for served rounds.
 	Scope *ScopePolicy `json:"scope,omitempty"`
+	// Chain configures the chain policy group; nil is every default.
+	Chain *ChainPolicy `json:"chain,omitempty"`
 }
 
 // ServePolicy configures relevo serve.
@@ -86,6 +88,26 @@ type ScopePolicy struct {
 	// means no pinning. Needs cpuset delegated to the user manager.
 	AllowedCPUs string `json:"allowed_cpus,omitempty"`
 	TasksMax    int    `json:"tasks_max,omitempty"` // 0 = none; else >= 1
+}
+
+// ChainPolicy configures the chain runner's settings: the correction budget
+// and the actors that fill each chain member.
+type ChainPolicy struct {
+	// MaxCorrections caps the correction rounds one plan may take before the
+	// chain asks you; nil is DefaultChainMaxCorrections, and 0 halts on the
+	// first changes verdict.
+	MaxCorrections *int `json:"max_corrections,omitempty"`
+	// ReviewerActor is the reviewer member's actor; "" is
+	// DefaultChainReviewerActor.
+	ReviewerActor string `json:"reviewer_actor,omitempty"`
+	// PlannerActor writes correction and fix plans; "" is
+	// DefaultChainPlannerActor.
+	PlannerActor string `json:"planner_actor,omitempty"`
+	// SecurityActor is the security member's actor; "" is
+	// DefaultChainSecurityActor.
+	SecurityActor string `json:"security_actor,omitempty"`
+	// Security is whether the security phase runs; nil is false.
+	Security *bool `json:"security,omitempty"`
 }
 
 // NotifyPolicy configures webhook delivery of lifecycle events.
@@ -185,6 +207,16 @@ const DefaultExploreAfter = 20 * time.Minute
 const DefaultStaleAfter = 4 * time.Hour
 
 const DefaultGateTimeout = 10 * time.Minute
+
+// Chain defaults: the correction rounds one plan may take before the chain
+// asks you, and the actors that fill the reviewer, planner and security
+// members.
+const (
+	DefaultChainMaxCorrections = 3
+	DefaultChainReviewerActor  = "reviewer"
+	DefaultChainPlannerActor   = "lite-planner"
+	DefaultChainSecurityActor  = "security"
+)
 
 func (p Policy) SwitchLimit() int {
 	if p.MaxSwitches == nil {
@@ -291,6 +323,51 @@ func (p Policy) VerifyDefault() bool {
 		return false
 	}
 	return p.Verify.Default
+}
+
+// ChainMaxCorrections returns the correction budget one plan may take before
+// the chain asks you: the configured value, or DefaultChainMaxCorrections
+// when it is unset.
+func (p Policy) ChainMaxCorrections() int {
+	if p.Chain == nil || p.Chain.MaxCorrections == nil {
+		return DefaultChainMaxCorrections
+	}
+	return *p.Chain.MaxCorrections
+}
+
+// ChainReviewerActor returns the reviewer member's actor: the configured name,
+// or DefaultChainReviewerActor when it is unset.
+func (p Policy) ChainReviewerActor() string {
+	if p.Chain == nil || p.Chain.ReviewerActor == "" {
+		return DefaultChainReviewerActor
+	}
+	return p.Chain.ReviewerActor
+}
+
+// ChainPlannerActor returns the actor that writes correction and fix plans:
+// the configured name, or DefaultChainPlannerActor when it is unset.
+func (p Policy) ChainPlannerActor() string {
+	if p.Chain == nil || p.Chain.PlannerActor == "" {
+		return DefaultChainPlannerActor
+	}
+	return p.Chain.PlannerActor
+}
+
+// ChainSecurityActor returns the security member's actor: the configured name,
+// or DefaultChainSecurityActor when it is unset.
+func (p Policy) ChainSecurityActor() string {
+	if p.Chain == nil || p.Chain.SecurityActor == "" {
+		return DefaultChainSecurityActor
+	}
+	return p.Chain.SecurityActor
+}
+
+// ChainSecurityOn reports whether the security phase runs; nil is false.
+func (p Policy) ChainSecurityOn() bool {
+	if p.Chain == nil || p.Chain.Security == nil {
+		return false
+	}
+	return *p.Chain.Security
 }
 
 func (p Policy) MaxBuildersOrDefault() int {

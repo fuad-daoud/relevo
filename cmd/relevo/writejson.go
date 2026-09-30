@@ -70,13 +70,17 @@ func sendDocOf(name string, round int, candidate, tier string, deferred bool) Se
 }
 
 // StopDoc is `relevo stop --json`: the round that was ended and the action
-// relevo took. action is one of "killed", "reaped", "gone", "dequeued" or
-// "nothing"; a binding with no open round reports "nothing" rather than "".
+// relevo took. action is one of "killed", "reaped", "gone" or "dequeued" for a
+// member's round, "nothing" when there was no open round, and "stopped" when the
+// name was a chain whose awaited member had no open round (the chain was still
+// marked stopped). chain is set when the name resolved to a chain rather than a
+// binding.
 type StopDoc struct {
 	Name   string `json:"name"`
 	Round  int    `json:"round"`
 	Killed bool   `json:"killed"`
 	Action string `json:"action"`
+	Chain  bool   `json:"chain,omitempty"`
 }
 
 // stopDocOf is stop's document. An empty StopResult.Action is the "no open
@@ -94,15 +98,25 @@ func stopDocOf(name string, res relevo.StopResult) StopDoc {
 	}
 }
 
+// chainStopDocOf is stop's document for a name that is a chain: the same shape,
+// with chain carried so a script can tell the two apart.
+func chainStopDocOf(name string, res relevo.StopResult) StopDoc {
+	doc := stopDocOf(name, res)
+	doc.Chain = true
+	return doc
+}
+
 // DoneDoc is `relevo done --json`: whether the worktree was released, which
 // worktree the run touched, the branch it names, and why it was kept when it
-// was.
+// was. chain is set when the name resolved to a chain rather than a binding, in
+// which case the worktree and branch are the chain's own tree.
 type DoneDoc struct {
 	Name       string `json:"name"`
 	Released   bool   `json:"released"`
 	Worktree   string `json:"worktree"`
 	Branch     string `json:"branch"`
 	KeptReason string `json:"kept_reason"`
+	Chain      bool   `json:"chain,omitempty"`
 }
 
 // doneDocOf is done's document: released is true only when relevo removed the
@@ -115,6 +129,14 @@ func doneDocOf(name string, r relevo.DoneResult) DoneDoc {
 		Branch:     r.Branch,
 		KeptReason: r.KeptReason,
 	}
+}
+
+// chainDoneDocOf is done's document for a name that is a chain: the same shape,
+// with chain carried so a script can tell the two apart.
+func chainDoneDocOf(name string, r relevo.DoneResult) DoneDoc {
+	doc := doneDocOf(name, r)
+	doc.Chain = true
+	return doc
 }
 
 // UnbindDoc is `relevo unbind --json`: whether the binding was archived rather

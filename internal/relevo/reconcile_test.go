@@ -410,7 +410,7 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil, "")
+			next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil, "", false)
 			if err != nil {
 				return err
 			}
@@ -798,7 +798,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				return err
 			}
 			legacy := fmt.Sprintf("Builder finished round %d. Report: relevo show webshop --round %d --report", cur.Round, cur.Round)
-			next, err := queueReport(context.Background(), rt, tx, cur, entries, reportPath, legacy, "", nil, nil, nil, nil, "")
+			next, err := queueReport(context.Background(), rt, tx, cur, entries, reportPath, legacy, "", nil, nil, nil, nil, "", false)
 			if err != nil {
 				return err
 			}

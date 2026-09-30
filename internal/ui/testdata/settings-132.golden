@@ -1,12 +1,6 @@
   ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
                                                                                                                                     
-   18 settings   3 set                                                                                                              
-   SETTING                                                                         VALUE                   DEFAULT                  
-   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 4 settings · 2 set   
-   max_switches                                                                    2                       2                        
-   max_tier                                                                        yolo                    edit                     
-   verify.default                                                                  off                     off                      
-   artifact_max_mb                                                                 25                      25                       
+   23 settings   3 set                                                                                                              
    check ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings   
    gate.default                                                                    none                    none                     
    gate.timeout                                                                    10m                     10m                      
@@ -26,6 +20,12 @@
    classify                                                                        off                     off                      
    notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
    notify.webhooks                                                                 none                    none                     
+   chain ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   
+   chain.max_corrections                                                           3                       3                        
+   chain.reviewer_actor                                                            reviewer                reviewer                 
+   chain.planner_actor                                                             lite-planner            lite-planner             
+   chain.security_actor                                                            security                security                 
+   chain.security                                                                  off                     off                      
                                                                                                                                     
    gate.default   none                                                                                                              
    The command relevo runs in a binding's tree when a writer round reports done; a failure opens a repair round while gate.regate   

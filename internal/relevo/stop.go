@@ -261,7 +261,7 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	}
 	payload, note := stopPayload(how, b.Name, stoppedRound, "", haveReport, closeClause(rt, b, stoppedRound), b.Shape)
 
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "")
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", true)
 	if err != nil {
 		return b, err
 	}

@@ -29,6 +29,19 @@ var registry = []verbEntry{
 		Errors:  []string{"internal", "not_available", "usage"},
 	},
 	{
+		Name:    "chain",
+		Summary: "start a chain: build, review and correct across a list of plans",
+		Args:    "--name <n> (--plan <file> [--plan <file>...] (--feature <label>|--no-feature) | --resume) [--json]",
+		Flags: []string{
+			"--base", "--feature", "--json", "--mastermind", "--max-corrections", "--name",
+			"--no-feature", "--no-security", "--plan", "--planner-actor", "--resume",
+			"--reviewer-actor", "--security", "--security-actor", "--ticket",
+		},
+		Output: "json:ChainDoc",
+		Exit:   []int{0, 1, 2},
+		Errors: []string{"binding_not_found", "conflict", "gate_active", "internal", "policy_refused", "refused", "tier_cap", "usage"},
+	},
+	{
 		Name:    "config",
 		Summary: "show the actors, the current pick and the candidates",
 		Args:    "[--probe [token...]] [--json]",
@@ -462,12 +475,12 @@ var registry = []verbEntry{
 	{
 		Name:    "show",
 		Summary: "one round's plan, report, diff, drift, gate, findings, log or transcript",
-		Args:    "[NAME] [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json] [--peek]",
+		Args:    "[NAME] [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--trace] [--json] [--peek]",
 		Flags: []string{
 			"--after", "--anchors", "--artifact", "--artifacts", "--diff", "--drift",
 			"--findings", "--follow", "--gate", "--json", "--log", "--output",
 			"--owner", "--peek", "--prompt", "--report", "--round", "--stat",
-			"--state", "--transcript",
+			"--state", "--trace", "--transcript",
 		},
 		Output: "json:ShowResult; --log prints NDJSON events",
 		Exit:   []int{0, 1, 2},

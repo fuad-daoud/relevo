@@ -1,0 +1,139 @@
+package relevo
+
+import (
+	"context"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/store"
+)
+
+// TestSendChainRoundOpensTheMemberRound pins the helper Send's in-lock core
+// became: the member's round is staged, its process started, its prompt entry
+// appended with the chain step's note, its baseline recorded, its state active
+// and its verify flag cleared.
+func TestSendChainRoundOpensTheMemberRound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	var sent store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		m, err := tx.Load("shop-rev")
+		if err != nil {
+			return err
+		}
+		sent, err = sendChainRound(context.Background(), rt, tx, m, "review the round")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("sendChainRound: %v", err)
+	}
+
+	if sent.Round != 1 {
+		t.Errorf("round = %d, want 1", sent.Round)
+	}
+	if sent.State != store.StateActive {
+		t.Errorf("state = %q, want active", sent.State)
+	}
+	if sent.RoundVerify {
+		t.Error("a chain member round must never run verify")
+	}
+	if !sent.FinishPending {
+		t.Error("FinishPending must be set, exactly as Send sets it")
+	}
+	if sent.RoundStartedAt.IsZero() {
+		t.Error("RoundStartedAt must be stamped")
+	}
+	if sent.RoundBaselineHead == "" {
+		t.Error("the round's baseline head must be recorded")
+	}
+	if sent.RoundClosedTree != "" {
+		t.Errorf("RoundClosedTree = %q, want empty on a fresh round", sent.RoundClosedTree)
+	}
+
+	staged, err := os.ReadFile(rt.Store.PromptPath("shop-rev", 1))
+	if err != nil {
+		t.Fatalf("read the staged plan: %v", err)
+	}
+	if string(staged) != "review the round" {
+		t.Errorf("staged plan = %q, want the seed text", staged)
+	}
+
+	entries := chainLog(t, rt, "shop-rev")
+	if !HasPromptEntry(entries, 1) {
+		t.Fatalf("reviewer log = %+v, want an open round 1", entries)
+	}
+	for _, e := range entries {
+		if e.Round == 1 && store.IsPromptKind(e.Kind) {
+			if !e.Confirmed {
+				t.Error("the prompt entry must be confirmed")
+			}
+			if e.Note != "chain reviewer" {
+				t.Errorf("prompt note = %q, want chain reviewer", e.Note)
+			}
+		}
+	}
+}
+
+// TestChainMemberRoundsRunWithVerifyOff pins the policy override: with
+// policy.verify.default on, a chain-started member round still carries
+// RoundVerify == false, because the chain's reviewer replaces the verify
+// consult.
+func TestChainMemberRoundsRunWithVerifyOff(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	rt.Policy = policy.Policy{Verify: &policy.VerifyPolicy{Default: true}}
+	startedChain(t, rt, ChainOptions{})
+
+	b := chainBinding(t, rt, "shop")
+	if b.RoundVerify {
+		t.Error("a chain member round must run with verify off even when policy.verify.default is on")
+	}
+	if b.State != store.StateActive {
+		t.Errorf("state = %q, want active", b.State)
+	}
+	if !HasPromptEntry(chainLog(t, rt, "shop"), b.Round) {
+		t.Error("plan 1 must be open on the builder")
+	}
+}
+
+// TestChainStartSendsPlanOneThroughTheChainPath pins that a start's own
+// handover goes through the chain sender: the chain row is running and the
+// builder's round 1 is open, yet an ordinary manual send to the same member is
+// refused. Had the start used the ordinary send, its own refusal would have
+// bitten it.
+func TestChainStartSendsPlanOneThroughTheChainPath(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	b := chainBinding(t, rt, "shop")
+	if b.Round != 1 || b.State != store.StateActive {
+		t.Errorf("builder = round %d, state %q; want round 1 active", b.Round, b.State)
+	}
+	if !HasPromptEntry(chainLog(t, rt, "shop"), 1) {
+		t.Error("plan 1 must be open on the builder")
+	}
+	if note := chainLog(t, rt, "shop")[0].Note; !strings.Contains(note, "chain") {
+		t.Errorf("builder prompt note = %q, want it to name the chain step", note)
+	}
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusRunning) || row.AwaitingMember != chain.MemberBuilder || row.AwaitingRound != 1 {
+		t.Errorf("chain row = %s awaiting (%s, %d); want running awaiting (builder, 1)", row.Status, row.AwaitingMember, row.AwaitingRound)
+	}
+
+	// The refusal the start had to avoid exists: a manual send to the same
+	// running member is refused.
+	if _, err := Send(context.Background(), rt, "shop", writePlan(t, "x"), SendOptions{}); !errors.Is(err, ErrRunningChainMember) {
+		t.Errorf("Send to a running chain member = %v, want ErrRunningChainMember", err)
+	}
+}

@@ -151,6 +151,11 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		if err != nil {
 			return err
 		}
+		// Re-check under the lock: the chain may have started between the
+		// preflight and here.
+		if err := refuseRunningChainMember(tx, name); err != nil {
+			return err
+		}
 		if cur.Round != b.Round {
 			return errors.New("round advanced during send; run relevo status")
 		}

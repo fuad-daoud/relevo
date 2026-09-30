@@ -1,31 +1,31 @@
   ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
                                                                                                                                     
-   18 settings   3 set                                                                                                              
-   SETTING                                                                         VALUE                   DEFAULT                  
-   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 4 settings · 2 set   
-   max_switches                                                                    2                       2                        
-   max_tier                                                                        yolo                    edit                     
-   verify.default                                                                  off                     off                      
-   artifact_max_mb ╭─ check ────────────────────────────────────────────────────────────────────────────────────╮                   
-   check ┈┈┈┈┈┈┈┈┈┈│                                                                                            │┈┈┈┈┈ 3 settings   
-   gate.default    │ command                                     default none                                   │                   
-   gate.timeout    │                                                                                            │                   
-   gate.regate     │ timeout                                     default 10m                                    │                   
-   timing ┈┈┈┈┈┈┈┈┈│                                                                                            │┈┈┈┈┈ 5 settings   
-   limit_gate_defau│ repair rounds                               default 0                                      │                   
+   23 settings   3 set                                                                                                              
+   check ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings   
+   gate.default                                                                    none                    none                     
+   gate.timeout                                                                    10m                     10m                      
+   gate.regate                                                                     0                       0                        
+   timing ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   
+   limit_gate_defau╭─ check ────────────────────────────────────────────────────────────────────────────────────╮                   
    stall_after     │                                                                                            │                   
-   progress_interva│ builder has check on, so with none set its rounds run nothing.                             │                   
+   progress_interva│ command                                     default none                                   │                   
    explore_after   │                                                                                            │                   
-   stale_after     │  enter  save       tab  next field       esc  cancel                                       │                   
-   processes ┈┈┈┈┈┈╰────────────────────────────────────────────────────────────────────────────────────────────╯settings · 1 set   
-   scope                                                                           on · no limits          on · no limits           
-   serve.max_builders                                                              21                      21                       
-   serve.scope                                                                     slice relevo.slice      as scope                 
-   scan ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 2 settings   
-   scan_patterns                                                                   none                    none                     
-   classify                                                                        off                     off                      
+   stale_after     │ timeout                                     default 10m                                    │                   
+   processes ┈┈┈┈┈┈│                                                                                            │settings · 1 set   
+   scope           │ repair rounds                               default 0                                      │o limits           
+   serve.max_builde│                                                                                            │                   
+   serve.scope     │ builder has check on, so with none set its rounds run nothing.                             │pe                 
+   scan ┈┈┈┈┈┈┈┈┈┈┈│                                                                                            │┈┈┈┈┈ 2 settings   
+   scan_patterns   │  enter  save       tab  next field       esc  cancel                                       │                   
+   classify        ╰────────────────────────────────────────────────────────────────────────────────────────────╯                   
    notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
    notify.webhooks                                                                 none                    none                     
+   chain ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   
+   chain.max_corrections                                                           3                       3                        
+   chain.reviewer_actor                                                            reviewer                reviewer                 
+   chain.planner_actor                                                             lite-planner            lite-planner             
+   chain.security_actor                                                            security                security                 
+   chain.security                                                                  off                     off                      
                                                                                                                                     
    gate.default   none                                                                                                              
    The command relevo runs in a binding's tree when a writer round reports done; a failure opens a repair round while gate.regate   

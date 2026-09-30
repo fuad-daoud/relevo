@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/hooks"
@@ -347,7 +348,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-			fmt.Sprintf("The runner finished round %d. %s", b.Round, closeClause(rt, b, b.Round))+gateSuffix, joinNotes("", note), rec, nil, nil, nil, "")
+			fmt.Sprintf("The runner finished round %d. %s", b.Round, closeClause(rt, b, b.Round))+gateSuffix, joinNotes("", note), rec, nil, nil, nil, "", false)
 		if err != nil {
 			return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 		}
@@ -355,17 +356,24 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no %s.", b.Round, outputWord(b.Shape))+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "")
+		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no %s.", b.Round, outputWord(b.Shape))+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "", false)
 	if err != nil {
 		return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 	}
 	return next, true, false, rec, nil
 }
 
-func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens, fallbackOutcome string) (store.Binding, error) {
+func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens, fallbackOutcome string, stopped bool) (store.Binding, error) {
 	// The round this close is closing: the cap check below sizes that round's
 	// artifact directory after b.Round has advanced.
 	closedRound := b.Round
+	// The chain this close belongs to, when it belongs to one. It is read
+	// before the round advances, so the event names the round that closed;
+	// the wiring advances the chain after the advance below. chainRunning is
+	// the consumption decision: a running chain's member close is consumed
+	// rather than delivered.
+	chainRow, chainErr := tx.ChainByMember(b.Name)
+	chainRunning := chainErr == nil && chainRow.Status == string(chain.StatusRunning)
 	// A reader's report is its artifact directory's summary.md: it is written
 	// here from the runner's final message when the runner wrote none itself,
 	// and it is the path the report entry records. A writer's report is the
@@ -384,8 +392,11 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 	// A round that closes while a stop was requested is the stop succeeding
 	// (#138): the note says so, and a KindStop entry follows the report below.
-	stopped := !b.StopRequestedAt.IsZero()
-	if stopped {
+	// This is the stored request's fact, not the caller's `stopped` parameter:
+	// stop_test.go pins exactly one stopped/killed entry per stop, and the
+	// parameter drives only the chain event below.
+	stopRequested := !b.StopRequestedAt.IsZero()
+	if stopRequested {
 		note = joinNotes(note, "stopped")
 	}
 
@@ -419,6 +430,16 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	sc := scanForInjection(ctx, rt, "report", b, body)
 	note = joinNotes(note, sc.Note)
+
+	// The chain event this close produces, built from the in-memory body
+	// before the reader output is stripped below (a re-read there would find
+	// no block). It names the closing member and the round that closed.
+	var chainEvent chain.Event
+	if chainErr == nil {
+		if part := chainPartOf(chainRow, b.Name); part != "" {
+			chainEvent = chainEventFromClose(rt, part, b, body, outcome, gate, stopped)
+		}
+	}
 
 	pLines := strings.SplitN(payload, "\n", 2)
 	pFirst := pLines[0]
@@ -545,7 +566,17 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		Gate:         gate,
 	}
 	entry.BuilderSession = builderSessionOf(b)
-	if err := delivery.Queue(ctx, deliveryDeps(rt), tx, b.Name, entry); err != nil {
+	if chainRunning {
+		// A chain member's close is consumed by the chain: the mastermind gets
+		// the chain's own end delivery when the chain ends, so the member's
+		// report is recorded confirmed with the chain's name rather than
+		// queued. delivery.Queue would force Confirmed=false.
+		entry.Confirmed = true
+		entry.Note = joinNotes(entry.Note, "consumed by chain "+chainRow.Name)
+		if err := tx.AppendLog(b.Name, entry); err != nil {
+			return b, err
+		}
+	} else if err := delivery.Queue(ctx, deliveryDeps(rt), tx, b.Name, entry); err != nil {
 		return b, err
 	}
 
@@ -561,7 +592,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		}
 	}
 
-	if stopped {
+	if stopRequested {
 		// Filed under the round that was stopped: b.Round advances below.
 		if err := tx.AppendLog(b.Name, store.LogEntry{
 			TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind,
@@ -629,6 +660,17 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if b.Shape == store.ShapeReader {
 		if over, total := artifactCapExceeded(rt.Store, b, closedRound, rt.Policy.ArtifactMaxBytes()); over {
 			b, _ = haltBinding(ctx, rt, b, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
+		}
+	}
+
+	// The round has advanced, so the chain may now move: the close is mapped
+	// to an event, the pure transition decides, and the action (seed the next
+	// member, halt, stop, finish) runs on the chain's own sender in this same
+	// critical section. A close that did not advance the chain writes no
+	// trace row.
+	if chainEvent.Kind != "" {
+		if err := chainApply(ctx, rt, tx, b, chainEvent, gate); err != nil {
+			return b, err
 		}
 	}
 

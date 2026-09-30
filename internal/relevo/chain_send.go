@@ -1,0 +1,131 @@
+package relevo
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+
+	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/store"
+)
+
+// sendChainRound starts one round for a chain member. It is Send's in-lock core
+// as a reusable helper: the caller holds the state lock and passes its tx, and
+// the member's new binding and its prompt entry are written in the same
+// critical section as the chain row that named it.
+//
+// It requests no verify: a chain member round is always verify-free, whatever
+// policy.verify.default says, because the chain's own reviewer replaces the
+// verify consult.
+//
+// A startRound failure leaves the member NEEDS YOU, exactly as Send's spawn
+// failure does, and the error is returned wrapped with the member's name; the
+// caller (the chain wiring) then halts the chain in the same critical section.
+func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string) (store.Binding, error) {
+	name := b.Name
+	cur, err := tx.Load(name)
+	if err != nil {
+		return b, fmt.Errorf("%s: %w", name, err)
+	}
+
+	entries, err := tx.ReadLog(name)
+	if err != nil {
+		return b, fmt.Errorf("%s: %w", name, err)
+	}
+	if roundOpenIn(entries, cur.Round) {
+		return b, fmt.Errorf("%s: round %d is still open; relevo stop %s ends it", name, cur.Round, name)
+	}
+	if path, found := pendingRoundFile(rt, name, cur.Round); found {
+		return b, fmt.Errorf("%s: round %d: %s exists: %w", name, cur.Round, filepath.Base(path), ErrReportPending)
+	}
+	if cur.Builder.PID != 0 {
+		if rt.Runner == nil {
+			return b, fmt.Errorf("%s: %w", name, spawn.ErrRunnerUnavailable)
+		}
+		alive, err := rt.Runner.Alive(ctx, handleOf(cur.Builder))
+		if err != nil {
+			return b, fmt.Errorf("%s: check previous process %d: %w", name, cur.Builder.PID, err)
+		}
+		if alive {
+			return b, fmt.Errorf("%s (pid %d): %w", name, cur.Builder.PID, ErrBuilderBusy)
+		}
+	}
+
+	planPath := rt.Store.PromptPath(name, cur.Round)
+	reportPath := rt.Store.ReportPath(name, cur.Round)
+	donePath := rt.Store.DonePath(name, cur.Round)
+	if err := stagePlan(planPath, []byte(text)); err != nil {
+		return b, fmt.Errorf("%s: stage plan at %s: %w", name, planPath, err)
+	}
+
+	baseline, baselineHead := capture.Baseline(ctx, captureDeps(rt), cur)
+	prompt := composePrompt(rt, cur, planPath, reportPath, donePath)
+
+	var pending []store.LogEntry
+	cur, res, err := repickStale(rt, cur, false)
+	if err != nil {
+		return b, fmt.Errorf("%s: %w", name, err)
+	}
+	if res != nil {
+		pending = append(pending, pickEntry(rt.Now().UTC(), cur.Round, bindingRole(cur), *res))
+	}
+
+	// A reader round runs in a throwaway scratch worktree, never in b.CWD:
+	// create it from the round's captured baseline before anything is
+	// spawned, exactly as Send does.
+	if cur.Shape == store.ShapeReader {
+		if _, err := CreateScratchFrom(ctx, rt, cur, cur.Round, baselineHead, baseline); err != nil {
+			return b, fmt.Errorf("%s: %w", name, err)
+		}
+	}
+
+	started, err := startRound(ctx, rt, tx, cur, prompt, false)
+	if err != nil {
+		// The plan is staged and the round is open; nothing was started.
+		// NEEDS YOU says so in status, exactly as Send's spawn failure does.
+		cur.State = store.StateNeedsYou
+		cur.Halt = "builder spawn failed: " + err.Error()
+		cur.HaltAt = rt.Now().UTC()
+		if saveErr := tx.SaveWithLog(cur, pending...); saveErr != nil {
+			return b, fmt.Errorf("%s: %v; saving NEEDS YOU failed: %w", name, err, saveErr)
+		}
+		return b, fmt.Errorf("%s: %w", name, err)
+	}
+	cur = started
+
+	pending = append(pending, store.LogEntry{
+		TS: rt.Now().UTC(), Round: cur.Round,
+		Direction: store.DirToBuilder, Kind: store.KindPrompt,
+		Path: planPath, Confirmed: true,
+		Tier: string(effectiveTier(cur)),
+		Note: chainStepNote(tx, name),
+	})
+
+	cur.RoundBaselineTree = baseline
+	cur.RoundBaselineHead = baselineHead
+	cur.RoundClosedTree = ""
+	cur.RoundStartedAt = rt.Now().UTC()
+	cur.FinishPending = true
+	cur.State = store.StateActive
+	// Verify off, whatever policy.verify.default says: the chain's reviewer
+	// replaces the verify consult on every member round.
+	cur.RoundVerify = false
+	if err := tx.SaveWithLog(cur, pending...); err != nil {
+		return b, fmt.Errorf("%s: %w", name, err)
+	}
+	return cur, nil
+}
+
+// chainStepNote names the chain step a member round runs, for its prompt
+// entry's note: the part the member fills. A binding that is not a chain
+// member reads as the plain word.
+func chainStepNote(tx *store.Tx, name string) string {
+	c, err := tx.ChainByMember(name)
+	if err == nil {
+		if part := chainPartOf(c, name); part != "" {
+			return "chain " + part
+		}
+	}
+	return "chain"
+}

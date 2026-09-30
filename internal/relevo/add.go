@@ -357,30 +357,16 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		if rt.Git == nil {
 			return AddResult{}, ErrGitRequired
 		}
-		base, err = rt.Git.HeadCommit(ctx, opts.Repo)
+		// The cut is one helper, shared with a chain's start: --base when
+		// given, HEAD otherwise, a named base that does not resolve refused
+		// before any worktree exists, and the branch relevo/<name> checked
+		// before it is created.
+		cwd, branch, base, baseRef, err = cutWorktree(ctx, rt, opts.Name, opts.Repo, opts.Base)
 		if err != nil {
 			return AddResult{}, err
 		}
-		branch = "relevo/" + opts.Name
-		exists, err := rt.Git.BranchExists(ctx, opts.Repo, branch)
-		if err != nil {
-			return AddResult{}, err
-		}
-		if exists {
-			return AddResult{}, git.ErrBranchExists
-		}
-		cwd = rt.Store.WorktreePath(opts.Name)
-		if err := rt.Git.AddWorktree(ctx, opts.Repo, cwd, branch, base); err != nil {
-			return AddResult{}, err
-		}
-		createdBranch = true
 		worktree = cwd
-		// The branch the cut came from, for `relevo land` (#136). A --cwd or
-		// --branch binding records none: nothing was cut, so there is no
-		// branch to rebase onto and land asks for --onto instead.
-		if ref, err := rt.Git.CurrentBranch(ctx, opts.Repo); err == nil {
-			baseRef = ref
-		}
+		createdBranch = true
 	}
 
 	rollback := func() {
@@ -484,6 +470,57 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 
 	return AddResult{Binding: b, Worktree: worktree, Branch: branch, Base: base, Resolution: res}, nil
+}
+
+// cutWorktree cuts relevo's own worktree for a new binding: the branch
+// relevo/<name> from base (else HEAD), at the store's worktree path. It is the
+// one cut both `add` and a chain's start run, so the two can never drift.
+//
+// Preconditions: rt.Git is set. A named base that does not resolve and a
+// branch that already exists are refused before anything is created.
+//
+// Postconditions: the worktree and its branch exist at the returned commit;
+// baseRef names the branch the cut came from, or "" when CurrentBranch could
+// not answer.
+func cutWorktree(ctx context.Context, rt Runtime, name, repo, base string) (worktree, branch, commit, baseRef string, err error) {
+	if rt.Git == nil {
+		return "", "", "", "", ErrGitRequired
+	}
+	// The cut's starting commit: --base when given, HEAD otherwise. A named
+	// base that does not resolve is refused here, before any worktree exists;
+	// the ref is resolved to a commit, so the branch is cut from exactly what
+	// the caller named.
+	if base != "" {
+		sha, ok, rerr := rt.Git.RefSHA(ctx, repo, base)
+		if rerr != nil {
+			return "", "", "", "", rerr
+		}
+		if !ok {
+			return "", "", "", "", fmt.Errorf("base %q not found", base)
+		}
+		commit = sha
+	} else if commit, err = rt.Git.HeadCommit(ctx, repo); err != nil {
+		return "", "", "", "", err
+	}
+	branch = "relevo/" + name
+	exists, err := rt.Git.BranchExists(ctx, repo, branch)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	if exists {
+		return "", "", "", "", git.ErrBranchExists
+	}
+	worktree = rt.Store.WorktreePath(name)
+	if err := rt.Git.AddWorktree(ctx, repo, worktree, branch, commit); err != nil {
+		return "", "", "", "", err
+	}
+	// The branch the cut came from, for `relevo land` (#136). A --cwd or
+	// --branch binding records none: nothing was cut, so there is no branch
+	// to rebase onto and land asks for --onto instead.
+	if ref, cerr := rt.Git.CurrentBranch(ctx, repo); cerr == nil {
+		baseRef = ref
+	}
+	return worktree, branch, commit, baseRef, nil
 }
 
 // DefaultBindingName derives a binding name from an existing branch: the last
