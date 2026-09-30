@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -25,6 +26,20 @@ const (
 
 	// HeaderSignature names the HTTP header carrying the base64-encoded ed25519 signature.
 	HeaderSignature = "Relevo-Signature"
+
+	// HeaderAudience names the HTTP header carrying the audience the request is
+	// signed for: the server identity the client bound its signature to. It is
+	// also part of the signed string, so rewriting it breaks the signature.
+	HeaderAudience = "Relevo-Audience"
+
+	// HeaderAuthScheme names the response header a server sets on every
+	// response, whatever its status, to say which audience scheme it speaks. A
+	// client that knows the scheme can tell an old server's refusal from a
+	// wrong-audience one.
+	HeaderAuthScheme = "Relevo-Auth"
+
+	// AuthSchemeAudience is HeaderAuthScheme's value.
+	AuthSchemeAudience = "audience"
 )
 
 // MaxClockSkew defines the maximum allowed difference between request timestamp and server time.
@@ -54,11 +69,17 @@ var (
 	ErrRevoked       = errors.New("revoked")
 	ErrBadSignature  = errors.New("bad signature")
 	ErrStale         = errors.New("stale or replayed")
+	ErrNoAudience    = errors.New("no audience")
+	ErrWrongAudience = errors.New("wrong audience")
 )
 
 // Canonical returns the exact bytes to be signed for an HTTP request:
 //
-//	method + "\n" + target + "\n" + timestamp + "\n" + nonce + "\n" + hex(sha256(body))
+//	audience + "\n" + method + "\n" + target + "\n" + timestamp + "\n" + nonce + "\n" + hex(sha256(body))
+//
+// audience is the server identity the request is bound to. It is signed, so a
+// signature made for one audience never verifies for another: the header cannot
+// be rewritten to point the request at a different server.
 //
 // target is the request path plus "?" + RawQuery when the query is non-empty,
 // exactly as it appears on the HTTP request line (including query parameters such
@@ -66,7 +87,7 @@ var (
 // the signature).
 // bodySHA256 is the 32-byte sha256 checksum of the body. If bodySHA256 is empty or nil,
 // the sha256 hash of zero bytes is computed and formatted.
-func Canonical(method, target, timestamp, nonce string, bodySHA256 []byte) []byte {
+func Canonical(audience, method, target, timestamp, nonce string, bodySHA256 []byte) []byte {
 	var bodyHex string
 	if len(bodySHA256) == 0 {
 		sum := sha256.Sum256(nil)
@@ -75,7 +96,7 @@ func Canonical(method, target, timestamp, nonce string, bodySHA256 []byte) []byt
 		bodyHex = hex.EncodeToString(bodySHA256)
 	}
 
-	canon := method + "\n" + target + "\n" + timestamp + "\n" + nonce + "\n" + bodyHex
+	canon := audience + "\n" + method + "\n" + target + "\n" + timestamp + "\n" + nonce + "\n" + bodyHex
 	return []byte(canon)
 }
 
@@ -88,14 +109,16 @@ func NewNonce() (string, error) {
 	return base64.StdEncoding.EncodeToString(buf[:]), nil
 }
 
-// Sign computes an ed25519 signature over the canonical request representation and
-// returns an http.Header containing HeaderClient, HeaderTimestamp, HeaderNonce, and HeaderSignature.
-func Sign(k Keypair, method, target string, bodySHA256 []byte, now time.Time, nonce string) http.Header {
+// Sign computes an ed25519 signature over the canonical request representation
+// and returns an http.Header containing HeaderAudience, HeaderClient,
+// HeaderTimestamp, HeaderNonce, and HeaderSignature.
+func Sign(k Keypair, audience, method, target string, bodySHA256 []byte, now time.Time, nonce string) http.Header {
 	ts := strconv.FormatInt(now.Unix(), 10)
-	canon := Canonical(method, target, ts, nonce, bodySHA256)
+	canon := Canonical(audience, method, target, ts, nonce, bodySHA256)
 	sig := ed25519.Sign(k.Private, canon)
 
 	h := make(http.Header)
+	h.Set(HeaderAudience, audience)
 	h.Set(HeaderClient, string(IDOf(k.Public)))
 	h.Set(HeaderTimestamp, ts)
 	h.Set(HeaderNonce, nonce)
@@ -142,12 +165,20 @@ func (w *NonceWindow) Seen(nonce string, now time.Time) bool {
 // Verify authenticates an HTTP request. Checks are evaluated in strict order:
 //  1. HeaderClient is present and non-empty -> ErrUnknownClient
 //  2. Lookup client ID in lookup: KeyUnknown -> ErrUnknownClient; KeyRevoked -> ErrRevoked
-//  3. Decode HeaderSignature as 64-byte base64 -> ErrBadSignature
-//  4. ed25519.Verify signature over Canonical string -> ErrBadSignature
-//  5. Parse HeaderTimestamp as decimal unix seconds; |now - ts| <= MaxClockSkew -> ErrStale
-//  6. nonces.Seen(nonce, now) == false -> ErrStale
-//  7. Return authenticated ClientID, nil
-func Verify(h http.Header, method, target string, bodySHA256 []byte, now time.Time, lookup KeyLookup, nonces *NonceWindow) (ClientID, error) {
+//  3. HeaderAudience is present and non-empty -> ErrNoAudience
+//  4. HeaderAudience is one of audiences -> ErrWrongAudience
+//  5. Decode HeaderSignature as 64-byte base64 -> ErrBadSignature
+//  6. ed25519.Verify signature over Canonical string -> ErrBadSignature
+//  7. Parse HeaderTimestamp as decimal unix seconds; |now - ts| <= MaxClockSkew -> ErrStale
+//  8. nonces.Seen(nonce, now) == false -> ErrStale
+//  9. Return authenticated ClientID, nil
+//
+// audiences is the set of server identities this server accepts. An empty set
+// accepts nothing: a server that names no audience cannot tell which of its own
+// identities a request was signed for, so it refuses rather than guessing.
+// Checks 3 and 4 sit before the signature and touch no state, so a refusal for
+// the wrong audience never consumes the request's nonce.
+func Verify(h http.Header, method, target string, bodySHA256 []byte, now time.Time, lookup KeyLookup, nonces *NonceWindow, audiences []string) (ClientID, error) {
 	// 1. id := h.Get(HeaderClient); "" -> ErrUnknownClient
 	id := ClientID(h.Get(HeaderClient))
 	if id == "" {
@@ -171,21 +202,32 @@ func Verify(h http.Header, method, target string, bodySHA256 []byte, now time.Ti
 		return "", ErrUnknownClient
 	}
 
-	// 3. sig := base64 decode HeaderSignature; decode failure or len != 64 -> ErrBadSignature
+	// 3. audience := h.Get(HeaderAudience); "" -> ErrNoAudience
+	audience := h.Get(HeaderAudience)
+	if audience == "" {
+		return "", ErrNoAudience
+	}
+
+	// 4. audience in audiences -> else ErrWrongAudience
+	if !slices.Contains(audiences, audience) {
+		return "", ErrWrongAudience
+	}
+
+	// 5. sig := base64 decode HeaderSignature; decode failure or len != 64 -> ErrBadSignature
 	sigStr := h.Get(HeaderSignature)
 	sig, err := base64.StdEncoding.DecodeString(sigStr)
 	if err != nil || len(sig) != ed25519.SignatureSize {
 		return "", ErrBadSignature
 	}
 
-	// 4. ed25519.Verify(pub, Canonical(method, target, h.Get(HeaderTimestamp), h.Get(HeaderNonce), bodySHA256), sig)
+	// 6. ed25519.Verify(pub, Canonical(audience, method, target, h.Get(HeaderTimestamp), h.Get(HeaderNonce), bodySHA256), sig)
 	//    false -> ErrBadSignature
-	canon := Canonical(method, target, h.Get(HeaderTimestamp), h.Get(HeaderNonce), bodySHA256)
+	canon := Canonical(audience, method, target, h.Get(HeaderTimestamp), h.Get(HeaderNonce), bodySHA256)
 	if !ed25519.Verify(pub, canon, sig) {
 		return "", ErrBadSignature
 	}
 
-	// 5. ts := parse HeaderTimestamp as int64; parse failure -> ErrStale;
+	// 7. ts := parse HeaderTimestamp as int64; parse failure -> ErrStale;
 	//    |now.Unix() - ts| > MaxClockSkew seconds -> ErrStale
 	tsStr := h.Get(HeaderTimestamp)
 	ts, err := strconv.ParseInt(tsStr, 10, 64)
@@ -200,11 +242,11 @@ func Verify(h http.Header, method, target string, bodySHA256 []byte, now time.Ti
 		return "", ErrStale
 	}
 
-	// 6. nonces.Seen(h.Get(HeaderNonce), now) -> ErrStale
+	// 8. nonces.Seen(h.Get(HeaderNonce), now) -> ErrStale
 	if nonces != nil && nonces.Seen(h.Get(HeaderNonce), now) {
 		return "", ErrStale
 	}
 
-	// 7. return id, nil
+	// 9. return id, nil
 	return id, nil
 }

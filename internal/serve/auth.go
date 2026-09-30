@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,8 +67,15 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		r.Body = tmp
 
 		sum := hasher.Sum(nil)
-		id, err := remote.Verify(r.Header, r.Method, target(r), sum, s.cfg.Now(), s.clients.Lookup, s.nonces)
+		id, err := remote.Verify(r.Header, r.Method, target(r), sum, s.cfg.Now(), s.clients.Lookup, s.nonces, s.audiences)
 		if err != nil {
+			// A client that sends no audience predates audience-bound
+			// signatures; 426 is its existing upgrade path.
+			if errors.Is(err, remote.ErrNoAudience) {
+				writeErr(w, http.StatusUpgradeRequired, remote.CodeVersion,
+					"this server requires audience-bound signatures; upgrade relevo on this machine")
+				return
+			}
 			writeErr(w, http.StatusUnauthorized, remote.CodeOf(err), err.Error())
 			return
 		}

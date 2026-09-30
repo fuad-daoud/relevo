@@ -27,6 +27,19 @@ var (
 	ErrCertChanged   = errors.New("pinned fingerprint mismatch")
 	ErrUnknownServer = errors.New("unknown server")
 	ErrVersion       = errors.New("server rejected protocol version (426)")
+	// ErrRedirect reports a server that answered a signed request with a
+	// redirect. Following it would carry the signed headers to another host, so
+	// the client refuses instead. A plain sentinel: probes report it as an error
+	// and retry never repeats it.
+	ErrRedirect = errors.New("server redirected a signed request")
+	// ErrServerTooOld reports a 401 the server answered without its audience
+	// scheme header: it predates audience-bound signatures and read our signed
+	// request under the old canonical string.
+	ErrServerTooOld = errors.New("server predates audience-bound signatures; upgrade relevo on the server")
+	// ErrWrongAudience reports a 401 wrong_audience: our request was signed for
+	// a server identity this server does not accept. A plain sentinel, so a
+	// probe reports the text rather than "not enrolled".
+	ErrWrongAudience = errors.New("request signed for another server")
 )
 
 // Version is this client's build version, sent as remote.HeaderClientVersion on
@@ -79,7 +92,10 @@ func (c *Client) getHTTPClient(entry remote.ServerEntry) *http.Client {
 	if cl, ok := c.httpClients[key]; ok {
 		return cl
 	}
-	cl := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfigFor(entry)}}
+	cl := &http.Client{
+		Transport:     &http.Transport{TLSClientConfig: tlsConfigFor(entry)},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return ErrRedirect },
+	}
 	c.httpClients[key] = cl
 	return cl
 }
@@ -136,6 +152,9 @@ func (c *Client) doRequest(ctx context.Context, server, method, pathWithQuery st
 		if errors.Is(err, ErrCertChanged) || strings.Contains(err.Error(), ErrCertChanged.Error()) {
 			return nil, ErrCertChanged
 		}
+		if errors.Is(err, ErrRedirect) {
+			return nil, ErrRedirect
+		}
 		return nil, fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
 	if err := responseError(resp); err != nil {
@@ -167,7 +186,11 @@ func (c *Client) newRequest(ctx context.Context, entry remote.ServerEntry, metho
 	if err != nil {
 		return nil, fmt.Errorf("new nonce: %w", err)
 	}
-	for k, vv := range remote.Sign(c.key, method, u.RequestURI(), bodySHA, c.now(), nonce) {
+	audience, err := remote.AudienceOf(entry)
+	if err != nil {
+		return nil, fmt.Errorf("audience: %w", err)
+	}
+	for k, vv := range remote.Sign(c.key, audience, method, u.RequestURI(), bodySHA, c.now(), nonce) {
 		for _, v := range vv {
 			req.Header.Add(k, v)
 		}
@@ -197,6 +220,18 @@ func responseError(resp *http.Response) error {
 	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	var errBody remote.ErrorBody
 	if jsonErr := json.Unmarshal(bodyBytes, &errBody); jsonErr == nil && (errBody.Code != "" || errBody.Message != "") {
+		if resp.StatusCode == http.StatusUnauthorized {
+			switch errBody.Code {
+			case remote.CodeBadSignature:
+				// An old server verified the old canonical string and found it
+				// bad; it never heard of the audience scheme.
+				if resp.Header.Get(remote.HeaderAuthScheme) == "" {
+					return ErrServerTooOld
+				}
+			case remote.CodeWrongAudience:
+				return ErrWrongAudience
+			}
+		}
 		return &HTTPError{Status: resp.StatusCode, Body: errBody}
 	}
 	return &HTTPError{

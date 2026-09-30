@@ -46,7 +46,8 @@ type ServerProbe struct {
 // "enrolled"; a 401 is "not enrolled" (Detail is the caller's enrollLine,
 // the line to hand the admin); ErrCertChanged is "cert changed";
 // ErrUnreachable is "unreachable" (Detail is the failure cause); anything
-// else is "error" (Detail is the error text).
+// else -- a plain error, ErrServerTooOld, ErrWrongAudience -- is "error"
+// (Detail is the error text).
 func ProbeServers(ctx context.Context, rt Runtime, servers map[string]remote.ServerEntry, enrollLine string) []ServerProbe {
 	names := make([]string, 0, len(servers))
 	for n := range servers {

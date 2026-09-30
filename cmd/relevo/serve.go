@@ -49,6 +49,7 @@ type serveFlags struct {
 	insecureHTTP   bool
 	maxBundleBytes int64
 	maxBuilders    int
+	publicHosts    hostSlice
 }
 
 // installServeFlags defines the server's own flags on fs, in the usage text's
@@ -61,6 +62,7 @@ func installServeFlags(fs *flag.FlagSet) *serveFlags {
 	fs.BoolVar(&sf.insecureHTTP, "insecure-http", false, "serve plain HTTP without TLS")
 	fs.Int64Var(&sf.maxBundleBytes, "max-bundle-bytes", 512<<20, "maximum bundle size in bytes")
 	fs.IntVar(&sf.maxBuilders, "max-builders", 0, "headless builders running at once across all owners (0 = policy.json serve.max_builders, else max(1, NumCPU-1))")
+	fs.Var(&sf.publicHosts, "public-host", "a host clients reach this server by, for CA or insecure mode; repeatable")
 	return sf
 }
 
@@ -492,6 +494,11 @@ func cmdServeRun(args []string) error {
 		}
 	}
 
+	audiences, err := serve.Audiences(serve.SecretStore{DB: d}, sf.publicHosts)
+	if err != nil {
+		return err
+	}
+
 	cfg := serve.Config{
 		Root:           root,
 		DB:             d,
@@ -512,6 +519,7 @@ func cmdServeRun(args []string) error {
 		Scope:          scope,
 		SessionReaper:  relevo.NewSessionReaper(binExec{}),
 		Installation:   inst,
+		Audiences:      audiences,
 	}
 
 	srv, err := serve.New(cfg)
@@ -524,6 +532,7 @@ func cmdServeRun(args []string) error {
 		maxBuilders = pol.MaxBuildersOrDefault()
 	}
 	slog.Info(fmt.Sprintf("builders cap=%d scopes=%s", maxBuilders, scopesStatus))
+	slog.Info("accepted audiences", "audiences", strings.Join(audiences, ", "))
 
 	root, err = filepath.Abs(root)
 	if err != nil {
