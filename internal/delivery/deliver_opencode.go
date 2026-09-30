@@ -99,9 +99,8 @@ func (d *OpencodeDeliverer) fallbackAfter() time.Duration {
 //
 // A 2xx is admission, not delivery: Deliver returns OutcomeAdmitted without
 // reading the session back, and the caller records that admit before calling
-// Confirm. An in-memory "already posted" map used to stand in for this; the
-// entry's own AdmittedAt is the fact now, so a restarted daemon and a second
-// process agree on it.
+// Confirm. The entry's own AdmittedAt is the fact, so a restarted daemon and a
+// second process agree on it.
 func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, payload, path string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "opencode" {
 		return OutcomeNotMine, "", nil
