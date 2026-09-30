@@ -1147,6 +1147,35 @@ func TestBindFlagSetDefinesLabels(t *testing.T) {
 	}
 }
 
+// TestBindFlagSetDefinesLocal pins the placement flag: --local runs the
+// builder here, whatever the actor's placement says.
+func TestBindFlagSetDefinesLocal(t *testing.T) {
+	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
+	bindFlagSet(fs)
+	if fs.Lookup("local") == nil {
+		t.Error("bind does not define --local")
+	}
+}
+
+// TestBindRejectsServerWithLocal pins the placement conflict: --server and
+// --local name two different machines, so the pair exits 2 on one line before
+// any runtime is built, like the other route refusals.
+func TestBindRejectsServerWithLocal(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"bind", "--no-feature", "--name", "x", "--server", "zen", "--local"})
+	})
+	ce := requireCLIError(t, err, codeRefused, "")
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("run = %v, want exit code 2", err)
+	}
+	for _, want := range []string{"--server", "--local"} {
+		if !strings.Contains(ce.message, want) {
+			t.Errorf("message = %q, want it to name %s", ce.message, want)
+		}
+	}
+}
+
 // TestBindRequiresAFeatureChoice pins #637's exactly-one rule on the CLI: a
 // fresh bind with neither flag, on either route, exits 2 with one stderr line
 // naming both flags, before any runtime is built.
@@ -1573,6 +1602,7 @@ func TestBindRoutesAndRefusals(t *testing.T) {
 		{"branch is add", bindFlags{branch: "b"}, routeAdd},
 		{"server is add", bindFlags{server: "s"}, routeAdd},
 		{"base is add", bindFlags{base: "main"}, routeAdd},
+		{"local is not a route flag", bindFlags{local: true}, routeBind},
 	}
 	for _, c := range valid {
 		got, err := bindRouteFor(c.f)

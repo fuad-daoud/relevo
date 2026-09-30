@@ -161,6 +161,11 @@ type BindOptions struct {
 	// Role is the writer role the new binding runs (#382); "" means builder.
 	// Bind ignores it on resume, because the binding keeps its stored role.
 	Role string
+
+	// Local runs the builder here, whatever the actor's placement says. It is
+	// the --local flag; a fresh bind with no placement list behaves the same
+	// whether it is set or not.
+	Local bool
 }
 
 // RequireFeatureChoice is the CLI's exactly-one rule for --feature/--no-feature
@@ -226,7 +231,40 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 		return resume(ctx, rt, opts, mastermindEP)
 	}
 
-	return create(ctx, rt, opts, mastermindEP)
+	// A fresh bind places itself once, here, before anything is created: an
+	// explicit --local is taken as given, and otherwise the actor's own list
+	// decides. A remote result is created through add's own path, so the wire
+	// and the client's record keep one implementation.
+	placement, perr := createPlacement(ctx, rt,
+		bindingRole(store.Binding{Role: normRole(opts.Role)}), opts.Candidate, "", opts.Local,
+		placementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
+	if perr != nil {
+		return store.Binding{}, Resolution{}, perr
+	}
+	if !placement.local() {
+		name := opts.Name
+		if name == "" {
+			name = SanitizeName(baseName(opts.CWD))
+		}
+		added, aerr := Add(ctx, rt, AddOptions{
+			Name:         name,
+			Candidate:    opts.Candidate,
+			MasterMindID: opts.MasterMindID,
+			Repo:         opts.CWD,
+			Server:       placement.Name,
+			Tier:         opts.Tier,
+			Feature:      opts.Feature,
+			Ticket:       opts.Ticket,
+			Role:         opts.Role,
+			Placement:    placement,
+		})
+		if aerr != nil {
+			return store.Binding{}, Resolution{}, aerr
+		}
+		return added.Binding, added.Resolution, nil
+	}
+
+	return create(ctx, rt, opts, mastermindEP, placement)
 }
 
 // Bind is BindResolved without the resolution, for the callers that only
@@ -588,7 +626,7 @@ func resolveRegate(regate *int, pol policy.Policy) int {
 	return pol.GateRegate()
 }
 
-func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint) (store.Binding, Resolution, error) {
+func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, placement PlacementResolution) (store.Binding, Resolution, error) {
 	shape, err := actorShape(rt.RoleRegistry(), opts.Role)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
@@ -668,6 +706,9 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
+	// The placement rides on the resolution so the pick note says where the
+	// binding landed and what it passed over.
+	res.Placement = placement
 
 	// #637: the ticket is parsed against the binding's own captured origin, so
 	// a typed number becomes owner/repo#N when relevo knows the repo.

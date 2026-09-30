@@ -88,6 +88,12 @@ type Resolution struct {
 	// ACTIVE (#137): the worktree was released by `relevo pause`, so the
 	// restore path ran and --rebind is implied.
 	WasPaused bool
+
+	// Placement is where the create landed, and every placement it passed
+	// over on the way. The zero value means the actor named no preference:
+	// nothing was probed, and the notes and the pick log entry stay exactly
+	// as they were before placement existed.
+	Placement PlacementResolution
 }
 
 // Token is the canonical ref of the resolved candidate, or "" when there
@@ -409,7 +415,24 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 		out += "; " + res.OffNote
 	}
 
-	return out
+	return out + placementClause(res.Placement)
+}
+
+// placementClause renders the placement and every skip as the clauses the pick
+// note and the bind line append: one "; placement <name> (<how>)" and one
+// "; skipped <name> (<reason>)" per entry passed over. A zero Placement renders
+// nothing, so a note written for an actor that names no placement is
+// byte-identical to its pre-placement text.
+func placementClause(p PlacementResolution) string {
+	if p.How == "" {
+		return ""
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "; placement %s (%s)", p.Name, p.How)
+	for _, s := range p.Skipped {
+		fmt.Fprintf(&sb, "; skipped %s (%s)", s.Name, s.Reason)
+	}
+	return sb.String()
 }
 
 // ExplainResolution is the one line that says what was picked and why.

@@ -11,7 +11,7 @@ var registry = []verbEntry{
 		Args:    "[NAME] [--json]",
 		Flags: []string{
 			"--actor", "--allow-yolo", "--base", "--branch", "--candidate", "--cwd",
-			"--feature", "--gate", "--json", "--mastermind", "--name", "--no-feature", "--no-gate",
+			"--feature", "--gate", "--json", "--local", "--mastermind", "--name", "--no-feature", "--no-gate",
 			"--rebind", "--regate", "--resume", "--server", "--ticket", "--tier",
 			"--timeout", "--worktree",
 		},

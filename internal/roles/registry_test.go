@@ -630,3 +630,35 @@ func TestCandidateEntriesAcceptNames(t *testing.T) {
 		t.Errorf("Load(A/b) err = %v, want ErrBadRoles", err)
 	}
 }
+
+// TestBuildCarriesPlacement pins that an actor's placement travels from the
+// row into the registry's role -- the resolution reads it there -- that an
+// absent one stays nil, and that Role's copy does not alias the registry's
+// own slice.
+func TestBuildCarriesPlacement(t *testing.T) {
+	t.Parallel()
+
+	set := setFromJSON(t, `[{"harness":"claude","provider":"test","model":"m","roles":["builder"]}]`)
+	reg, err := Build(&File{Rows: map[string]Row{
+		"builder": {Candidates: []string{"claude/test/m"}, Placement: []string{"zen", "local"}},
+	}}, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	role, ok := reg.Role("builder")
+	if !ok {
+		t.Fatal("builder missing from the registry")
+	}
+	if want := []string{"zen", "local"}; !reflect.DeepEqual(role.Placement, want) {
+		t.Errorf("builder placement = %v, want %v", role.Placement, want)
+	}
+	if reviewer, _ := reg.Role("reviewer"); reviewer.Placement != nil {
+		t.Errorf("reviewer placement = %v, want nil: the row named none", reviewer.Placement)
+	}
+
+	role.Placement[0] = "mutated"
+	if again, _ := reg.Role("builder"); again.Placement[0] != "zen" {
+		t.Errorf("Role returned an aliased placement: %v", again.Placement)
+	}
+}

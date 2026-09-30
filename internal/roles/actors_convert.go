@@ -60,6 +60,7 @@ func rowFor(name string, actor Actor, agents map[string]AgentEntry) (Row, error)
 		Shape:       &rowShape,
 		Definitions: defs,
 	}
+	row.Placement = append([]string(nil), actor.Placement...)
 	for _, e := range actor.Candidates {
 		row.Candidates = append(row.Candidates, e.Candidate)
 		if e.Off {

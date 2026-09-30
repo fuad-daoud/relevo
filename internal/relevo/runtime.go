@@ -404,6 +404,10 @@ var ErrRemoteUnavailable = errors.New("no remote client configured; run relevo c
 // RemoteClient is the client for communicating with remote relevo servers.
 type RemoteClient interface {
 	WhoAmI(ctx context.Context, server string) (remote.WhoAmI, error)
+	// Actor reads a server's answer for one actor, the same answer a create
+	// naming it would get, so a placement probe can decide before anything is
+	// created. A server that predates the placement feature answers 404.
+	Actor(ctx context.Context, server, actor, candidate string) (remote.ActorView, error)
 	Candidates(ctx context.Context, server string) (remote.CandidatesResponse, error)
 	CreateBinding(ctx context.Context, server string, req remote.CreateBindingRequest) (remote.BindingView, error)
 	GetBinding(ctx context.Context, server, name string) (remote.BindingView, error)
