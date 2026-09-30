@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/bugreport"
@@ -46,7 +47,7 @@ func bugreportFlagSet(fs *flag.FlagSet) *bugreportFlagValues {
 // either binary.
 var bugreportExec = func(ctx context.Context, argv []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	return cmd.Output()
+	return cmd.CombinedOutput()
 }
 
 // bugreportOptions is what one run of the verb was asked for.
@@ -155,11 +156,19 @@ func runBugreport(opts bugreportOptions) error {
 	if !opts.gh {
 		return nil
 	}
-	if _, err := bugreportExec(context.Background(), argv); err != nil {
+	out, err := bugreportExec(context.Background(), argv)
+	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return fail(codeNotAvailable, "%s", line)
 		}
-		return fail(codeInternal, "%v", err)
+		reason := firstLine(string(out))
+		if reason == "" {
+			reason = err.Error()
+		}
+		return fail(codeNotAvailable, "gh issue create: %s", reason)
+	}
+	if text := strings.TrimSpace(string(out)); text != "" {
+		fmt.Println(text)
 	}
 	return nil
 }
