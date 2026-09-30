@@ -74,6 +74,12 @@ var settingHelp = map[string]string{
 	"scan_patterns":      "Extra patterns that mark a builder's line as instruction-shaped, beside the built-in list.",
 	"classify":           "An optional classifier that scores a builder's lines for prompt injection, beside the pattern scan.",
 	"notify.webhooks":    "Where relevo posts round and binding events over HTTP.",
+
+	"chain.max_corrections": "How many correction rounds one plan may take before the chain asks you; 0 halts on the first changes verdict.",
+	"chain.reviewer_actor":  "The actor that reviews each builder round's diff.",
+	"chain.planner_actor":   "The actor that writes correction and fix plans after a changes verdict.",
+	"chain.security_actor":  "The actor that scans the branch diff for security findings.",
+	"chain.security":        "Whether the security phase runs after the last plan passes review.",
 }
 
 // checkSentence is the check form's note and the sentence that follows
@@ -427,7 +433,7 @@ func (v settingsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		}
 		row := settings[candClamp(v.cur, n)]
 		switch row.Form {
-		case "rounds", "check", "timing", "max_builders", "scope", "serve.scope", "classify":
+		case "rounds", "check", "timing", "max_builders", "scope", "serve.scope", "classify", "chain":
 			return v, openOverlay(newSettingsForm(env, v.doc, row.Form, row.Key))
 		case "webhooks":
 			return v, push(newWebhooksView(env, v.doc))
