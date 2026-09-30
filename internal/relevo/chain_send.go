@@ -71,8 +71,8 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		pending = append(pending, pickEntry(rt.Now().UTC(), cur.Round, bindingRole(cur), *res))
 	}
 
-	// A reader round runs in a throwaway scratch worktree, never in b.CWD (A5
-	// §2, D6): create it from the round's captured baseline before anything is
+	// A reader round runs in a throwaway scratch worktree, never in b.CWD:
+	// create it from the round's captured baseline before anything is
 	// spawned, exactly as Send does.
 	if cur.Shape == store.ShapeReader {
 		if _, err := CreateScratchFrom(ctx, rt, cur, cur.Round, baselineHead, baseline); err != nil {

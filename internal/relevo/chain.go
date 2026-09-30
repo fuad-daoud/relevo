@@ -205,14 +205,14 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return err
 	}
-	if c.Status != string(chain.StatusRunning) {
-		return nil
-	}
 
 	before, err := chainStateOf(c)
 	if err != nil {
 		return err
 	}
+	// Next owns the two refusals: it ignores a close that does not name the
+	// awaited (member, round), and it ignores every close once the chain is
+	// terminal -- which is what makes the end delivery happen exactly once.
 	next, act := chain.Next(before, ev)
 	if act.Kind == chain.ActionNone {
 		return nil

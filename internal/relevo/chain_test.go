@@ -402,8 +402,8 @@ func TestChainSecurityNoFindingsFinishes(t *testing.T) {
 	}
 }
 
-// TestChainFinishQueuesExactlyOneDelivery pins §9.2: finishing queues one end
-// delivery on the builder, and a later tick cannot add a second.
+// TestChainFinishQueuesExactlyOneDelivery pins the single end delivery:
+// finishing queues one on the builder, and a later tick cannot add a second.
 func TestChainFinishQueuesExactlyOneDelivery(t *testing.T) {
 	t.Parallel()
 
@@ -424,9 +424,18 @@ func TestChainFinishQueuesExactlyOneDelivery(t *testing.T) {
 		t.Errorf("delivery round = %d, want the builder's current round %d", pending[0].Round, chainBinding(t, rt, "shop").Round)
 	}
 
-	// A second tick: the terminal transition happened once, so nothing more
-	// is queued.
-	chainReconcile(t, rt, "shop")
+	// A second tick cannot add another: the terminal transition happened
+	// once, so a replayed close for the same member round is ignored.
+	rev := chainBinding(t, rt, "shop-rev")
+	replay := chain.Event{
+		Kind: chain.EventReviewerClosed, Member: chain.MemberReviewer, Round: 1,
+		Verdict: chain.VerdictPass,
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return chainApply(context.Background(), rt, tx, rev, replay)
+	}); err != nil {
+		t.Fatalf("replayed chainApply: %v", err)
+	}
 	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
 		t.Errorf("pending chain deliveries after a second tick = %d, want still 1", len(pending))
 	}
