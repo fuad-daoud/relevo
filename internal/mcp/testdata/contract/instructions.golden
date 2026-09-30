@@ -100,8 +100,9 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 - Something wrong in relevo itself -- an `internal` failure (its next is
   `relevo bugreport`), a stuck round, a status that lies -- is a bug: run
   `relevo bugreport`, with `--name <binding>` and `--round N` when one round is
-  involved. The bundle is local and redacted and nothing is sent. Review it,
-  then hand the human the printed `gh issue create` line -- never file as them.
-  `--logs` adds that round's report, diff and transcript, for content the human
-  agrees to share.
+  involved; `--logs` adds that round's report, diff and transcript, so only for
+  content the human agrees to share. The bundle is local and redacted and
+  nothing is sent by default. Review it, then ask the human whether to file it
+  with `relevo bugreport --gh`; if not, hand them the printed
+  `gh issue create` line. Never file without asking.
 - A binding that says NEEDS YOU is waiting on a human.
