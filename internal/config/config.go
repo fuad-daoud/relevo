@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -17,14 +18,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// Section names one config_doc row. Hooks, Agents and Actors have no file:
-// they are stored as a JSON body.
+// Section names one config_doc row. Hooks, Agents, Actors and Accounts have no
+// file: they are stored as a JSON body.
 type Section string
 
 const (
 	Candidates Section = "candidates"
 	Agents     Section = "agents"
 	Actors     Section = "actors"
+	Accounts   Section = "accounts"
 	Policy     Section = "policy"
 	Roles      Section = "roles"
 	Prices     Section = "prices"
@@ -34,7 +36,7 @@ const (
 
 // Sections is the order an import checks and stores the sections, and the
 // order EncodeDoc and DiffDocs render them.
-var Sections = []Section{Candidates, Agents, Actors, Policy, Roles, Prices, Servers, Hooks}
+var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks}
 
 // sectionFile maps a section to the file it is imported from.
 var sectionFile = map[Section]string{
@@ -90,6 +92,7 @@ type Loaded struct {
 	Version    int64
 	Agents     map[string]roles.AgentEntry
 	Actors     map[string]roles.Actor
+	Accounts   account.Set
 }
 
 // Store reads and writes the config sections and secrets of one database.
@@ -243,6 +246,69 @@ func loadServers(doc Doc, L *Loaded) error {
 	return nil
 }
 
+// loadAccounts parses the accounts section, warning about a group no candidate
+// of that harness uses. An absent section is an empty pool.
+func loadAccounts(doc Doc, L *Loaded) error {
+	body, ok := doc[Accounts]
+	if !ok {
+		return nil
+	}
+	set, warnings, err := account.Parse(string(Accounts), body, candidateGroups(L.Candidates))
+	if err != nil {
+		return err
+	}
+	L.Accounts = set
+	L.Warnings = append(L.Warnings, warnings...)
+	return nil
+}
+
+// candidateGroups maps each harness kind to the quota groups its candidates
+// use, which is what tells a stale group in the accounts section apart from a
+// live one.
+func candidateGroups(set *candidate.Set) map[account.Kind][]string {
+	if set == nil {
+		return nil
+	}
+	groups := make(map[account.Kind][]string)
+	seen := make(map[account.Kind]map[string]bool)
+	for _, token := range set.Refs() {
+		ref, err := candidate.ParseRef(token)
+		if err != nil {
+			continue
+		}
+		kind := account.Kind(ref.Harness)
+		if seen[kind] == nil {
+			seen[kind] = make(map[string]bool)
+		}
+		if seen[kind][ref.Provider] {
+			continue
+		}
+		seen[kind][ref.Provider] = true
+		groups[kind] = append(groups[kind], ref.Provider)
+	}
+	return groups
+}
+
+// opencodeGroups names every quota group an opencode account covers, for the
+// policy check that refuses round-robin.
+func opencodeGroups(set account.Set) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, a := range set {
+		if a.Harness != account.OpenCode {
+			continue
+		}
+		for _, g := range a.Groups {
+			if seen[g] {
+				continue
+			}
+			seen[g] = true
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
 func loadHooks(doc Doc, L *Loaded) error {
 	body, ok := doc[Hooks]
 	if !ok {
@@ -310,6 +376,9 @@ func Validate(sec Section, body []byte) ([]string, error) {
 		return warnings, err
 	case Actors:
 		_, warnings, err := roles.ParseActors(body)
+		return warnings, err
+	case Accounts:
+		_, warnings, err := account.Parse(string(Accounts), body, nil)
 		return warnings, err
 	case Prices:
 		_, err := usage.ParsePrices(body)

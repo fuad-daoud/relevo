@@ -1,12 +1,15 @@
 package config
 
-import "github.com/fuad-daoud/relevo/internal/roles"
+import (
+	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/roles"
+)
 
 // decodeDoc derives everything Load reads from section bodies: the parse of
-// candidates, policy, roles, agents, actors, prices, servers and hooks, the
-// actors-wins roles rebuild, the registry, and the placement cross-check of
-// that registry against the servers section. It touches no database, so the
-// read path and a writer's prospective check share one decode.
+// candidates, policy, roles, agents, actors, accounts, prices, servers and
+// hooks, the actors-wins roles rebuild, the registry, and the placement
+// cross-check of that registry against the servers section. It touches no
+// database, so the read path and a writer's prospective check share one decode.
 func decodeDoc(doc Doc) (Loaded, error) {
 	var L Loaded
 
@@ -36,6 +39,14 @@ func decodeDoc(doc Doc) (Loaded, error) {
 		return Loaded{}, err
 	}
 	if err := loadHooks(doc, &L); err != nil {
+		return Loaded{}, err
+	}
+	if err := loadAccounts(doc, &L); err != nil {
+		return Loaded{}, err
+	}
+	// The rotation check reads both sections, so it runs once the policy and
+	// the accounts are parsed.
+	if err := policy.ValidateRotation(FileName(Policy), L.Policy.AccountsRotation(), opencodeGroups(L.Accounts)); err != nil {
 		return Loaded{}, err
 	}
 
