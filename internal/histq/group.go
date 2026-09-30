@@ -158,6 +158,8 @@ func groupKey(r db.RoundRow, by Axis, loc *time.Location) string {
 		return derefKey(r.Ticket)
 	case AxisCandidate:
 		return derefKey(r.Candidate)
+	case AxisAccount:
+		return derefKey(r.Account)
 	case AxisActor:
 		return r.Actor
 	case AxisHarness:

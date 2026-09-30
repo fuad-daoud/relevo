@@ -48,11 +48,10 @@ type BindingStatus struct {
 	// candidate is no longer configured, in which case the token is shown;
 	// the token always stays the identity.
 	BuilderName string `json:"candidate_name,omitempty"`
-	// Account is the login of the candidate's pool this round drew from.
-	// Additive and omitted on every host with no accounts, so the document is
-	// unchanged there. It belongs to the binding's owner, never another owner:
-	// the row is only ever built for the owner's own status.
-	Account string `json:"account,omitempty"`
+	// BuilderAccount is the login of the candidate's pool this round drew from,
+	// for display. Empty on a host with no accounts, and omitted from JSON so a
+	// row that never learned it keeps the document it always had.
+	BuilderAccount string `json:"account,omitempty"`
 	// Role is the actor the runner plays; always present, "builder" when the
 	// binding stores the empty (builder) one.
 	Role string `json:"actor"`

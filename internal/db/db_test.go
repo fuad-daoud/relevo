@@ -669,4 +669,23 @@ func TestRoundAccountRoundTrips(t *testing.T) {
 	if rounds[1].Account != nil {
 		t.Errorf("round 2 account = %q, want nil", *rounds[1].Account)
 	}
+
+	// The history read path carries the same fact: Query selects round.account
+	// and a round with none leaves its RoundRow field nil.
+	rows, err := d.Query(Filter{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	for _, r := range rows {
+		switch r.Number {
+		case 1:
+			if r.Account == nil || *r.Account != "cp2" {
+				t.Errorf("RoundRow 1 account = %v, want cp2", r.Account)
+			}
+		case 2:
+			if r.Account != nil {
+				t.Errorf("RoundRow 2 account = %q, want nil", *r.Account)
+			}
+		}
+	}
 }

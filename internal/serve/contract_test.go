@@ -241,13 +241,13 @@ func TestContractStatusDocument(t *testing.T) {
 		Report: view.Report{
 			Bindings: []view.BindingStatus{
 				{
-					Name:          "active-task",
-					State:         "ACTIVE",
-					Round:         2,
-					BuilderStatus: "running",
-					Account:       "work",
-					Owner:         "SHA256:alice11111111111111111111111111111111111111",
-					OwnerLabel:    "alice",
+					Name:           "active-task",
+					State:          "ACTIVE",
+					Round:          2,
+					BuilderStatus:  "running",
+					BuilderAccount: "work",
+					Owner:          "SHA256:alice11111111111111111111111111111111111111",
+					OwnerLabel:     "alice",
 				},
 			},
 		},
