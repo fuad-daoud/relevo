@@ -1,32 +1,32 @@
   ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
                                                                                                                                     
-   18 settings   3 set                                                                                                              
-                                                                                                                                    
-   SETTING                                                                         VALUE                   DEFAULT                  
-   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 4 settings · 2 set   
-   max_switches                                                                    2                       2                        
-   max_tier                                                                        yolo                    edit                     
-   verify.default  ╭─ classify ─────────────────────────────────────────────────────────────────────────────────╮                   
-   artifact_max_mb │                                                                                            │                   
-   check ┈┈┈┈┈┈┈┈┈┈│ provider          off    jev                                                               │┈┈┈┈┈ 3 settings   
-   gate.default    │                                                                                            │                   
-   gate.timeout    │ model                                       default jev-latest                             │                   
-   gate.regate     │                                                                                            │                   
-   timing ┈┈┈┈┈┈┈┈┈│ threshold                                   default 0.7                                    │┈┈┈┈┈ 5 settings   
+   23 settings   3 set                                                                                                              
+   artifact_max_mb                                                                 25                      25                       
+   check ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings   
+   gate.default                                                                    none                    none                     
+   gate.timeout                                                                    10m                     10m                      
+   gate.regate                                                                     0                       0                        
+   timing ┈┈┈┈┈┈┈┈┈╭─ classify ─────────────────────────────────────────────────────────────────────────────────╮┈┈┈┈┈ 5 settings   
    limit_gate_defau│                                                                                            │                   
-   stall_after     │ timeout                                     default 4s                                     │                   
+   stall_after     │ provider          off    jev                                                               │                   
    progress_interva│                                                                                            │                   
-   explore_after   │ scores each builder line for prompt injection, beside the pattern scan                     │                   
+   explore_after   │ model                                       default jev-latest                             │                   
    stale_after     │                                                                                            │                   
-   processes ┈┈┈┈┈┈│  enter  save       tab  next field       esc  cancel       ←→  choose                      │settings · 1 set   
-   scope           ╰────────────────────────────────────────────────────────────────────────────────────────────╯o limits           
-   serve.max_builders                                                              21                      21                       
-   serve.scope                                                                     slice relevo.slice      as scope                 
-   scan ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 2 settings   
-   scan_patterns                                                                   none                    none                     
-   classify                                                                        off                     off                      
-   notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
+   processes ┈┈┈┈┈┈│ threshold                                   default 0.7                                    │settings · 1 set   
+   scope           │                                                                                            │o limits           
+   serve.max_builde│ timeout                                     default 4s                                     │                   
+   serve.scope     │                                                                                            │pe                 
+   scan ┈┈┈┈┈┈┈┈┈┈┈│ scores each builder line for prompt injection, beside the pattern scan                     │┈┈┈┈┈ 2 settings   
+   scan_patterns   │                                                                                            │                   
+   classify        │  enter  save       tab  next field       esc  cancel       ←→  choose                      │                   
+   notify ┈┈┈┈┈┈┈┈┈╰────────────────────────────────────────────────────────────────────────────────────────────╯┈┈┈┈┈┈ 1 setting   
    notify.webhooks                                                                 none                    none                     
+   chain ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   
+   chain.max_corrections                                                           3                       3                        
+   chain.reviewer_actor                                                            reviewer                reviewer                 
+   chain.planner_actor                                                             lite-planner            lite-planner             
+   chain.security_actor                                                            security                security                 
+   chain.security                                                                  off                     off                      
                                                                                                                                     
    classify   off                                                                                                                   
    An optional classifier that scores a builder's lines for prompt injection, beside the pattern scan.                              

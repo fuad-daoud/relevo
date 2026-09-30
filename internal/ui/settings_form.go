@@ -250,6 +250,9 @@ func newSettingsForm(env Env, doc relevo.ConfigDoc, form, focusKey string) setti
 
 	case "classify":
 		fields, note, title = newClassifyFields(doc)
+
+	case "chain":
+		fields, note, title = newChainFields(doc)
 	}
 
 	f := settingsForm{

@@ -16,11 +16,11 @@ import (
 // Setting is one policy setting displayed in :settings.
 type Setting struct {
 	Key     string // the name the list shows, e.g. max_switches, gate.timeout, serve.scope
-	Group   string // rounds, check, timing, processes, scan or notify
+	Group   string // rounds, check, timing, processes, scan, notify or chain
 	Value   string // the effective value as display text
 	Default string // the default as display text
 	Set     bool   // the key is stored in the policy section
-	Form    string // which editor enter opens: rounds, check, timing, max_builders; or scope, serve.scope, scan_patterns, classify, webhooks (round 2)
+	Form    string // which editor enter opens: rounds, check, timing, max_builders; or scope, serve.scope, scan_patterns, classify, webhooks (round 2), chain
 }
 
 // PolicySet is one path-value assignment for policy edits.
@@ -78,12 +78,12 @@ func formatScope(sc *policy.ScopePolicy, defaultText string) string {
 	return strings.Join(parts, " · ")
 }
 
-// Settings returns the 18 policy rows in display order, filled from d.Policy.
+// Settings returns the 23 policy rows in display order, filled from d.Policy.
 func Settings(d ConfigDoc, cpus int) []Setting {
 	p := d.Policy
 	defMaxBuilders := max(1, cpus-1)
 
-	var rows [18]Setting
+	var rows [23]Setting
 
 	// 1: rounds / max_switches
 	rows[0] = Setting{
@@ -307,6 +307,60 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "webhooks",
 	}
 
+	// 19: chain / chain.max_corrections
+	rows[18] = Setting{
+		Group:   "chain",
+		Key:     "chain.max_corrections",
+		Value:   strconv.Itoa(p.ChainMaxCorrections()),
+		Default: strconv.Itoa(policy.DefaultChainMaxCorrections),
+		Set:     p.Chain != nil && p.Chain.MaxCorrections != nil,
+		Form:    "chain",
+	}
+
+	// 20: chain / chain.reviewer_actor
+	rows[19] = Setting{
+		Group:   "chain",
+		Key:     "chain.reviewer_actor",
+		Value:   p.ChainReviewerActor(),
+		Default: policy.DefaultChainReviewerActor,
+		Set:     p.Chain != nil && p.Chain.ReviewerActor != "",
+		Form:    "chain",
+	}
+
+	// 21: chain / chain.planner_actor
+	rows[20] = Setting{
+		Group:   "chain",
+		Key:     "chain.planner_actor",
+		Value:   p.ChainPlannerActor(),
+		Default: policy.DefaultChainPlannerActor,
+		Set:     p.Chain != nil && p.Chain.PlannerActor != "",
+		Form:    "chain",
+	}
+
+	// 22: chain / chain.security_actor
+	rows[21] = Setting{
+		Group:   "chain",
+		Key:     "chain.security_actor",
+		Value:   p.ChainSecurityActor(),
+		Default: policy.DefaultChainSecurityActor,
+		Set:     p.Chain != nil && p.Chain.SecurityActor != "",
+		Form:    "chain",
+	}
+
+	// 23: chain / chain.security
+	csVal := "off"
+	if p.ChainSecurityOn() {
+		csVal = "on"
+	}
+	rows[22] = Setting{
+		Group:   "chain",
+		Key:     "chain.security",
+		Value:   csVal,
+		Default: "off",
+		Set:     p.Chain != nil && p.Chain.Security != nil,
+		Form:    "chain",
+	}
+
 	return rows[:]
 }
 
@@ -349,6 +403,16 @@ func SettingPaths(key string) []string {
 		return []string{"classify"}
 	case "notify.webhooks":
 		return []string{"notify"}
+	case "chain.max_corrections":
+		return []string{"chain.max_corrections"}
+	case "chain.reviewer_actor":
+		return []string{"chain.reviewer_actor"}
+	case "chain.planner_actor":
+		return []string{"chain.planner_actor"}
+	case "chain.security_actor":
+		return []string{"chain.security_actor"}
+	case "chain.security":
+		return []string{"chain.security"}
 	default:
 		return nil
 	}

@@ -154,6 +154,29 @@ func TestConfigSetGetUnsetRoundTrip(t *testing.T) {
 	}
 }
 
+// TestConfigSetPolicyChain pins that the chain group is reachable through the
+// generic dotted-path config verbs: a bare set stores the value and a get
+// reads it back, with no bespoke chain setter.
+func TestConfigSetPolicyChain(t *testing.T) {
+	initRoot(t)
+
+	if _, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "set", "policy.chain.max_corrections", "5"})
+	}); err != nil {
+		t.Fatalf("set policy.chain.max_corrections: %v (stderr: %s)", err, stderr)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "get", "policy.chain.max_corrections"})
+	})
+	if err != nil {
+		t.Fatalf("get policy.chain.max_corrections: %v (stderr: %s)", err, stderr)
+	}
+	if got := strings.TrimSpace(string(stdout)); got != "5" {
+		t.Errorf("get policy.chain.max_corrections = %q, want 5", got)
+	}
+}
+
 // TestConfigUnsetRefusesAgentInUse is the issue's repro: unsetting an agent an
 // actor still names is refused, the refusal names the actor, and the document
 // still loads so the entry is still readable. Only config verbs run here: no

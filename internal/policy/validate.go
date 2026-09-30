@@ -249,6 +249,9 @@ func Parse(name string, raw []byte) (Policy, []string, error) {
 	if err := validateNotify(path, p.Notify); err != nil {
 		return Policy{}, warnings, err
 	}
+	if err := validateChain(path, p.Chain); err != nil {
+		return Policy{}, warnings, err
+	}
 
 	return p, warnings, nil
 }
@@ -384,6 +387,28 @@ func validateOrder(path string, order map[string][]string) error {
 				return fmt.Errorf("%s: order.%s[%d]: duplicate token %q: %w", path, role, i, tok, ErrBadPolicy)
 			}
 			seen[tok] = true
+		}
+	}
+	return nil
+}
+
+// validateChain checks the chain group: a non-negative correction budget, and
+// any actor name that is set must be non-blank.
+func validateChain(path string, c *ChainPolicy) error {
+	if c == nil {
+		return nil
+	}
+	if c.MaxCorrections != nil && *c.MaxCorrections < 0 {
+		return fmt.Errorf("%s: chain.max_corrections: must be >= 0, got %d: %w", path, *c.MaxCorrections, ErrBadPolicy)
+	}
+	actors := []struct{ key, name string }{
+		{"chain.reviewer_actor", c.ReviewerActor},
+		{"chain.planner_actor", c.PlannerActor},
+		{"chain.security_actor", c.SecurityActor},
+	}
+	for _, a := range actors {
+		if a.name != "" && strings.TrimSpace(a.name) == "" {
+			return fmt.Errorf("%s: %s: must not be blank, got %q: %w", path, a.key, a.name, ErrBadPolicy)
 		}
 	}
 	return nil

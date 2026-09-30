@@ -1,32 +1,32 @@
   ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
                                                                                                                                     
-   18 settings   3 set                                                                                                              
-                                                                                                                                    
-   SETTING                                                                         VALUE                   DEFAULT                  
-   rounds ┈┈┈┈┈┈┈┈┈╭─ serve.scope ──────────────────────────────────────────────────────────────────────────────╮settings · 2 set   
-   max_switches    │                                                                                            │                   
-   max_tier        │ enabled           on    off                                                                │                   
-   verify.default  │                                                                                            │                   
-   artifact_max_mb │ slice            relevo.slice               default: systemd's                             │                   
-   check ┈┈┈┈┈┈┈┈┈┈│                                                                                            │┈┈┈┈┈ 3 settings   
-   gate.default    │ cpu_weight                                  default 100                                    │                   
+   23 settings   3 set                                                                                                              
+   artifact_max_mb                                                                 25                      25                       
+   check ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings   
+   gate.default    ╭─ serve.scope ──────────────────────────────────────────────────────────────────────────────╮                   
    gate.timeout    │                                                                                            │                   
-   gate.regate     │ memory_max                                  default none · e.g. 8G                         │                   
+   gate.regate     │ enabled           on    off                                                                │                   
    timing ┈┈┈┈┈┈┈┈┈│                                                                                            │┈┈┈┈┈ 5 settings   
-   limit_gate_defau│ cpu_quota                                   default none · e.g. 200%                       │                   
+   limit_gate_defau│ slice            relevo.slice               default: systemd's                             │                   
    stall_after     │                                                                                            │                   
-   progress_interva│ gate_cpu_quota                              default: cpu_quota                             │                   
+   progress_interva│ cpu_weight                                  default 100                                    │                   
    explore_after   │                                                                                            │                   
-   stale_after     │ allowed_cpus                                default: no pinning · e.g. 0-3                 │                   
+   stale_after     │ memory_max                                  default none · e.g. 8G                         │                   
    processes ┈┈┈┈┈┈│                                                                                            │settings · 1 set   
-   scope           │ tasks_max                                   default none                                   │o limits           
+   scope           │ cpu_quota                                   default none · e.g. 200%                       │o limits           
    serve.max_builde│                                                                                            │                   
-   serve.scope     │ rounds relevo serve runs use this in place of scope                                        │pe                 
+   serve.scope     │ gate_cpu_quota                              default: cpu_quota                             │pe                 
    scan ┈┈┈┈┈┈┈┈┈┈┈│                                                                                            │┈┈┈┈┈ 2 settings   
-   scan_patterns   │  enter  save       tab  next field       esc  cancel       ←→  choose                      │                   
-   classify        ╰────────────────────────────────────────────────────────────────────────────────────────────╯                   
-   notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
-   notify.webhooks                                                                 none                    none                     
+   scan_patterns   │ allowed_cpus                                default: no pinning · e.g. 0-3                 │                   
+   classify        │                                                                                            │                   
+   notify ┈┈┈┈┈┈┈┈┈│ tasks_max                                   default none                                   │┈┈┈┈┈┈ 1 setting   
+   notify.webhooks │                                                                                            │                   
+   chain ┈┈┈┈┈┈┈┈┈┈│ rounds relevo serve runs use this in place of scope                                        │┈┈┈┈┈ 5 settings   
+   chain.max_correc│                                                                                            │                   
+   chain.reviewer_a│  enter  save       tab  next field       esc  cancel       ←→  choose                      │er                 
+   chain.planner_ac╰────────────────────────────────────────────────────────────────────────────────────────────╯lanner             
+   chain.security_actor                                                            security                security                 
+   chain.security                                                                  off                     off                      
                                                                                                                                     
    serve.scope   slice relevo.slice                                                                                                 
    The scope for rounds relevo serve runs; when set it replaces scope for them.                                                     
