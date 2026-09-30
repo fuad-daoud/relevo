@@ -288,6 +288,17 @@ func filledCandidatesResponse() CandidatesResponse {
 	}
 }
 
+func filledActorView() ActorView {
+	return ActorView{
+		Actor:      "builder",
+		Shape:      "writer",
+		Accepted:   true,
+		Pick:       "agy/openai/gpt-4",
+		Reason:     "",
+		Candidates: []CandidateView{filledCandidateView()},
+	}
+}
+
 func filledErrorBody() ErrorBody {
 	return ErrorBody{
 		Code:    CodeNotEnrolled,
@@ -319,6 +330,7 @@ var protoCases = []protoTypeCase{
 	{"AvailableResponse", filledAvailableResponse(), func() any { return new(AvailableResponse) }},
 	{"CandidateView", filledCandidateView(), func() any { return new(CandidateView) }},
 	{"CandidatesResponse", filledCandidatesResponse(), func() any { return new(CandidatesResponse) }},
+	{"ActorView", filledActorView(), func() any { return new(ActorView) }},
 	{"ErrorBody", filledErrorBody(), func() any { return new(ErrorBody) }},
 }
 
