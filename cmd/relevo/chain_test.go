@@ -423,6 +423,98 @@ func TestChainStartedTextPrintsTheCheck(t *testing.T) {
 	}
 }
 
+// TestChainDocCarriesPlacement pins the document's placement field: a remote
+// member names its server, every other member runs here.
+func TestChainDocCarriesPlacement(t *testing.T) {
+	res := relevo.ChainResult{
+		Chain: db.ChainRow{Builder: "shop", Reviewer: "review", Planner: "plan"},
+		Members: []store.Binding{
+			{Name: "shop", Builder: store.Endpoint{Server: "zen"}},
+			{Name: "review", Role: "reviewer"},
+			{Name: "plan", Role: "planner"},
+		},
+	}
+	doc := chainDocOf(res)
+	if len(doc.Members) != 3 {
+		t.Fatalf("members = %d, want 3", len(doc.Members))
+	}
+	for i, want := range []string{"zen", "local", "local"} {
+		if got := doc.Members[i].Placement; got != want {
+			t.Errorf("members[%d].Placement = %q, want %q", i, got, want)
+		}
+	}
+}
+
+// TestChainStartedTextNamesTheRemoteBuilder pins the remote human text: the
+// builder names its server, branch and base with no worktree line, and a local
+// builder keeps the worktree line.
+func TestChainStartedTextNamesTheRemoteBuilder(t *testing.T) {
+	remote := relevo.ChainResult{
+		Chain: db.ChainRow{Builder: "shop", Reviewer: "review", Branch: "relevo/shop", Base: "abc123"},
+		Members: []store.Binding{
+			{Name: "shop", Builder: store.Endpoint{Server: "zen"}},
+			{Name: "review", Role: "reviewer"},
+		},
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		chainStartedText(relevo.Runtime{}, remote)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("chainStartedText: %v", err)
+	}
+	out := string(stdout)
+	for _, want := range []string{"on zen", "branch relevo/shop", "from abc123"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout = %q, want it to contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, "worktree") {
+		t.Errorf("stdout = %q, want no worktree line for a remote builder", out)
+	}
+
+	local := relevo.ChainResult{
+		Chain:   db.ChainRow{Builder: "shop", Worktree: "/work/shop", Branch: "relevo/shop", Base: "abc123"},
+		Members: []store.Binding{{Name: "shop"}},
+	}
+	stdout, _, err = captureOutput(t, func() error {
+		chainStartedText(relevo.Runtime{}, local)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("chainStartedText: %v", err)
+	}
+	if want := "  worktree /work/shop on relevo/shop (from abc123)\n"; !strings.Contains(string(stdout), want) {
+		t.Errorf("stdout = %q, want it to contain %q", stdout, want)
+	}
+}
+
+// TestChainResumedTextNamesPlacement pins the resume human text: each member
+// names where it runs, so the remote builder names its server.
+func TestChainResumedTextNamesPlacement(t *testing.T) {
+	res := relevo.ChainResult{
+		Chain: db.ChainRow{Name: "shop", Builder: "shop", Reviewer: "review"},
+		Members: []store.Binding{
+			{Name: "shop", Builder: store.Endpoint{Server: "zen"}},
+			{Name: "review", Role: "reviewer"},
+		},
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		chainResumedText(res)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("chainResumedText: %v", err)
+	}
+	out := string(stdout)
+	if !strings.Contains(out, "zen") {
+		t.Errorf("stdout = %q, want it to name the remote builder's server zen", out)
+	}
+	if !strings.Contains(out, "local") {
+		t.Errorf("stdout = %q, want the local reader's placement", out)
+	}
+}
+
 // TestChainDoneOnARunningChainIsAConflict pins the refusal's class: a script
 // must be able to tell "stop it first" from an internal failure.
 func TestChainDoneOnARunningChainIsAConflict(t *testing.T) {

@@ -198,7 +198,7 @@ func TestChainStartRemoteBuilderKeepsReadersOnTheChainRepo(t *testing.T) {
 }
 
 // TestChainStartRemoteBuilderCarriesTheResolvedCheck pins the check the create
-// and the member carry: the chain's resolved Settings (#773), so a policy
+// and the member carry: the chain's resolved Settings, so a policy
 // gate.default travels with no flag at all, --no-gate sends "", and --regate
 // stays a client-side fact.
 func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
