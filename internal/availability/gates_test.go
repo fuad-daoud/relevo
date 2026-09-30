@@ -781,7 +781,7 @@ func TestRolesMissingNoteWording(t *testing.T) {
 
 	builderDefs := []string{"plan-executor", "researcher"}
 
-	shipped := rolesMissingNote("builder", "claude", builderDefs, []string{".claude/agents/plan-executor.md"})
+	shipped := rolesMissingNote("builder", "claude", builderDefs, []string{".claude/agents/plan-executor.md"}, "")
 	if !strings.Contains(shipped, "run relevo config agents --kind claude") {
 		t.Errorf("shipped note = %q, want the install fix", shipped)
 	}
@@ -789,7 +789,7 @@ func TestRolesMissingNoteWording(t *testing.T) {
 		t.Errorf("shipped note = %q, want no custom fix", shipped)
 	}
 
-	custom := rolesMissingNote("builder", "claude", []string{"my-executor"}, []string{".claude/agents/my-executor.md"})
+	custom := rolesMissingNote("builder", "claude", []string{"my-executor"}, []string{".claude/agents/my-executor.md"}, "")
 	if !strings.Contains(custom, "run relevo config agents --kind claude for a custom agent relevo renders") || !strings.Contains(custom, "yourself") {
 		t.Errorf("custom note = %q, want the custom fix", custom)
 	}
@@ -798,7 +798,7 @@ func TestRolesMissingNoteWording(t *testing.T) {
 	}
 
 	mixed := rolesMissingNote("builder", "claude", []string{"plan-executor", "my-executor"},
-		[]string{".claude/agents/plan-executor.md", ".claude/agents/my-executor.md"})
+		[]string{".claude/agents/plan-executor.md", ".claude/agents/my-executor.md"}, "")
 	if !strings.Contains(mixed, "run relevo config agents --kind claude") || !strings.Contains(mixed, "yourself") {
 		t.Errorf("mixed note = %q, want both fixes", mixed)
 	}
