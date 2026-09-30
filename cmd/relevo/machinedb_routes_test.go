@@ -86,43 +86,29 @@ type testOwner struct {
 }
 
 // startTestOwner opens the machine database directly and serves it on the
-// root's socket, the way the daemon does.
+// root's socket, the way the daemon does. The bind and the serve are separate
+// steps so a wait test can bind early and serve late, the daemon's own order.
 func startTestOwner(t *testing.T, stateHome string) *testOwner {
 	t.Helper()
-	root := filepath.Join(stateHome, "relevo")
-	d, err := openDBDirect(filepath.Join(root, "relevo.db"))
-	if err != nil {
-		t.Fatalf("openDBDirect: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
-
-	if err := checkSocketPath(root); err != nil {
-		t.Fatalf("checkSocketPath: %v", err)
-	}
-	raw, err := openOwnerListener(root)
-	if err != nil {
-		t.Fatalf("openOwnerListener: %v", err)
-	}
-	ln := &countingListener{Listener: raw}
-	t.Cleanup(func() { _ = ln.Close() })
-
-	srv, err := serveOwner(d, ln)
-	if err != nil {
-		t.Fatalf("serveOwner: %v", err)
-	}
-	if srv == nil {
-		t.Fatal("serveOwner returned no owner")
-	}
-	t.Cleanup(func() { _ = srv.Close() })
-	return &testOwner{db: d, ln: ln, srv: srv}
+	b := bindTestOwner(t, stateHome)
+	return &testOwner{db: b.db, ln: b.ln, srv: b.serve(t)}
 }
 
 // withOwnerRoute installs the production route for the test and clears it when
-// the test ends, so the next test stays direct.
+// the test ends, so the next test stays direct. Its start wait is 0: these
+// tests want the route's dial budget, not the wait, which has its own tests.
 func withOwnerRoute(t *testing.T, budget time.Duration) {
 	t.Helper()
-	installDBRoute(routeOwner, budget)
-	t.Cleanup(func() { installDBRoute(routeNone, verbDialBudget) })
+	installDBRoute(routeOwner, budget, 0)
+	t.Cleanup(func() { installDBRoute(routeNone, verbDialBudget, 0) })
+}
+
+// withWaitingOwnerRoute installs the production route with the real start wait,
+// so a test can watch a verb wait for a daemon that is still starting.
+func withWaitingOwnerRoute(t *testing.T) {
+	t.Helper()
+	installDBRoute(routeOwner, verbDialBudget, ownerStartWait)
+	t.Cleanup(func() { installDBRoute(routeNone, verbDialBudget, 0) })
 }
 
 // noDaemon replaces the starter with a no-op and restores it afterwards.
@@ -177,11 +163,11 @@ func TestDirectEnvOpensTheFile(t *testing.T) {
 	served := startTestOwner(t, root)
 	t.Setenv("RELEVO_DB_DIRECT", "1")
 
-	if mode, _ := routeForArgs([]string{"status"}); mode != routeDirect {
+	if mode, _, _ := routeForArgs([]string{"status"}); mode != routeDirect {
 		t.Errorf("routeForArgs with RELEVO_DB_DIRECT = %v, want direct", mode)
 	}
-	installDBRoute(routeDirect, verbDialBudget)
-	t.Cleanup(func() { installDBRoute(routeNone, verbDialBudget) })
+	installDBRoute(routeDirect, verbDialBudget, 0)
+	t.Cleanup(func() { installDBRoute(routeNone, verbDialBudget, 0) })
 
 	d, err := openDB(machineDBPath())
 	if err != nil {
@@ -210,7 +196,7 @@ func TestPeekNeverDialsOrStarts(t *testing.T) {
 	daemonStarter = func() error { atomic.AddInt32(&calls, 1); return nil }
 	t.Cleanup(func() { daemonStarter = startDaemon })
 
-	if mode, _ := routeForArgs([]string{"daemon", "--check"}); mode != routeNone {
+	if mode, _, _ := routeForArgs([]string{"daemon", "--check"}); mode != routeNone {
 		t.Errorf("routeForArgs(daemon --check) = %v, want none", mode)
 	}
 
@@ -221,13 +207,13 @@ func TestPeekNeverDialsOrStarts(t *testing.T) {
 	if !isPeekArgs([]string{"bugreport"}) {
 		t.Error("isPeekArgs(bugreport) = false, want true")
 	}
-	if mode, _ := routeForArgs([]string{"bugreport"}); mode != routeNone {
+	if mode, _, _ := routeForArgs([]string{"bugreport"}); mode != routeNone {
 		t.Errorf("routeForArgs(bugreport) = %v, want none", mode)
 	}
 	if !isPeekArgs([]string{"bugreport", "--name", "alpha", "--round", "2", "--logs"}) {
 		t.Error("isPeekArgs(bugreport --name/--round/--logs) = false, want true")
 	}
-	if mode, _ := routeForArgs([]string{"bugreport", "--name", "alpha", "--round", "2", "--logs"}); mode != routeNone {
+	if mode, _, _ := routeForArgs([]string{"bugreport", "--name", "alpha", "--round", "2", "--logs"}); mode != routeNone {
 		t.Errorf("routeForArgs(bugreport with flags) = %v, want none", mode)
 	}
 	if peek := installRouteForArgs([]string{"bugreport"}); !peek {
@@ -412,7 +398,7 @@ type helperReport struct {
 // reaches the machine database through the parent's owner, proves the read,
 // and reports every descriptor it holds on the database.
 func runCmdTestHelper() int {
-	installDBRoute(routeOwner, verbDialBudget)
+	installDBRoute(routeOwner, verbDialBudget, 0)
 	d, err := openDB(machineDBPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "helper: open: %v\n", err)

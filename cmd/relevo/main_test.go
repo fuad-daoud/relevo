@@ -61,7 +61,7 @@ func TestMain(m *testing.M) {
 	// keep opening the machine database directly, and a test that wants the
 	// switch installs it itself.
 	dbRouteFromArgs = false
-	installDBRoute(routeNone, verbDialBudget)
+	installDBRoute(routeNone, verbDialBudget, 0)
 	cleanup, err := dbtest.Install()
 	if err != nil {
 		panic(err)

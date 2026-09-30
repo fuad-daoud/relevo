@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // ownerRouteSupported reports that this platform can serve and dial the owner.
@@ -22,6 +24,56 @@ func ownerSocket(root string) (string, error) { return owner.SocketPath(root) }
 func dialUDS(ctx context.Context, sock string) (net.Conn, error) {
 	var d net.Dialer
 	return d.DialContext(ctx, "unix", sock)
+}
+
+// ownerStarting reports whether a daemon that is still starting is evident
+// under root: a plain connect to sock that succeeds means some process holds
+// the listener, which is what survives a re-exec; when the connect fails the
+// daemon lock is probed. The connect comes first because DaemonRunning takes
+// the flock for a moment, which would cost a daemon that takes it at that
+// instant its start.
+func ownerStarting(root, sock string) bool {
+	if listenerHeld(sock) {
+		return true
+	}
+	return daemonLockHeld(root)
+}
+
+// listenerHeld is one plain connect, with no auto-start and no re-dial: a
+// connection the kernel queues in the backlog is the evidence that a listener
+// exists, whether or not anyone is accepting yet.
+func listenerHeld(sock string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), statuslineDialBudget)
+	defer cancel()
+	nc, err := dialUDS(ctx, sock)
+	if err != nil {
+		return false
+	}
+	_ = nc.Close()
+	return true
+}
+
+// The lock probe is remembered: taking the flock even for a moment races a
+// daemon that is starting, so each state root is probed at most once per
+// process.
+var (
+	daemonLockProbeMu sync.Mutex
+	daemonLockProbed  = map[string]bool{}
+)
+
+// daemonLockHeld reports whether a daemon holds the lock under root, probing
+// the lock once per process and reusing the answer. It also creates the state
+// root and the lock file, exactly as the daemon itself does.
+func daemonLockHeld(root string) bool {
+	daemonLockProbeMu.Lock()
+	defer daemonLockProbeMu.Unlock()
+	if held, ok := daemonLockProbed[root]; ok {
+		return held
+	}
+	running, err := store.New(root).DaemonRunning()
+	held := err == nil && running
+	daemonLockProbed[root] = held
+	return held
 }
 
 // dialWithStart is the client dial hook: it dials, starts the owner when the
