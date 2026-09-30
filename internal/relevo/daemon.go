@@ -61,6 +61,12 @@ type Daemon struct {
 	// releaseRetryAt is when a release fetch that failed may be tried again.
 	// The zero time means "no failure to back off from" (#371 §4.10).
 	releaseRetryAt time.Time
+
+	// ingestSeen is the store revision each binding was last mirrored at, so a
+	// tick whose data did not change costs one digest instead of a mirror run.
+	// It is process state on purpose: a restart mirrors everything once, and a
+	// change the daemon never saw cannot hide behind a revision it wrote.
+	ingestSeen map[string]string
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
@@ -131,28 +137,30 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		d.rt = d.refresh(d.rt)
 	}
 
-	// §4.4: the daemon prunes dead mastermind records itself, once an hour. It
-	// runs before the no-bindings early return: a machine whose sessions have
-	// all ended is exactly the one left carrying stale records.
-	d.safely("mastermind prune", func() { d.pruneMasterMinds() })
-	// A reader round's scratch worktree is throwaway: leftovers from a crash
-	// go away here, before the no-bindings early return, because a machine
-	// whose readers are all gone is exactly the one left carrying them.
-	d.safely("scratch sweep", func() { sweepReaderScratch(ctx, d.rt) })
-	// Before the first tick of this process, every archived record the mirror
-	// has not seen is ingested (P3d §4.2, §4.5).
-	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })
-
 	bindings, err := d.rt.Store.List()
 	if err != nil {
 		return fmt.Errorf("list bindings: %w", err)
 	}
+
+	// §4.4: the daemon prunes dead mastermind records itself, once an hour. It
+	// runs before the no-bindings early return: a machine whose sessions have
+	// all ended is exactly the one left carrying stale records.
+	d.safely("mastermind prune", func() { d.pruneMasterMinds() })
+	// A reader round's scratch worktree is throwaway: leftovers from a crash go
+	// away here, before the no-bindings early return, because a machine whose
+	// readers are all gone is exactly the one left carrying them. It runs off
+	// the list above rather than a second one.
+	d.safely("scratch sweep", func() { sweepReaderScratch(ctx, d.rt, bindings) })
+	// Before the first tick of this process, every archived record the mirror
+	// has not seen is ingested (P3d §4.2, §4.5).
+	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })
+
 	if len(bindings) == 0 {
 		return nil
 	}
 
 	for _, b := range bindings {
-		if err := d.tickOne(ctx, b.Name); err != nil {
+		if err := d.tickOne(ctx, b); err != nil {
 			slog.Error("reconcile failed", "binding", b.Name, "err", err)
 		}
 	}
@@ -175,7 +183,7 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// Each of Tick's non-binding phases runs through safely, so a panic in
 	// one cannot take the whole daemon down (#370, spec §4.6): it is logged
 	// with a stack and the next tick tries again.
-	d.safely("ingest", func() { ingestLiveBindings(ctx, d.rt, fresh) })
+	d.safely("ingest", func() { d.ingestLiveBindings(ctx, fresh) })
 
 	d.safely("refresh", func() { d.refreshRelease(ctx) })
 
@@ -251,7 +259,8 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 // writes it back without releasing the lock. Reconcile and everything it calls
 // take the *store.Tx rather than locking themselves, so a CLI command running
 // concurrently cannot land a write between the read and the save.
-func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
+func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
+	name := b.Name
 	// A panic anywhere under this binding is contained here (#370, spec
 	// §4.6): it is logged with a stack and returned as an error, so Tick logs
 	// "reconcile failed" and goes on to the next binding. WithLock releases
@@ -265,7 +274,7 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 
 	// The fetch runs unlocked, before the critical section: a slow or dead
 	// server must not hold the state lock against every writer.
-	pre := d.prefetchRemote(ctx, name)
+	pre := d.prefetchRemote(ctx, b)
 	defer pre.release()
 
 	err = d.rt.Store.WithLock(func(tx *store.Tx) error {
@@ -326,12 +335,13 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 // travels in the fetch's Err and is classified by the apply half. It runs
 // inside tickOne's deferred recover, so a panic in the fetch is contained
 // there.
-func (d *Daemon) prefetchRemote(ctx context.Context, name string) *remoteFetch {
+//
+// The binding is the caller's tick snapshot rather than a fresh load: a
+// concurrent pause or unbind of a remote binding costs one wasted fetch, which
+// the apply half discards against the binding it reads under the lock, and the
+// saved load was most of the tick's per-binding cost.
+func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFetch {
 	if d.rt.Remote == nil {
-		return nil
-	}
-	b, err := d.rt.Store.Load(name)
-	if err != nil {
 		return nil
 	}
 	if !b.Builder.Remote() || b.State == store.StateDone || b.State == store.StatePaused {
@@ -393,7 +403,9 @@ func mirrorArchived(ctx context.Context, rt Runtime) {
 }
 
 // sweepReaderScratch removes the scratch worktrees whose reader round is no
-// longer needed -- the daemon's cleanup of leftovers a crash left behind. For
+// longer needed -- the daemon's cleanup of leftovers a crash left behind. It
+// walks the tick's own binding list: a reader's scratch lives for its current
+// round, so what to keep is decided by that list, not by a second read. For
 // each reader binding that is not DONE it keeps the entries whose round is the
 // binding's current round or later. A scratch for the current round is kept
 // even before the round is open, because send makes the scratch before it logs
@@ -402,16 +414,11 @@ func mirrorArchived(ctx context.Context, rt Runtime) {
 // removed by the close, the done or the unbind that already calls
 // removeReaderScratch. Errors are logged per entry by SweepScratch's own join
 // and never fail the tick.
-func sweepReaderScratch(ctx context.Context, rt Runtime) {
+func sweepReaderScratch(ctx context.Context, rt Runtime, bindings []store.Binding) {
 	if rt.Git == nil {
 		return
 	}
 	keep := map[string]int{}
-	bindings, err := rt.Store.List()
-	if err != nil {
-		slog.Warn("scratch sweep: list bindings", "err", err)
-		return
-	}
 	for _, b := range bindings {
 		if b.Shape != store.ShapeReader || b.State == store.StateDone {
 			continue
@@ -511,22 +518,45 @@ func backfillMasterMindID(rt Runtime, b store.Binding) store.Binding {
 	return b
 }
 
-// ingestLiveBindings runs internal/ingest over every live binding's
-// directory at the end of a tick, so the database stays current with what
-// files just recorded (docs/specs/2026-09-20-persistence-design.md §5.5).
-// d.rt.DB == nil (no database configured) is a no-op. A source or database
-// error is logged at Warn and that binding is skipped this tick -- it
-// never fails the tick or touches a binding, a round file, or a state.
-func ingestLiveBindings(ctx context.Context, rt Runtime, bindings []store.Binding) {
-	if rt.DB == nil {
+// ingestLiveBindings runs internal/ingest over every live binding whose store
+// revision changed since the last run, so the database stays current with what
+// the store just recorded and an unchanged binding costs one digest rather
+// than a mirror transaction. d.rt.DB == nil (no database configured) is a
+// no-op. A source or database error is logged at Warn and that binding is
+// skipped this tick -- it never fails the tick or touches a binding, a round
+// file, or a state.
+//
+// The revision is read before the run and recorded only after it succeeds: a
+// change that lands mid-run is caught by the next tick, and a run that fails
+// is retried rather than remembered as done. A binding that is gone between
+// the caller's list and here is dropped from the map and skipped as normal use.
+func (d *Daemon) ingestLiveBindings(ctx context.Context, bindings []store.Binding) {
+	if d.rt.DB == nil {
 		return
 	}
-	deps := IngestDeps(rt)
+	deps := IngestDeps(d.rt)
+	seen := make(map[string]string, len(bindings))
 	for _, b := range bindings {
-		stats, err := ingest.Ingest(ctx, ingest.StoreSource(rt.Store, b.Name), rt.DB, deps)
+		rev, rerr := d.rt.Store.Revision(b.Name)
+		if errors.Is(rerr, store.ErrNotFound) {
+			continue
+		}
+		if rerr == nil && d.ingestSeen[b.Name] == rev {
+			seen[b.Name] = rev
+			continue
+		}
+		if rerr != nil {
+			// A revision that cannot be read must not stop the mirror: fall
+			// through to the run and let the next tick try again.
+			slog.Warn("ingest: revision", "binding", b.Name, "err", rerr)
+		}
+		stats, err := ingest.Ingest(ctx, ingest.StoreSource(d.rt.Store, b.Name), d.rt.DB, deps)
 		if err != nil {
 			slog.Warn("ingest", "binding", b.Name, "err", err)
 			continue
+		}
+		if rerr == nil {
+			seen[b.Name] = rev
 		}
 		if stats != (ingest.Stats{}) {
 			slog.Info("ingest", "binding", b.Name,
@@ -534,6 +564,7 @@ func ingestLiveBindings(ctx context.Context, rt Runtime, bindings []store.Bindin
 				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
 		}
 	}
+	d.ingestSeen = seen
 }
 
 // mastermindPrunedAt is the kv row planner.pruned_at's document: when the daemon
