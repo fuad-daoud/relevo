@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -250,6 +252,13 @@ func Sealable(b Binding, round int, streamDrained bool) bool {
 // trailer is in its content and the cursor has reached EOF, or every byte past
 // the cursor is a trailer line, or the trailer is present and the stream has been
 // quiet for staleStreamAfter.
+//
+// Only the stream's end is read. The exit trailer is the supervisor's last
+// write, so a bounded tail carries both it and the trailer lines the drain can
+// still be waiting on; reading a builder's whole output every tick is what kept
+// the daemon allocating megabytes a second. A cursor older than the tail cannot
+// be spoken for by the lines the tail shows, so it falls through to the
+// staleness rule rather than claiming a drained stream it cannot see.
 func (s *Store) StreamDrained(b Binding, round int) bool {
 	if round != b.Builder.StreamRound {
 		return true
@@ -262,25 +271,49 @@ func (s *Store) StreamDrained(b Binding, round int) bool {
 	if err != nil {
 		return false
 	}
-	body, err := os.ReadFile(path)
+
+	size := info.Size()
+	start := size - streamTailBytes
+	if start < 0 {
+		start = 0
+	}
+	tail, err := readStreamTail(path, start, size)
 	if err != nil {
 		return false
 	}
-	text := string(body)
-	if !strings.Contains(text, "\n"+spawn.ExitTrailer) {
+	if !bytes.Contains(tail, []byte("\n"+spawn.ExitTrailer)) {
 		return false
 	}
 	off := b.Builder.StreamOffset
 	if off < 0 {
 		off = 0
 	}
-	if off >= info.Size() {
+	if off >= size {
 		return true
 	}
-	if trailerLinesOnly(text[off:]) {
+	if off >= start && trailerLinesOnly(string(tail[off-start:])) {
 		return true
 	}
 	return time.Since(info.ModTime()) >= staleStreamAfter
+}
+
+// streamTailBytes is how much of a builder stream's end StreamDrained reads.
+// A trailer plus its rusage line is a few hundred bytes; the allowance covers a
+// builder that flushes a burst after the supervisor's exit marker.
+const streamTailBytes = 64 << 10
+
+// readStreamTail returns path's bytes from start to size, the end of a stream
+// StreamDrained reasons over.
+func readStreamTail(path string, start, size int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(io.LimitReader(f, size-start))
 }
 
 // staleStreamAfter is how long a stream that carries its exit trailer must go

@@ -481,6 +481,13 @@ func TestCatchUpFetchAbortLeavesNothing(t *testing.T) {
 	if n := countCalls(fr, "RoundBundle:"); n != 0 {
 		t.Fatalf("RoundBundle calls = %d, want 0", n)
 	}
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RemoteBundleFailures != 0 {
+		t.Fatalf("RemoteBundleFailures = %d, want 0: a file-route abort is not a bundle failure", got.RemoteBundleFailures)
+	}
 	assertNoFetchTemps(t, st, "api", 1)
 }
 
@@ -712,6 +719,12 @@ func TestFetchCatchUpBundleKeepsOtherErrorsHard(t *testing.T) {
 	if !cf.Abort {
 		t.Fatal("Abort = false, want the hard path for a non-stale failure")
 	}
+	if cf.BundleErr == nil {
+		t.Fatal("BundleErr = nil, want the failed request's error")
+	}
+	if !strings.Contains(cf.BundleErr.Error(), "bundle read failed") {
+		t.Fatalf("BundleErr = %q, want the request's own error", cf.BundleErr)
+	}
 	if n := countCalls(fr, "RoundBundle:"); n != 1 {
 		t.Fatalf("RoundBundle calls = %d, want 1", n)
 	}
@@ -720,6 +733,45 @@ func TestFetchCatchUpBundleKeepsOtherErrorsHard(t *testing.T) {
 	}
 	if len(ft.absorbCalls) != 0 {
 		t.Fatalf("Absorb calls = %d, want 0", len(ft.absorbCalls))
+	}
+}
+
+// TestFetchCatchUpBundleNamesARewrittenAdoptedBranch pins the adopted case: the
+// whole-branch fallback carries an adopted binding's rewritten history, which
+// the fetch must not hand to the absorb -- git would refuse it non-fast-forward
+// with its own text -- so the fetch names the rewrite and leaves every ref
+// alone.
+func TestFetchCatchUpBundleNamesARewrittenAdoptedBranch(t *testing.T) {
+	ctx := context.Background()
+	rt, b, fr, ft, fg := bundleFetchFixture(t)
+	b.Branch = "feature/x"
+	fr.roundBundleFunc = func(_ context.Context, _, _ string, _ int, since string) (io.ReadCloser, error) {
+		if since == "r1" {
+			return nil, staleBase()
+		}
+		return io.NopCloser(strings.NewReader("bundle")), nil
+	}
+
+	cf := fetchCatchUp(ctx, rt, b, fr.getBindingResp)
+	defer cf.release()
+
+	if cf.Abort {
+		t.Fatalf("Abort = true, want the adopted rewrite to reach the apply as an absorb failure: %v", cf.BundleErr)
+	}
+	if cf.AbsorbErr == nil {
+		t.Fatal("AbsorbErr = nil, want the rewrite named")
+	}
+	if got := cf.AbsorbErr.Error(); !strings.Contains(got, "the server branch was rewritten") || !strings.Contains(got, "feature/x") {
+		t.Fatalf("AbsorbErr = %q, want it to name the rewrite and the adopted branch", got)
+	}
+	if n := countCalls(fr, "RoundBundle:"); n != 2 {
+		t.Fatalf("RoundBundle calls = %d, want 2: the refused incremental request, then the whole branch", n)
+	}
+	if len(fg.deleteBranchCalls) != 0 {
+		t.Fatalf("DeleteBranch calls = %d, want 0: an adopted branch is not re-based", len(fg.deleteBranchCalls))
+	}
+	if len(ft.absorbCalls) != 0 {
+		t.Fatalf("Absorb calls = %d, want 0: no ref may be touched for this case", len(ft.absorbCalls))
 	}
 }
 

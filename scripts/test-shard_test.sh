@@ -127,6 +127,80 @@ if PATH="$work/bin:$PATH" awk -v x="$(printf 'a\nb')" 'BEGIN { print 1 }' </dev/
 	fail=1
 fi
 
+# The coverage toggle is read off a `go` stand-in: it records each `go test`
+# invocation and exits without compiling anything, and hands every other
+# subcommand to the real go so the assignment keeps resolving.
+real_go=$(command -v go)
+export real_go
+export SHIM_LOG="$work/go-argv"
+cat > "$work/bin/go" <<'SH'
+#!/bin/sh
+# A stand-in for go: `go test` is recorded and skipped, so the coverage flags can
+# be read off the argv without running anything; everything else is the real go.
+if [ "${1:-}" = "test" ]; then
+	printf '%s\n' "$*" >> "$SHIM_LOG"
+	exit 0
+fi
+exec "$real_go" "$@"
+SH
+chmod +x "$work/bin/go"
+
+# record_shard runs one shard from the repo root under the stand-in, leaving the
+# recorded argv lines in $1; $2 is SHARD_COVER's value (empty means unset).
+record_shard() {
+	status=0
+	(cd "$repo" && PATH="$work/bin:$PATH" SHIM_LOG="$1" SHARD_COVER="$2" \
+		sh "$here/test-shard.sh" 0 3 "$work/shard") > "$work/out" 2>&1 || status=$?
+}
+
+# Default: coverage is on, so every `go test` carries -cover and race, and at
+# least one split job carries its profile.
+record_shard "$work/argv-cover" ""
+if [ "$status" -ne 0 ]; then
+	echo "FAIL: a shard with coverage on exits $status, want 0"
+	fail=1
+fi
+if [ ! -s "$work/argv-cover" ]; then
+	echo "FAIL: the go stand-in recorded no go test invocation with coverage on"
+	fail=1
+else
+	while IFS= read -r line; do
+		case $line in
+		*"-race -count=1"*) ;;
+		*) echo "FAIL: with coverage on, '$line' lacks -race -count=1"; fail=1 ;;
+		esac
+		case $line in
+		*-cover*) ;;
+		*) echo "FAIL: with coverage on, '$line' lacks -cover"; fail=1 ;;
+		esac
+	done < "$work/argv-cover"
+	if ! grep -q -- '-coverprofile=' "$work/argv-cover"; then
+		echo "FAIL: with coverage on, no go test carries -coverprofile="
+		fail=1
+	fi
+fi
+
+# SHARD_COVER=0 drops both coverage flags and keeps race on every job.
+record_shard "$work/argv-nocover" 0
+if [ "$status" -ne 0 ]; then
+	echo "FAIL: a shard with SHARD_COVER=0 exits $status, want 0"
+	fail=1
+fi
+if [ ! -s "$work/argv-nocover" ]; then
+	echo "FAIL: the go stand-in recorded no go test invocation with coverage off"
+	fail=1
+else
+	while IFS= read -r line; do
+		case $line in
+		*"-race -count=1"*) ;;
+		*) echo "FAIL: with SHARD_COVER=0, '$line' lacks -race -count=1"; fail=1 ;;
+		esac
+		case $line in
+		*-cover*) echo "FAIL: with SHARD_COVER=0, '$line' still carries coverage"; fail=1 ;;
+		esac
+	done < "$work/argv-nocover"
+fi
+
 # SPLIT_PKGS naming two packages is the shape the default list takes once a
 # second package joins it. dry_run_split runs --dry-run with both split, under
 # the shim.

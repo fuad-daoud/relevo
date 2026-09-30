@@ -61,6 +61,9 @@ func Queue(_ context.Context, d Deps, tx *store.Tx, name string, e store.LogEntr
 //     Claude Code mastermind in tools mode that is the normal path, not a fault:
 //     the background wait prints it (its route is "wait").
 //
+// An entry the deliverer already admitted is no longer a pending one to push:
+// it is only read back, so a route that admitted it can never send it twice.
+//
 // The caller holds the state lock across pending -> deliver -> confirm and
 // passes tx in: `relevo wait` runs the same sequence from another process, and
 // unserialised both could deliver the same payload, and Reconcile needs this
@@ -86,22 +89,7 @@ func DeliverPending(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) 
 
 	kind := b.MasterMind.Kind
 	if del, ok := d.Deliverers[kind]; ok && kind != "" {
-		text, _ := PushText(pending, b, d.Store.ReadFile)
-		out, reason, err := del.Deliver(ctx, b.MasterMind, text, LogRef(b, pending), pending.TS)
-		if err != nil {
-			return b, Delivery{}, fmt.Errorf("deliver to mastermind: %w", err)
-		}
-		if out == OutcomeDelivered {
-			route := "deliverer:" + kind
-			if err := tx.ConfirmIndex(b.Name, idx, route); err != nil {
-				return b, Delivery{}, err
-			}
-			return b, Delivery{Delivered: true, Route: route, Reason: reason, Round: pending.Round}, nil
-		}
-		// OutcomeNotMine and OutcomeUnavailable both leave the entry
-		// pending: the deliverer's own reason is the answer, and the
-		// background wait is the route that will finally take it.
-		return b, Delivery{Route: "pull", Reason: reason, Round: pending.Round}, nil
+		return deliverViaDeliverer(ctx, d, tx, b, pending, idx, del)
 	}
 
 	return b, Delivery{
@@ -109,6 +97,69 @@ func DeliverPending(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) 
 		Reason: fmt.Sprintf("awaiting pull for mastermind %s (%s)", mastermindLabel(d, b), kind),
 		Round:  pending.Round,
 	}, nil
+}
+
+// deliverViaDeliverer runs one deliverer attempt for an entry the channel check
+// did not take: Deliver when nobody has pushed the payload yet, Confirm when the
+// push of this same tick admitted it, and ConfirmOnce -- one read-back, no poll
+// -- when an earlier tick already admitted it. The read-back runs inside the
+// caller's lock, so no reader can claim or print the entry while it is being
+// confirmed: the admitting tick holds that lock for Confirm's full window, a
+// repeat tick for a single read-back only.
+//
+// The admit is written BEFORE the read-back poll, so a crash during the poll
+// leaves an admitted entry rather than a pending one, and the next tick reads
+// the session back instead of sending again.
+func deliverViaDeliverer(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, pending store.LogEntry, idx int, del MasterMindDeliverer) (store.Binding, Delivery, error) {
+	kind := b.MasterMind.Kind
+	route := "deliverer:" + kind
+	text, _ := PushText(pending, b, d.Store.ReadFile)
+
+	if pending.AdmittedAt != nil {
+		out, reason, err := del.ConfirmOnce(ctx, b.MasterMind, text, pending.TS)
+		if err != nil {
+			return b, Delivery{}, fmt.Errorf("confirm to mastermind: %w", err)
+		}
+		return deliveryOf(tx, b, idx, route, out, reason, pending.Round)
+	}
+
+	out, reason, err := del.Deliver(ctx, b.MasterMind, text, LogRef(b, pending), pending.TS)
+	if err != nil {
+		return b, Delivery{}, fmt.Errorf("deliver to mastermind: %w", err)
+	}
+	if out == OutcomeAdmitted {
+		if err := tx.AdmitIndex(b.Name, idx); err != nil {
+			return b, Delivery{}, err
+		}
+
+		out, reason, err = del.Confirm(ctx, b.MasterMind, text, pending.TS)
+		if err != nil {
+			return b, Delivery{}, fmt.Errorf("confirm to mastermind: %w", err)
+		}
+		return deliveryOf(tx, b, idx, route, out, reason, pending.Round)
+	}
+	if out == OutcomeDelivered {
+		return deliveryOf(tx, b, idx, route, out, reason, pending.Round)
+	}
+
+	// OutcomeNotMine and OutcomeUnavailable both leave the entry
+	// pending: the deliverer's own reason is the answer, and the
+	// background wait is the route that will finally take it.
+	return b, Delivery{Route: "pull", Reason: reason, Round: pending.Round}, nil
+}
+
+// deliveryOf turns a deliverer outcome into the Delivery DeliverPending
+// returns: only OutcomeDelivered confirms the entry, and anything else leaves
+// it in the push route's own queue -- admitted, unconfirmed, and never
+// presented to a reader.
+func deliveryOf(tx *store.Tx, b store.Binding, idx int, route string, out Outcome, reason string, round int) (store.Binding, Delivery, error) {
+	if out != OutcomeDelivered {
+		return b, Delivery{Route: route, Reason: reason, Round: round}, nil
+	}
+	if err := tx.ConfirmIndex(b.Name, idx, route); err != nil {
+		return b, Delivery{}, err
+	}
+	return b, Delivery{Delivered: true, Route: route, Reason: reason, Round: round}, nil
 }
 
 // mastermindLabel names the binding's mastermind for a delivery reason: the record's

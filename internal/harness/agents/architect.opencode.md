@@ -32,6 +32,11 @@ the actor's `plan.md`; write no file.
 - Give one-line ordered steps, each naming its deliverable and how to know it
   worked.
 - A closed numbered list of what is deleted when the work deletes behaviour.
+- Never order an amend or rebase of a commit already on a remote binding's
+  branch. The client fetches each closed round as an incremental bundle based
+  on the last commit it absorbed, so a rewrite strands that base; the client
+  survives only by re-fetching the whole branch, and a binding that adopted the
+  branch still halts. Plan the work as new commits.
 - What the report must include.
 
 No code bodies, no implementation essays, no test cases: a strong builder owns the how.

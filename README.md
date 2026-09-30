@@ -404,9 +404,12 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   default; pass `--delete` to remove each binding's directory instead
   (`relevo unbind --done --archive` is accepted as a no-op).
 - `relevo unbind --sweep [--dry-run]` — delete `relevo/<name>` branches and `refs/relevo/<name>/*` refs of bindings that no longer exist, once each is on a remote-tracking ref.
-- `relevo daemon [--interval D] [--check]` — the long-running reconciler; this is what the
+- `relevo daemon [--interval D] [--check] [--pprof <path>]` — the long-running reconciler; this is what the
   service unit runs. It reconciles builders, queues reports for the MasterMind
   and syncs remote bindings. `--check` exits 0 when a daemon is running and 1 when not, printing nothing.
+  `--pprof` serves `net/http/pprof` on a unix socket (owner-only, off by
+  default) for profiling a daemon that is too slow or too large; fetch it with
+  `curl --unix-socket <path> http://x/debug/pprof/profile?seconds=30 -o cpu.pprof`.
 - `relevo mcp [--mode channel|tools|auto] [--mastermind P] [--interval D]` — run the
   MCP server over stdio for a Claude Code MasterMind pane. See
   [Claude Code plugin](#claude-code-plugin).

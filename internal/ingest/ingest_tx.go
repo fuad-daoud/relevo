@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,10 @@ type logRead struct {
 	lines    [][]byte
 	startSeq int
 	cursor   db.Cursor
+	// resumed reports that this read continued from a saved cursor instead of
+	// reading the member from the top, so the database's own earlier rows are
+	// the only copy of what came before.
+	resumed bool
 }
 
 func (r *ingestRun) upsertRepo(tx *db.Tx) (*string, error) {
@@ -38,14 +43,35 @@ func (r *ingestRun) upsertMasterMind(tx *db.Tx) (*string, error) {
 	if r.b.MasterMind.SessionID == "" {
 		return nil, nil
 	}
-	id, err := tx.UpsertMasterMind(db.MasterMind{
+	record := db.MasterMind{
 		ID:                r.b.MasterMindID,
 		HarnessKind:       r.b.MasterMind.Kind,
 		SessionID:         r.b.MasterMind.SessionID,
 		TranscriptLocator: nonEmptyPtr(r.b.MasterMind.TranscriptLocator),
-	})
+	}
+	id, err := tx.UpsertMasterMind(record)
 	if err != nil {
-		return nil, fmt.Errorf("upsert mastermind: %w", err)
+		// A binding can name a mastermind id its session no longer answers to:
+		// the record was forgotten and the session registered anew, and the
+		// binding kept the old id. In this origin the session is the identity,
+		// so the mirror follows the id that already holds it instead of
+		// failing the binding's whole mirror run every tick.
+		if !errors.Is(err, db.ErrInvalid) {
+			return nil, fmt.Errorf("upsert mastermind: %w", err)
+		}
+		held, ok, lerr := tx.MasterMindBySession(record.HarnessKind, record.SessionID)
+		if lerr != nil {
+			return nil, fmt.Errorf("upsert mastermind: %w", lerr)
+		}
+		if !ok {
+			return nil, fmt.Errorf("upsert mastermind: %w", err)
+		}
+		r.logger.Warn("ingest: mastermind id is stale; following the session",
+			"binding", r.b.Name, "from", record.ID, "to", held.ID)
+		record.ID = held.ID
+		if id, err = tx.UpsertMasterMind(record); err != nil {
+			return nil, fmt.Errorf("upsert mastermind: %w", err)
+		}
 	}
 	return &id, nil
 }
@@ -70,6 +96,7 @@ func (r *ingestRun) readLog(tx *db.Tx) (logRead, error) {
 		r.logger.Info("ingest: cursor reset", "binding", r.b.Name, "member", "log.jsonl")
 	}
 	lr.startSeq, lr.cursor, lr.lines = startSeq, next, lines
+	lr.resumed = found && !reset
 	for _, line := range lines {
 		var e store.LogEntry
 		if err := json.Unmarshal(line, &e); err != nil {
@@ -165,7 +192,7 @@ func (r *ingestRun) appendEvents(tx *db.Tx, bindingID string, log logRead) ([]st
 		return all, nil
 	}
 
-	if had, err := tx.Events(bindingID, 0); err == nil && len(had) > 0 && log.startSeq > 0 {
+	if had, err := tx.Events(bindingID, 0); err == nil && len(had) > 0 && log.resumed {
 		merged := make([]store.LogEntry, 0, len(had)+len(log.entries))
 		for _, ev := range had {
 			var e store.LogEntry
@@ -300,7 +327,7 @@ func (r *ingestRun) appendMasterMindTranscript(tx *db.Tx, mastermindID *string) 
 	if err != nil {
 		return fmt.Errorf("mastermind transcript cursor: %w", err)
 	}
-	opener := func() (io.ReadCloser, error) { return os.Open(r.locator) }
+	opener := func() (io.ReadSeekCloser, error) { return os.Open(r.locator) }
 	lines, startSeq, next, reset, err := readAppendOnly(opener, key, cur, found)
 	if err != nil {
 		return fmt.Errorf("read mastermind transcript: %w", err)

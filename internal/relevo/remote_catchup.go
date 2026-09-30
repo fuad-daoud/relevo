@@ -120,6 +120,12 @@ func applyCatchUpFiles(rt Runtime, tx *store.Tx, b store.Binding, view remote.Bi
 	return true
 }
 
+// catchUpFailureBudget is how many consecutive failures of one catch-up stage
+// a closed round may suffer before the binding asks for a human. Both stages
+// mean the same thing -- this closed round cannot be brought home -- so they
+// share one number; there is no case for another.
+const catchUpFailureBudget = 10
+
 // applyCatchUpAbsorb records the fetch's bundle outcome in b under tx. stop
 // reports whether it already decided the binding's fate: a checked-out branch
 // and an absorb failure both wait for the next tick, and the tenth failure
@@ -138,7 +144,7 @@ func applyCatchUpAbsorb(ctx context.Context, rt Runtime, b store.Binding, view r
 			return clearAbsorbHalt(b), false, nil
 		}
 		b.RemoteAbsorbFailures++
-		if b.RemoteAbsorbFailures >= 10 {
+		if b.RemoteAbsorbFailures >= catchUpFailureBudget {
 			next, err = haltBinding(ctx, rt, b, cf.AbsorbErr.Error())
 			return next, true, err
 		}
@@ -147,6 +153,19 @@ func applyCatchUpAbsorb(ctx context.Context, rt Runtime, b store.Binding, view r
 		return b, true, cf.Fatal
 	}
 	return clearAbsorbHalt(b), false, nil
+}
+
+// applyCatchUpBundleFailure counts a round-bundle fetch that failed and halts
+// at the shared budget. The fetch half runs without the state lock, so the
+// count lands here. Unlike an absorb failure there is no verified-store gate: a
+// bundle that never arrived left nothing to check the round against.
+func applyCatchUpBundleFailure(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, *catchUpAck, error) {
+	b.RemoteBundleFailures++
+	if b.RemoteBundleFailures >= catchUpFailureBudget {
+		next, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: cannot fetch round bundle %d from %s: %s", b.Name, view.ClosedRound, b.Builder.Server, cf.BundleErr))
+		return next, nil, err
+	}
+	return b, nil, nil
 }
 
 // absorbHoldsRound reports whether the binding's local branch already sits at
@@ -170,16 +189,19 @@ func absorbHoldsRound(ctx context.Context, rt Runtime, b store.Binding, view rem
 	return sha == view.ResultCommit
 }
 
-// clearAbsorbHalt clears an absorb-failure halt at the absorb step. A round
-// that got through after earlier failures proves those failures were
+// clearAbsorbHalt clears a catch-up halt once a later attempt succeeds. A
+// round that got through after earlier failures proves those failures were
 // transient, so the binding relays again without waiting for the round to
 // close -- a lost ack otherwise leaves it asking for a human it does not need.
-// The round itself is untouched: only the close advances it.
+// Both counters admit a binding here: a bundle-fetch halt must clear the same
+// way as an absorb one. The round itself is untouched: only the close advances
+// it.
 func clearAbsorbHalt(b store.Binding) store.Binding {
-	if b.RemoteAbsorbFailures == 0 {
+	if b.RemoteAbsorbFailures == 0 && b.RemoteBundleFailures == 0 {
 		return b
 	}
 	b.RemoteAbsorbFailures = 0
+	b.RemoteBundleFailures = 0
 	b.Halt = ""
 	b.HaltAt = time.Time{}
 	b.HaltNotifiedRound = 0

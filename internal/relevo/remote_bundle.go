@@ -34,15 +34,31 @@ func fetchCatchUpBundle(ctx context.Context, rt Runtime, b store.Binding, view r
 		rcBundle, err = rt.Remote.RoundBundle(ctx, server, name, n, "")
 	}
 	if err != nil {
-		slog.Warn("fetch round bundle failed", "server", server, "name", name, "round", n, "err", err)
+		// Warn on the first failure of a run only: the apply half counts these
+		// and halts at the budget, so one line per tick is the loop that count
+		// exists to end.
+		if b.RemoteBundleFailures == 0 {
+			slog.Warn("fetch round bundle failed", "server", server, "name", name, "round", n, "err", err)
+		}
 		cf.Abort = true
+		cf.BundleErr = err
 		cf.release()
 		return
 	}
 	if rcBundle == nil {
 		return
 	}
-	if rewritten && holdsRoundMirror(b, name) {
+	// The fallback carries the whole branch, so a rewritten base is the fetch's
+	// to repair only when the binding's branch is this client's own mirror. An
+	// adopted branch belongs to the mastermind: the absorb would refuse the
+	// whole branch non-fast-forward and report git's own text, so the fetch
+	// says what happened instead and leaves every ref alone.
+	if rewritten && !holdsRoundMirror(b, name) {
+		_ = rcBundle.Close()
+		cf.AbsorbErr = fmt.Errorf("%s: cannot absorb round %d from %s: the server branch was rewritten; delete or re-point %s", name, n, server, b.Branch)
+		return
+	}
+	if rewritten {
 		serverRef := "refs/heads/relevo/" + name
 		if rerr := resetRoundBase(ctx, rt, b, serverRef); rerr != nil {
 			_ = rcBundle.Close()

@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,8 +10,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-func opener(path string) func() (io.ReadCloser, error) {
-	return func() (io.ReadCloser, error) { return os.Open(path) }
+func opener(path string) func() (io.ReadSeekCloser, error) {
+	return func() (io.ReadSeekCloser, error) { return os.Open(path) }
 }
 
 func TestReadAppendOnlyFromZero(t *testing.T) {
@@ -146,4 +147,68 @@ func linesToStrings(lines [][]byte) []string {
 		out[i] = string(l)
 	}
 	return out
+}
+
+// countingReadSeekCloser counts the bytes read through it, so a test can pin
+// that an idle member is not read whole.
+type countingReadSeekCloser struct {
+	f    *os.File
+	read int64
+}
+
+func (c *countingReadSeekCloser) Read(p []byte) (int, error) {
+	n, err := c.f.Read(p)
+	c.read += int64(n)
+	return n, err
+}
+
+func (c *countingReadSeekCloser) Seek(offset int64, whence int) (int64, error) {
+	return c.f.Seek(offset, whence)
+}
+
+func (c *countingReadSeekCloser) Close() error { return c.f.Close() }
+
+// TestReadAppendOnlyIdleReadsOnlyTheHead pins the cost of a tick with nothing
+// appended: the rewrite check's head sample, not the member. Before, every
+// tick read and allocated the whole transcript of every binding, which is what
+// made the daemon this expensive.
+func TestReadAppendOnlyIdleReadsOnlyTheHead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "log.jsonl")
+	line := bytes.Repeat([]byte("x"), 63)
+	big := bytes.Repeat(append(append([]byte{}, line...), '\n'), 16*1024)
+	if err := os.WriteFile(path, big, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, _, cur, _, err := readAppendOnly(opener(path), path, db.Cursor{}, false)
+	if err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+
+	var counted *countingReadSeekCloser
+	countedOpener := func() (io.ReadSeekCloser, error) {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		counted = &countingReadSeekCloser{f: f}
+		return counted, nil
+	}
+	lines, startSeq, cur2, reset, err := readAppendOnly(countedOpener, path, cur, true)
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if reset {
+		t.Error("reset = true on an unchanged member, want false")
+	}
+	if len(lines) != 0 || startSeq != 0 {
+		t.Errorf("lines = %d, startSeq = %d, want none", len(lines), startSeq)
+	}
+	if cur2 != cur {
+		t.Errorf("cursor = %+v, want it unchanged at %+v", cur2, cur)
+	}
+	if counted.read > headSampleBytes {
+		t.Errorf("read %d bytes of a %d-byte member, want at most the %d-byte head sample",
+			counted.read, len(big), headSampleBytes)
+	}
 }

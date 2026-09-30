@@ -98,8 +98,9 @@ func drainOne(ctx context.Context, d Deps, p Pusher, st *DrainState, b store.Bin
 	return nil
 }
 
-// pendingFor reads one binding's oldest pending mastermind entry under the state
-// lock.
+// pendingFor reads one binding's oldest claimable mastermind entry under the
+// state lock. It skips an entry a push route already admitted, so the channel
+// never pushes a payload another route holds.
 func pendingFor(d Deps, name string) (store.LogEntry, int, bool, error) {
 	var (
 		entry store.LogEntry
@@ -108,7 +109,7 @@ func pendingFor(d Deps, name string) (store.LogEntry, int, bool, error) {
 	)
 	err := d.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		entry, idx, found, err = tx.PendingForMasterMind(name)
+		entry, idx, found, err = tx.ClaimableForMasterMind(name)
 		return err
 	})
 	return entry, idx, found, err

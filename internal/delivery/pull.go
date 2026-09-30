@@ -66,7 +66,7 @@ func pullPending(ctx context.Context, st *store.Store, name, route string) (text
 	// this very payload right now, and only one of us may claim it.
 	err = retryBusy(ctx, busyRetryDelays, nil, func() error {
 		return st.WithLock(func(tx *store.Tx) error {
-			pending, idx, ok, err := tx.PendingForMasterMind(name)
+			pending, idx, ok, err := tx.ClaimableForMasterMind(name)
 			if err != nil {
 				return err
 			}
@@ -111,7 +111,7 @@ func PullPendingThrough(ctx context.Context, st *store.Store, name, route string
 
 	err = retryBusy(ctx, busyRetryDelays, nil, func() error {
 		return st.WithLock(func(tx *store.Tx) error {
-			entries, err := tx.PendingForMasterMindThrough(name, round)
+			entries, err := tx.ClaimableForMasterMindThrough(name, round)
 			if err != nil {
 				return err
 			}

@@ -106,6 +106,11 @@ type remoteBranchExistsCall struct {
 
 // fakeGit is the in-memory Git used by tests in this package.
 type fakeGit struct {
+	// calls counts every method call, whatever the method. A test that asks
+	// "did this tick touch git at all" reads it; the per-method counters
+	// below stay for the tests that ask which method.
+	calls int
+
 	snapshotTreeID  string
 	snapshotTreeErr error
 	snapshotCalls   int
@@ -269,6 +274,7 @@ type fakeGit struct {
 type repoFactsCall struct{ Dir string }
 
 func (f *fakeGit) SnapshotTree(ctx context.Context, dir string) (string, error) {
+	f.calls++
 	f.snapshotCalls++
 	f.lastSnapshotDir = dir
 	if f.snapshotTreeErr != nil {
@@ -278,6 +284,7 @@ func (f *fakeGit) SnapshotTree(ctx context.Context, dir string) (string, error) 
 }
 
 func (f *fakeGit) DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error) {
+	f.calls++
 	f.diffCalls++
 	f.lastDiffDir = dir
 	f.lastDiffFrom = from
@@ -289,6 +296,7 @@ func (f *fakeGit) DiffTrees(ctx context.Context, dir, from, to string) (git.Diff
 }
 
 func (f *fakeGit) DiffWorktreeStat(ctx context.Context, dir, tree string) (git.Stat, error) {
+	f.calls++
 	f.worktreeStatCalls++
 	f.lastWorktreeStatDir = dir
 	f.lastWorktreeStatTree = tree
@@ -299,6 +307,7 @@ func (f *fakeGit) DiffWorktreeStat(ctx context.Context, dir, tree string) (git.S
 }
 
 func (f *fakeGit) HeadCommit(ctx context.Context, dir string) (string, error) {
+	f.calls++
 	f.headCalls++
 	f.lastHeadDir = dir
 	if f.headCommitErr != nil {
@@ -308,6 +317,7 @@ func (f *fakeGit) HeadCommit(ctx context.Context, dir string) (string, error) {
 }
 
 func (f *fakeGit) BranchExists(ctx context.Context, dir, branch string) (bool, error) {
+	f.calls++
 	f.branchCalls++
 	f.lastBranchDir = dir
 	f.lastBranchName = branch
@@ -318,6 +328,7 @@ func (f *fakeGit) BranchExists(ctx context.Context, dir, branch string) (bool, e
 }
 
 func (f *fakeGit) CreateBranch(ctx context.Context, dir, branch, commit string) error {
+	f.calls++
 	f.createBranchCalls = append(f.createBranchCalls, createBranchCall{
 		Dir: dir, Branch: branch, Commit: commit,
 	})
@@ -328,6 +339,7 @@ func (f *fakeGit) CreateBranch(ctx context.Context, dir, branch, commit string) 
 }
 
 func (f *fakeGit) CreateTrackingBranch(ctx context.Context, dir, branch, upstream string) error {
+	f.calls++
 	f.createTrackingBranchCalls = append(f.createTrackingBranchCalls, createTrackingBranchCall{
 		Dir: dir, Branch: branch, Upstream: upstream,
 	})
@@ -335,6 +347,7 @@ func (f *fakeGit) CreateTrackingBranch(ctx context.Context, dir, branch, upstrea
 }
 
 func (f *fakeGit) DeleteBranch(ctx context.Context, dir, branch string) error {
+	f.calls++
 	f.deleteBranchCalls = append(f.deleteBranchCalls, deleteBranchCall{
 		Dir: dir, Branch: branch,
 	})
@@ -345,6 +358,7 @@ func (f *fakeGit) DeleteBranch(ctx context.Context, dir, branch string) error {
 }
 
 func (f *fakeGit) AddWorktree(ctx context.Context, dir, path, branch, commit string) error {
+	f.calls++
 	f.addWorktreeCalls = append(f.addWorktreeCalls, addWorktreeCall{
 		Dir: dir, Path: path, Branch: branch, Commit: commit,
 	})
@@ -355,6 +369,7 @@ func (f *fakeGit) AddWorktree(ctx context.Context, dir, path, branch, commit str
 }
 
 func (f *fakeGit) AddDetachedWorktree(ctx context.Context, dir, path, commit string) error {
+	f.calls++
 	f.addDetachedWorktreeCalls = append(f.addDetachedWorktreeCalls, addDetachedWorktreeCall{
 		Dir: dir, Path: path, Commit: commit,
 	})
@@ -367,11 +382,13 @@ func (f *fakeGit) AddDetachedWorktree(ctx context.Context, dir, path, commit str
 // MaterializeTree records the call and touches no disk, like the other
 // worktree methods here.
 func (f *fakeGit) MaterializeTree(ctx context.Context, dir, tree string) error {
+	f.calls++
 	f.materializeCalls = append(f.materializeCalls, struct{ dir, tree string }{dir, tree})
 	return f.materializeErr
 }
 
 func (f *fakeGit) CheckoutWorktree(ctx context.Context, dir, path, branch string) error {
+	f.calls++
 	f.checkoutWorktreeCalls = append(f.checkoutWorktreeCalls, checkoutWorktreeCall{
 		Dir: dir, Path: path, Branch: branch,
 	})
@@ -382,6 +399,7 @@ func (f *fakeGit) CheckoutWorktree(ctx context.Context, dir, path, branch string
 }
 
 func (f *fakeGit) RemoveWorktree(ctx context.Context, dir, path string, force bool) error {
+	f.calls++
 	f.removeWorktreeCalls = append(f.removeWorktreeCalls, removeWorktreeCall{
 		Dir: dir, Path: path, Force: force,
 	})
@@ -392,6 +410,7 @@ func (f *fakeGit) RemoveWorktree(ctx context.Context, dir, path string, force bo
 }
 
 func (f *fakeGit) Dirty(ctx context.Context, dir string) (bool, error) {
+	f.calls++
 	f.dirtyCalls++
 	f.lastDirtyDir = dir
 	if f.dirtyErr != nil {
@@ -401,6 +420,7 @@ func (f *fakeGit) Dirty(ctx context.Context, dir string) (bool, error) {
 }
 
 func (f *fakeGit) RevListCount(ctx context.Context, dir, from, to string) (int, error) {
+	f.calls++
 	f.revListCalls++
 	f.lastRevListDir = dir
 	f.lastRevListFrom = from
@@ -412,6 +432,7 @@ func (f *fakeGit) RevListCount(ctx context.Context, dir, from, to string) (int, 
 }
 
 func (f *fakeGit) RefSHA(ctx context.Context, dir, ref string) (string, bool, error) {
+	f.calls++
 	f.refSHACalls = append(f.refSHACalls, refSHACall{Dir: dir, Ref: ref})
 	if f.refSHAErr != nil {
 		return "", false, f.refSHAErr
@@ -424,6 +445,7 @@ func (f *fakeGit) RefSHA(ctx context.Context, dir, ref string) (string, bool, er
 }
 
 func (f *fakeGit) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error {
+	f.calls++
 	f.updateRefCalls = append(f.updateRefCalls, updateRefCall{
 		Dir: dir, Ref: ref, NewSHA: newSHA, OldSHA: oldSHA,
 	})
@@ -434,11 +456,13 @@ func (f *fakeGit) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string
 }
 
 func (f *fakeGit) DeleteRef(ctx context.Context, dir, ref string) error {
+	f.calls++
 	f.deleteRefCalls = append(f.deleteRefCalls, deleteRefCall{Dir: dir, Ref: ref})
 	return f.deleteRefErr
 }
 
 func (f *fakeGit) ListRefs(ctx context.Context, dir, prefix string) ([]string, error) {
+	f.calls++
 	f.listRefsCalls = append(f.listRefsCalls, listRefsCall{Dir: dir, Prefix: prefix})
 	if f.listRefsErr != nil {
 		return nil, f.listRefsErr
@@ -450,6 +474,7 @@ func (f *fakeGit) ListRefs(ctx context.Context, dir, prefix string) ([]string, e
 }
 
 func (f *fakeGit) RefOnRemote(ctx context.Context, dir, ref string) (bool, error) {
+	f.calls++
 	f.refOnRemoteCalls = append(f.refOnRemoteCalls, refOnRemoteCall{Dir: dir, Ref: ref})
 	if f.refOnRemoteErr != nil {
 		return false, f.refOnRemoteErr
@@ -458,6 +483,7 @@ func (f *fakeGit) RefOnRemote(ctx context.Context, dir, ref string) (bool, error
 }
 
 func (f *fakeGit) CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error) {
+	f.calls++
 	f.commitTreeCalls = append(f.commitTreeCalls, commitTreeCall{
 		Dir: dir, Tree: tree, Parent: parent, Message: message,
 	})
@@ -471,6 +497,7 @@ func (f *fakeGit) CommitTree(ctx context.Context, dir, tree, parent, message str
 }
 
 func (f *fakeGit) CommitAll(ctx context.Context, dir, message string) (string, error) {
+	f.calls++
 	f.commitAllCalls = append(f.commitAllCalls, commitAllCall{Dir: dir, Message: message})
 	if f.commitAllErr != nil {
 		return "", f.commitAllErr
@@ -479,11 +506,13 @@ func (f *fakeGit) CommitAll(ctx context.Context, dir, message string) (string, e
 }
 
 func (f *fakeGit) MergeFF(ctx context.Context, dir, ref string) error {
+	f.calls++
 	f.mergeFFCalls = append(f.mergeFFCalls, mergeFFCall{Dir: dir, Ref: ref})
 	return f.mergeFFErr
 }
 
 func (f *fakeGit) RootCommit(ctx context.Context, dir string) (string, error) {
+	f.calls++
 	f.rootCommitCalls = append(f.rootCommitCalls, rootCommitCall{Dir: dir})
 	if f.rootCommitErr != nil {
 		return "", f.rootCommitErr
@@ -495,6 +524,7 @@ func (f *fakeGit) RootCommit(ctx context.Context, dir string) (string, error) {
 }
 
 func (f *fakeGit) ListTags(ctx context.Context, dir string) (map[string]string, error) {
+	f.calls++
 	if f.listTagsErr != nil {
 		return nil, f.listTagsErr
 	}
@@ -502,6 +532,7 @@ func (f *fakeGit) ListTags(ctx context.Context, dir string) (map[string]string, 
 }
 
 func (f *fakeGit) RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error) {
+	f.calls++
 	f.repoFactsCalls = append(f.repoFactsCalls, repoFactsCall{Dir: dir})
 	if f.repoFactsErr != nil {
 		return "", "", f.repoFactsErr
@@ -516,6 +547,7 @@ func (f *fakeGit) RepoFacts(ctx context.Context, dir string) (originURL, commonD
 // Identity returns the configured identity, or the defaults when no
 // identity was configured at all (see the field comment above).
 func (f *fakeGit) Identity(ctx context.Context, dir string) (name, email string, err error) {
+	f.calls++
 	if f.identityErr != nil {
 		return "", "", f.identityErr
 	}
@@ -528,6 +560,7 @@ func (f *fakeGit) Identity(ctx context.Context, dir string) (name, email string,
 // TreeFingerprint returns the next configured fingerprint; the last repeats
 // once the sequence is exhausted. No entries means "".
 func (f *fakeGit) TreeFingerprint(ctx context.Context, dir string) (string, error) {
+	f.calls++
 	if f.treeFingerprintErr != nil {
 		return "", f.treeFingerprintErr
 	}
@@ -543,6 +576,7 @@ func (f *fakeGit) TreeFingerprint(ctx context.Context, dir string) (string, erro
 }
 
 func (f *fakeGit) CurrentBranch(ctx context.Context, dir string) (string, error) {
+	f.calls++
 	f.currentBranchCalls = append(f.currentBranchCalls, currentBranchCall{Dir: dir})
 	if f.currentBranchErr != nil {
 		return "", f.currentBranchErr
@@ -551,11 +585,13 @@ func (f *fakeGit) CurrentBranch(ctx context.Context, dir string) (string, error)
 }
 
 func (f *fakeGit) Fetch(ctx context.Context, dir, remote, ref string) error {
+	f.calls++
 	f.fetchCalls = append(f.fetchCalls, fetchCall{Dir: dir, Remote: remote, Ref: ref})
 	return f.fetchErr
 }
 
 func (f *fakeGit) Rebase(ctx context.Context, dir, onto string) ([]string, error) {
+	f.calls++
 	f.rebaseCalls = append(f.rebaseCalls, rebaseCall{Dir: dir, Onto: onto})
 	if f.rebaseErr != nil {
 		return nil, f.rebaseErr
@@ -567,6 +603,7 @@ func (f *fakeGit) Rebase(ctx context.Context, dir, onto string) ([]string, error
 }
 
 func (f *fakeGit) Merge(ctx context.Context, dir, ref string) ([]string, error) {
+	f.calls++
 	f.mergeCalls = append(f.mergeCalls, mergeCall{Dir: dir, Ref: ref})
 	if f.mergeErr != nil {
 		return nil, f.mergeErr
@@ -578,6 +615,7 @@ func (f *fakeGit) Merge(ctx context.Context, dir, ref string) ([]string, error) 
 }
 
 func (f *fakeGit) Push(ctx context.Context, dir, remote, branch string, forceWithLease bool) error {
+	f.calls++
 	f.pushCalls = append(f.pushCalls, pushCall{
 		Dir: dir, Remote: remote, Branch: branch, ForceWithLease: forceWithLease,
 	})
@@ -585,6 +623,7 @@ func (f *fakeGit) Push(ctx context.Context, dir, remote, branch string, forceWit
 }
 
 func (f *fakeGit) RemoteBranchExists(ctx context.Context, dir, remote, branch string) (bool, error) {
+	f.calls++
 	f.remoteBranchExistsCalls = append(f.remoteBranchExistsCalls,
 		remoteBranchExistsCall{Dir: dir, Remote: remote, Branch: branch})
 	if f.remoteBranchExistsErr != nil {

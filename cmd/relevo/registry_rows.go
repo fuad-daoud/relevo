@@ -220,8 +220,8 @@ var registry = []verbEntry{
 	{
 		Name:    "daemon",
 		Summary: "run the long-running reconciler",
-		Args:    "[--interval D] [--check]",
-		Flags:   []string{"--check", "--interval", "--preflight"},
+		Args:    "[--interval D] [--check] [--pprof <path>]",
+		Flags:   []string{"--check", "--interval", "--pprof", "--preflight"},
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"usage"},
 	},

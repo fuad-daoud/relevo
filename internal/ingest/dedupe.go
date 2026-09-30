@@ -407,7 +407,7 @@ func transcriptKinds(record db.Record, rd db.Round) []string {
 // splits a live member, reusing that reader rather than a second splitter that
 // could drift from it.
 func roundFileLines(name string, body []byte) ([][]byte, error) {
-	opener := func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+	opener := func() (io.ReadSeekCloser, error) { return seekCloser{bytes.NewReader(body)}, nil }
 	lines, _, _, _, err := readAppendOnly(opener, name, db.Cursor{}, false)
 	if err != nil {
 		return nil, err

@@ -42,6 +42,14 @@ put() {
 	commit
 }
 
+# put_untracked copies one fixture into the staged repo without staging or
+# committing it, so the guard must find it through the untracked list rather
+# than the index.
+put_untracked() {
+	mkdir -p "$work/repo/fixtures"
+	cp "$fixtures/$1" "$work/repo/fixtures/$1"
+}
+
 fail=0
 # run executes the guard in the staged repo, leaving its exit status in $status
 # and its output in $work/out.
@@ -113,6 +121,37 @@ put big.go
 printf 'fixtures/big.go\nfixtures/gone.go\n' > "$work/repo/scripts/check-filesize.allow"
 run
 expect_exit "an allow-listed path and a missing path pass" 0
+
+# An untracked, non-ignored file over the limit fails like a tracked one.
+stage
+put_untracked big.go
+run
+expect_exit "an untracked 601-line file fails" 1
+expect_line "the untracked over-size file is reported" "fixtures/big.go: 601 lines (max 600)"
+
+# An untracked file under the limit passes and says so.
+stage
+put_untracked small.go
+run
+expect_exit "an untracked small file passes" 0
+expect_line "an untracked small file prints ok" "check-filesize: ok"
+
+# An untracked file a .gitignore covers is not scanned at all.
+stage
+printf 'fixtures/big.go\n' > "$work/repo/.gitignore"
+put_untracked big.go
+commit
+run
+expect_exit "an untracked ignored over-size file passes" 0
+expect_line "an untracked ignored file prints ok" "check-filesize: ok"
+
+# An untracked file the allow-list names is skipped like a tracked one.
+stage
+put_untracked big.go
+printf 'fixtures/big.go\n' > "$work/repo/scripts/check-filesize.allow"
+run
+expect_exit "an untracked allow-listed file passes" 0
+expect_line "an untracked allow-listed file prints ok" "check-filesize: ok"
 
 [ "$fail" -eq 0 ] && echo "check-filesize: ok"
 exit "$fail"

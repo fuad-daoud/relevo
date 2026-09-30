@@ -1178,3 +1178,45 @@ func TestShowLivePeekLeavesPendingMasterMindPayload(t *testing.T) {
 		t.Errorf("Pull after a peeked show = found %v, err %v; want the payload still pending", found, err)
 	}
 }
+
+// TestShowDoesNotClaimAdmittedPayload pins the read side of the admitted state:
+// an entry a push route already admitted is not claimable, so a plain show
+// prints the requested section but claims nothing -- the deliverer's own
+// read-back is the only thing that may confirm it.
+func TestShowDoesNotClaimAdmittedPayload(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedShowClaimStore(t, rt)
+	if err := rt.Store.AdmitIndex("webshop", 0); err != nil {
+		t.Fatalf("AdmitIndex: %v", err)
+	}
+
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Section: ShowReport})
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	if res.Text != "# round 1 report\n" {
+		t.Errorf("Text = %q, want the report section", res.Text)
+	}
+
+	if _, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "probe"); err != nil || found {
+		t.Errorf("Pull after an admitted show = found %v, err %v; want nothing claimable", found, err)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Direction != store.DirToMasterMind {
+			continue
+		}
+		if e.AdmittedAt == nil {
+			t.Error("the entry lost its admit marker")
+		}
+		if e.Confirmed {
+			t.Error("an admitted entry must not be confirmed by a plain show")
+		}
+	}
+}

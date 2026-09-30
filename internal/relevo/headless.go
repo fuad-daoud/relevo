@@ -670,10 +670,16 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	//
 	// The escape check runs before closeOnMarker, not inside it: queueReport
 	// clears RoundBaselineTree, and the snapshot must be compared against it
-	// while it is still on b (#192).
+	// while it is still on b (#192). It runs only when the marker is there --
+	// the close is the only reader of its answer -- so a live round pays two
+	// git subprocesses once, at its close, not every tick under the state
+	// lock. That per-tick pair was the largest cost of a live headless tick
+	// and it warned every tick for a repository git could not read.
 	markerNote := ""
-	if escapeCheck(ctx, rt, b, true) == EscapeNote {
-		markerNote = escapeNote
+	if _, err := os.Stat(rt.Store.DonePath(b.Name, b.Round)); err == nil {
+		if escapeCheck(ctx, rt, b, true) == EscapeNote {
+			markerNote = escapeNote
+		}
 	}
 	// queueReport's reset block clears RoundVerify: read the round's verify
 	// flag before the close consumes it (#144), as the pane path does.

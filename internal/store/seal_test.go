@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,6 +148,55 @@ func TestStreamDrained(t *testing.T) {
 
 			if got := s.StreamDrained(b, tc.round); got != tc.want {
 				t.Errorf("StreamDrained(round %d) = %v, want %v", tc.round, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStreamDrainedReadsOnlyTheTail pins the bounded read: the drain test
+// reasons over a stream's end, because the exit trailer is the supervisor's
+// last write, so a trailer buried far from the end no longer reads as drained
+// and a tail that carries it does.
+func TestStreamDrainedReadsOnlyTheTail(t *testing.T) {
+	const drained = 2
+	payload := `{"type":"step","part":{"time":{"end":1}}}`
+	// A stream far larger than the tail, ended by the supervisor's trailer.
+	prefix := strings.Repeat(payload+"\n", streamTailBytes/len(payload)/2+1)
+	trailed := prefix + spawn.ExitTrailer + "0\n"
+	// The same stream with a non-trailer line after the cursor, inside the tail.
+	lateLine := prefix + spawn.ExitTrailer + "0\n" + "still flushing\n"
+	// A trailer far from the end: after it, more than a tail's worth of lines
+	// the supervisor's exit allows. Only a whole-file read can see the trailer,
+	// so the bounded read refuses to call this drained while it is fresh.
+	buried := "\n" + spawn.ExitTrailer + "0\n" + strings.Repeat(spawn.RusageTrailerPrefix+" 1 2 3 4\n", streamTailBytes/16+16)
+
+	cases := []struct {
+		name   string
+		body   string
+		offset func(string) int64
+		want   bool
+	}{
+		{"cursor at EOF behind a trailer in the tail", trailed, func(s string) int64 { return int64(len(s)) }, true},
+		{"a fresh line after the trailer is not drained", lateLine, func(s string) int64 { return int64(len(prefix)) + int64(len(spawn.ExitTrailer)) + 2 }, false},
+		{"a trailer buried before the tail is not drained", buried, func(string) int64 { return 0 }, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(t.TempDir())
+			b := newBinding("webshop", "/home/dev/webshop")
+			b.Round = 4
+			b.Builder.StreamRound = drained
+			if err := s.Save(b); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			if err := os.WriteFile(s.RunnerStreamPath(b.Name, drained), []byte(tc.body), bindingFileMode); err != nil {
+				t.Fatalf("write stream: %v", err)
+			}
+			b.Builder.StreamOffset = tc.offset(tc.body)
+
+			if got := s.StreamDrained(b, drained); got != tc.want {
+				t.Errorf("StreamDrained = %v, want %v", got, tc.want)
 			}
 		})
 	}
