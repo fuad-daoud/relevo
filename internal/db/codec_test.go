@@ -63,6 +63,34 @@ func TestCodec(t *testing.T) {
 	}
 }
 
+// TestOversizedValuesStayPlain pins the guard against the shared encoder's
+// history: a value above zstdMaxInput is stored plain, so one outsized value --
+// a fetched round bundle -- cannot grow the encoder's retained buffers to its
+// own size. The value exactly at the limit still compresses, so the boundary is
+// the limit itself and not below it.
+func TestOversizedValuesStayPlain(t *testing.T) {
+	oversized := bytes.Repeat([]byte("bundle contents repeating "), zstdMaxInput/25+1)
+	if len(oversized) <= zstdMaxInput {
+		t.Fatalf("test value is %d bytes, want more than %d", len(oversized), zstdMaxInput)
+	}
+	stored, codec := encodeColumn(oversized)
+	if codec != codecPlain {
+		t.Errorf("oversized codec = %d, want %d", codec, codecZstd)
+	}
+	if !bytes.Equal(stored, oversized) {
+		t.Error("the oversized value came back changed")
+	}
+
+	atLimit := bytes.Repeat([]byte("row contents repeating "), zstdMaxInput/23+1)[:zstdMaxInput]
+	stored, codec = encodeColumn(atLimit)
+	if codec != codecZstd {
+		t.Errorf("codec at the limit = %d, want %d", codec, codecZstd)
+	}
+	if len(stored) >= len(atLimit) {
+		t.Errorf("stored %d bytes at the limit, want fewer than the plain %d", len(stored), len(atLimit))
+	}
+}
+
 // TestRoundFilePutGetCompresses pins the sealed-file round trip through the
 // write and read points: a compressible body stores under codec 1 and reads
 // back byte-identical, while bytes and sha256 stay the plaintext's.

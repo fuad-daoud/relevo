@@ -116,6 +116,41 @@ func getRecord(ctx context.Context, q queryer, origin, owner, name string) (Reco
 	return r, true, nil
 }
 
+// RecordRevision is what a mirror reads from a record besides its bytes: the
+// record's own JSON and the extents of its log and sealed round files, cheap
+// enough to read every tick where a full mirror run would not be.
+type RecordRevision struct {
+	JSON        string
+	EventCount  int
+	EventMaxSeq int
+	FileCount   int
+	FileMaxName string
+}
+
+// RecordRevision reads owner's live row for name and the extents of its events
+// and sealed round files in one query. ok false when no such record exists.
+// The extents are counts, not content: a growing log and a sealing round both
+// move them, and nothing else does.
+func (d *DB) RecordRevision(owner, name string) (RecordRevision, bool, error) {
+	var r RecordRevision
+	err := d.sqlDB.QueryRowContext(context.Background(),
+		`SELECT r.record_json,
+			(SELECT COUNT(*) FROM binding_event e WHERE e.record_id = r.id),
+			(SELECT COALESCE(MAX(e.seq), 0) FROM binding_event e WHERE e.record_id = r.id),
+			(SELECT COUNT(*) FROM round_file f WHERE f.record_id = r.id),
+			(SELECT COALESCE(MAX(f.name), '') FROM round_file f WHERE f.record_id = r.id)
+		 FROM binding_record r WHERE `+originScope+` AND r.owner = ? AND r.name = ? AND r.archived_at IS NULL`,
+		d.origin, owner, name).Scan(&r.JSON, &r.EventCount, &r.EventMaxSeq, &r.FileCount, &r.FileMaxName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RecordRevision{}, false, nil
+	}
+	if err != nil {
+		return RecordRevision{}, false, fmt.Errorf("db: record revision %s/%q: %w", owner, name, mapBusy(err))
+	}
+	return r, true, nil
+}
+
+// RecordList returns one row per live record of owner's, name-ordered.
 func (d *DB) RecordList(owner string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
 		`SELECT `+recordCols+` FROM binding_record WHERE `+originScope+` AND owner = ? AND archived_at IS NULL ORDER BY name ASC`,
@@ -367,6 +402,7 @@ func (t *Tx) EventMaxSeq(recordID string) (int, error) {
 	return n, nil
 }
 
+// EventMaxSeq returns recordID's highest event seq.
 func (d *DB) EventMaxSeq(recordID string) (int, error) {
 	n, err := eventMaxSeq(d.sqlDB.QueryRowContext(context.Background(),
 		`SELECT MAX(seq) FROM binding_event WHERE record_id = ?`, recordID))

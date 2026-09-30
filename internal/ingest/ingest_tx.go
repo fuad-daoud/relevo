@@ -18,6 +18,10 @@ type logRead struct {
 	lines    [][]byte
 	startSeq int
 	cursor   db.Cursor
+	// resumed reports that this read continued from a saved cursor instead of
+	// reading the member from the top, so the database's own earlier rows are
+	// the only copy of what came before.
+	resumed bool
 }
 
 func (r *ingestRun) upsertRepo(tx *db.Tx) (*string, error) {
@@ -70,6 +74,7 @@ func (r *ingestRun) readLog(tx *db.Tx) (logRead, error) {
 		r.logger.Info("ingest: cursor reset", "binding", r.b.Name, "member", "log.jsonl")
 	}
 	lr.startSeq, lr.cursor, lr.lines = startSeq, next, lines
+	lr.resumed = found && !reset
 	for _, line := range lines {
 		var e store.LogEntry
 		if err := json.Unmarshal(line, &e); err != nil {
@@ -165,7 +170,7 @@ func (r *ingestRun) appendEvents(tx *db.Tx, bindingID string, log logRead) ([]st
 		return all, nil
 	}
 
-	if had, err := tx.Events(bindingID, 0); err == nil && len(had) > 0 && log.startSeq > 0 {
+	if had, err := tx.Events(bindingID, 0); err == nil && len(had) > 0 && log.resumed {
 		merged := make([]store.LogEntry, 0, len(had)+len(log.entries))
 		for _, ev := range had {
 			var e store.LogEntry
@@ -300,7 +305,7 @@ func (r *ingestRun) appendMasterMindTranscript(tx *db.Tx, mastermindID *string) 
 	if err != nil {
 		return fmt.Errorf("mastermind transcript cursor: %w", err)
 	}
-	opener := func() (io.ReadCloser, error) { return os.Open(r.locator) }
+	opener := func() (io.ReadSeekCloser, error) { return os.Open(r.locator) }
 	lines, startSeq, next, reset, err := readAppendOnly(opener, key, cur, found)
 	if err != nil {
 		return fmt.Errorf("read mastermind transcript: %w", err)

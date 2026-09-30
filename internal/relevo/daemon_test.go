@@ -238,7 +238,7 @@ func TestTickIgnoresBindingUnboundMidTick(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelError})))
 	defer slog.SetDefault(previous)
 
-	if err := NewDaemon(rt, time.Second).tickOne(context.Background(), "webshop"); err != nil {
+	if err := NewDaemon(rt, time.Second).tickOne(context.Background(), store.Binding{Name: "webshop"}); err != nil {
 		t.Fatalf("a binding unbound mid-tick must be skipped, got %v", err)
 	}
 	if strings.Contains(logged.String(), "reconcile failed") {

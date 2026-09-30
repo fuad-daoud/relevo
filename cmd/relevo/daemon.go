@@ -31,6 +31,7 @@ type daemonFlagValues struct {
 	interval  *time.Duration
 	check     *bool
 	preflight *bool
+	pprof     *string
 }
 
 // daemonFlagSet defines those flags on fs and returns what they parse into.
@@ -38,6 +39,7 @@ func daemonFlagSet(fs *flag.FlagSet) *daemonFlagValues {
 	v := &daemonFlagValues{}
 	v.interval = fs.Duration("interval", 2*time.Second, "poll interval")
 	v.check = fs.Bool("check", false, "exit 0 if a daemon is running, 1 if not; print nothing")
+	v.pprof = fs.String("pprof", "", "serve net/http/pprof on this unix socket path (profiling only; off by default)")
 	// --preflight is internal: the daemon runs a candidate binary's own
 	// --preflight before re-exec'ing into it (#371 §4.4). It stays out of
 	// the usage text and the README, so it is defined but not printed.
@@ -48,9 +50,9 @@ func daemonFlagSet(fs *flag.FlagSet) *daemonFlagValues {
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	v := daemonFlagSet(fs)
-	interval, check, preflight := v.interval, v.check, v.preflight
+	interval, check, preflight, pprofSocket := v.interval, v.check, v.preflight, v.pprof
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: relevo daemon [--interval D] [--check]")
+		fmt.Fprintln(fs.Output(), "usage: relevo daemon [--interval D] [--check] [--pprof <path>]")
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -145,6 +147,24 @@ func cmdDaemon(args []string) error {
 		}
 		_ = ln.Close()
 	}()
+
+	// The profiling socket is opt-in and never fatal: a path it cannot bind
+	// must not take the daemon -- and the database it owns -- down. It is
+	// bound before the one-time passes so a start stuck in a migration can
+	// still be profiled. A re-exec skips the deferred cleanup (the image is
+	// replaced), and the next image removes the socket file it finds.
+	if *pprofSocket != "" {
+		pln, perr := servePprof(*pprofSocket)
+		if perr != nil {
+			slog.Warn("relevo daemon: pprof socket not served", "err", perr)
+		} else {
+			defer func() {
+				_ = pln.Close()
+				_ = os.Remove(*pprofSocket)
+			}()
+			slog.Info("relevo daemon: pprof socket", "path", *pprofSocket)
+		}
+	}
 
 	// The daemon's one handle: opened directly, here under the lock, and shared
 	// by store.NewShared with everything in the daemon -- the config store, the

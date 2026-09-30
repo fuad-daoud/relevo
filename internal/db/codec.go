@@ -23,11 +23,19 @@ var (
 	zstdDecoder, _ = zstd.NewReader(nil)
 )
 
+// zstdMaxInput is the largest value encodeColumn compresses. Above it the value
+// stays plain: the shared encoder's history buffer grows to the largest input it
+// ever encodes and keeps that size for the process's life, so one outsized value
+// -- a fetched round bundle rather than a row -- would pin hundreds of megabytes
+// until the daemon restarts. Legitimate columns are far below this: the largest
+// stored row is a few megabytes.
+const zstdMaxInput = 8 << 20
+
 // encodeColumn returns value with the codec to store it under: an empty value,
-// or one whose zstd frame is not strictly shorter, stays plain, so the guard
-// never grows a row.
+// an oversized one, or one whose zstd frame is not strictly shorter, stays
+// plain, so the guard never grows a row.
 func encodeColumn(value []byte) ([]byte, int) {
-	if len(value) == 0 {
+	if len(value) == 0 || len(value) > zstdMaxInput {
 		return value, codecPlain
 	}
 	frame := zstdEncoder.EncodeAll(value, nil)

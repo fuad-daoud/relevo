@@ -22,6 +22,17 @@ const readerCloseFinal = "The review is done.\n\n```relevo\nstatus: done\nhalted
 // findings.md must hold after the close, so the mastermind receives no stray block.
 const readerCloseSummary = "The review is done.\n"
 
+// sweepAll runs the scratch sweep with the tick's own binding list, the way
+// the daemon calls it.
+func sweepAll(t *testing.T, ctx context.Context, rt Runtime) {
+	t.Helper()
+	bindings, err := rt.Store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	sweepReaderScratch(ctx, rt, bindings)
+}
+
 // bindReader binds a reviewer on repo and sends it a plan, so round 1 is open
 // in a scratch worktree. It returns the runtime and the stored binding.
 func bindReader(t *testing.T, repo string) (Runtime, store.Binding) {
@@ -423,7 +434,7 @@ func TestSweepScratchKeepsOpenReaderRounds(t *testing.T) {
 		}
 	}
 
-	sweepReaderScratch(ctx, rt)
+	sweepAll(t, ctx, rt)
 
 	if _, err := os.Stat(rt.Store.ScratchWorktreePath("open-reader", 1)); err != nil {
 		t.Errorf("the open reader's scratch was removed: %v", err)
@@ -463,7 +474,7 @@ func TestSweepKeepsTheCurrentRoundsScratchBeforeItOpens(t *testing.T) {
 		}
 	}
 
-	sweepReaderScratch(ctx, rt)
+	sweepAll(t, ctx, rt)
 
 	if _, err := os.Stat(rt.Store.ScratchWorktreePath("reader-bind", 2)); err != nil {
 		t.Errorf("the current round's scratch was removed before its plan entry: %v", err)
