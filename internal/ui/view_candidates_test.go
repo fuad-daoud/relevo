@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
@@ -32,7 +33,8 @@ const candFixtureJSON = `[
 
 // candFixtureDoc is round 1's fixture doc: the seven candidates above, the
 // three actors, no custom agents, and a policy that allows the yolo tiers the
-// actors carry.
+// actors carry. It also carries the servers the placement picker offers, with
+// the builder placed on one of them.
 func candFixtureDoc(t *testing.T) relevo.ConfigDoc {
 	t.Helper()
 	var doc relevo.ConfigDoc
@@ -43,6 +45,10 @@ func candFixtureDoc(t *testing.T) relevo.ConfigDoc {
 		t.Fatalf("fixture has %d candidates, want 7", len(doc.Candidates))
 	}
 	doc.Policy = policy.Policy{MaxTier: "yolo"}
+	doc.Servers = map[string]remote.ServerEntry{
+		"backup": {URL: "https://backup:7777", Fingerprint: "sha256:bbbb"},
+		"zen":    {URL: "https://zen:7777", Fingerprint: "sha256:aaaa"},
+	}
 	doc.Actors = map[string]roles.Actor{
 		"builder": {
 			Agent: "plan-executor",
@@ -54,7 +60,8 @@ func candFixtureDoc(t *testing.T) relevo.ConfigDoc {
 				{Candidate: "sonnet"},
 				{Candidate: "glm-5.3-flash"},
 			},
-			Tier: "yolo",
+			Placement: []string{"zen"},
+			Tier:      "yolo",
 		},
 		"reviewer": {
 			Agent: "reviewer",

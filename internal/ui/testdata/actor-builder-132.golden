@@ -10,11 +10,11 @@
     5  sonnet                                                                            claude    anthropic   ready  next pick     
     6  glm-5.3-flash                                                                     opencode  openrouter  ready                
                                                                                                                                     
+    #  PLACEMENT                                                                                                                    
+    1  zen                                                                                                                          
+                                                                                                                                    
                                                                                                                                     
    check after each round is on, but no check command is set; set one in :settings                                                  
-                                                                                                                                    
-                                                                                                                                    
-                                                                                                                                    
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     

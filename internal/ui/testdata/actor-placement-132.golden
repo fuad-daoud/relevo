@@ -6,20 +6,20 @@
     1  gemini-3.8-flash-high                                                             agy       google      gated                
     2  claude-sonnet-4-6                                                                 agy       agy-extra   gated 20h            
     3  deepseek-v4.1-flash                                                               opencode  cline-pass  gated 1d             
-    4  gpt-5.6-terr╭─ edit builder ─────────────────────────────────────────────────────────────────────────────╮ted 24d            
-    5  sonnet      │                                                                                            │ady  next pick     
-    6  glm-5.3-flas│ name       builder                                                                         │ady                
-                   │                                                                                            │                   
-    #  PLACEMENT   │ agent       plan-executor                                                                  │                   
-    1  zen         │            writer                                                                          │                   
-                   │                                                                                            │                   
-                   │ tier        read    edit    yolo    harness                                                │                   
-   check after each│                                                                                            │                   
-                   │ check       on    off                                                                      │                   
-                   │                                                                                            │                   
-                   │                                                                                            │                   
-                   │  enter  save       tab  next field       esc  cancel                                       │                   
-                   ╰────────────────────────────────────────────────────────────────────────────────────────────╯                   
+    4  gpt-5.6-terra                                                                     codex     openai      gated 24d            
+    5  sonnet                                                                            claude    anthropic   ready  next pick     
+    6  glm-5.3-flash                                                                     opencode  openrouter  ready                
+                                                                                                                                    
+    #  PLACEMENT                                                                                                                    
+    1  zen                                                                                                                          
+                                                                                                                                    
+                                                                                                                                    
+   check after each round is on, but no check command is set; set one in :settings                                                  
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     
@@ -31,4 +31,4 @@
                                                                                                                                     
                                                                                                                                     
 
- enter  save      tab  next field      esc  cancel                                                                                  
+ ↑↓  move      shift+↑↓  reorder      a  add      d  remove      e  edit      :  command      ?  all keys      esc  back            
