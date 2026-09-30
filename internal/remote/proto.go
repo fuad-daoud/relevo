@@ -337,6 +337,10 @@ const (
 	CodeVersion        Code = "version"
 	CodeInvalid        Code = "invalid"
 	CodeTierAboveMax   Code = "tier_above_max"
+	// CodeWrongAudience is a 401: the request's Relevo-Audience is not one of
+	// the server's accepted audiences, so the signature was made for another
+	// server identity.
+	CodeWrongAudience Code = "wrong_audience"
 	// CodeRoundHalted is a 409: the round could not start because the
 	// binding halted trying to start it (e.g. a builder spawn failure);
 	// Message is the binding's Halt text.
@@ -434,6 +438,10 @@ func CodeOf(err error) Code {
 		return CodeBadSignature
 	case errors.Is(err, ErrStale):
 		return CodeStale
+	case errors.Is(err, ErrNoAudience):
+		return CodeVersion
+	case errors.Is(err, ErrWrongAudience):
+		return CodeWrongAudience
 	default:
 		return ""
 	}

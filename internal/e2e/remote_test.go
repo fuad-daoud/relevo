@@ -103,6 +103,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 		Now:            time.Now,
 		Interval:       time.Second,
 		MaxBundleBytes: 64 << 20,
+		Audiences:      []string{fp},
 	}
 
 	enroll := func(pub string) remote.ClientID {

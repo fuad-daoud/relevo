@@ -109,7 +109,7 @@ func testSignedRequest(t *testing.T, kp remote.Keypair, method, target string, b
 	if err != nil {
 		t.Fatalf("NewNonce: %v", err)
 	}
-	hdr := remote.Sign(kp, method, target, sum, fixedTime, nonce)
+	hdr := remote.Sign(kp, testAudience, method, target, sum, fixedTime, nonce)
 	for k, vv := range hdr {
 		for _, v := range vv {
 			req.Header.Add(k, v)
@@ -125,6 +125,7 @@ func TestContractRoutes(t *testing.T) {
 		Root:           t.TempDir(),
 		MaxBundleBytes: 10 * 1024 * 1024,
 		Now:            func() time.Time { return fixedTime },
+		Audiences:      []string{testAudience},
 	}
 	srv, err := New(cfg)
 	if err != nil {

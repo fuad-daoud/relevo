@@ -21,6 +21,9 @@ import (
 
 var ErrTLSExists = errors.New("server key or certificate already exists")
 
+// ErrNoCertificate reports that the secrets hold no server certificate.
+var ErrNoCertificate = errors.New("no server certificate")
+
 const (
 	tlsKeySecret  = "serve.tls.key"
 	tlsCertSecret = "serve.tls.cert"
@@ -55,7 +58,7 @@ func Fingerprint(secrets SecretStore) (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", errors.New("no server certificate")
+		return "", ErrNoCertificate
 	}
 	block, _ := pem.Decode(data)
 	if block == nil {

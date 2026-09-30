@@ -130,7 +130,7 @@ func startTestServer(t *testing.T) (*client.Client, *testServerFixture) {
 	runner := newScriptRunner()
 	kp := generateKey(t)
 	enrollTestClient(t, machineDB, serverRoot, kp)
-	srv := newTestServer(t, serverRoot, machineDB, cSet, runner, gitClient)
+	srv := newTestServer(t, serverRoot, machineDB, cSet, runner, gitClient, []string{fingerprint})
 	ts := newTestTLSServer(t, srv, cert)
 
 	cl := client.New(pinnedServers(ts.URL, fingerprint), kp, time.Now)
@@ -197,7 +197,7 @@ func enrollTestClient(t *testing.T, machineDB *db.DB, serverRoot string, kp remo
 	}
 }
 
-func newTestServer(t *testing.T, root string, machineDB *db.DB, cSet *candidate.Set, runner spawn.Runner, gitClient *git.Client) *serve.Server {
+func newTestServer(t *testing.T, root string, machineDB *db.DB, cSet *candidate.Set, runner spawn.Runner, gitClient *git.Client, audiences []string) *serve.Server {
 	t.Helper()
 	srv, err := serve.New(serve.Config{
 		Root:       root,
@@ -206,6 +206,7 @@ func newTestServer(t *testing.T, root string, machineDB *db.DB, cSet *candidate.
 		Runner:     runner,
 		Git:        gitClient,
 		Now:        time.Now,
+		Audiences:  audiences,
 	})
 	if err != nil {
 		t.Fatal(err)

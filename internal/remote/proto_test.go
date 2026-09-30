@@ -48,6 +48,14 @@ func TestCodeOf(t *testing.T) {
 	if got := CodeOf(ErrStale); got != CodeStale {
 		t.Fatalf("CodeOf(ErrStale) = %q, want %q", got, CodeStale)
 	}
+	// A missing audience reuses the version code: the 426 path old clients
+	// already understand.
+	if got := CodeOf(ErrNoAudience); got != CodeVersion {
+		t.Fatalf("CodeOf(ErrNoAudience) = %q, want %q", got, CodeVersion)
+	}
+	if got := CodeOf(ErrWrongAudience); got != CodeWrongAudience {
+		t.Fatalf("CodeOf(ErrWrongAudience) = %q, want %q", got, CodeWrongAudience)
+	}
 	if got := CodeOf(errors.New("x")); got != "" {
 		t.Fatalf("CodeOf(errors.New(\"x\")) = %q, want \"\"", got)
 	}
