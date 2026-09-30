@@ -10,7 +10,7 @@ UNAME_S := $(shell uname -s)
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
 LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check check-static check-scripts check-test lint build install service uninstall release jev
+.PHONY: check check-static check-scripts check-test lint build install service uninstall release release-bump release-tag jev
 
 # lint runs golangci-lint with .golangci.yml. The binary is not vendored and
 # CI installs it in a setup step, so a machine without it still gets the rest
@@ -77,14 +77,34 @@ jev:
 build: check
 	go build -ldflags "$(LDFLAGS)" -o relevo ./cmd/relevo
 
+# The usual way to cut a release is the PR flow in CONTRIBUTING.md, "Releasing":
+# release-bump on a release-vX.Y.Z branch, merge it, then release-tag on main.
+# release is that same bump, check and tag in one step, cutting directly on main.
 release:
 	@test -n "$(VERSION)" || { echo "VERSION is required (e.g. make release VERSION=0.1.0)" >&2; exit 1; }
-	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty" >&2; exit 1; }
 	@test "$$(git branch --show-current)" = "main" || { echo "not on main branch" >&2; exit 1; }
+	$(MAKE) release-bump VERSION=$(VERSION)
+	$(MAKE) check
+	$(MAKE) release-tag VERSION=$(VERSION)
+
+# release-bump bumps both plugin manifests to VERSION and commits them. It runs
+# on the release branch of the PR flow; the check that gates the bump is CI's,
+# and the tag waits for the merge.
+release-bump:
+	@test -n "$(VERSION)" || { echo "VERSION is required (e.g. make release-bump VERSION=0.1.0)" >&2; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty" >&2; exit 1; }
 	sed 's/^  "version": ".*",$$/  "version": "$(VERSION)",/' claude-plugin/.claude-plugin/plugin.json > claude-plugin/.claude-plugin/plugin.json.tmp && mv claude-plugin/.claude-plugin/plugin.json.tmp claude-plugin/.claude-plugin/plugin.json
 	sed 's/"version": "[^"]*"/"version": "$(VERSION)"/' .claude-plugin/marketplace.json > .claude-plugin/marketplace.json.tmp && mv .claude-plugin/marketplace.json.tmp .claude-plugin/marketplace.json
-	$(MAKE) check
 	git commit -m "chore(release): v$(VERSION)" claude-plugin/.claude-plugin/plugin.json .claude-plugin/marketplace.json
+
+# release-tag tags the merge commit of the bump PR, once it is on main. It
+# refuses unless both manifests already read VERSION: tagging first would leave
+# the tag's own manifest pointing at a release that does not exist.
+release-tag:
+	@test -n "$(VERSION)" || { echo "VERSION is required (e.g. make release-tag VERSION=0.1.0)" >&2; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty" >&2; exit 1; }
+	@test "$$(git branch --show-current)" = "main" || { echo "not on main branch" >&2; exit 1; }
+	sh scripts/check-plugin-version.sh "v$(VERSION)"
 	git tag -a v$(VERSION) -m "v$(VERSION)"
 	@echo "git push && git push origin v$(VERSION)"
 
