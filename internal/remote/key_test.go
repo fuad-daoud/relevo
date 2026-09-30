@@ -88,6 +88,7 @@ func TestParsePrivateRejectsWrongType(t *testing.T) {
 	}{
 		{"PRIVATE KEY", "PRIVATE KEY"},
 		{"EC PRIVATE KEY", "EC PRIVATE KEY"},
+		{"RELEVO ED25519 PUBLIC KEY", "RELEVO ED25519 PUBLIC KEY"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,6 +101,43 @@ func TestParsePrivateRejectsWrongType(t *testing.T) {
 				t.Fatalf("ParsePrivate(%q): got %v, want ErrKeyType", tc.typ, err)
 			}
 		})
+	}
+}
+
+// TestParsePrivateAcceptsLegacyType pins that a key stored before the relevo
+// rename keeps working: the pre-rename label parses to the same keypair
+// and the same id, and re-marshalling it lands under the current label.
+func TestParsePrivateAcceptsLegacyType(t *testing.T) {
+	kp, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	legacy := pem.EncodeToMemory(&pem.Block{
+		Type:  "RELAY ED25519 PRIVATE KEY", // name-guard: legacy
+		Bytes: []byte(kp.Private),
+	})
+
+	parsed, err := ParsePrivate(legacy)
+	if err != nil {
+		t.Fatalf("ParsePrivate(legacy label): %v", err)
+	}
+	if !bytes.Equal(parsed.Private, kp.Private) {
+		t.Fatal("parsed private key does not match original")
+	}
+	if !bytes.Equal(parsed.Public, kp.Public) {
+		t.Fatal("parsed public key does not match original")
+	}
+	if got, want := IDOf(parsed.Public), IDOf(kp.Public); got != want {
+		t.Fatalf("IDOf = %q, want %q", got, want)
+	}
+
+	current, err := MarshalPrivate(parsed)
+	if err != nil {
+		t.Fatalf("MarshalPrivate: %v", err)
+	}
+	block, _ := pem.Decode(current)
+	if block == nil || block.Type != pemTypePrivate {
+		t.Fatalf("re-marshalled block = %v, want type %q", block, pemTypePrivate)
 	}
 }
 

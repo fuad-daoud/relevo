@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"io"
@@ -14,12 +16,14 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -1477,6 +1481,77 @@ func TestDaemonPreflightFailsOnBadConfig(t *testing.T) {
 
 	if err := cmdDaemon([]string{"--preflight"}); err == nil {
 		t.Fatal("cmdDaemon --preflight with a malformed policy.json: err = nil, want an error")
+	}
+}
+
+// TestDaemonPreflightAcceptsAStoredLegacyClientKey covers the upgrade this
+// round repairs: a database whose client.key still carries the pre-rename PEM
+// label must pass --preflight. The read-only peek parses the stored key, so it
+// needs no migration; and because preflight cannot write, the stored bytes must
+// come back exactly as they were.
+func TestDaemonPreflightAcceptsAStoredLegacyClientKey(t *testing.T) {
+	configHome := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	d, err := store.New(root).DB()
+	if err != nil {
+		t.Fatalf("Store.DB: %v", err)
+	}
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	legacy := pem.EncodeToMemory(&pem.Block{
+		Type:  "RELAY ED25519 PRIVATE KEY", // name-guard: legacy
+		Bytes: []byte(kp.Private),
+	})
+
+	// A non-empty servers section is what makes the read parse the key at all.
+	if _, err := config.Open(d).As("test", "seed servers").Put(config.Servers,
+		[]byte(`{"zen":{"url":"https://zen:7777","fingerprint":"sha256:abcd"}}`)); err != nil {
+		t.Fatalf("Put(servers): %v", err)
+	}
+	if err := d.Tx(func(tx *db.Tx) error {
+		return tx.SecretPut(config.SecretClientKey, legacy, time.Now().UTC())
+	}); err != nil {
+		t.Fatalf("SecretPut: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	stdout, stderr, runErr := captureOutput(t, func() error {
+		return cmdDaemon([]string{"--preflight"})
+	})
+	if runErr != nil {
+		t.Fatalf("cmdDaemon --preflight with a legacy client key: %v (stderr %q)", runErr, stderr)
+	}
+	if !strings.HasPrefix(string(stdout), "ok ") {
+		t.Errorf("--preflight stdout = %q, want it to start with %q", stdout, "ok ")
+	}
+
+	// Preflight writes nothing: the stored row is still legacy.
+	d2, err := db.Open(filepath.Join(root, "relevo.db"))
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = d2.Close() }()
+	got, ok, err := d2.SecretGet(config.SecretClientKey)
+	if err != nil {
+		t.Fatalf("SecretGet: %v", err)
+	}
+	if !ok {
+		t.Fatal("client.key is missing after --preflight")
+	}
+	if !bytes.Equal(got, legacy) {
+		t.Fatalf("stored key = %q, want it unchanged (legacy) after a read-only preflight", got)
 	}
 }
 

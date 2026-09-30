@@ -314,6 +314,20 @@ func cmdDaemon(args []string) error {
 		}
 	}
 
+	// A client key stored under the pre-rename PEM label is rewritten once
+	// here, so every later reader sees the current label. The reader accepts
+	// either label, so no remote path refuses the key in the meantime; the
+	// trigger is the stored label itself, so the pass is self-limiting and
+	// needs no kv once-row. A failure never stops the daemon, and the key stays
+	// readable, so the next start retries.
+	if rt.DB != nil {
+		if wrote, err := rt.Config.NormalizeClientKey(); err != nil {
+			slog.Warn("relevo daemon: client key label not updated", "err", err)
+		} else if wrote {
+			slog.Info("relevo daemon: client key PEM label updated")
+		}
+	}
+
 	// daemon.json: what this image runs. Written under the lock, so its
 	// presence with the lock held means a #371 daemon; removed on a clean
 	// shutdown, kept across a re-exec (#371 §4.7).

@@ -20,6 +20,21 @@ var ErrKeyType = errors.New("invalid key type; ed25519 required")
 
 const pemTypePrivate = "RELEVO ED25519 PRIVATE KEY"
 
+// legacyPEMTypePrivate is the private-key PEM type written before the relevo
+// rename. A key stored under it was never rewritten by the rename, and the
+// read-only paths (preflight, check) cannot rewrite it, so it stays readable.
+// Nothing writes it: MarshalPrivate emits the current label only.
+const legacyPEMTypePrivate = "RELAY ED25519 PRIVATE KEY" // name-guard: legacy
+
+// IsLegacyPrivatePEM reports whether data holds a PEM block of the pre-rename
+// private key type. It is how a writer tells a legacy-labelled key apart from
+// one already carrying the current label; a block of any other type, or no
+// block at all, reports false.
+func IsLegacyPrivatePEM(data []byte) bool {
+	block, _ := pem.Decode(data)
+	return block != nil && block.Type == legacyPEMTypePrivate
+}
+
 // ClientID is "SHA256:" + base64.RawStdEncoding(sha256(raw 32-byte ed25519 public key)).
 // Same shape as ssh-keygen -l; 7 + 43 = 50 characters. Never empty.
 type ClientID string
@@ -98,14 +113,16 @@ func MarshalPrivate(k Keypair) ([]byte, error) {
 }
 
 // ParsePrivate parses a PEM-encoded private key. The PEM block must be of type
-// "RELEVO ED25519 PRIVATE KEY"; any other type, or an invalid key length,
-// returns an error.
+// "RELEVO ED25519 PRIVATE KEY" or of the pre-rename type held by
+// legacyPEMTypePrivate; any other type, or an invalid key length, returns an
+// error. The old label is read because a key stored before the rename was never
+// rewritten, and preflight, which cannot write, must parse the key it finds.
 func ParsePrivate(data []byte) (Keypair, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
 		return Keypair{}, ErrKeyFormat
 	}
-	if block.Type != pemTypePrivate {
+	if block.Type != pemTypePrivate && block.Type != legacyPEMTypePrivate {
 		return Keypair{}, ErrKeyType
 	}
 	if len(block.Bytes) != ed25519.PrivateKeySize {
