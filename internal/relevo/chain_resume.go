@@ -27,6 +27,14 @@ type ResumeOptions struct {
 	// for a chain that was started without the phase creates the security
 	// member now.
 	Security *bool
+	// Gate is the builder member's new acceptance command; "" keeps the stored
+	// one unless NoGate is set. NoGate clears it, winning over Gate exactly as
+	// bind's --no-gate does.
+	Gate   string
+	NoGate bool
+	// Regate is the builder member's new repair-round budget after a failing
+	// gate; nil keeps the stored one.
+	Regate *int
 }
 
 // resumeStep is the resume decision, as a pure function of the chain row and
@@ -89,7 +97,7 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
 	}
-	set, err := resumeSettings(c, opts)
+	set, err := resumeSettings(rt, c, opts)
 	if err != nil {
 		return ChainResult{}, err
 	}
@@ -105,7 +113,7 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 		if err := resumeRefusal(row); err != nil {
 			return err
 		}
-		res, err := chainResumeLocked(ctx, rt, tx, row, set)
+		res, err := chainResumeLocked(ctx, rt, tx, row, set, opts)
 		if err != nil {
 			return err
 		}
@@ -133,8 +141,10 @@ func resumeRefusal(c db.ChainRow) error {
 // resumeSettings applies the resume's flags to the chain's stored settings: a
 // flag that was given replaces the stored value, one that was not keeps it. The
 // settings come off the chain row, never from today's policy: the row is what
-// the chain has been running under.
-func resumeSettings(c db.ChainRow, opts ResumeOptions) (chain.Settings, error) {
+// the chain has been running under. The gate flags are the exception: an
+// explicit --gate or --no-gate resolves against today's policy exactly as a
+// start would, because the human is naming the command now.
+func resumeSettings(rt Runtime, c db.ChainRow, opts ResumeOptions) (chain.Settings, error) {
 	var set chain.Settings
 	if len(c.SettingsJSON) > 0 {
 		if err := json.Unmarshal(c.SettingsJSON, &set); err != nil {
@@ -143,6 +153,12 @@ func resumeSettings(c db.ChainRow, opts ResumeOptions) (chain.Settings, error) {
 	}
 	if opts.MaxCorrections != nil {
 		set.MaxCorrections = *opts.MaxCorrections
+	}
+	if opts.Gate != "" || opts.NoGate {
+		set.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"))
+	}
+	if opts.Regate != nil {
+		set.Regate = resolveRegate(opts.Regate, rt.Policy)
 	}
 	if opts.ReviewerActor != "" {
 		set.ReviewerActor = opts.ReviewerActor
@@ -163,12 +179,34 @@ func resumeSettings(c db.ChainRow, opts ResumeOptions) (chain.Settings, error) {
 // settings, creates the security member when the phase was just turned on,
 // decides which step to re-run, starts that round, and writes the new state and
 // the resume's one trace row in a single transaction.
-func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, set chain.Settings) (ChainResult, error) {
+func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, set chain.Settings, opts ResumeOptions) (ChainResult, error) {
 	settingsJSON, err := json.Marshal(set)
 	if err != nil {
 		return ChainResult{}, fmt.Errorf("encode chain %s settings: %w", c.Name, err)
 	}
 	c.SettingsJSON = settingsJSON
+
+	// The gate flags are settings, but they also live on the builder member.
+	// Only the flags that were given are written, so a resume that names none
+	// leaves the stored check untouched -- a chain started before the settings
+	// existed must not have a member gate it never saw cleared. A gate flag on
+	// a chain whose builder record is gone is an error: the resume fails with
+	// nothing written rather than quietly skipping the update.
+	if opts.Gate != "" || opts.NoGate || opts.Regate != nil {
+		builder, err := tx.Load(c.Builder)
+		if err != nil {
+			return ChainResult{}, fmt.Errorf("chain %s has no builder member to update its check: %w", c.Name, err)
+		}
+		if opts.Gate != "" || opts.NoGate {
+			builder.Gate = set.Gate
+		}
+		if opts.Regate != nil {
+			builder.Regate = set.Regate
+		}
+		if err := tx.Save(builder); err != nil {
+			return ChainResult{}, err
+		}
+	}
 
 	// Turning security on for a chain that was started without the phase
 	// creates the member now, through the helper a start builds its members
@@ -210,7 +248,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	// The send fills the round; until it does, the chain waits on no round.
 	next.Awaiting = chain.Awaiting{Member: targetPart}
 
-	text, err := chainSeedText(rt, c, next, act, closedRound)
+	text, err := chainSeedText(rt, tx, c, next, act, closedRound)
 	if err != nil {
 		return ChainResult{}, err
 	}
@@ -242,7 +280,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	if err != nil {
 		return ChainResult{}, err
 	}
-	return ChainResult{Chain: chainRowWithState(c, next, rt.Now().UTC()), Members: members, Plans: c.Plans}, nil
+	return ChainResult{Chain: chainRowWithState(c, next, rt.Now().UTC()), Members: members, Plans: c.Plans, Check: chainBuilderCheck(members, c.Builder)}, nil
 }
 
 // chainResumeAction is the action a resume's seed names: the member it sends to
@@ -308,7 +346,7 @@ func chainCreateSecurityMember(ctx context.Context, rt Runtime, tx *store.Tx, c 
 		repo: c.Repo, repoRef: builder.RepoRef, feature: c.Feature, ticket: c.Ticket,
 		worktree: builder.CWD,
 	}
-	built, err := chainBuildMembers(ctx, rt, []chainMember{member}, resolutions, base)
+	built, err := chainBuildMembers(ctx, rt, []chainMember{member}, resolutions, base, set)
 	if err != nil {
 		return "", err
 	}

@@ -38,10 +38,10 @@ func TestShowTraceRendersEveryStepInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChainTrace: %v", err)
 	}
-	const want = "plan 1/1  build    shop r1    check green\n" +
+	const want = "plan 1/1  build    shop r1    no check\n" +
 		"plan 1/1  review   shop-rev r1  changes\n" +
 		"plan 1/1  correct  shop-plan r1  correction plan\n" +
-		"plan 1/1  build    shop r2    check green\n" +
+		"plan 1/1  build    shop r2    no check\n" +
 		"plan 1/1  review   shop-rev r2  pass\n"
 	if got := RenderTrace(doc); got != want {
 		t.Errorf("RenderTrace = \n%s\nwant\n%s", got, want)
