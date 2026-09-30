@@ -1,0 +1,48 @@
+name: govulncheck
+
+# Its own workflow, not a job in ci.yml: ci.yml's `changes` gate answers
+# code=true on every non-PR event (its `git diff` has no BASE/HEAD and its
+# checkout is PR-only), so a schedule there would run the whole suite weekly.
+# This job also reaches vuln.go.dev, which `make check` must not: a new
+# advisory must not redden unrelated PRs. Nothing here is a required check.
+
+on:
+  schedule:
+    # Weekly, Monday 05:23 UTC; off the :00 queue spike.
+    - cron: '23 5 * * 1'
+  pull_request:
+    paths: ['go.mod', 'go.sum']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOVULNCHECK_VERSION: v1.8.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # stable, not go-version-file: golang.org/x/vuln v1.8.0 needs Go
+          # 1.26.0, and stable also reports advisories for what CI ships.
+          go-version: stable
+
+      # golang/vuln publishes no release binaries (v1.8.0 has no release and
+      # even the older releases carry no assets), so the pinned install is
+      # `go install`; the module checksum database, not a curl's sha256sum,
+      # is what verifies the bytes.
+      - name: install govulncheck
+        run: |
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: run govulncheck
+        run: |
+          govulncheck -version
+          govulncheck ./...
