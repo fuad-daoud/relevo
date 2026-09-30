@@ -152,9 +152,13 @@ capture "05b-scrolled"
 sleep 12
 capture "05c-after-polls"
 
-# 05d/05e/05f: transcript, prompt as markdown, and stale report refetch
-# From report tab (index 1), tab 3 times to transcript tab (index 4)
-send Tab; sleep 0.3; send Tab; sleep 0.3; send Tab; sleep 1.5
+# 05l/05d/05e/05f: log, transcript, prompt as markdown, and stale report refetch
+# From report tab (index 1), tab twice to log tab (index 3)
+send Tab; sleep 0.3; send Tab; sleep 1.5
+capture "05l-log"
+
+# Tab once to transcript tab (index 4)
+send Tab; sleep 1.5
 capture "05e-transcript"
 
 # Tab once more to prompt tab (index 0)
@@ -681,6 +685,20 @@ check_assertion_49() {
 }
 assert 49 "06-dialog hint names the actor and reason, not the name and round again" check_assertion_49
 
+# 50. (F9) 05l-log.txt renders the log tab from Events: it shows to_runner and
+#     question in, the to_runner line precedes the question in line, and the
+#     empty state is not drawn.
+check_assertion_50() {
+  local dir_line note_line
+  grep -q "to_runner" "$OUT/05l-log.txt" || return 1
+  grep -q "question in" "$OUT/05l-log.txt" || return 1
+  ! grep -q "(no log)" "$OUT/05l-log.txt" || return 1
+  dir_line="$(grep -n "to_runner" "$OUT/05l-log.txt" | head -1 | cut -d: -f1)"
+  note_line="$(grep -n "question in" "$OUT/05l-log.txt" | head -1 | cut -d: -f1)"
+  [ -n "$dir_line" ] && [ -n "$note_line" ] && [ "$dir_line" -lt "$note_line" ]
+}
+assert 50 "05l-log renders to_runner before question in from Events" check_assertion_50
+
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
 # fleet rows) is verified by inspection of tui.tsx, not by this smoke.
@@ -691,5 +709,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 49 assertions passed)"
+echo "Smoke test PASSED (all 50 assertions passed)"
 exit 0
