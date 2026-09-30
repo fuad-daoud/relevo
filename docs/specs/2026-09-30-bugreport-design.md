@@ -8,6 +8,9 @@ dated under `<state root>/bugreports/` rather than one overwritten
 plan wrote them; the issue sets no JSON key list, so this plan's `--json` document shape
 is the contract. Nothing else in the plan changed.
 **Status:** round A of three; the plan is `docs/plans/2026-09-30-bugreport.md`.
+**Amended for #732, 2026-10-01:** `--title T` and `--body FILE` join the shape, the
+description leads the sections, the rounds table carries its note, and the file render
+is capped to GitHub's issue-body limit with `--stdout` as the full render.
 
 This spec is transcribed from the issue text in the plan's appendix. The plan's author
 could not read #709 directly -- `gh issue view 709` needed approval -- so it worked from
@@ -47,15 +50,23 @@ the exact `gh issue create` command. Nothing is sent automatically.
    repo's never-destroy-a-record rule -- and `--out PATH` writes exactly where it is told
    instead. (Seed and plan; the issue names no path.)
 6. **The title is `relevo <version>: <code> in <verb>`** when a last error is recorded,
-   else `relevo <version>: bug report`. (Seed; matches the issue.)
+   else `relevo <version>: bug report`. A non-empty `--title T` overrides the generated
+   title in the markdown header, the `--json` document, the printed line and the `gh`
+   argv. (Seed; matches the issue.)
 7. **Every section is an explicit allow-list projection**, never a dump of a whole
    document: the fields the sections list in §4 are all that leaves the machine.
    (Seed; matches the issue.)
+8. **The markdown written to a file is capped to GitHub's issue-body limit**, 65,536
+   bytes: at or under the limit the file is the full render, over it the render is cut
+   on a line boundary with one marked final line naming the limit and `--stdout`, and
+   `--stdout`/`--json` carry the uncapped render. A bundle whose first line cannot fit
+   beside the marker is `usage`. (#732)
 
 ## 3. Shape
 
 ```
 relevo bugreport [--name <binding>] [--round N] [--logs] [--raw] [--out PATH]
+                 [--title T] [--body FILE]
                  [--stdout] [--json] [--gh]
 ```
 
@@ -68,11 +79,22 @@ relevo bugreport [--name <binding>] [--round N] [--logs] [--raw] [--out PATH]
   gh issue create --repo fuad-daoud/relevo --title '<title>' --body-file <path> --label bug
   ```
 
+  The file is the capped render: over 65,536 bytes it is cut on a line boundary with one
+  marked final line, and `--stdout` carries the full render (decision 8).
+
 - **`--gh`.** Writes the same file, then runs exactly that argv with `gh`. A missing `gh`
   is `not_available`, and its message is the printed line.
 - **`--out PATH`.** Writes the markdown to exactly PATH, creating parent directories; an
   unwritable PATH is `internal`, exit 1. It combines with `--gh` (the argv names PATH),
   `--logs` and `--raw`; with `--stdout` or `--json` it is `usage`, exit 2.
+- **`--title T`.** A non-empty T replaces the generated title in the markdown header, the
+  `--json` document, the printed line and the `gh` argv -- one value, four renderings. An
+  empty or absent T keeps the generated title.
+- **`--body FILE`.** The file's text becomes the bundle's first section, `## Description`,
+  ahead of every diagnostic section in the markdown and the `--json` document alike. It
+  passes `sanitize.Text` and then the bundle-wide redaction pass like every other
+  section. A missing or unreadable FILE is `usage`, exit 2, naming the path and the OS
+  error.
 - **`--stdout`.** Prints the markdown and writes no file.
 - **`--json`.** Prints the bundle document through `printDoc` and writes no file.
 - **`--stdout`, `--json` and `--gh` are mutually exclusive.** Combining them is `usage`,
@@ -86,26 +108,28 @@ source that errors or panics becomes one visible line, `<section>: omitted: <rea
 and never fails the run. The verb fails only on a usage error, or on failing to write or
 print its own output.
 
-1. **Environment:** relevo version and distribution, Go version, GOOS/GOARCH, and the
+1. **Description**, when `--body FILE` is given: the file's own text, ahead of every
+   diagnostic section.
+2. **Environment:** relevo version and distribution, Go version, GOOS/GOARCH, and the
    state root after redaction.
-2. **Last error**, when recorded: time, verb, argv, code, message, next.
-3. **Doctor:** the `DoctorDoc` that `relevo doctor --json` prints.
-4. **Status:** per binding, only name, actor, candidate token, state, round and round
+3. **Last error**, when recorded: time, verb, argv, code, message, next.
+4. **Doctor:** the `DoctorDoc` that `relevo doctor --json` prints.
+5. **Status:** per binding, only name, actor, candidate token, state, round and round
    count, shape, local or remote, and the pending kind. The status row's tail and every
    free-text field are excluded.
-5. **Rounds:** the last 5 log entries per binding -- with `--name N` only that binding,
+6. **Rounds:** the last 5 log entries per binding -- with `--name N` only that binding,
    and with `--round N` only that round (which requires `--name N`). Only seq, ts, round,
-   direction, kind, route, confirmed, late, tier, outcome, halted_at and usage totals are
-   kept; `Payload`, `Note`, `Path`, `ChangedPaths`, `CommandsRun` and `NotDone` are
-   excluded.
-6. **Hooks:** the last 20 runs from `hooks.KVLog.Runs`, keeping at, event, the basename of
+   direction, kind, route, confirmed, late, tier, outcome, halted_at, the note truncated
+   to 200 runes and usage totals are kept; `Payload`, `Path`, `ChangedPaths`,
+   `CommandsRun` and `NotDone` are excluded.
+7. **Hooks:** the last 20 runs from `hooks.KVLog.Runs`, keeping at, event, the basename of
    argv[0], exit_code, and error truncated to 200 runes. `Output` is excluded.
-7. **Gates:** active gates plus the last 20 ledger entries, keeping kind, subject, at,
+8. **Gates:** active gates plus the last 20 ledger entries, keeping kind, subject, at,
    until, source, binding, and note truncated to 200 runes.
-8. **Daemon:** `Store.DaemonRunning` and `ReadDaemonInfo`.
-9. **Journal** (Linux only): `journalctl --user -u relevo.service -n 100 --no-pager
-   -o short-iso`, run through an injected exec. Anywhere else it is the line
-   `journal: omitted: not available on <GOOS>`.
+9. **Daemon:** `Store.DaemonRunning` and `ReadDaemonInfo`.
+10. **Journal** (Linux only): `journalctl --user -u relevo.service -n 100 --no-pager
+    -o short-iso`, run through an injected exec. Anywhere else it is the line
+    `journal: omitted: not available on <GOOS>`.
 
 **`--logs`** adds three things for one round per selected binding: the newest round of
 each live binding, at most the 3 most recently active bindings -- or, with `--name N`,
@@ -164,6 +188,14 @@ default, UI surfaces.
 
 - `relevo bugreport` on a live machine writes the file and prints the command; `--json`
   is one document.
+- One `relevo bugreport --title T --body FILE` files an issue whose title is T and whose
+  body leads with FILE's text, then the diagnostics.
+- The default, `--out` and `--gh` markdown file is at or under GitHub's 65,536-byte body
+  limit; over it the file is cut on a line boundary and `--stdout` is the full render.
+- A bundle that cannot be cut for the limit is `usage`, exit 2, naming its size and the
+  limit, and writes no file.
+- An `unstructured` round report carries its reject reason in the rounds table's note
+  column.
 - Default bundles carry no transcript content and no secret-shaped strings; `--logs` and
   `--raw` are explicit.
 - An internal error prints `next: relevo bugreport`; the next run of it includes that

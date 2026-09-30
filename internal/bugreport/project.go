@@ -32,6 +32,13 @@ const (
 	LogTailLines   = 200
 )
 
+// DescriptionSection is the --body file as the bundle's first section: the
+// caller's own lines, ahead of every diagnostic section. The flag was given, so
+// the section is here even when the file held no text.
+func DescriptionSection(lines []string) Section {
+	return Section{Name: SectionDescription, Lines: lines}
+}
+
 // EnvFacts is what the environment section projects: the build's own facts,
 // never a dump of the process environment.
 type EnvFacts struct {
@@ -171,7 +178,7 @@ func RoundsSection(logs []BindingLog, name string, round int) Section {
 		Name: SectionRounds,
 		Columns: []string{
 			"binding", "seq", "ts", "round", "direction", "kind", "route", "confirmed",
-			"late", "tier", "outcome", "halted_at",
+			"late", "tier", "outcome", "halted_at", "note",
 			"tokens_in", "tokens_cache_read", "tokens_cache_write", "tokens_out",
 		},
 	}
@@ -202,9 +209,10 @@ func tailRound(entries []store.LogEntry, round, n int) []store.LogEntry {
 	return out
 }
 
-// roundRow is one log entry as the bundle keeps it. The payload, the note and
-// the paths the entry also holds are left out: the entry's facts are the report,
-// its bodies are content.
+// roundRow is one log entry as the bundle keeps it. The payload and the paths
+// the entry also holds are left out: the entry's facts are the report, its
+// bodies are content. The note is kept, cut to noteRunes, because it carries
+// the reason a report was rejected.
 func roundRow(name string, e store.LogEntry) []string {
 	var tokens usage.Tokens
 	if e.Usage != nil {
@@ -214,6 +222,7 @@ func roundRow(name string, e store.LogEntry) []string {
 		name, strconv.Itoa(e.Seq), stamp(e.TS), strconv.Itoa(e.Round),
 		string(e.Direction), string(e.Kind), e.Route, strconv.FormatBool(e.Confirmed),
 		strconv.FormatBool(e.Late), e.Tier, e.Outcome, e.HaltedAt,
+		truncateRunes(e.Note, noteRunes),
 		strconv.FormatInt(tokens.In, 10), strconv.FormatInt(tokens.CacheRead, 10),
 		strconv.FormatInt(tokens.CacheWrite, 10), strconv.FormatInt(tokens.Out, 10),
 	}

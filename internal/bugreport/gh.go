@@ -2,6 +2,11 @@ package bugreport
 
 import "strings"
 
+// GhBodyLimit is GitHub's issue-body limit in bytes, the ceiling a file handed
+// to `gh issue create --body-file` must fit inside. It is counted in bytes,
+// which is conservative against GitHub's 65,536-character limit.
+const GhBodyLimit = 65536
+
 // IssueArgv is the exact command that files a bundle. The default behaviour
 // prints it as a line and --gh runs it: no other command is ever assembled, and
 // filing is never silent.

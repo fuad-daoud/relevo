@@ -17,6 +17,7 @@ import (
 
 // bugreportFlagValues holds the pointers bugreport parses into.
 type bugreportFlagValues struct {
+	body   *string
 	gh     *bool
 	asJSON *bool
 	logs   *bool
@@ -25,12 +26,14 @@ type bugreportFlagValues struct {
 	raw    *bool
 	round  *int
 	stdout *bool
+	title  *string
 }
 
 // bugreportFlagSet defines that flag on fs and returns what it parses into, so
 // the registry's parity test finds exactly one installer per verb.
 func bugreportFlagSet(fs *flag.FlagSet) *bugreportFlagValues {
 	v := &bugreportFlagValues{}
+	v.body = fs.String("body", "", "read this file as the bundle's first section")
 	v.gh = fs.Bool("gh", false, "file the bundle with gh issue create after writing it")
 	v.asJSON = fs.Bool("json", false, "print the bundle as one JSON document and write no file")
 	v.logs = fs.Bool("logs", false, "add one round's report, diff and transcript tail per selected binding")
@@ -39,6 +42,7 @@ func bugreportFlagSet(fs *flag.FlagSet) *bugreportFlagValues {
 	v.raw = fs.Bool("raw", false, "skip the redaction pass and mark the bundle raw")
 	v.round = fs.Int("round", 0, "the round to read (requires --name)")
 	v.stdout = fs.Bool("stdout", false, "print the markdown and write no file")
+	v.title = fs.String("title", "", "use this title instead of the generated one")
 	return v
 }
 
@@ -50,16 +54,21 @@ var bugreportExec = func(ctx context.Context, argv []string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-// bugreportOptions is what one run of the verb was asked for.
+// bugreportOptions is what one run of the verb was asked for. body is the
+// --body file's text and haveBody records that the flag was given, so an empty
+// file still leads the bundle with its section while an absent flag adds none.
 type bugreportOptions struct {
-	name   string
-	round  int
-	logs   bool
-	raw    bool
-	out    string
-	stdout bool
-	asJSON bool
-	gh     bool
+	name     string
+	round    int
+	logs     bool
+	raw      bool
+	out      string
+	stdout   bool
+	asJSON   bool
+	gh       bool
+	title    string
+	body     string
+	haveBody bool
 }
 
 // validate refuses the combinations the verb's contract makes exclusive,
@@ -93,17 +102,27 @@ func cmdBugreport(args []string) error {
 	opts := bugreportOptions{
 		name: *v.name, round: *v.round, logs: *v.logs, raw: *v.raw,
 		out: *v.out, stdout: *v.stdout, asJSON: *v.asJSON, gh: *v.gh,
+		title: *v.title,
 	}
 	if err := opts.validate(); err != nil {
 		return err
+	}
+	if *v.body != "" {
+		// The description is read before a runtime is built: an unreadable
+		// file is the caller's usage error, not a line in a bundle.
+		text, err := os.ReadFile(*v.body)
+		if err != nil {
+			return fail(codeUsage, "read %s: %v", *v.body, err)
+		}
+		opts.body, opts.haveBody = string(text), true
 	}
 	return runBugreport(opts)
 }
 
 // runBugreport assembles, redacts and emits one bundle. It fails only on its
 // own output: a usage error was refused before this, an unwritable path is
-// internal, and a missing gh is not_available. A failing source is a line in
-// the bundle, never a failed run.
+// internal, a bundle too large to cut for a file is usage, and a missing gh is
+// not_available. A failing source is a line in the bundle, never a failed run.
 func runBugreport(opts bugreportOptions) error {
 	root, err := store.DefaultRoot()
 	if err != nil {
@@ -123,8 +142,12 @@ func runBugreport(opts bugreportOptions) error {
 	}
 
 	version := buildVersion()
+	title := bugreport.Title(version, le, haveLE)
+	if opts.title != "" {
+		title = opts.title
+	}
 	b := bugreport.Collect(
-		bugreport.Title(version, le, haveLE),
+		title,
 		version,
 		time.Now(),
 		bugreportSources(rt, root, L, le, haveLE, opts),
@@ -140,12 +163,23 @@ func runBugreport(opts bugreportOptions) error {
 		fmt.Print(bugreport.Markdown(b))
 		return nil
 	}
+	return fileBundle(b, opts, root)
+}
 
+// fileBundle writes the markdown to the run's path, capped to the body limit
+// GitHub accepts, prints the path and the gh line, and runs gh when --gh asked
+// for filing. The cap is applied before anything is written or printed, so a
+// bundle that cannot be cut fails usage with no file and no line.
+func fileBundle(b bugreport.Bundle, opts bugreportOptions, root string) error {
 	path := opts.out
 	if path == "" {
 		path = filepath.Join(root, "bugreports", "bugreport-"+time.Now().UTC().Format("20060102T150405Z")+".md")
 	}
-	if err := writeBundleFile(path, bugreport.Markdown(b)); err != nil {
+	text, err := bugreport.MarkdownCapped(b, bugreport.GhBodyLimit)
+	if err != nil {
+		return fail(codeUsage, "%v", err)
+	}
+	if err := writeBundleFile(path, text); err != nil {
 		return fail(codeInternal, "%v", err)
 	}
 
