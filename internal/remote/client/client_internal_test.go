@@ -5,6 +5,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -318,6 +319,118 @@ func TestRoundFileDeadline(t *testing.T) {
 	}
 	if elapsed > 2*time.Second {
 		t.Fatalf("RoundFile took %s: the deadline did not cut the call short", elapsed)
+	}
+}
+
+// TestCheckRedirectRefusesAndDoesNotRetry pins the redirect refusal: the
+// client returns ErrRedirect, the redirect target sees nothing, and the signed
+// request goes out exactly once -- no retry.
+//
+// Mutation: drop the CheckRedirect from getHTTPClient and the client follows
+// the 307, so the redirect target sees a request.
+func TestCheckRedirectRefusesAndDoesNotRetry(t *testing.T) {
+	var mu sync.Mutex
+	var secondHits int
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		secondHits++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"label":"laptop"}`))
+	}))
+	defer second.Close()
+
+	var firstHits int
+	first := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		firstHits++
+		mu.Unlock()
+		http.Redirect(w, r, second.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer first.Close()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := New(remote.Servers{"zen": remote.ServerEntry{URL: first.URL, Insecure: true}}, kp, time.Now)
+
+	_, err = cl.WhoAmI(context.Background(), "zen")
+	if !errors.Is(err, ErrRedirect) {
+		t.Fatalf("err = %v, want ErrRedirect", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if secondHits != 0 {
+		t.Fatalf("redirect target saw %d requests, want 0", secondHits)
+	}
+	if firstHits != 1 {
+		t.Fatalf("first server saw %d requests, want exactly 1 (no retry)", firstHits)
+	}
+}
+
+// TestResponseErrorMapsAudienceRefusals pins the two 401 mappings: a
+// bad_signature with no Relevo-Auth header is an old server, and
+// wrong_audience is a request signed for another server. Both are plain
+// sentinels; a bad_signature that carries the header stays an *HTTPError.
+func TestResponseErrorMapsAudienceRefusals(t *testing.T) {
+	tests := []struct {
+		name       string
+		authHeader string
+		code       remote.Code
+		wantErr    error
+		wantHTTP   bool
+	}{
+		{
+			name:     "old server: bad_signature with no Relevo-Auth",
+			code:     remote.CodeBadSignature,
+			wantErr:  ErrServerTooOld,
+			wantHTTP: false,
+		},
+		{
+			name:       "new server: bad_signature with Relevo-Auth",
+			authHeader: remote.AuthSchemeAudience,
+			code:       remote.CodeBadSignature,
+			wantHTTP:   true,
+		},
+		{
+			name:       "wrong audience",
+			authHeader: remote.AuthSchemeAudience,
+			code:       remote.CodeWrongAudience,
+			wantErr:    ErrWrongAudience,
+			wantHTTP:   false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.authHeader != "" {
+					w.Header().Set(remote.HeaderAuthScheme, tc.authHeader)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(remote.ErrorBody{Code: tc.code, Message: string(tc.code)})
+			}))
+			defer ts.Close()
+
+			cl := testClient(t, ts)
+			_, err := cl.WhoAmI(context.Background(), "zen")
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			var httpErr *HTTPError
+			if !errors.As(err, &httpErr) {
+				t.Fatalf("err = %v (%T), want *HTTPError", err, err)
+			}
+			if httpErr.Body.Code != tc.code {
+				t.Fatalf("code = %q, want %q", httpErr.Body.Code, tc.code)
+			}
+		})
 	}
 }
 

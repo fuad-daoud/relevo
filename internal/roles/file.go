@@ -72,6 +72,12 @@ type Row struct {
 	// string.
 	Off []string `json:"off,omitempty"`
 
+	// Placement is where the role's rounds run, most preferred first, as the
+	// actors conversion wrote it. The build copies it onto the Role, and the
+	// resolution reads it there: an absent or empty list keeps today's local
+	// path. A legacy file may carry the key too; it flows the same way.
+	Placement []string `json:"placement,omitempty"`
+
 	// Tier is the role's default permission tier.
 	Tier *string `json:"tier"`
 }

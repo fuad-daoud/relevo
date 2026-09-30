@@ -164,7 +164,7 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		// b.BuilderCandidate and writes no spurious "switched on <server>".
 		// The pick entry is filed under the sent round, before its plan entry.
 		if builder != "" && view.Candidate != "" && view.Candidate != cur.BuilderCandidate {
-			pick := remotePickEntry(now, server, view.Candidate, true, cur.Round)
+			pick := remotePickEntry(now, server, view.Candidate, true, cur.Round, PlacementResolution{})
 			if err := tx.AppendLog(name, pick); err != nil {
 				return fmt.Errorf("append builder pick log: %w", err)
 			}

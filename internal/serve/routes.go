@@ -79,6 +79,10 @@ func (s *Server) Handler() http.Handler {
 	authenticatedMux := s.authenticate(mux)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Before anything else: every response says which audience scheme this
+		// server speaks, so a client can tell an old server's refusal from a
+		// wrong-audience one.
+		w.Header().Set(remote.HeaderAuthScheme, remote.AuthSchemeAudience)
 		if !strings.HasPrefix(r.URL.Path, "/v1/") && r.URL.Path != "/v1" {
 			writeErr(w, http.StatusUpgradeRequired, remote.CodeVersion, "this server speaks v1")
 			return

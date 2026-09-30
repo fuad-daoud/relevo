@@ -28,6 +28,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
+// testAudience is the one audience every in-package test signs for and every
+// test server accepts. Production never sees it: a real server's set comes from
+// serve.Audiences.
+const testAudience = "host:test"
+
 func testServeDB(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -55,7 +60,7 @@ func signedRequest(t *testing.T, kp remote.Keypair, method, target string, body 
 	if err != nil {
 		t.Fatalf("NewNonce: %v", err)
 	}
-	hdr := remote.Sign(kp, method, target, sum, time.Now(), nonce)
+	hdr := remote.Sign(kp, testAudience, method, target, sum, time.Now(), nonce)
 	for k, vv := range hdr {
 		for _, v := range vv {
 			req.Header.Add(k, v)
@@ -394,6 +399,7 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 		Runner:     runner,
 		Git:        gitClient,
 		Now:        time.Now,
+		Audiences:  []string{testAudience},
 	}
 	for _, opt := range cfgOpts {
 		opt(&srvCfg)
@@ -465,6 +471,7 @@ func newTestServer(t *testing.T, maxBundleBytes int64) (*Server, string) {
 		Root:           root,
 		MaxBundleBytes: maxBundleBytes,
 		Now:            time.Now,
+		Audiences:      []string{testAudience},
 	}
 	s, err := New(cfg)
 	if err != nil {

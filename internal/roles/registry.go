@@ -73,6 +73,11 @@ type Role struct {
 	Resolved []string
 	// Ordered is true when the role has a preference order to resolve with.
 	Ordered bool
+	// Placement is where this role's rounds run, most preferred first: the
+	// "local" sentinel or a servers section name. An absent or empty list
+	// means no preference, which is the local path. The config build copies
+	// it from the row; the client-side resolver reads it.
+	Placement []string
 	// Definitions is the resolved definition per harness kind, for the kinds
 	// the role can run on.
 	Definitions map[string]Definition
@@ -211,6 +216,9 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 		}
 		if row.Candidates != nil {
 			base.Candidates = append([]string(nil), row.Candidates...)
+		}
+		if row.Placement != nil {
+			base.Placement = append([]string(nil), row.Placement...)
 		}
 		if len(row.Off) > 0 {
 			offRaw[name] = append([]string(nil), row.Off...)
@@ -443,6 +451,7 @@ func copyRole(role Role) Role {
 	out.Candidates = append([]string(nil), role.Candidates...)
 	out.Ranked = append([]Ranked(nil), role.Ranked...)
 	out.Resolved = append([]string(nil), role.Resolved...)
+	out.Placement = append([]string(nil), role.Placement...)
 	if role.Definitions != nil {
 		out.Definitions = make(map[string]Definition, len(role.Definitions))
 		for kind, d := range role.Definitions {

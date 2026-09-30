@@ -159,10 +159,17 @@ client store                             server store: all owners' bindings
 
 ### 2.4 Request signing and transport
 
-- Headers: `Relay-Client: <id>`, `Relay-Timestamp: <unix seconds>`,
+- Headers: `Relay-Client: <id>`, `Relay-Audience: <audience>`,
+  `Relay-Timestamp: <unix seconds>`,
   `Relay-Nonce: <16 random bytes, base64>`, `Relay-Signature: <base64
   ed25519 signature>` over the canonical string
-  `method "\n" path "\n" timestamp "\n" nonce "\n" hex(sha256(body))`.
+  `audience "\n" method "\n" path "\n" timestamp "\n" nonce "\n" hex(sha256(body))`.
+  **[amended]** `audience` binds the signature to the server identity the
+  client verified itself: the pinned fingerprint, or `host:<lower-case host>`
+  in CA and insecure mode. The server accepts a `host:` audience only when it
+  was started with `--public-host <that host>`, and always accepts its own
+  certificate's fingerprint. A server with an empty audience set refuses every
+  request.
 - Server checks, in order: id enrolled and not revoked; signature verifies
   against the stored key; `|now - timestamp| <= 5m`; nonce unseen within
   the window (in-memory set with expiry; a restart forgets nonces and the

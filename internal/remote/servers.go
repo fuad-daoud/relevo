@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 )
 
 // ServerEntry is one entry of the `servers` section: where a server lives and
@@ -47,6 +48,41 @@ func ParseServers(data []byte) (Servers, error) {
 		}
 	}
 	return s, nil
+}
+
+// HostAudience returns the audience for a connection whose host, not its
+// certificate, is what was verified: "host:" plus the lower-case hostname. The
+// port is dropped -- whoever runs a host controls all of its ports, and the
+// server cannot know which default port the client's scheme implied.
+func HostAudience(host string) string {
+	return "host:" + strings.ToLower(host)
+}
+
+// AudienceOf returns the audience a client signs for entry: the identity it
+// will send as Relevo-Audience. It follows the same trust-mode order as the
+// client's TLS configuration, so the audience always follows the trust mode
+// actually in use:
+//
+//   - insecure: the host is a label -- nothing is verified -- but it still
+//     stops replay to any server that does not list this host;
+//   - CA "system" (even beside a fingerprint): the CA chain proves the host, so
+//     a malicious server cannot present a certificate for another server's host;
+//   - otherwise (pinned): TLS proves the peer holds that certificate, so its
+//     fingerprint is the identity.
+func AudienceOf(entry ServerEntry) (string, error) {
+	u, err := url.Parse(entry.URL)
+	if err != nil {
+		return "", fmt.Errorf("parse url: %w", err)
+	}
+	if u.Hostname() == "" {
+		return "", errors.New("url has no host")
+	}
+	switch {
+	case entry.Insecure, entry.CA == "system":
+		return HostAudience(u.Hostname()), nil
+	default:
+		return strings.ToLower(entry.Fingerprint), nil
+	}
 }
 
 // ValidateEntry checks one server entry: a URL with a scheme and host, and a
