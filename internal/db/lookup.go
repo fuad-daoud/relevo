@@ -56,7 +56,7 @@ func mastermindBySession(ctx context.Context, q queryer, origin, kind, session s
 }
 
 const roundColumns = `id, binding_id, number, started_at, closed_at, outcome, actor,
-	candidate, harness, provider, model, mode, tier,
+	candidate, account, harness, provider, model, mode, tier,
 	commits, tree, gate_result, gate_exit, gate_duration_ms,
 	in_tokens, cache_tokens, write_tokens, out_tokens, cost_usd, cost_basis,
 	report_outcome, switches`
@@ -65,7 +65,7 @@ func scanRound(s rowScanner) (Round, error) {
 	var r Round
 	var startedAt string
 	var closedAt sql.Null[string]
-	var candidate, harness, provider, model, mode, tier sql.Null[string]
+	var candidate, account, harness, provider, model, mode, tier sql.Null[string]
 	var commits sql.Null[int64]
 	var tree, gateResult sql.Null[string]
 	var gateExit sql.Null[int64]
@@ -75,7 +75,7 @@ func scanRound(s rowScanner) (Round, error) {
 	var costBasis, reportOutcome sql.Null[string]
 
 	if err := s.Scan(&r.ID, &r.BindingID, &r.Number, &startedAt, &closedAt, &r.Outcome, &r.Actor,
-		&candidate, &harness, &provider, &model, &mode, &tier,
+		&candidate, &account, &harness, &provider, &model, &mode, &tier,
 		&commits, &tree, &gateResult, &gateExit, &gateDurationMS,
 		&inTokens, &cacheTokens, &writeTokens, &outTokens, &costUSD, &costBasis,
 		&reportOutcome, &r.Switches); err != nil {
@@ -91,6 +91,7 @@ func scanRound(s rowScanner) (Round, error) {
 		return Round{}, fmt.Errorf("parse closed_at: %w", err)
 	}
 	r.Candidate = ptrIfValid(candidate)
+	r.Account = ptrIfValid(account)
 	r.Harness = ptrIfValid(harness)
 	r.Provider = ptrIfValid(provider)
 	r.Model = ptrIfValid(model)

@@ -406,6 +406,14 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
 	}
+	// The session only resolves under the login that wrote it, so a row a
+	// human moved meanwhile is put back before the harness resumes.
+	if b.BuilderAccount != "" {
+		pick := pickFor(rt)
+		if rec, ok := accountByName(pick.Set, b.BuilderAccount); ok {
+			ensureOpencodeActive(ctx, rt, rec, pick.Gates)
+		}
+	}
 	h, ok := harness.Lookup(c.Harness)
 	if !ok {
 		return b, fmt.Errorf("unknown harness kind %q", c.Harness)

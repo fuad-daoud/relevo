@@ -248,7 +248,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
 	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName, pickFor(rt))
 	if err != nil {
 		return AddResult{}, err
 	}
@@ -427,6 +427,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		MasterMindID:     opts.MasterMindID,
 		Builder:          builder,
 		BuilderCandidate: c.Ref().String(),
+		BuilderAccount:   res.Account,
 		Round:            1,
 		State:            store.StateActive,
 		Worktree:         worktree,
