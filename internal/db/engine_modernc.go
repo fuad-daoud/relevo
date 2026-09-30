@@ -15,10 +15,6 @@ import (
 // is the way back from Turso.
 const engineName = "sqlite"
 
-// legacyDriverName is the modernc driver name, which the default build keeps
-// linked for the one-time conversion.
-const legacyDriverName = "sqlite"
-
 // journalSizeLimit caps the -wal file after a checkpoint resets it, in bytes;
 // without it sqlite keeps a write burst's high-water size for the process's
 // life. It is a modernc-only pragma: Turso does not support it.

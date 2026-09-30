@@ -32,6 +32,13 @@ type conn struct {
 // client's cleanup before closing the socket anyway.
 const closeDrainTimeout = 2 * time.Second
 
+// cancelGrace bounds how long a cancelled request waits for the owner's reply
+// before the client gives up and returns the caller's own context error. An
+// engine that cannot interrupt a running statement keeps the owner busy until
+// the statement ends, so waiting for the reply would hold the caller for the
+// whole statement; the grace still lets an owner that can interrupt answer.
+const cancelGrace = 250 * time.Millisecond
+
 func (c *conn) newID() int {
 	c.id++
 	return c.id
@@ -141,6 +148,53 @@ func (c *conn) readFrame() (byte, []byte, error) {
 		return 0, nil, c.connLost(err)
 	}
 	return kind, frame, nil
+}
+
+// await reads one request's reply, racing it against the caller's context. When
+// the context is cancelled it sends the cancel, waits up to cancelGrace for the
+// owner's reply, then returns the caller's own context error and marks the
+// connection dead. A stubborn statement only ever finishes on the owner, so the
+// stream's state is no longer known; the dead flag makes the next use fail
+// IsValid/ResetSession and database/sql discards the connection. The cancelled
+// call itself returns the context error, never driver.ErrBadConn, so
+// database/sql does not retry a statement that may already have run.
+func (c *conn) await(ctx context.Context, id int) (byte, []byte, error) {
+	type reply struct {
+		kind  byte
+		frame []byte
+		err   error
+	}
+	ch := make(chan reply, 1)
+	go func() {
+		frame, err := c.w.Read()
+		if err != nil {
+			ch <- reply{err: err}
+			return
+		}
+		kind, err := wire.Kind(frame)
+		ch <- reply{kind: kind, frame: frame, err: err}
+	}()
+
+	select {
+	case r := <-ch:
+		if ctx.Err() != nil {
+			c.dead = true
+			return 0, nil, ctx.Err()
+		}
+		if r.err != nil {
+			return 0, nil, c.connLost(r.err)
+		}
+		return r.kind, r.frame, nil
+	case <-ctx.Done():
+	}
+
+	c.sendCancel(id)
+	select {
+	case <-ch:
+	case <-time.After(cancelGrace):
+	}
+	c.dead = true
+	return 0, nil, ctx.Err()
 }
 
 func decodeError(frame []byte) error {
@@ -253,19 +307,10 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	if err := c.send(wire.KindExec, &wire.Exec{Header: wire.Header{Type: wire.TypeExec, ID: id}, Query: query}, raw); err != nil {
 		return nil, c.badConn(err)
 	}
-	stop := context.AfterFunc(ctx, func() { c.sendCancel(id) })
-	defer stop()
 
-	kind, frame, err := c.readFrame()
+	kind, frame, err := c.await(ctx, id)
 	if err != nil {
 		return nil, err
-	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		// The owner has been told to interrupt and the stream's state is no
-		// longer known, so the connection is abandoned; the caller sees its
-		// own context error and database/sql never retries the statement.
-		c.dead = true
-		return nil, ctxErr
 	}
 	switch kind {
 	case wire.KindDone:
@@ -295,20 +340,17 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	if err := c.send(wire.KindQuery, &wire.Query{Header: wire.Header{Type: wire.TypeQuery, ID: id}, Query: query}, raw); err != nil {
 		return nil, c.badConn(err)
 	}
-	stop := context.AfterFunc(ctx, func() { c.sendCancel(id) })
 
-	kind, frame, err := c.readFrame()
+	kind, frame, err := c.await(ctx, id)
 	if err != nil {
-		stop()
 		return nil, err
-	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		stop()
-		c.dead = true
-		return nil, ctxErr
 	}
 	switch kind {
 	case wire.KindRows:
+		// Rows stream under their own cancel: a caller that closes early or
+		// whose context ends mid-stream leaves the owner to roll the pinned
+		// connection back.
+		stop := context.AfterFunc(ctx, func() { c.sendCancel(id) })
 		r := &rows{c: c, id: id, stop: stop}
 		if err := r.fill(frame); err != nil {
 			stop()
@@ -316,16 +358,12 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		}
 		return r, nil
 	case wire.KindError:
-		stop()
 		return nil, decodeError(frame)
 	case wire.KindDone:
-		stop()
 		return &emptyRows{}, nil
 	case wire.KindRefuse:
-		stop()
 		return nil, c.midRefuse(frame)
 	default:
-		stop()
 		return nil, c.connLost(fmt.Errorf("client: unexpected frame kind %d for query", kind))
 	}
 }

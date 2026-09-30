@@ -23,9 +23,10 @@ jobs:
       - name: check plugin manifest versions
         run: scripts/check-plugin-version.sh "${{ github.ref_name }}"
 
-      # Only the platforms relevo actually supports. Everything is stdlib and
-      # CGO-free, so plain cross-compilation is enough -- no build matrix, no
-      # third-party release tooling.
+      # Only the platforms relevo actually supports. The build is CGO_ENABLED=0
+      # and purego loads the embedded Turso library at run time, so plain
+      # cross-compilation is enough -- no build matrix, no third-party release
+      # tooling; the shipped binary is dynamically linked to that library.
       - name: build release archives
         env:
           CGO_ENABLED: '0'

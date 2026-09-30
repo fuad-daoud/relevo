@@ -128,7 +128,12 @@ its in-flight request, issues `ROLLBACK`, and closes the pinned connection
 rather than returning it to a pool.
 
 **Cancellation.** `cancel{id}` cancels the context of a running request on the
-owner, which interrupts the statement.
+owner, which interrupts the statement where the engine can. Under Turso it
+cannot: tursogo v0.8.1 exposes no statement interrupt -- `turso_connection_interrupt`
+in the C ABI would lift that -- so a cancel releases the client at once, after a
+short grace for the owner's reply, while the statement runs to completion on the
+owner. That connection is then discarded rather than served again, because the
+client can no longer know the stream's state.
 
 **Errors.** `error{id, code, extended_code, message}`. The client rebuilds an
 error carrying `Code()`, so `ErrBusy`, `ErrInvalid` and `retryBusy` work

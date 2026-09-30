@@ -26,10 +26,6 @@ import (
 // engineName is the driver this build opens databases with.
 const engineName = "turso"
 
-// legacyDriverName is the modernc driver name, kept linked for the one-time
-// conversion.
-const legacyDriverName = "sqlite"
-
 // The SQLite primary result codes Turso's sentinels map onto, so a caller
 // masks the same codes a modernc error carries.
 const (

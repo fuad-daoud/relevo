@@ -5,12 +5,24 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	turso "turso.tech/database/tursogo"
 )
+
+// TestEngineCodeMapsAReadOnlyError pins the read-only mapping: a write against a
+// read-only connection reports code 8, the primary code modernc's error carries.
+func TestEngineCodeMapsAReadOnlyError(t *testing.T) {
+	err := fmt.Errorf("%w: attempt to write a readonly database", turso.ErrTursoReadOnly)
+	if code, _, ok := engineCode(err); !ok || code != tursoReadOnly {
+		t.Errorf("engineCode(%v) = (%d, ok %v), want the read-only code", err, code, ok)
+	}
+}
 
 // TestEngineCodeMapsARealBusyAndConstraint pins the Turso error mapping against
 // real driver errors: a constraint violation becomes 19 and a busy 5, the codes
