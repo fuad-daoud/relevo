@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
@@ -584,4 +585,241 @@ func TestReloadConfig(t *testing.T) {
 			t.Errorf("Resolve(opus-5): %v", err)
 		}
 	})
+}
+
+// decodeServers is one edit's servers section, decoded.
+func decodeServers(t *testing.T, e ConfigEdit) map[string]remote.ServerEntry {
+	t.Helper()
+	raw, ok := e.Sections[config.Servers]
+	if !ok {
+		t.Fatal("edit changes no servers section")
+	}
+	var out map[string]remote.ServerEntry
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode servers: %v", err)
+	}
+	return out
+}
+
+// configeditServerDoc is configeditDoc with a servers section and the builder
+// placed on zen, so the delete guard has an actor to name.
+func configeditServerDoc(t *testing.T) ConfigDoc {
+	t.Helper()
+	doc := configeditDoc(t)
+	doc.Servers = map[string]remote.ServerEntry{
+		"backup": {URL: "https://backup:7777", Fingerprint: "sha256:bbbb"},
+		"zen":    {URL: "https://zen:7777", Fingerprint: "sha256:aaaa"},
+	}
+	b := doc.Actors["builder"]
+	b.Placement = []string{"zen"}
+	doc.Actors["builder"] = b
+	return doc
+}
+
+// A server edit changes the servers section alone, and the store's own read
+// path hands it back: add, edit and delete all round-trip.
+func TestConfigEditServersRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	st := config.Open(d)
+
+	add, err := AddServer(configeditDoc(t), "zen", remote.ServerEntry{URL: "https://zen:7777", Fingerprint: "sha256:aaaa"})
+	if err != nil {
+		t.Fatalf("AddServer: %v", err)
+	}
+	if add.Message != "add server zen" || add.Name != "zen" {
+		t.Errorf("add edit = {message: %q, name: %q}", add.Message, add.Name)
+	}
+	if err := WriteConfigEdit(st, add); err != nil {
+		t.Fatalf("WriteConfigEdit(add): %v", err)
+	}
+	loaded, err := LoadConfigDoc(st)
+	if err != nil {
+		t.Fatalf("LoadConfigDoc: %v", err)
+	}
+	if got := loaded.Servers["zen"]; got.URL != "https://zen:7777" || got.Fingerprint != "sha256:aaaa" {
+		t.Fatalf("loaded zen = %+v", got)
+	}
+
+	edit, err := EditServer(loaded, "zen", remote.ServerEntry{URL: "https://zen:7777", Fingerprint: "sha256:cccc"})
+	if err != nil {
+		t.Fatalf("EditServer: %v", err)
+	}
+	if edit.Message != "edit server zen" {
+		t.Errorf("edit message = %q", edit.Message)
+	}
+	if err := WriteConfigEdit(st, edit); err != nil {
+		t.Fatalf("WriteConfigEdit(edit): %v", err)
+	}
+	loaded, err = LoadConfigDoc(st)
+	if err != nil {
+		t.Fatalf("LoadConfigDoc after the edit: %v", err)
+	}
+	if got := loaded.Servers["zen"].Fingerprint; got != "sha256:cccc" {
+		t.Fatalf("zen fingerprint = %q after the edit", got)
+	}
+
+	del, err := DeleteServer(loaded, "zen")
+	if err != nil {
+		t.Fatalf("DeleteServer: %v", err)
+	}
+	if del.Message != "delete server zen" {
+		t.Errorf("delete message = %q", del.Message)
+	}
+	if err := WriteConfigEdit(st, del); err != nil {
+		t.Fatalf("WriteConfigEdit(delete): %v", err)
+	}
+	loaded, err = LoadConfigDoc(st)
+	if err != nil {
+		t.Fatalf("LoadConfigDoc after the delete: %v", err)
+	}
+	if _, ok := loaded.Servers["zen"]; ok {
+		t.Error("zen is still stored after the delete")
+	}
+}
+
+// AddServer refuses a name that cannot key the section and an entry the store
+// would refuse, each as the FieldError the form shows.
+func TestConfigEditAddServerRefusals(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		field string
+		msg   string
+		add   func(d ConfigDoc) (ConfigEdit, error)
+	}{
+		{
+			name: "empty name", field: "name", msg: "a name is required",
+			add: func(d ConfigDoc) (ConfigEdit, error) {
+				return AddServer(d, "", remote.ServerEntry{URL: "https://zen:7777", Fingerprint: "sha256:aaaa"})
+			},
+		},
+		{
+			name: "local is reserved", field: "name", msg: "local is reserved for placement",
+			add: func(d ConfigDoc) (ConfigEdit, error) {
+				return AddServer(d, "local", remote.ServerEntry{URL: "https://zen:7777", Fingerprint: "sha256:aaaa"})
+			},
+		},
+		{
+			name: "already a server", field: "name", msg: "server zen already exists",
+			add: func(d ConfigDoc) (ConfigEdit, error) {
+				return AddServer(d, "zen", remote.ServerEntry{URL: "https://zen:7777", Fingerprint: "sha256:aaaa"})
+			},
+		},
+		{
+			name: "no url", field: "url", msg: "new: invalid url",
+			add: func(d ConfigDoc) (ConfigEdit, error) {
+				return AddServer(d, "new", remote.ServerEntry{})
+			},
+		},
+		{
+			name: "https without a fingerprint or ca", field: "url", msg: "new: fingerprint or ca required for https",
+			add: func(d ConfigDoc) (ConfigEdit, error) {
+				return AddServer(d, "new", remote.ServerEntry{URL: "https://new:7777"})
+			},
+		},
+		{
+			name: "http without insecure", field: "url", msg: "new: https required unless insecure",
+			add: func(d ConfigDoc) (ConfigEdit, error) {
+				return AddServer(d, "new", remote.ServerEntry{URL: "http://new:7777"})
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.add(configeditServerDoc(t))
+			wantFieldError(t, err, tc.field, tc.msg)
+		})
+	}
+}
+
+// DeleteServer refuses a server an actor's placement names, and names that
+// actor; once no placement mentions it the delete is accepted.
+func TestConfigEditDeleteServerRefusedWhileAnActorPlaces(t *testing.T) {
+	t.Parallel()
+
+	doc := configeditServerDoc(t)
+	_, err := DeleteServer(doc, "zen")
+	wantFieldError(t, err, "", "placed by builder; change their placement in :actors first")
+
+	a := doc.Actors["builder"]
+	a.Placement = nil
+	doc.Actors["builder"] = a
+
+	edit, err := DeleteServer(doc, "zen")
+	if err != nil {
+		t.Fatalf("DeleteServer after the placement cleared: %v", err)
+	}
+	if _, ok := decodeServers(t, edit)["zen"]; ok {
+		t.Error("zen is still in the edit's servers section")
+	}
+	if _, ok := decodeServers(t, edit)["backup"]; !ok {
+		t.Error("the delete dropped a server it was not asked to")
+	}
+}
+
+// Editing one entry rewrites only that entry: the others' bytes survive.
+func TestConfigEditEditServerKeepsOthersByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	const body = `{
+  "backup": {
+    "url": "https://backup:7777",
+    "fingerprint": "sha256:bbbb"
+  },
+  "zen": {
+    "url": "https://zen:7777",
+    "fingerprint": "sha256:aaaa"
+  }
+}
+`
+	servers, err := remote.ParseServers([]byte(body))
+	if err != nil {
+		t.Fatalf("ParseServers: %v", err)
+	}
+	doc := configeditDoc(t)
+	doc.Servers = servers
+
+	edit, err := EditServer(doc, "zen", remote.ServerEntry{URL: "https://zen:7777", Fingerprint: "sha256:cccc"})
+	if err != nil {
+		t.Fatalf("EditServer: %v", err)
+	}
+	got := string(edit.Sections[config.Servers])
+	backup := `  "backup": {
+    "url": "https://backup:7777",
+    "fingerprint": "sha256:bbbb"
+  }`
+	if !strings.Contains(got, backup) {
+		t.Errorf("editing zen changed backup's bytes:\n%s", got)
+	}
+	if !strings.Contains(got, `"sha256:cccc"`) || strings.Contains(got, `"sha256:aaaa"`) {
+		t.Errorf("the edit did not replace zen's entry:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Errorf("the written body must end in a newline: %q", got)
+	}
+}
+
+// A servers edit carries the servers section alone, never the actors the
+// section's guard reads.
+func TestConfigEditServerSectionsClosed(t *testing.T) {
+	t.Parallel()
+
+	doc := configeditServerDoc(t)
+	edit, err := EditServer(doc, "backup", remote.ServerEntry{URL: "https://backup:7777", CA: "system"})
+	if err != nil {
+		t.Fatalf("EditServer: %v", err)
+	}
+	if len(edit.Sections) != 1 {
+		t.Fatalf("sections = %v, want only servers", edit.Sections)
+	}
+	if _, ok := edit.Sections[config.Servers]; !ok {
+		t.Error("the edit must carry the servers section")
+	}
 }

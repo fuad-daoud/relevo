@@ -340,9 +340,12 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   command exits, with the report in its output (see
   [Claude Code plugin](#claude-code-plugin)).
 - `relevo ui [--interval D] [:view [args]]` — the cockpit: `:fleet`, `:rounds [query]`,
-  `:round <binding> [N]`. `:fleet` is the root table of bindings; `enter` opens its round
+  `:round <binding> [N]`, `:servers`. `:fleet` is the root table of bindings; `enter` opens its round
   detail, `esc` goes back, `:` the command line, `?` the key list. `relevo ui :rounds`
   opens the rounds grid directly (`:rounds` reaches it from the fleet).
+  `:servers` lists the configured remote builders' servers and probes their health on demand
+  (`r`); the client key stays with `relevo config server key`, and the view never shows or edits
+  key material.
 - `relevo bind --worktree --name N --feature L|--no-feature [--ticket REF] [--candidate CANDIDATE] [--actor R] [--cwd DIR]` — attach an
   additional builder to this MasterMind on its own git worktree, starting at
   round 1. This is how one MasterMind drives several builders at once.

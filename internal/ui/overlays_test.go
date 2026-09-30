@@ -100,7 +100,7 @@ func TestCommandModalFoldsOverflow(t *testing.T) {
 	if shown != 8 {
 		t.Errorf("the box shows %d match rows, want 8:\n%s", shown, box)
 	}
-	if !strings.Contains(box, "+ 17 more match; keep typing") {
+	if !strings.Contains(box, "+ 18 more match; keep typing") {
 		t.Errorf("the box must fold the overflow, got:\n%s", box)
 	}
 	if strings.Contains(box, "round b") {
