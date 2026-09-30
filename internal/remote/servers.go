@@ -22,7 +22,8 @@ type ServerEntry struct {
 type Servers map[string]ServerEntry // key: the server's short name
 
 // ParseServers validates every entry, checking names in order so the first
-// error is deterministic. It returns the map the JSON holds, never nil.
+// error is deterministic. `local` is refused: it is the placement sentinel, so
+// a server may never shadow it. It returns the map the JSON holds, never nil.
 func ParseServers(data []byte) (Servers, error) {
 	var s Servers
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -38,6 +39,9 @@ func ParseServers(data []byte) (Servers, error) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		if name == "local" {
+			return nil, fmt.Errorf("parse servers file: %s: name is reserved for placement", name)
+		}
 		if err := ValidateEntry(s[name]); err != nil {
 			return nil, fmt.Errorf("parse servers file: %s: %w", name, err)
 		}

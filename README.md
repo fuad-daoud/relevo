@@ -1431,6 +1431,9 @@ Actor entries:
   place but the pick skips it unless you name it explicitly. relevo prints
   `off` in the pick block and a note if it runs an off candidate you named.
 - `tier` -- the actor's permission tier.
+- `placement` -- where the actor's rounds run, most preferred first: `local`
+  names this machine, and every other entry must name a `servers` section entry,
+  checked when the config loads. Absent or empty means `["local"]`.
 - `check` -- writers only: whether a round closes on a gate; defaults to true.
   An actor whose agent is a reader must not set it.
 
