@@ -407,6 +407,9 @@ func TestChainResumeReviewKeepsThePlanStartCommit(t *testing.T) {
 		t.Fatal("test premise: the chain must record a plan-start commit")
 	}
 
+	// The manual round is sent at a different head from the stored plan start,
+	// so a commit recomputed at the resume would be visible.
+	fg.headCommitID = "head-manual"
 	if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
 		t.Fatalf("Send after the stop: %v", err)
 	}
