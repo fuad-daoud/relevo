@@ -4,7 +4,10 @@ package proc
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -85,6 +88,62 @@ func TestKillOnADeadProcessRecordsNothing(t *testing.T) {
 	code, ok := r.ExitCode(context.Background(), h, stream)
 	if !ok || code != 7 {
 		t.Errorf("ExitCode = %d, %v; want 7, true", code, ok)
+	}
+}
+
+// TestKillSignalsWhenTheRecordIsASymlink pins the policy: the record is a
+// breadcrumb for ExitCode, so a record that cannot be written is a warning,
+// never a reason to leave a process alive. The state directory is
+// runner-writable, so the refusal must also keep the write from following a
+// planted link out of it. The link's target lives in a separate directory for
+// that second point.
+func TestKillSignalsWhenTheRecordIsASymlink(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		plant bool
+	}{
+		{name: "dangling link"},
+		{name: "link to an existing file", plant: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := New()
+			r.KillGrace = 2 * time.Second
+			h, _, stream := start(t, r, "sleep", "60")
+			t.Cleanup(func() { _ = syscall.Kill(-h.PID, syscall.SIGKILL) })
+
+			target := filepath.Join(t.TempDir(), "target")
+			const planted = "planted\n"
+			if c.plant {
+				if err := os.WriteFile(target, []byte(planted), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(target, killRecordPath(stream)); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := r.Kill(context.Background(), h, stream); err != nil {
+				t.Fatalf("Kill through a symlinked record path: %v", err)
+			}
+			waitGone(t, r, h, 5*time.Second)
+
+			if fi, statErr := os.Lstat(killRecordPath(stream)); statErr != nil {
+				t.Errorf("Lstat(%q) = %v, want the link left in place", killRecordPath(stream), statErr)
+			} else if fi.Mode()&os.ModeSymlink == 0 {
+				t.Errorf("kill record path mode = %v, want a symlink", fi.Mode())
+			}
+			if c.plant {
+				got, readErr := os.ReadFile(target)
+				if readErr != nil {
+					t.Fatalf("read the link's target: %v", readErr)
+				}
+				if string(got) != planted {
+					t.Errorf("link target = %q, want it byte-unchanged at %q", got, planted)
+				}
+			} else if _, lstatErr := os.Lstat(target); !errors.Is(lstatErr, fs.ErrNotExist) {
+				t.Errorf("Lstat(%q) = %v, want fs.ErrNotExist: the write must not follow the link", target, lstatErr)
+			}
+		})
 	}
 }
 
