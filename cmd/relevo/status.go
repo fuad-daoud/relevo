@@ -62,6 +62,14 @@ func filterReportMasterMind(rep view.Report, mastermindID string) view.Report {
 	return rep
 }
 
+// statusChain reports whether name resolves to a chain rather than a binding.
+// A store that cannot answer -- no database, a read failure -- reads as "not a
+// chain", so the ordinary binding path still decides.
+func statusChain(rt relevo.Runtime, name string) bool {
+	_, err := rt.Store.Chain(name)
+	return err == nil
+}
+
 // statusFlagValues holds the pointers status parses into.
 type statusFlagValues struct {
 	all    *bool
@@ -111,7 +119,18 @@ func cmdStatus(args []string) error {
 			fmt.Fprintf(os.Stderr, "relevo: sync remote bindings: %v\n", serr)
 		}
 	}
-	rep, err := relevo.Status(context.Background(), rt)
+
+	// A name that resolves to a chain -- including the chain's own builder
+	// member, `<n>` -- is the chain: `status <chain>` lists the chain row with
+	// its members under it. The chain lookup runs before filterReport, so a
+	// chain name never comes back as a missing binding.
+	isChain := target != "" && statusChain(rt, target)
+	var rep view.Report
+	if isChain {
+		rep, err = relevo.ChainStatus(context.Background(), rt, target)
+	} else {
+		rep, err = relevo.Status(context.Background(), rt)
+	}
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
@@ -125,9 +144,14 @@ func cmdStatus(args []string) error {
 		}
 	}
 
-	rep, err = filterReport(rep, target)
-	if err != nil {
-		return err
+	// A chain report already holds exactly the chain and its members, so it
+	// skips filterReport: narrowing it to the chain row alone would drop the
+	// members the named view exists to show.
+	if !isChain {
+		rep, err = filterReport(rep, target)
+		if err != nil {
+			return err
+		}
 	}
 	rep = scopeReport(rep, target, *all)
 

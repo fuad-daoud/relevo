@@ -98,15 +98,18 @@ func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns in
 		round = row.ReportRound
 	}
 
-	mid := "r" + strconv.Itoa(round) + " · " + row.Actor
-	if row.On != "" {
-		mid += " on " + row.On
-	}
-	if row.Reason != "" {
-		mid += " · " + row.Reason
-	}
-	if row.Tokens != "" {
-		mid += " · " + row.Tokens
+	mid := row.Chain
+	if mid == "" {
+		mid = "r" + strconv.Itoa(round) + " · " + row.Actor
+		if row.On != "" {
+			mid += " on " + row.On
+		}
+		if row.Reason != "" {
+			mid += " · " + row.Reason
+		}
+		if row.Tokens != "" {
+			mid += " · " + row.Tokens
+		}
 	}
 
 	colour := ""
@@ -375,6 +378,10 @@ type StatusLineRow struct {
 	// Reason explains the status in the middle segment; empty unless there is
 	// something to explain.
 	Reason string `json:"reason"`
+	// Chain is the whole middle segment for the row that stands in for a
+	// chain: "chain x · plan 2/4 · reviewing · 1 correction". Empty on every
+	// ordinary row, which then keeps the round-and-actor middle.
+	Chain string `json:"chain,omitempty"`
 }
 
 // StatusLineDoc is the top-level document emitted by relevo status --line --json.
@@ -393,8 +400,23 @@ func StatusLineRows(r Report, now time.Time) []StatusLineRow {
 	return rows
 }
 
+// actorOf is the actor a row names: b.Role when it is set, else fallback --
+// "builder" for a binding, whose stored empty role is the builder's
+// (normRole), and "chain" for the synthetic chain row.
+func actorOf(b BindingStatus, fallback string) string {
+	if b.Role != "" {
+		return b.Role
+	}
+	return fallback
+}
+
 // statusLineRowOf builds the statusline row for one binding.
 func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
+	// The synthetic chain row carries no round and no candidate: its whole
+	// middle is the chain's own text and its status column is the chain's.
+	if b.Chain != nil {
+		return statusLineRowOfChain(b)
+	}
 	harness := harnessSegment(b.BuilderCandidate)
 	if b.Server != "" {
 		harness += "@" + b.Server
@@ -433,10 +455,6 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		reportRound = b.LastPayload.Round
 	}
 	reportIn := toMasterMindPayload && !pending
-	actor := b.Role
-	if actor == "" {
-		actor = "builder"
-	}
 	status, tone := rowStatus(b, needsYou, reportIn)
 	reason := ""
 	if needsYou {
@@ -460,10 +478,39 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		LastKind:    lastKind,
 		LastTS:      lastTS,
 		Route:       b.MasterMindRoute,
-		Actor:       actor,
+		Actor:       actorOf(b, "builder"),
 		Shape:       b.Shape,
 		Status:      status,
 		Tone:        tone,
 		Reason:      reason,
+	}
+}
+
+// statusLineRowOfChain builds the statusline row that stands in for a live
+// chain: one entry per chain in place of its members' rows. The middle is the
+// chain's plan segment, and the status column follows the chain -- NEEDS YOU
+// while it waits on a human, DONE once it finished, ACTIVE while it works.
+// The chain has no round and no candidate, so those cells stay empty and the
+// clock keeps the "--" every row without a round shows.
+func statusLineRowOfChain(b BindingStatus) StatusLineRow {
+	display := b.Display
+	status, tone := display, "quiet"
+	switch display {
+	case "ACTIVE":
+		tone = "phase"
+	case "NEEDS YOU":
+		tone = "needs"
+	}
+	actor := actorOf(b, "chain")
+	return StatusLineRow{
+		Name:     b.Name,
+		Chain:    "chain " + b.Name + " · " + ChainSegment(*b.Chain),
+		Display:  display,
+		NeedsYou: display == "NEEDS YOU",
+		Actor:    actor,
+		Clock:    "--",
+		Status:   status,
+		Tone:     tone,
+		Reason:   b.Detail,
 	}
 }
