@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
@@ -241,11 +240,14 @@ func (v verifyStart) launch(wt, diff, gateLog string) (store.Binding, error) {
 		v.d.Store.PromptPath(v.b.Name, v.round), v.d.Store.ReportPath(v.b.Name, v.round), diff, gateLog)
 	render := func(ref string) string { return fmt.Sprintf(headlessPrompt, ref) }
 	prompt, inline := inlinePrompt(render, []byte(question))
-	if err := stageVerifyQuestion(v.tx, v.b.Name, v.round, askPath, question, inline); err != nil {
-		return v.fail(err.Error())
-	}
 	if !inline {
-		prompt = render("Read: " + askPath)
+		// The prompt is one argv element and relevo cannot hand an oversized
+		// question to the reviewer: skip the verify rather than spawn a
+		// reviewer it cannot give the question to.
+		return v.fail("question over the inline prompt limit")
+	}
+	if err := stageVerifyQuestion(v.tx, v.b.Name, v.round, askPath, question); err != nil {
+		return v.fail(err.Error())
 	}
 
 	consult := store.Consult{
@@ -334,17 +336,12 @@ func (v verifyStart) start(b store.Binding, consult store.Consult, askPath, prom
 	return b, nil
 }
 
-// stageVerifyQuestion records the reviewer's question where Spawn records an
-// ask's: in round_file when it fits inline, else as a staged file.
-func stageVerifyQuestion(tx *store.Tx, name string, round int, askPath, question string, inline bool) error {
-	if inline {
-		if err := tx.PutRoundFile(name, round, askPath, []byte(question)); err != nil {
-			return fmt.Errorf("record question at %s: %s", askPath, err.Error())
-		}
-		return nil
-	}
-	if err := os.WriteFile(askPath, []byte(question), 0o644); err != nil {
-		return fmt.Errorf("stage question at %s: %s", askPath, err.Error())
+// stageVerifyQuestion records the reviewer's question as a round_file row, the
+// same way Spawn records an ask: a verify question is row-only, so the ask name
+// is reserved and relevo never writes it to disk, whatever its size.
+func stageVerifyQuestion(tx *store.Tx, name string, round int, askPath, question string) error {
+	if err := tx.PutRoundFile(name, round, askPath, []byte(question)); err != nil {
+		return fmt.Errorf("record question at %s: %s", askPath, err.Error())
 	}
 	return nil
 }

@@ -220,7 +220,6 @@ func writeSealFixtures(t *testing.T, s *Store) (sealed, kept map[string][]byte) 
 		"003-builder.log":            []byte("builder stderr\n"),
 		"003-builder.jsonl":          []byte("{}\n"),
 		"003-gate.log":               []byte("gate passed\n"),
-		"003-aabbccdd-ask.md":        []byte("the question\n"),
 		"003-aabbccdd-consult.jsonl": []byte("consult stream\n"),
 	}
 	kept = map[string][]byte{

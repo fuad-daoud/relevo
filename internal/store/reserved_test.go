@@ -46,7 +46,7 @@ func writePlant(t *testing.T, path, body string) {
 	}
 }
 
-// reservedKeyCases names the four reserved shapes and the path helper each one
+// reservedKeyCases names the five reserved shapes and the path helper each one
 // resolves through.
 func reservedKeyCases() []struct {
 	name string
@@ -60,6 +60,7 @@ func reservedKeyCases() []struct {
 		{"001-drift.patch", func(s *Store, b string) string { return s.DriftPath(b, 1) }},
 		{"001-builder-segments.json", func(s *Store, b string) string { return s.BuilderSegmentsPath(b, 1) }},
 		{"001-7f2a3c1d-findings.md", func(s *Store, b string) string { return s.FindingsPath(b, 1, "7f2a3c1d") }},
+		{"001-7f2a3c1d-ask.md", func(s *Store, b string) string { return s.AskPath(b, 1, "7f2a3c1d") }},
 	}
 }
 

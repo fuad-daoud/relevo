@@ -1,9 +1,14 @@
 package consult
 
 import (
+	"errors"
+	"io/fs"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // relevoBlock wraps body in the fenced block a report or a findings file ends
@@ -126,5 +131,39 @@ func TestParseVerdict(t *testing.T) {
 
 	if v, _ := parseVerdict(nil); v != "unstructured" {
 		t.Errorf("parseVerdict(nil) = %q, want unstructured", v)
+	}
+}
+
+// TestStageVerifyQuestionRecordsARowAndNoFile pins the staging policy: a verify
+// question is row-only, whatever its size. The question is oversized on purpose
+// -- the function must be size-blind -- and the ask name is reserved, so the
+// staged question is readable from the row and there is no file on disk.
+// Mutation check: write the question with os.WriteFile again and this fails:
+// the file exists, and ReadFile misses because no row holds the name.
+func TestStageVerifyQuestionRecordsARowAndNoFile(t *testing.T) {
+	t.Parallel()
+
+	s := store.New(t.TempDir())
+	if err := s.Save(store.Binding{Name: "webshop", CWD: "/repo"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	question := strings.Repeat("x", InlineAskMax+1)
+	askPath := s.AskPath("webshop", 1, "7f2a3c1d")
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return stageVerifyQuestion(tx, "webshop", 1, askPath, question)
+	}); err != nil {
+		t.Fatalf("stageVerifyQuestion: %v", err)
+	}
+
+	if _, err := os.Stat(askPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("os.Stat(%s) err = %v, want the file not to exist", askPath, err)
+	}
+	body, err := s.ReadFile(askPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", askPath, err)
+	}
+	if string(body) != question {
+		t.Errorf("ReadFile(%s) = %d bytes, want the staged question", askPath, len(body))
 	}
 }

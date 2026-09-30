@@ -3,10 +3,11 @@ package store
 import "regexp"
 
 // reservedRoundFileRe matches a flat round-file name relevo authors only as a
-// round_file row: a round's diff and drift patches, its builder segments, and a
-// consult's findings. The pattern is anchored and carries no slash, so a nested
-// name -- NNN-<actor>/<rel>, a runner-written artifact -- is never reserved.
-var reservedRoundFileRe = regexp.MustCompile(`^\d{3}-(diff\.patch|drift\.patch|builder-segments\.json|[0-9a-f]{8}-findings\.md)$`)
+// round_file row: a round's diff and drift patches, its builder segments, a
+// consult's findings, and a verify consult's ask. The pattern is anchored and
+// carries no slash, so a nested name -- NNN-<actor>/<rel>, a runner-written
+// artifact -- is never reserved.
+var reservedRoundFileRe = regexp.MustCompile(`^\d{3}-(diff\.patch|drift\.patch|builder-segments\.json|[0-9a-f]{8}-findings\.md|[0-9a-f]{8}-ask\.md)$`)
 
 // reservedRoundFile reports whether name is one of those row-only names. relevo
 // never writes one of them to disk, so a file with such a name under a binding
