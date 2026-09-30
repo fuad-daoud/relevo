@@ -608,6 +608,200 @@ func TestStripTailRemovesTheTrailingBlock(t *testing.T) {
 	})
 }
 
+// TestParseEscapedQuotesInCommandsRun pins that a commands_run item carrying an
+// escaped quote and an apostrophe no longer desyncs the scanners: the list
+// closes at its own bracket and the item arrives unescaped.
+func TestParseEscapedQuotesInCommandsRun(t *testing.T) {
+	t.Parallel()
+
+	input := `
+` + "```relevo" + `
+status: done
+halted_at: ""
+changed_paths: ["cmd/relevo/bugreport.go", "cmd/relevo/bugreport_test.go"]
+commands_run: ["git status", "git commit -m \"fix(bugreport): --gh prints the issue URL and surfaces gh's reason (#721)\"", "go test -count=1 ./cmd/relevo/"]
+not_done: []
+` + "```" + `
+`
+	tail, ok, reason := ParseWithReason([]byte(input))
+	if !ok {
+		t.Fatalf("ParseWithReason ok = false, reason %q", reason)
+	}
+	if tail.Status != OutcomeDone {
+		t.Errorf("Status = %q, want %q", tail.Status, OutcomeDone)
+	}
+	if len(tail.CommandsRun) != 3 {
+		t.Fatalf("CommandsRun = %+v, want 3 elements", tail.CommandsRun)
+	}
+	want := "git commit -m \"fix(bugreport): --gh prints the issue URL and surfaces gh's reason (#721)\""
+	if tail.CommandsRun[1] != want {
+		t.Errorf("CommandsRun[1] = %q, want %q", tail.CommandsRun[1], want)
+	}
+	if len(tail.NotDone) != 0 {
+		t.Errorf("NotDone = %+v, want empty", tail.NotDone)
+	}
+}
+
+// TestParseSingleQuotedFlowElements pins that a single-quoted flow element
+// closes at its own quote: a lone ' ends the scalar, so the list's ] closes it
+// and the elements arrive unquoted. Reading every ' as the start of an escaped
+// pair left the ] inside a scalar and rejected the block as an unclosed list.
+func TestParseSingleQuotedFlowElements(t *testing.T) {
+	t.Parallel()
+
+	input := "```relevo\nstatus: done\n  changed_paths: ['a.go', 'b.go']\n  commands_run: ['go test ./...']\n```\n"
+	tail, ok := Parse([]byte(input))
+	if !ok {
+		t.Fatalf("Parse(%q) ok = false, want true", input)
+	}
+	if tail.Status != OutcomeDone {
+		t.Errorf("Status = %q, want %q", tail.Status, OutcomeDone)
+	}
+	wantPaths := []string{"a.go", "b.go"}
+	if !reflect.DeepEqual(tail.ChangedPaths, wantPaths) {
+		t.Errorf("ChangedPaths = %+v, want %+v", tail.ChangedPaths, wantPaths)
+	}
+	wantCommands := []string{"go test ./..."}
+	if !reflect.DeepEqual(tail.CommandsRun, wantCommands) {
+		t.Errorf("CommandsRun = %+v, want %+v", tail.CommandsRun, wantCommands)
+	}
+}
+
+// TestFlowListDepthHonoursScalarEscapes pins the depth count against the escape
+// rules: an escaped quote inside a scalar never reaches the bracket count.
+func TestFlowListDepthHonoursScalarEscapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{
+			name: "balanced list whose scalar carries an escaped quote",
+			in:   `["git commit -m \"x\""]`,
+			want: 0,
+		},
+		{
+			name: "balanced list of single-quoted elements",
+			in:   `['a', 'b']`,
+			want: 0,
+		},
+		{
+			name: "value continued on the next line",
+			in:   `["a",`,
+			want: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := flowListDepth(tc.in); got != tc.want {
+				t.Errorf("flowListDepth(%q) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSplitListElementsHonoursScalarEscapes pins that only a comma outside a
+// scalar splits an element, and that the raw element keeps its quotes.
+func TestSplitListElementsHonoursScalarEscapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{
+			name: "comma inside a quoted element does not split",
+			in:   `"a, b", "c\"d"`,
+			want: []string{`"a, b"`, ` "c\"d"`},
+		},
+		{
+			name: "comma between single-quoted elements splits",
+			in:   `'a', 'b'`,
+			want: []string{`'a'`, ` 'b'`},
+		},
+		{
+			name: "comma after a doubled single quote splits",
+			in:   `'it''s', 'b'`,
+			want: []string{`'it''s'`, ` 'b'`},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := splitListElements(tc.in); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("splitListElements(%q) = %+v, want %+v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStripCommentHonoursScalarEscapes pins which hash starts a comment once
+// the escape rules decide where a scalar ends.
+func TestStripCommentHonoursScalarEscapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "hash inside a bracketed scalar is content",
+			in:   `["a # kept"] # cut`,
+			want: `["a # kept"] `,
+		},
+		{
+			name: "hash after an escaped quote stays inside the scalar",
+			in:   `"x\" # "`,
+			want: `"x\" # "`,
+		},
+		{
+			name: "hash after a single-quoted flow list is cut",
+			in:   `['a', 'b'] # c`,
+			want: `['a', 'b'] `,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StripComment(tc.in); got != tc.want {
+				t.Errorf("StripComment(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnquoteScalarHonoursScalarEscapes pins that one layer of quotes goes and
+// the escapes inside them resolve.
+func TestUnquoteScalarHonoursScalarEscapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "double-quoted scalar with escaped quotes",
+			in:   `"git commit -m \"x\""`,
+			want: `git commit -m "x"`,
+		},
+		{
+			name: "single-quoted scalar with a doubled quote",
+			in:   `'it''s'`,
+			want: `it's`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := UnquoteScalar(tc.in); got != tc.want {
+				t.Errorf("UnquoteScalar(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestParseWithReasonSanitizesHaltedAt pins that a halted_at value carrying a
 // control byte is stored clean.
 func TestParseWithReasonSanitizesHaltedAt(t *testing.T) {
