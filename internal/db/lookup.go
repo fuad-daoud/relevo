@@ -10,8 +10,13 @@ import (
 // MasterMindBySession returns the mastermind row for one (harness_kind, session_id),
 // false when there is none; `relevo mastermind init` reuses that row's id. An
 // error here is not a missing mastermind, so the two outcomes are reported apart.
+//
+// The lookup is scoped to this handle's origin, like the (origin, harness_kind,
+// session_id) index the upsert guards: on a machine database carrying more than
+// one installation, a session another installation registered must not answer
+// for this one.
 func (d *DB) MasterMindBySession(kind, session string) (MasterMind, bool, error) {
-	return mastermindBySession(context.Background(), d.sqlDB, kind, session)
+	return mastermindBySession(context.Background(), d.sqlDB, d.origin, kind, session)
 }
 
 // MasterMindBySession is MasterMindBySession on the transaction's own origin: a
@@ -19,33 +24,10 @@ func (d *DB) MasterMindBySession(kind, session string) (MasterMind, bool, error)
 // up the row that does hold the session, in the same origin the upsert's own
 // uniqueness guard covers.
 func (t *Tx) MasterMindBySession(kind, session string) (MasterMind, bool, error) {
-	var (
-		p         MasterMind
-		locator   sql.Null[string]
-		firstSeen string
-		lastSeen  string
-	)
-	err := t.queryRow(`SELECT id, harness_kind, session_id, transcript_locator, first_seen, last_seen
-		   FROM mastermind WHERE `+originScope+` AND harness_kind = ? AND session_id = ?`,
-		t.origin, kind, session).Scan(&p.ID, &p.HarnessKind, &p.SessionID, &locator, &firstSeen, &lastSeen)
-	if errors.Is(err, sql.ErrNoRows) {
-		return MasterMind{}, false, nil
-	}
-	if err != nil {
-		return MasterMind{}, false, fmt.Errorf("db: mastermind by session: %w", err)
-	}
-
-	p.TranscriptLocator = ptrIfValid(locator)
-	if p.FirstSeen, err = parseTime(firstSeen); err != nil {
-		return MasterMind{}, false, fmt.Errorf("db: mastermind by session: parse first_seen: %w", err)
-	}
-	if p.LastSeen, err = parseTime(lastSeen); err != nil {
-		return MasterMind{}, false, fmt.Errorf("db: mastermind by session: parse last_seen: %w", err)
-	}
-	return p, true, nil
+	return mastermindBySession(t.ctx, t.conn, t.origin, kind, session)
 }
 
-func mastermindBySession(ctx context.Context, q queryer, kind, session string) (MasterMind, bool, error) {
+func mastermindBySession(ctx context.Context, q queryer, origin, kind, session string) (MasterMind, bool, error) {
 	var (
 		p         MasterMind
 		locator   sql.Null[string]
@@ -54,8 +36,8 @@ func mastermindBySession(ctx context.Context, q queryer, kind, session string) (
 	)
 	err := q.QueryRowContext(ctx,
 		`SELECT id, harness_kind, session_id, transcript_locator, first_seen, last_seen
-		   FROM mastermind WHERE harness_kind = ? AND session_id = ?`,
-		kind, session).Scan(&p.ID, &p.HarnessKind, &p.SessionID, &locator, &firstSeen, &lastSeen)
+		   FROM mastermind WHERE `+originScope+` AND harness_kind = ? AND session_id = ?`,
+		origin, kind, session).Scan(&p.ID, &p.HarnessKind, &p.SessionID, &locator, &firstSeen, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MasterMind{}, false, nil
 	}

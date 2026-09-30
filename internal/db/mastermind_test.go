@@ -260,3 +260,26 @@ func TestMasterMindBySession(t *testing.T) {
 		t.Errorf("MasterMindBySession(unknown) = ok %v, err %v; want no row and no error", ok, err)
 	}
 }
+
+// TestMasterMindBySessionIsOriginScoped pins the natural-key lookup to the
+// handle's origin, like the (origin, harness_kind, session_id) index the upsert
+// guards: on a machine database carrying more than one installation, a session
+// another installation registered must not answer for this one.
+func TestMasterMindBySessionIsOriginScoped(t *testing.T) {
+	d := openTestDB(t)
+	if _, err := d.sqlDB.Exec(`INSERT INTO mastermind (id, origin, harness_kind, session_id, first_seen, last_seen)
+		VALUES ('pl_other', 'other-installation', 'claude', 'sess-1', '2026-09-01T10:00:00.000Z', '2026-09-01T10:00:00.000Z')`); err != nil {
+		t.Fatalf("seed other-origin row: %v", err)
+	}
+
+	if _, ok, err := d.MasterMindBySession("claude", "sess-1"); err != nil || ok {
+		t.Errorf("MasterMindBySession over another origin = ok %v, err %v; want no row", ok, err)
+	}
+
+	if _, err := d.UpsertMasterMind(MasterMind{HarnessKind: "claude", SessionID: "sess-1"}); err != nil {
+		t.Fatalf("UpsertMasterMind: %v", err)
+	}
+	if _, ok, err := d.MasterMindBySession("claude", "sess-1"); err != nil || !ok {
+		t.Errorf("MasterMindBySession over this origin = ok %v, err %v; want the row", ok, err)
+	}
+}
