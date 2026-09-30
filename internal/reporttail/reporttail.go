@@ -212,6 +212,36 @@ func FindRelevoBlock(lines []string) (openIdx, closeIdx int, reason string) {
 	return openIdx, closeIdx, ""
 }
 
+// RelevoBlock is one fenced relevo block: the line indices of its opening and
+// closing fences.
+type RelevoBlock struct{ Open, Close int }
+
+// RelevoBlocks returns every fenced relevo block in lines, in file order:
+// each ```relevo opening fence paired with the next ``` closing fence. An
+// opening fence with no closing fence after it yields no pair and ends the
+// scan; no block returns nil.
+func RelevoBlocks(lines []string) []RelevoBlock {
+	var blocks []RelevoBlock
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], " \t") != "```relevo" {
+			continue
+		}
+		closeIdx := -1
+		for j := i + 1; j < len(lines); j++ {
+			if strings.TrimRight(lines[j], " \t") == "```" {
+				closeIdx = j
+				break
+			}
+		}
+		if closeIdx == -1 {
+			return blocks
+		}
+		blocks = append(blocks, RelevoBlock{Open: i, Close: closeIdx})
+		i = closeIdx
+	}
+	return blocks
+}
+
 // SplitFenceLines splits body into CR-trimmed lines, the form FindRelevoBlock
 // expects. The report tail and the reviewer verdict must split the same way,
 // or the two would disagree about the same bytes.
