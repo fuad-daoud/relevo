@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -122,11 +124,19 @@ func applyCatchUpFiles(rt Runtime, tx *store.Tx, b store.Binding, view remote.Bi
 // reports whether it already decided the binding's fate: a checked-out branch
 // and an absorb failure both wait for the next tick, and the tenth failure
 // halts. A fatal ref error is returned to the caller.
-func applyCatchUpAbsorb(ctx context.Context, rt Runtime, b store.Binding, cf *catchUpFetch) (next store.Binding, stop bool, err error) {
+//
+// An absorb failure is not counted when the binding's branch already holds the
+// round's result: the store has the round, so the failure is not evidence that
+// the round is missing, and counting it would halt a binding that is already
+// caught up.
+func applyCatchUpAbsorb(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch) (next store.Binding, stop bool, err error) {
 	switch {
 	case cf.CheckedOut:
 		return b, true, nil
 	case cf.AbsorbErr != nil:
+		if absorbHoldsRound(ctx, rt, b, view) {
+			return clearAbsorbHalt(b), false, nil
+		}
 		b.RemoteAbsorbFailures++
 		if b.RemoteAbsorbFailures >= 10 {
 			next, err = haltBinding(ctx, rt, b, cf.AbsorbErr.Error())
@@ -136,7 +146,45 @@ func applyCatchUpAbsorb(ctx context.Context, rt Runtime, b store.Binding, cf *ca
 	case cf.Fatal != nil:
 		return b, true, cf.Fatal
 	}
-	return b, false, nil
+	return clearAbsorbHalt(b), false, nil
+}
+
+// absorbHoldsRound reports whether the binding's local branch already sits at
+// the closed round's result commit. A round-close fetch can fail on git's own
+// maintenance racing it -- a repack rewrites refs while the fetch reads them,
+// and the fetch then dies on a bad object -- while the objects the round needs
+// are already in the store. Such a failure says nothing about whether the
+// round arrived, so it must not count toward the halt.
+func absorbHoldsRound(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView) bool {
+	if rt.Git == nil || view.ResultCommit == "" {
+		return false
+	}
+	branchRef := b.Branch
+	if !strings.HasPrefix(branchRef, "refs/heads/") {
+		branchRef = "refs/heads/" + branchRef
+	}
+	sha, ok, err := rt.Git.RefSHA(ctx, b.Repo, branchRef)
+	if err != nil || !ok {
+		return false
+	}
+	return sha == view.ResultCommit
+}
+
+// clearAbsorbHalt clears an absorb-failure halt at the absorb step. A round
+// that got through after earlier failures proves those failures were
+// transient, so the binding relays again without waiting for the round to
+// close -- a lost ack otherwise leaves it asking for a human it does not need.
+// The round itself is untouched: only the close advances it.
+func clearAbsorbHalt(b store.Binding) store.Binding {
+	if b.RemoteAbsorbFailures == 0 {
+		return b
+	}
+	b.RemoteAbsorbFailures = 0
+	b.Halt = ""
+	b.HaltAt = time.Time{}
+	b.HaltNotifiedRound = 0
+	b.State = store.StateActive
+	return b
 }
 
 // applyCatchUpReport queues the round's report entry: the client's own diff

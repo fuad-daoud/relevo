@@ -572,9 +572,11 @@ func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	if !applyCatchUpFiles(rt, tx, b, view, cf) {
 		return b, nil, nil
 	}
-	if next, stop, err := applyCatchUpAbsorb(ctx, rt, b, cf); stop {
+	next, stop, err := applyCatchUpAbsorb(ctx, rt, b, view, cf)
+	if stop {
 		return next, nil, err
 	}
+	b = next
 	b.Builder.LastKnown = view.ResultCommit
 	b.RemoteAbsorbFailures = 0
 	return b, &catchUpAck{
