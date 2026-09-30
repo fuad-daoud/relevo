@@ -73,8 +73,9 @@ kinds: [claude, agy]
 Design the screens.
 `
 
-// TestFormatActors pins R7: the shipped, off, custom and native entries, and
-// that no escape code ever appears.
+// TestFormatActors pins R7: the shipped, off, custom and native entries, the
+// placement line (printed only when the actor sets one), and that no escape
+// code ever appears.
 func TestFormatActors(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +89,7 @@ func TestFormatActors(t *testing.T) {
 		"builder": {
 			Agent:      "plan-executor",
 			Candidates: []roles.Entry{{Candidate: "a"}, {Candidate: "c", Off: true}},
+			Placement:  []string{"zen", "local"},
 			Tier:       "yolo",
 			Check:      ptr(true),
 		},
@@ -116,6 +118,7 @@ func TestFormatActors(t *testing.T) {
 
 	want := "builder  plan-executor  writer  shipped  tier yolo  check on\n" +
 		"  candidates  a, c (off)\n" +
+		"  placement  zen, local\n" +
 		"designer  ui-designer  reader  custom  tier -\n" +
 		"  candidates  a\n" +
 		"reviewer  reviewer  reader  shipped  tier yolo\n" +

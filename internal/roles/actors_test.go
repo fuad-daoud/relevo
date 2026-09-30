@@ -74,6 +74,42 @@ func TestParseActorsEntries(t *testing.T) {
 	}
 }
 
+// TestParseActorsPlacement pins the placement field: a valid list round-trips
+// through EncodeActors/ParseActors, and an actor with no placement marshals
+// without the key at all.
+func TestParseActorsPlacement(t *testing.T) {
+	body := []byte(`{"builder":{"agent":"plan-executor","candidates":["sonnet"],"placement":["zen","local"]}}`)
+
+	actors, _, err := ParseActors(body)
+	if err != nil {
+		t.Fatalf("ParseActors: %v", err)
+	}
+	want := []string{"zen", "local"}
+	if got := actors["builder"].Placement; !reflect.DeepEqual(got, want) {
+		t.Errorf("builder.placement = %v, want %v", got, want)
+	}
+
+	out, err := EncodeActors(actors)
+	if err != nil {
+		t.Fatalf("EncodeActors: %v", err)
+	}
+	back, _, err := ParseActors(out)
+	if err != nil {
+		t.Fatalf("ParseActors(round trip): %v", err)
+	}
+	if !reflect.DeepEqual(back, actors) {
+		t.Errorf("round trip = %+v, want %+v", back, actors)
+	}
+
+	none, err := EncodeActors(map[string]Actor{"builder": {Agent: "plan-executor"}})
+	if err != nil {
+		t.Fatalf("EncodeActors: %v", err)
+	}
+	if strings.Contains(string(none), "placement") {
+		t.Errorf("an actor with no placement must marshal without the key:\n%s", none)
+	}
+}
+
 // TestParseActorsErrors gives one case per §3.2 rule; every case wraps
 // ErrBadActors.
 func TestParseActorsErrors(t *testing.T) {
@@ -101,6 +137,16 @@ func TestParseActorsErrors(t *testing.T) {
 			name:          "duplicate candidate",
 			body:          `{"builder": {"agent": "plan-executor", "candidates": ["sonnet", "sonnet"]}}`,
 			wantSubstring: `builder.candidates[1]: duplicate token "sonnet"`,
+		},
+		{
+			name:          "empty placement entry",
+			body:          `{"builder": {"agent": "plan-executor", "placement": ["zen", ""]}}`,
+			wantSubstring: "builder.placement[1]: empty entry",
+		},
+		{
+			name:          "duplicate placement entry",
+			body:          `{"builder": {"agent": "plan-executor", "placement": ["zen", "zen"]}}`,
+			wantSubstring: `builder.placement[1]: duplicate token "zen"`,
 		},
 		{
 			name:          "bad tier",

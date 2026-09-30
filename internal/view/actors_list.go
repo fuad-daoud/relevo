@@ -16,6 +16,7 @@ import (
 //
 //	<name>  <agent>  <writer|reader>  <shipped|custom>  tier <tier or ->[  check on|off]
 //	  candidates  <name>, <name> (off)
+//	  placement   <name>, <name>                                  (only when set)
 //
 // -- a writer carries its check state, a reader has none -- then, only when the
 // agents section is non-empty, an `agents` line and one line per custom or
@@ -48,7 +49,8 @@ func FormatActors(L config.Loaded, reg *roles.Registry) string {
 	return sb.String()
 }
 
-// formatActor renders one actor's two lines, without the trailing newline.
+// formatActor renders one actor's lines, without the trailing newline: the
+// candidates line, then a placement line only when the actor names one.
 func formatActor(L config.Loaded, reg *roles.Registry, name string, a roles.Actor) string {
 	shape := "reader"
 	if reg != nil {
@@ -77,6 +79,9 @@ func formatActor(L config.Loaded, reg *roles.Registry, name string, a roles.Acto
 		}
 	}
 	b.WriteString("\n  candidates  " + actorCandidates(L, a))
+	if len(a.Placement) > 0 {
+		b.WriteString("\n  placement  " + strings.Join(a.Placement, ", "))
+	}
 	return b.String()
 }
 

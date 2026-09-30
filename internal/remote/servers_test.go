@@ -15,6 +15,26 @@ func TestParseServersValidatesEntries(t *testing.T) {
 	}
 }
 
+// TestParseServersRefusesLocal pins the reserved name: `local` is the placement
+// sentinel, so a server may never shadow it, and every other name is accepted.
+func TestParseServersRefusesLocal(t *testing.T) {
+	_, err := ParseServers([]byte(`{"local":{"url":"https://zen:7777","fingerprint":"sha256:1234"}}`))
+	if err == nil {
+		t.Fatal("ParseServers accepted a server named local")
+	}
+	if !strings.Contains(err.Error(), "parse servers file: local:") {
+		t.Errorf("error = %q, want it to name the file and the reserved name", err)
+	}
+
+	s, err := ParseServers([]byte(`{"zen":{"url":"https://zen:7777","fingerprint":"sha256:1234"}}`))
+	if err != nil {
+		t.Fatalf("ParseServers(other name): %v", err)
+	}
+	if _, ok := s["zen"]; !ok {
+		t.Errorf("servers = %v, want zen kept", s)
+	}
+}
+
 func TestValidateEntry(t *testing.T) {
 	tests := []struct {
 		name    string

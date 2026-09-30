@@ -48,7 +48,12 @@ type AgentEntry struct {
 type Actor struct {
 	Agent      string  `json:"agent"`
 	Candidates []Entry `json:"candidates,omitempty"`
-	Tier       string  `json:"tier,omitempty"`
+	// Placement is where this actor's rounds run, most preferred first.
+	// "local" names this machine; an absent or empty list means ["local"];
+	// every other entry must name a servers section entry, which the config
+	// package checks against the servers body.
+	Placement []string `json:"placement,omitempty"`
+	Tier      string   `json:"tier,omitempty"`
 	// Check is the writer's gate: run the project's check after the round.
 	// nil means true for a writer; it is refused on a reader.
 	Check *bool `json:"check,omitempty"`
@@ -203,6 +208,17 @@ func validateActor(name string, a Actor) error {
 			return fmt.Errorf("actors: %s.candidates[%d]: duplicate token %q: %w", name, i, tok, ErrBadActors)
 		}
 		seen[tok] = true
+	}
+
+	placed := make(map[string]bool, len(a.Placement))
+	for i, entry := range a.Placement {
+		if entry == "" {
+			return fmt.Errorf("actors: %s.placement[%d]: empty entry: %w", name, i, ErrBadActors)
+		}
+		if placed[entry] {
+			return fmt.Errorf("actors: %s.placement[%d]: duplicate token %q: %w", name, i, entry, ErrBadActors)
+		}
+		placed[entry] = true
 	}
 
 	if a.Tier != "" {
