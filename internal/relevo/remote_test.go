@@ -5617,6 +5617,9 @@ func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Reconcile iteration %d: %v", i, err)
 		}
+		if got.Round != 1 {
+			t.Fatalf("iteration %d: Round = %d, want 1: a halt does not advance the round", i, got.Round)
+		}
 		if i < 10 {
 			if got.State == store.StateNeedsYou {
 				t.Fatalf("halted after only %d absorb failures", i)
@@ -5631,6 +5634,138 @@ func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
 	}
 	if !strings.Contains(got.Halt, "cannot absorb round") {
 		t.Fatalf("Halt = %q, want it to name the absorb failure", got.Halt)
+	}
+}
+
+// TestCatchUpAbsorbIgnoresAFailureWhenTheBranchHoldsTheRound pins the
+// verified-store gate: an absorb error for a round the binding's branch
+// already holds is not counted, because the catch-up can still ack, report
+// and close the round.
+//
+// Mutation: make absorbHoldsRound always false and the failure is counted
+// instead, so no Ack and no report entry appear.
+func TestCatchUpAbsorbIgnoresAFailureWhenTheBranchHoldsTheRound(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	const resultCommit = "1111111111111111111111111111111111111111"
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: resultCommit},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleFunc: func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("not a real bundle")), nil
+		},
+	}
+	ft := &fakeTransport{absorbErr: errors.New("the fetch raced a repack")}
+	rt := Runtime{
+		Store:     st,
+		Remote:    fr,
+		Transport: ft,
+		Git:       &fakeGit{refSHA: map[string]string{"refs/heads/relevo/api": resultCommit}},
+		Now:       func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0: the branch already held the round", got.RemoteAbsorbFailures)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("halted on an absorb error for a round the branch already holds: %q", got.Halt)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2: the round must close", got.Round)
+	}
+	foundAck := false
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") {
+			foundAck = true
+		}
+	}
+	if !foundAck {
+		t.Fatalf("Ack never called once the store held the round: %v", fr.calls)
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
+		t.Fatalf("no round 1 report entry after the gate passed: %+v", entries)
+	}
+}
+
+// TestCatchUpAbsorbRecoveryClearsTheHaltWithoutAdvancingTheRound pins the
+// clear: an absorb that succeeds after the binding was halted on absorb
+// failures clears the halt at the absorb step, so the binding relays again
+// even when the ack is lost and the round cannot close.
+//
+// Mutation: drop the clear and State/Halt stay NEEDS YOU with the failure
+// count still at the threshold.
+func TestCatchUpAbsorbRecoveryClearsTheHaltWithoutAdvancingTheRound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	b.State = store.StateNeedsYou
+	b.Halt = "cannot absorb round 1 from zen: the fetch raced a repack"
+	b.HaltAt = baseTime
+	b.HaltNotifiedRound = 1
+	b.RemoteAbsorbFailures = 10
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle, headSHA := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relevo/api", c1)
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: headSHA},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleResp: bundle,
+		ackErr:          errors.New("ack reply lost"),
+	}
+	rt := Runtime{
+		Store:     st,
+		Remote:    fr,
+		Transport: remote.NewBundleTransport(g, t.TempDir()),
+		Now:       func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Fatalf("State = %q, want %q: the halt clears at the absorb step", got.State, store.StateActive)
+	}
+	if got.Halt != "" || !got.HaltAt.IsZero() || got.HaltNotifiedRound != 0 {
+		t.Fatalf("halt not cleared: Halt=%q HaltAt=%v HaltNotifiedRound=%d", got.Halt, got.HaltAt, got.HaltNotifiedRound)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0", got.RemoteAbsorbFailures)
+	}
+	if got.Round != 1 {
+		t.Fatalf("Round = %d, want 1: the clear does not advance the round", got.Round)
 	}
 }
 
@@ -6303,5 +6438,74 @@ func TestAddRemoteLabelsPreLabelsServerRefused(t *testing.T) {
 	}
 	if len(fg.createBranchCalls) != 0 || len(fg.addWorktreeCalls) != 0 {
 		t.Fatalf("git calls = %v / %v, want no branch or worktree", fg.createBranchCalls, fg.addWorktreeCalls)
+	}
+}
+
+// TestWriteTempAndRenameRefusesALinkedDestDir pins the temp-write helper's
+// refusal of a destination directory planted as a link: nothing is created
+// inside the directory the runner named.
+func TestWriteTempAndRenameRefusesALinkedDestDir(t *testing.T) {
+	root := t.TempDir()
+	target := t.TempDir()
+	dir := filepath.Join(root, "001-reviewer")
+	if err := os.Symlink(target, dir); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "001-builder.log")
+	if err := writeTempAndRename(root, dest, strings.NewReader("x")); err == nil {
+		t.Fatal("writeTempAndRename wrote through a linked destination directory")
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("the link target holds %d entries, want none", len(entries))
+	}
+}
+
+// TestMirrorLogLeavesAPlantedBuilderLogAlone pins the legacy append branch's
+// refusal: a link planted at the builder-log path is not followed, its victim
+// is left untouched, the binding is not halted and nothing is repaired.
+func TestMirrorLogLeavesAPlantedBuilderLogAlone(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := st.BuilderLogPath("api", 1)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("legacy content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, logPath); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp:     remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileFromResp:  io.NopCloser(strings.NewReader("appended\n")),
+		roundFileFromRange: remote.FileRange{Honored: true, From: 15, Size: 24},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "legacy content\n" {
+		t.Errorf("victim = %q, %v; want it untouched", data, err)
+	}
+	if fi, err := os.Lstat(logPath); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the planted link was repaired or unlinked (lstat err = %v)", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Errorf("the binding halted over a refused mirror: %q", got.Halt)
+	}
+	if left, _ := filepath.Glob(filepath.Join(st.Dir("api"), "*.tmp.*")); len(left) != 0 {
+		t.Errorf("temps left behind: %v", left)
 	}
 }

@@ -19,14 +19,23 @@ func killRecordPath(streamPath string) string {
 }
 
 // recordKill writes the handle Kill is about to signal. An empty streamPath
-// records nothing, and a failed write is returned so the caller can refuse to
-// signal.
+// records nothing. The open refuses any path that is not a regular file,
+// because nothing may be written through a path a runner can replace with a
+// link; the caller signals anyway.
 func recordKill(h spawn.ProcHandle, streamPath string) error {
 	if streamPath == "" {
 		return nil
 	}
 	body := strconv.Itoa(h.PID) + " " + strconv.FormatInt(h.StartedAt.Unix(), 10) + "\n"
-	return os.WriteFile(killRecordPath(streamPath), []byte(body), 0o644)
+	f, err := openRegular(killRecordPath(streamPath), os.O_TRUNC)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(body)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 // killRecorded reports whether streamPath carries a record for exactly this
