@@ -461,6 +461,17 @@ function resetFailedFetches() {
   failedFetches.clear();
 }
 
+// logEntryText is the plugin's own line for one log entry: the fields the log
+// tab shows, two spaces apart, in the order relevo.LogLine prints them. It is
+// a presentation mapper only -- the entry's ts is shown as received, with no
+// timezone maths, and its own order is kept.
+function logEntryText(e: any): string {
+  const parts = [e.ts, `round ${e.round}`, e.direction, e.kind];
+  if (e.path) parts.push(e.path);
+  if (e.note) parts.push(e.note);
+  return parts.join("  ");
+}
+
 async function fetchShow(name: string, round?: number, tab = "report", force = false): Promise<string> {
   const r = round !== undefined && round > 0 ? round : 0;
   const key = `${name}:${r}:${tab}`;
@@ -482,7 +493,12 @@ async function fetchShow(name: string, round?: number, tab = "report", force = f
     if (res.ok) {
       try {
         const data = JSON.parse(res.stdout);
-        const text = data.Text || "";
+        const text =
+          tab === "log"
+            ? Array.isArray(data.Events)
+              ? data.Events.map(logEntryText).join("\n")
+              : ""
+            : data.Text || "";
         if (!data.Missing && text.length > 0) {
           showCache.set(key, text);
           updateStore(`show:${key}`, text);

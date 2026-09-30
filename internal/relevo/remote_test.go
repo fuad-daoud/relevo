@@ -66,6 +66,7 @@ type fakeRemote struct {
 	startRoundErr       error
 	startRoundTier      string
 	startRoundCandidate string
+	startRoundForce     bool
 	startRoundTags      []remote.TagRef
 	startRoundRetry     bool
 	roundFileResp       io.ReadCloser
@@ -131,7 +132,7 @@ func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remot
 	return f.getBindingResp, f.getBindingErr
 }
 
-func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error) {
+func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error) {
 	call := fmt.Sprintf("StartRound:%s:%s:%d", server, name, round)
 	if f.beforeCall != nil {
 		f.beforeCall(call)
@@ -139,6 +140,7 @@ func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round 
 	f.calls = append(f.calls, call)
 	f.startRoundTier = tier
 	f.startRoundCandidate = candidate
+	f.startRoundForce = force
 	f.startRoundTags = tags
 	f.startRoundRetry = retryOnUnreachable
 	return f.startRoundResp, f.startRoundErr
@@ -1954,6 +1956,131 @@ func TestSendRemoteRefusesASymlinkedPlanFile(t *testing.T) {
 	}
 	if !reflect.DeepEqual(after, before) {
 		t.Errorf("binding = %+v, want it unchanged (%+v)", after, before)
+	}
+}
+
+// TestSendRemoteForcePassedToStartRound pins that a Send with Force reaches
+// StartRound over the wire, after the force feature probe succeeds (#702).
+func TestSendRemoteForcePassedToStartRound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:   "api",
+		CWD:    "/fake/repo",
+		Repo:   "/fake/repo",
+		Branch: "relevo/api",
+		Round:  1,
+		State:  store.StateActive,
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: "zen",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relevo/api": "1111111111111111111111111111111111111111",
+		},
+	}
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureForce}},
+		startRoundResp: remote.BindingView{
+			RoundState: remote.RoundRunning,
+		},
+	}
+	ft := &fakeTransport{
+		snapshotResp: remote.Snapshot{
+			Heads: map[string]string{"refs/relevo/api/out": "1111111111111111111111111111111111111111"},
+		},
+	}
+	rt := Runtime{
+		Store:     st,
+		Git:       fg,
+		Remote:    fr,
+		Transport: ft,
+		Now:       time.Now,
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Send(ctx, rt, "api", planFile, SendOptions{Force: true}); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if !fr.startRoundForce {
+		t.Fatalf("startRoundForce = %v, want true", fr.startRoundForce)
+	}
+}
+
+// TestSendRemoteForceRefusedWithoutTheFeature pins #702: a forced send to a
+// server without the force feature is refused before the bundle is shipped,
+// naming the missing feature rather than the "pass --force" sentence.
+func TestSendRemoteForceRefusedWithoutTheFeature(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:   "api",
+		CWD:    "/fake/repo",
+		Repo:   "/fake/repo",
+		Branch: "relevo/api",
+		Round:  1,
+		State:  store.StateActive,
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: "zen",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relevo/api": "1111111111111111111111111111111111111111",
+		},
+	}
+	fr := &fakeRemote{
+		whoAmIResp:     remote.WhoAmI{Features: []string{remote.FeatureTier}},
+		startRoundResp: remote.BindingView{RoundState: remote.RoundRunning},
+	}
+	ft := &fakeTransport{
+		snapshotResp: remote.Snapshot{
+			Heads: map[string]string{"refs/relevo/api/out": "1111111111111111111111111111111111111111"},
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Transport: ft, Now: time.Now}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Send(ctx, rt, "api", planFile, SendOptions{Force: true})
+	if err == nil {
+		t.Fatal("Send --force against a pre-force server must be refused")
+	}
+	if !strings.Contains(err.Error(), "pre-force server") {
+		t.Errorf("err = %q, want the pre-force refusal", err.Error())
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "StartRound:") {
+			t.Errorf("StartRound was called: %v", fr.calls)
+		}
+	}
+	if len(ft.snapshotCalls) != 0 {
+		t.Errorf("a snapshot was taken before the refusal: %+v", ft.snapshotCalls)
+	}
+	if _, statErr := os.Stat(st.PromptPath("api", 1)); !os.IsNotExist(statErr) {
+		t.Errorf("a plan was staged: %v", statErr)
 	}
 }
 
@@ -5714,6 +5841,9 @@ func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Reconcile iteration %d: %v", i, err)
 		}
+		if got.Round != 1 {
+			t.Fatalf("iteration %d: Round = %d, want 1: a halt does not advance the round", i, got.Round)
+		}
 		if i < 10 {
 			if got.State == store.StateNeedsYou {
 				t.Fatalf("halted after only %d absorb failures", i)
@@ -5728,6 +5858,138 @@ func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
 	}
 	if !strings.Contains(got.Halt, "cannot absorb round") {
 		t.Fatalf("Halt = %q, want it to name the absorb failure", got.Halt)
+	}
+}
+
+// TestCatchUpAbsorbIgnoresAFailureWhenTheBranchHoldsTheRound pins the
+// verified-store gate: an absorb error for a round the binding's branch
+// already holds is not counted, because the catch-up can still ack, report
+// and close the round.
+//
+// Mutation: make absorbHoldsRound always false and the failure is counted
+// instead, so no Ack and no report entry appear.
+func TestCatchUpAbsorbIgnoresAFailureWhenTheBranchHoldsTheRound(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	const resultCommit = "1111111111111111111111111111111111111111"
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: resultCommit},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleFunc: func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("not a real bundle")), nil
+		},
+	}
+	ft := &fakeTransport{absorbErr: errors.New("the fetch raced a repack")}
+	rt := Runtime{
+		Store:     st,
+		Remote:    fr,
+		Transport: ft,
+		Git:       &fakeGit{refSHA: map[string]string{"refs/heads/relevo/api": resultCommit}},
+		Now:       func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0: the branch already held the round", got.RemoteAbsorbFailures)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("halted on an absorb error for a round the branch already holds: %q", got.Halt)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2: the round must close", got.Round)
+	}
+	foundAck := false
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") {
+			foundAck = true
+		}
+	}
+	if !foundAck {
+		t.Fatalf("Ack never called once the store held the round: %v", fr.calls)
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
+		t.Fatalf("no round 1 report entry after the gate passed: %+v", entries)
+	}
+}
+
+// TestCatchUpAbsorbRecoveryClearsTheHaltWithoutAdvancingTheRound pins the
+// clear: an absorb that succeeds after the binding was halted on absorb
+// failures clears the halt at the absorb step, so the binding relays again
+// even when the ack is lost and the round cannot close.
+//
+// Mutation: drop the clear and State/Halt stay NEEDS YOU with the failure
+// count still at the threshold.
+func TestCatchUpAbsorbRecoveryClearsTheHaltWithoutAdvancingTheRound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	b.State = store.StateNeedsYou
+	b.Halt = "cannot absorb round 1 from zen: the fetch raced a repack"
+	b.HaltAt = baseTime
+	b.HaltNotifiedRound = 1
+	b.RemoteAbsorbFailures = 10
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle, headSHA := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relevo/api", c1)
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: headSHA},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleResp: bundle,
+		ackErr:          errors.New("ack reply lost"),
+	}
+	rt := Runtime{
+		Store:     st,
+		Remote:    fr,
+		Transport: remote.NewBundleTransport(g, t.TempDir()),
+		Now:       func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Fatalf("State = %q, want %q: the halt clears at the absorb step", got.State, store.StateActive)
+	}
+	if got.Halt != "" || !got.HaltAt.IsZero() || got.HaltNotifiedRound != 0 {
+		t.Fatalf("halt not cleared: Halt=%q HaltAt=%v HaltNotifiedRound=%d", got.Halt, got.HaltAt, got.HaltNotifiedRound)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0", got.RemoteAbsorbFailures)
+	}
+	if got.Round != 1 {
+		t.Fatalf("Round = %d, want 1: the clear does not advance the round", got.Round)
 	}
 }
 
@@ -6400,5 +6662,74 @@ func TestAddRemoteLabelsPreLabelsServerRefused(t *testing.T) {
 	}
 	if len(fg.createBranchCalls) != 0 || len(fg.addWorktreeCalls) != 0 {
 		t.Fatalf("git calls = %v / %v, want no branch or worktree", fg.createBranchCalls, fg.addWorktreeCalls)
+	}
+}
+
+// TestWriteTempAndRenameRefusesALinkedDestDir pins the temp-write helper's
+// refusal of a destination directory planted as a link: nothing is created
+// inside the directory the runner named.
+func TestWriteTempAndRenameRefusesALinkedDestDir(t *testing.T) {
+	root := t.TempDir()
+	target := t.TempDir()
+	dir := filepath.Join(root, "001-reviewer")
+	if err := os.Symlink(target, dir); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "001-builder.log")
+	if err := writeTempAndRename(root, dest, strings.NewReader("x")); err == nil {
+		t.Fatal("writeTempAndRename wrote through a linked destination directory")
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("the link target holds %d entries, want none", len(entries))
+	}
+}
+
+// TestMirrorLogLeavesAPlantedBuilderLogAlone pins the legacy append branch's
+// refusal: a link planted at the builder-log path is not followed, its victim
+// is left untouched, the binding is not halted and nothing is repaired.
+func TestMirrorLogLeavesAPlantedBuilderLogAlone(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := st.BuilderLogPath("api", 1)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("legacy content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, logPath); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp:     remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileFromResp:  io.NopCloser(strings.NewReader("appended\n")),
+		roundFileFromRange: remote.FileRange{Honored: true, From: 15, Size: 24},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "legacy content\n" {
+		t.Errorf("victim = %q, %v; want it untouched", data, err)
+	}
+	if fi, err := os.Lstat(logPath); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the planted link was repaired or unlinked (lstat err = %v)", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Errorf("the binding halted over a refused mirror: %q", got.Halt)
+	}
+	if left, _ := filepath.Glob(filepath.Join(st.Dir("api"), "*.tmp.*")); len(left) != 0 {
+		t.Errorf("temps left behind: %v", left)
 	}
 }

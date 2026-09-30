@@ -387,6 +387,12 @@ const FeatureReaders = "readers"
 // client's row would record a link the server never kept.
 const FeatureOrigin = "origin"
 
+// FeatureForce is the WhoAmI.Features token a server that honours the round
+// request's Force field advertises (#702). A client force-sending refuses a
+// server without it: an old server would re-apply the seed cap and answer with
+// the "pass --force" sentence for a flag that was already passed.
+const FeatureForce = "force"
+
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {
 	Code    Code   `json:"error"`

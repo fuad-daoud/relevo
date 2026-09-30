@@ -26,9 +26,9 @@ const unreachableGrace = 30 * time.Minute
 // separate processes and each says it once.
 var checkedOutWarned sync.Map // binding name -> struct{}
 
-func writeTempAndRename(dest string, r io.Reader) error {
+func writeTempAndRename(root, dest string, r io.Reader) error {
 	dir := filepath.Dir(dest)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := ensureRealDir(root, dir); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(dest)+".tmp.*")
@@ -72,11 +72,11 @@ func mirrorLog(ctx context.Context, rt Runtime, tx *store.Tx, server, name strin
 		case fr.Honored && fr.From == local && fr.Size >= local:
 			defer rc.Close()
 			dir := filepath.Dir(path)
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			if err := ensureRealDir(rt.Store.Dir(name), dir); err != nil {
 				slog.Warn("write builder log failed", "path", path, "err", err)
 				return
 			}
-			f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+			f, err := openAppendRegular(path)
 			if err != nil {
 				slog.Warn("write builder log failed", "path", path, "err", err)
 				return
@@ -95,12 +95,12 @@ func mirrorLog(ctx context.Context, rt Runtime, tx *store.Tx, server, name strin
 				return
 			}
 			defer rc2.Close()
-			if err := writeTempAndRename(path, rc2); err != nil {
+			if err := writeTempAndRename(rt.Store.Dir(name), path, rc2); err != nil {
 				slog.Warn("write builder log failed", "path", path, "err", err)
 			}
 		default:
 			defer rc.Close()
-			if err := writeTempAndRename(path, rc); err != nil {
+			if err := writeTempAndRename(rt.Store.Dir(name), path, rc); err != nil {
 				slog.Warn("write builder log failed", "path", path, "err", err)
 			}
 		}

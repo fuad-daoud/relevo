@@ -15,7 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byte, tier, builder string) (SendResult, error) {
+func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byte, tier, builder string, force bool) (SendResult, error) {
 	if rt.Remote == nil {
 		return SendResult{}, ErrRemoteUnavailable
 	}
@@ -41,6 +41,9 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	}
 	if builder != "" && !slices.Contains(who.Features, remote.FeatureBuilder) {
 		return SendResult{}, fmt.Errorf("server %s cannot change a binding's candidate (no %q feature); upgrade it, or send without --candidate", server, remote.FeatureBuilder)
+	}
+	if force && !slices.Contains(who.Features, remote.FeatureForce) {
+		return SendResult{}, fmt.Errorf("server %s does not carry --force (pre-force server); upgrade it, or send without --force", server)
 	}
 
 	name := b.Name
@@ -101,7 +104,7 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	// The retry is safe only on a server that dedupes a repeated send (#373
 	// §4.5): without idempotent_send a retry could re-queue a round that did
 	// start, so a gateway error is reported as unreachable instead.
-	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader, tier, builder, tags,
+	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader, tier, builder, force, tags,
 		slices.Contains(who.Features, remote.FeatureIdempotentSend))
 	if err != nil {
 		var httpErr *client.HTTPError

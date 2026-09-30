@@ -6,7 +6,25 @@
   "Archived": false,
   "ArchivedAt": "0001-01-01T00:00:00Z",
   "Section": "log",
-  "Text": "2026-09-24T20:00:00Z round 4 started\n2026-09-24T20:05:00Z question in",
+  "Text": "",
   "Missing": false,
-  "Events": []
+  "Events": [
+    {
+      "seq": 1,
+      "ts": "2026-09-24T20:00:00Z",
+      "round": 4,
+      "direction": "to_runner",
+      "kind": "prompt",
+      "confirmed": true
+    },
+    {
+      "seq": 2,
+      "ts": "2026-09-24T20:05:00Z",
+      "round": 4,
+      "direction": "to_planner",
+      "kind": "question",
+      "confirmed": true,
+      "note": "question in"
+    }
+  ]
 }
