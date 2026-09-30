@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
@@ -410,5 +411,85 @@ func TestGatedOrdersByTokenThenSince(t *testing.T) {
 	}
 	if !got[0].Since.Equal(now.Add(-time.Hour)) || !got[1].Since.Equal(now) {
 		t.Errorf("gates not ordered by Since: got %v, %v", got[0].Since, got[1].Since)
+	}
+}
+
+// clinePassPool is a two-account pool for the group cline-pass, the shape every
+// account-pool assertion below needs.
+func clinePassPool() account.Set {
+	return account.Set{
+		{Name: "cp1", Harness: account.OpenCode, Groups: []string{"cline-pass"}},
+		{Name: "cp2", Harness: account.OpenCode, Groups: []string{"cline-pass"}},
+	}
+}
+
+// TestGatedAccountPool pins the rule that a group@account entry gates its group
+// only once every account in the pool is gated: until then the pick has
+// somewhere to go, so the token is not gated.
+func TestGatedAccountPool(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+	refs := []string{"opencode/cline-pass/m"}
+	providerOf := func(token string) string { return strings.Split(token, "/")[1] }
+	set := clinePassPool()
+
+	partial := Ledger{Entries: []Entry{
+		{Kind: RateLimited, Subject: "cline-pass@cp1", At: now, Source: "planner"},
+	}}
+	if got := Gated(partial, refs, providerOf, now, set); len(got) != 0 {
+		t.Errorf("Gated() on a partially gated pool = %+v, want no gates", got)
+	}
+
+	full := Ledger{Entries: []Entry{
+		{Kind: RateLimited, Subject: "cline-pass@cp1", At: now, Source: "planner"},
+		{Kind: RateLimited, Subject: "cline-pass@cp2", At: now, Source: "planner"},
+	}}
+	got := Gated(full, refs, providerOf, now, set)
+	if len(got) != 2 {
+		t.Fatalf("Gated() on a fully gated pool returned %d gates, want one per account entry: %+v", len(got), got)
+	}
+	for i, g := range got {
+		if g.Token != refs[0] || g.Kind != RateLimited {
+			t.Errorf("gate %d = %+v, want RateLimited for %s", i, g, refs[0])
+		}
+	}
+}
+
+// TestGatedBareGroupWithAccounts: a bare group entry still gates every
+// candidate of the group, whatever the pool holds.
+func TestGatedBareGroupWithAccounts(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+	refs := []string{"opencode/cline-pass/m"}
+	providerOf := func(token string) string { return strings.Split(token, "/")[1] }
+
+	l := Ledger{Entries: []Entry{
+		{Kind: RateLimited, Subject: "cline-pass", At: now, Source: "planner"},
+	}}
+	got := Gated(l, refs, providerOf, now, clinePassPool())
+	if len(got) != 1 || got[0].Token != refs[0] {
+		t.Errorf("Gated() with a bare group entry = %+v, want one gate for %s", got, refs[0])
+	}
+}
+
+// TestOldFormatLedgerWithAccounts: an old-format ledger (bare group subjects,
+// no "@") decodes and behaves unchanged even when accounts are configured.
+func TestOldFormatLedgerWithAccounts(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+	doc := []byte(`{"entries":[{"kind":"rate_limited","subject":"cline-pass","at":"2026-09-11T15:00:00Z","source":"planner"}]}`)
+	l, err := decode(doc)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	refs := []string{"opencode/cline-pass/m"}
+	providerOf := func(token string) string { return strings.Split(token, "/")[1] }
+	got := Gated(l, refs, providerOf, now, clinePassPool())
+	if len(got) != 1 || got[0].Token != refs[0] {
+		t.Errorf("Gated() on an old-format ledger = %+v, want one gate for %s", got, refs[0])
 	}
 }

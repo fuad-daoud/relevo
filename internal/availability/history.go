@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
@@ -22,10 +23,13 @@ type Event struct {
 	At       time.Time `json:"at"`
 	Kind     Kind      `json:"kind"`
 	Provider string    `json:"provider"`
-	Token    string    `json:"token,omitempty"`
-	Source   string    `json:"source"`
-	Binding  string    `json:"binding,omitempty"`
-	Note     string    `json:"note,omitempty"`
+	// Account is the login an account gate names, the account half of a
+	// group@account key. Display-only: counts and durations stay on Provider.
+	Account string `json:"account,omitempty"`
+	Token   string `json:"token,omitempty"`
+	Source  string `json:"source"`
+	Binding string `json:"binding,omitempty"`
+	Note    string `json:"note,omitempty"`
 	// Since is, on a Cleared event, the At of the oldest ledger entry the clear
 	// removed: At - Since is how long the provider was blocked. Zero on every
 	// other kind, and omitted from the JSON when zero.
@@ -103,7 +107,14 @@ func FromEntry(e Entry, providerOf func(token string) string) Event {
 	}
 	switch e.Kind {
 	case RateLimited:
-		ev.Provider = e.Subject
+		// A rate-limit subject is a bare group or a group@account key; the
+		// history names the group and, when there is one, the account.
+		group, accountName, ok := account.ParseGateKey(e.Subject)
+		if !ok {
+			group, accountName = e.Subject, ""
+		}
+		ev.Provider = group
+		ev.Account = accountName
 	case SpawnFailed:
 		ev.Token = e.Subject
 		ev.Provider = providerOf(e.Subject)
