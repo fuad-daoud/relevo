@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -622,4 +623,165 @@ func TestSyncRemoteAcksWithoutTheStateLock(t *testing.T) {
 		t.Errorf("Ack calls = %d, want 1", n)
 	}
 	assertNoFetchTemps(t, st, "api", 1)
+}
+
+// bundleFetchFixture is the fetch half's rig for the rewritten-base cases: a
+// closed round 1 whose bundle the fake answers, a fake transport and git to
+// count the absorb and the reset, and a binding already holding a base.
+func bundleFetchFixture(t *testing.T) (Runtime, store.Binding, *fakeRemote, *fakeTransport, *fakeGit) {
+	t.Helper()
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Builder.LastKnown = "r1"
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	fr := roundClosedRemote()
+	ft := &fakeTransport{}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Remote: fr, Transport: ft, Git: fg, Now: func() time.Time { return baseTime }}
+	return rt, b, fr, ft, fg
+}
+
+// staleBase is the server's refusal to cut an incremental bundle: the base the
+// client holds is no longer an ancestor of the branch the round produced.
+func staleBase() *client.HTTPError {
+	return &client.HTTPError{Status: 422, Body: remote.ErrorBody{Code: remote.CodeNotFastForward, Message: "since is not an ancestor of the result"}}
+}
+
+// roundBundleCalls returns every RoundBundle call the fake recorded, in order.
+func roundBundleCalls(fr *fakeRemote) []string {
+	var calls []string
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "RoundBundle:") {
+			calls = append(calls, c)
+		}
+	}
+	return calls
+}
+
+// TestFetchCatchUpBundleFallsBackToAFullBundle pins the rewritten-base retry:
+// the server refuses the incremental bundle because the base this client holds
+// is no longer an ancestor of its branch, so the fetch asks once more for the
+// whole branch, re-bases its own mirror onto it, and absorbs.
+func TestFetchCatchUpBundleFallsBackToAFullBundle(t *testing.T) {
+	ctx := context.Background()
+	rt, b, fr, ft, fg := bundleFetchFixture(t)
+	fr.roundBundleFunc = func(_ context.Context, _, _ string, _ int, since string) (io.ReadCloser, error) {
+		if since == "r1" {
+			return nil, staleBase()
+		}
+		return io.NopCloser(strings.NewReader("bundle")), nil
+	}
+
+	cf := fetchCatchUp(ctx, rt, b, fr.getBindingResp)
+	defer cf.release()
+
+	if cf.Abort {
+		t.Fatalf("Abort = true: the full retry must carry the catch-up on: %v", cf.AbsorbErr)
+	}
+	want := []string{"RoundBundle:zen:api:1:r1", "RoundBundle:zen:api:1:"}
+	if got := roundBundleCalls(fr); !slices.Equal(got, want) {
+		t.Fatalf("RoundBundle calls = %v, want %v", got, want)
+	}
+	if len(fg.deleteBranchCalls) != 1 {
+		t.Fatalf("DeleteBranch calls = %d, want 1: the mirror is re-based onto the whole branch", len(fg.deleteBranchCalls))
+	}
+	if got := fg.deleteBranchCalls[0].Branch; got != "refs/heads/relevo/api" {
+		t.Fatalf("DeleteBranch branch = %q, want the server mirror ref", got)
+	}
+	if len(ft.absorbCalls) != 1 {
+		t.Fatalf("Absorb calls = %d, want 1 after the re-base", len(ft.absorbCalls))
+	}
+	if cf.CheckedOut || cf.AbsorbErr != nil {
+		t.Fatalf("CheckedOut = %v, AbsorbErr = %v, want a clean absorb", cf.CheckedOut, cf.AbsorbErr)
+	}
+}
+
+// TestFetchCatchUpBundleKeepsOtherErrorsHard pins the retry's narrow trigger: a
+// failure that is not the stale-base refusal keeps today's path -- one request,
+// no mirror deleted, no absorb.
+func TestFetchCatchUpBundleKeepsOtherErrorsHard(t *testing.T) {
+	ctx := context.Background()
+	rt, b, fr, ft, fg := bundleFetchFixture(t)
+	fr.roundBundleErr = &client.HTTPError{Status: 500, Body: remote.ErrorBody{Code: "boom", Message: "bundle read failed"}}
+
+	cf := fetchCatchUp(ctx, rt, b, fr.getBindingResp)
+	defer cf.release()
+
+	if !cf.Abort {
+		t.Fatal("Abort = false, want the hard path for a non-stale failure")
+	}
+	if n := countCalls(fr, "RoundBundle:"); n != 1 {
+		t.Fatalf("RoundBundle calls = %d, want 1", n)
+	}
+	if len(fg.deleteBranchCalls) != 0 {
+		t.Fatalf("DeleteBranch calls = %d, want 0: no mirror may be lost to a transient failure", len(fg.deleteBranchCalls))
+	}
+	if len(ft.absorbCalls) != 0 {
+		t.Fatalf("Absorb calls = %d, want 0", len(ft.absorbCalls))
+	}
+}
+
+// TestFetchCatchUpBundleDoesNotResetTheBaseWhenTheRetryFails pins the reset's
+// place: only a whole branch that arrived is worth re-basing onto, so a
+// fallback that fails leaves the mirror alone for the next tick.
+func TestFetchCatchUpBundleDoesNotResetTheBaseWhenTheRetryFails(t *testing.T) {
+	ctx := context.Background()
+	rt, b, fr, ft, fg := bundleFetchFixture(t)
+	fr.roundBundleFunc = func(_ context.Context, _, _ string, _ int, since string) (io.ReadCloser, error) {
+		if since == "r1" {
+			return nil, staleBase()
+		}
+		return nil, &client.HTTPError{Status: 500, Body: remote.ErrorBody{Code: "boom", Message: "bundle read failed"}}
+	}
+
+	cf := fetchCatchUp(ctx, rt, b, fr.getBindingResp)
+	defer cf.release()
+
+	if !cf.Abort {
+		t.Fatal("Abort = false, want the hard path when the retry fails too")
+	}
+	if n := countCalls(fr, "RoundBundle:"); n != 2 {
+		t.Fatalf("RoundBundle calls = %d, want 2", n)
+	}
+	if len(fg.deleteBranchCalls) != 0 {
+		t.Fatalf("DeleteBranch calls = %d, want 0: the mirror survives a failed retry", len(fg.deleteBranchCalls))
+	}
+	if len(ft.absorbCalls) != 0 {
+		t.Fatalf("Absorb calls = %d, want 0", len(ft.absorbCalls))
+	}
+}
+
+// TestFetchCatchUpBundleRetriesOnlyForAStaleBase pins the classification: the
+// retry needs both the status and the code, so a stale code under another
+// status and a stale status carrying another code are each the hard path.
+func TestFetchCatchUpBundleRetriesOnlyForAStaleBase(t *testing.T) {
+	cases := []struct {
+		name string
+		err  *client.HTTPError
+	}{
+		{"other status", &client.HTTPError{Status: 409, Body: remote.ErrorBody{Code: remote.CodeNotFastForward, Message: "stale base"}}},
+		{"other code", &client.HTTPError{Status: 422, Body: remote.ErrorBody{Code: "bad_request", Message: "stale base"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			rt, b, fr, _, fg := bundleFetchFixture(t)
+			fr.roundBundleErr = tc.err
+
+			cf := fetchCatchUp(ctx, rt, b, fr.getBindingResp)
+			defer cf.release()
+
+			if !cf.Abort {
+				t.Fatal("Abort = false, want the hard path: only the stale-base signal earns the retry")
+			}
+			if n := countCalls(fr, "RoundBundle:"); n != 1 {
+				t.Fatalf("RoundBundle calls = %d, want 1", n)
+			}
+			if len(fg.deleteBranchCalls) != 0 {
+				t.Fatalf("DeleteBranch calls = %d, want 0", len(fg.deleteBranchCalls))
+			}
+		})
+	}
 }

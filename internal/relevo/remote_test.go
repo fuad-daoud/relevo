@@ -4720,6 +4720,164 @@ func TestCatchUpOrderAndIdempotence(t *testing.T) {
 	}
 }
 
+// TestCatchUpClosesRoundAfterHistoryRewrite is the rewritten-history repro: the
+// server's branch no longer descends from the base this client holds, so the
+// incremental bundle is refused, the whole branch is fetched instead, the
+// client's own mirror is re-based onto it, and the round still closes.
+//
+// Mutation: drop the retry and the round stays ACTIVE; drop the re-base and the
+// absorb refuses a non-fast-forward, so the failure is counted and no Ack goes
+// out.
+func TestCatchUpClosesRoundAfterHistoryRewrite(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+
+	// The server-side repo: its relevo/api first carries round 1's result, then
+	// is rewritten so round 2's result descends from the seed instead.
+	serverRepo := t.TempDir()
+	runGit(t, serverRepo, "clone", clientRepo, ".")
+	runGit(t, serverRepo, "checkout", "relevo/api")
+	if err := os.WriteFile(filepath.Join(serverRepo, "r1.txt"), []byte("round 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, serverRepo, "add", "r1.txt")
+	runGit(t, serverRepo, "commit", "-m", "round 1")
+	r1 := strings.TrimSpace(runGit(t, serverRepo, "rev-parse", "HEAD"))
+
+	transport := remote.NewBundleTransport(g, t.TempDir())
+	bundle1 := readBundle(t, ctx, transport, serverRepo, c1, "round 1")
+
+	// The rewrite: a fresh commit on the seed, so r2 does not descend from r1.
+	runGit(t, serverRepo, "checkout", "-B", "relevo/api", c1)
+	if err := os.WriteFile(filepath.Join(serverRepo, "r2.txt"), []byte("round 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, serverRepo, "add", "r2.txt")
+	runGit(t, serverRepo, "commit", "-m", "round 2")
+	r2 := strings.TrimSpace(runGit(t, serverRepo, "rev-parse", "HEAD"))
+	bundle2 := readBundle(t, ctx, transport, serverRepo, "", "whole branch")
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: r1},
+		roundFileFunc: func(_ context.Context, _, _ string, _ int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, notFound(kind)
+		},
+		roundBundleFunc: func(_ context.Context, _, _ string, round int, since string) (io.ReadCloser, error) {
+			switch {
+			case round == 1:
+				return io.NopCloser(bytes.NewReader(bundle1)), nil
+			case since == r1:
+				return nil, staleBase()
+			case since == "":
+				return io.NopCloser(bytes.NewReader(bundle2)), nil
+			default:
+				return nil, fmt.Errorf("unexpected since %q for round %d", since, round)
+			}
+		},
+	}
+	rt := Runtime{
+		Store:     st,
+		Remote:    fr,
+		Transport: transport,
+		Git:       g,
+		Now:       func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile (round 1): %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d after round 1 closed, want 2", got.Round)
+	}
+	if got.Builder.LastKnown != r1 {
+		t.Fatalf("LastKnown = %q after round 1, want %q", got.Builder.LastKnown, r1)
+	}
+	if head, ok, _ := g.RefSHA(ctx, clientRepo, "refs/heads/relevo/api"); !ok || head != r1 {
+		t.Fatalf("mirror after round 1 = %q (ok=%v), want %q", head, ok, r1)
+	}
+
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 2, ResultCommit: r2}
+	before := len(fr.calls)
+
+	got, err = reconcile(t, rt, got)
+	if err != nil {
+		t.Fatalf("Reconcile (rewritten round): %v", err)
+	}
+
+	if got.Round != 3 {
+		t.Fatalf("Round = %d, want 3: the rewritten round must close", got.Round)
+	}
+	if got.Builder.LastKnown != r2 {
+		t.Fatalf("LastKnown = %q, want the rewritten result %q", got.Builder.LastKnown, r2)
+	}
+	if head, ok, _ := g.RefSHA(ctx, clientRepo, "refs/heads/relevo/api"); !ok || head != r2 {
+		t.Fatalf("mirror = %q (ok=%v), want the rewritten result %q", head, ok, r2)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0", got.RemoteAbsorbFailures)
+	}
+
+	// The rewritten round's own requests: the refused incremental one, then the
+	// whole branch. One ack closes it.
+	var sinces []string
+	acks := 0
+	for _, c := range fr.calls[before:] {
+		if strings.HasPrefix(c, "RoundBundle:") {
+			sinces = append(sinces, c[strings.LastIndex(c, ":")+1:])
+		}
+		if strings.HasPrefix(c, "Ack:") {
+			acks++
+		}
+	}
+	if !slices.Equal(sinces, []string{r1, ""}) {
+		t.Fatalf("round 2 bundle requests = %v, want [%s, \"\"]", sinces, r1)
+	}
+	if acks != 1 {
+		t.Fatalf("Ack calls in the rewritten round = %d, want 1", acks)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasEntry(entries, 2, store.DirToMasterMind, store.KindReport) {
+		t.Fatalf("no report entry for the rewritten round 2: %+v", entries)
+	}
+}
+
+// readBundle snapshots repo's relevo/api with the given base and returns the
+// bundle bytes, so a test can answer the same request twice.
+func readBundle(t *testing.T, ctx context.Context, transport remote.TreeTransport, repo, since, label string) []byte {
+	t.Helper()
+	snap, err := transport.Snapshot(ctx, repo, []string{"refs/heads/relevo/api"}, since)
+	if err != nil {
+		t.Fatalf("Snapshot (%s): %v", label, err)
+	}
+	if snap.Empty || snap.Body == nil {
+		t.Fatalf("expected a %s bundle", label)
+	}
+	body, err := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+	if err != nil {
+		t.Fatalf("read %s bundle: %v", label, err)
+	}
+	return body
+}
+
 // TestObserveRemoteIdleCatchUpRecoversLostReport pins #373 §4.5's Idle
 // catch-up: the server says Idle with this round closed and the client holds
 // no report entry, so the round's report is collected and acked again -- the
@@ -5758,6 +5916,85 @@ func TestCatchUpBranchCheckedOutRetries(t *testing.T) {
 		if strings.HasPrefix(c, "Ack:") {
 			t.Fatalf("Ack called despite the absorb never completing: %v", fr.calls)
 		}
+	}
+}
+
+// TestCatchUpRewriteOnCheckedOutBaseRetries pins the re-base's refusal: the
+// mirror is the repo's own current branch, so git will not delete it. The round
+// retries quietly -- no failure count, no halt, no ack and no absorb -- exactly
+// as a checked-out absorb always has.
+//
+// Mutation: match only "checked out" and the wording git gives a branch held by
+// a worktree is counted as an absorb failure and walks the binding to a halt.
+func TestCatchUpRewriteOnCheckedOutBaseRetries(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, _ := newRemoteClientRepo(t, "api")
+	// The mirror is this repo's current branch, which is what refuses the reset.
+	runGit(t, clientRepo, "checkout", "relevo/api")
+	if err := os.WriteFile(filepath.Join(clientRepo, "r1.txt"), []byte("round 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, clientRepo, "add", "r1.txt")
+	runGit(t, clientRepo, "commit", "-m", "round 1")
+	r1 := strings.TrimSpace(runGit(t, clientRepo, "rev-parse", "HEAD"))
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	b.Round = 2
+	b.Builder.LastKnown = r1
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 2, ResultCommit: "2222222222222222222222222222222222222222"},
+		roundFileFunc: func(_ context.Context, _, _ string, _ int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 2\n")), nil
+			}
+			return nil, notFound(kind)
+		},
+		roundBundleFunc: func(_ context.Context, _, _ string, _ int, since string) (io.ReadCloser, error) {
+			if since == r1 {
+				return nil, staleBase()
+			}
+			return io.NopCloser(strings.NewReader("bundle")), nil
+		},
+	}
+	ft := &fakeTransport{}
+	rt := Runtime{Store: st, Remote: fr, Transport: ft, Git: g, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if got.State != store.StateActive {
+		t.Fatalf("state = %s (halt %q), want active: a checked-out mirror retries quietly", got.State, got.Halt)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2: the round must not close", got.Round)
+	}
+	if got.Builder.LastKnown != r1 {
+		t.Fatalf("LastKnown = %q, want it left at %q", got.Builder.LastKnown, r1)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0", got.RemoteAbsorbFailures)
+	}
+	if len(ft.absorbCalls) != 0 {
+		t.Fatalf("Absorb calls = %d, want 0: the refused reset comes first", len(ft.absorbCalls))
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") {
+			t.Fatalf("Ack called though the round never closed: %v", fr.calls)
+		}
+	}
+	if head, ok, _ := g.RefSHA(ctx, clientRepo, "refs/heads/relevo/api"); !ok || head != r1 {
+		t.Fatalf("mirror = %q (ok=%v), want the untouched %q", head, ok, r1)
 	}
 }
 

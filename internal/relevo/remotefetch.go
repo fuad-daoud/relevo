@@ -273,7 +273,7 @@ func applyDrift(rt Runtime, tx *store.Tx, name string, round int, data []byte) {
 // under the lock with the steps the inline catch-up used to run.
 type catchUpFetch struct {
 	Round         int               // view.ClosedRound
-	Abort         bool              // a non-404 read failed: the apply returns b unchanged (retry next tick)
+	Abort         bool              // a read failed and the whole-branch retry did too: the apply returns b unchanged (retry next tick)
 	ReportMissing bool              // RoundFile(report), or the listing's output, was absent
 	ReportTemp    string            // temp file holding the report or the reader's output, "" if none
 	Diff          []byte            // nil: none (404, or over cap -- logged at fetch as today)
@@ -282,8 +282,8 @@ type catchUpFetch struct {
 	Log           []byte            // DB-form log body; nil: none
 	LogTemp       string            // legacy-form log in a temp file, "" if none
 	StreamTemp    string            // temp file holding the stream, "" if none
-	CheckedOut    bool              // absorb or adopted-branch update hit "checked out": quiet retry
-	AbsorbErr     error             // other absorb / UpdateRef failure: apply counts it (halt at 10)
+	CheckedOut    bool              // git refuses to move the branch (checked out somewhere): quiet retry
+	AbsorbErr     error             // any other reset, absorb or UpdateRef failure: apply counts it (halt at 10)
 	Fatal         error             // RefSHA failure after absorb: apply returns it as today
 }
 
@@ -307,9 +307,12 @@ func (cf *catchUpFetch) release() {
 }
 
 // checkedOut reports whether err is git's refusal to touch a branch that is
-// checked out somewhere, which the catch-up answers with a quiet retry.
+// checked out somewhere, which the catch-up answers with a quiet retry. A
+// branch held by any worktree counts: the reset's branch delete refuses it with
+// git's own "used by worktree" wording, not "checked out".
 func checkedOut(err error) bool {
-	return strings.Contains(strings.ToLower(err.Error()), "checked out")
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "checked out") || strings.Contains(msg, "used by worktree")
 }
 
 // warnCheckedOut logs the checkout hint once per process, then only at Debug.
@@ -479,72 +482,6 @@ func fetchCatchUpStream(ctx context.Context, rt Runtime, b store.Binding, view r
 			return false
 		}
 		return true
-	}
-}
-
-// fetchCatchUpBundle absorbs the round bundle and brings an adopted branch to
-// the absorbed result, both without the lock. A discarded fetch leaves
-// LastKnown unchanged, so the next catch-up asks for the same bundle again.
-func fetchCatchUpBundle(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch) {
-	n := view.ClosedRound
-	server, name := b.Builder.Server, b.Name
-	rcBundle, err := rt.Remote.RoundBundle(ctx, server, name, n, b.Builder.LastKnown)
-	if err != nil {
-		slog.Warn("fetch round bundle failed", "server", server, "name", name, "round", n, "err", err)
-		cf.Abort = true
-		cf.release()
-		return
-	}
-	if rcBundle == nil {
-		return
-	}
-	defer rcBundle.Close()
-
-	branchRef := b.Branch
-	if !strings.HasPrefix(branchRef, "refs/heads/") {
-		branchRef = "refs/heads/" + branchRef
-	}
-	// The server always cuts its own relevo/<name> branch and ships that, so a
-	// binding that adopted a branch keeps the adopted name locally: the
-	// allow-list names the server's ref, and the adopted branch is
-	// fast-forwarded to the absorbed result below.
-	serverRef := "refs/heads/relevo/" + name
-	refs := []string{serverRef}
-	if view.DirtyCommit != "" {
-		refs = append(refs, fmt.Sprintf("refs/relevo/%s/round-%d", name, n))
-	}
-	if _, err := rt.Transport.Absorb(ctx, b.Repo, remote.ContentTypeGitBundle, rcBundle, refs); err != nil {
-		if checkedOut(err) {
-			warnCheckedOut(name, b.Branch)
-			cf.CheckedOut = true
-			return
-		}
-		cf.AbsorbErr = fmt.Errorf("%s: cannot absorb round %d from %s: %s", name, n, server, err.Error())
-		return
-	}
-	checkedOutWarned.Delete(name)
-
-	if serverRef == branchRef {
-		return
-	}
-	sha, ok, err := rt.Git.RefSHA(ctx, b.Repo, serverRef)
-	if err != nil {
-		cf.Fatal = fmt.Errorf("resolve server branch %s after absorb: %w", serverRef, err)
-		return
-	}
-	if !ok {
-		cf.Fatal = fmt.Errorf("server branch %s missing after absorb", serverRef)
-		return
-	}
-	old, _, _ := rt.Git.RefSHA(ctx, b.Repo, branchRef)
-	if err := rt.Git.UpdateRef(ctx, b.Repo, branchRef, sha, old); err != nil {
-		if checkedOut(err) {
-			warnCheckedOut(name, b.Branch)
-			cf.CheckedOut = true
-			return
-		}
-		cf.AbsorbErr = fmt.Errorf("%s: cannot fast-forward %s to round %d from %s: %s", name, b.Branch, n, server, err.Error())
-		return
 	}
 }
 
