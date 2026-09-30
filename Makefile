@@ -60,10 +60,11 @@ check-test:
 	@go test -race -count=1 -cover ./... > .coverage.txt 2>&1; st=$$?; cat .coverage.txt; exit $$st
 	sh scripts/check-coverage.sh
 
-# e2e runs one headless relevo round end to end (internal/e2e/headless_test.go).
-# CI runs it; it needs no session manager on PATH and is not part of check.
+# e2e runs relevo's headless end-to-end scenarios (internal/e2e): one round on
+# its own, and a chain of two plans with the security phase. CI runs it; it
+# needs no session manager on PATH and is not part of check.
 e2e:
-	go test ./internal/e2e/ -run TestHeadlessE2E -count=1
+	go test ./internal/e2e/ -run 'TestHeadlessE2E|TestChainE2E' -count=1
 
 # jev runs the classifier fixtures against the real TypeSafe endpoint
 # (docs/plans/2026-09-19-injection-classify.md §8). Local only: it needs

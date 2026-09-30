@@ -121,6 +121,43 @@ func TestChainResumeFlagRules(t *testing.T) {
 	}
 }
 
+// TestChainResumeRefusesStartOnlyFlags pins the round-6 review's refusal: a
+// resume takes the chain's name and the settings, never a start's own flags.
+// Each is a usage error that names the flag, made before any runtime is built,
+// so a caller who passes one cannot believe it took effect. Parse-only: no
+// state is opened and no harness is needed.
+func TestChainResumeRefusesStartOnlyFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"plan", []string{"chain", "--resume", "--name", "shop", "--plan", chainPlanArg(t)}},
+		{"base", []string{"chain", "--resume", "--name", "shop", "--base", "HEAD"}},
+		{"ticket", []string{"chain", "--resume", "--name", "shop", "--ticket", "#1"}},
+		{"feature", []string{"chain", "--resume", "--name", "shop", "--feature", "auth"}},
+		{"no-feature", []string{"chain", "--resume", "--name", "shop", "--no-feature"}},
+		{"mastermind", []string{"chain", "--resume", "--name", "shop", "--mastermind", "someone"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := captureOutput(t, func() error { return run(tc.args) })
+			ce := requireCLIError(t, err, codeUsage, "")
+			if !strings.Contains(ce.message, "--"+tc.name) {
+				t.Errorf("message = %q, want it to name --%s", ce.message, tc.name)
+			}
+		})
+	}
+
+	// The settings flags stay accepted: a resume with a settings flag and no
+	// start-only flag reaches the store and reports the chain it cannot find.
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"chain", "--resume", "--name", "resumesettings", "--max-corrections", "1", "--reviewer-actor", "reviewer"})
+	})
+	ce := requireCLIError(t, err, codeBindingNotFound, "")
+	if strings.Contains(ce.message, "--max-corrections") || strings.Contains(ce.message, "--reviewer-actor") {
+		t.Errorf("message = %q, want the missing chain, not a settings refusal", ce.message)
+	}
+}
+
 // seedCLIChain writes one chain row and its member bindings into the default
 // state root: store-only, so a test drives the verbs with no harness, no git
 // and no network.

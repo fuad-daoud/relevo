@@ -209,6 +209,16 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	if *v.security && *v.noSecurity {
 		return relevo.ResumeOptions{}, fail(codeUsage, "--security and --no-security are exclusive")
 	}
+	// A start's own flags: --resume continues a chain that already holds its
+	// plans, its label and its mastermind, so these have nothing to act on.
+	// Silently ignoring one would leave the caller believing it took effect,
+	// so each is refused by name -- before any runtime is built (round 6's
+	// review; --mastermind is the same dead flag the sweep found).
+	for _, name := range []string{"plan", "base", "ticket", "feature", "no-feature", "mastermind"} {
+		if chainFlagGiven(fs, name) {
+			return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --%s: a resume continues the chain it names, which already holds its plans, label and mastermind", name)
+		}
+	}
 	maxCorrections, err := chainIntFlag(fs, "max-corrections", *v.maxCorrections)
 	if err != nil {
 		return relevo.ResumeOptions{}, err
