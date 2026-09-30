@@ -165,6 +165,8 @@ func TestParsePickNoteForms(t *testing.T) {
 		{"picked agy/test/m: explicit, policy bypassed", "agy/test/m"},
 		{"picked codex/openai/gpt-5.6-terra:high for builder: order #2", "codex/openai/gpt-5.6-terra:high"},
 		{"picked opencode/cline-pass/cline-pass/glm-5.3-flash#high on h: s", "opencode/cline-pass/cline-pass/glm-5.3-flash#high"},
+		{"picked claude/anthropic/sonnet on zen: server's pick; placement zen (explicit)", "claude/anthropic/sonnet"},
+		{"picked agy/test/m for builder: order #1; placement zen (actor); skipped backup (unreachable)", "agy/test/m"},
 		{"picked x/y/z", "x/y/z"},
 		{"nothing picked", ""},
 	}

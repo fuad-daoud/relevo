@@ -12,7 +12,7 @@ import (
 // returns nil only after that tick returns. Tick cannot be held open through the
 // real implementation, so this uses the unexported tickFn seam.
 func TestRunFinishesInFlightTickWithoutCancel(t *testing.T) {
-	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond})
+	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond, Audiences: []string{testAudience}})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

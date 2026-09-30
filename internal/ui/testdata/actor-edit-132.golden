@@ -10,11 +10,11 @@
     5  sonnet      │                                                                                            │ady  next pick     
     6  glm-5.3-flas│ name       builder                                                                         │ady                
                    │                                                                                            │                   
-                   │ agent       plan-executor                                                                  │                   
-   check after each│            writer                                                                          │                   
+    #  PLACEMENT   │ agent       plan-executor                                                                  │                   
+    1  zen         │            writer                                                                          │                   
                    │                                                                                            │                   
                    │ tier        read    edit    yolo    harness                                                │                   
-                   │                                                                                            │                   
+   check after each│                                                                                            │                   
                    │ check       on    off                                                                      │                   
                    │                                                                                            │                   
                    │                                                                                            │                   

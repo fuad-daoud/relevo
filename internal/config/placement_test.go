@@ -142,3 +142,27 @@ func TestCheckActorPlacementIgnoresTheLegacyRolesPath(t *testing.T) {
 		t.Errorf("Actors = %v, want none on the legacy roles path", L.Actors)
 	}
 }
+
+// TestStoreRefusesALegacyRolesPlacementNamingAnUnknownServer pins the moved
+// check: it reads the built registry, so a placement a legacy roles row
+// carried is refused against the servers section exactly like one the actors
+// section wrote, with the same line.
+func TestStoreRefusesALegacyRolesPlacementNamingAnUnknownServer(t *testing.T) {
+	t.Parallel()
+
+	s := openStore(t)
+	seedSections(t, s, map[Section]string{
+		Candidates: placementCandidates,
+		Servers:    placementServers,
+	})
+
+	_, err := s.Put(Roles, []byte(`{"builder":{"candidates":["m"],"placement":["nope"]}}`))
+	if err == nil {
+		t.Fatal("Put(roles) with an unknown placement server: want a refusal")
+	}
+	for _, want := range []string{"builder.placement[0]", `"nope"`, "is not in the servers section"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to contain %q", err, want)
+		}
+	}
+}

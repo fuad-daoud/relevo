@@ -186,6 +186,44 @@ func TestDescribeChange(t *testing.T) {
 	}
 }
 
+// TestDescribeChangeServers pins the servers arm: a server's field keeps the
+// server as the subject, and a whole server entry names the server alone.
+func TestDescribeChangeServers(t *testing.T) {
+	t.Parallel()
+
+	field := config.Change{
+		Path: "servers.zen.url", Op: "change",
+		Before: json.RawMessage(`"https://old:7777"`), After: json.RawMessage(`"https://zen:7777"`),
+	}
+	if got := DescribeChange(field, config.Doc{}, config.Doc{}); got != (ChangeLine{
+		Op: "~", Subject: "server zen", Field: "url",
+		Before: "https://old:7777", After: "https://zen:7777",
+	}) {
+		t.Errorf("DescribeChange(%s) = %+v, want subject server zen, field url", field.Path, got)
+	}
+
+	for _, op := range []struct {
+		op           string
+		carriesValue bool
+	}{{"add", false}, {"remove", true}} {
+		c := config.Change{Path: "servers.zen", Op: op.op}
+		if op.carriesValue {
+			c.Before = json.RawMessage(`{"url":"https://zen:7777"}`)
+		} else {
+			c.After = json.RawMessage(`{"url":"https://zen:7777"}`)
+		}
+		want := ChangeLine{Op: changeOp(op.op), Subject: "server zen"}
+		if op.carriesValue {
+			want.Before = "url https://zen:7777"
+		} else {
+			want.After = "url https://zen:7777"
+		}
+		if got := DescribeChange(c, config.Doc{}, config.Doc{}); got != want {
+			t.Errorf("DescribeChange(%s, %s) = %+v, want %+v", c.Path, op.op, got, want)
+		}
+	}
+}
+
 // A value longer than 60 runes is cut with the ellipsis, as cutValue cuts it.
 func TestDescribeChangeCutsValue(t *testing.T) {
 	t.Parallel()

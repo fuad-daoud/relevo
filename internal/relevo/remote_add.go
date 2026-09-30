@@ -367,6 +367,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	res := Resolution{
 		Candidate: cand,
 		How:       HowExplicit,
+		Placement: opts.Placement,
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -374,7 +375,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 			return err
 		}
 		if view.Candidate != "" {
-			return tx.AppendLog(b.Name, remotePickEntry(rt.Now(), opts.Server, view.Candidate, opts.Candidate != "", 1))
+			return tx.AppendLog(b.Name, remotePickEntry(rt.Now(), opts.Server, view.Candidate, opts.Candidate != "", 1, opts.Placement))
 		}
 		return nil
 	}); err != nil {
@@ -412,8 +413,9 @@ func remoteLink(view remote.BindingView) *store.RemoteLink {
 // wording assumes a local resolveCandidate call that never ran here, so it
 // would misdescribe a token the server picked on its own. round is the round
 // the pick is filed under: 1 for a fresh binding, the sent round for a
-// `relevo send --candidate` (#318).
-func remotePickEntry(now time.Time, server, token string, explicit bool, round int) store.LogEntry {
+// `relevo send --candidate` (#318). A placement appends its own clause; a zero
+// one leaves the sentence byte-identical.
+func remotePickEntry(now time.Time, server, token string, explicit bool, round int, placement PlacementResolution) store.LogEntry {
 	how := "server's pick"
 	if explicit {
 		how = "explicit"
@@ -421,6 +423,6 @@ func remotePickEntry(now time.Time, server, token string, explicit bool, round i
 	return store.LogEntry{
 		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
 		Kind: store.KindPick, Confirmed: true,
-		Note: fmt.Sprintf("picked %s on %s: %s", token, server, how),
+		Note: fmt.Sprintf("picked %s on %s: %s", token, server, how) + placementClause(placement),
 	}
 }

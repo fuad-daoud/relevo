@@ -42,6 +42,15 @@ type AddOptions struct {
 	// Server hosts the builder on a remote relevo server (§4.4).
 	Server string
 
+	// Local runs the builder here, whatever the actor's placement says. It is
+	// the --local flag, and it is refused with Server on the command line.
+	Local bool
+
+	// Placement is a choice the caller already made, so Add does not probe
+	// again. The zero value means "resolve it here": an explicit Server or
+	// Local decides without a probe, and otherwise the actor's own list does.
+	Placement PlacementResolution
+
 	// Base commit or ref to branch from; defaults to HEAD.
 	Base string
 
@@ -169,6 +178,40 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 				return AddResult{}, errors.New("--regate: a reader round has no check")
 			}
 		}
+		// A caller that resolved the actor's list (a plain bind that landed
+		// here) passes its choice in; only a bare --server is explicitly
+		// chosen here.
+		if opts.Placement.How == "" {
+			opts.Placement = PlacementResolution{Name: opts.Server, How: placementHowExplicit}
+		}
+		return addRemote(ctx, rt, opts, rec, haveRec)
+	}
+	// The placement decides the rest of the path, once, before anything is
+	// created: an explicit --local is taken as given, and otherwise the
+	// actor's own list is probed in order. A caller that already resolved
+	// passes its choice in, so nothing is probed twice.
+	if opts.Placement.How == "" {
+		placement, perr := createPlacement(ctx, rt,
+			bindingRole(store.Binding{Role: normRole(opts.Role)}), opts.Candidate, "", opts.Local,
+			placementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
+		if perr != nil {
+			return AddResult{}, perr
+		}
+		opts.Placement = placement
+	}
+	if !opts.Placement.local() {
+		opts.Server = opts.Placement.Name
+		if shape, rerr := actorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
+			if err := requireRemoteReaders(ctx, rt, opts.Server); err != nil {
+				return AddResult{}, err
+			}
+			if opts.Gate != "" {
+				return AddResult{}, errors.New("--gate: a reader round has no check")
+			}
+			if opts.Regate != nil {
+				return AddResult{}, errors.New("--regate: a reader round has no check")
+			}
+		}
 		return addRemote(ctx, rt, opts, rec, haveRec)
 	}
 	// A binding runs one actor, writer or reader (A5 §2). Refuse an unknown
@@ -209,6 +252,9 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if err != nil {
 		return AddResult{}, err
 	}
+	// The placement rides on the resolution so the pick note and the added
+	// line say where the binding landed and what it passed over.
+	res.Placement = opts.Placement
 	c := res.Candidate
 
 	tier := resolveRoleTier(opts.Tier, c, rt.RoleRegistry(), roleName)

@@ -11,7 +11,7 @@ var registry = []verbEntry{
 		Args:    "[NAME] [--json]",
 		Flags: []string{
 			"--actor", "--allow-yolo", "--base", "--branch", "--candidate", "--cwd",
-			"--feature", "--gate", "--json", "--mastermind", "--name", "--no-feature", "--no-gate",
+			"--feature", "--gate", "--json", "--local", "--mastermind", "--name", "--no-feature", "--no-gate",
 			"--rebind", "--regate", "--resume", "--server", "--ticket", "--tier",
 			"--timeout", "--worktree",
 		},
@@ -374,7 +374,7 @@ var registry = []verbEntry{
 		Args:    "[--listen :7777] [--state <dir>] [--interval 2s]",
 		Flags: []string{
 			"--insecure-http", "--interval", "--listen", "--max-builders",
-			"--max-bundle-bytes", "--state",
+			"--max-bundle-bytes", "--public-host", "--state",
 		},
 		Exit:   []int{0, 1, 2},
 		Errors: []string{"usage"},

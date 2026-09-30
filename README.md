@@ -256,7 +256,7 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
 
 ## Command surface
 
-- `relevo bind [--name N] [--candidate CANDIDATE] [--actor R] [--tier T [--allow-yolo]] [--gate CMD|--no-gate] [--regate N] [--resume [--rebind]] [--timeout D] --feature L|--no-feature [--ticket REF] [--mastermind P]`
+- `relevo bind [--name N] [--candidate CANDIDATE] [--actor R] [--tier T [--allow-yolo]] [--gate CMD|--no-gate] [--regate N] [--resume [--rebind]] [--local] [--timeout D] --feature L|--no-feature [--ticket REF] [--mastermind P]`
   — start a binding between the calling MasterMind and a builder. A fresh bind
   must name exactly one of `--feature <label>` (a label grouping it with other
   bindings) and `--no-feature` (it serves no feature); naming neither or both is
@@ -340,9 +340,12 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   command exits, with the report in its output (see
   [Claude Code plugin](#claude-code-plugin)).
 - `relevo ui [--interval D] [:view [args]]` — the cockpit: `:fleet`, `:rounds [query]`,
-  `:round <binding> [N]`. `:fleet` is the root table of bindings; `enter` opens its round
+  `:round <binding> [N]`, `:servers`. `:fleet` is the root table of bindings; `enter` opens its round
   detail, `esc` goes back, `:` the command line, `?` the key list. `relevo ui :rounds`
   opens the rounds grid directly (`:rounds` reaches it from the fleet).
+  `:servers` lists the configured remote builders' servers and probes their health on demand
+  (`r`); the client key stays with `relevo config server key`, and the view never shows or edits
+  key material.
 - `relevo bind --worktree --name N --feature L|--no-feature [--ticket REF] [--candidate CANDIDATE] [--actor R] [--cwd DIR]` — attach an
   additional builder to this MasterMind on its own git worktree, starting at
   round 1. This is how one MasterMind drives several builders at once.
@@ -419,7 +422,7 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   `--json` print instead of writing, `--out PATH` writes exactly there, `--logs` adds
   capped report, diff and transcript tails, `--raw` skips the redaction pass, and `--gh`
   runs the printed line. Nothing is sent automatically.
-- `relevo serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N] [--max-builders N]` — run the remote-builder server (listener + daemon).
+- `relevo serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N] [--max-builders N] [--public-host <h>]...` — run the remote-builder server (listener + daemon).
 - `relevo serve init|enroll|clients|revoke|fingerprint|status|ui|gc|unbind` — server administration, on the server host. `relevo show --owner` reads one owner's round on that host, and `serve ui` is the server's own reader.
 - `relevo gate --serve [--state DIR]` — list the gates on the server's own ledger.
 - `relevo gate --serve --clear <provider|token> [--state DIR]` — clear a recorded rate limit on the server's ledger.
@@ -748,6 +751,9 @@ On a fresh server host, the first run looks like:
    systemctl --user daemon-reload
    systemctl --user enable --now relevo-serve
    ```
+5. If any client reaches this server by `--ca system` or `--insecure`, start it with `--public-host <the exact host in that client's URL>` (repeatable; the port is dropped and the host is lower-cased). A client that pins the certificate needs nothing: its audience is the pinned fingerprint. Run `relevo serve --public-host serve.example.com` (or add the flag to the unit's `ExecStart`). Every accepted audience is logged once at startup, so the log names what the server will accept.
+
+`relevo serve` refuses to start with neither a certificate nor a `--public-host` value: "no audience: run relevo serve init or pass --public-host". A server with no accepted audience refuses every signed request rather than guessing which of its identities a request was meant for.
 
 On the server machine, the admin runs these on the server host. No `--state` is needed: an admin verb reads the running daemon's root from the database's `serve.daemon` record (an explicit `--state` still wins, and a stale record falls back to the default root with a note):
 
@@ -781,11 +787,24 @@ Set up once per machine:
    `<label>`", or "not enrolled on `<name>`: give the admin: `<enrollment
    line>`" if step 2 has not happened yet. `--ca system` trusts the system CA
    pool instead of pinning a fingerprint; `--insecure` allows plain HTTP, for
-   a server reachable only over an already-trusted tunnel.
+   a server reachable only over an already-trusted tunnel. With `--ca system`
+   or `--insecure`, this client signs every request for the URL's host, so the
+   server admin must have started the server with `--public-host <that host>`;
+   with `--fingerprint` it signs for the pinned fingerprint and the server
+   needs no extra flag.
 4. `relevo config server list` lists every configured server and this client's
    enrollment on each: `enrolled as <label>`, `not enrolled`, `unreachable`,
    or `cert changed` (the pinned fingerprint no longer matches -- a hard
    refusal the client never overrides silently).
+
+**Version skew.** This release binds every signature to the server's
+identity, so the two ends upgrade together -- there is no window that accepts
+both the old and the new signed string. A pre-upgrade client against an
+upgraded server gets HTTP 426, and `relevo config server list` prints
+`error: server rejected protocol version (426)`. An upgraded client against a
+pre-upgrade server prints `server predates audience-bound signatures; upgrade
+relevo on the server`. Upgrade both ends, then check `relevo config server
+list` shows `enrolled as <label>` for every server.
 
 Then, from any repository:
 ```
@@ -1433,7 +1452,8 @@ Actor entries:
 - `tier` -- the actor's permission tier.
 - `placement` -- where the actor's rounds run, most preferred first: `local`
   names this machine, and every other entry must name a `servers` section entry,
-  checked when the config loads. Absent or empty means `["local"]`.
+  checked when the config loads. Absent or empty means `["local"]`. `bind`
+  probes the list in order and `--server`/`--local` override it.
 - `check` -- writers only: whether a round closes on a gate; defaults to true.
   An actor whose agent is a reader must not set it.
 

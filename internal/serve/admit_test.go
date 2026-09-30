@@ -395,6 +395,7 @@ func TestRestartRequeuesDeadBuilder(t *testing.T) {
 		Now:         time.Now,
 		MaxBuilders: 1,
 		StartedAt:   time.Unix(oldStartedAt+60, 0), // after A's own builder start
+		Audiences:   []string{testAudience},
 	})
 	if err != nil {
 		t.Fatal(err)

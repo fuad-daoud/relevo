@@ -42,6 +42,11 @@ type bindFlags struct {
 	server   string
 	base     string
 
+	// local runs the builder on this machine whatever the actor's placement
+	// says. It is not a route flag: a plain `bind --local` stays bind, and
+	// --server with --local is refused below.
+	local bool
+
 	// asJSON selects the result document instead of the human lines; stdout
 	// then carries the document alone and the notices move to stderr (§2.1).
 	asJSON bool
@@ -61,6 +66,10 @@ const (
 func bindRouteFor(f bindFlags) (bindRoute, error) {
 	placement := f.worktree || f.cwd != "" || f.branch != "" || f.server != "" || f.base != ""
 	switch {
+	case f.server != "" && f.local:
+		// --server and --local name two different machines; the two together
+		// are refused on one line like every other route conflict.
+		return routeBind, errors.New("--server and --local are exclusive: --server runs the builder on that server, --local on this machine")
 	case f.resume || f.rebind:
 		// --resume and --rebind are bind's alone.
 		if placement {
@@ -103,6 +112,7 @@ type bindFlagValues struct {
 	branch         *string
 	server         *string
 	base           *string
+	local          *bool
 	asJSON         *bool
 }
 
@@ -132,6 +142,7 @@ func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v.branch = fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
 	v.server = fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
 	v.base = fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
+	v.local = fs.Bool("local", false, "run the builder on this machine, whatever the actor's placement says")
 	v.asJSON = fs.Bool("json", false, "print the binding as a JSON document")
 	return v
 }
@@ -172,6 +183,7 @@ func cmdBind(args []string) error {
 		feature: *v.feature, noFeature: *v.noFeature, ticket: *v.ticket,
 		role: *v.actor, worktree: *v.worktree, cwd: *v.cwd,
 		branch: *v.branch, server: *v.server, base: *v.base,
+		local:  *v.local,
 		asJSON: *v.asJSON,
 	}
 
@@ -238,6 +250,7 @@ func runBind(f bindFlags) error {
 		NoFeature:    f.noFeature,
 		Ticket:       f.ticket,
 		Role:         f.role,
+		Local:        f.local,
 	}
 	opts.Candidate = f.candidate
 
@@ -379,6 +392,7 @@ func runAdd(f bindFlags) error {
 		Branch:       branch,
 		Server:       f.server,
 		Base:         f.base,
+		Local:        f.local,
 		Tier:         f.tier,
 		AllowYolo:    f.allowYolo,
 		Gate:         f.gate,

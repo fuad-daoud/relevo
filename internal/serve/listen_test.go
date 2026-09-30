@@ -76,7 +76,7 @@ func whoAmILabel(t *testing.T, client *http.Client, scheme string, addr net.Addr
 	if err != nil {
 		t.Fatal(err)
 	}
-	for k, vv := range remote.Sign(kp, "GET", "/v1/whoami", nil, now, nonce) {
+	for k, vv := range remote.Sign(kp, testAudience, "GET", "/v1/whoami", nil, now, nonce) {
 		for _, v := range vv {
 			req.Header.Add(k, v)
 		}
@@ -122,7 +122,7 @@ func TestListenWhoAmI(t *testing.T) {
 				scheme = "https"
 			}
 
-			srv, err := New(Config{DB: testServeDB(t), Root: dir, Now: func() time.Time { return now }})
+			srv, err := New(Config{DB: testServeDB(t), Root: dir, Now: func() time.Time { return now }, Audiences: []string{testAudience}})
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
@@ -161,7 +161,7 @@ func TestListenWhoAmI(t *testing.T) {
 }
 
 func TestListenRefusesWithoutTLS(t *testing.T) {
-	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now})
+	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now, Audiences: []string{testAudience}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestListenRefusesWithoutTLS(t *testing.T) {
 // down and returns only after Run has finished its in-flight tick. Tick cannot
 // be held open through the real implementation, so this uses tickFn.
 func TestListenAndServeWaitsForRun(t *testing.T) {
-	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond})
+	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond, Audiences: []string{testAudience}})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

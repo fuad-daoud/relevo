@@ -1,3 +1,4 @@
+host:test
 GET
 /v1/whoami
 1767323045

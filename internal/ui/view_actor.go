@@ -12,15 +12,17 @@ import (
 )
 
 // actorView is `actors › <name>` (§4): the actor's candidate list, reordered,
-// turned on and off, added to from a picker and removed from, its check line,
-// and the edit form behind e.
+// turned on and off, added to from a picker and removed from, the placement
+// list beside it, its check line, and the edit form behind e.
 type actorView struct {
-	name   string
-	doc    relevo.ConfigDoc
-	err    error // the last ConfigDoc error; shown centred like candidates' error state
-	loaded bool
-	cur    int // cursor over the actor's entries
-	top    int // first body line shown (page follows the cursor)
+	name     string
+	doc      relevo.ConfigDoc
+	err      error // the last ConfigDoc error; shown centred like candidates' error state
+	loaded   bool
+	cur      int // cursor over the actor's entries
+	placeCur int // cursor over the actor's placement entries
+	focus    int // focusCandidates or focusPlacement: which pane owns the keys
+	top      int // first body line shown (page follows the cursor)
 }
 
 // newActorView pushes the actor's detail view (§4).
@@ -132,6 +134,8 @@ func (v actorView) bodyLines(env Env, width int) []string {
 	for i := range a.Candidates {
 		lines = append(lines, actorPickLine(v.doc, env, v.name, i, i == cur, nameW, cols, cw))
 	}
+	lines = append(lines, "")
+	lines = append(lines, actorPlacementLines(v.doc, v.name, v.placementFocus(), v.placeCur, width)...)
 	lines = append(lines, "", "")
 	if check, ok := actorCheckLine(v.doc, v.name, width); ok {
 		lines = append(lines, fit(check, width))
@@ -147,7 +151,13 @@ func (v *actorView) follow(env Env) {
 		return
 	}
 	lines := v.bodyLines(env, env.Width)
-	sel := 2 + v.cur // the blank line, the header row, then the rows
+	// The selected row is the focused pane's: the candidate rows start after
+	// the blank line and the header, the placement rows after those rows, a
+	// blank, and the PLACEMENT header.
+	sel := 2 + v.cur
+	if v.placementFocus() {
+		sel = len(v.doc.Actors[v.name].Candidates) + 4 + v.placeCur
+	}
 	if sel < v.top {
 		v.top = sel
 	}
@@ -162,8 +172,32 @@ func (v actorView) Crumbs() []string { return []string{v.name} }
 // Capturing is always false: the view owns no text input of its own (§4).
 func (v actorView) Capturing() bool { return false }
 
-// Keys are the detail view's keys (§4).
+// Keys are the detail view's keys (§4), for the pane that owns them: a
+// placement entry has no on/off, and tab names the pane it would move to.
 func (v actorView) Keys() []KeyHelp {
+	tab := KeyHelp{"tab", "placement"}
+	if v.placementFocus() {
+		tab = KeyHelp{"tab", "candidates"}
+	}
+	keys := []KeyHelp{
+		{"↑↓", "move"},
+		{"shift+↑↓", "reorder"},
+	}
+	if !v.placementFocus() {
+		keys = append(keys, KeyHelp{"space", "on / off"})
+	}
+	return append(keys,
+		KeyHelp{"a", "add"},
+		KeyHelp{"d", "remove"},
+		KeyHelp{"e", "edit"},
+		tab,
+		KeyHelp{"esc", "back"},
+	)
+}
+
+// HelpKeys is the help overlay's key list (§2.2): both panes' keys, so the
+// overlay documents the pane that does not own them right now too.
+func (v actorView) HelpKeys() []KeyHelp {
 	return []KeyHelp{
 		{"↑↓", "move"},
 		{"shift+↑↓", "reorder"},
@@ -171,12 +205,10 @@ func (v actorView) Keys() []KeyHelp {
 		{"a", "add"},
 		{"d", "remove"},
 		{"e", "edit"},
+		{"tab", "switch list"},
 		{"esc", "back"},
 	}
 }
-
-// HelpKeys is the help overlay's key list (§2.2): the same set.
-func (v actorView) HelpKeys() []KeyHelp { return v.Keys() }
 
 // Context is the actor's summary line (§4): the agent and shape, the tier, the
 // candidate count and the next pick.
@@ -230,6 +262,7 @@ func (v actorView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 			v.loaded = true
 		}
 		v.cur = candClamp(v.cur, len(v.doc.Actors[v.name].Candidates))
+		v.placeCur = candClamp(v.placeCur, len(v.doc.Actors[v.name].Placement))
 		return v, nil
 
 	case statusMsg:
@@ -244,8 +277,9 @@ func (v actorView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateKey is the detail view's own keys (§4). While an edit of this actor is
-// in flight, every change key is ignored, so two fast presses cannot build a
-// second edit on a list the first has not written yet.
+// in flight, every change key is ignored -- in both panes, since either one
+// would build a second edit on a list the first has not written yet. tab
+// changes nothing on its own, so it still moves the focus.
 func (v actorView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 	entries := v.doc.Actors[v.name].Candidates
 	n := len(entries)
@@ -255,6 +289,19 @@ func (v actorView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		case "shift+up", "shift+down", " ", "space", "d", "a", "e":
 			return v, nil
 		}
+	}
+
+	if k.String() == "tab" {
+		if v.placementFocus() {
+			v.focus = focusCandidates
+		} else {
+			v.focus = focusPlacement
+		}
+		v.follow(env)
+		return v, nil
+	}
+	if v.placementFocus() {
+		return v.updatePlacementKey(k, env)
 	}
 
 	switch k.String() {

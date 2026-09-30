@@ -45,6 +45,11 @@ type Actions interface {
 	// applied and reloaded, and one candidate probed.
 	ConfigDoc() (relevo.ConfigDoc, error)                        // the stored config, freshly read
 	ApplyConfig(ctx context.Context, e relevo.ConfigEdit) Result // write one edit, then reload this adapter's runtime
+	// ServerProbes checks every configured server's reachability and this
+	// client's enrollment on it, the same relevo.ProbeServers `relevo config
+	// server list` runs. No config store, or a nil adapter, is an empty
+	// answer rather than a failure.
+	ServerProbes(ctx context.Context) []relevo.ServerProbe
 	// The audit view (round 6): every revision, one revision's changes in
 	// human words, the same for a roll back's preview, and the roll back
 	// itself.

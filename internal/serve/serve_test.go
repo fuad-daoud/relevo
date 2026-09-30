@@ -283,7 +283,7 @@ func TestAuthRejects(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for k, vv := range remote.Sign(kpEnrolled, "GET", "/v1/whoami", sum[:], staleTime, nonce) {
+		for k, vv := range remote.Sign(kpEnrolled, testAudience, "GET", "/v1/whoami", sum[:], staleTime, nonce) {
 			for _, v := range vv {
 				req.Header.Add(k, v)
 			}
@@ -487,10 +487,11 @@ func TestWhoAmIAdvertisesCandidateAndActors(t *testing.T) {
 
 func TestWhoAmIScope(t *testing.T) {
 	scoped, err := New(Config{
-		DB:    testServeDB(t),
-		Root:  t.TempDir(),
-		Now:   time.Now,
-		Scope: &spawn.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"},
+		DB:        testServeDB(t),
+		Root:      t.TempDir(),
+		Now:       time.Now,
+		Scope:     &spawn.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"},
+		Audiences: []string{testAudience},
 	})
 	if err != nil {
 		t.Fatalf("New scoped server: %v", err)
@@ -666,6 +667,7 @@ func newTierTestServer(t *testing.T, pol policy.Policy) (*Server, remote.Keypair
 		Candidates: cSet,
 		Policy:     pol,
 		Now:        time.Now,
+		Audiences:  []string{testAudience},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -719,6 +721,7 @@ func newRoleTestServer(t *testing.T, pol policy.Policy, reg *roles.Registry) (*S
 		Policy:     pol,
 		Registry:   reg,
 		Now:        time.Now,
+		Audiences:  []string{testAudience},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -974,6 +977,7 @@ func roleRefusalServer(t *testing.T, checker harness.RoleChecker) (*Server, remo
 		Registry:   reg,
 		Roles:      checker,
 		Now:        time.Now,
+		Audiences:  []string{testAudience},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1226,7 +1230,7 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Candidates: cSet, Now: time.Now})
+	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Candidates: cSet, Now: time.Now, Audiences: []string{testAudience}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1275,7 +1279,7 @@ func newAvailableServer(t *testing.T) (*Server, remote.Keypair) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Candidates: cSet, Now: time.Now})
+	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Candidates: cSet, Now: time.Now, Audiences: []string{testAudience}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2249,6 +2253,7 @@ func TestTickWalksEveryOwner(t *testing.T) {
 		Runner:     runner,
 		Git:        gitClient,
 		Now:        time.Now,
+		Audiences:  []string{testAudience},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2316,7 +2321,7 @@ func requireNoOwnerDatabases(t *testing.T, root string, ids ...remote.ClientID) 
 }
 
 func TestTickSkipsMissingBindingsDir(t *testing.T) {
-	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now})
+	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now, Audiences: []string{testAudience}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2365,6 +2370,7 @@ func candidatesViewServer(t *testing.T) (*Server, remote.Keypair) {
 		Candidates: cSet,
 		Policy:     pol,
 		Now:        func() time.Time { return now },
+		Audiences:  []string{testAudience},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -3099,7 +3105,7 @@ func TestUnavailableRejectsAnOverlongReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Candidates: cSet, Now: time.Now})
+	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Candidates: cSet, Now: time.Now, Audiences: []string{testAudience}})
 	if err != nil {
 		t.Fatal(err)
 	}

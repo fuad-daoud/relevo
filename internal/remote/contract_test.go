@@ -404,17 +404,17 @@ func TestContractSignedRequests(t *testing.T) {
 	fixedKp := fixedKeypair()
 	ts := strconv.FormatInt(fixedTime.Unix(), 10)
 
-	canonGet := Canonical("GET", "/v1/whoami", ts, fixedNonce, nil)
+	canonGet := Canonical(testAudience, "GET", "/v1/whoami", ts, fixedNonce, nil)
 	canonGet = append(canonGet, '\n')
 	assertGolden(t, "canonical-get", canonGet)
 
 	body := []byte(`{"name":"test-binding"}`)
 	bodySum := sha256.Sum256(body)
-	canonPost := Canonical("POST", "/v1/bindings", ts, fixedNonce, bodySum[:])
+	canonPost := Canonical(testAudience, "POST", "/v1/bindings", ts, fixedNonce, bodySum[:])
 	canonPost = append(canonPost, '\n')
 	assertGolden(t, "canonical-post", canonPost)
 
-	hdr := Sign(fixedKp, "POST", "/v1/bindings", bodySum[:], fixedTime, fixedNonce)
+	hdr := Sign(fixedKp, testAudience, "POST", "/v1/bindings", bodySum[:], fixedTime, fixedNonce)
 
 	var sortedHeaders strings.Builder
 	var keys []string
@@ -439,7 +439,7 @@ func TestContractSignedRequests(t *testing.T) {
 	}
 	nonces := NewNonceWindow(10 * time.Minute)
 
-	gotID, err := Verify(hdr, "POST", "/v1/bindings", bodySum[:], fixedTime, lookup, nonces)
+	gotID, err := Verify(hdr, "POST", "/v1/bindings", bodySum[:], fixedTime, lookup, nonces, []string{testAudience})
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestContractSignedRequests(t *testing.T) {
 		clone := hdr.Clone()
 		clone.Del(k)
 		testNonces := NewNonceWindow(10 * time.Minute)
-		if _, err := Verify(clone, "POST", "/v1/bindings", bodySum[:], fixedTime, lookup, testNonces); err == nil {
+		if _, err := Verify(clone, "POST", "/v1/bindings", bodySum[:], fixedTime, lookup, testNonces, []string{testAudience}); err == nil {
 			t.Fatalf("Verify unexpectedly succeeded with header %s removed", k)
 		}
 	}

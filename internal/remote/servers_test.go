@@ -60,3 +60,83 @@ func TestValidateEntry(t *testing.T) {
 		})
 	}
 }
+
+// TestAudienceOf pins the audience a client signs for each trust mode: the
+// pinned fingerprint in pin mode, the lower-case host in CA and insecure mode.
+// The port is always dropped; a mixed-case host is lower-cased.
+func TestAudienceOf(t *testing.T) {
+	const fp = "sha256:ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+
+	tests := []struct {
+		name  string
+		entry ServerEntry
+		want  string
+	}{
+		{
+			name:  "pinned with an upper-case fingerprint",
+			entry: ServerEntry{URL: "https://zen:7777", Fingerprint: fp},
+			want:  "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		},
+		{
+			name:  "ca system",
+			entry: ServerEntry{URL: "https://zen.example.com:7777", CA: "system"},
+			want:  "host:zen.example.com",
+		},
+		{
+			name:  "ca system beside a fingerprint wins the host",
+			entry: ServerEntry{URL: "https://zen.example.com", CA: "system", Fingerprint: fp},
+			want:  "host:zen.example.com",
+		},
+		{
+			name:  "insecure",
+			entry: ServerEntry{URL: "http://zen:7777", Insecure: true},
+			want:  "host:zen",
+		},
+		{
+			name:  "host with port",
+			entry: ServerEntry{URL: "https://zen:7777", CA: "system"},
+			want:  "host:zen",
+		},
+		{
+			name:  "mixed-case host",
+			entry: ServerEntry{URL: "https://Zen.Example.COM:7777", CA: "system"},
+			want:  "host:zen.example.com",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := AudienceOf(tc.entry)
+			if err != nil {
+				t.Fatalf("AudienceOf(%+v): %v", tc.entry, err)
+			}
+			if got != tc.want {
+				t.Fatalf("AudienceOf(%+v) = %q, want %q", tc.entry, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAudienceOfErrors pins the two refusals: a URL that does not parse, and
+// one that parses with no host, each name no audience to sign for.
+func TestAudienceOfErrors(t *testing.T) {
+	for _, entry := range []ServerEntry{
+		{URL: "::not-a-url::"},
+		{URL: "https:///no-host", CA: "system"},
+	} {
+		if got, err := AudienceOf(entry); err == nil {
+			t.Fatalf("AudienceOf(%+v) = %q, want an error", entry, got)
+		}
+	}
+}
+
+// TestHostAudience pins the normalisation -- lower-case, no port, the literal
+// host: prefix -- that both sides of the wire share.
+func TestHostAudience(t *testing.T) {
+	if got, want := HostAudience("Zen.Fuad-Daoud.COM"), "host:zen.fuad-daoud.com"; got != want {
+		t.Fatalf("HostAudience = %q, want %q", got, want)
+	}
+	if got, want := HostAudience("zen"), "host:zen"; got != want {
+		t.Fatalf("HostAudience = %q, want %q", got, want)
+	}
+}

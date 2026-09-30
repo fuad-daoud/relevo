@@ -39,7 +39,7 @@ func (aliveRunner) Rusage(context.Context, spawn.ProcHandle, string) (spawn.Proc
 
 func newAdminServer(t *testing.T, now time.Time, opts ...func(*Config)) *Server {
 	t.Helper()
-	cfg := Config{DB: testServeDB(t), Root: t.TempDir(), Now: func() time.Time { return now }}
+	cfg := Config{DB: testServeDB(t), Root: t.TempDir(), Now: func() time.Time { return now }, Audiences: []string{testAudience}}
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -142,7 +142,7 @@ func TestAdminStatusReportsHeadlessLivenessThroughRunner(t *testing.T) {
 	d := testServeDB(t)
 	newServer := func(r spawn.Runner) *Server {
 		t.Helper()
-		s, err := New(Config{DB: d, Root: root, Now: func() time.Time { return now }, Runner: r})
+		s, err := New(Config{DB: d, Root: root, Now: func() time.Time { return now }, Runner: r, Audiences: []string{testAudience}})
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}

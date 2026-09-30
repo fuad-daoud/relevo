@@ -63,6 +63,10 @@ type Config struct {
 	// lets a client show a name for the machine. The zero value serves
 	// exactly as before, with no installation advertised.
 	Installation installation.Installation
+	// Audiences is the set of request audiences this server accepts: its
+	// certificate fingerprint and every host:<h> a --public-host value names.
+	// An empty set refuses every signed request, so production must fill it.
+	Audiences []string
 }
 
 type Server struct {
@@ -72,7 +76,10 @@ type Server struct {
 	transport    remote.TreeTransport // remote.NewBundleTransport(cfg.Git, filepath.Join(cfg.Root, "tmp"))
 	addr         net.Addr
 	insecureHTTP bool
-	mu           sync.Mutex // every store/ledger mutation and every tick
+	// audiences is the accepted audience set, copied from cfg so a later
+	// mutation of the caller's slice cannot widen it.
+	audiences []string
+	mu        sync.Mutex // every store/ledger mutation and every tick
 	// gates is a `serve.`-prefixed view of the machine database, so a server-wide
 	// gate never collides with this machine's own rows.
 	gates db.KV
@@ -124,6 +131,7 @@ func New(cfg Config) (*Server, error) {
 		clients:   clients,
 		nonces:    nonces,
 		transport: transport,
+		audiences: append([]string(nil), cfg.Audiences...),
 		gates:     db.PrefixKV{KV: cfg.DB, Prefix: "serve."},
 		stores:    map[string]*store.Store{},
 		liveCache: newLiveCache(),
