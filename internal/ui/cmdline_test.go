@@ -209,3 +209,29 @@ func TestOpenRoundLive(t *testing.T) {
 		t.Errorf("roundOpenMsg = %+v, want key persist round 2", msg)
 	}
 }
+
+// :servers completes from the command table and dispatches to the view.
+func TestCmdLineServersCompletesAndDispatches(t *testing.T) {
+	c := newCmdLine()
+	c.input.SetValue("ser")
+	ms := c.matches(cmdEnv())
+	if len(ms) == 0 || ms[0].name != "servers" {
+		t.Fatalf("matches(\"ser\") = %+v, want servers first", ms)
+	}
+
+	env := candActionEnv(&fakeActions{}, view.Report{})
+	cmd := execLine("servers", env, prefs{})
+	if cmd == nil {
+		t.Fatal(":servers must return a command")
+	}
+	msg, ok := cmd().(rootMsg)
+	if !ok {
+		t.Fatalf(":servers gave %T, want a root message", msg)
+	}
+	if len(msg.vs) != 1 {
+		t.Fatalf(":servers rooted %d views, want one", len(msg.vs))
+	}
+	if _, ok := msg.vs[0].(serversView); !ok {
+		t.Errorf(":servers rooted %T, want a serversView", msg.vs[0])
+	}
+}
