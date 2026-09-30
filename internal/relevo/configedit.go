@@ -361,6 +361,44 @@ func SetActorEntries(d ConfigDoc, actor string, entries []roles.Entry) (ConfigEd
 	return actorEdit(d, acts, actor, "edit actor "+actor+" candidates")
 }
 
+// SetActorPlacement replaces actor's ordered placement list with entries. It
+// covers reorder, add and remove in one call.
+//
+// Empty entries clear the field rather than storing ["local"]: the absent
+// field is what means ["local"] on the next load, so clearing leaves the
+// actor at the default instead of pinning that default into the config.
+//
+// The unknown-server refusal lives here rather than in the store's own
+// cross-check (internal/config/placement.go) so the cockpit can show a human
+// notice; the cross-check stays the backstop on every write path.
+func SetActorPlacement(d ConfigDoc, actor string, entries []string) (ConfigEdit, error) {
+	a, ok := d.Actors[actor]
+	if !ok {
+		return ConfigEdit{}, &FieldError{"", "no actor named " + actor}
+	}
+	seen := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		if entry == "" {
+			return ConfigEdit{}, &FieldError{"", "placement entry is empty"}
+		}
+		if seen[entry] {
+			return ConfigEdit{}, &FieldError{"", "duplicate placement " + entry}
+		}
+		seen[entry] = true
+		if entry == "local" {
+			continue
+		}
+		if _, ok := d.Servers[entry]; !ok {
+			return ConfigEdit{}, &FieldError{"", "no server named " + entry}
+		}
+	}
+
+	a.Placement = append([]string(nil), entries...)
+	acts := copyActors(d.Actors)
+	acts[actor] = a
+	return actorEdit(d, acts, actor, "edit actor "+actor+" placement")
+}
+
 // EditActor sets actor's agent, tier and check. A reader agent stores no
 // check, whatever check says.
 func EditActor(d ConfigDoc, actor, agent, tier string, check bool) (ConfigEdit, error) {

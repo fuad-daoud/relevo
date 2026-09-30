@@ -437,6 +437,87 @@ func TestConfigEditPreservesPlacement(t *testing.T) {
 	}
 }
 
+// TestConfigEditSetActorPlacement pins the placement edit: the refusals the
+// store would give, a replace that leaves the rest of the actor alone, and a
+// clear that stores nothing at all.
+func TestConfigEditSetActorPlacement(t *testing.T) {
+	t.Parallel()
+
+	t.Run("rejects an unknown actor", func(t *testing.T) {
+		_, err := SetActorPlacement(configeditServerDoc(t), "nope", []string{"zen"})
+		wantFieldError(t, err, "", "no actor named nope")
+	})
+
+	t.Run("rejects an empty entry", func(t *testing.T) {
+		_, err := SetActorPlacement(configeditServerDoc(t), "builder", []string{"", ""})
+		wantFieldError(t, err, "", "placement entry is empty")
+	})
+
+	t.Run("rejects a duplicate", func(t *testing.T) {
+		_, err := SetActorPlacement(configeditServerDoc(t), "builder", []string{"zen", "zen"})
+		wantFieldError(t, err, "", "duplicate placement zen")
+	})
+
+	t.Run("rejects an unknown server", func(t *testing.T) {
+		_, err := SetActorPlacement(configeditServerDoc(t), "builder", []string{"zen", "nope"})
+		wantFieldError(t, err, "", "no server named nope")
+	})
+
+	t.Run("accepts local with no servers section", func(t *testing.T) {
+		doc := configeditDoc(t)
+		if doc.Servers != nil {
+			t.Fatal("the fixture must have no servers section")
+		}
+		edit, err := SetActorPlacement(doc, "builder", []string{"local"})
+		if err != nil {
+			t.Fatalf("SetActorPlacement: %v", err)
+		}
+		if got := decodeActors(t, edit)["builder"].Placement; !reflect.DeepEqual(got, []string{"local"}) {
+			t.Errorf("placement = %v, want [local]", got)
+		}
+	})
+
+	t.Run("replaces the order and touches nothing else", func(t *testing.T) {
+		before := configeditServerDoc(t).Actors["builder"]
+		edit, err := SetActorPlacement(configeditServerDoc(t), "builder", []string{"backup", "local", "zen"})
+		if err != nil {
+			t.Fatalf("SetActorPlacement: %v", err)
+		}
+		if edit.Message != "edit actor builder placement" || edit.Name != "builder" {
+			t.Errorf("edit = {message: %q, name: %q}", edit.Message, edit.Name)
+		}
+		if len(edit.Sections) != 1 {
+			t.Fatalf("sections = %v, want only actors", edit.Sections)
+		}
+		if _, ok := edit.Sections[config.Actors]; !ok {
+			t.Fatal("the edit must carry the actors section")
+		}
+		got := decodeActors(t, edit)["builder"]
+		if want := []string{"backup", "local", "zen"}; !reflect.DeepEqual(got.Placement, want) {
+			t.Errorf("placement = %v, want %v", got.Placement, want)
+		}
+		if !reflect.DeepEqual(got.Candidates, before.Candidates) || got.Agent != before.Agent ||
+			got.Tier != before.Tier || !reflect.DeepEqual(got.Check, before.Check) {
+			t.Errorf("actor = %+v, want only the placement changed from %+v", got, before)
+		}
+	})
+
+	t.Run("clears the list", func(t *testing.T) {
+		for _, entries := range [][]string{nil, {}} {
+			edit, err := SetActorPlacement(configeditServerDoc(t), "builder", entries)
+			if err != nil {
+				t.Fatalf("SetActorPlacement(%v): %v", entries, err)
+			}
+			if got := decodeActors(t, edit)["builder"].Placement; got != nil {
+				t.Errorf("placement for %v = %v, want nil: the absent field is the default", entries, got)
+			}
+			if body := string(edit.Sections[config.Actors]); strings.Contains(body, "placement") {
+				t.Errorf("the cleared body still carries a placement key:\n%s", body)
+			}
+		}
+	})
+}
+
 func TestConfigEditAddAndDeleteActor(t *testing.T) {
 	t.Parallel()
 
