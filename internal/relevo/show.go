@@ -37,12 +37,15 @@ const (
 	ShowFindings   ShowSection = "findings"
 	ShowOutput     ShowSection = "output"
 	ShowArtifacts  ShowSection = "artifacts"
+	// ShowTrace is a chain's ordered trace, not a binding's round: it is the
+	// one section a chain name answers and a binding name refuses.
+	ShowTrace ShowSection = "trace"
 )
 
 // ValidShowSection reports whether s is one of the ShowSection values.
 func ValidShowSection(s ShowSection) bool {
 	switch s {
-	case ShowPrompt, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate, ShowFindings, ShowOutput, ShowArtifacts:
+	case ShowPrompt, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate, ShowFindings, ShowOutput, ShowArtifacts, ShowTrace:
 		return true
 	}
 	return false
@@ -88,6 +91,10 @@ type ShowResult struct {
 	// Artifacts is filled for Section artifacts: the round's artifact files,
 	// output first, then summary.md, then by rel.
 	Artifacts []ArtifactFile `json:"artifacts,omitempty"`
+	// Trace is filled for Section trace: the chain's state and its trace, the
+	// document the CLI encodes for --json. Text carries the same trace
+	// rendered for a human. Nil for every other section, and for no round.
+	Trace *ChainTraceDoc `json:"trace,omitempty"`
 }
 
 // Show resolves opts against a live binding's files; then, for a name that is
@@ -101,6 +108,13 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 	}
 	if !ValidShowSection(opts.Section) {
 		return ShowResult{}, fmt.Errorf("show: %q: invalid section", opts.Section)
+	}
+
+	// A trace is a chain's, not a round's: it answers before any binding is
+	// looked up, so a chain whose name is also its builder's reads its trace
+	// rather than the builder's newest round.
+	if opts.Section == ShowTrace {
+		return showTrace(ctx, rt, opts)
 	}
 
 	b, err := rt.Store.Load(opts.Name)
