@@ -328,3 +328,157 @@ func TestRemoteReaderRoundSealsOnTheNextTick(t *testing.T) {
 		}
 	}
 }
+
+// TestDownloadTempRefusesALinkedDestDir pins downloadTemp's refusal of a
+// destination directory planted as a link: nothing is created inside the
+// directory the runner named.
+func TestDownloadTempRefusesALinkedDestDir(t *testing.T) {
+	root := t.TempDir()
+	target := t.TempDir()
+	dir := filepath.Join(root, "001-reviewer")
+	if err := os.Symlink(target, dir); err != nil {
+		t.Fatal(err)
+	}
+	tmp, err := downloadTemp(root, filepath.Join(dir, "findings.md"), io.NopCloser(strings.NewReader("x")))
+	if err == nil {
+		_ = os.Remove(tmp)
+		t.Fatal("downloadTemp wrote through a linked destination directory")
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("the link target holds %d entries, want none", len(entries))
+	}
+}
+
+// TestRemoteCatchUpRefusesALinkedArtifactDir pins the artifact directory
+// planted as a link: the first listed file's own directory is refused, so
+// nothing is installed, nothing is acked and no report is filed.
+func TestRemoteCatchUpRefusesALinkedArtifactDir(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(readerRemoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(st.Dir("api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	if err := os.Symlink(target, st.ArtifactDir("api", 1, "reviewer")); err != nil {
+		t.Fatal(err)
+	}
+	fr := readerClosedRemote()
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("the link target holds %d entries, want none", len(entries))
+	}
+	if n := countCalls(fr, "RoundArtifact:"); n != 1 {
+		t.Errorf("RoundArtifact calls = %d, want the first file only", n)
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
+		t.Errorf("a report entry exists for a refused artifact directory: %+v", entries)
+	}
+	if n := countCalls(fr, "Ack:"); n != 0 {
+		t.Errorf("Ack calls = %d, want 0", n)
+	}
+	if left, _ := filepath.Glob(filepath.Join(st.Dir("api"), "*", "*.fetch.*")); len(left) != 0 {
+		t.Errorf("download temps left behind: %v", left)
+	}
+}
+
+// TestRemoteCatchUpRefusesALinkedArtifactSubdir pins a link one level below the
+// artifact directory: the destination's last component is a link, so it is
+// refused and nothing lands in its target.
+func TestRemoteCatchUpRefusesALinkedArtifactSubdir(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(readerRemoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	dir := st.ArtifactDir("api", 1, "reviewer")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(dir, "site")); err != nil {
+		t.Fatal(err)
+	}
+	fr := readerClosedRemote()
+	fr.roundArtifactsResp.Files = []remote.ArtifactFile{{Rel: "site/index.html", Size: 16}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("the link target holds %d entries, want none", len(entries))
+	}
+	if n := countCalls(fr, "RoundArtifact:"); n != 1 {
+		t.Errorf("RoundArtifact calls = %d, want the first file only", n)
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
+		t.Errorf("a report entry exists for a refused artifact subdir: %+v", entries)
+	}
+	if n := countCalls(fr, "Ack:"); n != 0 {
+		t.Errorf("Ack calls = %d, want 0", n)
+	}
+	for _, pattern := range []string{filepath.Join(dir, "*.fetch.*"), filepath.Join(dir, "site", "*.fetch.*")} {
+		if left, _ := filepath.Glob(pattern); len(left) != 0 {
+			t.Errorf("download temps left behind: %v", left)
+		}
+	}
+}
+
+// TestRemoteCatchUpRefusesALinkedArtifactAncestor pins a link above an as-yet
+// absent file directory: the destination's own directory does not exist, so
+// only the component walk sees the planted link and refuses it.
+func TestRemoteCatchUpRefusesALinkedArtifactAncestor(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(readerRemoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(st.Dir("api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	if err := os.Symlink(target, st.ArtifactDir("api", 1, "reviewer")); err != nil {
+		t.Fatal(err)
+	}
+	fr := readerClosedRemote()
+	fr.roundArtifactsResp.Files = []remote.ArtifactFile{{Rel: "site/index.html", Size: 16}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("the link target holds %d entries, want none", len(entries))
+	}
+	if n := countCalls(fr, "RoundArtifact:"); n != 1 {
+		t.Errorf("RoundArtifact calls = %d, want the first file only", n)
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
+		t.Errorf("a report entry exists for a refused artifact ancestor: %+v", entries)
+	}
+	if n := countCalls(fr, "Ack:"); n != 0 {
+		t.Errorf("Ack calls = %d, want 0", n)
+	}
+	if left, _ := filepath.Glob(filepath.Join(st.Dir("api"), "*", "*.fetch.*")); len(left) != 0 {
+		t.Errorf("download temps left behind: %v", left)
+	}
+}

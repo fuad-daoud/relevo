@@ -6440,3 +6440,72 @@ func TestAddRemoteLabelsPreLabelsServerRefused(t *testing.T) {
 		t.Fatalf("git calls = %v / %v, want no branch or worktree", fg.createBranchCalls, fg.addWorktreeCalls)
 	}
 }
+
+// TestWriteTempAndRenameRefusesALinkedDestDir pins the temp-write helper's
+// refusal of a destination directory planted as a link: nothing is created
+// inside the directory the runner named.
+func TestWriteTempAndRenameRefusesALinkedDestDir(t *testing.T) {
+	root := t.TempDir()
+	target := t.TempDir()
+	dir := filepath.Join(root, "001-reviewer")
+	if err := os.Symlink(target, dir); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "001-builder.log")
+	if err := writeTempAndRename(root, dest, strings.NewReader("x")); err == nil {
+		t.Fatal("writeTempAndRename wrote through a linked destination directory")
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("the link target holds %d entries, want none", len(entries))
+	}
+}
+
+// TestMirrorLogLeavesAPlantedBuilderLogAlone pins the legacy append branch's
+// refusal: a link planted at the builder-log path is not followed, its victim
+// is left untouched, the binding is not halted and nothing is repaired.
+func TestMirrorLogLeavesAPlantedBuilderLogAlone(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := st.BuilderLogPath("api", 1)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("legacy content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, logPath); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp:     remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileFromResp:  io.NopCloser(strings.NewReader("appended\n")),
+		roundFileFromRange: remote.FileRange{Honored: true, From: 15, Size: 24},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "legacy content\n" {
+		t.Errorf("victim = %q, %v; want it untouched", data, err)
+	}
+	if fi, err := os.Lstat(logPath); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the planted link was repaired or unlinked (lstat err = %v)", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Errorf("the binding halted over a refused mirror: %q", got.Halt)
+	}
+	if left, _ := filepath.Glob(filepath.Join(st.Dir("api"), "*.tmp.*")); len(left) != 0 {
+		t.Errorf("temps left behind: %v", left)
+	}
+}

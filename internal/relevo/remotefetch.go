@@ -372,7 +372,7 @@ func fetchCatchUpReport(ctx context.Context, rt Runtime, b store.Binding, view r
 		return false
 	default:
 		path := rt.Store.ReportPath(name, n)
-		cf.ReportTemp, err = downloadTemp(path, rc)
+		cf.ReportTemp, err = downloadTemp(rt.Store.Dir(name), path, rc)
 		if err != nil {
 			slog.Warn("write report failed", "path", path, "err", err)
 			cf.Abort = true
@@ -430,7 +430,7 @@ func fetchCatchUpLog(ctx context.Context, rt Runtime, b store.Binding, view remo
 	default:
 		path := rt.Store.BuilderLogPath(name, n)
 		if legacyLog(rt, name, n) {
-			cf.LogTemp, err = downloadTemp(path, rc)
+			cf.LogTemp, err = downloadTemp(rt.Store.Dir(name), path, rc)
 			if err != nil {
 				slog.Warn("write log failed", "path", path, "err", err)
 				cf.Abort = true
@@ -471,7 +471,7 @@ func fetchCatchUpStream(ctx context.Context, rt Runtime, b store.Binding, view r
 		return false
 	default:
 		path := rt.Store.StreamPath(name, n)
-		cf.StreamTemp, err = downloadTemp(path, rc)
+		cf.StreamTemp, err = downloadTemp(rt.Store.Dir(name), path, rc)
 		if err != nil {
 			slog.Warn("write stream failed", "path", path, "err", err)
 			cf.Abort = true
