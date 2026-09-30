@@ -26,5 +26,4 @@ type Deps struct {
 	Now          func() time.Time
 	Roles        harness.RoleChecker
 	RoleRegistry func() *roles.Registry
-	Accounts     account.Set
 }

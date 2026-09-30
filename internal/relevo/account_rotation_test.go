@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -279,6 +280,49 @@ func TestRotationLeavesAnUngatedActiveRow(t *testing.T) {
 	}
 	if len(fa.switches) != 0 {
 		t.Errorf("switches = %+v, want none: the active row is not gated", fa.switches)
+	}
+}
+
+// TestRotationFlipsWhenTheRowIsUnreadable pins the fallback: an unreadable
+// active row must not block the flip the rotation needs, or the rotated round
+// would start on the gated login again.
+func TestRotationFlipsWhenTheRowIsUnreadable(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := accountRotateSetup(t, fr)
+	fa := &fakeOpencodeAuth{activeErr: errors.New("no sqlite3")}
+	rt.OpencodeAuth = fa
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testOpencodeRef, time.Time{}, "quota", "test@cp2"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	var got store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		got, err = switchBuilder(context.Background(), rt, tx, b, "rate-limited", false, false)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if got.BuilderAccount != "cp3" {
+		t.Fatalf("BuilderAccount = %q, want cp3", got.BuilderAccount)
+	}
+	if len(fa.switches) != 1 || fa.switches[0] != (opencodeFlip{"cline-pass", "ClinePass 3"}) {
+		t.Fatalf("switches = %+v, want one flip to ClinePass 3", fa.switches)
+	}
+}
+
+// TestOpencodeActiveQueryQuotesTheIntegration pins the literal quoting of the
+// sqlite3 query: the CLI cannot bind parameters, and an integration containing a
+// quote must not break out of the literal.
+func TestOpencodeActiveQueryQuotesTheIntegration(t *testing.T) {
+	t.Parallel()
+
+	want := "select label from credential where active = 1 and integration_id = 'cline''pass' limit 1"
+	if got := opencodeActiveQuery("cline'pass"); got != want {
+		t.Errorf("opencodeActiveQuery = %q, want %q", got, want)
 	}
 }
 

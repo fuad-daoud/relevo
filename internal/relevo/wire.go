@@ -26,39 +26,35 @@ type OpencodeAuth interface {
 }
 
 // OSOpencodeAuth returns the production seam, backed by the opencode binary on
-// PATH. It runs only a plain `opencode auth list` and `opencode auth switch`;
-// nothing else on the host changes.
-func OSOpencodeAuth() OpencodeAuth { return osOpencodeAuth{} }
+// PATH and its own database. It runs `opencode auth switch` to flip a row and
+// `sqlite3 -readonly` to see which row is active; nothing else on the host
+// changes.
+func OSOpencodeAuth(dbPath string) OpencodeAuth { return osOpencodeAuth{dbPath: dbPath} }
 
-// osOpencodeAuth runs the opencode CLI. Active reads the list command's JSON,
-// the one surface that names the active row; a shape it cannot read is an
-// error, never a guessed login.
-type osOpencodeAuth struct{}
+// osOpencodeAuth runs the opencode CLI. Active reads the credential table: the
+// list command reports every row but not the active one, so the database is the
+// only surface that names it.
+type osOpencodeAuth struct{ dbPath string }
 
-// opencodeCredential is the one field Active needs from `auth list --format
-// json`: which integration the row serves, its label, and whether opencode
-// marks it active.
-type opencodeCredential struct {
-	Integration string `json:"integration"`
-	Label       string `json:"label"`
-	Active      bool   `json:"active"`
+// opencodeActiveQuery names the active credential row of one integration. The
+// sqlite3 CLI cannot bind parameters, so the integration is quoted as a
+// literal.
+func opencodeActiveQuery(integration string) string {
+	return "select label from credential where active = 1 and integration_id = " + sqlQuote(integration) + " limit 1"
 }
 
-func (osOpencodeAuth) Active(ctx context.Context, integration string) (string, error) {
-	out, err := opencodeRun(ctx, "auth", "list", "--format", "json")
+// sqlQuote renders a value as a single-quoted SQL literal.
+func sqlQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+
+func (o osOpencodeAuth) Active(ctx context.Context, integration string) (string, error) {
+	if o.dbPath == "" {
+		return "", fmt.Errorf("opencode auth: no database path")
+	}
+	out, err := exec.CommandContext(ctx, "sqlite3", "-readonly", o.dbPath, opencodeActiveQuery(integration)).CombinedOutput()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("opencode auth: read %s: %w: %s", o.dbPath, err, strings.TrimSpace(string(out)))
 	}
-	var rows []opencodeCredential
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &rows); err != nil {
-		return "", fmt.Errorf("opencode auth list: %w", err)
-	}
-	for _, r := range rows {
-		if r.Integration == integration && r.Active {
-			return r.Label, nil
-		}
-	}
-	return "", nil
+	return strings.TrimSpace(string(out)), nil
 }
 
 func (osOpencodeAuth) Switch(ctx context.Context, integration, label string) error {
@@ -128,7 +124,11 @@ func switchOpencodeActive(ctx context.Context, rt Runtime, to account.Account, p
 	}
 	actual, err := rt.OpencodeAuth.Active(ctx, to.Integration)
 	if err != nil {
-		return err
+		// The flip is what makes the rotation usable; an unreadable row must
+		// not block it. The drift check is skipped, and the row relevo set is
+		// still recorded below.
+		slog.Warn("opencode active account unreadable; flipping anyway", "integration", to.Integration, "err", err)
+		actual = ""
 	}
 	recorded := readActiveAccount(rt.Gates, to.Integration)
 	if actual != "" && actual != recorded {
