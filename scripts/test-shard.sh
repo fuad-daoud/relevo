@@ -9,6 +9,8 @@
 # Env: SPLIT_PKGS  space-separated import-path patterns whose tests are split
 #                  across shards (default ./internal/relevo). Every package not
 #                  matched by a pattern is assigned whole, in go list order.
+#      SHARD_COVER  0 drops coverage instrumentation from every job; unset or any
+#                  other value keeps it (default on).
 # Exit: 0 when every go test it ran passed, 1 when any failed, 2 on bad usage.
 #
 # CI runs three shards of one leg in parallel, which is how internal/relevo's
@@ -68,6 +70,13 @@ if [ "$total" -lt 1 ] || [ "$index" -ge "$total" ]; then
 fi
 
 split_pkgs=${SPLIT_PKGS:-./internal/relevo}
+
+# SHARD_COVER=0 turns coverage off for every job. darwin's coverage report
+# intermittently fails after a passing run, so the macOS legs set it.
+cover=1
+case ${SHARD_COVER:-} in
+	0) cover=0 ;;
+esac
 
 work=$(mktemp -d)
 # The cleanup must not decide the verdict: in dash a failing EXIT trap's status
@@ -136,11 +145,18 @@ mkdir -p "$outdir"
 joblog="$work/jobs"
 : > "$joblog"
 
+# The coverage flags are one unit: -coverprofile implies coverage, so both come
+# and go with the toggle.
+cover_flag=
+if [ "$cover" -eq 1 ]; then
+	cover_flag=-cover
+fi
+
 # The whole-package test and each split package's test run concurrently; every
 # job writes its output to OUTDIR and the log is replayed after all of them.
 if [ -s "$work/pkgs.txt" ]; then
-	# shellcheck disable=SC2046,SC2086 # word splitting is the point: one argument per package
-	go test -race -count=1 -cover $(cat "$work/pkgs.txt") > "$outdir/whole.txt" 2>&1 &
+	# shellcheck disable=SC2046,SC2086 # word splitting is the point: one argument per package, and the toggle's flag
+	go test -race -count=1 $cover_flag $(cat "$work/pkgs.txt") > "$outdir/whole.txt" 2>&1 &
 	printf '%s\t%s\n' "$!" "$outdir/whole.txt" >> "$joblog"
 else
 	: > "$outdir/whole.txt"
@@ -152,7 +168,12 @@ while [ "$k" -lt "$n" ]; do
 	pkg=$(cat "$work/s$k.pkg")
 	base=${pkg##*/}
 	run_re=$(awk 'NF { if (c++) printf "|"; printf "%s", $0 }' "$work/s$k.names")
-	go test -race -count=1 -cover -coverprofile="$outdir/split-$base.out" \
+	coverprofile_flag=
+	if [ "$cover" -eq 1 ]; then
+		coverprofile_flag="-coverprofile=$outdir/split-$base.out"
+	fi
+	# shellcheck disable=SC2086 # word splitting is the point: the toggle's flags
+	go test -race -count=1 $cover_flag $coverprofile_flag \
 		-run "^($run_re)$" "$pkg" > "$outdir/split-$base.txt" 2>&1 &
 	printf '%s\t%s\n' "$!" "$outdir/split-$base.txt" >> "$joblog"
 done
