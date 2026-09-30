@@ -503,8 +503,7 @@ func (c *conn) refuse(code, message string) error {
 }
 
 func (c *conn) sendError(id int, err error) {
-	code, _ := wire.CodeOf(err)
-	ext := wire.ExtendedCodeOf(err)
+	code, ext := c.s.errorCode(err)
 	_ = c.send(wire.KindError, wire.NewError(id, code, ext, err.Error()), nil)
 }
 

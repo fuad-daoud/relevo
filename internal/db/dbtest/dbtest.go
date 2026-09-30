@@ -4,6 +4,7 @@
 package dbtest
 
 import (
+	"database/sql"
 	"fmt"
 	"net"
 	"os"
@@ -75,6 +76,19 @@ func Main(m *testing.M) int {
 	ownerCleanup()
 	cleanup()
 	return code
+}
+
+// RawOpen opens path with the package's selected engine, without migrating it
+// and without an owner hop, so a test can drive the raw driver directly. It
+// registers a cleanup that closes the pool.
+func RawOpen(t testing.TB, path string) *sql.DB {
+	t.Helper()
+	pool, err := db.OpenRaw(path)
+	if err != nil {
+		t.Fatalf("OpenRaw: %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	return pool
 }
 
 // OwnerMode routes every database opened with db.Open or db.OpenWith through an

@@ -11,9 +11,9 @@ import (
 // migration, so a test can drive applyMigrations itself.
 func rawSQLDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
+	sqlDB, err := OpenRaw(path)
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenRaw: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	return sqlDB

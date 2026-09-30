@@ -24,4 +24,4 @@ func DialContext(context.Context, string) (*DB, error) { return nil, notHere() }
 func dial(string, Options, bool) (*DB, error) { return nil, notHere() }
 
 // NewOwner refuses off unix.
-func NewOwner(*DB) *owner.Server { return owner.New(nil, 0, 0, "") }
+func NewOwner(*DB) *owner.Server { return owner.New(nil, 0, 0, "", nil) }

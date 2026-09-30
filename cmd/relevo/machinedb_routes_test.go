@@ -3,7 +3,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,10 +17,9 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/store"
-
-	_ "modernc.org/sqlite"
 )
 
 // cmdTestHelperEnv marks the one-opener child: TestMain answers it before any
@@ -641,16 +639,15 @@ func seedNewerSchema(t *testing.T, path string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	defer func() { _ = sqlDB.Close() }()
+	sqlDB := dbtest.RawOpen(t, path)
 
 	if _, err := sqlDB.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)`); err != nil {
 		t.Fatalf("create schema_version: %v", err)
 	}
 	if _, err := sqlDB.Exec(`INSERT INTO schema_version (version, applied_at) VALUES (999, '2026-01-01T00:00:00.000Z')`); err != nil {
 		t.Fatalf("insert version 999: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close: %v", err)
 	}
 }

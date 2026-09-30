@@ -2,9 +2,7 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,10 +85,9 @@ func TestOpenCurrentSchemaWhileAnotherProcessWrites(t *testing.T) {
 	busyTimeoutMS = 200
 	t.Cleanup(func() { busyTimeoutMS = oldTimeout })
 
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", path, busyTimeoutMS)
-	writer, err := sql.Open("sqlite", dsn)
+	writer, err := OpenRaw(path)
 	if err != nil {
-		t.Fatalf("sql.Open writer: %v", err)
+		t.Fatalf("OpenRaw writer: %v", err)
 	}
 	t.Cleanup(func() { _ = writer.Close() })
 
@@ -202,9 +199,9 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 			}
 		}
 
-		sqlDB, err := sql.Open("sqlite", "file:"+path)
+		sqlDB, err := OpenRaw(path)
 		if err != nil {
-			t.Fatalf("iteration %d: sql.Open: %v", i, err)
+			t.Fatalf("iteration %d: OpenRaw: %v", i, err)
 		}
 		rows, err := sqlDB.Query(`SELECT version FROM schema_version`)
 		if err != nil {
@@ -235,20 +232,7 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 	}
 }
 
-// TestOpenSetsJournalSizeLimit pins that sqlite truncates the -wal file after a
-// checkpoint instead of leaving it at a write burst's high-water size.
-func TestOpenSetsJournalSizeLimit(t *testing.T) {
-	d := openTestDB(t)
-
-	var limit int
-	if err := d.sqlDB.QueryRow(`PRAGMA journal_size_limit`).Scan(&limit); err != nil {
-		t.Fatalf("PRAGMA journal_size_limit: %v", err)
-	}
-	if limit != journalSizeLimit {
-		t.Errorf("journal_size_limit = %d, want %d", limit, journalSizeLimit)
-	}
-}
-
+// TestTxRefusesANewerSchema pins that a newer schema is not written by a Tx.
 func TestTxRefusesANewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	seedNewerSchema(t, path)
@@ -564,6 +548,10 @@ func TestOpenCreatesPrivateFiles(t *testing.T) {
 	}
 	for _, p := range []string{path, path + "-wal", path + "-shm"} {
 		info, err := os.Stat(p)
+		if errors.Is(err, os.ErrNotExist) {
+			// Turso keeps no -shm sibling; a file that is not there has no mode.
+			continue
+		}
 		if err != nil {
 			t.Fatalf("stat %s: %v", filepath.Base(p), err)
 		}
@@ -571,15 +559,19 @@ func TestOpenCreatesPrivateFiles(t *testing.T) {
 			t.Errorf("%s mode = %o, want 600", filepath.Base(p), perm)
 		}
 	}
+	if _, err := os.Stat(path + "-wal"); err != nil {
+		t.Errorf("the -wal sibling is absent: %v", err)
+	}
 }
 
 // TestOpenPathWithHashOrQuestionUsesThatFile pins that a path containing a `#`
-// or a `?` is escaped inside the `file:` DSN, so Open and OpenReadOnly touch
-// that exact file and never the truncated prefix a bare path would resolve to.
+// is escaped inside the `file:` DSN, so Open and OpenReadOnly touch that exact
+// file and never the truncated prefix a bare path would resolve to. A `?` is
+// escaped the same way under modernc; the Turso build refuses it, and its twin
+// lives in the !modernc file.
 func TestOpenPathWithHashOrQuestionUsesThatFile(t *testing.T) {
 	cases := []struct{ name, rel string }{
 		{"hash", "a#b/relevo.db"},
-		{"question", "a?b/relevo.db"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -617,18 +609,31 @@ func TestOpenPathWithHashOrQuestionUsesThatFile(t *testing.T) {
 	}
 }
 
-// TestBackupToCreatesPrivateTarget pins that the backup target is created
-// owner-only before VACUUM INTO writes it, and stays 0600 after.
-func TestBackupToCreatesPrivateTarget(t *testing.T) {
+// TestBackupToNeverExposesAWorldReadableCopy pins that the backup is built in an
+// owner-only temp directory and linked into place, and that the final file is
+// 0600.
+func TestBackupToNeverExposesAWorldReadableCopy(t *testing.T) {
 	d := openTestDB(t)
-	recorded := recordCreateMode(t)
+
+	orig := mkdirVacuumTemp
+	var dirMode os.FileMode
+	mkdirVacuumTemp = func(dir, pattern string) (string, error) {
+		p, err := orig(dir, pattern)
+		if err == nil {
+			if info, serr := os.Stat(p); serr == nil {
+				dirMode = info.Mode().Perm()
+			}
+		}
+		return p, err
+	}
+	t.Cleanup(func() { mkdirVacuumTemp = orig })
 
 	path := filepath.Join(t.TempDir(), "copy.db")
 	if err := d.BackupTo(path); err != nil {
 		t.Fatalf("BackupTo: %v", err)
 	}
-	if got := recorded(); got != 0o600 {
-		t.Errorf("backup target created with mode %o, want 600", got)
+	if dirMode != 0o700 {
+		t.Errorf("vacuum temp dir mode = %o, want 700", dirMode)
 	}
 	info, err := os.Stat(path)
 	if err != nil {

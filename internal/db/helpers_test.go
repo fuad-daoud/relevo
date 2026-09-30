@@ -1,7 +1,6 @@
 package db
 
 import (
-	"database/sql"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -40,9 +39,9 @@ func embeddedVersion(t *testing.T) int {
 // seedNewerSchema writes a schema_version row above every embedded migration.
 func seedNewerSchema(t *testing.T, path string) int {
 	t.Helper()
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
+	sqlDB, err := OpenRaw(path)
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenRaw: %v", err)
 	}
 	defer func() { _ = sqlDB.Close() }()
 
@@ -56,6 +55,9 @@ func seedNewerSchema(t *testing.T, path string) int {
 	var tables int
 	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'`).Scan(&tables); err != nil {
 		t.Fatalf("count tables: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close: %v", err)
 	}
 	return tables
 }
@@ -73,9 +75,9 @@ func openSchema(t *testing.T, names ...string) *DB {
 		fsys["migrations/"+name] = &fstest.MapFile{Data: data}
 	}
 
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
+	sqlDB, err := OpenRaw(path)
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenRaw: %v", err)
 	}
 	if err := applyMigrations(sqlDB, fsys); err != nil {
 		t.Fatalf("applyMigrations: %v", err)

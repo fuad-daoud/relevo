@@ -112,7 +112,7 @@ func runReexecHelper() {
 		fmt.Fprintln(os.Stderr, "helper open:", err)
 		os.Exit(1)
 	}
-	srv := New(sqlDB, 3, 9, "01ORIGIN")
+	srv := New(sqlDB, 3, 9, "01ORIGIN", nil)
 	go func() { _ = srv.Serve(ln) }()
 
 	if ready := os.Getenv(helperReadyEnv); ready != "" {

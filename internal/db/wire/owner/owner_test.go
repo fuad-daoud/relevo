@@ -44,7 +44,7 @@ func startServer(t *testing.T) (*Server, string) {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
 	l, sock := shortListener(t)
-	srv := New(sqlDB, 3, 9, "01ORIGIN")
+	srv := New(sqlDB, 3, 9, "01ORIGIN", nil)
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() {
 		_ = srv.Close()

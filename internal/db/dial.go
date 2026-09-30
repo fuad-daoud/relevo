@@ -82,7 +82,9 @@ func dialContext(ctx context.Context, sock string, o Options, adoptOrigin bool) 
 
 // NewOwner serves d on a listener the caller opened. The owner and this
 // package share nothing else: the server takes the raw pool and the handle's
-// facts.
+// facts. The handle is marked served so a vacuum refuses to swap its pool out
+// from under the owner's clients.
 func NewOwner(d *DB) *owner.Server {
-	return owner.New(d.sqlDB, d.have, d.know, d.origin)
+	d.served = true
+	return owner.New(d.sqlDB, d.have, d.know, d.origin, errCode)
 }

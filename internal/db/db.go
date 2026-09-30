@@ -6,18 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
-
-	// This package is the only place that knows it is sqlite today and Turso
-	// tomorrow, so its driver is registered here and nowhere else. The wire
-	// driver reads errors through their Code method, so nothing else needs the
-	// package's types.
-	_ "modernc.org/sqlite"
 )
 
 // rfc3339Milli is the text encoding every timestamp uses in the db.
@@ -64,6 +57,16 @@ type DB struct {
 	// "owner <sock>" for a dial. It is what `relevo doctor` reports and what a
 	// test asserts about the switch.
 	route string
+
+	// path is the file a direct handle opened; empty on a dialled handle. It is
+	// what Vacuum reopens and what the per-path handle count keys on.
+	path string
+	// busy is the busy_timeout the pool opens connections with, kept so a
+	// reopen after a vacuum uses the same value.
+	busy time.Duration
+	// served is true while an owner serves this handle: a vacuum must not close
+	// the pool out from under its clients.
+	served bool
 }
 
 // Options tunes OpenWith. A negative value is treated as 0, which selects the
@@ -79,10 +82,6 @@ type Options struct {
 	Origin string
 }
 
-// journalSizeLimit caps the -wal file after a checkpoint resets it, in bytes;
-// without it sqlite keeps a write burst's high-water size for the process's life.
-const journalSizeLimit = 64 << 20
-
 // Open opens (creating if needed) the sqlite database at path, applying
 // pending migrations. A database whose schema is newer than this binary's is
 // left untouched, so an older relevo cannot downgrade it.
@@ -96,12 +95,12 @@ func OpenWith(path string, o Options) (*DB, error) {
 	return open(path, o)
 }
 
-// fileDSN builds a `file:` DSN for path with params after the `?`. The path is
-// percent-encoded, so a `#`, `?` or `%` in it stays part of the filename
-// instead of truncating the DSN to another file; the path must be absolute,
-// which every call site satisfies.
-func fileDSN(path, params string) string {
-	return (&url.URL{Scheme: "file", Path: path}).String() + "?" + params
+// OpenRaw opens path with the selected engine's pool and its per-connection
+// settings, without migrating the file, without an owner hop, and without
+// joining the per-path handle count. It is the seam tests and tooling use to
+// drive the driver directly.
+func OpenRaw(path string) (*sql.DB, error) {
+	return openPool(path, time.Duration(busyTimeoutMS)*time.Millisecond, false)
 }
 
 // open routes through the test-only owner hop when one is installed, and opens
@@ -119,32 +118,33 @@ func open(path string, o Options) (*DB, error) {
 
 func openDirect(path string, o Options) (_ *DB, err error) {
 	seedFromTemplate(path)
-	busy := busyTimeoutMS
+	busy := time.Duration(busyTimeoutMS) * time.Millisecond
 	if o.BusyTimeout > 0 {
-		busy = int(o.BusyTimeout.Milliseconds())
+		busy = o.BusyTimeout
 	}
 	retry := beginRetryFor
 	if o.BeginRetry > 0 {
 		retry = o.BeginRetry
 	}
-	dsn := fileDSN(path, fmt.Sprintf("_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)", busy, journalSizeLimit))
 
 	// Create the file ourselves first, so it -- and the -wal and -shm siblings
-	// sqlite derives from its mode -- is owner-only from the instant it exists,
-	// not only after the chmods below.
+	// the engine derives from its mode -- is owner-only from the instant it
+	// exists, not only after the chmods below.
 	if err = ensurePrivateFile(path); err != nil {
 		return nil, fmt.Errorf("db: open %s: create: %w: %w", path, ErrOpen, err)
 	}
 
-	sqlDB, err := sql.Open("sqlite", dsn)
+	sqlDB, err := openPool(path, busy, false)
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: %w: %w", path, ErrOpen, err)
 	}
 	// Secrets live in this file, so a failure to make it and its WAL siblings
 	// owner-only fails the open: a world-readable secrets store is not a
 	// warning.
+	registerHandle(path)
 	defer func() {
 		if err != nil {
+			releaseHandle(path)
 			if cerr := sqlDB.Close(); cerr != nil {
 				err = fmt.Errorf("%w, and close failed: %w", err, cerr)
 			}
@@ -172,11 +172,11 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open %s: migrations: %w: %w", path, ErrOpen, err)
 	}
 	if have > know {
-		return &DB{sqlDB: sqlDB, beginRetry: retry, newer: true, have: have, know: know, origin: o.Origin, route: "file"}, nil
+		return &DB{sqlDB: sqlDB, beginRetry: retry, newer: true, have: have, know: know, origin: o.Origin, route: "file", path: path, busy: busy}, nil
 	}
 	// A current schema needs no write: BEGIN IMMEDIATE here failed under load.
 	if have == know {
-		return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin, route: "file"}, nil
+		return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin, route: "file", path: path, busy: busy}, nil
 	}
 
 	if err = applyMigrations(sqlDB, migrationFiles); err != nil {
@@ -188,7 +188,7 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open %s: version: %w: %w", path, ErrOpen, err)
 	}
 
-	return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin, route: "file"}, nil
+	return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin, route: "file", path: path, busy: busy}, nil
 }
 
 // Newer reports whether the database's schema is newer than this relevo's.
@@ -226,38 +226,16 @@ func ping(sqlDB *sql.DB) error {
 }
 
 func (d *DB) Close() error {
+	if d.path != "" {
+		releaseHandle(d.path)
+		// Turso keeps the write-ahead log across a close, so checkpoint it
+		// here: callers and the template seeder copy the main file alone, and
+		// a non-empty -wal would leave that copy without its schema.
+		_ = d.walCheckpoint()
+		d.path = ""
+	}
 	if err := d.sqlDB.Close(); err != nil {
 		return fmt.Errorf("db: close: %w", err)
-	}
-	return nil
-}
-
-// BackupTo copies the whole database to path with VACUUM INTO. The target is
-// pre-created owner-only, so the copy never exists world-readable even for the
-// instant before the chmod; a path that already exists is refused, because
-// VACUUM INTO would overwrite it.
-func (d *DB) BackupTo(path string) error {
-	if err := createFile(path); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("db: backup to %s: file already exists: %w", path, ErrInvalid)
-		}
-		return fmt.Errorf("db: backup to %s: %w", path, mapBusy(err))
-	}
-
-	if _, err := d.sqlDB.ExecContext(context.Background(), `VACUUM INTO ?`, path); err != nil {
-		return fmt.Errorf("db: backup to %s: %w", path, mapBusy(err))
-	}
-	if err := chmodPrivate(path); err != nil {
-		return fmt.Errorf("db: backup to %s: chmod: %w", path, err)
-	}
-	return nil
-}
-
-// Vacuum compacts the database in place. It runs outside any transaction, as
-// sqlite requires.
-func (d *DB) Vacuum() error {
-	if _, err := d.sqlDB.ExecContext(context.Background(), `VACUUM`); err != nil {
-		return fmt.Errorf("db: vacuum: %w", mapBusy(err))
 	}
 	return nil
 }
@@ -356,6 +334,16 @@ func restartingRefusal(err error) bool {
 	return errors.As(err, &ref) && ref.Code == wire.RefuseRestarting
 }
 
+// errCode returns the sqlite result code an error carries: the wire's rebuilt
+// code on a dialled handle, and the engine's own mapping on a direct one, where
+// a Turso error wraps a sentinel instead of exposing a Code method.
+func errCode(err error) (code, ext int, ok bool) {
+	if code, ok := wire.CodeOf(err); ok {
+		return code, wire.ExtendedCodeOf(err), true
+	}
+	return engineCode(err)
+}
+
 // mapBusy turns a driver's SQLITE_BUSY into ErrBusy. It matches any error
 // carrying the code, so a value rebuilt on the client from the wire maps the
 // same way the driver's own error does.
@@ -363,7 +351,7 @@ func mapBusy(err error) error {
 	if err == nil {
 		return nil
 	}
-	if code, ok := wire.CodeOf(err); ok && code == sqliteBusy {
+	if code, _, ok := errCode(err); ok && code == sqliteBusy {
 		return ErrBusy
 	}
 	if strings.Contains(err.Error(), "database is locked") {

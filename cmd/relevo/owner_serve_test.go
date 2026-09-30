@@ -3,15 +3,13 @@
 package main
 
 import (
-	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 )
 
 // TestDaemonRefusesATooLongSocketPath pins that a winning start whose state
@@ -52,10 +50,7 @@ func TestOwnerServesANewerSchema(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	dbPath := filepath.Join(root, "relevo.db")
 
-	raw, err := sql.Open("sqlite", "file:"+dbPath)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
+	raw := dbtest.RawOpen(t, dbPath)
 	if _, err := raw.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)`); err != nil {
 		t.Fatalf("create schema_version: %v", err)
 	}

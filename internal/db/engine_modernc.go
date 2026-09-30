@@ -1,0 +1,59 @@
+//go:build modernc
+
+package db
+
+import (
+	"database/sql"
+	"fmt"
+	"net/url"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+// engineName is the driver this build opens databases with; the modernc build
+// is the way back from Turso.
+const engineName = "sqlite"
+
+// legacyDriverName is the modernc driver name, which the default build keeps
+// linked for the one-time conversion.
+const legacyDriverName = "sqlite"
+
+// journalSizeLimit caps the -wal file after a checkpoint resets it, in bytes;
+// without it sqlite keeps a write burst's high-water size for the process's
+// life. It is a modernc-only pragma: Turso does not support it.
+const journalSizeLimit = 64 << 20
+
+// fileDSN builds a `file:` DSN for path with params after the `?`. The path is
+// percent-encoded, so a `#`, `?` or `%` in it stays part of the filename
+// instead of truncating the DSN to another file; the path must be absolute,
+// which every call site satisfies.
+func fileDSN(path, params string) string {
+	return (&url.URL{Scheme: "file", Path: path}).String() + "?" + params
+}
+
+// openPool opens a pool on path with the pragmas modernc expects. A read-only
+// pool opens mode=ro; a writable one switches to WAL, turns foreign keys on,
+// and caps the -wal.
+func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
+	if readOnly {
+		return sql.Open(engineName, fileDSN(path, "mode=ro&_pragma=busy_timeout(5000)"))
+	}
+	dsn := fileDSN(path, fmt.Sprintf(
+		"_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)",
+		busy.Milliseconds(), journalSizeLimit))
+	return sql.Open(engineName, dsn)
+}
+
+// engineCode reports no code: modernc's *sqlite.Error already carries one, so
+// wire.CodeOf reads it directly.
+func engineCode(error) (int, int, bool) { return 0, 0, false }
+
+// vacuumIntoStmt is the placeholder form modernc accepts, with the target
+// passed as an argument.
+func vacuumIntoStmt(path string) (string, []any, error) {
+	return `VACUUM INTO ?`, []any{path}, nil
+}
+
+// prepareEngine is a no-op: modernc carries no external library to extract.
+func prepareEngine(string) error { return nil }

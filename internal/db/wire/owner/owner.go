@@ -35,6 +35,11 @@ type Server struct {
 	origin string
 	uid    int
 
+	// codeOf resolves a driver error's sqlite result code. It is nil when the
+	// server was built without one: the wire's own CodeOf and ExtendedCodeOf
+	// then carry the code, which is what a modernc-backed owner needs.
+	codeOf func(error) (int, int, bool)
+
 	mu     sync.Mutex
 	closed bool
 	// draining is set for the life of a drain: the accept loop stops, a request
@@ -50,17 +55,33 @@ type Server struct {
 }
 
 // New wraps a database handle, its schema versions and the installation id
-// every scoped query needs.
-func New(dbh *sql.DB, have, know int, origin string) *Server {
+// every scoped query needs. codeOf maps a driver error onto a SQLite result
+// code; nil falls back to the wire's own CodeOf and ExtendedCodeOf.
+func New(dbh *sql.DB, have, know int, origin string, codeOf func(error) (int, int, bool)) *Server {
 	return &Server{
 		dbh:    dbh,
 		have:   have,
 		know:   know,
 		origin: origin,
 		uid:    ownerUID,
+		codeOf: codeOf,
 		conns:  make(map[*conn]struct{}),
 		sem:    make(chan struct{}, maxConns),
 	}
+}
+
+// errorCode resolves err's SQLite result code and extended code, preferring the
+// server's resolver when one was installed. A Turso error wraps a sentinel and
+// exposes no Code method, so only the resolver can name it; a modernc error
+// carries its code and needs no help.
+func (s *Server) errorCode(err error) (int, int) {
+	if s.codeOf != nil {
+		if code, ext, ok := s.codeOf(err); ok {
+			return code, ext
+		}
+	}
+	code, _ := wire.CodeOf(err)
+	return code, wire.ExtendedCodeOf(err)
 }
 
 // Serve accepts connections until the server is closed. Each accepted

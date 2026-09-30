@@ -1,0 +1,228 @@
+//go:build !modernc
+
+package db
+
+import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	turso_libs "github.com/tursodatabase/turso-go-platform-libs"
+	turso "turso.tech/database/tursogo"
+
+	// The default build keeps the old driver linked: round 2's one-time
+	// conversion opens it to read a pre-swap database.
+	_ "modernc.org/sqlite"
+)
+
+// engineName is the driver this build opens databases with.
+const engineName = "turso"
+
+// legacyDriverName is the modernc driver name, kept linked for the one-time
+// conversion.
+const legacyDriverName = "sqlite"
+
+// The SQLite primary result codes Turso's sentinels map onto, so a caller
+// masks the same codes a modernc error carries.
+const (
+	tursoBusy       = 5
+	tursoConstraint = 19
+	tursoReadOnly   = 8
+)
+
+// cacheEnv is the directory the loader extracts the embedded library into.
+const cacheEnv = "TURSO_GO_CACHE_DIR"
+
+// openPool opens a pool on path with Turso. Turso parses no `file:` URI and
+// ends the path at the first `?`, so a path carrying one would silently open
+// another file: that is refused. Settings that modernc takes in the DSN are
+// applied per connection instead.
+func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
+	if strings.Contains(path, "?") {
+		return nil, fmt.Errorf("db: open %s: the path contains '?': %w", path, ErrOpen)
+	}
+	if err := prepareEngine(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("db: open %s: engine: %w: %w", path, ErrOpen, err)
+	}
+	// Pre-create the -wal owner-only before the engine derives anything from
+	// it; an existing file is fine.
+	if err := createFile(path + "-wal"); err != nil && !errors.Is(err, os.ErrExist) {
+		return nil, fmt.Errorf("db: open %s: create -wal: %w: %w", path, ErrOpen, err)
+	}
+	conn, err := turso.NewConnector(fmt.Sprintf("%s?_busy_timeout=%d", path, busy.Milliseconds()))
+	if err != nil {
+		return nil, fmt.Errorf("db: open %s: connector: %w: %w", path, ErrOpen, err)
+	}
+	return sql.OpenDB(&pragmaConnector{base: conn, pragmas: openPragmas(readOnly)}), nil
+}
+
+// openPragmas is the per-connection pragma sequence: WAL always, and then the
+// guard that matches the handle's mode.
+func openPragmas(readOnly bool) []string {
+	if readOnly {
+		return []string{"PRAGMA journal_mode = wal", "PRAGMA query_only = 1"}
+	}
+	return []string{"PRAGMA journal_mode = wal", "PRAGMA foreign_keys = ON"}
+}
+
+// pragmaConnector runs pragmas on every new driver connection before
+// database/sql can use it. Turso's DSN has no _pragma option, and the mode word
+// and per-handle guards must hold on each pooled connection, not just the first.
+type pragmaConnector struct {
+	base    driver.Connector
+	pragmas []string
+}
+
+func (c *pragmaConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.base.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ex, ok := conn.(driver.ExecerContext)
+	if !ok {
+		_ = conn.Close()
+		return nil, fmt.Errorf("db: %s connection cannot run pragmas: %w", engineName, ErrOpen)
+	}
+	for _, p := range c.pragmas {
+		if _, err := ex.ExecContext(ctx, p, nil); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("db: %s: %w", p, err)
+		}
+	}
+	return conn, nil
+}
+
+func (c *pragmaConnector) Driver() driver.Driver { return c.base.Driver() }
+
+// engineCode maps Turso's sentinel errors onto the SQLite codes modernc's error
+// type carries, so mapBusy and mapMasterMindKey mask the same values either
+// way. Turso's errors wrap a sentinel with fmt.Errorf, so errors.Is is the test.
+func engineCode(err error) (int, int, bool) {
+	switch {
+	case errors.Is(err, turso.ErrTursoBusy):
+		return tursoBusy, tursoBusy, true
+	case errors.Is(err, turso.ErrTursoConstraint):
+		return tursoConstraint, tursoConstraint, true
+	case errors.Is(err, turso.ErrTursoReadOnly):
+		return tursoReadOnly, tursoReadOnly, true
+	}
+	return 0, 0, false
+}
+
+// vacuumIntoStmt builds Turso's literal VACUUM INTO form: it accepts a string
+// literal only, not a placeholder. A path holding a quote cannot be embedded in
+// a literal, so it is refused.
+func vacuumIntoStmt(path string) (string, []any, error) {
+	if strings.Contains(path, "'") {
+		return "", nil, fmt.Errorf("db: vacuum into %s: the path contains a quote: %w", path, ErrInvalid)
+	}
+	return `VACUUM INTO '` + path + `'`, nil, nil
+}
+
+// enginePrepareOnce keeps the library load to one per process: the first
+// database the process opens directly fixes the directory it is extracted into.
+var (
+	enginePrepareOnce sync.Once
+	enginePrepareErr  error
+)
+
+// prepareEngine extracts and loads the embedded Turso library once per process
+// beneath dir, so the extracted library sits beside the database rather than in
+// a shared user cache. The error of the first call is kept and returned by every
+// later one.
+func prepareEngine(dir string) error {
+	enginePrepareOnce.Do(func() { enginePrepareErr = extractAndLoad(dir) })
+	return enginePrepareErr
+}
+
+// extractAndLoad creates dir/turso-go owner-only, points the loader's cache at
+// dir for the duration, and loads the library. A cached copy whose hash does not
+// match is removed and the load retried once, so a truncated or corrupted cache
+// heals instead of bricking every later open.
+func extractAndLoad(dir string) error {
+	cacheDir := filepath.Join(dir, "turso-go")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", cacheDir, err)
+	}
+	if err := os.Chmod(cacheDir, 0o700); err != nil {
+		return fmt.Errorf("chmod %s: %w", cacheDir, err)
+	}
+	prev, had := os.LookupEnv(cacheEnv)
+	if err := os.Setenv(cacheEnv, dir); err != nil {
+		return fmt.Errorf("set %s: %w", cacheEnv, err)
+	}
+	defer restoreEnv(cacheEnv, prev, had)
+
+	cfg := turso_libs.LoadTursoLibraryConfig{}
+	if _, err := turso_libs.LoadTursoLibrary(cfg); err != nil {
+		if !strings.Contains(err.Error(), "hash sum mismatch") {
+			return fmt.Errorf("load turso library: %w", err)
+		}
+		if rerr := removeCachedLibrary(dir); rerr != nil {
+			return rerr
+		}
+		if _, err := turso_libs.LoadTursoLibrary(cfg); err != nil {
+			return fmt.Errorf("load turso library after clearing the corrupt cache: %w", err)
+		}
+	}
+	return initLibrary()
+}
+
+// initLibrary calls turso.InitLibrary, turning the panic it raises when the
+// library cannot load into an error, so the failure stays inside the seam
+// instead of escaping a driver call.
+func initLibrary() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("init turso library: %v", r)
+		}
+	}()
+	turso.InitLibrary(turso_libs.LoadTursoLibraryConfig{})
+	return nil
+}
+
+// restoreEnv puts the cache variable back the way it was, so the seam does not
+// leak a setting into the rest of the process.
+func restoreEnv(key, prev string, had bool) {
+	if had {
+		_ = os.Setenv(key, prev)
+		return
+	}
+	_ = os.Unsetenv(key)
+}
+
+// removeCachedLibrary deletes an extracted library under dir's cache, so the
+// next load re-extracts it from the embedded copy.
+func removeCachedLibrary(dir string) error {
+	matches, err := filepath.Glob(filepath.Join(dir, "turso-go", "*", libraryFileName()))
+	if err != nil {
+		return fmt.Errorf("find the cached turso library: %w", err)
+	}
+	for _, match := range matches {
+		if err := os.Remove(match); err != nil {
+			return fmt.Errorf("remove the cached turso library %s: %w", match, err)
+		}
+	}
+	return nil
+}
+
+// libraryFileName is the embedded library's name on this platform, matching
+// what the loader extracts.
+func libraryFileName() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "libturso_sync_sdk_kit.dylib"
+	case "windows":
+		return "turso_sync_sdk_kit.dll"
+	default:
+		return "libturso_sync_sdk_kit.so"
+	}
+}

@@ -206,13 +206,15 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open readonly %s: %w", path, serr)
 	}
 
-	dsn := fileDSN(path, "mode=ro&_pragma=busy_timeout(5000)")
-	sqlDB, err := sql.Open("sqlite", dsn)
+	busy := time.Duration(busyTimeoutMS) * time.Millisecond
+	sqlDB, err := openPool(path, busy, true)
 	if err != nil {
 		return nil, fmt.Errorf("db: open readonly %s: %w: %w", path, ErrOpen, err)
 	}
+	registerHandle(path)
 	defer func() {
 		if err != nil {
+			releaseHandle(path)
 			if cerr := sqlDB.Close(); cerr != nil {
 				err = fmt.Errorf("%w, and close failed: %w", err, cerr)
 			}
@@ -232,7 +234,7 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open readonly %s: migrations: %w: %w", path, ErrOpen, err)
 	}
 
-	return &DB{sqlDB: sqlDB, newer: have > know, have: have, know: know, origin: o.Origin}, nil
+	return &DB{sqlDB: sqlDB, newer: have > know, have: have, know: know, origin: o.Origin, path: path, busy: busy}, nil
 }
 
 // isMissingTable reports whether err is sqlite's "no such table" for a schema
