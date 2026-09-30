@@ -41,6 +41,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
@@ -94,6 +95,16 @@ func TestHeadlessE2E(t *testing.T) {
 	// The hook, relevo mcp and every mastermind verb detect a Claude Code session
 	// from the environment (§1.1); this process plays that session.
 	t.Setenv("CLAUDECODE", "1")
+
+	// The whole round runs over a /tmp socket: the owner switch installed here
+	// routes every db.Open/OpenWith this process makes -- the store, the gates,
+	// the claims, the mastermind registry -- through an in-process owner. It is
+	// 0b's transparency switch (db.SetOwnerHop) with no env gate.
+	ownerCleanup, err := dbtest.InstallOwner()
+	if err != nil {
+		t.Fatalf("install the in-process owner: %v", err)
+	}
+	t.Cleanup(ownerCleanup)
 
 	// -- 1. A fake `claude` first on PATH -----------------------------------
 	t.Setenv("PATH", writeFakeHarness(t)+string(os.PathListSeparator)+os.Getenv("PATH"))

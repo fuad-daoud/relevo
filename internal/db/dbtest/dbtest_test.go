@@ -91,6 +91,29 @@ func TestOwnerModeRoutesOpenThroughASocket(t *testing.T) {
 	}
 }
 
+// TestInstallOwnerRoutesWithoutTheEnvGate pins the ungated entry point the e2e
+// round calls: with the variable unset InstallOwner still installs the hop, and
+// the first Open of a path is reached through an owner on a short /tmp socket.
+func TestInstallOwnerRoutesWithoutTheEnvGate(t *testing.T) {
+	t.Setenv(ownerEnv, "")
+	cleanup, err := InstallOwner()
+	if err != nil {
+		t.Fatalf("InstallOwner: %v", err)
+	}
+	t.Cleanup(cleanup)
+
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	if got := d.Route(); !strings.HasPrefix(got, "owner /tmp/") {
+		t.Errorf("route = %q, want an owner socket directly under /tmp", got)
+	}
+}
+
 // TestOwnerModeOffOpensDirectly pins the off mode: an unset variable installs
 // nothing, and Open creates the file itself.
 func TestOwnerModeOffOpensDirectly(t *testing.T) {
