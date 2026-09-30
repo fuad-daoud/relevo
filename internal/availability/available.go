@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 )
 
@@ -23,6 +24,10 @@ const (
 // refuses a subject relevo knows nothing about. Pure: the caller passes the
 // configured set (possibly nil) and the already-pruned ledger.
 //
+//	subject is a group@account account gate key:
+//	  provider := the group half
+//	  known if group is in set.Providers(),
+//	     or if l has a RateLimited entry whose group half is group
 //	subject is a configured candidate name:
 //	  provider := that candidate's provider
 //	subject parses as a candidate token (candidate.ParseRef succeeds):
@@ -39,6 +44,16 @@ const (
 //	     or if l has a RateLimited entry whose Subject == provider
 //	  otherwise: return an error wrapping ErrUnknownProvider
 func ResolveClearSubject(set *candidate.Set, l Ledger, subject string) (provider string, err error) {
+	// An account gate key names its group; the account half is the caller's to
+	// clear. Recognised first because a candidate name and a candidate token
+	// never contain "@".
+	if group, accountName, ok := account.ParseGateKey(subject); ok && accountName != "" {
+		if gatesProvider(l, group) || slices.Contains(set.Providers(), group) {
+			return group, nil
+		}
+		return "", unknownProviderError{msg: unknownProviderMessage(set, group)}
+	}
+
 	// A name is a candidate, and clears that candidate's provider. A provider
 	// name is never also a candidate name (candidate names must not equal a
 	// configured provider), so this cannot shadow the bare-provider branch
@@ -77,12 +92,38 @@ func ResolveClearSubject(set *candidate.Set, l Ledger, subject string) (provider
 	return "", unknownProviderError{msg: unknownProviderMessage(set, subject)}
 }
 
-// gatesProvider reports whether l carries a rate-limit gate on provider. The
-// caller passes an already-pruned ledger, so this is exactly the set of entries
-// a clear would remove.
+// clearSubjects names every ledger subject a clear of provider must remove: the
+// bare group and, when no account is named, every group@account key the ledger
+// holds. An account clear removes just that key. The bare subject is always
+// included so an old-format ledger, which has no account keys, clears exactly
+// as it always did.
+func clearSubjects(l Ledger, provider, accountName string) []string {
+	if accountName != "" {
+		return []string{account.GateKey(provider, accountName)}
+	}
+	subjects := []string{provider}
+	for _, e := range l.Entries {
+		if e.Kind != RateLimited {
+			continue
+		}
+		group, acct, ok := account.ParseGateKey(e.Subject)
+		if ok && group == provider && acct != "" {
+			subjects = append(subjects, e.Subject)
+		}
+	}
+	return subjects
+}
+
+// gatesProvider reports whether l carries a rate-limit gate on provider, bare
+// or on one of its accounts. The caller passes an already-pruned ledger, so
+// this is exactly the set of entries a clear would remove.
 func gatesProvider(l Ledger, provider string) bool {
 	for _, e := range l.Entries {
-		if e.Kind == RateLimited && e.Subject == provider {
+		if e.Kind != RateLimited {
+			continue
+		}
+		group, _, ok := account.ParseGateKey(e.Subject)
+		if ok && group == provider {
 			return true
 		}
 	}

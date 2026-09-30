@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
@@ -140,23 +141,40 @@ func RecordSpawnFailureLocked(d Deps, token, binding string, cause error) {
 // sharing that provider shows as gated -- a quota is enforced per subscription
 // or key, not per model. token (a candidate name or a canonical token) must
 // resolve to a configured candidate: a typo is refused rather than recorded.
-func Unavailable(d Deps, token string, until time.Time, reason string) (provider string, err error) {
+//
+// keys names the account gates to record instead of the bare group, one
+// group@account entry each; it is empty on every host with no accounts, when
+// the bare group gates every candidate of the provider exactly as before.
+func Unavailable(d Deps, token string, until time.Time, reason string, keys ...string) (provider string, err error) {
 	c, err := d.Candidates.Resolve(token)
 	if err != nil {
 		return "", err
 	}
 	ref := c.Ref()
 
-	now := d.Now()
-	entry := Entry{
-		Kind:    RateLimited,
-		Subject: ref.Provider,
-		At:      now,
-		Until:   until,
-		Note:    sanitize.Text(reason),
-		Source:  "planner", // why: ClearedByMasterMind's value is state already written
+	subjects := keys
+	if len(subjects) == 0 {
+		subjects = []string{ref.Provider}
 	}
-	if err := d.Store.WithLock(func(*store.Tx) error { return AppendEntryLocked(d, entry) }); err != nil {
+
+	now := d.Now()
+	err = d.Store.WithLock(func(*store.Tx) error {
+		for _, subject := range subjects {
+			entry := Entry{
+				Kind:    RateLimited,
+				Subject: subject,
+				At:      now,
+				Until:   until,
+				Note:    sanitize.Text(reason),
+				Source:  "planner", // why: ClearedByMasterMind's value is state already written
+			}
+			if err := AppendEntryLocked(d, entry); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return "", err
 	}
 
@@ -193,18 +211,14 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 		if err != nil {
 			return err
 		}
+		// The account half of a group@account subject, empty for a bare group:
+		// a group clear lifts the bare entry and every account entry, an
+		// account clear lifts only that key.
+		_, accountName, _ := account.ParseGateKey(subject)
 
-		for _, e := range l.Entries {
-			if e.Kind != RateLimited || e.Subject != provider {
-				continue
-			}
-			removed++
-			if oldest.IsZero() || e.At.Before(oldest) {
-				oldest = e.At
-			}
-		}
+		l, removed, oldest = clearLedger(l, clearSubjects(l, provider, accountName))
 
-		if serr := SaveLedger(d.Gates, l.Clear(RateLimited, provider)); serr != nil {
+		if serr := SaveLedger(d.Gates, l); serr != nil {
 			return serr
 		}
 
@@ -213,6 +227,7 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 				At:       d.Now(),
 				Kind:     Cleared,
 				Provider: provider,
+				Account:  accountName,
 				Source:   source,
 				Note:     fmt.Sprintf("cleared %d entries", removed),
 				Since:    oldest,
@@ -235,10 +250,31 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 	return provider, removed, nil
 }
 
+// clearLedger removes every rate-limit entry on the named subjects and returns
+// the ledger without them, how many entries were removed, and the At of the
+// oldest removal -- how long the gate had been live.
+func clearLedger(l Ledger, subjects []string) (Ledger, int, time.Time) {
+	var removed int
+	var oldest time.Time
+	for _, subject := range subjects {
+		for _, e := range l.Entries {
+			if e.Kind != RateLimited || e.Subject != subject {
+				continue
+			}
+			removed++
+			if oldest.IsZero() || e.At.Before(oldest) {
+				oldest = e.At
+			}
+		}
+		l = l.Clear(RateLimited, subject)
+	}
+	return l, removed, oldest
+}
+
 // LedgerGates projects the live ledger onto tokens, whether or not the
 // configured set holds them: a rate limit gates every token of its provider, a
 // spawn failure gates its own token.
-func LedgerGates(d Deps, tokens []string) []Gate {
+func LedgerGates(d Deps, tokens []string, accounts ...account.Set) []Gate {
 	if d.Gates == nil {
 		return nil
 	}
@@ -249,19 +285,19 @@ func LedgerGates(d Deps, tokens []string) []Gate {
 		return nil
 	}
 
-	return Gated(l, tokens, ProviderOf, d.Now())
+	return Gated(l, tokens, ProviderOf, d.Now(), accounts...)
 }
 
 // Gates is what every reader renders from: the live ledger projected onto the
 // configured candidates. A load error is reported once on stderr and read as
 // an empty ledger -- status, candidates and doctor must not go down over a
 // bookkeeping file.
-func Gates(d Deps) []Gate {
+func Gates(d Deps, accounts ...account.Set) []Gate {
 	if d.Candidates == nil {
 		return nil
 	}
 
-	gates := LedgerGates(d, d.Candidates.Refs())
+	gates := LedgerGates(d, d.Candidates.Refs(), accounts...)
 	gates = append(gates, rolesMissingGates(d)...)
 
 	// Every gate carries the candidate's short name when the set holds its
@@ -480,5 +516,61 @@ func BindingsOnProvider(bindings []store.Binding, provider string) []string {
 		names = append(names, b.Name)
 	}
 	sort.Strings(names)
+	return names
+}
+
+// LiveGateKeys returns the subjects of the live rate-limit entries, pruned at
+// now: the bare groups and group@account keys the pick and `gate <token>` read.
+func LiveGateKeys(l Ledger, now time.Time) []string {
+	var keys []string
+	for _, e := range l.Prune(now).Entries {
+		if e.Kind == RateLimited {
+			keys = append(keys, e.Subject)
+		}
+	}
+	return keys
+}
+
+// GateAccountsFor names the accounts a `gate <token>` records, in pool order:
+// the account every open round on token draws from, and, with no open round,
+// the account the pick would use now. Nil when no account serves token, so the
+// caller records the bare group exactly as before. Pure: gateKeys is the live
+// ledger's rate-limit subjects.
+func GateAccountsFor(token string, bindings []store.Binding, accounts account.Set, gateKeys []string, mode account.Mode) []string {
+	ref, err := candidate.ParseRef(token)
+	if err != nil {
+		return nil
+	}
+	pool := accounts.Pool(account.Kind(ref.Harness), ref.Provider)
+	if len(pool) == 0 {
+		return nil
+	}
+
+	found := map[string]bool{}
+	selectAccount := func() {
+		a, ok, err := account.Select(pool, gateKeys, mode)
+		if err == nil && ok {
+			found[a.Name] = true
+		}
+	}
+
+	open := 0
+	for _, b := range bindings {
+		if b.State != store.StateActive || b.RoundStartedAt.IsZero() || b.BuilderCandidate != token {
+			continue
+		}
+		open++
+		selectAccount()
+	}
+	if open == 0 {
+		selectAccount()
+	}
+
+	var names []string
+	for _, a := range pool {
+		if found[a.Name] {
+			names = append(names, a.Name)
+		}
+	}
 	return names
 }

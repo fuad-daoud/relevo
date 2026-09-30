@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -53,7 +54,7 @@ func gateFlagSet(fs *flag.FlagSet) *gateFlagValues {
 	v := &gateFlagValues{}
 	v.forFlag = fs.String("for", "", "how long to gate the provider, as a Go `duration` (e.g. 2h); omit to leave it gated until relevo gate --clear")
 	v.reason = fs.String("reason", "", "why, for the record")
-	v.clear = fs.String("clear", "", "clear a recorded rate limit: --clear <provider|token>")
+	v.clear = fs.String("clear", "", "clear a recorded rate limit: --clear <group|group@account|provider|token>")
 	v.serveFlag = fs.Bool("serve", false, "act on the local serve daemon's gates instead of this machine's")
 	v.asJSON = fs.Bool("json", false, "print the gates as JSON")
 	_ = fs.String("state", "", "with --serve: state directory")
@@ -92,7 +93,7 @@ func gateList(asJSON bool) error {
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
-	gates := availability.Gates(relevo.AvailabilityDeps(rt))
+	gates := availability.Gates(relevo.AvailabilityDeps(rt), gateAccounts(rt))
 	if asJSON {
 		return printDoc(gateRowsOf(gates))
 	}
@@ -122,7 +123,10 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 	}
 	canonical := c.Ref().String()
 
-	provider, err := availability.Unavailable(relevo.AvailabilityDeps(rt), canonical, until, reason)
+	deps := relevo.AvailabilityDeps(rt)
+	keys, accounts := gateKeys(rt, deps, canonical, c.Ref().Provider)
+
+	provider, err := availability.Unavailable(deps, canonical, until, reason, keys...)
 	if err != nil {
 		return writeError(err)
 	}
@@ -140,6 +144,9 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 	} else {
 		fmt.Printf("gated %s (%d candidates) %s\n", provider, count, availability.GateUntilText(until))
 	}
+	if len(accounts) > 0 {
+		fmt.Fprintf(notices, "gated accounts: %s\n", strings.Join(accounts, ", "))
+	}
 
 	if bs, err := rt.Store.List(); err == nil {
 		if names := availability.BindingsOnProvider(bs, provider); len(names) > 0 {
@@ -152,6 +159,43 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 	}
 
 	return nil
+}
+
+// gateAccounts reads the accounts the config loaded, or nil when there is no
+// config store to read: a host with no accounts behaves exactly as before.
+func gateAccounts(rt relevo.Runtime) account.Set {
+	if rt.Config == nil {
+		return nil
+	}
+	L, err := rt.Config.Load()
+	if err != nil {
+		return nil
+	}
+	return L.Accounts
+}
+
+// gateKeys resolves the accounts `gate <token>` records and the names to print:
+// the account every open round on token draws from, or the account the pick
+// would use now. Both nil on a host with no accounts, so the gate stays a bare
+// group key exactly as before.
+func gateKeys(rt relevo.Runtime, deps availability.Deps, token, provider string) (keys, names []string) {
+	accounts := gateAccounts(rt)
+	if len(accounts) == 0 || deps.Gates == nil || rt.Store == nil {
+		return nil, nil
+	}
+	l, err := availability.LoadLedger(deps.Gates)
+	if err != nil {
+		return nil, nil
+	}
+	bs, err := rt.Store.List()
+	if err != nil {
+		return nil, nil
+	}
+	names = availability.GateAccountsFor(token, bs, accounts, availability.LiveGateKeys(l, deps.Now()), account.Mode(rt.Policy.AccountsRotation()))
+	for _, n := range names {
+		keys = append(keys, account.GateKey(provider, n))
+	}
+	return keys, names
 }
 
 // providerCandidateCount counts the configured candidates a provider serves:
