@@ -141,7 +141,7 @@ func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v.cwd = fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	v.branch = fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
 	v.server = fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
-	v.base = fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
+	v.base = fs.String("base", "", "commit or ref to branch from; defaults to HEAD")
 	v.local = fs.Bool("local", false, "run the builder on this machine, whatever the actor's placement says")
 	v.asJSON = fs.Bool("json", false, "print the binding as a JSON document")
 	return v

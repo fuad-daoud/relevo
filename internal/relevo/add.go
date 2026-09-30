@@ -357,9 +357,24 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		if rt.Git == nil {
 			return AddResult{}, ErrGitRequired
 		}
-		base, err = rt.Git.HeadCommit(ctx, opts.Repo)
-		if err != nil {
-			return AddResult{}, err
+		// The cut's starting commit: --base when given, HEAD otherwise. A
+		// named base that does not resolve is refused here, before any
+		// worktree exists; the ref is resolved to a commit, so the branch is
+		// cut from exactly what the caller named.
+		if opts.Base != "" {
+			sha, ok, err := rt.Git.RefSHA(ctx, opts.Repo, opts.Base)
+			if err != nil {
+				return AddResult{}, err
+			}
+			if !ok {
+				return AddResult{}, fmt.Errorf("base %q not found", opts.Base)
+			}
+			base = sha
+		} else {
+			base, err = rt.Git.HeadCommit(ctx, opts.Repo)
+			if err != nil {
+				return AddResult{}, err
+			}
 		}
 		branch = "relevo/" + opts.Name
 		exists, err := rt.Git.BranchExists(ctx, opts.Repo, branch)

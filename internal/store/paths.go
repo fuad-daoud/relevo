@@ -291,6 +291,20 @@ func (s *Store) WorktreePath(name string) string {
 	return filepath.Join(s.WorktreeDir(), name)
 }
 
+// ChainDir is a chain's plan directory: <root>/.chains/<name>. It is
+// dot-prefixed, so the store's readers skip it, and ValidName forbids "." in
+// binding names, so no binding's directory can collide with it.
+func (s *Store) ChainDir(name string) string {
+	return filepath.Join(s.root, ".chains", name)
+}
+
+// ChainPlanPath is a chain's copy of its i-th plan, 1-based. The copies live
+// beside the binding directories and their paths are what the chain row
+// stores, so a later edit of a source plan changes nothing.
+func (s *Store) ChainPlanPath(name string, i int) string {
+	return filepath.Join(s.ChainDir(name), fmt.Sprintf("plan-%d.md", i))
+}
+
 // VerifyWorktreePath lives under its own dot-prefixed subdirectory so a human
 // can see at a glance which trees are leftovers from a crashed verify, and so
 // nothing mistakes one for a binding's worktree (Store.WorktreePath is the

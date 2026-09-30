@@ -29,6 +29,19 @@ var registry = []verbEntry{
 		Errors:  []string{"internal", "not_available", "usage"},
 	},
 	{
+		Name:    "chain",
+		Summary: "start a chain: build, review and correct across a list of plans",
+		Args:    "--name <n> --plan <file> [--plan <file>...] (--feature <label>|--no-feature) [--json]",
+		Flags: []string{
+			"--base", "--feature", "--json", "--mastermind", "--max-corrections", "--name",
+			"--no-feature", "--no-security", "--plan", "--planner-actor", "--reviewer-actor",
+			"--security", "--security-actor", "--ticket",
+		},
+		Output: "json:ChainDoc",
+		Exit:   []int{0, 1, 2},
+		Errors: []string{"binding_not_found", "conflict", "gate_active", "internal", "policy_refused", "refused", "tier_cap", "usage"},
+	},
+	{
 		Name:    "config",
 		Summary: "show the actors, the current pick and the candidates",
 		Args:    "[--probe [token...]] [--json]",

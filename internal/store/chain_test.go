@@ -103,6 +103,41 @@ func TestCreateChainWritesEveryMemberAndTheChainAtomically(t *testing.T) {
 	}
 }
 
+// TestCreateChainWritesNoMemberWhenTheChainRowIsRefused pins the one
+// transaction from the other side: when the chain row's own write is refused
+// IN the transaction, after every member prepared and wrote, no member record
+// survives either. The failure is injected after the members' writes -- unlike
+// TestCreateChainWritesEveryMemberAndTheChainAtomically, whose message cannot be
+// prepared at all -- so it fails when the members and the chain row are written
+// in two separate transactions.
+func TestCreateChainWritesNoMemberWhenTheChainRowIsRefused(t *testing.T) {
+	s := New(t.TempDir())
+	// A chain row ChainPut refuses: no plans.
+	refused := testStoreChain("x")
+	refused.Plans = 0
+
+	err := s.WithLock(func(tx *Tx) error {
+		return tx.CreateChain(refused, []Binding{
+			newBinding("x", "/repo"),
+			newBinding("x-rev", "/repo"),
+		})
+	})
+	if err == nil {
+		t.Fatal("CreateChain = nil, want the chain row refused")
+	}
+
+	if _, err := s.Chain("x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Chain after the refused row = %v, want ErrNotFound", err)
+	}
+	d, err := s.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	if names := memberNames(t, d); len(names) != 0 {
+		t.Errorf("member records = %v, want none", names)
+	}
+}
+
 // TestCreateChainSetsTheStoredBindingDefaults pins that each member is saved
 // as the ordinary binding it is: format and shape stamped, the builder actor
 // defaulted, and the binding's own round kept.
