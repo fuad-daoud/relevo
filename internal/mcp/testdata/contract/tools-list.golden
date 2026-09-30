@@ -61,7 +61,7 @@
       "name": "send"
     },
     {
-      "description": "Mark a binding done once its round is verified; relaying stops. Calls relevo.Done.",
+      "description": "Mark a binding done once its round is verified; relaying stops. A name that is a chain releases every member instead. Calls relevo.Done.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

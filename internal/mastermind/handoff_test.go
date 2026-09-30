@@ -40,3 +40,23 @@ func TestGuideNamesTheLabelFlags(t *testing.T) {
 		t.Error("the guide lost its resume bullet")
 	}
 }
+
+// TestGuideNamesTheChainsCommand pins that the injected guide teaches chains:
+// the section, the start and resume commands, the wait and trace commands, and
+// the rule that a running chain's members are not driven by hand.
+func TestGuideNamesTheChainsCommand(t *testing.T) {
+	g := Guide()
+	for _, want := range []string{
+		"## Chains",
+		"relevo chain --name",
+		"--plan",
+		"relevo wait --name",
+		"relevo show <n> --trace",
+		"relevo chain --resume --name",
+		"Never drive a running chain's members by hand",
+	} {
+		if !strings.Contains(g, want) {
+			t.Errorf("the guide does not name %q:\n%s", want, g)
+		}
+	}
+}

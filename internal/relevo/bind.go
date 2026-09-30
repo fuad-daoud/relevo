@@ -905,6 +905,14 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 		return UnbindResult{}, err
 	}
 
+	// A running chain owns its member's rounds: unbinding one would steal the
+	// record the chain's next send needs, and the chain has no way to resume
+	// it. The refusal is read-only and sits before every side effect below --
+	// a late one would stop a process and then keep the record.
+	if err := refuseRunningChainMemberStore(rt.Store, name); err != nil {
+		return UnbindResult{}, err
+	}
+
 	// A remote binding's server is told first (§4.6), same shape as Done: it
 	// is asked to release the binding before anything local changes. A 404
 	// means the server already considers it gone, which is not a reason to
