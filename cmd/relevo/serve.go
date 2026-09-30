@@ -371,6 +371,7 @@ func serveAdminConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
 	cfg := serveAdminConfig(root, d)
 	cfg.Policy = L.Policy
 	cfg.Registry = L.Registry
+	cfg.Accounts = L.Accounts
 	return cfg
 }
 
@@ -503,6 +504,7 @@ func cmdServeRun(args []string) error {
 		Root:           root,
 		DB:             d,
 		Candidates:     candidates,
+		Accounts:       L.Accounts,
 		Policy:         pol,
 		Runner:         proc.New(),
 		Git:            git.NewClient("git", 0, 0),

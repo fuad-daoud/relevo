@@ -447,6 +447,23 @@ func seedHistoryFixture(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertRound hist-beta/2: %v", err)
 	}
+
+	// hist-gamma carries the one round with an account, so `--by account`
+	// regroups it apart from the rounds that drew none. Its outcome and its
+	// missing mastermind and ticket keep it out of every filtered golden.
+	gammaID, err := d.UpsertBinding(db.Binding{
+		Name: "hist-gamma", CWD: "/repo/hist-gamma", BuilderMode: "headless",
+		CreatedAt: t0, IngestSource: db.IngestLive,
+	})
+	if err != nil {
+		t.Fatalf("UpsertBinding hist-gamma: %v", err)
+	}
+	if _, err := d.UpsertRound(db.Round{
+		BindingID: gammaID, Number: 1, StartedAt: t0, Outcome: db.OutcomeExited,
+		Account: strPtr("cp1"),
+	}); err != nil {
+		t.Fatalf("UpsertRound hist-gamma/1: %v", err)
+	}
 }
 
 func TestContractHistory(t *testing.T) {
@@ -470,6 +487,9 @@ func TestContractHistory(t *testing.T) {
 		// A bare --ticket matches every stored ticket ending in #N, and
 		// --by ticket regroups the matches by their stored form.
 		{"history-ticket", []string{"history", "--json", "--ticket", "#607", "--by", "ticket"}},
+		// --by account regroups by the login each round drew from; a round
+		// that drew none lands in the unrecorded "-" bucket.
+		{"history-account", []string{"history", "--json", "--by", "account"}},
 	} {
 		stdout, _, _ := captureOutput(t, func() error { return run(c.args) })
 		assertGolden(t, c.golden, normalize(stdout))

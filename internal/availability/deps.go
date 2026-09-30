@@ -16,12 +16,14 @@ import (
 // records, the clock, the roles checker and the account pools. A nil field
 // means that facility is not configured and reads as empty.
 type Deps struct {
-	Store        *store.Store
-	Candidates   *candidate.Set
+	Store      *store.Store
+	Candidates *candidate.Set
+	// Accounts is the configured login pool. Empty on every host with no
+	// accounts, where a gate is a bare group and nothing here changes.
+	Accounts     account.Set
 	Gates        db.KV
 	Latency      db.KV
 	Now          func() time.Time
 	Roles        harness.RoleChecker
 	RoleRegistry func() *roles.Registry
-	Accounts     account.Set
 }

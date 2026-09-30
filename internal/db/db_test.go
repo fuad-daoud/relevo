@@ -638,3 +638,54 @@ func TestBackupToCreatesPrivateTarget(t *testing.T) {
 		t.Errorf("backup mode = %o, want 600", perm)
 	}
 }
+
+// TestRoundAccountRoundTrips pins schema v17: the login a round drew from
+// survives the write and read, and a round recorded with no account reads nil.
+func TestRoundAccountRoundTrips(t *testing.T) {
+	d := openTestDB(t)
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	bindingID, err := d.UpsertBinding(newTestBinding("webshop", now))
+	if err != nil {
+		t.Fatalf("UpsertBinding: %v", err)
+	}
+	acct := "cp2"
+	if _, err := d.UpsertRound(Round{BindingID: bindingID, Number: 1, StartedAt: now, Outcome: OutcomeOpen, Account: &acct}); err != nil {
+		t.Fatalf("UpsertRound: %v", err)
+	}
+	if _, err := d.UpsertRound(Round{BindingID: bindingID, Number: 2, StartedAt: now, Outcome: OutcomeOpen}); err != nil {
+		t.Fatalf("UpsertRound 2: %v", err)
+	}
+
+	rounds, err := d.Rounds(bindingID)
+	if err != nil {
+		t.Fatalf("Rounds: %v", err)
+	}
+	if len(rounds) != 2 {
+		t.Fatalf("rounds = %d, want 2", len(rounds))
+	}
+	if rounds[0].Account == nil || *rounds[0].Account != "cp2" {
+		t.Fatalf("round 1 account = %v, want cp2", rounds[0].Account)
+	}
+	if rounds[1].Account != nil {
+		t.Errorf("round 2 account = %q, want nil", *rounds[1].Account)
+	}
+
+	// The history read path carries the same fact: Query selects round.account
+	// and a round with none leaves its RoundRow field nil.
+	rows, err := d.Query(Filter{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	for _, r := range rows {
+		switch r.Number {
+		case 1:
+			if r.Account == nil || *r.Account != "cp2" {
+				t.Errorf("RoundRow 1 account = %v, want cp2", r.Account)
+			}
+		case 2:
+			if r.Account != nil {
+				t.Errorf("RoundRow 2 account = %q, want nil", *r.Account)
+			}
+		}
+	}
+}

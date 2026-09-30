@@ -397,7 +397,7 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]Resolutio
 			return nil, fmt.Errorf("chain %s actor %q must be a %s actor, not a %s", m.part, m.actor, m.shape, shape)
 		}
 		res, err := resolveRole(rt.RoleRegistry(), rt.Candidates,
-			availability.Gates(AvailabilityDeps(rt)), "", bindingRole(store.Binding{Role: normRole(m.actor)}))
+			availability.Gates(AvailabilityDeps(rt)), "", bindingRole(store.Binding{Role: normRole(m.actor)}), pickFor(rt))
 		if err != nil {
 			return nil, err
 		}
@@ -434,6 +434,7 @@ func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, r
 			return nil, err
 		}
 		b := chainMemberBinding(m, ep, c.Ref().String(), base)
+		b.BuilderAccount = res.Account
 		b.Tier = string(tier)
 		if m.writer {
 			b.Gate = set.Gate

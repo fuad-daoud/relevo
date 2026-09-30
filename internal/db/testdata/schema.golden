@@ -355,7 +355,7 @@ CREATE TABLE round (
     cost_basis TEXT,
     report_outcome TEXT,
     switches INTEGER NOT NULL
-, actor TEXT NOT NULL DEFAULT 'builder')
+, actor TEXT NOT NULL DEFAULT 'builder', account TEXT)
 
 table round_file round_file
 CREATE TABLE round_file (

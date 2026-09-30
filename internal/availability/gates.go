@@ -285,7 +285,23 @@ func LedgerGates(d Deps, tokens []string, accounts ...account.Set) []Gate {
 		return nil
 	}
 
-	return Gated(l, tokens, ProviderOf, d.Now(), accounts...)
+	return Gated(l, tokens, ProviderOf, d.Now(), gateAccounts(d, accounts)...)
+}
+
+// gateAccounts picks the account set the projection reads: an explicit
+// argument wins, otherwise the Deps carry the configured pool. Empty on a host
+// with no accounts, where Gated takes no account set and every gate stays a
+// bare group.
+func gateAccounts(d Deps, accounts []account.Set) []account.Set {
+	for _, a := range accounts {
+		if len(a) > 0 {
+			return []account.Set{a}
+		}
+	}
+	if len(d.Accounts) == 0 {
+		return nil
+	}
+	return []account.Set{d.Accounts}
 }
 
 // Gates is what every reader renders from: the live ledger projected onto the

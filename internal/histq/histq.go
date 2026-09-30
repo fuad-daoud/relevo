@@ -53,6 +53,7 @@ const (
 	AxisFeature   Axis = "feature"
 	AxisTicket    Axis = "ticket"
 	AxisCandidate Axis = "candidate"
+	AxisAccount   Axis = "account"
 	AxisActor     Axis = "actor"
 	AxisHarness   Axis = "harness"
 	AxisProvider  Axis = "provider"
@@ -62,11 +63,11 @@ const (
 )
 
 var axes = []Axis{
-	AxisNone, AxisBinding, AxisRepo, AxisFeature, AxisTicket, AxisCandidate, AxisActor,
+	AxisNone, AxisBinding, AxisRepo, AxisFeature, AxisTicket, AxisCandidate, AxisAccount, AxisActor,
 	AxisHarness, AxisProvider, AxisModel, AxisDay, AxisOutcome,
 }
 
-// Axes returns the twelve axis names, none first. The caller owns the slice.
+// Axes returns the axis names, none first. The caller owns the slice.
 func Axes() []Axis { return append([]Axis(nil), axes...) }
 
 func ParseAxis(s string) (Axis, bool) {

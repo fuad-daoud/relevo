@@ -135,5 +135,21 @@ func loadHistory(rt relevo.Runtime) availability.History {
 // formatPolicy renders the per-role pick explanation the `pick` block of
 // `relevo config` shows.
 func formatPolicy(rt relevo.Runtime) string {
-	return relevo.FormatPolicyFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, availability.Gates(relevo.AvailabilityDeps(rt)), loadHistory(rt), rt.Now(), time.Local)
+	deps := relevo.AvailabilityDeps(rt)
+	return relevo.FormatPolicyFor(rt.RoleRegistry(), rt.Accounts, rt.Candidates, rt.Policy,
+		availability.Gates(deps), liveLedgerEntries(rt), loadHistory(rt), rt.Now(), time.Local)
+}
+
+// liveLedgerEntries is the live availability ledger, for the policy pool view's
+// per-account gate text. A read failure reads as none, the same rule the gates
+// projection follows.
+func liveLedgerEntries(rt relevo.Runtime) []availability.Entry {
+	if rt.Gates == nil {
+		return nil
+	}
+	l, err := availability.LoadLedger(rt.Gates)
+	if err != nil {
+		return nil
+	}
+	return l.Prune(rt.Now()).Entries
 }

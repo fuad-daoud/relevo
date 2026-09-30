@@ -8,7 +8,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -49,6 +51,53 @@ func roundExclusionGates(b store.Binding) []availability.Gate {
 		})
 	}
 	return gates
+}
+
+// nextBuilder returns the same candidate on the next ungated account of its
+// pool, when a limit gated the account the binding is on and another login is
+// free. The walk starts after the current login and wraps, so a pool rotates
+// through its logins rather than restarting at the first one. It is decided
+// before the actor order is walked, so a limit rotates within the pool before
+// it ever changes candidate. Pure.
+func nextBuilder(b store.Binding, pick AccountPick) (account.Account, bool) {
+	if len(pick.Set) == 0 || b.BuilderAccount == "" {
+		return account.Account{}, false
+	}
+	ref, err := candidate.ParseRef(b.BuilderCandidate)
+	if err != nil {
+		return account.Account{}, false
+	}
+	pool := pick.Set.Pool(account.Kind(ref.Harness), ref.Provider)
+	cur, ok := accountByName(pool, b.BuilderAccount)
+	if !ok || !account.Gated(cur, pick.Gates) {
+		// The login in use is not gated: this switch has another cause and
+		// the actor order decides it as it always did.
+		return account.Account{}, false
+	}
+	start := 0
+	for i, a := range pool {
+		if a.Name == cur.Name {
+			start = i + 1
+			break
+		}
+	}
+	for i := 0; i < len(pool); i++ {
+		a := pool[(start+i)%len(pool)]
+		if !account.Gated(a, pick.Gates) {
+			return a, true
+		}
+	}
+	return account.Account{}, false
+}
+
+// poolForPick is the pool a pick drew from, for the opencode flip's drift
+// check. Nil when the token does not parse or the pool is empty.
+func poolForPick(pick AccountPick, token string) []account.Account {
+	ref, err := candidate.ParseRef(token)
+	if err != nil {
+		return nil
+	}
+	return pick.Set.Pool(account.Kind(ref.Harness), ref.Provider)
 }
 
 // switchEntry is the log record of one builder switch: why the switch
@@ -106,14 +155,34 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			b.Name, reason, b.BuilderCandidate, b.RoundSwitches, limit))
 	}
 
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, append(availability.Gates(AvailabilityDeps(rt)), roundExclusionGates(b)...), "", bindingRole(b))
-	if err != nil {
-		if b.Builder.PID == 0 {
-			b = abandonSession(b)
+	pick := pickFor(rt)
+	gates := append(availability.Gates(AvailabilityDeps(rt)), roundExclusionGates(b)...)
+
+	// A limit gated the account this binding is on: retry the same candidate
+	// on the next ungated login of its pool before the actor order is walked
+	// at all. The rotation is decided here, purely.
+	var (
+		res     Resolution
+		next    account.Account
+		rotated bool
+	)
+	if a, ok := nextBuilder(b, pick); ok {
+		if c, cerr := rt.Candidates.Resolve(b.BuilderCandidate); cerr == nil {
+			res = Resolution{Candidate: c, How: HowRotation, Account: a.Name}
+			next, rotated = a, true
 		}
-		return haltBinding(ctx, rt, b, fmt.Sprintf(
-			"%s: builder %s (%s); cannot switch: %v",
-			b.Name, reason, b.BuilderCandidate, err))
+	}
+	if !rotated {
+		var err error
+		res, err = resolveRole(rt.RoleRegistry(), rt.Candidates, gates, "", bindingRole(b), pick)
+		if err != nil {
+			if b.Builder.PID == 0 {
+				b = abandonSession(b)
+			}
+			return haltBinding(ctx, rt, b, fmt.Sprintf(
+				"%s: builder %s (%s); cannot switch: %v",
+				b.Name, reason, b.BuilderCandidate, err))
+		}
 	}
 
 	if closeOld {
@@ -149,7 +218,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// binding for the next tick: with the old pane closed (or already
 		// gone) the gone trigger fires again after switchGrace and walks on
 		// to the next candidate.
-		if counted {
+		if counted && !rotated {
 			b.RoundSwitches++
 		}
 		b.State = store.StateBroken
@@ -157,9 +226,21 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		return b, nil
 	}
 
+	// The whole install shares one opencode login, so a rotation must move the
+	// active row itself; claude and codex carry their login per process and
+	// need nothing here.
+	if rotated {
+		if err := switchOpencodeActive(ctx, rt, next, poolForPick(pick, res.Token()), pick.Gates); err != nil {
+			slog.Warn("could not flip the opencode active account", "binding", b.Name, "account", next.Name, "err", err)
+		}
+	}
+
 	b.Builder = carryStream(b.Builder, ep)
 	b.BuilderCandidate = res.Token()
-	if counted {
+	b.BuilderAccount = res.Account
+	// A rotation never counts: the pool bounds it naturally -- every login it
+	// leaves is gated -- so it must not consume the max_switches budget.
+	if counted && !rotated {
 		b.RoundSwitches++
 	}
 	b.BuilderMissingSince = time.Time{}
@@ -223,9 +304,16 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		return b, availability.LimitMatch{}, false, nil
 	}
 
+	// A limit is recorded against the login that hit it, so another login of
+	// the same provider stays usable; a binding with no account records the
+	// bare group exactly as before.
+	subject := availability.ProviderOf(b.BuilderCandidate)
+	if b.BuilderAccount != "" && subject != "" {
+		subject = account.GateKey(subject, b.BuilderAccount)
+	}
 	entry := availability.Entry{
 		Kind:    availability.RateLimited,
-		Subject: availability.ProviderOf(b.BuilderCandidate),
+		Subject: subject,
 		At:      now,
 		Until:   m.Until,
 		Note:    m.Line,
