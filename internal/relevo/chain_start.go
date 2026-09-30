@@ -12,7 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -174,7 +173,7 @@ func chainResolveStart(ctx context.Context, rt Runtime, opts ChainOptions) (chai
 // builder's worktree, builds every member, writes the chain row and the
 // members in one transaction, copies the plans and sends plan 1.
 func chainCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan) (ChainResult, error) {
-	worktree, branch, commit, baseRef, err := chainCut(ctx, rt, opts.Name, plan.repo, opts.Base)
+	worktree, branch, commit, baseRef, err := cutWorktree(ctx, rt, opts.Name, plan.repo, opts.Base)
 	if err != nil {
 		return ChainResult{}, err
 	}
@@ -216,7 +215,23 @@ func chainCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan chainS
 	if err := chainCopyPlans(rt, opts.Name, plan.bodies); err != nil {
 		return ChainResult{}, fmt.Errorf("chain %q started, but copying its plans failed: %w", opts.Name, err)
 	}
-	if _, err := Send(ctx, rt, opts.Name, rt.Store.ChainPlanPath(opts.Name, 1), SendOptions{}); err != nil {
+	// Plan 1 goes through the chain's own sender, so a running chain's
+	// refusal never bites its own start. The member carries its resolved
+	// candidate already, so none of Send's preflight is needed. A failure
+	// leaves the chain row running and the builder member NEEDS YOU; a later
+	// round's sweep turns that into a halt.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load(opts.Name)
+		if err != nil {
+			return err
+		}
+		body, err := rt.Store.ReadFile(rt.Store.ChainPlanPath(opts.Name, 1))
+		if err != nil {
+			return err
+		}
+		_, err = sendChainRound(ctx, rt, tx, b, string(body))
+		return err
+	}); err != nil {
 		return ChainResult{}, fmt.Errorf("chain %q started, but plan 1 could not be handed to %s: %w", opts.Name, opts.Name, err)
 	}
 	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies)}, nil
@@ -374,44 +389,6 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]Resolutio
 		out[m.part] = res
 	}
 	return out, nil
-}
-
-// chainCut cuts the builder's worktree exactly as `bind --worktree` does:
-// branch relevo/<name> from --base (else HEAD), at the store's worktree path.
-func chainCut(ctx context.Context, rt Runtime, name, repo, base string) (worktree, branch, commit, baseRef string, err error) {
-	if rt.Git == nil {
-		return "", "", "", "", ErrGitRequired
-	}
-	if base != "" {
-		sha, ok, rerr := rt.Git.RefSHA(ctx, repo, base)
-		if rerr != nil {
-			return "", "", "", "", rerr
-		}
-		if !ok {
-			return "", "", "", "", fmt.Errorf("base %q not found", base)
-		}
-		commit = sha
-	} else if commit, err = rt.Git.HeadCommit(ctx, repo); err != nil {
-		return "", "", "", "", err
-	}
-	branch = "relevo/" + name
-	exists, err := rt.Git.BranchExists(ctx, repo, branch)
-	if err != nil {
-		return "", "", "", "", err
-	}
-	if exists {
-		return "", "", "", "", git.ErrBranchExists
-	}
-	worktree = rt.Store.WorktreePath(name)
-	if err := rt.Git.AddWorktree(ctx, repo, worktree, branch, commit); err != nil {
-		return "", "", "", "", err
-	}
-	// The branch the cut came from, for `relevo land`, exactly as the
-	// local add records it.
-	if ref, cerr := rt.Git.CurrentBranch(ctx, repo); cerr == nil {
-		baseRef = ref
-	}
-	return worktree, branch, commit, baseRef, nil
 }
 
 // chainBuildMembers builds every member's stored binding: its tier resolved

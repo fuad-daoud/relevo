@@ -52,6 +52,11 @@ const (
 	KindEdge     Kind = "edge"
 	KindQueue    Kind = "queue"
 	KindRetired  Kind = "retired"
+
+	// KindChain is a chain's one end delivery: the payload the mastermind
+	// reads when a chain finishes, halts or stops. It is additive, like
+	// DirToConsult: nothing enumerates the set exhaustively.
+	KindChain Kind = "chain"
 )
 
 // kindPlanLegacy is the kind a round's prompt carried before the rename: it is

@@ -790,7 +790,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if escapeCheck(ctx, rt, b, true) == EscapeNote {
 			note = joinNotes(note, escapeNote)
 		}
-		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "")
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", false)
 		if err != nil {
 			return b, err
 		}
@@ -1126,7 +1126,11 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// The report is queued; a failing gate may now open round N+1, as a
 	// fresh process, exactly as Send would (#132 part 2). The failed
 	// round's own report, diff and gate=fail stand.
-	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
+	//
+	// A chain member never repairs here: the chain wiring owns the red gate
+	// (it hands the round to the chain's reviewer), and the repair round
+	// arrives in the wiring's later half.
+	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou && !chainOwnsMember(tx, b.Name) {
 		next, err = startRepairRound(ctx, rt, tx, next, *rec, closedRound)
 		if err != nil {
 			return next, true, false, err

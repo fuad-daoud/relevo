@@ -259,7 +259,7 @@ func writeError(err error) error {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return fail(codeBindingNotFound, "%v", err)
-	case errors.Is(err, store.ErrCWDTaken):
+	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, relevo.ErrRunningChainMember):
 		return fail(codeConflict, "%v", err)
 	case errors.Is(err, relevo.ErrTierAboveMax), errors.Is(err, harness.ErrTierUnsupported):
 		return fail(codeTierCap, "%v", err)
