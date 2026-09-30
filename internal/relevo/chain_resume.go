@@ -248,7 +248,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	// The send fills the round; until it does, the chain waits on no round.
 	next.Awaiting = chain.Awaiting{Member: targetPart}
 
-	text, err := chainSeedText(rt, tx, c, next, act, closedRound)
+	text, err := chainSeedText(rt, tx, c, next, act, closedRound, false)
 	if err != nil {
 		return ChainResult{}, err
 	}

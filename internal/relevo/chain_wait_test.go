@@ -211,6 +211,106 @@ func TestWaitChainFindsTheEndDeliveryOnASurvivingMember(t *testing.T) {
 	}
 }
 
+// TestWaitChainRunningAlwaysWaitsOnTheChain pins the running case: a running
+// chain waits on the chain even with the builder's round open, because the
+// chain's end is the one event the caller asked about.
+func TestWaitChainRunningAlwaysWaitsOnTheChain(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+	// The builder's first round is open, and the chain is running.
+	b := chainBinding(t, rt, "shop")
+	if !HasPromptEntry(chainLog(t, rt, "shop"), b.Round) {
+		t.Fatal("test premise: the builder's round must be open")
+	}
+
+	binding, isChain, err := ChainWaitTarget(rt, "shop")
+	if err != nil {
+		t.Fatalf("ChainWaitTarget: %v", err)
+	}
+	if !isChain || binding != "shop" {
+		t.Errorf("ChainWaitTarget(running) = (%q, chain %v), want the chain arm", binding, isChain)
+	}
+}
+
+// TestWaitChainHaltedWithAnOpenBuilderRoundWaitsOnTheRound pins gap 4: a chain
+// a human halted, whose builder then took a manual round, waits on that round
+// rather than on the chain's old halt line.
+func TestWaitChainHaltedWithAnOpenBuilderRoundWaitsOnTheRound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	// The chain halts on the reviewer's missing verdict.
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-rev", chainNoVerdictBody())
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+
+	// A human's manual round goes to the builder while the chain is halted.
+	if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+		t.Fatalf("Send after the halt: %v", err)
+	}
+	b := chainBinding(t, rt, "shop")
+	if !HasPromptEntry(chainLog(t, rt, "shop"), b.Round) {
+		t.Fatal("test premise: the manual builder round must be open")
+	}
+
+	binding, isChain, err := ChainWaitTarget(rt, "shop")
+	if err != nil {
+		t.Fatalf("ChainWaitTarget: %v", err)
+	}
+	if isChain {
+		t.Error("ChainWaitTarget chose the chain arm; the open builder round must win")
+	}
+	if binding != "shop" {
+		t.Errorf("binding = %q, want the builder %q", binding, "shop")
+	}
+}
+
+// TestWaitChainHaltedWithNoOpenRoundReturnsTheHalt pins the unchanged case: a
+// halted chain with no builder round open still waits on the chain's halt.
+func TestWaitChainHaltedWithNoOpenRoundReturnsTheHalt(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-rev", chainNoVerdictBody())
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+
+	binding, isChain, err := ChainWaitTarget(rt, "shop")
+	if err != nil {
+		t.Fatalf("ChainWaitTarget: %v", err)
+	}
+	if !isChain || binding != "shop" {
+		t.Errorf("ChainWaitTarget(halted, no open round) = (%q, chain %v), want the chain arm", binding, isChain)
+	}
+}
+
+// TestWaitTargetOnABindingIsTheBinding pins the non-chain name: a plain
+// binding, and a missing name, both take the ordinary binding path.
+func TestWaitTargetOnABindingIsTheBinding(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	for _, name := range []string{"plain", "missing"} {
+		binding, isChain, err := ChainWaitTarget(rt, name)
+		if err != nil {
+			t.Fatalf("ChainWaitTarget(%s): %v", name, err)
+		}
+		if isChain || binding != name {
+			t.Errorf("ChainWaitTarget(%s) = (%q, chain %v), want the binding path", name, binding, isChain)
+		}
+	}
+}
+
 // TestWaitChainUnknownNameIsNotFound pins the missing name: a chain the store
 // does not hold is store.ErrNotFound, which the CLI reports as binding_not_found.
 func TestWaitChainUnknownNameIsNotFound(t *testing.T) {

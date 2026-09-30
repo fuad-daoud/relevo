@@ -516,8 +516,12 @@ func chainRow(opts ChainOptions, set chain.Settings, members []chainMember, base
 		Feature:        opts.Feature,
 		Ticket:         base.ticket,
 		MasterMindID:   base.mastermindID,
-		CreatedAt:      at,
-		UpdatedAt:      at,
+		// Plan 1 starts here: the plan-start commit is the commit the
+		// builder's worktree was cut from, so plan 1's review can diff the
+		// plan's whole span.
+		PlanStartCommit: base.commit,
+		CreatedAt:       at,
+		UpdatedAt:       at,
 	}, nil
 }
 
