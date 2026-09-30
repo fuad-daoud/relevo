@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"time"
@@ -165,6 +166,25 @@ func (s *Store) save(b Binding) error {
 	return nil
 }
 
+// ensureBindingDir refuses a binding directory reached through anything but a
+// real directory: the state root is runner-writable, so a symlink planted at
+// <root>/<name> -- even one pointing at a real directory -- must not be
+// followed. MkdirAll takes no flags, so the Lstat is the whole refusal here; it
+// is why the check and the creation cannot be one call. An absent directory is
+// created, which is how <root> and <root>/<name> come into being.
+func (s *Store) ensureBindingDir(name string) error {
+	dir := s.Dir(name)
+	if fi, err := os.Lstat(dir); err == nil {
+		if !fi.IsDir() {
+			return fmt.Errorf("binding dir %s is not a directory", dir)
+		}
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return os.MkdirAll(dir, bindingDirMode)
+}
+
 // prepareSave validates and stamps a binding and builds the record Save writes.
 func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
 	// A binding written by a newer relevo is read-only for this binary: its
@@ -207,7 +227,7 @@ func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
 		b.RoundTimeoutMS = defaultRoundMSecs
 	}
 
-	if err := os.MkdirAll(s.Dir(b.Name), bindingDirMode); err != nil {
+	if err := s.ensureBindingDir(b.Name); err != nil {
 		return b, db.Record{}, fmt.Errorf("create binding dir: %w", err)
 	}
 

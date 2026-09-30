@@ -524,7 +524,7 @@ func readFrom(path string, off int64) ([]byte, error) {
 // in one write: O_APPEND writes of one buffer interleave with the
 // supervisor's stderr at line boundaries.
 func appendLines(path string, lines []string) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := openAppend(path)
 	if err != nil {
 		return err
 	}

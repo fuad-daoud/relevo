@@ -525,7 +525,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		planPath := rt.Store.PromptPath(name, b.Round)
 		reportPath := rt.Store.ReportPath(name, b.Round)
 		donePath := rt.Store.DonePath(name, b.Round)
-		if err := os.WriteFile(planPath, pf.body, 0o644); err != nil {
+		if err := stagePlan(planPath, pf.body); err != nil {
 			return fmt.Errorf("stage plan at %s: %w", planPath, err)
 		}
 

@@ -4213,6 +4213,41 @@ func TestDrainKeepsAppendingALegacyLog(t *testing.T) {
 	}
 }
 
+// TestDrainRefusesASymlinkedLegacyLog pins that the drain does not create or
+// append to a legacy log reached through a symlink: the refusal is a warning
+// with the cursor left where it was, so the sentinel stays byte-identical and
+// nothing outside the binding directory is written.
+func TestDrainRefusesASymlinkedLegacyLog(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	if err := os.WriteFile(sentinel, []byte("sentinel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacy := rt.Store.BuilderLogPath("webshop", 1)
+	if err := os.Symlink(sentinel, legacy); err != nil {
+		t.Fatal(err)
+	}
+	streamWrite(t, rt, agyToolActive+agyToolDone)
+
+	got := drainStream(rt, b)
+	if body, err := os.ReadFile(sentinel); err != nil || string(body) != "sentinel" {
+		t.Errorf("sentinel = %q, %v; want it byte-identical", body, err)
+	}
+	fi, err := os.Lstat(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("legacy log is no longer a symlink: mode = %v", fi.Mode())
+	}
+	if got.Builder.StreamOffset != b.Builder.StreamOffset {
+		t.Errorf("StreamOffset = %d, want it unchanged at %d", got.Builder.StreamOffset, b.Builder.StreamOffset)
+	}
+}
+
 // N7: stderr-only agy limits must survive the move of stderr into the stream
 // (builder-log spec §4.4, item 2): builderTail reads the raw stderr line out of
 // the rendered stream, and the limit scan still matches it.

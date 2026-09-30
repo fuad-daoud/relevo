@@ -3,7 +3,6 @@ package store
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -307,7 +306,7 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 		return err
 	}
 
-	if err := os.MkdirAll(s.Dir(name), bindingDirMode); err != nil {
+	if err := s.ensureBindingDir(name); err != nil {
 		return fmt.Errorf("create binding dir: %w", err)
 	}
 

@@ -1791,3 +1791,88 @@ func TestSendRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
 		t.Errorf("argv = %v, want --dangerously-skip-permissions", fr.specs[0].Argv)
 	}
 }
+
+// TestSendRefusesASymlinkedPlanFile pins that a local send does not follow a
+// symlink planted at the round's plan path: the write is refused under the
+// store lock, so nothing is recorded, the binding keeps active with no
+// process, and the link's target stays byte-identical.
+func TestSendRefusesASymlinkedPlanFile(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := seedBound(t)
+	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	if err := os.WriteFile(sentinel, []byte("sentinel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planPath := rt.Store.PromptPath("webshop", 1)
+	if err := os.Symlink(sentinel, planPath); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true})
+	if err == nil || !strings.Contains(err.Error(), "stage plan") {
+		t.Fatalf("Send = %v, want an error containing stage plan", err)
+	}
+
+	got, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("ReadFile(sentinel): %v", err)
+	}
+	if string(got) != "sentinel" {
+		t.Errorf("sentinel = %q, want it byte-identical", got)
+	}
+	fi, err := os.Lstat(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("plan path is no longer a symlink: mode = %v", fi.Mode())
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Kind != store.KindPick {
+		t.Errorf("log = %+v, want exactly Bind's pick entry", entries)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.State != store.StateActive || b.Builder.PID != 0 {
+		t.Errorf("binding = state %s pid %d, want active with no process", b.State, b.Builder.PID)
+	}
+}
+
+// TestSendReplacesAnExistingPlanFile pins that a resend into a round that
+// already holds a plan replaces it in place: the path stays a regular file
+// holding the new body, which an exclusive create alone would refuse.
+func TestSendReplacesAnExistingPlanFile(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := seedBound(t)
+	planPath := rt.Store.PromptPath("webshop", 1)
+	if err := os.WriteFile(planPath, []byte("old plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	got, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != "do it" {
+		t.Errorf("plan = %q, want the new body", got)
+	}
+	fi, err := os.Lstat(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.Mode().IsRegular() {
+		t.Errorf("plan path mode = %v, want a regular file", fi.Mode())
+	}
+}

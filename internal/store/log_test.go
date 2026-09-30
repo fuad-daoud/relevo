@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -166,6 +167,43 @@ func TestAppendLogTakesLockOnlyOnce(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatalf("got %d entries, want 1", len(got))
+	}
+}
+
+// TestAppendLogRefusesASymlinkedBindingDir pins that an append does not create
+// the binding directory through a symlink: the append fails before any event
+// row is written and the link's target stays empty.
+func TestAppendLogRefusesASymlinkedBindingDir(t *testing.T) {
+	s, name := seedBinding(t)
+
+	target := t.TempDir()
+	if err := os.Remove(s.Dir(name)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, s.Dir(name)); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.WithLock(func(tx *Tx) error {
+		return tx.AppendLog(name, LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPrompt, Confirmed: true})
+	})
+	if err == nil {
+		t.Fatal("AppendLog: got nil error, want a refusal")
+	}
+
+	got, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("target holds %d entries, want it empty", len(got))
+	}
+	entries, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("log holds %d entries, want it empty", len(entries))
 	}
 }
 

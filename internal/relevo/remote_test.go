@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -1859,6 +1860,102 @@ func TestSendRemoteTierPassedToStartRound(t *testing.T) {
 	}
 	if fr.startRoundTier != "edit" {
 		t.Fatalf("startRoundTier = %q, want edit", fr.startRoundTier)
+	}
+}
+
+// TestSendRemoteRefusesASymlinkedPlanFile pins that a remote send does not
+// follow a symlink planted at the round's plan path: the server has already
+// accepted the round, but the write is refused before the plan is logged and
+// the binding saved, so the local log stays empty and the stored binding is
+// unchanged.
+func TestSendRemoteRefusesASymlinkedPlanFile(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:   "api",
+		CWD:    "/fake/repo",
+		Repo:   "/fake/repo",
+		Branch: "relevo/api",
+		Round:  1,
+		State:  store.StateActive,
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: "zen",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	before, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relevo/api": "1111111111111111111111111111111111111111",
+		},
+	}
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureTier}},
+		startRoundResp: remote.BindingView{
+			RoundState: remote.RoundRunning,
+		},
+	}
+	ft := &fakeTransport{
+		snapshotResp: remote.Snapshot{
+			Heads: map[string]string{"refs/relevo/api/out": "1111111111111111111111111111111111111111"},
+		},
+	}
+	rt := Runtime{
+		Store:     st,
+		Git:       fg,
+		Remote:    fr,
+		Transport: ft,
+		Now:       time.Now,
+	}
+
+	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	if err := os.WriteFile(sentinel, []byte("sentinel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planPath := st.PromptPath("api", 1)
+	if err := os.Symlink(sentinel, planPath); err != nil {
+		t.Fatal(err)
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Send(ctx, rt, "api", planFile, SendOptions{Tier: "edit"})
+	if err == nil || !strings.Contains(err.Error(), "write plan") {
+		t.Fatalf("Send = %v, want an error containing write plan", err)
+	}
+
+	got, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("ReadFile(sentinel): %v", err)
+	}
+	if string(got) != "sentinel" {
+		t.Errorf("sentinel = %q, want it byte-identical", got)
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("log = %+v, want it empty", entries)
+	}
+	after, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Errorf("binding = %+v, want it unchanged (%+v)", after, before)
 	}
 }
 

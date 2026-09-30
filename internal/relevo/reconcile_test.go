@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1797,6 +1798,61 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 	}
 	if rec := gateRecordFor(t, rt, "webshop", 1); rec == nil || rec.Result != "fail" {
 		t.Errorf("round 1 report gate = %+v, want the fail it closed with", rec)
+	}
+}
+
+// TestRepairRoundRefusesASymlinkedPlanFile pins that a repair round does not
+// follow a symlink planted at its plan path: the round was never opened, the
+// binding halts NEEDS YOU with the refusal named in Halt, and the failing
+// round's own gate=fail record stands.
+func TestRepairRoundRefusesASymlinkedPlanFile(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentBinding(t)
+	rt.Runner = fr
+	b.Gate = "make check"
+	b.Regate = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	if err := os.WriteFile(sentinel, []byte("sentinel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planPath := rt.Store.PromptPath("webshop", 2)
+	if err := os.Symlink(sentinel, planPath); err != nil {
+		t.Fatal(err)
+	}
+
+	got, rec := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n")
+	if rec == nil || rec.Result != "fail" {
+		t.Fatalf("round 1 record = %+v, want the fail it closed with", rec)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2", got.Round)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("State = %q, want NEEDS YOU", got.State)
+	}
+	if !strings.Contains(got.Halt, "could not stage its plan") {
+		t.Errorf("Halt = %q, want it to name the refused plan", got.Halt)
+	}
+
+	body, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("ReadFile(sentinel): %v", err)
+	}
+	if string(body) != "sentinel" {
+		t.Errorf("sentinel = %q, want it byte-identical", body)
+	}
+	fi, err := os.Lstat(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("plan path is no longer a symlink: mode = %v", fi.Mode())
 	}
 }
 

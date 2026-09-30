@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -179,7 +178,7 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		}
 
 		planPath := rt.Store.PromptPath(name, cur.Round)
-		if err := os.WriteFile(planPath, planBody, 0o644); err != nil {
+		if err := stagePlan(planPath, planBody); err != nil {
 			return fmt.Errorf("write plan %s: %w", planPath, err)
 		}
 

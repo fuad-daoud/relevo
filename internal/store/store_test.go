@@ -951,6 +951,37 @@ func TestPruneWorktreeDirs(t *testing.T) {
 	})
 }
 
+// TestSaveRefusesASymlinkedBindingDir pins that Save does not create or write
+// into a binding directory reached through a symlink: the save fails and the
+// link's target stays empty, so no record is written through the plant.
+func TestSaveRefusesASymlinkedBindingDir(t *testing.T) {
+	s := New(t.TempDir())
+	target := t.TempDir()
+	if err := os.Symlink(target, s.Dir("webshop")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Save(newBinding("webshop", "/repo"))
+	if err == nil {
+		t.Fatal("Save: got nil error, want a refusal")
+	}
+
+	got, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("target holds %d entries, want it empty", len(got))
+	}
+	fi, err := os.Lstat(s.Dir("webshop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("binding dir is no longer a symlink: mode = %v", fi.Mode())
+	}
+}
+
 // TestStateRootIsOwnerOnly pins that a new state root is created 0700, so the
 // database and every binding's files sit under an owner-only directory. It
 // compares against a same-umask control directory and skips when the umask
