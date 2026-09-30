@@ -71,6 +71,7 @@ type fakeRemote struct {
 	startRoundForce     bool
 	startRoundTags      []remote.TagRef
 	startRoundRetry     bool
+	startRoundVerify    *bool
 	roundFileResp       io.ReadCloser
 	roundFileErr        error
 	roundFileFromResp   io.ReadCloser
@@ -149,7 +150,7 @@ func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remot
 	return f.getBindingResp, f.getBindingErr
 }
 
-func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error) {
+func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool, verify *bool) (remote.BindingView, error) {
 	call := fmt.Sprintf("StartRound:%s:%s:%d", server, name, round)
 	if f.beforeCall != nil {
 		f.beforeCall(call)
@@ -160,6 +161,7 @@ func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round 
 	f.startRoundForce = force
 	f.startRoundTags = tags
 	f.startRoundRetry = retryOnUnreachable
+	f.startRoundVerify = verify
 	return f.startRoundResp, f.startRoundErr
 }
 

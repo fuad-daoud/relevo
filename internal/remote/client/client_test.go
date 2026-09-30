@@ -208,7 +208,7 @@ func startRemoteRound(t *testing.T, ctx context.Context, cl *client.Client, fix 
 		t.Fatalf("Snapshot: %v", err)
 	}
 	defer func() { _ = snap.Body.Close() }()
-	return cl.StartRound(ctx, "zen", "api", 1, []byte("# Round 1 Plan\nImplement feature"), snap.Body, "", "", false, nil, false)
+	return cl.StartRound(ctx, "zen", "api", 1, []byte("# Round 1 Plan\nImplement feature"), snap.Body, "", "", false, nil, false, nil)
 }
 
 func commitServerResult(t *testing.T, worktree string) {
@@ -331,7 +331,7 @@ func TestStartRoundSendsTagsField(t *testing.T) {
 		{Name: "v0", SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 		{Name: "v1", SHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	}
-	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, tags, false); err != nil {
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, tags, false, nil); err != nil {
 		t.Fatalf("StartRound with tags: %v", err)
 	}
 	want, err := json.Marshal(tags)
@@ -348,7 +348,7 @@ func TestStartRoundSendsTagsField(t *testing.T) {
 		t.Fatalf("tags field = %q, want %q", got, string(want))
 	}
 
-	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, nil, false); err != nil {
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, nil, false, nil); err != nil {
 		t.Fatalf("StartRound without tags: %v", err)
 	}
 	mu.Lock()
@@ -386,7 +386,7 @@ func TestStartRoundSendsForceField(t *testing.T) {
 		time.Now,
 	)
 
-	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", true, nil, false); err != nil {
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", true, nil, false, nil); err != nil {
 		t.Fatalf("StartRound with force: %v", err)
 	}
 	mu.Lock()
@@ -399,7 +399,7 @@ func TestStartRoundSendsForceField(t *testing.T) {
 		t.Fatalf("force field = %q, want 1", got)
 	}
 
-	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, nil, false); err != nil {
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, nil, false, nil); err != nil {
 		t.Fatalf("StartRound without force: %v", err)
 	}
 	mu.Lock()

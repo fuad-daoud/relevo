@@ -363,6 +363,48 @@ func TestServedViewReportOutcome(t *testing.T) {
 	}
 }
 
+// TestServedViewCarriesGateResult pins gate_result to the closed round's own
+// gate record: the newest KindReport entry for Serve.ClosedRound that carries
+// one, never an older round's and never a report with no gate.
+//
+// Mutation: drop the Round == ClosedRound check and the older-round arm sees
+// round 1's result.
+func TestServedViewCarriesGateResult(t *testing.T) {
+	t.Parallel()
+
+	b := store.Binding{
+		Name:  "api",
+		State: store.StateActive,
+		Round: 3,
+		Serve: &store.ServeFacts{ClosedRound: 2, AckedRound: 1},
+	}
+
+	entries := []store.LogEntry{
+		{Round: 1, Kind: store.KindReport, Gate: &store.GateRecord{Result: "pass"}},
+		{Round: 2, Kind: store.KindReport, Gate: &store.GateRecord{Result: "fail"}},
+	}
+	if view := ServedView(b, entries, "", ""); view.GateResult != "fail" {
+		t.Fatalf("GateResult = %q, want fail", view.GateResult)
+	}
+
+	// The closed round's report carries no gate (a binding with no gate).
+	noGate := []store.LogEntry{
+		{Round: 1, Kind: store.KindReport, Gate: &store.GateRecord{Result: "pass"}},
+		{Round: 2, Kind: store.KindReport},
+	}
+	if view := ServedView(b, noGate, "", ""); view.GateResult != "" {
+		t.Fatalf("GateResult = %q with no gate on the closed round, want empty", view.GateResult)
+	}
+
+	// Only an older round carries a gate: still empty.
+	older := []store.LogEntry{
+		{Round: 1, Kind: store.KindReport, Gate: &store.GateRecord{Result: "pass"}},
+	}
+	if view := ServedView(b, older, "", ""); view.GateResult != "" {
+		t.Fatalf("GateResult = %q with only an older round's gate, want empty", view.GateResult)
+	}
+}
+
 func TestServedViewDiffFacts(t *testing.T) {
 	t.Parallel()
 

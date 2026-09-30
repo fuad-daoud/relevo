@@ -110,6 +110,7 @@ func filledCreateBindingRequest() CreateBindingRequest {
 		Role:               "builder",
 		Feature:            "auth",
 		Ticket:             "o/r#607",
+		Gate:               "make check",
 		Author:             &author,
 		ClientInstallation: "01CLIENTINSTALLATION0000000",
 		ClientBindingID:    "01CLIENTBINDINGRECORD000000",
@@ -228,6 +229,7 @@ func filledBindingView() BindingView {
 		ResultCommit:   "3333444455556666777788889999000011112222",
 		DirtyCommit:    "4444555566667777888899990000111122223333",
 		ReportOutcome:  "completed",
+		GateResult:     "pass",
 		Stopped:        "killed",
 		Shape:          "reader",
 		DiffNote:       "refactored remote wire",
@@ -357,6 +359,27 @@ func TestContractProtoShapes(t *testing.T) {
 				t.Fatalf("%s round-trip mismatch:\n--- orig ---\n%s\n--- back ---\n%s", tc.name, string(b), string(b2))
 			}
 		})
+	}
+}
+
+// TestGateFieldsAreAdditive pins the omitempty halves the goldens cannot: a
+// zero CreateBindingRequest and BindingView marshal without a gate/gate_result
+// key, so an old server parses an old client's body unchanged and an old client
+// sees no new key on an old server's view.
+func TestGateFieldsAreAdditive(t *testing.T) {
+	create, err := json.Marshal(CreateBindingRequest{})
+	if err != nil {
+		t.Fatalf("marshal zero CreateBindingRequest: %v", err)
+	}
+	if bytes.Contains(create, []byte(`"gate"`)) {
+		t.Fatalf("zero CreateBindingRequest carries a gate key: %s", create)
+	}
+	view, err := json.Marshal(BindingView{})
+	if err != nil {
+		t.Fatalf("marshal zero BindingView: %v", err)
+	}
+	if bytes.Contains(view, []byte(`"gate_result"`)) {
+		t.Fatalf("zero BindingView carries a gate_result key: %s", view)
 	}
 }
 

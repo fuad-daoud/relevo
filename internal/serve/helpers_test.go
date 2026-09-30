@@ -270,6 +270,30 @@ func makeRoundFormWithTier(t *testing.T, round int, plan, tier string, bundleByt
 	return buf.Bytes(), mw.FormDataContentType()
 }
 
+// makeRoundFormWithVerify is makeRoundForm plus an optional "verify" field,
+// written after "plan" and before "bundle" per the wire contract.
+func makeRoundFormWithVerify(t *testing.T, round int, plan, verify string, bundleBytes []byte) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("plan", plan); err != nil {
+		t.Fatal(err)
+	}
+	if verify != "" {
+		if err := mw.WriteField("verify", verify); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBundlePart(t, mw, bundleBytes)
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes(), mw.FormDataContentType()
+}
+
 // makeRoundFormForce is makeRoundForm plus an optional "force" field, written
 // after "plan" and before "bundle" per the wire contract.
 func makeRoundFormForce(t *testing.T, round int, plan string, bundleBytes []byte, force bool) ([]byte, string) {
@@ -606,6 +630,29 @@ func finishRound(t *testing.T, env *testEnv, rt relevo.Runtime, name string, n i
 	if err := os.WriteFile(rt.Store.DonePath(name, n), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.runner.setAlive(false)
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+}
+
+// finishGatedRound writes round n's report and done marker for a gated binding,
+// finishes the builder, ticks, finishes the gate the close started, and ticks
+// again so the round closes with a gate record.
+func finishGatedRound(t *testing.T, env *testEnv, rt relevo.Runtime, name string, n int) {
+	t.Helper()
+	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
+	if err := os.WriteFile(rt.Store.ReportPath(name, n), []byte(reportText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.DonePath(name, n), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.runner.setAlive(false)
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	// The gate started on that tick; finish it and tick again to close.
 	env.runner.setAlive(false)
 	if err := env.srv.Tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)

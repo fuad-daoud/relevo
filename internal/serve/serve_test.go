@@ -353,7 +353,7 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement}
+	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureChainMember}
 	if !slices.Equal(who.Features, wantFeatures) {
 		t.Fatalf("Features = %v, want %v", who.Features, wantFeatures)
 	}
@@ -485,6 +485,34 @@ func TestWhoAmIAdvertisesCandidateAndActors(t *testing.T) {
 	}
 }
 
+// TestWhoAmIAdvertisesChainMember pins the chain_member token on the feature
+// list, so a chain start knows this server can carry a member's round.
+//
+// Mutation: omit the token from handleWhoAmI and this fails.
+func TestWhoAmIAdvertisesChainMember(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var who remote.WhoAmI
+	if err := json.NewDecoder(rec.Body).Decode(&who); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if !slices.Contains(who.Features, remote.FeatureChainMember) {
+		t.Errorf("Features = %v, want %q", who.Features, remote.FeatureChainMember)
+	}
+}
+
 func TestWhoAmIScope(t *testing.T) {
 	scoped, err := New(Config{
 		DB:        testServeDB(t),
@@ -600,6 +628,58 @@ func TestCreateBinding(t *testing.T) {
 	}
 	if b.Owner != string(id) {
 		t.Fatalf("binding.Owner = %q, want %q", b.Owner, id)
+	}
+}
+
+// TestCreateBindingStoresGate pins the create's gate verbatim on the server
+// binding, and the reader refusal: a reader round has no check.
+//
+// Mutation: drop `Gate: req.Gate` from buildServedBinding and the writer arm
+// stores "".
+func TestCreateBindingStoresGate(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, kp := newRoleTestServer(t, policy.Policy{}, roleTestRegistry(t, set, policy.Policy{}))
+
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     testRepoID,
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
+		Gate:       "make check",
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+	b, err := testRuntime(t, srv, remote.IDOf(kp.Public)).Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load binding: %v", err)
+	}
+	if b.Gate != "make check" {
+		t.Fatalf("stored Gate = %q, want %q", b.Gate, "make check")
+	}
+
+	readerRec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "reader",
+		RepoID:     testRepoID,
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "reviewer",
+		Gate:       "make check",
+	})
+	if readerRec.Code != http.StatusBadRequest {
+		t.Fatalf("reader+gate status = %d, want 400; body: %s", readerRec.Code, readerRec.Body.String())
+	}
+	var errBody remote.ErrorBody
+	if err := json.NewDecoder(readerRec.Body).Decode(&errBody); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if errBody.Message != "--gate: a reader round has no check" {
+		t.Fatalf("reader+gate message = %q, want the local wording", errBody.Message)
+	}
+	if _, err := testRuntime(t, srv, remote.IDOf(kp.Public)).Store.Load("reader"); err == nil {
+		t.Fatal("reader binding with a gate was stored despite the refusal")
 	}
 }
 
@@ -1501,6 +1581,61 @@ func TestRoundStartHonoursTierField(t *testing.T) {
 	}
 }
 
+// TestRoundRequestVerifyOff pins the round form's verify field: "0" stores
+// RoundVerify=false and starts no verify consult at the close; absent takes the
+// server policy's verify.default; any other value is 400.
+//
+// Mutation: stop passing req.Verify into SendOptions and the verify=0 arm sees
+// the policy default (true).
+func TestRoundRequestVerifyOff(t *testing.T) {
+	env := setupTestEnv(t, func(c *Config) {
+		c.Policy = policy.Policy{Verify: &policy.VerifyPolicy{Default: true}}
+	})
+	rt := env.runtime(t)
+
+	// verify=0: stored false, no consult at close.
+	bundle := createAndAbsorb(t, env, "off")
+	form, ct := makeRoundFormWithVerify(t, 1, "# Plan 1", "0", bundle)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/off/rounds", form, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
+	b, err := rt.Store.Load("off")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.RoundVerify {
+		t.Fatalf("RoundVerify = true, want false for verify=0")
+	}
+	finishRound(t, env, rt, "off", 1)
+	entries, err := rt.Store.ReadLog("off")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Direction == store.DirToConsult {
+			t.Fatalf("verify=0 started a consult: %+v", e)
+		}
+	}
+
+	// absent: the policy's verify.default (true) is stored.
+	bundle = createAndAbsorb(t, env, "on")
+	form, ct = makeRoundFormWithVerify(t, 1, "# Plan 1", "", bundle)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/on/rounds", form, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
+	b, err = rt.Store.Load("on")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !b.RoundVerify {
+		t.Fatalf("RoundVerify = false, want the policy default true when verify is absent")
+	}
+
+	// a bad value is refused 400.
+	bundle = createAndAbsorb(t, env, "bad")
+	form, ct = makeRoundFormWithVerify(t, 1, "# Plan 1", "maybe", bundle)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/bad/rounds", form, ct)
+	requireStatus(t, resp, body, http.StatusBadRequest)
+}
+
 func TestRoundStartTierAboveMaxIs422(t *testing.T) {
 	env := setupTestEnv(t)
 
@@ -1878,6 +2013,55 @@ func TestRoundCloseServesFiles(t *testing.T) {
 	if string(body) != streamText {
 		t.Fatalf("stream body = %q, want %q", string(body), streamText)
 	}
+}
+
+// TestRoundFileServesTheGateLog pins the `gate` round-file route: a closed
+// gated round serves its gate log; an unclosed round and a round with no gate
+// are 404.
+//
+// Mutation: remove the "gate" case from roundFilePath and the closed arm 404s.
+func TestRoundFileServesTheGateLog(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+		Role:       "builder",
+		Gate:       "true",
+	})
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+	requireStatus(t, resp, body, http.StatusCreated)
+	if err := env.gitClient.UpdateRef(ctx, env.clientDir, "refs/relevo/api/out", env.headSHA, ""); err != nil {
+		t.Fatal(err)
+	}
+	bundleBytes := snapshotRef(t, env, env.clientDir, "refs/relevo/api/out")
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
+
+	// The round is open: no gate log yet.
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/gate", nil, "")
+	requireStatus(t, resp, body, http.StatusNotFound)
+
+	rt := env.runtime(t)
+	finishGatedRound(t, env, rt, "api", 1)
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/gate", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if !strings.Contains(string(body), "builder started") {
+		t.Fatalf("gate log body = %q, want the gate's log", string(body))
+	}
+
+	// A closed round with no gate has no gate log either.
+	plainBundle := createAndAbsorb(t, env, "nogate")
+	plainForm, plainCT := makeRoundForm(t, 1, "# Plan 1", plainBundle)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/nogate/rounds", plainForm, plainCT)
+	requireStatus(t, resp, body, http.StatusCreated)
+	finishRound(t, env, rt, "nogate", 1)
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/nogate/rounds/1/files/gate", nil, "")
+	requireStatus(t, resp, body, http.StatusNotFound)
 }
 
 func TestRoundBundleAndAck(t *testing.T) {

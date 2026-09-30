@@ -105,7 +105,7 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	// §4.5): without idempotent_send a retry could re-queue a round that did
 	// start, so a gateway error is reported as unreachable instead.
 	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader, tier, builder, force, tags,
-		slices.Contains(who.Features, remote.FeatureIdempotentSend))
+		slices.Contains(who.Features, remote.FeatureIdempotentSend), nil)
 	if err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) {
