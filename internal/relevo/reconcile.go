@@ -669,7 +669,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// critical section. A close that did not advance the chain writes no
 	// trace row.
 	if chainEvent.Kind != "" {
-		if err := chainApply(ctx, rt, tx, b, chainEvent); err != nil {
+		if err := chainApply(ctx, rt, tx, b, chainEvent, gate); err != nil {
 			return b, err
 		}
 	}

@@ -285,9 +285,12 @@ func securityClosed(s State, e Event) (State, Action) {
 }
 
 // send names the member the caller must send to and the seed it must render;
-// the caller fills Awaiting.Round from that member binding.
+// the caller fills Awaiting.Round from that member binding. The round is
+// cleared here, so a caller that forgets to fill it can never match a stale
+// round the chain happened to hold before the event.
 func send(s State, member string, seed SeedKind) (State, Action) {
 	s.Awaiting.Member = member
+	s.Awaiting.Round = 0
 	return s, Action{Kind: ActionSend, Member: member, Seed: seed}
 }
 

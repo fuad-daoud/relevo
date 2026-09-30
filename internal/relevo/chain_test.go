@@ -222,50 +222,115 @@ func TestChainBuilderCloseSeedsReviewer(t *testing.T) {
 	}
 }
 
-// TestChainBuilderRedGateSeedsReviewer pins the red gate in this half: a
-// failing gate spends nothing and opens no repair round, the event carries red
-// and the reviewer is seeded.
-func TestChainBuilderRedGateSeedsReviewer(t *testing.T) {
-	t.Parallel()
-
-	rt, _ := chainRuntime(t)
-	startedChain(t, rt, ChainOptions{})
-
-	// A gate that has already exited non-zero: the record is scripted rather
-	// than run, so the test names only the wiring.
-	b := chainBinding(t, rt, "shop")
+// chainArmFailingGate arms a failing gate on the binding's open round: the
+// next reconcile finds the run already exited non-zero, so the round closes
+// with gate=fail on the first tick. logBody is the gate log the signature
+// bound reads; "" leaves it absent, which skips the stall bound.
+func chainArmFailingGate(t *testing.T, rt Runtime, name, logBody string) {
+	t.Helper()
+	b := chainBinding(t, rt, name)
 	b.Gate = "false"
-	b.Regate = 2
 	b.GateRun = &store.GateRun{PID: 9999, StartedAt: baseTime.Unix(), Round: b.Round, Command: "false"}
 	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
+		t.Fatalf("arm the gate on %s: %v", name, err)
 	}
 	fr, ok := rt.Runner.(*fakeRunner)
 	if !ok {
 		t.Fatal("the chain runtime must carry a fakeRunner")
 	}
 	fr.exit(9999, 1)
+	if logBody != "" {
+		if err := os.WriteFile(rt.Store.GateLogPath(name, b.Round), []byte(logBody), 0o644); err != nil {
+			t.Fatalf("write the gate log: %v", err)
+		}
+	}
+}
+
+// TestChainBuilderRedGateRepairsBeforeTheReviewer pins the red gate's first
+// spend: with a repair still in budget the chain raises no event and writes no
+// trace row, the builder's repair round opens in the wiring's later half, and
+// the chain waits again on that member.
+func TestChainBuilderRedGateRepairsBeforeTheReviewer(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	b := chainBinding(t, rt, "shop")
+	b.Regate = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	builder := chainBinding(t, rt, "shop")
+	row := chainStoredRow(t, rt, "shop")
+	if builder.Round != 2 {
+		t.Fatalf("builder round = %d, want the repair round 2", builder.Round)
+	}
+	if row.Status != string(chain.StatusRunning) || row.Plan != 1 || row.Step != string(chain.StepBuilding) {
+		t.Errorf("chain row = %+v, want it running on plan 1 building: a repair is not a transition", row)
+	}
+	if row.AwaitingMember != chain.MemberBuilder || row.AwaitingRound != builder.Round {
+		t.Errorf("awaiting = (%s, %d), want the builder's repair round (%s, %d)",
+			row.AwaitingMember, row.AwaitingRound, chain.MemberBuilder, builder.Round)
+	}
+	if builder.RepairCount != 1 || builder.LastGateSig == "" {
+		t.Errorf("repair bookkeeping = %d repairs, sig %q; want 1 and a signature", builder.RepairCount, builder.LastGateSig)
+	}
+	if !HasPromptEntry(chainLog(t, rt, "shop"), builder.Round) {
+		t.Error("the repair round's plan must be open on the builder")
+	}
+	if events := chainTrace(t, rt, "shop"); len(events) != 0 {
+		t.Errorf("trace = %+v, want no row: a repair is not a transition", events)
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 0 {
+		t.Errorf("pending chain deliveries = %+v, want none on a repair", pending)
+	}
+}
+
+// TestChainBuilderRedAfterRegateSeedsReviewer pins the count bound's other
+// half: once the budget is spent, a red gate raises the event and the reviewer
+// sees it instead of the member halting.
+func TestChainBuilderRedAfterRegateSeedsReviewer(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	b := chainBinding(t, rt, "shop")
+	b.Regate = 2
+	b.RepairCount = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	row := chainStoredRow(t, rt, "shop")
+	rev := chainBinding(t, rt, "shop-rev")
 	if row.Step != string(chain.StepReviewing) {
-		t.Errorf("step = %q, want reviewing even on a red gate", row.Step)
+		t.Errorf("step = %q, want reviewing once the repair budget is spent", row.Step)
 	}
-	if !HasPromptEntry(chainLog(t, rt, "shop-rev"), 1) {
-		t.Error("the reviewer must be seeded on a red gate")
+	if row.AwaitingMember != chain.MemberReviewer || row.AwaitingRound != rev.Round {
+		t.Errorf("awaiting = (%s, %d), want the reviewer's round (%s, %d)",
+			row.AwaitingMember, row.AwaitingRound, chain.MemberReviewer, rev.Round)
 	}
-	// No repair round opened: the builder advanced to round 2 with no prompt
-	// for it, and the budget is untouched.
+	if !HasPromptEntry(chainLog(t, rt, "shop-rev"), rev.Round) {
+		t.Error("the reviewer must be seeded once the repair budget is spent")
+	}
 	after := chainBinding(t, rt, "shop")
-	if after.Round != 2 {
-		t.Errorf("builder round = %d, want 2 (no repair round in this half)", after.Round)
+	if after.State == store.StateNeedsYou {
+		t.Errorf("builder state = %q, want it left alone: the red event went to the reviewer", after.State)
 	}
-	if HasPromptEntry(chainLog(t, rt, "shop"), 2) {
-		t.Error("a chain member must not open a repair round here")
+	if after.RepairCount != 2 {
+		t.Errorf("RepairCount = %d, want it held at 2", after.RepairCount)
 	}
-	if after.RepairCount != 0 || after.Regate != 2 {
-		t.Errorf("repair budget = %d of %d, want it untouched at 0 of 2", after.RepairCount, after.Regate)
+	if HasPromptEntry(chainLog(t, rt, "shop"), after.Round) {
+		t.Error("no repair round may open once the budget is spent")
 	}
 
 	events := chainTrace(t, rt, "shop")
@@ -278,6 +343,243 @@ func TestChainBuilderRedGateSeedsReviewer(t *testing.T) {
 	}
 	if ev.Gate != chain.GateRed {
 		t.Errorf("event gate = %q, want red", ev.Gate)
+	}
+}
+
+// TestChainBuilderRedWithUnchangedGateOutputSeedsReviewer pins the stall
+// bound: the same failure the last repair already saw cannot buy a second
+// repair, so the event goes red to the reviewer.
+func TestChainBuilderRedWithUnchangedGateOutputSeedsReviewer(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	b := chainBinding(t, rt, "shop")
+	b.Regate = 3
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+
+	// The failure equals the one the last repair round already saw, with room
+	// left in the budget: only the stall bound can stop the repair.
+	b = chainBinding(t, rt, "shop")
+	b.RepairCount = 1
+	b.LastGateSig = gateSignature(rt.Store.ReadFile, rt.Store.GateLogPath("shop", b.Round))
+	if b.LastGateSig == "" {
+		t.Fatal("the gate log must hash to a signature")
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	row := chainStoredRow(t, rt, "shop")
+	rev := chainBinding(t, rt, "shop-rev")
+	if row.AwaitingMember != chain.MemberReviewer || row.AwaitingRound != rev.Round {
+		t.Errorf("awaiting = (%s, %d), want the reviewer's round (%s, %d)",
+			row.AwaitingMember, row.AwaitingRound, chain.MemberReviewer, rev.Round)
+	}
+	if !HasPromptEntry(chainLog(t, rt, "shop-rev"), rev.Round) {
+		t.Error("the reviewer must be seeded when the gate output is unchanged")
+	}
+	after := chainBinding(t, rt, "shop")
+	if after.RepairCount != 1 {
+		t.Errorf("RepairCount = %d, want 1: no second repair may open", after.RepairCount)
+	}
+	if HasPromptEntry(chainLog(t, rt, "shop"), after.Round) {
+		t.Error("no second repair round may open on the same failure")
+	}
+
+	events := chainTrace(t, rt, "shop")
+	if len(events) != 1 {
+		t.Fatalf("trace = %+v, want one row", events)
+	}
+	ev, err := chain.DecodeEvent(events[0].Event)
+	if err != nil {
+		t.Fatalf("DecodeEvent: %v", err)
+	}
+	if ev.Gate != chain.GateRed {
+		t.Errorf("event gate = %q, want red", ev.Gate)
+	}
+}
+
+// TestChainRepairHaltHaltsTheChain pins the failed start: a repair round that
+// cannot open leaves the member NEEDS YOU, and the sweep halts the chain with
+// the member's own reason and queues the single end delivery.
+func TestChainRepairHaltHaltsTheChain(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	b := chainBinding(t, rt, "shop")
+	b.Regate = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// A symlinked plan path: the repair round cannot stage its plan, so the
+	// member halts instead of opening round 2.
+	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	if err := os.WriteFile(sentinel, []byte("sentinel"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	if err := os.Symlink(sentinel, rt.Store.PromptPath("shop", 2)); err != nil {
+		t.Fatalf("plant the symlink: %v", err)
+	}
+	chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	builder := chainBinding(t, rt, "shop")
+	if builder.State != store.StateNeedsYou {
+		t.Fatalf("builder state = %q, want NEEDS YOU: the repair round could not start", builder.State)
+	}
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusRunning) {
+		t.Fatalf("chain status = %q, want it still running until the sweep", row.Status)
+	}
+
+	tickChains(context.Background(), rt)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+	if row.Reason != builder.Halt {
+		t.Errorf("halt reason = %q, want the member's reason %q", row.Reason, builder.Halt)
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+		t.Errorf("pending chain deliveries = %d, want the one end delivery", len(pending))
+	}
+	if events := chainTrace(t, rt, "shop"); len(events) != 1 {
+		t.Errorf("trace = %+v, want the sweep's one row", events)
+	}
+}
+
+// TestChainRepairRoundCloseReachesTheReviewer pins the repair round as a
+// member round: its own close is the next event the chain maps, and a green
+// gate there seeds the reviewer.
+func TestChainRepairRoundCloseReachesTheReviewer(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	b := chainBinding(t, rt, "shop")
+	b.Regate = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	if row := chainStoredRow(t, rt, "shop"); row.AwaitingMember != chain.MemberBuilder {
+		t.Fatalf("awaiting = %q, want the builder's repair round", row.AwaitingMember)
+	}
+
+	// The repair round passes: with no gate the close is green, and the chain
+	// maps it like any other builder round.
+	b = chainBinding(t, rt, "shop")
+	b.Gate = ""
+	b.GateRun = nil
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	row := chainStoredRow(t, rt, "shop")
+	rev := chainBinding(t, rt, "shop-rev")
+	if row.Step != string(chain.StepReviewing) {
+		t.Errorf("step = %q, want reviewing after the repair round closed", row.Step)
+	}
+	if row.AwaitingMember != chain.MemberReviewer || row.AwaitingRound != rev.Round {
+		t.Errorf("awaiting = (%s, %d), want the reviewer's round (%s, %d)",
+			row.AwaitingMember, row.AwaitingRound, chain.MemberReviewer, rev.Round)
+	}
+	if !HasPromptEntry(chainLog(t, rt, "shop-rev"), rev.Round) {
+		t.Error("the reviewer must be seeded for the repair round's close")
+	}
+	events := chainTrace(t, rt, "shop")
+	if len(events) != 1 {
+		t.Fatalf("trace = %+v, want one row for the repair round's close", events)
+	}
+	if events[0].Round != 2 {
+		t.Errorf("trace round = %d, want the repair round 2", events[0].Round)
+	}
+}
+
+// TestNonMemberRepairUnchanged pins that a binding no chain owns keeps the
+// gate repair loop exactly as it was: the budget opens a repair round, and a
+// spent budget halts the member.
+func TestNonMemberRepairUnchanged(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentBinding(t)
+	rt.Runner = fr
+	b.Gate = "make check"
+	b.Regate = 1
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n")
+	if got.Round != 2 || got.RepairCount != 1 || got.State != store.StateActive {
+		t.Fatalf("after the first failure: round=%d repairs=%d state=%q, want 2/1/active",
+			got.Round, got.RepairCount, got.State)
+	}
+	if !anySpecArgv(fr, "002-prompt.md") {
+		t.Error("a non-member must still be handed its repair round")
+	}
+
+	// A different failure spends the last of the budget: the member halts.
+	got, _ = failRoundWithGate(t, rt, got, fr, "FAIL github.com/example/other-pkg\n")
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %q, want needs_you once the budget is spent", got.State)
+	}
+	if !strings.Contains(got.Halt, "after 1 repair") {
+		t.Errorf("halt = %q, want the count bound's wording", got.Halt)
+	}
+}
+
+// TestChainAwaitsTheSentMembersOwnRound pins the round the chain stores when
+// it sends: it is the member's own new round, never the round the chain held
+// from the close before. In a real chain the members' rounds diverge, and a
+// stale round would make the chain ignore that member's close forever.
+func TestChainAwaitsTheSentMembersOwnRound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	// The reviewer is rounds ahead of the builder's first: its next send opens
+	// round 4, which the builder's stale round 1 must not shadow.
+	rev := chainBinding(t, rt, "shop-rev")
+	rev.Round = 4
+	if err := rt.Store.Save(rev); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	row := chainStoredRow(t, rt, "shop")
+	rev = chainBinding(t, rt, "shop-rev")
+	if rev.Round != 4 {
+		t.Fatalf("reviewer round = %d, want 4", rev.Round)
+	}
+	if row.AwaitingMember != chain.MemberReviewer || row.AwaitingRound != 4 {
+		t.Fatalf("awaiting = (%s, %d), want the reviewer's own round (%s, 4)",
+			row.AwaitingMember, row.AwaitingRound, chain.MemberReviewer)
+	}
+
+	// The close of that round advances the chain; a stale awaiting round would
+	// have dropped it. A pass on the only plan finishes the chain.
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusDone) {
+		t.Errorf("chain status = %q, want done: the reviewer's own round must advance the chain", row.Status)
 	}
 }
 
@@ -432,7 +734,7 @@ func TestChainFinishQueuesExactlyOneDelivery(t *testing.T) {
 		Verdict: chain.VerdictPass,
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return chainApply(context.Background(), rt, tx, rev, replay)
+		return chainApply(context.Background(), rt, tx, rev, replay, nil)
 	}); err != nil {
 		t.Fatalf("replayed chainApply: %v", err)
 	}
@@ -505,7 +807,7 @@ func TestChainAdvanceWritesStateAndTraceInOneTransaction(t *testing.T) {
 		Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
 	}
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
-		return chainApply(context.Background(), rt, tx, b, ev)
+		return chainApply(context.Background(), rt, tx, b, ev, nil)
 	})
 	if err == nil {
 		t.Fatal("chainApply = nil, want the staging failure")
@@ -535,7 +837,7 @@ func TestChainIgnoresACloseForAnotherRound(t *testing.T) {
 		Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return chainApply(context.Background(), rt, tx, b, ev)
+		return chainApply(context.Background(), rt, tx, b, ev, nil)
 	}); err != nil {
 		t.Fatalf("chainApply: %v", err)
 	}
@@ -570,7 +872,7 @@ func TestChainReviewerCloseWithoutAVerdictHalts(t *testing.T) {
 	rev := chainBinding(t, rt, "shop-rev")
 	ev := chain.Event{Kind: chain.EventReviewerClosed, Member: chain.MemberReviewer, Round: 1}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return chainApply(context.Background(), rt, tx, rev, ev)
+		return chainApply(context.Background(), rt, tx, rev, ev, nil)
 	}); err != nil {
 		t.Fatalf("chainApply: %v", err)
 	}

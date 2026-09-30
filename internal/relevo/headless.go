@@ -1127,13 +1127,21 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// fresh process, exactly as Send would (#132 part 2). The failed
 	// round's own report, diff and gate=fail stand.
 	//
-	// A chain member never repairs here: the chain wiring owns the red gate
-	// (it hands the round to the chain's reviewer), and the repair round
-	// arrives in the wiring's later half.
-	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou && !chainOwnsMember(tx, b.Name) {
-		next, err = startRepairRound(ctx, rt, tx, next, *rec, closedRound)
-		if err != nil {
-			return next, true, false, err
+	// A chain member's red gate is the chain's to spend: the wiring already
+	// decided in this tick whether a repair can run, on this binding and this
+	// gate log, so the two agree. It opens the round only when that decision
+	// allowed one; when it did not, the red event went to the chain's reviewer
+	// and the member must be left alone rather than halted.
+	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
+		repair := true
+		if chainOwnsMember(tx, b.Name) {
+			repair, _ = repairDecision(next, gateSignature(rt.Store.ReadFile, rec.LogPath))
+		}
+		if repair {
+			next, err = startRepairRound(ctx, rt, tx, next, *rec, closedRound)
+			if err != nil {
+				return next, true, false, err
+			}
 		}
 	}
 	return next, true, false, nil

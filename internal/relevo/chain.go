@@ -196,8 +196,9 @@ func chainGateResult(gate *store.GateRecord) string {
 // chain with the caller's tx, runs the pure transition and performs the action
 // in the same critical section as the close. A close that is not the awaited
 // one -- or that arrives once the chain has stopped -- changes nothing and
-// writes no trace row.
-func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, ev chain.Event) error {
+// writes no trace row. gate is the closing round's gate record when one ran;
+// a builder's red gate may be spent on a repair instead of an event.
+func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, ev chain.Event, gate *store.GateRecord) error {
 	c, err := tx.ChainByMember(b.Name)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil
@@ -216,6 +217,19 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	next, act := chain.Next(before, ev)
 	if act.Kind == chain.ActionNone {
 		return nil
+	}
+
+	// A builder's red gate with a repair still in budget is not a chain
+	// transition: the chain raises no event and writes no trace row, it only
+	// waits again for the same member's new round. The close has already
+	// advanced the binding, so b.Round is that repair round's number, and the
+	// wiring's later half opens the round on this same decision.
+	if ev.Kind == chain.EventBuilderClosed && ev.Gate == chain.GateRed && gate != nil {
+		if ok, _ := repairDecision(b, gateSignature(rt.Store.ReadFile, gate.LogPath)); ok {
+			next = before
+			next.Awaiting = chain.Awaiting{Member: chain.MemberBuilder, Round: b.Round}
+			return tx.ChainPut(chainRowWithState(c, next, rt.Now().UTC()))
+		}
 	}
 
 	if act.Kind != chain.ActionSend {

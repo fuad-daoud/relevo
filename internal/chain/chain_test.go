@@ -71,6 +71,22 @@ func TestNextBuilderCloseGreenSeedsReviewer(t *testing.T) {
 	assertSend(t, act, MemberReviewer, SeedReviewer)
 }
 
+// TestNextSendZeroesTheAwaitingRound pins the guard send sets: the round is
+// cleared along with the member, so a caller that forgets to fill the new
+// round can never match a stale round the state held before the event.
+func TestNextSendZeroesTheAwaitingRound(t *testing.T) {
+	t.Parallel()
+	s := awaited(StepBuilding, MemberBuilder, 7)
+	got, act := Next(s, Event{
+		Kind: EventBuilderClosed, Member: MemberBuilder, Round: 7,
+		Outcome: reporttail.OutcomeDone, Gate: GateGreen,
+	})
+	assertSend(t, act, MemberReviewer, SeedReviewer)
+	if got.Awaiting.Round != 0 {
+		t.Fatalf("awaited round: want 0 until the caller fills it, got %d", got.Awaiting.Round)
+	}
+}
+
 func TestNextBuilderCloseRedSeedsReviewer(t *testing.T) {
 	t.Parallel()
 	s := awaited(StepBuilding, MemberBuilder, 1)

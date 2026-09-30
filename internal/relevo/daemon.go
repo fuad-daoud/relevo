@@ -142,6 +142,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// Before the first tick of this process, every archived record the mirror
 	// has not seen is ingested (P3d §4.2, §4.5).
 	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })
+	// A running chain whose members have left the binding list still has to be
+	// swept: a member's record can be gone while the chain row says running,
+	// and then there is no binding left to reconcile it on.
+	d.safely("chain sweep", func() { tickChains(ctx, d.rt) })
 
 	bindings, err := d.rt.Store.List()
 	if err != nil {
