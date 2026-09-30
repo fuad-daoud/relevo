@@ -314,6 +314,7 @@ func writeFakeHarness(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := strings.ReplaceAll(fakeHarnessScript, "__READER_LINE__", fakeReaderStreamLine(t))
+	script = strings.ReplaceAll(script, "__FENCE__", fakeFence)
 	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake claude: %v", err)
 	}
@@ -333,6 +334,12 @@ const fakeReportBody = "# Round Report\n\n" +
 	"not_done: []\n" +
 	"```\n"
 
+// fakeFence is the relevo block's fence (three backticks), spliced into
+// fakeHarnessScript by writeFakeHarness: a Go raw string cannot hold a
+// backtick, and a chain seed's final message must carry a fenced block for
+// chain.ParseVerdict and chain.ParseFindings to read.
+const fakeFence = "```"
+
 // fakeHarnessScript is the fake `claude` relevo launches for a round. Its argv
 // is the real claude Print form -- `claude -p <prompt> --model M --agent
 // plan-executor --output-format stream-json --verbose` (internal/harness) -- so
@@ -341,9 +348,17 @@ const fakeReportBody = "# Round Report\n\n" +
 //
 // It does the four things a fake harness must: writes the report, makes one
 // commit in its worktree, creates the done marker, and prints one valid
-// stream-json line.
+// stream-json line. A reader round that read a chain seed instead recognizes
+// the seed by its opening line and prints that member's own final message --
+// the reviewer's verdict, the security finding count, a planner's plan --
+// counting its reviewer rounds under $XDG_STATE_HOME/chain-e2e/ so the first
+// asks for changes and the rest pass.
 var fakeHarnessScript = `#!/bin/sh
 set -eu
+
+# The three-character fence a relevo block opens and closes with. It is spliced
+# in by writeFakeHarness, because a Go raw string cannot hold a backtick.
+fence='__FENCE__'
 
 prompt=""
 for arg in "$@"; do
@@ -389,9 +404,52 @@ if [ -n "$artifact" ]; then
 	printf '<!doctype html><title>reader</title>\n' > "$artifact/index.html"
 	printf 'body { color: #000; }\n' > "$artifact/style.css"
 	printf 'the reader edited this\n' > "$worktree/reader-edit.txt"
+
+	# A chain member's round reads a seed, not a plan: each of the four seed
+	# templates opens with its own sentence, and that first line is what says
+	# which part of the chain this round is. A first line that matches none of
+	# them is an ordinary reader round, and keeps the fixed final message.
+	#
+	# The reviewer's verdict needs to tell its first round from its second. No
+	# per-round marker exists in the seed (and inventing one would be a design
+	# change), so the rounds are counted under $XDG_STATE_HOME/chain-e2e/:
+	# round one asks for changes, every round after it passes.
+	seed=$(head -n 1 "$plan")
+	msg=""
+	case "$seed" in
+	"Review the round and give a verdict.")
+		state="${XDG_STATE_HOME:-$HOME/.local/state}/chain-e2e"
+		mkdir -p "$state"
+		count=0
+		if [ -f "$state/reviewer-rounds" ]; then
+			count=$(cat "$state/reviewer-rounds")
+		fi
+		count=$((count + 1))
+		printf '%s\n' "$count" > "$state/reviewer-rounds"
+		verdict=pass
+		if [ "$count" -eq 1 ]; then
+			verdict=changes
+		fi
+		msg='# Reviewer output\n\nI read the plan, the report, the round diff and the check result.\n\n'"$fence"'relevo\nverdict: '"$verdict"'\n'"$fence"'\n'
+		;;
+	"Write a correction plan for the builder.")
+		msg='# Correction plan\n\n1. Make the change the reviewer asked for.\n2. Re-run the check.\n'
+		;;
+	"Write a plan that fixes the security findings.")
+		msg='# Fix plan\n\n1. Fix the finding the security scan reported.\n2. Re-run the check.\n'
+		;;
+	"Scan the branch for security problems.")
+		msg='# Security scan\n\nThe branch has one finding: a shell variable expanded unquoted in the fake harness.\n\n'"$fence"'relevo\nfindings: 1\n'"$fence"'\n'
+		;;
+	esac
+
 	: > "$marker"
 	sleep 0.2
-	printf '%s\n' '__READER_LINE__'
+	if [ -n "$msg" ]; then
+		printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' "$msg"
+	else
+		printf '%s\n' '__READER_LINE__'
+	fi
 	exit 0
 fi
 

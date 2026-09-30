@@ -7,7 +7,7 @@ that classification, written next to the migrations that create the tables.
 It is proposal item 4 of the shared-database work; which file each scope lands
 in, and the decision for each per-user config section, belong to the sync round.
 
-Migrations 001-015 are the whole series this classifies. Migration 015 adds
+Migrations 001-016 are the whole series this classifies. Migration 015 adds
 columns to `binding_record` and no table, so every table in the series is
 listed below. The rules a migration must follow are in
 [`README.md`](README.md); the file that created a table is its history.
@@ -21,7 +21,9 @@ it, from migration 014.
 | table | what it is |
 |---|---|
 | `binding_record` | A binding as `internal/store` reads and writes it: the system of record. `origin` is a live key column, and the live uniqueness key is `(origin, owner, name)`. |
+| `chains` | A chain and its members. `origin` is a live key column, and `(origin, owner, name)` is its natural key. |
 | `binding_event` | A binding record's append-only log. No column: it inherits origin through `record_id`. |
+| `chain_event` | A chain's append-only trace. No column: it inherits origin through `chain_id`. |
 | `round_file` | A closed round's sealed files. No column: it inherits origin through `record_id`. |
 | `installation` | The display label of every installation seen, so another machine can name the writer of a row. A projection of the installation file that sits beside the database; the file is authoritative and never syncs. |
 | mirror `repo` | A git repository relevo has seen. `origin` is part of the natural keys `(origin, origin_url)` and `(origin, common_dir)`. |

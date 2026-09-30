@@ -56,3 +56,43 @@ func TestReadsOnAnOlderSchemaAreAbsent(t *testing.T) {
 		})
 	}
 }
+
+// schemaFifteen is the migration series up to and including the one before the
+// chain tables, so a read on it exercises the absent-table path.
+var schemaFifteen = []string{
+	"001_initial.sql",
+	"002_config.sql",
+	"003_binding_record.sql",
+	"004_round_file.sql",
+	"005_owner_scope.sql",
+	"006_config_revision.sql",
+	"007_round_actor.sql",
+	"008_mastermind.sql",
+	"009_prompt_artifact_kind.sql",
+	"010_repo_consent.sql",
+	"011_session_consent.sql",
+	"012_binding_ticket.sql",
+	"013_column_codec.sql",
+	"014_installation_origin.sql",
+	"015_binding_link.sql",
+}
+
+// TestChainReadsAreAbsentOnAnOlderSchema pins that the chain reads migration
+// 016 adds report a schema that predates the chain tables as absent, never an
+// error.
+func TestChainReadsAreAbsentOnAnOlderSchema(t *testing.T) {
+	d := openSchema(t, schemaFifteen...)
+
+	if _, ok, err := d.ChainGet("", "x"); err != nil || ok {
+		t.Fatalf("ChainGet on schema 15 = (_, %v, %v), want (_, false, nil)", ok, err)
+	}
+	if _, ok, err := d.ChainGetByMember("", "x"); err != nil || ok {
+		t.Fatalf("ChainGetByMember on schema 15 = (_, %v, %v), want (_, false, nil)", ok, err)
+	}
+	if rows, err := d.ChainList(""); err != nil || len(rows) != 0 {
+		t.Fatalf("ChainList on schema 15 = (%v, %v), want (empty, nil)", rows, err)
+	}
+	if rows, err := d.ChainEvents("x"); err != nil || len(rows) != 0 {
+		t.Fatalf("ChainEvents on schema 15 = (%v, %v), want (empty, nil)", rows, err)
+	}
+}

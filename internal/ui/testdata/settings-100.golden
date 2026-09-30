@@ -1,6 +1,6 @@
   ◆ relevo    settings                                                         v0.13.0-28    14:02  
                                                                                                     
-   18 settings   3 set                                                                              
+   23 settings   3 set                                                                              
                                                                                                     
    SETTING                                         VALUE                   DEFAULT                  
    rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 4 settings · 2 set   
@@ -27,8 +27,8 @@
    classify                                        off                     off                      
    notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
    notify.webhooks                                 none                    none                     
-                                                                                                    
-   max_switches   2                                                                                 
-   How many times relevo may move one round to the next candidate after a rate limit or a failed    
+   chain ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   
+   chain.max_corrections                           3                       3                        
+   chain.reviewer_actor                            reviewer                reviewer                 
 
  enter  edit      r  reset      :  command      ?  all keys      q  quit                            

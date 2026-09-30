@@ -44,6 +44,10 @@ func RenderStatus(r Report) string {
 	}
 
 	for _, b := range r.Bindings {
+		if b.Chain != nil {
+			writeChainRow(&sb, b)
+			continue
+		}
 		writeBindingRow(&sb, b)
 	}
 
@@ -67,6 +71,22 @@ func writeBindingRow(sb *strings.Builder, b BindingStatus) {
 	writeMasterMindLine(sb, b)
 	writeBuilderLine(sb, b)
 	writeRowTrailer(sb, b)
+}
+
+// writeChainRow renders one chain's block in place of its members' rows: the
+// chain's name, the tree it works in, the chain's status and its plan segment,
+// then the halt reason when it has one. A member's own block still renders
+// through writeBindingRow, underneath, in the status <chain> view.
+func writeChainRow(sb *strings.Builder, b BindingStatus) {
+	cwd := b.CWD
+	if cwd == "" {
+		cwd = "-"
+	}
+	fmt.Fprintf(sb, "%-8s %-40s chain  %s  %s", b.Name, cwd, b.Chain.Status, ChainSegment(*b.Chain))
+	if b.Detail != "" {
+		fmt.Fprintf(sb, "\n  reason   %s", b.Detail)
+	}
+	fmt.Fprint(sb, "\n")
 }
 
 // writeRoundLine renders the binding's name, cwd, round and state, plus the

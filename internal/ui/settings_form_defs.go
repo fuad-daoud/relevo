@@ -145,6 +145,68 @@ func newClassifyFields(doc relevo.ConfigDoc) ([]settingField, string, string) {
 	return fields, "scores each builder line for prompt injection, beside the pattern scan", "classify"
 }
 
+// newChainFields builds the chain form's fields: the security chip, then the
+// correction budget and the reviewer, planner and security actors.
+func newChainFields(doc relevo.ConfigDoc) ([]settingField, string, string) {
+	ch := doc.Policy.Chain
+
+	securitySel := 0
+	if ch != nil && ch.Security != nil && *ch.Security {
+		securitySel = 1
+	}
+	securityField := settingField{
+		label: "security", path: "chain.security",
+		chips: []string{"off", "on"}, sel: securitySel, origSel: securitySel,
+		value: func(sel int) any { return sel == 1 },
+	}
+
+	var maxCorrections, reviewer, planner, securityActor string
+	if ch != nil {
+		if ch.MaxCorrections != nil {
+			maxCorrections = strconv.Itoa(*ch.MaxCorrections)
+		}
+		reviewer = ch.ReviewerActor
+		planner = ch.PlannerActor
+		securityActor = ch.SecurityActor
+	}
+
+	textField := func(label, path, orig, hint string, parse func(string) (any, error)) settingField {
+		in := newFormInput(false)
+		in.SetValue(orig)
+		in.CursorEnd()
+		return settingField{
+			label: label, path: path, input: in, orig: orig, hint: hint, parse: parse,
+		}
+	}
+
+	fields := []settingField{
+		securityField,
+		textField("max_corrections", "chain.max_corrections", maxCorrections,
+			"default 3", parseNonNegInt("a whole number, 0 or more")),
+		textField("reviewer_actor", "chain.reviewer_actor", reviewer,
+			"default reviewer", parseChainActor),
+		textField("planner_actor", "chain.planner_actor", planner,
+			"default lite-planner", parseChainActor),
+		textField("security_actor", "chain.security_actor", securityActor,
+			"default security", parseChainActor),
+	}
+
+	return fields, "how many correction rounds a plan may take, and which actor fills each chain member", "chain"
+}
+
+// parseChainActor is the chain form's actor parsers: "" deletes, else the
+// trimmed name must be non-empty.
+func parseChainActor(s string) (any, error) {
+	if s == "" {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return nil, errors.New("an actor name")
+	}
+	return trimmed, nil
+}
+
 // parseSlice is the scope forms' slice parser: "" deletes, else the trimmed
 // value must end in ".slice".
 func parseSlice(s string) (any, error) {

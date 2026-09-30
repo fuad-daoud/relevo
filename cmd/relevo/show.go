@@ -21,6 +21,7 @@ import (
 const showUsage = `usage: relevo show <name> [--round N] [--prompt|--report|--diff|--drift|--log|--transcript|--gate|--findings ID|--output|--artifacts|--artifact REL] [--json] [--peek]
        relevo show <name> --diff|--drift [--stat] [--anchors]
        relevo show <name> --log [--follow] [--after N]
+       relevo show <chain> --trace [--json]
        relevo show <name> --owner <label|id> [--log] [--state DIR]`
 
 // flagGiven reports whether the named flag was set on the command line. It is
@@ -42,6 +43,7 @@ type showSectionArgs struct {
 	prompt, report, diff, drift bool
 	log, transcript, gate       bool
 	output, artifacts           bool
+	trace                       bool
 	findingsID                  string
 	artifactRel                 string
 }
@@ -67,6 +69,7 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 		{a.findingsID != "", relevo.ShowFindings},
 		{a.output, relevo.ShowOutput},
 		{a.artifacts || a.artifactRel != "", relevo.ShowArtifacts},
+		{a.trace, relevo.ShowTrace},
 	}
 	var chosen relevo.ShowSection
 	n := 0
@@ -82,7 +85,7 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 	case 1:
 		return chosen, nil
 	default:
-		return "", fmt.Errorf("only one of --prompt, --report, --diff, --drift, --log, --transcript, --gate, --findings, --output, --artifacts may be given")
+		return "", fmt.Errorf("only one of --prompt, --report, --diff, --drift, --log, --transcript, --gate, --findings, --output, --artifacts, --trace may be given")
 	}
 }
 
@@ -98,6 +101,7 @@ type showFlagValues struct {
 	gateSection *bool
 	output      *bool
 	artifacts   *bool
+	trace       *bool
 	artifact    *string
 	findings    *string
 	stat        *bool
@@ -124,6 +128,7 @@ func showFlagSet(fs *flag.FlagSet) *showFlagValues {
 	v.gateSection = fs.Bool("gate", false, "show the round's gate log")
 	v.output = fs.Bool("output", false, "show the round's output file (a reader's <label>.md)")
 	v.artifacts = fs.Bool("artifacts", false, "show the round's artifact files")
+	v.trace = fs.Bool("trace", false, "on a chain: show its ordered trace")
 	v.artifact = fs.String("artifact", "", "show one artifact's bytes, raw: --artifact <rel>")
 	v.findings = fs.String("findings", "", "show a consult's findings: --findings <id>")
 	v.stat = fs.Bool("stat", false, "with --diff/--drift: print the summary line instead of the patch body")
@@ -148,6 +153,7 @@ func cmdShow(args []string) error {
 	round, prompt, report, diff := v.round, v.prompt, v.report, v.diff
 	drift, logSection, transcript, gateSection := v.drift, v.logSection, v.transcript, v.gateSection
 	output, artifacts, artifact, findings := v.output, v.artifacts, v.artifact, v.findings
+	trace := v.trace
 	stat, anchors, follow, after := v.stat, v.anchors, v.follow, v.after
 	asJSON, peek, owner, state := v.asJSON, v.peek, v.owner, v.state
 	fs.Usage = func() {
@@ -172,6 +178,7 @@ func cmdShow(args []string) error {
 		prompt: *prompt, report: *report, diff: *diff, drift: *drift,
 		log: *logSection, transcript: *transcript, gate: *gateSection,
 		output: *output, artifacts: *artifacts,
+		trace:      *trace,
 		findingsID: *findings, artifactRel: *artifact,
 	})
 	if serr != nil {
@@ -251,6 +258,10 @@ func classifyReadErr(err error) error {
 		return fail(codeRoundNotFound, "%v", err)
 	case errors.Is(err, relevo.ErrNoArtifact):
 		return fail(codeArtifactNotFound, "%v", err)
+	case errors.Is(err, relevo.ErrNotAChain):
+		// --trace names a chain, and only a chain has one: the name exists,
+		// the request for it is what is wrong.
+		return failWrap(codeUsage, err, "%v", err)
 	default:
 		return fail(codeInternal, "%v", err)
 	}
@@ -302,6 +313,17 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	}
 
 	if opts.JSON {
+		if res.Trace != nil {
+			// --trace's document is the trace itself, not the round-shaped
+			// ShowResult the other sections encode.
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(res.Trace); err != nil {
+				return err
+			}
+			stampViewed()
+			return nil
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(res); err != nil {
@@ -311,9 +333,15 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 		return nil
 	}
 
-	header := fmt.Sprintf("%s%s round %d of %d · %s", headerPrefix, res.Name, res.Round, res.Rounds, res.Section)
-	if res.Archived {
-		header += " · archived " + res.ArchivedAt.Format("2006-01-02")
+	// A trace names no round: the header says chain and trace instead.
+	var header string
+	if res.Section == relevo.ShowTrace {
+		header = fmt.Sprintf("%s%s · trace", headerPrefix, res.Name)
+	} else {
+		header = fmt.Sprintf("%s%s round %d of %d · %s", headerPrefix, res.Name, res.Round, res.Rounds, res.Section)
+		if res.Archived {
+			header += " · archived " + res.ArchivedAt.Format("2006-01-02")
+		}
 	}
 	fmt.Fprintln(os.Stderr, header)
 

@@ -197,6 +197,11 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if err != nil {
 		return preflight{}, err
 	}
+	// A running chain owns its members' rounds: a manual send would race the
+	// chain's own next send. Read-only, so a dry run refuses identically.
+	if err := refuseRunningChainMemberStore(rt.Store, name); err != nil {
+		return preflight{}, err
+	}
 	if b.State == store.StatePaused {
 		return preflight{}, fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
 	}
@@ -453,6 +458,11 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 		b, err := tx.Load(name)
 		if err != nil {
+			return err
+		}
+		// Re-check under the lock, exactly as the preflight's read-only check
+		// did: the chain may have started between the two.
+		if err := refuseRunningChainMember(tx, name); err != nil {
 			return err
 		}
 		if b.State == store.StateBroken {

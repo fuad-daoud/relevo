@@ -767,3 +767,83 @@ func TestAddStoresTicketWithRepoHint(t *testing.T) {
 		t.Errorf("stored Ticket = %q, want o/r#607", stored.Ticket)
 	}
 }
+
+// TestAddUsesBaseWhenGiven pins the local cut's --base: when --base names a
+// ref, the worktree is cut from the commit that ref resolves to, and HEAD is
+// left out of it entirely; with no --base, HEAD stays the default.
+func TestAddUsesBaseWhenGiven(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a named base", func(t *testing.T) {
+		t.Parallel()
+
+		fg := &fakeGit{
+			headCommitID: "commit-head-123",
+			refSHA:       map[string]string{"release/v1": "commit-base-456"},
+		}
+		rt := newTestRuntime(t, fg)
+		repo := addRepo(t)
+
+		got, err := Add(context.Background(), rt, AddOptions{
+			Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName,
+			Repo: repo, Base: "release/v1",
+		})
+		if err != nil {
+			t.Fatalf("Add --base: %v", err)
+		}
+		if len(fg.refSHACalls) != 1 || fg.refSHACalls[0].Ref != "release/v1" || fg.refSHACalls[0].Dir != repo {
+			t.Fatalf("RefSHA calls = %+v, want one for release/v1 in %s", fg.refSHACalls, repo)
+		}
+		if len(fg.addWorktreeCalls) != 1 || fg.addWorktreeCalls[0].Commit != "commit-base-456" {
+			t.Fatalf("AddWorktree calls = %+v, want the resolved base commit", fg.addWorktreeCalls)
+		}
+		if got.Base != "commit-base-456" {
+			t.Errorf("Base = %q, want the resolved base commit", got.Base)
+		}
+		if fg.headCalls != 0 {
+			t.Errorf("HeadCommit calls = %d, want 0 when --base is given", fg.headCalls)
+		}
+	})
+
+	t.Run("no base keeps HEAD", func(t *testing.T) {
+		t.Parallel()
+
+		fg := &fakeGit{headCommitID: "commit-head-123"}
+		rt := newTestRuntime(t, fg)
+		repo := addRepo(t)
+
+		got, err := Add(context.Background(), rt, AddOptions{
+			Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName, Repo: repo,
+		})
+		if err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		if len(fg.addWorktreeCalls) != 1 || fg.addWorktreeCalls[0].Commit != "commit-head-123" {
+			t.Fatalf("AddWorktree calls = %+v, want HEAD", fg.addWorktreeCalls)
+		}
+		if got.Base != "commit-head-123" {
+			t.Errorf("Base = %q, want HEAD", got.Base)
+		}
+		if len(fg.refSHACalls) != 0 {
+			t.Errorf("RefSHA calls = %+v, want none when --base is omitted", fg.refSHACalls)
+		}
+	})
+
+	t.Run("an unresolvable base is refused before the cut", func(t *testing.T) {
+		t.Parallel()
+
+		fg := &fakeGit{headCommitID: "commit-head-123", refSHA: map[string]string{}}
+		rt := newTestRuntime(t, fg)
+
+		_, err := Add(context.Background(), rt, AddOptions{
+			Name: "frontend", Candidate: testAgyRef, MasterMindID: testMasterMindName,
+			Repo: addRepo(t), Base: "nope",
+		})
+		if err == nil || !strings.Contains(err.Error(), `base "nope" not found`) {
+			t.Fatalf("err = %v, want base \"nope\" not found", err)
+		}
+		if len(fg.addWorktreeCalls) != 0 {
+			t.Errorf("a refused base must cut no worktree: %+v", fg.addWorktreeCalls)
+		}
+	})
+}

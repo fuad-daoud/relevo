@@ -1133,3 +1133,123 @@ func TestArtifactMaxMBValidates(t *testing.T) {
 		})
 	}
 }
+
+// TestChainPolicyDefaults pins the chain group's defaults: a 3 correction
+// budget, reviewer / lite-planner / security actors, and security off.
+func TestChainPolicyDefaults(t *testing.T) {
+	if DefaultChainMaxCorrections != 3 || DefaultChainReviewerActor != "reviewer" ||
+		DefaultChainPlannerActor != "lite-planner" || DefaultChainSecurityActor != "security" {
+		t.Errorf("chain defaults = %d/%s/%s/%s, want 3/reviewer/lite-planner/security",
+			DefaultChainMaxCorrections, DefaultChainReviewerActor, DefaultChainPlannerActor, DefaultChainSecurityActor)
+	}
+
+	p, err := load(t, `{}`)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if p.Chain != nil {
+		t.Fatalf("Chain = %+v, want nil", p.Chain)
+	}
+	if got := p.ChainMaxCorrections(); got != 3 {
+		t.Errorf("ChainMaxCorrections() = %d, want 3", got)
+	}
+	if got := p.ChainReviewerActor(); got != "reviewer" {
+		t.Errorf("ChainReviewerActor() = %q, want reviewer", got)
+	}
+	if got := p.ChainPlannerActor(); got != "lite-planner" {
+		t.Errorf("ChainPlannerActor() = %q, want lite-planner", got)
+	}
+	if got := p.ChainSecurityActor(); got != "security" {
+		t.Errorf("ChainSecurityActor() = %q, want security", got)
+	}
+	if p.ChainSecurityOn() {
+		t.Error("ChainSecurityOn() = true, want false")
+	}
+}
+
+// TestChainPolicyOverrides pins a loaded chain block: every accessor reads its
+// configured value, and an explicit false still reads false.
+func TestChainPolicyOverrides(t *testing.T) {
+	body := `{"chain":{"max_corrections":0,"reviewer_actor":"rev","planner_actor":"plan","security_actor":"sec","security":true}}`
+	p, err := load(t, body)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if p.Chain == nil {
+		t.Fatal("Chain is nil")
+	}
+	if got := p.ChainMaxCorrections(); got != 0 {
+		t.Errorf("ChainMaxCorrections() = %d, want 0", got)
+	}
+	if got := p.ChainReviewerActor(); got != "rev" {
+		t.Errorf("ChainReviewerActor() = %q, want rev", got)
+	}
+	if got := p.ChainPlannerActor(); got != "plan" {
+		t.Errorf("ChainPlannerActor() = %q, want plan", got)
+	}
+	if got := p.ChainSecurityActor(); got != "sec" {
+		t.Errorf("ChainSecurityActor() = %q, want sec", got)
+	}
+	if !p.ChainSecurityOn() {
+		t.Error("ChainSecurityOn() = false, want true")
+	}
+
+	p, err = load(t, `{"chain":{"security":false}}`)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if p.ChainSecurityOn() {
+		t.Error("explicit chain.security false read as on")
+	}
+	if got := p.ChainMaxCorrections(); got != DefaultChainMaxCorrections {
+		t.Errorf("ChainMaxCorrections() beside an unset budget = %d, want %d", got, DefaultChainMaxCorrections)
+	}
+}
+
+// TestChainUnknownKeyStillWarns pins that the generic unknown-key path covers
+// the chain group: a key Policy's shape does not declare warns rather than
+// rejecting the file.
+func TestChainUnknownKeyStillWarns(t *testing.T) {
+	_, warnings := loadWarnings(t, `{"chain":{"max_corrections":2,"frobnicate":true}}`)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `unknown key "chain.frobnicate"`) {
+		t.Fatalf("warnings = %v, want exactly one naming chain.frobnicate", warnings)
+	}
+}
+
+// TestChainValidateRefusesNegativeCorrections pins the chain budget's rule: a
+// negative max_corrections is refused, wrapping ErrBadPolicy.
+func TestChainValidateRefusesNegativeCorrections(t *testing.T) {
+	_, err := load(t, `{"chain":{"max_corrections":-1}}`)
+	if err == nil {
+		t.Fatal("Load: got nil error, want one wrapping ErrBadPolicy")
+	}
+	if !errors.Is(err, ErrBadPolicy) {
+		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+	}
+	for _, want := range []string{"chain.max_corrections", "must be >= 0, got -1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Load error %q does not contain %q", err.Error(), want)
+		}
+	}
+}
+
+// TestChainValidateRefusesAnEmptyActorWhenSet pins that an actor key set to
+// blank text is refused rather than quietly read as its default.
+func TestChainValidateRefusesAnEmptyActorWhenSet(t *testing.T) {
+	for _, key := range []string{"reviewer_actor", "planner_actor", "security_actor"} {
+		t.Run(key, func(t *testing.T) {
+			_, err := load(t, fmt.Sprintf(`{"chain":{%q:"   "}}`, key))
+			if err == nil {
+				t.Fatal("Load: got nil error, want one wrapping ErrBadPolicy")
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+			}
+			for _, want := range []string{"chain." + key, "must not be blank"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("Load error %q does not contain %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}

@@ -523,3 +523,138 @@ func TestSettingsDownSkipsRule(t *testing.T) {
 		t.Errorf("cursor key = %q, want gate.default", settings[v.cur].Key)
 	}
 }
+
+// a. The chain form: moving security off -> on writes chain.security true and
+// nothing else under chain.
+func TestSettingsChainFormTurnsSecurityOn(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, view.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 22 // chain.security
+
+	f := settingsFormFrom(t, v, env)
+	if f.title != "chain" {
+		t.Fatalf("title = %q, want chain", f.title)
+	}
+	if f.fields[0].label != "security" || f.fields[0].sel != 0 {
+		t.Fatalf("field 0 = %+v, want the security chip on off", f.fields[0])
+	}
+	next, _, _ := f.update(tea.KeyMsg{Type: tea.KeyRight}) // off -> on
+	f = next.(settingsForm)
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !closed {
+		t.Fatal("a valid submit must close the form")
+	}
+	runCmd(t, cmd)
+
+	if len(fa.configEdits) != 1 {
+		t.Fatalf("configEdits = %d, want one", len(fa.configEdits))
+	}
+	body := string(fa.configEdits[0].Sections[config.Policy])
+	var m map[string]any
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	ch, ok := m["chain"].(map[string]any)
+	if !ok {
+		t.Fatalf("chain is not a map: %v", m["chain"])
+	}
+	if len(ch) != 1 || ch["security"] != true {
+		t.Errorf("chain = %v, want only security true", ch)
+	}
+}
+
+// b. The chain form: typing 5 into max_corrections writes
+// chain.max_corrections.
+func TestSettingsChainFormSetsMaxCorrections(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, view.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 18 // chain.max_corrections
+
+	f := settingsFormFrom(t, v, env)
+	if f.title != "chain" {
+		t.Fatalf("title = %q, want chain", f.title)
+	}
+	f = f.setFocus(1) // max_corrections
+	if f.fields[1].label != "max_corrections" {
+		t.Fatalf("field 1 = %+v, want max_corrections", f.fields[1])
+	}
+	f = settingsFormType(f, "5")
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !closed {
+		t.Fatal("a valid submit must close the form")
+	}
+	runCmd(t, cmd)
+
+	if len(fa.configEdits) != 1 {
+		t.Fatalf("configEdits = %d, want one", len(fa.configEdits))
+	}
+	body := string(fa.configEdits[0].Sections[config.Policy])
+	if !strings.Contains(body, `"max_corrections": 5`) {
+		t.Errorf("body = %s, want chain.max_corrections 5", body)
+	}
+}
+
+// c. The chain form: -1 into max_corrections shows the parse error, and enter
+// records no edit.
+func TestSettingsChainFormRejectsANegativeCount(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, view.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 18 // chain.max_corrections
+
+	f := settingsFormFrom(t, v, env)
+	f = f.setFocus(1) // max_corrections
+	f = settingsFormType(f, "-1")
+
+	shown := stripANSI(strings.Join(f.view(90), "\n"))
+	if !strings.Contains(shown, "a whole number, 0 or more") {
+		t.Errorf("view = %s, want the max_corrections error shown", shown)
+	}
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if closed {
+		t.Fatal("an invalid submit must keep the form open")
+	}
+	if cmd != nil {
+		t.Errorf("an invalid submit must return no command: %T", cmd())
+	}
+	if len(fa.configEdits) != 0 {
+		t.Error("an invalid submit must not write an edit")
+	}
+}
+
+// d. The chain form: blank text in reviewer_actor shows the actor error, and
+// enter records no edit.
+func TestSettingsChainFormBadActorText(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, view.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 19 // chain.reviewer_actor
+
+	f := settingsFormFrom(t, v, env)
+	f = f.setFocus(2) // reviewer_actor
+	if f.fields[2].label != "reviewer_actor" {
+		t.Fatalf("field 2 = %+v, want reviewer_actor", f.fields[2])
+	}
+	f = settingsFormType(f, "   ")
+
+	shown := stripANSI(strings.Join(f.view(90), "\n"))
+	if !strings.Contains(shown, "an actor name") {
+		t.Errorf("view = %s, want the actor error shown", shown)
+	}
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if closed {
+		t.Fatal("an invalid submit must keep the form open")
+	}
+	if cmd != nil {
+		t.Errorf("an invalid submit must return no command: %T", cmd())
+	}
+	if len(fa.configEdits) != 0 {
+		t.Error("an invalid submit must not write an edit")
+	}
+}

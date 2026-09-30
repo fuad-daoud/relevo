@@ -10,6 +10,59 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
+// runStopChain is cmdStop's chain arm: the name is a chain, so the chain's own
+// stop runs. A chain that is not running is the same "nothing to stop" answer a
+// binding with no open round gives, and it changes nothing.
+func runStopChain(rt relevo.Runtime, name string, asJSON bool) error {
+	res, err := relevo.ChainStop(context.Background(), rt, name)
+	if errors.Is(err, relevo.ErrNothingToStop) {
+		if asJSON {
+			return printDoc(chainStopDocOf(name, res))
+		}
+		fmt.Printf("nothing to stop: chain %s is not running\n", name)
+		return nil
+	}
+	if err != nil {
+		return writeError(err)
+	}
+
+	if asJSON {
+		return printDoc(chainStopDocOf(name, res))
+	}
+	// The member had no open round, so the chain was stopped directly rather
+	// than by a member's close; StopText's wording is about a round.
+	if res.Action == relevo.ChainStopActionStopped {
+		fmt.Printf("stopped chain %s: its awaited member had no open round\n", name)
+		return nil
+	}
+	fmt.Println(relevo.StopText(name, res))
+	return nil
+}
+
+// runDoneChain is cmdDone's chain arm: the name is a chain, so every member is
+// released and the chain is marked done. A running chain is refused with the
+// conflict that says to stop it first. A member whose process could not be
+// stopped still marked itself done, so the result prints before the failure is
+// returned, exactly as the binding path does.
+func runDoneChain(rt relevo.Runtime, name string, asJSON bool) error {
+	res, err := relevo.ChainDone(context.Background(), rt, name)
+	if err != nil && !errors.Is(err, relevo.ErrStopFailed) {
+		return writeError(err)
+	}
+
+	if asJSON {
+		if perr := printDoc(chainDoneDocOf(name, res)); perr != nil {
+			return perr
+		}
+	} else {
+		fmt.Println(relevo.DoneText(name, res))
+	}
+	if err != nil {
+		return writeError(err)
+	}
+	return nil
+}
+
 // doneFlagValues holds the pointers done parses into.
 type doneFlagValues struct {
 	name   *string
@@ -51,6 +104,11 @@ func cmdDone(args []string) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return writeError(err)
+	}
+	// A name that resolves to a chain releases the whole chain: every member
+	// is marked done, builder first, and the chain row follows.
+	if statusChain(rt, target) {
+		return runDoneChain(rt, target, *asJSON)
 	}
 	res, err := relevo.Done(context.Background(), rt, target)
 	if err != nil && !errors.Is(err, relevo.ErrStopFailed) {
@@ -108,6 +166,12 @@ func cmdStop(args []string) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return writeError(err)
+	}
+	// A name that resolves to a chain stops the chain, not one of its members:
+	// the member the chain awaits is the one whose open round ends, and its
+	// stopped close is what marks the chain stopped.
+	if statusChain(rt, target) {
+		return runStopChain(rt, target, *asJSON)
 	}
 	res, err := relevo.Stop(context.Background(), rt, target, relevo.StopOptions{})
 	if errors.Is(err, relevo.ErrNothingToStop) {

@@ -29,6 +29,7 @@ func installer[V any](f func(*flag.FlagSet) V) func(*flag.FlagSet) {
 var verbFlagSets = map[string]func(*flag.FlagSet){
 	"bind":               installer(bindFlagSet),
 	"bugreport":          installer(bugreportFlagSet),
+	"chain":              installer(chainFlagSet),
 	"config":             installer(configShowFlagSet),
 	"config agents":      installer(agentFlagSet),
 	"config edit":        configEditFlagSet,

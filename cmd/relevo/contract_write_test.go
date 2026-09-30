@@ -469,3 +469,22 @@ func TestContractWriteForcedFailures(t *testing.T) {
 		})
 	}
 }
+
+// TestSendRefusedErrorIsAConflict pins the sentinel mapping: a manual send
+// refused because the binding belongs to a running chain is a conflict, so a
+// script can tell "the chain owns it" from an internal failure.
+func TestSendRefusedErrorIsAConflict(t *testing.T) {
+	wrapped := fmt.Errorf("binding %q belongs to running chain %s; relevo stop %s first: %w",
+		"shop", "shop", "shop", relevo.ErrRunningChainMember)
+
+	var ce *cliError
+	if !errors.As(writeError(wrapped), &ce) {
+		t.Fatalf("writeError(%v) is not a coded error", wrapped)
+	}
+	if ce.code != codeConflict {
+		t.Errorf("code = %q, want %q", ce.code, codeConflict)
+	}
+	if _, ok := catalog[ce.code]; !ok {
+		t.Errorf("code %q is not in the catalog", ce.code)
+	}
+}

@@ -205,6 +205,10 @@ type BindingStatus struct {
 	// nil unless the round is queued. Set only by internal/serve's
 	// AdminStatus/FlatStatus; always nil from a mastermind's own Status.
 	Queued *remote.QueueView `json:"queued,omitempty"`
+	// Chain is the chain's state, set only on the synthetic row that stands in
+	// for a live chain's members; nil on every ordinary binding row, whose
+	// document then keeps exactly the keys it always had.
+	Chain *ChainFacts `json:"chain,omitempty"`
 }
 
 // Key is the UI's row identity. A mastermind row keys by Name; a server row

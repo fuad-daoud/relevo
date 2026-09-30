@@ -27,8 +27,8 @@ func TestSettings(t *testing.T) {
 			PolicyRaw: json.RawMessage(raw),
 		}
 		settings := Settings(doc, 22)
-		if len(settings) != 18 {
-			t.Fatalf("len(settings) = %d, want 18", len(settings))
+		if len(settings) != 23 {
+			t.Fatalf("len(settings) = %d, want 23", len(settings))
 		}
 
 		// Rows 1, 2 and 15 are Set (1-based: indices 0, 1, 14)
@@ -63,8 +63,8 @@ func TestSettings(t *testing.T) {
 	t.Run("empty policy", func(t *testing.T) {
 		doc := ConfigDoc{}
 		settings := Settings(doc, 4)
-		if len(settings) != 18 {
-			t.Fatalf("len(settings) = %d, want 18", len(settings))
+		if len(settings) != 23 {
+			t.Fatalf("len(settings) = %d, want 23", len(settings))
 		}
 		for i, s := range settings {
 			if s.Set {
@@ -283,5 +283,149 @@ func TestLoadConfigDocPolicyRaw(t *testing.T) {
 	}
 	if got.Policy.MaxSwitches == nil || *got.Policy.MaxSwitches != 2 {
 		t.Errorf("Policy.MaxSwitches = %v, want 2", got.Policy.MaxSwitches)
+	}
+}
+
+// TestSettingsCountAndGroupOrder pins the table's shape: 23 rows, the six
+// groups in display order, and chain appended last so every earlier row keeps
+// the index the cockpit tests use.
+func TestSettingsCountAndGroupOrder(t *testing.T) {
+	t.Parallel()
+
+	settings := Settings(ConfigDoc{}, 4)
+	if len(settings) != 23 {
+		t.Fatalf("len(settings) = %d, want 23", len(settings))
+	}
+
+	var groups []string
+	for _, s := range settings {
+		if len(groups) == 0 || groups[len(groups)-1] != s.Group {
+			groups = append(groups, s.Group)
+		}
+	}
+	want := "rounds,check,timing,processes,scan,notify,chain"
+	if got := strings.Join(groups, ","); got != want {
+		t.Errorf("group order = %q, want %q", got, want)
+	}
+	if last := settings[len(settings)-1]; last.Group != "chain" {
+		t.Errorf("last row = %s/%s, want the chain group last", last.Group, last.Key)
+	}
+}
+
+// TestSettingsChainRowsRenderValues pins the five chain rows: set rows read
+// their stored values through the accessors, unset rows their defaults.
+func TestSettingsChainRowsRenderValues(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"chain":{"max_corrections":5,"reviewer_actor":"rev","planner_actor":"plan","security_actor":"sec","security":true}}`
+	p, _, err := policy.Parse(config.FileName(config.Policy), []byte(raw))
+	if err != nil {
+		t.Fatalf("policy.Parse: %v", err)
+	}
+	settings := Settings(ConfigDoc{Policy: p}, 4)
+	if len(settings) != 23 {
+		t.Fatalf("len(settings) = %d, want 23", len(settings))
+	}
+
+	set := []struct {
+		key, value, def string
+	}{
+		{"chain.max_corrections", "5", "3"},
+		{"chain.reviewer_actor", "rev", "reviewer"},
+		{"chain.planner_actor", "plan", "lite-planner"},
+		{"chain.security_actor", "sec", "security"},
+		{"chain.security", "on", "off"},
+	}
+	for i, w := range set {
+		row := settings[18+i]
+		if row.Key != w.key || row.Group != "chain" || row.Form != "chain" {
+			t.Errorf("row %d = %s / %s / %s, want %s / chain / chain", 19+i, row.Key, row.Group, row.Form, w.key)
+		}
+		if row.Value != w.value || row.Default != w.def || !row.Set {
+			t.Errorf("%s = %q / %q / set %v, want %q / %q / set", w.key, row.Value, row.Default, row.Set, w.value, w.def)
+		}
+	}
+
+	unset := []struct{ key, value string }{
+		{"chain.max_corrections", "3"},
+		{"chain.reviewer_actor", "reviewer"},
+		{"chain.planner_actor", "lite-planner"},
+		{"chain.security_actor", "security"},
+		{"chain.security", "off"},
+	}
+	settings = Settings(ConfigDoc{}, 4)
+	for i, w := range unset {
+		row := settings[18+i]
+		if row.Key != w.key || row.Value != w.value || row.Set {
+			t.Errorf("%s = %q / set %v, want %q / unset", w.key, row.Value, row.Set, w.value)
+		}
+	}
+}
+
+// TestEditPolicyChainKeys sets and unsets each chain path through the generic
+// dotted-path editor; an unset of the only key prunes the whole block.
+func TestEditPolicyChainKeys(t *testing.T) {
+	t.Parallel()
+
+	doc := policyTestDoc(t)
+	cases := []struct {
+		path string
+		val  any
+		want string
+	}{
+		{"chain.max_corrections", 5, `"max_corrections": 5`},
+		{"chain.reviewer_actor", "rev", `"reviewer_actor": "rev"`},
+		{"chain.planner_actor", "plan", `"planner_actor": "plan"`},
+		{"chain.security_actor", "sec", `"security_actor": "sec"`},
+		{"chain.security", true, `"security": true`},
+	}
+
+	for _, tc := range cases {
+		t.Run("set "+tc.path, func(t *testing.T) {
+			d := doc
+			d.PolicyRaw = json.RawMessage(`{}`)
+			edit, err := EditPolicy(d, []PolicySet{{Path: tc.path, Value: tc.val}}, "set "+tc.path)
+			if err != nil {
+				t.Fatalf("EditPolicy: %v", err)
+			}
+			if body := string(edit.Sections[config.Policy]); !strings.Contains(body, tc.want) {
+				t.Errorf("body = %s, want it to contain %s", body, tc.want)
+			}
+		})
+
+		t.Run("unset "+tc.path, func(t *testing.T) {
+			d := doc
+			d.PolicyRaw = json.RawMessage(`{}`)
+			edit, err := EditPolicy(d, []PolicySet{{Path: tc.path, Value: tc.val}}, "set "+tc.path)
+			if err != nil {
+				t.Fatalf("EditPolicy set: %v", err)
+			}
+			d.PolicyRaw = edit.Sections[config.Policy]
+			unset, err := EditPolicy(d, []PolicySet{{Path: tc.path, Value: nil}}, "unset "+tc.path)
+			if err != nil {
+				t.Fatalf("EditPolicy unset: %v", err)
+			}
+			if body := string(unset.Sections[config.Policy]); strings.Contains(body, "chain") {
+				t.Errorf("body after unset = %s, must not contain chain", body)
+			}
+		})
+	}
+}
+
+// TestSettingPathsChain pins the JSON path each chain row's reset clears.
+func TestSettingPathsChain(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{
+		"chain.max_corrections",
+		"chain.reviewer_actor",
+		"chain.planner_actor",
+		"chain.security_actor",
+		"chain.security",
+	} {
+		got := SettingPaths(key)
+		if len(got) != 1 || got[0] != key {
+			t.Errorf("SettingPaths(%q) = %v, want [%s]", key, got, key)
+		}
 	}
 }

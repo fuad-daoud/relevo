@@ -3,12 +3,15 @@ package relevo
 import (
 	"context"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // MasterMindStatus filters stored bindings to one mastermind id and builds rows
-// through buildReport from the store alone.
+// through buildReport from the store alone. Each of that mastermind's live
+// chains then replaces its member rows with one chain row (applyChains), so the
+// statusline shows one entry per chain.
 func MasterMindStatus(ctx context.Context, rt Runtime, mastermindID string) (view.Report, error) {
 	if mastermindID == "" {
 		return view.Report{}, nil
@@ -23,5 +26,19 @@ func MasterMindStatus(ctx context.Context, rt Runtime, mastermindID string) (vie
 			kept = append(kept, b)
 		}
 	}
-	return buildReport(ctx, rt, kept)
+	rep, err := buildReport(ctx, rt, kept)
+	if err != nil {
+		return view.Report{}, err
+	}
+	chains, err := rt.Store.Chains()
+	if err != nil {
+		return view.Report{}, err
+	}
+	var mine []db.ChainRow
+	for _, c := range chains {
+		if c.MasterMindID == mastermindID {
+			mine = append(mine, c)
+		}
+	}
+	return applyChains(rep, mine), nil
 }

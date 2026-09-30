@@ -85,27 +85,43 @@ func repairPlan(b store.Binding, failedRound int, planPath, gateLogPath string, 
 	return sb.String()
 }
 
+// repairDecision is the failing gate's two bounds, shared by startRepairRound
+// and the chain wiring so both agree on whether a repair round may open: the
+// repair budget is spent (RepairCount >= Regate), or the new failure's
+// normalised signature equals the previous one -- the builder changed nothing
+// that mattered. ok is false when a repair cannot run, and why then carries
+// the halt wording startRepairRound has always used.
+//
+// b is the binding after the failed round closed, so the round being judged is
+// b.Round - 1: every caller advances the binding before it asks.
+func repairDecision(b store.Binding, sig string) (ok bool, why string) {
+	failedRound := b.Round - 1
+	if b.RepairCount >= b.Regate {
+		return false, fmt.Sprintf("%s: gate failed after %d repair round(s) (regate %d); see %s", b.Name, b.RepairCount, b.Regate, showCommand(b.Name, failedRound, "gate"))
+	}
+	if sig != "" && sig == b.LastGateSig {
+		return false, fmt.Sprintf("%s: gate output unchanged after repair; see %s", b.Name, showCommand(b.Name, failedRound, "gate"))
+	}
+	return true, ""
+}
+
 // startRepairRound stages and hands over round failedRound+1 after a failing
 // gate (#132 part 2). It is called on the tick that closed round failedRound,
 // after the report has been queued to the mastermind, with the binding already
 // advanced (`b.Round == failedRound+1`, RoundStartedAt zero).
 //
-// Two bounds end the loop with NEEDS YOU instead of another repair: the
-// repair budget is spent (RepairCount >= Regate), or the new failure's
-// normalised signature equals the previous one -- the builder changed nothing
-// that mattered. Otherwise it writes round N+1's plan, hands it to the
-// builder the way Send does (a fresh process for a headless binding, a prompt
-// for a pane), logs `repair k/M` on the round's plan entry, and opens the
-// round exactly as a Send would.
+// repairDecision holds the two bounds that end the loop with NEEDS YOU instead
+// of another repair, so a caller that must decide without opening the round
+// reaches the same answer. Otherwise it writes round N+1's plan, hands it to
+// the builder the way Send does (a fresh process for a headless binding, a
+// prompt for a pane), logs `repair k/M` on the round's plan entry, and opens
+// the round exactly as a Send would.
 //
 // Preconditions: the round just closed; rec.Result == "fail"; b.Regate > 0.
 func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, rec store.GateRecord, failedRound int) (store.Binding, error) {
 	sig := gateSignature(rt.Store.ReadFile, rec.LogPath)
-	if b.RepairCount >= b.Regate {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: gate failed after %d repair round(s) (regate %d); see %s", b.Name, b.RepairCount, b.Regate, showCommand(b.Name, failedRound, "gate")))
-	}
-	if sig != "" && sig == b.LastGateSig {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: gate output unchanged after repair; see %s", b.Name, showCommand(b.Name, failedRound, "gate")))
+	if ok, why := repairDecision(b, sig); !ok {
+		return haltBinding(ctx, rt, b, why)
 	}
 
 	b.LastGateSig = sig
