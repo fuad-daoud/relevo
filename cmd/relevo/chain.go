@@ -29,6 +29,7 @@ type chainFlagValues struct {
 	plans          *planSlice
 	feature        *string
 	noFeature      *bool
+	resume         *bool
 	ticket         *string
 	base           *string
 	maxCorrections *int
@@ -50,6 +51,7 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	fs.Var(v.plans, "plan", "a plan file the chain runs, in order; repeatable, at least one")
 	v.feature = fs.String("feature", "", "label grouping every member with others; a chain needs exactly one of --feature or --no-feature")
 	v.noFeature = fs.Bool("no-feature", false, "record that this chain is not a feature; a chain needs exactly one of --feature or --no-feature")
+	v.resume = fs.Bool("resume", false, "continue a halted or stopped chain: re-run the step it stopped on, applying any settings flags")
 	v.ticket = fs.String("ticket", "", "the issue this chain serves: N, #N, owner/repo#N, or a .../issues/N URL")
 	v.base = fs.String("base", "", "commit or ref to cut the builder's worktree from; defaults to HEAD")
 	v.maxCorrections = fs.Int("max-corrections", -1, "correction rounds allowed per plan before NEEDS YOU; 0 halts on the first changes (default: config policy chain.max_corrections)")
@@ -81,14 +83,38 @@ type ChainMemberDoc struct {
 	Actor string `json:"actor"`
 }
 
-// cmdChain starts a chain. Every refusal it can make on its own flags runs
-// before newRuntime, so a bad invocation touches no state directory.
+// cmdChain starts a chain, or resumes a halted or stopped one. Every refusal it
+// can make on its own flags runs before newRuntime, so a bad invocation touches
+// no state directory.
 func cmdChain(args []string) error {
 	fs := flag.NewFlagSet("relevo chain", flag.ContinueOnError)
 	v := chainFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+
+	// --resume takes the name (a positional is not a name) and only the
+	// settings flags; a start takes the plans and the label too.
+	if *v.resume {
+		opts, err := chainResumeOptions(fs, v)
+		if err != nil {
+			return err
+		}
+		rt, err := newRuntime()
+		if err != nil {
+			return writeError(err)
+		}
+		res, err := relevo.ChainResume(context.Background(), rt, opts)
+		if err != nil {
+			return writeError(err)
+		}
+		if *v.asJSON {
+			return printDoc(chainDocOf(res))
+		}
+		chainResumedText(res)
+		return nil
+	}
+
 	opts, err := chainOptions(fs, v)
 	if err != nil {
 		return err
@@ -168,6 +194,41 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 	return opts, nil
 }
 
+// chainResumeOptions turns the parsed flags into a resume request: the chain's
+// name, and only the settings whose flags were given, so every unflagged
+// setting keeps the value the chain was started with. A resume names no plan
+// and no label of its own -- the chain already holds both -- so the
+// feature-choice rule is the resume one.
+func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOptions, error) {
+	if *v.name == "" {
+		return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume needs --name NAME")
+	}
+	if err := relevo.RequireFeatureChoice(*v.feature, *v.noFeature, true); err != nil {
+		return relevo.ResumeOptions{}, refuseFlag(err)
+	}
+	if *v.security && *v.noSecurity {
+		return relevo.ResumeOptions{}, fail(codeUsage, "--security and --no-security are exclusive")
+	}
+	maxCorrections, err := chainIntFlag(fs, "max-corrections", *v.maxCorrections)
+	if err != nil {
+		return relevo.ResumeOptions{}, err
+	}
+
+	opts := relevo.ResumeOptions{
+		Name:           *v.name,
+		MaxCorrections: maxCorrections,
+		ReviewerActor:  *v.reviewerActor,
+		PlannerActor:   *v.plannerActor,
+		SecurityActor:  *v.securityActor,
+	}
+	// --security/--no-security are exclusive (refused above), so an explicit
+	// value is whichever flag was given; neither leaves the stored setting.
+	if chainFlagGiven(fs, "security") || chainFlagGiven(fs, "no-security") {
+		opts.Security = v.security
+	}
+	return opts, nil
+}
+
 // chainIntFlag turns a chain integer flag into the *int the chain takes: its
 // -1 default means "not given", which becomes nil so the policy stands; any
 // value the human typed must be >= 0.
@@ -240,4 +301,17 @@ func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 	}
 	fmt.Printf("  worktree %s on %s (from %s)\n", res.Chain.Worktree, res.Chain.Branch, res.Chain.Base)
 	fmt.Printf("  relevo wait --name %s\n", res.Chain.Name)
+}
+
+// chainResumedText is what a resume prints for a human: the chain's state now,
+// the round it awaits, and the command that watches it.
+func chainResumedText(res relevo.ChainResult) {
+	c := res.Chain
+	fmt.Printf("resumed chain %s: status %s, phase %s, step %s, plan %d/%d\n",
+		c.Name, c.Status, c.Phase, c.Step, c.Plan, c.Plans)
+	for _, m := range res.Members {
+		fmt.Printf("  %-8s %-16s %s\n", chainPartOf(c, m.Name), m.Name, relevo.BindingRole(m))
+	}
+	fmt.Printf("  awaiting %s round %d\n", c.AwaitingMember, c.AwaitingRound)
+	fmt.Printf("  relevo wait --name %s\n", c.Name)
 }

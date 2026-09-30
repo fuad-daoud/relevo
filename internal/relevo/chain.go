@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -224,7 +226,12 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	// waits again for the same member's new round. The close has already
 	// advanced the binding, so b.Round is that repair round's number, and the
 	// wiring's later half opens the round on this same decision.
-	if ev.Kind == chain.EventBuilderClosed && ev.Gate == chain.GateRed && gate != nil {
+	//
+	// Only a done round may buy a repair: the gate runs on the done marker
+	// whatever the report says, so a builder that reports halted, blocked or
+	// unstructured with a red gate is the chain's halt, exactly as the design
+	// says ("builder halted on plan i"), never a repair round.
+	if ev.Kind == chain.EventBuilderClosed && ev.Gate == chain.GateRed && ev.Outcome == reporttail.OutcomeDone && gate != nil {
 		if ok, _ := repairDecision(b, gateSignature(rt.Store.ReadFile, gate.LogPath)); ok {
 			next = before
 			next.Awaiting = chain.Awaiting{Member: chain.MemberBuilder, Round: b.Round}
@@ -325,14 +332,20 @@ func chainSaveWithTrace(rt Runtime, tx *store.Tx, c db.ChainRow, before, next ch
 }
 
 // chainTerminal ends a chain: it writes the status, the reason and the trace
-// row, then queues exactly one end delivery on the builder member. The
-// transition to a terminal status happens once -- a later tick's close is
-// ignored by the state machine -- so the payload exists once.
+// row, then queues exactly one end delivery on the first member whose record
+// still exists. The transition to a terminal status happens once -- a later
+// tick's close is ignored by the state machine -- so the payload exists once.
+//
+// The delivery does not belong to the builder: a chain whose builder record is
+// the one that is gone must still tell the MasterMind, so the carrier is the
+// first of builder, reviewer, planner and security that the store still holds.
+// When every record is gone there is nowhere to deliver: the row is still ended
+// and the fact is logged.
 func chainTerminal(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, before, next chain.State, ev chain.Event, act chain.Action, closing string) error {
 	if err := chainSaveWithTrace(rt, tx, c, before, next, ev, act, closing); err != nil {
 		return err
 	}
-	builder, err := tx.Load(c.Builder)
+	member, carrier, ok, err := chainDeliveryMember(tx, c)
 	if err != nil {
 		return err
 	}
@@ -340,12 +353,36 @@ func chainTerminal(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow,
 	if err != nil {
 		return err
 	}
+	if !ok {
+		slog.Warn("chain ended with no member record to deliver on",
+			"chain", c.Name, "status", string(next.Status))
+		return nil
+	}
 	entry := store.LogEntry{
-		TS: rt.Now().UTC(), Round: builder.Round,
+		TS: rt.Now().UTC(), Round: carrier.Round,
 		Direction: store.DirToMasterMind, Kind: store.KindChain,
 		Payload: chainTerminalPayload(c, next, findings),
 	}
-	return delivery.Queue(ctx, deliveryDeps(rt), tx, c.Builder, entry)
+	return delivery.Queue(ctx, deliveryDeps(rt), tx, member, entry)
+}
+
+// chainDeliveryMember names the member that carries a chain's end delivery: the
+// first of the chain's member bindings whose record still exists, in the order
+// builder, reviewer, planner, security. ok is false when every record is gone,
+// which is the one case a chain ends silently. A read failure that is not
+// "gone" is returned rather than treated as a missing member.
+func chainDeliveryMember(tx *store.Tx, c db.ChainRow) (name string, b store.Binding, ok bool, err error) {
+	for _, member := range chainMembersOf(c) {
+		mb, lerr := tx.Load(member)
+		if errors.Is(lerr, store.ErrNotFound) {
+			continue
+		}
+		if lerr != nil {
+			return "", store.Binding{}, false, lerr
+		}
+		return member, mb, true, nil
+	}
+	return "", store.Binding{}, false, nil
 }
 
 // chainFindings is the last security close's finding count from the trace. The

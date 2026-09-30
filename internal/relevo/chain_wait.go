@@ -57,8 +57,10 @@ func WaitChain(ctx context.Context, rt Runtime, name string, timeout, interval t
 // waitChainEnd classifies a chain that has stopped running: done is exit 0 and
 // halted or stopped is exit 3, with the line naming the state, the plan it
 // reached and the corrections it spent. A halt carries its reason. Unless peek
-// is set, the chain's end payload comes off the builder; a delivery failure is
-// returned in DeliverErr and never changes the exit.
+// is set, the chain's end payload is pulled off whichever member holds it -- the
+// first of builder, reviewer, planner and security whose record exists, the
+// same order chainTerminal queued it in; a delivery failure is returned in
+// DeliverErr and never changes the exit.
 func waitChainEnd(ctx context.Context, rt Runtime, c db.ChainRow, peek bool) (WaitResult, error) {
 	res := WaitResult{Done: true, Line: chainEndLine(c)}
 	if c.Status == string(chain.StatusDone) {
@@ -69,11 +71,19 @@ func waitChainEnd(ctx context.Context, rt Runtime, c db.ChainRow, peek bool) (Wa
 	if peek {
 		return res, nil
 	}
-	text, found, err := delivery.PullPendingThrough(ctx, rt.Store, c.Builder, "wait", 0)
-	if err != nil {
-		res.DeliverErr = err
-	} else if found {
-		res.Payload = text
+	// A member whose record is gone has no log, so PullPendingThrough finds
+	// nothing there and confirms nothing: the walk reaches the surviving
+	// member that carries the delivery.
+	for _, member := range chainMembersOf(c) {
+		text, found, err := delivery.PullPendingThrough(ctx, rt.Store, member, "wait", 0)
+		if err != nil {
+			res.DeliverErr = err
+			return res, nil
+		}
+		if found {
+			res.Payload = text
+			return res, nil
+		}
 	}
 	return res, nil
 }

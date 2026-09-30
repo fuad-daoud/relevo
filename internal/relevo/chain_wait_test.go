@@ -170,6 +170,47 @@ func TestWaitChainPullsTheDeliveryOnlyOnce(t *testing.T) {
 	}
 }
 
+// TestWaitChainFindsTheEndDeliveryOnASurvivingMember pins the search order:
+// the chain's one end delivery lives on the first member whose record exists,
+// so a wait on a chain whose builder is gone still hands the payload over.
+func TestWaitChainFindsTheEndDeliveryOnASurvivingMember(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	// The builder's record is gone, so the halt's end delivery landed on the
+	// reviewer.
+	if err := rt.Store.Delete("shop"); err != nil {
+		t.Fatalf("Delete shop: %v", err)
+	}
+	tickChains(context.Background(), rt)
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+	if pending := chainPendingChain(t, rt, "shop-rev"); len(pending) != 1 {
+		t.Fatalf("pending on shop-rev = %d, want the one end delivery", len(pending))
+	}
+
+	timeout, interval := waitChainOpts()
+	res, err := WaitChain(context.Background(), rt, "shop", timeout, interval, false)
+	if err != nil {
+		t.Fatalf("WaitChain: %v", err)
+	}
+	if res.Code != WaitNeedsYou {
+		t.Errorf("code = %d, want %d for a halted chain", res.Code, WaitNeedsYou)
+	}
+	if !strings.Contains(res.Payload, "chain shop halted") {
+		t.Errorf("payload = %q, want the chain's end delivery off the surviving member", res.Payload)
+	}
+	if res.DeliverErr != nil {
+		t.Errorf("deliver error = %v, want none", res.DeliverErr)
+	}
+	if pending := chainPendingChain(t, rt, "shop-rev"); len(pending) != 0 {
+		t.Errorf("pending on shop-rev = %d, want the wait to claim it", len(pending))
+	}
+}
+
 // TestWaitChainUnknownNameIsNotFound pins the missing name: a chain the store
 // does not hold is store.ErrNotFound, which the CLI reports as binding_not_found.
 func TestWaitChainUnknownNameIsNotFound(t *testing.T) {

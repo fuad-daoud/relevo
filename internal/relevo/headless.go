@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
@@ -1132,10 +1133,15 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// gate log, so the two agree. It opens the round only when that decision
 	// allowed one; when it did not, the red event went to the chain's reviewer
 	// and the member must be left alone rather than halted.
+	//
+	// Only a done round may buy a repair: a chain member that reported halted,
+	// blocked or unstructured halts the chain instead, whatever its gate says
+	// (the gate runs on the done marker, not on the report).
 	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
 		repair := true
 		if chainOwnsMember(tx, b.Name) {
 			repair, _ = repairDecision(next, gateSignature(rt.Store.ReadFile, rec.LogPath))
+			repair = repair && closedReportOutcome(tx, b.Name, closedRound) == reporttail.OutcomeDone
 		}
 		if repair {
 			next, err = startRepairRound(ctx, rt, tx, next, *rec, closedRound)
@@ -1145,6 +1151,24 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		}
 	}
 	return next, true, false, nil
+}
+
+// closedReportOutcome is the outcome the just-closed round's report entry
+// recorded, or "" when the log holds no such entry. The chain wiring reads it
+// for the same round the close wrote, so the repair decision and the close
+// agree on what the builder actually reported.
+func closedReportOutcome(tx *store.Tx, name string, round int) string {
+	entries, err := tx.ReadLog(name)
+	if err != nil {
+		return ""
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		if e.Round == round && e.Direction == store.DirToMasterMind && e.Kind == store.KindReport {
+			return e.Outcome
+		}
+	}
+	return ""
 }
 
 // appendUnique returns s with v appended, unless it is already present.

@@ -31,11 +31,11 @@ var registry = []verbEntry{
 	{
 		Name:    "chain",
 		Summary: "start a chain: build, review and correct across a list of plans",
-		Args:    "--name <n> --plan <file> [--plan <file>...] (--feature <label>|--no-feature) [--json]",
+		Args:    "--name <n> (--plan <file> [--plan <file>...] (--feature <label>|--no-feature) | --resume) [--json]",
 		Flags: []string{
 			"--base", "--feature", "--json", "--mastermind", "--max-corrections", "--name",
-			"--no-feature", "--no-security", "--plan", "--planner-actor", "--reviewer-actor",
-			"--security", "--security-actor", "--ticket",
+			"--no-feature", "--no-security", "--plan", "--planner-actor", "--resume",
+			"--reviewer-actor", "--security", "--security-actor", "--ticket",
 		},
 		Output: "json:ChainDoc",
 		Exit:   []int{0, 1, 2},

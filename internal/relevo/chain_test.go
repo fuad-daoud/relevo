@@ -34,6 +34,13 @@ func chainNoVerdictBody() string {
 	return "I reviewed the round but forgot the block.\n"
 }
 
+// chainHaltedBody is a builder's report tail that says the round halted: the
+// gate still runs on the done marker, so this is the report the two guards in
+// this round have to look past.
+func chainHaltedBody(note string) string {
+	return "I stopped before finishing.\n\n```relevo\nstatus: halted\nhalted_at: \"" + note + "\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n```\n"
+}
+
 // chainMember loads one chain member's binding.
 func chainBinding(t *testing.T, rt Runtime, name string) store.Binding {
 	t.Helper()
@@ -914,6 +921,91 @@ func TestChainTraceSeqIsPerChain(t *testing.T) {
 	}
 	if beta := chainTrace(t, rt, "beta"); len(beta) != 1 {
 		t.Errorf("beta trace = %+v, want it untouched", beta)
+	}
+}
+
+// TestChainBuilderHaltedWithRedGateHaltsTheChain pins the gate-does-not-decide
+// rule: the gate runs on the done marker whatever the report says, so a builder
+// that reports `halted` with a failing gate and a repair still in budget halts
+// the chain -- it never opens a repair round, and the chain's one end delivery
+// is queued. Removing either guard (chainApply's outcome guard, or markerClose's
+// chain-member guard) fails this test.
+func TestChainBuilderHaltedWithRedGateHaltsTheChain(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	// A repair is still in budget, and the gate fails: without the outcome
+	// guard this is exactly the repair path's input.
+	b := chainBinding(t, rt, "shop")
+	b.Regate = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+
+	chainBuilderClose(t, rt, "shop", chainHaltedBody("waiting on a decision"))
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted: a halted builder never repairs", row.Status)
+	}
+	if !strings.HasPrefix(row.Reason, "builder halted on plan 1:") {
+		t.Errorf("halt reason = %q, want the builder-halted wording on plan 1", row.Reason)
+	}
+
+	builder := chainBinding(t, rt, "shop")
+	if HasPromptEntry(chainLog(t, rt, "shop"), builder.Round) {
+		t.Errorf("a round %d prompt entry exists; a halted report must open no repair round", builder.Round)
+	}
+	if builder.RepairCount != 0 {
+		t.Errorf("RepairCount = %d, want 0: no repair round may open", builder.RepairCount)
+	}
+	if events := chainTrace(t, rt, "shop"); len(events) != 1 {
+		t.Errorf("trace = %+v, want the halt's one row", events)
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+		t.Errorf("pending chain deliveries = %d, want the one end delivery", len(pending))
+	}
+}
+
+// TestChainHaltWithTheBuilderGoneDeliversOnASurvivingMember pins the end
+// delivery's carrier: when the record that is gone is the builder's, the
+// MasterMind is still told -- the delivery is queued on the first member whose
+// record exists, reviewer before planner before security.
+func TestChainHaltWithTheBuilderGoneDeliversOnASurvivingMember(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	// The builder's record is the one that is gone; the reviewer's survives.
+	if err := rt.Store.Delete("shop"); err != nil {
+		t.Fatalf("Delete shop: %v", err)
+	}
+
+	tickChains(context.Background(), rt)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+	if !strings.Contains(row.Reason, "member shop gone") {
+		t.Errorf("halt reason = %q, want the missing member named", row.Reason)
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 0 {
+		t.Errorf("pending on the gone builder = %d, want none", len(pending))
+	}
+	pending := chainPendingChain(t, rt, "shop-rev")
+	if len(pending) != 1 {
+		t.Fatalf("pending chain deliveries on shop-rev = %d, want the one end delivery", len(pending))
+	}
+	if pending[0].Kind != store.KindChain || pending[0].Direction != store.DirToMasterMind {
+		t.Errorf("delivery = %+v, want a mastermind-bound chain entry", pending[0])
+	}
+	if !strings.Contains(pending[0].Payload, "chain shop halted") {
+		t.Errorf("payload = %q, want the chain's end payload", pending[0].Payload)
 	}
 }
 
