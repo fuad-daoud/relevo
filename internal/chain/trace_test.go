@@ -38,6 +38,15 @@ var traceLineCases = []struct {
 		want: "plan 2/4  build    x r4       check green",
 	},
 	{
+		name: "a builder close with no check",
+		line: TraceLine{
+			Plan: 2, Plans: 4, Phase: PhaseBuild, Step: StepBuilding,
+			Member: "x", Round: 4,
+			Event: Event{Kind: EventBuilderClosed, Gate: GateNone},
+		},
+		want: "plan 2/4  build    x r4       no check",
+	},
+	{
 		name: "a reviewer changes",
 		line: TraceLine{
 			Plan: 2, Plans: 4, Phase: PhaseBuild, Step: StepReviewing,

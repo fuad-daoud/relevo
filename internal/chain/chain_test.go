@@ -71,6 +71,25 @@ func TestNextBuilderCloseGreenSeedsReviewer(t *testing.T) {
 	assertSend(t, act, MemberReviewer, SeedReviewer)
 }
 
+// TestNextBuilderCloseNoCheckSeedsReviewer pins that a done round with no check
+// behaves as green does: the chain steps to reviewing and sends the reviewer
+// seed, so "no check" is never a halt.
+func TestNextBuilderCloseNoCheckSeedsReviewer(t *testing.T) {
+	t.Parallel()
+	s := awaited(StepBuilding, MemberBuilder, 1)
+	got, act := Next(s, Event{
+		Kind: EventBuilderClosed, Member: MemberBuilder, Round: 1,
+		Outcome: reporttail.OutcomeDone, Gate: GateNone,
+	})
+	if got.Step != StepReviewing {
+		t.Fatalf("step: want %s, got %s", StepReviewing, got.Step)
+	}
+	if got.Awaiting.Member != MemberReviewer {
+		t.Fatalf("awaited member: want %s, got %s", MemberReviewer, got.Awaiting.Member)
+	}
+	assertSend(t, act, MemberReviewer, SeedReviewer)
+}
+
 // TestNextSendZeroesTheAwaitingRound pins the guard send sets: the round is
 // cleared along with the member, so a caller that forgets to fill the new
 // round can never match a stale round the state held before the event.
