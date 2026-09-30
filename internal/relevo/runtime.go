@@ -9,6 +9,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/capture"
@@ -160,6 +161,11 @@ type Runtime struct {
 	// Candidates and Policy on demand" (#374), which is what every existing
 	// test gets, since tests don't set it.
 	Registry *roles.Registry
+
+	// Accounts is the configured account pools, in config order. An empty set
+	// is no accounts configured: every account-aware path skips, and a round
+	// spawns with the single default home it always used.
+	Accounts account.Set
 
 	// ConfigWarnings collects the unknown-key and skipped-candidate warnings
 	// the last config load produced (candidates.json then policy.json). They
@@ -331,6 +337,7 @@ func AvailabilityDeps(rt Runtime) availability.Deps {
 		Now:          now,
 		Roles:        rt.Roles,
 		RoleRegistry: rt.RoleRegistry,
+		Accounts:     rt.Accounts,
 	}
 }
 

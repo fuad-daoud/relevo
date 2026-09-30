@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -283,6 +285,12 @@ func Gates(d Deps) []Gate {
 // the role it belongs to, so resolveRole can ignore the gates of every other
 // role. nil when d.Roles is nil: no checker configured (every test that does not
 // set one, and every caller before cmd/relevo wires harness.OSRoleChecker()).
+//
+// When a candidate's provider is served by an account pool, the definitions are
+// checked in each account's own home -- the builder reads them under that
+// account, not the default home -- and a missing account gates as
+// group@account, so one broken home gates only that account and the rest of the
+// pool stays usable.
 func rolesMissingGates(d Deps) []Gate {
 	if d.Roles == nil || d.Candidates == nil {
 		return nil
@@ -292,7 +300,8 @@ func rolesMissingGates(d Deps) []Gate {
 
 	// Missing is called once per distinct (kind, definition list), not once per
 	// candidate or role: several candidates commonly share a kind, and a role's
-	// definition list is usually the shipped one.
+	// definition list is usually the shipped one. The same cache keyed by home
+	// serves the account path.
 	cache := map[string][]string{}
 
 	var out []Gate
@@ -301,43 +310,115 @@ func rolesMissingGates(d Deps) []Gate {
 		if err != nil {
 			continue
 		}
-		kind := r.Harness
+		pool := d.Accounts.Pool(account.Kind(r.Harness), r.Provider)
 		for _, role := range reg.Names() {
-			if !reg.Serves(role, r) {
-				continue
-			}
-			spec, err := reg.Spec(role, kind)
-			if err != nil {
-				continue
-			}
-			key := kind + "\x00" + strings.Join(spec.Definitions, ",")
-			paths, ok := cache[key]
+			spec, ok := servedRoleSpec(reg, role, r)
 			if !ok {
-				paths = d.Roles.Missing(kind, spec.Definitions)
-				cache[key] = paths
-			}
-			if len(paths) == 0 {
 				continue
 			}
-			out = append(out, Gate{
-				Token:  ref,
-				Kind:   RolesMissing,
-				Role:   role,
-				Since:  d.Now(),
-				Note:   rolesMissingNote(role, kind, spec.Definitions, paths),
-				Source: "relevo",
-			})
+			out = append(out, roleMissingGates(d, ref, r, role, spec, pool, cache)...)
 		}
 	}
 	return out
 }
 
+// servedRoleSpec is role's resolved spec when the role serves r, and false when
+// it does not or its spec cannot be built.
+func servedRoleSpec(reg *roles.Registry, role string, r candidate.Ref) (harness.RoleSpec, bool) {
+	if !reg.Serves(role, r) {
+		return harness.RoleSpec{}, false
+	}
+	spec, err := reg.Spec(role, r.Harness)
+	if err != nil {
+		return harness.RoleSpec{}, false
+	}
+	return spec, true
+}
+
+// roleMissingGates is every RolesMissing gate for one role of one candidate:
+// the default-home gate when no account serves the provider, else one
+// group@account gate per account home that lacks the definitions.
+func roleMissingGates(d Deps, ref string, r candidate.Ref, role string, spec harness.RoleSpec, pool []account.Account, cache map[string][]string) []Gate {
+	defsKey := strings.Join(spec.Definitions, ",")
+	if len(pool) == 0 {
+		key := r.Harness + "\x00" + defsKey
+		paths := cachedMissing(cache, key, func() []string {
+			return d.Roles.Missing(r.Harness, spec.Definitions)
+		})
+		if len(paths) == 0 {
+			return nil
+		}
+		return []Gate{{
+			Token:  ref,
+			Kind:   RolesMissing,
+			Role:   role,
+			Since:  d.Now(),
+			Note:   rolesMissingNote(role, r.Harness, spec.Definitions, paths, ""),
+			Source: "relevo",
+		}}
+	}
+
+	var out []Gate
+	for _, a := range pool {
+		home, ok := harness.AccountHome(a)
+		if !ok {
+			continue
+		}
+		key := home + "\x00" + r.Harness + "\x00" + defsKey
+		paths := cachedMissing(cache, key, func() []string {
+			return missingInHome(d.Roles, home, r.Harness, spec.Definitions)
+		})
+		if len(paths) == 0 {
+			continue
+		}
+		out = append(out, Gate{
+			Token:  account.GateKey(r.Provider, a.Name),
+			Kind:   RolesMissing,
+			Role:   role,
+			Since:  d.Now(),
+			Note:   rolesMissingNote(role, r.Harness, spec.Definitions, paths, " in account "+a.Name+" ("+home+")"),
+			Source: "relevo",
+		})
+	}
+	return out
+}
+
+// cachedMissing is a missing-definitions lookup memoised under key, so one
+// (kind or home, definition list) pair is checked once per Gates call.
+func cachedMissing(cache map[string][]string, key string, load func() []string) []string {
+	if paths, ok := cache[key]; ok {
+		return paths
+	}
+	paths := load()
+	cache[key] = paths
+	return paths
+}
+
+// homeChecker is the account-aware half of harness.RoleChecker: the same
+// missing-definitions check rooted at one per-process home. A checker that does
+// not implement it (a test double, or a caller that predates accounts) falls
+// back to the default-home check, so a gate still appears rather than silently
+// vanishing.
+type homeChecker interface {
+	MissingIn(home, kind string, definitions []string) []string
+}
+
+// missingInHome asks c which definitions are missing from one account home;
+// c's default check answers when it is not account-aware.
+func missingInHome(c harness.RoleChecker, home, kind string, definitions []string) []string {
+	if hc, ok := c.(homeChecker); ok {
+		return hc.MissingIn(home, kind, definitions)
+	}
+	return c.Missing(kind, definitions)
+}
+
 // rolesMissingNote is one roles-missing gate's note: which of role's definitions
-// are missing on kind, and how to fix each class of them. A shipped path is
-// installed by `relevo config agents`; a custom one may be rendered from a
-// source agent by that same command, or be the user's own native definition,
-// so its fix names both.
-func rolesMissingNote(role, kind string, defs, paths []string) string {
+// are missing on kind, and how to fix each class of them. where names the
+// account home when the check was per account, and is empty for the default
+// home. A shipped path is installed by `relevo config agents`; a custom one may
+// be rendered from a source agent by that same command, or be the user's own
+// native definition, so its fix names both.
+func rolesMissingNote(role, kind string, defs, paths []string, where string) string {
 	var shipped, custom []string
 	for _, path := range paths {
 		if definitionIsShipped(kind, defs, path) {
@@ -354,7 +435,7 @@ func rolesMissingNote(role, kind string, defs, paths []string) string {
 	if len(custom) > 0 {
 		fixes = append(fixes, "run relevo config agents --kind "+kind+" for a custom agent relevo renders, or install "+strings.Join(custom, ", ")+" yourself")
 	}
-	return "agent definitions missing for " + role + ": " + strings.Join(paths, ", ") + "; " + strings.Join(fixes, "; ")
+	return "agent definitions missing for " + role + where + ": " + strings.Join(paths, ", ") + "; " + strings.Join(fixes, "; ")
 }
 
 // definitionIsShipped reports whether path is one of defs' shipped paths for
