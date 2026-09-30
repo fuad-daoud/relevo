@@ -28,7 +28,19 @@ func TestCancelReturnsToTheClientWhileTheEngineFinishes(t *testing.T) {
 	sock := startOwner(t, d)
 	d2 := dialDB(t, sock)
 
+	// dialDB's own handshake connection is reaped asynchronously, so let the
+	// live count settle before it stands as the baseline the statement must
+	// rise above: a lagging handshake would otherwise be mistaken for the
+	// statement's pinned connection and make the comparison below vacuous.
 	baseline := ownerConns(t, sock)
+	for i := 0; i < 100; i++ {
+		time.Sleep(5 * time.Millisecond)
+		next := ownerConns(t, sock)
+		if next == baseline {
+			break
+		}
+		baseline = next
+	}
 
 	// Sized to outlast the client's grace by seconds, so the owner is still
 	// running it when the client has already returned.
