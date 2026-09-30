@@ -3,14 +3,37 @@ package serve
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// tokenForProvider is a configured candidate token whose provider is provider,
+// so an account gate key can be recorded through the Unavailable path, which
+// takes a resolvable token beside the keys. ok is false when no configured
+// candidate serves provider, which is the server's own refusal.
+func tokenForProvider(rt relevo.Runtime, provider string) (string, bool) {
+	if rt.Candidates == nil {
+		return "", false
+	}
+	for _, ref := range rt.Candidates.Refs() {
+		r, err := candidate.ParseRef(ref)
+		if err != nil {
+			continue
+		}
+		if r.Provider == provider {
+			return ref, true
+		}
+	}
+	return "", false
+}
 
 func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
@@ -54,7 +77,22 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := availability.Unavailable(relevo.AvailabilityDeps(rt), req.Token, time.Time{}, req.Reason); err != nil {
+	// A group@account token is an account gate key, not a candidate token: the
+	// provider half names the group, and the whole key is what gets recorded,
+	// so a server whose client forwards an account gate keeps the same
+	// per-account ledger. A bare token records the provider exactly as before.
+	token := req.Token
+	var keys []string
+	if group, name, ok := account.ParseGateKey(req.Token); ok && name != "" {
+		byProvider, found := tokenForProvider(rt, group)
+		if !found {
+			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, fmt.Sprintf("no configured candidate serves provider %q", group))
+			return
+		}
+		token, keys = byProvider, []string{req.Token}
+	}
+
+	if _, err := availability.Unavailable(relevo.AvailabilityDeps(rt), token, time.Time{}, req.Reason, keys...); err != nil {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 		return
 	}

@@ -182,11 +182,15 @@ type BindingView struct {
 	// from the newest KindDiff entry for Serve.ClosedRound -- the same facts
 	// DiffSummary wrote to the server's own log at close. Empty/zero on any
 	// binding that is not closed, or whose close wrote no diff entry.
-	DiffNote       string    `json:"diff_note,omitempty"`
-	DiffCommits    int       `json:"diff_commits,omitempty"`
-	DiffTree       string    `json:"diff_tree,omitempty"`
-	AckedRound     int       `json:"acked_round"`
-	Candidate      string    `json:"candidate,omitempty"`
+	DiffNote    string `json:"diff_note,omitempty"`
+	DiffCommits int    `json:"diff_commits,omitempty"`
+	DiffTree    string `json:"diff_tree,omitempty"`
+	AckedRound  int    `json:"acked_round"`
+	Candidate   string `json:"candidate,omitempty"`
+	// Account names the login of the candidate's pool the round drew from.
+	// It is the owner's own secret (accounts are not shared with tenants), so
+	// it is sent only on the owner's own view; a pre-accounts server omits it.
+	Account        string    `json:"account,omitempty"`
 	RoundStartedAt time.Time `json:"round_started_at,omitempty"`
 	RoundCap       int       `json:"round_cap"`
 	RoundTimeoutMS int       `json:"round_timeout_ms"`
@@ -415,6 +419,13 @@ const FeatureForce = "force"
 // whether a placement would be accepted before it creates anything, so a
 // server without the token is missing the only way to ask.
 const FeaturePlacement = "placement"
+
+// FeatureAccounts is the WhoAmI.Features token a server that understands
+// group@account gate keys advertises, on both the gate and the clear routes.
+// An account key sent to a server without it would be a subject the server
+// cannot resolve, so a client holding one refuses that server instead of
+// sending it.
+const FeatureAccounts = "accounts"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

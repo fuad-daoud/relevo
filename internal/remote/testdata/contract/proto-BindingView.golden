@@ -15,6 +15,7 @@
   "diff_tree": "5555666677778888999900001111222233334444",
   "acked_round": 1,
   "candidate": "agy/openai/gpt-4",
+  "account": "work",
   "round_started_at": "2026-01-02T03:04:05Z",
   "round_cap": 10,
   "round_timeout_ms": 60000,
