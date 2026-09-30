@@ -468,12 +468,21 @@ func known(sec Section) bool {
 }
 
 // PutSecret stores value under name, validating the client key with
-// remote.ParsePrivate first so a malformed PEM never reaches the database.
+// remote.ParsePrivate first so a malformed PEM never reaches the database. A
+// client key is re-marshalled before it is stored, so whichever accepted label
+// the caller handed in -- the current one or the pre-rename one -- exactly one
+// label, the current one, survives a re-store.
 func (s *Store) PutSecret(name string, value []byte) error {
 	if name == SecretClientKey {
-		if _, err := remote.ParsePrivate(value); err != nil {
+		kp, err := remote.ParsePrivate(value)
+		if err != nil {
 			return err
 		}
+		canonical, err := remote.MarshalPrivate(kp)
+		if err != nil {
+			return err
+		}
+		value = canonical
 	}
 	return s.db.Tx(func(t *db.Tx) error {
 		before, err := readSnapshot(t)
