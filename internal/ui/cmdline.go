@@ -27,6 +27,7 @@ var commands = []command{
 	{"candidates", "", "candidates, gates and who picks them", false},
 	{"actors", "", "who runs each job, and in what order", false},
 	{"agents", "", "agent definitions per harness", false},
+	{"servers", "", "remote builders' servers, and their health", false},
 	{"settings", "", "limits, checks and timings", false},
 	{"audit", "", "config revisions, and roll back", false},
 	{"log", "", "this session's action results", false},

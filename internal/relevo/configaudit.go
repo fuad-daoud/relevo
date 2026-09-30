@@ -112,6 +112,12 @@ func changeSubject(path string, doc config.Doc) (subject, field string, ms bool)
 		}
 		return "agent " + a, rest, false
 	}
+	if s, rest, ok := pathUnder(path, "servers"); ok {
+		if rest == "" {
+			return "server " + s, "", false
+		}
+		return "server " + s, rest, false
+	}
 	if rest, ok := strings.CutPrefix(path, "policy."); ok && rest != "" {
 		s, ms := stripMS(rest)
 		return s, "", ms

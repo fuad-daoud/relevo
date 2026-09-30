@@ -65,6 +65,11 @@ type fakeActions struct {
 	configEdits []relevo.ConfigEdit
 	probes      []string
 
+	// The servers view: the scripted health probes ServerProbes answers with,
+	// and how many times it was asked.
+	serverProbes     []relevo.ServerProbe
+	serverProbeCalls int
+
 	// The agents view (round 5): the scripted per-agent file states, the
 	// files the user's editor was opened on, and the (kind, agent) pairs a
 	// reset was asked for.
@@ -151,6 +156,26 @@ func (f *fakeActions) ConfigDoc() (relevo.ConfigDoc, error) { return f.doc, f.do
 func (f *fakeActions) ApplyConfig(_ context.Context, e relevo.ConfigEdit) Result {
 	f.configEdits = append(f.configEdits, e)
 	return f.result
+}
+
+// ServerProbes answers the scripted server probes and counts the calls, so a
+// test can tell a load-time probe from a re-probe.
+func (f *fakeActions) ServerProbes(_ context.Context) []relevo.ServerProbe {
+	f.serverProbeCalls++
+	return f.serverProbes
+}
+
+// A nil adapter, and a runtime with no config store, answer no server probes
+// rather than panicking.
+func TestServerProbesNilRuntimeIsEmpty(t *testing.T) {
+	var a *mastermindActions
+	if got := a.ServerProbes(context.Background()); got != nil {
+		t.Errorf("ServerProbes on a nil adapter = %v, want none", got)
+	}
+	a = &mastermindActions{live: newLiveRuntime(relevo.Runtime{})}
+	if got := a.ServerProbes(context.Background()); len(got) != 0 {
+		t.Errorf("ServerProbes with no config store = %v, want none", got)
+	}
 }
 
 func (f *fakeActions) Probe(_ context.Context, name string) Result {
