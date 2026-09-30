@@ -87,12 +87,27 @@ func OwnerMode() (cleanup func(), err error) {
 	return cleanup, err
 }
 
+// InstallOwner installs the same switch with no environment gate: a test
+// binary that is itself the switch's subject -- the e2e round, which must run
+// whole over a /tmp socket -- calls it directly instead of through
+// RELEVO_DBTEST_OWNER. The returned cleanup closes every owner and removes the
+// socket directory.
+func InstallOwner() (cleanup func(), err error) {
+	_, cleanup, err = ownerModeForced()
+	return cleanup, err
+}
+
 // ownerMode is OwnerMode plus the registry, which this package's own test
 // inspects. A nil registry means the switch is off.
 func ownerMode() (reg *registry, cleanup func(), err error) {
 	if os.Getenv(ownerEnv) == "" {
 		return nil, func() {}, nil
 	}
+	return ownerModeForced()
+}
+
+// ownerModeForced is the switch itself, without the environment gate.
+func ownerModeForced() (reg *registry, cleanup func(), err error) {
 	dir, err := os.MkdirTemp("/tmp", "rvo-")
 	if err != nil {
 		return nil, nil, err
