@@ -509,6 +509,29 @@ func TestPickNotesNameThePlacementOnlyWhenItExists(t *testing.T) {
 	}
 }
 
+// TestPlacementTextNamesOnlyTheActorsOwnChoice pins the fresh-create clause: the
+// actor's own list produces the same bytes the pick note carries, and a
+// placement a flag named or nothing named produces none.
+func TestPlacementTextNamesOnlyTheActorsOwnChoice(t *testing.T) {
+	t.Parallel()
+
+	actor := PlacementResolution{
+		Name: "zen", How: placementHowActor,
+		Skipped: []PlacementSkip{{Name: "backup", Reason: "unreachable"}},
+	}
+	if got, want := PlacementText(actor), "; placement zen (actor); skipped backup (unreachable)"; got != want {
+		t.Fatalf("PlacementText(actor) = %q, want %q", got, want)
+	}
+
+	if got := PlacementText(PlacementResolution{Name: "zen", How: placementHowExplicit}); got != "" {
+		t.Fatalf("PlacementText(explicit) = %q, want empty", got)
+	}
+
+	if got := PlacementText(PlacementResolution{}); got != "" {
+		t.Fatalf("PlacementText(zero) = %q, want empty", got)
+	}
+}
+
 // lastPickNote returns the newest KindPick note a binding's log holds.
 func lastPickNote(t *testing.T, st *store.Store, name string) string {
 	t.Helper()

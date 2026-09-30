@@ -209,6 +209,20 @@ func refuseFlag(err error) error {
 	return fail(codeRefused, "%v", err)
 }
 
+// boundLine is the one line a successful bind prints. A remote builder names the
+// server it runs on, mirroring the add line, and appends the clause when the
+// actor's own placement list chose that server; an explicit --server and a local
+// builder read as they always did. It is pure, so the wording is pinned without
+// a live server.
+func boundLine(b store.Binding, mastermind, candidate string, placement relevo.PlacementResolution) string {
+	if b.Builder.Remote() {
+		return fmt.Sprintf("bound %s: mastermind %s -> builder %s on %s, round %d%s",
+			b.Name, mastermind, candidate, b.Builder.Server, b.Round, relevo.PlacementText(placement))
+	}
+	return fmt.Sprintf("bound %s: mastermind %s -> builder %s (%s), round %d",
+		b.Name, mastermind, builderWhere(b.Builder), candidate, b.Round)
+}
+
 // runBind is bind's own body after parsing: bind the current tree, or resume
 // or rebind an existing binding (the old cmdBind).
 func runBind(f bindFlags) error {
@@ -335,8 +349,7 @@ func runBind(f bindFlags) error {
 	}
 
 	if !f.asJSON {
-		fmt.Printf("bound %s: mastermind %s -> builder %s (%s), round %d\n",
-			b.Name, b.MasterMind.PaneID, builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate), b.Round)
+		fmt.Println(boundLine(b, b.MasterMind.PaneID, rt.Candidates.NameOf(b.BuilderCandidate), res.Placement))
 	}
 	noteRegateNoGate(notices, b)
 	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), b.BuilderCandidate); n != "" {
