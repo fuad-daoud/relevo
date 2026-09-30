@@ -61,18 +61,6 @@ type Daemon struct {
 	// releaseRetryAt is when a release fetch that failed may be tried again.
 	// The zero time means "no failure to back off from" (#371 §4.10).
 	releaseRetryAt time.Time
-
-	// releaseStore is the machine store (at store.DefaultRoot()) that
-	// refreshRelease reads and writes the release cache through. It starts
-	// nil and is set on the first refreshRelease call that resolves a root;
-	// it is never replaced afterwards. It exists because store.New per tick
-	// leaked one connection per tick (D1).
-	releaseStore *store.Store
-
-	// releaseRoot is releaseStore's root, kept beside it so the legacy
-	// release-check.json path needs no exported root accessor on
-	// store.Store.
-	releaseRoot string
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
@@ -208,16 +196,6 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		return
 	}
 
-	if d.releaseStore == nil {
-		root, err := store.DefaultRoot()
-		if err != nil {
-			slog.Debug("release check: no state root", "err", err)
-			return
-		}
-		d.releaseStore = store.New(root)
-		d.releaseRoot = root
-	}
-
 	now := time.Now
 	if d.rt.Now != nil {
 		now = d.rt.Now
@@ -230,11 +208,10 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 	}
 
 	// The cache lives in the machine database's kv row "release-check"
-	// (P3b plan §4.5). The first call opens and creates relevo.db on a
-	// machine whose daemon has nothing else to store; later calls reuse
-	// the cached handle, because a fresh store.New per tick leaked one
-	// connection per tick (D1).
-	mdb, err := d.releaseStore.DB()
+	// (P3b plan §4.5), reached through the runtime's own store: for the daemon
+	// that is the one shared handle it serves, so the release check adds no
+	// connection of its own and no store.New per tick (D1).
+	mdb, err := d.rt.Store.DB()
 	if err != nil {
 		slog.Debug("release check: no database", "err", err)
 		return

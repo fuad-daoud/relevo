@@ -25,9 +25,10 @@ import (
 )
 
 // databaseCheck is doctor's `database` row (P3d §4.7): the path, the file
-// size, the schema version and the binding_record live/archived counts. It is
-// OK unless the open fails; there is no migrate row, because every open
-// migrates.
+// size, the schema version, the binding_record live/archived counts and the
+// route this process reached the row by -- `via file` for a direct open, `via
+// owner <sock>` for a dialled handle (stage 1b). It is OK unless the open
+// fails; there is no migrate row, because every open migrates.
 func databaseCheck(st *store.Store) doctor.Check {
 	path := st.DBPath()
 	c := doctor.Check{Name: "database", Severity: doctor.SevOK}
@@ -56,8 +57,8 @@ func databaseCheck(st *store.Store) doctor.Check {
 	if info, serr := os.Stat(path); serr == nil {
 		size = info.Size()
 	}
-	c.Detail = fmt.Sprintf("%s · %s · schema v%d · %d live, %d archived",
-		path, view.HumanBytes(size), version, live, archived)
+	c.Detail = fmt.Sprintf("%s · %s · schema v%d · %d live, %d archived · via %s",
+		path, view.HumanBytes(size), version, live, archived, d.Route())
 	return c
 }
 
@@ -73,7 +74,7 @@ func ownerCheck(status db.OwnerStatus, probeErr error) doctor.Check {
 			detail = status.Socket + " · " + detail
 		}
 		c.Detail = detail
-		c.Fix = "start the daemon: relevo daemon"
+		c.Fix = "run any relevo command: it starts the daemon when the socket is missing"
 		return c
 	}
 	c.Detail = fmt.Sprintf("socket %s · pid %d · protocol %s v%d · %d connections",

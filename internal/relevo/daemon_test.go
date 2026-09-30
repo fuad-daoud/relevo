@@ -439,19 +439,6 @@ func (f *fakeFetcher) Latest(ctx context.Context) (string, error) {
 	return f.tag, nil
 }
 
-// releaseStateRoot points store.DefaultRoot() at a temp root, so no test in
-// this package ever reads or writes the user's real state. The release check
-// is the one daemon path that composes its own path from that root (#293).
-func releaseStateRoot(t *testing.T) string {
-	t.Helper()
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	root, err := store.DefaultRoot()
-	if err != nil {
-		t.Fatalf("DefaultRoot: %v", err)
-	}
-	return root
-}
-
 // TestTickRefreshesOncePastTTL counts fetches: none while the cached answer is
 // fresh, one once it is stale. Drop the Stale guard and the fresh case fails.
 func TestTickRefreshesOncePastTTL(t *testing.T) {
@@ -483,10 +470,15 @@ func TestTickRefreshesOncePastTTL(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			root := releaseStateRoot(t)
-			// The cache lives in the machine database's kv row, so seeding and
-			// reading it goes through a store handle on that root (P3b plan §4.5).
-			mdb, err := store.New(root).DB()
+			ff := &fakeFetcher{tag: "v0.8.0"}
+			rt, _ := sentBinding(t)
+			rt.Fetcher = ff
+			rt.Now = func() time.Time { return now }
+
+			// The cache lives in the machine database's kv row, reached through
+			// the runtime's own store -- for the daemon the one shared handle
+			// (P3b plan §4.5).
+			mdb, err := rt.Store.DB()
 			if err != nil {
 				t.Fatalf("open store db: %v", err)
 			}
@@ -500,11 +492,6 @@ func TestTickRefreshesOncePastTTL(t *testing.T) {
 					t.Fatalf("seed cache: %v", err)
 				}
 			}
-
-			ff := &fakeFetcher{tag: "v0.8.0"}
-			rt, _ := sentBinding(t)
-			rt.Fetcher = ff
-			rt.Now = func() time.Time { return now }
 
 			if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 				t.Fatalf("Tick: %v", err)
@@ -539,8 +526,6 @@ func TestTickSurvivesFetchError(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
 	t.Run("no cache yet", func(t *testing.T) {
-		root := releaseStateRoot(t)
-
 		ff := &fakeFetcher{err: errors.New("dial tcp: network is unreachable")}
 		rt, _ := sentBinding(t)
 		rt.Fetcher = ff
@@ -552,7 +537,7 @@ func TestTickSurvivesFetchError(t *testing.T) {
 		if ff.calls != 1 {
 			t.Errorf("fetch calls = %d, want 1 (the stale check tried)", ff.calls)
 		}
-		mdb, merr := store.New(root).DB()
+		mdb, merr := rt.Store.DB()
 		if merr != nil {
 			t.Fatalf("open store db: %v", merr)
 		}
@@ -563,8 +548,12 @@ func TestTickSurvivesFetchError(t *testing.T) {
 	})
 
 	t.Run("stale cache is left alone", func(t *testing.T) {
-		root := releaseStateRoot(t)
-		mdb, merr := store.New(root).DB()
+		ff := &fakeFetcher{err: errors.New("504 gateway timeout")}
+		rt, _ := sentBinding(t)
+		rt.Fetcher = ff
+		rt.Now = func() time.Time { return now }
+
+		mdb, merr := rt.Store.DB()
 		if merr != nil {
 			t.Fatalf("open store db: %v", merr)
 		}
@@ -573,11 +562,6 @@ func TestTickSurvivesFetchError(t *testing.T) {
 		if err := release.Save(mdb, stale); err != nil {
 			t.Fatalf("seed cache: %v", err)
 		}
-
-		ff := &fakeFetcher{err: errors.New("504 gateway timeout")}
-		rt, _ := sentBinding(t)
-		rt.Fetcher = ff
-		rt.Now = func() time.Time { return now }
 
 		if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 			t.Errorf("Tick = %v, want nil", err)
@@ -669,7 +653,6 @@ func TestTickSurvivesAPanickingReconcile(t *testing.T) {
 // Mutation: drop the `now().Before(d.releaseRetryAt)` early return and the
 // second Tick fetches, so calls reaches 2 early.
 func TestTickBacksOffAfterAFailedReleaseFetch(t *testing.T) {
-	releaseStateRoot(t)
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 
 	ff := &fakeFetcher{err: errors.New("504 gateway timeout")}
@@ -706,7 +689,6 @@ func TestTickBacksOffAfterAFailedReleaseFetch(t *testing.T) {
 // contract: a successful save clears the retry deadline, so the next failure
 // backs off from its own moment.
 func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
-	root := releaseStateRoot(t)
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 
 	ff := &fakeFetcher{err: errors.New("network is unreachable")}
@@ -731,7 +713,7 @@ func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
 	if !d.releaseRetryAt.IsZero() {
 		t.Errorf("releaseRetryAt = %v after a successful fetch, want the zero time", d.releaseRetryAt)
 	}
-	mdb, merr := store.New(root).DB()
+	mdb, merr := rt.Store.DB()
 	if merr != nil {
 		t.Fatalf("open store db: %v", merr)
 	}
@@ -746,18 +728,17 @@ func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
 }
 
 // TestRefreshReleaseOpensTheDatabaseOnce pins the D1 postcondition: across any
-// number of refreshRelease calls on one Daemon, only one connection to
-// relevo.db is open. Before the fix each tick made a fresh store.New, opened a
-// connection and never closed it.
+// number of refreshRelease calls on one Daemon, only one connection to the
+// runtime's relevo.db is open. Before the fix each tick made a fresh store.New,
+// opened a connection and never closed it.
 //
-// Mutation: restore `store.New(root).DB()` inside refreshRelease and the count
-// grows by one per call.
+// Mutation: open a store.New(root).DB() inside refreshRelease again and the
+// count grows by one per call.
 func TestRefreshReleaseOpensTheDatabaseOnce(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("counts open fds through /proc/self/fd, which is Linux-only")
 	}
 
-	root := releaseStateRoot(t)
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 
 	ff := &fakeFetcher{tag: "v0.9.0"}
@@ -771,7 +752,7 @@ func TestRefreshReleaseOpensTheDatabaseOnce(t *testing.T) {
 	// The first call may open and create relevo.db, so the baseline is
 	// counted after it.
 	d.refreshRelease(ctx)
-	before := countFDsOn(t, filepath.Join(root, "relevo.db"))
+	before := countFDsOn(t, rt.Store.DBPath())
 
 	for i := 0; i < 20; i++ {
 		if i == 10 {
@@ -782,7 +763,7 @@ func TestRefreshReleaseOpensTheDatabaseOnce(t *testing.T) {
 		d.refreshRelease(ctx)
 	}
 
-	after := countFDsOn(t, filepath.Join(root, "relevo.db"))
+	after := countFDsOn(t, rt.Store.DBPath())
 	if after-before != 0 {
 		t.Errorf("open fds on relevo.db went from %d to %d across 20 extra refreshRelease calls, want no growth",
 			before, after)
