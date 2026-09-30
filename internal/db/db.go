@@ -67,6 +67,9 @@ type DB struct {
 	// served is true while an owner serves this handle: a vacuum must not close
 	// the pool out from under its clients.
 	served bool
+	// onClosed, when set, runs after this handle's pool is closed. The test
+	// owner hop uses it to learn that a dialled client handle is gone.
+	onClosed func()
 }
 
 // Options tunes OpenWith. A negative value is treated as 0, which selects the
@@ -111,7 +114,14 @@ func open(path string, o Options) (*DB, error) {
 		if err != nil {
 			return nil, err
 		}
-		return dial(sock, o, false)
+		d, err := dial(sock, o, false)
+		if err != nil {
+			return nil, err
+		}
+		if onClosed := ownerHopClosed; onClosed != nil {
+			d.onClosed = func() { onClosed(sock) }
+		}
+		return d, nil
 	}
 	return openDirect(path, o)
 }
@@ -235,9 +245,21 @@ func (d *DB) Close() error {
 		d.path = ""
 	}
 	if err := d.sqlDB.Close(); err != nil {
+		d.runOnClosed()
 		return fmt.Errorf("db: close: %w", err)
 	}
+	d.runOnClosed()
 	return nil
+}
+
+// runOnClosed notifies the close observer installed on a dialled handle, once.
+func (d *DB) runOnClosed() {
+	if d.onClosed == nil {
+		return
+	}
+	onClosed := d.onClosed
+	d.onClosed = nil
+	onClosed()
 }
 
 func (d *DB) Version() (int, error) {
