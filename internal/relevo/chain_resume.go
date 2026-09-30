@@ -97,6 +97,15 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
 	}
+	// A remote builder's check is fixed at create: the wire has no route that
+	// updates a served binding's gate, so a resume cannot change it. --regate
+	// still travels, because the repair budget is the chain's own client-side
+	// fact.
+	if opts.Gate != "" || opts.NoGate {
+		if err := resumeRemoteGateRefusal(rt, c); err != nil {
+			return ChainResult{}, err
+		}
+	}
 	set, err := resumeSettings(rt, c, opts)
 	if err != nil {
 		return ChainResult{}, err
@@ -123,7 +132,35 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	if err != nil {
 		return ChainResult{}, err
 	}
+	// A resume whose target member is remote has only staged its round: the
+	// unlocked step ships it now, outside the state lock, exactly as a start's
+	// plan 1 is shipped. A failed ship records the halt and returns nil.
+	if name := chainMemberName(out.Chain, out.Chain.AwaitingMember); name != "" {
+		if b, lerr := rt.Store.Load(name); lerr == nil && b.Builder.Remote() {
+			if serr := chainSendPending(ctx, rt); serr != nil {
+				return ChainResult{}, fmt.Errorf("chain %s resumed, but its remote member could not be handed its round: %w", opts.Name, serr)
+			}
+		}
+	}
 	return out, nil
+}
+
+// resumeRemoteGateRefusal refuses a --gate/--no-gate on a resume whose builder
+// member is remote: the served binding's check is fixed when the binding is
+// created, and the wire has no route that updates it. A missing builder record
+// is left to chainResumeLocked's own gate-flag error.
+func resumeRemoteGateRefusal(rt Runtime, c db.ChainRow) error {
+	if c.Builder == "" {
+		return nil
+	}
+	b, err := rt.Store.Load(c.Builder)
+	if err != nil {
+		return nil
+	}
+	if !b.Builder.Remote() {
+		return nil
+	}
+	return fmt.Errorf("chain %s: a remote builder's check is fixed at create; unbind and start again", c.Name)
 }
 
 // resumeRefusal is the one refusal a resume makes on its own chain: running and
@@ -256,7 +293,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	if err != nil {
 		return ChainResult{}, err
 	}
-	sent, err := sendChainRound(ctx, rt, tx, member, text)
+	sent, err := chainSendMember(ctx, rt, tx, member, text)
 	if err != nil {
 		// The member could not start: the chain stays halted, named with the
 		// member's own reason, exactly as a failed advance leaves it.

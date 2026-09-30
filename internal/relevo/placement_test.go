@@ -532,6 +532,82 @@ func TestPlacementTextNamesOnlyTheActorsOwnChoice(t *testing.T) {
 	}
 }
 
+// TestChoosePlacementChainMemberFeature pins the chain-member skip: a server
+// that cannot carry one chain member's round is passed over with the upgrade
+// wording, and the next entry wins.
+func TestChoosePlacementChainMemberFeature(t *testing.T) {
+	t.Parallel()
+
+	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureLabels}}}
+	rt := placementRuntime(t, fr, rowsWithPlacement("zen", "local"), nil)
+
+	got, err := choosePlacement(context.Background(), rt, "builder", "", placementFlags{ChainMember: true, Feature: "auth"})
+	if err != nil {
+		t.Fatalf("choosePlacement: %v", err)
+	}
+	want := PlacementResolution{
+		Name: "local", How: placementHowActor,
+		Skipped: []PlacementSkip{{Name: "zen", Reason: "chain members unsupported; upgrade the server"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("choosePlacement = %+v, want %+v", got, want)
+	}
+}
+
+// TestChoosePlacementSkipsReaderServers pins the chain reader rule: every server
+// entry is a skip with one fixed reason and no probe, a local entry is still
+// viable, and a list with no local entry refuses with that reason named.
+func TestChoosePlacementSkipsReaderServers(t *testing.T) {
+	t.Parallel()
+
+	rows := map[string]roles.Row{
+		"reviewer": {Candidates: []string{testClaudeRef}, Placement: []string{"zen", "local"}},
+	}
+
+	t.Run("a local entry wins after the server is skipped unprobed", func(t *testing.T) {
+		t.Parallel()
+
+		fr := &fakeRemote{}
+		rt := placementRuntime(t, fr, rows, nil)
+
+		got, err := choosePlacement(context.Background(), rt, "reviewer", "", placementFlags{ChainReader: true})
+		if err != nil {
+			t.Fatalf("choosePlacement: %v", err)
+		}
+		want := PlacementResolution{
+			Name: "local", How: placementHowActor,
+			Skipped: []PlacementSkip{{Name: "zen", Reason: chainReaderSkip}},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("choosePlacement = %+v, want %+v", got, want)
+		}
+		if len(fr.calls) != 0 {
+			t.Fatalf("calls = %v, want no probe for a reader's server entry", fr.calls)
+		}
+	})
+
+	t.Run("no local entry refuses and names the skip", func(t *testing.T) {
+		t.Parallel()
+
+		fr := &fakeRemote{}
+		rt := placementRuntime(t, fr, map[string]roles.Row{
+			"reviewer": {Candidates: []string{testClaudeRef}, Placement: []string{"zen"}},
+		}, nil)
+
+		_, err := choosePlacement(context.Background(), rt, "reviewer", "", placementFlags{ChainReader: true})
+		if err == nil {
+			t.Fatal("choosePlacement = nil, want the refusal")
+		}
+		if !strings.Contains(err.Error(), `no viable placement for actor "reviewer"`) ||
+			!strings.Contains(err.Error(), "zen ("+chainReaderSkip+")") {
+			t.Fatalf("err = %q, want the reader skip named", err)
+		}
+		if len(fr.calls) != 0 {
+			t.Fatalf("calls = %v, want no probe", fr.calls)
+		}
+	})
+}
+
 // lastPickNote returns the newest KindPick note a binding's log holds.
 func lastPickNote(t *testing.T, st *store.Store, name string) string {
 	t.Helper()

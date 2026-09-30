@@ -66,6 +66,7 @@ type fakeRemote struct {
 	getBindingErr       error
 	startRoundResp      remote.BindingView
 	startRoundErr       error
+	startRoundPlan      []byte
 	startRoundTier      string
 	startRoundCandidate string
 	startRoundForce     bool
@@ -156,6 +157,7 @@ func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round 
 		f.beforeCall(call)
 	}
 	f.calls = append(f.calls, call)
+	f.startRoundPlan = plan
 	f.startRoundTier = tier
 	f.startRoundCandidate = candidate
 	f.startRoundForce = force

@@ -169,6 +169,11 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		}
 	}
 
+	// The chain's staged rounds are shipped here, outside every lock, once per
+	// tick and after the binding loop: a tick above may have staged the next
+	// round for a remote member, and the step is what hands it over.
+	d.safely("chain pending send", func() { chainSendPending(ctx, d.rt) })
+
 	fresh, err := d.rt.Store.List()
 	if err != nil {
 		slog.Warn("list bindings for metadata sync", "err", err)
