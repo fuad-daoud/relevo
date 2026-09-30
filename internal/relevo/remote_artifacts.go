@@ -24,10 +24,10 @@ func is404(err error) bool {
 // downloadTemp writes r into a new temp file beside final and returns its
 // path, leaving the rename into place to the apply half. A discarded fetch
 // removes it, so the final name never holds a file the apply did not accept.
-func downloadTemp(final string, r io.ReadCloser) (string, error) {
+func downloadTemp(root, final string, r io.ReadCloser) (string, error) {
 	defer r.Close()
 	dir := filepath.Dir(final)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := ensureRealDir(root, dir); err != nil {
 		return "", err
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(final)+".fetch.*")
@@ -158,7 +158,7 @@ func fetchArtifactFiles(ctx context.Context, rt Runtime, b store.Binding, view r
 			cf.release()
 			return false
 		}
-		temp, err := downloadTemp(final, rc)
+		temp, err := downloadTemp(rt.Store.Dir(name), final, rc)
 		if err != nil {
 			slog.Warn("write artifact failed", "path", final, "err", err)
 			cf.Abort = true

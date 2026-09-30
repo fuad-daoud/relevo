@@ -170,9 +170,10 @@ func (c *Client) BundleHeads(ctx context.Context, dir, path string) (map[string]
 // without a leading '+', so every update is a fast-forward. A failed update
 // stops the loop and refs already moved stay moved: callers treat a partial
 // absorb as retryable, and a re-run is idempotent because a ref already at its
-// target SHA is a no-op. gc.autoDetach=false keeps an auto-gc inside this call
-// instead of forking a process that outlives it and could race a later worktree
-// removal.
+// target SHA is a no-op. The fetch runs with git's own auto-maintenance off:
+// a round-close fetch must not trigger a repack, because a repack rewrites
+// refs while the fetch reads them and the fetch then dies on a bad object for
+// a round the store already holds.
 func (c *Client) FetchBundle(ctx context.Context, dir, path string, refs []string) (map[string]string, error) {
 	_, err := c.run(ctx, dir, nil, "bundle", "verify", path)
 	if err != nil {
@@ -193,7 +194,7 @@ func (c *Client) FetchBundle(ctx context.Context, dir, path string, refs []strin
 		if !ok {
 			continue
 		}
-		_, err := c.run(ctx, dir, nil, "-c", "gc.autoDetach=false", "fetch", "--no-tags", path, ref+":"+ref)
+		_, err := c.run(ctx, dir, nil, "-c", "maintenance.auto=false", "-c", "gc.auto=0", "fetch", "--no-tags", path, ref+":"+ref)
 		if err != nil {
 			if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return fetched, err
