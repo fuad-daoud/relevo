@@ -549,9 +549,9 @@ func TestContractDocsErrorFrame(t *testing.T) {
 		})
 	}
 
-	// The runtime-build failures render the same way, with the catalog's empty
-	// next hint: no HOME and no XDG_CONFIG_HOME is what newRuntime cannot
-	// resolve.
+	// The runtime-build failures render the same way, with the catalog's next
+	// hint for internal -- the bundle command: no HOME and no XDG_CONFIG_HOME is
+	// what newRuntime cannot resolve.
 	t.Setenv("HOME", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
 	for _, args := range [][]string{
@@ -567,8 +567,20 @@ func TestContractDocsErrorFrame(t *testing.T) {
 		if !strings.HasPrefix(human.String(), "relevo: internal: ") {
 			t.Errorf("%v: human line = %q, want the internal prefix", args, human.String())
 		}
-		if strings.Contains(human.String(), "\n  next:") {
-			t.Errorf("%v: human line = %q, want no next line for internal", args, human.String())
+		if !strings.Contains(human.String(), "\n  next: relevo bugreport\n") {
+			t.Errorf("%v: human line = %q, want the bundle next line", args, human.String())
+		}
+
+		var jsonBuf bytes.Buffer
+		if code := report(&jsonBuf, runErr, true); code != 1 {
+			t.Errorf("%v: json exit = %d, want 1", args, code)
+		}
+		var env errorEnvelope
+		if err := json.Unmarshal(jsonBuf.Bytes(), &env); err != nil {
+			t.Fatalf("%v: json envelope %q: %v", args, jsonBuf.String(), err)
+		}
+		if env.Error.Next != "relevo bugreport" {
+			t.Errorf("%v: json next = %q, want relevo bugreport", args, env.Error.Next)
 		}
 	}
 }

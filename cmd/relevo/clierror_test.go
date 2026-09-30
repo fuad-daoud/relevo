@@ -75,7 +75,8 @@ func TestCatalogCoversEveryDeclaredCode(t *testing.T) {
 }
 
 // TestCatalogNextHints pins the rows whose next command is known: the
-// not-found family, the missing daemon and an active gate.
+// not-found family, the missing daemon, an active gate and an internal
+// failure, whose next is the bundle command.
 func TestCatalogNextHints(t *testing.T) {
 	for _, code := range []errorCode{
 		codeBindingNotFound,
@@ -86,6 +87,7 @@ func TestCatalogNextHints(t *testing.T) {
 		codeMastermindNotFound,
 		codeClientNotFound,
 		codeServerNotFound,
+		codeInternal,
 	} {
 		entry, ok := catalog[code]
 		if !ok {
@@ -118,12 +120,15 @@ func TestReportHumanErrorLine(t *testing.T) {
 		t.Errorf("report wrote %q, want %q", buf.String(), want)
 	}
 
+	// An internal failure carries the bundle command as its next hint, so the
+	// reporter has one command that turns the failure into an issue.
 	buf.Reset()
 	if code := report(&buf, fail(codeInternal, "boom"), false); code != 1 {
 		t.Errorf("report exit = %d, want 1", code)
 	}
-	if got := buf.String(); got != "relevo: internal: boom\n" {
-		t.Errorf("report wrote %q, want no next line", got)
+	wantInternal := "relevo: internal: boom\n  next: relevo bugreport\n"
+	if got := buf.String(); got != wantInternal {
+		t.Errorf("report wrote %q, want %q", got, wantInternal)
 	}
 }
 

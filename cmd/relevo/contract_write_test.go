@@ -402,16 +402,17 @@ func TestContractWriteUnclassifiedIsInternal(t *testing.T) {
 }
 
 // TestContractWriteInternalExit is the frame-level companion: the internal code
-// an unclassified write failure earns renders with exit 1 and no next hint, the
-// same as every other internal error.
+// an unclassified write failure earns renders with exit 1 and the bundle
+// command as its next hint.
 func TestContractWriteInternalExit(t *testing.T) {
 	var buf bytes.Buffer
 	code := report(&buf, writeError(errors.New("boom")), false)
 	if code != 1 {
 		t.Errorf("exit = %d, want 1", code)
 	}
-	if got := buf.String(); got != "relevo: internal: boom\n" {
-		t.Errorf("report wrote %q, want the internal line with no next", got)
+	want := "relevo: internal: boom\n  next: relevo bugreport\n"
+	if got := buf.String(); got != want {
+		t.Errorf("report wrote %q, want %q", got, want)
 	}
 }
 

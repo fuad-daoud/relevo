@@ -65,7 +65,7 @@ var catalog = map[errorCode]catalogEntry{
 	codeMastermindNotFound: {exit: 1, next: "relevo mastermind list"},
 	codeClientNotFound:     {exit: 1, next: "relevo serve clients"},
 	codeServerNotFound:     {exit: 1, next: "relevo config server list"},
-	codeInternal:           {exit: 1},
+	codeInternal:           {exit: 1, next: "relevo bugreport"},
 }
 
 // cliError is the frame's error value: a catalog code, a human message that is

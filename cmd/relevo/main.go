@@ -60,6 +60,7 @@ Commands:
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
+  bugreport assemble a local, redacted bug-report bundle and print the gh line
   update    replace this release binary with the latest release, checksum-verified [--check] [--to vX.Y.Z] [--release]
   config    show the actors, the current pick and the candidates
   config edit|get|set|unset|export|import
@@ -111,7 +112,9 @@ func main() {
 	client.Version = buildVersion()
 
 	args := os.Args[1:]
-	os.Exit(report(os.Stderr, run(args), jsonRequested(args)))
+	err := run(args)
+	recordInternal(args, err)
+	os.Exit(report(os.Stderr, err, jsonRequested(args)))
 }
 
 // report renders run's error on w and returns the process exit code. It is the
@@ -229,6 +232,8 @@ func run(args []string) error {
 		return cmdMCP(args[1:])
 	case "doctor":
 		return cmdDoctor(args[1:])
+	case "bugreport":
+		return cmdBugreport(args[1:])
 	case "update":
 		return cmdUpdate(args[1:])
 	case "config":

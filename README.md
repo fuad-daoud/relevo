@@ -413,6 +413,12 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   or forget its records.
 - `relevo doctor` — preflight check: plugin, daemon, harness binaries, roles,
   the database and hooks. See [First run on a clean machine](#first-run-on-a-clean-machine).
+- `relevo bugreport [--name N] [--round N] [--logs] [--raw] [--out PATH] [--stdout|--json|--gh]` —
+  assemble a local, redacted bug-report bundle and print the `gh issue create` line.
+  The default writes a new dated file under `<state root>/bugreports/`; `--stdout` and
+  `--json` print instead of writing, `--out PATH` writes exactly there, `--logs` adds
+  capped report, diff and transcript tails, `--raw` skips the redaction pass, and `--gh`
+  runs the printed line. Nothing is sent automatically.
 - `relevo serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N] [--max-builders N]` — run the remote-builder server (listener + daemon).
 - `relevo serve init|enroll|clients|revoke|fingerprint|status|ui|gc|unbind` — server administration, on the server host. `relevo show --owner` reads one owner's round on that host, and `serve ui` is the server's own reader.
 - `relevo gate --serve [--state DIR]` — list the gates on the server's own ledger.

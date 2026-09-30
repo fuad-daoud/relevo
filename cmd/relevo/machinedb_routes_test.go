@@ -214,6 +214,26 @@ func TestPeekNeverDialsOrStarts(t *testing.T) {
 		t.Errorf("routeForArgs(daemon --check) = %v, want none", mode)
 	}
 
+	// bugreport is a read-only verb too: it reads the machine through its own
+	// read-only handle, so it gets routeNone and the peek flag -- the exact
+	// value run() branches on to skip captureAgyEnv -- whatever its own flags
+	// select.
+	if !isPeekArgs([]string{"bugreport"}) {
+		t.Error("isPeekArgs(bugreport) = false, want true")
+	}
+	if mode, _ := routeForArgs([]string{"bugreport"}); mode != routeNone {
+		t.Errorf("routeForArgs(bugreport) = %v, want none", mode)
+	}
+	if !isPeekArgs([]string{"bugreport", "--name", "alpha", "--round", "2", "--logs"}) {
+		t.Error("isPeekArgs(bugreport --name/--round/--logs) = false, want true")
+	}
+	if mode, _ := routeForArgs([]string{"bugreport", "--name", "alpha", "--round", "2", "--logs"}); mode != routeNone {
+		t.Errorf("routeForArgs(bugreport with flags) = %v, want none", mode)
+	}
+	if peek := installRouteForArgs([]string{"bugreport"}); !peek {
+		t.Error("installRouteForArgs(bugreport) = false, want the peek that skips capture")
+	}
+
 	_, _, err := captureOutput(t, func() error { return run([]string{"daemon", "--check"}) })
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 1 {

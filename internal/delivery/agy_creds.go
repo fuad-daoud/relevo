@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
 // The agy variables relevo reads. agy rotates ANTIGRAVITY_LS_ADDRESS and
@@ -36,8 +38,9 @@ const agySecretPrefix = "agy/"
 const agyCredsPruneAfter = 7 * 24 * time.Hour
 
 // redactedToken is what every rendering of a credential replaces the token
-// with, so an accidental %v cannot leak it.
-const redactedToken = "<redacted>"
+// with, so an accidental %v cannot leak it. The bytes are sanitize.Redacted:
+// one placeholder, shared with every other pass that rewrites a secret.
+const redactedToken = sanitize.Redacted
 
 // AgyCreds is one agy conversation's captured agentapi credentials, stored as
 // the secret `agy/<conversation_id>` in the machine database. The conversation

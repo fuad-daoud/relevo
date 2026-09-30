@@ -47,6 +47,43 @@ func TestLoadMintsAndReusesOneID(t *testing.T) {
 	}
 }
 
+// TestReadDoesNotMintAndAgreesWithLoad pins the non-minting read: a root with
+// no installation file is (Installation{}, false, nil) and stays empty, and
+// after Load the same id comes back through Read.
+func TestReadDoesNotMintAndAgreesWithLoad(t *testing.T) {
+	root := t.TempDir()
+
+	inst, ok, err := Read(root)
+	if err != nil {
+		t.Fatalf("Read on an empty root: %v", err)
+	}
+	if ok || inst != (Installation{}) {
+		t.Errorf("Read on an empty root = (%+v, %v), want the zero value and ok=false", inst, ok)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("Read minted a file: root holds %v, want nothing", entries)
+	}
+
+	loaded, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got, ok, err := Read(root)
+	if err != nil {
+		t.Fatalf("Read after Load: %v", err)
+	}
+	if !ok {
+		t.Fatal("Read after Load = ok=false, want the minted file")
+	}
+	if got.ID != loaded.ID {
+		t.Errorf("Read id = %q, want Load's %q", got.ID, loaded.ID)
+	}
+}
+
 // TestLoadTwoRootsGetDifferentIDs pins what makes the id usable as an origin:
 // each state root mints its own, so two installations never share one.
 func TestLoadTwoRootsGetDifferentIDs(t *testing.T) {

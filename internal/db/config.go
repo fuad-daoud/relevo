@@ -186,10 +186,22 @@ func (t *Tx) ConfigImportRecord(name, sourcePath string, body []byte, now time.T
 // that must not create or change the database; a missing file's error wraps
 // os.ErrNotExist.
 func OpenReadOnly(path string) (*DB, error) {
-	return openReadOnly(path)
+	return OpenReadOnlyWith(path, Options{})
 }
 
-func openReadOnly(path string) (_ *DB, err error) {
+// OpenReadOnlyWith opens path read-only like OpenReadOnly, with o.Origin set
+// on the returned handle. The origin matters because a scoped read matches the
+// rows this installation wrote -- every row relevo writes carries its
+// installation id as origin, and record reads are scoped by `origin IN (?,
+// ”)` against the handle's own origin. A read verb that serves those rows
+// must carry the id, or its scoped reads see none of the machine's bindings.
+// Like OpenReadOnly it never mints, migrates or writes: the file must exist
+// and it is opened mode=ro.
+func OpenReadOnlyWith(path string, o Options) (*DB, error) {
+	return openReadOnly(path, o)
+}
+
+func openReadOnly(path string, o Options) (_ *DB, err error) {
 	if _, serr := os.Stat(path); serr != nil {
 		return nil, fmt.Errorf("db: open readonly %s: %w", path, serr)
 	}
@@ -220,7 +232,7 @@ func openReadOnly(path string) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open readonly %s: migrations: %w: %w", path, ErrOpen, err)
 	}
 
-	return &DB{sqlDB: sqlDB, newer: have > know, have: have, know: know}, nil
+	return &DB{sqlDB: sqlDB, newer: have > know, have: have, know: know, origin: o.Origin}, nil
 }
 
 // isMissingTable reports whether err is sqlite's "no such table" for a schema

@@ -40,18 +40,34 @@ type Installation struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Read returns the installation at root without minting one: ok is false when
+// the file is absent, and an absent file is left absent. A read verb that must
+// not write -- `relevo bugreport` opens the machine read-only -- calls this
+// rather than Load, which mints the file, and a read must never mint. A file
+// that is present but not this shape is still an error.
+func Read(root string) (Installation, bool, error) {
+	inst, err := read(filepath.Join(root, FileName))
+	if errors.Is(err, os.ErrNotExist) {
+		return Installation{}, false, nil
+	}
+	if err != nil {
+		return Installation{}, false, err
+	}
+	return inst, true, nil
+}
+
 // Load returns the installation at root, minting the file when it is absent.
 // The file is authoritative: a second Load returns the same id, and two roots
 // get different ids because each mints its own.
 func Load(root string) (Installation, error) {
 	path := filepath.Join(root, FileName)
 
-	inst, err := read(path)
-	if err == nil {
-		return inst, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
+	inst, ok, err := Read(root)
+	if err != nil {
 		return Installation{}, err
+	}
+	if ok {
+		return inst, nil
 	}
 	return mint(path)
 }
