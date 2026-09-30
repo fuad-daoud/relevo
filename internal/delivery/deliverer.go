@@ -51,4 +51,10 @@ type MasterMindDeliverer interface {
 	// Confirm reads the mastermind's own queue back and never sends: it is the
 	// only call allowed for a payload Deliver admitted.
 	Confirm(ctx context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error)
+	// ConfirmOnce is the read-back for a tick that found the payload already
+	// admitted: exactly one read-back, never a poll and never a send. The tick
+	// that admitted the payload keeps Confirm's full window; every later tick
+	// calls ConfirmOnce, so a repeat tick holds the caller's lock for one
+	// read-back instead of the whole window.
+	ConfirmOnce(ctx context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error)
 }

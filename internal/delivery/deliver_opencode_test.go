@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -829,4 +830,150 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 	if got := opencodePosts(&mu, &posts); got != 2 {
 		t.Fatalf("after payload 2, got %d POSTs, want 2", got)
 	}
+}
+
+// TestOpencodeConfirmOnceNeverPolls pins the repeat tick's read-back: one query
+// of the session and no poll. The fake only reports the origin seen from its
+// fifth query on, so a poll would reach it and report delivered; a single
+// read-back cannot, and leaves the payload admitted.
+func TestOpencodeConfirmOnceNeverPolls(t *testing.T) {
+	t.Parallel()
+
+	exec := &fakeSqliteExec{seenFrom: 5}
+	d := &OpencodeDeliverer{DBPath: filepath.Join(t.TempDir(), "opencode.db"), Exec: exec}
+
+	out, reason, err := d.ConfirmOnce(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", time.Time{})
+	if err != nil {
+		t.Fatalf("ConfirmOnce: %v", err)
+	}
+	if out != OutcomeAdmitted || reason != "posted; awaiting the session" {
+		t.Fatalf("out/reason = %v/%q, want OutcomeAdmitted/\"posted; awaiting the session\"", out, reason)
+	}
+	if exec.calls >= 5 {
+		t.Fatalf("session queries = %d, want fewer than 5: a poll would have reached the seen count and delivered", exec.calls)
+	}
+	if exec.calls != 1 {
+		t.Fatalf("session queries = %d, want exactly 1 read-back", exec.calls)
+	}
+}
+
+// TestOpencodeConfirmOnceNeverPosts pins the other half of the repeat tick's
+// contract: even with a live service file in reach -- the thing that lets the
+// push half send -- ConfirmOnce makes no request at all. A send added to
+// ConfirmOnce would show up here as a POST.
+func TestOpencodeConfirmOnceNeverPosts(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		posts++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
+	db := sqliteFixture(t,
+		"create table message (id text, data text)",
+		"create table part (id text, message_id text, session_id text, data text)",
+		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
+		"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
+	)
+
+	d := &OpencodeDeliverer{
+		StateFiles: []string{stateFile},
+		DBPath:     db,
+		Exec:       cliExec{},
+		Alive:      aliveAlways,
+	}
+
+	payload := "relevo: round 1 · to MasterMind · payload 1\n\nbody 1"
+	out, reason, err := d.ConfirmOnce(context.Background(), opencodeMasterMind("ses_abc123"), payload, time.Time{})
+	if err != nil {
+		t.Fatalf("ConfirmOnce: %v", err)
+	}
+	if out != OutcomeAdmitted || reason != "posted; awaiting the session" {
+		t.Fatalf("out/reason = %v/%q, want OutcomeAdmitted/\"posted; awaiting the session\"", out, reason)
+	}
+	if got := opencodePosts(&mu, &posts); got != 0 {
+		t.Fatalf("POSTs = %d, want 0: a repeat tick reads back, it cannot send", got)
+	}
+}
+
+// TestOpencodeConfirmOnceSeen pins the confirming read-back: the single query
+// finds the origin, so the repeat tick reports the payload delivered.
+func TestOpencodeConfirmOnceSeen(t *testing.T) {
+	t.Parallel()
+
+	exec := &fakeSqliteExec{seenFrom: 1}
+	d := &OpencodeDeliverer{DBPath: filepath.Join(t.TempDir(), "opencode.db"), Exec: exec}
+
+	out, reason, err := d.ConfirmOnce(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", time.Time{})
+	if err != nil {
+		t.Fatalf("ConfirmOnce: %v", err)
+	}
+	if out != OutcomeDelivered || reason != "" {
+		t.Fatalf("out/reason = %v/%q, want OutcomeDelivered and an empty reason", out, reason)
+	}
+	if exec.calls != 1 {
+		t.Fatalf("session queries = %d, want exactly 1 read-back", exec.calls)
+	}
+}
+
+// TestOpencodeConfirmOnceRefusesWhatItCannotRead pins the repeat tick's guards
+// and its read error: the single query is attempted only for the mastermind the
+// other halves accept, and a failing sqlite3 is unavailable rather than
+// delivered.
+func TestOpencodeConfirmOnceRefusesWhatItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		mastermind store.Endpoint
+		noExec     bool
+		reason     string
+	}{
+		{name: "claude mastermind", mastermind: store.Endpoint{Kind: "claude", SessionID: "ses_abc123"}, reason: ""},
+		{name: "empty session id", mastermind: store.Endpoint{Kind: "opencode", SessionID: ""}, reason: "no opencode session id"},
+		{name: "malformed session id", mastermind: store.Endpoint{Kind: "opencode", SessionID: "ses_bad!id"}, reason: "no opencode session id"},
+		{name: "nil Exec", mastermind: store.Endpoint{Kind: "opencode", SessionID: "ses_abc123"}, noExec: true, reason: "no sqlite3"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &OpencodeDeliverer{DBPath: filepath.Join(t.TempDir(), "opencode.db")}
+			if !tc.noExec {
+				d.Exec = &fakeSqliteExec{}
+			}
+
+			out, reason, err := d.ConfirmOnce(context.Background(), tc.mastermind, "relevo: round 1\n\nbody", time.Time{})
+			if err != nil {
+				t.Fatalf("ConfirmOnce: %v", err)
+			}
+			if out != OutcomeNotMine {
+				t.Fatalf("out = %v, want OutcomeNotMine", out)
+			}
+			if reason != tc.reason {
+				t.Errorf("reason = %q, want %q", reason, tc.reason)
+			}
+		})
+	}
+
+	t.Run("a failing sqlite3 is unavailable", func(t *testing.T) {
+		d := &OpencodeDeliverer{
+			DBPath: filepath.Join(t.TempDir(), "opencode.db"),
+			Exec:   &fakeSqliteExec{err: errors.New("boom: no such table\nsecond line")},
+		}
+
+		out, reason, err := d.ConfirmOnce(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", time.Time{})
+		if err != nil {
+			t.Fatalf("ConfirmOnce: %v", err)
+		}
+		if out != OutcomeUnavailable || reason != "sqlite3: boom: no such table" {
+			t.Fatalf("out/reason = %v/%q, want OutcomeUnavailable and the first error line", out, reason)
+		}
+	})
 }

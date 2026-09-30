@@ -758,6 +758,98 @@ func TestAgyConfirmPollsTheInbox(t *testing.T) {
 	})
 }
 
+// TestAgyConfirmOnceAdmitsThenDelivers pins the agy repeat tick's read-back:
+// one inbox scan with no send, which reports the message admitted while it is
+// unread and delivered once the read mark is there.
+func TestAgyConfirmOnceAdmitsThenDelivers(t *testing.T) {
+	t.Parallel()
+
+	d, fake, home := newAgyRig(t)
+	writeAgyMessage(t, home, "m-once", agyTestConv, agyTestPayload, time.Now().UTC(), false)
+
+	endpoint := store.Endpoint{Kind: "agy", SessionID: agyTestConv}
+
+	out, reason, err := d.ConfirmOnce(context.Background(), endpoint, agyTestPayload, time.Time{})
+	if err != nil {
+		t.Fatalf("ConfirmOnce: %v", err)
+	}
+	if out != OutcomeAdmitted {
+		t.Errorf("outcome = %v (reason %q), want OutcomeAdmitted", out, reason)
+	}
+	if want := "sent to agy but not yet read"; reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+	if fake.calls != 0 {
+		t.Errorf("ConfirmOnce sent %d times, want none", fake.calls)
+	}
+
+	markAgyRead(t, home, "m-once")
+
+	out, reason, err = d.ConfirmOnce(context.Background(), endpoint, agyTestPayload, time.Time{})
+	if err != nil {
+		t.Fatalf("ConfirmOnce after the read mark: %v", err)
+	}
+	if out != OutcomeDelivered || reason != "already present" {
+		t.Errorf("outcome/reason = %v/%q, want OutcomeDelivered/\"already present\"", out, reason)
+	}
+	if fake.calls != 0 {
+		t.Errorf("ConfirmOnce sent %d times after the read mark, want none", fake.calls)
+	}
+}
+
+// TestAgyConfirmOnceRefusesWhatItCannotRead pins the repeat tick's guards: the
+// single inbox scan is attempted only for the mastermind Deliver and Confirm
+// accept, and it never runs a command whatever it finds.
+func TestAgyConfirmOnceRefusesWhatItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	d, fake, _ := newAgyRig(t)
+
+	cases := []struct {
+		name       string
+		mastermind store.Endpoint
+		reason     string
+	}{
+		{name: "another kind", mastermind: store.Endpoint{Kind: "claude", SessionID: agyTestConv}, reason: ""},
+		{
+			name:       "bad conversation id",
+			mastermind: store.Endpoint{Kind: "agy", SessionID: "not-a-conversation"},
+			reason:     "agy mastermind session is not a conversation id; run relevo mastermind init inside agy",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, reason, err := d.ConfirmOnce(context.Background(), tc.mastermind, agyTestPayload, time.Time{})
+			if err != nil {
+				t.Fatalf("ConfirmOnce: %v", err)
+			}
+			if out != OutcomeNotMine {
+				t.Fatalf("outcome = %v, want OutcomeNotMine", out)
+			}
+			if reason != tc.reason {
+				t.Errorf("reason = %q, want %q", reason, tc.reason)
+			}
+		})
+	}
+
+	t.Run("no exec", func(t *testing.T) {
+		bare := &AgyDeliverer{}
+		out, reason, err := bare.ConfirmOnce(context.Background(),
+			store.Endpoint{Kind: "agy", SessionID: agyTestConv}, agyTestPayload, time.Time{})
+		if err != nil {
+			t.Fatalf("ConfirmOnce: %v", err)
+		}
+		if out != OutcomeNotMine || reason != "no exec" {
+			t.Errorf("ConfirmOnce = (%v, %q), want OutcomeNotMine and no exec", out, reason)
+		}
+	})
+
+	if fake.calls != 0 {
+		t.Errorf("ConfirmOnce ran %d commands, want none", fake.calls)
+	}
+}
+
 // TestDeliverPendingAgyDeliversViaDeliverer is the routing test the plan asks
 // for: DeliverPending over a real AgyDeliverer confirms the pending entry with
 // route deliverer:agy.
