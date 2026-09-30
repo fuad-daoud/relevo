@@ -195,14 +195,14 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "repo_id escapes the owner's repo root")
 		return store.Binding{}, false
 	}
-	if err := s.cfg.Git.InitBare(ctx, bare); err != nil {
-		writeErr(w, http.StatusInternalServerError, "", err.Error())
-		return store.Binding{}, false
-	}
-
 	roleName := orText(role, "builder")
 	candidateToken, harnessKind, tier, ok := pickServedTier(w, rt, roleName, req.Candidate, req.Tier)
 	if !ok {
+		return store.Binding{}, false
+	}
+
+	if err := s.cfg.Git.InitBare(ctx, bare); err != nil {
+		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return store.Binding{}, false
 	}
 

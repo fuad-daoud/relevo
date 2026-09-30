@@ -1,5 +1,6 @@
 GET /v1/whoami 401 not_enrolled
 GET /v1/candidates 401 not_enrolled
+GET /v1/actors/test-actor 401 not_enrolled
 POST /v1/bindings 401 not_enrolled
 GET /v1/bindings 401 not_enrolled
 GET /v1/bindings/test-binding 401 not_enrolled

@@ -299,10 +299,23 @@ type CandidateView struct {
 	Name  string `json:"name,omitempty"` // the candidate's short name, when the server knows one
 	Kind  string `json:"kind"`           // harness kind: agy | claude | opencode
 	Gated bool   `json:"gated"`          // a live limit gate on the ledger
-	Pick  bool   `json:"pick"`           // what the policy order would pick right now for the builder actor
+	Pick  bool   `json:"pick"`           // what the policy order would pick right now for the view's actor
 }
 
 type CandidatesResponse struct {
+	Candidates []CandidateView `json:"candidates"`
+}
+
+// ActorView is the answer to GET /v1/actors/{actor}: what a create naming this
+// actor would answer. Accepted, Pick and Reason come from the same call a
+// create makes, so the probe cannot disagree with the create it precedes.
+// Candidates is never null. Field names are the wire contract.
+type ActorView struct {
+	Actor      string          `json:"actor"`
+	Shape      string          `json:"shape"` // writer | reader
+	Accepted   bool            `json:"accepted"`
+	Pick       string          `json:"pick,omitempty"`
+	Reason     string          `json:"reason,omitempty"`
 	Candidates []CandidateView `json:"candidates"`
 }
 
@@ -392,6 +405,12 @@ const FeatureOrigin = "origin"
 // server without it: an old server would re-apply the seed cap and answer with
 // the "pass --force" sentence for a flag that was already passed.
 const FeatureForce = "force"
+
+// FeaturePlacement is the WhoAmI.Features token a server that serves
+// GET /v1/actors/{actor} advertises. A client probes that route to learn
+// whether a placement would be accepted before it creates anything, so a
+// server without the token is missing the only way to ask.
+const FeaturePlacement = "placement"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

@@ -56,6 +56,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /v1/whoami", s.handleWhoAmI)
 	mux.HandleFunc("GET /v1/candidates", s.handleCandidates)
+	mux.HandleFunc("GET /v1/actors/{actor}", s.handleGetActor)
 	mux.HandleFunc("POST /v1/bindings", s.handleCreateBinding)
 	mux.HandleFunc("GET /v1/bindings", s.handleListBindings)
 	mux.HandleFunc("GET /v1/bindings/{name}", s.handleGetBinding)
@@ -112,7 +113,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		InstallationLabel: s.cfg.Installation.Label,
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement}
 		who.BuilderTier = string(relevo.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()

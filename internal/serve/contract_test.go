@@ -73,6 +73,7 @@ type routeEntry struct {
 var registeredRoutes = []routeEntry{
 	{"GET /v1/whoami", "GET", "/v1/whoami"},
 	{"GET /v1/candidates", "GET", "/v1/candidates"},
+	{"GET /v1/actors/{actor}", "GET", "/v1/actors/test-actor"},
 	{"POST /v1/bindings", "POST", "/v1/bindings"},
 	{"GET /v1/bindings", "GET", "/v1/bindings"},
 	{"GET /v1/bindings/{name}", "GET", "/v1/bindings/test-binding"},
