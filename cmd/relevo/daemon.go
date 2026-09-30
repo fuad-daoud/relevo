@@ -146,11 +146,37 @@ func cmdDaemon(args []string) error {
 		_ = ln.Close()
 	}()
 
-	// newRuntime is the one constructor, called under the lock: it mints a
-	// whole installation.json, opens and migrates relevo.db, imports config
-	// and builds the runtime with gates. Nothing before this point touches
-	// the database.
-	rt, err := newRuntime()
+	// The daemon's one handle: opened directly, here under the lock, and shared
+	// by store.NewShared with everything in the daemon -- the config store, the
+	// runtime's store (gates, claims, run log, daemon.json, the release cache)
+	// and the agy deliverer's creds store. Nothing in the daemon dials the
+	// owner, and the owner never opens a second handle of its own. Clients
+	// still hold their own dialled connections.
+	//
+	// Closing is explicit rather than a bare defer: the re-exec path closes the
+	// DB itself before syscall.Exec, and the deferred pass must then do
+	// nothing. *db.DB.Close is not idempotent.
+	d, err := openDBDirect(filepath.Join(root, "relevo.db"))
+	if err != nil {
+		return err
+	}
+	var dbClosed bool
+	closeDB := func() {
+		if dbClosed {
+			return
+		}
+		dbClosed = true
+		if cerr := d.Close(); cerr != nil {
+			slog.Warn("relevo daemon: close db", "err", cerr)
+		}
+	}
+	defer closeDB()
+
+	// newRuntimeOn is the one constructor, called under the lock: it mints a
+	// whole installation.json (above, in openDBDirect), opens and migrates
+	// relevo.db, imports config and builds the runtime with gates over the
+	// shared handle. Nothing before this point touches the database.
+	rt, err := newRuntimeOn(root, d)
 	if err != nil {
 		return err
 	}
@@ -202,54 +228,9 @@ func cmdDaemon(args []string) error {
 	}
 	watcher := relevo.NewConfigWatcher(configSource, configDirPath, os.Getenv)
 
-	// The database is opened only here, under the lock (and by `relevo db *`):
-	// the daemon is the process that writes it every tick. An open failure
-	// never blocks the daemon from starting -- every ingest call site treats
-	// DB == nil like a machine with no database.
-	//
-	// Closing is explicit rather than a bare defer: the re-exec path closes
-	// the DB itself before syscall.Exec, and the deferred pass must then do
-	// nothing. *db.DB.Close is not idempotent.
-	var (
-		dbClosed bool
-		// serveDB is the handle the owner serves. It is rt.DB when the daemon's
-		// own work runs, and a separate handle when the schema is newer: the
-		// owner is a SQL pipe, so it still serves that database while rt.DB
-		// stays nil to pause the daemon's own ingest.
-		serveDB *db.DB
-	)
-	closeDB := func() {
-		if dbClosed {
-			return
-		}
-		dbClosed = true
-		if rt.DB != nil {
-			if cerr := rt.DB.Close(); cerr != nil {
-				slog.Warn("relevo daemon: close db", "err", cerr)
-			}
-		}
-		if serveDB != nil && serveDB != rt.DB {
-			if cerr := serveDB.Close(); cerr != nil {
-				slog.Warn("relevo daemon: close db", "err", cerr)
-			}
-		}
-	}
-	defer closeDB()
-
-	if d, derr := openDB(rt.Store.DBPath()); derr != nil {
-		slog.Warn("relevo daemon: db unavailable; ingest disabled", "err", derr)
-	} else if d.Newer() {
-		// A schema a newer relevo wrote is never migrated or written by this
-		// binary: leave rt.DB nil so every ingest call site treats it as a
-		// machine with no database, and say why once (#372 §4.5). The owner
-		// still serves it, so a dialled client gets its schema answer.
-		have, know := d.SchemaVersions()
-		slog.Warn(fmt.Sprintf("relevo.db schema v%d is newer than this relevo (v%d); ingest paused until relevo is upgraded", have, know))
-		serveDB = d
-	} else {
-		rt.DB = d
-		serveDB = d
-	}
+	// The one handle is already open and shared; this decides only whether the
+	// daemon's own ingest may write it.
+	daemonRuntimeHandle(&rt, d)
 
 	// The ingest mirror's proven duplicates are removed once, before daemon.json
 	// is written (D3c; v2 #476). The run backs the database up first and records
@@ -336,11 +317,9 @@ func cmdDaemon(args []string) error {
 	// daemon.json: what this image runs. Written under the lock, so its
 	// presence with the lock held means a #371 daemon; removed on a clean
 	// shutdown, kept across a re-exec (#371 §4.7).
-	if serveDB != nil {
-		srv, err = serveOwner(serveDB, ln)
-		if err != nil {
-			slog.Warn("relevo daemon: owner socket not served", "err", err)
-		}
+	srv, err = serveOwner(d, ln)
+	if err != nil {
+		slog.Warn("relevo daemon: owner socket not served", "err", err)
 	}
 	info := store.DaemonInfo{
 		Version:    buildVersion(),
@@ -461,6 +440,24 @@ func cmdDaemon(args []string) error {
 	// A clean shutdown removes the record; the re-exec path above must not.
 	_ = rt.Store.RemoveDaemonInfo()
 	return err
+}
+
+// daemonRuntimeHandle decides whether the daemon's own ingest may write d, the
+// one handle the daemon opened and the owner serves. A schema a newer relevo
+// wrote is never migrated or written by this binary: rt.DB stays nil so every
+// ingest call site treats it as a machine with no database, and the reason is
+// said once (#372 §4.5). The owner still serves the handle, so a dialled client
+// gets its schema answer.
+//
+// It is a function of its own so the tests drive the very branch the daemon
+// does; rt is a pointer because a Runtime is copied by value everywhere else.
+func daemonRuntimeHandle(rt *relevo.Runtime, d *db.DB) {
+	if d.Newer() {
+		have, know := d.SchemaVersions()
+		slog.Warn(fmt.Sprintf("relevo.db schema v%d is newer than this relevo (v%d); ingest paused until relevo is upgraded", have, know))
+		return
+	}
+	rt.DB = d
 }
 
 // refreshRoles lands relevo's shipped agent definitions and the custom agents

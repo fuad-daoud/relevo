@@ -730,7 +730,7 @@ gate` still overrides; `relevo gate --clear` undoes a false positive.
 
 ### Remote builders: the server
 
-`relevo serve` runs a remote-builder server: an HTTPS listener over enrolled clients and an autonomous daemon loop that runs headless builders on the server host without a local MasterMind or GUI. It opens the one machine database: enrolled clients, the server's TLS key and certificate, its gates and every served binding are records in relevo.db. `--state` only says where the server keeps its bare repos, its temp files and its worktrees.
+`relevo serve` runs a remote-builder server: an HTTPS listener over enrolled clients and an autonomous daemon loop that runs headless builders on the server host without a local MasterMind or GUI. It reaches the one machine database -- enrolled clients, the server's TLS key and certificate, its gates and every served binding are records in relevo.db -- through the local daemon's owner socket like every other client. `--state` only says where the server keeps its bare repos, its temp files and its worktrees. The service unit pulls that daemon in and starts after it (`Wants=relevo.service`, `After=relevo.service`); a daemon `relevo serve` had to start itself would live in serve's own cgroup, so the unit dependency is the supported shape on a server host.
 
 On a fresh server host, the first run looks like:
 1. `relevo serve init --host <hostname>` generates a server private key and self-signed certificate, printing the SHA-256 fingerprint that clients pin.
@@ -968,6 +968,14 @@ log and rounds, gates, MasterMind records, and every file a closed round produce
 (artifact and transcript rows). Nothing else is a source of truth, and no verb
 needs it closed.
 
+One process opens the file: `relevo daemon`. Every other process -- every verb,
+the lifecycle hooks, `mcp`, `wait`, the ui and `relevo serve` -- reaches it
+through the owner socket `$XDG_STATE_HOME/relevo/relevo.sock` beside it, and a
+process that finds no daemon starts one ("Running the daemon" below). The file
+at another path (a test's root, a serve root) is still opened directly.
+`relevo doctor` prints the database's `database` row, which names the route the
+reader reached it by: `via owner <socket>` or `via file`.
+
 The state root holds only what cannot be a row:
 
 - `relevo.db`, with its `-wal` and `-shm`;
@@ -987,7 +995,7 @@ together with their origin, is classified in
 Nothing else is used. A file dropped into `~/.config/relevo` is imported on the
 next command and removed. `relevo doctor`
 prints the database's `database` row: its path, its size, the schema version,
-and the live and archived binding counts.
+the live and archived binding counts, and the route it was read by.
 
 `relevo history` and `relevo show` read the database for anything that is not a
 live binding's open round, so a round from months ago renders the same way a
@@ -2040,10 +2048,19 @@ definitions.
 
 ## Running the daemon
 
-`relevo daemon` is the reconciler: it watches builders, queues reports back to
-the MasterMind, and flags stalled rounds. Nothing else needs it running — the CLI
-works on its own — but without it, reports are only delivered when you run
-`relevo wait` by hand.
+`relevo daemon` is the reconciler and the one process that opens `relevo.db`:
+it watches builders, queues reports back to the MasterMind, and flags stalled
+rounds. Every other process reaches the database through the daemon's owner
+socket, so a command that finds no daemon starts one itself:
+
+- `systemctl --user start --no-block relevo` when the user unit is installed;
+- `launchctl kickstart` on macOS when the LaunchAgent is installed;
+- otherwise a `relevo daemon` in a session of its own, appending its output to
+  `$XDG_STATE_HOME/relevo/daemon.log`.
+
+So the CLI works on its own -- you never have to start the daemon first -- and
+reports are delivered even when you run a single verb by hand instead of
+`relevo wait`.
 
 You can just run `relevo daemon` in any spare terminal. To have it start with
 your session:

@@ -42,6 +42,11 @@ func TestMain(m *testing.M) {
 	if os.Getenv(cmdTestHelperEnv) != "" {
 		os.Exit(runCmdTestHelper())
 	}
+	// The daemon-runtime child keeps the parent's state root for the same
+	// reason: it opens the database the parent points it at.
+	if os.Getenv(cmdTestDaemonHelperEnv) != "" {
+		os.Exit(runCmdTestDaemonHelper())
+	}
 
 	root, err := os.MkdirTemp("", "relevo-cmd-test-")
 	if err != nil {

@@ -37,7 +37,6 @@ func TestRunReturnsErrReexecAfterOneTick(t *testing.T) {
 // cancellation.
 func TestRunDrainsInFlightTickOnCancel(t *testing.T) {
 	rt, _ := sentBinding(t)
-	releaseStateRoot(t) // the release check composes its own path from the root
 	fetch := &ctxRecordingFetcher{}
 	rt.Fetcher = fetch
 

@@ -129,20 +129,21 @@ func captureAgyEnv() {
 // reports stay pending for the background wait. agy needs no external tool: it reads
 // the captured credential secret from the machine database and runs agy
 // itself, and reports its own failure as OutcomeUnavailable.
-func newDeliverers() map[string]delivery.MasterMindDeliverer {
+//
+// It takes the runtime's own store, so the deliverer reads and writes the same
+// database the rest of the runtime does: for a client that is one more dialled
+// owner connection, and for the daemon the one shared handle. The peek verbs
+// pass openGates false and wire no deliverers at all, which is what keeps
+// `--preflight`/`--check` from opening the database a deliverer would.
+func newDeliverers(st *store.Store) map[string]delivery.MasterMindDeliverer {
 	deliverers := map[string]delivery.MasterMindDeliverer{}
-	// store.DefaultRoot has already succeeded once in newRuntime; the guard is
-	// only for the shape of the function, and a root relevo cannot resolve means
-	// every verb has failed long before a delivery is attempted.
-	if root, err := store.DefaultRoot(); err == nil {
-		// DBIfExists, not DB: a root with no relevo.db yet -- `daemon
-		// --preflight` and `--check` run against one -- must not get a
-		// database conjured into it just because a deliverer was wired.
-		if d, derr := store.New(root).DBIfExists(); derr == nil && d != nil {
-			deliverers["agy"] = &delivery.AgyDeliverer{
-				Exec:  binEnvExec{},
-				Creds: db.SecretStore{DB: d},
-			}
+	// DBIfExists, not DB: a root with no relevo.db yet -- `daemon
+	// --preflight` and `--check` run against one -- must not get a database
+	// conjured into it just because a deliverer was wired.
+	if d, derr := st.DBIfExists(); derr == nil && d != nil {
+		deliverers["agy"] = &delivery.AgyDeliverer{
+			Exec:  binEnvExec{},
+			Creds: db.SecretStore{DB: d},
 		}
 	}
 	if _, err := exec.LookPath("sqlite3"); err != nil {
@@ -156,9 +157,15 @@ func newDeliverers() map[string]delivery.MasterMindDeliverer {
 	return deliverers
 }
 
-// newRuntime constructs the production runtime. Config and secrets come from
-// the machine database; any file present under <userConfigRoot>/relevo is
-// imported into it first and removed (#4.6). aliases.json is never read (#80).
+// newRuntime constructs the production runtime a CLI verb uses. Config and
+// secrets come from the machine database; any file present under
+// <userConfigRoot>/relevo is imported into it first and removed (#4.6).
+// aliases.json is never read (#80).
+//
+// The handle is opened through openDB, so a client reaches the machine database
+// through the owner once the route is installed, while the store the runtime
+// carries opens its own dialled handle on first use. The daemon instead hands
+// its one shared handle to newRuntimeOn.
 func newRuntime() (relevo.Runtime, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {
@@ -169,6 +176,21 @@ func newRuntime() (relevo.Runtime, error) {
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
+	return newRuntimeWith(root, d, store.New(root))
+}
+
+// newRuntimeOn constructs the daemon's runtime over the one handle it opened
+// and serves: the runtime's store borrows d (store.NewShared), so nothing in
+// the daemon dials its own socket and the file is opened exactly once.
+func newRuntimeOn(root string, d *db.DB) (relevo.Runtime, error) {
+	return newRuntimeWith(root, d, store.NewShared(root, "", d))
+}
+
+// newRuntimeWith is the one body both constructors share: the config store
+// reads, imports and migrates through d, and buildRuntime wires the runtime
+// over st -- the store the caller's shape needs, a routed New for a client and
+// a shared one for the daemon.
+func newRuntimeWith(root string, d *db.DB, st *store.Store) (relevo.Runtime, error) {
 	cs := config.Open(d)
 
 	configDir, err := userConfigRoot()
@@ -208,7 +230,7 @@ func newRuntime() (relevo.Runtime, error) {
 		return relevo.Runtime{}, err
 	}
 
-	rt, err := buildRuntime(root, L, true)
+	rt, err := buildRuntime(root, L, st, true)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
@@ -261,7 +283,7 @@ func newRuntimePeek() (relevo.Runtime, error) {
 
 	// buildRuntime with openGates false: preflight and check open no database
 	// and carry nil Gates/Latency, so they touch no gate record (P3b plan §4.5).
-	return buildRuntime(root, L, false)
+	return buildRuntime(root, L, store.New(root), false)
 }
 
 // loadConfigReadOnly reads config without creating, migrating or writing
@@ -312,12 +334,12 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// buildRuntime wires the Runtime from one loaded config, the shape both
-// newRuntime and newRuntimePeek use. openGates opens the store root's database
-// for the gate, availability and latency records (P3b plan §4.5): newRuntime
-// passes true, and a DB() error is fatal for the verb; newRuntimePeek passes
-// false, so preflight and check leave the root with no database and nil gates.
-func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime, error) {
+// buildRuntime wires the Runtime from one loaded config and one store, the
+// shape newRuntimeWith uses. openGates opens the store's database for the gate,
+// availability and latency records (P3b plan §4.5): newRuntime passes true, and
+// a DB() error is fatal for the verb; newRuntimePeek passes false, so preflight
+// and check leave the root with no database, nil gates and no deliverers.
+func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool) (relevo.Runtime, error) {
 	pol := L.Policy
 
 	// Warnings are carried, never printed: every CLI command calls newRuntime,
@@ -330,7 +352,6 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 	reader, prices := newUsageReader(L.Prices)
 	home, _ := os.UserHomeDir()
 
-	st := store.New(root)
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
 
 	// Gates and latency live in the store root's database (P3b plan §4.5).
@@ -401,8 +422,13 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 		ProcStart:          procStartUnix,
 		OpencodeSession:    opencodeSession,
 		OpencodeSessionDir: opencodeSessionDir,
-		Deliverers:         newDeliverers(),
 		SessionReaper:      relevo.NewSessionReaper(binExec{}),
+	}
+	// Deliverers need the runtime's store, and a runtime with no database open
+	// (preflight, check) carries none at all: wiring one would open -- and
+	// migrate -- the very database the peek must leave alone.
+	if openGates {
+		rt.Deliverers = newDeliverers(st)
 	}
 	// The registry needs the runtime's own store and clock, so it is wired
 	// here rather than in the literal above. A runtime with no database open

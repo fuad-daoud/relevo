@@ -3,6 +3,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,11 +20,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/store"
+
+	_ "modernc.org/sqlite"
 )
 
 // cmdTestHelperEnv marks the one-opener child: TestMain answers it before any
 // isolation, so the child keeps the parent's state root.
 const cmdTestHelperEnv = "RELEVO_CMDTEST_HELPER"
+
+// cmdTestDaemonHelperEnv marks the daemon-runtime child: TestMain answers it
+// before any isolation, so the child keeps the parent's state root too.
+const cmdTestDaemonHelperEnv = "RELEVO_CMDTEST_DAEMON_HELPER"
 
 // shortStateRoot is a state home directly under /tmp: the socket path under
 // t.TempDir can exceed the sun_path limit.
@@ -456,5 +463,188 @@ func TestOneOpenerWithAnOwnerRunning(t *testing.T) {
 	}
 	if len(report.DBFDs) != 0 {
 		t.Errorf("the child holds database descriptors: %v", report.DBFDs)
+	}
+}
+
+// daemonHelperReport is what the daemon-runtime child prints on stdout.
+type daemonHelperReport struct {
+	Newer        bool `json:"newer"`
+	RTDBSet      bool `json:"rt_db_set"`
+	SameStore    bool `json:"same_store"`
+	StoreIsOwner bool `json:"store_is_owner"`
+	DBFDs        int  `json:"db_fds"`
+}
+
+// runCmdTestDaemonHelper is the child half of TestDaemonRuntimeOpensTheDatabaseOnce
+// and TestDaemonServesANewerSchema: it opens the machine database directly the
+// way cmdDaemon does, builds the daemon runtime over it, applies the daemon's
+// own ingest decision, and reports the handle identity plus how many descriptors
+// the process holds on relevo.db itself.
+func runCmdTestDaemonHelper() int {
+	root, err := store.DefaultRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon helper: root: %v\n", err)
+		return 1
+	}
+	path := filepath.Join(root, "relevo.db")
+	d, err := openDBDirect(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon helper: open: %v\n", err)
+		return 1
+	}
+	defer func() { _ = d.Close() }()
+
+	rt, err := newRuntimeOn(root, d)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon helper: runtime: %v\n", err)
+		return 1
+	}
+	daemonRuntimeHandle(&rt, d)
+
+	storeDB, err := rt.Store.DB()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon helper: store db: %v\n", err)
+		return 1
+	}
+
+	report, err := json.Marshal(daemonHelperReport{
+		Newer:        d.Newer(),
+		RTDBSet:      rt.DB != nil,
+		SameStore:    rt.DB != nil && rt.DB == storeDB,
+		StoreIsOwner: storeDB == d,
+		DBFDs:        countDatabaseFDs(path),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon helper: marshal: %v\n", err)
+		return 1
+	}
+	fmt.Println(string(report))
+	return 0
+}
+
+// countDatabaseFDs counts this process's descriptors on path itself -- not its
+// -wal or -shm siblings: one open handle is one descriptor on the file. A host
+// with no /proc reports -1, which a test reads as "not measured".
+func countDatabaseFDs(path string) int {
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return -1
+	}
+	base := filepath.Base(path)
+	n := 0
+	for _, e := range entries {
+		target, lerr := os.Readlink(filepath.Join("/proc/self/fd", e.Name()))
+		if lerr != nil {
+			continue
+		}
+		if filepath.Base(target) == base {
+			n++
+		}
+	}
+	return n
+}
+
+// runDaemonHelperChild re-execs the test binary as the daemon-runtime child and
+// returns its report. The child answers in TestMain before any isolation, so it
+// keeps this test's state root.
+func runDaemonHelperChild(t *testing.T) daemonHelperReport {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("Executable: %v", err)
+	}
+	cmd := exec.Command(exe)
+	cmd.Env = append(os.Environ(), cmdTestDaemonHelperEnv+"=1")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("daemon helper child: %v: %s", err, out)
+	}
+	var report daemonHelperReport
+	if uerr := json.Unmarshal(out, &report); uerr != nil {
+		t.Fatalf("unmarshal daemon helper report %q: %v", out, uerr)
+	}
+	return report
+}
+
+// daemonHelperEnv points the child's state root at a short /tmp root, the way
+// every socket-path test does, and returns it.
+func daemonHelperEnv(t *testing.T) string {
+	t.Helper()
+	root := shortStateRoot(t)
+	t.Setenv("XDG_STATE_HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("HOME", root)
+	return root
+}
+
+// TestDaemonRuntimeOpensTheDatabaseOnce pins the daemon's one handle: the
+// runtime's store borrows the handle the daemon opened and serves, so the daemon
+// process holds exactly one descriptor on relevo.db and rt.DB is that handle.
+func TestDaemonRuntimeOpensTheDatabaseOnce(t *testing.T) {
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("no /proc: the daemon's descriptors cannot be inspected")
+	}
+	daemonHelperEnv(t)
+
+	report := runDaemonHelperChild(t)
+	if report.Newer {
+		t.Fatalf("the child opened a newer schema: %+v", report)
+	}
+	if !report.RTDBSet {
+		t.Error("rt.DB is nil: the daemon's own ingest is not on its one handle")
+	}
+	if !report.SameStore {
+		t.Error("rt.Store.DB() != rt.DB: the runtime's store did not borrow the daemon's handle")
+	}
+	if !report.StoreIsOwner {
+		t.Error("rt.Store.DB() is not the handle the daemon opened: a second handle was opened")
+	}
+	if report.DBFDs != 1 {
+		t.Errorf("the daemon process holds %d descriptors on relevo.db, want exactly 1", report.DBFDs)
+	}
+}
+
+// TestDaemonServesANewerSchema pins the branch the daemon's one handle makes
+// reachable: a database a newer relevo wrote builds the daemon runtime with no
+// error, the owner keeps the handle to serve, and the daemon's own ingest is
+// paused (rt.DB nil). Before the one handle, newRuntime refused such a file
+// through the store and the daemon exited "schema is newer than this relevo".
+func TestDaemonServesANewerSchema(t *testing.T) {
+	root := daemonHelperEnv(t)
+	seedNewerSchema(t, filepath.Join(root, "relevo", "relevo.db"))
+
+	report := runDaemonHelperChild(t)
+	if !report.Newer {
+		t.Fatalf("the child did not see a newer schema: %+v", report)
+	}
+	if report.RTDBSet {
+		t.Error("rt.DB is set on a newer schema: the daemon's own ingest must be paused")
+	}
+	if !report.StoreIsOwner {
+		t.Error("the owner handle was not kept: the daemon must still serve the newer database")
+	}
+	if _, err := os.Stat("/proc/self/fd"); err == nil && report.DBFDs != 1 {
+		t.Errorf("the daemon process holds %d descriptors on relevo.db, want exactly 1", report.DBFDs)
+	}
+}
+
+// seedNewerSchema writes a schema_version row above every embedded migration:
+// the file an older relevo must serve but never write.
+func seedNewerSchema(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	sqlDB, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer func() { _ = sqlDB.Close() }()
+
+	if _, err := sqlDB.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)`); err != nil {
+		t.Fatalf("create schema_version: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO schema_version (version, applied_at) VALUES (999, '2026-01-01T00:00:00.000Z')`); err != nil {
+		t.Fatalf("insert version 999: %v", err)
 	}
 }
