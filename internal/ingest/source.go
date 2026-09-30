@@ -22,12 +22,21 @@ type Source interface {
 	Name() string
 	// Bind decodes bind.json. ErrSource when it is missing or invalid.
 	Bind() (store.Binding, error)
-	// Open returns member's content and size; os.ErrNotExist when absent.
-	Open(member string) (io.ReadCloser, int64, error)
+	// Open returns member's content, its size, and os.ErrNotExist when absent.
+	// The reader is seekable: append-only members are read from a cursor, not
+	// from the top.
+	Open(member string) (io.ReadSeekCloser, int64, error)
 	List() ([]string, error)
 	// Origin reports "live" and the directory, or "archive" and an empty path.
 	Origin() (kind, path string)
 }
+
+// seekCloser is the io.ReadSeekCloser a bytes-backed member is opened as: the
+// cursor can seek past what it already confirmed, and a synthesized member has
+// nothing to close.
+type seekCloser struct{ *bytes.Reader }
+
+func (seekCloser) Close() error { return nil }
 
 // archivedAtter is a Source that knows when it was archived; the mirror's binding
 // row carries that stamp.
@@ -56,7 +65,7 @@ func (d dirSource) Bind() (store.Binding, error) {
 	return b, nil
 }
 
-func (d dirSource) Open(member string) (io.ReadCloser, int64, error) {
+func (d dirSource) Open(member string) (io.ReadSeekCloser, int64, error) {
 	f, err := os.Open(filepath.Join(d.dir, member))
 	if err != nil {
 		return nil, 0, err
@@ -110,7 +119,7 @@ func (s storeSource) Bind() (store.Binding, error) {
 	return b, nil
 }
 
-func (s storeSource) Open(member string) (io.ReadCloser, int64, error) {
+func (s storeSource) Open(member string) (io.ReadSeekCloser, int64, error) {
 	switch member {
 	case "bind.json":
 		b, err := s.st.Load(s.name)
@@ -121,7 +130,7 @@ func (s storeSource) Open(member string) (io.ReadCloser, int64, error) {
 		if err != nil {
 			return nil, 0, err
 		}
-		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
+		return seekCloser{bytes.NewReader(data)}, int64(len(data)), nil
 	case "log.jsonl":
 		entries, err := s.st.ReadLog(s.name)
 		if err != nil {
@@ -137,7 +146,7 @@ func (s storeSource) Open(member string) (io.ReadCloser, int64, error) {
 			buf.WriteByte('\n')
 		}
 		data := buf.Bytes()
-		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
+		return seekCloser{bytes.NewReader(data)}, int64(len(data)), nil
 	default:
 		if !roundMember(member) {
 			return dirSource{dir: s.st.Dir(s.name)}.Open(member)
@@ -147,7 +156,7 @@ func (s storeSource) Open(member string) (io.ReadCloser, int64, error) {
 		if err != nil {
 			return nil, 0, err
 		}
-		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
+		return seekCloser{bytes.NewReader(data)}, int64(len(data)), nil
 	}
 }
 
@@ -194,7 +203,7 @@ func (s archivedSource) Bind() (store.Binding, error) {
 	return b, nil
 }
 
-func (s archivedSource) Open(member string) (io.ReadCloser, int64, error) {
+func (s archivedSource) Open(member string) (io.ReadSeekCloser, int64, error) {
 	switch member {
 	case "bind.json":
 		b, err := s.Bind()
@@ -205,7 +214,7 @@ func (s archivedSource) Open(member string) (io.ReadCloser, int64, error) {
 		if err != nil {
 			return nil, 0, err
 		}
-		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
+		return seekCloser{bytes.NewReader(data)}, int64(len(data)), nil
 	case "log.jsonl":
 		entries, err := s.st.ArchivedLog(s.recordID)
 		if err != nil {
@@ -221,7 +230,7 @@ func (s archivedSource) Open(member string) (io.ReadCloser, int64, error) {
 			buf.WriteByte('\n')
 		}
 		data := buf.Bytes()
-		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
+		return seekCloser{bytes.NewReader(data)}, int64(len(data)), nil
 	default:
 		if !roundMember(member) {
 			return nil, 0, os.ErrNotExist
@@ -233,7 +242,7 @@ func (s archivedSource) Open(member string) (io.ReadCloser, int64, error) {
 		if !ok {
 			return nil, 0, os.ErrNotExist
 		}
-		return io.NopCloser(bytes.NewReader(body)), int64(len(body)), nil
+		return seekCloser{bytes.NewReader(body)}, int64(len(body)), nil
 	}
 }
 

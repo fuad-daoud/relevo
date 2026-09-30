@@ -109,8 +109,8 @@ func repoRefFromGit(ctx context.Context, g GitFacts, dir string) *store.RepoRef 
 	return &store.RepoRef{OriginURL: normalised, CommonDir: commonDir}
 }
 
-func sourceOpener(src Source, member string) (func() (io.ReadCloser, error), string) {
-	return func() (io.ReadCloser, error) {
+func sourceOpener(src Source, member string) (func() (io.ReadSeekCloser, error), string) {
+	return func() (io.ReadSeekCloser, error) {
 		rc, _, err := src.Open(member)
 		return rc, err
 	}, cursorSourceKey(src, member)
