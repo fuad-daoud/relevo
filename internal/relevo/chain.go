@@ -184,11 +184,14 @@ func chainEventFromClose(rt Runtime, part string, b store.Binding, body []byte, 
 	return ev
 }
 
-// chainGateResult is the builder close's gate word: green when no gate ran or
-// it passed, red otherwise. A red gate has already spent the regate budget, so
-// it still reaches the reviewer rather than a halt.
+// chainGateResult is the builder close's gate word: none when no check ran,
+// green when one passed, red otherwise. A red gate has already spent the
+// regate budget, so it still reaches the reviewer rather than a halt.
 func chainGateResult(gate *store.GateRecord) string {
-	if gate == nil || gate.Result == "pass" {
+	if gate == nil {
+		return chain.GateNone
+	}
+	if gate.Result == "pass" {
 		return chain.GateGreen
 	}
 	return chain.GateRed
@@ -243,7 +246,7 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 		return chainTerminal(ctx, rt, tx, c, before, next, ev, act, b.Name)
 	}
 
-	text, err := chainSeedText(rt, c, next, act, ev.Round)
+	text, err := chainSeedText(rt, tx, c, next, act, ev.Round)
 	if err != nil {
 		return err
 	}
@@ -271,7 +274,7 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 // chainSeedText is the prompt a send action hands over: a builder gets the
 // chain's own copy of the plan the transition advanced to, every other member
 // gets its rendered seed.
-func chainSeedText(rt Runtime, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (string, error) {
+func chainSeedText(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (string, error) {
 	paths, err := chainPlanPaths(c)
 	if err != nil {
 		return "", err
@@ -286,12 +289,19 @@ func chainSeedText(rt Runtime, c db.ChainRow, s chain.State, act chain.Action, c
 		}
 		return string(body), nil
 	}
-	return chain.Seed(act.Seed, chainSeedView(rt, c, s, act, closedRound))
+	v, err := chainSeedView(rt, tx, c, s, act, closedRound)
+	if err != nil {
+		return "", err
+	}
+	return chain.Seed(act.Seed, v)
 }
 
 // chainSeedView builds one send's inputs: the plan copies the chain holds and
-// the members' artifacts for the round that just closed.
-func chainSeedView(rt Runtime, c db.ChainRow, s chain.State, act chain.Action, closedRound int) chain.SeedView {
+// the members' artifacts for the round that just closed. The reviewer's and
+// correction seeds also carry the closing round's gate -- the check result and
+// its log -- read from the builder's report entry; the other seeds render no
+// gate and need no lookup.
+func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (chain.SeedView, error) {
 	v := chain.SeedView{
 		Plan: s.Plan, Plans: s.Plans, Corrections: s.Corrections,
 		Branch: c.Branch, Base: c.Base,
@@ -308,7 +318,35 @@ func chainSeedView(rt Runtime, c db.ChainRow, s chain.State, act chain.Action, c
 	case chain.SeedSecurity, chain.SeedFixes:
 		v.OutputPath = rt.Store.ReportPath(c.Security, closedRound)
 	}
-	return v
+	if act.Seed == chain.SeedReviewer || act.Seed == chain.SeedCorrection {
+		rec, err := chainRoundGate(tx, c.Builder, closedRound)
+		if err != nil {
+			return chain.SeedView{}, err
+		}
+		if rec != nil {
+			v.GateResult = chainGateResult(rec)
+			v.GateLogPath = rec.LogPath
+		}
+	}
+	return v, nil
+}
+
+// chainRoundGate reads the gate the builder's round wrote on its report entry:
+// the KindReport entry for round in the builder's log, or nil when the round
+// ran no check. The close writes that record on the entry, so a read under the
+// same lock sees it.
+func chainRoundGate(tx *store.Tx, builder string, round int) (*store.GateRecord, error) {
+	entries, err := tx.ReadLog(builder)
+	if err != nil {
+		return nil, err
+	}
+	var rec *store.GateRecord
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && e.Kind == store.KindReport && e.Round == round {
+			rec = e.Gate
+		}
+	}
+	return rec, nil
 }
 
 // chainSaveWithTrace writes the chain's new state and its one trace row in one

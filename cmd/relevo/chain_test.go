@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -261,6 +262,163 @@ func TestChainStopAndDoneThroughTheCLI(t *testing.T) {
 		}
 		if b.State != store.StateDone {
 			t.Errorf("member %s state = %q, want done", member, b.State)
+		}
+	}
+}
+
+// chainOptionsFrom parses args through chain's own flag set and maps them with
+// chainOptions, the way cmdChain's start arm does -- parse and mapping only, no
+// runtime.
+func chainOptionsFrom(t *testing.T, args ...string) (relevo.ChainOptions, error) {
+	t.Helper()
+	fs := flag.NewFlagSet("relevo chain", flag.ContinueOnError)
+	v := chainFlagSet(fs)
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("parse %v: %v", args, err)
+	}
+	return chainOptions(fs, v)
+}
+
+// chainResumeOptionsFrom is chainOptionsFrom's resume twin.
+func chainResumeOptionsFrom(t *testing.T, args ...string) (relevo.ResumeOptions, error) {
+	t.Helper()
+	fs := flag.NewFlagSet("relevo chain", flag.ContinueOnError)
+	v := chainFlagSet(fs)
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("parse %v: %v", args, err)
+	}
+	return chainResumeOptions(fs, v)
+}
+
+// TestChainFlagSetDefinesGateFlags pins that the three gate flags exist on the
+// chain verb's set, so the registry's parity test and the mapping below see
+// them.
+func TestChainFlagSetDefinesGateFlags(t *testing.T) {
+	fs := flag.NewFlagSet("relevo chain", flag.ContinueOnError)
+	chainFlagSet(fs)
+	for _, name := range []string{"gate", "no-gate", "regate"} {
+		if fs.Lookup(name) == nil {
+			t.Errorf("chain flag set has no --%s", name)
+		}
+	}
+}
+
+// TestChainGateFlagsParseIntoOptions pins the start arm's mapping: --gate,
+// --no-gate and --regate land in ChainOptions.
+func TestChainGateFlagsParseIntoOptions(t *testing.T) {
+	opts, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--feature", "auth",
+		"--gate", "make check", "--regate", "2")
+	if err != nil {
+		t.Fatalf("chainOptions: %v", err)
+	}
+	if opts.Gate != "make check" {
+		t.Errorf("Gate = %q, want make check", opts.Gate)
+	}
+	if opts.Regate == nil || *opts.Regate != 2 {
+		t.Errorf("Regate = %v, want 2", opts.Regate)
+	}
+	if opts.NoGate {
+		t.Error("NoGate = true, want false")
+	}
+
+	noGate, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--feature", "auth", "--no-gate")
+	if err != nil {
+		t.Fatalf("chainOptions --no-gate: %v", err)
+	}
+	if !noGate.NoGate {
+		t.Error("NoGate = false, want true")
+	}
+}
+
+// TestChainResumeGateFlagsParseIntoOptions pins the resume arm's mapping: the
+// same three flags land in ResumeOptions.
+func TestChainResumeGateFlagsParseIntoOptions(t *testing.T) {
+	opts, err := chainResumeOptionsFrom(t, "--resume", "--name", "shop", "--gate", "make check", "--regate", "3")
+	if err != nil {
+		t.Fatalf("chainResumeOptions: %v", err)
+	}
+	if opts.Gate != "make check" {
+		t.Errorf("Gate = %q, want make check", opts.Gate)
+	}
+	if opts.Regate == nil || *opts.Regate != 3 {
+		t.Errorf("Regate = %v, want 3", opts.Regate)
+	}
+	if opts.NoGate {
+		t.Error("NoGate = true, want false")
+	}
+
+	noGate, err := chainResumeOptionsFrom(t, "--resume", "--name", "shop", "--no-gate")
+	if err != nil {
+		t.Fatalf("chainResumeOptions --no-gate: %v", err)
+	}
+	if !noGate.NoGate {
+		t.Error("NoGate = false, want true")
+	}
+}
+
+// TestChainRegateRefusesANegativeValue pins the one refusal --regate makes:
+// both arms refuse a value below zero, before any runtime is built.
+func TestChainRegateRefusesANegativeValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"start", []string{"chain", "--name", "shop", "--feature", "auth", "--plan", chainPlanArg(t), "--regate", "-1"}},
+		{"resume", []string{"chain", "--resume", "--name", "shop", "--regate", "-1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := captureOutput(t, func() error { return run(tc.args) })
+			ce := requireCLIError(t, err, codeUsage, "")
+			if !strings.Contains(ce.message, "--regate") {
+				t.Errorf("message = %q, want it to name --regate", ce.message)
+			}
+		})
+	}
+}
+
+// TestChainResumeGateFlagsAreSettings pins that the gate flags are settings on
+// the resume arm, not start-only flags: a resume naming --gate reaches the
+// store and reports the chain it cannot find.
+func TestChainResumeGateFlagsAreSettings(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"chain", "--resume", "--name", "missing", "--gate", "make check"})
+	})
+	ce := requireCLIError(t, err, codeBindingNotFound, "")
+	if strings.Contains(ce.message, "--gate") {
+		t.Errorf("message = %q, want the missing chain, not a settings refusal", ce.message)
+	}
+}
+
+// TestChainDocCarriesTheCheck pins the document's check field: the resolved
+// command, or "none" when the builder ran no check.
+func TestChainDocCarriesTheCheck(t *testing.T) {
+	if got := chainDocOf(relevo.ChainResult{Check: "make check"}).Check; got != "make check" {
+		t.Errorf("Check = %q, want make check", got)
+	}
+	if got := chainDocOf(relevo.ChainResult{}).Check; got != "none" {
+		t.Errorf("Check = %q, want none", got)
+	}
+}
+
+// TestChainStartedTextPrintsTheCheck pins the human line: the resolved command,
+// or "none".
+func TestChainStartedTextPrintsTheCheck(t *testing.T) {
+	for _, tc := range []struct {
+		check string
+		want  string
+	}{
+		{"make check", "  check: make check\n"},
+		{"", "  check: none\n"},
+	} {
+		stdout, _, err := captureOutput(t, func() error {
+			chainStartedText(relevo.Runtime{}, relevo.ChainResult{Check: tc.check})
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("chainStartedText: %v", err)
+		}
+		if !strings.Contains(string(stdout), tc.want) {
+			t.Errorf("stdout = %q, want it to contain %q", stdout, tc.want)
 		}
 	}
 }

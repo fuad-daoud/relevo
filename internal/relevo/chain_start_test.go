@@ -506,6 +506,96 @@ func TestChainStartStoresTheResolvedSettings(t *testing.T) {
 	})
 }
 
+// TestChainStartResolvesTheBuilderCheck pins the check the builder member is
+// started with: policy.gate.default and gate.regate fill an unset flag, each
+// flag beats the policy, and no gate anywhere leaves no check. The readers
+// never hold a gate, and the stored settings and the result agree.
+func TestChainStartResolvesTheBuilderCheck(t *testing.T) {
+	t.Parallel()
+
+	gatePolicy := func() policy.Policy {
+		return policy.Policy{Gate: &policy.GatePolicy{Default: "make check", Regate: ptr(2)}}
+	}
+
+	t.Run("policy fills an unset flag", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		rt.Policy = gatePolicy()
+		res := startedChain(t, rt, ChainOptions{})
+
+		assertBuilderCheck(t, rt, res, "make check")
+		if set := storedSettings(t, res.Chain); set.Regate != 2 {
+			t.Errorf("settings regate = %d, want the policy's 2", set.Regate)
+		}
+	})
+
+	t.Run("gate beats the policy", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		rt.Policy = gatePolicy()
+		res := startedChain(t, rt, ChainOptions{Gate: "go test ./..."})
+
+		assertBuilderCheck(t, rt, res, "go test ./...")
+	})
+
+	t.Run("no-gate beats the policy", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		rt.Policy = gatePolicy()
+		res := startedChain(t, rt, ChainOptions{NoGate: true})
+
+		assertBuilderCheck(t, rt, res, "")
+	})
+
+	t.Run("regate beats the policy", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		rt.Policy = gatePolicy()
+		res := startedChain(t, rt, ChainOptions{Regate: ptr(5)})
+
+		if set := storedSettings(t, res.Chain); set.Regate != 5 {
+			t.Errorf("settings regate = %d, want the flag's 5", set.Regate)
+		}
+	})
+
+	t.Run("no flags and no policy leaves no check", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		res := startedChain(t, rt, ChainOptions{})
+
+		assertBuilderCheck(t, rt, res, "")
+	})
+}
+
+// assertBuilderCheck pins the builder's check on the stored setting, the
+// member and the result, and that no reader holds a gate.
+func assertBuilderCheck(t *testing.T, rt Runtime, res ChainResult, want string) {
+	t.Helper()
+	if set := storedSettings(t, res.Chain); set.Gate != want {
+		t.Errorf("settings gate = %q, want %q", set.Gate, want)
+	}
+	if res.Check != want {
+		t.Errorf("result check = %q, want %q", res.Check, want)
+	}
+	builder := memberByName(t, res.Members, "shop")
+	if builder.Gate != want {
+		t.Errorf("builder member gate = %q, want %q", builder.Gate, want)
+	}
+	for _, m := range res.Members {
+		if m.Name == "shop" {
+			continue
+		}
+		if m.Gate != "" || m.Regate != 0 {
+			t.Errorf("reader %s carries gate %q regate %d, want none", m.Name, m.Gate, m.Regate)
+		}
+	}
+}
+
 // storedSettings decodes a chain row's stored settings.
 func storedSettings(t *testing.T, row db.ChainRow) chain.Settings {
 	t.Helper()

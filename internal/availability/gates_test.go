@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -824,5 +825,119 @@ func TestUnavailableSanitizesReason(t *testing.T) {
 		if !strings.Contains(g.Note, "\uFFFD") {
 			t.Errorf("Note = %q, want a replacement rune", g.Note)
 		}
+	}
+}
+
+// TestAvailableClearsEveryAccountGateByGroup: `gate --clear <group>` lifts the
+// bare group entry and every group@account entry, and leaves other kinds alone.
+func TestAvailableClearsEveryAccountGateByGroup(t *testing.T) {
+	t.Parallel()
+
+	d := testDeps(t)
+	l := Ledger{Entries: []Entry{
+		{Kind: RateLimited, Subject: "test", At: baseTime, Source: "planner"},
+		{Kind: RateLimited, Subject: "test@cp1", At: baseTime, Source: "planner"},
+		{Kind: RateLimited, Subject: "test@cp2", At: baseTime, Source: "planner"},
+		{Kind: SpawnFailed, Subject: testClaudeRef, At: baseTime, Source: "relevo"},
+	}}
+	if err := SaveLedger(d.Gates, l); err != nil {
+		t.Fatalf("SaveLedger: %v", err)
+	}
+
+	provider, removed, err := Available(d, "test", ClearedByMasterMind)
+	if err != nil {
+		t.Fatalf("Available: %v", err)
+	}
+	if provider != "test" || removed != 3 {
+		t.Errorf("Available(test) = %q, %d, want test, 3", provider, removed)
+	}
+
+	got := loadLedger(t, d)
+	if len(got.Entries) != 1 || got.Entries[0].Kind != SpawnFailed {
+		t.Errorf("remaining ledger = %+v, want only the spawn failure", got.Entries)
+	}
+}
+
+// TestAvailableClearsOneAccountGate: `gate --clear <group>@<account>` lifts only
+// that key, and records the account on the history event.
+func TestAvailableClearsOneAccountGate(t *testing.T) {
+	t.Parallel()
+
+	d := testDeps(t)
+	l := Ledger{Entries: []Entry{
+		{Kind: RateLimited, Subject: "test@cp1", At: baseTime, Source: "planner"},
+		{Kind: RateLimited, Subject: "test@cp2", At: baseTime, Source: "planner"},
+	}}
+	if err := SaveLedger(d.Gates, l); err != nil {
+		t.Fatalf("SaveLedger: %v", err)
+	}
+
+	provider, removed, err := Available(d, "test@cp1", ClearedByMasterMind)
+	if err != nil {
+		t.Fatalf("Available: %v", err)
+	}
+	if provider != "test" || removed != 1 {
+		t.Errorf("Available(test@cp1) = %q, %d, want test, 1", provider, removed)
+	}
+
+	got := loadLedger(t, d)
+	if len(got.Entries) != 1 || got.Entries[0].Subject != "test@cp2" {
+		t.Errorf("remaining ledger = %+v, want only test@cp2", got.Entries)
+	}
+
+	h := readHistory(t, d)
+	if len(h.Events) != 1 {
+		t.Fatalf("history events = %+v, want one", h.Events)
+	}
+	if h.Events[0].Provider != "test" || h.Events[0].Account != "cp1" {
+		t.Errorf("clear event = %+v, want provider test account cp1", h.Events[0])
+	}
+}
+
+// TestUnavailableRecordsAccountKeys: the keys a caller resolves are recorded as
+// group@account entries, and mirrored into the history with the account.
+func TestUnavailableRecordsAccountKeys(t *testing.T) {
+	t.Parallel()
+
+	d := testDeps(t)
+
+	provider, err := Unavailable(d, testClaudeRef, time.Time{}, "window", "test@cp1")
+	if err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	if provider != "test" {
+		t.Errorf("provider = %q, want test", provider)
+	}
+
+	l := loadLedger(t, d)
+	if len(l.Entries) != 1 || l.Entries[0].Subject != "test@cp1" {
+		t.Errorf("ledger = %+v, want one entry for test@cp1", l.Entries)
+	}
+
+	h := readHistory(t, d)
+	if len(h.Events) != 1 || h.Events[0].Provider != "test" || h.Events[0].Account != "cp1" {
+		t.Errorf("history = %+v, want provider test account cp1", h.Events)
+	}
+}
+
+// TestGateAccountsForPicksTheUngatedAccount: the pure resolver names the first
+// account of the pool no gate covers, and nil when no account serves the token.
+func TestGateAccountsForPicksTheUngatedAccount(t *testing.T) {
+	t.Parallel()
+
+	set := account.Set{
+		{Name: "cp1", Harness: account.OpenCode, Groups: []string{"cline-pass"}},
+		{Name: "cp2", Harness: account.OpenCode, Groups: []string{"cline-pass"}},
+	}
+	token := "opencode/cline-pass/m"
+
+	if names := GateAccountsFor(token, nil, set, nil, account.Failover); len(names) != 1 || names[0] != "cp1" {
+		t.Errorf("GateAccountsFor = %v, want [cp1]", names)
+	}
+	if names := GateAccountsFor(token, nil, set, []string{"cline-pass@cp1"}, account.Failover); len(names) != 1 || names[0] != "cp2" {
+		t.Errorf("GateAccountsFor with cp1 gated = %v, want [cp2]", names)
+	}
+	if names := GateAccountsFor(token, nil, account.Set{}, nil, account.Failover); names != nil {
+		t.Errorf("GateAccountsFor with no accounts = %v, want nil", names)
 	}
 }
