@@ -32,6 +32,9 @@ type chainFlagValues struct {
 	resume         *bool
 	ticket         *string
 	base           *string
+	gate           *string
+	noGate         *bool
+	regate         *int
 	maxCorrections *int
 	reviewerActor  *string
 	plannerActor   *string
@@ -54,6 +57,9 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	v.resume = fs.Bool("resume", false, "continue a halted or stopped chain: re-run the step it stopped on, applying any settings flags")
 	v.ticket = fs.String("ticket", "", "the issue this chain serves: N, #N, owner/repo#N, or a .../issues/N URL")
 	v.base = fs.String("base", "", "commit or ref to cut the builder's worktree from; defaults to HEAD")
+	v.gate = fs.String("gate", "", "acceptance command the builder runs on the round's completion marker (default: config policy gate.default)")
+	v.noGate = fs.Bool("no-gate", false, "opt the builder out of config policy's gate.default")
+	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	v.maxCorrections = fs.Int("max-corrections", -1, "correction rounds allowed per plan before NEEDS YOU; 0 halts on the first changes (default: config policy chain.max_corrections)")
 	v.reviewerActor = fs.String("reviewer-actor", "", "the actor the reviewer member runs (default: config policy chain.reviewer_actor)")
 	v.plannerActor = fs.String("planner-actor", "", "the actor that writes correction and fix plans (default: config policy chain.planner_actor)")
@@ -73,6 +79,9 @@ type ChainDoc struct {
 	Plans   int              `json:"plans"`
 	Status  string           `json:"status"`
 	Phase   string           `json:"phase"`
+	// Check is the builder member's resolved acceptance command, rendered
+	// "none" when it ran no check.
+	Check string `json:"check"`
 }
 
 // ChainMemberDoc is one member in the document: the part it fills, its binding
@@ -172,6 +181,10 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 	if err != nil {
 		return relevo.ChainOptions{}, err
 	}
+	regate, err := regateFlag(fs, v.regate)
+	if err != nil {
+		return relevo.ChainOptions{}, err
+	}
 
 	opts := relevo.ChainOptions{
 		Name:           *v.name,
@@ -180,6 +193,9 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 		NoFeature:      *v.noFeature,
 		Ticket:         *v.ticket,
 		Base:           *v.base,
+		Gate:           *v.gate,
+		NoGate:         *v.noGate,
+		Regate:         regate,
 		MaxCorrections: maxCorrections,
 		ReviewerActor:  *v.reviewerActor,
 		PlannerActor:   *v.plannerActor,
@@ -223,6 +239,10 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	if err != nil {
 		return relevo.ResumeOptions{}, err
 	}
+	regate, err := regateFlag(fs, v.regate)
+	if err != nil {
+		return relevo.ResumeOptions{}, err
+	}
 
 	opts := relevo.ResumeOptions{
 		Name:           *v.name,
@@ -230,6 +250,9 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 		ReviewerActor:  *v.reviewerActor,
 		PlannerActor:   *v.plannerActor,
 		SecurityActor:  *v.securityActor,
+		Gate:           *v.gate,
+		NoGate:         *v.noGate,
+		Regate:         regate,
 	}
 	// --security/--no-security are exclusive (refused above), so an explicit
 	// value is whichever flag was given; neither leaves the stored setting.
@@ -271,6 +294,7 @@ func chainDocOf(res relevo.ChainResult) ChainDoc {
 		Plans:  res.Plans,
 		Status: res.Chain.Status,
 		Phase:  res.Chain.Phase,
+		Check:  chainCheckText(res.Check),
 	}
 	for _, m := range res.Members {
 		doc.Members = append(doc.Members, ChainMemberDoc{
@@ -309,8 +333,18 @@ func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 		}
 		fmt.Printf("  %-8s %-16s %s\n", chainPartOf(res.Chain, m.Name), m.Name, actor)
 	}
+	fmt.Printf("  check: %s\n", chainCheckText(res.Check))
 	fmt.Printf("  worktree %s on %s (from %s)\n", res.Chain.Worktree, res.Chain.Branch, res.Chain.Base)
 	fmt.Printf("  relevo wait --name %s\n", res.Chain.Name)
+}
+
+// chainCheckText renders a resolved check for a human and the document: "none"
+// when the builder ran no check, the command itself otherwise.
+func chainCheckText(check string) string {
+	if check == "" {
+		return "none"
+	}
+	return check
 }
 
 // chainResumedText is what a resume prints for a human: the chain's state now,

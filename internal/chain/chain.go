@@ -65,11 +65,13 @@ const (
 	MemberSecurity = "security"
 )
 
-// Gate results a builder close can carry. A red gate has already spent the
-// regate budget, so it still reaches the reviewer rather than a halt.
+// Gate results a builder close can carry. None is a round with no check at
+// all; a red gate has already spent the regate budget, so it still reaches the
+// reviewer rather than a halt.
 const (
 	GateGreen = "green"
 	GateRed   = "red"
+	GateNone  = "none"
 )
 
 // Settings is the chain's resolved configuration, stored when the chain starts
@@ -80,6 +82,10 @@ type Settings struct {
 	PlannerActor   string
 	SecurityActor  string
 	Security       bool
+	// Gate is the builder member's resolved acceptance command; "" means no
+	// check. Regate is its repair-round budget.
+	Gate   string
+	Regate int
 }
 
 // Awaiting names the member round whose close the chain waits for. The caller
@@ -123,7 +129,7 @@ type Event struct {
 	Member        string
 	Round         int
 	Outcome       string // builder: the report tail's outcome
-	Gate          string // builder: green or red after the regate budget
+	Gate          string // builder: green, red after the regate budget, or none when no check ran
 	Verdict       Verdict
 	PlanPresent   bool // planner: artifact present and non-empty
 	Findings      int  // security

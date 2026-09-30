@@ -3,7 +3,7 @@ Review the round and give a verdict.
 Plan: {{.PlanPath}} (plan {{.Plan}} of {{.Plans}}).
 Builder's report: {{.ReportPath}}.
 Round diff: {{.DiffPath}}.
-Check result: {{.GateResult}}; its output is at {{.GateLogPath}}.
+{{if .GateLogPath}}Check result: {{.GateResult}}; its output is at {{.GateLogPath}}.{{else}}No check ran for this round.{{end}}
 
 Read all four, judge the diff against the plan and against the check, and do
 not edit the tree. End your output with this block:

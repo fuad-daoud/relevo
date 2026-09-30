@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -224,8 +225,110 @@ func TestChainBuilderCloseSeedsReviewer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeEvent: %v", err)
 	}
-	if ev.Kind != chain.EventBuilderClosed || ev.Gate != chain.GateGreen {
-		t.Errorf("event = %+v, want a builder close with a green gate", ev)
+	if ev.Kind != chain.EventBuilderClosed || ev.Gate != chain.GateNone {
+		t.Errorf("event = %+v, want a builder close with no check", ev)
+	}
+}
+
+// TestChainReviewerSeedSaysNoCheckRan pins the no-check seed: a builder round
+// with no gate reaches the reviewer as GateNone, and the staged prompt says no
+// check ran instead of naming a result and a log. The correction seed after a
+// changes verdict says the same.
+func TestChainReviewerSeedSaysNoCheckRan(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	events := chainTrace(t, rt, "shop")
+	if len(events) != 1 {
+		t.Fatalf("trace = %+v, want one row", events)
+	}
+	ev, err := chain.DecodeEvent(events[0].Event)
+	if err != nil {
+		t.Fatalf("DecodeEvent: %v", err)
+	}
+	if ev.Gate != chain.GateNone {
+		t.Fatalf("event gate = %q, want %q", ev.Gate, chain.GateNone)
+	}
+	rev := chainBinding(t, rt, "shop-rev")
+	assertSeedSaysNoCheck(t, rt, "shop-rev", rev.Round)
+
+	// A changes verdict seeds the correction planner; its seed says the same.
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
+	plan := chainBinding(t, rt, "shop-plan")
+	assertSeedSaysNoCheck(t, rt, "shop-plan", plan.Round)
+}
+
+// assertSeedSaysNoCheck reads the staged prompt at name's round and pins the
+// no-check wording: the exact sentence, no result line, and no gate log path.
+func assertSeedSaysNoCheck(t *testing.T, rt Runtime, name string, round int) {
+	t.Helper()
+	text, err := os.ReadFile(rt.Store.PromptPath(name, round))
+	if err != nil {
+		t.Fatalf("read %s prompt: %v", name, err)
+	}
+	if !strings.Contains(string(text), "No check ran for this round.") {
+		t.Errorf("%s seed does not say no check ran:\n%s", name, text)
+	}
+	if strings.Contains(string(text), "Check result:") {
+		t.Errorf("%s seed still carries a Check result line:\n%s", name, text)
+	}
+	if strings.Contains(string(text), rt.Store.GateLogPath("shop", round)) {
+		t.Errorf("%s seed names the gate log for a round with no check:\n%s", name, text)
+	}
+}
+
+// TestChainReviewerSeedNamesTheCheckThatRan pins the gated seed: a passing
+// check reaches the reviewer as green with its log, and a red check that spent
+// its regate budget reaches it as red with the same log.
+func TestChainReviewerSeedNamesTheCheckThatRan(t *testing.T) {
+	t.Parallel()
+
+	t.Run("green", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{})
+		chainArmPassingGate(t, rt, "shop", "PASS\n")
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+		want := fmt.Sprintf("Check result: green; its output is at %s.", rt.Store.GateLogPath("shop", 1))
+		assertSeedNamesCheck(t, rt, "shop-rev", want)
+	})
+
+	t.Run("red after regate", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{})
+		b := chainBinding(t, rt, "shop")
+		b.Regate = 2
+		b.RepairCount = 2
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		chainArmFailingGate(t, rt, "shop", "FAIL\n")
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+		want := fmt.Sprintf("Check result: red; its output is at %s.", rt.Store.GateLogPath("shop", 1))
+		assertSeedNamesCheck(t, rt, "shop-rev", want)
+	})
+}
+
+// assertSeedNamesCheck reads the reviewer's staged prompt and pins the exact
+// check line.
+func assertSeedNamesCheck(t *testing.T, rt Runtime, name, want string) {
+	t.Helper()
+	rev := chainBinding(t, rt, name)
+	text, err := os.ReadFile(rt.Store.PromptPath(name, rev.Round))
+	if err != nil {
+		t.Fatalf("read %s prompt: %v", name, err)
+	}
+	if !strings.Contains(string(text), want) {
+		t.Errorf("%s seed does not carry %q:\n%s", name, want, text)
 	}
 }
 
@@ -246,6 +349,29 @@ func chainArmFailingGate(t *testing.T, rt Runtime, name, logBody string) {
 		t.Fatal("the chain runtime must carry a fakeRunner")
 	}
 	fr.exit(9999, 1)
+	if logBody != "" {
+		if err := os.WriteFile(rt.Store.GateLogPath(name, b.Round), []byte(logBody), 0o644); err != nil {
+			t.Fatalf("write the gate log: %v", err)
+		}
+	}
+}
+
+// chainArmPassingGate is chainArmFailingGate's green twin: it arms a gate that
+// already exited zero, so the next reconcile closes the round with gate=pass.
+// logBody is the gate log the seed names.
+func chainArmPassingGate(t *testing.T, rt Runtime, name, logBody string) {
+	t.Helper()
+	b := chainBinding(t, rt, name)
+	b.Gate = "true"
+	b.GateRun = &store.GateRun{PID: 9999, StartedAt: baseTime.Unix(), Round: b.Round, Command: "true"}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("arm the passing gate on %s: %v", name, err)
+	}
+	fr, ok := rt.Runner.(*fakeRunner)
+	if !ok {
+		t.Fatal("the chain runtime must carry a fakeRunner")
+	}
+	fr.exit(9999, 0)
 	if logBody != "" {
 		if err := os.WriteFile(rt.Store.GateLogPath(name, b.Round), []byte(logBody), 0o644); err != nil {
 			t.Fatalf("write the gate log: %v", err)

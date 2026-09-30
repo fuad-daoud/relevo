@@ -40,13 +40,39 @@ func TestReviewerSeedNamesPlanReportDiffGateAndVerdictBlock(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
 	assertSeedNames(t, SeedReviewer, v,
-		v.PlanPath, v.ReportPath, v.DiffPath, v.GateLogPath, v.GateResult, "```relevo", "verdict:")
+		v.PlanPath, v.ReportPath, v.DiffPath, v.GateLogPath, v.GateResult, "Check result:", "```relevo", "verdict:")
 }
 
 func TestCorrectionSeedNamesTheReviewerOutput(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	assertSeedNames(t, SeedCorrection, v, v.OutputPath, v.PlanPath, v.ReportPath, v.DiffPath)
+	assertSeedNames(t, SeedCorrection, v, v.OutputPath, v.PlanPath, v.ReportPath, v.DiffPath, "Check result:")
+}
+
+// TestReviewerSeedSaysNoCheckRan pins the no-check rendering: an empty gate log
+// path drops the check line for the exact sentence and names no log.
+func TestReviewerSeedSaysNoCheckRan(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	v.GateLogPath, v.GateResult = "", ""
+	out := assertSeedNames(t, SeedReviewer, v,
+		"No check ran for this round.", v.PlanPath, v.ReportPath, v.DiffPath, "```relevo", "verdict:")
+	if strings.Contains(out, "Check result:") {
+		t.Errorf("reviewer seed with no check still says Check result:\n%s", out)
+	}
+}
+
+// TestCorrectionSeedSaysNoCheckRan is the correction template's twin of the
+// reviewer's no-check rendering.
+func TestCorrectionSeedSaysNoCheckRan(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	v.GateLogPath, v.GateResult = "", ""
+	out := assertSeedNames(t, SeedCorrection, v,
+		"No check ran for this round.", v.OutputPath, v.PlanPath, v.ReportPath, v.DiffPath)
+	if strings.Contains(out, "Check result:") {
+		t.Errorf("correction seed with no check still says Check result:\n%s", out)
+	}
 }
 
 func TestSecuritySeedNamesBranchDiffAndCountBlock(t *testing.T) {

@@ -314,6 +314,71 @@ func TestChainResumeAppliesOnlyGivenFlags(t *testing.T) {
 	}
 }
 
+// TestChainResumeGateFlagsUpdateTheBuilder pins the gate flags' member half: an
+// explicit --gate/--regate writes the stored settings and the builder member, a
+// --no-gate clears both, and a resume that names none keeps the stored check.
+func TestChainResumeGateFlagsUpdateTheBuilder(t *testing.T) {
+	t.Parallel()
+
+	t.Run("gate and regate", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{})
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{
+			Name: "shop", Gate: "go test ./...", Regate: ptr(1),
+		}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+
+		set := storedSettings(t, chainStoredRow(t, rt, "shop"))
+		if set.Gate != "go test ./..." || set.Regate != 1 {
+			t.Errorf("settings gate/regate = %q/%d, want go test ./.../1", set.Gate, set.Regate)
+		}
+		builder := chainBinding(t, rt, "shop")
+		if builder.Gate != "go test ./..." || builder.Regate != 1 {
+			t.Errorf("builder gate/regate = %q/%d, want go test ./.../1", builder.Gate, builder.Regate)
+		}
+	})
+
+	t.Run("no-gate clears both", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", NoGate: true}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+
+		if set := storedSettings(t, chainStoredRow(t, rt, "shop")); set.Gate != "" {
+			t.Errorf("settings gate = %q, want none", set.Gate)
+		}
+		if builder := chainBinding(t, rt, "shop"); builder.Gate != "" {
+			t.Errorf("builder gate = %q, want none", builder.Gate)
+		}
+	})
+
+	t.Run("none keeps the stored check", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+
+		if set := storedSettings(t, chainStoredRow(t, rt, "shop")); set.Gate != "make check" || set.Regate != 2 {
+			t.Errorf("settings gate/regate = %q/%d, want the stored make check/2", set.Gate, set.Regate)
+		}
+		if builder := chainBinding(t, rt, "shop"); builder.Gate != "make check" || builder.Regate != 2 {
+			t.Errorf("builder gate/regate = %q/%d, want the stored make check/2", builder.Gate, builder.Regate)
+		}
+	})
+}
+
 // TestChainResumeCreatesTheSecurityMemberWhenTurnedOn pins the late member:
 // turning the security phase on for a chain started without it creates the
 // reader member now, beside the builder, and names it on the chain row.
