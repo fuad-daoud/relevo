@@ -61,6 +61,7 @@ func dial(sock string, o Options, adoptOrigin bool) (*DB, error) {
 		newer:      info.Have > know,
 		origin:     origin,
 		beginRetry: retry,
+		route:      "owner " + sock,
 	}, nil
 }
 

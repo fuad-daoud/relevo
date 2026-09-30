@@ -22,6 +22,26 @@ func (s *Store) dbForWrite() (*db.DB, error) {
 		return s.shared, nil
 	}
 	s.dbOnce.Do(func() {
+		// An installed route answers for the machine database only: ok true
+		// means the returned handle is this store's handle, with the origin the
+		// owner handed out, so neither the installation file nor a second open
+		// is consulted here.
+		if machineOpener != nil {
+			d, ok, err := machineOpener(s.DBPath())
+			if ok {
+				if err != nil {
+					s.dbErr = fmt.Errorf("open store db %s: %w", s.DBPath(), err)
+					return
+				}
+				if d.Newer() {
+					_ = d.Close()
+					s.dbErr = db.ErrNewerSchema
+					return
+				}
+				s.dbh = d
+				return
+			}
+		}
 		if err := os.MkdirAll(s.root, StateRootMode); err != nil {
 			s.dbErr = fmt.Errorf("open store db %s: %w", s.DBPath(), err)
 			return
