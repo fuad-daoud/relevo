@@ -1331,6 +1331,12 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "actor-placement-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return candKeys(t, goldenActorViewModel(t, 132, 34), tea.KeyMsg{Type: tea.KeyTab})
+			},
+		},
+		{
 			name: "agents-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				fa := &fakeActions{doc: candFixtureDoc(t), files: agentFileFixtures(t)}

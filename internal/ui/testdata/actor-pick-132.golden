@@ -10,11 +10,11 @@
     5  sonnet                                                                            claude    anthropic   ready  next pick     
     6  glm-5.3-flash        ╭─ add to builder ─────────────────────────────────────────────────────────╮outer  ready                
                             │                                                                          │                            
-                            │ haiku                      ready            claude · anthropic           │                            
-   check after each round is│                                                                          │                            
+    #  PLACEMENT            │ haiku                      ready            claude · anthropic           │                            
+    1  zen                  │                                                                          │                            
                             │                                                                          │                            
                             │  enter  add as 7th    esc  cancel                                        │                            
-                            ╰──────────────────────────────────────────────────────────────────────────╯                            
+   check after each round is╰──────────────────────────────────────────────────────────────────────────╯                            
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     
