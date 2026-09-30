@@ -230,6 +230,18 @@ everything is reversible by not merging.
   every database through an in-process owner over a socketpair, and the
   `internal/db` and `internal/store` suites run that way in CI. Passing
   unchanged is the transparency proof.
+- **Direct-only tests (the Turso swap).** Five tests hold a direct handle even
+  when the switch is on, because the operation they exercise is direct-only by
+  design: `Vacuum` refuses a handle reached over the wire (`vacuum.go`), the
+  per-path handle count tracks direct handles only (`handles.go`), and
+  `engineCode` maps an engine's own sentinel before the error is put on the wire
+  (`engine_turso.go`). They open through `directOpen`/`directOpenTestDB`
+  (`internal/db/helpers_test.go`), the direct opener the hop wraps:
+  `TestVacuumKeepsRows`, `TestVacuumShrinksTheFileAndKeepsTheHandleUsable`,
+  `TestCompressHistoryOnce`, `TestTwoDirectHandlesOnOnePathAreCounted` and
+  `TestEngineCodeMapsARealBusyAndConstraint`. `TestVacuumRefusesADialledHandle`
+  pins the refusal itself. This is a listed exception to passing unchanged, not
+  a bent test.
 - **Protocol tests (0b):** client killed mid-transaction rolls back and the
   `seq` invariants hold; three or more concurrent connections while one is
   pinned in a transaction; `cancel`; a ~5 MB blob and a ~50 MB result set;

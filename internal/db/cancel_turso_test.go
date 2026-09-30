@@ -78,3 +78,64 @@ func TestCancelReturnsToTheClientWhileTheEngineFinishes(t *testing.T) {
 	}
 	waitOwnerConns(t, sock, baseline)
 }
+
+// TestCancelReturnsFromAStreamingQuery pins the row-streaming half of the cancel
+// contract: once batches are flowing, a cancelled caller must still return within
+// the grace. The query's first two rows are cheap and each is large enough to
+// fill a batch, so the first batch arrives at once; every later row runs a
+// correlated count that takes seconds. The reader is therefore waiting on the
+// owner for the second batch when the context ends. Without the bounded await on
+// a batch read it would block until the owner replied, which under Turso -- with
+// no statement interrupt -- may be the whole statement's length.
+func TestCancelReturnsFromAStreamingQuery(t *testing.T) {
+	if os.Getenv("RELEVO_DBTEST_OWNER") != "" {
+		// The switch already dials every handle, and this test serves its own
+		// direct handle; serving a dialled one is not the shape under test.
+		t.Skip("owner mode dials the handle this test serves")
+	}
+	d := openTestDB(t)
+	sock := startOwner(t, d)
+	d2 := dialDB(t, sock)
+
+	const heavy = `SELECT randomblob(1200000) FROM (SELECT 1 AS n UNION ALL SELECT 2)
+UNION ALL
+SELECT randomblob(1200000 + (SELECT count(*) FROM (WITH RECURSIVE d(y) AS (SELECT n UNION ALL SELECT y + 1 FROM d WHERE y < n + 2000000) SELECT y FROM d)))
+FROM (SELECT 1 AS n UNION ALL SELECT 2)`
+	ctx, cancel := context.WithCancel(context.Background())
+	rows, err := d2.sqlDB.QueryContext(ctx, heavy)
+	if err != nil {
+		cancel()
+		t.Fatalf("query: %v", err)
+	}
+	if !rows.Next() {
+		cancel()
+		t.Fatalf("first row: %v", rows.Err())
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		for rows.Next() {
+		}
+		done <- rows.Err()
+	}()
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("streaming cancel error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the cancelled stream did not return to the client within 1 s")
+	}
+
+	// The abandoned session is discarded, and the handle still serves.
+	var one int
+	if err := d2.sqlDB.QueryRow(`SELECT 1`).Scan(&one); err != nil {
+		t.Fatalf("query after streaming cancel: %v", err)
+	}
+	if one != 1 {
+		t.Errorf("query after streaming cancel = %d, want 1", one)
+	}
+}

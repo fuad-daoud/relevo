@@ -57,7 +57,7 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: connector: %w: %w", path, ErrOpen, err)
 	}
-	return sql.OpenDB(&pragmaConnector{base: conn, pragmas: openPragmas(readOnly)}), nil
+	return sql.OpenDB(repairConnector{Connector: &pragmaConnector{base: conn, pragmas: openPragmas(readOnly)}}), nil
 }
 
 // openPragmas is the per-connection pragma sequence: WAL always, and then the

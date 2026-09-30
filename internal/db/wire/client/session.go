@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
@@ -25,7 +26,9 @@ type conn struct {
 	origin string
 	pid    int
 	conns  int
-	dead   bool
+	// dead is set from the caller's goroutine and read from a cancel
+	// AfterFunc, so it is atomic rather than a plain flag.
+	dead atomic.Bool
 }
 
 // closeDrainTimeout bounds how long Close waits for the owner to finish the
@@ -102,7 +105,7 @@ func (c *conn) send(kind byte, v any, raw []byte) error {
 // connection, or a send that failed -- where a retry on a fresh connection
 // cannot run a statement twice.
 func (c *conn) badConn(err error) error {
-	c.dead = true
+	c.dead.Store(true)
 	return fmt.Errorf("%w: %w", driver.ErrBadConn, err)
 }
 
@@ -111,43 +114,28 @@ func (c *conn) badConn(err error) error {
 // statement, so the error deliberately does not match driver.ErrBadConn and
 // database/sql must not retry it.
 func (c *conn) connLost(err error) error {
-	c.dead = true
+	c.dead.Store(true)
 	return fmt.Errorf("%w: %w", wire.ErrConnLost, err)
 }
 
 // IsValid reports whether the connection may be reused. A dead connection fails
 // this check, so the pool discards it instead of reusing a desynchronised
 // stream.
-func (c *conn) IsValid() bool { return !c.dead }
+func (c *conn) IsValid() bool { return !c.dead.Load() }
 
 // ResetSession discards a dead connection before the pool hands it out again.
 func (c *conn) ResetSession(context.Context) error {
-	if c.dead {
+	if c.dead.Load() {
 		return driver.ErrBadConn
 	}
 	return nil
 }
 
 func (c *conn) sendCancel(id int) {
-	if c.dead {
+	if c.dead.Load() {
 		return
 	}
 	_ = c.send(wire.KindCancel, &wire.Cancel{Header: wire.Header{Type: wire.TypeCancel, ID: id}}, nil)
-}
-
-// readFrame reads and returns one frame's kind and raw payload. It always runs
-// after a request frame was sent, so a read failure is a lost connection: the
-// statement may have run, and database/sql must not retry it.
-func (c *conn) readFrame() (byte, []byte, error) {
-	frame, err := c.w.Read()
-	if err != nil {
-		return 0, nil, c.connLost(err)
-	}
-	kind, err := wire.Kind(frame)
-	if err != nil {
-		return 0, nil, c.connLost(err)
-	}
-	return kind, frame, nil
 }
 
 // await reads one request's reply, racing it against the caller's context. When
@@ -178,7 +166,7 @@ func (c *conn) await(ctx context.Context, id int) (byte, []byte, error) {
 	select {
 	case r := <-ch:
 		if ctx.Err() != nil {
-			c.dead = true
+			c.dead.Store(true)
 			return 0, nil, ctx.Err()
 		}
 		if r.err != nil {
@@ -193,7 +181,7 @@ func (c *conn) await(ctx context.Context, id int) (byte, []byte, error) {
 	case <-ch:
 	case <-time.After(cancelGrace):
 	}
-	c.dead = true
+	c.dead.Store(true)
 	return 0, nil, ctx.Err()
 }
 
@@ -215,7 +203,7 @@ func (c *conn) midRefuse(frame []byte) error {
 	if _, err := wire.Decode(frame, &r); err != nil {
 		return c.connLost(err)
 	}
-	c.dead = true
+	c.dead.Store(true)
 	if r.Code == wire.RefuseRestarting {
 		return fmt.Errorf("%w: %w", driver.ErrBadConn, &r)
 	}
@@ -240,10 +228,10 @@ func (c *conn) Prepare(string) (driver.Stmt, error) {
 }
 
 func (c *conn) Close() error {
-	if c.dead {
+	if c.dead.Load() {
 		return c.nc.Close()
 	}
-	c.dead = true
+	c.dead.Store(true)
 	// Tell the owner this connection is done and wait for it to close the
 	// socket, so its rollback and discard of the pinned connection finish
 	// before database/sql returns: whatever the database must write back to
@@ -257,7 +245,7 @@ func (c *conn) Close() error {
 }
 
 func (c *conn) Ping(context.Context) error {
-	if c.dead {
+	if c.dead.Load() {
 		return driver.ErrBadConn
 	}
 	return nil
@@ -296,7 +284,7 @@ func (r wireResult) LastInsertId() (int64, error) { return r.id, nil }
 func (r wireResult) RowsAffected() (int64, error) { return r.rows, nil }
 
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	if c.dead {
+	if c.dead.Load() {
 		return nil, driver.ErrBadConn
 	}
 	raw, err := encodeArgs(args)
@@ -329,7 +317,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 }
 
 func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	if c.dead {
+	if c.dead.Load() {
 		return nil, driver.ErrBadConn
 	}
 	raw, err := encodeArgs(args)
@@ -351,7 +339,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		// whose context ends mid-stream leaves the owner to roll the pinned
 		// connection back.
 		stop := context.AfterFunc(ctx, func() { c.sendCancel(id) })
-		r := &rows{c: c, id: id, stop: stop}
+		r := &rows{c: c, id: id, ctx: ctx, stop: stop}
 		if err := r.fill(frame); err != nil {
 			stop()
 			return nil, err
@@ -379,8 +367,12 @@ func (e *emptyRows) Next([]driver.Value) error { return io.EOF }
 // batch follows; otherwise a done frame follows the batch immediately, so
 // Close can drain the stream without a next.
 type rows struct {
-	c    *conn
-	id   int
+	c  *conn
+	id int
+	// ctx is the query's context, kept so every batch read can race it through
+	// await: a cancelled stream must return to the caller within the grace
+	// rather than wait for the owner to finish the statement.
+	ctx  context.Context
 	stop func() bool
 	cols []string
 	buf  []any
@@ -403,7 +395,7 @@ func (r *rows) Close() error {
 	}
 	// Abandoned mid-stream: the owner rolls its pinned connection back and
 	// discards it, and this driver connection goes with it.
-	r.c.dead = true
+	r.c.dead.Store(true)
 	_ = r.c.send(wire.KindClose, &wire.Close{Header: wire.Header{Type: wire.TypeClose, ID: r.id}}, nil)
 	return driver.ErrBadConn
 }
@@ -434,7 +426,7 @@ func (r *rows) requestNext() error {
 	if err := r.c.send(wire.KindNext, &wire.Next{Header: wire.Header{Type: wire.TypeNext, ID: r.id}}, nil); err != nil {
 		return r.c.badConn(err)
 	}
-	kind, frame, err := r.c.readFrame()
+	kind, frame, err := r.c.await(r.ctx, r.id)
 	if err != nil {
 		return err
 	}
@@ -455,7 +447,7 @@ func (r *rows) requestNext() error {
 
 // awaitDone reads the done frame the server sent after a final batch.
 func (r *rows) awaitDone() error {
-	kind, frame, err := r.c.readFrame()
+	kind, frame, err := r.c.await(r.ctx, r.id)
 	if err != nil {
 		return err
 	}

@@ -28,12 +28,11 @@ func TestEngineCodeMapsAReadOnlyError(t *testing.T) {
 // real driver errors: a constraint violation becomes 19 and a busy 5, the codes
 // modernc's error type carries and mapBusy and mapMasterMindKey mask.
 func TestEngineCodeMapsARealBusyAndConstraint(t *testing.T) {
+	// engineCode maps the engine's own sentinels, which a dialled handle never
+	// sees: its errors are rebuilt from the wire, so the test needs a direct
+	// handle to reach a real Turso busy and constraint error.
 	path := filepath.Join(t.TempDir(), "engine.db")
-	d, err := OpenWith(path, Options{BusyTimeout: 30 * time.Millisecond})
-	if err != nil {
-		t.Fatalf("OpenWith: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
+	d := directOpen(t, path, Options{BusyTimeout: 30 * time.Millisecond})
 
 	ctx := context.Background()
 

@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"time"
 
-	_ "modernc.org/sqlite"
+	sqlite "modernc.org/sqlite"
 )
 
 // engineName is the driver this build opens databases with; the modernc build
@@ -33,12 +33,24 @@ func fileDSN(path, params string) string {
 // and caps the -wal.
 func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	if readOnly {
-		return sql.Open(engineName, fileDSN(path, "mode=ro&_pragma=busy_timeout(5000)"))
+		return openModernc(fileDSN(path, "mode=ro&_pragma=busy_timeout(5000)"))
 	}
 	dsn := fileDSN(path, fmt.Sprintf(
 		"_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)",
 		busy.Milliseconds(), journalSizeLimit))
-	return sql.Open(engineName, dsn)
+	return openModernc(dsn)
+}
+
+// openModernc builds the pool from this engine's connector rather than
+// sql.Open, so the connection wrapper can repair a string argument on the way
+// in: sql.Open offers no place to interpose, and the repair must hold under
+// modernc too, so a file written before a downgrade stays readable by Turso.
+func openModernc(dsn string) (*sql.DB, error) {
+	connector, err := sqlite.NewConnector(dsn)
+	if err != nil {
+		return nil, err
+	}
+	return sql.OpenDB(repairConnector{Connector: connector}), nil
 }
 
 // engineCode reports no code: modernc's *sqlite.Error already carries one, so

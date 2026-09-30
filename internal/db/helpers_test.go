@@ -24,6 +24,28 @@ func openTestDB(t *testing.T) *DB {
 	return d
 }
 
+// directOpen opens path with the direct opener and never through the owner hop:
+// a test of a direct-only operation -- a vacuum, the per-path handle count, a
+// raw driver error -- must hold a direct handle even when the owner-mode switch
+// is installed. The hop wraps openDirect, so calling it bypasses the hop. A
+// dbtest helper cannot serve here, because dbtest imports this package and the
+// internal tests would then form an import cycle.
+func directOpen(t *testing.T, path string, o Options) *DB {
+	t.Helper()
+	d, err := openDirect(path, o)
+	if err != nil {
+		t.Fatalf("openDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// directOpenTestDB is directOpen on a fresh temp path with the default options.
+func directOpenTestDB(t *testing.T) *DB {
+	t.Helper()
+	return directOpen(t, filepath.Join(t.TempDir(), "relevo.db"), Options{})
+}
+
 func ptr[T any](v T) *T { return &v }
 
 // embeddedVersion is the highest migration this binary embeds.

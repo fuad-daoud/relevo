@@ -465,6 +465,13 @@ func (c *conn) cleanup() {
 		_ = pinned.Raw(func(any) error { return driver.ErrBadConn })
 		_ = pinned.Close()
 		<-c.s.sem
+		// Turso keeps the write-ahead log across a close, where modernc
+		// checkpoints when the last connection goes. The owner's direct handle
+		// must checkpoint the same way, so a file copied after the client
+		// leaves -- or read by the next image -- carries every written page.
+		// The error is ignored for the same reason DB.Close ignores it: the
+		// connection is already gone.
+		_, _ = c.s.dbh.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`)
 	}
 	_ = c.nc.Close()
 }

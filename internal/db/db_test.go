@@ -481,7 +481,9 @@ func TestBackupToCopiesEveryRowAndRefusesAnExistingPath(t *testing.T) {
 
 // TestVacuumKeepsRows pins that Vacuum leaves the rows readable.
 func TestVacuumKeepsRows(t *testing.T) {
-	d := openTestDB(t)
+	// Vacuum refuses a dialled handle: it closes and reopens the pool, which
+	// only the handle that owns the file may do. The test holds a direct one.
+	d := directOpenTestDB(t)
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
 	bindingID, err := d.UpsertBinding(newTestBinding("webshop", now))

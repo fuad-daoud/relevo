@@ -130,3 +130,18 @@ func TestNewOwnerServesRowsReadByADirectHandle(t *testing.T) {
 		t.Fatalf("owner read = %q, %v, %v", raw, ok, err)
 	}
 }
+
+// TestVacuumRefusesADialledHandle pins that Vacuum refuses a handle reached over
+// the wire: the swap closes and reopens the pool, which only the handle that
+// owns the file may do, so a dialled handle is refused rather than left with a
+// stranded pool.
+func TestVacuumRefusesADialledHandle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	direct := directOpen(t, path, Options{})
+	sock := startOwner(t, direct)
+	dialled := dialDB(t, sock)
+
+	if err := dialled.Vacuum(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Vacuum on a dialled handle = %v, want ErrInvalid", err)
+	}
+}

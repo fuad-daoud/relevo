@@ -92,17 +92,11 @@ func TestReadOnlyHandleRefusesWritesOnEveryConnection(t *testing.T) {
 
 // TestTwoDirectHandlesOnOnePathAreCounted pins the per-path handle count.
 func TestTwoDirectHandlesOnOnePathAreCounted(t *testing.T) {
+	// The count is of direct handles this process holds; a dialled handle has
+	// no path and never joins it, so the test opens both handles directly.
 	path := filepath.Join(t.TempDir(), "relevo.db")
-	d1, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open d1: %v", err)
-	}
-	t.Cleanup(func() { _ = d1.Close() })
-	d2, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open d2: %v", err)
-	}
-	t.Cleanup(func() { _ = d2.Close() })
+	d1 := directOpen(t, path, Options{})
+	d2 := directOpen(t, path, Options{})
 
 	if got := handleCount(path); got != 2 {
 		t.Errorf("handleCount with two handles = %d, want 2", got)
@@ -155,12 +149,10 @@ func TestVacuumRefusesWhileAnotherHandleIsOpen(t *testing.T) {
 // TestVacuumShrinksTheFileAndKeepsTheHandleUsable pins the swap: the file gets
 // smaller, and the handle keeps serving the reopened pool.
 func TestVacuumShrinksTheFileAndKeepsTheHandleUsable(t *testing.T) {
+	// Vacuum refuses a dialled handle, so the swap under test needs a direct
+	// one even when the owner-mode switch is installed.
 	path := filepath.Join(t.TempDir(), "relevo.db")
-	d, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
+	d := directOpen(t, path, Options{})
 
 	recordID, err := d.RecordPut(testRecord("vacuum"))
 	if err != nil {
