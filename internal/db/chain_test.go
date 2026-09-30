@@ -159,13 +159,13 @@ func TestMigration016KeepsExistingRows(t *testing.T) {
 	}
 }
 
-// TestMigration017AddsPlanStartCommit pins the plan-start column: applying 017
+// TestMigration018AddsPlanStartCommit pins the plan-start column: applying 018
 // adds it with an empty default, leaves a row written before it reading ”, and
 // a second apply records nothing new.
-func TestMigration017AddsPlanStartCommit(t *testing.T) {
+func TestMigration018AddsPlanStartCommit(t *testing.T) {
 	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
-	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 16)); err != nil {
-		t.Fatalf("applyMigrations through 016: %v", err)
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 17)); err != nil {
+		t.Fatalf("applyMigrations through 017: %v", err)
 	}
 	if _, err := sqlDB.Exec(`INSERT INTO chains
 			(id, name, status, phase, step, plan, plans, plan_paths, builder, created_at, updated_at)
@@ -174,8 +174,8 @@ func TestMigration017AddsPlanStartCommit(t *testing.T) {
 		t.Fatalf("insert chains row: %v", err)
 	}
 
-	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 17)); err != nil {
-		t.Fatalf("applyMigrations 017: %v", err)
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 18)); err != nil {
+		t.Fatalf("applyMigrations 018: %v", err)
 	}
 	assertColumns(t, sqlDB, "chains", []string{"plan_start_commit"})
 	var start string
@@ -186,15 +186,15 @@ func TestMigration017AddsPlanStartCommit(t *testing.T) {
 		t.Errorf("old row plan_start_commit = %q, want the empty default", start)
 	}
 
-	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 17)); err != nil {
-		t.Fatalf("second applyMigrations 017: %v", err)
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 18)); err != nil {
+		t.Fatalf("second applyMigrations 018: %v", err)
 	}
 	var rows, versions int
 	if err := sqlDB.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT version) FROM schema_version`).Scan(&rows, &versions); err != nil {
 		t.Fatalf("count schema_version: %v", err)
 	}
-	if rows != 17 || versions != 17 {
-		t.Errorf("schema_version has %d rows and %d versions, want 17 and 17", rows, versions)
+	if rows != 18 || versions != 18 {
+		t.Errorf("schema_version has %d rows and %d versions, want 18 and 18", rows, versions)
 	}
 }
 
