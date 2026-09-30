@@ -379,12 +379,17 @@ func TestBugreportStdoutAndJSONWriteNoFile(t *testing.T) {
 	}
 }
 
+// ghIssueURL is what a successful `gh issue create` prints on stdout: the new
+// issue's URL, and nothing else.
+const ghIssueURL = "https://github.com/fuad-daoud/relevo/issues/999"
+
 // TestBugreportGhRunsExactArgv pins --gh: the one argv the verb runs is the
-// one the default prints, byte for byte.
+// one the default prints, byte for byte, and the issue URL gh answers with is
+// printed after the command line.
 func TestBugreportGhRunsExactArgv(t *testing.T) {
 	docsEnv(t)
 	seedBugreportMachine(t, "alpha")
-	calls := fakeBugreportExec(t, nil, nil)
+	calls := fakeBugreportExec(t, []byte(ghIssueURL+"\n"), nil)
 
 	stdout, stderr, err := captureOutput(t, func() error { return run([]string{"bugreport", "--gh"}) })
 	if err != nil {
@@ -392,8 +397,8 @@ func TestBugreportGhRunsExactArgv(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("stdout = %q, want the path then the gh line", stdout)
+	if len(lines) != 3 {
+		t.Fatalf("stdout = %q, want the path, the gh line and the issue URL", stdout)
 	}
 	path := lines[0]
 	want := bugreport.IssueArgv(bundleTitle(), path)
@@ -413,6 +418,29 @@ func TestBugreportGhRunsExactArgv(t *testing.T) {
 	}
 	if line := bugreport.ShellLine(want); lines[1] != line {
 		t.Errorf("printed line = %q, want %q", lines[1], line)
+	}
+	if lines[2] != ghIssueURL {
+		t.Errorf("stdout does not end with the issue URL: third line = %q, want %q", lines[2], ghIssueURL)
+	}
+}
+
+// TestBugreportGhFailureSurfacesTheReason pins the failed filing: gh's own
+// refusal -- auth, permission, network -- is the user's environment, so it is
+// not_available rather than internal, and the message carries gh's reason
+// rather than a bare exit status.
+func TestBugreportGhFailureSurfacesTheReason(t *testing.T) {
+	docsEnv(t)
+	seedBugreportMachine(t, "alpha")
+	reason := "gh: To use GitHub CLI, run gh auth login"
+	fakeBugreportExec(t, []byte(reason+"\n"), errors.New("exit status 1"))
+
+	_, _, err := captureOutput(t, func() error { return run([]string{"bugreport", "--gh"}) })
+	ce := requireCLIError(t, err, codeNotAvailable, "")
+	if ce.code == codeInternal {
+		t.Errorf("code = %q, want not %q", ce.code, codeInternal)
+	}
+	if !strings.Contains(ce.message, reason) {
+		t.Errorf("message = %q, want it to carry gh's reason %q", ce.message, reason)
 	}
 }
 
