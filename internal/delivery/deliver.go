@@ -100,9 +100,12 @@ func DeliverPending(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) 
 }
 
 // deliverViaDeliverer runs one deliverer attempt for an entry the channel check
-// did not take: Deliver when nobody has pushed the payload yet, Confirm when a
-// push route already admitted it. The read-back poll runs inside the caller's
-// lock, so no reader can claim or print the entry while it is being confirmed.
+// did not take: Deliver when nobody has pushed the payload yet, Confirm when the
+// push of this same tick admitted it, and ConfirmOnce -- one read-back, no poll
+// -- when an earlier tick already admitted it. The read-back runs inside the
+// caller's lock, so no reader can claim or print the entry while it is being
+// confirmed: the admitting tick holds that lock for Confirm's full window, a
+// repeat tick for a single read-back only.
 //
 // The admit is written BEFORE the read-back poll, so a crash during the poll
 // leaves an admitted entry rather than a pending one, and the next tick reads

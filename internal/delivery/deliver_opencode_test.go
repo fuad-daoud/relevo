@@ -857,6 +857,52 @@ func TestOpencodeConfirmOnceNeverPolls(t *testing.T) {
 	}
 }
 
+// TestOpencodeConfirmOnceNeverPosts pins the other half of the repeat tick's
+// contract: even with a live service file in reach -- the thing that lets the
+// push half send -- ConfirmOnce makes no request at all. A send added to
+// ConfirmOnce would show up here as a POST.
+func TestOpencodeConfirmOnceNeverPosts(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		posts++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
+	db := sqliteFixture(t,
+		"create table message (id text, data text)",
+		"create table part (id text, message_id text, session_id text, data text)",
+		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
+		"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
+	)
+
+	d := &OpencodeDeliverer{
+		StateFiles: []string{stateFile},
+		DBPath:     db,
+		Exec:       cliExec{},
+		Alive:      aliveAlways,
+	}
+
+	payload := "relevo: round 1 · to MasterMind · payload 1\n\nbody 1"
+	out, reason, err := d.ConfirmOnce(context.Background(), opencodeMasterMind("ses_abc123"), payload, time.Time{})
+	if err != nil {
+		t.Fatalf("ConfirmOnce: %v", err)
+	}
+	if out != OutcomeAdmitted || reason != "posted; awaiting the session" {
+		t.Fatalf("out/reason = %v/%q, want OutcomeAdmitted/\"posted; awaiting the session\"", out, reason)
+	}
+	if got := opencodePosts(&mu, &posts); got != 0 {
+		t.Fatalf("POSTs = %d, want 0: a repeat tick reads back, it cannot send", got)
+	}
+}
+
 // TestOpencodeConfirmOnceSeen pins the confirming read-back: the single query
 // finds the origin, so the repeat tick reports the payload delivered.
 func TestOpencodeConfirmOnceSeen(t *testing.T) {
