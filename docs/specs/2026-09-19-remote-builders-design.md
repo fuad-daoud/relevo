@@ -319,7 +319,10 @@ released on `done`, removed on `unbind`.
   (fast-forward guaranteed: only the server writes that history) and,
   when present, `refs/relay/<name>/round-<N>`. The `Diff:` line the
   planner receives gains `uncommitted work at relay/<name>/round-N`.
-  `ack` is sent only after both fetches succeeded.
+  `ack` is sent only after both fetches succeeded. Because `since` is the
+  client's last absorbed commit, amending or rebasing a commit already on the
+  branch strands that base; the placement spec's §11 records why a plan must
+  not order it.
 - If `relay/<name>` is checked out locally, git refuses the fetch; the
   client reports `checkout another branch, then relay pull` and retries
   each tick.
@@ -363,9 +366,15 @@ if b.Builder.Remote():
                          -> fall through to deliverAndSettle
 ```
 
-`catchUp` is idempotent and ordered; a failure at any step leaves the
-binding as it was and retries next tick. After 10 consecutive absorb
-failures: `NEEDS YOU: cannot absorb round N from zen: <err>`.
+`catchUp` is idempotent and ordered; a file it could not download leaves the
+binding as it was and retries next tick. A round-bundle fetch that keeps failing
+counts too, and 10 consecutive failures of either stage stop the retry:
+`NEEDS YOU`, the absorb one reading `cannot absorb round N from zen: <err>` and
+the bundle one `cannot fetch round bundle N from zen: <err>` (only the first
+failure of a run warns). An adopted binding whose server branch was rewritten
+halts with `the server branch was rewritten; delete or re-point <branch>`
+rather than git's non-fast-forward text, because the whole-branch fallback
+cannot land on a branch this client does not own.
 
 ### 5.4 Send
 
@@ -462,6 +471,8 @@ side names the other by its label.
 | Catch-up | client dies before ack | nothing acked | re-download; every step idempotent |
 | Catch-up | `relay/api` checked out | -- | `checkout another branch, then relay pull`; retried, not a halt |
 | Catch-up | absorb fails | round stays closed, unacked | retried; after 10: NEEDS YOU |
+| Catch-up | bundle fetch fails | -- | first failure warned once, then retried; after 10 consecutive: NEEDS YOU naming the round and server |
+| Catch-up | adopted branch rewritten | -- | one whole-branch refetch; the rewrite is named and counted to NEEDS YOU at 10 |
 | Auth | revoked / unknown | `401` | NEEDS YOU once |
 | Auth | clock skew | `401 stale` | `check this machine's clock`; log line, not a halt |
 | Auth | cert changed | -- | hard refuse; `zen !cert` |
