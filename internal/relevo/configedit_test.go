@@ -409,6 +409,33 @@ func TestConfigEditEditActor(t *testing.T) {
 	})
 }
 
+// TestConfigEditPreservesPlacement pins that the two edit APIs that mutate a
+// loaded actor copy leave an existing placement untouched.
+func TestConfigEditPreservesPlacement(t *testing.T) {
+	t.Parallel()
+
+	doc := configeditDoc(t)
+	builder := doc.Actors["builder"]
+	builder.Placement = []string{"zen", "local"}
+	doc.Actors["builder"] = builder
+
+	entries, err := SetActorEntries(doc, "builder", []roles.Entry{{Candidate: "sonnet"}})
+	if err != nil {
+		t.Fatalf("SetActorEntries: %v", err)
+	}
+	if got := decodeActors(t, entries)["builder"].Placement; !reflect.DeepEqual(got, []string{"zen", "local"}) {
+		t.Errorf("SetActorEntries placement = %v, want [zen local]", got)
+	}
+
+	edited, err := EditActor(doc, "builder", "plan-executor", "yolo", true)
+	if err != nil {
+		t.Fatalf("EditActor: %v", err)
+	}
+	if got := decodeActors(t, edited)["builder"].Placement; !reflect.DeepEqual(got, []string{"zen", "local"}) {
+		t.Errorf("EditActor placement = %v, want [zen local]", got)
+	}
+}
+
 func TestConfigEditAddAndDeleteActor(t *testing.T) {
 	t.Parallel()
 

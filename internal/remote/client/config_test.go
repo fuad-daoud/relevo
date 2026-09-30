@@ -13,7 +13,7 @@ func TestServersRoundTrip(t *testing.T) {
 			URL:         "https://zen:7777",
 			Fingerprint: "sha256:abcd",
 		},
-		"local": remote.ServerEntry{
+		"laptop": remote.ServerEntry{
 			URL:      "http://localhost:8888",
 			Insecure: true,
 		},
@@ -36,8 +36,8 @@ func TestServersRoundTrip(t *testing.T) {
 	if loaded["zen"] != saved["zen"] {
 		t.Fatalf("zen entry = %+v, want %+v", loaded["zen"], saved["zen"])
 	}
-	if loaded["local"] != saved["local"] {
-		t.Fatalf("local entry = %+v, want %+v", loaded["local"], saved["local"])
+	if loaded["laptop"] != saved["laptop"] {
+		t.Fatalf("laptop entry = %+v, want %+v", loaded["laptop"], saved["laptop"])
 	}
 }
 

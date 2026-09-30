@@ -4,8 +4,9 @@ import "github.com/fuad-daoud/relevo/internal/roles"
 
 // decodeDoc derives everything Load reads from section bodies: the parse of
 // candidates, policy, roles, agents, actors, prices, servers and hooks, the
-// actors-wins roles rebuild, and the registry. It touches no database, so the
-// read path and a writer's prospective check share one decode.
+// actors-wins roles rebuild, the actors x servers placement cross-check, and
+// the registry. It touches no database, so the read path and a writer's
+// prospective check share one decode.
 func decodeDoc(doc Doc) (Loaded, error) {
 	var L Loaded
 
@@ -32,6 +33,9 @@ func decodeDoc(doc Doc) (Loaded, error) {
 		return Loaded{}, err
 	}
 	if err := loadServers(doc, &L); err != nil {
+		return Loaded{}, err
+	}
+	if err := checkActorPlacement(&L); err != nil {
 		return Loaded{}, err
 	}
 	if err := loadHooks(doc, &L); err != nil {
