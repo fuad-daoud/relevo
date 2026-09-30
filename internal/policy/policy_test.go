@@ -1206,6 +1206,64 @@ func TestChainPolicyOverrides(t *testing.T) {
 	}
 }
 
+// TestAccountsRotation pins policy.accounts.rotation: failover is the default,
+// round-robin is accepted, and any other value is refused.
+func TestAccountsRotation(t *testing.T) {
+	p, err := load(t, `{}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := p.AccountsRotation(); got != RotationFailover {
+		t.Errorf("AccountsRotation() with accounts unset = %q, want %q", got, RotationFailover)
+	}
+
+	for _, mode := range []string{RotationFailover, RotationRoundRobin} {
+		t.Run(mode, func(t *testing.T) {
+			p, err := load(t, fmt.Sprintf(`{"accounts":{"rotation":%q}}`, mode))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := p.AccountsRotation(); got != mode {
+				t.Errorf("AccountsRotation() = %q, want %q", got, mode)
+			}
+		})
+	}
+
+	_, err = load(t, `{"accounts":{"rotation":"spread"}}`)
+	if err == nil {
+		t.Fatal("Load: got nil error, want one wrapping ErrBadPolicy")
+	}
+	if !errors.Is(err, ErrBadPolicy) {
+		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+	}
+	if !strings.Contains(err.Error(), "accounts.rotation") {
+		t.Errorf("Load error %q does not name accounts.rotation", err.Error())
+	}
+}
+
+// TestValidateRotationRefusesRoundRobinForOpenCode pins the cross-check the
+// config runs once it holds both the policy and the accounts.
+func TestValidateRotationRefusesRoundRobinForOpenCode(t *testing.T) {
+	if err := ValidateRotation("policy.json", RotationFailover, []string{"cline-pass"}); err != nil {
+		t.Errorf("ValidateRotation(failover, opencode group) = %v, want nil", err)
+	}
+
+	err := ValidateRotation("policy.json", RotationRoundRobin, []string{"cline-pass"})
+	if err == nil {
+		t.Fatal("ValidateRotation(round-robin, opencode group) = nil, want a refusal")
+	}
+	if !errors.Is(err, ErrBadPolicy) {
+		t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+	}
+	if !strings.Contains(err.Error(), "round-robin") {
+		t.Errorf("error %q does not name round-robin", err.Error())
+	}
+
+	if err := ValidateRotation("policy.json", RotationRoundRobin, nil); err != nil {
+		t.Errorf("ValidateRotation(round-robin, no opencode group) = %v, want nil", err)
+	}
+}
+
 // TestChainUnknownKeyStillWarns pins that the generic unknown-key path covers
 // the chain group: a key Policy's shape does not declare warns rather than
 // rejecting the file.

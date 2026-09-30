@@ -304,6 +304,11 @@ func checkRequired(name string, i int, c Candidate) error {
 	if strings.Contains(c.Provider, "/") {
 		return fmt.Errorf("candidates %s: candidate %d: provider must be a single segment", name, i)
 	}
+	if strings.Contains(c.Provider, "@") {
+		// "@" separates the group from the account in a gate key, so a provider
+		// carrying one could not be read back.
+		return fmt.Errorf("candidates %s: candidate %d: provider must not contain \"@\"", name, i)
+	}
 	return nil
 }
 

@@ -86,6 +86,18 @@ func TestSetQueries(t *testing.T) {
 	}
 }
 
+// TestParseRefusesAnAtSignInTheProvider pins the gate-key separator rule: a
+// provider carrying "@" could not be read back as a group, so it is refused.
+func TestParseRefusesAnAtSignInTheProvider(t *testing.T) {
+	_, _, err := Parse("candidates.json", []byte(`[{"harness":"claude","provider":"anthropic@spare","model":"sonnet"}]`))
+	if err == nil {
+		t.Fatal("Parse: got nil error, want a refusal for \"@\" in the provider")
+	}
+	if !strings.Contains(err.Error(), `provider must not contain "@"`) {
+		t.Errorf("Parse error %q does not name the refusal", err.Error())
+	}
+}
+
 func TestLookup(t *testing.T) {
 	set := writeCandidates(t, threeSetBody)
 
