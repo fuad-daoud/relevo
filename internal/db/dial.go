@@ -18,18 +18,33 @@ const dialTimeout = 2 * time.Second
 
 // Dial connects to an owner over sock and returns the same *DB a direct Open
 // would: the schema answer comes from the handshake, the origin from the
-// owner, and a nil error means the handshake completed.
+// owner, and a nil error means the handshake completed. Dial plus the handshake
+// share dialTimeout.
 func Dial(sock string) (*DB, error) {
-	return dial(sock, Options{}, true)
+	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer cancel()
+	return DialContext(ctx, sock)
 }
 
-// dial builds the handle. adoptOrigin selects between the owner's installation
-// id (production) and the caller's own Options (the test hop, which must carry
-// the caller's origin verbatim).
+// DialContext is Dial under the caller's ctx: the deadline ctx carries bounds
+// dial and handshake together, so a caller that may wait longer than
+// dialTimeout -- a verb waiting for a daemon that is still starting -- sets its
+// own limit here instead of being cut off by the two-second one.
+func DialContext(ctx context.Context, sock string) (*DB, error) {
+	return dialContext(ctx, sock, Options{}, true)
+}
+
+// dial builds the handle under its own dialTimeout deadline. adoptOrigin
+// selects between the owner's installation id (production) and the caller's
+// own Options (the test hop, which must carry the caller's origin verbatim).
 func dial(sock string, o Options, adoptOrigin bool) (*DB, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
+	return dialContext(ctx, sock, o, adoptOrigin)
+}
 
+// dialContext builds the handle under ctx.
+func dialContext(ctx context.Context, sock string, o Options, adoptOrigin bool) (*DB, error) {
 	info, err := client.Info(ctx, sock)
 	if err != nil {
 		return nil, fmt.Errorf("db: dial %s: %w: %w", sock, ErrOpen, err)

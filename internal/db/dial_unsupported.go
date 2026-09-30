@@ -3,6 +3,7 @@
 package db
 
 import (
+	"context"
 	"errors"
 	"runtime"
 
@@ -16,6 +17,9 @@ func notHere() error {
 
 // Dial refuses off unix: the owner protocol is a unix socket.
 func Dial(string) (*DB, error) { return nil, notHere() }
+
+// DialContext refuses off unix: the owner protocol is a unix socket.
+func DialContext(context.Context, string) (*DB, error) { return nil, notHere() }
 
 func dial(string, Options, bool) (*DB, error) { return nil, notHere() }
 
