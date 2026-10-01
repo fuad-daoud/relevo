@@ -102,6 +102,12 @@ func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns in
 		if row.Reason != "" {
 			mid += " · " + row.Reason
 		}
+		if row.Live != nil {
+			mid += fmt.Sprintf(" · +%d/-%d in %d", row.Live.Added, row.Live.Removed, row.Live.Files)
+			if row.Live.Shared {
+				mid += " (shared)"
+			}
+		}
 		if row.Tokens != "" {
 			mid += " · " + row.Tokens
 		}
@@ -185,6 +191,34 @@ func phase(b BindingStatus) string {
 	return ""
 }
 
+// ActivityWord is the runner's own activity word a row may show while its round
+// is in flight, or "" when the runner's status carries no word a row may claim.
+// A working runner reads "working", or "quiet X" once the progress sampler has
+// gone silent (QuietFor is set). The definite words -- "stalled X", "exploring
+// X", "gating X", "exited N", the bare "exited", "running", "queued (...)" and
+// the bare "queued" -- pass through verbatim. Every other word returns "": a
+// runner that is idle, unknown or "", and words a row must not claim as its own
+// activity (unreachable, a credential word, cert, closed, gone). The caller
+// keeps its phase when this is empty.
+func ActivityWord(b BindingStatus) string {
+	switch s := b.BuilderStatus; {
+	case s == "working":
+		if b.QuietFor != "" {
+			return "quiet " + b.QuietFor
+		}
+		return "working"
+	case strings.HasPrefix(s, "stalled "),
+		strings.HasPrefix(s, "exploring "),
+		strings.HasPrefix(s, "gating "):
+		return s
+	case s == "exited", strings.HasPrefix(s, "exited "):
+		return s
+	case s == "running", s == "queued", strings.HasPrefix(s, "queued "):
+		return s
+	}
+	return ""
+}
+
 func waiting(b BindingStatus) string {
 	if b.Detail != "" {
 		return b.Detail
@@ -228,6 +262,15 @@ func rowStatus(b BindingStatus, needsYou, reportIn bool) (status, tone string) {
 			return status, "report"
 		case store.KindQuestion:
 			return "QUESTION IN", "report"
+		}
+	}
+	// While a round is in flight the runner's own word takes the phase slot: a
+	// quiet or stalled runner says more than the payload phase, which for a
+	// working round is the bare "prompt sent". A closed round, a row with no
+	// round and a runner with no definite word still read the phase.
+	if !b.RoundStart.IsZero() && b.RoundEnd.IsZero() {
+		if word := ActivityWord(b); word != "" {
+			return word, "phase"
 		}
 	}
 	status = phase(b)
@@ -353,13 +396,18 @@ type StatusLineRow struct {
 	// On is what the row's actor runs on, as "actor on X" names it: the
 	// candidate's short name, else its harness when the set no longer
 	// holds the token, with "@server" for a remote runner.
-	On       string `json:"on"`
-	Waiting  string `json:"waiting"`
-	Clock    string `json:"clock"`
-	Tokens   string `json:"tokens"`
-	LastKind string `json:"last_kind"`
-	LastTS   string `json:"last_ts"`
-	Route    string `json:"route"`
+	On      string `json:"on"`
+	Waiting string `json:"waiting"`
+	Clock   string `json:"clock"`
+	Tokens  string `json:"tokens"`
+	// Live is the open round's live diff against its baseline tree, copied
+	// from BindingStatus.Live, rendered as the middle's "· +A/-R in F"
+	// segment. Nil when no round is open, the baseline was never recorded or
+	// the git read failed, so the row stays byte-identical to before.
+	Live     *LiveDiff `json:"live,omitempty"`
+	LastKind string    `json:"last_kind"`
+	LastTS   string    `json:"last_ts"`
+	Route    string    `json:"route"`
 	// Actor is who runs the binding: b.Role when it is set, else "builder",
 	// because a builder binding stores an empty role (normRole).
 	Actor string `json:"actor"`
@@ -471,6 +519,7 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		Waiting:     waiting(b),
 		Clock:       roundClock(b, now),
 		Tokens:      roundTokens(b),
+		Live:        b.Live,
 		LastKind:    lastKind,
 		LastTS:      lastTS,
 		Route:       b.MasterMindRoute,
