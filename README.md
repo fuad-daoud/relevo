@@ -280,6 +280,11 @@ gives a MasterMind a name of your own.
   the repo, served on `127.0.0.1` with a per-run token, saving the scene and (for
   a repo scene) a companion `.svg` beside it. `relevo board url` prints a live
   board's URL. Foreground; Ctrl-C stops. See "relevo board" below.
+- `relevo board comments [path|--board NAME] [--json]` — list every comment in the
+  resolved scene in scene order (`id, x, y, text, by, at`); `--json` is one compact
+  array. `relevo board comment [path|--board NAME] --text S [--x X --y Y] [--by B]`
+  — append one comment element, leaving every other byte of the scene unchanged.
+  See "relevo board" below.
 - `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
   prompt and hand it to the builder as the prompt of a fresh process started in
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
@@ -1210,6 +1215,8 @@ relevo board --board api                      opens the live scene "api"
 relevo board --mastermind architect-2         another MasterMind's live board
 relevo board docs/boards/api.excalidraw       edits a named repo scene
 relevo board --theme blueprint                a different palette for new elements
+relevo board comments                         lists the scene's comments
+relevo board comment --text "check state 3"   appends one comment
 ```
 
 A live board lives under the state root, at
@@ -1230,6 +1237,24 @@ wins. `relevo board url [--board NAME] [--mastermind M]` prints that URL -- its
 token included -- for a shell copy, and exits 1 when no live server holds it.
 The URL also appears in the statusline (below). Promotion of a live board into
 the repo is a later cut.
+
+`relevo board comments [path|--board NAME] [--json]` reads the resolved scene
+and prints every comment in scene order -- `id, x, y, text, by, at` -- one
+tab-separated row each, or one compact JSON array with `--json` (`[]` when
+there are none). A comment is a text element carrying
+`customData.relevo` `{comment: true, by, at}`; both writers use the theme's
+`comment` colour and `by` distinguishes them. `relevo board comment
+[path|--board NAME] --text S [--x X --y Y] [--by B]` appends one comment, at
+`--x`/`--y` when both are given and otherwise below the scene's bounds so it
+never lands on a drawing, authored by `--by` (default `RELEVO_MASTERMIND`, else
+`human`); every other byte of the scene is unchanged. A missing scene is a new
+one carrying the comment for `comment`, and simply no comments for `comments`.
+A malformed marker, or a file that is not a scene, is `refused` (exit 2) naming
+the element or the path; an author that is empty, longer than 64 bytes or holds
+a control character is `usage` (exit 2). Both verbs resolve like `relevo board`
+and are peek verbs: no daemon, no database, and `comments` never writes the
+pointer. Comments are flat -- no replies, resolve, delete or thread -- and the
+CLI never deletes.
 
 A repo scene is fixed at startup and confined to the repository: a path must end
 in `.excalidraw` and, after symlinks are resolved on its deepest existing
