@@ -3,6 +3,7 @@ package board
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,6 +30,36 @@ func writeScene(t *testing.T, body string) string {
 	return p
 }
 
+// sceneElements reads path's elements as raw messages.
+func sceneElements(t *testing.T, path string) []json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read scene: %v", err)
+	}
+	var doc struct {
+		Elements []json.RawMessage `json:"elements"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode scene: %v", err)
+	}
+	return doc.Elements
+}
+
+// lastElement reads path's last element as a generic object.
+func lastElement(t *testing.T, path string) map[string]any {
+	t.Helper()
+	els := sceneElements(t, path)
+	if len(els) == 0 {
+		t.Fatalf("scene %s has no elements", path)
+	}
+	var el map[string]any
+	if err := json.Unmarshal(els[len(els)-1], &el); err != nil {
+		t.Fatalf("decode element: %v", err)
+	}
+	return el
+}
+
 // cockpitTheme is the default theme, looked up so a test names it once.
 func cockpitTheme(t *testing.T) *Theme {
 	t.Helper()
@@ -37,16 +68,6 @@ func cockpitTheme(t *testing.T) *Theme {
 		t.Fatalf("Lookup(cockpit): %v", err)
 	}
 	return th
-}
-
-// decodeElement unmarshals one raw element into a generic object.
-func decodeElement(t *testing.T, raw []byte) map[string]any {
-	t.Helper()
-	var el map[string]any
-	if err := json.Unmarshal(raw, &el); err != nil {
-		t.Fatalf("decode element: %v", err)
-	}
-	return el
 }
 
 func TestTextElementsInSceneOrder(t *testing.T) {
@@ -102,8 +123,8 @@ func TestTextElementsRefusesInvalid(t *testing.T) {
 	}
 }
 
-// fixedElement is the exact byte sequence the builder emits under the fixed
-// seams, for text "hi" at (1, 2) under cockpit.
+// fixedElement is the exact byte sequence one annotation appends under the
+// fixed seams, for text "hi" at (1, 2) under cockpit.
 const fixedElement = `{"id":"00112233445566778899aabbccddeeff","type":"text","x":1,"y":2,` +
 	`"width":24,"height":24,"angle":0,"strokeColor":"#e6e8ec","backgroundColor":"transparent",` +
 	`"fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":0,` +
@@ -115,23 +136,30 @@ const fixedElement = `{"id":"00112233445566778899aabbccddeeff","type":"text","x"
 
 func TestAnnotateElementFields(t *testing.T) {
 	fixSeams(t)
-	_, raw, err := buildElementBytes("hi", 1, 2, cockpitTheme(t))
-	if err != nil {
-		t.Fatalf("buildElementBytes: %v", err)
+	path := writeScene(t, `{"type":"excalidraw","elements":[]}`)
+	if _, err := Annotate(path, AnnotateOptions{
+		Text: "hi", X: 1, Y: 2, HasX: true, HasY: true, Theme: cockpitTheme(t),
+	}); err != nil {
+		t.Fatalf("Annotate: %v", err)
 	}
-	if string(raw) != fixedElement {
-		t.Errorf("element = %s\nwant    %s", raw, fixedElement)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read scene: %v", err)
+	}
+	want := `{"type":"excalidraw","elements":[` + fixedElement + `]}`
+	if string(got) != want {
+		t.Errorf("scene = %s\nwant    %s", got, want)
 	}
 }
 
 func TestAnnotateWidthCoversTheEstimate(t *testing.T) {
 	fixSeams(t)
 	for _, text := range []string{"hello", "hi\nthere", "wide\tlabel"} {
-		_, raw, err := buildElementBytes(text, 0, 0, cockpitTheme(t))
-		if err != nil {
-			t.Fatalf("buildElementBytes(%q): %v", text, err)
+		path := writeScene(t, `{"type":"excalidraw","elements":[]}`)
+		if _, err := Annotate(path, AnnotateOptions{Text: text, Theme: cockpitTheme(t)}); err != nil {
+			t.Fatalf("Annotate(%q): %v", text, err)
 		}
-		el := decodeElement(t, raw)
+		el := lastElement(t, path)
 		if w, _ := el["width"].(float64); w < estimateTextWidth(text) {
 			t.Errorf("%q: width = %v, want >= %v", text, w, estimateTextWidth(text))
 		}
@@ -159,20 +187,101 @@ func TestAnnotateEstimatePinsValues(t *testing.T) {
 	}
 }
 
+func TestAnnotateKeepsEveryOtherByte(t *testing.T) {
+	fixSeams(t)
+	compact := `{"type":"excalidraw","elements":[{"id":"a","type":"text","x":1,"y":2,"text":"hi"}],"appState":{"zoom":1}}`
+	pretty := "{\n  \"type\": \"excalidraw\",\n  \"elements\": [\n    {\n      \"id\": \"a\"\n    }\n  ],\n  \"appState\": {}\n}"
+
+	cases := []struct{ name, in, want string }{
+		{
+			"compact",
+			compact,
+			`{"type":"excalidraw","elements":[{"id":"a","type":"text","x":1,"y":2,"text":"hi"},` +
+				fixedElement + `],"appState":{"zoom":1}}`,
+		},
+		{
+			"pretty",
+			pretty,
+			"{\n  \"type\": \"excalidraw\",\n  \"elements\": [\n    {\n      \"id\": \"a\"\n    }," +
+				fixedElement + "\n  ],\n  \"appState\": {}\n}",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeScene(t, tc.in)
+			if _, err := Annotate(path, AnnotateOptions{
+				Text: "hi", X: 1, Y: 2, HasX: true, HasY: true, Theme: cockpitTheme(t),
+			}); err != nil {
+				t.Fatalf("Annotate: %v", err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read scene: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("scene = %q\nwant    %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnnotateDefaultPositionEmptyScene(t *testing.T) {
+	fixSeams(t)
+	path := writeScene(t, `{"type":"excalidraw","elements":[]}`)
+	if _, err := Annotate(path, AnnotateOptions{Text: "hi", Theme: cockpitTheme(t)}); err != nil {
+		t.Fatalf("Annotate: %v", err)
+	}
+	el := lastElement(t, path)
+	if el["x"] != float64(0) || el["y"] != float64(0) {
+		t.Errorf("default position = (%v, %v), want (0, 0)", el["x"], el["y"])
+	}
+}
+
+func TestAnnotateDefaultPositionBelowBounds(t *testing.T) {
+	fixSeams(t)
+	path := writeScene(t, `{"type":"excalidraw","elements":[`+
+		`{"id":"a","type":"text","x":10,"y":20,"width":5,"height":6},`+
+		`{"id":"b","type":"rectangle","x":3,"y":0,"width":1,"height":2},`+
+		`{"id":"d","type":"rectangle","x":-100,"y":-100,"width":1,"height":1,"isDeleted":true}]}`)
+	if _, err := Annotate(path, AnnotateOptions{Text: "hi", Theme: cockpitTheme(t)}); err != nil {
+		t.Fatalf("Annotate: %v", err)
+	}
+	el := lastElement(t, path)
+	if el["x"] != float64(3) {
+		t.Errorf("default x = %v, want 3 (the leftmost live element)", el["x"])
+	}
+	if el["y"] != float64(46) {
+		t.Errorf("default y = %v, want 46 (lowest edge 26 + gap 20)", el["y"])
+	}
+}
+
+func TestAnnotateRefusesMissingScene(t *testing.T) {
+	fixSeams(t)
+	path := filepath.Join(t.TempDir(), "missing.excalidraw")
+	_, err := Annotate(path, AnnotateOptions{Text: "hi", Theme: cockpitTheme(t)})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Annotate(missing) = %v, want ErrNotFound", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Errorf("annotate created the missing scene: stat error = %v", statErr)
+	}
+}
+
 func TestAnnotateRandomFieldsAreWellFormed(t *testing.T) {
-	id, raw, err := buildElementBytes("hi", 0, 0, cockpitTheme(t))
+	path := writeScene(t, `{"type":"excalidraw","elements":[]}`)
+	el, err := Annotate(path, AnnotateOptions{Text: "hi", Theme: cockpitTheme(t)})
 	if err != nil {
-		t.Fatalf("buildElementBytes: %v", err)
+		t.Fatalf("Annotate: %v", err)
 	}
-	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(id) {
-		t.Errorf("id = %q, want 32 hex characters", id)
+	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(el.ID) {
+		t.Errorf("id = %q, want 32 hex characters", el.ID)
 	}
-	el := decodeElement(t, raw)
-	if seed, _ := el["seed"].(float64); seed < 0 || seed >= float64(int64(1)<<31) {
-		t.Errorf("seed = %v, want [0, 2^31)", el["seed"])
+	obj := lastElement(t, path)
+	if seed, _ := obj["seed"].(float64); seed < 0 || seed >= float64(int64(1)<<31) {
+		t.Errorf("seed = %v, want [0, 2^31)", obj["seed"])
 	}
-	if updated, _ := el["updated"].(float64); updated <= 0 {
-		t.Errorf("updated = %v, want a positive unix ms", el["updated"])
+	if updated, _ := obj["updated"].(float64); updated <= 0 {
+		t.Errorf("updated = %v, want a positive unix ms", obj["updated"])
 	}
 }
 
@@ -183,12 +292,35 @@ func TestAnnotateStrokeIsThemeInk(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Lookup(%s): %v", name, err)
 		}
-		_, raw, err := buildElementBytes("hi", 0, 0, th)
-		if err != nil {
-			t.Fatalf("buildElementBytes: %v", err)
+		path := writeScene(t, `{"type":"excalidraw","elements":[]}`)
+		if _, err := Annotate(path, AnnotateOptions{Text: "hi", Theme: th}); err != nil {
+			t.Fatalf("Annotate: %v", err)
 		}
-		if got := decodeElement(t, raw)["strokeColor"]; got != th.Ink {
+		if got := lastElement(t, path)["strokeColor"]; got != th.Ink {
 			t.Errorf("%s: strokeColor = %v, want %v", name, got, th.Ink)
 		}
+	}
+}
+
+func TestAnnotateRefusesBadOptions(t *testing.T) {
+	fixSeams(t)
+	path := writeScene(t, `{"type":"excalidraw","elements":[]}`)
+	cases := []struct {
+		name string
+		opts AnnotateOptions
+	}{
+		{"empty text", AnnotateOptions{Text: "", Theme: cockpitTheme(t)}},
+		{"lone x", AnnotateOptions{Text: "hi", HasX: true, X: 1, Theme: cockpitTheme(t)}},
+		{"lone y", AnnotateOptions{Text: "hi", HasY: true, Y: 1, Theme: cockpitTheme(t)}},
+		{"non-finite x", AnnotateOptions{Text: "hi", HasX: true, HasY: true, X: math.NaN(), Y: 1, Theme: cockpitTheme(t)}},
+		{"non-finite y", AnnotateOptions{Text: "hi", HasX: true, HasY: true, X: 1, Y: math.Inf(1), Theme: cockpitTheme(t)}},
+		{"nil theme", AnnotateOptions{Text: "hi"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Annotate(path, tc.opts); !errors.Is(err, ErrUsage) {
+				t.Errorf("Annotate(%s) = %v, want ErrUsage", tc.name, err)
+			}
+		})
 	}
 }
