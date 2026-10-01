@@ -64,7 +64,7 @@ func (s Scope) Validate() error {
 			continue
 		}
 		if _, _, err := compilePattern(p); err != nil {
-			return fmt.Errorf("paths[%d]: %v", i, err)
+			return fmt.Errorf("paths[%d]: %w", i, err)
 		}
 	}
 	return nil
