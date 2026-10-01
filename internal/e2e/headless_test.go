@@ -442,6 +442,7 @@ if [ -n "$artifact" ]; then
 	# round one asks for changes, every round after it passes.
 	seed=$(head -n 1 "$plan")
 	msg=""
+	recap=""
 	case "$seed" in
 	"Review the round and give a verdict.")
 		check_seed_inputs
@@ -458,6 +459,11 @@ if [ -n "$artifact" ]; then
 			verdict=changes
 		fi
 		msg='# Reviewer output\n\nI read the plan, the report, the round diff and the check result.\n\n'"$fence"'relevo\nverdict: '"$verdict"'\n'"$fence"'\n\n'"$fence"'relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n'"$fence"'\n'
+		# A reader may write a recap after the message that carries its block.
+		# This recap is the last text the round's stream holds, so FinalText
+		# returns it and the written output excludes the verdict: only the
+		# stream still carries it.
+		recap='# Reviewer recap\n\nI read the plan, the report, the round diff and the check result; the block was written above.'
 		;;
 	"Write a correction plan for the builder.")
 		check_seed_inputs
@@ -477,7 +483,11 @@ if [ -n "$artifact" ]; then
 	sleep 0.2
 	if [ -n "$msg" ]; then
 		printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' "$msg"
-	else
+	fi
+	if [ -n "$recap" ]; then
+		printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' "$recap"
+	fi
+	if [ -z "$msg" ] && [ -z "$recap" ]; then
 		printf '%s\n' '__READER_LINE__'
 	fi
 	exit 0

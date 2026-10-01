@@ -52,3 +52,34 @@ func TestFinalText(t *testing.T) {
 		})
 	}
 }
+
+// TestTextsReturnsEveryMessageInOrder pins the rescan helper: every decoded
+// message comes back in stream order, an assistant text and a result fallback
+// both count, a thinking-only event and the trailer are skipped, and an empty
+// stream carries nothing.
+func TestTextsReturnsEveryMessageInOrder(t *testing.T) {
+	t.Parallel()
+
+	stream := raw(`{"type":"assistant","message":{"content":[{"type":"text","text":"FIRST"}]}}` + "\n" +
+		"not json at all\n" +
+		`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"x","signature":"s"}]}}` + "\n" +
+		`{"type":"result","subtype":"success","is_error":false,"result":"RECAP"}` + "\n" +
+		"relevo-exit:0\n")(t)
+
+	got := Texts("claude", stream)
+	want := []string{"FIRST", "RECAP"}
+	if len(got) != len(want) {
+		t.Fatalf("Texts = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Texts[%d] = %q, want %q (all: %q)", i, got[i], want[i], got)
+		}
+	}
+	if got := Texts("claude", raw("")(t)); len(got) != 0 {
+		t.Errorf("Texts(empty) = %q, want none", got)
+	}
+	if got := Texts("claude", raw("relevo-exit:0\n")(t)); len(got) != 0 {
+		t.Errorf("Texts(trailer only) = %q, want none", got)
+	}
+}

@@ -84,7 +84,8 @@ commands_run: []        # commands you ran
 not_done: []            # what you deliberately left
 ` + "```" + `
 Then create this empty file: %s
-Your final message comes after it: relevo saves it once you finish.`
+The message carrying the block must be the last text you write; the marker is
+your final action, created after that message, with nothing written after the marker.`
 
 // SendResult is what one successful Send produced.
 type SendResult struct {
