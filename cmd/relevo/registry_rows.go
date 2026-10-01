@@ -226,6 +226,23 @@ var registry = []verbEntry{
 		Errors:  []string{"usage"},
 	},
 	{
+		Name:    "db",
+		Summary: "read relevo.db without opening it as a writer",
+		Args:    "query <SQL> [--json]",
+		Flags:   []string{},
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"conflict", "internal", "refused", "usage"},
+	},
+	{
+		Name:    "db query",
+		Summary: "run one read-only SQL statement against relevo.db",
+		Args:    "<SQL> [--json]",
+		Flags:   []string{"--json"},
+		Output:  "json:{columns,rows}",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"conflict", "internal", "refused", "usage"},
+	},
+	{
 		Name:    "doctor",
 		Summary: "preflight check: plugin, daemon, harness binaries, roles, release",
 		Args:    "",

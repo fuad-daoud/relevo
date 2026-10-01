@@ -111,17 +111,19 @@ func routeForArgs(args []string) (dbRoute, time.Duration, time.Duration) {
 	return routeOwner, verbDialBudget, ownerStartWait
 }
 
-// isPeekArgs reports the read-only verbs, which never dial and never start the
-// owner: the daemon's --check/--preflight probes, and bugreport, whose read-only
-// runtime opens the machine database itself and must leave the route alone. A
-// peek verb also skips captureAgyEnv, which would open -- and can migrate -- the
-// very database the verb promises not to touch. bugreport's own flags
-// (--name/--round/--logs) pick what it reads and never change the route.
+// isPeekArgs reports the read-only verbs, which install no route and never
+// start the owner: the daemon's --check/--preflight probes, bugreport, whose
+// read-only runtime opens the machine database itself, and db query, which
+// reads the file directly or through an owner that is already up. A peek verb
+// also skips captureAgyEnv, which would open -- and can migrate -- the very
+// database the verb promises not to touch. bugreport's own flags
+// (--name/--round/--logs) pick what it reads and never change the route, and db
+// query's SQL never does either.
 func isPeekArgs(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "bugreport" {
+	if args[0] == "bugreport" || args[0] == "db" {
 		return true
 	}
 	return args[0] == "daemon" && hasArg(args[1:], "--check", "--preflight")
