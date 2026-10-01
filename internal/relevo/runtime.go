@@ -9,6 +9,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/capture"
@@ -124,6 +125,17 @@ type Runtime struct {
 	Runner     spawn.Runner
 	Store      *store.Store
 	Candidates *candidate.Set
+
+	// Accounts is the configured login pool: the logins a pick may draw a
+	// round from. Empty on every host with no accounts, where a pick records
+	// no account and every other path is byte-identical to before.
+	Accounts account.Set
+
+	// OpencodeAuth is the install-global opencode credential row: reading
+	// which login is active and flipping it. Nil means this host has no
+	// opencode seam -- every test that does not set one, and any host with no
+	// opencode accounts -- so no flip is attempted.
+	OpencodeAuth OpencodeAuth
 
 	// Gates is where the availability ledger and the availability history live
 	// (P3b plan §4.5): the store root's database. A nil Gates means no gates
@@ -326,6 +338,7 @@ func AvailabilityDeps(rt Runtime) availability.Deps {
 	return availability.Deps{
 		Store:        rt.Store,
 		Candidates:   rt.Candidates,
+		Accounts:     rt.Accounts,
 		Gates:        rt.Gates,
 		Latency:      rt.Latency,
 		Now:          now,

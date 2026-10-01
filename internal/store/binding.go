@@ -108,6 +108,11 @@ type Binding struct {
 	MasterMindID     string   `json:"planner_id,omitempty"` // why: ditto, state already written
 	Builder          Endpoint `json:"runner"`
 	BuilderCandidate string   `json:"candidate,omitempty"`
+	// BuilderAccount names the login of the candidate's pool the round drew
+	// from, empty on a host with no accounts. It is stamped at the current
+	// format, so a binary that predates it refuses the record rather than
+	// saving one back with the account erased.
+	BuilderAccount string `json:"account,omitempty"`
 	// Role names the actor the runner plays. It is always written; the empty
 	// value means builder and is stored as the literal "builder".
 	Role string `json:"actor"`

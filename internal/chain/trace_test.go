@@ -4,8 +4,9 @@ import "testing"
 
 // TestChainTraceLineFormatsPlanPhaseStepMemberRound pins the one trace line's
 // columns: plan i/N, the state the chain was in before the event, the closing
-// member and its round, and the event's detail -- the shape the design's
-// example uses, spacing included.
+// member and its round, and the event's detail -- the trace's own wording,
+// spacing included. A red gate reads `check red`, not the design's
+// `check red after regate`: the plan of record supersedes that example.
 func TestChainTraceLineFormatsPlanPhaseStepMemberRound(t *testing.T) {
 	t.Parallel()
 
@@ -15,7 +16,7 @@ func TestChainTraceLineFormatsPlanPhaseStepMemberRound(t *testing.T) {
 		Event:  Event{Kind: EventBuilderClosed, Gate: GateRed},
 		Action: Action{Kind: ActionSend, Member: MemberReviewer, Seed: SeedReviewer},
 	}
-	const want = "plan 2/4  build    x r3       check red after regate"
+	const want = "plan 2/4  build    x r3       check red"
 	if got := line.Line(); got != want {
 		t.Errorf("Line() = %q, want %q", got, want)
 	}
@@ -36,6 +37,15 @@ var traceLineCases = []struct {
 			Event: Event{Kind: EventBuilderClosed, Gate: GateGreen},
 		},
 		want: "plan 2/4  build    x r4       check green",
+	},
+	{
+		name: "a red builder close",
+		line: TraceLine{
+			Plan: 2, Plans: 4, Phase: PhaseBuild, Step: StepBuilding,
+			Member: "x", Round: 4,
+			Event: Event{Kind: EventBuilderClosed, Gate: GateRed},
+		},
+		want: "plan 2/4  build    x r4       check red",
 	},
 	{
 		name: "a builder close with no check",

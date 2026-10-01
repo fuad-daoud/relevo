@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -45,6 +46,9 @@ const (
 	// HowUnlisted means the candidate serves the role but is not in
 	// order[role], and was reached after every listed candidate was gated.
 	HowUnlisted How = "unlisted"
+	// HowRotation means a limit gated the builder's account and the pick
+	// stayed on the same candidate with the next ungated login of its pool.
+	HowRotation How = "rotation"
 )
 
 // Skip is one reason a resolution passed over a candidate: a gate, or an off
@@ -63,6 +67,10 @@ type Skip struct {
 type Resolution struct {
 	Candidate candidate.Candidate
 	How       How
+	// Account names the login of the candidate's pool the round draws from,
+	// or "" on a host with no accounts. It rides into the pick and switch
+	// notes and onto the binding.
+	Account string
 	// Position is the candidate's 1-based index in order[role] when
 	// How == HowOrder, or 0 otherwise.
 	Position int
@@ -220,16 +228,81 @@ func uniqStrings(in []string) []string {
 //
 // It is the legacy registry's resolver: resolveRole over the derivation of
 // set and pol. It stays for tests and policy_view.go (#374 §4.3).
-func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []availability.Gate, token, role string) (Resolution, error) {
-	return resolveRole(legacyRegistry(set, pol), set, gates, token, role)
+func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []availability.Gate, token, role string, picks ...AccountPick) (Resolution, error) {
+	return resolveRole(legacyRegistry(set, pol), set, gates, token, role, picks...)
+}
+
+// AccountPick is the login pool a pick draws from: the configured set, the
+// live gate keys and the configured rotation mode. The zero value is a host
+// with no accounts, where a pick records no account and every note is
+// byte-identical to its pre-account text.
+type AccountPick struct {
+	Set   account.Set
+	Gates []string
+	Mode  account.Mode
+}
+
+// pickFor is the AccountPick a pick at rt draws from. It reads the live gate
+// keys, so a pool that still holds a free login is not skipped; a ledger this
+// cannot read reads as no gates, the same rule Gates follows.
+func pickFor(rt Runtime) AccountPick {
+	if len(rt.Accounts) == 0 {
+		return AccountPick{}
+	}
+	var keys []string
+	if rt.Gates != nil {
+		if l, err := availability.LoadLedger(rt.Gates); err == nil {
+			now := rt.Now
+			if now == nil {
+				now = time.Now
+			}
+			keys = availability.LiveGateKeys(l, now())
+		}
+	}
+	return AccountPick{Set: rt.Accounts, Gates: keys, Mode: account.Mode(rt.Policy.AccountsRotation())}
+}
+
+// withAccount fills the resolution's account: the first login of the chosen
+// candidate's harness and provider that no live gate covers. A host with no
+// accounts, or a decision that chose no candidate, is returned unchanged, so
+// no account means exactly the previous behaviour.
+func withAccount(res Resolution, picks ...AccountPick) Resolution {
+	if len(picks) == 0 || len(picks[0].Set) == 0 || res.How == "" {
+		return res
+	}
+	p := picks[0]
+	ref, err := candidate.ParseRef(res.Token())
+	if err != nil {
+		return res
+	}
+	pool := p.Set.Pool(account.Kind(ref.Harness), ref.Provider)
+	if len(pool) == 0 {
+		return res
+	}
+	a, ok, err := account.Select(pool, p.Gates, p.Mode)
+	if err != nil || !ok {
+		return res
+	}
+	res.Account = a.Name
+	return res
 }
 
 // resolveRole is resolveCandidate's rule with the role's ranked candidates,
 // order and tier read from the registry -- roles.json when one is loaded, the
-// legacy derivation otherwise (#374 §4.3). Every error text is the legacy one
+// legacy derivation otherwise (#374 §4.3) -- and then the account of the
+// chosen candidate's pool filled in. Every error text is the legacy one
 // except where a candidate is refused for not being in the file's list, which
 // the registry can only know in file mode.
-func resolveRole(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, token, role string) (Resolution, error) {
+func resolveRole(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, token, role string, picks ...AccountPick) (Resolution, error) {
+	res, err := resolveRoleBase(reg, set, gates, token, role)
+	if err != nil {
+		return res, err
+	}
+	return withAccount(res, picks...), nil
+}
+
+// resolveRoleBase is resolveRole without the account dimension.
+func resolveRoleBase(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, token, role string) (Resolution, error) {
 	gates = gatesForRole(gates, role)
 	if token != "" {
 		// The argument may be a candidate name or a canonical token (A1
@@ -383,6 +456,8 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 		body = fmt.Sprintf("order #%d", res.Position)
 	case HowUnlisted:
 		body = "unlisted, after order"
+	case HowRotation:
+		body = "same candidate, next account"
 	case HowExplicit:
 		if res.InheritedFrom != "" {
 			body = "explicit, inherited from " + res.InheritedFrom + ", policy bypassed"
@@ -413,6 +488,14 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 	// (A2 §4.3), printed with the gated candidate's own note.
 	if res.OffNote != "" {
 		out += "; " + res.OffNote
+	}
+
+	// The account is part of the record: a limit is recorded per login, so a
+	// note that named only the candidate would hide which login the round
+	// actually drew from. Empty on a host with no accounts, which keeps the
+	// note byte-identical to its pre-account text.
+	if res.Account != "" {
+		out += "; account " + res.Account
 	}
 
 	return out + placementClause(res.Placement)

@@ -131,7 +131,7 @@ func Tools() []ToolSpec {
 		},
 		{
 			Name:        "done",
-			Description: "Mark a binding done once its round is verified; relaying stops. Calls relevo.Done.",
+			Description: "Mark a binding done once its round is verified; relaying stops. A name that is a chain releases every member instead. Calls relevo.Done.",
 			InputSchema: schemaObject([]string{"name"}, map[string]any{
 				"name": map[string]any{"type": "string", "description": "binding name"},
 			}),

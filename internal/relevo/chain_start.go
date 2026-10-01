@@ -428,7 +428,7 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]Resolutio
 			return nil, fmt.Errorf("chain %s actor %q must be a %s actor, not a %s", m.part, m.actor, m.shape, shape)
 		}
 		res, err := resolveRole(rt.RoleRegistry(), rt.Candidates,
-			availability.Gates(AvailabilityDeps(rt)), "", bindingRole(store.Binding{Role: normRole(m.actor)}))
+			availability.Gates(AvailabilityDeps(rt)), "", bindingRole(store.Binding{Role: normRole(m.actor)}), pickFor(rt))
 		if err != nil {
 			return nil, err
 		}
@@ -465,6 +465,7 @@ func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, r
 			return nil, err
 		}
 		b := chainMemberBinding(m, ep, c.Ref().String(), base)
+		b.BuilderAccount = res.Account
 		b.Tier = string(tier)
 		if m.writer {
 			b.Gate = set.Gate
@@ -547,8 +548,12 @@ func chainRow(opts ChainOptions, set chain.Settings, members []chainMember, base
 		Feature:        opts.Feature,
 		Ticket:         base.ticket,
 		MasterMindID:   base.mastermindID,
-		CreatedAt:      at,
-		UpdatedAt:      at,
+		// Plan 1 starts here: the plan-start commit is the commit the
+		// builder's worktree was cut from, so plan 1's review can diff the
+		// plan's whole span.
+		PlanStartCommit: base.commit,
+		CreatedAt:       at,
+		UpdatedAt:       at,
 	}, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -314,9 +315,9 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []availability.Ga
 // their candidate lists and their refusal come from roles.json, the header
 // names the file, a role with nothing to rank says so, and the "no policy
 // configured" line never prints -- roles.json is the policy.
-func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy, gates []availability.Gate, hist availability.History, now time.Time, loc *time.Location) string {
+func FormatPolicyFor(reg *roles.Registry, accounts account.Set, set *candidate.Set, pol policy.Policy, gates []availability.Gate, live []availability.Entry, hist availability.History, now time.Time, loc *time.Location) string {
 	if !reg.FileMode() {
-		return FormatPolicy(set, pol, gates, hist, now, loc)
+		return FormatPolicy(set, pol, gates, hist, now, loc) + formatAccountPools(accounts, gates, live)
 	}
 	if set == nil || set.Len() == 0 {
 		return "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
@@ -356,6 +357,8 @@ func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 	if s := formatHistory(hist, loc); s != "" {
 		sb.WriteString("\n" + s)
 	}
+
+	sb.WriteString(formatAccountPools(accounts, gates, live))
 
 	return sb.String()
 }

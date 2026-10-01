@@ -183,6 +183,7 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		DiffTree:       diffTree,
 		AckedRound:     ackedRound,
 		Candidate:      b.BuilderCandidate,
+		Account:        b.BuilderAccount,
 		RoundStartedAt: b.RoundStartedAt,
 		RoundCap:       b.RoundCap,
 		RoundTimeoutMS: b.RoundTimeoutMS,

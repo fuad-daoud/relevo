@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -353,7 +354,7 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureChainMember}
+	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember}
 	if !slices.Equal(who.Features, wantFeatures) {
 		t.Fatalf("Features = %v, want %v", who.Features, wantFeatures)
 	}
@@ -1419,6 +1420,63 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 	}
 	if resp.Removed != 0 {
 		t.Errorf("second removed = %d, want 0", resp.Removed)
+	}
+}
+
+// TestServerRuntimeCarriesAccounts: the server's own accounts section reaches
+// every owner runtime, which is what gives a served round rotation.
+func TestServerRuntimeCarriesAccounts(t *testing.T) {
+	set := account.Set{{Name: "work", Harness: account.Claude, Groups: []string{"anthropic"}, ConfigDir: "/home/u/.claude-work"}}
+	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Accounts: set, Now: time.Now})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rt := s.runtimeAt(filepath.Join(s.cfg.Root, "bindings", "x"))
+	if len(rt.Accounts) != 1 || rt.Accounts[0].Name != "work" {
+		t.Fatalf("runtime accounts = %+v, want the server's own pool", rt.Accounts)
+	}
+}
+
+// TestUnavailableAcceptsAccountGateKey: a group@account token is recorded as
+// the account key itself, so a forwarded account gate keeps the server's own
+// per-account ledger instead of over-gating the whole provider.
+func TestUnavailableAcceptsAccountGateKey(t *testing.T) {
+	s, kpA := newAvailableServer(t)
+	handler := s.Handler()
+
+	body, _ := json.Marshal(remote.UnavailableRequest{Token: "anthropic@work", Reason: "rate limited test"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/unavailable", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unavailable status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	l, err := availability.LoadLedger(db.PrefixKV{KV: s.DB(), Prefix: "serve."})
+	if err != nil {
+		t.Fatalf("LoadLedger: %v", err)
+	}
+	var subjects []string
+	for _, e := range l.Entries {
+		if e.Kind == availability.RateLimited {
+			subjects = append(subjects, e.Subject)
+		}
+	}
+	if !slices.Equal(subjects, []string{"anthropic@work"}) {
+		t.Errorf("ledger subjects = %v, want [anthropic@work]", subjects)
+	}
+}
+
+// TestUnavailableRejectsUnknownAccountProvider: an account key naming a group
+// no configured candidate serves is refused, not recorded.
+func TestUnavailableRejectsUnknownAccountProvider(t *testing.T) {
+	s, kpA := newAvailableServer(t)
+	handler := s.Handler()
+
+	body, _ := json.Marshal(remote.UnavailableRequest{Token: "nope@work", Reason: "rate limited test"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/unavailable", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unavailable status = %d, want 400; body: %s", rec.Code, rec.Body.String())
 	}
 }
 

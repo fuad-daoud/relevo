@@ -154,9 +154,10 @@ func chainRowWithState(c db.ChainRow, s chain.State, now time.Time) db.ChainRow 
 // chainEventFromClose maps one member close onto the event the state machine
 // reads. part names the closing member's part; b is the closing binding and
 // body is its in-memory output (before a reader's block is stripped). outcome
-// and gate describe a builder's close. stopped is the caller's fact that the
-// close was a stop.
-func chainEventFromClose(rt Runtime, part string, b store.Binding, body []byte, outcome string, gate *store.GateRecord, stopped bool) chain.Event {
+// and gate describe a builder's close; tail is the parsed report tail and note
+// the close's own note, both of which a non-done builder close folds into its
+// one-line reason. stopped is the caller's fact that the close was a stop.
+func chainEventFromClose(rt Runtime, part string, b store.Binding, body []byte, outcome string, gate *store.GateRecord, stopped bool, tail reporttail.Tail, note string) chain.Event {
 	// The event names the member by its part: that is the vocabulary the
 	// state machine's Awaiting column stores, and Next compares against it.
 	ev := chain.Event{Member: part, Round: b.Round}
@@ -169,6 +170,12 @@ func chainEventFromClose(rt Runtime, part string, b store.Binding, body []byte, 
 		ev.Kind = chain.EventBuilderClosed
 		ev.Outcome = outcome
 		ev.Gate = chainGateResult(gate)
+		// A builder close that is not done carries why in one line from its
+		// report tail. A done close carries no reason, and every other part's
+		// event is left as it was.
+		if outcome != reporttail.OutcomeDone {
+			ev.Reason = chain.BuilderHaltReason(tail, note, outcome)
+		}
 	case chain.MemberReviewer:
 		ev.Kind = chain.EventReviewerClosed
 		ev.Verdict = chain.ParseVerdict(body)
@@ -246,7 +253,14 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 		return chainTerminal(ctx, rt, tx, c, before, next, ev, act, b.Name)
 	}
 
-	text, err := chainSeedText(rt, tx, c, next, act, ev.Round)
+	// The seed reads the closing member's own record -- the builder's closed
+	// tree, for the plan's cumulative diff -- so persist the advanced round
+	// before building it. The caller saves the same binding after this critical
+	// section; doing it here just makes it visible to the seed's own reads.
+	if err := tx.Save(b); err != nil {
+		return err
+	}
+	text, err := chainSeedText(rt, tx, c, next, act, ev.Round, ev.Kind == chain.EventPlannerClosed)
 	if err != nil {
 		return err
 	}
@@ -268,13 +282,36 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	}
 	// The member's own round is the round the chain now awaits; it is never 0.
 	next.Awaiting.Round = sent.Round
+	// A send that starts a plan records the commit the plan began at, so its
+	// review can diff the plan's whole span (plan-start commit -> the closing
+	// round's tree). A reviewer's pass onto the next plan, and the security
+	// phase's fix plan, both start one; a correction, a repair and a resume
+	// re-send do not, and keep the commit already recorded.
+	if before.Step == chain.StepReviewing && next.Plan != before.Plan {
+		c.PlanStartCommit = sent.RoundBaselineHead
+	}
+	if before.Step == chain.StepPlanningFixes {
+		c.PlanStartCommit = sent.RoundBaselineHead
+	}
 	return chainSaveWithTrace(rt, tx, c, before, next, ev, act, b.Name)
 }
 
-// chainSeedText is the prompt a send action hands over: a builder gets the
-// chain's own copy of the plan the transition advanced to, every other member
-// gets its rendered seed.
-func chainSeedText(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (string, error) {
+// chainSeedText is the prompt a send action hands over. A builder send with
+// fromPlanner set gets the planning member's own plan for the round that closed
+// -- the correction or fix plan the planner wrote -- and the chain's own copy
+// of the plan otherwise; every other member gets its rendered seed.
+func chainSeedText(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int, fromPlanner bool) (string, error) {
+	if act.Member == chain.MemberBuilder && fromPlanner {
+		path, err := plannerReportPath(tx, c.Planner, closedRound)
+		if err != nil {
+			return "", err
+		}
+		body, err := rt.Store.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		return string(body), nil
+	}
 	paths, err := chainPlanPaths(c)
 	if err != nil {
 		return "", err
@@ -298,9 +335,12 @@ func chainSeedText(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 
 // chainSeedView builds one send's inputs: the plan copies the chain holds and
 // the members' artifacts for the round that just closed. The reviewer's and
-// correction seeds also carry the closing round's gate -- the check result and
-// its log -- read from the builder's report entry; the other seeds render no
-// gate and need no lookup.
+// correction seeds name the builder round their closing event judged -- the
+// closing round itself when the builder closed it, the builder's newest closed
+// round when the reviewer did -- and carry that round's gate, the plan's
+// cumulative diff and the round's own prompt when it differs from the plan
+// copy. The security and fixes seeds keep the closing round's values and render
+// no gate.
 func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (chain.SeedView, error) {
 	v := chain.SeedView{
 		Plan: s.Plan, Plans: s.Plans, Corrections: s.Corrections,
@@ -309,17 +349,19 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 	if paths, err := chainPlanPaths(c); err == nil && s.Plan >= 1 && s.Plan <= len(paths) {
 		v.PlanPath = paths[s.Plan-1]
 	}
-	v.ReportPath = rt.Store.ReportPath(c.Builder, closedRound)
-	v.DiffPath = rt.Store.DiffPath(c.Builder, closedRound)
-	v.BranchDiffPath = v.DiffPath
 	switch act.Seed {
-	case chain.SeedCorrection:
-		v.OutputPath = rt.Store.ReportPath(c.Reviewer, closedRound)
-	case chain.SeedSecurity, chain.SeedFixes:
-		v.OutputPath = rt.Store.ReportPath(c.Security, closedRound)
-	}
-	if act.Seed == chain.SeedReviewer || act.Seed == chain.SeedCorrection {
-		rec, err := chainRoundGate(tx, c.Builder, closedRound)
+	case chain.SeedReviewer, chain.SeedCorrection:
+		// The builder round the event judged: the reviewer's own close judged
+		// the builder's round `closedRound`; a correction is seeded from the
+		// reviewer's close, so it names the builder's newest closed round.
+		builderRound := closedRound
+		if act.Seed == chain.SeedCorrection {
+			builderRound = memberNewestClosedRound(tx, c.Builder)
+		}
+		v.ReportPath = rt.Store.ReportPath(c.Builder, builderRound)
+		v.DiffPath = rt.Store.DiffPath(c.Builder, builderRound)
+		v.BranchDiffPath = v.DiffPath
+		rec, err := chainRoundGate(tx, c.Builder, builderRound)
 		if err != nil {
 			return chain.SeedView{}, err
 		}
@@ -327,6 +369,16 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 			v.GateResult = chainGateResult(rec)
 			v.GateLogPath = rec.LogPath
 		}
+		v.PlanDiffPath = chainPlanDiff(rt, tx, c, c.Builder, builderRound)
+		v.RoundPromptPath = chainRoundPromptPath(rt, v.PlanPath, c.Builder, builderRound)
+		if act.Seed == chain.SeedCorrection {
+			v.OutputPath = rt.Store.ReportPath(c.Reviewer, closedRound)
+		}
+	case chain.SeedSecurity, chain.SeedFixes:
+		v.OutputPath = rt.Store.ReportPath(c.Security, closedRound)
+		v.ReportPath = rt.Store.ReportPath(c.Builder, closedRound)
+		v.DiffPath = rt.Store.DiffPath(c.Builder, closedRound)
+		v.BranchDiffPath = v.DiffPath
 	}
 	return v, nil
 }

@@ -237,6 +237,7 @@ func filledBindingView() BindingView {
 		DiffTree:       "5555666677778888999900001111222233334444",
 		AckedRound:     1,
 		Candidate:      "agy/openai/gpt-4",
+		Account:        "work",
 		RoundStartedAt: fixedTime,
 		RoundCap:       10,
 		RoundTimeoutMS: 60000,

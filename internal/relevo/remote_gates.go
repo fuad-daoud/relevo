@@ -3,13 +3,110 @@ package relevo
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// accountGateKey reports whether subject is a group@account gate key rather
+// than a bare group, a candidate name or a candidate token. A candidate name
+// and a provider never contain "@", so the separator is unambiguous.
+func accountGateKey(subject string) bool {
+	_, name, ok := account.ParseGateKey(subject)
+	return ok && name != ""
+}
+
+// serverHasAccounts reports whether server advertises remote.FeatureAccounts.
+// A WhoAmI that could not be read returns its error rather than a false, so
+// the caller reports the failure instead of treating an unasked server as
+// account-aware.
+func serverHasAccounts(ctx context.Context, rt Runtime, server string) (bool, error) {
+	who, err := rt.Remote.WhoAmI(ctx, server)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(who.Features, remote.FeatureAccounts), nil
+}
+
+// accountRefusal is the one line a forward prints instead of sending an
+// account key to a server that does not advertise accounts: the key is a
+// subject that server cannot resolve, so it would be recorded as a provider
+// it does not have.
+func accountRefusal(server string) string {
+	return fmt.Sprintf("%s: account gates unsupported; upgrade the server", server)
+}
+
+// forwardAccountKeys sends keys, each a group@account gate key, to every open
+// binding on server. It checks the feature first and, when server does not
+// advertise accounts, appends accountRefusal and reports false: the caller
+// then forwards nothing to that server. One line names the keys sent.
+func forwardAccountKeys(ctx context.Context, rt Runtime, server string, keys []string, open []store.Binding, reason string, lines *[]string) bool {
+	ok, err := serverHasAccounts(ctx, rt, server)
+	if err != nil {
+		*lines = append(*lines, fmt.Sprintf("%s: read features: %v", server, err))
+		return false
+	}
+	if !ok {
+		*lines = append(*lines, accountRefusal(server))
+		return false
+	}
+
+	*lines = append(*lines, fmt.Sprintf("%s: gated %s", server, strings.Join(keys, ", ")))
+	for _, b := range open {
+		if b.Builder.Server != server {
+			continue
+		}
+		for _, key := range keys {
+			if err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, key, reason); err != nil {
+				*lines = append(*lines, fmt.Sprintf("%s: %s: %v", b.Name, b.Builder.Server, err))
+			}
+		}
+	}
+	return true
+}
+
+// forwardAccountNames names the login of each live group@account key this
+// host's ledger records for token's provider, in ledger order: the logins a
+// `gate <token>` just gated locally, which the server's own rotation must gate
+// too. Nil when token is not a candidate, when no gates store is configured,
+// or when the ledger holds no account key for that provider -- exactly the
+// hosts where the bare token must keep travelling.
+func forwardAccountNames(rt Runtime, token string) []string {
+	if rt.Gates == nil {
+		return nil
+	}
+	ref, err := candidate.ParseRef(token)
+	if err != nil {
+		return nil
+	}
+	l, err := availability.LoadLedger(rt.Gates)
+	if err != nil {
+		return nil
+	}
+	now := time.Now()
+	if rt.Now != nil {
+		now = rt.Now()
+	}
+
+	seen := map[string]bool{}
+	var names []string
+	for _, key := range availability.LiveGateKeys(l, now) {
+		group, name, ok := account.ParseGateKey(key)
+		if !ok || group != ref.Provider || name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
+}
 
 // clientCandidateToken resolves subject -- a candidate name or a canonical token
 // -- to this machine's token and the candidate's short name. A subject this
@@ -186,7 +283,20 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 	}
 	sort.Strings(servers)
 
+	// An account gate key the caller already resolved travels as itself; a
+	// candidate token's logins are read from the live ledger, so a
+	// `gate <token>` forwards the same group@account keys it gated locally.
+	// Both are empty on a host with no accounts, where the bare server token
+	// below stands unchanged.
+	direct := accountGateKey(token)
+	acctNames := forwardAccountNames(rt, token)
+
 	for _, server := range servers {
+		if direct {
+			forwardAccountKeys(ctx, rt, server, []string{token}, open, reason, &lines)
+			continue
+		}
+
 		srv, miss, err := serverTokenFor(ctx, rt, server, token, name)
 		if err != nil {
 			lines = append(lines, fmt.Sprintf("%s: list candidates: %v", server, err))
@@ -195,6 +305,16 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 		if srv == "" {
 			lines = append(lines, miss)
 			continue
+		}
+		if len(acctNames) > 0 {
+			if ref, perr := candidate.ParseRef(srv); perr == nil {
+				keys := make([]string, len(acctNames))
+				for i, n := range acctNames {
+					keys[i] = account.GateKey(ref.Provider, n)
+				}
+				forwardAccountKeys(ctx, rt, server, keys, open, reason, &lines)
+				continue
+			}
 		}
 		if srv != token {
 			lines = append(lines, fmt.Sprintf("%s: gated %s for %s", server, srv, token))
@@ -249,6 +369,20 @@ func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string 
 
 	var lines []string
 	for _, server := range servers {
+		// An account clear travels only to a server that understands the key;
+		// a server without the feature would refuse the subject it cannot
+		// resolve, so the client refuses it first and names the upgrade.
+		if accountGateKey(token) {
+			ok, ferr := serverHasAccounts(ctx, rt, server)
+			if ferr != nil {
+				lines = append(lines, fmt.Sprintf("%s: read features: %v", server, ferr))
+				continue
+			}
+			if !ok {
+				lines = append(lines, accountRefusal(server))
+				continue
+			}
+		}
 		send := token
 		if isCandidate {
 			if srv, _, err := serverTokenFor(ctx, rt, server, token, name); err == nil && srv != "" {

@@ -87,15 +87,16 @@ func (l TraceLine) detail() string {
 	return string(l.Event.Kind)
 }
 
-// gateWord is a builder close's gate as the trace shows it. A red gate has
-// already spent the regate budget, which is what the line names; a round with
-// no check says so rather than reading as green.
+// gateWord is a builder close's gate as the trace shows it. A red gate reads
+// as a plain red check: the regate budget it spent is the state machine's own
+// fact, not the line's. A round with no check says so rather than reading as
+// green.
 func gateWord(gate string) string {
 	switch gate {
 	case GateNone:
 		return "no check"
 	case GateRed:
-		return "check red after regate"
+		return "check red"
 	}
 	return "check green"
 }

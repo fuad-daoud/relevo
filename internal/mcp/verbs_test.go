@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -257,6 +258,105 @@ func TestRelevoVerbsDoneErrorPropagates(t *testing.T) {
 
 	if _, err := v.Done(context.Background(), "", DoneArgs{Name: "nonexistent"}); err == nil {
 		t.Fatal("Done on a binding that does not exist must error")
+	}
+}
+
+// seedVerbChain writes one chain row and its three member bindings into s: a
+// store-only fixture, so the done-routing tests need no harness and no network.
+func seedVerbChain(t *testing.T, s *store.Store, name, status string) {
+	t.Helper()
+
+	now := time.Unix(0, 0).UTC()
+	c := db.ChainRow{
+		ID: db.NewID(), Name: name, Status: status, Phase: "build", Step: "building",
+		Plan: 1, Plans: 1, PlanPathsJSON: []byte(`["/p/plan-1.md"]`), SettingsJSON: []byte(`{}`),
+		AwaitingMember: "builder", AwaitingRound: 1,
+		Builder: name, Reviewer: name + "-rev", Planner: name + "-plan",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.WithLock(func(tx *store.Tx) error {
+		for _, m := range []store.Binding{
+			{Name: name, CWD: "/repo", Round: 1, State: store.StateActive},
+			{Name: name + "-rev", CWD: "/repo", Round: 1, State: store.StateActive, Shape: store.ShapeReader},
+			{Name: name + "-plan", CWD: "/repo", Round: 1, State: store.StateActive, Shape: store.ShapeReader},
+		} {
+			if err := tx.Save(m); err != nil {
+				return err
+			}
+		}
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatalf("seed chain %s: %v", name, err)
+	}
+}
+
+// TestRelevoVerbsDoneOnAChainReleasesEveryMember pins the route: done on a name
+// that is a chain calls relevo.ChainDone, so every member is released and the
+// chain is marked done -- the same one row status shows for the chain.
+func TestRelevoVerbsDoneOnAChainReleasesEveryMember(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	seedVerbChain(t, s, "shop", "stopped")
+
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
+	res, err := v.Done(context.Background(), "", DoneArgs{Name: "shop"})
+	if err != nil {
+		t.Fatalf("Done on a chain name: %v", err)
+	}
+	dr, ok := res.(doneResult)
+	if !ok {
+		t.Fatalf("result = %#v, want doneResult", res)
+	}
+	if dr.Text == "" {
+		t.Error("Text must be set from relevo.DoneText")
+	}
+
+	for _, member := range []string{"shop", "shop-rev", "shop-plan"} {
+		b, err := s.Load(member)
+		if err != nil {
+			t.Fatalf("Load %s: %v", member, err)
+		}
+		if b.State != store.StateDone {
+			t.Errorf("member %s state = %q, want done", member, b.State)
+		}
+	}
+	row, err := s.Chain("shop")
+	if err != nil {
+		t.Fatalf("Chain: %v", err)
+	}
+	if row.Status != "done" {
+		t.Errorf("chain status = %q, want done", row.Status)
+	}
+}
+
+// TestRelevoVerbsDoneRefusedOnARunningChain pins both refusals through the tool:
+// done on a running chain's name is the chain refusal, done on one of its
+// members is the running-chain-member refusal, and neither marks anything done.
+func TestRelevoVerbsDoneRefusedOnARunningChain(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	seedVerbChain(t, s, "shop", "running")
+
+	v := &RelevoVerbs{RT: rt, MasterMind: mcpTestMasterMindA}
+
+	if _, err := v.Done(context.Background(), "", DoneArgs{Name: "shop"}); err == nil {
+		t.Fatal("Done on a running chain = nil, want a refusal")
+	} else if !strings.Contains(err.Error(), "relevo stop shop first") {
+		t.Errorf("err = %v, want it to name `relevo stop shop first`", err)
+	}
+
+	if _, err := v.Done(context.Background(), "", DoneArgs{Name: "shop-rev"}); !errors.Is(err, relevo.ErrRunningChainMember) {
+		t.Errorf("Done on a running chain's member = %v, want ErrRunningChainMember", err)
+	}
+
+	for _, member := range []string{"shop", "shop-rev", "shop-plan"} {
+		b, err := s.Load(member)
+		if err != nil {
+			t.Fatalf("Load %s: %v", member, err)
+		}
+		if b.State == store.StateDone {
+			t.Errorf("member %s was marked done by a refused call", member)
+		}
 	}
 }
 

@@ -25,7 +25,7 @@ func repickStale(rt Runtime, b store.Binding, allowYolo bool) (store.Binding, *R
 	}
 
 	old := b.BuilderCandidate
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", bindingRole(b))
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", bindingRole(b), pickFor(rt))
 	if err != nil {
 		return b, nil, fmt.Errorf("builder %s is no longer configured and no other candidate can take it: %w", old, err)
 	}

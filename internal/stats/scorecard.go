@@ -144,3 +144,41 @@ func buildScorecard(in Inputs, rows []db.RoundRow) []ScoreRow {
 	})
 	return out
 }
+
+// buildAccountScorecard is buildScorecard grouped by the login a round drew
+// from rather than its candidate. Rounds with no account -- every host with
+// none -- produce no rows, so the two report shapes never disagree on whether
+// an account was recorded. The per-account TTFT and plan flags are not known,
+// so a row's Token is the account name and those fields stay zero.
+func buildAccountScorecard(in Inputs, rows []db.RoundRow) []ScoreRow {
+	accs := map[string]*scoreAcc{}
+	var order []string
+	for _, r := range rows {
+		if r.Account == nil {
+			continue
+		}
+		if in.Keep != nil && !in.Keep(r) {
+			continue
+		}
+		tok := *r.Account
+		a := accs[tok]
+		if a == nil {
+			a = &scoreAcc{}
+			accs[tok] = a
+			order = append(order, tok)
+		}
+		a.add(in, r)
+	}
+
+	out := make([]ScoreRow, 0, len(order))
+	for _, tok := range order {
+		out = append(out, accs[tok].row(in, tok))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Rounds != out[j].Rounds {
+			return out[i].Rounds > out[j].Rounds
+		}
+		return out[i].Token < out[j].Token
+	})
+	return out
+}

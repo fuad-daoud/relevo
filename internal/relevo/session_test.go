@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/account"
 )
 
 func TestHomeSessionLocatorGlobsAnySlug(t *testing.T) {
@@ -49,5 +51,36 @@ func TestHomeSessionLocatorGlobsAnySlug(t *testing.T) {
 	}
 	if _, ok := locate("claude", "*"); ok {
 		t.Error("a glob metacharacter in the id must be refused")
+	}
+}
+
+// TestAccountSessionLocatorSearchesEveryClaudeHome pins the account-aware
+// locator: a session written under an account's own config dir is found even
+// though it is absent from the default home, and an empty pool searches only
+// the default home, exactly as HomeSessionLocator does.
+func TestAccountSessionLocatorSearchesEveryClaudeHome(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	work := t.TempDir()
+	slug := filepath.Join(work, "projects", "-slug")
+	if err := os.MkdirAll(slug, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(slug, "S.jsonl")
+	if err := os.WriteFile(want, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	accounts := account.Set{{Name: "work", Harness: account.Claude, Groups: []string{"test"}, ConfigDir: work}}
+	locate := AccountSessionLocator(home, accounts)
+	if path, ok := locate("claude", "S"); !ok || path != want {
+		t.Errorf("locate(claude, S) = %q, %v; want the account-home record %q", path, ok, want)
+	}
+	if _, ok := locate("opencode", "S"); ok {
+		t.Error("a non-claude kind must not locate")
+	}
+	if _, ok := AccountSessionLocator(home, nil)("claude", "S"); ok {
+		t.Error("with no accounts the default home alone must be searched")
 	}
 }

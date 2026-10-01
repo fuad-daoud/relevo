@@ -232,7 +232,7 @@ CREATE TABLE chains (
     mastermind_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-)
+, plan_start_commit TEXT NOT NULL DEFAULT '')
 
 table config_doc config_doc
 CREATE TABLE config_doc (
@@ -355,7 +355,7 @@ CREATE TABLE round (
     cost_basis TEXT,
     report_outcome TEXT,
     switches INTEGER NOT NULL
-, actor TEXT NOT NULL DEFAULT 'builder')
+, actor TEXT NOT NULL DEFAULT 'builder', account TEXT)
 
 table round_file round_file
 CREATE TABLE round_file (
@@ -402,4 +402,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 , record_json_codec INTEGER NOT NULL DEFAULT 0, rendered_codec INTEGER NOT NULL DEFAULT 0)
 
-schema_versions have=16 know=16
+schema_versions have=18 know=18
