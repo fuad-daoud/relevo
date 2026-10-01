@@ -150,6 +150,11 @@ func ChainStart(ctx context.Context, rt Runtime, opts ChainOptions) (ChainResult
 	if opts.Server != "" {
 		return chainStartServer(ctx, rt, opts)
 	}
+	// A chain started with a named workflow runs on the workflow engine; the
+	// shipped default reached through no --workflow keeps the old path.
+	if opts.Workflow != "" {
+		return chainStartWorkflow(ctx, rt, opts)
+	}
 	plan, err := chainResolveStart(ctx, rt, opts)
 	if err != nil {
 		return ChainResult{}, err

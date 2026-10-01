@@ -40,12 +40,14 @@ const (
 	// ShowTrace is a chain's ordered trace, not a binding's round: it is the
 	// one section a chain name answers and a binding name refuses.
 	ShowTrace ShowSection = "trace"
+	// ShowWorkflow is the stored definition a workflow chain runs.
+	ShowWorkflow ShowSection = "workflow"
 )
 
 // ValidShowSection reports whether s is one of the ShowSection values.
 func ValidShowSection(s ShowSection) bool {
 	switch s {
-	case ShowPrompt, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate, ShowFindings, ShowOutput, ShowArtifacts, ShowTrace:
+	case ShowPrompt, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate, ShowFindings, ShowOutput, ShowArtifacts, ShowTrace, ShowWorkflow:
 		return true
 	}
 	return false
@@ -115,6 +117,9 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 	// rather than the builder's newest round.
 	if opts.Section == ShowTrace {
 		return showTrace(ctx, rt, opts)
+	}
+	if opts.Section == ShowWorkflow {
+		return showWorkflow(ctx, rt, opts)
 	}
 
 	b, err := rt.Store.Load(opts.Name)

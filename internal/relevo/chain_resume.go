@@ -95,6 +95,11 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	if chainOnServer(c) {
 		return chainServerResume(ctx, rt, c, opts)
 	}
+	// A chain that carries a workflow resumes on the engine, not on the fixed
+	// state machine's step words.
+	if len(c.WorkflowJSON) > 0 {
+		return chainResumeWorkflow(ctx, rt, c, opts)
+	}
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
 	}

@@ -510,7 +510,7 @@ var registry = []verbEntry{
 			"--after", "--anchors", "--artifact", "--artifacts", "--diff", "--drift",
 			"--findings", "--follow", "--gate", "--json", "--log", "--output",
 			"--owner", "--peek", "--prompt", "--report", "--round", "--stat",
-			"--state", "--trace", "--transcript",
+			"--state", "--trace", "--transcript", "--workflow",
 		},
 		Output: "json:ShowResult; --log prints NDJSON events",
 		Exit:   []int{0, 1, 2},

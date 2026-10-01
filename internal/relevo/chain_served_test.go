@@ -245,7 +245,7 @@ func TestServedChainMemberSendQueues(t *testing.T) {
 			Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
 		}
 		if err := rt.Store.WithLock(func(tx *store.Tx) error {
-			_, err := chainApply(context.Background(), rt, tx, builder, ev, nil)
+			_, err := chainApply(context.Background(), rt, tx, builder, ev, nil, nil)
 			return err
 		}); err != nil {
 			t.Fatalf("chainApply: %v", err)
@@ -339,7 +339,7 @@ func TestServedChainEndQueuesNoDelivery(t *testing.T) {
 			Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
 		}
 		if err := rt.Store.WithLock(func(tx *store.Tx) error {
-			_, err := chainApply(context.Background(), rt, tx, builder, builderEv, nil)
+			_, err := chainApply(context.Background(), rt, tx, builder, builderEv, nil, nil)
 			return err
 		}); err != nil {
 			t.Fatalf("builder chainApply: %v", err)
@@ -351,7 +351,7 @@ func TestServedChainEndQueuesNoDelivery(t *testing.T) {
 			Verdict: chain.VerdictPass,
 		}
 		if err := rt.Store.WithLock(func(tx *store.Tx) error {
-			_, err := chainApply(context.Background(), rt, tx, rev, revEv, nil)
+			_, err := chainApply(context.Background(), rt, tx, rev, revEv, nil, nil)
 			return err
 		}); err != nil {
 			t.Fatalf("reviewer chainApply: %v", err)

@@ -435,8 +435,11 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// before the reader output is stripped below (a re-read there would find
 	// no block). It names the closing member and the round that closed.
 	var chainEvent chain.Event
+	var closeWF *chainCloseWF
 	if chainErr == nil {
-		if part := chainPartOf(chainRow, b.Name); part != "" {
+		if len(chainRow.WorkflowJSON) > 0 {
+			closeWF = &chainCloseWF{Body: body, Path: path, Outcome: outcome, Stopped: stopped}
+		} else if part := chainPartOf(chainRow, b.Name); part != "" {
 			chainEvent = chainEventFromClose(rt, part, b, body, outcome, gate, stopped, tail, note)
 		}
 	}
@@ -674,12 +677,12 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// member, halt, stop, finish) runs on the chain's own sender in this same
 	// critical section. A close that did not advance the chain writes no
 	// trace row.
-	if chainEvent.Kind != "" {
+	if chainEvent.Kind != "" || closeWF != nil {
 		// chainApply returns the binding its action wrote: a remote member's
 		// staged repair carries the chain's own bookkeeping (RepairCount,
 		// LastGateSig, the staged round's baseline head), and the caller saves
 		// what it returns.
-		next, cerr := chainApply(ctx, rt, tx, b, chainEvent, gate)
+		next, cerr := chainApply(ctx, rt, tx, b, chainEvent, gate, closeWF)
 		b = next
 		if cerr != nil {
 			return b, cerr

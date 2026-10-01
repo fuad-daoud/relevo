@@ -38,6 +38,9 @@ func chainFactsOf(s *store.Store, c db.ChainRow) view.ChainFacts {
 		Awaiting:    c.AwaitingMember,
 		Reason:      c.Reason,
 	}
+	if len(c.WorkflowJSON) > 0 {
+		chainFlowFacts(&f, c)
+	}
 	if (c.Status == string(chain.StatusHalted) || c.Status == string(chain.StatusStopped)) &&
 		chainBuilderRoundOpen(s, c) {
 		if b, err := s.Load(c.Builder); err == nil {
@@ -45,6 +48,30 @@ func chainFactsOf(s *store.Store, c db.ChainRow) view.ChainFacts {
 		}
 	}
 	return f
+}
+
+// chainFlowFacts fills a workflow chain's own facts: the step its engine is
+// on, the round (or check run) it awaits, and its position in the plan input.
+func chainFlowFacts(f *view.ChainFacts, c db.ChainRow) {
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		return
+	}
+	f.StepAt = st.Awaiting.Step
+	if f.StepAt == "" {
+		f.StepAt = st.At
+	}
+	f.Round = st.Awaiting.Round
+	f.Check = st.Awaiting.Step != "" && st.Awaiting.Member == ""
+	if f.Check {
+		f.Round = st.Awaiting.Run
+	}
+	it := st.Iter["plans"]
+	f.PlanTotal = len(it.Items)
+	f.PlanPos = it.Index + 1
+	if f.PlanPos < 1 {
+		f.PlanPos = 1
+	}
 }
 
 // chainStoreState maps a chain's status onto the stored binding state the

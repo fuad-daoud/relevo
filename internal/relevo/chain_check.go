@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainCheckGreen is a check that passed and chainCheckRed one that did not;
@@ -104,8 +105,8 @@ func chainAdvanceCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 
 // tickChainChecks advances every chain's in-flight check once per tick, one
 // check per chain: a chain's steps run one at a time, so at most one check is
-// in flight. Nothing registers it yet -- the engine that starts a check
-// advances it until then.
+// in flight. A settled check is fed back to the engine as check_closed in the
+// same critical section.
 func tickChainChecks(ctx context.Context, rt Runtime) {
 	chains, err := rt.Store.Chains()
 	if err != nil {
@@ -125,9 +126,13 @@ func tickChainChecks(ctx context.Context, rt Runtime) {
 }
 
 // chainAdvanceOneCheck advances the chain's oldest unsettled check, if it has
-// one. Runs are allocated contiguously, so the row list stops at the first run
-// the chain has not recorded.
+// one, and feeds its end to the engine. Runs are allocated contiguously, so the
+// row list stops at the first run the chain has not recorded. A chain with no
+// workflow never started a check, so it is left alone.
 func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
+	if len(c.WorkflowJSON) == 0 {
+		return nil
+	}
 	for run := 1; ; run++ {
 		row, err := tx.ChainCheck(c.Name, run)
 		if errors.Is(err, store.ErrNotFound) {
@@ -139,8 +144,17 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		if row.Result != "" {
 			continue
 		}
-		_, _, err = chainAdvanceCheck(ctx, rt, tx, c, run)
-		return err
+		result, logKey, err := chainAdvanceCheck(ctx, rt, tx, c, run)
+		if err != nil {
+			return err
+		}
+		if result == "" {
+			return nil
+		}
+		return chainAdvance(ctx, rt, tx, c, workflow.Event{
+			Kind: workflow.EventCheckClosed, Step: row.Step, Run: run,
+			Result: result, Log: logKey,
+		})
 	}
 }
 

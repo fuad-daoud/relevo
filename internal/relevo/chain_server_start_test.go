@@ -399,7 +399,7 @@ func TestServerChainMirrorNeverAdvancesLocally(t *testing.T) {
 			Round: b.Round, Outcome: reporttail.OutcomeDone,
 		}
 		var aerr error
-		next, aerr = chainApply(context.Background(), rt, tx, b, ev, nil)
+		next, aerr = chainApply(context.Background(), rt, tx, b, ev, nil, nil)
 		return aerr
 	})
 	if err != nil {

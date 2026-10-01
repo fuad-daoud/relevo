@@ -891,7 +891,7 @@ func TestChainFinishQueuesExactlyOneDelivery(t *testing.T) {
 		Verdict: chain.VerdictPass,
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		_, err := chainApply(context.Background(), rt, tx, rev, replay, nil)
+		_, err := chainApply(context.Background(), rt, tx, rev, replay, nil, nil)
 		return err
 	}); err != nil {
 		t.Fatalf("replayed chainApply: %v", err)
@@ -965,7 +965,7 @@ func TestChainAdvanceWritesStateAndTraceInOneTransaction(t *testing.T) {
 		Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
 	}
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
-		_, err := chainApply(context.Background(), rt, tx, b, ev, nil)
+		_, err := chainApply(context.Background(), rt, tx, b, ev, nil, nil)
 		return err
 	})
 	if err == nil {
@@ -996,7 +996,7 @@ func TestChainIgnoresACloseForAnotherRound(t *testing.T) {
 		Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		_, err := chainApply(context.Background(), rt, tx, b, ev, nil)
+		_, err := chainApply(context.Background(), rt, tx, b, ev, nil, nil)
 		return err
 	}); err != nil {
 		t.Fatalf("chainApply: %v", err)
@@ -1032,7 +1032,7 @@ func TestChainReviewerCloseWithoutAVerdictHalts(t *testing.T) {
 	rev := chainBinding(t, rt, "shop-rev")
 	ev := chain.Event{Kind: chain.EventReviewerClosed, Member: chain.MemberReviewer, Round: 1}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		_, err := chainApply(context.Background(), rt, tx, rev, ev, nil)
+		_, err := chainApply(context.Background(), rt, tx, rev, ev, nil, nil)
 		return err
 	}); err != nil {
 		t.Fatalf("chainApply: %v", err)

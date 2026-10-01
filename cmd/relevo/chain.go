@@ -10,7 +10,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
-	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // planSlice collects the repeatable --plan flag in the order it was given: a
@@ -203,9 +202,6 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 	}
 	if *v.from != "" {
 		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --from applies with --resume: it re-enters a halted chain at another step")
-	}
-	if !*v.dryRun && *v.workflow != "" && *v.workflow != workflow.Default().Name {
-		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --workflow %s needs --dry-run: a workflow other than the shipped default runs as a dry run for now", *v.workflow)
 	}
 	maxCorrections, err := chainIntFlag(fs, "max-corrections", *v.maxCorrections)
 	if err != nil {

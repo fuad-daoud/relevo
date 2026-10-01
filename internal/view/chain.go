@@ -23,6 +23,15 @@ type ChainFacts struct {
 	// It is the fact that turns the row from NEEDS YOU into the chain's own
 	// status word with the round in the segment.
 	ManualRound int `json:"manual_round,omitempty"`
+	// StepAt, Round, PlanPos, PlanTotal and Check describe a workflow chain:
+	// the step its engine is on, the round or check run it awaits, and its
+	// position in the plan input. They are empty on a chain that runs the
+	// fixed state machine.
+	StepAt    string `json:"step_at,omitempty"`
+	Round     int    `json:"round,omitempty"`
+	PlanPos   int    `json:"plan_pos,omitempty"`
+	PlanTotal int    `json:"plan_total,omitempty"`
+	Check     bool   `json:"check,omitempty"`
 }
 
 // ChainSegment is the text a chain row shows after its name: the plan in
@@ -38,6 +47,9 @@ func ChainSegment(f ChainFacts) string {
 	if f.ManualRound > 0 {
 		return fmt.Sprintf("manual round %d running", f.ManualRound)
 	}
+	if f.StepAt != "" {
+		return flowChainSegment(f)
+	}
 	s := fmt.Sprintf("plan %d/%d", f.Plan, f.Plans)
 	if f.Step != "" && f.Status != "done" && f.Status != "stopped" {
 		s += " · " + f.Step
@@ -47,6 +59,27 @@ func ChainSegment(f ChainFacts) string {
 		if f.Corrections != 1 {
 			s += "s"
 		}
+	}
+	return s
+}
+
+// flowChainSegment is the text a workflow chain's row shows: the step its
+// engine is on with the round it awaits -- or the check run while a check is
+// awaited -- and its position in the plan input.
+func flowChainSegment(f ChainFacts) string {
+	s := ""
+	if f.Status != "done" && f.Status != "stopped" {
+		if f.Check {
+			s = fmt.Sprintf("%s check run %d", f.StepAt, f.Round)
+		} else {
+			s = fmt.Sprintf("%s r%d", f.StepAt, f.Round)
+		}
+	}
+	if f.PlanTotal > 0 {
+		if s != "" {
+			s += " · "
+		}
+		s += fmt.Sprintf("plans %d/%d", f.PlanPos, f.PlanTotal)
 	}
 	return s
 }

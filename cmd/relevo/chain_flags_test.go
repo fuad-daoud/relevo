@@ -45,16 +45,16 @@ func TestChainFlagsFromNeedsResume(t *testing.T) {
 	}
 }
 
-// TestChainFlagsCustomWorkflowNeedsDryRun pins that a workflow other than the
-// shipped default is refused without --dry-run, so a start never runs a
-// workflow the engine cannot yet drive.
-func TestChainFlagsCustomWorkflowNeedsDryRun(t *testing.T) {
-	_, _, err := captureOutput(t, func() error {
-		return run([]string{"chain", "--name", "shop", "--workflow", "custom"})
-	})
-	ce := requireCLIError(t, err, codeUsage, "")
-	if !strings.Contains(ce.message, "--dry-run") {
-		t.Errorf("message = %q, want it to name --dry-run", ce.message)
+// TestChainFlagsCustomWorkflowStarts pins that a workflow other than the
+// shipped default now parses into a start: the engine can drive it, so no flag
+// combination refuses it before a runtime is built.
+func TestChainFlagsCustomWorkflowStarts(t *testing.T) {
+	opts, err := chainOptionsFrom(t, "--name", "shop", "--plan", "plan.md", "--no-feature", "--workflow", "custom")
+	if err != nil {
+		t.Fatalf("chainOptions(--workflow custom): %v", err)
+	}
+	if opts.Workflow != "custom" {
+		t.Errorf("Workflow = %q, want custom", opts.Workflow)
 	}
 }
 

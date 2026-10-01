@@ -194,7 +194,7 @@ func chainEventFromClose(rt Runtime, part string, b store.Binding, body []byte, 
 // returns the value it wrote, so a remote member's staged repair -- which sets
 // the chain's own bookkeeping on the member record -- is what the close's
 // caller persists.
-func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, ev chain.Event, gate *store.GateRecord) (store.Binding, error) {
+func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, ev chain.Event, gate *store.GateRecord, wf *chainCloseWF) (store.Binding, error) {
 	c, err := tx.ChainByMember(b.Name)
 	if errors.Is(err, store.ErrNotFound) {
 		return b, nil
@@ -207,6 +207,18 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	// moves the mirror.
 	if chainOnServer(c) {
 		return b, nil
+	}
+	// A chain that carries a workflow runs on the engine: the close becomes the
+	// workflow event its state awaits.
+	if len(c.WorkflowJSON) > 0 {
+		if wf == nil {
+			return b, nil
+		}
+		fev, ferr := chainEventFromCloseWF(rt, tx, c, b, *wf)
+		if ferr != nil {
+			return b, ferr
+		}
+		return b, chainAdvance(ctx, rt, tx, c, fev)
 	}
 
 	before, err := chainStateOf(c)
