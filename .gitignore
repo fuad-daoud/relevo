@@ -1,3 +1,4 @@
 /relevo
 /dist/*.tar.gz
 /.coverage.txt
+board/node_modules/
