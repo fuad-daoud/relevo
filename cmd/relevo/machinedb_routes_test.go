@@ -153,30 +153,17 @@ func TestOpenDBDialsTheOwnerSocket(t *testing.T) {
 	}
 }
 
-// TestDirectEnvOpensTheFile pins the hidden escape hatch: with RELEVO_DB_DIRECT
-// set the machine path opens the file even when an owner is listening.
-func TestDirectEnvOpensTheFile(t *testing.T) {
+// TestRouteIgnoresTheRetiredDirectEnv pins that the RELEVO_DB_DIRECT escape
+// hatch is gone: setting it must not change the route.
+func TestRouteIgnoresTheRetiredDirectEnv(t *testing.T) {
 	root := shortStateRoot(t)
 	t.Setenv("XDG_STATE_HOME", root)
-	served := startTestOwner(t, root)
 	t.Setenv("RELEVO_DB_DIRECT", "1")
 
-	if mode, _, _ := routeForArgs([]string{"status"}); mode != routeDirect {
-		t.Errorf("routeForArgs with RELEVO_DB_DIRECT = %v, want direct", mode)
-	}
-	installDBRoute(routeDirect, verbDialBudget, 0)
-	t.Cleanup(func() { installDBRoute(routeNone, verbDialBudget, 0) })
-
-	d, err := openDB(machineDBPath())
-	if err != nil {
-		t.Fatalf("openDB: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
-	if got := d.Route(); got != "file" {
-		t.Errorf("route = %q, want %q", got, "file")
-	}
-	if got := atomic.LoadInt32(&served.ln.accepts); got != 0 {
-		t.Errorf("the owner accepted %d connections during a direct open, want 0", got)
+	mode, budget, startWait := routeForArgs([]string{"status"})
+	if mode != routeOwner || budget != verbDialBudget || startWait != ownerStartWait {
+		t.Errorf("routeForArgs(status) with RELEVO_DB_DIRECT = %v, %v, %v; want %v, %v, %v",
+			mode, budget, startWait, routeOwner, verbDialBudget, ownerStartWait)
 	}
 }
 

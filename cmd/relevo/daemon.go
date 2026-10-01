@@ -110,7 +110,7 @@ func cmdDaemon(args []string) error {
 		return err
 	}
 	configDirPath := filepath.Join(configDir, "relevo")
-	if _, err := loadConfigReadOnly(root, configDirPath); err != nil {
+	if _, err := loadConfigReadOnly(root, configDirPath, lockedSkip); err != nil {
 		return err
 	}
 

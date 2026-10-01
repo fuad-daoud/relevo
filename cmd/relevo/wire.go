@@ -276,7 +276,7 @@ func newRuntimePeek() (relevo.Runtime, error) {
 		return relevo.Runtime{}, err
 	}
 
-	L, err := loadConfigReadOnly(root, filepath.Join(configDir, "relevo"))
+	L, err := loadConfigReadOnly(root, filepath.Join(configDir, "relevo"), lockedDial)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
@@ -286,33 +286,89 @@ func newRuntimePeek() (relevo.Runtime, error) {
 	return buildRuntime(root, L, store.New(root), false)
 }
 
+// lockedPolicy is what a read-only config load does when relevo's open lock
+// says another process -- the daemon -- holds the file.
+type lockedPolicy int
+
+const (
+	// lockedSkip leaves the database alone and reads the config files or the
+	// defaults: the daemon's own pre-lock load, which must not dial the daemon
+	// it is about to become.
+	lockedSkip lockedPolicy = iota
+	// lockedDial reads the database through the owner, so a peek or a bundle
+	// sees the live config. It never starts the owner.
+	lockedDial
+)
+
+// openReadOnlyDB is the direct read-only opener the config load uses. It is a
+// var so a test can make a held file's open fail with db.ErrLocked without a
+// real second process.
+var openReadOnlyDB = func(path string, o db.Options) (*db.DB, error) {
+	return db.OpenReadOnlyWith(path, o)
+}
+
 // loadConfigReadOnly reads config without creating, migrating or writing
 // anything: the config files when any is present, else the database read-only
 // when one exists, else the files again (a load of defaults). It is the one
-// read-only load the `--preflight`/`--check` peek and the daemon's pre-lock
-// phase share (#4.6).
-func loadConfigReadOnly(root, dir string) (config.Loaded, error) {
-	var (
-		L   config.Loaded
-		err error
-	)
+// read-only load the `--preflight`/`--check` peek, the bugreport bundle and the
+// daemon's pre-lock phase share (#4.6).
+//
+// When the file is held -- the daemon has it -- onLocked decides: lockedSkip
+// reads the files or defaults, and lockedDial reads config through the owner,
+// erroring when the owner does not answer.
+func loadConfigReadOnly(root, dir string, onLocked lockedPolicy) (config.Loaded, error) {
 	switch {
 	case configFilesPresent(dir):
-		L, err = config.LoadFiles(dir)
+		return config.LoadFiles(dir)
 	case fileExists(filepath.Join(root, "relevo.db")):
-		var d *db.DB
-		d, err = db.OpenReadOnly(filepath.Join(root, "relevo.db"))
+		L, err := loadConfigFromFile(filepath.Join(root, "relevo.db"))
 		if err == nil {
-			L, err = config.Open(d).Load()
-			_ = d.Close()
+			return L, nil
 		}
+		if !errors.Is(err, db.ErrLocked) {
+			return config.Loaded{}, err
+		}
+		if onLocked == lockedSkip {
+			return config.LoadFiles(dir)
+		}
+		return loadConfigFromOwner(root, err)
 	default:
-		L, err = config.LoadFiles(dir)
+		return config.LoadFiles(dir)
 	}
+}
+
+// loadConfigFromFile opens path read-only and loads the config through it.
+func loadConfigFromFile(path string) (config.Loaded, error) {
+	d, err := openReadOnlyDB(path, db.Options{})
 	if err != nil {
 		return config.Loaded{}, err
 	}
-	return L, nil
+	defer func() { _ = d.Close() }()
+	return config.Open(d).Load()
+}
+
+// loadConfigFromOwner reads the config through the daemon that holds the file.
+// The dial carries the verb budget and never starts the owner; a failure names
+// both the held file and the failed dial.
+func loadConfigFromOwner(root string, lockErr error) (config.Loaded, error) {
+	d, err := dialOwner(root, verbDialBudget)
+	if err != nil {
+		return config.Loaded{}, fmt.Errorf("relevo.db is held by the daemon and the owner did not answer: %w (the file open failed with: %v)", err, lockErr)
+	}
+	defer func() { _ = d.Close() }()
+	return config.Open(d).Load()
+}
+
+// dialOwner dials the owner on root's socket within budget, without starting
+// it: a missing or unanswering socket is an error.
+func dialOwner(root string, budget time.Duration) (*db.DB, error) {
+	sock, err := ownerSocket(root)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	return db.DialContext(ctx, sock)
 }
 
 // configFilesPresent reports whether any file the import consumes, or a hooks

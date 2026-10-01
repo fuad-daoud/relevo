@@ -27,8 +27,9 @@ const (
 	// routeNone leaves the route off: the machine database is opened directly,
 	// which is what the daemon, the peek verbs and a test get.
 	routeNone dbRoute = iota
-	// routeDirect opens the file directly even with an owner listening, which
-	// is what the hidden RELEVO_DB_DIRECT escape hatch selects.
+	// routeDirect opens the file directly. It is not selectable by any verb:
+	// installDBRoute falls back to it only on a platform with no owner socket,
+	// where the direct open is the only route there is.
 	routeDirect
 	// routeOwner dials the owner, starting it when the socket is missing.
 	routeOwner
@@ -94,15 +95,12 @@ func installRouteForArgs(args []string) (peek bool) {
 
 // routeForArgs maps a command line to its route, its dial budget and how long
 // it may wait for a daemon that is still starting: the peek verbs and the
-// daemon open directly, RELEVO_DB_DIRECT keeps the direct open, the statusline
-// gets the short budget, a hook gets the verb budget with no start wait, and
-// every other verb dials with the default budget and the start wait.
+// daemon open directly, the statusline gets the short budget, a hook gets the
+// verb budget with no start wait, and every other verb dials with the default
+// budget and the start wait.
 func routeForArgs(args []string) (dbRoute, time.Duration, time.Duration) {
 	if isPeekArgs(args) || (len(args) > 0 && args[0] == "daemon") {
 		return routeNone, verbDialBudget, 0
-	}
-	if os.Getenv("RELEVO_DB_DIRECT") != "" {
-		return routeDirect, verbDialBudget, 0
 	}
 	if isStatuslineArgs(args) {
 		return routeOwner, statuslineDialBudget, 0
