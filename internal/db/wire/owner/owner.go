@@ -67,10 +67,10 @@ type Server struct {
 	// only way to end a statement the engine cannot interrupt.
 	OnAbandoned func()
 
-	// reapMu guards the abandoned-statement registration: the one finish
-	// channel the server tracks and whether its hook already ran.
+	// reapMu guards the abandoned-statement registrations: every finish channel
+	// the server is still waiting on, and whether the hook already ran.
 	reapMu      sync.Mutex
-	reapPending <-chan struct{}
+	reapPending map[<-chan struct{}]struct{}
 	reapFired   bool
 }
 

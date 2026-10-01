@@ -27,26 +27,24 @@ func SetReapGrace(d time.Duration) {
 }
 
 // noteAbandoned registers finish -- the channel closed when a pinned
-// connection's rollback and discard finished -- as the abandoned statement. At
-// most one statement is tracked: a registration made while one is live is
-// dropped, so a second client teardown cannot replace the statement the owner
-// is already ending. The registration clears itself if finish closes first, so
-// a statement that ends before the grace is never reaped.
+// connection's rollback and discard finished -- as an abandoned statement.
+// Every registration is kept: two clients can abandon statements at once, and
+// dropping the second would let its runaway escape the refusal and the reap as
+// soon as the first clears. A registration clears itself if finish closes
+// first, so a statement that ends before the grace is never reaped.
 func (s *Server) noteAbandoned(finish <-chan struct{}) {
 	s.reapMu.Lock()
-	if s.reapPending != nil {
-		s.reapMu.Unlock()
-		return
+	if s.reapPending == nil {
+		s.reapPending = make(map[<-chan struct{}]struct{})
 	}
-	s.reapPending = finish
-	s.reapFired = false
+	s.reapPending[finish] = struct{}{}
 	s.reapMu.Unlock()
 
 	go s.awaitReapGrace(finish)
 }
 
 // awaitReapGrace waits out the grace on one registration and fires the reap
-// when the statement still has not finished.
+// when that statement still has not finished.
 func (s *Server) awaitReapGrace(finish <-chan struct{}) {
 	select {
 	case <-finish:
@@ -54,15 +52,15 @@ func (s *Server) awaitReapGrace(finish <-chan struct{}) {
 		return
 	case <-time.After(reapGrace):
 	}
-	s.fireReap(finish)
+	s.fireReap()
 }
 
-// fireReap calls the hook once for one registration. A registration that
-// already fired, or that a racing clear replaced, is not fired again, so the
-// daemon re-execs at most once per abandoned statement.
-func (s *Server) fireReap(finish <-chan struct{}) {
+// fireReap calls the hook at most once. One re-exec ends every abandoned
+// statement, so the first registration to outlive the grace is enough; a
+// later one does not ask again.
+func (s *Server) fireReap() {
 	s.reapMu.Lock()
-	if s.reapPending != finish || s.reapFired {
+	if s.reapFired || len(s.reapPending) == 0 {
 		s.reapMu.Unlock()
 		return
 	}
@@ -74,21 +72,19 @@ func (s *Server) fireReap(finish <-chan struct{}) {
 	}
 }
 
-// clearAbandoned drops the registration when finish closes: the statement
-// finished after all, so ad-hoc reads resume and no hook fires.
+// clearAbandoned drops one registration when its finish closes: the statement
+// finished after all, so it no longer refuses ad-hoc reads and no hook fires
+// for it.
 func (s *Server) clearAbandoned(finish <-chan struct{}) {
 	s.reapMu.Lock()
-	if s.reapPending == finish {
-		s.reapPending = nil
-		s.reapFired = false
-	}
+	delete(s.reapPending, finish)
 	s.reapMu.Unlock()
 }
 
-// reaping reports whether an abandoned statement is registered now, which is
-// what refuses a request on an ad-hoc connection.
+// reaping reports whether at least one abandoned statement is registered now,
+// which is what refuses a request on an ad-hoc connection.
 func (s *Server) reaping() bool {
 	s.reapMu.Lock()
 	defer s.reapMu.Unlock()
-	return s.reapPending != nil
+	return len(s.reapPending) > 0
 }

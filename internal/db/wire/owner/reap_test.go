@@ -145,3 +145,49 @@ func TestOwnerRefusesAdHocRequestsWhileAStatementIsAbandoned(t *testing.T) {
 	execRaw(t, adhocW, 3, `SELECT 1`)
 	readDone(t, adhocW, adhocNC)
 }
+
+// TestASecondAbandonedStatementIsStillReaped pins the backlog: when a second
+// statement is abandoned while a first registration is live, and the first
+// clears before its grace, the second must still be tracked. The single-slot
+// tracker dropped it, so its runaway then escaped both the refusal and the
+// reap.
+func TestASecondAbandonedStatementIsStillReaped(t *testing.T) {
+	SetReapGrace(200 * time.Millisecond)
+	t.Cleanup(func() { SetReapGrace(0) })
+
+	srv, sock := startServer(t)
+	reaped := make(chan struct{}, 1)
+	srv.OnAbandoned = func() { reaped <- struct{}{} }
+
+	w, nc := dialRaw(t, sock)
+	helloAdHoc(t, w, true)
+	welcome(t, w)
+
+	// A is abandoned first and clears before its grace.
+	a := make(chan struct{})
+	srv.noteAbandoned(a)
+
+	// B is abandoned during A's window: the registration the old tracker
+	// dropped while one was live.
+	b := make(chan struct{})
+	srv.noteAbandoned(b)
+
+	// A ends, so its registration clears and only B remains. B must keep the
+	// refusal alive rather than the tracker going quiet with B unwatched.
+	close(a)
+	time.Sleep(50 * time.Millisecond)
+	if !srv.reaping() {
+		t.Fatal("the second abandoned statement stopped being tracked when the first cleared")
+	}
+
+	execRaw(t, w, 1, `SELECT 1`)
+	if got := readRefusal(t, w, nc); got.Code != wire.RefuseReaping {
+		t.Errorf("ad-hoc refusal code = %q, want %q", got.Code, wire.RefuseReaping)
+	}
+
+	select {
+	case <-reaped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second abandoned statement was never reaped")
+	}
+}
