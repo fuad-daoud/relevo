@@ -1165,7 +1165,11 @@ The first line names the MasterMind (`MasterMind architect-14`), so each termina
 shows which MasterMind it is; `relevo mastermind list` maps that name to its chat.
 Each row shows the round's harness (`harness@server` for a remote builder),
 what it is waiting on, this round's tokens, and the round's length: ticking while
-it runs, frozen once the report is in.
+it runs, frozen once the report is in. While a round runs the row also says what
+the runner is doing -- `working`, `quiet X` once its progress has gone silent,
+`stalled X`, `exploring X`, `gating X`, `exited`, `running`, `queued` -- in place
+of the phase word, and the round's live diff against its baseline (`+A/-R in F`,
+`(shared)` for a `--cwd` binding whose tree is the mastermind's own).
 
 Add this to `~/.claude/settings.json`:
 
@@ -1187,8 +1191,12 @@ count the cells before Claude Code's `…`:
     sh -c 'printf "%s" "$(seq -s . 1 $COLUMNS | cut -c1-$COLUMNS)"'
 
 Each row is `○ name  rN · builder · what relevo is waiting on  …  age · STATE`,
-where `builder` is the harness segment of the candidate token, and `age` is
-time since the last prompt, report or question crossed.
+where `builder` is the harness segment of the candidate token, `age` is time
+since the last prompt, report or question crossed, and a `+A/-R in F` segment in
+the middle is the round's live diff against its baseline. `relevo status --line
+--json` carries that diff as an additive `live` object on the row (`files`,
+`added`, `removed`, and `shared` for a `--cwd` binding); the key is present only
+while a round runs.
 
 ## Candidates
 
