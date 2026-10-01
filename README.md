@@ -1464,8 +1464,33 @@ writer, whether its round closes on a gate.
 
 `documentor` is a writer whose definition states the docs-only contract: it
 edits markdown, agent instruction files, sketches and diagrams, and code
-comments, and never anything that changes behaviour. That contract is prose in
-the definition; nothing inspects the diff.
+comments, and never anything that changes behaviour. That contract is a
+**scope**, and relevo enforces it when a round closes.
+
+`actors.<name>.scope` is `{"paths": [...], "comments": bool}`. Each `paths`
+entry is a glob over the repo-relative path -- `*` matches within one segment,
+`**` matches any number of segments, a leading `!` excludes, and the last match
+wins -- or `@docs`, which expands to `**/*.md`, `**/*.markdown`, `**/*.mdx`,
+`**/*.mmd`, `**/*.svg` and `**/*.excalidraw`, excluding `!**/testdata/**`,
+`!vendor/**` and `!**/node_modules/**`. With `comments` true, an edit to an
+out-of-scope `.go` file is still in scope when the old and new contents differ
+only in non-directive comments; a change to a directive comment (`//go:`,
+`// +build`, `//line`, `//export`, `//nolint`, `//lint:`, anything containing
+`#nosec`, the `// Code generated ... DO NOT EDIT.` marker, a test `Output:`
+comment) or to any code token is refused, as is any other extension, a binary
+or a symlink.
+
+A refusal still closes the round -- its report, diff and usage are recorded --
+but its outcome is forced to `halted`, the binding goes to **NEEDS YOU** naming
+the offending file, and the gate never runs. A round relevo cannot judge (no
+baseline tree, or a git error) refuses the same way. A writer with no `scope`
+closes exactly as before.
+
+`relevo config init` seeds `documentor` with
+`{"paths": ["@docs"], "comments": true}`. There is no migration: an existing DB
+adds the scope with `relevo config edit`. The scope is actor config, so a served
+binding is judged by the server's own `actors` section, the same rule that
+applies to its shape and definitions.
 
 Agents and actors are the `agents` and `actors` sections of relevo.db; read
 them with `relevo config get agents` and `relevo config get actors`, and change

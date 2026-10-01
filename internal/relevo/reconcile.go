@@ -321,16 +321,39 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	// A reader has no check, so the gate never runs for it: done is true with
 	// no record, exactly as an ungated writer.
 	var (
-		done bool
-		rec  *store.GateRecord
+		done    bool
+		rec     *store.GateRecord
+		verdict scopeVerdict
 	)
 	if b.Shape == store.ShapeReader {
 		done = true
+	} else if b.GateRun == nil {
+		// Scope fires before the gate (#801): a refusal closes the round
+		// without running gateStep at all -- no gate record, no KindGate
+		// entry, no repair round, Regate untouched.
+		verdict = judgeRoundScope(ctx, rt, b)
+		if verdict.Refused {
+			done = true
+		} else {
+			var err error
+			b, done, rec, err = gateStep(ctx, rt, tx, b)
+			if err != nil {
+				return b, false, false, nil, fmt.Errorf("close round on marker: gate: %w", err)
+			}
+			if done && rec != nil {
+				// The tree can move while the gate runs: judge again on the
+				// tick the gate finishes.
+				verdict = judgeRoundScope(ctx, rt, b)
+			}
+		}
 	} else {
 		var err error
 		b, done, rec, err = gateStep(ctx, rt, tx, b)
 		if err != nil {
 			return b, false, false, nil, fmt.Errorf("close round on marker: gate: %w", err)
+		}
+		if done && rec != nil {
+			verdict = judgeRoundScope(ctx, rt, b)
 		}
 	}
 	if !done {
@@ -355,7 +378,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-			fmt.Sprintf("The runner finished round %d. %s", b.Round, closeClause(rt, b, b.Round))+gateSuffix, joinNotes("", note), rec, nil, nil, nil, "", false)
+			fmt.Sprintf("The runner finished round %d. %s", b.Round, closeClause(rt, b, b.Round))+gateSuffix, joinNotes("", note), rec, nil, nil, nil, "", false, verdict)
 		if err != nil {
 			return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 		}
@@ -363,14 +386,14 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no %s.", b.Round, outputWord(b.Shape))+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "", false)
+		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no %s.", b.Round, outputWord(b.Shape))+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "", false, verdict)
 	if err != nil {
 		return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 	}
 	return next, true, false, rec, nil
 }
 
-func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens, fallbackOutcome string, stopped bool) (store.Binding, error) {
+func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens, fallbackOutcome string, stopped bool, verdict scopeVerdict) (store.Binding, error) {
 	// The round this close is closing: the cap check below sizes that round's
 	// artifact directory after b.Round has advanced.
 	closedRound := b.Round
@@ -438,6 +461,17 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	sc := scanForInjection(ctx, rt, "report", b, body)
 	note = joinNotes(note, sc.Note)
 
+	// The scope verdict (#801): a refusal forces the outcome to halted and
+	// names the path, before the chain event below is built, so a chain
+	// member's refusal halts its chain instead of advancing it.
+	if verdict.Scoped {
+		note = joinNotes(note, scopeNote(verdict))
+		if verdict.Refused {
+			outcome = reporttail.OutcomeHalted
+			tail.HaltedAt = scopeHaltedAt(verdict)
+		}
+	}
+
 	// The chain event this close produces, built from the in-memory body
 	// before the reader output is stripped below (a re-read there would find
 	// no block). It names the closing member and the round that closed.
@@ -482,6 +516,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		pFirst += flaggedParenthetical(sc.Flagged, sc.Record)
 	}
 	payload = pFirst + pRest
+	if verdict.Refused {
+		payload += "\n" + scopePayloadLine(b, verdict)
+	}
 
 	closed := ""
 	if b.Shape != store.ShapeReader && !HasEntry(entries, b.Round, store.DirToMasterMind, store.KindDiff) {
@@ -674,6 +711,13 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		if over, total := artifactCapExceeded(rt.Store, b, closedRound, rt.Policy.ArtifactMaxBytes()); over {
 			b, _ = haltBinding(ctx, rt, b, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
 		}
+	}
+
+	// A scope refusal asks for a human, exactly where the reader artifact
+	// cap does: after the round has advanced, naming the offending file
+	// (#801).
+	if verdict.Refused {
+		b, _ = haltBinding(ctx, rt, b, scopeHaltText(b, closedRound, verdict))
 	}
 
 	// The round has advanced, so the chain may now move: the close is mapped

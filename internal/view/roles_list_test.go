@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -22,18 +23,26 @@ func TestFormatRolesFileMode(t *testing.T) {
 	set := candidateSet(t, rolesViewsCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{MaxTier: "yolo"}, map[string]roles.Row{
 		"builder": {
-			Tier: ptr("yolo"),
+			Tier:  ptr("yolo"),
+			Scope: &pathscope.Scope{Paths: []string{"docs/**"}, Comments: true},
 			Definitions: map[string]roles.DefRow{
 				"claude": {Agent: "my-executor", Requires: []string{"my-scout"}},
 			},
 		},
 		"reviewer": {},
+		"plain":    {Shape: ptr("writer")},
 	})
 
 	got := FormatRoles(reg)
 
 	if !strings.Contains(got, "builder  writer  check  tier yolo  (roles.json)") {
 		t.Errorf("first line must carry writer, check, tier yolo and the source:\n%s", got)
+	}
+	if !strings.Contains(got, "  scope  docs/** + comments") {
+		t.Errorf("a scoped writer must show its scope line:\n%s", got)
+	}
+	if strings.Contains(got, "plain  writer  check  tier -  (roles.json)\n  candidates  (none)\n  scope") {
+		t.Errorf("a writer with no scope must show no scope line:\n%s", got)
 	}
 	if !strings.Contains(got, "  claude  my-executor + my-scout  (custom)") {
 		t.Errorf("kind line must join the requires with + and mark a custom definition:\n%s", got)
