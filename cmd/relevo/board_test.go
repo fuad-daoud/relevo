@@ -210,46 +210,48 @@ func TestBoardRefusesNestedScopes(t *testing.T) {
 		{"explicit live path", "", "live"},
 		{"explicit repo path", "", "docs/boards/api.excalidraw"},
 	}
-	dirs := []struct {
-		name     string
-		repoRoot func(liveRoot, id string) string
-	}{
-		{"live scope under the repository root", func(liveRoot, _ string) string {
-			return filepath.Dir(filepath.Dir(liveRoot))
-		}},
-		{"repository root under the live scope", func(liveRoot, id string) string {
-			return filepath.Join(liveRoot, id, "repo")
-		}},
+	for _, form := range forms {
+		t.Run(form.name, func(t *testing.T) {
+			liveRoot := boardStateRoot(t)
+			id := "mm_aaaaaaaaaaaa"
+			liveDir := filepath.Join(liveRoot, id)
+			repoRoot := filepath.Dir(filepath.Dir(liveRoot))
+			if err := os.MkdirAll(liveDir, 0o700); err != nil {
+				t.Fatalf("MkdirAll: %v", err)
+			}
+			arg := form.arg
+			if arg == "live" {
+				arg = filepath.Join(liveDir, "board.excalidraw")
+			}
+
+			orig := boardRepoRootFn
+			boardRepoRootFn = func(string) (string, error) { return repoRoot, nil }
+			t.Cleanup(func() { boardRepoRootFn = orig })
+
+			// cwd is the repo root so the explicit-repo-path form would
+			// resolve -- not refuse -- without C2's wiring.
+			_, err := resolveBoard(repoRoot, id, form.flag, arg)
+			requireCLIError(t, err, codeUsage, "")
+		})
 	}
-	for _, dir := range dirs {
-		for _, form := range forms {
-			t.Run(dir.name+"/"+form.name, func(t *testing.T) {
-				liveRoot := boardStateRoot(t)
-				id := "mm_aaaaaaaaaaaa"
-				liveDir := filepath.Join(liveRoot, id)
-				repoRoot := dir.repoRoot(liveRoot, id)
-				if err := os.MkdirAll(liveDir, 0o700); err != nil {
-					t.Fatalf("MkdirAll live dir: %v", err)
-				}
-				if err := os.MkdirAll(repoRoot, 0o700); err != nil {
-					t.Fatalf("MkdirAll repo root: %v", err)
-				}
-				arg := form.arg
-				if arg == "live" {
-					arg = filepath.Join(liveDir, "board.excalidraw")
-				}
 
-				orig := boardRepoRootFn
-				boardRepoRootFn = func(string) (string, error) { return repoRoot, nil }
-				t.Cleanup(func() { boardRepoRootFn = orig })
-
-				// cwd is the repo root so the explicit-repo-path form would
-				// resolve -- not refuse -- without C2's wiring.
-				_, err := resolveBoard(repoRoot, id, form.flag, arg)
-				requireCLIError(t, err, codeUsage, "")
-			})
+	// And the reverse: the repository root under the live scope.
+	t.Run("repository root under the live scope", func(t *testing.T) {
+		liveRoot := boardStateRoot(t)
+		id := "mm_aaaaaaaaaaaa"
+		liveDir := filepath.Join(liveRoot, id)
+		repoRoot := filepath.Join(liveDir, "repo")
+		if err := os.MkdirAll(liveDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
 		}
-	}
+
+		orig := boardRepoRootFn
+		boardRepoRootFn = func(string) (string, error) { return repoRoot, nil }
+		t.Cleanup(func() { boardRepoRootFn = orig })
+
+		_, err := resolveBoard(repoRoot, id, "", "")
+		requireCLIError(t, err, codeUsage, "")
+	})
 }
 
 func TestBoardPathAndFlagAreExclusive(t *testing.T) {
