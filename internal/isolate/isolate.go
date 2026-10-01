@@ -12,6 +12,7 @@ package isolate
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
@@ -47,8 +48,8 @@ func Parse(s string) (Mode, error) {
 
 // Available reports whether this build can run the mode. Only none can: a user
 // or container server is refused at startup and failed by the doctor, never
-// started and warned (spec §10). The sentence is what `relevo serve` refuses
-// with and what the doctor's serve isolation row prints.
+// started and warned. The sentence is what `relevo serve` refuses with and what
+// the doctor's serve isolation row prints.
 func (m Mode) Available() error {
 	if m == ModeNone {
 		return nil
@@ -77,6 +78,14 @@ type boundary struct {
 	mode Mode
 }
 
+// boundary must stay transparent to every optional half of a Runner. Callers
+// type-assert Runtime.Runner to ScopeProber, ScopeStopper and ScopeResultProber
+// themselves, so a wrapper that dropped one would hide the base's scope support
+// and stop a none server being byte-identical to an unwrapped one.
+var _ spawn.ScopeProber = (*boundary)(nil)
+var _ spawn.ScopeStopper = (*boundary)(nil)
+var _ spawn.ScopeResultProber = (*boundary)(nil)
+
 // Start translates the spec for the boundary's mode and hands it to the base.
 // An unavailable mode is refused here even if Wrap's error was dropped.
 func (b *boundary) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
@@ -104,6 +113,36 @@ func (b *boundary) Kill(ctx context.Context, h spawn.ProcHandle, streamPath stri
 // Rusage delegates to the base.
 func (b *boundary) Rusage(ctx context.Context, h spawn.ProcHandle, streamPath string) (spawn.ProcRusage, bool) {
 	return b.base.Rusage(ctx, h, streamPath)
+}
+
+// ScopeActive delegates to a base that can probe scope units, and answers "no
+// scope is active" for a base that cannot -- the same answer scopeRunning gives
+// a runner without the prober half.
+func (b *boundary) ScopeActive(ctx context.Context, unit string) (bool, error) {
+	if p, ok := b.base.(spawn.ScopeProber); ok {
+		return p.ScopeActive(ctx, unit)
+	}
+	return false, nil
+}
+
+// StopScope delegates to a base that can end scope units. A base that cannot
+// is refused, as endScope refuses a runner that can see a scope but not end it:
+// the caller cannot otherwise free the unit.
+func (b *boundary) StopScope(ctx context.Context, unit string) error {
+	if s, ok := b.base.(spawn.ScopeStopper); ok {
+		return s.StopScope(ctx, unit)
+	}
+	return fmt.Errorf("scope %s.scope: this runner cannot end scopes", unit)
+}
+
+// ScopeResult delegates to a base that can read a scope's journal result, and
+// reports the zero result for a base that cannot -- "not oom-killed", the
+// meaning oomKilled gives a runner without the result prober.
+func (b *boundary) ScopeResult(ctx context.Context, unit string, since time.Time) (spawn.ScopeResult, error) {
+	if p, ok := b.base.(spawn.ScopeResultProber); ok {
+		return p.ScopeResult(ctx, unit, since)
+	}
+	return spawn.ScopeResult{}, nil
 }
 
 // translate maps a round's ProcSpec to the spec the base runner starts for

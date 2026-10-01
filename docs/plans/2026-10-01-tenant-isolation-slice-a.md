@@ -135,3 +135,66 @@ Each was applied, the named test failed, and the mutation was restored:
 - `make check` — pass. `internal/isolate` reported "not in baseline (new
   package?)"; `testdata/coverage-baseline.txt` untouched.
 - `make e2e` untouched.
+
+## Correction: the boundary forwards the optional Runner halves
+
+Round 1's `boundary` implemented only `spawn.Runner`. `cmd/relevo/serve.go:cmdServeRun`
+wraps `proc.New()` in it for every mode, `none` included, so on a serve host
+`rt.Runner` no longer satisfied the optional interfaces every scope caller
+type-asserts:
+
+- `internal/relevo/roundscope.go:scopeRunning` (the assert at :21) asserts
+  `spawn.ScopeProber`; the `!ok` branch answered "no scope active", so a loaded
+  round scope was invisible.
+- `internal/relevo/roundscope.go:endScope` (the assert at :41) asserts
+  `spawn.ScopeStopper`; a loaded scope could no longer be ended.
+- `internal/relevo/oom.go:oomKilled` (the assert at :38) asserts
+  `spawn.ScopeResultProber`; OOM detection (#782) was dead.
+
+That made `isolation: none` differ from an unwrapped server, which slice A
+promises is byte-identical. These are the only optional Runner interfaces
+asserted anywhere.
+
+`internal/isolate/isolate.go:boundary` now forwards all three, with the
+compile-time pins beside the type (`var _ spawn.ScopeProber = (*boundary)(nil)`,
+and the stopper and result prober) so a future edit cannot drop one unnoticed:
+callers type-assert `Runtime.Runner`, so the wrapper must stay transparent to
+every optional half.
+
+| Method | Base implements it | Base lacks it |
+| --- | --- | --- |
+| `ScopeActive(ctx, unit)` | delegate | `false, nil` — `scopeRunning`'s `!ok` answer |
+| `StopScope(ctx, unit)` | delegate | error `scope <unit>.scope: this runner cannot end scopes` — `endScope`'s `!ok` class |
+| `ScopeResult(ctx, unit, since)` | delegate | `spawn.ScopeResult{}, nil` — `oomKilled`'s "not oom-killed" |
+
+Each fallback is exactly what the pre-wrapper `!ok` branch returned or meant, so
+a none server's scope behaviour is unchanged.
+
+### Tests
+
+- `internal/isolate/isolate_test.go:TestBoundaryForwardsOptionalHalves` — a spy
+  base that has all three records delegation (the unit, and the `since` for
+  `ScopeResult`) and the base's answers pass through.
+- `internal/isolate/isolate_test.go:TestBoundaryFallbacksWithoutOptionalHalves`
+  — a base without them yields the three fallbacks above, `StopScope`'s error
+  included.
+- Unchanged: `TestWrapNonePassesSpecThrough`, the serve byte-identity test
+  (`internal/serve/serve_test.go:TestServedRunnerPassesSpecThrough`), and round
+  1's four mutation targets.
+
+### Mutation check (fifth)
+
+`ScopeActive` made to return `false, nil` without delegating;
+`TestBoundaryForwardsOptionalHalves` failed with
+
+```
+=== RUN   TestBoundaryForwardsOptionalHalves
+    isolate_test.go:200: ScopeActive = (false, <nil>), want (true, nil)
+--- FAIL: TestBoundaryForwardsOptionalHalves (0.00s)
+FAIL
+FAIL	github.com/fuad-daoud/relevo/internal/isolate	0.003s
+FAIL
+```
+
+and was restored.
+

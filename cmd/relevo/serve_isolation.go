@@ -10,8 +10,8 @@ import (
 // resolveIsolation parses the configured serve.isolation and wraps the process
 // runner in its boundary. A mode this build cannot run -- or an unknown value
 // -- is returned as an error naming serve.isolation, so cmdServeRun can refuse
-// it with not_available before any side effect (spec §10: fail closed, never
-// start and warn).
+// it with not_available before any side effect: fail closed, never start and
+// warn.
 func resolveIsolation(raw string) (spawn.Runner, isolate.Mode, error) {
 	mode, err := isolate.Parse(raw)
 	if err != nil {
