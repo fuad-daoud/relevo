@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -193,6 +194,31 @@ func TestBugreportNeverCaptures(t *testing.T) {
 			t.Errorf("%s exists after bugreport: stat error = %v, want not-exist", name, err)
 		}
 	}
+}
+
+// captureBigOutput runs fn with stdout pointed at a file rather than a pipe.
+// captureOutput reads its pipe only after fn returns, so a render larger than
+// the pipe's buffer deadlocks; a capped-render test exceeds it.
+func captureBigOutput(t *testing.T, fn func() error) ([]byte, error) {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "stdout")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create stdout file: %v", err)
+	}
+	orig := os.Stdout
+	os.Stdout = f
+	runErr := fn()
+	os.Stdout = orig
+	if err := f.Close(); err != nil {
+		t.Fatalf("close stdout file: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read stdout file: %v", err)
+	}
+	return data, runErr
 }
 
 // seedBugreportMachine writes the state root and one binding the bugreport
@@ -576,5 +602,418 @@ func TestBundleIncludesLastError(t *testing.T) {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("bundle carries %q unredacted:\n%s", unwanted, body)
 		}
+	}
+}
+
+// TestBugreportTitleOverridesTheGeneratedTitle pins --title: a non-empty T
+// replaces the generated title in the markdown header, the --json document, the
+// printed line and the gh argv, and an empty T keeps the generated one.
+func TestBugreportTitleOverridesTheGeneratedTitle(t *testing.T) {
+	const title = "relevo: send hangs on a slow disk"
+
+	t.Run("default", func(t *testing.T) {
+		docsEnv(t)
+		seedBugreportMachine(t, "alpha")
+		fakeBugreportExec(t, nil, nil)
+
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"bugreport", "--title", title})
+		})
+		if err != nil {
+			t.Fatalf("bugreport --title: %v (stderr: %s)", err, stderr)
+		}
+		lines := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
+		if len(lines) != 2 {
+			t.Fatalf("stdout = %q, want the path then the gh line", stdout)
+		}
+		path := lines[0]
+		if want := bugreport.ShellLine(bugreport.IssueArgv(title, path)); lines[1] != want {
+			t.Errorf("printed line = %q, want %q", lines[1], want)
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read bundle: %v", err)
+		}
+		if !strings.HasPrefix(string(body), "# "+title+"\n") {
+			t.Errorf("bundle header does not carry the title:\n%s", body)
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		docsEnv(t)
+		seedBugreportMachine(t, "alpha")
+		fakeBugreportExec(t, nil, nil)
+
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"bugreport", "--title", title, "--json"})
+		})
+		if err != nil {
+			t.Fatalf("bugreport --title --json: %v (stderr: %s)", err, stderr)
+		}
+		var doc bugreport.Doc
+		if err := json.Unmarshal(stdout, &doc); err != nil {
+			t.Fatalf("--json document: %v", err)
+		}
+		if doc.Title != title {
+			t.Errorf("document title = %q, want %q", doc.Title, title)
+		}
+	})
+
+	t.Run("gh", func(t *testing.T) {
+		docsEnv(t)
+		seedBugreportMachine(t, "alpha")
+		calls := fakeBugreportExec(t, []byte(ghIssueURL+"\n"), nil)
+
+		if _, _, err := captureOutput(t, func() error {
+			return run([]string{"bugreport", "--title", title, "--gh"})
+		}); err != nil {
+			t.Fatalf("bugreport --title --gh: %v", err)
+		}
+		var gh [][]string
+		for _, call := range *calls {
+			if len(call) > 0 && call[0] == "gh" {
+				gh = append(gh, call)
+			}
+		}
+		if len(gh) != 1 {
+			t.Fatalf("gh ran %d times, want 1", len(gh))
+		}
+		if !slices.Contains(gh[0], title) {
+			t.Errorf("gh argv = %v, want it to carry the title %q", gh[0], title)
+		}
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		docsEnv(t)
+		seedBugreportMachine(t, "alpha")
+		fakeBugreportExec(t, nil, nil)
+
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"bugreport", "--title", "", "--stdout"})
+		})
+		if err != nil {
+			t.Fatalf("bugreport --title '': %v (stderr: %s)", err, stderr)
+		}
+		if !strings.HasPrefix(string(stdout), "# "+bundleTitle()+"\n") {
+			t.Errorf("an empty --title changed the generated title:\n%s", stdout)
+		}
+	})
+}
+
+// TestBugreportBodyBecomesTheFirstSection pins --body: the file's text is the
+// first section in the markdown and the --json document, sanitized and redacted
+// like every other section, and an empty file stays the heading with no lines.
+func TestBugreportBodyBecomesTheFirstSection(t *testing.T) {
+	docsEnv(t)
+	seedBugreportMachine(t, "alpha")
+	fakeBugreportExec(t, nil, nil)
+
+	const token = "ghp_" + "16C7e42F292c6912E7710c838347Ae178B4a"
+	body := filepath.Join(t.TempDir(), "body.md")
+	text := "the send hung\nwith a\ttab\nand a \x01 control\ntoken " + token + "\n"
+	if err := os.WriteFile(body, []byte(text), 0o600); err != nil {
+		t.Fatalf("write body: %v", err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"bugreport", "--body", body, "--stdout"})
+	})
+	if err != nil {
+		t.Fatalf("bugreport --body: %v (stderr: %s)", err, stderr)
+	}
+	md := string(stdout)
+	desc, env := strings.Index(md, "## Description"), strings.Index(md, "## Environment")
+	if desc < 0 || env < 0 || desc > env {
+		t.Errorf("Description is not the first section:\n%s", md)
+	}
+	if !strings.Contains(md, "with a    tab") {
+		t.Errorf("the tab was not sanitized to four spaces:\n%s", md)
+	}
+	if strings.Contains(md, "\x01") || !strings.Contains(md, "\uFFFD") {
+		t.Errorf("the control byte was not sanitized to U+FFFD:\n%s", md)
+	}
+	if strings.Contains(md, token) || !strings.Contains(md, sanitize.Redacted) {
+		t.Errorf("the seeded token was not redacted:\n%s", md)
+	}
+
+	stdout, _, err = captureOutput(t, func() error {
+		return run([]string{"bugreport", "--body", body, "--json"})
+	})
+	if err != nil {
+		t.Fatalf("bugreport --body --json: %v", err)
+	}
+	var doc bugreport.Doc
+	if err := json.Unmarshal(stdout, &doc); err != nil {
+		t.Fatalf("--json document: %v", err)
+	}
+	if len(doc.Sections) == 0 || doc.Sections[0].Name != bugreport.SectionDescription {
+		t.Errorf("sections = %+v, want Description first", doc.Sections)
+	}
+
+	empty := filepath.Join(t.TempDir(), "empty.md")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatalf("write empty body: %v", err)
+	}
+	stdout, _, err = captureOutput(t, func() error {
+		return run([]string{"bugreport", "--body", empty, "--stdout"})
+	})
+	if err != nil {
+		t.Fatalf("bugreport --body <empty>: %v", err)
+	}
+	if !strings.Contains(string(stdout), "## Description\n\n\n## Environment") {
+		t.Errorf("an empty description is not the heading with no lines:\n%s", stdout)
+	}
+}
+
+// TestBugreportBodyUnreadableIsUsage pins the unreadable body: it is usage,
+// exit 2, naming the path and the OS error, with nothing built, printed or
+// written.
+func TestBugreportBodyUnreadableIsUsage(t *testing.T) {
+	docsEnv(t)
+	fakeBugreportExec(t, nil, nil)
+
+	missing := filepath.Join(t.TempDir(), "nope.md")
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"bugreport", "--body", missing})
+	})
+	ce := requireCLIError(t, err, codeUsage, "")
+	if !strings.Contains(ce.message, missing) {
+		t.Errorf("message = %q, want the path %q", ce.message, missing)
+	}
+	if !strings.Contains(ce.message, "no such file or directory") {
+		t.Errorf("message = %q, want the OS error", ce.message)
+	}
+	if got := catalogExit(codeUsage); got != 2 {
+		t.Errorf("usage exit = %d, want 2", got)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("stdout = %q, want nothing printed", stdout)
+	}
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "bugreports")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a bugreports directory was created: %v", err)
+	}
+}
+
+// TestBugreportBodyAndTitleCombineWithEveryMode pins that --title and --body
+// combine with --stdout, --json, --gh, --out, --logs and --raw.
+func TestBugreportBodyAndTitleCombineWithEveryMode(t *testing.T) {
+	const title = "relevo: my own title"
+	const description = "my own description"
+
+	setup := func(t *testing.T) (string, string) {
+		t.Helper()
+		docsEnv(t)
+		seedBugreportMachine(t, "alpha")
+		body := filepath.Join(t.TempDir(), "body.md")
+		if err := os.WriteFile(body, []byte(description+"\n"), 0o600); err != nil {
+			t.Fatalf("write body: %v", err)
+		}
+		return body, filepath.Join(t.TempDir(), "bundle.md")
+	}
+	ghCall := func(t *testing.T, calls *[][]string) []string {
+		t.Helper()
+		for _, call := range *calls {
+			if len(call) > 0 && call[0] == "gh" {
+				return call
+			}
+		}
+		t.Fatalf("no gh call in %v", *calls)
+		return nil
+	}
+
+	t.Run("stdout", func(t *testing.T) {
+		body, _ := setup(t)
+		fakeBugreportExec(t, nil, nil)
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"bugreport", "--title", title, "--body", body, "--stdout"})
+		})
+		if err != nil {
+			t.Fatalf("bugreport: %v (stderr: %s)", err, stderr)
+		}
+		if !strings.HasPrefix(string(stdout), "# "+title+"\n") || !strings.Contains(string(stdout), description) {
+			t.Errorf("stdout does not carry the title and description:\n%s", stdout)
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		body, _ := setup(t)
+		fakeBugreportExec(t, nil, nil)
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"bugreport", "--title", title, "--body", body, "--json"})
+		})
+		if err != nil {
+			t.Fatalf("bugreport: %v (stderr: %s)", err, stderr)
+		}
+		var doc bugreport.Doc
+		if err := json.Unmarshal(stdout, &doc); err != nil {
+			t.Fatalf("--json document: %v", err)
+		}
+		if doc.Title != title || len(doc.Sections) == 0 || doc.Sections[0].Name != bugreport.SectionDescription {
+			t.Errorf("document = %+v, want the titled description first", doc)
+		}
+	})
+
+	t.Run("gh", func(t *testing.T) {
+		body, _ := setup(t)
+		calls := fakeBugreportExec(t, []byte(ghIssueURL+"\n"), nil)
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"bugreport", "--title", title, "--body", body, "--gh"})
+		})
+		if err != nil {
+			t.Fatalf("bugreport: %v (stderr: %s)", err, stderr)
+		}
+		path := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")[0]
+		written, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read bundle: %v", err)
+		}
+		if !strings.HasPrefix(string(written), "# "+title+"\n") || !strings.Contains(string(written), description) {
+			t.Errorf("the filed bundle does not carry the title and description:\n%s", written)
+		}
+		if call := ghCall(t, calls); !slices.Contains(call, title) {
+			t.Errorf("gh argv = %v, want the title in it", call)
+		}
+	})
+
+	t.Run("out", func(t *testing.T) {
+		body, out := setup(t)
+		fakeBugreportExec(t, nil, nil)
+		if _, _, err := captureOutput(t, func() error {
+			return run([]string{"bugreport", "--title", title, "--body", body, "--out", out})
+		}); err != nil {
+			t.Fatalf("bugreport: %v", err)
+		}
+		written, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatalf("read --out bundle: %v", err)
+		}
+		if !strings.HasPrefix(string(written), "# "+title+"\n") || !strings.Contains(string(written), description) {
+			t.Errorf("--out bundle does not carry the title and description:\n%s", written)
+		}
+	})
+
+	t.Run("logs", func(t *testing.T) {
+		body, _ := setup(t)
+		fakeBugreportExec(t, nil, nil)
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"bugreport", "--title", title, "--body", body, "--logs", "--stdout"})
+		})
+		if err != nil {
+			t.Fatalf("bugreport: %v (stderr: %s)", err, stderr)
+		}
+		if !strings.HasPrefix(string(stdout), "# "+title+"\n") || !strings.Contains(string(stdout), description) {
+			t.Errorf("--logs stdout does not carry the title and description:\n%s", stdout)
+		}
+	})
+
+	t.Run("raw", func(t *testing.T) {
+		body, _ := setup(t)
+		fakeBugreportExec(t, nil, nil)
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"bugreport", "--title", title, "--body", body, "--raw", "--stdout"})
+		})
+		if err != nil {
+			t.Fatalf("bugreport: %v (stderr: %s)", err, stderr)
+		}
+		if !strings.HasPrefix(string(stdout), "# "+title+"\n") || !strings.Contains(string(stdout), description) {
+			t.Errorf("--raw stdout does not carry the title and description:\n%s", stdout)
+		}
+	})
+}
+
+// TestBugreportFileRenderIsCappedToGhLimit pins the file cap: a --body file
+// over the limit yields a written file at or under the limit whose final line
+// names the limit and --stdout, while --stdout still prints the full render.
+func TestBugreportFileRenderIsCappedToGhLimit(t *testing.T) {
+	docsEnv(t)
+	seedBugreportMachine(t, "alpha")
+	fakeBugreportExec(t, nil, nil)
+
+	body := filepath.Join(t.TempDir(), "body.md")
+	var sb strings.Builder
+	line := strings.Repeat("d", 79) + "\n"
+	for sb.Len() < 70<<10 {
+		sb.WriteString(line)
+	}
+	if err := os.WriteFile(body, []byte(sb.String()), 0o600); err != nil {
+		t.Fatalf("write body: %v", err)
+	}
+
+	out := filepath.Join(t.TempDir(), "bundle.md")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"bugreport", "--body", body, "--out", out})
+	})
+	if err != nil {
+		t.Fatalf("bugreport --body --out: %v (stderr: %s)", err, stderr)
+	}
+	if len(stdout) == 0 {
+		t.Error("the run printed neither the path nor the gh line")
+	}
+	written, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read capped bundle: %v", err)
+	}
+	if len(written) > bugreport.GhBodyLimit {
+		t.Errorf("written file is %d bytes, want at most %d", len(written), bugreport.GhBodyLimit)
+	}
+	lines := strings.Split(strings.TrimRight(string(written), "\n"), "\n")
+	final := lines[len(lines)-1]
+	if !strings.Contains(final, strconv.Itoa(bugreport.GhBodyLimit)) || !strings.Contains(final, "--stdout") {
+		t.Errorf("final line = %q, want it to name %d and --stdout", final, bugreport.GhBodyLimit)
+	}
+
+	stdout, err = captureBigOutput(t, func() error {
+		return run([]string{"bugreport", "--body", body, "--stdout"})
+	})
+	if err != nil {
+		t.Fatalf("bugreport --body --stdout: %v", err)
+	}
+	if len(stdout) <= bugreport.GhBodyLimit {
+		t.Errorf("--stdout render is %d bytes, want the uncapped full render", len(stdout))
+	}
+	if !strings.Contains(string(stdout), sb.String()) {
+		t.Error("--stdout is not the uncapped full text")
+	}
+}
+
+// TestBugreportUncuttableBundleIsUsage pins the uncuttable bundle: a title
+// whose first line cannot fit beside the cap marker is usage, exit 2, naming the
+// size and the limit and writing no file, while --stdout still prints it.
+func TestBugreportUncuttableBundleIsUsage(t *testing.T) {
+	docsEnv(t)
+	seedBugreportMachine(t, "alpha")
+	fakeBugreportExec(t, nil, nil)
+
+	title := strings.Repeat("t", 70000)
+	out := filepath.Join(t.TempDir(), "bundle.md")
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"bugreport", "--title", title, "--out", out})
+	})
+	ce := requireCLIError(t, err, codeUsage, "")
+	if !strings.Contains(ce.message, strconv.Itoa(bugreport.GhBodyLimit)) {
+		t.Errorf("message = %q, want the limit %d", ce.message, bugreport.GhBodyLimit)
+	}
+	if !regexp.MustCompile(`\d+ bytes`).MatchString(ce.message) {
+		t.Errorf("message = %q, want the bundle's size", ce.message)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("stdout = %q, want nothing printed", stdout)
+	}
+	if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the uncuttable run wrote a file: %v", err)
+	}
+
+	stdout, err = captureBigOutput(t, func() error {
+		return run([]string{"bugreport", "--title", title, "--stdout"})
+	})
+	if err != nil {
+		t.Fatalf("bugreport --title --stdout: %v", err)
+	}
+	if !strings.HasPrefix(string(stdout), "# "+title+"\n") {
+		t.Errorf("--stdout does not print the uncuttable bundle:\n%.80s", stdout)
 	}
 }

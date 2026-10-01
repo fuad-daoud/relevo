@@ -178,7 +178,7 @@ func chainEventFromClose(rt Runtime, part string, b store.Binding, body []byte, 
 		}
 	case chain.MemberReviewer:
 		ev.Kind = chain.EventReviewerClosed
-		ev.Verdict = chain.ParseVerdict(body)
+		ev.Verdict = chainReaderVerdict(rt, b, body)
 	case chain.MemberPlanner:
 		ev.Kind = chain.EventPlannerClosed
 		if size, _, ok, err := rt.Store.StatFile(reportPathFor(rt, b)); err == nil && ok && size > 0 {
@@ -186,7 +186,7 @@ func chainEventFromClose(rt Runtime, part string, b store.Binding, body []byte, 
 		}
 	case chain.MemberSecurity:
 		ev.Kind = chain.EventSecurityClosed
-		ev.Findings, ev.FindingsGiven = chain.ParseFindings(body)
+		ev.Findings, ev.FindingsGiven = chainReaderFindings(rt, b, body)
 	}
 	return ev
 }
@@ -425,6 +425,8 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 		}
 		v.PlanDiffPath = chainSeedInput(rt, c, chainPlanDiff(rt, tx, c, c.Builder, builderRound))
 		v.RoundPromptPath = chainSeedInput(rt, c, chainRoundPromptPath(rt, v.PlanPath, c.Builder, builderRound))
+		v.BuilderRoundKind, v.BuilderRoundOn, v.BuilderRounds, v.DiffFrom =
+			chainBuilderPlanView(rt, tx, c, s, act, c.Builder, builderRound)
 		if act.Seed == chain.SeedCorrection {
 			v.OutputPath = reviewerOutput
 		}

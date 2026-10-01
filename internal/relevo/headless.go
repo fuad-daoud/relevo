@@ -1131,11 +1131,11 @@ func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (held,
 // closed and gating are reported so the caller returns exactly what the marker
 // branch does; a marker-absent read comes back unchanged with both false.
 func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string, wantVerify bool) (store.Binding, bool, bool, error) {
-	// A reader round closes on its runner's exit, not on the marker: the final
-	// message comes after the marker, so the summary is only complete once the
-	// process has gone. While the runner is alive the round stays open; past
-	// the grace the runner is stopped and the round closes with the summary
-	// taken early.
+	// A reader round closes on its runner's exit, not on the marker: the runner
+	// may have written its output near the end, so the summary is only complete
+	// once the process has gone. While the runner is alive the round stays
+	// open; past the grace the runner is stopped and the round closes with the
+	// summary taken early.
 	if b.Shape == store.ShapeReader {
 		held, early, err := holdReaderOnMarker(ctx, rt, b)
 		if err != nil {

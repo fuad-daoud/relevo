@@ -53,6 +53,10 @@ const (
 	// real process, take seconds; the bound is what turns a stuck chain into a
 	// failure that names the step.
 	chainE2EDeadline = 2 * time.Minute
+	// chainRecapMarker is the text the fake reviewer writes after its
+	// block-bearing message: a recap that carries no relevo block, so the
+	// verdict can only be read from the round's stream.
+	chainRecapMarker = "Reviewer recap"
 )
 
 func TestChainE2E(t *testing.T) {
@@ -236,6 +240,22 @@ func TestChainE2E(t *testing.T) {
 	}
 	if got, want := chainStaged(t, rt, firstDiffCopy), chainStaged(t, rt, firstDiffKey); got != want {
 		t.Errorf("the round 1 diff copy %s = %q, want the key's bytes %q", firstDiffCopy, got, want)
+	}
+
+	// The reviewer writes a recap after the message that carries its block, so
+	// its written output is the recap and holds no verdict. The verdict on the
+	// trace above is still pass, so it must have been read from the stream:
+	// an event build that dropped the stream fallback would halt here with
+	// "reviewer gave no verdict".
+	for _, round := range []int{1, 2} {
+		outPath := rt.Store.OutputPath(reviewerName, round, "reviewer", "findings")
+		body := chainStaged(t, rt, outPath)
+		if !strings.Contains(body, chainRecapMarker) {
+			t.Errorf("the reviewer's round %d output does not carry the recap %q:\n%s", round, chainRecapMarker, body)
+		}
+		if strings.Contains(body, "verdict:") {
+			t.Errorf("the reviewer's round %d output carries the verdict block; the verdict must come from the stream:\n%s", round, body)
+		}
 	}
 
 	// The correction planner's seed names the builder round the reviewer's

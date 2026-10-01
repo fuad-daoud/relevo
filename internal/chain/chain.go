@@ -163,6 +163,23 @@ const (
 	SeedFixes      SeedKind = "fixes"
 )
 
+// The kind words for a closing builder round that is not the plan's first: the
+// reviewer seed names which kind it is, so the reviewer knows what it judges.
+const (
+	BuilderRoundRepair     = "a repair round after a red check"
+	BuilderRoundCorrection = "a correction round"
+	BuilderRoundFix        = "a fix-plan round"
+	BuilderRoundHuman      = "a round a human sent"
+)
+
+// SeedRound is one builder round the reviewer's plan view lists: the round
+// number and the openable paths of its prompt and report.
+type SeedRound struct {
+	Round      int
+	PromptPath string
+	ReportPath string
+}
+
 // SeedView is one round's inputs, rendered from a seed template. It carries
 // paths, never file contents.
 type SeedView struct {
@@ -172,6 +189,15 @@ type SeedView struct {
 	OutputPath, BranchDiffPath     string
 	PlanDiffPath, RoundPromptPath  string
 	Branch, Base                   string
+	// BuilderRoundKind names what the closing builder round is when it is not
+	// the plan's first; "" means it is. BuilderRoundOn is the round it sits on
+	// top of, and BuilderRounds lists every builder round of the plan with the
+	// paths a runner can open for each. DiffFrom names the commit to diff the
+	// plan from when no cumulative diff was captured.
+	BuilderRoundKind string
+	BuilderRoundOn   int
+	BuilderRounds    []SeedRound
+	DiffFrom         string
 }
 
 // Action is what relevo does next. A send names the member and the seed; the
