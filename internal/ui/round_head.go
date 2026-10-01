@@ -122,18 +122,19 @@ func (p roundPane) moveArtifact(delta int) (roundPane, tea.Cmd) {
 // browser or the editor, through the Actions seam, so no test ever runs one.
 // A file still on disk opens where it is; a sealed file -- one the seal pass
 // moved into round_file -- is first written to a temp file under os.TempDir()
-// whose name starts with its own, and that is what opens.
+// whose name starts with its own, and that is what opens. An .excalidraw scene
+// with a companion .svg opens that svg instead, through the same decision the
+// OPENS IN cell reads.
 func (p roundPane) openCmd(env Env) tea.Cmd {
 	c := p.detail.cache[tabArtifacts]
 	if !c.loaded || c.artifactRel == "" || env.Actions == nil {
 		return nil
 	}
-	rt, name, ok := env.Src.Runtime(p.detail.name)
-	if !ok || rt.Store == nil {
+	if c.artifactDir == "" {
 		return notice("cannot open " + c.artifactRel)
 	}
 	rel := c.artifactRel
-	path := filepath.Join(rt.Store.ArtifactDir(name, p.detail.round, c.artifactActor), filepath.FromSlash(rel))
+	path := filepath.Join(c.artifactDir, filepath.FromSlash(rel))
 	if _, err := os.Stat(path); err != nil {
 		if c.artifactErr != nil {
 			return notice(c.artifactErr.Error())
@@ -152,8 +153,8 @@ func (p roundPane) openCmd(env Env) tea.Cmd {
 		path = tmp.Name()
 	}
 
-	kind := artifactOpenKind(rel)
-	cmd, err := env.Actions.OpenArtifact(path, kind)
+	kind, target := artifactOpenTarget(rel, path)
+	cmd, err := env.Actions.OpenArtifact(target, kind)
 	if err != nil {
 		return notice(err.Error())
 	}

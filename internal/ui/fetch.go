@@ -70,6 +70,9 @@ type tabContent struct {
 	artifactActor  string
 	artifactOutput string
 	artifactErr    error
+	// artifactDir is the directory artifactRel lives in, or would live in
+	// for a sealed round. The open action and the hint line join it.
+	artifactDir string
 }
 
 // headlessLogLines caps how much of a round log the terminal tab holds:
@@ -727,6 +730,7 @@ func fetchArtifacts(ctx context.Context, src Source, key string, round, sel int)
 			artifactRel:    files[sel].Rel,
 			artifactActor:  actor,
 			artifactOutput: output,
+			artifactDir:    rt.Store.ArtifactDir(name, round, actor),
 		}
 		data, rerr := relevo.ReadArtifact(rt, name, round, actor, files[sel].Rel)
 		if rerr != nil {
