@@ -48,6 +48,23 @@ var registry = []verbEntry{
 		Errors:  []string{"internal", "mastermind_not_found", "not_available", "refused", "usage"},
 	},
 	{
+		Name:    "board annotate",
+		Summary: "append one text element to a scene in the repo",
+		Args:    "<file> --text S [--x X --y Y]",
+		Flags:   []string{"--text", "--x", "--y"},
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"internal", "refused", "usage"},
+	},
+	{
+		Name:    "board text",
+		Summary: "list a scene's text elements",
+		Args:    "<file> [--json]",
+		Flags:   []string{"--json"},
+		Output:  "json:[]board.TextElement",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"internal", "refused", "usage"},
+	},
+	{
 		Name:    "bugreport",
 		Summary: "assemble a local, redacted bug-report bundle and print the gh line",
 		Args:    "[--name N] [--round N] [--logs] [--raw] [--out PATH] [--title T] [--body FILE] [--stdout|--json|--gh]",
