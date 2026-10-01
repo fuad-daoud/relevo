@@ -33,18 +33,25 @@ node_modules/.bin/esbuild src/index.jsx \
 # one. Replace that base with the local /assets/ and fail hard unless the 0.18.1
 # template is found exactly once and no https://esm.sh/ remains, so an
 # Excalidraw bump cannot silently reintroduce the CDN.
+#
+# The template's local identifier is an esbuild-minified name (`Cr` in
+# Excalidraw 0.18.1's own bundle, `io` once the pinned mermaid-to-excalidraw
+# import joins the graph), so match the template by shape, not by the literal:
+# `https://esm.sh/${<ident>.PKG_NAME?`${<ident>.PKG_NAME}@${<ident>.PKG_VERSION}`:"@excalidraw/excalidraw"}/dist/prod/`
+# where <ident> is any `[A-Za-z_$][\w$]*`.
 BOARD_BUNDLE="$out/bundle.js" node --input-type=module <<'NODE'
 import { readFileSync, writeFileSync } from "node:fs";
 
 const file = process.env.BOARD_BUNDLE;
-const template = 'https://esm.sh/${Cr.PKG_NAME?`${Cr.PKG_NAME}@${Cr.PKG_VERSION}`:"@excalidraw/excalidraw"}/dist/prod/';
+const template =
+  /https:\/\/esm\.sh\/\$\{([A-Za-z_$][\w$]*)\.PKG_NAME\?`\$\{\1\.PKG_NAME\}@\$\{\1\.PKG_VERSION\}`:"@excalidraw\/excalidraw"\}\/dist\/prod\//g;
 const local = "/assets/";
 
 const js = readFileSync(file, "utf8");
-const found = js.split(template).length - 1;
-if (found !== 1) {
+const found = js.match(template) || [];
+if (found.length !== 1) {
   console.error(
-    `board-assets: expected exactly one Excalidraw 0.18.1 assets-fallback template in ${file}, found ${found}`,
+    `board-assets: expected exactly one Excalidraw 0.18.1 assets-fallback template in ${file}, found ${found.length}`,
   );
   process.exit(1);
 }
