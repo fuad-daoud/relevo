@@ -391,6 +391,12 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 // (a halt, a running mirror, an error), delivers any pending payload. A nil
 // pre is the inline path: fetch and apply under the caller's lock.
 func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, pre *remoteFetch) (store.Binding, error) {
+	// A server chain's member is moved by the chain pull, never by the
+	// per-binding reconcile: a close collected here would advance the mirror
+	// the server owns.
+	if serverChainMember(tx, b.Name) {
+		return b, nil
+	}
 	var (
 		next    store.Binding
 		deliver bool
@@ -483,6 +489,11 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 		// A paused binding is not being relayed, and the daemon's Reconcile
 		// skips it too, so this pass has nothing to collect for it.
 		if !b.Builder.Remote() || b.State == store.StateDone || b.State == store.StatePaused {
+			continue
+		}
+		// A server chain's member is collected by the chain pull, never by
+		// this per-binding pass.
+		if serverChainMemberStore(rt.Store, b.Name) {
 			continue
 		}
 		name := b.Name

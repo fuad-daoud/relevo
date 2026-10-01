@@ -43,6 +43,7 @@ type chainFlagValues struct {
 	noSecurity     *bool
 	mastermind     *string
 	asJSON         *bool
+	server         *string
 }
 
 // chainFlagSet defines chain's flags on fs and returns what they parse into,
@@ -68,6 +69,7 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	v.noSecurity = fs.Bool("no-security", false, "do not run the chain's security phase")
 	v.mastermind = fs.String("mastermind", "", "act as this mastermind (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
 	v.asJSON = fs.Bool("json", false, "print the chain as a JSON document")
+	v.server = fs.String("server", "", "run the whole chain on this server; it continues when this machine is off")
 	return v
 }
 
@@ -204,6 +206,7 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 		PlannerActor:   *v.plannerActor,
 		SecurityActor:  *v.securityActor,
 		MasterMindID:   *v.mastermind,
+		Server:         *v.server,
 	}
 	// --security/--no-security are exclusive (refused above), so an explicit
 	// value is whichever flag was given; neither leaves the policy's own.
@@ -221,6 +224,9 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOptions, error) {
 	if *v.name == "" {
 		return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume needs --name NAME")
+	}
+	if *v.server != "" {
+		return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --server: a resume finds its server on the chain")
 	}
 	if err := relevo.RequireFeatureChoice(*v.feature, *v.noFeature, true); err != nil {
 		return relevo.ResumeOptions{}, refuseFlag(err)
