@@ -50,6 +50,23 @@ func waitDraining(t *testing.T, srv *Server) {
 	}
 }
 
+// waitTransactionClosed waits, with a bounded deadline, until the connection
+// reports no transaction. The clear is ordered after the ack by design:
+// conn.go's exec clears inTx only after the Done frame is written, so a caller
+// that has just read the ack may still observe the flag set. Poll instead of
+// reading once.
+func waitTransactionClosed(t *testing.T, c *conn) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for c.transactionOpen() {
+		if time.Now().After(deadline) {
+			t.Error("ROLLBACK did not clear the connection's transaction")
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // TestServeRefusesANewTransactionWhileDraining pins the drain contract: a
 // request that arrives while draining on a connection with no open transaction
 // is refused restarting, while a connection already inside one is let through
@@ -185,7 +202,8 @@ func TestAFailedCommitKeepsTheConnectionInATransaction(t *testing.T) {
 
 	execRaw(t, a, 6, "ROLLBACK")
 	readDone(t, a, na)
-	if c.transactionOpen() {
-		t.Error("ROLLBACK did not clear the connection's transaction")
-	}
+	// conn.go's exec clears inTx only after the Done is written, so a caller
+	// that just read the ack may still observe the flag set: wait, don't read
+	// once.
+	waitTransactionClosed(t, c)
 }

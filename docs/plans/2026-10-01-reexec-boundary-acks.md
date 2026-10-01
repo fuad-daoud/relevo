@@ -161,3 +161,25 @@ no allow-list and no coverage baseline line changes.
   is not proof; macOS CI on the PR is the acceptance.
 - Removing the sleeps does not weaken `assertLoadFailuresWithin`: its window
   still starts at `signalAt`, before the marker.
+
+## Correction round
+
+`make check-test` failed once on the round-1 commit:
+
+```
+--- FAIL: TestAFailedCommitKeepsTheConnectionInATransaction (0.02s)
+    drain_test.go:189: ROLLBACK did not clear the connection's transaction
+```
+
+Reproduced 1/20 with
+`go test -race -count=1 -cover ./internal/db/wire/owner/ -run TestAFailedCommitKeepsTheConnectionInATransaction`.
+
+Mechanism: round 1 made `conn.exec` clear `inTx` only after the closer's Done
+is written, so `drain_test.go`'s synchronous read of `transactionOpen()` right
+after `readDone` of the ROLLBACK could win the race against the owner
+goroutine's clear. The fix is in the test: `drain_test.go` waits for the flag
+with `waitTransactionClosed` (polls every 5 ms, 2 s deadline) instead of reading
+it once. The clear stays after the ack by design; the failed-COMMIT check stays
+synchronous because the error path never changes membership. `conn.go`,
+`reexec_test.go` and `txack_test.go` are untouched. The order the wait depends
+on is pinned by `txack_test.go`.
