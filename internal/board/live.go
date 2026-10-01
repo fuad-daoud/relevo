@@ -23,11 +23,11 @@ const (
 )
 
 // DefaultBoard is the scene name a live board opens when neither --board nor
-// the pointer names one (§4, S1/S4).
+// the pointer names one.
 const DefaultBoard = "board"
 
 // pointerName is the file, inside a live directory, that holds the current
-// scene name (§4, S1).
+// scene name.
 const pointerName = "current"
 
 // sceneNameRe is S3's slug rule: a lowercase letter or digit first, then up to

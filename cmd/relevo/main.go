@@ -61,7 +61,9 @@ Commands:
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
   bugreport assemble a local, redacted bug-report bundle and print the gh line
-  board     open a local Excalidraw whiteboard for a scene in the repo [--theme NAME] [--no-open]
+  board     open a local Excalidraw whiteboard: this MasterMind's live board, or a repo scene
+              relevo board [path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]
+              relevo board url [--board NAME] [--mastermind M]   print a live board's URL
   db        query '<SQL>' [--json]
             read relevo.db with one read-only SQL statement, through the daemon
             when it runs; use it instead of sqlite3, which the daemon's lock
