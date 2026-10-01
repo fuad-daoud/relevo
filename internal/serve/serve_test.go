@@ -729,6 +729,54 @@ func TestCreateBindingStoresGate(t *testing.T) {
 	}
 }
 
+// TestCreateBindingStoresRegate pins the repair budget on the served binding:
+// the client's resolved value is stored verbatim, and a create request that
+// carries none -- an old client -- takes the server's own policy default.
+func TestCreateBindingStoresRegate(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := func(v int) *int { return &v }
+	pol := policy.Policy{Gate: &policy.GatePolicy{Regate: ip(2)}}
+	srv, kp := newRoleTestServer(t, pol, roleTestRegistry(t, set, policy.Policy{}))
+
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     testRepoID,
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
+		Regate:     ip(3),
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+	b, err := testRuntime(t, srv, remote.IDOf(kp.Public)).Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load binding: %v", err)
+	}
+	if b.Regate != 3 {
+		t.Fatalf("stored Regate = %d, want 3", b.Regate)
+	}
+
+	oldRec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "old",
+		RepoID:     testRepoID,
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
+	})
+	if oldRec.Code != http.StatusCreated {
+		t.Fatalf("old-client status = %d, want 201; body: %s", oldRec.Code, oldRec.Body.String())
+	}
+	old, err := testRuntime(t, srv, remote.IDOf(kp.Public)).Store.Load("old")
+	if err != nil {
+		t.Fatalf("Load old binding: %v", err)
+	}
+	if old.Regate != 2 {
+		t.Fatalf("old client's stored Regate = %d, want the server policy default 2", old.Regate)
+	}
+}
+
 func TestOwnerDirIsFlatHex(t *testing.T) {
 	s, root := newTestServer(t, 0)
 

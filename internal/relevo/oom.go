@@ -109,7 +109,7 @@ func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 		b.QueuedAt = now
 	}
 	b.RoundStartedAt = time.Time{}
-	b.OOMRequeue = &store.OOMRequeue{At: now, Running: running}
+	b.OOMRequeue = &store.OOMRequeue{At: now, Running: running, PeakBytes: peak}
 
 	var note string
 	if b.Owner == "" {

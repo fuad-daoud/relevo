@@ -7489,3 +7489,73 @@ func TestAddRemoteCarriesTheGate(t *testing.T) {
 		}
 	})
 }
+
+// TestAddRemoteCarriesTheRegate pins the repair budget on a plain remote bind:
+// the client resolves --regate exactly as the local add does and puts it on the
+// create request and the mirror binding -- an unnamed flag takes policy
+// gate.regate, and an explicit value travels as given, 0 included (0 disables
+// repairs, which is why the wire field is a pointer).
+func TestAddRemoteCarriesTheRegate(t *testing.T) {
+	ctx := context.Background()
+
+	pol := policy.Policy{Gate: &policy.GatePolicy{Regate: ptr(2)}}
+	registry := func(t *testing.T) *roles.Registry {
+		t.Helper()
+		return rolesFileRegistry(t, candidateSet(t, testCandidatesJSON), policy.Policy{}, map[string]roles.Row{
+			"builder": {Candidates: []string{testClaudeRef}},
+		})
+	}
+	add := func(t *testing.T, opts AddOptions) (*fakeRemote, store.Binding) {
+		t.Helper()
+		st := store.New(t.TempDir())
+		fg := &fakeGit{
+			headCommitID:  "1111111111111111111111111111111111111111",
+			rootCommitSHA: "2222222222222222222222222222222222222222",
+		}
+		fr := &fakeRemote{
+			createBindingResp: remote.BindingView{Name: opts.Name, Candidate: "claude/anthropic/haiku"},
+		}
+		rt := Runtime{
+			Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t),
+			Policy: pol, Registry: registry(t),
+		}
+		if _, err := Add(ctx, rt, opts); err != nil {
+			t.Fatalf("Add %+v: %v", opts, err)
+		}
+		stored, err := st.Load(opts.Name)
+		if err != nil {
+			t.Fatalf("Load %s: %v", opts.Name, err)
+		}
+		return fr, stored
+	}
+
+	t.Run("an unnamed flag takes gate.regate", func(t *testing.T) {
+		fr, stored := add(t, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
+		if fr.createBindingReq.Regate == nil || *fr.createBindingReq.Regate != 2 {
+			t.Errorf("CreateBindingRequest.Regate = %v, want 2", fr.createBindingReq.Regate)
+		}
+		if stored.Regate != 2 {
+			t.Errorf("mirror Regate = %d, want 2", stored.Regate)
+		}
+	})
+
+	t.Run("an explicit --regate travels", func(t *testing.T) {
+		fr, stored := add(t, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo", Regate: ptr(5)})
+		if fr.createBindingReq.Regate == nil || *fr.createBindingReq.Regate != 5 {
+			t.Errorf("CreateBindingRequest.Regate = %v, want 5", fr.createBindingReq.Regate)
+		}
+		if stored.Regate != 5 {
+			t.Errorf("mirror Regate = %d, want 5", stored.Regate)
+		}
+	})
+
+	t.Run("--regate 0 disables repairs", func(t *testing.T) {
+		fr, stored := add(t, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo", Regate: ptr(0)})
+		if fr.createBindingReq.Regate == nil || *fr.createBindingReq.Regate != 0 {
+			t.Errorf("CreateBindingRequest.Regate = %v, want 0", fr.createBindingReq.Regate)
+		}
+		if stored.Regate != 0 {
+			t.Errorf("mirror Regate = %d, want 0", stored.Regate)
+		}
+	})
+}

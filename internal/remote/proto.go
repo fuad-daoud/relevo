@@ -125,6 +125,12 @@ type CreateBindingRequest struct {
 	// "" means no check. It is additive: an old server ignores it.
 	Gate string `json:"gate,omitempty"`
 
+	// Regate is the binding's automatic repair-round budget, resolved by the
+	// client exactly as the local add resolves it. nil means an old client
+	// that sent none: the server then applies its own policy default. It is
+	// additive: an old server ignores it.
+	Regate *int `json:"regate,omitempty"`
+
 	// Author is the client's git identity; the server runs this binding's
 	// builders as it (#335). nil means an old client that sent none.
 	Author *GitIdentity `json:"author,omitempty"`

@@ -437,7 +437,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Role:             normRole(opts.Role),
 		Shape:            shape,
 		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
-		Regate:           resolveRegate(opts.Regate, rt.Policy),
+		Regate:           ResolveRegate(opts.Regate, rt.Policy),
 		// captureRepo runs against opts.Repo, not cwd: opts.Repo is the
 		// parent checkout the worktree is cut from (its git identity is
 		// what the coming history database wants), while cwd is the fresh

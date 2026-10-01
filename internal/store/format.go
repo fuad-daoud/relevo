@@ -5,13 +5,15 @@ import (
 	"fmt"
 )
 
-// BindingFormat is the format of the Binding JSON this binary writes. It is 12
-// because the runner-writable state layout moved: a round's report, done marker
-// and artifact directories now live under the binding's out/ directory, and
-// relevo migrates an older binding's files into it on the first tick. The file
-// names and the round_file row names are unchanged, so the format bump exists
-// only to lock an older relevo out: it does not know the out/ layout and would
-// name, read and seal the old paths. That refusal is the intended clean break.
+// BindingFormat is the format of the Binding JSON this binary writes. It is 13
+// because oom_requeue gained peak_bytes: a build that knows 12 would load the
+// binding and rewrite it without that field. (12 was the runner-writable state
+// layout: a round's report, done marker and artifact directories now live under
+// the binding's out/ directory, and relevo migrates an older binding's files
+// into it on the first tick. The file names and the round_file row names are
+// unchanged, so the format bump exists only to lock an older relevo out: it
+// does not know the out/ layout and would name, read and seal the old paths.
+// That refusal is the intended clean break.)
 //
 // Later fields (abandoned_sessions, oom_requeue, round_oom_kills, link,
 // remote_bundle_failures) are fields recordFormat never stamps: an older relevo
@@ -22,7 +24,7 @@ import (
 // failure run, which restarts from zero. Stamping a field would lock that older
 // relevo out of loading the binding. Bump BindingFormat whenever Binding's JSON
 // shape changes in a way that must lock an older relevo out.
-const BindingFormat = 12
+const BindingFormat = 13
 
 // recordFormat is the format to write b at. Every record is format 12: the
 // binary writes and migrates the out/ layout, which an older relevo cannot
