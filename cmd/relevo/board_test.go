@@ -227,8 +227,12 @@ func TestBoardRefusesNestedScopes(t *testing.T) {
 				liveRoot := boardStateRoot(t)
 				id := "mm_aaaaaaaaaaaa"
 				liveDir := filepath.Join(liveRoot, id)
+				repoRoot := dir.repoRoot(liveRoot, id)
 				if err := os.MkdirAll(liveDir, 0o700); err != nil {
-					t.Fatalf("MkdirAll: %v", err)
+					t.Fatalf("MkdirAll live dir: %v", err)
+				}
+				if err := os.MkdirAll(repoRoot, 0o700); err != nil {
+					t.Fatalf("MkdirAll repo root: %v", err)
 				}
 				arg := form.arg
 				if arg == "live" {
@@ -236,10 +240,12 @@ func TestBoardRefusesNestedScopes(t *testing.T) {
 				}
 
 				orig := boardRepoRootFn
-				boardRepoRootFn = func(string) (string, error) { return dir.repoRoot(liveRoot, id), nil }
+				boardRepoRootFn = func(string) (string, error) { return repoRoot, nil }
 				t.Cleanup(func() { boardRepoRootFn = orig })
 
-				_, err := resolveBoard(t.TempDir(), id, form.flag, arg)
+				// cwd is the repo root so the explicit-repo-path form would
+				// resolve -- not refuse -- without C2's wiring.
+				_, err := resolveBoard(repoRoot, id, form.flag, arg)
 				requireCLIError(t, err, codeUsage, "")
 			})
 		}
