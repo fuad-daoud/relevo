@@ -306,8 +306,8 @@ func TestActorViewPickerAddsHaiku(t *testing.T) {
 func TestActorFormBuilderAgents(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	f := newActorForm(candActionEnv(fa, candGatedReport()), fa.doc, "builder")
-	if got := strings.Join(f.agents, ","); got != "plan-executor,documentor" {
-		t.Errorf("builder agents = %q, want plan-executor,documentor", got)
+	if got := strings.Join(f.agents, ","); got != "plan-executor,librarian" {
+		t.Errorf("builder agents = %q, want plan-executor,librarian", got)
 	}
 	if f.asel != 0 || f.tsel != 2 || !f.check || !f.builtin {
 		t.Errorf("form = asel %d tsel %d check %v builtin %v, want 0, 2, true, true", f.asel, f.tsel, f.check, f.builtin)

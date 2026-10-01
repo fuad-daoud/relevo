@@ -4,7 +4,7 @@
                                                                                                                                     
    AGENT                                             SHAPE   SOURCE   USED BY              AGY       CLAUDE    CODEX     OPENCODE   
    plan-executor                                     writer  shipped  builder              ok        ok        ok        ok         
-   documentor                                        writer  shipped  no actor             ok        ok        ok        ok         
+   librarian                                         writer  shipped  no actor             ok        ok        ok        ok         
    reviewer                                          reader  shipped  reviewer             ok        ok        ok        ok         
    security-reviewer                                 reader  shipped  no actor             ok        ok        ok        ok         
    researcher                                        reader  shipped  builder, researcher  ok        ok        ok        ok         

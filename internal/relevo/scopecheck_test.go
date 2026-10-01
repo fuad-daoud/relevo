@@ -13,16 +13,16 @@ import (
 )
 
 // scopedWriterRuntime is sentBinding with the fake Git installed and the
-// binding moved onto a scoped documentor writer, one Send into round 1.
+// binding moved onto a scoped librarian writer, one Send into round 1.
 func scopedWriterRuntime(t *testing.T, fg *fakeGit, scope *pathscope.Scope) (Runtime, store.Binding) {
 	t.Helper()
 	rt, b := sentBinding(t)
 	rt.Git = fg
 	rt.Runner = newFakeRunner()
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, map[string]roles.Row{
-		"documentor": {Shape: ptr("writer"), Scope: scope},
+		"librarian": {Shape: ptr("writer"), Scope: scope},
 	})
-	b.Role = "documentor"
+	b.Role = "librarian"
 	b.RoundBaselineTree = "tree-start"
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
