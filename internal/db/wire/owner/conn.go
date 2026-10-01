@@ -461,12 +461,32 @@ func (c *conn) cleanup() {
 		}
 	}
 	if pinned != nil {
-		_, _ = pinned.ExecContext(context.Background(), "ROLLBACK")
-		_ = pinned.Raw(func(any) error { return driver.ErrBadConn })
-		_ = pinned.Close()
+		discardPinned(pinned)
+		// The slot returns whether or not the discard finished: a statement the
+		// engine will not interrupt must not wedge a pin slot, so the abandoned
+		// statement keeps running until the engine finishes it.
 		<-c.s.sem
 	}
 	_ = c.nc.Close()
+}
+
+// discardPinned best-effort rolls a pinned connection back and drops it, bounded
+// by discardTimeout. The rollback runs on the connection's single-operation
+// mutex, so a statement the engine will not interrupt parks it; the caller must
+// return the slot regardless, and the abandoned statement keeps running until
+// the engine finishes it.
+func discardPinned(pinned *sql.Conn) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = pinned.ExecContext(context.Background(), "ROLLBACK")
+		_ = pinned.Raw(func(any) error { return driver.ErrBadConn })
+		_ = pinned.Close()
+	}()
+	select {
+	case <-done:
+	case <-time.After(discardTimeout):
+	}
 }
 
 // takePinned detaches the client's pinned connection, returning nil when there
