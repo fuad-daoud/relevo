@@ -370,6 +370,25 @@ func (w *blockingWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// TestDBQueryNotConvertedRefusalCarriesTheDaemonHint pins the folded cause: the
+// ErrNotConverted refusal ends with the daemon hint rather than only naming the
+// file it could not read.
+func TestDBQueryNotConvertedRefusalCarriesTheDaemonHint(t *testing.T) {
+	seedQueryRoot(t)
+
+	prev := openReadOnlyDB
+	openReadOnlyDB = func(string, db.Options) (*db.DB, error) { return nil, db.ErrNotConverted }
+	t.Cleanup(func() { openReadOnlyDB = prev })
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `SELECT 1`})
+	})
+	ce := requireCLIError(t, err, codeRefused, "")
+	if !strings.Contains(ce.message, "start the daemon once") {
+		t.Errorf("message = %q, want the daemon hint", ce.message)
+	}
+}
+
 // TestDBQueryConflictNamesTheLockNotTheDaemon pins the conflict message: when
 // the file is held and no owner answers, the message names the lock and the
 // socket, never the daemon that may not exist.
