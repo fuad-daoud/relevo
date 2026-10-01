@@ -66,7 +66,7 @@ func TestMoveSessionAppendsHistoryAndCapsAt20(t *testing.T) {
 
 	for i := 1; i <= 21; i++ {
 		at := testNow.Add(time.Duration(i) * time.Minute)
-		if _, err := reg.MoveSession("pl_aaaaaaaaaaaa", sessionName(i), "", at); err != nil {
+		if _, err := reg.MoveSession("pl_aaaaaaaaaaaa", sessionName(i), at); err != nil {
 			t.Fatalf("MoveSession(%d): %v", i, err)
 		}
 	}
@@ -95,26 +95,8 @@ func TestMoveSessionAppendsHistoryAndCapsAt20(t *testing.T) {
 	}
 
 	mustCreate(t, reg, record("pl_bbbbbbbbbbbb", "beta", "claude", "held", 0))
-	if _, err := reg.MoveSession("pl_aaaaaaaaaaaa", "held", "", testNow); !errors.Is(err, ErrSessionTaken) {
+	if _, err := reg.MoveSession("pl_aaaaaaaaaaaa", "held", testNow); !errors.Is(err, ErrSessionTaken) {
 		t.Errorf("MoveSession onto a held session = %v, want ErrSessionTaken", err)
-	}
-
-	before, err := reg.Get("pl_aaaaaaaaaaaa")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if before.TranscriptLocator != "" {
-		t.Fatalf("TranscriptLocator = %q, want empty", before.TranscriptLocator)
-	}
-	if _, err := reg.MoveSession("pl_aaaaaaaaaaaa", "s22", "/tmp/t.jsonl", testNow.Add(22*time.Minute)); err != nil {
-		t.Fatalf("MoveSession with transcript: %v", err)
-	}
-	after, err := reg.Get("pl_aaaaaaaaaaaa")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if after.TranscriptLocator != "/tmp/t.jsonl" {
-		t.Errorf("TranscriptLocator = %q, want /tmp/t.jsonl", after.TranscriptLocator)
 	}
 }
 

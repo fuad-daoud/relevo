@@ -247,7 +247,7 @@ func TestMasterMindInitHookWritesEnvFile(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_AGENT", "architect")
 	repo := mastermindConsentRepo(t, state, db.ConsentYes)
 
-	payload := fmt.Sprintf(`{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-abc","transcript_path":"/tmp/t.jsonl","cwd":%q}`, repo)
+	payload := fmt.Sprintf(`{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-abc","cwd":%q}`, repo)
 	stdout, _, err := runWithStdin(t, payload, "mastermind", "init", "--hook", "claude")
 	if err != nil {
 		t.Fatalf("run = %v, want exit 0", err)
@@ -275,8 +275,8 @@ func TestMasterMindInitHookWritesEnvFile(t *testing.T) {
 	if rec.Name != "architect-1" {
 		t.Errorf("Name = %q, want architect-1", rec.Name)
 	}
-	if rec.TranscriptLocator != "/tmp/t.jsonl" || rec.CWD != repo {
-		t.Errorf("record = %+v, want the hook payload's transcript and cwd", rec)
+	if rec.CWD != repo {
+		t.Errorf("record = %+v, want the hook payload's cwd", rec)
 	}
 	if rec.HostPID != os.Getppid() {
 		t.Errorf("HostPID = %d, want the hook's parent pid %d", rec.HostPID, os.Getppid())

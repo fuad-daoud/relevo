@@ -155,11 +155,11 @@ func TestRecordShapeFailurePath(t *testing.T) {
 }
 
 func TestStoredFormat(t *testing.T) {
-	if got := storedFormat(MasterMindFormat); got != 0 {
-		t.Errorf("storedFormat(%d) = %d, want 0: format 1 is absent on disk", MasterMindFormat, got)
+	if got := storedFormat(1); got != 0 {
+		t.Errorf("storedFormat(1) = %d, want 0: format 1 is absent on disk", got)
 	}
-	if got := storedFormat(2); got != 2 {
-		t.Errorf("storedFormat(2) = %d, want 2", got)
+	if got := storedFormat(MasterMindFormat); got != MasterMindFormat {
+		t.Errorf("storedFormat(%d) = %d, want %d", MasterMindFormat, got, MasterMindFormat)
 	}
 }
 
@@ -197,7 +197,7 @@ func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 	if newer.Kind != "mastermind record" || newer.Name != rec.Name || newer.Have != MasterMindFormat+1 || newer.Know != MasterMindFormat {
 		t.Errorf("ErrNewerFormat = %+v", newer)
 	}
-	wantText := `mastermind record "alpha" was written by a newer relevo (format 2; this relevo knows 1): upgrade relevo; a mastermind session reconnects relevo mcp with /mcp`
+	wantText := `mastermind record "alpha" was written by a newer relevo (format 3; this relevo knows 2): upgrade relevo; a mastermind session reconnects relevo mcp with /mcp`
 	if err.Error() != wantText {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}

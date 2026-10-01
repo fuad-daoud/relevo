@@ -4,7 +4,7 @@ package mastermind
 // is stored as an absent "format" field, so an old record stays unchanged;
 // bump this whenever Record's JSON shape changes, so an older relevo refuses
 // to overwrite fields it does not know.
-const MasterMindFormat = 1
+const MasterMindFormat = 2
 
 // storedFormat is the number written on disk for format n: format 1 is
 // omitted (written as 0); every other format is written as itself.
