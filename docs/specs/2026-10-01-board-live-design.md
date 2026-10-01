@@ -51,6 +51,10 @@ changed" banner and never merges silently.
 **D6 -- one human and one agent.** No CRDT/OT, no multi-user, no presence.
 Conflicts are surfaced (409, banner), not resolved.
 
+**D7 -- the live board is visible in the session's statusline.** While a board
+server runs for a MasterMind, the statusline carries its URL, so neither side
+has to hunt the terminal that started it.
+
 ## 4. Identity and addressing
 
 - Live directory: `<state root>/boards/<mastermind-id>/` (the MasterMind record
@@ -87,8 +91,10 @@ customData: { "relevo": { "comment": true, "by": "human" | "<mastermind>",
                           "at": "<RFC3339>" } }
 ```
 
-- The page's Comment tool creates one at the click point, drawn in the theme's
-  comment colour (section 14, question 1).
+- One comment colour per theme for both writers; `by` distinguishes them. New
+  palette role: `comment` -- cockpit `#b48cf2`, blueprint `#c4b5fd`. A comment
+  is a text element in that colour; no sticky container in the first cut.
+- The page's Comment tool creates one at the click point in that colour.
 - Verbs, pure Go, under S1's confinement rules:
   - `relevo board comments [<file>|--board NAME] [--json]` -- every comment in
     scene order: id, x, y, text, by, at.
@@ -100,9 +106,10 @@ customData: { "relevo": { "comment": true, "by": "human" | "<mastermind>",
     agent's comment never lands on a drawing.
 - The human's comments come from the page or from `board comment` in their
   shell; the agent's from `board comment`. Both are read by `board comments`.
-- First cut: no resolve, delete, or thread. Removing a comment is an edit in the
-  page like any other, and the CLI never deletes. A `--wait` for new comments is
-  a later, small addition.
+- First cut: flat comments -- no replies, resolve, delete, or thread. Removing a
+  comment is an edit in the page like any other, and the CLI never deletes.
+  Replies are a non-goal (section 13); a `--wait` for new comments is a later,
+  small addition.
 
 ## 6. Live updates
 
@@ -162,6 +169,25 @@ customData: { "relevo": { "comment": true, "by": "human" | "<mastermind>",
 - README: a "live boards" paragraph under `### relevo board`, plus the new verb
   rows.
 
+### The statusline (D7)
+
+- While a board server runs for a MasterMind, it writes
+  `<state root>/boards/<mastermind-id>/server.json` (`scene`, `url`, `port`,
+  `pid`, `started_at`) and removes it on shutdown.
+- `relevo status --line` and `--json` gain an optional `board` block for the
+  calling MasterMind: `{name, scope, url}`. It comes from the pointer file and
+  `server.json` -- a file read and a pid liveness check, no daemon and no
+  database -- so the statusline keeps its short budget.
+- The plugin (`internal/harness/opencodeplugin/tui.tsx`) renders a `board` segment
+  when the block is present, carrying the full URL (its token included) so it can
+  be copied straight into a browser. The token is per-run, loopback-only, dies
+  with the server, and is already readable under the state root, so the status
+  display adds no new exposure.
+- If several servers run on one board -- the agent's and the human's -- `server.json`
+  holds the most recent; all of them serve the same file.
+- `relevo board url [--board NAME]` prints the same URL for a shell copy when the
+  statusline is not at hand.
+
 ## 11. Testing
 
 - Pure Go, CI: resolution order and refusals; live-dir confinement (including a
@@ -174,12 +200,16 @@ customData: { "relevo": { "comment": true, "by": "human" | "<mastermind>",
   ~2 seconds; a dirty page shows the banner and never merges; a comment added in
   the page is read by `relevo board comments`; the Comment tool's element
   carries the marker.
+- Statusline, CI: the `board` block appears only when a live board exists and its
+  pid is alive, and the statusline path never dials the daemon (the existing
+  statusline route test extends).
 
 ## 12. Slices
 
 - **L1 -- the live scope (pure Go).** The live directory, the default name, the
-  pointer, the resolution order, `--mastermind`, `--board`, and confinement.
-  Mergeable alone.
+  pointer, the resolution order, `--mastermind`, `--board`, and confinement;
+  `server.json`, the status document's `board` block, `relevo board url`, and the
+  plugin's statusline segment. Mergeable alone.
 - **L2 -- comments (pure Go).** The marker, `comments`, `comment`, the S2 font
   rule, and the tests.
 - **L3 -- the live page (wrapper JS + the poll).** The Comment tool; the 2-second
@@ -198,14 +228,15 @@ L1 and L2 can run together; L3 needs both; L4 needs S3.
 - CRDT/OT, presence, cursors, and chat threads.
 - A daemon-hosted board, or a board served over the wire.
 - Autosave of drawing; explicit save stays.
-- Resolving, deleting, or threading comments from the CLI (a later addition).
+- Replies, resolution, deletion, or threading of comments: the first cut is flat
+  comments, and the CLI never deletes (a later addition).
 - Replacing the repo scope: committed boards stay the durable form.
 
-## 14. Open questions (owner)
+## 14. Resolved in review (owner, 2026-10-01)
 
-1. **Comment colour.** One comment colour per theme for both writers, with `by`
-   distinguishing them (proposed), or a human colour and an agent colour?
-2. **Replies.** Should `board comment` be able to reply to an existing comment
-   (`--reply-to <id>`), or are flat comments enough for the first cut?
-3. **Visibility.** Does the live board's URL belong in the statusline or the
-   cockpit for the session, or is the printed URL enough?
+1. **Comment colour.** One role colour per theme for both writers, with `by`
+   distinguishing them: cockpit `#b48cf2`, blueprint `#c4b5fd` (the MasterMind
+   chose; accepted).
+2. **Replies.** Flat comments for the first cut; replies are a non-goal here.
+3. **Visibility.** The live board's URL is carried in the session's statusline,
+   with `relevo board url` as the shell copy (section 10).
