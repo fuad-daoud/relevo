@@ -314,10 +314,17 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 			return nil
 		}
 		for _, f := range fs {
-			cur.Round = f.round
-			if !applyCatchUpFiles(rt, tx, cur, f.view, f.cf) {
-				return nil
+			next := cur
+			next.Round = f.round
+			if !applyCatchUpFiles(rt, tx, next, f.view, f.cf) {
+				// The round's files did not land. Stop here and fall through
+				// to the save, so the rounds before it commit with the member
+				// advanced past them while this round does not: the next pass
+				// resumes at f.round instead of re-installing what already
+				// landed and doubling its entries.
+				break
 			}
+			cur = next
 			if err := chainPullPromptEntry(rt, tx, cur, f.round, f.prompt); err != nil {
 				return err
 			}

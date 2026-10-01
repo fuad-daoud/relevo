@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -262,6 +263,58 @@ func TestChainPullStopsAtAFailedRound(t *testing.T) {
 	}
 }
 
+// TestChainPullSavesTheRoundsBeforeAFailedInstall pins the in-order save when a
+// round's files cannot be installed: the rounds before it commit with the member
+// advanced past them while the failed round does not, so the next pass resumes
+// at that round instead of re-installing the earlier rounds and doubling their
+// log entries.
+func TestChainPullSavesTheRoundsBeforeAFailedInstall(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 2, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	// Round 2's install fails: its report path is a directory, so the apply's
+	// rename cannot land the fetched report there.
+	if err := os.MkdirAll(rt.Store.ReportPath("shop", 2), 0o755); err != nil {
+		t.Fatalf("occupy round 2's report path: %v", err)
+	}
+
+	pullRounds(t, rt, "shop")
+
+	if b := chainBinding(t, rt, "shop"); b.Round != 2 {
+		t.Fatalf("builder round = %d, want 2: round 1 lands and round 2 stops there", b.Round)
+	}
+	if got := countLogEntries(chainLog(t, rt, "shop"), 1, store.DirToBuilder, store.KindPrompt); got != 1 {
+		t.Fatalf("round 1 prompt entries = %d, want 1", got)
+	}
+	if got := countLogEntries(chainLog(t, rt, "shop"), 1, store.DirToMasterMind, store.KindReport); got != 1 {
+		t.Fatalf("round 1 report entries = %d, want 1", got)
+	}
+
+	// The second pass resumes at round 2 and must not revisit round 1.
+	pullRounds(t, rt, "shop")
+
+	if got := countLogEntries(chainLog(t, rt, "shop"), 1, store.DirToBuilder, store.KindPrompt); got != 1 {
+		t.Errorf("after a second pass, round 1 prompt entries = %d, want still 1", got)
+	}
+	if got := countLogEntries(chainLog(t, rt, "shop"), 1, store.DirToMasterMind, store.KindReport); got != 1 {
+		t.Errorf("after a second pass, round 1 report entries = %d, want still 1", got)
+	}
+}
+
+// countLogEntries counts a binding's entries of one shape for one round.
+func countLogEntries(entries []store.LogEntry, round int, dir store.Direction, kind store.Kind) int {
+	n := 0
+	for _, e := range entries {
+		if e.Round == round && e.Direction == dir && e.Kind == kind {
+			n++
+		}
+	}
+	return n
+}
+
 // TestChainPullAcksAfterInstall pins the ack's order: the server is acked only
 // once the round it names is stored on this machine.
 func TestChainPullAcksAfterInstall(t *testing.T) {
@@ -372,6 +425,37 @@ func TestChainPullQueuesTheEndDeliveryOnlyOnceCaughtUp(t *testing.T) {
 
 		if pending := chainPendingChain(t, rt, "shop"); len(pending) != 2 {
 			t.Errorf("pending deliveries = %d, want a second after the resumed chain ended: %+v", len(pending), pending)
+		}
+	})
+
+	t.Run("a member level with its closed round is not caught up", func(t *testing.T) {
+		t.Parallel()
+
+		// The builder's round files cannot be fetched, so it stays at round 1
+		// while the server closed round 1: exactly level, not past it. The
+		// reviewer installs normally and is caught up, so the builder is the
+		// only member the guard can hold on.
+		fr := chainPullFake(chainPullView("shop", string(chain.StatusStopped), 1, 1, 0))
+		base := chainPullFiles()
+		fr.roundFileFunc = func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if name == "shop" {
+				return nil, errors.New("the builder's round files are gone")
+			}
+			return base(ctx, server, name, round, kind)
+		}
+		rt := chainPullRuntime(t, fr)
+		seedServerChain(t, rt, "shop")
+
+		pullRounds(t, rt, "shop")
+
+		if b := chainBinding(t, rt, "shop"); b.Round != 1 {
+			t.Fatalf("builder round = %d, want 1: the fetch failed, so the round cannot advance", b.Round)
+		}
+		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusRunning) {
+			t.Errorf("mirror status = %q, want running: a member level with its closed round is not caught up", row.Status)
+		}
+		if pending := chainPendingChain(t, rt, "shop"); len(pending) != 0 {
+			t.Errorf("pending deliveries = %d, want none while a member sits level with its closed round", len(pending))
 		}
 	})
 }

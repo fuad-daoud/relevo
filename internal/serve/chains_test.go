@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -489,6 +490,56 @@ func TestChainStopResumeDoneOverTheWire(t *testing.T) {
 	}
 	if c.Status != string(chain.StatusDone) {
 		t.Errorf("stored chain status = %q, want done", c.Status)
+	}
+}
+
+// TestResumeChainRefusesOutOfBoundSettings pins the resume route's bounds: a
+// max_corrections or regate outside the create's range answers 400 and leaves
+// the chain row byte-identical.
+func TestResumeChainRefusesOutOfBoundSettings(t *testing.T) {
+	env := setupTestEnv(t, func(c *Config) { c.MaxBuilders = 1 })
+
+	// Occupy the single builder slot so the chain's plan 1 stays queued.
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "decoy", "# Decoy")
+	requireCreated(t, resp, body, "decoy")
+
+	resp, body = createChain(t, env, "shop")
+	requireStatus(t, resp, body, http.StatusCreated)
+
+	// Stop the chain so the resume route is reachable.
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/chains/shop/stop", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+
+	rt := env.runtime(t)
+	before, err := rt.Store.Chain("shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := func(v int) *int { return &v }
+
+	for _, tc := range []struct {
+		name string
+		req  remote.ChainResumeRequest
+	}{
+		{"max_corrections below zero", remote.ChainResumeRequest{MaxCorrections: ip(-1)}},
+		{"max_corrections above the cap", remote.ChainResumeRequest{MaxCorrections: ip(maxChainCorrections + 1)}},
+		{"regate below zero", remote.ChainResumeRequest{Regate: ip(-1)}},
+		{"regate above the cap", remote.ChainResumeRequest{Regate: ip(maxChainRegate + 1)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reqBody, _ := json.Marshal(tc.req)
+			resp, out := doSigned(t, env.ts, env.kp, "POST", "/v1/chains/shop/resume", reqBody, "application/json")
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, string(out))
+			}
+			after, err := rt.Store.Chain("shop")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(before, after) {
+				t.Errorf("the refused resume changed the chain row:\nbefore: %+v\nafter:  %+v", before, after)
+			}
+		})
 	}
 }
 
