@@ -186,12 +186,6 @@ type Runtime struct {
 	// reader, and rounds close exactly as before.
 	Usage usage.Reader
 
-	// Sessions locates a session record so a round's transcript can be
-	// recorded (#184). mastermindLocator (bind.go) also calls it at bind time
-	// to fill MasterMind.TranscriptLocator (#172), the same file path, for the
-	// coming history database.
-	Sessions SessionLocator
-
 	// Classify judges report and dialog paragraphs for instruction-shaped
 	// content beside the regex scan (#211). Nil means no classifier is
 	// configured and the regex result stands alone; cmd/relevo wires
