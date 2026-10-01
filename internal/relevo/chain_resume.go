@@ -36,6 +36,10 @@ type ResumeOptions struct {
 	// Regate is the builder member's new repair-round budget after a failing
 	// gate; nil keeps the stored one.
 	Regate *int
+	// From re-enters the chain at this step instead of the one it halted on.
+	From string
+	// Params overrides the workflow's params, keyed by param name.
+	Params map[string]string
 }
 
 // resumeStep is the resume decision, as a pure function of the chain row and

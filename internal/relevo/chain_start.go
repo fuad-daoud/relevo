@@ -63,6 +63,18 @@ type ChainOptions struct {
 	// Server runs the whole chain on this server's daemon, so it continues
 	// when this machine is off. "" starts the chain locally.
 	Server string
+	// Workflow names the workflow the chain runs: a saved or shipped name, or
+	// a YAML/JSON file. "" is the shipped default.
+	Workflow string
+	// Params overrides the workflow's params, keyed by param name; they win
+	// over every old flag and the policy.
+	Params map[string]string
+	// Task is the chain's task input text, already read from --task-file when
+	// that flag named one.
+	Task string
+	// DryRun resolves and validates the workflow and prints its graph without
+	// starting anything.
+	DryRun bool
 }
 
 // ChainResult is what a start produced: the chain row, its members in part
