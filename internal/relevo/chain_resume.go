@@ -87,6 +87,9 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	if err != nil {
 		return ChainResult{}, err
 	}
+	if chainOnServer(c) {
+		return chainServerResume(ctx, rt, c, opts)
+	}
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
 	}

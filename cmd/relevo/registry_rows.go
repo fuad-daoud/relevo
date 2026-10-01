@@ -35,7 +35,7 @@ var registry = []verbEntry{
 		Flags: []string{
 			"--base", "--feature", "--gate", "--json", "--mastermind", "--max-corrections", "--name",
 			"--no-feature", "--no-gate", "--no-security", "--plan", "--planner-actor", "--regate", "--resume",
-			"--reviewer-actor", "--security", "--security-actor", "--ticket",
+			"--reviewer-actor", "--security", "--security-actor", "--server", "--ticket",
 		},
 		Output: "json:ChainDoc",
 		Exit:   []int{0, 1, 2},

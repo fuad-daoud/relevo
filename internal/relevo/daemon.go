@@ -174,6 +174,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// round for a remote member, and the step is what hands it over.
 	d.safely("chain pending send", func() { chainSendPending(ctx, d.rt) })
 
+	// A server chain is moved by the pull: it collects every mirror chain's
+	// missing rounds and queues each chain's end delivery, outside every lock.
+	d.safely("chain pull", func() { chainPullServers(ctx, d.rt) })
+
 	fresh, err := d.rt.Store.List()
 	if err != nil {
 		slog.Warn("list bindings for metadata sync", "err", err)
@@ -351,6 +355,11 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 // saved load was most of the tick's per-binding cost.
 func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFetch {
 	if d.rt.Remote == nil {
+		return nil
+	}
+	// A server chain's member is collected by the chain pull, not by the
+	// per-binding catch-up: there is no fetch to prefetch for it.
+	if serverChainMemberStore(d.rt.Store, b.Name) {
 		return nil
 	}
 	if !b.Builder.Remote() || b.State == store.StateDone || b.State == store.StatePaused {

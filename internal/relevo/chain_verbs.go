@@ -49,6 +49,9 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 	if err != nil {
 		return StopResult{}, err
 	}
+	if chainOnServer(c) {
+		return chainServerStop(ctx, rt, c)
+	}
 	if c.Status != string(chain.StatusRunning) {
 		return StopResult{}, ErrNothingToStop
 	}
@@ -117,6 +120,9 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 	}
 	if err != nil {
 		return DoneResult{}, err
+	}
+	if chainOnServer(c) {
+		return chainServerDone(ctx, rt, c)
 	}
 	if c.Status == string(chain.StatusRunning) {
 		return DoneResult{}, fmt.Errorf("chain %s is running; relevo stop %s first: %w", c.Name, c.Name, ErrChainRunning)

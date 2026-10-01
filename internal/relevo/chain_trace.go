@@ -52,6 +52,9 @@ func ChainTrace(ctx context.Context, rt Runtime, name string) (ChainTraceDoc, er
 	if err != nil {
 		return ChainTraceDoc{}, err
 	}
+	if chainOnServer(c) {
+		return chainServerTrace(ctx, rt, c)
+	}
 	rows, err := rt.Store.ChainEvents(name)
 	if err != nil {
 		return ChainTraceDoc{}, err
