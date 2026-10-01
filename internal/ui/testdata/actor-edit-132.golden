@@ -10,7 +10,7 @@
     5  sonnet      │                                                                                            │ady  next pick     
     6  glm-5.3-flas│ name       builder                                                                         │ady                
                    │                                                                                            │                   
-    #  PLACEMENT   │ agent       plan-executor    documentor                                                    │                   
+    #  PLACEMENT   │ agent       plan-executor    librarian                                                     │                   
     1  zen         │            writer                                                                          │                   
                    │                                                                                            │                   
                    │ tier        read    edit    yolo    harness                                                │                   

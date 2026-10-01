@@ -155,8 +155,21 @@ func scratchRel(st *store.Store, path string) (string, bool) {
 // RemoveScratch takes a reader round's throwaway worktree away. A path that is
 // already gone is success: RemoveWorktree prunes the stale administrative
 // entry in that case.
+// RemoveScratch removes a reader round's throwaway worktree. A scratch whose
+// source tree is already gone and whose path no longer exists is already
+// removed: the release that took the source tree -- a chain's done removes the
+// builder's worktree its readers were cut from -- took the scratch with it, and
+// `git worktree remove` has no repository left to run in. That case is a quiet
+// nil so a shared-tree release logs no cleanup warning; every other failure
+// still surfaces.
 func RemoveScratch(ctx context.Context, rt Runtime, b store.Binding, round int) error {
-	return rt.Git.RemoveWorktree(ctx, b.CWD, rt.Store.ScratchWorktreePath(b.Name, round), true)
+	path := rt.Store.ScratchWorktreePath(b.Name, round)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, cerr := os.Stat(b.CWD); os.IsNotExist(cerr) {
+			return nil
+		}
+	}
+	return rt.Git.RemoveWorktree(ctx, b.CWD, path, true)
 }
 
 // SweepScratch removes the scratch worktrees whose round is closed -- the

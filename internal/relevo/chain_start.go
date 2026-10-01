@@ -305,7 +305,7 @@ func chainSettings(pol policy.Policy, opts ChainOptions, checks bool) chain.Sett
 		SecurityActor:  pol.ChainSecurityActor(),
 		Security:       pol.ChainSecurityOn(),
 		Gate:           resolveGateFor(opts.Gate, opts.NoGate, pol, checks),
-		Regate:         resolveRegate(opts.Regate, pol),
+		Regate:         ResolveRegate(opts.Regate, pol),
 	}
 	if opts.MaxCorrections != nil {
 		set.MaxCorrections = *opts.MaxCorrections

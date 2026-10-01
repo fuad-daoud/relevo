@@ -260,6 +260,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		Feature:          req.Feature,
 		Ticket:           req.Ticket,
 		Gate:             req.Gate,
+		Regate:           relevo.ResolveRegate(req.Regate, rt.Policy),
 		Serve: &store.ServeFacts{
 			RepoID:      req.RepoID,
 			BareRepo:    bare,

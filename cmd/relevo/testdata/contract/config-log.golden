@@ -23,8 +23,8 @@
               "m"
             ]
           },
-          "documentor": {
-            "agent": "documentor"
+          "librarian": {
+            "agent": "librarian"
           },
           "researcher": {
             "agent": "researcher"

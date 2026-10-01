@@ -96,8 +96,8 @@ func TestFormatActors(t *testing.T) {
 		},
 		"reviewer": {Agent: "reviewer", Candidates: []roles.Entry{{Candidate: "b"}}, Tier: "yolo"},
 		"designer": {Agent: "ui-designer", Candidates: []roles.Entry{{Candidate: "a"}}},
-		"documentor": {
-			Agent:      "documentor",
+		"librarian": {
+			Agent:      "librarian",
 			Candidates: []roles.Entry{{Candidate: "a"}},
 			Tier:       "yolo",
 			Scope:      &pathscope.Scope{Paths: []string{"@docs"}, Comments: true},
@@ -128,7 +128,7 @@ func TestFormatActors(t *testing.T) {
 		"  placement  zen, local\n" +
 		"designer  ui-designer  reader  custom  tier -\n" +
 		"  candidates  a\n" +
-		"documentor  documentor  writer  shipped  tier yolo  check on\n" +
+		"librarian  librarian  writer  shipped  tier yolo  check on\n" +
 		"  candidates  a\n" +
 		"  scope  @docs + comments\n" +
 		"reviewer  reviewer  reader  shipped  tier yolo\n" +

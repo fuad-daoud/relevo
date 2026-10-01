@@ -1,8 +1,10 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -359,5 +361,82 @@ func TestSweepScratchDoesNotFollowSymlinkedScratchDir(t *testing.T) {
 	}
 	if _, err := os.Stat(work); err != nil {
 		t.Errorf("the outside worktree was removed by removeScratchPath: %v", err)
+	}
+}
+
+// TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone pins the shared-tree
+// release: a chain done removes the builder's worktree first, and every reader
+// cut from that tree then cleans a scratch whose source no longer exists. Both
+// gone means the scratch is already removed -- no git call, no cleanup warning.
+func TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	fg := &fakeGit{}
+	rt.Git = fg
+	b := store.Binding{
+		Name: "reader-bind", CWD: filepath.Join(t.TempDir(), "gone"), Shape: store.ShapeReader, Round: 1,
+	}
+
+	if err := RemoveScratch(context.Background(), rt, b, 1); err != nil {
+		t.Fatalf("RemoveScratch = %v, want nil when the source tree and the scratch are both gone", err)
+	}
+	if len(fg.removeWorktreeCalls) != 0 {
+		t.Errorf("RemoveWorktree calls = %d, want 0", len(fg.removeWorktreeCalls))
+	}
+}
+
+// TestRemoveScratchRemovesARealScratchEvenWhenTheSourceIsGone keeps the guard
+// narrow: a scratch path that still exists is removed even when its source
+// tree is gone.
+func TestRemoveScratchRemovesARealScratchEvenWhenTheSourceIsGone(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	fg := &fakeGit{}
+	rt.Git = fg
+	scratch := rt.Store.ScratchWorktreePath("reader-bind", 1)
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
+		t.Fatalf("mkdir scratch: %v", err)
+	}
+	b := store.Binding{
+		Name: "reader-bind", CWD: filepath.Join(t.TempDir(), "gone"), Shape: store.ShapeReader, Round: 1,
+	}
+
+	if err := RemoveScratch(context.Background(), rt, b, 1); err != nil {
+		t.Fatalf("RemoveScratch = %v, want nil", err)
+	}
+	if len(fg.removeWorktreeCalls) != 1 {
+		t.Errorf("RemoveWorktree calls = %d, want 1", len(fg.removeWorktreeCalls))
+	}
+}
+
+// TestDoneOnAReaderWithAGoneSourceAndScratchLogsNoWarning pins the release
+// symptom end to end: a reader whose source tree is gone and whose scratch is
+// gone runs done without the "scratch worktree not removed" warning, even when
+// the git cleanup would fail.
+func TestDoneOnAReaderWithAGoneSourceAndScratchLogsNoWarning(t *testing.T) {
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	defer slog.SetDefault(previous)
+
+	rt := newRuntime(t)
+	fg := &fakeGit{removeWorktreeErr: errors.New("chdir /gone: no such file or directory")}
+	rt.Git = fg
+	b := store.Binding{
+		Name: "reader-bind", CWD: filepath.Join(t.TempDir(), "gone"),
+		Shape: store.ShapeReader, Round: 1, State: store.StateActive,
+		Builder: store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := Done(context.Background(), rt, "reader-bind"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if strings.Contains(logged.String(), "scratch worktree not removed") {
+		t.Errorf("done logged the scratch cleanup warning:\n%s", logged.String())
 	}
 }

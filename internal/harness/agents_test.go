@@ -90,7 +90,7 @@ func TestOpencodeDefinitionsDeclareMode(t *testing.T) {
 	}{
 		{"architect", "primary"},
 		{"plan-executor", "all"},
-		{"documentor", "all"},
+		{"librarian", "all"},
 		{"researcher", "subagent"},
 	}
 	for _, tc := range cases {
@@ -107,7 +107,7 @@ func TestOpencodeDefinitionsDeclareMode(t *testing.T) {
 
 func TestAgentDocCodexIsToml(t *testing.T) {
 	const marker = "developer_instructions = '''\n"
-	for _, role := range []string{"plan-executor", "documentor", "researcher", "reviewer", "architect"} {
+	for _, role := range []string{"plan-executor", "librarian", "researcher", "reviewer", "architect"} {
 		doc, err := AgentDoc(role, "codex")
 		if err != nil {
 			t.Fatalf("AgentDoc(%s, codex): %v", role, err)
@@ -158,7 +158,7 @@ func checkCodexResearcher(t *testing.T, s string) {
 
 func TestAgyDefinitionsFrontmatter(t *testing.T) {
 	forbidden := regexp.MustCompile(`(?m)^\s*-\s*(write_to_file|replace_file_content|create_file|delete_file|notebook_edit|invoke_subagent|send_command_input|multi_replace_file_content|sed_file|manage_subagents|define_subagent)\s*$`)
-	for _, role := range []string{"plan-executor", "documentor", "researcher", "reviewer"} {
+	for _, role := range []string{"plan-executor", "librarian", "researcher", "reviewer"} {
 		doc, err := AgentDoc(role, "agy")
 		if err != nil {
 			t.Fatalf("AgentDoc(%s, agy): %v", role, err)
@@ -174,8 +174,8 @@ func TestAgyDefinitionsFrontmatter(t *testing.T) {
 			checkAgyPlanExecutor(t, fm)
 			continue
 		}
-		if role == "documentor" {
-			checkAgyDocumentor(t, fm)
+		if role == "librarian" {
+			checkAgyLibrarian(t, fm)
 			continue
 		}
 		if !strings.Contains(fm, "\ntools:\n") {
@@ -211,54 +211,54 @@ func checkAgyPlanExecutor(t *testing.T, fm string) {
 	}
 }
 
-// checkAgyDocumentor pins the docs-only writer's frontmatter: a root agent that
+// checkAgyLibrarian pins the docs-only writer's frontmatter: a root agent that
 // is never dispatched as a sub-agent, carrying the writer's tools and none of
 // the sub-agent ones, because a second writer in one tree is forbidden.
-func checkAgyDocumentor(t *testing.T, fm string) {
+func checkAgyLibrarian(t *testing.T, fm string) {
 	t.Helper()
 	if !strings.Contains(fm, "\nsubagent: false\n") {
-		t.Errorf("documentor must be subagent: false")
+		t.Errorf("librarian must be subagent: false")
 	}
 	if !strings.Contains(fm, "\ntools:\n") {
-		t.Errorf("documentor must carry a tools allowlist")
+		t.Errorf("librarian must carry a tools allowlist")
 	}
 	for _, name := range []string{"write_to_file", "replace_file_content", "run_command"} {
 		m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)
 		if !m.MatchString(fm) {
-			t.Errorf("documentor allowlist must include %s; without it the writer cannot write", name)
+			t.Errorf("librarian allowlist must include %s; without it the writer cannot write", name)
 		}
 	}
 	for _, name := range []string{"invoke_subagent", "manage_subagents"} {
 		m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)
 		if m.MatchString(fm) {
-			t.Errorf("documentor allowlist must not include %s", name)
+			t.Errorf("librarian allowlist must not include %s", name)
 		}
 	}
 }
 
-// TestDocumentorDefinitionsCarryTheDocsOnlyContract pins the prose contract
+// TestLibrarianDefinitionsCarryTheDocsOnlyContract pins the prose contract
 // every dialect carries: what is in scope, the directive comments and other
 // code that are out of scope, and the sentence that makes a code change a
 // failed round.
-func TestDocumentorDefinitionsCarryTheDocsOnlyContract(t *testing.T) {
+func TestLibrarianDefinitionsCarryTheDocsOnlyContract(t *testing.T) {
 	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
-		doc, err := AgentDoc("documentor", kind)
+		doc, err := AgentDoc("librarian", kind)
 		if err != nil {
-			t.Fatalf("AgentDoc(documentor, %s): %v", kind, err)
+			t.Fatalf("AgentDoc(librarian, %s): %v", kind, err)
 		}
 		body := definitionBody(t, kind, string(doc))
 		for _, want := range []string{"README", "docs/", "CHANGELOG", "CLAUDE.md", ".excalidraw", "Mermaid", "doc comments"} {
 			if !strings.Contains(body, want) {
-				t.Errorf("documentor.%s body lacks the in-scope anchor %q", kind, want)
+				t.Errorf("librarian.%s body lacks the in-scope anchor %q", kind, want)
 			}
 		}
 		for _, want := range []string{"//go:build", "//nolint", "@ts-ignore"} {
 			if !strings.Contains(body, want) {
-				t.Errorf("documentor.%s body lacks the out-of-scope anchor %q", kind, want)
+				t.Errorf("librarian.%s body lacks the out-of-scope anchor %q", kind, want)
 			}
 		}
 		if !strings.Contains(body, "A round that changes code is a failed round") {
-			t.Errorf("documentor.%s body lacks the failed-round sentence", kind)
+			t.Errorf("librarian.%s body lacks the failed-round sentence", kind)
 		}
 	}
 }
@@ -324,7 +324,7 @@ func agyAllowlist(fm string) []string {
 }
 
 func TestAgyAllowlistsResolve(t *testing.T) {
-	for _, role := range []string{"plan-executor", "documentor", "researcher", "reviewer"} {
+	for _, role := range []string{"plan-executor", "librarian", "researcher", "reviewer"} {
 		doc, err := AgentDoc(role, "agy")
 		if err != nil {
 			t.Fatalf("AgentDoc(%s, agy): %v", role, err)
