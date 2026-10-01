@@ -285,6 +285,10 @@ gives a MasterMind a name of your own.
   array. `relevo board comment [path|--board NAME] --text S [--x X --y Y] [--by B]`
   — append one comment element, leaving every other byte of the scene unchanged.
   See "relevo board" below.
+- `relevo board text <file> [--json]`, `relevo board annotate <file> --text S
+  [--x X --y Y]` — list the scene's text elements, or append one without
+  touching the rest of the scene. See "relevo board" below.
+>>>>>>> 40c2bb9a (docs(board): the text and annotate subverbs and the .excalidraw fallback (S2.7))
 - `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
   prompt and hand it to the builder as the prompt of a fresh process started in
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
@@ -1246,6 +1250,9 @@ relevo board docs/boards/api.excalidraw       edits a named repo scene
 relevo board --theme blueprint                a different palette for new elements
 relevo board comments                         lists the scene's comments
 relevo board comment --text "check state 3"   appends one comment
+relevo board text docs/boards/api.excalidraw  lists the scene's text elements
+relevo board annotate docs/boards/api.excalidraw --text "step 1"
+                                              appends one text element
 ```
 
 A live board lives under the state root, at
@@ -1314,6 +1321,38 @@ API; `If-Match` carries the scene's etag, and a stale one is a 409 the page
 reports as `the file changed on disk; reload to continue`. `make board-assets`
 regenerates the vendored assets and their integrity manifest; it is dev-only,
 and CI only reads them.
+
+The agent leg is pure Go, so an agent reads and writes a scene without the
+page: `relevo board text <file>` prints one row per non-deleted text element --
+id, x, y, then the raw text -- and `--json` prints one line,
+`[{"id":"…","x":10,"y":20,"text":"…"}]` (`[]` for a scene with none, never
+`null`). `relevo board annotate <file> --text S [--x X --y Y]` appends one text
+element and prints `board: annotated <path> (id <id>)`; it never unmarshals and
+re-marshals the scene, so every other byte keeps its position and a diff shows
+only the insertion. Without `--x/--y` the element lands below the scene's
+current bounds, left-aligned with its leftmost element, so an agent's note
+never lands on a drawing.
+
+Both subverbs require a scene path that ends in `.excalidraw` and sits under
+the repository root, and both refuse rather than create one: a missing scene is
+`no scene at <path>` (exit 2), and an invalid scene is refused with the
+validator's own words. The other usage refusals are exit 2 as well: a path that
+is missing or repeated, `--text` absent or empty, `--x` without `--y` (they
+come together), and a non-finite coordinate.
+
+Annotate's element is built for Excalidraw 0.18.1: `fontFamily` 3 (Cascadia),
+`lineHeight` 1.2, `fontSize` 20, `roughness` 0, and `strokeColor` from the
+resolved theme's ink. Font safety is explicit -- `autoResize` is true and the
+width is an estimate (twelve pixels per byte of the widest line, so it errs
+upward) that the emitted element never falls below, which is what keeps
+CLI-made text from rendering clipped before the font loads. Only the id (16
+random bytes), the seed and the timestamp are random.
+
+In the cockpit, an `.excalidraw` artifact opens its companion `.svg` in the
+browser when one sits beside it; without one it opens in `$EDITOR` and the tab
+shows the faint line `run relevo board <path> to edit`, so the scene can be
+opened on the board. The OPENS IN cell and the open action share one decision,
+so they cannot disagree.
 
 ### done and unbind are the destructive verbs
 

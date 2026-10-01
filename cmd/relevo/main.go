@@ -66,6 +66,8 @@ Commands:
               relevo board url [--board NAME] [--mastermind M]   print a live board's URL
               relevo board comments [path|--board NAME] [--json]   list the scene's comments
               relevo board comment [path|--board NAME] --text S [--x X --y Y] [--by B]   append one comment
+              relevo board text <file> [--json]   list a scene's text elements
+              relevo board annotate <file> --text S [--x X --y Y]   append one text element
   db        query '<SQL>' [--json]
             read relevo.db with one read-only SQL statement, through the daemon
             when it runs; use it instead of sqlite3, which the daemon's lock
