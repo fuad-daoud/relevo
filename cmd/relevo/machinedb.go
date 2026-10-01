@@ -114,16 +114,17 @@ func routeForArgs(args []string) (dbRoute, time.Duration, time.Duration) {
 }
 
 // isPeekArgs reports the read-only verbs, which never dial and never start the
-// owner: the daemon's --check/--preflight probes, and bugreport, whose read-only
-// runtime opens the machine database itself and must leave the route alone. A
-// peek verb also skips captureAgyEnv, which would open -- and can migrate -- the
-// very database the verb promises not to touch. bugreport's own flags
-// (--name/--round/--logs) pick what it reads and never change the route.
+// owner: the daemon's --check/--preflight probes, and bugreport and board,
+// whose runtimes read and write the repository themselves and must leave the
+// route alone. A peek verb also skips captureAgyEnv, which would open -- and
+// can migrate -- the very database the verb promises not to touch. bugreport's
+// own flags (--name/--round/--logs) and board's ([path]/--theme/--no-open)
+// pick what it does and never change the route.
 func isPeekArgs(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "bugreport" {
+	if args[0] == "bugreport" || args[0] == "board" {
 		return true
 	}
 	return args[0] == "daemon" && hasArg(args[1:], "--check", "--preflight")
