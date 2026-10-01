@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.8.0
 	github.com/klauspost/compress v1.18.4
 	github.com/muesli/termenv v0.15.2
+	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.59.0
 )
