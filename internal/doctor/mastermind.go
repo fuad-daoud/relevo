@@ -59,7 +59,7 @@ type MasterMindCheckInput struct {
 
 	Detected  bool               // mastermind.Detect: relevo runs inside a Claude Code session
 	Resolved  *mastermind.Record // the mastermind Resolve found; nil on a miss
-	Chat      string             // the resolved mastermind's chatlabel, "" when Resolved is nil
+	Chat      string             // the resolved mastermind's chatlabel (opencode only); "" when Resolved is nil
 	ClaimLive bool               // a live channel claim exists for Resolved
 	MCPChild  bool               // a `relevo mcp` process is a child of the mastermind's host; false is FAIL
 

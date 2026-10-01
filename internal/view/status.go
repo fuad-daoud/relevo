@@ -64,7 +64,8 @@ type BindingStatus struct {
 	MasterMindID   string `json:"mastermind_id,omitempty"`
 	MasterMindName string `json:"mastermind_name,omitempty"`
 	// MasterMindChatLabel and MasterMindChatLink are the harness's own name for the
-	// mastermind's session: Label.Text and Label.Link. Only cmd/relevo fills
+	// mastermind's session: Label.Text and Label.Link, resolved from an opencode
+	// session's own title and empty for every other kind. Only cmd/relevo fills
 	// them, inside the command a person ran, and only to print them; Status
 	// itself leaves them empty, so no label is ever computed on, or sent to,
 	// a server. They are never stored or logged.
