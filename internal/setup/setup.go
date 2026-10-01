@@ -79,7 +79,7 @@ func Plan(env harness.InstallEnv) (Files, error) {
 	}
 	builderCount := len(candidates)
 
-	order := []string{"builder"}
+	order := []string{"builder", "documentor"}
 	var planners []PlannerDefault
 	for _, p := range PlannerDefaults {
 		h, ok := harness.Lookup(p.Kind)
@@ -120,11 +120,13 @@ func Plan(env harness.InstallEnv) (Files, error) {
 	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON, Actors: actorsJSON, ActorOrder: order, CandidateNames: names}, nil
 }
 
-// starterActors assembles the builder actor and one reader actor per written
-// planner, each with the candidate names DeriveNames produced.
+// starterActors assembles the builder actor, the documentor writer over the
+// same candidates, and one reader actor per written planner, each with the
+// candidate names DeriveNames produced.
 func starterActors(builderNames []string, planners []PlannerDefault, plannerNames []string) map[string]roles.Actor {
 	actors := map[string]roles.Actor{
-		"builder": {Agent: "plan-executor", Tier: "yolo", Candidates: candidateEntries(builderNames)},
+		"builder":    {Agent: "plan-executor", Tier: "yolo", Candidates: candidateEntries(builderNames)},
+		"documentor": {Agent: "documentor", Tier: "yolo", Candidates: candidateEntries(builderNames)},
 	}
 	for i, p := range planners {
 		actors[p.Actor] = roles.Actor{Agent: "architect", Candidates: candidateEntries(plannerNames[i : i+1])}

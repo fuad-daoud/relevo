@@ -120,7 +120,7 @@ func TestPlanSeedsPlannerActors(t *testing.T) {
 			t.Errorf("%s tier = %q, want none", tt.actor, a.Tier)
 		}
 	}
-	if want := []string{"builder", "planner", "lite-planner"}; !reflect.DeepEqual(files.ActorOrder, want) {
+	if want := []string{"builder", "documentor", "planner", "lite-planner"}; !reflect.DeepEqual(files.ActorOrder, want) {
 		t.Errorf("ActorOrder = %v, want %v", files.ActorOrder, want)
 	}
 
@@ -146,6 +146,43 @@ func TestPlanSeedsPlannerActors(t *testing.T) {
 	}
 	if liteCand.Harness != "opencode" || liteCand.Provider != "openrouter" {
 		t.Errorf("lite-planner candidate = %+v, want harness opencode and provider openrouter", liteCand)
+	}
+}
+
+// TestPlanSeedsDocumentorActor pins the docs-only writer's seed: the
+// documentor agent over the builder's own candidate names, the yolo tier, and
+// a nil check so the writer default (on) applies.
+func TestPlanSeedsDocumentorActor(t *testing.T) {
+	files, err := Plan(pathEnv{onPath: map[string]bool{"claude": true, "opencode": true}})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	actorSet, _, err := roles.ParseActors(files.Actors)
+	if err != nil {
+		t.Fatalf("roles.ParseActors: %v", err)
+	}
+	builder, ok := actorSet["builder"]
+	if !ok {
+		t.Fatalf("actors = %v, want a builder", actorSet)
+	}
+	documentor, ok := actorSet["documentor"]
+	if !ok {
+		t.Fatalf("actors = %v, want a documentor", actorSet)
+	}
+	if documentor.Agent != "documentor" {
+		t.Errorf("documentor agent = %q, want documentor", documentor.Agent)
+	}
+	if documentor.Tier != "yolo" {
+		t.Errorf("documentor tier = %q, want yolo", documentor.Tier)
+	}
+	if documentor.Check != nil {
+		t.Errorf("documentor check = %v, want nil (the writer default)", *documentor.Check)
+	}
+	if !reflect.DeepEqual(documentor.Candidates, builder.Candidates) {
+		t.Errorf("documentor candidates = %v, want the builder's %v", documentor.Candidates, builder.Candidates)
+	}
+	if want := []string{"builder", "documentor", "planner", "lite-planner"}; !reflect.DeepEqual(files.ActorOrder, want) {
+		t.Errorf("ActorOrder = %v, want %v", files.ActorOrder, want)
 	}
 }
 
@@ -248,7 +285,7 @@ func TestPlanSkipsPlannerWithoutItsHarness(t *testing.T) {
 	if strings.Contains(string(files.Candidates), "opus:medium") {
 		t.Errorf("candidates carry opus:medium without claude on PATH:\n%s", files.Candidates)
 	}
-	if want := []string{"builder", "lite-planner"}; !reflect.DeepEqual(files.ActorOrder, want) {
+	if want := []string{"builder", "documentor", "lite-planner"}; !reflect.DeepEqual(files.ActorOrder, want) {
 		t.Errorf("ActorOrder = %v, want %v", files.ActorOrder, want)
 	}
 

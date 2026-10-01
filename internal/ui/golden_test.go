@@ -960,7 +960,7 @@ func goldenAuditModel(t *testing.T, width, height int, fa *fakeActions) Model {
 // its detail pushed.
 func goldenAgentResearcherModel(t *testing.T, width, height int, fa *fakeActions) Model {
 	t.Helper()
-	m := candDown(t, goldenAgentsModel(t, width, height, fa), 2) // researcher
+	m := candDown(t, goldenAgentsModel(t, width, height, fa), 4) // researcher
 	return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 }
 
@@ -1340,13 +1340,13 @@ func TestGoldenViews(t *testing.T) {
 			name: "agents-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				fa := &fakeActions{doc: candFixtureDoc(t), files: agentFileFixtures(t)}
-				return candDown(t, goldenAgentsModel(t, 132, 34, fa), 2) // researcher
+				return candDown(t, goldenAgentsModel(t, 132, 34, fa), 4) // researcher
 			},
 		},
 		{
 			name: "agents-custom-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
-				return candDown(t, goldenAgentsModel(t, 132, 34, sourceAgentFixture(t)), 4) // security-reviewer
+				return candDown(t, goldenAgentsModel(t, 132, 34, sourceAgentFixture(t)), 6) // the custom security-reviewer
 			},
 		},
 		{

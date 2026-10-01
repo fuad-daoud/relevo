@@ -9,10 +9,10 @@ import (
 )
 
 // TestShippedTableMatchesHarness pins §3.3: the shipped agent table agrees
-// with harness.RoleByName's Definitions for the three roles the role table
+// with harness.RoleByName's Definitions for the four roles the role table
 // defines, and every shipped agent is a definition on every known kind.
 func TestShippedTableMatchesHarness(t *testing.T) {
-	for _, role := range []string{"builder", "reviewer", "researcher"} {
+	for _, role := range []string{"builder", "documentor", "reviewer", "researcher"} {
 		spec, ok := harness.RoleByName(role)
 		if !ok {
 			t.Fatalf("harness.RoleByName(%q) not found", role)
@@ -43,6 +43,7 @@ func TestShippedTableMatchesHarness(t *testing.T) {
 	// label is the one §3.3's table names.
 	wantOutput := map[string]string{
 		"plan-executor":     "report",
+		"documentor":        "report",
 		"reviewer":          "findings",
 		"security-reviewer": "findings",
 		"researcher":        "notes",
