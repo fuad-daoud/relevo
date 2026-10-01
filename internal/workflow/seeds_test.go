@@ -1,4 +1,4 @@
-package chain
+package workflow
 
 import (
 	"os"
@@ -14,7 +14,7 @@ func sampleSeedView() SeedView {
 		ReportPath:       "/tmp/chain/report.md",
 		DiffPath:         "/tmp/chain/round.diff",
 		GateLogPath:      "/tmp/chain/gate.log",
-		GateResult:       GateRed,
+		GateResult:       "red",
 		OutputPath:       "/tmp/chain/review.md",
 		BranchDiffPath:   "/tmp/chain/branch.diff",
 		PlanDiffPath:     "/tmp/chain/plan-diff.patch",
@@ -32,15 +32,15 @@ func sampleSeedView() SeedView {
 	}
 }
 
-func assertSeedNames(t *testing.T, kind SeedKind, v SeedView, want ...string) string {
+func assertSeedNames(t *testing.T, name string, v SeedView, want ...string) string {
 	t.Helper()
-	out, err := Seed(kind, v)
+	out, err := RenderShipped(name, v)
 	if err != nil {
-		t.Fatalf("Seed(%s): %v", kind, err)
+		t.Fatalf("RenderShipped(%s): %v", name, err)
 	}
 	for _, w := range want {
 		if !strings.Contains(out, w) {
-			t.Fatalf("%s seed does not name %q:\n%s", kind, w, out)
+			t.Fatalf("%s seed does not name %q:\n%s", name, w, out)
 		}
 	}
 	return out
@@ -49,7 +49,7 @@ func assertSeedNames(t *testing.T, kind SeedKind, v SeedView, want ...string) st
 func TestReviewerSeedNamesPlanReportDiffGateAndVerdictBlock(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	assertSeedNames(t, SeedReviewer, v,
+	assertSeedNames(t, "review", v,
 		v.PlanPath, v.ReportPath, v.DiffPath, v.GateLogPath, v.GateResult, "Check result:", "```relevo", "verdict:")
 }
 
@@ -59,7 +59,7 @@ func TestReviewerSeedNamesPlanReportDiffGateAndVerdictBlock(t *testing.T) {
 func TestReviewerSeedNamesThePlanDiffAndTheRoundPrompt(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	out := assertSeedNames(t, SeedReviewer, v,
+	out := assertSeedNames(t, "review", v,
 		"This round's diff: "+v.DiffPath,
 		"Plan diff, every round of this plan so far: "+v.PlanDiffPath,
 		"This round's prompt: "+v.RoundPromptPath)
@@ -76,7 +76,7 @@ func TestReviewerSeedOmitsAnUnsetPlanDiff(t *testing.T) {
 	v.PlanDiffPath = ""
 	// With no commit to diff from either, the seed words the plain miss.
 	v.DiffFrom = ""
-	out := assertSeedNames(t, SeedReviewer, v, "No cumulative plan diff was captured for this plan.")
+	out := assertSeedNames(t, "review", v, "No cumulative plan diff was captured for this plan.")
 	if strings.Contains(out, "Plan diff, every round of this plan so far:") {
 		t.Errorf("reviewer seed names a cumulative diff it does not have:\n%s", out)
 	}
@@ -89,7 +89,7 @@ func TestReviewerSeedOmitsAnUnsetPlanDiff(t *testing.T) {
 func TestReviewerSeedFramesThePlanAndListsTheRounds(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	out := assertSeedNames(t, SeedReviewer, v,
+	out := assertSeedNames(t, "review", v,
 		"as a whole",
 		"the plan's cumulative diff is the primary input",
 		"this round's diff is its latest increment",
@@ -113,7 +113,7 @@ func TestReviewerSeedNamesTheDiffFromWithoutAPlanDiff(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
 	v.PlanDiffPath = ""
-	out := assertSeedNames(t, SeedReviewer, v,
+	out := assertSeedNames(t, "review", v,
 		"No cumulative plan diff was captured; diff the plan yourself from "+v.DiffFrom+".",
 		"This round's diff: "+v.DiffPath)
 	if strings.Contains(out, "Plan diff, every round of this plan so far:") {
@@ -129,7 +129,7 @@ func TestReviewerSeedNamesTheDiffFromWithoutAPlanDiff(t *testing.T) {
 func TestCorrectionSeedFramesThePlan(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	out := assertSeedNames(t, SeedCorrection, v,
+	out := assertSeedNames(t, "correct", v,
 		"as a whole",
 		"the plan's cumulative diff is the primary input",
 		"This closing round is "+v.BuilderRoundKind+", on top of round 1.",
@@ -147,7 +147,7 @@ func TestReviewerSeedOmitsAnUnsetRoundPrompt(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
 	v.RoundPromptPath = ""
-	out := assertSeedNames(t, SeedReviewer, v, v.PlanPath)
+	out := assertSeedNames(t, "review", v, v.PlanPath)
 	if strings.Contains(out, "This round's prompt:") {
 		t.Errorf("reviewer seed names a round prompt it does not have:\n%s", out)
 	}
@@ -156,7 +156,7 @@ func TestReviewerSeedOmitsAnUnsetRoundPrompt(t *testing.T) {
 func TestCorrectionSeedNamesTheReviewerOutput(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	assertSeedNames(t, SeedCorrection, v, v.OutputPath, v.PlanPath, v.ReportPath, v.DiffPath, "Check result:")
+	assertSeedNames(t, "correct", v, v.OutputPath, v.PlanPath, v.ReportPath, v.DiffPath, "Check result:")
 }
 
 // TestCorrectionSeedNamesThePlanDiffAndTheRoundPrompt pins the correction
@@ -164,7 +164,7 @@ func TestCorrectionSeedNamesTheReviewerOutput(t *testing.T) {
 func TestCorrectionSeedNamesThePlanDiffAndTheRoundPrompt(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	assertSeedNames(t, SeedCorrection, v,
+	assertSeedNames(t, "correct", v,
 		"This round's diff: "+v.DiffPath,
 		"Plan diff, every round of this plan so far: "+v.PlanDiffPath,
 		"This round's prompt: "+v.RoundPromptPath)
@@ -176,7 +176,7 @@ func TestReviewerSeedSaysNoCheckRan(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
 	v.GateLogPath, v.GateResult = "", ""
-	out := assertSeedNames(t, SeedReviewer, v,
+	out := assertSeedNames(t, "review", v,
 		"No check ran for this round.", v.PlanPath, v.ReportPath, v.DiffPath, "```relevo", "verdict:")
 	if strings.Contains(out, "Check result:") {
 		t.Errorf("reviewer seed with no check still says Check result:\n%s", out)
@@ -189,7 +189,7 @@ func TestCorrectionSeedSaysNoCheckRan(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
 	v.GateLogPath, v.GateResult = "", ""
-	out := assertSeedNames(t, SeedCorrection, v,
+	out := assertSeedNames(t, "correct", v,
 		"No check ran for this round.", v.OutputPath, v.PlanPath, v.ReportPath, v.DiffPath)
 	if strings.Contains(out, "Check result:") {
 		t.Errorf("correction seed with no check still says Check result:\n%s", out)
@@ -199,13 +199,13 @@ func TestCorrectionSeedSaysNoCheckRan(t *testing.T) {
 func TestSecuritySeedNamesBranchDiffAndCountBlock(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	assertSeedNames(t, SeedSecurity, v, v.BranchDiffPath, v.Branch, v.Base, "```relevo", "findings:")
+	assertSeedNames(t, "scan", v, v.BranchDiffPath, v.Branch, v.Base, "```relevo", "findings:")
 }
 
 func TestFixesSeedNamesSecurityOutput(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	assertSeedNames(t, SeedFixes, v, v.OutputPath, v.BranchDiffPath)
+	assertSeedNames(t, "fix", v, v.OutputPath, v.BranchDiffPath)
 }
 
 // TestSecuritySeedNamesTheWholeBranchDiffAndThePlanCopies pins the security
@@ -215,7 +215,7 @@ func TestFixesSeedNamesSecurityOutput(t *testing.T) {
 func TestSecuritySeedNamesTheWholeBranchDiffAndThePlanCopies(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	out := assertSeedNames(t, SeedSecurity, v,
+	out := assertSeedNames(t, "scan", v,
 		v.BranchDiffPath,
 		"Plan copies:",
 		"Plan copy: "+v.PlanPaths[0]+".",
@@ -234,14 +234,14 @@ func TestSecuritySeedSaysToDiffFromTheBaseWhenNoBranchDiffWasCaptured(t *testing
 	v := sampleSeedView()
 	v.BranchDiffPath = ""
 	v.PlanPaths = nil
-	out := assertSeedNames(t, SeedSecurity, v,
+	out := assertSeedNames(t, "scan", v,
 		"No branch diff was captured; diff the branch yourself from "+v.Base+".")
 	if strings.Contains(out, "Plan copies:") {
 		t.Errorf("security seed lists plan copies it does not have:\n%s", out)
 	}
 
 	v.Base = ""
-	out = assertSeedNames(t, SeedSecurity, v, "No branch diff was captured.")
+	out = assertSeedNames(t, "scan", v, "No branch diff was captured.")
 	if strings.Contains(out, "diff the branch yourself from") {
 		t.Errorf("security seed leaves a dangling branch sentence with no base:\n%s", out)
 	}
@@ -253,7 +253,7 @@ func TestSecuritySeedSaysToDiffFromTheBaseWhenNoBranchDiffWasCaptured(t *testing
 func TestFixesSeedNamesTheWholeBranchDiffAndThePlanCopies(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
-	out := assertSeedNames(t, SeedFixes, v,
+	out := assertSeedNames(t, "fix", v,
 		"Security output: "+v.OutputPath+".",
 		v.BranchDiffPath,
 		"Plan copies:",
@@ -272,7 +272,7 @@ func TestFixesSeedSaysToDiffFromTheBaseWhenNoBranchDiffWasCaptured(t *testing.T)
 	v := sampleSeedView()
 	v.BranchDiffPath = ""
 	v.PlanPaths = nil
-	out := assertSeedNames(t, SeedFixes, v,
+	out := assertSeedNames(t, "fix", v,
 		"No branch diff was captured; diff the branch yourself from "+v.Base+".")
 	if strings.Contains(out, "Plan copies:") {
 		t.Errorf("fixes seed lists plan copies it does not have:\n%s", out)
@@ -281,8 +281,8 @@ func TestFixesSeedSaysToDiffFromTheBaseWhenNoBranchDiffWasCaptured(t *testing.T)
 
 func TestSeedRejectsAnUnknownKind(t *testing.T) {
 	t.Parallel()
-	if _, err := Seed(SeedKind("bogus"), sampleSeedView()); err == nil {
-		t.Fatal("Seed(unknown kind): want an error")
+	if _, err := RenderShipped("bogus", sampleSeedView()); err == nil {
+		t.Fatal("RenderShipped(unknown kind): want an error")
 	}
 }
 
@@ -300,18 +300,18 @@ func TestSeedsNamePathsOnly(t *testing.T) {
 	v := SeedView{
 		PlanPath: path, ReportPath: path, DiffPath: path, GateLogPath: path,
 		OutputPath: path, BranchDiffPath: path,
-		GateResult: GateGreen, Branch: "b", Base: "b",
+		GateResult: "green", Branch: "b", Base: "b",
 	}
-	for _, kind := range []SeedKind{SeedReviewer, SeedCorrection, SeedSecurity, SeedFixes} {
-		out, err := Seed(kind, v)
+	for _, name := range []string{"review", "correct", "scan", "fix"} {
+		out, err := RenderShipped(name, v)
 		if err != nil {
-			t.Fatalf("Seed(%s): %v", kind, err)
+			t.Fatalf("RenderShipped(%s): %v", name, err)
 		}
 		if !strings.Contains(out, path) {
-			t.Fatalf("Seed(%s) does not name %s:\n%s", kind, path, out)
+			t.Fatalf("RenderShipped(%s) does not name %s:\n%s", name, path, out)
 		}
 		if strings.Contains(out, sentinel) {
-			t.Fatalf("Seed(%s) inlined a file's content", kind)
+			t.Fatalf("RenderShipped(%s) inlined a file's content", name)
 		}
 	}
 }

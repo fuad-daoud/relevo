@@ -346,6 +346,12 @@ func (s *Store) ChainPlanPath(name string, i int) string {
 	return filepath.Join(s.ChainDir(name), fmt.Sprintf("plan-%d.md", i))
 }
 
+// ChainTaskPath is a chain's copy of its task input: <chainDir>/task.md,
+// beside the plan copies.
+func (s *Store) ChainTaskPath(name string) string {
+	return filepath.Join(s.ChainDir(name), "task.md")
+}
+
 // ChainInputDir is where a chain keeps the copies of the round files its seeds
 // name: <chainDir>/inputs. It is under ChainDir, so it is dot-prefixed and no
 // store walk, seal pass or binding name can reach it.

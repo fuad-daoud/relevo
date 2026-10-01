@@ -74,7 +74,7 @@ func chainBranchDiff(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, bu
 // chain holds, in plan order, made seed-openable by chainSeedInput, and the copy
 // for the current plan. A decode error leaves both empty, as the plan block did
 // before it moved here.
-func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *chain.SeedView) {
+func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *workflow.SeedView) {
 	paths, err := chainPlanPaths(c)
 	if err != nil {
 		return
@@ -109,7 +109,7 @@ func chainParseOutcomes(rt Runtime, b store.Binding, body []byte, outputs workfl
 // start/advance send hands the builder that copy, while a correction, a repair
 // and a human round carry other bytes. A closing round that is the plan's first
 // (or a chain whose copy cannot be read) gets no kind and no list.
-func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, builder string, builderRound int) (kind string, on int, rounds []chain.SeedRound, diffFrom string) {
+func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, builder string, builderRound int) (kind string, on int, rounds []workflow.SeedRound, diffFrom string) {
 	diffFrom = chainPlanDiffFrom(c, s)
 	paths, err := chainPlanPaths(c)
 	if err != nil || s.Plan < 1 || s.Plan > len(paths) {
@@ -136,7 +136,7 @@ func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State
 	kind = chainBuilderRoundKind(rt, tx, c, s, builder, builderRound)
 	on = builderRound - 1
 	for r := first; r <= builderRound; r++ {
-		rounds = append(rounds, chain.SeedRound{
+		rounds = append(rounds, workflow.SeedRound{
 			Round:      r,
 			PromptPath: chainSeedInput(rt, c, rt.Store.PromptPath(builder, r)),
 			ReportPath: chainSeedInput(rt, c, rt.Store.ReportPath(builder, r)),
@@ -164,15 +164,15 @@ func chainPlanDiffFrom(c db.ChainRow, s chain.State) string {
 // planner's newest plan, else a round a human sent.
 func chainBuilderRoundKind(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, builder string, builderRound int) string {
 	if chainBuilderRoundIsRepair(tx, builder, builderRound) {
-		return chain.BuilderRoundRepair
+		return workflow.BuilderRoundRepair
 	}
 	if chainBuilderRanThePlannerPlan(rt, tx, c, builder, builderRound) {
 		if s.Phase == chain.PhaseSecurity {
-			return chain.BuilderRoundFix
+			return workflow.BuilderRoundFix
 		}
-		return chain.BuilderRoundCorrection
+		return workflow.BuilderRoundCorrection
 	}
-	return chain.BuilderRoundHuman
+	return workflow.BuilderRoundHuman
 }
 
 // chainBuilderRoundIsRepair reports whether the builder's prompt entry for the

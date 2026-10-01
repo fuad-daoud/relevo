@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // ErrRunningChainMember reports a manual send refused because the binding is a
@@ -342,7 +343,16 @@ func chainSeedText(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 	if err != nil {
 		return "", err
 	}
-	return chain.Seed(act.Seed, v)
+	return workflow.RenderShipped(shippedSeedName[act.Seed], v)
+}
+
+// shippedSeedName maps the old engine's seed kinds onto the shipped templates
+// that spell them.
+var shippedSeedName = map[chain.SeedKind]string{
+	chain.SeedReviewer:   "review",
+	chain.SeedCorrection: "correct",
+	chain.SeedSecurity:   "scan",
+	chain.SeedFixes:      "fix",
 }
 
 // chainSeedView builds one send's inputs: the plan copies the chain holds and
@@ -359,8 +369,8 @@ func chainSeedText(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 // than the flat NNN-report.md no reader writes. The security and fixes seeds
 // name the whole branch diff -- the chain's base to the builder's newest closed
 // round -- and render no gate.
-func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (chain.SeedView, error) {
-	v := chain.SeedView{
+func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (workflow.SeedView, error) {
+	v := workflow.SeedView{
 		Plan: s.Plan, Plans: s.Plans, Corrections: s.Corrections,
 		Branch: c.Branch, Base: c.Base,
 	}
@@ -400,7 +410,7 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 		v.BranchDiffPath = v.DiffPath
 		rec, err := chainRoundGate(tx, c.Builder, builderRound)
 		if err != nil {
-			return chain.SeedView{}, err
+			return workflow.SeedView{}, err
 		}
 		if rec != nil {
 			v.GateResult = chainGateResult(rec)

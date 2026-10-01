@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // repairTailLines is how much of the failing gate's log a repair plan carries,
@@ -74,20 +75,19 @@ const repairPlanPrefix = "# Repair round "
 // the original plan and carries the tail of the gate log inline, because the
 // builder gets nothing but this file.
 func repairPlan(b store.Binding, failedRound int, planPath, gateLogPath string, tail []string) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, repairPlanPrefix+"%d for %s: round %d's gate failed\n", failedRound+1, b.Name, failedRound)
-	fmt.Fprintf(&sb, "Round %d's acceptance check (`%s`) did NOT pass. Fix ONLY what the check reports; do not\n", failedRound, b.Gate)
-	sb.WriteString("restyle or refactor unrelated code. If the failure is not something a code change can fix, halt and report.\n")
-	fmt.Fprintf(&sb, "Original plan: %s   (read it first; the same rules apply)\n", planPath)
-	fmt.Fprintf(&sb, "Acceptance check output: %s -- last %d lines:\n", gateLogPath, len(tail))
-	sb.WriteString("```\n")
-	for _, line := range tail {
-		sb.WriteString(line)
-		sb.WriteString("\n")
+	text, err := workflow.RenderShipped("repair", workflow.SeedView{
+		Name:        b.Name,
+		RepairRound: failedRound + 1,
+		FailedRound: failedRound,
+		Gate:        b.Gate,
+		PlanPath:    planPath,
+		GateLogPath: gateLogPath,
+		Tail:        tail,
+	})
+	if err != nil {
+		return ""
 	}
-	sb.WriteString("```\n")
-	sb.WriteString("When done: run the same check yourself in the foreground, then write your report and create the done marker as before.\n")
-	return sb.String()
+	return text
 }
 
 // isRepairPlan reports whether text is a repair prompt repairPlan wrote; a

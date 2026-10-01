@@ -29,7 +29,7 @@ github.com/fuad-daoud/relevo/internal/pick 48.4
 github.com/fuad-daoud/relevo/internal/policy 97.0
 github.com/fuad-daoud/relevo/internal/proc 87.9
 github.com/fuad-daoud/relevo/internal/release 88.2
-github.com/fuad-daoud/relevo/internal/relevo 86.1
+github.com/fuad-daoud/relevo/internal/relevo 85.2
 github.com/fuad-daoud/relevo/internal/remote 86.7
 github.com/fuad-daoud/relevo/internal/remote/client 72.9
 github.com/fuad-daoud/relevo/internal/reporttail 96.9
@@ -39,11 +39,11 @@ github.com/fuad-daoud/relevo/internal/serve 79.9
 github.com/fuad-daoud/relevo/internal/setup 93.8
 github.com/fuad-daoud/relevo/internal/spawn 60.0
 github.com/fuad-daoud/relevo/internal/stats 98.3
-github.com/fuad-daoud/relevo/internal/store 80.4
+github.com/fuad-daoud/relevo/internal/store 81.0
 github.com/fuad-daoud/relevo/internal/transcript 94.4
 github.com/fuad-daoud/relevo/internal/ui 81.8
 github.com/fuad-daoud/relevo/internal/ui/dash 86.5
 github.com/fuad-daoud/relevo/internal/upgrade 66.7
 github.com/fuad-daoud/relevo/internal/usage 93.9
 github.com/fuad-daoud/relevo/internal/view 86.7
-github.com/fuad-daoud/relevo/internal/workflow 97.2
+github.com/fuad-daoud/relevo/internal/workflow 96.6

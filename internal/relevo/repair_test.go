@@ -102,3 +102,31 @@ func TestGateSignatureIgnoresNoise(t *testing.T) {
 		t.Errorf("gateSignature(missing) = %q, want \"\"", got)
 	}
 }
+
+// repairPlanGolden is repairPlan's output for the fixture below, captured before
+// the plan text moved into the shipped template.
+func repairPlanGolden() string {
+	return strings.Join([]string{
+		"# Repair round 3 for shop: round 2's gate failed",
+		"Round 2's acceptance check (`make check`) did NOT pass. Fix ONLY what the check reports; do not",
+		"restyle or refactor unrelated code. If the failure is not something a code change can fix, halt and report.",
+		"Original plan: /state/shop/002-plan.md   (read it first; the same rules apply)",
+		"Acceptance check output: /state/shop/002-gate.log -- last 2 lines:",
+		"```",
+		"FAIL: one",
+		"FAIL: two",
+		"```",
+		"When done: run the same check yourself in the foreground, then write your report and create the done marker as before.",
+	}, "\n") + "\n"
+}
+
+// TestRepairPlanBytesUnchanged pins the solo-binding repair round's plan bytes:
+// rendering the repair template must not change one character of it.
+func TestRepairPlanBytesUnchanged(t *testing.T) {
+	t.Parallel()
+	b := store.Binding{Name: "shop", Gate: "make check"}
+	got := repairPlan(b, 2, "/state/shop/002-plan.md", "/state/shop/002-gate.log", []string{"FAIL: one", "FAIL: two"})
+	if got != repairPlanGolden() {
+		t.Fatalf("repairPlan bytes changed:\ngot  %q\nwant %q", got, repairPlanGolden())
+	}
+}

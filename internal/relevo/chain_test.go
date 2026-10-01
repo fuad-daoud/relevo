@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // The report bodies the chain tests write. A builder's body must parse as a
@@ -2164,7 +2165,7 @@ func TestRepairRoundSeedFramesThePlanAndListsEveryBuilderRound(t *testing.T) {
 	got := string(text)
 	for _, want := range []string{
 		"as a whole",
-		"This closing round is " + chain.BuilderRoundRepair + ", on top of round 1.",
+		"This closing round is " + workflow.BuilderRoundRepair + ", on top of round 1.",
 		"Builder rounds of this plan:",
 		"- round 1 prompt: " + rt.Store.PromptPath("shop", 1),
 		"- round 1 report: " + rt.Store.ReportPath("shop", 1),
@@ -2206,7 +2207,7 @@ func TestChainReviewerSeedNamesTheCorrectionRoundKind(t *testing.T) {
 	}
 	got := string(text)
 	for _, want := range []string{
-		"This closing round is " + chain.BuilderRoundCorrection + ", on top of round 1.",
+		"This closing round is " + workflow.BuilderRoundCorrection + ", on top of round 1.",
 		"- round 1 prompt: " + rt.Store.PromptPath("shop", 1),
 		"- round 2 prompt: " + rt.Store.PromptPath("shop", 2),
 	} {
