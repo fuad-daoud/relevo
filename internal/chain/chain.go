@@ -6,6 +6,7 @@ package chain
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 )
@@ -162,6 +163,23 @@ const (
 	SeedFixes      SeedKind = "fixes"
 )
 
+// The kind words for a closing builder round that is not the plan's first: the
+// reviewer seed names which kind it is, so the reviewer knows what it judges.
+const (
+	BuilderRoundRepair     = "a repair round after a red check"
+	BuilderRoundCorrection = "a correction round"
+	BuilderRoundFix        = "a fix-plan round"
+	BuilderRoundHuman      = "a round a human sent"
+)
+
+// SeedRound is one builder round the reviewer's plan view lists: the round
+// number and the openable paths of its prompt and report.
+type SeedRound struct {
+	Round      int
+	PromptPath string
+	ReportPath string
+}
+
 // SeedView is one round's inputs, rendered from a seed template. It carries
 // paths, never file contents.
 type SeedView struct {
@@ -169,7 +187,20 @@ type SeedView struct {
 	PlanPath, ReportPath, DiffPath string
 	GateLogPath, GateResult        string
 	OutputPath, BranchDiffPath     string
+	PlanDiffPath, RoundPromptPath  string
 	Branch, Base                   string
+	// PlanPaths lists every plan copy the chain holds, in plan order, for the
+	// seeds that judge the branch as a whole.
+	PlanPaths []string
+	// BuilderRoundKind names what the closing builder round is when it is not
+	// the plan's first; "" means it is. BuilderRoundOn is the round it sits on
+	// top of, and BuilderRounds lists every builder round of the plan with the
+	// paths a runner can open for each. DiffFrom names the commit to diff the
+	// plan from when no cumulative diff was captured.
+	BuilderRoundKind string
+	BuilderRoundOn   int
+	BuilderRounds    []SeedRound
+	DiffFrom         string
 }
 
 // Action is what relevo does next. A send names the member and the seed; the
@@ -209,6 +240,42 @@ func Next(s State, e Event) (State, Action) {
 	default:
 		return s, Action{}
 	}
+}
+
+// BuilderHaltReason is the one-line reason a builder close that is not done
+// carries onto the chain: the first present of the report tail's halted_at,
+// the close note and the first not_done item, each labelled; the outcome word
+// when none of them is set. A value that carries a newline is cut at its first
+// one and trimmed before it is labelled, and an empty source is skipped rather
+// than rendered as an empty label. Pure.
+func BuilderHaltReason(tail reporttail.Tail, note, outcome string) string {
+	for _, src := range []struct{ label, value string }{
+		{"halted_at", tail.HaltedAt},
+		{"note", note},
+		{"not_done", firstOrEmpty(tail.NotDone)},
+	} {
+		if v := firstLine(src.value); v != "" {
+			return src.label + ": " + v
+		}
+	}
+	return "status: " + outcome
+}
+
+// firstOrEmpty is the first element of a list, or "" for a list with none.
+func firstOrEmpty(list []string) string {
+	if len(list) == 0 {
+		return ""
+	}
+	return list[0]
+}
+
+// firstLine is value cut at its first newline and trimmed, or "" when nothing
+// but whitespace is left.
+func firstLine(value string) string {
+	if idx := strings.IndexByte(value, '\n'); idx != -1 {
+		value = value[:idx]
+	}
+	return strings.TrimSpace(value)
 }
 
 // builderClosed turns a builder's report into the next step. A halted, blocked

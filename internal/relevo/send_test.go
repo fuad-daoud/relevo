@@ -435,6 +435,34 @@ func TestComposePromptReaderNamesTheOutputFile(t *testing.T) {
 	}
 }
 
+// TestComposePromptReaderPutsTheBlockMessageLast pins the reader handoff's
+// ending: the block-bearing message is the last text the runner writes and the
+// done marker is its final action, with nothing written after it -- the old
+// "the final message comes after the marker" sentence is gone, so the summary
+// the close reads is the block message itself.
+func TestComposePromptReaderPutsTheBlockMessageLast(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	rt := Runtime{Store: st}
+	b := store.Binding{Name: "reader-bind", CWD: "/repo", Round: 1, Shape: store.ShapeReader, Role: "reviewer"}
+
+	got := composePrompt(rt, b, "/s/001-prompt.md", "/s/001-report.md", "/s/001-done")
+
+	for _, want := range []string{
+		"must be the last text you write",
+		"your final action",
+		"with nothing written after the marker",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("reader prompt does not carry %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "comes after it") || strings.Contains(got, "Your final message comes after") {
+		t.Errorf("reader prompt still says the final message comes after the marker:\n%s", got)
+	}
+}
+
 func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 	t.Parallel()
 
@@ -1678,6 +1706,9 @@ func TestPlannerSeedCapRefusesOverCap(t *testing.T) {
 	_, err = Send(context.Background(), rt, "planner-bind", writePlan(t, strings.Repeat("x", 4097)), SendOptions{})
 	if err == nil {
 		t.Fatal("Send(4097 bytes to a planner) = nil, want the cap refusal")
+	}
+	if !errors.Is(err, ErrSeedOverCap) {
+		t.Errorf("refusal %v does not wrap ErrSeedOverCap", err)
 	}
 	for _, want := range []string{"4097", "--force"} {
 		if !strings.Contains(err.Error(), want) {

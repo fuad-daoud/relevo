@@ -43,7 +43,7 @@ func startRoundDeadline(size int64) time.Duration {
 
 // spoolStartRound writes the multipart body once to a temp file so every retry
 // re-reads the same plan and bundle bytes; on error the temp file is removed.
-func spoolStartRound(round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef) (tmp *os.File, size int64, bodySHA []byte, contentType string, err error) {
+func spoolStartRound(round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, verify *bool) (tmp *os.File, size int64, bodySHA []byte, contentType string, err error) {
 	tmp, err = os.CreateTemp("", "relevo-start-round-*.tmp")
 	if err != nil {
 		return nil, 0, nil, "", fmt.Errorf("create temp file: %w", err)
@@ -57,7 +57,7 @@ func spoolStartRound(round int, plan []byte, bundle io.Reader, tier, candidate s
 
 	hasher := sha256.New()
 	mw := multipart.NewWriter(io.MultiWriter(tmp, hasher))
-	if err = writeStartRoundFields(mw, round, plan, tier, candidate, force, tags); err != nil {
+	if err = writeStartRoundFields(mw, round, plan, tier, candidate, force, tags, verify); err != nil {
 		return nil, 0, nil, "", err
 	}
 	if err = copyBundleField(mw, bundle); err != nil {
@@ -72,7 +72,7 @@ func spoolStartRound(round int, plan []byte, bundle io.Reader, tier, candidate s
 	return tmp, size, hasher.Sum(nil), mw.FormDataContentType(), nil
 }
 
-func writeStartRoundFields(mw *multipart.Writer, round int, plan []byte, tier, candidate string, force bool, tags []remote.TagRef) error {
+func writeStartRoundFields(mw *multipart.Writer, round int, plan []byte, tier, candidate string, force bool, tags []remote.TagRef, verify *bool) error {
 	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
 		return fmt.Errorf("write round field: %w", err)
 	}
@@ -92,6 +92,15 @@ func writeStartRoundFields(mw *multipart.Writer, round int, plan []byte, tier, c
 	if force {
 		if err := mw.WriteField("force", "1"); err != nil {
 			return fmt.Errorf("write force field: %w", err)
+		}
+	}
+	if verify != nil {
+		v := "0"
+		if *verify {
+			v = "1"
+		}
+		if err := mw.WriteField("verify", v); err != nil {
+			return fmt.Errorf("write verify field: %w", err)
 		}
 	}
 	if len(tags) == 0 {
@@ -123,10 +132,11 @@ func copyBundleField(mw *multipart.Writer, bundle io.Reader) error {
 
 // StartRound begins a round on the server. tags nil or empty omits the field;
 // candidate "" leaves the binding's builder unchanged; force true carries the
-// --force opt-out of the seed cap. retryOnUnreachable is safe only when the
-// server advertised remote.FeatureIdempotentSend.
-func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error) {
-	tmp, size, bodySHA, contentType, err := spoolStartRound(round, plan, bundle, tier, candidate, force, tags)
+// --force opt-out of the seed cap; verify nil takes the server's own policy.
+// retryOnUnreachable is safe only when the server advertised
+// remote.FeatureIdempotentSend.
+func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool, verify *bool) (remote.BindingView, error) {
+	tmp, size, bodySHA, contentType, err := spoolStartRound(round, plan, bundle, tier, candidate, force, tags, verify)
 	if err != nil {
 		return remote.BindingView{}, err
 	}

@@ -780,3 +780,31 @@ func TestIngestSkipsAConsultPick(t *testing.T) {
 		t.Errorf("Actor = %q, want builder", rounds[0].Actor)
 	}
 }
+
+// TestIngestWritesTheRoundAccount pins that the binding's account becomes the
+// round's account, so the per-login gate and the round line up in the record.
+func TestIngestWritesTheRoundAccount(t *testing.T) {
+	d := openTestDB(t)
+	dir := writePickFixture(t, store.Binding{
+		Name:             "fixture",
+		CWD:              "/work/fixture",
+		Builder:          store.Endpoint{Kind: "opencode", Mode: store.ModeHeadless},
+		Role:             "builder",
+		BuilderCandidate: "opencode/openrouter/z-ai/glm-5.3-flash",
+		BuilderAccount:   "cp2",
+		CreatedAt:        time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC),
+		Round:            1,
+	}, "picked opencode/openrouter/z-ai/glm-5.3-flash for builder: order #1")
+
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	rounds := mustRounds(t, d, mustBinding(t, d, "fixture").ID)
+	if len(rounds) != 1 {
+		t.Fatalf("len(rounds) = %d, want 1", len(rounds))
+	}
+	if !strEq(rounds[0].Account, "cp2") {
+		t.Errorf("Account = %v, want cp2", rounds[0].Account)
+	}
+}

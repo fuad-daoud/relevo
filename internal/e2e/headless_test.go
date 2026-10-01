@@ -396,6 +396,32 @@ if [ ! -s "$plan" ]; then
 	exit 2
 fi
 
+# Every path a chain seed names must be openable: the seed builder names the
+# input's own regular file or a copy under the chain's own directory, and a seed
+# that names a path the store could not produce says "not available:" instead.
+# This opens each path line the staged seed carries and fails loudly -- with no
+# marker, so the round closes without a verdict and the chain halts -- when one
+# is not readable, so a seed that names a key a runner cannot open fails the e2e
+# rather than passing silently.
+check_seed_inputs() {
+	while IFS= read -r line; do
+		case "$line" in
+		*": "*)
+			path=${line##*": "}
+			path=${path%.}
+			case "$path" in
+			/*)
+				if [ ! -r "$path" ]; then
+					echo "fake-claude: seed names a missing input: $path" >&2
+					exit 3
+				fi
+				;;
+			esac
+			;;
+		esac
+	done < "$plan"
+}
+
 # A reader round: fill the artifact directory, edit the throwaway tree, create
 # the marker, then -- after the marker, as a real runner does -- print the final
 # message the summary is taken from and exit.
@@ -416,8 +442,10 @@ if [ -n "$artifact" ]; then
 	# round one asks for changes, every round after it passes.
 	seed=$(head -n 1 "$plan")
 	msg=""
+	recap=""
 	case "$seed" in
 	"Review the round and give a verdict.")
+		check_seed_inputs
 		state="${XDG_STATE_HOME:-$HOME/.local/state}/chain-e2e"
 		mkdir -p "$state"
 		count=0
@@ -430,16 +458,24 @@ if [ -n "$artifact" ]; then
 		if [ "$count" -eq 1 ]; then
 			verdict=changes
 		fi
-		msg='# Reviewer output\n\nI read the plan, the report, the round diff and the check result.\n\n'"$fence"'relevo\nverdict: '"$verdict"'\n'"$fence"'\n'
+		msg='# Reviewer output\n\nI read the plan, the report, the round diff and the check result.\n\n'"$fence"'relevo\nverdict: '"$verdict"'\n'"$fence"'\n\n'"$fence"'relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n'"$fence"'\n'
+		# A reader may write a recap after the message that carries its block.
+		# This recap is the last text the round's stream holds, so FinalText
+		# returns it and the written output excludes the verdict: only the
+		# stream still carries it.
+		recap='# Reviewer recap\n\nI read the plan, the report, the round diff and the check result; the block was written above.'
 		;;
 	"Write a correction plan for the builder.")
+		check_seed_inputs
 		msg='# Correction plan\n\n1. Make the change the reviewer asked for.\n2. Re-run the check.\n'
 		;;
 	"Write a plan that fixes the security findings.")
+		check_seed_inputs
 		msg='# Fix plan\n\n1. Fix the finding the security scan reported.\n2. Re-run the check.\n'
 		;;
 	"Scan the branch for security problems.")
-		msg='# Security scan\n\nThe branch has one finding: a shell variable expanded unquoted in the fake harness.\n\n'"$fence"'relevo\nfindings: 1\n'"$fence"'\n'
+		check_seed_inputs
+		msg='# Security scan\n\nThe branch has one finding: a shell variable expanded unquoted in the fake harness.\n\n'"$fence"'relevo\nfindings: 1\n'"$fence"'\n\n'"$fence"'relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n'"$fence"'\n'
 		;;
 	esac
 
@@ -447,7 +483,11 @@ if [ -n "$artifact" ]; then
 	sleep 0.2
 	if [ -n "$msg" ]; then
 		printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' "$msg"
-	else
+	fi
+	if [ -n "$recap" ]; then
+		printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' "$recap"
+	fi
+	if [ -z "$msg" ] && [ -z "$recap" ]; then
 		printf '%s\n' '__READER_LINE__'
 	fi
 	exit 0
@@ -460,7 +500,13 @@ fi
 ` + fakeReportBody + `RELEVO_FAKE_REPORT
 } > "$report"
 
-printf 'one round of fake work\n' > "$worktree/fake-round.txt"
+# Every round appends its own line, so the worktree file carries the whole
+# chain's span. The reviewer's round-diff assertions and the security seed's
+# whole-branch-diff assertion both depend on a later round's diff being
+# distinguishable from the base-to-newest span; overwriting a constant would
+# make every round's diff empty or identical.
+round=$(basename "$plan" | cut -c1-3)
+printf 'one round of fake work %s\n' "$round" >> "$worktree/fake-round.txt"
 
 # One commit in the round's own worktree. The daemon reads that tree with git
 # while the round is open (truthful diff capture, the escape check), but every

@@ -817,3 +817,50 @@ func TestParseWithReasonSanitizesHaltedAt(t *testing.T) {
 		t.Errorf("HaltedAt = %q, want a replacement rune", tail.HaltedAt)
 	}
 }
+
+// TestRelevoBlocksReturnsEveryBlockInOrder pins the fence-pair enumeration the
+// chain parsers scan: every block in file order, and only a closed one.
+func TestRelevoBlocksReturnsEveryBlockInOrder(t *testing.T) {
+	t.Parallel()
+
+	t.Run("two blocks with prose between", func(t *testing.T) {
+		lines := []string{
+			"prose",
+			"```relevo",
+			"status: done",
+			"```",
+			"",
+			"more prose",
+			"",
+			"```relevo",
+			"verdict: pass",
+			"```",
+		}
+		want := []RelevoBlock{{Open: 1, Close: 3}, {Open: 7, Close: 9}}
+		if got := RelevoBlocks(lines); !reflect.DeepEqual(got, want) {
+			t.Fatalf("RelevoBlocks = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("one block", func(t *testing.T) {
+		lines := []string{"```relevo", "verdict: pass", "```"}
+		want := []RelevoBlock{{Open: 0, Close: 2}}
+		if got := RelevoBlocks(lines); !reflect.DeepEqual(got, want) {
+			t.Fatalf("RelevoBlocks = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("no fence", func(t *testing.T) {
+		if got := RelevoBlocks([]string{"prose", "```go", "```"}); got != nil {
+			t.Fatalf("RelevoBlocks = %+v, want nil", got)
+		}
+	})
+
+	t.Run("a closed block followed by an unclosed open", func(t *testing.T) {
+		lines := []string{"```relevo", "status: done", "```", "", "```relevo", "verdict: pass"}
+		want := []RelevoBlock{{Open: 0, Close: 2}}
+		if got := RelevoBlocks(lines); !reflect.DeepEqual(got, want) {
+			t.Fatalf("RelevoBlocks = %+v, want %+v", got, want)
+		}
+	})
+}

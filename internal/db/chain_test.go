@@ -13,28 +13,29 @@ import (
 func testChain(name string) ChainRow {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	return ChainRow{
-		ID:            NewID(),
-		Name:          name,
-		Status:        "running",
-		Phase:         "build",
-		Step:          "building",
-		Plan:          1,
-		Plans:         2,
-		PlanPathsJSON: []byte(`["/plans/001.md","/plans/002.md"]`),
-		SettingsJSON:  []byte(`{"max_corrections":1}`),
-		Builder:       name,
-		Reviewer:      name + "-rev",
-		Planner:       name + "-plan",
-		Security:      name + "-sec",
-		Base:          "main",
-		Branch:        "relevo/" + name,
-		Repo:          "https://example.test/r.git",
-		Worktree:      "/work/" + name,
-		Feature:       "f",
-		Ticket:        "#1",
-		MasterMindID:  "mm1",
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:              NewID(),
+		Name:            name,
+		Status:          "running",
+		Phase:           "build",
+		Step:            "building",
+		Plan:            1,
+		Plans:           2,
+		PlanPathsJSON:   []byte(`["/plans/001.md","/plans/002.md"]`),
+		SettingsJSON:    []byte(`{"max_corrections":1}`),
+		Builder:         name,
+		Reviewer:        name + "-rev",
+		Planner:         name + "-plan",
+		Security:        name + "-sec",
+		Base:            "main",
+		Branch:          "relevo/" + name,
+		Repo:            "https://example.test/r.git",
+		Worktree:        "/work/" + name,
+		Feature:         "f",
+		Ticket:          "#1",
+		MasterMindID:    "mm1",
+		PlanStartCommit: "commit-plan-start",
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 }
 
@@ -158,6 +159,89 @@ func TestMigration016KeepsExistingRows(t *testing.T) {
 	}
 }
 
+// TestMigration018AddsPlanStartCommit pins the plan-start column: applying 018
+// adds it with an empty default, leaves a row written before it reading ”, and
+// a second apply records nothing new.
+func TestMigration018AddsPlanStartCommit(t *testing.T) {
+	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 17)); err != nil {
+		t.Fatalf("applyMigrations through 017: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO chains
+			(id, name, status, phase, step, plan, plans, plan_paths, builder, created_at, updated_at)
+		VALUES ('c1', 'x', 'running', 'build', 'building', 1, 1, '["/p/1.md"]', 'x',
+			'2026-09-01T10:00:00.000Z', '2026-09-01T10:00:00.000Z')`); err != nil {
+		t.Fatalf("insert chains row: %v", err)
+	}
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 18)); err != nil {
+		t.Fatalf("applyMigrations 018: %v", err)
+	}
+	assertColumns(t, sqlDB, "chains", []string{"plan_start_commit"})
+	var start string
+	if err := sqlDB.QueryRow(`SELECT plan_start_commit FROM chains WHERE id = 'c1'`).Scan(&start); err != nil {
+		t.Fatalf("select plan_start_commit: %v", err)
+	}
+	if start != "" {
+		t.Errorf("old row plan_start_commit = %q, want the empty default", start)
+	}
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 18)); err != nil {
+		t.Fatalf("second applyMigrations 018: %v", err)
+	}
+	var rows, versions int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT version) FROM schema_version`).Scan(&rows, &versions); err != nil {
+		t.Fatalf("count schema_version: %v", err)
+	}
+	if rows != 18 || versions != 18 {
+		t.Errorf("schema_version has %d rows and %d versions, want 18 and 18", rows, versions)
+	}
+}
+
+// TestMigration019AddsChainEventPlan pins the plan column: applying 019 adds it
+// with a zero default, leaves a chain_event row written before it reading 0, and
+// a second apply records nothing new.
+func TestMigration019AddsChainEventPlan(t *testing.T) {
+	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 18)); err != nil {
+		t.Fatalf("applyMigrations through 018: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO chains
+			(id, name, status, phase, step, plan, plans, plan_paths, builder, created_at, updated_at)
+		VALUES ('c1', 'x', 'running', 'build', 'building', 1, 1, '["/p/1.md"]', 'x',
+			'2026-09-01T10:00:00.000Z', '2026-09-01T10:00:00.000Z')`); err != nil {
+		t.Fatalf("insert chains row: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO chain_event
+			(chain_id, seq, ts, phase, step, member, round, event, action)
+		VALUES ('c1', 1, '2026-09-01T10:00:00.000Z', 'build', 'building', 'x', 1, '{}', '{}')`); err != nil {
+		t.Fatalf("insert chain_event row: %v", err)
+	}
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 19)); err != nil {
+		t.Fatalf("applyMigrations 019: %v", err)
+	}
+	assertColumns(t, sqlDB, "chain_event", []string{"plan"})
+	var plan int
+	if err := sqlDB.QueryRow(`SELECT plan FROM chain_event WHERE chain_id = 'c1' AND seq = 1`).Scan(&plan); err != nil {
+		t.Fatalf("select plan: %v", err)
+	}
+	if plan != 0 {
+		t.Errorf("old row plan = %d, want the zero default", plan)
+	}
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 19)); err != nil {
+		t.Fatalf("second applyMigrations 019: %v", err)
+	}
+	var rows, versions int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT version) FROM schema_version`).Scan(&rows, &versions); err != nil {
+		t.Fatalf("count schema_version: %v", err)
+	}
+	if rows != 19 || versions != 19 {
+		t.Errorf("schema_version has %d rows and %d versions, want 19 and 19", rows, versions)
+	}
+}
+
 func TestChainPutGetRoundTrip(t *testing.T) {
 	d := openTestDB(t)
 	c := testChain("x")
@@ -228,7 +312,8 @@ func assertChainMatches(t *testing.T, got, want ChainRow) {
 	}
 	if got.Base != want.Base || got.Branch != want.Branch || got.Repo != want.Repo ||
 		got.Worktree != want.Worktree || got.Feature != want.Feature || got.Ticket != want.Ticket ||
-		got.Server != want.Server || got.MasterMindID != want.MasterMindID {
+		got.Server != want.Server || got.MasterMindID != want.MasterMindID ||
+		got.PlanStartCommit != want.PlanStartCommit {
 		t.Errorf("placement/facts = %+v, want %+v", got, want)
 	}
 	if !got.CreatedAt.Equal(want.CreatedAt) || !got.UpdatedAt.Equal(want.UpdatedAt) {
@@ -301,6 +386,7 @@ func TestChainEventsAppendInSeqOrder(t *testing.T) {
 			Step:   "building",
 			Member: c.Builder,
 			Round:  i + 1,
+			Plan:   i + 1,
 			Event:  `{"kind":"` + kind + `"}`,
 			Action: `{"kind":"send","member":"` + c.Reviewer + `","seed":"reviewer"}`,
 		})
@@ -317,8 +403,8 @@ func TestChainEventsAppendInSeqOrder(t *testing.T) {
 		if e.Seq != i+1 {
 			t.Errorf("row %d seq = %d, want %d", i, e.Seq, i+1)
 		}
-		if e.ChainID != c.ID || e.Member != c.Builder || e.Round != i+1 {
-			t.Errorf("row %d = %+v, want chain %s member %q round %d", i, e, c.ID, c.Builder, i+1)
+		if e.ChainID != c.ID || e.Member != c.Builder || e.Round != i+1 || e.Plan != i+1 {
+			t.Errorf("row %d = %+v, want chain %s member %q round %d plan %d", i, e, c.ID, c.Builder, i+1, i+1)
 		}
 		if !e.TS.Equal(now.Add(time.Duration(i) * time.Millisecond)) {
 			t.Errorf("row %d ts = %v, want %v", i, e.TS, now.Add(time.Duration(i)*time.Millisecond))

@@ -437,7 +437,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	var chainEvent chain.Event
 	if chainErr == nil {
 		if part := chainPartOf(chainRow, b.Name); part != "" {
-			chainEvent = chainEventFromClose(rt, part, b, body, outcome, gate, stopped)
+			chainEvent = chainEventFromClose(rt, part, b, body, outcome, gate, stopped, tail, note)
 		}
 	}
 
@@ -628,7 +628,13 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.RoundCPU = nil
 	b.RoundBaselineTree = ""
 	b.RoundBaselineHead = ""
-	b.RoundClosedTree = closed
+	// A remote member's closed tree is the pulled result commit the catch-up
+	// recorded -- there is no local worktree to snapshot -- so it keeps that
+	// value across the advance. Every non-remote binding keeps today's exact
+	// assignment.
+	if !b.Builder.Remote() {
+		b.RoundClosedTree = closed
+	}
 	// The stream id was the closed round's; the next round's process
 	// announces its own (a pane builder has none) (#147).
 	b.Builder.StreamSessionID = ""
@@ -669,8 +675,14 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// critical section. A close that did not advance the chain writes no
 	// trace row.
 	if chainEvent.Kind != "" {
-		if err := chainApply(ctx, rt, tx, b, chainEvent, gate); err != nil {
-			return b, err
+		// chainApply returns the binding its action wrote: a remote member's
+		// staged repair carries the chain's own bookkeeping (RepairCount,
+		// LastGateSig, the staged round's baseline head), and the caller saves
+		// what it returns.
+		next, cerr := chainApply(ctx, rt, tx, b, chainEvent, gate)
+		b = next
+		if cerr != nil {
+			return b, cerr
 		}
 	}
 

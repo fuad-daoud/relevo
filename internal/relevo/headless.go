@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/consult"
@@ -181,6 +182,55 @@ func roundEnv(b store.Binding) []string {
 	return append(builderEnv(b), mastermind.RunnerEnvEntry(b.Name))
 }
 
+// roundEnvFor is roundEnv with the round's builder account pinned: the same git
+// identity and runner marker, plus the account home entry last. Appending it
+// after the marker puts it after proc.ChildEnv's deny filter, so the account's
+// value is the later of two entries of the same name and a stale parent value
+// cannot win. A nil account is exactly roundEnv's output, so a host with no
+// accounts configured spawns the environment it always did.
+func roundEnvFor(b store.Binding, a *account.Account) []string {
+	return append(roundEnv(b), accountEnvEntry(a)...)
+}
+
+// accountEnvEntry is the spawn environment entry that pins a round's harness to
+// the account's per-process home (CLAUDE_CONFIG_DIR, CODEX_HOME). nil for a nil
+// account, a kind with no per-process home (opencode), and an account whose
+// selector is empty: each would pin nothing.
+func accountEnvEntry(a *account.Account) []string {
+	if a == nil {
+		return nil
+	}
+	name, ok := harness.HomeEnv(string(a.Harness))
+	if !ok {
+		return nil
+	}
+	home, ok := harness.AccountHome(*a)
+	if !ok {
+		return nil
+	}
+	return []string{name + "=" + home}
+}
+
+// accountFor returns the account a round on candidate c runs as: the first
+// account of c's harness serving c's provider, or nil when accounts are
+// unconfigured or no account serves the provider. The pool's config order is
+// the failover order the pick walks, so the home this pins is the one the
+// round's recorded account will name.
+func accountFor(rt Runtime, c candidate.Candidate) *account.Account {
+	if len(rt.Accounts) == 0 {
+		return nil
+	}
+	pool := rt.Accounts.Pool(account.Kind(c.Harness), c.Provider)
+	if len(pool) == 0 {
+		return nil
+	}
+	a, ok, err := account.Select(pool, nil, account.Failover)
+	if err != nil || !ok {
+		return nil
+	}
+	return &a
+}
+
 // startRound starts the round's process for a headless binding and records
 // its handle on the endpoint (headless spec §4.3). The caller holds the
 // state lock, has staged the plan, and saves what comes back.
@@ -315,7 +365,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	}
 	spec := spawn.ProcSpec{
 		Dir: roundTree(rt, b), Argv: argv,
-		Env:        roundEnv(b),
+		Env:        roundEnvFor(b, accountFor(rt, c)),
 		LogPath:    logPath,
 		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}
@@ -355,6 +405,14 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	c, err := rt.Candidates.Lookup(ref)
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
+	}
+	// The session only resolves under the login that wrote it, so a row a
+	// human moved meanwhile is put back before the harness resumes.
+	if b.BuilderAccount != "" {
+		pick := pickFor(rt)
+		if rec, ok := accountByName(pick.Set, b.BuilderAccount); ok {
+			ensureOpencodeActive(ctx, rt, rec, pick.Gates)
+		}
 	}
 	h, ok := harness.Lookup(c.Harness)
 	if !ok {
@@ -828,10 +886,16 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	// Detect the oom kill before the exit entry, so the entry says it. A
-	// requested stop still wins and is checked below.
-	oom := codeText == "unknown" && oomKilled(ctx, rt, b)
-	if oom {
-		suffix += "; killed by systemd-oomd (host out of memory)"
+	// requested stop still wins and is checked below. The kernel reports a
+	// cgroup kill either as a process that left no trailer (unknown) or as the
+	// supervisor's own 128+SIGKILL (137), so both are probed.
+	var oomPeak int64
+	oom := false
+	if codeText == "unknown" || codeText == "137" {
+		if peak, killed := oomKilled(ctx, rt, b); killed {
+			oom, oomPeak = true, peak
+			suffix += "; " + oomWords(peak)
+		}
 	}
 
 	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix, builderTail(rt, b, logTailLines), b.Shape)); err != nil {
@@ -861,7 +925,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// An oom kill is not the candidate's failure, so re-queue on the same
 	// candidate with no switch and no exclusion.
 	if oom {
-		return requeueOOM(ctx, rt, tx, b, now)
+		return requeueOOM(ctx, rt, tx, b, oomPeak, now)
 	}
 
 	// A cgroup/group kill of the daemon (systemd restart, kill -9 of the
@@ -1073,11 +1137,11 @@ func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (held,
 // closed and gating are reported so the caller returns exactly what the marker
 // branch does; a marker-absent read comes back unchanged with both false.
 func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string, wantVerify bool) (store.Binding, bool, bool, error) {
-	// A reader round closes on its runner's exit, not on the marker: the final
-	// message comes after the marker, so the summary is only complete once the
-	// process has gone. While the runner is alive the round stays open; past
-	// the grace the runner is stopped and the round closes with the summary
-	// taken early.
+	// A reader round closes on its runner's exit, not on the marker: the runner
+	// may have written its output near the end, so the summary is only complete
+	// once the process has gone. While the runner is alive the round stays
+	// open; past the grace the runner is stopped and the round closes with the
+	// summary taken early.
 	if b.Shape == store.ShapeReader {
 		held, early, err := holdReaderOnMarker(ctx, rt, b)
 		if err != nil {

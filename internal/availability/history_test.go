@@ -96,6 +96,13 @@ func TestFromEntry(t *testing.T) {
 	if got != want {
 		t.Errorf("FromEntry(spawn_failed) = %+v, want %+v", got, want)
 	}
+
+	accountGate := Entry{Kind: RateLimited, Subject: "anthropic@work", At: historyNow, Source: "planner", Note: "5h"}
+	got = FromEntry(accountGate, func(string) string { return "" })
+	want = Event{Provider: "anthropic", Account: "work", Kind: RateLimited, Source: "planner", Note: "5h", At: historyNow}
+	if got != want {
+		t.Errorf("FromEntry(rate_limited group@account) = %+v, want %+v", got, want)
+	}
 }
 
 func TestHourCounts(t *testing.T) {

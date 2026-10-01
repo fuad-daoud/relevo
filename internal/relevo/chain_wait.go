@@ -12,6 +12,54 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// ChainWaitTarget decides what `relevo wait --name <n>` waits on when the
+// resolved target is a chain. A running chain always waits on the chain: its
+// end is the one event the caller asked about. A chain that is no longer
+// running usually waits on the chain too -- its halt or finish is the answer --
+// but when the chain's builder member has a round open (a prompt entry for its
+// current round with no report yet, or a queued round) a human's manual round
+// is in flight, and the wait must follow that round the way it follows any
+// binding.
+//
+// It returns the binding wait should target and whether the chain arm should be
+// used instead. A name that is no chain is the ordinary binding path. It is
+// read-only.
+func ChainWaitTarget(rt Runtime, name string) (binding string, chainArm bool, err error) {
+	c, err := rt.Store.Chain(name)
+	if errors.Is(err, store.ErrNotFound) {
+		return name, false, nil
+	}
+	if err != nil {
+		return name, false, err
+	}
+	if chain.Status(c.Status) == chain.StatusRunning {
+		return name, true, nil
+	}
+	if chainBuilderRoundOpen(rt.Store, c) {
+		return c.Builder, false, nil
+	}
+	return name, true, nil
+}
+
+// chainBuilderRoundOpen reports whether a chain's builder member has a round
+// open: a prompt entry for its current round with no report entry for it yet,
+// or a queued round that has not started. A builder record that is gone, or
+// unreadable, has no open round.
+func chainBuilderRoundOpen(s *store.Store, c db.ChainRow) bool {
+	b, err := s.Load(c.Builder)
+	if err != nil {
+		return false
+	}
+	if !b.QueuedAt.IsZero() {
+		return true
+	}
+	entries, err := s.ReadLog(c.Builder)
+	if err != nil {
+		return false
+	}
+	return HasPromptEntry(entries, b.Round) && !HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
+}
+
 // WaitChain polls a chain until it is no longer running and reports how it
 // ended. A finished chain is exit 0; a halted or stopped one is exit 3, the
 // code a chain that waits on a human shares with every other binding that

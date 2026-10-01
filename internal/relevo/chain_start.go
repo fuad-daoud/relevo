@@ -105,6 +105,8 @@ type chainStartPlan struct {
 	bodies       [][]byte
 	members      []chainMember
 	resolutions  map[string]Resolution
+	placements   map[string]PlacementResolution
+	remote       *chainRemotePlan
 	mastermind   store.Endpoint
 	mastermindID string
 }
@@ -164,6 +166,27 @@ func chainResolveStart(ctx context.Context, rt Runtime, opts ChainOptions) (chai
 	if plan.resolutions, err = chainResolveActors(rt, plan.members); err != nil {
 		return chainStartPlan{}, err
 	}
+	// Every member's placement is resolved before anything is created: the
+	// builder first (its list is walked exactly as `bind --actor` would), then
+	// each reader's, whose server entries are skipped unprobed. A remote
+	// builder also resolves its read-only preflight here, so no refusal fires
+	// after the server has been asked to create anything.
+	if plan.placements, err = chainResolvePlacements(ctx, rt, opts, plan); err != nil {
+		return chainStartPlan{}, err
+	}
+	// Each resolution carries its placement, so the member's pick note records
+	// where it landed and every entry its actor's list passed over -- exactly as
+	// a local bind's does.
+	for part, p := range plan.placements {
+		res := plan.resolutions[part]
+		res.Placement = p
+		plan.resolutions[part] = res
+	}
+	if p := plan.placements[chain.MemberBuilder]; !p.local() {
+		if plan.remote, err = chainRemotePreflight(ctx, rt, opts, plan, p); err != nil {
+			return chainStartPlan{}, err
+		}
+	}
 
 	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
 	if err != nil {
@@ -182,8 +205,13 @@ func chainResolveStart(ctx context.Context, rt Runtime, opts ChainOptions) (chai
 
 // chainCreate is the half of a start that creates things: it cuts the
 // builder's worktree, builds every member, writes the chain row and the
-// members in one transaction, copies the plans and sends plan 1.
+// members in one transaction, copies the plans and sends plan 1. A builder
+// whose placement named a server takes the remote path instead; the local path
+// is unchanged.
 func chainCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan) (ChainResult, error) {
+	if plan.remote != nil {
+		return chainCreateWithRemoteBuilder(ctx, rt, opts, plan)
+	}
 	worktree, branch, commit, baseRef, err := cutWorktree(ctx, rt, opts.Name, plan.repo, opts.Base)
 	if err != nil {
 		return ChainResult{}, err
@@ -213,7 +241,10 @@ func chainCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan chainS
 		return ChainResult{}, err
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return tx.CreateChain(row, built)
+		if err := tx.CreateChain(row, built); err != nil {
+			return err
+		}
+		return chainAppendPickNotes(tx, rt, plan.members, plan.resolutions)
 	}); err != nil {
 		chainRollback(ctx, rt, plan.repo, worktree, branch)
 		return ChainResult{}, err
@@ -397,7 +428,7 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]Resolutio
 			return nil, fmt.Errorf("chain %s actor %q must be a %s actor, not a %s", m.part, m.actor, m.shape, shape)
 		}
 		res, err := resolveRole(rt.RoleRegistry(), rt.Candidates,
-			availability.Gates(AvailabilityDeps(rt)), "", bindingRole(store.Binding{Role: normRole(m.actor)}))
+			availability.Gates(AvailabilityDeps(rt)), "", bindingRole(store.Binding{Role: normRole(m.actor)}), pickFor(rt))
 		if err != nil {
 			return nil, err
 		}
@@ -434,6 +465,7 @@ func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, r
 			return nil, err
 		}
 		b := chainMemberBinding(m, ep, c.Ref().String(), base)
+		b.BuilderAccount = res.Account
 		b.Tier = string(tier)
 		if m.writer {
 			b.Gate = set.Gate
@@ -516,8 +548,12 @@ func chainRow(opts ChainOptions, set chain.Settings, members []chainMember, base
 		Feature:        opts.Feature,
 		Ticket:         base.ticket,
 		MasterMindID:   base.mastermindID,
-		CreatedAt:      at,
-		UpdatedAt:      at,
+		// Plan 1 starts here: the plan-start commit is the commit the
+		// builder's worktree was cut from, so plan 1's review can diff the
+		// plan's whole span.
+		PlanStartCommit: base.commit,
+		CreatedAt:       at,
+		UpdatedAt:       at,
 	}, nil
 }
 

@@ -53,6 +53,10 @@ const (
 	// real process, take seconds; the bound is what turns a stuck chain into a
 	// failure that names the step.
 	chainE2EDeadline = 2 * time.Minute
+	// chainRecapMarker is the text the fake reviewer writes after its
+	// block-bearing message: a recap that carries no relevo block, so the
+	// verdict can only be read from the round's stream.
+	chainRecapMarker = "Reviewer recap"
 )
 
 func TestChainE2E(t *testing.T) {
@@ -172,6 +176,103 @@ func TestChainE2E(t *testing.T) {
 			rt.Store.ReportPath(builderName, 2), got)
 	}
 
+	// The reviewer's round-2 seed names the plan's whole span as well as the
+	// correction round's own diff: the plan's start through the correction
+	// round's tree, captured beside the round diff. Each is a copy under the
+	// chain's own directory -- a path a runner can open, not the round_file key
+	// itself -- holding the key's bytes.
+	reviewerTwo := chainStaged(t, rt, rt.Store.PromptPath(reviewerName, 2))
+
+	planDiffKey := rt.Store.PlanDiffPath(builderName, 2)
+	planDiffCopy, ok := rt.Store.ChainInputPath(chainE2EName, planDiffKey)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", planDiffKey)
+	}
+	if !rt.Store.DiskRegularFile(planDiffCopy) {
+		t.Errorf("the reviewer's round 2 plan-diff copy %s is not a regular file on disk", planDiffCopy)
+	}
+	if want := "Plan diff, every round of this plan so far: " + planDiffCopy + "."; !strings.Contains(reviewerTwo, want) {
+		t.Errorf("the reviewer's round 2 seed does not name the cumulative plan diff copy %s:\n%s", planDiffCopy, reviewerTwo)
+	}
+	if got, want := chainStaged(t, rt, planDiffCopy), chainStaged(t, rt, planDiffKey); got != want {
+		t.Errorf("the plan-diff copy %s = %q, want the key's bytes %q", planDiffCopy, got, want)
+	}
+	if patch := chainStaged(t, rt, planDiffKey); patch == "" {
+		t.Errorf("the plan's cumulative diff at %s is empty", planDiffKey)
+	}
+
+	// The correction round appends its own line to the fake worktree file, so
+	// its own round diff was captured: the seed names a copy of that diff. A
+	// runner that could not produce one would instead read the path-free
+	// "not available" wording -- a seed never names a key a runner cannot open.
+	diffKey := rt.Store.DiffPath(builderName, 2)
+	if _, err := rt.Store.ReadFile(diffKey); err == nil {
+		diffCopy, ok := rt.Store.ChainInputPath(chainE2EName, diffKey)
+		if !ok {
+			t.Fatalf("ChainInputPath(%s) = false", diffKey)
+		}
+		if !rt.Store.DiskRegularFile(diffCopy) {
+			t.Errorf("the reviewer's round 2 diff copy %s is not a regular file on disk", diffCopy)
+		}
+		if want := "This round's diff: " + diffCopy + "."; !strings.Contains(reviewerTwo, want) {
+			t.Errorf("the reviewer's round 2 seed does not name the correction round's diff copy %s:\n%s", diffCopy, reviewerTwo)
+		}
+		if got, want := chainStaged(t, rt, diffCopy), chainStaged(t, rt, diffKey); got != want {
+			t.Errorf("the diff copy %s = %q, want the key's bytes %q", diffCopy, got, want)
+		}
+	} else if want := "This round's diff: not available:"; !strings.Contains(reviewerTwo, want) {
+		t.Errorf("the reviewer's round 2 seed neither names a round diff copy nor words its miss:\n%s", reviewerTwo)
+	}
+
+	// The reviewer's round-1 seed judged the builder's round 1, whose diff was
+	// captured: that seed names the diff copy, and the copy holds the key's
+	// bytes.
+	reviewerOne := chainStaged(t, rt, rt.Store.PromptPath(reviewerName, 1))
+	firstDiffKey := rt.Store.DiffPath(builderName, 1)
+	firstDiffCopy, ok := rt.Store.ChainInputPath(chainE2EName, firstDiffKey)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", firstDiffKey)
+	}
+	if !rt.Store.DiskRegularFile(firstDiffCopy) {
+		t.Errorf("the reviewer's round 1 diff copy %s is not a regular file on disk", firstDiffCopy)
+	}
+	if want := "This round's diff: " + firstDiffCopy + "."; !strings.Contains(reviewerOne, want) {
+		t.Errorf("the reviewer's round 1 seed does not name the round diff copy %s:\n%s", firstDiffCopy, reviewerOne)
+	}
+	if got, want := chainStaged(t, rt, firstDiffCopy), chainStaged(t, rt, firstDiffKey); got != want {
+		t.Errorf("the round 1 diff copy %s = %q, want the key's bytes %q", firstDiffCopy, got, want)
+	}
+
+	// The reviewer writes a recap after the message that carries its block, so
+	// its written output is the recap and holds no verdict. The verdict on the
+	// trace above is still pass, so it must have been read from the stream:
+	// an event build that dropped the stream fallback would halt here with
+	// "reviewer gave no verdict".
+	for _, round := range []int{1, 2} {
+		outPath := rt.Store.OutputPath(reviewerName, round, "reviewer", "findings")
+		body := chainStaged(t, rt, outPath)
+		if !strings.Contains(body, chainRecapMarker) {
+			t.Errorf("the reviewer's round %d output does not carry the recap %q:\n%s", round, chainRecapMarker, body)
+		}
+		if strings.Contains(body, "verdict:") {
+			t.Errorf("the reviewer's round %d output carries the verdict block; the verdict must come from the stream:\n%s", round, body)
+		}
+	}
+
+	// The correction planner's seed names the builder round the reviewer's
+	// changes verdict judged, so the planner reads the report and diff that
+	// verdict was about.
+	correctionSeed := chainStaged(t, rt, rt.Store.PromptPath(plannerName, 1))
+	if want := "Builder's report: " + rt.Store.ReportPath(builderName, 1); !strings.Contains(correctionSeed, want) {
+		t.Errorf("the correction planner's seed does not name the judged builder round's report %s:\n%s", rt.Store.ReportPath(builderName, 1), correctionSeed)
+	}
+
+	// The builder's round 2 is the planner's correction plan itself, not the
+	// chain's copy of plan 1: the correction plan reaches the builder.
+	if got := chainStaged(t, rt, rt.Store.PromptPath(builderName, 2)); !strings.Contains(got, "# Correction plan") {
+		t.Errorf("the builder's round 2 prompt is not the planner's correction plan:\n%s", got)
+	}
+
 	// The security member scanned once and found one thing; that finding is
 	// what bought the planner's fix plan and the builder's fourth round.
 	if !chainPromptOpen(t, rt, securityName, 1) {
@@ -181,23 +282,59 @@ func TestChainE2E(t *testing.T) {
 		t.Fatalf("the planner has no prompt entries for both seeds: a correction and a fix plan")
 	}
 
+	// The security member's seed names the whole branch diff -- the chain's base
+	// to the builder's newest closed round (3), copied under the chain's own
+	// directory -- and the copy carries every round's line, so a one-round diff
+	// cannot stand in for it.
+	securitySeed := chainStaged(t, rt, rt.Store.PromptPath(securityName, 1))
+	chainDiffKey := rt.Store.ChainDiffPath(builderName, 3)
+	chainDiffCopy, ok := rt.Store.ChainInputPath(chainE2EName, chainDiffKey)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", chainDiffKey)
+	}
+	if !rt.Store.DiskRegularFile(chainDiffCopy) {
+		t.Errorf("the security seed's whole-branch diff copy %s is not a regular file on disk", chainDiffCopy)
+	}
+	if !strings.Contains(securitySeed, chainDiffCopy) {
+		t.Errorf("the security seed does not name the whole branch diff copy %s:\n%s", chainDiffCopy, securitySeed)
+	}
+	if got, want := chainStaged(t, rt, chainDiffCopy), chainStaged(t, rt, chainDiffKey); got != want {
+		t.Errorf("the whole-branch diff copy %s = %q, want the key's bytes %q", chainDiffCopy, got, want)
+	}
+	for round := 1; round <= 3; round++ {
+		line := fmt.Sprintf("one round of fake work %03d", round)
+		if !strings.Contains(chainStaged(t, rt, chainDiffCopy), line) {
+			t.Errorf("the whole branch diff copy does not carry %q; a one-round diff cannot stand in:\n%s", line, chainStaged(t, rt, chainDiffCopy))
+		}
+	}
+	if oldCopy, ok := rt.Store.ChainInputPath(chainE2EName, rt.Store.DiffPath(builderName, 3)); ok && strings.Contains(securitySeed, oldCopy) {
+		t.Errorf("the security seed still names the old round-diff copy %s:\n%s", oldCopy, securitySeed)
+	}
+
+	// The fix planner's seed names the same whole branch diff copy: the
+	// builder's newest closed round is still 3 at the fixes send.
+	fixSeed := chainStaged(t, rt, rt.Store.PromptPath(plannerName, 2))
+	if !strings.Contains(fixSeed, chainDiffCopy) {
+		t.Errorf("the fix planner's seed does not name the same whole branch diff copy %s:\n%s", chainDiffCopy, fixSeed)
+	}
+
 	// The trace: one row per transition, in seq order, ending at finish. The
 	// pattern is the pin for the three design mutations -- a changes verdict
 	// advancing to plan 2 would drop the planner's first send, a close that
 	// matched any round would add a second row per close, and a missing
 	// verdict read as a pass would drop the reviewer's first round.
 	want := []chainE2EStep{
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberPlanner},
-		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberBuilder},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberSecurity},
-		{member: securityName, event: chain.EventSecurityClosed, action: chain.ActionSend, to: chain.MemberPlanner},
-		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionFinish},
+		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 1},
+		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberPlanner, plan: 1},
+		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder, plan: 1},
+		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 1},
+		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberBuilder, plan: 1},
+		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 2},
+		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberSecurity, plan: 2},
+		{member: securityName, event: chain.EventSecurityClosed, action: chain.ActionSend, to: chain.MemberPlanner, plan: 2},
+		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder, plan: 2},
+		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 2},
+		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionFinish, plan: 2},
 	}
 	doc, err := relevo.ChainTrace(ctx, rt, chainE2EName)
 	if err != nil {
@@ -222,6 +359,9 @@ func TestChainE2E(t *testing.T) {
 		}
 		if step.to != "" && got.Action.Member != step.to {
 			t.Errorf("trace row %d action sends to %q, want %q", i, got.Action.Member, step.to)
+		}
+		if got.Plan != step.plan {
+			t.Errorf("trace row %d plan = %d, want %d: each row keeps the plan it was written on", i, got.Plan, step.plan)
 		}
 	}
 	if got := doc.Events[1].Event.Verdict; got != chain.VerdictChanges {
@@ -283,12 +423,14 @@ func TestChainE2E(t *testing.T) {
 }
 
 // chainE2EStep is one expected trace row: the member whose round closed, the
-// event that close raised, the action it produced, and the part a send names.
+// event that close raised, the action it produced, the part a send names, and
+// the plan the row was written on.
 type chainE2EStep struct {
 	member string
 	event  chain.EventKind
 	action chain.ActionKind
 	to     string
+	plan   int
 }
 
 // writeChainCandidatesAndPolicy writes the config the chain's members resolve

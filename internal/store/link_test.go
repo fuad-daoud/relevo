@@ -38,8 +38,8 @@ func TestSaveKeepsRemoteLink(t *testing.T) {
 		t.Fatalf("row link = %q/%q, want the promoted columns", rec.LinkOrigin, rec.LinkID)
 	}
 
-	if BindingFormat != 10 {
-		t.Fatalf("BindingFormat = %d, want 10: the link is a field recordFormat does not stamp", BindingFormat)
+	if BindingFormat != 11 {
+		t.Fatalf("BindingFormat = %d, want 11: the link is a field recordFormat does not stamp", BindingFormat)
 	}
 }
 

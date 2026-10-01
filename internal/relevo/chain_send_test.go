@@ -137,3 +137,49 @@ func TestChainStartSendsPlanOneThroughTheChainPath(t *testing.T) {
 		t.Errorf("Send to a running chain member = %v, want ErrRunningChainMember", err)
 	}
 }
+
+// TestSendChainRoundRefusesOpenRound pins that a member round still open is
+// refused as a typed RoundOpenError naming the member and the round, so the CLI
+// can map it to a conflict with `relevo stop <member>` as the next command.
+func TestSendChainRoundRefusesOpenRound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	// The first send opens shop-rev's round 1.
+	var sent store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		m, err := tx.Load("shop-rev")
+		if err != nil {
+			return err
+		}
+		sent, err = sendChainRound(context.Background(), rt, tx, m, "review the round")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("first sendChainRound: %v", err)
+	}
+
+	// The second send to the same member, its round still open, refuses.
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		m, lerr := tx.Load("shop-rev")
+		if lerr != nil {
+			return lerr
+		}
+		_, err := sendChainRound(context.Background(), rt, tx, m, "again")
+		return err
+	})
+	var open *RoundOpenError
+	if !errors.As(err, &open) {
+		t.Fatalf("second sendChainRound err = %v, want a *RoundOpenError", err)
+	}
+	if open.Member != "shop-rev" || open.Round != sent.Round {
+		t.Errorf("RoundOpenError = %+v, want member shop-rev round %d", open, sent.Round)
+	}
+	for _, want := range []string{"still open", "relevo stop shop-rev"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message %q does not name %q", err, want)
+		}
+	}
+}

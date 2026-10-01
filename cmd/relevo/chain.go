@@ -85,11 +85,14 @@ type ChainDoc struct {
 }
 
 // ChainMemberDoc is one member in the document: the part it fills, its binding
-// name and the actor it runs.
+// name, the actor it runs and where it runs.
 type ChainMemberDoc struct {
 	Part  string `json:"part"`
 	Name  string `json:"name"`
 	Actor string `json:"actor"`
+	// Placement names where the member runs: "local", or the server a remote
+	// member's builder endpoint names.
+	Placement string `json:"placement"`
 }
 
 // cmdChain starts a chain, or resumes a halted or stopped one. Every refusal it
@@ -298,12 +301,22 @@ func chainDocOf(res relevo.ChainResult) ChainDoc {
 	}
 	for _, m := range res.Members {
 		doc.Members = append(doc.Members, ChainMemberDoc{
-			Part:  chainPartOf(res.Chain, m.Name),
-			Name:  m.Name,
-			Actor: relevo.BindingRole(m),
+			Part:      chainPartOf(res.Chain, m.Name),
+			Name:      m.Name,
+			Actor:     relevo.BindingRole(m),
+			Placement: chainMemberPlacement(m),
 		})
 	}
 	return doc
+}
+
+// chainMemberPlacement names where a member runs: the server a remote member's
+// builder endpoint names, or "local" for every member that runs here.
+func chainMemberPlacement(m store.Binding) string {
+	if m.Builder.Server != "" {
+		return m.Builder.Server
+	}
+	return "local"
 }
 
 // chainPartOf names the part a member fills, from the chain row's columns.
@@ -322,19 +335,29 @@ func chainPartOf(row db.ChainRow, name string) string {
 }
 
 // chainStartedText is what a start prints for a human: the chain, its members
-// and the command that watches it.
+// with where each runs and the command that watches it.
 func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 	fmt.Printf("started chain %s: %d plan(s), status %s, phase %s\n",
 		res.Chain.Name, res.Plans, res.Chain.Status, res.Chain.Phase)
+	builderPlacement := ""
 	for _, m := range res.Members {
 		actor := relevo.BindingRole(m)
 		if m.BuilderCandidate != "" {
 			actor = fmt.Sprintf("%s (%s)", actor, candidateLabel(rt, m.BuilderCandidate))
 		}
-		fmt.Printf("  %-8s %-16s %s\n", chainPartOf(res.Chain, m.Name), m.Name, actor)
+		placement := chainMemberPlacement(m)
+		if m.Name == res.Chain.Builder {
+			builderPlacement = placement
+		}
+		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(res.Chain, m.Name), m.Name, placement, actor)
 	}
 	fmt.Printf("  check: %s\n", chainCheckText(res.Check))
-	fmt.Printf("  worktree %s on %s (from %s)\n", res.Chain.Worktree, res.Chain.Branch, res.Chain.Base)
+	if res.Chain.Worktree != "" {
+		fmt.Printf("  worktree %s on %s (from %s)\n", res.Chain.Worktree, res.Chain.Branch, res.Chain.Base)
+	} else {
+		fmt.Printf("  builder %s on %s · branch %s · from %s\n",
+			res.Chain.Builder, builderPlacement, res.Chain.Branch, res.Chain.Base)
+	}
 	fmt.Printf("  relevo wait --name %s\n", res.Chain.Name)
 }
 
@@ -348,13 +371,13 @@ func chainCheckText(check string) string {
 }
 
 // chainResumedText is what a resume prints for a human: the chain's state now,
-// the round it awaits, and the command that watches it.
+// the round it awaits, where each member runs and the command that watches it.
 func chainResumedText(res relevo.ChainResult) {
 	c := res.Chain
 	fmt.Printf("resumed chain %s: status %s, phase %s, step %s, plan %d/%d\n",
 		c.Name, c.Status, c.Phase, c.Step, c.Plan, c.Plans)
 	for _, m := range res.Members {
-		fmt.Printf("  %-8s %-16s %s\n", chainPartOf(c, m.Name), m.Name, relevo.BindingRole(m))
+		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(c, m.Name), m.Name, chainMemberPlacement(m), relevo.BindingRole(m))
 	}
 	fmt.Printf("  awaiting %s round %d\n", c.AwaitingMember, c.AwaitingRound)
 	fmt.Printf("  relevo wait --name %s\n", c.Name)

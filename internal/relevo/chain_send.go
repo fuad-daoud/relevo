@@ -10,6 +10,22 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// RoundOpenError is returned when a chain member's round is still open: its
+// prompt entry exists with no report entry, so a new round would overwrite the
+// one in flight. It carries the member the caller must stop, so the CLI can
+// name `relevo stop <member>` as the next command instead of an internal
+// failure.
+type RoundOpenError struct {
+	Member string
+	Round  int
+}
+
+// Error renders today's message, unchanged: the round number and the stop
+// command the member's own name completes.
+func (e *RoundOpenError) Error() string {
+	return fmt.Sprintf("%s: round %d is still open; relevo stop %s ends it", e.Member, e.Round, e.Member)
+}
+
 // sendChainRound starts one round for a chain member. It is Send's in-lock core
 // as a reusable helper: the caller holds the state lock and passes its tx, and
 // the member's new binding and its prompt entry are written in the same
@@ -34,7 +50,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		return b, fmt.Errorf("%s: %w", name, err)
 	}
 	if roundOpenIn(entries, cur.Round) {
-		return b, fmt.Errorf("%s: round %d is still open; relevo stop %s ends it", name, cur.Round, name)
+		return b, &RoundOpenError{Member: name, Round: cur.Round}
 	}
 	if path, found := pendingRoundFile(rt, name, cur.Round); found {
 		return b, fmt.Errorf("%s: round %d: %s exists: %w", name, cur.Round, filepath.Base(path), ErrReportPending)

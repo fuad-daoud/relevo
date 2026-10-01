@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -16,12 +17,20 @@ import (
 // filesystem; cmd/relevo wires HomeSessionLocator, tests wire a map.
 type SessionLocator func(kind, sessionID string) (path string, ok bool)
 
-// HomeSessionLocator locates claude's record under home:
-// filepath.Glob(home/.claude/projects/*/<sessionID>.jsonl); when several
-// match (a session copied between slugs) the newest by mtime wins. A
-// sessionID containing a path separator or a glob metacharacter is
-// refused (ok false): a session id is used in a path.
+// HomeSessionLocator locates claude's record under home, the default
+// ~/.claude: the account-aware AccountSessionLocator is this locator with every
+// configured account home added.
 func HomeSessionLocator(home string) SessionLocator {
+	return ClaudeSessionLocator(filepath.Join(home, ".claude"))
+}
+
+// ClaudeSessionLocator locates claude's record under configDir, the directory a
+// round's CLAUDE_CONFIG_DIR names (the default ~/.claude when no account pins
+// one): filepath.Glob(configDir/projects/*/<sessionID>.jsonl); when several
+// match (a session copied between slugs) the newest by mtime wins. A sessionID
+// containing a path separator or a glob metacharacter is refused (ok false): a
+// session id is used in a path.
+func ClaudeSessionLocator(configDir string) SessionLocator {
 	return func(kind, sessionID string) (string, bool) {
 		if kind != "claude" || sessionID == "" {
 			return "", false
@@ -29,7 +38,7 @@ func HomeSessionLocator(home string) SessionLocator {
 		if strings.ContainsAny(sessionID, `/\*?[]`) {
 			return "", false
 		}
-		matches, err := filepath.Glob(filepath.Join(home, ".claude", "projects", "*", sessionID+".jsonl"))
+		matches, err := filepath.Glob(filepath.Join(configDir, "projects", "*", sessionID+".jsonl"))
 		if err != nil || len(matches) == 0 {
 			return "", false
 		}
@@ -42,6 +51,46 @@ func HomeSessionLocator(home string) SessionLocator {
 		}
 		return best, true
 	}
+}
+
+// AccountSessionLocator searches the default home and every claude account's
+// own config dir: a session id only resolves under the home that wrote it, and
+// a pane builder may have run under any configured account. A kind other than
+// claude, and a session id that is empty or carries a path separator or glob
+// metacharacter, locate nothing, exactly as HomeSessionLocator refuses them.
+func AccountSessionLocator(home string, accounts account.Set) SessionLocator {
+	dirs := []string{filepath.Join(home, ".claude")}
+	seen := map[string]bool{dirs[0]: true}
+	for _, a := range accounts {
+		dir, ok := claudeConfigDir(a)
+		if !ok || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		dirs = append(dirs, dir)
+	}
+	locators := make([]SessionLocator, 0, len(dirs))
+	for _, dir := range dirs {
+		locators = append(locators, ClaudeSessionLocator(dir))
+	}
+	return func(kind, sessionID string) (string, bool) {
+		for _, locate := range locators {
+			if path, ok := locate(kind, sessionID); ok {
+				return path, true
+			}
+		}
+		return "", false
+	}
+}
+
+// claudeConfigDir is a claude account's config dir, and false for any other
+// kind: codex and opencode keep their sessions elsewhere, so their accounts
+// never add a search root.
+func claudeConfigDir(a account.Account) (string, bool) {
+	if a.Harness != account.Claude || a.ConfigDir == "" {
+		return "", false
+	}
+	return a.ConfigDir, true
 }
 
 // mtimeOf is path's modification time, or the zero time when it cannot be

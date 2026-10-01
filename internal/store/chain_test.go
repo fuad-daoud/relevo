@@ -39,6 +39,7 @@ func chainEventFor(c db.ChainRow) db.ChainEventRow {
 		Step:   "building",
 		Member: c.Builder,
 		Round:  1,
+		Plan:   2,
 		Event:  `{"kind":"builder_closed","outcome":"done","gate":"green"}`,
 		Action: `{"kind":"send","member":"` + c.Reviewer + `","seed":"reviewer"}`,
 	}
@@ -216,8 +217,8 @@ func TestStoreChainRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChainEvents(x): %v", err)
 	}
-	if len(events) != 1 || events[0].Seq != 1 || events[0].Member != c.Builder {
-		t.Fatalf("ChainEvents(x) = %+v, want one row for %q at seq 1", events, c.Builder)
+	if len(events) != 1 || events[0].Seq != 1 || events[0].Member != c.Builder || events[0].Plan != 2 {
+		t.Fatalf("ChainEvents(x) = %+v, want one row for %q at seq 1 on plan 2", events, c.Builder)
 	}
 
 	if _, err := s.Chain("missing"); !errors.Is(err, ErrNotFound) {
@@ -295,5 +296,82 @@ func TestChainByMemberAfterARenameIsGone(t *testing.T) {
 	}
 	if got.ID != c.ID {
 		t.Errorf("ChainByMember(y) id = %s, want %s", got.ID, c.ID)
+	}
+}
+
+// TestChainInputPathKeysACopyByItsSource pins the copy's name: it is
+// <chainDir>/inputs/<source binding>-<NNN>/<source base name>, derived from the
+// source path's own binding and round file; a path outside the root, or one the
+// store cannot resolve to a binding round file, resolves no copy.
+func TestChainInputPathKeysACopyByItsSource(t *testing.T) {
+	s := New(t.TempDir())
+
+	cases := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "a flat round file",
+			source: s.DiffPath("shop", 4),
+			want:   filepath.Join(s.ChainInputDir("x"), "shop-004", "004-diff.patch"),
+		},
+		{
+			name:   "a nested artifact",
+			source: s.OutputPath("rev", 3, "reviewer", "report"),
+			want:   filepath.Join(s.ChainInputDir("x"), "rev-003", "report.md"),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := s.ChainInputPath("x", tc.source)
+			if !ok || got != tc.want {
+				t.Errorf("ChainInputPath(%s) = %q (ok %v), want %q", tc.source, got, ok, tc.want)
+			}
+		})
+	}
+
+	for _, bad := range []string{
+		filepath.Join(t.TempDir(), "004-diff.patch"),
+		s.ChainDir("x"),
+		s.ChainPlanPath("x", 1),
+	} {
+		if got, ok := s.ChainInputPath("x", bad); ok {
+			t.Errorf("ChainInputPath(%s) = %q, want false", bad, got)
+		}
+	}
+}
+
+// TestDiskRegularFileRefusesAPlantAtARowOnlyKey pins the disk-record rule: a
+// plant at a reserved round-file name is never a disk record, while a plain
+// report is; a symlink is never one either.
+func TestDiskRegularFileRefusesAPlantAtARowOnlyKey(t *testing.T) {
+	s := New(t.TempDir())
+	const binding = "shop"
+
+	for _, tc := range reservedKeyCases() {
+		path := tc.path(s, binding)
+		writePlant(t, path, "the plant's bytes\n")
+		if s.DiskRegularFile(path) {
+			t.Errorf("DiskRegularFile(%s) = true, want false: a reserved name is row-only", tc.name)
+		}
+	}
+
+	report := s.ReportPath(binding, 1)
+	writePlant(t, report, "the report\n")
+	if !s.DiskRegularFile(report) {
+		t.Errorf("DiskRegularFile(%s) = false, want true: a plain report is a disk record", report)
+	}
+
+	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	if err := os.WriteFile(sentinel, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	link := s.ReportPath(binding, 2)
+	if err := os.Symlink(sentinel, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if s.DiskRegularFile(link) {
+		t.Errorf("DiskRegularFile(%s) = true, want false: a symlink is never opened", link)
 	}
 }

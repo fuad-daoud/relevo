@@ -109,6 +109,19 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 			}
 		}
 	}
+	// gateResult is the closed round's gate result: the newest KindReport
+	// entry for ClosedRound that carries a gate record, and only that round's.
+	// "" when the binding had no gate, the round is unclosed, or no report
+	// entry carries a record.
+	var gateResult string
+	if b.Serve != nil && b.Serve.ClosedRound > 0 {
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entries[i].Round == b.Serve.ClosedRound && entries[i].Kind == store.KindReport && entries[i].Gate != nil {
+				gateResult = entries[i].Gate.Result
+				break
+			}
+		}
+	}
 	var diffNote, diffTree string
 	var diffCommits int
 	if b.Serve != nil && b.Serve.ClosedRound > 0 {
@@ -162,6 +175,7 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		ResultCommit:   resultCommit,
 		DirtyCommit:    dirtyCommit,
 		ReportOutcome:  reportOutcome,
+		GateResult:     gateResult,
 		Stopped:        stopped,
 		Shape:          b.Shape,
 		DiffNote:       diffNote,
@@ -169,6 +183,7 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		DiffTree:       diffTree,
 		AckedRound:     ackedRound,
 		Candidate:      b.BuilderCandidate,
+		Account:        b.BuilderAccount,
 		RoundStartedAt: b.RoundStartedAt,
 		RoundCap:       b.RoundCap,
 		RoundTimeoutMS: b.RoundTimeoutMS,

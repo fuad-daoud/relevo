@@ -25,6 +25,11 @@ const plannerAgent = "architect"
 // reads the code itself.
 const seedMaxBytes = 4 << 10
 
+// ErrSeedOverCap is the sentinel a planner send returns when its seed is over
+// seedMaxBytes and --force was not given, so the CLI classifies it as a usage
+// refusal rather than an internal failure.
+var ErrSeedOverCap = errors.New("planner seed over cap")
+
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
 // file rather than something relevo reads off the terminal. The marker is the
@@ -84,7 +89,8 @@ commands_run: []        # commands you ran
 not_done: []            # what you deliberately left
 ` + "```" + `
 Then create this empty file: %s
-Your final message comes after it: relevo saves it once you finish.`
+The message carrying the block must be the last text you write; the marker is
+your final action, created after that message, with nothing written after the marker.`
 
 // SendResult is what one successful Send produced.
 type SendResult struct {
@@ -298,7 +304,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// here, in the read-only preflight, so a --dry-run refuses identically
 	// and a refusal writes nothing. --force is the explicit escape.
 	if !opts.Force && len(body) > seedMaxBytes && actorRunsPlanner(rt, b) {
-		return preflight{}, fmt.Errorf("binding %q: the seed is %d bytes; a planner actor takes at most %d bytes -- pass --force to send it anyway", name, len(body), seedMaxBytes)
+		return preflight{}, fmt.Errorf("binding %q: the seed is %d bytes; a planner actor takes at most %d bytes -- pass --force to send it anyway: %w", name, len(body), seedMaxBytes, ErrSeedOverCap)
 	}
 
 	promptPath := rt.Store.PromptPath(name, b.Round)

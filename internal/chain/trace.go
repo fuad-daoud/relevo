@@ -34,7 +34,20 @@ func (l TraceLine) Line() string {
 // the design's example uses. A step the state machine does not name falls back
 // to its own text, and an empty step to the phase, so a row is never wordless.
 func (l TraceLine) stateWord() string {
-	switch l.Step {
+	if w := l.Step.Word(); w != "" {
+		return w
+	}
+	if l.Step != "" {
+		return string(l.Step)
+	}
+	return string(l.Phase)
+}
+
+// Word is the step's short word, the vocabulary the trace's state column and a
+// resume's reason both speak: build, review, correct, scan, planning. A step
+// the state machine does not name has no word.
+func (s Step) Word() string {
+	switch s {
 	case StepBuilding:
 		return "build"
 	case StepReviewing:
@@ -46,11 +59,13 @@ func (l TraceLine) stateWord() string {
 	case StepPlanningFixes:
 		return "planning"
 	}
-	if l.Step != "" {
-		return string(l.Step)
-	}
-	return string(l.Phase)
+	return ""
 }
+
+// ResumeReason is the reason a resumed chain's trace row carries: where the
+// resume moved the chain, in the trace's own step words -- "resumed -> build",
+// "resumed -> review" and so on. A step with no word yields just the arrow.
+func ResumeReason(s Step) string { return "resumed -> " + s.Word() }
 
 // memberRound is the closing member and its round, the line's third column.
 func (l TraceLine) memberRound() string {
@@ -87,15 +102,16 @@ func (l TraceLine) detail() string {
 	return string(l.Event.Kind)
 }
 
-// gateWord is a builder close's gate as the trace shows it. A red gate has
-// already spent the regate budget, which is what the line names; a round with
-// no check says so rather than reading as green.
+// gateWord is a builder close's gate as the trace shows it. A red gate reads
+// as a plain red check: the regate budget it spent is the state machine's own
+// fact, not the line's. A round with no check says so rather than reading as
+// green.
 func gateWord(gate string) string {
 	switch gate {
 	case GateNone:
 		return "no check"
 	case GateRed:
-		return "check red after regate"
+		return "check red"
 	}
 	return "check green"
 }

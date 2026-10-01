@@ -114,7 +114,11 @@ func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 // source builds on its own, so one that errors or panics is one omitted line
 // and never fails the run.
 func bugreportSources(rt relevo.Runtime, root string, L config.Loaded, le bugreport.LastError, haveLE bool, opts bugreportOptions) []bugreport.Source {
-	srcs := []bugreport.Source{
+	srcs := []bugreport.Source{}
+	if opts.haveBody {
+		srcs = append(srcs, descriptionSource(opts.body))
+	}
+	srcs = append(srcs,
 		environmentSource(root),
 		lastErrorSource(le, haveLE),
 		doctorSource(rt, L),
@@ -124,11 +128,25 @@ func bugreportSources(rt relevo.Runtime, root string, L config.Loaded, le bugrep
 		gatesSource(rt),
 		daemonSource(rt),
 		journalSource(),
-	}
+	)
 	if opts.logs {
 		srcs = append(srcs, logsSource(rt, opts))
 	}
 	return srcs
+}
+
+// descriptionSource carries the --body file as the bundle's first section: the
+// caller's own description, sanitized like every other body and redacted with
+// the rest of the bundle. It is wired only when the flag was given, so an
+// absent --body leaves today's sections and their order untouched.
+func descriptionSource(text string) bugreport.Source {
+	return bugreport.Source{Name: bugreport.SectionDescription, Build: func() (bugreport.Section, error) {
+		clean := sanitize.Text(text)
+		if strings.TrimRight(clean, "\n") == "" {
+			return bugreport.DescriptionSection(nil), nil
+		}
+		return bugreport.DescriptionSection(bodyLines(clean)), nil
+	}}
 }
 
 // environmentSource names the binary that produced the bundle and the machine

@@ -44,8 +44,11 @@ type ChainRow struct {
 	Ticket         string
 	Server         string
 	MasterMindID   string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// PlanStartCommit is the commit the chain's current plan started at; ""
+	// for every chain created before the column existed.
+	PlanStartCommit string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // ChainEventRow is one chain_event row: the transition the trace shows. Event
@@ -59,6 +62,7 @@ type ChainEventRow struct {
 	Step    string
 	Member  string
 	Round   int
+	Plan    int
 	Event   string
 	Action  string
 	Reason  string
@@ -93,7 +97,7 @@ func (d *DB) hasChains() bool { return d.have >= 16 }
 
 const chainCols = `id, origin, owner, name, status, reason, phase, step, plan, plans, plan_paths, corrections,
 	awaiting_member, awaiting_round, settings, builder, reviewer, planner, security,
-	base, branch, repo, worktree, feature, ticket, server, mastermind_id, created_at, updated_at`
+	base, branch, repo, worktree, feature, ticket, server, mastermind_id, created_at, updated_at, plan_start_commit`
 
 func scanChain(s rowScanner) (ChainRow, error) {
 	var c ChainRow
@@ -101,7 +105,7 @@ func scanChain(s rowScanner) (ChainRow, error) {
 	if err := s.Scan(&c.ID, &c.Origin, &c.Owner, &c.Name, &c.Status, &c.Reason, &c.Phase, &c.Step,
 		&c.Plan, &c.Plans, &planPaths, &c.Corrections, &c.AwaitingMember, &c.AwaitingRound, &settings,
 		&c.Builder, &c.Reviewer, &c.Planner, &c.Security, &c.Base, &c.Branch, &c.Repo, &c.Worktree,
-		&c.Feature, &c.Ticket, &c.Server, &c.MasterMindID, &createdAt, &updatedAt); err != nil {
+		&c.Feature, &c.Ticket, &c.Server, &c.MasterMindID, &createdAt, &updatedAt, &c.PlanStartCommit); err != nil {
 		return ChainRow{}, err
 	}
 	c.PlanPathsJSON = []byte(planPaths)
@@ -179,7 +183,7 @@ func (d *DB) ChainList(owner string) ([]ChainRow, error) {
 	return out, nil
 }
 
-const chainEventCols = `chain_id, seq, ts, phase, step, member, round, event, action, reason`
+const chainEventCols = `chain_id, seq, ts, phase, step, member, round, event, action, reason, plan`
 
 // ChainEvents returns chain id's trace rows in seq order. A database that
 // predates the chains tables reads as empty.
@@ -206,7 +210,7 @@ func scanChainEvent(s rowScanner) (ChainEventRow, error) {
 	var e ChainEventRow
 	var ts string
 	if err := s.Scan(&e.ChainID, &e.Seq, &ts, &e.Phase, &e.Step, &e.Member, &e.Round,
-		&e.Event, &e.Action, &e.Reason); err != nil {
+		&e.Event, &e.Action, &e.Reason, &e.Plan); err != nil {
 		return ChainEventRow{}, err
 	}
 
@@ -250,11 +254,11 @@ func (t *Tx) updateChain(id string, c ChainRow, updatedAt time.Time) error {
 	if _, err := t.exec(`UPDATE chains SET origin = ?, owner = ?, status = ?, reason = ?, phase = ?, step = ?,
 			plan = ?, plans = ?, plan_paths = ?, corrections = ?, awaiting_member = ?, awaiting_round = ?, settings = ?,
 			builder = ?, reviewer = ?, planner = ?, security = ?, base = ?, branch = ?, repo = ?, worktree = ?,
-			feature = ?, ticket = ?, server = ?, mastermind_id = ?, updated_at = ? WHERE id = ?`,
+			feature = ?, ticket = ?, server = ?, mastermind_id = ?, plan_start_commit = ?, updated_at = ? WHERE id = ?`,
 		t.origin, c.Owner, c.Status, c.Reason, c.Phase, c.Step,
 		c.Plan, c.Plans, string(c.PlanPathsJSON), c.Corrections, c.AwaitingMember, c.AwaitingRound, string(c.SettingsJSON),
 		c.Builder, c.Reviewer, c.Planner, c.Security, c.Base, c.Branch, c.Repo, c.Worktree,
-		c.Feature, c.Ticket, c.Server, c.MasterMindID, formatTime(updatedAt), id); err != nil {
+		c.Feature, c.Ticket, c.Server, c.MasterMindID, c.PlanStartCommit, formatTime(updatedAt), id); err != nil {
 		return fmt.Errorf("db: chain put %q: update: %w", c.Name, mapBusy(err))
 	}
 	return nil
@@ -264,12 +268,12 @@ func (t *Tx) insertChain(c ChainRow, createdAt, updatedAt time.Time) error {
 	if _, err := t.exec(`INSERT INTO chains
 			(id, origin, owner, name, status, reason, phase, step, plan, plans, plan_paths, corrections,
 			 awaiting_member, awaiting_round, settings, builder, reviewer, planner, security,
-			 base, branch, repo, worktree, feature, ticket, server, mastermind_id, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			 base, branch, repo, worktree, feature, ticket, server, mastermind_id, created_at, updated_at, plan_start_commit)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.ID, t.origin, c.Owner, c.Name, c.Status, c.Reason, c.Phase, c.Step, c.Plan, c.Plans,
 		string(c.PlanPathsJSON), c.Corrections, c.AwaitingMember, c.AwaitingRound, string(c.SettingsJSON),
 		c.Builder, c.Reviewer, c.Planner, c.Security, c.Base, c.Branch, c.Repo, c.Worktree,
-		c.Feature, c.Ticket, c.Server, c.MasterMindID, formatTime(createdAt), formatTime(updatedAt)); err != nil {
+		c.Feature, c.Ticket, c.Server, c.MasterMindID, formatTime(createdAt), formatTime(updatedAt), c.PlanStartCommit); err != nil {
 		return fmt.Errorf("db: chain put %q: insert: %w", c.Name, mapBusy(err))
 	}
 	return nil
@@ -288,9 +292,9 @@ func (t *Tx) ChainDelete(owner, name string) error {
 // ChainEventAppend appends one trace row for chain id, with the next seq after
 // the chain's current maximum, so a caller never names a seq.
 func (t *Tx) ChainEventAppend(id string, e ChainEventRow) error {
-	if _, err := t.exec(`INSERT INTO chain_event (chain_id, seq, ts, phase, step, member, round, event, action, reason)
-		SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ? FROM chain_event WHERE chain_id = ?`,
-		id, formatTime(e.TS), e.Phase, e.Step, e.Member, e.Round, e.Event, e.Action, e.Reason, id); err != nil {
+	if _, err := t.exec(`INSERT INTO chain_event (chain_id, seq, ts, phase, step, member, round, event, action, reason, plan)
+		SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM chain_event WHERE chain_id = ?`,
+		id, formatTime(e.TS), e.Phase, e.Step, e.Member, e.Round, e.Event, e.Action, e.Reason, e.Plan, id); err != nil {
 		return fmt.Errorf("db: chain event append %s: %w", id, mapBusy(err))
 	}
 	return nil

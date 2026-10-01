@@ -269,6 +269,12 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 
 	b.RemoteUnreachableSince = time.Time{}
 	b.Builder.RemoteStatus = string(view.RoundState)
+	// The account is the server's own choice for a served round, so carry its
+	// choice across: the owner's own status names the login that actually ran.
+	// A server that predates accounts omits the field and leaves it alone.
+	if view.Account != "" {
+		b.BuilderAccount = view.Account
+	}
 	// RemoteQueue and RemoteLive are set only in their respective cases below;
 	// every other state clears them.
 	b.Builder.RemoteQueue = nil
@@ -509,6 +515,13 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
+	}
+
+	// The chain's own staged rounds ship here, after the per-binding loop: a
+	// remote member's round is staged wherever a local send would start it, and
+	// this pass is what collects and ships it when no daemon is running.
+	if err := chainSendPending(ctx, rt); err != nil {
+		errs = append(errs, err)
 	}
 
 	return synced, errors.Join(errs...)

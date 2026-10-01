@@ -3,7 +3,10 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -266,6 +269,49 @@ func TestChainStopAndDoneThroughTheCLI(t *testing.T) {
 	}
 }
 
+// TestChainMemberDoneAndUnbindRefusedWhileRunning pins the guards at the CLI
+// edge: on a running chain's member, done and unbind are both conflicts naming
+// the chain and `relevo stop <n> first`, and unbind on the chain's own name is
+// refused through the member that name is. Store-only: seedCLIChain needs no
+// harness, no git and no network.
+func TestChainMemberDoneAndUnbindRefusedWhileRunning(t *testing.T) {
+	const name = "climembers"
+	seedCLIChain(t, name, "running")
+
+	for _, tc := range []struct {
+		what string
+		args []string
+	}{
+		{"done on a member", []string{"done", name + "-rev"}},
+		{"unbind on a member", []string{"unbind", name + "-rev"}},
+		{"unbind on the chain", []string{"unbind", name}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			_, _, err := captureOutput(t, func() error { return run(tc.args) })
+			ce := requireCLIError(t, err, codeConflict, "")
+			if !strings.Contains(ce.message, name) || !strings.Contains(ce.message, "relevo stop "+name+" first") {
+				t.Errorf("message = %q, want it to name the chain and `relevo stop %s first`", ce.message, name)
+			}
+		})
+	}
+}
+
+// TestChainMemberDoneAndUnbindAllowedAfterTheChainStops pins the other half at
+// the CLI edge: a chain that is not running has handed its members back, so done
+// and unbind both succeed on one. The seeded member has no worktree and no PID,
+// so neither verb runs git or a harness.
+func TestChainMemberDoneAndUnbindAllowedAfterTheChainStops(t *testing.T) {
+	const name = "clistop"
+	seedCLIChain(t, name, "stopped")
+
+	if _, stderr, err := captureOutput(t, func() error { return run([]string{"done", name + "-rev"}) }); err != nil {
+		t.Fatalf("done %s-rev = %v (stderr: %s), want it allowed", name, err, stderr)
+	}
+	if _, stderr, err := captureOutput(t, func() error { return run([]string{"unbind", name + "-rev"}) }); err != nil {
+		t.Fatalf("unbind %s-rev = %v (stderr: %s), want it allowed", name, err, stderr)
+	}
+}
+
 // chainOptionsFrom parses args through chain's own flag set and maps them with
 // chainOptions, the way cmdChain's start arm does -- parse and mapping only, no
 // runtime.
@@ -423,6 +469,98 @@ func TestChainStartedTextPrintsTheCheck(t *testing.T) {
 	}
 }
 
+// TestChainDocCarriesPlacement pins the document's placement field: a remote
+// member names its server, every other member runs here.
+func TestChainDocCarriesPlacement(t *testing.T) {
+	res := relevo.ChainResult{
+		Chain: db.ChainRow{Builder: "shop", Reviewer: "review", Planner: "plan"},
+		Members: []store.Binding{
+			{Name: "shop", Builder: store.Endpoint{Server: "zen"}},
+			{Name: "review", Role: "reviewer"},
+			{Name: "plan", Role: "planner"},
+		},
+	}
+	doc := chainDocOf(res)
+	if len(doc.Members) != 3 {
+		t.Fatalf("members = %d, want 3", len(doc.Members))
+	}
+	for i, want := range []string{"zen", "local", "local"} {
+		if got := doc.Members[i].Placement; got != want {
+			t.Errorf("members[%d].Placement = %q, want %q", i, got, want)
+		}
+	}
+}
+
+// TestChainStartedTextNamesTheRemoteBuilder pins the remote human text: the
+// builder names its server, branch and base with no worktree line, and a local
+// builder keeps the worktree line.
+func TestChainStartedTextNamesTheRemoteBuilder(t *testing.T) {
+	remote := relevo.ChainResult{
+		Chain: db.ChainRow{Builder: "shop", Reviewer: "review", Branch: "relevo/shop", Base: "abc123"},
+		Members: []store.Binding{
+			{Name: "shop", Builder: store.Endpoint{Server: "zen"}},
+			{Name: "review", Role: "reviewer"},
+		},
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		chainStartedText(relevo.Runtime{}, remote)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("chainStartedText: %v", err)
+	}
+	out := string(stdout)
+	for _, want := range []string{"on zen", "branch relevo/shop", "from abc123"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout = %q, want it to contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, "worktree") {
+		t.Errorf("stdout = %q, want no worktree line for a remote builder", out)
+	}
+
+	local := relevo.ChainResult{
+		Chain:   db.ChainRow{Builder: "shop", Worktree: "/work/shop", Branch: "relevo/shop", Base: "abc123"},
+		Members: []store.Binding{{Name: "shop"}},
+	}
+	stdout, _, err = captureOutput(t, func() error {
+		chainStartedText(relevo.Runtime{}, local)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("chainStartedText: %v", err)
+	}
+	if want := "  worktree /work/shop on relevo/shop (from abc123)\n"; !strings.Contains(string(stdout), want) {
+		t.Errorf("stdout = %q, want it to contain %q", stdout, want)
+	}
+}
+
+// TestChainResumedTextNamesPlacement pins the resume human text: each member
+// names where it runs, so the remote builder names its server.
+func TestChainResumedTextNamesPlacement(t *testing.T) {
+	res := relevo.ChainResult{
+		Chain: db.ChainRow{Name: "shop", Builder: "shop", Reviewer: "review"},
+		Members: []store.Binding{
+			{Name: "shop", Builder: store.Endpoint{Server: "zen"}},
+			{Name: "review", Role: "reviewer"},
+		},
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		chainResumedText(res)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("chainResumedText: %v", err)
+	}
+	out := string(stdout)
+	if !strings.Contains(out, "zen") {
+		t.Errorf("stdout = %q, want it to name the remote builder's server zen", out)
+	}
+	if !strings.Contains(out, "local") {
+		t.Errorf("stdout = %q, want the local reader's placement", out)
+	}
+}
+
 // TestChainDoneOnARunningChainIsAConflict pins the refusal's class: a script
 // must be able to tell "stop it first" from an internal failure.
 func TestChainDoneOnARunningChainIsAConflict(t *testing.T) {
@@ -433,5 +571,81 @@ func TestChainDoneOnARunningChainIsAConflict(t *testing.T) {
 	ce := requireCLIError(t, err, codeConflict, "")
 	if !strings.Contains(ce.message, "relevo stop "+name+" first") {
 		t.Errorf("message = %q, want it to name `relevo stop %s first`", ce.message, name)
+	}
+}
+
+// TestSeedOverCapIsAUsageRefusal pins the class of the planner seed cap: the
+// refusal is a usage error naming the escape, not an internal failure. Pure: it
+// classifies an error and touches no state.
+func TestSeedOverCapIsAUsageRefusal(t *testing.T) {
+	err := writeError(fmt.Errorf("binding \"planner\": the seed is 4097 bytes: %w", relevo.ErrSeedOverCap))
+	ce := requireCLIError(t, err, codeUsage, "trim the seed or pass --force")
+	if !strings.Contains(ce.message, "4097") {
+		t.Errorf("message = %q, want the wrapping error's text", ce.message)
+	}
+}
+
+// seedCLIOpenMemberChain writes a halted chain whose builder member's round is
+// still open: a prompt log entry with no report. Store-only, so a resume of it
+// reaches the round-open refusal with no daemon, no harness and no network; the
+// refusal precedes startRound, so nothing spawns.
+func seedCLIOpenMemberChain(t *testing.T, name string) {
+	t.Helper()
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	now := time.Now().UTC()
+	plan := filepath.Join(t.TempDir(), "plan-1.md")
+	if err := os.WriteFile(plan, []byte("build it"), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	c := db.ChainRow{
+		ID: db.NewID(), Name: name, Status: "halted", Phase: "build", Step: "building",
+		Plan: 1, Plans: 1, PlanPathsJSON: []byte(`[` + strconv.Quote(plan) + `]`), SettingsJSON: []byte(`{}`),
+		AwaitingMember: "builder", AwaitingRound: 1,
+		Builder: name, Reviewer: name + "-rev", Planner: name + "-plan",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	err = s.WithLock(func(tx *store.Tx) error {
+		for _, m := range []store.Binding{
+			{Name: name, CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive},
+			{Name: name + "-rev", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Shape: store.ShapeReader},
+			{Name: name + "-plan", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Shape: store.ShapeReader},
+		} {
+			if err := tx.Save(m); err != nil {
+				return err
+			}
+		}
+		if err := tx.ChainPut(c); err != nil {
+			return err
+		}
+		// The builder's round 1 is open: its prompt entry exists, no report.
+		return tx.AppendLog(name, store.LogEntry{
+			TS: now, Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+			Path: plan, Confirmed: true,
+		})
+	})
+	if err != nil {
+		t.Fatalf("seed open chain %s: %v", name, err)
+	}
+}
+
+// TestChainResumeOpenMemberRoundIsAConflict pins the class of a resume that
+// finds its member's round still open: a conflict naming `relevo stop <member>`
+// as the next command, not an internal failure.
+func TestChainResumeOpenMemberRoundIsAConflict(t *testing.T) {
+	const name = "cliresumeopen"
+	seedCLIOpenMemberChain(t, name)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"chain", "--resume", "--name", name})
+	})
+	ce := requireCLIError(t, err, codeConflict, "relevo stop "+name)
+	if !strings.Contains(ce.message, "still open") {
+		t.Errorf("message = %q, want the round-open refusal", ce.message)
 	}
 }

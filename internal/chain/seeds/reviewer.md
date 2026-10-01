@@ -1,12 +1,22 @@
 Review the round and give a verdict.
 
-Plan: {{.PlanPath}} (plan {{.Plan}} of {{.Plans}}).
-Builder's report: {{.ReportPath}}.
-Round diff: {{.DiffPath}}.
-{{if .GateLogPath}}Check result: {{.GateResult}}; its output is at {{.GateLogPath}}.{{else}}No check ran for this round.{{end}}
+Plan {{.Plan}} of {{.Plans}}: {{.PlanPath}}.
+{{if .RoundPromptPath}}This round's prompt: {{.RoundPromptPath}}.
+{{end}}Builder's report: {{.ReportPath}}.
+This round's diff: {{.DiffPath}}.
+{{if .PlanDiffPath}}Plan diff, every round of this plan so far: {{.PlanDiffPath}}.
+{{else if .DiffFrom}}No cumulative plan diff was captured; diff the plan yourself from {{.DiffFrom}}.
+{{else}}No cumulative plan diff was captured for this plan.
+{{end}}{{if .BuilderRoundKind}}This closing round is {{.BuilderRoundKind}}, on top of round {{.BuilderRoundOn}}.
+Builder rounds of this plan:
+{{range .BuilderRounds}}- round {{.Round}} prompt: {{.PromptPath}}
+- round {{.Round}} report: {{.ReportPath}}
+{{end}}{{end}}{{if .GateLogPath}}Check result: {{.GateResult}}; its output: {{.GateLogPath}}.{{else}}No check ran for this round.{{end}}
 
-Read all four, judge the diff against the plan and against the check, and do
-not edit the tree. End your output with this block:
+Read the plan, the round's prompt when it is named, the report and the diffs.
+You review plan {{.Plan}} of {{.Plans}} as a whole against the plan text: the plan's cumulative diff is the primary input and this round's diff is its latest increment.
+Judge the plan against the check, and do not edit the tree.
+End your output with this block:
 
 ```relevo
 verdict: pass        # or: changes

@@ -39,6 +39,33 @@ func FinalText(kind string, stream []byte) string {
 	return strings.TrimSpace(last)
 }
 
+// Texts returns every message text FinalText's decoding recognises, in stream
+// order: per JSON line, the same finalCandidates values, the last preferred
+// over the fallback when it is non-empty, skipping non-JSON lines and empty
+// texts. It lets a caller rescan a stream for something earlier than the last
+// message, where FinalText stops at the last one.
+func Texts(kind string, stream []byte) []string {
+	var out []string
+	for _, line := range bytes.Split(stream, []byte{'\n'}) {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 || trimmed[0] != '{' {
+			continue
+		}
+		var obj map[string]any
+		if err := json.Unmarshal(trimmed, &obj); err != nil || obj == nil {
+			continue
+		}
+		l, f := finalCandidates(kind, obj)
+		if l == "" {
+			l = f
+		}
+		if t := strings.TrimSpace(l); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func finalCandidates(kind string, obj map[string]any) (last, fallback string) {
 	switch kind {
 	case "claude":

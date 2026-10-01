@@ -42,5 +42,21 @@ if [ -z "$limit_line" ] || [ -z "$service_line" ] || [ "$limit_line" -ge "$servi
 	echo "FAIL: $template must set StartLimitIntervalSec=0 in [Unit], before [Service]"; fail=1
 fi
 
+# The daemon execs the harness CLIs by PATH lookup, and CI installs
+# golangci-lint under $(go env GOPATH)/bin, whose default is %h/go/bin. Both
+# shipped unit templates must carry it, or `make lint` skips quietly inside the
+# unit. Exactly one Environment=PATH= line per unit, naming %h/go/bin.
+for unit in "$here/../dist/relevo.service" "$here/../dist/relevo-serve.service"; do
+	if [ ! -f "$unit" ]; then
+		echo "FAIL: no template at $unit"; fail=1; continue
+	fi
+	if [ "$(grep -c '^Environment=PATH=' "$unit")" -ne 1 ]; then
+		echo "FAIL: $unit must set exactly one Environment=PATH= line"; fail=1
+	fi
+	if ! grep -q '^Environment=PATH=.*%h/go/bin' "$unit"; then
+		echo "FAIL: $unit does not carry %h/go/bin on PATH"; fail=1
+	fi
+done
+
 if [ "$fail" -ne 0 ]; then exit 1; fi
-echo "ok: $template has no MemoryMax, OOMPolicy=continue, and StartLimitIntervalSec=0 in [Unit]"
+echo "ok: $template has no MemoryMax, OOMPolicy=continue, and StartLimitIntervalSec=0 in [Unit]; both unit templates carry %h/go/bin on PATH"

@@ -22,8 +22,8 @@ var registry = []verbEntry{
 	{
 		Name:    "bugreport",
 		Summary: "assemble a local, redacted bug-report bundle and print the gh line",
-		Args:    "[--name N] [--round N] [--logs] [--raw] [--out PATH] [--stdout|--json|--gh]",
-		Flags:   []string{"--gh", "--json", "--logs", "--name", "--out", "--raw", "--round", "--stdout"},
+		Args:    "[--name N] [--round N] [--logs] [--raw] [--out PATH] [--title T] [--body FILE] [--stdout|--json|--gh]",
+		Flags:   []string{"--body", "--gh", "--json", "--logs", "--name", "--out", "--raw", "--round", "--stdout", "--title"},
 		Output:  "json:bugreport.Doc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"internal", "not_available", "usage"},

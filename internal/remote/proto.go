@@ -121,6 +121,10 @@ type CreateBindingRequest struct {
 	Feature string `json:"feature,omitempty"`
 	Ticket  string `json:"ticket,omitempty"`
 
+	// Gate is the acceptance command this binding's rounds are checked with;
+	// "" means no check. It is additive: an old server ignores it.
+	Gate string `json:"gate,omitempty"`
+
 	// Author is the client's git identity; the server runs this binding's
 	// builders as it (#335). nil means an old client that sent none.
 	Author *GitIdentity `json:"author,omitempty"`
@@ -171,6 +175,9 @@ type BindingView struct {
 	ResultCommit  string     `json:"result_commit,omitempty"`
 	DirtyCommit   string     `json:"dirty_commit,omitempty"`
 	ReportOutcome string     `json:"report_outcome,omitempty"` // reporttail.Tail.Status or "unstructured"
+	// GateResult is the closed round's (ClosedRound) gate result, "pass" or
+	// "fail"; "" when it had none.
+	GateResult string `json:"gate_result,omitempty"`
 	// Stopped is how the closed round (ClosedRound) was stopped: "killed",
 	// "reaped", "gone" or "dequeued". It is "" when that round closed any
 	// other way, on a pre-stop server, or when ClosedRound is 0.
@@ -182,11 +189,15 @@ type BindingView struct {
 	// from the newest KindDiff entry for Serve.ClosedRound -- the same facts
 	// DiffSummary wrote to the server's own log at close. Empty/zero on any
 	// binding that is not closed, or whose close wrote no diff entry.
-	DiffNote       string    `json:"diff_note,omitempty"`
-	DiffCommits    int       `json:"diff_commits,omitempty"`
-	DiffTree       string    `json:"diff_tree,omitempty"`
-	AckedRound     int       `json:"acked_round"`
-	Candidate      string    `json:"candidate,omitempty"`
+	DiffNote    string `json:"diff_note,omitempty"`
+	DiffCommits int    `json:"diff_commits,omitempty"`
+	DiffTree    string `json:"diff_tree,omitempty"`
+	AckedRound  int    `json:"acked_round"`
+	Candidate   string `json:"candidate,omitempty"`
+	// Account names the login of the candidate's pool the round drew from.
+	// It is the owner's own secret (accounts are not shared with tenants), so
+	// it is sent only on the owner's own view; a pre-accounts server omits it.
+	Account        string    `json:"account,omitempty"`
 	RoundStartedAt time.Time `json:"round_started_at,omitempty"`
 	RoundCap       int       `json:"round_cap"`
 	RoundTimeoutMS int       `json:"round_timeout_ms"`
@@ -415,6 +426,19 @@ const FeatureForce = "force"
 // whether a placement would be accepted before it creates anything, so a
 // server without the token is missing the only way to ask.
 const FeaturePlacement = "placement"
+
+// FeatureChainMember is the WhoAmI.Features token a server that can carry one
+// chain member's round advertises: a server that accepts a gate on a create,
+// reports the closed round's gate result, serves its log, and honours the
+// round form's verify.
+const FeatureChainMember = "chain_member"
+
+// FeatureAccounts is the WhoAmI.Features token a server that understands
+// group@account gate keys advertises, on both the gate and the clear routes.
+// An account key sent to a server without it would be a subject the server
+// cannot resolve, so a client holding one refuses that server instead of
+// sending it.
+const FeatureAccounts = "accounts"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

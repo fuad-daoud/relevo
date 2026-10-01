@@ -25,7 +25,7 @@ func queryRounds(ctx context.Context, q queryer, f Filter) ([]RoundRow, error) {
 	query := `SELECT round.binding_id, binding.name, repo.origin_url, repo.common_dir, binding.feature,
 			binding.ticket,
 			round.number, round.started_at, round.closed_at, round.outcome,
-			round.candidate, round.harness, round.provider, round.model, round.actor,
+			round.candidate, round.account, round.harness, round.provider, round.model, round.actor,
 			round.commits, round.tree, round.gate_result, round.cost_usd, round.cost_basis,
 			round.in_tokens, round.cache_tokens, round.write_tokens, round.out_tokens,
 			round.report_outcome, round.mode, binding.server,
@@ -166,7 +166,7 @@ func scanRoundRow(s rowScanner) (RoundRow, error) {
 	var origin, commonDir, feature, ticket sql.Null[string]
 	var startedAt string
 	var closedAt sql.Null[string]
-	var candidate, harness, provider, model sql.Null[string]
+	var candidate, account, harness, provider, model sql.Null[string]
 	var commits sql.Null[int64]
 	var tree, gateResult sql.Null[string]
 	var costUSD sql.Null[float64]
@@ -177,7 +177,7 @@ func scanRoundRow(s rowScanner) (RoundRow, error) {
 
 	if err := s.Scan(&row.BindingID, &row.BindingName, &origin, &commonDir, &feature, &ticket,
 		&row.Number, &startedAt, &closedAt, &row.Outcome,
-		&candidate, &harness, &provider, &model, &row.Actor,
+		&candidate, &account, &harness, &provider, &model, &row.Actor,
 		&commits, &tree, &gateResult, &costUSD, &costBasis,
 		&inTokens, &cacheTokens, &writeTokens, &outTokens,
 		&reportOutcome, &mode, &server,
@@ -201,6 +201,7 @@ func scanRoundRow(s rowScanner) (RoundRow, error) {
 		row.DurationMS = &ms
 	}
 	row.Candidate = ptrIfValid(candidate)
+	row.Account = ptrIfValid(account)
 	row.Harness = ptrIfValid(harness)
 	row.Provider = ptrIfValid(provider)
 	row.Model = ptrIfValid(model)

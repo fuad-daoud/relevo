@@ -11,6 +11,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
@@ -235,10 +237,20 @@ type Gate struct {
 // configured candidates it gates. A spawn failure gates its own token; a
 // rate limit gates every candidate of its provider, because the quota is
 // the provider's, not the model's.
-func Gated(l Ledger, refs []string, providerOf func(string) string, now time.Time) []Gate {
+//
+// With accounts, a group@account entry gates its group only once every account
+// in the group's pool is gated: until then the pick has somewhere to go, so a
+// partially gated pool is not a gated token.
+func Gated(l Ledger, refs []string, providerOf func(string) string, now time.Time, accounts ...account.Set) []Gate {
+	var set account.Set
+	if len(accounts) > 0 {
+		set = accounts[0]
+	}
+	live := l.Prune(now).Entries
+
 	var gates []Gate
 
-	for _, e := range l.Prune(now).Entries {
+	for _, e := range live {
 		switch e.Kind {
 		case SpawnFailed:
 			if slices.Contains(refs, e.Subject) {
@@ -254,17 +266,18 @@ func Gated(l Ledger, refs []string, providerOf func(string) string, now time.Tim
 			}
 		case RateLimited:
 			for _, ref := range refs {
-				if providerOf(ref) == e.Subject {
-					gates = append(gates, Gate{
-						Token:   ref,
-						Kind:    e.Kind,
-						Since:   e.At,
-						Until:   e.Until,
-						Note:    e.Note,
-						Source:  e.Source,
-						Binding: e.Binding,
-					})
+				if !rateLimitedGates(e.Subject, ref, providerOf, set, live) {
+					continue
 				}
+				gates = append(gates, Gate{
+					Token:   ref,
+					Kind:    e.Kind,
+					Since:   e.At,
+					Until:   e.Until,
+					Note:    e.Note,
+					Source:  e.Source,
+					Binding: e.Binding,
+				})
 			}
 		}
 	}
@@ -277,4 +290,54 @@ func Gated(l Ledger, refs []string, providerOf func(string) string, now time.Tim
 	})
 
 	return gates
+}
+
+// rateLimitedGates reports whether a live rate-limit entry with this subject
+// gates ref. A bare group entry gates every candidate of the group; a
+// group@account entry gates them only when every account in the group's pool is
+// gated, so a partially gated pool leaves the token ungated.
+func rateLimitedGates(subject, ref string, providerOf func(string) string, set account.Set, live []Entry) bool {
+	group, accountName, ok := account.ParseGateKey(subject)
+	if !ok || group != providerOf(ref) {
+		return false
+	}
+	if accountName == "" {
+		return true
+	}
+	pool := poolFor(set, ref, group)
+	if len(pool) == 0 {
+		return false
+	}
+	for _, a := range pool {
+		if !accountGated(live, group, a.Name) {
+			return false
+		}
+	}
+	return true
+}
+
+// poolFor returns the accounts a candidate token draws from: the pool of the
+// token's harness and group. Nil when the token does not parse or no account
+// serves it -- every host with no accounts configured.
+func poolFor(set account.Set, ref, group string) []account.Account {
+	r, err := candidate.ParseRef(ref)
+	if err != nil {
+		return nil
+	}
+	return set.Pool(account.Kind(r.Harness), group)
+}
+
+// accountGated reports whether a live rate-limit entry gates one account of
+// group: a bare group entry covers every account, and group@name covers name.
+func accountGated(live []Entry, group, name string) bool {
+	for _, e := range live {
+		if e.Kind != RateLimited {
+			continue
+		}
+		g, a, ok := account.ParseGateKey(e.Subject)
+		if ok && g == group && (a == "" || a == name) {
+			return true
+		}
+	}
+	return false
 }

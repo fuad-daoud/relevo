@@ -158,8 +158,21 @@ type doneResult struct {
 	Text string `json:"text"`
 }
 
-// Done calls relevo.Done and reports relevo.DoneText alongside its result.
+// Done calls relevo.Done and reports relevo.DoneText alongside its result. A
+// name that is a chain routes to relevo.ChainDone: status shows one synthetic
+// row named after the chain, so done on that name releases every member. A
+// name that is no chain -- or a store that cannot answer -- falls through to
+// the binding path unchanged.
 func (v *RelevoVerbs) Done(ctx context.Context, _ string, a DoneArgs) (any, error) {
+	if v.RT.Store != nil {
+		if _, err := v.RT.Store.Chain(a.Name); err == nil {
+			res, cerr := relevo.ChainDone(ctx, v.RT, a.Name)
+			if cerr != nil {
+				return nil, cerr
+			}
+			return doneResult{DoneResult: res, Text: relevo.DoneText(a.Name, res)}, nil
+		}
+	}
 	res, err := relevo.Done(ctx, v.RT, a.Name)
 	if err != nil {
 		return nil, err

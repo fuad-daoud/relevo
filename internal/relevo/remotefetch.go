@@ -283,6 +283,7 @@ type catchUpFetch struct {
 	Log           []byte            // DB-form log body; nil: none
 	LogTemp       string            // legacy-form log in a temp file, "" if none
 	StreamTemp    string            // temp file holding the stream, "" if none
+	GateTemp      string            // temp file holding the acceptance check's log, "" if none
 	CheckedOut    bool              // git refuses to move the branch (checked out somewhere): quiet retry
 	AbsorbErr     error             // any other reset, absorb or UpdateRef failure: apply counts it (halt at 10)
 	Fatal         error             // RefSHA failure after absorb: apply returns it as today
@@ -295,7 +296,7 @@ func (cf *catchUpFetch) release() {
 	if cf == nil {
 		return
 	}
-	for _, path := range []string{cf.ReportTemp, cf.LogTemp, cf.StreamTemp} {
+	for _, path := range []string{cf.ReportTemp, cf.LogTemp, cf.StreamTemp, cf.GateTemp} {
 		if path != "" {
 			_ = os.Remove(path)
 		}
@@ -356,7 +357,10 @@ func fetchCatchUpFiles(ctx context.Context, rt Runtime, b store.Binding, view re
 		!fetchCatchUpLog(ctx, rt, b, view, cf) {
 		return false
 	}
-	return fetchCatchUpStream(ctx, rt, b, view, cf)
+	if !fetchCatchUpStream(ctx, rt, b, view, cf) {
+		return false
+	}
+	return fetchCatchUpGate(ctx, rt, b, view, cf)
 }
 
 // fetchCatchUpReport fetches the report into a temp file. A 404 on a stopped
@@ -486,6 +490,34 @@ func fetchCatchUpStream(ctx context.Context, rt Runtime, b store.Binding, view r
 	}
 }
 
+// fetchCatchUpGate fetches the closed round's acceptance-check log into a temp
+// file, so the apply half can rename it into the gate log path the chain and
+// the reviewer seed read. A round whose server ran no check has no gate file:
+// 404 is fine and leaves no temp.
+func fetchCatchUpGate(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch) bool {
+	server, name, n := b.Builder.Server, b.Name, view.ClosedRound
+	rc, err := rt.Remote.RoundFile(ctx, server, name, n, "gate")
+	switch {
+	case is404(err):
+		return true
+	case err != nil:
+		slog.Warn("fetch gate failed", "server", server, "name", name, "round", n, "err", err)
+		cf.Abort = true
+		cf.release()
+		return false
+	default:
+		path := rt.Store.GateLogPath(name, n)
+		cf.GateTemp, err = downloadTemp(rt.Store.Dir(name), path, rc)
+		if err != nil {
+			slog.Warn("write gate failed", "path", path, "err", err)
+			cf.Abort = true
+			cf.release()
+			return false
+		}
+		return true
+	}
+}
+
 // applyCatchUp installs a fetched catch-up under tx in the order the inline
 // catch-up ran: abort, a missing report's halt, the downloaded files, the
 // absorb outcome, then the settle the caller owes once it gives the lock up.
@@ -519,6 +551,10 @@ func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	}
 	b = next
 	b.Builder.LastKnown = view.ResultCommit
+	// The pulled result commit is the round's closed tree. It is the commit the
+	// absorb just brought home, and the chain's cumulative plan diff reads it
+	// where a local binding's close would carry its snapshot's tree.
+	b.RoundClosedTree = view.ResultCommit
 	b.RemoteAbsorbFailures = 0
 	b.RemoteBundleFailures = 0
 	return b, &catchUpAck{

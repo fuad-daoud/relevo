@@ -1,11 +1,15 @@
 package chain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestChainTraceLineFormatsPlanPhaseStepMemberRound pins the one trace line's
 // columns: plan i/N, the state the chain was in before the event, the closing
-// member and its round, and the event's detail -- the shape the design's
-// example uses, spacing included.
+// member and its round, and the event's detail -- the trace's own wording,
+// spacing included. A red gate reads `check red`, not the design's
+// `check red after regate`: the plan of record supersedes that example.
 func TestChainTraceLineFormatsPlanPhaseStepMemberRound(t *testing.T) {
 	t.Parallel()
 
@@ -15,7 +19,7 @@ func TestChainTraceLineFormatsPlanPhaseStepMemberRound(t *testing.T) {
 		Event:  Event{Kind: EventBuilderClosed, Gate: GateRed},
 		Action: Action{Kind: ActionSend, Member: MemberReviewer, Seed: SeedReviewer},
 	}
-	const want = "plan 2/4  build    x r3       check red after regate"
+	const want = "plan 2/4  build    x r3       check red"
 	if got := line.Line(); got != want {
 		t.Errorf("Line() = %q, want %q", got, want)
 	}
@@ -36,6 +40,15 @@ var traceLineCases = []struct {
 			Event: Event{Kind: EventBuilderClosed, Gate: GateGreen},
 		},
 		want: "plan 2/4  build    x r4       check green",
+	},
+	{
+		name: "a red builder close",
+		line: TraceLine{
+			Plan: 2, Plans: 4, Phase: PhaseBuild, Step: StepBuilding,
+			Member: "x", Round: 4,
+			Event: Event{Kind: EventBuilderClosed, Gate: GateRed},
+		},
+		want: "plan 2/4  build    x r4       check red",
 	},
 	{
 		name: "a builder close with no check",
@@ -138,6 +151,16 @@ var traceLineCases = []struct {
 		},
 		want: "plan 2/4  review   x-rev r2   no verdict  reviewer gave no verdict",
 	},
+	{
+		name: "a resume names the step it moved to",
+		line: TraceLine{
+			Plan: 1, Plans: 1, Phase: PhaseBuild, Step: StepBuilding,
+			Member: "shop", Round: 2,
+			Event:  Event{Kind: EventNeedsYou, Member: MemberBuilder, Round: 2, Reason: ResumeReason(StepReviewing)},
+			Action: Action{Kind: ActionSend, Member: MemberReviewer, Seed: SeedReviewer},
+		},
+		want: "plan 1/1  build    shop r2    resumed -> review",
+	},
 }
 
 // TestTraceLineDetailWords pins the word each kind of close renders, the
@@ -153,5 +176,32 @@ func TestTraceLineDetailWords(t *testing.T) {
 				t.Errorf("Line() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestResumeReasonNamesTheStepItMovedTo pins the resume reason's vocabulary:
+// every step renders in the trace's own word, and a step the state machine does
+// not name has no word, so its reason ends at the arrow.
+func TestResumeReasonNamesTheStepItMovedTo(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		step Step
+		want string
+	}{
+		{StepBuilding, "resumed -> build"},
+		{StepReviewing, "resumed -> review"},
+		{StepCorrecting, "resumed -> correct"},
+		{StepScanning, "resumed -> scan"},
+		{StepPlanningFixes, "resumed -> planning"},
+		{Step(""), "resumed -> "},
+		{Step("mystery"), "resumed -> "},
+	} {
+		if got := ResumeReason(tc.step); got != tc.want {
+			t.Errorf("ResumeReason(%q) = %q, want %q", tc.step, got, tc.want)
+		}
+		if got := tc.step.Word(); !strings.HasSuffix(tc.want, got) {
+			t.Errorf("Step(%q).Word() = %q, want the reason's own word", tc.step, got)
+		}
 	}
 }

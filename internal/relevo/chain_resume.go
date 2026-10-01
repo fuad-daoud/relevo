@@ -68,13 +68,6 @@ func resumeStep(ch db.ChainRow, lastEventRound, newestBuilderRound int) chain.Se
 	return ""
 }
 
-// resumeEvent is the word a resumed chain's trace row carries. Round 1's event
-// vocabulary has no "resumed" kind, and the chain's own word for "a human acted
-// on this chain" is needs_you, whose text the trace renders from the event's
-// reason -- the same shape the member sweep records its own non-close
-// transition with.
-const resumeEvent = "resumed"
-
 // ChainResume continues a chain a human has looked at: `relevo chain --resume
 // --name <n>`. The flags override the chain's stored settings (a flag that was
 // not given keeps its setting), and the chain re-runs the step it halted or was
@@ -96,6 +89,15 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	}
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
+	}
+	// A remote builder's check is fixed at create: the wire has no route that
+	// updates a served binding's gate, so a resume cannot change it. --regate
+	// still travels, because the repair budget is the chain's own client-side
+	// fact.
+	if opts.Gate != "" || opts.NoGate {
+		if err := resumeRemoteGateRefusal(rt, c); err != nil {
+			return ChainResult{}, err
+		}
 	}
 	set, err := resumeSettings(rt, c, opts)
 	if err != nil {
@@ -123,7 +125,35 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	if err != nil {
 		return ChainResult{}, err
 	}
+	// A resume whose target member is remote has only staged its round: the
+	// unlocked step ships it now, outside the state lock, exactly as a start's
+	// plan 1 is shipped. A failed ship records the halt and returns nil.
+	if name := chainMemberName(out.Chain, out.Chain.AwaitingMember); name != "" {
+		if b, lerr := rt.Store.Load(name); lerr == nil && b.Builder.Remote() {
+			if serr := chainSendPending(ctx, rt); serr != nil {
+				return ChainResult{}, fmt.Errorf("chain %s resumed, but its remote member could not be handed its round: %w", opts.Name, serr)
+			}
+		}
+	}
 	return out, nil
+}
+
+// resumeRemoteGateRefusal refuses a --gate/--no-gate on a resume whose builder
+// member is remote: the served binding's check is fixed when the binding is
+// created, and the wire has no route that updates it. A missing builder record
+// is left to chainResumeLocked's own gate-flag error.
+func resumeRemoteGateRefusal(rt Runtime, c db.ChainRow) error {
+	if c.Builder == "" {
+		return nil
+	}
+	b, err := rt.Store.Load(c.Builder)
+	if err != nil {
+		return nil
+	}
+	if !b.Builder.Remote() {
+		return nil
+	}
+	return fmt.Errorf("chain %s: a remote builder's check is fixed at create; unbind and start again", c.Name)
 }
 
 // resumeRefusal is the one refusal a resume makes on its own chain: running and
@@ -248,7 +278,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	// The send fills the round; until it does, the chain waits on no round.
 	next.Awaiting = chain.Awaiting{Member: targetPart}
 
-	text, err := chainSeedText(rt, tx, c, next, act, closedRound)
+	text, err := chainSeedText(rt, tx, c, next, act, closedRound, false)
 	if err != nil {
 		return ChainResult{}, err
 	}
@@ -256,7 +286,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	if err != nil {
 		return ChainResult{}, err
 	}
-	sent, err := sendChainRound(ctx, rt, tx, member, text)
+	sent, err := chainSendMember(ctx, rt, tx, member, text)
 	if err != nil {
 		// The member could not start: the chain stays halted, named with the
 		// member's own reason, exactly as a failed advance leaves it.
@@ -271,7 +301,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	}
 	next.Awaiting.Round = sent.Round
 
-	ev := chain.Event{Kind: chain.EventNeedsYou, Member: targetPart, Round: sent.Round, Reason: resumeEvent}
+	ev := chain.Event{Kind: chain.EventNeedsYou, Member: targetPart, Round: sent.Round, Reason: chain.ResumeReason(next.Step)}
 	if err := chainSaveWithTrace(rt, tx, c, before, next, ev, act, memberName); err != nil {
 		return ChainResult{}, err
 	}
