@@ -64,13 +64,18 @@ func gateSignature(read func(string) ([]byte, error), logPath string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// repairPlanPrefix is the first line repairPlan writes. The prompt bytes are
+// relevo's own, so the prefix identifies a repair round to a resume that must
+// tell one from a plan, correction or fix text.
+const repairPlanPrefix = "# Repair round "
+
 // repairPlan is round failedRound+1's plan text (#132 part 2): the failed
 // round's acceptance check did not pass, so fix only what it reports. It names
 // the original plan and carries the tail of the gate log inline, because the
 // builder gets nothing but this file.
 func repairPlan(b store.Binding, failedRound int, planPath, gateLogPath string, tail []string) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "# Repair round %d for %s: round %d's gate failed\n", failedRound+1, b.Name, failedRound)
+	fmt.Fprintf(&sb, repairPlanPrefix+"%d for %s: round %d's gate failed\n", failedRound+1, b.Name, failedRound)
 	fmt.Fprintf(&sb, "Round %d's acceptance check (`%s`) did NOT pass. Fix ONLY what the check reports; do not\n", failedRound, b.Gate)
 	sb.WriteString("restyle or refactor unrelated code. If the failure is not something a code change can fix, halt and report.\n")
 	fmt.Fprintf(&sb, "Original plan: %s   (read it first; the same rules apply)\n", planPath)
@@ -83,6 +88,13 @@ func repairPlan(b store.Binding, failedRound int, planPath, gateLogPath string, 
 	sb.WriteString("```\n")
 	sb.WriteString("When done: run the same check yourself in the foreground, then write your report and create the done marker as before.\n")
 	return sb.String()
+}
+
+// isRepairPlan reports whether text is a repair prompt repairPlan wrote; a
+// resume that replaces the check uses it to tell a repair round from the plan,
+// correction or fix text it repairs.
+func isRepairPlan(text string) bool {
+	return strings.HasPrefix(text, repairPlanPrefix)
 }
 
 // repairDecision is the failing gate's two bounds, shared by startRepairRound

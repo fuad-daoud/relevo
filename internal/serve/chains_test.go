@@ -543,6 +543,27 @@ func TestResumeChainRefusesOutOfBoundSettings(t *testing.T) {
 	}
 }
 
+// TestWriteChainResumeErrorMapsTheOpenRoundRefusal pins the wire shape: an open
+// member round on a resume is a 409 round_open, not the 500 the default arm
+// used to write, so the client can rebuild the typed refusal.
+func TestWriteChainResumeErrorMapsTheOpenRoundRefusal(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeChainResumeError(rec, &relevo.RoundOpenError{Member: "x-plan", Round: 2})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeRoundOpen {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeRoundOpen)
+	}
+	if !strings.Contains(body.Message, "relevo stop x-plan") {
+		t.Errorf("message = %q, want it to name the stop command", body.Message)
+	}
+}
+
 func TestWhoAmIAdvertisesChain(t *testing.T) {
 	s, _ := newTestServer(t, 0)
 	kp, err := remote.Generate()

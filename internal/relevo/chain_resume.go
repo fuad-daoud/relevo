@@ -107,6 +107,15 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 		return ChainResult{}, err
 	}
 
+	// A halted chain whose awaited member's round is dead -- its process is
+	// gone and no close was written -- otherwise cannot come back: the resume
+	// refuses an open round, and the stop path refuses a halted one. Close the
+	// dead round the way a stop would, before the lock, so the resume's send
+	// can open the next round.
+	if err := closeDeadMemberRound(ctx, rt, c); err != nil {
+		return ChainResult{}, err
+	}
+
 	var out ChainResult
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
 		row, err := tx.Chain(opts.Name)
@@ -157,6 +166,50 @@ func resumeRemoteGateRefusal(rt Runtime, c db.ChainRow) error {
 		return nil
 	}
 	return fmt.Errorf("chain %s: a remote builder's check is fixed at create; unbind and start again", c.Name)
+}
+
+// closeDeadMemberRound closes the round of the member a halted chain awaits
+// when that round died without a close: its process is gone and the binding is
+// NEEDS YOU. A resume is the human's command, so the same close a stop writes
+// is performed here, and the resume's send can then open the next round. A
+// round whose process is still alive, or whose close already exists, is left
+// to the resume's own refusal.
+func closeDeadMemberRound(ctx context.Context, rt Runtime, c db.ChainRow) error {
+	member := chainMemberName(c, c.AwaitingMember)
+	if member == "" {
+		return nil
+	}
+	b, err := rt.Store.Load(member)
+	if err != nil {
+		return nil // a missing member is left to the resume's own failure
+	}
+	if !memberRoundDead(ctx, rt, b) {
+		return nil
+	}
+	entries, err := rt.Store.ReadLog(member)
+	if err != nil || !roundOpenIn(entries, b.Round) {
+		return nil
+	}
+	if _, err := Stop(ctx, rt, member, StopOptions{}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// memberRoundDead reports whether b is a halted member whose round has no live
+// process left: the state a round that died without a report leaves.
+func memberRoundDead(ctx context.Context, rt Runtime, b store.Binding) bool {
+	if b.State != store.StateNeedsYou {
+		return false
+	}
+	if b.Builder.PID == 0 {
+		return true
+	}
+	if rt.Runner == nil {
+		return false
+	}
+	alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+	return err != nil || !alive
 }
 
 // resumeRefusal is the one refusal a resume makes on its own chain: running and
@@ -290,7 +343,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	// The send fills the round; until it does, the chain waits on no round.
 	next.Awaiting = chain.Awaiting{Member: targetPart}
 
-	text, err := chainResumeText(rt, tx, c, before, next, act, closedRound)
+	text, err := chainResumeText(rt, tx, c, before, next, act, closedRound, opts.Gate != "" || opts.NoGate)
 	if err != nil {
 		return ChainResult{}, err
 	}
@@ -354,11 +407,26 @@ func resumeOpenRoundRefusal(tx *store.Tx, c db.ChainRow, memberName string) erro
 // correction or fix text, or the repair prompt. Anything else, and a staged
 // prompt that is gone, falls back to chainSeedText's plan copy, so a plain plan
 // round reads exactly as it always did.
-func chainResumeText(rt Runtime, tx *store.Tx, c db.ChainRow, before, next chain.State, act chain.Action, closedRound int) (string, error) {
+//
+// gateChanged says the resume replaced the builder's check. A repair prompt
+// names the check that failed and the failed round's gate log, so those bytes
+// are wrong under a new check: the resume then walks back past the
+// repair prompts to the round the step seeded and re-sends that -- the plan,
+// correction or fix text -- under the new check.
+func chainResumeText(rt Runtime, tx *store.Tx, c db.ChainRow, before, next chain.State, act chain.Action, closedRound int, gateChanged bool) (string, error) {
 	if act.Member == chain.MemberBuilder &&
 		before.Awaiting.Member == chain.MemberBuilder && before.Awaiting.Round > 0 {
-		path := rt.Store.PromptPath(c.Builder, before.Awaiting.Round)
-		if body, err := rt.Store.ReadFile(path); err == nil {
+		round := before.Awaiting.Round
+		if gateChanged {
+			for round > 1 {
+				body, err := rt.Store.ReadFile(rt.Store.PromptPath(c.Builder, round))
+				if err != nil || !isRepairPlan(string(body)) {
+					break
+				}
+				round--
+			}
+		}
+		if body, err := rt.Store.ReadFile(rt.Store.PromptPath(c.Builder, round)); err == nil {
 			return string(body), nil
 		}
 	}
