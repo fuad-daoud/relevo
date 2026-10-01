@@ -1,7 +1,6 @@
 # Board v2: a live board per MasterMind, with comments
 
-**Issues:** extends #795 (S1 shipped `relevo board`). A dedicated issue is to
-be filed; this spec is the design.
+**Issues:** #838 (this design), extends #795 (S1 shipped `relevo board`).
 
 ## 1. Goal
 
