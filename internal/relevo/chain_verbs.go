@@ -63,28 +63,7 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 	if c.Status != string(chain.StatusRunning) {
 		return StopResult{}, ErrNothingToStop
 	}
-	if len(c.WorkflowJSON) > 0 {
-		return chainStopWorkflow(ctx, rt, c)
-	}
-
-	memberName := chainMemberName(c, c.AwaitingMember)
-	if memberName == "" {
-		return StopResult{}, fmt.Errorf("chain %s has no %s member to stop", c.Name, c.AwaitingMember)
-	}
-
-	res, err := Stop(ctx, rt, memberName, StopOptions{})
-	if errors.Is(err, ErrNothingToStop) {
-		// The member's round already closed, so no close will raise the
-		// chain's stopped event: the chain is stopped directly.
-		if derr := chainStopDirect(ctx, rt, name); derr != nil {
-			return StopResult{}, derr
-		}
-		return StopResult{Round: c.AwaitingRound, Action: ChainStopActionStopped}, nil
-	}
-	if err != nil {
-		return StopResult{}, err
-	}
-	return res, nil
+	return chainStopWorkflow(ctx, rt, c)
 }
 
 // chainStopWorkflow stops a workflow chain's awaited member. The actor the
@@ -165,34 +144,6 @@ func chainStopWorkflowDirect(ctx context.Context, rt Runtime, name string) error
 		}
 		act := workflow.Action{Kind: workflow.ActionStop, Step: before.Awaiting.Step, Reason: chainStopNoRoundReason}
 		return chainTerminalWF(ctx, rt, tx, c, def, before, next, ev, act)
-	})
-}
-
-// chainStopDirect marks a running chain stopped when the member it awaits had
-// no open round to end: the status, the one trace row and the one end delivery,
-// written under the state lock in the shape the state machine's own stop uses.
-// A chain that ended between the caller's read and this lock is left alone.
-func chainStopDirect(ctx context.Context, rt Runtime, name string) error {
-	return rt.Store.WithLock(func(tx *store.Tx) error {
-		c, err := tx.Chain(name)
-		if err != nil {
-			return err
-		}
-		if c.Status != string(chain.StatusRunning) {
-			return nil
-		}
-		before, err := chainStateOf(c)
-		if err != nil {
-			return err
-		}
-		next := before
-		next.Status = chain.StatusStopped
-		ev := chain.Event{
-			Kind: chain.EventStopped, Member: c.AwaitingMember,
-			Round: before.Awaiting.Round, Reason: chainStopNoRoundReason,
-		}
-		act := chain.Action{Kind: chain.ActionStop, Reason: chainStopNoRoundReason}
-		return chainTerminal(ctx, rt, tx, c, before, next, ev, act, chainMemberName(c, c.AwaitingMember))
 	})
 }
 

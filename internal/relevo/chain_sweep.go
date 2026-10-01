@@ -67,28 +67,7 @@ func chainSweep(ctx context.Context, rt Runtime, tx *store.Tx, name string) erro
 	if c.Status != string(chain.StatusRunning) {
 		return nil
 	}
-
-	if len(c.WorkflowJSON) > 0 {
-		return chainSweepFlow(ctx, rt, tx, c)
-	}
-	parts := []string{chain.MemberBuilder, chain.MemberReviewer, chain.MemberPlanner, chain.MemberSecurity}
-	for _, part := range parts {
-		member := chainMemberName(c, part)
-		if member == "" {
-			continue
-		}
-		m, err := tx.Load(member)
-		if errors.Is(err, store.ErrNotFound) {
-			return chainSweepHalt(ctx, rt, tx, c, part, member, fmt.Sprintf("member %s gone", member))
-		}
-		if err != nil {
-			return err
-		}
-		if m.State == store.StateNeedsYou {
-			return chainSweepHalt(ctx, rt, tx, c, part, member, m.Halt)
-		}
-	}
-	return nil
+	return chainSweepFlow(ctx, rt, tx, c)
 }
 
 // chainSweepHalt ends a chain the sweep found unable to move: the status, one

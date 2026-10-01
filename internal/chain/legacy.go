@@ -1,6 +1,7 @@
-// Package chain owns a chain's state and the pure transition function that
-// advances it from one member close to the next. It does no I/O: the state and
-// the event alone decide every action.
+// Package chain reads trace rows written before workflows carried them: it
+// decodes their event and action documents and renders them as trace lines. It
+// also holds the member, phase, step and gate words those rows and a chain's
+// persisted columns share.
 package chain
 
 import (
@@ -97,7 +98,7 @@ type Awaiting struct {
 	Round  int
 }
 
-// State is everything the transition function reads and writes.
+// State is everything the transition function read and wrote.
 type State struct {
 	Status      Status
 	Reason      string
@@ -133,9 +134,9 @@ type Event struct {
 	Gate          string // builder: green, red after the regate budget, or none when no check ran
 	Verdict       Verdict
 	PlanPresent   bool // planner: artifact present and non-empty
+	Reason        string
 	Findings      int  // security
 	FindingsGiven bool // security
-	Reason        string
 }
 
 // ActionKind is what relevo does with a transition. Its zero value is no
@@ -173,35 +174,6 @@ type Action struct {
 	Reason string
 }
 
-// Next advances the chain by one member close. An event that does not name the
-// awaited (member, round), or that arrives once the chain has stopped, leaves
-// the state untouched, so a replayed close can never advance a chain twice.
-func Next(s State, e Event) (State, Action) {
-	if s.Status.terminal() {
-		return s, Action{}
-	}
-	if e.Member != s.Awaiting.Member || e.Round != s.Awaiting.Round {
-		return s, Action{}
-	}
-
-	switch e.Kind {
-	case EventBuilderClosed:
-		return builderClosed(s, e)
-	case EventReviewerClosed:
-		return reviewerClosed(s, e)
-	case EventPlannerClosed:
-		return plannerClosed(s, e)
-	case EventSecurityClosed:
-		return securityClosed(s, e)
-	case EventNeedsYou:
-		return halt(s, e.Reason)
-	case EventStopped:
-		return stop(s)
-	default:
-		return s, Action{}
-	}
-}
-
 // BuilderHaltReason is the one-line reason a builder close that is not done
 // carries onto the chain: the first present of the report tail's halted_at,
 // the close note and the first not_done item, each labelled; the outcome word
@@ -236,116 +208,6 @@ func firstLine(value string) string {
 		value = value[:idx]
 	}
 	return strings.TrimSpace(value)
-}
-
-// builderClosed turns a builder's report into the next step. A halted, blocked
-// or unstructured report halts the chain; only a done round, green or red after
-// the regate budget, reaches the reviewer.
-func builderClosed(s State, e Event) (State, Action) {
-	if e.Outcome != reporttail.OutcomeDone {
-		return halt(s, fmt.Sprintf("builder halted on plan %d: %s", s.Plan, e.Reason))
-	}
-	s.Step = StepReviewing
-	return send(s, MemberReviewer, SeedReviewer)
-}
-
-// reviewerClosed routes on the verdict. A pass advances the plan, starts the
-// security phase or finishes; changes seeds a correction while the budget
-// lasts; anything else halts.
-func reviewerClosed(s State, e Event) (State, Action) {
-	switch e.Verdict {
-	case VerdictPass:
-		return reviewerPassed(s)
-	case VerdictChanges:
-		if s.Corrections < s.Settings.MaxCorrections {
-			s.Step = StepCorrecting
-			return send(s, MemberPlanner, SeedCorrection)
-		}
-		return halt(s, fmt.Sprintf("reviewer still wants changes after %d corrections", s.Settings.MaxCorrections))
-	default:
-		return halt(s, "reviewer gave no verdict")
-	}
-}
-
-// reviewerPassed handles a passed plan: the next plan, the security phase, or
-// the end of the chain. A pass in the security phase always finishes, because
-// the phase scans once and has no further build plan to advance to.
-func reviewerPassed(s State) (State, Action) {
-	if s.Phase != PhaseSecurity && s.Plan < s.Plans {
-		s.Plan++
-		s.Corrections = 0
-		s.Step = StepBuilding
-		return send(s, MemberBuilder, "")
-	}
-	if s.Phase == PhaseBuild && s.Settings.Security {
-		s.Step = StepScanning
-		s.Phase = PhaseSecurity
-		return send(s, MemberSecurity, SeedSecurity)
-	}
-	return finish(s)
-}
-
-// plannerClosed sends a present correction or fix plan to the builder. A
-// correction spends one correction round; a fix plan resets the count because
-// the security phase's review loop is its own. A missing plan halts.
-func plannerClosed(s State, e Event) (State, Action) {
-	if !e.PlanPresent {
-		return halt(s, "planner wrote no plan")
-	}
-	switch s.Step {
-	case StepCorrecting:
-		s.Corrections++
-	case StepPlanningFixes:
-		s.Corrections = 0
-	default:
-		return s, Action{}
-	}
-	s.Step = StepBuilding
-	return send(s, MemberBuilder, "")
-}
-
-// securityClosed finishes on no findings and seeds a fix plan otherwise. A
-// close without a count halts: the chain never guesses that a scan was clean.
-func securityClosed(s State, e Event) (State, Action) {
-	if !e.FindingsGiven {
-		return halt(s, "security gave no finding count")
-	}
-	if e.Findings > 0 {
-		s.Step = StepPlanningFixes
-		return send(s, MemberPlanner, SeedFixes)
-	}
-	return finish(s)
-}
-
-// send names the member the caller must send to and the seed it must render;
-// the caller fills Awaiting.Round from that member binding. The round is
-// cleared here, so a caller that forgets to fill it can never match a stale
-// round the chain happened to hold before the event.
-func send(s State, member string, seed SeedKind) (State, Action) {
-	s.Awaiting.Member = member
-	s.Awaiting.Round = 0
-	return s, Action{Kind: ActionSend, Member: member, Seed: seed}
-}
-
-func halt(s State, reason string) (State, Action) {
-	s.Status = StatusHalted
-	s.Reason = reason
-	return s, Action{Kind: ActionHalt, Reason: reason}
-}
-
-func stop(s State) (State, Action) {
-	s.Status = StatusStopped
-	return s, Action{Kind: ActionStop}
-}
-
-func finish(s State) (State, Action) {
-	s.Status = StatusDone
-	s.Phase = PhaseFinished
-	return s, Action{Kind: ActionFinish}
-}
-
-func (st Status) terminal() bool {
-	return st == StatusHalted || st == StatusStopped || st == StatusDone
 }
 
 // Encode writes the event as the one document DecodeEvent reads back. Marshal
@@ -408,4 +270,145 @@ func (k ActionKind) known() bool {
 		return true
 	}
 	return false
+}
+
+// TraceLine is one chain_event row as the trace's line renderer reads it: the
+// plan the chain was on, the phase and step before the event, the member whose
+// round closed and its round, the event and the action it produced, and the
+// halt reason when there is one. It carries the state machine's own types, so
+// the renderer needs no second copy of them.
+type TraceLine struct {
+	Plan, Plans int
+	Phase       Phase
+	Step        Step
+	Member      string
+	Round       int
+	Event       Event
+	Action      Action
+	Reason      string
+}
+
+// Line renders l as one trace line: plan i/N, the state before the event, the
+// closing member and its round, then the event's detail. The columns are padded
+// so a trace lines up, and a halt appends its reason -- but only when the
+// rendered detail does not already carry that same string, so a needs-you row
+// whose detail is the event's own reason prints it once, while a distinct
+// event detail and action reason both still show.
+func (l TraceLine) Line() string {
+	detail := l.detail()
+	line := fmt.Sprintf("plan %d/%d  %-8s %-9s  %s",
+		l.Plan, l.Plans, l.stateWord(), l.memberRound(), detail)
+	if l.Reason != "" && !strings.Contains(detail, l.Reason) {
+		line += "  " + l.Reason
+	}
+	return line
+}
+
+// stateWord is the step the chain was on before the event, in the short word
+// the design's example uses. A step the state machine does not name falls back
+// to its own text, and an empty step to the phase, so a row is never wordless.
+func (l TraceLine) stateWord() string {
+	if w := l.Step.Word(); w != "" {
+		return w
+	}
+	if l.Step != "" {
+		return string(l.Step)
+	}
+	return string(l.Phase)
+}
+
+// Word is the step's short word, the vocabulary the trace's state column and a
+// resume's reason both speak: build, review, correct, scan, planning. A step
+// the state machine does not name has no word.
+func (s Step) Word() string {
+	switch s {
+	case StepBuilding:
+		return "build"
+	case StepReviewing:
+		return "review"
+	case StepCorrecting:
+		return "correct"
+	case StepScanning:
+		return "scan"
+	case StepPlanningFixes:
+		return "planning"
+	}
+	return ""
+}
+
+// ResumeReason is the reason a resumed chain's trace row carries: where the
+// resume moved the chain, in the trace's own step words -- "resumed -> build",
+// "resumed -> review" and so on. A step with no word yields just the arrow.
+func ResumeReason(s Step) string { return "resumed -> " + s.Word() }
+
+// memberRound is the closing member and its round, the line's third column.
+func (l TraceLine) memberRound() string {
+	return fmt.Sprintf("%s r%d", l.Member, l.Round)
+}
+
+// detail is what the member's close said: the builder's gate, the reviewer's
+// verdict, the planner's plan, the security finding count, or the event's own
+// reason for a needs-you or stopped close.
+func (l TraceLine) detail() string {
+	switch l.Event.Kind {
+	case EventBuilderClosed:
+		return gateWord(l.Event.Gate)
+	case EventReviewerClosed:
+		return verdictWord(l.Event.Verdict)
+	case EventPlannerClosed:
+		if l.Step == StepPlanningFixes {
+			return "fix plan"
+		}
+		return "correction plan"
+	case EventSecurityClosed:
+		if !l.Event.FindingsGiven {
+			return "no findings given"
+		}
+		return findingWord(l.Event.Findings)
+	case EventNeedsYou:
+		if l.Event.Reason != "" {
+			return l.Event.Reason
+		}
+		return "needs you"
+	case EventStopped:
+		return "stopped"
+	}
+	return string(l.Event.Kind)
+}
+
+// gateWord is a builder close's gate as the trace shows it. A red gate reads
+// as a plain red check: the regate budget it spent is the state machine's own
+// fact, not the line's. A round with no check says so rather than reading as
+// green.
+func gateWord(gate string) string {
+	switch gate {
+	case GateNone:
+		return "no check"
+	case GateRed:
+		return "check red"
+	}
+	return "check green"
+}
+
+// verdictWord is a reviewer close's verdict as the trace shows it, the zero
+// verdict included.
+func verdictWord(v Verdict) string {
+	switch v {
+	case VerdictPass:
+		return "pass"
+	case VerdictChanges:
+		return "changes"
+	}
+	return "no verdict"
+}
+
+// findingWord is a security close's finding count in words.
+func findingWord(n int) string {
+	switch n {
+	case 0:
+		return "no findings"
+	case 1:
+		return "1 finding"
+	}
+	return fmt.Sprintf("%d findings", n)
 }

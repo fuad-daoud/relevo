@@ -51,7 +51,7 @@ func chainStateAwaited(m chainMemberLister, c db.ChainRow) (name string, round i
 // engine recorded, in creation order, when the row carries a state; the legacy
 // part columns otherwise. A part the row leaves empty is skipped.
 func chainReadMembers(s *store.Store, c db.ChainRow) []string {
-	if len(c.StateJSON) > 0 {
+	if len(c.WorkflowJSON) > 0 {
 		rows, err := s.ChainMembers(c.Name)
 		if err != nil {
 			return nil

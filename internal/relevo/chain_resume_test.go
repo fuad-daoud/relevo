@@ -11,107 +11,9 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
-	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
-
-// The resume decision is a pure function of the chain row's step and two round
-// numbers, so every row of the design's resume rule is pinned here without a
-// store, a runner or a clock: `resumeStep` returns the seed the resume applies,
-// and the zero seed is the builder's own plan.
-
-// TestResumeStepPicksTheReviewerForANewerBuilderRound pins the manual-round
-// rule: a builder round that closed after the last one the chain mapped is the
-// round the resume reviews, whatever step the chain halted on. The comparison
-// is what makes it a review rather than a re-run, so dropping it fails here.
-func TestResumeStepPicksTheReviewerForANewerBuilderRound(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name         string
-		step         chain.Step
-		last, newest int
-		want         chain.SeedKind
-	}{
-		{"a newer builder round is reviewed", chain.StepBuilding, 1, 2, chain.SeedReviewer},
-		{"a newer builder round wins over reviewing", chain.StepReviewing, 3, 4, chain.SeedReviewer},
-		{"a newer builder round wins over correcting", chain.StepCorrecting, 2, 5, chain.SeedReviewer},
-		{"the same round re-runs the step", chain.StepBuilding, 2, 2, ""},
-		{"an older builder round re-runs the step", chain.StepBuilding, 3, 2, ""},
-		{"no builder round at all re-runs the step", chain.StepBuilding, 1, 0, ""},
-	} {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			ch := db.ChainRow{Name: "shop", Step: string(tc.step), Plan: 1, Plans: 1}
-			if got := resumeStep(ch, tc.last, tc.newest); got != tc.want {
-				t.Errorf("resumeStep(step %q, last %d, newest %d) = %q, want %q",
-					tc.step, tc.last, tc.newest, got, tc.want)
-			}
-		})
-	}
-}
-
-// TestResumeReSendsPlanForBuilding pins the building row: the builder's seed is
-// the zero seed, because the plan itself is what it is sent. An unknown step
-// word is the builder's too -- the plan is the only thing a resume can re-send
-// without a seed.
-func TestResumeReSendsPlanForBuilding(t *testing.T) {
-	t.Parallel()
-
-	for _, step := range []string{string(chain.StepBuilding), ""} {
-		ch := db.ChainRow{Name: "shop", Step: step, Plan: 2, Plans: 3}
-		if got := resumeStep(ch, 2, 2); got != "" {
-			t.Errorf("resumeStep(step %q, awaiting a re-run) = %q, want the zero seed (the plan)", step, got)
-		}
-	}
-}
-
-// TestResumeReSeedsReviewerForReviewing pins the reviewing row: the reviewer is
-// seeded again for the builder's last closed round.
-func TestResumeReSeedsReviewerForReviewing(t *testing.T) {
-	t.Parallel()
-
-	ch := db.ChainRow{Name: "shop", Step: string(chain.StepReviewing), Plan: 2, Plans: 3}
-	if got := resumeStep(ch, 2, 2); got != chain.SeedReviewer {
-		t.Errorf("resumeStep(reviewing) = %q, want %q", got, chain.SeedReviewer)
-	}
-}
-
-// TestResumeReSeedsPlannerForCorrecting pins the correcting row: the planner is
-// seeded with a correction plan again.
-func TestResumeReSeedsPlannerForCorrecting(t *testing.T) {
-	t.Parallel()
-
-	ch := db.ChainRow{Name: "shop", Step: string(chain.StepCorrecting), Plan: 2, Plans: 3}
-	if got := resumeStep(ch, 2, 2); got != chain.SeedCorrection {
-		t.Errorf("resumeStep(correcting) = %q, want %q", got, chain.SeedCorrection)
-	}
-}
-
-// TestResumeReSeedsSecurityForScanning pins the scanning row: the security
-// member is seeded again for the branch diff.
-func TestResumeReSeedsSecurityForScanning(t *testing.T) {
-	t.Parallel()
-
-	ch := db.ChainRow{Name: "shop", Step: string(chain.StepScanning), Plan: 2, Plans: 3}
-	if got := resumeStep(ch, 2, 2); got != chain.SeedSecurity {
-		t.Errorf("resumeStep(scanning) = %q, want %q", got, chain.SeedSecurity)
-	}
-}
-
-// TestResumeReSeedsFixesForPlanningFixes pins the planning-fixes row: the
-// planner is seeded with the findings' fix plan again.
-func TestResumeReSeedsFixesForPlanningFixes(t *testing.T) {
-	t.Parallel()
-
-	ch := db.ChainRow{Name: "shop", Step: string(chain.StepPlanningFixes), Plan: 2, Plans: 3}
-	if got := resumeStep(ch, 2, 2); got != chain.SeedFixes {
-		t.Errorf("resumeStep(planning-fixes) = %q, want %q", got, chain.SeedFixes)
-	}
-}
 
 // stoppedChain starts a chain and stops it through the member: the active
 // builder's open round is ended the way `relevo stop` ends one, which raises the
@@ -687,45 +589,6 @@ func TestChainResumeRemoteBuilderShipsThroughThePendingStep(t *testing.T) {
 	}
 	if res.Chain.Status != string(chain.StatusRunning) {
 		t.Errorf("result chain = %+v, want the resumed row", res.Chain)
-	}
-}
-
-// TestChainResumeRefusesAGateFlagOnARemoteBuilder pins the one refusal: the
-// wire has no route that updates a served binding's check, so --gate and
-// --no-gate are refused; --regate, which is the chain's own repair budget,
-// still travels.
-func TestChainResumeRefusesAGateFlagOnARemoteBuilder(t *testing.T) {
-	t.Parallel()
-
-	fr := chainRemoteFake()
-	rt, _, _ := chainRemoteRuntime(t, fr)
-	seedRemoteChain(t, rt, "shop", remoteChainOpts{})
-	advanceRemoteChain(t, rt, 2)
-	haltRemoteChain(t, rt)
-
-	for _, opts := range []ResumeOptions{
-		{Name: "shop", Gate: "make check"},
-		{Name: "shop", NoGate: true},
-	} {
-		_, err := ChainResume(context.Background(), rt, opts)
-		if err == nil {
-			t.Fatalf("ChainResume %+v = nil, want the refusal", opts)
-		}
-		if !strings.Contains(err.Error(), "fixed at create") {
-			t.Errorf("err = %q, want it to say the check is fixed at create", err)
-		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("err = %v, want errors.Is(err, ErrRefused): a replaced check on a remote builder is refused, not internal", err)
-		}
-	}
-
-	// The chain was left halted by the refusals; --regate alone is accepted and
-	// the resume ships round 2.
-	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Regate: ptr(3)}); err != nil {
-		t.Fatalf("ChainResume --regate: %v", err)
-	}
-	if b := chainBinding(t, rt, "shop"); b.Regate != 3 {
-		t.Errorf("builder regate = %d, want the flag's 3", b.Regate)
 	}
 }
 

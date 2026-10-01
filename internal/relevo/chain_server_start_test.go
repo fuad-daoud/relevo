@@ -16,7 +16,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
-	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -394,12 +393,8 @@ func TestServerChainMirrorNeverAdvancesLocally(t *testing.T) {
 
 	var next store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		ev := chain.Event{
-			Kind: chain.EventBuilderClosed, Member: chain.MemberBuilder,
-			Round: b.Round, Outcome: reporttail.OutcomeDone,
-		}
 		var aerr error
-		next, aerr = chainApply(context.Background(), rt, tx, b, ev, nil, nil)
+		next, aerr = chainApply(context.Background(), rt, tx, b, nil)
 		return aerr
 	})
 	if err != nil {

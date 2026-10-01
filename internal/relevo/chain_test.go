@@ -793,12 +793,11 @@ func TestChainFinishQueuesExactlyOneDelivery(t *testing.T) {
 	// A second tick cannot add another: the terminal transition happened
 	// once, so a replayed close for the same member round is ignored.
 	rev := chainBinding(t, rt, "shop-rev")
-	replay := chain.Event{
-		Kind: chain.EventReviewerClosed, Member: chain.MemberReviewer, Round: 1,
-		Verdict: chain.VerdictPass,
-	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		_, err := chainApply(context.Background(), rt, tx, rev, replay, nil, nil)
+		rev := rev
+		_, err := chainApply(context.Background(), rt, tx, rev, &chainCloseWF{
+			Body: []byte(chainVerdictBody("pass")), Outcome: reporttail.OutcomeDone, Round: 1,
+		})
 		return err
 	}); err != nil {
 		t.Fatalf("replayed chainApply: %v", err)
@@ -875,70 +874,6 @@ func plantLegacyChain(t *testing.T, rt Runtime, name, planPaths string, plans in
 	})
 	if err != nil {
 		t.Fatalf("plant legacy chain %s: %v", name, err)
-	}
-}
-
-// TestChainAdvanceWritesStateAndTraceInOneTransaction pins the atomicity of the
-// legacy chain's state and its trace row: when the advance cannot be staged,
-// neither is written and the old state stands.
-func TestChainAdvanceWritesStateAndTraceInOneTransaction(t *testing.T) {
-	t.Parallel()
-
-	rt, _ := chainRuntime(t)
-	// Break the stored plan copies, so the reviewer's seed cannot be built:
-	// the advance fails before either write.
-	plantLegacyChain(t, rt, "shop", "{not json", 1)
-
-	b := chainBinding(t, rt, "shop")
-	ev := chain.Event{
-		Kind: chain.EventBuilderClosed, Member: chain.MemberBuilder, Round: 1,
-		Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
-	}
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		_, err := chainApply(context.Background(), rt, tx, b, ev, nil, nil)
-		return err
-	})
-	if err == nil {
-		t.Fatal("chainApply = nil, want the staging failure")
-	}
-
-	after := chainStoredRow(t, rt, "shop")
-	if after.Status != string(chain.StatusRunning) || after.Step != string(chain.StepBuilding) ||
-		after.AwaitingMember != chain.MemberBuilder || after.AwaitingRound != 1 {
-		t.Errorf("chain row = %+v, want the old running/build/building awaiting the builder", after)
-	}
-	if events := chainTrace(t, rt, "shop"); len(events) != 0 {
-		t.Errorf("trace = %+v, want no row when the advance was never written", events)
-	}
-}
-
-// TestChainIgnoresACloseForAnotherRound pins the legacy awaited-round guard: a
-// close that does not name the awaited round changes nothing and writes no
-// trace.
-func TestChainIgnoresACloseForAnotherRound(t *testing.T) {
-	t.Parallel()
-
-	rt, _ := chainRuntime(t)
-	plantLegacyChain(t, rt, "shop", `["/p/plan-1.md"]`, 1)
-
-	b := chainBinding(t, rt, "shop")
-	ev := chain.Event{
-		Kind: chain.EventBuilderClosed, Member: chain.MemberBuilder, Round: 2,
-		Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
-	}
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		_, err := chainApply(context.Background(), rt, tx, b, ev, nil, nil)
-		return err
-	}); err != nil {
-		t.Fatalf("chainApply: %v", err)
-	}
-
-	after := chainStoredRow(t, rt, "shop")
-	if after.Step != string(chain.StepBuilding) || after.AwaitingMember != chain.MemberBuilder || after.AwaitingRound != 1 {
-		t.Errorf("chain row = %+v, want it unchanged", after)
-	}
-	if events := chainTrace(t, rt, "shop"); len(events) != 0 {
-		t.Errorf("trace = %+v, want no row for a close that did not advance the chain", events)
 	}
 }
 
@@ -1469,12 +1404,11 @@ func TestChainReviewerSeedOmitsThePlanCopyAsRoundPrompt(t *testing.T) {
 	}
 }
 
-// TestChainRemoteRedGateStagesARepairRound pins the chain's own repair for a
-// remote member: a red close with budget left raises no event and writes no
-// trace row, the chain stages the repair text on the client's member record --
-// the served binding never opens one -- and the pending-send step ships it with
-// verify off. The staged prompt's entry note is the chain step note, not a
-// local repair's `repair k/M`.
+// TestChainRemoteRedGateStagesARepairRound pins the repair step for a remote
+// member: a red close sends the writer the repair seed, which stages the repair
+// text on the client's member record -- the served binding never opens one --
+// and the pending-send step ships it with verify off. The staged prompt's entry
+// note is the chain step note, not a local repair's `repair k/M`.
 func TestChainRemoteRedGateStagesARepairRound(t *testing.T) {
 	t.Parallel()
 
@@ -1493,23 +1427,14 @@ func TestChainRemoteRedGateStagesARepairRound(t *testing.T) {
 	if b.Round != 2 {
 		t.Fatalf("builder round = %d, want the staged repair round 2", b.Round)
 	}
-	if b.RepairCount != 1 || b.LastGateSig == "" {
-		t.Errorf("repair bookkeeping = %d repairs, sig %q; want 1 and a signature", b.RepairCount, b.LastGateSig)
-	}
-	if b.RoundBaselineHead != "repair-head" {
-		t.Errorf("RoundBaselineHead = %q, want the branch head the staging read", b.RoundBaselineHead)
-	}
-	if b.RoundClosedTree != "" {
-		t.Errorf("RoundClosedTree = %q, want it cleared for the new round", b.RoundClosedTree)
-	}
 	if row.Status != string(chain.StatusRunning) || row.Step != string(chain.StepBuilding) {
 		t.Errorf("chain row = %+v, want it running/building: a repair is not a transition", row)
 	}
 	if row.AwaitingMember != chain.MemberBuilder || row.AwaitingRound != 2 {
 		t.Errorf("awaiting = (%s, %d), want the builder's repair round (builder, 2)", row.AwaitingMember, row.AwaitingRound)
 	}
-	if events := chainTrace(t, rt, "shop"); len(events) != 0 {
-		t.Errorf("trace = %+v, want no row: a repair is not a transition", events)
+	if events := chainTrace(t, rt, "shop"); len(events) != 2 {
+		t.Errorf("trace = %+v, want the build close and the red check", events)
 	}
 	if HasPromptEntry(chainLog(t, rt, "shop"), 2) {
 		t.Fatal("no prompt entry may exist before the pending-send step ships")
@@ -1551,10 +1476,21 @@ func TestChainRemoteRedGateAfterTheBudgetReachesTheReviewer(t *testing.T) {
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
 	seedRemoteChain(t, rt, "shop", remoteChainOpts{Regate: 2})
-	b := chainBinding(t, rt, "shop")
-	b.RepairCount = 2
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
+	// The engine's repair budget is the repair step's visit count: spend it, so
+	// the next red check routes to the reviewer.
+	row := chainStoredRow(t, rt, "shop")
+	st, serr := chainWorkflowState(row)
+	if serr != nil {
+		t.Fatalf("state: %v", serr)
+	}
+	st.Visits["repair"] = 2
+	stateJSON, jerr := json.Marshal(st)
+	if jerr != nil {
+		t.Fatalf("marshal state: %v", jerr)
+	}
+	row.StateJSON = stateJSON
+	if err := rt.Store.WithLock(func(tx *store.Tx) error { return tx.ChainPut(row) }); err != nil {
+		t.Fatalf("put state: %v", err)
 	}
 
 	remoteChainClose(t, rt, fr, "shop", remote.BindingView{
@@ -1562,7 +1498,7 @@ func TestChainRemoteRedGateAfterTheBudgetReachesTheReviewer(t *testing.T) {
 		DiffNote: "1 file changed",
 	}, map[string]string{"report": chainDoneBody(), "diff": "diff body\n", "gate": "FAIL the thing\n"})
 
-	row := chainStoredRow(t, rt, "shop")
+	row = chainStoredRow(t, rt, "shop")
 	rev := chainBinding(t, rt, "shop-rev")
 	if row.Step != string(chain.StepReviewing) {
 		t.Errorf("step = %q, want reviewing once the repair budget is spent", row.Step)
@@ -1601,15 +1537,15 @@ func TestChainRemoteRedGateAfterTheBudgetReachesTheReviewer(t *testing.T) {
 		t.Errorf("the seed's red gate log %s = %q, want the gate log's %q", namedGate, gotGate, wantGate)
 	}
 	events := chainTrace(t, rt, "shop")
-	if len(events) != 1 {
-		t.Fatalf("trace = %+v, want one row", events)
+	if len(events) != 2 {
+		t.Fatalf("trace = %+v, want the build close and the red check", events)
 	}
-	ev, err := chain.DecodeEvent(events[0].Event)
+	cev, err := workflow.DecodeEvent(events[1].Event)
 	if err != nil {
 		t.Fatalf("DecodeEvent: %v", err)
 	}
-	if ev.Kind != chain.EventBuilderClosed || ev.Gate != chain.GateRed {
-		t.Errorf("event = %+v, want a red builder close", ev)
+	if cev.Kind != workflow.EventCheckClosed || cev.Result != "red" {
+		t.Errorf("check event = %+v, want a red check close", cev)
 	}
 }
 
@@ -1694,8 +1630,8 @@ func TestChainRemoteBuilderAdvanceStagesPlanTwo(t *testing.T) {
 	seedRemoteChain(t, rt, "shop", remoteChainOpts{Plans: 2})
 
 	remoteChainClose(t, rt, fr, "shop", remote.BindingView{
-		ResultCommit: "result-r1", ReportOutcome: "done", DiffNote: "1 file changed",
-	}, map[string]string{"report": chainDoneBody(), "diff": "diff body\n"})
+		ResultCommit: "result-r1", GateResult: "pass", ReportOutcome: "done", DiffNote: "1 file changed",
+	}, map[string]string{"report": chainDoneBody(), "diff": "diff body\n", "gate": "ok\n"})
 
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
 
@@ -1733,8 +1669,8 @@ func TestChainRemoteCorrectionShipsThePlannerPlan(t *testing.T) {
 	seedRemoteChain(t, rt, "shop", remoteChainOpts{})
 
 	remoteChainClose(t, rt, fr, "shop", remote.BindingView{
-		ResultCommit: "result-r1", ReportOutcome: "done", DiffNote: "1 file changed",
-	}, map[string]string{"report": chainDoneBody(), "diff": "diff body\n"})
+		ResultCommit: "result-r1", GateResult: "pass", ReportOutcome: "done", DiffNote: "1 file changed",
+	}, map[string]string{"report": chainDoneBody(), "diff": "diff body\n", "gate": "ok\n"})
 
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
 
