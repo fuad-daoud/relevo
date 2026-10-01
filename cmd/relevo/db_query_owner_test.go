@@ -13,7 +13,7 @@ import (
 // opening the file itself. The counting listener is what proves the difference;
 // both routes read the same rows.
 func TestDBQueryReadsThroughTheOwnerWhenItIsUp(t *testing.T) {
-	stateHome := seedQueryRoot(t)
+	stateHome := seedQueryRootAt(t, shortStateRoot(t))
 	served := startTestOwner(t, stateHome)
 
 	stdout, stderr, err := captureOutput(t, func() error {
@@ -34,7 +34,7 @@ func TestDBQueryReadsThroughTheOwnerWhenItIsUp(t *testing.T) {
 // the same over-budget value that stops the direct read stops the owner stream
 // too, so nothing larger is ever sent.
 func TestDBQueryByteCapStopsTheOwnerStream(t *testing.T) {
-	stateHome := seedQueryRoot(t)
+	stateHome := seedQueryRootAt(t, shortStateRoot(t))
 	startTestOwner(t, stateHome)
 
 	stdout, stderr, err := captureOutput(t, func() error {

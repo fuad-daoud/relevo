@@ -23,7 +23,15 @@ import (
 // a test that needs an owner beside it can serve one there.
 func seedQueryRoot(t *testing.T) string {
 	t.Helper()
-	stateHome := t.TempDir()
+	return seedQueryRootAt(t, t.TempDir())
+}
+
+// seedQueryRootAt seeds the probe database under an existing state home and
+// points the environment at it. The caller chooses the directory so a test that
+// serves an owner beside the database can keep the socket path inside
+// sun_path's limit, which t.TempDir is too long for on macOS.
+func seedQueryRootAt(t *testing.T, stateHome string) string {
+	t.Helper()
 	t.Setenv("XDG_STATE_HOME", stateHome)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(stateHome, "config"))
 
