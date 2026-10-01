@@ -325,7 +325,10 @@ func loadConfigReadOnly(root, dir string, onLocked lockedPolicy) (config.Loaded,
 		if err == nil {
 			return L, nil
 		}
-		if !errors.Is(err, db.ErrLocked) {
+		// A file another process holds, or one this build has not converted
+		// yet, both leave the database alone: the former's reader is the owner
+		// and the latter is converted by a writable open, not by this peek.
+		if !errors.Is(err, db.ErrLocked) && !errors.Is(err, db.ErrNotConverted) {
 			return config.Loaded{}, err
 		}
 		if onLocked == lockedSkip {

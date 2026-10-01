@@ -228,6 +228,13 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 		}
 	}()
 
+	// The marker check runs after the lock and before the pool: a held file
+	// still reports ErrLocked, and a refused file never opens the engine, so no
+	// -wal is created beside an unconverted database.
+	if err = requireConverted(path); err != nil {
+		return nil, err
+	}
+
 	sqlDB, err := openPool(path, busy, true)
 	if err != nil {
 		return nil, fmt.Errorf("db: open readonly %s: %w: %w", path, engineSentinel(err), err)
@@ -253,7 +260,7 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open readonly %s: migrations: %w: %w", path, ErrOpen, err)
 	}
 
-	return &DB{sqlDB: sqlDB, newer: have > know, have: have, know: know, origin: o.Origin, path: path, busy: busy}, nil
+	return &DB{sqlDB: sqlDB, newer: have > know, have: have, know: know, origin: o.Origin, path: path, busy: busy, readOnly: true}, nil
 }
 
 // isMissingTable reports whether err is sqlite's "no such table" for a schema

@@ -292,6 +292,20 @@ func markFreshDatabase(pool *sql.DB) error {
 	return nil
 }
 
+// requireConverted refuses a file whose header lacks the conversion marker. A
+// read-only open must not convert -- that is a write -- so it refuses and leaves
+// the file for a writable open, the daemon's, to convert and mark.
+func requireConverted(path string) error {
+	converted, _, err := fileMarker(path)
+	if err != nil {
+		return fmt.Errorf("db: open readonly %s: read the header: %w", path, err)
+	}
+	if !converted {
+		return fmt.Errorf("db: open readonly %s: %w", path, ErrNotConverted)
+	}
+	return nil
+}
+
 // pathExists reports whether path names an existing file.
 func pathExists(path string) (bool, error) {
 	_, err := os.Stat(path)

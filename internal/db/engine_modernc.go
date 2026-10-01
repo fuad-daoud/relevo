@@ -74,6 +74,10 @@ func prepareEngine(string) error { return nil }
 // modernc build wrote, so there is nothing to convert.
 func convertLegacy(string) error { return nil }
 
+// requireConverted is a no-op under modernc: this engine reads the files an
+// earlier modernc build wrote, so a read-only open has nothing to refuse.
+func requireConverted(string) error { return nil }
+
 // engineStatus reports the modernc engine: it carries no external library, so
 // there is nothing to be missing and nothing to mismatch.
 func engineStatus(string) EngineState { return EngineState{Name: engineName} }

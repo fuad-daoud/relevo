@@ -78,11 +78,101 @@ func TestOpenRefusesAQuestionMarkInThePath(t *testing.T) {
 	if _, err := Open(path); !errors.Is(err, ErrOpen) {
 		t.Fatalf("Open(a path with '?') = %v, want ErrOpen", err)
 	}
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatalf("create the file: %v", err)
+	// The read-only half needs a converted copy: the marker check runs first,
+	// and an unmarked file would stop there instead of reaching the path check
+	// this half pins.
+	seed := directOpen(t, filepath.Join(dir, "seed.db"), Options{})
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close the seed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "seed.db"))
+	if err != nil {
+		t.Fatalf("read the converted seed: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write the converted copy: %v", err)
 	}
 	if _, err := OpenReadOnly(path); !errors.Is(err, ErrOpen) {
 		t.Fatalf("OpenReadOnly(a path with '?') = %v, want ErrOpen", err)
+	}
+}
+
+// TestOpenReadOnlyRefusesAnUnconvertedFile pins the read-only marker check: a
+// file whose header lacks the conversion marker is refused rather than opened
+// under Turso without conversion, and the refusal names the fix.
+func TestOpenReadOnlyRefusesAnUnconvertedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d := directOpen(t, path, Options{})
+	if err := d.Close(); err != nil {
+		t.Fatalf("close the writable handle: %v", err)
+	}
+
+	// Clear the conversion marker -- application_id -- in the header, the state
+	// a file an earlier build wrote is in.
+	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open the file: %v", err)
+	}
+	if _, err := f.WriteAt(make([]byte, 4), applicationIDOffset); err != nil {
+		_ = f.Close()
+		t.Fatalf("clear the marker: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close the file: %v", err)
+	}
+
+	// The writable handle's pool leaves an empty -wal beside the file; remove it
+	// so the refusal can be pinned to creating none of its own.
+	if err := os.Remove(path + "-wal"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("remove the stale -wal: %v", err)
+	}
+
+	_, oerr := OpenReadOnly(path)
+	if !errors.Is(oerr, ErrNotConverted) {
+		t.Fatalf("OpenReadOnly on an unconverted file = %v, want ErrNotConverted", oerr)
+	}
+	if !strings.Contains(oerr.Error(), "not converted yet; start the daemon once") {
+		t.Errorf("message = %q, want it to name the fix", oerr)
+	}
+	if _, serr := os.Stat(path + "-wal"); !errors.Is(serr, os.ErrNotExist) {
+		t.Errorf("a refused read-only open left a -wal: stat error = %v, want not-exist", serr)
+	}
+}
+
+// TestReadOnlyCloseDoesNotCheckpoint pins the read-only close: a read-only
+// handle must not write, so the -wal of the file it read is left exactly as it
+// was, rather than truncated by a checkpoint.
+func TestReadOnlyCloseDoesNotCheckpoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d := directOpen(t, path, Options{})
+	if _, err := d.sqlDB.Exec(`CREATE TABLE probe (n INTEGER)`); err != nil {
+		t.Fatalf("write to grow the -wal: %v", err)
+	}
+	before, err := walSize(path)
+	if err != nil {
+		t.Fatalf("walSize: %v", err)
+	}
+	if before == 0 {
+		t.Fatalf("-wal is empty after a write; the test cannot pin the checkpoint")
+	}
+
+	ro, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatalf("OpenReadOnly: %v", err)
+	}
+	if !ro.readOnly {
+		t.Error("the read-only handle is not marked read-only")
+	}
+	if err := ro.Close(); err != nil {
+		t.Fatalf("read-only Close: %v", err)
+	}
+
+	after, err := walSize(path)
+	if err != nil {
+		t.Fatalf("walSize: %v", err)
+	}
+	if after != before {
+		t.Errorf("-wal is %d bytes after a read-only Close, want %d", after, before)
 	}
 }
 

@@ -78,6 +78,27 @@ func TestDaemonPreLockLoadSkipsAHeldFile(t *testing.T) {
 	}
 }
 
+// TestDaemonPreLockLoadSkipsAnUnconvertedFile pins the daemon's pre-lock policy
+// for a database this build has not converted: like a held file, it is left
+// alone -- files or defaults -- with no error, so the start reaches the writable
+// open that converts and marks it.
+func TestDaemonPreLockLoadSkipsAnUnconvertedFile(t *testing.T) {
+	root := shortStateRoot(t)
+	t.Setenv("XDG_STATE_HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	startTestOwner(t, root)
+
+	orig := openReadOnlyDB
+	openReadOnlyDB = func(string, db.Options) (*db.DB, error) {
+		return nil, db.ErrNotConverted
+	}
+	t.Cleanup(func() { openReadOnlyDB = orig })
+
+	if _, err := loadConfigReadOnly(machineRoot(t), configDirPathFor(t), lockedSkip); err != nil {
+		t.Fatalf("loadConfigReadOnly(skip) with an unconverted file: %v, want the files or defaults", err)
+	}
+}
+
 // TestBugreportReadsThroughTheOwnerWhenTheFileIsHeld pins the bundle's policy:
 // when the daemon holds the file, the bundle's handle is a dialled one and its
 // reads reach the owner.

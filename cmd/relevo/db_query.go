@@ -45,9 +45,13 @@ var dbQueryRead = func(ctx context.Context, d *db.DB, stmt string, onRow func([]
 	return d.QueryReadOnly(ctx, stmt, onRow)
 }
 
-// dbFlagSet declares no flags: `relevo db` is a dispatcher, and every flag
-// lives on its subcommands.
-func dbFlagSet(*flag.FlagSet) {}
+// dbFlagSet declares the flags `relevo db`'s subcommands take. The verb itself
+// is a dispatcher and parses none, but the registry lists the flags a caller
+// reaches through it, and the parity test requires the installer to declare
+// exactly those.
+func dbFlagSet(fs *flag.FlagSet) {
+	dbQueryFlagSet(fs)
+}
 
 // dbQueryFlagValues holds the pointers db query parses into.
 type dbQueryFlagValues struct {
@@ -208,6 +212,9 @@ func openDBQuery(ctx context.Context) (*db.DB, error) {
 	d, err := openReadOnlyDB(path, db.Options{})
 	if err == nil {
 		return d, nil
+	}
+	if errors.Is(err, db.ErrNotConverted) {
+		return nil, failWrap(codeRefused, err, "open %s", path)
 	}
 	if !errors.Is(err, db.ErrLocked) {
 		return nil, failWrap(codeInternal, err, "open %s", path)
