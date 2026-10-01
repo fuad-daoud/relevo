@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainMaxNameLen is the longest chain name: the longest member suffix is
@@ -170,6 +171,9 @@ func chainResolveStart(ctx context.Context, rt Runtime, opts ChainOptions) (chai
 		return chainStartPlan{}, err
 	}
 	if plan.resolutions, err = chainResolveActors(rt, plan.members); err != nil {
+		return chainStartPlan{}, err
+	}
+	if err := chainValidateDefault(rt, plan.settings, workflow.Given{Plans: len(plan.bodies) > 0}); err != nil {
 		return chainStartPlan{}, err
 	}
 	// Every member's placement is resolved before anything is created: the

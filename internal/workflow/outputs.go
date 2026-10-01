@@ -31,6 +31,49 @@ type Output struct {
 // Outputs maps an output key to its declaration.
 type Outputs map[string]Output
 
+// MarshalJSON renders the outputs in wire form.
+func (o Outputs) MarshalJSON() ([]byte, error) {
+	if o == nil {
+		return []byte("null"), nil
+	}
+	m := make(map[string]any, len(o))
+	for _, key := range sortedKeys(o) {
+		out := o[key]
+		switch out.Kind {
+		case OutputOneOf:
+			if len(out.Values) == 0 {
+				return nil, fmt.Errorf("workflow: output %q: one-of needs at least one value", key)
+			}
+			m[key] = map[string]any{"one-of": out.Values}
+		case OutputCount:
+			m[key] = string(OutputCount)
+		case OutputArtifact:
+			m[key] = string(OutputArtifact)
+		default:
+			return nil, fmt.Errorf("workflow: output %q: unknown kind %q", key, out.Kind)
+		}
+	}
+	return json.Marshal(m)
+}
+
+// UnmarshalJSON reads outputs from JSON using decodeOutputs.
+func (o *Outputs) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*o = nil
+		return nil
+	}
+	v, err := parseOutputJSON(data)
+	if err != nil {
+		return err
+	}
+	decoded, err := decodeOutputs(v, "")
+	if err != nil {
+		return err
+	}
+	*o = decoded
+	return nil
+}
+
 // Outcomes returns the non-artifact output keys, sorted.
 func (o Outputs) Outcomes() []string {
 	keys := make([]string, 0, len(o))
@@ -190,9 +233,9 @@ func Footer(o Outputs, artifactPaths map[string]string) string {
 	return b.String()
 }
 
-// outcomeLine renders one outcome's placeholder line: a count shows 0, and a
+// OutcomeLine renders one outcome's placeholder line: a count shows 0, and a
 // one-of names its first value and lists the rest after it.
-func outcomeLine(key string, out Output) string {
+func OutcomeLine(key string, out Output) string {
 	if out.Kind == OutputCount {
 		return key + ": 0   # a count"
 	}
@@ -201,4 +244,8 @@ func outcomeLine(key string, out Output) string {
 		line += "   # or: " + strings.Join(out.Values[1:], ", ")
 	}
 	return line
+}
+
+func outcomeLine(key string, out Output) string {
+	return OutcomeLine(key, out)
 }

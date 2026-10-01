@@ -107,12 +107,10 @@ func TestChainE2E(t *testing.T) {
 		Plans:        plans,
 		Feature:      "chains-s1-e2e",
 		MasterMindID: rec.ID,
-		// The shipped reader roles: the chain's own defaults (lite-planner,
-		// security) are not roles this machine's config names, and inventing
-		// actors for a test would be a config change, not a test.
+		// The reader actors: planner on architect and security on security-reviewer.
 		ReviewerActor: "reviewer",
-		PlannerActor:  "researcher",
-		SecurityActor: "reviewer",
+		PlannerActor:  "planner",
+		SecurityActor: "security",
 		Security:      chainBoolPtr(true),
 	})
 	if err != nil {
@@ -420,9 +418,8 @@ type chainE2EStep struct {
 }
 
 // writeChainCandidatesAndPolicy writes the config the chain's members resolve
-// against. One candidate serves the builder plus the two shipped reader roles
-// the e2e points the chain's reviewer, planner and security members at: a
-// chain member's actor must be a reader unless it is the builder.
+// against: candidates, policy, and roles defining planner on architect and security
+// on security-reviewer.
 func writeChainCandidatesAndPolicy(t *testing.T, configDir string) {
 	t.Helper()
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -431,7 +428,33 @@ func writeChainCandidatesAndPolicy(t *testing.T, configDir string) {
 	token := "claude/anthropic/" + chainE2EModel
 	candidates := `[{"harness":"claude","provider":"anthropic","model":"` + chainE2EModel + `","roles":["builder","reviewer","researcher"]}]`
 	pol := `{"order":{"builder":["` + token + `"],"reviewer":["` + token + `"],"researcher":["` + token + `"]}}`
-	for name, body := range map[string]string{"candidates.json": candidates, "policy.json": pol} {
+	rolesJSON := `{
+  "builder": {
+    "candidates": ["` + token + `"]
+  },
+  "reviewer": {
+    "candidates": ["` + token + `"]
+  },
+  "planner": {
+    "shape": "reader",
+    "definitions": {
+      "claude": {"agent": "architect"}
+    },
+    "candidates": ["` + token + `"]
+  },
+  "security": {
+    "shape": "reader",
+    "definitions": {
+      "claude": {"agent": "security-reviewer"}
+    },
+    "candidates": ["` + token + `"]
+  }
+}`
+	for name, body := range map[string]string{
+		"candidates.json": candidates,
+		"policy.json":     pol,
+		"roles.json":      rolesJSON,
+	} {
 		if err := os.WriteFile(filepath.Join(configDir, name), []byte(body), 0o644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}

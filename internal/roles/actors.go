@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // ErrBadActors reports an agents or actors section that does not parse or
@@ -46,8 +47,9 @@ type AgentEntry struct {
 // Actor is one entry of the `actors` section: a named agent plus candidates in
 // order, each of which may be off, plus a tier and a check.
 type Actor struct {
-	Agent      string  `json:"agent"`
-	Candidates []Entry `json:"candidates,omitempty"`
+	Agent      string           `json:"agent"`
+	Candidates []Entry          `json:"candidates,omitempty"`
+	Outputs    workflow.Outputs `json:"outputs,omitempty"`
 	// Placement is where this actor's rounds run, most preferred first.
 	// "local" names this machine; an absent or empty list means ["local"];
 	// every other entry must name a servers section entry, which the config
@@ -224,6 +226,11 @@ func validateActor(name string, a Actor) error {
 	if a.Tier != "" {
 		if _, err := harness.ParseTier(a.Tier); err != nil {
 			return fmt.Errorf("actors: %s.tier: %v: %w", name, err, ErrBadActors)
+		}
+	}
+	for _, key := range sortedKeys(a.Outputs) {
+		if err := workflow.ValidName(key); err != nil {
+			return fmt.Errorf("actors: %s.outputs: %w: %w", name, err, ErrBadActors)
 		}
 	}
 	return nil

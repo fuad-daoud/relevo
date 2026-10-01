@@ -176,32 +176,10 @@ func chainEventFromClose(rt Runtime, part string, b store.Binding, body []byte, 
 		if outcome != reporttail.OutcomeDone {
 			ev.Reason = chain.BuilderHaltReason(tail, note, outcome)
 		}
-	case chain.MemberReviewer:
-		ev.Kind = chain.EventReviewerClosed
-		ev.Verdict = chainReaderVerdict(rt, b, body)
-	case chain.MemberPlanner:
-		ev.Kind = chain.EventPlannerClosed
-		if size, _, ok, err := rt.Store.StatFile(reportPathFor(rt, b)); err == nil && ok && size > 0 {
-			ev.PlanPresent = true
-		}
-	case chain.MemberSecurity:
-		ev.Kind = chain.EventSecurityClosed
-		ev.Findings, ev.FindingsGiven = chainReaderFindings(rt, b, body)
+	default:
+		chainFillReaderClose(rt, b, body, part, &ev)
 	}
 	return ev
-}
-
-// chainGateResult is the builder close's gate word: none when no check ran,
-// green when one passed, red otherwise. A red gate has already spent the
-// regate budget, so it still reaches the reviewer rather than a halt.
-func chainGateResult(gate *store.GateRecord) string {
-	if gate == nil {
-		return chain.GateNone
-	}
-	if gate.Result == "pass" {
-		return chain.GateGreen
-	}
-	return chain.GateRed
 }
 
 // chainApply advances the chain a closing member belongs to: it loads the

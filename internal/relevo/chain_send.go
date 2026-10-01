@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
-	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // RoundOpenError is returned when a chain member's round is still open: its
@@ -159,20 +160,29 @@ func chainStepNote(tx *store.Tx, name string) string {
 }
 
 // chainMemberBlock is the block a chain member's final message must end with
-// and the chain parses: the reviewer's verdict or the security member's
-// finding count. The planner has none -- its final message is the plan
-// artifact the chain hands the builder next -- so it keeps the ordinary reader
-// prompt and its reporttail block.
-func chainMemberBlock(tx *store.Tx, name string) (string, bool) {
-	c, err := tx.ChainByMember(name)
-	if err != nil {
+// and the chain parses, generated from the member's actor outcomes.
+func chainMemberBlock(rt Runtime, tx *store.Tx, b store.Binding) (string, bool) {
+	if tx != nil {
+		if _, err := tx.ChainByMember(b.Name); err != nil {
+			return "", false
+		}
+	} else if rt.Store != nil {
+		if _, err := rt.Store.ChainByMember(b.Name); err != nil {
+			return "", false
+		}
+	}
+	actor := BindingRole(b)
+	info, ok := rt.RoleRegistry().ActorInfo(actor)
+	if !ok {
 		return "", false
 	}
-	switch chainPartOf(c, name) {
-	case chain.MemberReviewer:
-		return "verdict: pass        # or: changes", true
-	case chain.MemberSecurity:
-		return "findings: 0", true
+	outcomes := info.Outputs.Outcomes()
+	if len(outcomes) == 0 {
+		return "", false
 	}
-	return "", false
+	lines := make([]string, 0, len(outcomes))
+	for _, key := range outcomes {
+		lines = append(lines, workflow.OutcomeLine(key, info.Outputs[key]))
+	}
+	return strings.Join(lines, "\n"), true
 }

@@ -36,6 +36,11 @@ func chainRows() map[string]roles.Row {
 		"assistant": {
 			Shape:       ptr("reader"),
 			Candidates:  []string{testClaudeRef},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "reviewer"}},
+		},
+		"researcher": {
+			Shape:       ptr("reader"),
+			Candidates:  []string{testClaudeRef},
 			Definitions: map[string]roles.DefRow{"claude": {Agent: "researcher"}},
 		},
 	}

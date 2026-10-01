@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainPlanDiff captures the plan's cumulative diff -- the plan-start commit to
@@ -86,46 +87,17 @@ func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *chain.SeedView) {
 	}
 }
 
-// chainReaderVerdict reads a reviewer close's verdict. The output body is the
-// first attempt; when it carries no key the round's stream is rescanned newest
-// assistant message first, so a recap the runner wrote after its verdict does
-// not hide it. An absent or unreadable stream, and a message that parses to
-// nothing, all fall through to no verdict, which halts the chain as before.
-func chainReaderVerdict(rt Runtime, b store.Binding, body []byte) chain.Verdict {
-	if v := chain.ParseVerdict(body); v != "" {
-		return v
-	}
-	stream, err := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
-	if err != nil {
-		return ""
-	}
-	texts := transcript.Texts(lastStreamKind(b), stream)
-	for i := len(texts) - 1; i >= 0; i-- {
-		if v := chain.ParseVerdict([]byte(texts[i])); v != "" {
-			return v
+// chainParseOutcomes reads the declared outcomes of a chain reader round, trying
+// the output body first, then the round's stream newest assistant message first.
+func chainParseOutcomes(rt Runtime, b store.Binding, body []byte, outputs workflow.Outputs) (map[string]string, string) {
+	bodies := [][]byte{body}
+	if stream, err := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round)); err == nil {
+		texts := transcript.Texts(lastStreamKind(b), stream)
+		for i := len(texts) - 1; i >= 0; i-- {
+			bodies = append(bodies, []byte(texts[i]))
 		}
 	}
-	return ""
-}
-
-// chainReaderFindings is chainReaderVerdict's twin for a security close's
-// finding count: the output body first, then the round's stream newest message
-// first. A miss is no count, which halts the chain as before.
-func chainReaderFindings(rt Runtime, b store.Binding, body []byte) (int, bool) {
-	if n, ok := chain.ParseFindings(body); ok {
-		return n, true
-	}
-	stream, err := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
-	if err != nil {
-		return 0, false
-	}
-	texts := transcript.Texts(lastStreamKind(b), stream)
-	for i := len(texts) - 1; i >= 0; i-- {
-		if n, ok := chain.ParseFindings([]byte(texts[i])); ok {
-			return n, true
-		}
-	}
-	return 0, false
+	return workflow.ParseOutcomes(outputs, bodies...)
 }
 
 // chainBuilderPlanView is the plan view the reviewer and correction seeds carry:

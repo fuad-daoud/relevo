@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // readerSource is a minimal valid agentsrc single source named my-reader.
@@ -237,5 +238,108 @@ func TestToRolesFileCarriesPlacement(t *testing.T) {
 	}
 	if got := f.Rows["plain"].Placement; got != nil {
 		t.Errorf("plain.placement = %v, want nil", got)
+	}
+}
+
+func TestReaderDeclaresAtMostOneArtifact(t *testing.T) {
+	t.Parallel()
+
+	oneArtifact := map[string]Actor{
+		"my-reader": {
+			Agent: "reviewer",
+			Outputs: workflow.Outputs{
+				"report": {Kind: workflow.OutputArtifact},
+			},
+		},
+	}
+	if _, _, err := FromActors(nil, oneArtifact); err != nil {
+		t.Fatalf("reader with one artifact failed: %v", err)
+	}
+
+	twoArtifacts := map[string]Actor{
+		"my-reader": {
+			Agent: "reviewer",
+			Outputs: workflow.Outputs{
+				"one": {Kind: workflow.OutputArtifact},
+				"two": {Kind: workflow.OutputArtifact},
+			},
+		},
+	}
+	if _, _, err := FromActors(nil, twoArtifacts); err == nil || !errors.Is(err, ErrBadRoles) {
+		t.Fatalf("reader with two artifacts err = %v, want ErrBadRoles", err)
+	}
+}
+
+func TestWriterArtifactRefused(t *testing.T) {
+	t.Parallel()
+
+	noArtifact := map[string]Actor{
+		"builder": {
+			Agent: "plan-executor",
+			Outputs: workflow.Outputs{
+				"verdict": {Kind: workflow.OutputOneOf, Values: []string{"pass"}},
+			},
+		},
+	}
+	if _, _, err := FromActors(nil, noArtifact); err != nil {
+		t.Fatalf("writer with outcome only failed: %v", err)
+	}
+
+	withArtifact := map[string]Actor{
+		"builder": {
+			Agent: "plan-executor",
+			Outputs: workflow.Outputs{
+				"plan": {Kind: workflow.OutputArtifact},
+			},
+		},
+	}
+	if _, _, err := FromActors(nil, withArtifact); err == nil || !errors.Is(err, ErrBadRoles) {
+		t.Fatalf("writer with artifact err = %v, want ErrBadRoles", err)
+	}
+}
+
+func TestUndeclaredActorInheritsAgentDefault(t *testing.T) {
+	t.Parallel()
+
+	actors := map[string]Actor{
+		"rev":  {Agent: "reviewer"},
+		"sec":  {Agent: "security-reviewer"},
+		"arch": {Agent: "architect"},
+		"exec": {Agent: "plan-executor"},
+		"res":  {Agent: "researcher"},
+	}
+	f, _, err := FromActors(nil, actors)
+	if err != nil {
+		t.Fatalf("FromActors: %v", err)
+	}
+
+	wantRev := workflow.Outputs{
+		"verdict":  {Kind: workflow.OutputOneOf, Values: []string{"pass", "changes"}},
+		"findings": {Kind: workflow.OutputArtifact},
+	}
+	if !reflect.DeepEqual(f.Rows["rev"].Outputs, wantRev) {
+		t.Errorf("rev outputs = %+v, want %+v", f.Rows["rev"].Outputs, wantRev)
+	}
+
+	wantSec := workflow.Outputs{
+		"findings": {Kind: workflow.OutputCount},
+		"report":   {Kind: workflow.OutputArtifact},
+	}
+	if !reflect.DeepEqual(f.Rows["sec"].Outputs, wantSec) {
+		t.Errorf("sec outputs = %+v, want %+v", f.Rows["sec"].Outputs, wantSec)
+	}
+
+	wantArch := workflow.Outputs{
+		"plan": {Kind: workflow.OutputArtifact},
+	}
+	if !reflect.DeepEqual(f.Rows["arch"].Outputs, wantArch) {
+		t.Errorf("arch outputs = %+v, want %+v", f.Rows["arch"].Outputs, wantArch)
+	}
+
+	if len(f.Rows["exec"].Outputs) != 0 {
+		t.Errorf("exec outputs = %+v, want empty", f.Rows["exec"].Outputs)
+	}
+	if len(f.Rows["res"].Outputs) != 0 {
+		t.Errorf("res outputs = %+v, want empty", f.Rows["res"].Outputs)
 	}
 }

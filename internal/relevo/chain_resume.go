@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // ResumeOptions is what one `relevo chain --resume` was asked for: the chain to
@@ -121,6 +122,14 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	// can open the next round.
 	if err := closeDeadMemberRound(ctx, rt, c); err != nil {
 		return ChainResult{}, err
+	}
+	if err := resumeAwaitedOpenRoundRefusal(rt, c); err != nil {
+		return ChainResult{}, err
+	}
+	if c.Owner == "" {
+		if err := chainValidateDefault(rt, set, workflow.Given{Plans: c.Plans > 0}); err != nil {
+			return ChainResult{}, err
+		}
 	}
 
 	var out ChainResult

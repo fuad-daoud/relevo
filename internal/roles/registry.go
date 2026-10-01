@@ -7,6 +7,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // ErrNoDefinition reports a role with no definition for a harness kind, or a
@@ -81,6 +82,8 @@ type Role struct {
 	// Definitions is the resolved definition per harness kind, for the kinds
 	// the role can run on.
 	Definitions map[string]Definition
+	// Outputs is the role's declared outputs.
+	Outputs workflow.Outputs
 }
 
 // Registry is a set of roles, built either from roles.json or from the legacy
@@ -232,6 +235,18 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 				return nil, fmt.Errorf("roles.json: %s.tier: %s exceeds max_tier %s: %w", name, t, max, ErrBadRoles)
 			}
 			tiers[name] = t
+		}
+		if row.Outputs != nil {
+			base.Outputs = copyOutputs(row.Outputs)
+		} else {
+			var agent string
+			for _, d := range base.Definitions {
+				if d.Agent != "" {
+					agent = d.Agent
+					break
+				}
+			}
+			base.Outputs = EffectiveOutputs(agent, nil)
 		}
 		byName[name] = base
 	}
@@ -452,11 +467,49 @@ func copyRole(role Role) Role {
 	out.Ranked = append([]Ranked(nil), role.Ranked...)
 	out.Resolved = append([]string(nil), role.Resolved...)
 	out.Placement = append([]string(nil), role.Placement...)
+	out.Outputs = copyOutputs(role.Outputs)
 	if role.Definitions != nil {
 		out.Definitions = make(map[string]Definition, len(role.Definitions))
 		for kind, d := range role.Definitions {
 			d.Requires = append([]string(nil), d.Requires...)
 			out.Definitions[kind] = d
+		}
+	}
+	return out
+}
+
+func workflowShape(shape harness.RoleShape) workflow.Shape {
+	if shape == harness.ShapeBuilder {
+		return workflow.ShapeWriter
+	}
+	return workflow.ShapeReader
+}
+
+// ActorInfo returns the actor's shape and outputs for workflow validation.
+func (r *Registry) ActorInfo(name string) (workflow.ActorInfo, bool) {
+	if r == nil {
+		return workflow.ActorInfo{}, false
+	}
+	role, ok := r.roles[name]
+	if !ok {
+		return workflow.ActorInfo{}, false
+	}
+	return workflow.ActorInfo{
+		Shape:   workflowShape(role.Shape),
+		Outputs: copyOutputs(role.Outputs),
+	}, true
+}
+
+// WorkflowActors returns a map of all actors' info for workflow validation.
+func (r *Registry) WorkflowActors() map[string]workflow.ActorInfo {
+	if r == nil {
+		return nil
+	}
+	out := make(map[string]workflow.ActorInfo, len(r.roles))
+	for name, role := range r.roles {
+		out[name] = workflow.ActorInfo{
+			Shape:   workflowShape(role.Shape),
+			Outputs: copyOutputs(role.Outputs),
 		}
 	}
 	return out

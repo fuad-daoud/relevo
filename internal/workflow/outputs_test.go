@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -113,5 +114,36 @@ func TestFooterWithNoOutcomesHasNoBlock(t *testing.T) {
 	artifacts := Outputs{"plan": {Kind: OutputArtifact}}
 	if got := Footer(artifacts, nil); strings.Contains(got, "```relevo") {
 		t.Fatalf("Footer(%+v) = %q, want no relevo block", artifacts, got)
+	}
+}
+
+func TestOutputsJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	orig := Outputs{
+		"answer":   {Kind: OutputOneOf, Values: []string{"yes", "no"}},
+		"findings": {Kind: OutputCount},
+		"report":   {Kind: OutputArtifact},
+	}
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("json.Marshal error: %v", err)
+	}
+	var got Outputs
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal error: %v", err)
+	}
+	if !reflect.DeepEqual(got, orig) {
+		t.Fatalf("got %+v, want %+v", got, orig)
+	}
+
+	badMarshal := Outputs{"bad": {Kind: "invalid"}}
+	if _, err := json.Marshal(badMarshal); err == nil {
+		t.Fatalf("expected error marshaling invalid kind, got nil")
+	}
+
+	var badUnmarshal Outputs
+	if err := json.Unmarshal([]byte(`{"bad": "invalid"}`), &badUnmarshal); err == nil {
+		t.Fatalf("expected error unmarshaling invalid kind, got nil")
 	}
 }

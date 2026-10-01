@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/jsonshape"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // ErrBadRoles reports a roles.json that does not validate. Callers treat it
@@ -80,6 +81,9 @@ type Row struct {
 
 	// Tier is the role's default permission tier.
 	Tier *string `json:"tier"`
+
+	// Outputs is the role's declared outputs.
+	Outputs workflow.Outputs `json:"outputs,omitempty"`
 }
 
 // DefRow is one role's definition for one harness kind.

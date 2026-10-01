@@ -49,6 +49,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -558,6 +559,13 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 		t.Fatalf("load policy: %v", err)
 	}
 
+	var regRoles *roles.Registry
+	if rf, err := roles.Load(filepath.Join(configDir, "roles.json")); err == nil && rf != nil {
+		if r, err := roles.Build(rf, candidates, pol); err == nil {
+			regRoles = r
+		}
+	}
+
 	st := store.New(root)
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 
@@ -575,6 +583,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 		Runner:      proc.New(),
 		Store:       st,
 		Candidates:  candidates,
+		Registry:    regRoles,
 		Gates:       mdb,
 		Latency:     mdb,
 		Policy:      pol,

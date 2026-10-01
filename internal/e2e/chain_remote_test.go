@@ -476,6 +476,12 @@ func newChainRemoteClient(t *testing.T, url, fingerprint, home string) (relevo.R
 			Shape:       &reader,
 			Definitions: map[string]roles.DefRow{"claude": {Agent: "architect"}},
 		},
+		"security": {
+			Candidates:  []string{chainRemoteToken},
+			Placement:   []string{chainRemoteLocal},
+			Shape:       &reader,
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "security-reviewer"}},
+		},
 	}
 	registry, err := roles.Build(&roles.File{Rows: rows}, candidates, pol)
 	if err != nil {

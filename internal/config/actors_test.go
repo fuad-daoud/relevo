@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 func TestLoadPrefersActors(t *testing.T) {
@@ -98,5 +99,58 @@ func TestExportIncludesActors(t *testing.T) {
 	}
 	if !strings.HasPrefix(strings.TrimSpace(s), "{\n  \"agents\"") {
 		t.Errorf("agents must be the first section present:\n%s", s)
+	}
+}
+
+func TestExportImportCarriesActorOutputs(t *testing.T) {
+	t.Parallel()
+
+	s := openStore(t)
+	if _, err := s.Put(Candidates, []byte(
+		`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`)); err != nil {
+		t.Fatalf("Put(candidates): %v", err)
+	}
+	if _, err := s.Put(Agents, []byte(
+		`{"my-exec":{"shape":"reader","native":{"claude":{"agent":"my-exec"}}}}`)); err != nil {
+		t.Fatalf("Put(agents): %v", err)
+	}
+	actorJSON := []byte(`{"my-actor":{"agent":"my-exec","candidates":["claude/p/m"],"outputs":{"findings":"count","report":"artifact"}}}`)
+	if _, err := s.Put(Actors, actorJSON); err != nil {
+		t.Fatalf("Put(actors): %v", err)
+	}
+
+	doc, err := s.Current()
+	if err != nil {
+		t.Fatalf("Current: %v", err)
+	}
+	exported, err := EncodeDoc(doc)
+	if err != nil {
+		t.Fatalf("EncodeDoc: %v", err)
+	}
+
+	var imported Doc
+	if err := json.Unmarshal(exported, &imported); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	s2 := openStore(t)
+	if _, err := s2.PutDoc(imported); err != nil {
+		t.Fatalf("PutDoc: %v", err)
+	}
+
+	L, err := s2.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	act, ok := L.Actors["my-actor"]
+	if !ok {
+		t.Fatal("my-actor missing after import")
+	}
+	wantOutputs := workflow.Outputs{
+		"findings": {Kind: workflow.OutputCount},
+		"report":   {Kind: workflow.OutputArtifact},
+	}
+	if !reflect.DeepEqual(act.Outputs, wantOutputs) {
+		t.Errorf("imported actor outputs = %+v, want %+v", act.Outputs, wantOutputs)
 	}
 }
