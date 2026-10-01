@@ -84,7 +84,8 @@ tag in one step — when a PR round-trip is not wanted.
 
 Run `relevo bugreport`: it assembles a redacted diagnostic bundle locally, writes
 it under the state root, and prints the `gh issue create` line that files it. Add
-`--logs` for a round's report, diff and transcript when those can be shared.
+`--logs` for a round's report, diff and transcript when those can be shared. Pass
+`--title` and `--body FILE` to file your own title and description.
 `relevo version` and `relevo status --json` remain the short answers a maintainer
 may ask for.
 

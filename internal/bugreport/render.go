@@ -68,6 +68,35 @@ func Markdown(b Bundle) string {
 	return sb.String()
 }
 
+// MarkdownCapped renders the bundle for a file GitHub accepts: at or under
+// limit the bytes are Markdown's own, over it the render is cut on a line
+// boundary and one marked final line names the limit and where the full render
+// lives. A bundle whose first line alone cannot fit beside that marker cannot be
+// cut, so it is an error naming the bundle's size and the limit rather than a
+// silently truncated file.
+func MarkdownCapped(b Bundle, limit int) (string, error) {
+	full := Markdown(b)
+	if limit <= 0 || len(full) <= limit {
+		return full, nil
+	}
+	marker := fmt.Sprintf("[body cut at %d bytes to fit GitHub's issue-body limit; run 'relevo bugreport --stdout' for the full render]", limit)
+	keep := limit - len(marker) - 1
+	if keep <= 0 {
+		return "", uncuttable(len(full), limit)
+	}
+	idx := strings.LastIndex(full[:keep], "\n")
+	if idx < 0 {
+		return "", uncuttable(len(full), limit)
+	}
+	return full[:idx+1] + marker + "\n", nil
+}
+
+// uncuttable is the error a bundle that cannot be cut on a line boundary fails
+// with: its size and the limit, the two numbers a caller needs to see.
+func uncuttable(size, limit int) error {
+	return fmt.Errorf("bundle is %d bytes; its first line alone does not fit GitHub's %d-byte issue-body limit", size, limit)
+}
+
 // writeSection renders one part: its heading, then its prose lines, then its
 // table. An omitted section renders the one line that says so.
 func writeSection(sb *strings.Builder, s Section) {
