@@ -430,7 +430,7 @@ func (s *Server) handleResumeChain(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, remote.CodeChainRunning, "chain is running")
 		return
 	case chain.StatusDone:
-		writeErr(w, http.StatusConflict, remote.CodeInvalid, "chain is done")
+		writeErr(w, http.StatusConflict, remote.CodeChainDone, "chain is done")
 		return
 	}
 
@@ -475,7 +475,7 @@ func writeChainResumeError(w http.ResponseWriter, err error) {
 	case strings.Contains(msg, "is running"):
 		writeErr(w, http.StatusConflict, remote.CodeChainRunning, msg)
 	case strings.Contains(msg, "is done"):
-		writeErr(w, http.StatusConflict, remote.CodeInvalid, msg)
+		writeErr(w, http.StatusConflict, remote.CodeChainDone, msg)
 	default:
 		writeErr(w, http.StatusInternalServerError, "", msg)
 	}

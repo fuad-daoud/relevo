@@ -256,6 +256,8 @@ func TestChainResumeRefusesRunningOrDone(t *testing.T) {
 			t.Fatal("ChainResume on a running chain = nil, want a refusal")
 		} else if !strings.Contains(err.Error(), "chain shop is running") {
 			t.Errorf("err = %v, want it to say the chain is running", err)
+		} else if !errors.Is(err, ErrChainRunning) {
+			t.Errorf("err = %v, want errors.Is(err, ErrChainRunning): the refusal is a conflict, not internal", err)
 		}
 		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusRunning) {
 			t.Errorf("chain status = %q, want it untouched", row.Status)
@@ -277,6 +279,8 @@ func TestChainResumeRefusesRunningOrDone(t *testing.T) {
 			t.Fatal("ChainResume on a done chain = nil, want a refusal")
 		} else if !strings.Contains(err.Error(), "chain shop is done") {
 			t.Errorf("err = %v, want it to say the chain is done", err)
+		} else if !errors.Is(err, ErrChainDone) {
+			t.Errorf("err = %v, want errors.Is(err, ErrChainDone): the refusal is a conflict, not internal", err)
 		}
 	})
 

@@ -34,6 +34,11 @@ const (
 // a script can tell "stop it first" from an internal failure.
 var ErrChainRunning = errors.New("the chain is still running")
 
+// ErrChainDone reports a verb refused because the chain has finished: nothing
+// continues a done chain. The CLI maps it to a conflict, the same class its
+// running sibling has.
+var ErrChainDone = errors.New("the chain is done")
+
 // ChainStop ends a running chain: `relevo stop <n>` where <n> names a chain.
 // The member the chain is waiting on is stopped exactly as `relevo stop` stops
 // any binding, and that member's stopped close raises the chain's `stopped`
