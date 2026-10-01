@@ -152,6 +152,14 @@ func chainFlowSend(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow,
 	if err != nil {
 		return err
 	}
+	return chainFlowSendText(ctx, rt, tx, c, def, before, next, ev, act, name, text)
+}
+
+// chainFlowSendText starts a run step's member round with the text it is handed:
+// the rendered seed for an ordinary send, the round's own staged prompt for a
+// resume that re-sends a round already under way. A member that cannot start
+// halts the chain in the same critical section, with the member's own reason.
+func chainFlowSendText(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action, name, text string) error {
 	member, err := tx.Load(name)
 	if err != nil {
 		return err

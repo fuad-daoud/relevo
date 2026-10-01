@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -128,7 +129,9 @@ func tickChainChecks(ctx context.Context, rt Runtime) {
 // chainAdvanceOneCheck advances the chain's oldest unsettled check, if it has
 // one, and feeds its end to the engine. Runs are allocated contiguously, so the
 // row list stops at the first run the chain has not recorded. A chain with no
-// workflow never started a check, so it is left alone.
+// workflow never started a check, so it is left alone. A chain with no check row
+// at all may still be waiting on a placed writer's check, which this tick
+// re-tries.
 func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	if len(c.WorkflowJSON) == 0 {
 		return nil
@@ -136,7 +139,7 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	for run := 1; ; run++ {
 		row, err := tx.ChainCheck(c.Name, run)
 		if errors.Is(err, store.ErrNotFound) {
-			return nil
+			return chainTickPlacedCheck(ctx, rt, tx, c)
 		}
 		if err != nil {
 			return err
@@ -156,6 +159,45 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 			Result: result, Log: logKey,
 		})
 	}
+}
+
+// chainTickPlacedCheck re-tries a placed writer's check that was left awaiting
+// when its round's gate record had not been pulled yet. A running workflow chain
+// that awaits a check step with no run of its own, on a writer member placed on a
+// server, answers from the writer's newest closed round's gate record once the
+// pull has installed it; until then it stays where it is. Every other chain is
+// left alone, so a local check (which has its own row) is never touched here.
+func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
+	if len(c.WorkflowJSON) == 0 || c.Status != string(chain.StatusRunning) {
+		return nil
+	}
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		return err
+	}
+	// Only a check awaiting is answered here: a run step has a member, and a
+	// check already given a run has nothing left to look for.
+	if st.Awaiting.Step == "" || st.Awaiting.Member != "" || st.Awaiting.Run != 0 {
+		return nil
+	}
+	def, err := chainWorkflowDef(c)
+	if err != nil {
+		return err
+	}
+	step, ok := def.Steps[st.Awaiting.Step]
+	if !ok || step.Check == "" {
+		return nil
+	}
+	member, err := chainFlowWriterMember(tx, c)
+	if err != nil {
+		return err
+	}
+	b, lerr := tx.Load(member)
+	if lerr != nil || !b.Builder.Remote() {
+		return nil
+	}
+	act := workflow.Action{Kind: workflow.ActionRunCheck, Step: st.Awaiting.Step, Command: step.Check}
+	return chainFlowPullCheck(ctx, rt, tx, c, def, st, &st, workflow.Event{}, act, member)
 }
 
 // chainCheckSpec is the gate-runner spec for one chain check: the chain's tree,

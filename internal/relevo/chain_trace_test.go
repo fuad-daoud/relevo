@@ -105,6 +105,26 @@ func TestShowTraceHaltCarriesTheReason(t *testing.T) {
 	}
 }
 
+// TestRenderTraceLegacyRowUnchanged pins the no-regression rule for the trace:
+// a row the fixed state machine wrote -- no decoded workflow event -- renders
+// exactly the line it always did.
+func TestRenderTraceLegacyRowUnchanged(t *testing.T) {
+	t.Parallel()
+
+	doc := ChainTraceDoc{
+		Name: "shop", Status: string(chain.StatusDone), Plan: 1, Plans: 1,
+		Events: []ChainTraceEvent{{
+			Seq: 1, Step: string(chain.StepBuilding), Member: "shop", Round: 2, Plan: 1,
+			Event:  chain.Event{Kind: chain.EventBuilderClosed, Gate: chain.GateGreen},
+			Action: chain.Action{Kind: chain.ActionFinish},
+		}},
+	}
+	const want = "plan 1/1  build    shop r2    check green\n"
+	if got := RenderTrace(doc); got != want {
+		t.Errorf("RenderTrace = %q, want %q", got, want)
+	}
+}
+
 // TestShowRoundStillReadsTheBuilderBinding pins the no-regression rule: a name
 // that is both a chain and its builder still answers `<n> --round R` from the
 // builder's binding, and carries no trace.
