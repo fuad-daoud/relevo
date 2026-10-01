@@ -361,6 +361,75 @@ func TestNextBudgetPerChainNeverResets(t *testing.T) {
 	}
 }
 
+// TestNextBudgetRedirectLoopHalts pins the cap against the runaway the review
+// found: two run steps whose chain-scoped budgets are permanently exhausted
+// redirect to each other forever. Validate accepts the definition, so the
+// engine itself must stop it.
+func TestNextBudgetRedirectLoopHalts(t *testing.T) {
+	def := tdef("c", map[string]Step{
+		"c": {Run: "builder", On: map[string]Target{"done": StepTarget("d")}},
+		"d": {Run: "builder", Budget: &Budget{Max: Limit{Count: 0}, Per: Per{Chain: true}, Then: StepTarget("e")},
+			On: map[string]Target{"done": DoneTarget()}},
+		"e": {Run: "builder", Budget: &Budget{Max: Limit{Count: 0}, Per: Per{Chain: true}, Then: StepTarget("d")},
+			On: map[string]Target{"done": DoneTarget()}},
+	})
+	e := Event{Kind: EventStepClosed, Step: "c", Member: "builder", Round: 0, Status: "done"}
+	s, actions := Next(def, awaitingRun("c", "builder", 0), e)
+	if s.Status != StatusHalted {
+		t.Fatalf("status = %q", s.Status)
+	}
+	if !strings.HasPrefix(s.Reason, "control walk exceeded") {
+		t.Fatalf("reason = %q, want the cap reason", s.Reason)
+	}
+	if !strings.Contains(s.Reason, "d") && !strings.Contains(s.Reason, "e") {
+		t.Fatalf("reason = %q, want it to name the step", s.Reason)
+	}
+	if a := only(t, actions); a.Kind != ActionHalt {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+// TestNextBudgetPastMaxRedirectsToAStep guards the other side of the cap: a
+// single exhausted budget that redirects to a step must still enter and run it,
+// not halt.
+func TestNextBudgetPastMaxRedirectsToAStep(t *testing.T) {
+	def := tdef("q", map[string]Step{
+		"q": {Run: "builder", On: map[string]Target{"done": StepTarget("a")}},
+		"a": {Run: "builder", Budget: &Budget{Max: Limit{Count: 1}, Per: Per{Chain: true}, Then: StepTarget("b")},
+			On: map[string]Target{"done": DoneTarget()}},
+		"b": {Run: "builder"},
+	})
+	s := awaitingRun("q", "builder", 0)
+	s.Visits["a"] = 1
+	s, actions := Next(def, s, Event{Kind: EventStepClosed, Step: "q", Member: "builder", Round: 0, Status: "done"})
+	if s.Status != StatusRunning {
+		t.Fatalf("status = %q", s.Status)
+	}
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "b" {
+		t.Fatalf("action = %+v, want a send to b", a)
+	}
+}
+
+// TestNextEmptyCheckRouteConsumesTheWalk pins the second unguarded route: an
+// empty check whose green edge loops back to itself must halt at the cap, not
+// recurse. The definition is deliberately not validated, as Next is exported.
+func TestNextEmptyCheckRouteConsumesTheWalk(t *testing.T) {
+	def := tdef("c", map[string]Step{
+		"c": {Check: "{{params.gate}}", On: map[string]Target{"green": StepTarget("c")}},
+	})
+	def.Params = map[string]Param{"gate": {Kind: ParamString, Str: ""}}
+	s, actions := Start(def, StartInputs{})
+	if s.Status != StatusHalted {
+		t.Fatalf("status = %q", s.Status)
+	}
+	if !strings.Contains(s.Reason, "control walk exceeded") {
+		t.Fatalf("reason = %q, want the cap reason", s.Reason)
+	}
+	if a := only(t, actions); a.Kind != ActionHalt {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
 func TestNextIgnoresAnotherStepMemberOrRound(t *testing.T) {
 	def := tdef("a", map[string]Step{
 		"a": {Run: "builder", On: map[string]Target{"done": StepTarget("b")}},

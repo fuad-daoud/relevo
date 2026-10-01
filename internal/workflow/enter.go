@@ -29,8 +29,9 @@ func seedPlans(def Definition, s State, in StartInputs) State {
 }
 
 // enter runs one step: it resets the budgets a step entry resets, checks its
-// own budget, then acts by kind. A control step routes on and continues the
-// walk; walked counts the control steps this transition has entered.
+// own budget, then acts by kind. Every entry that routes on without emitting
+// an action -- a control step, a budget redirect or an empty check -- consumes
+// one unit of the walk; walked counts those entries this transition has made.
 func enter(def Definition, s State, id string, walked int) (State, []Action) {
 	step, ok := def.Steps[id]
 	if !ok {
@@ -41,6 +42,10 @@ func enter(def Definition, s State, id string, walked int) (State, []Action) {
 	if step.Budget != nil {
 		var then Target
 		if s, then = applyBudget(def, s, id, step.Budget); then.Kind != "" {
+			walked++
+			if walked > len(def.Steps)+1 {
+				return halt(s, id, capReason(def, id))
+			}
 			return route(def, s, id, then, walked)
 		}
 	}
@@ -127,11 +132,16 @@ func sendRun(def Definition, s State, id string, step Step) (State, []Action) {
 }
 
 // runCheck renders the check's command. An empty command is green with no
-// action and no log: the walk continues straight to the green target.
+// action and no log; like a control step it consumes one unit of the walk, so
+// a green edge that loops back cannot recurse past the cap.
 func runCheck(def Definition, s State, id string, step Step, walked int) (State, []Action) {
 	if command := RenderParams(def, step.Check); command != "" {
 		s.Awaiting = Awaiting{Step: id}
 		return s, []Action{{Kind: ActionRunCheck, Step: id, Command: command}}
+	}
+	walked++
+	if walked > len(def.Steps)+1 {
+		return halt(s, id, capReason(def, id))
 	}
 	return controlRoute(def, s, id, step.On, "green", walked)
 }
