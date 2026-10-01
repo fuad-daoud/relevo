@@ -256,6 +256,29 @@ func TestCreateChainRefusesUntrustedFields(t *testing.T) {
 	}
 }
 
+// TestCreateChainUnknownActorIsTyped pins the refusal's wire code: an actor no
+// role defines is 400 unknown_actor, the twin of relevo.ErrUnknownRole the
+// client re-types, not a bare invalid.
+func TestCreateChainUnknownActorIsTyped(t *testing.T) {
+	env := setupTestEnv(t)
+	req := chainWireRequest("shop", env.repoID, env.headSHA)
+	req.Settings.ReviewerActor = "ghost"
+	form, ct := makeChainForm(t, req, nil)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, string(body))
+	}
+	var errBody remote.ErrorBody
+	if err := json.Unmarshal(body, &errBody); err != nil {
+		t.Fatalf("decode error body: %v; body: %s", err, string(body))
+	}
+	if errBody.Code != remote.CodeUnknownActor {
+		t.Errorf("error code = %q, want %q; body: %s", errBody.Code, remote.CodeUnknownActor, string(body))
+	}
+	requireChainAbsent(t, env, "shop")
+	requireChainRepoAbsent(t, env)
+}
+
 // TestCreateChainRefusesATierAboveMax pins the preflight's tier mapping: a
 // server whose policy tier for the builder is above its max_tier refuses the
 // create 422 tier_above_max with nothing created.
@@ -540,6 +563,27 @@ func TestResumeChainRefusesOutOfBoundSettings(t *testing.T) {
 				t.Errorf("the refused resume changed the chain row:\nbefore: %+v\nafter:  %+v", before, after)
 			}
 		})
+	}
+}
+
+// TestWriteChainResumeErrorMapsTheOpenRoundRefusal pins the wire shape: an open
+// member round on a resume is a 409 round_open, not the 500 the default arm
+// used to write, so the client can rebuild the typed refusal.
+func TestWriteChainResumeErrorMapsTheOpenRoundRefusal(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeChainResumeError(rec, &relevo.RoundOpenError{Member: "x-plan", Round: 2})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeRoundOpen {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeRoundOpen)
+	}
+	if !strings.Contains(body.Message, "relevo stop x-plan") {
+		t.Errorf("message = %q, want it to name the stop command", body.Message)
 	}
 }
 

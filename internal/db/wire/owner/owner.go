@@ -250,9 +250,10 @@ func (s *Server) isClosed() bool {
 	return s.closed
 }
 
-// connCount is the number of live connections, read for the welcome a client
-// sees so its answer names the owner's real load.
-func (s *Server) connCount() int {
+// ConnCount is the number of live connections: the welcome a client sees so
+// its answer names the owner's real load, and the daemon's idle watcher, which
+// treats a live client as work in flight and keeps the daemon up.
+func (s *Server) ConnCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.conns)

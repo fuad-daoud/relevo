@@ -125,12 +125,40 @@ func opencodeAllowlistCheck(env Env, stateRoot string) Check {
 		}
 	}
 
+	// OpenCode 2.x moved the allowlist to "permissions", an ordered ruleset of
+	// {action, resource, effect} rules. A rule that allows
+	// external_directory for the state root is exactly as good as the v1
+	// entry, and the Fix must speak the schema the file uses.
+	if _, v2 := cfg["permissions"]; v2 {
+		rules, _ := cfg["permissions"].([]any)
+		for _, raw := range rules {
+			rule, _ := raw.(map[string]any)
+			action, _ := rule["action"].(string)
+			resource, _ := rule["resource"].(string)
+			effect, _ := rule["effect"].(string)
+			if action != "external_directory" || effect != "allow" {
+				continue
+			}
+			if patternCovers(resource, stateRoot) {
+				return Check{Group: "opencode", Name: "external_directory", Severity: SevOK, Detail: fmt.Sprintf("%s: a permissions rule allows %s/**", path, stateRoot)}
+			}
+		}
+		warn = func(detail string) Check {
+			return Check{Group: "opencode", Name: "external_directory", Severity: SevWarn, Detail: detail, Fix: permissionsSnippet(stateRoot)}
+		}
+		return warn(fmt.Sprintf("%s has no permissions allow rule for %s/**; headless opencode builders auto-reject reading their plan", path, stateRoot))
+	}
+
 	return warn(fmt.Sprintf("%s has no permission.external_directory allow entry for %s/**; headless opencode builders auto-reject reading their plan", path, stateRoot))
 }
 
-// patternCovers reports whether an allow entry opens stateRoot: the root
-// itself, with /* or /**, or a glob whose prefix is a parent of the root.
+// patternCovers reports whether an allow entry opens stateRoot: everything
+// ("*"), the root itself, with /* or /**, or a glob whose prefix is a parent
+// of the root.
 func patternCovers(pattern, stateRoot string) bool {
+	if pattern == "*" || pattern == "**" {
+		return true
+	}
 	if pattern == stateRoot || pattern == stateRoot+"/*" || pattern == stateRoot+"/**" {
 		return true
 	}
@@ -155,6 +183,16 @@ func snippet(stateRoot string) string {
     "` + stateRoot + `/**": "allow"
   }
 }`
+}
+
+// permissionsSnippet is snippet for an OpenCode 2.x config: the same allow in
+// the v2 "permissions" ruleset shape.
+func permissionsSnippet(stateRoot string) string {
+	return "add to ~/.config/opencode/opencode.jsonc:\n" +
+		`"permissions": [
+  { "action": "external_directory", "resource": "` + stateRoot + `/*", "effect": "allow" },
+  { "action": "external_directory", "resource": "` + stateRoot + `/**", "effect": "allow" }
+]`
 }
 
 // stripJSONC removes // and /* */ comments outside string literals, and a

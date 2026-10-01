@@ -152,6 +152,32 @@ func readDone(t *testing.T, w *wire.Conn, nc net.Conn) {
 	}
 }
 
+// TestConnCountCountsLiveConnections pins the count the welcome and the
+// daemon's idle watcher read: 0 with no client, 1 after a handshake, and back
+// to 0 once the client closes.
+func TestConnCountCountsLiveConnections(t *testing.T) {
+	srv, sock := startServer(t)
+	if got := srv.ConnCount(); got != 0 {
+		t.Fatalf("ConnCount with no client = %d, want 0", got)
+	}
+
+	w, nc := dialRaw(t, sock)
+	sendHello(t, w, wire.Version)
+	_ = welcome(t, w)
+	if got := srv.ConnCount(); got != 1 {
+		t.Fatalf("ConnCount after the handshake = %d, want 1", got)
+	}
+
+	_ = nc.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.ConnCount() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("ConnCount = %d after the client closed, want 0", srv.ConnCount())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestOwnerGreetsWithItsSchemaAndOrigin(t *testing.T) {
 	_, sock := startServer(t)
 	w, _ := dialRaw(t, sock)

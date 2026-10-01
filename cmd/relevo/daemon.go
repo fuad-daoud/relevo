@@ -30,10 +30,11 @@ import (
 
 // daemonFlagValues holds the pointers daemon parses into.
 type daemonFlagValues struct {
-	interval  *time.Duration
-	check     *bool
-	preflight *bool
-	pprof     *string
+	interval      *time.Duration
+	check         *bool
+	preflight     *bool
+	pprof         *string
+	autoExitAfter *time.Duration
 }
 
 // daemonFlagSet defines those flags on fs and returns what they parse into.
@@ -46,6 +47,10 @@ func daemonFlagSet(fs *flag.FlagSet) *daemonFlagValues {
 	// --preflight before re-exec'ing into it (#371 §4.4). It stays out of
 	// the usage text and the README, so it is defined but not printed.
 	v.preflight = fs.Bool("preflight", false, "validate the runtime configuration and exit (internal)")
+	// --auto-exit-after is internal: only the daemon this CLI spawns gets it,
+	// so only a daemon with nothing to do exits on its own. It stays out of
+	// the usage text and the README, so it is defined but not printed.
+	v.autoExitAfter = fs.Duration("auto-exit-after", 0, "exit after this long idle (internal)")
 	return v
 }
 
@@ -53,11 +58,23 @@ func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	v := daemonFlagSet(fs)
 	interval, check, preflight, pprofSocket := v.interval, v.check, v.preflight, v.pprof
+	autoExitAfter := v.autoExitAfter
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: relevo daemon [--interval D] [--check] [--pprof <path>]")
+		fmt.Fprintln(fs.Output(), "       relevo daemon stop")
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+
+	// `daemon stop` is a positional form, checked before the --check/--preflight
+	// peek so `daemon stop --check` is a usage error rather than a silent
+	// --check. Any other positional is refused with the usage line.
+	if pos := fs.Args(); len(pos) > 0 {
+		if len(pos) == 1 && pos[0] == "stop" && !*check && !*preflight {
+			return daemonStop()
+		}
+		return fail(codeUsage, "usage: relevo daemon [--interval D] [--check] [--pprof <path>]; relevo daemon stop")
 	}
 
 	// --preflight and --check are the read-only peek. §4.6: neither writes;
@@ -466,6 +483,16 @@ func cmdDaemon(args []string) error {
 			return true
 		}
 		return false
+	}
+
+	// The idle watcher is the CLI-spawned daemon's own exit: the flag is
+	// internal, so a service-managed or hand-started daemon never gets it. It
+	// cancels this context once the daemon has been idle past the period, which
+	// Run reports as a clean shutdown.
+	if *autoExitAfter > 0 {
+		go watchDaemonIdle(ctx, stop, *autoExitAfter, idlePoll, rt.Now, func() daemonActivity {
+			return daemonActivityNow(root, srv, rt.Store)
+		})
 	}
 
 	slog.Info("relevo daemon starting", "interval", *interval)

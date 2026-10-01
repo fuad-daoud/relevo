@@ -4,5 +4,7 @@
   "cap": 4,
   "scopes": true,
   "slice": "relevo.slice",
-  "quota": "200%"
+  "quota": "200%",
+  "isolation": "container",
+  "image": "registry.example/relevo-builder:latest"
 }

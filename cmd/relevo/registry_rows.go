@@ -221,7 +221,7 @@ var registry = []verbEntry{
 		Name:    "daemon",
 		Summary: "run the long-running reconciler",
 		Args:    "[--interval D] [--check] [--pprof <path>]",
-		Flags:   []string{"--check", "--interval", "--pprof", "--preflight"},
+		Flags:   []string{"--auto-exit-after", "--check", "--interval", "--pprof", "--preflight"},
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"usage"},
 	},

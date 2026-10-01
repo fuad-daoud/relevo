@@ -85,14 +85,16 @@ func chainRequestMatches(rt relevo.Runtime, view remote.ChainView, req remote.Cr
 }
 
 // writeChainPreflightError maps a refused chain preflight to its status: a tier
-// above max is 422 tier_above_max, an unknown actor or wrong shape is 400, a
-// name already taken is 409, and any other pick refusal is 422 invalid.
+// above max is 422 tier_above_max, an unknown actor is 400 unknown_actor (the
+// wire twin of relevo.ErrUnknownRole, so the client can classify it like its
+// local refusal), a name already taken is 409, and any other pick refusal is
+// 422 invalid.
 func writeChainPreflightError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, relevo.ErrTierAboveMax):
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax, err.Error())
 	case errors.Is(err, relevo.ErrUnknownRole):
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+		writeErr(w, http.StatusBadRequest, remote.CodeUnknownActor, err.Error())
 	case strings.Contains(err.Error(), "already exists"):
 		writeErr(w, http.StatusConflict, remote.CodeInvalid, err.Error())
 	case strings.Contains(err.Error(), "must be a"):

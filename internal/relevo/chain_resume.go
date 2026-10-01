@@ -107,6 +107,22 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 		return ChainResult{}, err
 	}
 
+	// A halt's end delivery was queued before the human decided to resume, and
+	// it tells them the chain needs them -- no longer true. Confirming it here
+	// keeps a stale NEEDS YOU from being pushed after the chain has moved on.
+	if err := supersedeChainDelivery(rt, c); err != nil {
+		return ChainResult{}, err
+	}
+
+	// A halted chain whose awaited member's round is dead -- its process is
+	// gone and no close was written -- otherwise cannot come back: the resume
+	// refuses an open round, and the stop path refuses a halted one. Close the
+	// dead round the way a stop would, before the lock, so the resume's send
+	// can open the next round.
+	if err := closeDeadMemberRound(ctx, rt, c); err != nil {
+		return ChainResult{}, err
+	}
+
 	var out ChainResult
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
 		row, err := tx.Chain(opts.Name)
@@ -156,7 +172,7 @@ func resumeRemoteGateRefusal(rt Runtime, c db.ChainRow) error {
 	if !b.Builder.Remote() {
 		return nil
 	}
-	return fmt.Errorf("chain %s: a remote builder's check is fixed at create; unbind and start again", c.Name)
+	return refuse("chain %s: a remote builder's check is fixed at create; unbind and start again", c.Name)
 }
 
 // resumeRefusal is the one refusal a resume makes on its own chain: running and
@@ -290,7 +306,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	// The send fills the round; until it does, the chain waits on no round.
 	next.Awaiting = chain.Awaiting{Member: targetPart}
 
-	text, err := chainResumeText(rt, tx, c, before, next, act, closedRound)
+	text, err := chainResumeText(rt, tx, c, before, next, act, closedRound, opts.Gate != "" || opts.NoGate)
 	if err != nil {
 		return ChainResult{}, err
 	}
@@ -354,11 +370,26 @@ func resumeOpenRoundRefusal(tx *store.Tx, c db.ChainRow, memberName string) erro
 // correction or fix text, or the repair prompt. Anything else, and a staged
 // prompt that is gone, falls back to chainSeedText's plan copy, so a plain plan
 // round reads exactly as it always did.
-func chainResumeText(rt Runtime, tx *store.Tx, c db.ChainRow, before, next chain.State, act chain.Action, closedRound int) (string, error) {
+//
+// gateChanged says the resume replaced the builder's check. A repair prompt
+// names the check that failed and the failed round's gate log, so those bytes
+// are wrong under a new check: the resume then walks back past the
+// repair prompts to the round the step seeded and re-sends that -- the plan,
+// correction or fix text -- under the new check.
+func chainResumeText(rt Runtime, tx *store.Tx, c db.ChainRow, before, next chain.State, act chain.Action, closedRound int, gateChanged bool) (string, error) {
 	if act.Member == chain.MemberBuilder &&
 		before.Awaiting.Member == chain.MemberBuilder && before.Awaiting.Round > 0 {
-		path := rt.Store.PromptPath(c.Builder, before.Awaiting.Round)
-		if body, err := rt.Store.ReadFile(path); err == nil {
+		round := before.Awaiting.Round
+		if gateChanged {
+			for round > 1 {
+				body, err := rt.Store.ReadFile(rt.Store.PromptPath(c.Builder, round))
+				if err != nil || !isRepairPlan(string(body)) {
+					break
+				}
+				round--
+			}
+		}
+		if body, err := rt.Store.ReadFile(rt.Store.PromptPath(c.Builder, round)); err == nil {
 			return string(body), nil
 		}
 	}

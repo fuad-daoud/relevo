@@ -56,7 +56,13 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// A remote binding's server is told first: the server is the
 		// one place that knows whether the round is still open, and it must
 		// agree before this binding stops relaying locally.
-		if b.Builder.Remote() {
+		//
+		// A member of a server chain is the exception: the chain's own verbs
+		// release it on the server, and this copy is the mirror. Calling the
+		// server here would ask it to release a binding the chain already
+		// released, and the refusal would fail a done that has already
+		// happened where it matters.
+		if b.Builder.Remote() && !serverChainMember(tx, b.Name) {
 			if rt.Remote == nil {
 				return ErrRemoteUnavailable
 			}

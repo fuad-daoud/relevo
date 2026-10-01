@@ -385,7 +385,7 @@ func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 	if err != nil {
 		return serve.Config{}, err
 	}
-	return serveAdminConfigFrom(root, d, L), nil
+	return withIsolation(serveAdminConfigFrom(root, d, L), L.Policy.ServeIsolation()), nil
 }
 
 // serveAdminConfigWithCandidates is serveAdminConfigFrom plus the configured
@@ -427,6 +427,14 @@ func cmdServeRun(args []string) error {
 		return err
 	}
 	defer func() { _ = d.Close() }()
+
+	// Fail closed before any side effect: a configured mode this build cannot
+	// run is refused, never started and warned (spec §10), and the mode and
+	// image ride into the server config so whoami and status report them.
+	runner, isoMode, err := resolveIsolation(L.Policy.ServeIsolation())
+	if err != nil {
+		return fail(codeNotAvailable, "%v", err)
+	}
 
 	// The server's own installation: its rows carry its id as their origin,
 	// and WhoAmI advertises it so a client can link its row to this server's
@@ -506,7 +514,7 @@ func cmdServeRun(args []string) error {
 		Candidates:     candidates,
 		Accounts:       L.Accounts,
 		Policy:         pol,
-		Runner:         proc.New(),
+		Runner:         runner,
 		Git:            git.NewClient("git", 0, 0),
 		Now:            time.Now,
 		Interval:       sf.interval,
@@ -519,6 +527,8 @@ func cmdServeRun(args []string) error {
 		MaxBuilders:    sf.maxBuilders,
 		Hooks:          dispatcher,
 		Scope:          scope,
+		Isolation:      isoMode,
+		IsolationImage: L.Policy.ServeIsolationImage(),
 		SessionReaper:  relevo.NewSessionReaper(binExec{}),
 		Installation:   inst,
 		Audiences:      audiences,
@@ -533,7 +543,7 @@ func cmdServeRun(args []string) error {
 	if maxBuilders <= 0 {
 		maxBuilders = pol.MaxBuildersOrDefault()
 	}
-	slog.Info(fmt.Sprintf("builders cap=%d scopes=%s", maxBuilders, scopesStatus))
+	slog.Info(fmt.Sprintf("builders cap=%d scopes=%s isolation=%s", maxBuilders, scopesStatus, isoMode))
 	slog.Info("accepted audiences", "audiences", strings.Join(audiences, ", "))
 
 	root, err = filepath.Abs(root)

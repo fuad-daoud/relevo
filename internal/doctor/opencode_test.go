@@ -154,6 +154,14 @@ func TestOpencodeAllowlistCheck(t *testing.T) {
 		}()},
 		{name: "a config that does not parse warns with the error", wantSev: SevWarn, wantContains: []string{"could not parse " + jsoncPath, stateRoot + "/**"},
 			env: newEnv(jsoncPath, `{"permission": `)},
+		{name: "a v2 permissions rule with * allows", wantSev: SevOK, wantContains: []string{"a permissions rule allows"},
+			env: newEnv(jsoncPath, `{"permissions":[{"action":"external_directory","resource":"*","effect":"allow"}]}`)},
+		{name: "a v2 permissions rule for the state root allows", wantSev: SevOK, wantContains: []string{"a permissions rule allows"},
+			env: newEnv(jsoncPath, `{"permissions":[{"action":"read","resource":"*.env","effect":"allow"},{"action":"external_directory","resource":"/fake/home/.local/state/relevo/**","effect":"allow"}]}`)},
+		{name: "a v2 rule with ask does not allow", wantSev: SevWarn,
+			env: newEnv(jsoncPath, `{"permissions":[{"action":"external_directory","resource":"*","effect":"ask"}]}`)},
+		{name: "a v2 ruleset without external_directory warns with the v2 snippet", wantSev: SevWarn, wantContains: []string{`"permissions"`, `"effect": "allow"`},
+			env: newEnv(jsoncPath, `{"permissions":[{"action":"read","resource":"*.env","effect":"allow"}]}`)},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

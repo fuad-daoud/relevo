@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -191,6 +193,38 @@ func TestChainStartServerRefusesAServerWithoutTheFeature(t *testing.T) {
 			assertNothingCreated(t, rt, fg, "shop")
 		})
 	}
+}
+
+// TestChainStartServerRetypesAnUnknownActor pins the create refusal's class: a
+// server's 400 unknown_actor is rebuilt as ErrUnknownRole, so a bad actor is
+// the same policy refusal a local start gives -- never an internal failure.
+func TestChainStartServerRetypesAnUnknownActor(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	fr.createChainErr = &client.HTTPError{
+		Status: http.StatusBadRequest,
+		Body: remote.ErrorBody{
+			Code:    remote.CodeUnknownActor,
+			Message: `unknown actor "ghost" (known: [builder reviewer]): unknown actor`,
+		},
+	}
+	rt, fg, _ := chainServerRuntime(t, fr)
+
+	_, err := ChainStart(context.Background(), rt, chainServerOpts(t))
+	if err == nil {
+		t.Fatal("ChainStart --server = nil, want the unknown-actor refusal")
+	}
+	if !errors.Is(err, ErrUnknownRole) {
+		t.Errorf("err = %v, want errors.Is(err, ErrUnknownRole)", err)
+	}
+	if !strings.Contains(err.Error(), `unknown actor "ghost"`) {
+		t.Errorf("err = %q, want the server's own message kept", err)
+	}
+	if len(fg.createBranchCalls) != 0 {
+		t.Errorf("a refused create must cut no local branch: %v", fg.createBranchCalls)
+	}
+	assertNothingCreated(t, rt, fg, "shop")
 }
 
 // TestChainStartServerPostsOneCreateAndRecordsTheMirror pins the whole start:

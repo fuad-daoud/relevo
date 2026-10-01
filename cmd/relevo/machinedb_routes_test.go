@@ -325,7 +325,7 @@ func TestStatuslineGivesUpSilently(t *testing.T) {
 // TestStartDaemonHelpers pins the pure helpers the detached spawn is built
 // from; no process is spawned.
 func TestStartDaemonHelpers(t *testing.T) {
-	if got := daemonArgv("/usr/bin/relevo"); !reflect.DeepEqual(got, []string{"/usr/bin/relevo", "daemon"}) {
+	if got := daemonArgv("/usr/bin/relevo"); !reflect.DeepEqual(got, []string{"/usr/bin/relevo", "daemon", "--auto-exit-after", daemonAutoExitAfter.String()}) {
 		t.Errorf("daemonArgv = %v", got)
 	}
 	if got, want := daemonLogPath("/tmp/rvo-x"), filepath.Join("/tmp/rvo-x", "daemon.log"); got != want {
