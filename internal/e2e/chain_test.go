@@ -548,7 +548,7 @@ func dumpChainHaltDiagnostics(t *testing.T, rt relevo.Runtime, c db.ChainRow) {
 	ds, dmt, dok, derr := rt.Store.StatFile(donePath)
 	ss, smt, sok, serr := rt.Store.StatFile(streamPath)
 	stream, rerr := rt.Store.ReadFile(streamPath)
-	t.Logf("member %s round %d state %s pid=%d started=%s segments=%+v", member, b.Round, b.State, b.Builder.PID, b.Builder.StartedAt, b.Builder.StreamSegments)
+	t.Logf("member %s round %d state %s pid=%d started=%d segments=%+v", member, b.Round, b.State, b.Builder.PID, b.Builder.StartedAt, b.Builder.StreamSegments)
 	t.Logf("done   %s stat=(size=%d mtime=%s ok=%v err=%v)", donePath, ds, dmt, dok, derr)
 	t.Logf("stream %s stat=(size=%d mtime=%s ok=%v err=%v) readErr=%v bytes=%d", streamPath, ss, smt, sok, serr, rerr, len(stream))
 	if len(stream) > 1200 {
