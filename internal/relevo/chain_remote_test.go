@@ -2,14 +2,20 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -17,6 +23,139 @@ import (
 // policyWithGate is the policy a chain's resolved check reads from.
 func policyWithGate(defaultCmd string, regate *int) policy.Policy {
 	return policy.Policy{Gate: &policy.GatePolicy{Default: defaultCmd, Regate: regate}}
+}
+
+// seedRemoteBase is the commit a seeded remote chain's plan 1 starts at and the
+// head its branch is cut from.
+const seedRemoteBase = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+// remoteChainOpts tunes seedRemoteChain.
+type remoteChainOpts struct {
+	Round  int // the builder's current round; 0 means 1
+	Plans  int // plan copies the chain holds; 0 means 1
+	Regate int // the builder member's repair budget
+}
+
+// seedRemoteChain plants a store-only chain whose builder member runs on a
+// server: a running chain awaiting the builder's round, a builder binding on
+// zen carrying branch relevo/<name>, and the local reviewer and planner readers
+// built the way ChainStart builds them. Nothing is created on a server and no
+// round is started -- the caller drives a close through the catch-up view, or
+// stages and ships a round. The chain's own plan copies and the builder's round
+// prompt are written, so a builder send and a repair both have their files.
+func seedRemoteChain(t *testing.T, rt Runtime, name string, opts remoteChainOpts) store.Binding {
+	t.Helper()
+	if opts.Round == 0 {
+		opts.Round = 1
+	}
+	if opts.Plans == 0 {
+		opts.Plans = 1
+	}
+	ctx := context.Background()
+	settings := chain.Settings{Gate: "make check", Regate: opts.Regate, MaxCorrections: 2, ReviewerActor: "reviewer", PlannerActor: "lite-planner"}
+	chainOpts := ChainOptions{Name: name, Feature: "auth", MasterMindID: testMasterMindName}
+	members := chainMembersFor(chainOpts, settings)
+
+	repo := t.TempDir()
+	base := chainBase{
+		cwd: repo, worktree: repo, repo: repo, branch: "relevo/" + name,
+		commit: seedRemoteBase, feature: "auth", mastermindID: testMasterMindName,
+	}
+	resolutions, err := chainResolveActors(rt, members)
+	if err != nil {
+		t.Fatalf("seedRemoteChain: resolve actors: %v", err)
+	}
+	built, err := chainBuildMembers(ctx, rt, members, resolutions, base, settings)
+	if err != nil {
+		t.Fatalf("seedRemoteChain: build members: %v", err)
+	}
+
+	builder := built[0]
+	builder.Builder = store.Endpoint{Mode: store.ModeRemote, Server: "zen", AgentName: name}
+	builder.Worktree = ""
+	builder.Branch = "relevo/" + name
+	builder.Base = seedRemoteBase
+	builder.Repo = repo
+	builder.CWD = repo
+	builder.Round = opts.Round
+	builder.State = store.StateActive
+	builder.Gate = settings.Gate
+	builder.Regate = opts.Regate
+	built[0] = builder
+
+	paths := make([]string, opts.Plans)
+	for i := range paths {
+		paths[i] = rt.Store.ChainPlanPath(name, i+1)
+	}
+	planJSON, err := json.Marshal(paths)
+	if err != nil {
+		t.Fatalf("seedRemoteChain: marshal plan paths: %v", err)
+	}
+	settingsJSON, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("seedRemoteChain: marshal settings: %v", err)
+	}
+	now := baseTime
+	if rt.Now != nil {
+		now = rt.Now()
+	}
+	row := db.ChainRow{
+		ID: db.NewID(), Name: name, Status: string(chain.StatusRunning),
+		Phase: string(chain.PhaseBuild), Step: string(chain.StepBuilding),
+		Plan: 1, Plans: opts.Plans, PlanPathsJSON: planJSON, SettingsJSON: settingsJSON,
+		Corrections:    0,
+		AwaitingMember: chain.MemberBuilder, AwaitingRound: opts.Round,
+		Builder: name, Reviewer: name + "-rev", Planner: name + "-plan",
+		Base: seedRemoteBase, Branch: "relevo/" + name, Repo: repo,
+		PlanStartCommit: seedRemoteBase,
+		CreatedAt:       now, UpdatedAt: now,
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.CreateChain(row, built)
+	}); err != nil {
+		t.Fatalf("seedRemoteChain: create chain: %v", err)
+	}
+	if err := os.MkdirAll(rt.Store.ChainDir(name), 0o755); err != nil {
+		t.Fatalf("seedRemoteChain: chain dir: %v", err)
+	}
+	for i := 1; i <= opts.Plans; i++ {
+		if err := os.WriteFile(paths[i-1], []byte(fmt.Sprintf("plan %d\n", i)), 0o644); err != nil {
+			t.Fatalf("seedRemoteChain: plan %d: %v", i, err)
+		}
+	}
+	// The builder's own round prompt differs from the plan copy, so the
+	// reviewer seed names it beside the plan.
+	stageRemoteRoundFile(t, rt, name, opts.Round, "the round prompt\n")
+	return builder
+}
+
+// remoteRoundFileFunc serves a closed round's files from a name->body map:
+// every kind not named answers 404, as a round that wrote nothing does.
+func remoteRoundFileFunc(files map[string]string) func(context.Context, string, string, int, string) (io.ReadCloser, error) {
+	return func(_ context.Context, _, _ string, _ int, kind string) (io.ReadCloser, error) {
+		if body, ok := files[kind]; ok {
+			return io.NopCloser(strings.NewReader(body)), nil
+		}
+		return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+	}
+}
+
+// remoteChainClose drives one close of the remote builder named name through
+// the client catch-up: fr serves the view and the round files, the tick
+// reconciles and settles inline, and the chain advances in the same critical
+// section. It does not run the pending-send step; the caller does that when it
+// wants the staged round shipped. view's RoundState and ClosedRound are filled
+// from the builder's current round.
+func remoteChainClose(t *testing.T, rt Runtime, fr *fakeRemote, name string, view remote.BindingView, files map[string]string) store.Binding {
+	t.Helper()
+	b := chainBinding(t, rt, name)
+	view.RoundState = remote.RoundClosed
+	if view.ClosedRound == 0 {
+		view.ClosedRound = b.Round
+	}
+	fr.getBindingResp = view
+	fr.roundFileFunc = remoteRoundFileFunc(files)
+	return chainReconcile(t, rt, name)
 }
 
 // chainRemoteFake is a server a chain's builder can be placed on: it carries

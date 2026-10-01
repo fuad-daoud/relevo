@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/installation"
@@ -7177,5 +7178,184 @@ func TestMirrorLogLeavesAPlantedBuilderLogAlone(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(filepath.Join(st.Dir("api"), "*.tmp.*")); len(left) != 0 {
 		t.Errorf("temps left behind: %v", left)
+	}
+}
+
+// TestCatchUpRecordsThePulledClosedTree pins the pulled closed tree: the
+// catch-up records the view's result commit as the member's RoundClosedTree,
+// and the value survives the report's queueReport -- a remote binding keeps it
+// where a local one would run the snapshot's own assignment. A checked-out
+// fetch changes nothing.
+func TestCatchUpRecordsThePulledClosedTree(t *testing.T) {
+	t.Parallel()
+
+	t.Run("recorded and kept across the report", func(t *testing.T) {
+		t.Parallel()
+
+		st := store.New(t.TempDir())
+		b := remoteBinding("zen")
+		b.Repo = t.TempDir()
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		fr := &fakeRemote{
+			getBindingResp: remote.BindingView{
+				RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: "commit-r1",
+				DiffNote: "1 file changed",
+			},
+			roundFileFunc: remoteRoundFileFunc(map[string]string{"report": "Finished round 1\n", "diff": "diff body\n"}),
+		}
+		rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+		got, err := reconcile(t, rt, b)
+		if err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		if got.RoundClosedTree != "commit-r1" {
+			t.Fatalf("RoundClosedTree = %q, want the pulled result commit", got.RoundClosedTree)
+		}
+		if got.Round != 2 {
+			t.Fatalf("Round = %d, want 2: the round closed and the report was queued", got.Round)
+		}
+	})
+
+	t.Run("a checked-out fetch leaves it unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+		g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+		clientRepo, c1 := newRemoteClientRepo(t, "api")
+		runGit(t, clientRepo, "checkout", "relevo/api")
+		bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relevo/api", c1)
+
+		st := store.New(t.TempDir())
+		b := remoteBinding("zen")
+		b.Repo = clientRepo
+		b.RoundClosedTree = "kept-tree"
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		fr := &fakeRemote{
+			getBindingResp:  remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: "commit-r1"},
+			roundFileFunc:   remoteRoundFileFunc(map[string]string{"report": "Finished round 1\n"}),
+			roundBundleResp: bundle,
+		}
+		rt := Runtime{
+			Store: st, Remote: fr,
+			Transport: remote.NewBundleTransport(g, t.TempDir()),
+			Now:       func() time.Time { return baseTime },
+		}
+
+		got, err := reconcile(t, rt, b)
+		if err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		if got.RoundClosedTree != "kept-tree" {
+			t.Fatalf("RoundClosedTree = %q, want it unchanged across a checked-out fetch", got.RoundClosedTree)
+		}
+		if got.Round != 1 {
+			t.Fatalf("Round = %d, want 1: the checked-out fetch closed nothing", got.Round)
+		}
+	})
+}
+
+// TestRemoteBuilderCloseCarriesTheGateRecord pins the remote gate record: the
+// closed round's view result and the locally fetched log land on the member's
+// report entry, and the chain maps the close as red.
+func TestRemoteBuilderCloseCarriesTheGateRecord(t *testing.T) {
+	t.Parallel()
+
+	fr := chainRemoteFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	seedRemoteChain(t, rt, "shop", remoteChainOpts{Regate: 2})
+	b := chainBinding(t, rt, "shop")
+	b.RepairCount = b.Regate // the budget is spent: the red event reaches the reviewer
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	got := remoteChainClose(t, rt, fr, "shop", remote.BindingView{
+		ResultCommit: "result-r1", GateResult: "fail", ReportOutcome: "done",
+		DiffNote: "1 file changed",
+	}, map[string]string{"report": chainDoneBody(), "diff": "diff body\n", "gate": "FAIL the thing\n"})
+
+	entries := chainLog(t, rt, "shop")
+	var report *store.LogEntry
+	for i := range entries {
+		if entries[i].Kind == store.KindReport && entries[i].Round == 1 {
+			report = &entries[i]
+		}
+	}
+	if report == nil {
+		t.Fatalf("no report entry for round 1: %+v", entries)
+	}
+	if report.Gate == nil || report.Gate.Result != "fail" {
+		t.Fatalf("report gate = %+v, want a failing record", report.Gate)
+	}
+	wantLog := rt.Store.GateLogPath("shop", 1)
+	if report.Gate.LogPath != wantLog {
+		t.Errorf("gate log path = %q, want %q", report.Gate.LogPath, wantLog)
+	}
+	body, err := rt.Store.ReadFile(wantLog)
+	if err != nil || string(body) != "FAIL the thing\n" {
+		t.Errorf("gate log body = %q (err %v), want the fetched body", body, err)
+	}
+	if got.RoundClosedTree != "result-r1" {
+		t.Errorf("RoundClosedTree = %q, want the pulled result commit", got.RoundClosedTree)
+	}
+
+	events := chainTrace(t, rt, "shop")
+	if len(events) != 1 {
+		t.Fatalf("trace = %+v, want one row", events)
+	}
+	ev, err := chain.DecodeEvent(events[0].Event)
+	if err != nil {
+		t.Fatalf("DecodeEvent: %v", err)
+	}
+	if ev.Gate != chain.GateRed {
+		t.Errorf("chain event gate = %q, want red", ev.Gate)
+	}
+}
+
+// TestRemoteStoppedCloseStopsTheChain pins the stopped fact: a close the server
+// reports as stopped stops the chain with one trace row and one end delivery,
+// and the member's report entry still exists.
+func TestRemoteStoppedCloseStopsTheChain(t *testing.T) {
+	t.Parallel()
+
+	fr := chainRemoteFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	seedRemoteChain(t, rt, "shop", remoteChainOpts{})
+
+	remoteChainClose(t, rt, fr, "shop", remote.BindingView{
+		Stopped: "killed", ResultCommit: "result-r1", DiffNote: "1 file changed",
+	}, map[string]string{"diff": "diff body\n"})
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusStopped) {
+		t.Fatalf("chain status = %q, want stopped", row.Status)
+	}
+	events := chainTrace(t, rt, "shop")
+	if len(events) != 1 {
+		t.Fatalf("trace = %+v, want one row", events)
+	}
+	ev, err := chain.DecodeEvent(events[0].Event)
+	if err != nil {
+		t.Fatalf("DecodeEvent: %v", err)
+	}
+	if ev.Kind != chain.EventStopped {
+		t.Errorf("event kind = %q, want stopped", ev.Kind)
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+		t.Errorf("pending chain deliveries = %d, want the one end delivery", len(pending))
+	}
+	found := false
+	for _, e := range chainLog(t, rt, "shop") {
+		if e.Kind == store.KindReport && e.Round == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the member's report entry must still exist for a stopped close")
 	}
 }

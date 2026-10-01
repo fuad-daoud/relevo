@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -21,20 +22,53 @@ import (
 // round's file; the step's own short lock does the recording.
 func chainSendMember(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string) (store.Binding, error) {
 	if b.Builder.Remote() {
-		return chainStageRemoteRound(rt, b, text)
+		return chainStageRemote(ctx, rt, b, text)
 	}
 	return sendChainRound(ctx, rt, tx, b, text)
 }
 
-// chainStageRemoteRound writes a remote member's staged round: the text lands
-// at the member's own round path, and nothing else changes. A missing or
-// unreadable directory is the stage failure the resume's halt names.
-func chainStageRemoteRound(rt Runtime, b store.Binding, text string) (store.Binding, error) {
+// chainStageRemote writes a remote member's staged round the one way every
+// staging goes: the text lands at the member's own round path, RoundBaselineHead
+// is the head of the branch the ship publishes as refs/relevo/<name>/out -- the
+// commit the plan starts at and the server's next round is cut from -- and the
+// previous round's closed tree is cleared, exactly the three writes a local
+// sendChainRound makes for the same round. A missing or unreadable directory is
+// the stage failure the resume's halt names.
+func chainStageRemote(ctx context.Context, rt Runtime, b store.Binding, text string) (store.Binding, error) {
 	path := rt.Store.PromptPath(b.Name, b.Round)
 	if err := stagePlan(path, []byte(text)); err != nil {
 		return b, fmt.Errorf("%s: stage plan at %s: %w", b.Name, path, err)
 	}
+	head, err := chainBranchHead(ctx, rt, b)
+	if err != nil {
+		return b, err
+	}
+	b.RoundBaselineHead = head
+	b.RoundClosedTree = ""
 	return b, nil
+}
+
+// chainBranchHead resolves the head of the branch the member's ship publishes
+// as refs/relevo/<name>/out: the commit the server's next round is cut from and
+// the plan-start commit a plan that begins here records. It is a local ref
+// lookup, never a network call. A repo with no git configured leaves the head
+// empty rather than failing the stage; a repo that refuses the lookup does not.
+func chainBranchHead(ctx context.Context, rt Runtime, b store.Binding) (string, error) {
+	if rt.Git == nil {
+		return "", nil
+	}
+	branchRef := b.Branch
+	if !strings.HasPrefix(branchRef, "refs/heads/") {
+		branchRef = "refs/heads/" + branchRef
+	}
+	sha, ok, err := rt.Git.RefSHA(ctx, b.Repo, branchRef)
+	if err != nil {
+		return "", fmt.Errorf("%s: resolve %s: %w", b.Name, branchRef, err)
+	}
+	if !ok {
+		return "", fmt.Errorf("%s: branch %s not found", b.Name, b.Branch)
+	}
+	return sha, nil
 }
 
 // chainSendPending is the unlocked step that ships the rounds a chain has
