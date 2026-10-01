@@ -1295,6 +1295,7 @@ A section that does not validate is refused with a message naming the entry; an 
 | actor | shape | agent |
 | --- | --- | --- |
 | `builder` | writer | `plan-executor` |
+| `documentor` | writer | `documentor` |
 | `reviewer` | reader | `reviewer` |
 | `researcher` | reader | `researcher` |
 
@@ -1555,8 +1556,8 @@ Actor entries:
 - `check` -- writers only: whether a round closes on a gate; defaults to true.
   An actor whose agent is a reader must not set it.
 
-An actor named `builder`, `reviewer` or `researcher` keeps that builtin's
-shape: `builder` must run a writer agent, `reviewer` and `researcher` a reader.
+An actor named `builder`, `documentor`, `reviewer` or `researcher` keeps that builtin's
+shape: `builder` and `documentor` must run a writer agent, `reviewer` and `researcher` a reader.
 An unknown agent, a reader with `check`, or a builtin actor with the wrong
 shape is refused when the config loads.
 
