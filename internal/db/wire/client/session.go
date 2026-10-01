@@ -26,6 +26,8 @@ type conn struct {
 	origin string
 	pid    int
 	conns  int
+	// adHoc is the marker every handshake this connection opens carries.
+	adHoc bool
 	// dead is set from the caller's goroutine and read from a cancel
 	// AfterFunc, so it is atomic rather than a plain flag.
 	dead atomic.Bool
@@ -60,6 +62,7 @@ func (c *conn) handshake(ctx context.Context) error {
 		// client cannot read its own embedded maximum without importing the
 		// package that owns the migrations.
 		SchemaKnow: 0,
+		AdHoc:      c.adHoc,
 	}
 	if err := c.send(wire.KindHello, hello, nil); err != nil {
 		return err

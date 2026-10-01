@@ -87,6 +87,10 @@ type Options struct {
 	// Origin is the installation id stamped on every row this handle writes
 	// and scoped to on every scoped read. Empty leaves the handle unscoped.
 	Origin string
+	// AdHoc marks every connection this handle's pool opens as an ad-hoc read:
+	// the owner may refuse such a request while it reaps an abandoned
+	// statement. A handle opened without it is never refused.
+	AdHoc bool
 }
 
 // Open opens (creating if needed) the sqlite database at path, applying

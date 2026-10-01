@@ -34,6 +34,15 @@ func DialContext(ctx context.Context, sock string) (*DB, error) {
 	return dialContext(ctx, sock, Options{}, true)
 }
 
+// DialContextAdHoc is DialContext for the ad-hoc read path (`db query`): every
+// connection its pool opens marks itself in the handshake, so the owner may
+// refuse a request while it is reaping an abandoned statement. A refusal is an
+// answer the caller must accept rather than fall back from: a direct open would
+// find the file held and report a lock conflict that is not the real problem.
+func DialContextAdHoc(ctx context.Context, sock string) (*DB, error) {
+	return dialContext(ctx, sock, Options{AdHoc: true}, true)
+}
+
 // dial builds the handle under its own dialTimeout deadline. adoptOrigin
 // selects between the owner's installation id (production) and the caller's
 // own Options (the test hop, which must carry the caller's origin verbatim).
@@ -65,10 +74,7 @@ func dialContext(ctx context.Context, sock string, o Options, adoptOrigin bool) 
 		origin = info.Origin
 	}
 
-	sqlDB, err := sql.Open(client.DriverName, sock)
-	if err != nil {
-		return nil, fmt.Errorf("db: dial %s: %w: %w", sock, ErrOpen, err)
-	}
+	sqlDB := sql.OpenDB(client.Connector(sock, o.AdHoc))
 	return &DB{
 		sqlDB:      sqlDB,
 		have:       info.Have,

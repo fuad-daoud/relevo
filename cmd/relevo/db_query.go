@@ -204,7 +204,7 @@ func openDBQuery(ctx context.Context) (*db.DB, error) {
 		return nil, fail(codeRefused, "no relevo.db at %s", path)
 	}
 
-	if d, derr := dialOwner(ctx, root, verbDialBudget); derr == nil {
+	if d, derr := dialOwnerAdHoc(ctx, root, verbDialBudget); derr == nil {
 		return d, nil
 	} else if ctx.Err() != nil {
 		return nil, failWrap(codeRefused, ctx.Err(), "relevo db query: the deadline passed before the owner answered")
@@ -222,7 +222,7 @@ func openDBQuery(ctx context.Context) (*db.DB, error) {
 	// The file is held, so the owner is the only reader. One more dial covers a
 	// daemon that bound its socket between the first attempt and the open;
 	// after that the file stays out of reach.
-	if d, derr := dialOwner(ctx, root, verbDialBudget); derr == nil {
+	if d, derr := dialOwnerAdHoc(ctx, root, verbDialBudget); derr == nil {
 		return d, nil
 	}
 	if sock, sockErr := ownerSocket(root); sockErr != nil {

@@ -375,6 +375,20 @@ func dialOwner(ctx context.Context, root string, budget time.Duration) (*db.DB, 
 	return db.DialContext(ctx, sock)
 }
 
+// dialOwnerAdHoc is dialOwner for the ad-hoc read path: the pool's connections
+// mark themselves in the handshake, so the owner may refuse a request while it
+// is reaping an abandoned statement. The caller refuses on that answer rather
+// than falling back, because its dial succeeded.
+func dialOwnerAdHoc(ctx context.Context, root string, budget time.Duration) (*db.DB, error) {
+	sock, err := ownerSocket(root)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	return db.DialContextAdHoc(ctx, sock)
+}
+
 // configFilesPresent reports whether any file the import consumes, or a hooks
 // directory, is present in dir.
 func configFilesPresent(dir string) bool {
