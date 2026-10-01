@@ -25,6 +25,11 @@ type scriptRunner struct {
 	mu    sync.Mutex
 	specs []spawn.ProcSpec
 	alive bool
+	// gateExit is the scripted exit code per gate run, keyed by the gate log
+	// path ExitCode receives: a gate the test has completed with a chosen code,
+	// a closed builder round's specs never land here. A dead process whose
+	// logPath is not here is today's builder exit, code 0.
+	gateExit map[string]int
 }
 
 func (r *scriptRunner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
@@ -44,7 +49,58 @@ func (r *scriptRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, err
 func (r *scriptRunner) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath string) (int, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return 0, !r.alive
+	if r.alive {
+		return 0, false
+	}
+	if code, ok := r.gateExit[logPath]; ok {
+		return code, true
+	}
+	return 0, true
+}
+
+// runningSpec reports the spec of the process the fake runner currently holds
+// alive, so a test can tell which served step is in flight. ok is false when
+// nothing is running: a finished builder round and a completed gate both leave
+// the runner dead.
+func (r *scriptRunner) runningSpec() (spawn.ProcSpec, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.alive || len(r.specs) == 0 {
+		return spawn.ProcSpec{}, false
+	}
+	return r.specs[len(r.specs)-1], true
+}
+
+// completeGate is the helper the e2e calls to finish a served chain's gate: it
+// marks the gate run logging to logPath dead with exit code code, so the next
+// server tick reads the scripted code through ExitCode and records pass or
+// fail. Keying by logPath is the same seam ExitCode reads.
+func (r *scriptRunner) completeGate(t *testing.T, logPath string, code int) {
+	t.Helper()
+	// A real gate writes its output to the log the runner was started with, and
+	// that log is what the server serves back to the client (and what
+	// gateSignature and the repair plan read). The fake runner writes one line
+	// so the pulled gate log is a real file, then lands the scripted exit.
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatalf("completeGate: create %s: %v", filepath.Dir(logPath), err)
+	}
+	if err := os.WriteFile(logPath, []byte(fmt.Sprintf("scripted gate output for exit %d\n", code)), 0o644); err != nil {
+		t.Fatalf("completeGate: write %s: %v", logPath, err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.gateExit == nil {
+		r.gateExit = map[string]int{}
+	}
+	r.gateExit[logPath] = code
+	r.alive = false
+}
+
+// isGateSpec reports whether spec is a gate run rather than a served builder
+// round: the gate's own argv is `sh -c <check> 2>&1` (relevo's startGate),
+// while a builder round's argv is the harness's own launch line.
+func isGateSpec(spec spawn.ProcSpec) bool {
+	return len(spec.Argv) >= 2 && spec.Argv[0] == "sh" && spec.Argv[1] == "-c"
 }
 
 func (r *scriptRunner) Kill(ctx context.Context, h spawn.ProcHandle, _ string) error {
