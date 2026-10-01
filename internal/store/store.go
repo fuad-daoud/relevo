@@ -100,6 +100,11 @@ func NewShared(root, owner string, d *db.DB) *Store {
 	return &Store{root: root, owner: owner, shared: d}
 }
 
+// Owner is the store's scope: "" for a local store, the enrolled client id for
+// a shared one. Callers that write a row the store itself scopes -- a chain row,
+// which no prepareSave stamps -- carry it so the row stays readable.
+func (s *Store) Owner() string { return s.owner }
+
 // maxLog is the binding log's entry cap: logCap when a test set one, else the
 // package default.
 func (s *Store) maxLog() int {

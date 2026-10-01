@@ -166,6 +166,10 @@ func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, wo
 	if err != nil {
 		return ChainResult{}, err
 	}
+	// The store's own scope stamps the chain row, exactly as prepareSave stamps
+	// every member binding: a shared store scopes every read to its owner, so a
+	// row written with no owner is invisible to its own chain's reads.
+	row.Owner = rt.Store.Owner()
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		return tx.CreateChain(row, built)
 	}); err != nil {

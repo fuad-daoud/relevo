@@ -178,6 +178,13 @@ func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "round not closed")
 		return
 	}
+	if b.Branch == "" {
+		// A branchless member -- a chain reader sharing the builder's tree --
+		// has no branch to bundle.
+		s.mu.Unlock()
+		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "no branch")
+		return
+	}
 
 	bare := b.Serve.BareRepo
 	refs := []string{"refs/heads/" + b.Branch}
