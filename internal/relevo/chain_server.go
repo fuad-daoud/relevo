@@ -17,8 +17,10 @@ func chainOnServer(c db.ChainRow) bool {
 }
 
 // serverChainMember reports whether name is a member binding of a chain that
-// runs on a server. The client's own machinery leaves such a member to the
-// chain pull: its rounds are closed on the server, not collected here.
+// runs on a server. The per-binding machinery observes such a member's live
+// round, but never collects it: the chain pull installs its closed rounds and
+// acks them, and the stop and done paths leave its release to the chain's own
+// verbs.
 func serverChainMember(tx *store.Tx, name string) bool {
 	c, err := tx.ChainByMember(name)
 	if err != nil {

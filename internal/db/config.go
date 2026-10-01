@@ -182,6 +182,14 @@ func (t *Tx) ConfigImportRecord(name, sourcePath string, body []byte, now time.T
 	return nil
 }
 
+// ReadOnlyHoldBudget is the longest a read-only caller may hold the database
+// before it must answer: `db query`'s --timeout default and its cap. The
+// writable open's lock wait is derived from it, so the wait outlasts any
+// read-only deadline by a margin and a slow reader never makes a daemon start
+// fail its open. It is defined beside the read-only open so the two are one
+// expression.
+const ReadOnlyHoldBudget = 12 * time.Second
+
 // OpenReadOnly opens path without ever migrating or writing it, for readers
 // that must not create or change the database; a missing file's error wraps
 // os.ErrNotExist.
@@ -206,10 +214,38 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open readonly %s: %w", path, serr)
 	}
 
-	dsn := fileDSN(path, "mode=ro&_pragma=busy_timeout(5000)")
-	sqlDB, err := sql.Open("sqlite", dsn)
+	busy := time.Duration(busyTimeoutMS) * time.Millisecond
+
+	// A read-only open takes the same path lock but never waits for it: a
+	// caller that must not write needs an answer now, and ErrLocked lets it
+	// fall back to the owner.
+	first, err := acquireHandle(path, false)
 	if err != nil {
-		return nil, fmt.Errorf("db: open readonly %s: %w: %w", path, ErrOpen, err)
+		return nil, fmt.Errorf("db: open readonly %s: %w", path, err)
+	}
+	defer func() {
+		if err != nil {
+			releaseHandle(path)
+		}
+	}()
+	// A read-only open never creates, but it may still be the first handle on
+	// the path: it signals so a writable handle that is waiting for the first
+	// open does not wait forever. It never waits itself, because it needs an
+	// answer now to fall back to the owner.
+	if first {
+		defer signalCreated(path)
+	}
+
+	// The marker check runs after the lock and before the pool: a held file
+	// still reports ErrLocked, and a refused file never opens the engine, so no
+	// -wal is created beside an unconverted database.
+	if err = requireConverted(path); err != nil {
+		return nil, err
+	}
+
+	sqlDB, err := openPool(path, busy, true)
+	if err != nil {
+		return nil, fmt.Errorf("db: open readonly %s: %w: %w", path, engineSentinel(err), err)
 	}
 	defer func() {
 		if err != nil {
@@ -220,7 +256,7 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 	}()
 
 	if err = ping(sqlDB); err != nil {
-		return nil, fmt.Errorf("db: open readonly %s: ping: %w: %w", path, ErrOpen, err)
+		return nil, fmt.Errorf("db: open readonly %s: ping: %w: %w", path, engineSentinel(err), err)
 	}
 
 	have, err := maxVersion(sqlDB)
@@ -232,7 +268,7 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open readonly %s: migrations: %w: %w", path, ErrOpen, err)
 	}
 
-	return &DB{sqlDB: sqlDB, newer: have > know, have: have, know: know, origin: o.Origin}, nil
+	return &DB{sqlDB: sqlDB, newer: have > know, have: have, know: know, origin: o.Origin, path: path, busy: busy, readOnly: true}, nil
 }
 
 // isMissingTable reports whether err is sqlite's "no such table" for a schema

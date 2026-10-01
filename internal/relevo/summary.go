@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
@@ -22,14 +24,21 @@ func reportPathFor(rt Runtime, b store.Binding) string {
 	return rt.Store.ReportPath(b.Name, b.Round)
 }
 
-// writeReaderSummary records a reader round's report. A reader's final message
-// is its output file (<label>.md): when the runner did not write one itself, it
-// is written here from the stream's last assistant text, rendered with the
+// writeReaderSummary records a reader round's report. A reader's output file
+// (<label>.md) is written here when the runner did not write one itself: it is
+// taken from the last message that carried a relevo block, kept whole so the
+// close can parse its tail and strip it afterwards, or from the stream's last
+// assistant text when no message carried a block. Either is rendered with the
 // harness kind of the last segment that ran, which a mid-round switch can
 // change. A runner that wrote only summary.md does not keep it as the report:
-// the old file stays an extra artifact. An empty final message writes nothing,
-// so the round closes without a report exactly as a writer that wrote none. A
-// writer is untouched: it writes its own report.
+// the old file stays an extra artifact. An empty text writes nothing, so the
+// round closes without a report exactly as a writer that wrote none. A writer
+// is untouched: it writes its own report.
+//
+// A chain's reviewer and security members are the exception: their report is
+// the message that carried the block their seed demands (a recap after the
+// block would otherwise hide the whole review), and the file is relevo's to
+// rewrite with that message, stripped of the block the parse already read.
 //
 // The path a close should record is returned either way, so a caller can stat
 // what it is about to queue. An error is the write's own; the callers log it
@@ -40,19 +49,26 @@ func writeReaderSummary(rt Runtime, b store.Binding) (string, error) {
 	if b.Shape != store.ShapeReader {
 		return path, nil
 	}
+
+	chainReader := chainReaderPart(rt, b.Name)
+	stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
+	text := readerOutputText(lastStreamKind(b), stream, chainReader)
+
 	// A regular file at the output path is the runner's own report and is left
-	// alone. Anything else there -- a symlink a runner planted, a directory, a
-	// fifo -- must not be followed: it is refused and nothing is created.
+	// alone -- except for a chain reader, whose report relevo owns. Anything
+	// else there -- a symlink a runner planted, a directory, a fifo -- must not
+	// be followed: it is refused and nothing is created.
 	if fi, err := os.Lstat(path); err == nil {
-		if fi.Mode().IsRegular() {
+		if !fi.Mode().IsRegular() {
+			return path, fmt.Errorf("reader output %s is not a regular file", path)
+		}
+		if !chainReader || text == "" {
 			return path, nil
 		}
-		return path, fmt.Errorf("reader output %s is not a regular file", path)
+		return path, replaceReaderOutput(path, []byte(text+"\n"))
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return path, err
 	}
-	stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
-	text := transcript.FinalText(lastStreamKind(b), stream)
 	if text == "" {
 		return path, nil
 	}
@@ -70,6 +86,41 @@ func writeReaderSummary(rt Runtime, b store.Binding) (string, error) {
 		return path, err
 	}
 	return path, writeReaderOutput(path, text)
+}
+
+// readerOutputText is the message a reader's output file is written from. A
+// chain reviewer or security member's block-carrying message is returned with
+// its block stripped: relevo rewrites the file the mastermind reads, and the
+// parse already read the block. Any other reader prefers the last message that
+// carried a block, block kept so the close can parse and strip it, falling back
+// to the stream's last assistant text when no message carried one.
+func readerOutputText(kind string, stream []byte, chainReader bool) string {
+	withBlock := transcript.LastWithBlock(kind, stream)
+	if chainReader {
+		if withBlock != "" {
+			return string(reporttail.StripTail([]byte(withBlock)))
+		}
+		return transcript.FinalText(kind, stream)
+	}
+	if withBlock != "" {
+		return withBlock
+	}
+	return transcript.FinalText(kind, stream)
+}
+
+// chainReaderPart reports whether name is the reviewer or the security member
+// of a chain: the readers whose final message must carry the chain's block, so
+// their saved artifact is relevo's to write from the block-carrying message.
+func chainReaderPart(rt Runtime, name string) bool {
+	c, err := rt.Store.ChainByMember(name)
+	if err != nil {
+		return false
+	}
+	switch chainPartOf(c, name) {
+	case chain.MemberReviewer, chain.MemberSecurity:
+		return true
+	}
+	return false
 }
 
 // writeReaderOutput creates path and writes text with a trailing newline. The

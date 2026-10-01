@@ -58,8 +58,18 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 	}
 
 	rows := StatusLineRows(r, now)
+	nameW, statusW, clockW := statusLineColumns(rows)
 
-	nameW, statusW, clockW := 0, 0, 0
+	var sb strings.Builder
+	for _, row := range rows {
+		sb.WriteString(renderedStatusLineRow(row, nameW, statusW, clockW, columns))
+	}
+	return sb.String()
+}
+
+// statusLineColumns is the shared name, status and clock column widths of a row
+// set, so the status and the clock never move when another row's text changes.
+func statusLineColumns(rows []StatusLineRow) (nameW, statusW, clockW int) {
 	for _, row := range rows {
 		if w := utf8.RuneCountInString(row.Name); w > nameW {
 			nameW = w
@@ -71,21 +81,19 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 			clockW = w
 		}
 	}
-
-	var sb strings.Builder
-	for _, row := range rows {
-		sb.WriteString(renderedStatusLineRow(row, nameW, statusW, clockW, columns))
-	}
-	return sb.String()
+	return nameW, statusW, clockW
 }
 
-// renderedStatusLineRow lays out one StatusLineRow at the shared column
-// widths. The tone colours only the visible status text; the padding counts
-// the uncoloured runes, so the colour never widens the column.
-func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns int) string {
-	dotColoured := ansiDim + "○" + ansiReset
+// statusLineRowText lays out one StatusLineRow's visible text at the shared
+// column widths. Non-empty dotColour and statusColour wrap the dot and the
+// status, so padding counts the uncoloured runes; "" for both is the plain path.
+func statusLineRowText(row StatusLineRow, nameW, statusW, clockW, columns int, dotColour, statusColour string) string {
+	dot := "○"
 	if row.NeedsYou {
-		dotColoured = ansiNeedsYou + "●" + ansiReset
+		dot = "●"
+	}
+	if dotColour != "" {
+		dot = dotColour + dot + ansiReset
 	}
 
 	round := row.Round
@@ -102,19 +110,15 @@ func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns in
 		if row.Reason != "" {
 			mid += " · " + row.Reason
 		}
+		if row.Live != nil {
+			mid += fmt.Sprintf(" · +%d/-%d in %d", row.Live.Added, row.Live.Removed, row.Live.Files)
+			if row.Live.Shared {
+				mid += " (shared)"
+			}
+		}
 		if row.Tokens != "" {
 			mid += " · " + row.Tokens
 		}
-	}
-
-	colour := ""
-	switch row.Tone {
-	case "needs":
-		colour = ansiNeedsYou
-	case "report":
-		colour = ansiReportIn
-	case "phase":
-		colour = ansiDim
 	}
 
 	leftW := 2 + nameW + 2
@@ -124,18 +128,51 @@ func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns in
 		// Unpadded fallback: a row this narrow cannot afford three aligned
 		// columns, so the status and the clock follow the middle cell.
 		status := row.Status
-		if colour != "" {
-			status = colour + status + ansiReset
+		if statusColour != "" {
+			status = statusColour + status + ansiReset
 		}
-		return dotColoured + " " + row.Name + "  " + mid + " · " + status + " · " + row.Clock + "\n"
+		return dot + " " + row.Name + "  " + mid + " · " + status + " · " + row.Clock + "\n"
 	}
-
 	status := pad(row.Status, statusW)
-	if colour != "" {
-		status = colour + status + ansiReset
+	if statusColour != "" {
+		status = statusColour + status + ansiReset
 	}
-	right := status + "  " + padLeft(row.Clock, clockW)
-	return dotColoured + " " + pad(row.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + right + "\n"
+	return dot + " " + pad(row.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + status + "  " + padLeft(row.Clock, clockW) + "\n"
+}
+
+// renderedStatusLineRow lays out one StatusLineRow with its SGR codes: the dot
+// keeps its dim or needs colour, and the tone colours only the visible status
+// text, so the padding never counts the colour and the column never widens.
+func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns int) string {
+	dotColour := ansiDim
+	if row.NeedsYou {
+		dotColour = ansiNeedsYou
+	}
+	statusColour := ""
+	switch row.Tone {
+	case "needs":
+		statusColour = ansiNeedsYou
+	case "report":
+		statusColour = ansiReportIn
+	case "phase":
+		statusColour = ansiDim
+	}
+	return statusLineRowText(row, nameW, statusW, clockW, columns, dotColour, statusColour)
+}
+
+// PlainStatusLineRows returns each row's visible text, in order, with no SGR
+// codes and no trailing newline: the row exactly as RenderStatusLine renders it
+// at the same column widths. columns <= 0 is the renderer's default width (80).
+func PlainStatusLineRows(rows []StatusLineRow, columns int) []string {
+	if columns <= 0 {
+		columns = 80
+	}
+	nameW, statusW, clockW := statusLineColumns(rows)
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, strings.TrimSuffix(statusLineRowText(row, nameW, statusW, clockW, columns, "", ""), "\n"))
+	}
+	return out
 }
 
 // RenderMasterMindLine is the statusline's first line: the mastermind's own name,
@@ -185,6 +222,34 @@ func phase(b BindingStatus) string {
 	return ""
 }
 
+// ActivityWord is the runner's own activity word a row may show while its round
+// is in flight, or "" when the runner's status carries no word a row may claim.
+// A working runner reads "working", or "quiet X" once the progress sampler has
+// gone silent (QuietFor is set). The definite words -- "stalled X", "exploring
+// X", "gating X", "exited N", the bare "exited", "running", "queued (...)" and
+// the bare "queued" -- pass through verbatim. Every other word returns "": a
+// runner that is idle, unknown or "", and words a row must not claim as its own
+// activity (unreachable, a credential word, cert, closed, gone). The caller
+// keeps its phase when this is empty.
+func ActivityWord(b BindingStatus) string {
+	switch s := b.BuilderStatus; {
+	case s == "working":
+		if b.QuietFor != "" {
+			return "quiet " + b.QuietFor
+		}
+		return "working"
+	case strings.HasPrefix(s, "stalled "),
+		strings.HasPrefix(s, "exploring "),
+		strings.HasPrefix(s, "gating "):
+		return s
+	case s == "exited", strings.HasPrefix(s, "exited "):
+		return s
+	case s == "running", s == "queued", strings.HasPrefix(s, "queued "):
+		return s
+	}
+	return ""
+}
+
 func waiting(b BindingStatus) string {
 	if b.Detail != "" {
 		return b.Detail
@@ -228,6 +293,15 @@ func rowStatus(b BindingStatus, needsYou, reportIn bool) (status, tone string) {
 			return status, "report"
 		case store.KindQuestion:
 			return "QUESTION IN", "report"
+		}
+	}
+	// While a round is in flight the runner's own word takes the phase slot: a
+	// quiet or stalled runner says more than the payload phase, which for a
+	// working round is the bare "prompt sent". A closed round, a row with no
+	// round and a runner with no definite word still read the phase.
+	if !b.RoundStart.IsZero() && b.RoundEnd.IsZero() {
+		if word := ActivityWord(b); word != "" {
+			return word, "phase"
 		}
 	}
 	status = phase(b)
@@ -343,9 +417,9 @@ type StatusLineRow struct {
 	Display  string `json:"display"`
 	NeedsYou bool   `json:"needs_you"`
 	// ReportIn is true when the newest to-mastermind report/question has been
-	// delivered: it is a to-mastermind payload and nothing is pending on the
-	// mastermind. A delivered report is handled, so the consumer shows REPORT IN
-	// rather than NEEDS YOU.
+	// delivered and not consumed by a chain: it is a to-mastermind payload and
+	// nothing is pending on the mastermind. A delivered report is handled, so
+	// the consumer shows REPORT IN rather than NEEDS YOU.
 	ReportIn    bool   `json:"report_in"`
 	ReportRound int    `json:"report_round,omitempty"`
 	Harness     string `json:"harness"`
@@ -353,13 +427,18 @@ type StatusLineRow struct {
 	// On is what the row's actor runs on, as "actor on X" names it: the
 	// candidate's short name, else its harness when the set no longer
 	// holds the token, with "@server" for a remote runner.
-	On       string `json:"on"`
-	Waiting  string `json:"waiting"`
-	Clock    string `json:"clock"`
-	Tokens   string `json:"tokens"`
-	LastKind string `json:"last_kind"`
-	LastTS   string `json:"last_ts"`
-	Route    string `json:"route"`
+	On      string `json:"on"`
+	Waiting string `json:"waiting"`
+	Clock   string `json:"clock"`
+	Tokens  string `json:"tokens"`
+	// Live is the open round's live diff against its baseline tree, copied
+	// from BindingStatus.Live, rendered as the middle's "· +A/-R in F"
+	// segment. Nil when no round is open, the baseline was never recorded or
+	// the git read failed, so the row stays byte-identical to before.
+	Live     *LiveDiff `json:"live,omitempty"`
+	LastKind string    `json:"last_kind"`
+	LastTS   string    `json:"last_ts"`
+	Route    string    `json:"route"`
 	// Actor is who runs the binding: b.Role when it is set, else "builder",
 	// because a builder binding stores an empty role (normRole).
 	Actor string `json:"actor"`
@@ -377,6 +456,11 @@ type StatusLineRow struct {
 	// chain: "chain x · plan 2/4 · reviewing · 1 correction". Empty on every
 	// ordinary row, which then keeps the round-and-actor middle.
 	Chain string `json:"chain,omitempty"`
+	// Text is the row exactly as relevo status --line renders it, without SGR
+	// codes and without the trailing newline, laid out at the renderer's
+	// default width. Only the --line --json path fills it; it is the OpenCode
+	// sidebar's row, so no consumer composes one.
+	Text string `json:"text,omitempty"`
 }
 
 // StatusLineDoc is the top-level document emitted by relevo status --line --json.
@@ -450,11 +534,13 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 	if toMasterMindPayload {
 		reportRound = b.LastPayload.Round
 	}
-	reportIn := toMasterMindPayload && !pending
+	reportIn := toMasterMindPayload && !pending && !isConsumedPayload(b.LastPayload)
 	status, tone := rowStatus(b, needsYou, reportIn)
 	reason := ""
 	if needsYou {
 		reason = waiting(b)
+	} else if isConsumedPayload(b.LastPayload) {
+		reason = b.LastPayload.Note
 	} else if b.Detail != "" {
 		reason = b.Detail
 	}
@@ -471,6 +557,7 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		Waiting:     waiting(b),
 		Clock:       roundClock(b, now),
 		Tokens:      roundTokens(b),
+		Live:        b.Live,
 		LastKind:    lastKind,
 		LastTS:      lastTS,
 		Route:       b.MasterMindRoute,
@@ -482,7 +569,7 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 	}
 }
 
-// statusLineRowOfChain builds the statusline row that stands in for a live
+// statusLineRowOfChain builds the statusline row that stands in for a
 // chain: one entry per chain in place of its members' rows. The middle is the
 // chain's plan segment, and the status column follows the chain -- NEEDS YOU
 // while it waits on a human, DONE once it finished, ACTIVE while it works.

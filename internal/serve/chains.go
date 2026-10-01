@@ -430,7 +430,7 @@ func (s *Server) handleResumeChain(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, remote.CodeChainRunning, "chain is running")
 		return
 	case chain.StatusDone:
-		writeErr(w, http.StatusConflict, remote.CodeInvalid, "chain is done")
+		writeErr(w, http.StatusConflict, remote.CodeChainDone, "chain is done")
 		return
 	}
 
@@ -463,13 +463,19 @@ func (s *Server) handleResumeChain(w http.ResponseWriter, r *http.Request) {
 // call, so these arms are the backstop for a chain that changed under the lock.
 func writeChainResumeError(w http.ResponseWriter, err error) {
 	msg := err.Error()
+	var open *relevo.RoundOpenError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+	case errors.As(err, &open):
+		// The target member's round is open and alive: the client rebuilds the
+		// typed refusal so the CLI prints the conflict and its `relevo stop
+		// <member>` next line, exactly as a local refusal does.
+		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, msg)
 	case strings.Contains(msg, "is running"):
 		writeErr(w, http.StatusConflict, remote.CodeChainRunning, msg)
 	case strings.Contains(msg, "is done"):
-		writeErr(w, http.StatusConflict, remote.CodeInvalid, msg)
+		writeErr(w, http.StatusConflict, remote.CodeChainDone, msg)
 	default:
 		writeErr(w, http.StatusInternalServerError, "", msg)
 	}
@@ -515,9 +521,12 @@ func (s *Server) handleDoneChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := relevo.ChainDone(r.Context(), rt, name); err != nil {
+		var open *relevo.RoundOpenError
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+		case errors.As(err, &open):
+			writeErr(w, http.StatusConflict, remote.CodeRoundOpen, err.Error())
 		case errors.Is(err, relevo.ErrChainRunning):
 			writeErr(w, http.StatusConflict, remote.CodeChainRunning, err.Error())
 		default:

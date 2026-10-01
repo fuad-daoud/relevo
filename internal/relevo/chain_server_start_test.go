@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -191,6 +193,38 @@ func TestChainStartServerRefusesAServerWithoutTheFeature(t *testing.T) {
 			assertNothingCreated(t, rt, fg, "shop")
 		})
 	}
+}
+
+// TestChainStartServerRetypesAnUnknownActor pins the create refusal's class: a
+// server's 400 unknown_actor is rebuilt as ErrUnknownRole, so a bad actor is
+// the same policy refusal a local start gives -- never an internal failure.
+func TestChainStartServerRetypesAnUnknownActor(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	fr.createChainErr = &client.HTTPError{
+		Status: http.StatusBadRequest,
+		Body: remote.ErrorBody{
+			Code:    remote.CodeUnknownActor,
+			Message: `unknown actor "ghost" (known: [builder reviewer]): unknown actor`,
+		},
+	}
+	rt, fg, _ := chainServerRuntime(t, fr)
+
+	_, err := ChainStart(context.Background(), rt, chainServerOpts(t))
+	if err == nil {
+		t.Fatal("ChainStart --server = nil, want the unknown-actor refusal")
+	}
+	if !errors.Is(err, ErrUnknownRole) {
+		t.Errorf("err = %v, want errors.Is(err, ErrUnknownRole)", err)
+	}
+	if !strings.Contains(err.Error(), `unknown actor "ghost"`) {
+		t.Errorf("err = %q, want the server's own message kept", err)
+	}
+	if len(fg.createBranchCalls) != 0 {
+		t.Errorf("a refused create must cut no local branch: %v", fg.createBranchCalls)
+	}
+	assertNothingCreated(t, rt, fg, "shop")
 }
 
 // TestChainStartServerPostsOneCreateAndRecordsTheMirror pins the whole start:
@@ -382,40 +416,84 @@ func TestServerChainMirrorNeverAdvancesLocally(t *testing.T) {
 	}
 }
 
-// TestServerChainMemberSkipsTheBindingCatchUp pins the four per-binding
-// guards: the daemon prefetch answers none, the per-binding reconcile changes
-// nothing, and the read verbs' sync makes no GetBinding call for a mirror
-// member.
-func TestServerChainMemberSkipsTheBindingCatchUp(t *testing.T) {
+// TestServerChainMemberObservesTheLiveRound pins the observe half of the
+// split: the daemon prefetch and the read verbs' sync both fetch and apply a
+// member's live view -- status, live facts and the mirrored builder log -- so
+// the cockpit shows the running round the server drives.
+func TestServerChainMemberObservesTheLiveRound(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	fr := &fakeRemote{getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, ClosedRound: 1}}
+	const logBody = "builder log line 1\n"
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			Name: "shop", Round: 1, RoundState: remote.RoundRunning,
+			Live: &remote.LiveView{
+				Tail: []string{"building the plan"},
+				Diff: &remote.DiffStat{Files: 1, Added: 2, Removed: 0},
+			},
+		},
+		roundFileFromFunc: func(context.Context, string, string, int, string, int64) (io.ReadCloser, remote.FileRange, error) {
+			return io.NopCloser(strings.NewReader(logBody)), remote.FileRange{}, nil
+		},
+	}
 	rt.Remote = fr
 	b := seedServerChain(t, rt, "shop")
 
-	if pre := NewDaemon(rt, time.Minute).prefetchRemote(context.Background(), b); pre != nil {
-		t.Errorf("prefetchRemote = %+v, want nil for a mirror member", pre)
-	}
-	var next store.Binding
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		var rerr error
-		next, rerr = reconcileRemote(context.Background(), rt, tx, b, nil)
-		return rerr
-	})
-	if err != nil {
-		t.Fatalf("reconcileRemote on a mirror member: %v", err)
-	}
-	if !store.SameBinding(next, b) {
-		t.Errorf("reconcileRemote changed the mirror: %+v -> %+v", b, next)
-	}
+	// The read verbs' pass observes the live view on its own, from the seed.
 	if _, err := SyncRemote(context.Background(), rt); err != nil {
 		t.Fatalf("SyncRemote: %v", err)
 	}
-	for _, c := range fr.calls {
-		if strings.HasPrefix(c, "GetBinding") {
-			t.Errorf("calls = %v, want no GetBinding for a mirror member", fr.calls)
+	assertServerChainMemberLive(t, rt, logBody)
+
+	// The daemon's tick observes it too: prefetch unlocked, apply and save
+	// under the lock.
+	pre := NewDaemon(rt, time.Minute).prefetchRemote(context.Background(), b)
+	if pre == nil {
+		t.Fatal("prefetchRemote = nil, want a live fetch for a member")
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		next, rerr := reconcileRemote(context.Background(), rt, tx, b, pre)
+		if rerr != nil {
+			return rerr
 		}
+		return tx.Save(next)
+	}); err != nil {
+		t.Fatalf("reconcileRemote on a member: %v", err)
+	}
+	assertServerChainMemberLive(t, rt, logBody)
+
+	fetched := false
+	for _, c := range fr.calls {
+		if c == "GetBinding:zen:shop" {
+			fetched = true
+		}
+	}
+	if !fetched {
+		t.Errorf("calls = %v, want GetBinding:zen:shop", fr.calls)
+	}
+}
+
+// assertServerChainMemberLive asserts the stored builder member carries the
+// observed live round: its status word, its live facts and its mirrored log.
+func assertServerChainMemberLive(t *testing.T, rt Runtime, logBody string) {
+	t.Helper()
+	b := chainBinding(t, rt, "shop")
+	if b.Builder.RemoteStatus != string(remote.RoundRunning) {
+		t.Errorf("RemoteStatus = %q, want %q", b.Builder.RemoteStatus, remote.RoundRunning)
+	}
+	if b.Builder.RemoteLive == nil {
+		t.Fatal("RemoteLive = nil, want the live facts")
+	}
+	if got := b.Builder.RemoteLive.Tail; len(got) != 1 || got[0] != "building the plan" {
+		t.Errorf("RemoteLive.Tail = %v, want [building the plan]", got)
+	}
+	body, err := rt.Store.ReadFile(rt.Store.BuilderLogPath("shop", 1))
+	if err != nil {
+		t.Fatalf("read mirrored log: %v", err)
+	}
+	if string(body) != logBody {
+		t.Errorf("mirrored log = %q, want %q", body, logBody)
 	}
 }
 

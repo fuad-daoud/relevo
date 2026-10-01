@@ -647,6 +647,47 @@ var rowStatusCases = []struct {
 		wantTone:   "report",
 	},
 	{
+		name: "consumed writer report",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            4,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, Round: 4, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "report in",
+		wantTone:   "phase",
+		wantReason: "consumed by chain 1",
+	},
+	{
+		name: "consumed reader artifact",
+		binding: BindingStatus{
+			Name:             "atlas",
+			Round:            2,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			Role:             "reviewer",
+			Shape:            store.ShapeReader,
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, Round: 2, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "artifact in",
+		wantTone:   "phase",
+		wantReason: "consumed by chain 1",
+	},
+	{
+		name: "consumed question",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            3,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindQuestion, Direction: store.DirToMasterMind, Round: 3, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "question in",
+		wantTone:   "phase",
+		wantReason: "consumed by chain 1",
+	},
+	{
 		name: "report still in flight on a live deliverer route",
 		binding: BindingStatus{
 			Name:                "api",
@@ -700,6 +741,81 @@ var rowStatusCases = []struct {
 		wantStatus: "NEEDS YOU",
 		wantTone:   "needs",
 		wantReason: "round 1 was open",
+	},
+	{
+		name: "in-flight working runner reads quiet",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			BuilderStatus:    "working",
+			QuietFor:         "3m",
+			RoundStart:       rsNow.Add(-4 * time.Minute),
+			LastPayload:      &LastEvent{Kind: store.KindPrompt, Direction: store.DirToBuilder, TS: rsNow.Add(-4 * time.Minute)},
+		},
+		wantStatus: "quiet 3m",
+		wantTone:   "phase",
+	},
+	{
+		name: "in-flight stalled runner reads stalled",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			BuilderStatus:    "stalled 17m",
+			RoundStart:       rsNow.Add(-20 * time.Minute),
+			LastPayload:      &LastEvent{Kind: store.KindPrompt, Direction: store.DirToBuilder, TS: rsNow.Add(-20 * time.Minute)},
+		},
+		wantStatus: "stalled 17m",
+		wantTone:   "phase",
+	},
+	{
+		name: "closed round keeps the phase",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			BuilderStatus:    "working",
+			QuietFor:         "3m",
+			RoundStart:       rsNow.Add(-10 * time.Minute),
+			RoundEnd:         rsNow.Add(-2 * time.Minute),
+			LastPayload:      &LastEvent{Kind: store.KindPrompt, Direction: store.DirToBuilder, TS: rsNow.Add(-10 * time.Minute)},
+		},
+		wantStatus: "prompt sent",
+		wantTone:   "phase",
+	},
+	{
+		name: "no RoundStart keeps the phase",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			BuilderStatus:    "working",
+			QuietFor:         "3m",
+			LastPayload:      &LastEvent{Kind: store.KindPrompt, Direction: store.DirToBuilder, TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "prompt sent",
+		wantTone:   "phase",
+	},
+	{
+		name: "in-flight NEEDS YOU outranks the activity word",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "NEEDS YOU",
+			BuilderCandidate: "agy",
+			BuilderStatus:    "working",
+			QuietFor:         "3m",
+			RoundStart:       rsNow.Add(-4 * time.Minute),
+			LastPayload:      &LastEvent{Kind: store.KindPrompt, Direction: store.DirToBuilder, TS: rsNow.Add(-4 * time.Minute)},
+		},
+		wantStatus: "NEEDS YOU",
+		wantTone:   "needs",
+		wantReason: "prompt sent",
 	},
 }
 
@@ -1689,5 +1805,309 @@ func TestPhaseReadsBothPromptSpellings(t *testing.T) {
 		if got != "prompt sent" {
 			t.Errorf("phase(%q) = %q, want \"prompt sent\"", kind, got)
 		}
+	}
+}
+
+// TestActivityWord pins the one activity rule: a working runner reads working
+// or, once the progress sampler has gone silent, "quiet X"; the definite words
+// pass through verbatim; every other word is empty so the caller keeps its
+// phase.
+func TestActivityWord(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		b    BindingStatus
+		want string
+	}{
+		{name: "working", b: BindingStatus{BuilderStatus: "working"}, want: "working"},
+		{name: "working quiet", b: BindingStatus{BuilderStatus: "working", QuietFor: "3m"}, want: "quiet 3m"},
+		{name: "stalled", b: BindingStatus{BuilderStatus: "stalled 17m"}, want: "stalled 17m"},
+		{name: "exploring", b: BindingStatus{BuilderStatus: "exploring 22m"}, want: "exploring 22m"},
+		{name: "gating", b: BindingStatus{BuilderStatus: "gating 1m12s"}, want: "gating 1m12s"},
+		{name: "exited code", b: BindingStatus{BuilderStatus: "exited 3"}, want: "exited 3"},
+		{name: "exited bare", b: BindingStatus{BuilderStatus: "exited"}, want: "exited"},
+		{name: "running", b: BindingStatus{BuilderStatus: "running"}, want: "running"},
+		{name: "queued bare", b: BindingStatus{BuilderStatus: "queued"}, want: "queued"},
+		{name: "queued full", b: BindingStatus{BuilderStatus: "queued (2/4 busy on contabo, 3 ahead, 5m)"}, want: "queued (2/4 busy on contabo, 3 ahead, 5m)"},
+		{name: "idle", b: BindingStatus{BuilderStatus: "idle"}, want: ""},
+		{name: "unknown", b: BindingStatus{BuilderStatus: "unknown"}, want: ""},
+		{name: "empty", b: BindingStatus{}, want: ""},
+		{name: "gone", b: BindingStatus{BuilderStatus: "gone"}, want: ""},
+		{name: "unreachable", b: BindingStatus{BuilderStatus: "unreachable"}, want: ""},
+		{name: "closed", b: BindingStatus{BuilderStatus: "closed"}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ActivityWord(tt.b); got != tt.want {
+				t.Errorf("ActivityWord(%q, quiet %q) = %q, want %q", tt.b.BuilderStatus, tt.b.QuietFor, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestStatusLineRowsLive pins the open round's live diff: the middle carries
+// "· +A/-R in F" before the token cell, "(shared)" for a shared tree, and the
+// row's JSON carries the live object; a row with no live diff keeps its middle
+// and its JSON exactly as before.
+func TestStatusLineRowsLive(t *testing.T) {
+	t.Parallel()
+
+	live := BindingStatus{
+		Name:             "webshop",
+		Round:            4,
+		Display:          "ACTIVE",
+		BuilderCandidate: "opencode",
+		BuilderStatus:    "working",
+		QuietFor:         "3m",
+		RoundStart:       baseTime.Add(-4 * time.Minute),
+		LastPayload:      &LastEvent{TS: baseTime.Add(-4 * time.Minute), Kind: store.KindPrompt, Direction: store.DirToBuilder},
+		LiveUsage: &usage.Usage{Harness: "opencode", Model: "m",
+			Tokens: usage.Tokens{In: 2_000, CacheRead: 1_000, Out: 100}, Samples: 1},
+		Live: &LiveDiff{Files: 6, Added: 142, Removed: 8},
+	}
+
+	t.Run("live row", func(t *testing.T) {
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{live}}, baseTime)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].Live == nil || *rows[0].Live != (LiveDiff{Files: 6, Added: 142, Removed: 8}) {
+			t.Fatalf("Live = %+v, want {6 142 8 false}", rows[0].Live)
+		}
+		plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{live}}, baseTime, 120))[0])
+		t.Logf("live row: %q", plain)
+		if !strings.Contains(plain, "+142/-8 in 6 · 3k tok") {
+			t.Errorf("middle must carry the live diff before the token cell: %q", plain)
+		}
+		if !strings.Contains(plain, "quiet 3m") {
+			t.Errorf("status column must carry the runner's quiet word: %q", plain)
+		}
+	})
+
+	t.Run("shared live tree", func(t *testing.T) {
+		b := live
+		b.Live = &LiveDiff{Files: 6, Added: 142, Removed: 8, Shared: true}
+		plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
+		if !strings.Contains(plain, "+142/-8 in 6 (shared)") {
+			t.Errorf("a shared tree must say so: %q", plain)
+		}
+	})
+
+	t.Run("JSON carries live", func(t *testing.T) {
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{live}}, baseTime)
+		data, err := json.Marshal(StatusLineDoc{Now: baseTime.UTC(), Rows: rows})
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		if !strings.Contains(string(data), `"live":{"files":6,"added":142,"removed":8}`) {
+			t.Errorf("json must carry the live object: %s", data)
+		}
+	})
+
+	t.Run("JSON omits live when nil", func(t *testing.T) {
+		b := live
+		b.Live = nil
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, baseTime)
+		data, err := json.Marshal(StatusLineDoc{Now: baseTime.UTC(), Rows: rows})
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		if strings.Contains(string(data), `"live"`) {
+			t.Errorf("json must omit live when nil: %s", data)
+		}
+	})
+}
+
+// TestRunnerLineWordMatchesActivityWord pins the shared vocabulary: the runner
+// line `relevo status` prints carries the word the one activity rule returns
+// for every definite word, and a quiet working row keeps "quiet X" on the round
+// line while the runner line itself still reads "working".
+func TestRunnerLineWordMatchesActivityWord(t *testing.T) {
+	t.Parallel()
+
+	words := []string{
+		"working",
+		"stalled 17m",
+		"exploring 22m",
+		"gating 1m12s",
+		"exited 3",
+		"exited",
+		"running",
+		"queued (2/4 busy on contabo, 3 ahead, 5m)",
+	}
+	for _, w := range words {
+		b := BindingStatus{Name: "api", CWD: "/tmp/api", Round: 1, Display: "ACTIVE", BuilderKind: "opencode", BuilderStatus: w}
+		var sb strings.Builder
+		writeBuilderLine(&sb, b)
+		if want := ActivityWord(b); !strings.Contains(sb.String(), want) {
+			t.Errorf("runner line for %q does not carry the activity word %q: %q", w, want, sb.String())
+		}
+	}
+
+	quiet := BindingStatus{Name: "api", CWD: "/tmp/api", Round: 1, Display: "ACTIVE", BuilderKind: "opencode", BuilderStatus: "working", QuietFor: "3m", RoundStart: baseTime.Add(-4 * time.Minute)}
+	if got := ActivityWord(quiet); got != "quiet 3m" {
+		t.Fatalf("ActivityWord(quiet working) = %q, want %q", got, "quiet 3m")
+	}
+	var roundSb strings.Builder
+	writeRoundLine(&roundSb, quiet)
+	if !strings.Contains(roundSb.String(), "quiet 3m") {
+		t.Errorf("the round line must keep quiet X: %q", roundSb.String())
+	}
+	var builderSb strings.Builder
+	writeBuilderLine(&builderSb, quiet)
+	if !strings.Contains(builderSb.String(), "working") || strings.Contains(builderSb.String(), "quiet") {
+		t.Errorf("the runner line must keep the definite word working, not quiet: %q", builderSb.String())
+	}
+}
+
+// TestPlainStatusLineMatchesTheColouredLines pins the one renderer: for every
+// fixture the visible text RenderStatusLine draws (SGR stripped) and the plain
+// rows agree line for line, including a chain row, the 40-column case and the
+// unpadded short-width fallback.
+func TestPlainStatusLineMatchesTheColouredLines(t *testing.T) {
+	t.Parallel()
+
+	type fixture struct {
+		name string
+		rep  Report
+	}
+	chain := Report{Bindings: []BindingStatus{{
+		Name:    "x",
+		Display: "ACTIVE",
+		Chain: &ChainFacts{
+			Status: "running", Phase: "build", Step: "reviewing",
+			Plan: 2, Plans: 4, Corrections: 1, Awaiting: "reviewer",
+		},
+	}}}
+
+	fixtures := []fixture{
+		{"statusline fixture", statuslineFixture(baseTime)},
+		{"row rule", srrRep},
+		{"chain", chain},
+	}
+	for _, c := range rowStatusCases {
+		fixtures = append(fixtures, fixture{c.name, Report{Bindings: []BindingStatus{c.binding}}})
+	}
+	for _, c := range waitingFallthroughCases {
+		fixtures = append(fixtures, fixture{c.name, Report{Bindings: []BindingStatus{c.binding}}})
+	}
+
+	for _, f := range fixtures {
+		for _, columns := range []int{80, 40, 20, 0} {
+			t.Run(f.name+"/"+strconv.Itoa(columns), func(t *testing.T) {
+				rows := StatusLineRows(f.rep, baseTime)
+				plain := PlainStatusLineRows(rows, columns)
+				lines := splitLines(stripSGR(RenderStatusLine(f.rep, baseTime, columns)))
+				if len(plain) != len(lines) {
+					t.Fatalf("columns %d: plain has %d rows and the coloured line %d, want one each", columns, len(plain), len(lines))
+				}
+				for i := range lines {
+					if plain[i] != lines[i] {
+						t.Errorf("columns %d: line %d plain = %q, coloured = %q", columns, i, plain[i], lines[i])
+					}
+				}
+			})
+		}
+	}
+}
+
+var consumedStatusCases = []struct {
+	name       string
+	binding    BindingStatus
+	wantStatus string
+	wantTone   string
+	wantRound  int
+}{
+	{
+		name: "writer report",
+		binding: BindingStatus{
+			Name:    "api",
+			Round:   5,
+			Display: "ACTIVE",
+			LastPayload: &LastEvent{
+				Kind: store.KindReport, Direction: store.DirToMasterMind,
+				Round: 4, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute),
+			},
+		},
+		wantStatus: "report in",
+		wantTone:   "phase",
+		wantRound:  4,
+	},
+	{
+		name: "reader artifact",
+		binding: BindingStatus{
+			Name:    "rev",
+			Round:   3,
+			Display: "ACTIVE",
+			Role:    "reviewer", Shape: store.ShapeReader,
+			LastPayload: &LastEvent{
+				Kind: store.KindReport, Direction: store.DirToMasterMind,
+				Round: 2, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute),
+			},
+		},
+		wantStatus: "artifact in",
+		wantTone:   "phase",
+		wantRound:  2,
+	},
+	{
+		name: "question",
+		binding: BindingStatus{
+			Name:    "api",
+			Round:   2,
+			Display: "ACTIVE",
+			LastPayload: &LastEvent{
+				Kind: store.KindQuestion, Direction: store.DirToMasterMind,
+				Round: 1, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute),
+			},
+		},
+		wantStatus: "question in",
+		wantTone:   "phase",
+		wantRound:  1,
+	},
+}
+
+// TestStatusLineRowsConsumed pins the consumed-round clean read: a payload
+// consumed by a chain reads as phase, not REPORT IN / QUESTION IN, with
+// ReportIn false, the round naming the report round, and the note in Reason.
+func TestStatusLineRowsConsumed(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range consumedStatusCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := StatusLineRows(Report{Bindings: []BindingStatus{tc.binding}}, rsNow)
+			if len(rows) != 1 {
+				t.Fatalf("len(rows) = %d, want 1", len(rows))
+			}
+			r := rows[0]
+			if r.ReportIn || r.Status != tc.wantStatus || r.Tone != tc.wantTone || r.Reason != "consumed by chain 1" || r.ReportRound != tc.wantRound {
+				t.Errorf("row = %+v", r)
+			}
+		})
+	}
+
+	rep := Report{Bindings: []BindingStatus{consumedStatusCases[0].binding}}
+	plain := stripSGR(splitLines(RenderStatusLine(rep, rsNow, 120))[0])
+	if !strings.Contains(plain, "r4 · builder · consumed by chain 1") || !strings.Contains(plain, "report in") {
+		t.Errorf("rendered line = %q", plain)
+	}
+}
+
+// TestStatusLineRowsConsumedContrast pins the contrast: unconsumed payload reads REPORT IN.
+func TestStatusLineRowsConsumedContrast(t *testing.T) {
+	t.Parallel()
+
+	rep := Report{Bindings: []BindingStatus{{
+		Name:    "api",
+		Round:   5,
+		Display: "ACTIVE",
+		LastPayload: &LastEvent{
+			Kind: store.KindReport, Direction: store.DirToMasterMind,
+			Round: 4, Note: "ordinary note", TS: rsNow.Add(-2 * time.Minute),
+		},
+	}}}
+	rows := StatusLineRows(rep, rsNow)
+	if !rows[0].ReportIn || rows[0].Status != "REPORT IN · ordinary note" || rows[0].Tone != "report" || rows[0].Reason != "" {
+		t.Errorf("contrast row = %+v", rows[0])
 	}
 }

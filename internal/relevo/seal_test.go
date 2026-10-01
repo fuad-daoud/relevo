@@ -82,9 +82,9 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("second Tick: %v", err)
 	}
-	for _, base := range []string{"001-report.md", "001-prompt.md"} {
-		if _, err := os.Stat(filepath.Join(rt.Store.Dir("webshop"), base)); err != nil {
-			t.Errorf("%s was deleted while it is still the latest closed round (D2): %v", base, err)
+	for _, path := range []string{rt.Store.ReportPath("webshop", 1), rt.Store.PromptPath("webshop", 1)} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was deleted while it is still the latest closed round (D2): %v", path, err)
 		}
 	}
 
@@ -103,9 +103,15 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("third Tick: %v", err)
 	}
-	for _, base := range []string{"001-prompt.md", "001-report.md", "001-diff.patch", "001-builder.log", "001-done"} {
-		if _, err := os.Stat(filepath.Join(rt.Store.Dir("webshop"), base)); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s is still on disk after the seal", base)
+	for _, path := range []string{
+		rt.Store.PromptPath("webshop", 1),
+		rt.Store.ReportPath("webshop", 1),
+		rt.Store.DiffPath("webshop", 1),
+		rt.Store.BuilderLogPath("webshop", 1),
+		rt.Store.DonePath("webshop", 1),
+	} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s is still on disk after the seal", path)
 		}
 	}
 
@@ -182,6 +188,75 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	}
 }
 
+// TestTickMigratesAnOldLayoutBinding pins the transition: a binding whose
+// runner-output files still sit in the old flat layout has them moved into out/
+// by the tick, and the reads answer from the new home.
+func TestTickMigratesAnOldLayoutBinding(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	b := store.Binding{
+		Name:             "webshop",
+		CWD:              "/repo",
+		Round:            5,
+		State:            store.StateActive,
+		Builder:          store.Endpoint{AgentName: "webshop-builder", Kind: "claude", Mode: store.ModeHeadless},
+		BuilderCandidate: testAgyRef,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	dir := rt.Store.Dir("webshop")
+	if err := os.WriteFile(filepath.Join(dir, "005-report.md"), []byte("old report"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "005-done"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "005-reviewer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "005-reviewer", "summary.md"), []byte("old summary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A prompt and a stream are not runner outputs and stay in the binding dir.
+	if err := os.WriteFile(filepath.Join(dir, "005-prompt.md"), []byte("prompt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "005-runner.jsonl"), []byte("stream"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewDaemon(rt, time.Second).tickOne(context.Background(), b); err != nil {
+		t.Fatalf("tickOne: %v", err)
+	}
+
+	out := rt.Store.OutDir("webshop")
+	for rel, want := range map[string]string{
+		"005-report.md":           "old report",
+		"005-reviewer/summary.md": "old summary",
+	} {
+		got, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(rel)))
+		if err != nil || string(got) != want {
+			t.Errorf("out/%s = %q, %v; want %q", rel, got, err, want)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "005-report.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("old report still present after the tick: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "005-reviewer")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("old artifact dir still present after the tick: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "005-runner.jsonl")); err != nil {
+		t.Errorf("stream moved out of the binding dir: %v", err)
+	}
+
+	got, err := rt.Store.ReadFile(rt.Store.ReportPath("webshop", 5))
+	if err != nil || string(got) != "old report" {
+		t.Errorf("ReadFile(report) = %q, %v; want the migrated report", got, err)
+	}
+}
+
 // TestSealPassEmptiesADoneDirOnly pins the last leftover the seal pass clears:
 // once a DONE binding's rounds are all sealed and its directory holds nothing
 // else, the empty directory goes too. An ACTIVE binding's directory stays, as
@@ -203,6 +278,9 @@ func TestSealPassEmptiesADoneDirOnly(t *testing.T) {
 			b := store.Binding{Name: "webshop", CWD: "/repo", Round: 3, State: tc.state}
 			if err := st.Save(b); err != nil {
 				t.Fatalf("Save: %v", err)
+			}
+			if err := st.EnsureOutDir("webshop"); err != nil {
+				t.Fatalf("EnsureOutDir: %v", err)
 			}
 			if err := os.WriteFile(st.ReportPath("webshop", 1), []byte("round 1\n"), 0o644); err != nil {
 				t.Fatalf("write round file: %v", err)

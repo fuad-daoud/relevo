@@ -23,6 +23,9 @@
               "m"
             ]
           },
+          "documentor": {
+            "agent": "documentor"
+          },
           "researcher": {
             "agent": "researcher"
           },

@@ -134,7 +134,8 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
    It finds the harness binaries on `PATH`, writes one builder candidate per
    harness to the candidates section except claude, which only plans (it gets the
    `planner` actor), writes the policy section and the builder
-   actor, plus a `planner` and a `lite-planner` reader actor for claude and
+   actor, plus a `documentor` writer over the same candidates and a `planner`
+   and a `lite-planner` reader actor for claude and
    opencode, and installs the agent definitions into each of those harnesses. The
    configuration lives in relevo.db under the state root, not in a file; a
    file you drop into `~/.config/relevo` is imported on the next command and
@@ -145,7 +146,7 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
    the command to run next, e.g.:
    ```
    wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)
-   wrote actors (builder: glm-5.3-flash; planner: opus; lite-planner: deepseek-v4.1-flash)
+   wrote actors (builder: glm-5.3-flash; documentor: glm-5.3-flash; planner: opus; lite-planner: deepseek-v4.1-flash)
    wrote  ~/.claude/agents/plan-executor.md
    wrote  ~/.config/opencode/agents/plan-executor.md
    next: edit the model names, then run: relevo doctor
@@ -181,7 +182,7 @@ One line per file says `wrote`, `updated (unchanged since relevo wrote it)`,
 `kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
 name a harness that is not on `PATH` yet, `--agent` for one definition,
 `--dry-run` to look first. This writes `plan-executor`, `researcher`, `reviewer`,
-`security-reviewer` and `architect` for every kind; `relevo config agents --dry-run` shows what
+`security-reviewer`, `architect` and `documentor` for every kind; `relevo config agents --dry-run` shows what
 would be written.
 
 `researcher` is the read-only agent the builder's own sub-agents run as. It
@@ -376,7 +377,8 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   once and records its time to first output.
 - `relevo config init` — seed the candidates, policy and actors sections from
   the harnesses on `PATH` (one builder candidate per harness except claude,
-  which only plans, plus a `planner` and a `lite-planner` reader actor for
+  which only plans, plus a `documentor` writer over the same candidates and a
+  `planner` and a `lite-planner` reader actor for
   claude and opencode) and install the agent definitions (`--force`,
   `--no-agents`).
 - `relevo config agents` — install the per-kind agent definitions
@@ -414,6 +416,11 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   `--pprof` serves `net/http/pprof` on a unix socket (owner-only, off by
   default) for profiling a daemon that is too slow or too large; fetch it with
   `curl --unix-socket <path> http://x/debug/pprof/profile?seconds=30 -o cpu.pprof`.
+- `relevo daemon stop` — stop the daemon this CLI started: it reads the recorded
+  pid, sends it SIGTERM and waits for it to exit, or says when none is running.
+  A service-managed daemon (systemd unit or launchd agent installed) is refused
+  with the service command to use instead, so the stop never fights the service
+  manager's restart policy.
 - `relevo mcp [--mode channel|tools|auto] [--mastermind P] [--interval D]` — run the
   MCP server over stdio for a Claude Code MasterMind pane. See
   [Claude Code plugin](#claude-code-plugin).
@@ -1201,13 +1208,18 @@ that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 
 ## Status line
 
-`relevo status --line` shows this MasterMind's live bindings, one row each, under
-the Claude Code prompt; it shows nothing on error and never probes a builder.
+`relevo status --line` shows this MasterMind's bindings, one row each (one entry
+per chain in place of its members), under the Claude Code prompt; it shows nothing
+on error and never probes a builder.
 The first line names the MasterMind (`MasterMind architect-14`), so each terminal
 shows which MasterMind it is; `relevo mastermind list` maps that name to its chat.
 Each row shows the round's harness (`harness@server` for a remote builder),
 what it is waiting on, this round's tokens, and the round's length: ticking while
-it runs, frozen once the report is in.
+it runs, frozen once the report is in. While a round runs the row also says what
+the runner is doing -- `working`, `quiet X` once its progress has gone silent,
+`stalled X`, `exploring X`, `gating X`, `exited`, `running`, `queued` -- in place
+of the phase word, and the round's live diff against its baseline (`+A/-R in F`,
+`(shared)` for a `--cwd` binding whose tree is the mastermind's own).
 
 Add this to `~/.claude/settings.json`:
 
@@ -1229,8 +1241,13 @@ count the cells before Claude Code's `…`:
     sh -c 'printf "%s" "$(seq -s . 1 $COLUMNS | cut -c1-$COLUMNS)"'
 
 Each row is `○ name  rN · builder · what relevo is waiting on  …  age · STATE`,
-where `builder` is the harness segment of the candidate token, and `age` is
-time since the last prompt, report or question crossed.
+where `builder` is the harness segment of the candidate token, `age` is time
+since the last prompt, report or question crossed, and a `+A/-R in F` segment in
+the middle is the round's live diff against its baseline. `relevo status --line
+--json` carries that diff as an additive `live` object on the row (`files`,
+`added`, `removed`, and `shared` for a `--cwd` binding); the key is present only
+while a round runs. It also carries `text`: the row exactly as the text mode
+renders it, without colour codes, which the OpenCode sidebar prints.
 
 ## Candidates
 
@@ -1296,7 +1313,7 @@ For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` r
 
 For `claude` the `model` may end in `:low|medium|high|xhigh|max`: `opus:medium` runs `--model opus --effort medium`, and any other suffix stays part of the model id, so a Bedrock id such as `...-v1:0` passes through whole. For `opencode` the effort is a variant, `model#<variant>`, passed as is to `opencode run -m`: variants are per model, and opencode refuses an unknown one.
 
-Under `workspace-write`, codex also cannot write to Go's default build cache (`~/.cache/go-build`), so a Go plan fails at `go build` unless the plan sets `GOCACHE` inside the worktree or `/tmp`, or your `~/.codex/config.toml` lists it under `sandbox_workspace_write.writable_roots`. relevo adds only its own state directory.
+Under `workspace-write`, codex also cannot write to Go's default build cache (`~/.cache/go-build`), so a Go plan fails at `go build` unless the plan sets `GOCACHE` inside the worktree or `/tmp`, or your `~/.codex/config.toml` lists it under `sandbox_workspace_write.writable_roots`. relevo adds only its own binding's `out/` directory (`<binding>/out/`, where the report, done marker and artifacts live).
 
 Any `extra_args` are appended verbatim after what relevo renders. Because relevo renders the argv, the token in `relevo status` is exactly what was started.
 
@@ -1429,8 +1446,8 @@ who runs it -- the agent plus an ordered list of candidates, a tier, and, for a
 writer, whether its round closes on a gate.
 
 - A **shipped** agent is one relevo renders and installs: `plan-executor`,
-  `reviewer`, `researcher` and `architect`. It needs no `agents` entry -- an
-  actor names it directly.
+  `documentor`, `reviewer`, `researcher` and `architect`. It needs no `agents`
+  entry -- an actor names it directly.
 - A **custom** agent is one you write, carried in the `agents` section as its
   `source` text (an `agentsrc` definition; its `name` must equal its key).
 - A **native** agent points at a harness definition you already have: it names
@@ -1440,9 +1457,15 @@ writer, whether its round closes on a gate.
 | shipped agent | shape | output | requires |
 | --- | --- | --- | --- |
 | `plan-executor` | writer | `report` | `researcher` |
+| `documentor` | writer | `report` | -- |
 | `reviewer` | reader | `findings` | -- |
 | `researcher` | reader | `notes` | -- |
 | `architect` | reader | `plan` | -- |
+
+`documentor` is a writer whose definition states the docs-only contract: it
+edits markdown, agent instruction files, sketches and diagrams, and code
+comments, and never anything that changes behaviour. That contract is prose in
+the definition; nothing inspects the diff.
 
 Agents and actors are the `agents` and `actors` sections of relevo.db; read
 them with `relevo config get agents` and `relevo config get actors`, and change
@@ -1667,11 +1690,11 @@ The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278,
 | claude | (none) | `--permission-mode plan` | `--permission-mode acceptEdits` | `--dangerously-skip-permissions` |
 | agy | (none) | `--mode plan` | `--mode accept-edits` | `--dangerously-skip-permissions` |
 | opencode | (none) | refuse | refuse | `--auto` |
-| codex | (none) | refuse | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding state dir>"]` | `--dangerously-bypass-approvals-and-sandbox` |
+| codex | (none) | refuse | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding>/out"]` | `--dangerously-bypass-approvals-and-sandbox` |
 
 opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
 
-codex does not support the `read` tier: `-s read-only` cannot write the report, marker, question and findings files relevo stages under `~/.local/state/relevo/<binding>/`, and codex ignores `writable_roots` under read-only. Choosing `read` for a codex candidate is refused with an error directing you to `--tier edit` or `--tier harness`. At `edit` relevo adds the binding's state directory as a writable root; that is the only path outside the worktree the sandbox lets the builder write.
+codex does not support the `read` tier: `-s read-only` cannot write the report, marker, question and findings files relevo stages under `~/.local/state/relevo/<binding>/out/`, and codex ignores `writable_roots` under read-only. Choosing `read` for a codex candidate is refused with an error directing you to `--tier edit` or `--tier harness`. At `edit` relevo adds the binding's `out/` directory as a writable root; that is the only path outside the worktree the sandbox lets the builder write.
 
 ### Ceiling semantics and ordering
 
@@ -2158,7 +2181,9 @@ Only one daemon runs at a time. `relevo daemon` takes an exclusive lock on
 `$XDG_STATE_HOME/relevo/.daemon.lock` and refuses to start if another one holds
 it, so starting a second by hand next to the service is an error rather than
 two reconcilers racing. `relevo daemon --check` exits 0 if a daemon is running
-and 1 if not, printing nothing.
+and 1 if not, printing nothing. `relevo daemon stop` sends SIGTERM to the
+daemon's recorded pid and waits for it to exit, or says so when none is
+running; a service-managed daemon is refused with the service command instead.
 
 ## Lifecycle hooks
 

@@ -565,3 +565,30 @@ func TestPointDetailAtOpensOnPlanRound(t *testing.T) {
 		t.Errorf("idle detail.rounds = %d, want 2 (§2.2)", rvIdle.pane.detail.rounds)
 	}
 }
+
+// TestFleetChainRowOpensTheBuilderMembersRound pins part 2: the synthetic row
+// that stands in for a live chain opens its builder member's own binding at the
+// member's current round, not the row's absent plan (which would read round
+// -1 of 0).
+func TestFleetChainRowOpensTheBuilderMembersRound(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(store.Binding{Name: "cc-w2", CWD: "/repo/cc-w2", Round: 3, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rt := relevo.Runtime{Store: st}
+	rep := view.Report{Bindings: []view.BindingStatus{{
+		Name: "cc-w2", Display: "ACTIVE", Role: "chain",
+		Chain: &view.ChainFacts{Status: "running", Phase: "build", Step: "building", Plan: 1, Plans: 1},
+	}}}
+
+	rv := newTestRound(t, rt, rep, "cc-w2", 0)
+	if rv.pane.detail.name != "cc-w2" {
+		t.Errorf("detail.name = %q, want cc-w2", rv.pane.detail.name)
+	}
+	if rv.pane.detail.round != 3 {
+		t.Errorf("detail.round = %d, want 3", rv.pane.detail.round)
+	}
+	if rv.pane.detail.rounds != 3 {
+		t.Errorf("detail.rounds = %d, want 3", rv.pane.detail.rounds)
+	}
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 )
 
 // errorCode names a class of failure with a stable, lowercase snake word. The
@@ -124,9 +125,16 @@ func failNext(code errorCode, next, format string, args ...any) error {
 }
 
 // failWrap is fail keeping cause, so a coded failure classified out of a
-// library error that a caller probes with errors.Is still unwraps to it.
+// library error that a caller probes with errors.Is still unwraps to it. The
+// cause's own text is folded into the message when the formatted text does not
+// already carry it, so a sentinel such as ErrNotConverted still reaches the
+// user instead of being reduced to a code.
 func failWrap(code errorCode, cause error, format string, args ...any) error {
-	return newCLIErrorCause(code, "", fmt.Sprintf(format, args...), cause)
+	message := fmt.Sprintf(format, args...)
+	if cause != nil && !strings.Contains(message, cause.Error()) {
+		message += ": " + cause.Error()
+	}
+	return newCLIErrorCause(code, "", message, cause)
 }
 
 // newCLIErrorCause is newCLIError with the classified cause attached.

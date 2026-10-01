@@ -3,16 +3,92 @@ package relevo
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// TestDoneOnAServerChainMirrorDoesNotCallTheServer pins the mirror rule: a
+// member of a chain that runs on a server is released by the chain's own verbs
+// there, so the client's done must not ask the server to release it again --
+// with no Runtime.Remote at all, the release still succeeds locally.
+func TestDoneOnAServerChainMirrorDoesNotCallTheServer(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	rt.Remote = nil // any call to the server would be ErrRemoteUnavailable
+
+	now := rt.Now().UTC()
+	row := db.ChainRow{
+		ID: db.NewID(), Name: "mesh", Status: string(chain.StatusHalted),
+		Phase: "build", Step: "planning-fixes", Plan: 1, Plans: 1,
+		Builder: "mesh", Planner: "mesh-plan", Server: "zen",
+		MasterMindID: testMasterMindID, CreatedAt: now, UpdatedAt: now,
+	}
+	member := store.Binding{
+		Name: "mesh-plan", CWD: "/repo/mesh", Round: 1, State: store.StateNeedsYou,
+		Role: "lite-planner", Shape: store.ShapeReader, MasterMindID: testMasterMindID,
+		Builder: store.Endpoint{Kind: "opencode", Mode: store.ModeRemote, Server: "zen"},
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.ChainPut(row); err != nil {
+			return err
+		}
+		return tx.Save(member)
+	}); err != nil {
+		t.Fatalf("seed the mirror: %v", err)
+	}
+
+	if _, err := Done(context.Background(), rt, "mesh-plan"); err != nil {
+		t.Fatalf("Done on a server-chain mirror = %v, want it released locally", err)
+	}
+	got, err := rt.Store.Load("mesh-plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.StateDone {
+		t.Errorf("state = %q, want done", got.State)
+	}
+}
+
+// TestRoundOpenFromWireRebuildsTheTypedRefusal pins the client half of the
+// round-open mapping: the server's 409 round_open becomes the send path's own
+// typed refusal, so the CLI prints the conflict and its `relevo stop <member>`
+// next line; anything unparseable stays the server's error.
+func TestRoundOpenFromWireRebuildsTheTypedRefusal(t *testing.T) {
+	t.Parallel()
+
+	err := roundOpenFromWire(&client.HTTPError{
+		Status: 409,
+		Body: remote.ErrorBody{
+			Code:    remote.CodeRoundOpen,
+			Message: "shop-plan: round 3 is still open; relevo stop shop-plan ends it",
+		},
+	})
+	var open *RoundOpenError
+	if !errors.As(err, &open) {
+		t.Fatalf("err = %v, want *RoundOpenError", err)
+	}
+	if open.Member != "shop-plan" || open.Round != 3 {
+		t.Errorf("RoundOpenError = %+v, want member shop-plan round 3", open)
+	}
+
+	raw := errors.New("boom")
+	if got := roundOpenFromWire(raw); !errors.Is(got, raw) {
+		t.Errorf("roundOpenFromWire(non-HTTP error) = %v, want the original error", got)
+	}
+	if got := roundOpenFromWire(&client.HTTPError{Status: 409, Body: remote.ErrorBody{Message: "no round here"}}); got == nil || errors.As(got, &open) {
+		t.Errorf("roundOpenFromWire(unparseable message) = %v, want the server's error kept", got)
+	}
+}
 
 // TestChainStatusOnAServerChainReadsTheServer pins the status verb's source:
 // the chain row is the server's view, not this machine's mirror, and a server
@@ -194,9 +270,100 @@ func TestChainResumeOnAServerChainSendsTheResolvedGate(t *testing.T) {
 	}
 }
 
+// TestChainServerResumeSupersedesTheMirrorsQueuedHalt pins the client half of
+// the stale delivery rule: the mirror's own queued end payload is confirmed by
+// the resume, so a stale NEEDS YOU is never delivered after a chain that runs
+// on a server has moved on.
+func TestChainServerResumeSupersedesTheMirrorsQueuedHalt(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusHalted), 1, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	// The halt the mirror pulled: the chain row is terminal and the end
+	// payload sits undelivered on the builder member.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		row, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		row.Status = string(chain.StatusHalted)
+		if err := tx.ChainPut(row); err != nil {
+			return err
+		}
+		return tx.AppendLog("shop", store.LogEntry{
+			TS: rt.Now().UTC(), Round: 3,
+			Direction: store.DirToMasterMind, Kind: store.KindChain,
+			Payload: "chain shop halted: builder halted on plan 1",
+		})
+	}); err != nil {
+		t.Fatalf("seed the mirror's halt: %v", err)
+	}
+
+	pendingChain := func() int {
+		t.Helper()
+		n := 0
+		err := rt.Store.WithLock(func(tx *store.Tx) error {
+			entries, err := tx.PendingForMasterMindThrough("shop", 0)
+			if err != nil {
+				return err
+			}
+			for _, p := range entries {
+				if p.Entry.Kind == store.KindChain {
+					n++
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("read pending entries: %v", err)
+		}
+		return n
+	}
+	if pendingChain() == 0 {
+		t.Fatal("test premise: the halt must queue the mirror's end delivery")
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	if n := pendingChain(); n != 0 {
+		t.Errorf("pending chain deliveries after a server resume = %d, want 0", n)
+	}
+}
+
+// TestChainServerResumeRetypesAChainDone pins the client half of the done
+// refusal: the server's 409 chain_done becomes the typed ErrChainDone, so the
+// CLI reports a conflict and a script can tell a settled chain from an
+// internal failure.
+func TestChainServerResumeRetypesAChainDone(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusDone), 1, 0, 0))
+	fr.chainResumeErr = &client.HTTPError{
+		Status: http.StatusConflict,
+		Body:   remote.ErrorBody{Code: remote.CodeChainDone, Message: "chain is done"},
+	}
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	if err == nil {
+		t.Fatal("ChainResume = nil, want the done refusal")
+	}
+	if !errors.Is(err, ErrChainDone) {
+		t.Errorf("err = %v, want errors.Is(err, ErrChainDone)", err)
+	}
+	if !strings.Contains(err.Error(), "chain shop is done") {
+		t.Errorf("err = %q, want it to name the chain's state", err)
+	}
+}
+
 // TestChainDoneOnAServerChainPostsDone pins done: the server releases the
-// chain, every mirror member is released through the ordinary done, and the
-// mirror row is closed.
+// chain, the mirror members are released locally (the chain's own verb already
+// released them there, so no second round-trip per member), and the mirror row
+// is closed.
 func TestChainDoneOnAServerChainPostsDone(t *testing.T) {
 	t.Parallel()
 
@@ -211,8 +378,13 @@ func TestChainDoneOnAServerChainPostsDone(t *testing.T) {
 		t.Errorf("ChainDone calls = %d, want 1", n)
 	}
 	for _, member := range []string{"shop", "shop-rev", "shop-plan"} {
-		if n := exactCalls(fr.calls, "Done:zen:"+member); n != 1 {
-			t.Errorf("Done calls for %s = %d, want 1", member, n)
+		if n := exactCalls(fr.calls, "Done:zen:"+member); n != 0 {
+			t.Errorf("Done calls for the mirror %s = %d, want none: the chain released it on the server", member, n)
+		}
+		if got, err := rt.Store.Load(member); err != nil {
+			t.Errorf("load mirror %s: %v", member, err)
+		} else if got.State != store.StateDone {
+			t.Errorf("mirror %s state = %q, want done", member, got.State)
 		}
 	}
 	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusDone) {

@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // The report bodies the chain tests write. A builder's body must parse as a
@@ -153,6 +154,43 @@ func chainReaderClose(t *testing.T, rt Runtime, name string, body string) store.
 		fr.script(b.Builder.PID, false)
 	}
 	return chainReconcile(t, rt, name)
+}
+
+// TestConsumedMemberCloseReadsAsSeen pins the status side of the consumption: a
+// report a running chain took must not keep painting REPORT IN on the member
+// row -- the chain's own end delivery is the mastermind's copy of it.
+func TestConsumedMemberCloseReadsAsSeen(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	row, err := statusRow(context.Background(), rt, chainBinding(t, rt, "shop"))
+	if err != nil {
+		t.Fatalf("statusRow: %v", err)
+	}
+	if row.Unread {
+		t.Error("a consumed report must read as seen")
+	}
+
+	rows := view.StatusLineRows(view.Report{Bindings: []view.BindingStatus{row}}, rt.Now())
+	if len(rows) != 1 {
+		t.Fatalf("len(rows) = %d, want 1", len(rows))
+	}
+	slRow := rows[0]
+	if slRow.ReportIn {
+		t.Errorf("ReportIn = true, want false")
+	}
+	if slRow.Status != "report in" {
+		t.Errorf("Status = %q, want 'report in'", slRow.Status)
+	}
+	if slRow.Tone != "phase" {
+		t.Errorf("Tone = %q, want 'phase'", slRow.Tone)
+	}
+	if !strings.Contains(slRow.Reason, "consumed by chain") {
+		t.Errorf("Reason = %q, want to contain 'consumed by chain'", slRow.Reason)
+	}
 }
 
 // TestConsumedMemberCloseIsNotPending pins the consumption: a closing chain
@@ -2259,10 +2297,11 @@ func chainStreamResultLine(t *testing.T, text string) string {
 	return string(b) + "\n"
 }
 
-// TestReviewerRecapAfterTheBlockStillYieldsTheVerdict pins the stream rescan: a
-// reviewer whose output file is a block-free recap closes with a verdict only
-// because the block-bearing message is still in the round's stream.
-func TestReviewerRecapAfterTheBlockStillYieldsTheVerdict(t *testing.T) {
+// TestReviewerRecapAfterTheBlockKeepsTheBlockMessage pins the artifact rule: a
+// reviewer that recaps after its block closes with a verdict from the stream,
+// and its saved output is the block-carrying message, stripped of the block,
+// never the recap.
+func TestReviewerRecapAfterTheBlockKeepsTheBlockMessage(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
@@ -2290,8 +2329,11 @@ func TestReviewerRecapAfterTheBlockStillYieldsTheVerdict(t *testing.T) {
 	if strings.Contains(string(out), "verdict:") {
 		t.Errorf("the reviewer's written output carries the verdict block:\n%s", out)
 	}
-	if !strings.Contains(string(out), "Recap") {
-		t.Errorf("the reviewer's written output is not the recap:\n%s", out)
+	if !strings.Contains(string(out), "I reviewed the round") {
+		t.Errorf("the reviewer's written output is not the block-carrying message:\n%s", out)
+	}
+	if strings.Contains(string(out), chainRecapText) {
+		t.Errorf("the reviewer's written output is the recap:\n%s", out)
 	}
 }
 

@@ -78,6 +78,23 @@ func TestChainRefusesAnUnknownFlag(t *testing.T) {
 	}
 }
 
+// TestChainStartBadInputIsRefused pins the class at the CLI edge: the start's
+// own input refusals (an empty plan file here) are refused with exit 2, never
+// internal -- a user's bad file is not a relevo bug and gets no bugreport hint.
+func TestChainStartBadInputIsRefused(t *testing.T) {
+	plan := filepath.Join(t.TempDir(), "empty.md")
+	if err := os.WriteFile(plan, nil, 0o644); err != nil {
+		t.Fatalf("write empty plan: %v", err)
+	}
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"chain", "--name", "cliemptyplan", "--plan", plan, "--feature", "auth"})
+	})
+	ce := requireCLIError(t, err, codeRefused, "")
+	if !strings.Contains(ce.message, "is empty") {
+		t.Errorf("message = %q, want the empty-plan text", ce.message)
+	}
+}
+
 // TestChainResumeFlagRules pins the resume arm's own refusals, all of which
 // fire before newRuntime: --resume is useless without a name, the feature flags
 // are still exclusive (a resume may name neither, because the chain keeps its
@@ -592,6 +609,33 @@ func TestChainDoneOnARunningChainIsAConflict(t *testing.T) {
 	ce := requireCLIError(t, err, codeConflict, "")
 	if !strings.Contains(ce.message, "relevo stop "+name+" first") {
 		t.Errorf("message = %q, want it to name `relevo stop %s first`", ce.message, name)
+	}
+}
+
+// TestChainResumeOnASettledChainIsAConflict pins both settle refusals at the
+// CLI edge: a chain still in flight and a finished chain are conflicts, not
+// internal failures.
+func TestChainResumeOnASettledChainIsAConflict(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{"running", "running", "is running"},
+		{"done", "done", "is done"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			name := "cli" + tc.name + "resume"
+			seedCLIChain(t, name, tc.status)
+
+			_, _, err := captureOutput(t, func() error {
+				return run([]string{"chain", "--resume", "--name", name})
+			})
+			ce := requireCLIError(t, err, codeConflict, "")
+			if !strings.Contains(ce.message, tc.want) {
+				t.Errorf("message = %q, want it to say the chain %s", ce.message, tc.want)
+			}
+		})
 	}
 }
 

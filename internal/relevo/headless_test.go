@@ -227,7 +227,10 @@ func TestStartRoundPassesStateDir(t *testing.T) {
 		t.Fatalf("specs = %+v, want one Start", fr.specs)
 	}
 	spec := fr.specs[0]
-	wantRoot := fmt.Sprintf(`sandbox_workspace_write.writable_roots=[%q]`, rt.Store.Dir(b.Name))
+	wantRoot := fmt.Sprintf(`sandbox_workspace_write.writable_roots=[%q]`, rt.Store.OutDir(b.Name))
+	if wantRoot == fmt.Sprintf(`sandbox_workspace_write.writable_roots=[%q]`, rt.Store.Dir(b.Name)) {
+		t.Fatal("the writable root must be out/, not the binding directory")
+	}
 	found := false
 	for _, arg := range spec.Argv {
 		if arg == wantRoot {

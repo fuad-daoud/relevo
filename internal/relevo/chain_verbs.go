@@ -34,6 +34,11 @@ const (
 // a script can tell "stop it first" from an internal failure.
 var ErrChainRunning = errors.New("the chain is still running")
 
+// ErrChainDone reports a verb refused because the chain has finished: nothing
+// continues a done chain. The CLI maps it to a conflict, the same class its
+// running sibling has.
+var ErrChainDone = errors.New("the chain is done")
+
 // ChainStop ends a running chain: `relevo stop <n>` where <n> names a chain.
 // The member the chain is waiting on is stopped exactly as `relevo stop` stops
 // any binding, and that member's stopped close raises the chain's `stopped`
@@ -206,4 +211,27 @@ func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	ev := chain.Event{Kind: chain.EventNeedsYou, Member: part, Round: round, Reason: chainDoneReason}
 	act := chain.Action{Kind: chain.ActionFinish}
 	return chainSaveWithTrace(rt, tx, c, before, next, ev, act, member)
+}
+
+// supersedeChainDelivery confirms a chain's undelivered end payload: a halt's
+// delivery queued before a resume says the chain needs the human, and that is
+// no longer true the moment they resume it. The next end queues its own.
+func supersedeChainDelivery(rt Runtime, c db.ChainRow) error {
+	return rt.Store.WithLock(func(tx *store.Tx) error {
+		for _, member := range chainMembersOf(c) {
+			pending, err := tx.PendingForMasterMindThrough(member, 0)
+			if err != nil {
+				return err
+			}
+			for _, p := range pending {
+				if p.Entry.Kind != store.KindChain {
+					continue
+				}
+				if err := tx.ConfirmIndex(member, p.Idx, "superseded by resume"); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }

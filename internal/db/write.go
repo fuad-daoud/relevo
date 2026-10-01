@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
 
 func nullableString(s *string) any {
@@ -223,7 +221,7 @@ func mapMasterMindKey(err error) error {
 	if err == nil {
 		return nil
 	}
-	if code, ok := wire.CodeOf(err); ok && code&0xff == sqliteConstraint {
+	if code, _, ok := errCode(err); ok && code&0xff == sqliteConstraint {
 		return fmt.Errorf("mastermind (harness_kind, session_id) already exists: %w", ErrInvalid)
 	}
 	if strings.Contains(err.Error(), "UNIQUE constraint failed") {

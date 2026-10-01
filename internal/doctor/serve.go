@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/serve"
 )
 
@@ -18,7 +19,10 @@ import (
 // root the running daemon's serve.daemon row names -- or serveRoot when
 // there is none. Reading the root from the row is what makes the serve rows
 // show on a box started with a non-default --state.
-func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time) []Check {
+//
+// isolation is the raw serve.isolation policy value; the isolation row parses
+// it, so a hand-built unknown reads as a failure.
+func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time, isolation string) []Check {
 	if d == nil {
 		return nil
 	}
@@ -34,6 +38,7 @@ func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time) []Check {
 	return []Check{
 		serveCertificateCheck(d, now),
 		serveClientsCheck(d),
+		serveIsolationCheck(d, isolation),
 		serveStateCheck(env, root),
 	}
 }
@@ -76,30 +81,18 @@ func serveClientsCheck(d *db.DB) Check {
 		return c
 	}
 
-	rawClients, ok, err := d.KVGet("serve.clients")
+	active, present, err := serveClientCount(d)
 	switch {
+	case err != nil && present:
+		c.Severity, c.Detail, c.Fix = SevFail, "parse error", "fix the serve.clients row in the database"
+		return c
 	case err != nil:
 		c.Severity, c.Detail = SevFail, err.Error()
 		return c
-	case !ok:
+	case !present:
 		return noneEnrolled()
 	}
 
-	var list []struct {
-		ID        string    `json:"id"`
-		RevokedAt time.Time `json:"revoked_at,omitempty"`
-	}
-	if err := json.Unmarshal(rawClients, &list); err != nil {
-		c.Severity, c.Detail, c.Fix = SevFail, "parse error", "fix the serve.clients row in the database"
-		return c
-	}
-
-	active := 0
-	for _, cl := range list {
-		if cl.RevokedAt.IsZero() {
-			active++
-		}
-	}
 	switch active {
 	case 0:
 		return noneEnrolled()
@@ -108,6 +101,71 @@ func serveClientsCheck(d *db.DB) Check {
 	default:
 		c.Severity, c.Detail = SevOK, fmt.Sprintf("%d enrolled", active)
 	}
+	return c
+}
+
+// serveClientCount reads the serve.clients registry and reports the number of
+// active (non-revoked) clients, whether the row was present at all, and any
+// read or parse error. A malformed row is an error, so a broken registry can
+// never read as a clean zero.
+func serveClientCount(d *db.DB) (active int, present bool, err error) {
+	raw, ok, err := d.KVGet("serve.clients")
+	if err != nil {
+		return 0, false, err
+	}
+	if !ok {
+		return 0, false, nil
+	}
+	var list []struct {
+		ID        string    `json:"id"`
+		RevokedAt time.Time `json:"revoked_at,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return 0, true, err
+	}
+	for _, cl := range list {
+		if cl.RevokedAt.IsZero() {
+			active++
+		}
+	}
+	return active, true, nil
+}
+
+// serveIsolationCheck is the serve isolation row. It parses the raw policy
+// value and reports:
+//
+//   - none with at most one active client: OK, Detail "none".
+//   - none with two or more: Warn, naming the count and the shared unix user;
+//     no Fix, because enabling a mode is not a pasteable command in slice A.
+//   - user or container: Fail with Available's sentence and the config Fix.
+//   - an unknown value: Fail naming serve.isolation.
+//   - an unreadable or unparseable serve.clients row: Fail, so a broken
+//     registry can never read as a clean none.
+func serveIsolationCheck(d *db.DB, raw string) Check {
+	c := Check{Group: "serve", Name: "isolation"}
+	const fix = `relevo config set policy.serve '{"isolation":"none"}'`
+
+	mode, err := isolate.Parse(raw)
+	if err != nil {
+		c.Severity, c.Detail, c.Fix = SevFail, err.Error(), fix
+		return c
+	}
+	if err := mode.Available(); err != nil {
+		c.Severity, c.Detail, c.Fix = SevFail, err.Error(), fix
+		return c
+	}
+
+	active, _, err := serveClientCount(d)
+	if err != nil {
+		c.Severity, c.Detail, c.Fix = SevFail, "serve.clients unreadable", "fix the serve.clients row in the database"
+		return c
+	}
+	if active <= 1 {
+		c.Severity, c.Detail = SevOK, "none"
+		return c
+	}
+	c.Severity = SevWarn
+	c.Detail = fmt.Sprintf("%d active clients share one unix user", active)
 	return c
 }
 

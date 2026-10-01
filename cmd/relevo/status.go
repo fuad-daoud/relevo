@@ -259,6 +259,9 @@ func runStatusline(asJSON bool) error {
 		rep, err := relevo.MasterMindStatus(context.Background(), rt, rec.ID)
 		if err == nil {
 			doc.Rows = view.StatusLineRows(rep, rt.Now())
+			for i, text := range view.PlainStatusLineRows(doc.Rows, 0) {
+				doc.Rows[i].Text = text
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
 		}

@@ -2,9 +2,7 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,10 +85,9 @@ func TestOpenCurrentSchemaWhileAnotherProcessWrites(t *testing.T) {
 	busyTimeoutMS = 200
 	t.Cleanup(func() { busyTimeoutMS = oldTimeout })
 
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", path, busyTimeoutMS)
-	writer, err := sql.Open("sqlite", dsn)
+	writer, err := OpenRaw(path)
 	if err != nil {
-		t.Fatalf("sql.Open writer: %v", err)
+		t.Fatalf("OpenRaw writer: %v", err)
 	}
 	t.Cleanup(func() { _ = writer.Close() })
 
@@ -202,9 +199,9 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 			}
 		}
 
-		sqlDB, err := sql.Open("sqlite", "file:"+path)
+		sqlDB, err := OpenRaw(path)
 		if err != nil {
-			t.Fatalf("iteration %d: sql.Open: %v", i, err)
+			t.Fatalf("iteration %d: OpenRaw: %v", i, err)
 		}
 		rows, err := sqlDB.Query(`SELECT version FROM schema_version`)
 		if err != nil {
@@ -235,20 +232,117 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 	}
 }
 
-// TestOpenSetsJournalSizeLimit pins that sqlite truncates the -wal file after a
-// checkpoint instead of leaving it at a write burst's high-water size.
-func TestOpenSetsJournalSizeLimit(t *testing.T) {
-	d := openTestDB(t)
-
-	var limit int
-	if err := d.sqlDB.QueryRow(`PRAGMA journal_size_limit`).Scan(&limit); err != nil {
-		t.Fatalf("PRAGMA journal_size_limit: %v", err)
-	}
-	if limit != journalSizeLimit {
-		t.Errorf("journal_size_limit = %d, want %d", limit, journalSizeLimit)
+// TestDirectHandlesOnOneFreshPathWriteTogether pins the production shape: the
+// daemon's owner handle on a direct open, plus the same process's second direct
+// open of that fresh path -- what store.New(root).DB does in the daemon -- with
+// writes through both at once. The engine keeps one database per file in this
+// process, so a fresh file's first page must be created once; two pools racing
+// that creation leave a short or corrupt WAL. The mutation is the creation gate
+// in handles.go: without it the concurrent opens meet the engine's own page-1
+// race and an open fails before the writes.
+func TestDirectHandlesOnOneFreshPathWriteTogether(t *testing.T) {
+	for i := 0; i < 30; i++ {
+		handles := openFreshPair(t, filepath.Join(t.TempDir(), "relevo.db"))
+		// One handle is the owner's, as the daemon's first open is.
+		_ = NewOwner(handles[0])
+		if _, err := handles[0].sqlDB.Exec(`CREATE TABLE direct_probe (n INTEGER)`); err != nil {
+			t.Fatalf("iteration %d: create direct_probe: %v", i, err)
+		}
+		writeThroughBoth(t, i, handles)
+		assertProbeIntact(t, i, handles[0])
+		for _, d := range handles {
+			if err := d.Close(); err != nil {
+				t.Fatalf("iteration %d: close: %v", i, err)
+			}
+		}
 	}
 }
 
+// directProbePerHandle is the rows each concurrent writer inserts, so
+// directProbeRows is what both together must leave behind.
+const (
+	directProbePerHandle = 25
+	directProbeRows      = 2 * directProbePerHandle
+)
+
+// openFreshPair opens path twice at once, from a start gate so both enter Open
+// together. That is the shape the daemon's owner handle and store.New(root).DB
+// share: two direct handles on one fresh file, which the creation gate in
+// handles.go must serialise.
+func openFreshPair(t *testing.T, path string) []*DB {
+	t.Helper()
+	handles := make([]*DB, 2)
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for j := range handles {
+		wg.Add(1)
+		go func(j int) {
+			defer wg.Done()
+			<-start
+			d, err := Open(path)
+			if err != nil {
+				errs[j] = err
+				return
+			}
+			handles[j] = d
+		}(j)
+	}
+	close(start)
+	wg.Wait()
+	for j, err := range errs {
+		if err != nil {
+			t.Fatalf("direct open %d: %v", j, err)
+		}
+	}
+	return handles
+}
+
+// writeThroughBoth writes directProbePerHandle rows through each handle at once,
+// so the two pools contend on the one engine database.
+func writeThroughBoth(t *testing.T, iteration int, handles []*DB) {
+	t.Helper()
+	var writers sync.WaitGroup
+	for j, d := range handles {
+		writers.Add(1)
+		go func(j int, d *DB) {
+			defer writers.Done()
+			for n := 0; n < directProbePerHandle; n++ {
+				err := d.Tx(func(tx *Tx) error {
+					_, err := tx.exec(`INSERT INTO direct_probe (n) VALUES (?)`, j*directProbePerHandle+n)
+					return err
+				})
+				if err != nil {
+					t.Errorf("iteration %d: insert through handle %d: %v", iteration, j, err)
+					return
+				}
+			}
+		}(j, d)
+	}
+	writers.Wait()
+}
+
+// assertProbeIntact pins the post-condition: every row is present and the file
+// passes integrity_check.
+func assertProbeIntact(t *testing.T, iteration int, d *DB) {
+	t.Helper()
+	var rows int
+	if err := d.sqlDB.QueryRow(`SELECT COUNT(*) FROM direct_probe`).Scan(&rows); err != nil {
+		t.Fatalf("iteration %d: count rows: %v", iteration, err)
+	}
+	if rows != directProbeRows {
+		t.Errorf("iteration %d: direct_probe has %d rows, want %d", iteration, rows, directProbeRows)
+	}
+	var integrity string
+	if err := d.sqlDB.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil {
+		t.Fatalf("iteration %d: integrity_check: %v", iteration, err)
+	}
+	if integrity != "ok" {
+		t.Errorf("iteration %d: integrity_check = %q, want ok", iteration, integrity)
+	}
+}
+
+// TestTxRefusesANewerSchema pins that a newer schema is not written by a Tx.
 func TestTxRefusesANewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	seedNewerSchema(t, path)
@@ -497,7 +591,9 @@ func TestBackupToCopiesEveryRowAndRefusesAnExistingPath(t *testing.T) {
 
 // TestVacuumKeepsRows pins that Vacuum leaves the rows readable.
 func TestVacuumKeepsRows(t *testing.T) {
-	d := openTestDB(t)
+	// Vacuum refuses a dialled handle: it closes and reopens the pool, which
+	// only the handle that owns the file may do. The test holds a direct one.
+	d := directOpenTestDB(t)
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
 	bindingID, err := d.UpsertBinding(newTestBinding("webshop", now))
@@ -564,6 +660,10 @@ func TestOpenCreatesPrivateFiles(t *testing.T) {
 	}
 	for _, p := range []string{path, path + "-wal", path + "-shm"} {
 		info, err := os.Stat(p)
+		if errors.Is(err, os.ErrNotExist) {
+			// Turso keeps no -shm sibling; a file that is not there has no mode.
+			continue
+		}
 		if err != nil {
 			t.Fatalf("stat %s: %v", filepath.Base(p), err)
 		}
@@ -571,15 +671,19 @@ func TestOpenCreatesPrivateFiles(t *testing.T) {
 			t.Errorf("%s mode = %o, want 600", filepath.Base(p), perm)
 		}
 	}
+	if _, err := os.Stat(path + "-wal"); err != nil {
+		t.Errorf("the -wal sibling is absent: %v", err)
+	}
 }
 
 // TestOpenPathWithHashOrQuestionUsesThatFile pins that a path containing a `#`
-// or a `?` is escaped inside the `file:` DSN, so Open and OpenReadOnly touch
-// that exact file and never the truncated prefix a bare path would resolve to.
+// is escaped inside the `file:` DSN, so Open and OpenReadOnly touch that exact
+// file and never the truncated prefix a bare path would resolve to. A `?` is
+// escaped the same way under modernc; the Turso build refuses it, and its twin
+// lives in the !modernc file.
 func TestOpenPathWithHashOrQuestionUsesThatFile(t *testing.T) {
 	cases := []struct{ name, rel string }{
 		{"hash", "a#b/relevo.db"},
-		{"question", "a?b/relevo.db"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -617,18 +721,31 @@ func TestOpenPathWithHashOrQuestionUsesThatFile(t *testing.T) {
 	}
 }
 
-// TestBackupToCreatesPrivateTarget pins that the backup target is created
-// owner-only before VACUUM INTO writes it, and stays 0600 after.
-func TestBackupToCreatesPrivateTarget(t *testing.T) {
+// TestBackupToNeverExposesAWorldReadableCopy pins that the backup is built in an
+// owner-only temp directory and linked into place, and that the final file is
+// 0600.
+func TestBackupToNeverExposesAWorldReadableCopy(t *testing.T) {
 	d := openTestDB(t)
-	recorded := recordCreateMode(t)
+
+	orig := mkdirVacuumTemp
+	var dirMode os.FileMode
+	mkdirVacuumTemp = func(dir, pattern string) (string, error) {
+		p, err := orig(dir, pattern)
+		if err == nil {
+			if info, serr := os.Stat(p); serr == nil {
+				dirMode = info.Mode().Perm()
+			}
+		}
+		return p, err
+	}
+	t.Cleanup(func() { mkdirVacuumTemp = orig })
 
 	path := filepath.Join(t.TempDir(), "copy.db")
 	if err := d.BackupTo(path); err != nil {
 		t.Fatalf("BackupTo: %v", err)
 	}
-	if got := recorded(); got != 0o600 {
-		t.Errorf("backup target created with mode %o, want 600", got)
+	if dirMode != 0o700 {
+		t.Errorf("vacuum temp dir mode = %o, want 700", dirMode)
 	}
 	info, err := os.Stat(path)
 	if err != nil {

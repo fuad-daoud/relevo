@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -162,9 +164,17 @@ func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult
 // server: the resolved settings and an explicit gate are posted, then the
 // mirror is pulled so the answer is this machine's own view of the resumed
 // chain. A chain the server still runs is the running refusal.
+//
+// The mirror's own queued end payload is confirmed first, exactly as the local
+// resume confirms it: the halt it carries says the chain needs the human, and
+// that stops being true the moment they resume it -- a later wait or pull must
+// not deliver the stale NEEDS YOU.
 func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) (ChainResult, error) {
 	if rt.Remote == nil {
 		return ChainResult{}, ErrRemoteUnavailable
+	}
+	if err := supersedeChainDelivery(rt, c); err != nil {
+		return ChainResult{}, err
 	}
 	req := remote.ChainResumeRequest{
 		MaxCorrections: opts.MaxCorrections,
@@ -182,9 +192,38 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 		if remoteCode(err, 409, remote.CodeChainRunning) {
 			return ChainResult{}, fmt.Errorf("chain %s is running: %w", c.Name, ErrChainRunning)
 		}
+		if remoteCode(err, 409, remote.CodeChainDone) {
+			return ChainResult{}, fmt.Errorf("chain %s is done: %w", c.Name, ErrChainDone)
+		}
+		if remoteCode(err, 409, remote.CodeRoundOpen) {
+			return ChainResult{}, roundOpenFromWire(err)
+		}
 		return ChainResult{}, err
 	}
 	return chainResultFromMirror(ctx, rt, c.Name)
+}
+
+// roundOpenFromWire rebuilds the send path's typed round-open refusal from the
+// server's 409 round_open, so the CLI prints the conflict and its `relevo stop
+// <member>` next line exactly as a local refusal does. The member and round are
+// read back from the refusal's own message, whose shape the send path already
+// generates; anything unparseable stays the server's error.
+func roundOpenFromWire(err error) error {
+	var httpErr *client.HTTPError
+	if !errors.As(err, &httpErr) {
+		return err
+	}
+	msg := httpErr.Body.Message
+	i := strings.Index(msg, ": round ")
+	j := strings.Index(msg, " is still open")
+	if i < 0 || j <= i {
+		return err
+	}
+	round, perr := strconv.Atoi(strings.TrimSpace(msg[i+len(": round ") : j]))
+	if perr != nil || round <= 0 {
+		return err
+	}
+	return &RoundOpenError{Member: strings.TrimSpace(msg[:i]), Round: round}
 }
 
 // chainServerDone is `relevo done <chain>` for a chain that runs on a server:
@@ -200,6 +239,9 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 	if err := rt.Remote.ChainDone(ctx, c.Server, c.Name); err != nil {
 		if remoteCode(err, 409, remote.CodeChainRunning) {
 			return DoneResult{}, fmt.Errorf("chain %s is running; relevo stop %s first: %w", c.Name, c.Name, ErrChainRunning)
+		}
+		if remoteCode(err, 409, remote.CodeRoundOpen) {
+			return DoneResult{}, roundOpenFromWire(err)
 		}
 		return DoneResult{}, err
 	}

@@ -626,3 +626,41 @@ func TestServeInitRootFailureIsAnError(t *testing.T) {
 		}
 	})
 }
+
+// TestServeRunRefusesUnavailableIsolation pins slice A's one rule at the
+// command: a configured serve.isolation=user is refused at startup with
+// not_available naming the mode, before any side effect. The wait is bounded:
+// if the refusal regresses the command would start a daemon and never return,
+// so the test fails on timeout rather than hanging.
+func TestServeRunRefusesUnavailableIsolation(t *testing.T) {
+	stateHome := t.TempDir()
+	configHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	policyDir := filepath.Join(configHome, "relevo")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir policy dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "policy.json"), []byte(`{"serve":{"isolation":"user"}}`), 0o644); err != nil {
+		t.Fatalf("write policy.json: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		// 127.0.0.1:0 and insecure HTTP so a regressed command would not
+		// collide with another test's port or need TLS; the bounded wait still
+		// fails the test instead of letting the daemon run.
+		done <- run([]string{"serve", "--listen", "127.0.0.1:0", "--insecure-http"})
+	}()
+
+	select {
+	case err := <-done:
+		ce := requireCLIError(t, err, codeNotAvailable, "")
+		if !strings.Contains(ce.message, "serve.isolation=user") {
+			t.Errorf("message = %q, want it to name serve.isolation=user", ce.message)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("relevo serve did not refuse isolation=user within 10s; it may have started a daemon")
+	}
+}

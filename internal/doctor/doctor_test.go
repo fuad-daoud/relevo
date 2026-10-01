@@ -231,7 +231,7 @@ func TestDoctorUnknownKindDegradesWithoutFailing(t *testing.T) {
 }
 
 func TestDoctorRolesRow(t *testing.T) {
-	roles := []string{"plan-executor", "researcher", "reviewer", "security-reviewer", "architect"}
+	roles := []string{"plan-executor", "researcher", "reviewer", "security-reviewer", "architect", "documentor"}
 	fill := func(body func(role string) string) map[string]string {
 		m := map[string]string{}
 		for _, r := range roles {
@@ -481,7 +481,7 @@ func agyEnv(t *testing.T) *fakeEnv {
 		fileContents:  map[string]string{},
 		versions:      map[string]string{"/home/fuad/.local/bin/agy": "1.2.1"},
 	}
-	for _, name := range []string{"plan-executor", "researcher", "reviewer"} {
+	for _, name := range []string{"plan-executor", "researcher", "reviewer", "documentor"} {
 		p := home + "/.gemini/config/agents/" + name + ".md"
 		env.existingFiles[p] = true
 		env.fileContents[p] = shippedDoc(t, name, "agy")
@@ -553,7 +553,7 @@ func TestDoctorAgyRoleWarnsOnATierPin(t *testing.T) {
 	if c.Fix != "set model: inherit in ~/.gemini/config/agents/researcher.md" {
 		t.Errorf("fix = %q", c.Fix)
 	}
-	for _, name := range []string{"plan-executor", "reviewer"} {
+	for _, name := range []string{"plan-executor", "reviewer", "documentor"} {
 		if c := findCheck(report, "agy", name); c == nil || c.Severity != SevOK {
 			t.Errorf("%s row = %+v, want SevOK", name, c)
 		}
@@ -577,7 +577,7 @@ func TestDoctorClaudeRoleNeverWarnsOnAPin(t *testing.T) {
 func TestDoctorAgyRolesAreCheckedLikeAnyKind(t *testing.T) {
 	env := agyEnv(t)
 	report := Run(context.Background(), env, []string{"agy"})
-	for _, name := range []string{"plan-executor", "researcher", "reviewer"} {
+	for _, name := range []string{"plan-executor", "researcher", "reviewer", "documentor"} {
 		c := findCheck(report, "agy", name)
 		if c == nil {
 			t.Fatalf("agy %s row not found", name)
@@ -678,7 +678,7 @@ func TestDoctorCodexResearcherPin(t *testing.T) {
 			fileContents:  map[string]string{},
 			versions:      map[string]string{"/usr/bin/codex": "0.155.1"},
 		}
-		for _, role := range []string{"plan-executor", "researcher", "reviewer", "architect"} {
+		for _, role := range []string{"plan-executor", "researcher", "reviewer", "architect", "documentor"} {
 			env.existingFiles[home+"/.codex/"+role+".config.toml"] = true
 		}
 		return env
@@ -748,7 +748,7 @@ func TestDoctorKindAbsentFromDefinitionsKeepsEveryRow(t *testing.T) {
 	report := Run(context.Background(), env, []string{"claude"},
 		WithDefinitions(map[string][]string{"opencode": {"plan-executor"}}))
 
-	for _, name := range []string{"plan-executor", "researcher", "reviewer"} {
+	for _, name := range []string{"plan-executor", "researcher", "reviewer", "documentor"} {
 		if findCheck(report, "claude", name) == nil {
 			t.Errorf("no %s row for claude; a kind absent from the map must keep every shipped definition", name)
 		}

@@ -1,7 +1,6 @@
 package db
 
 import (
-	"database/sql"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -25,6 +24,28 @@ func openTestDB(t *testing.T) *DB {
 	return d
 }
 
+// directOpen opens path with the direct opener and never through the owner hop:
+// a test of a direct-only operation -- a vacuum, the per-path handle count, a
+// raw driver error -- must hold a direct handle even when the owner-mode switch
+// is installed. The hop wraps openDirect, so calling it bypasses the hop. A
+// dbtest helper cannot serve here, because dbtest imports this package and the
+// internal tests would then form an import cycle.
+func directOpen(t *testing.T, path string, o Options) *DB {
+	t.Helper()
+	d, err := openDirect(path, o)
+	if err != nil {
+		t.Fatalf("openDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// directOpenTestDB is directOpen on a fresh temp path with the default options.
+func directOpenTestDB(t *testing.T) *DB {
+	t.Helper()
+	return directOpen(t, filepath.Join(t.TempDir(), "relevo.db"), Options{})
+}
+
 func ptr[T any](v T) *T { return &v }
 
 // embeddedVersion is the highest migration this binary embeds.
@@ -40,9 +61,9 @@ func embeddedVersion(t *testing.T) int {
 // seedNewerSchema writes a schema_version row above every embedded migration.
 func seedNewerSchema(t *testing.T, path string) int {
 	t.Helper()
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
+	sqlDB, err := OpenRaw(path)
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenRaw: %v", err)
 	}
 	defer func() { _ = sqlDB.Close() }()
 
@@ -56,6 +77,9 @@ func seedNewerSchema(t *testing.T, path string) int {
 	var tables int
 	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'`).Scan(&tables); err != nil {
 		t.Fatalf("count tables: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close: %v", err)
 	}
 	return tables
 }
@@ -73,9 +97,9 @@ func openSchema(t *testing.T, names ...string) *DB {
 		fsys["migrations/"+name] = &fstest.MapFile{Data: data}
 	}
 
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
+	sqlDB, err := OpenRaw(path)
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenRaw: %v", err)
 	}
 	if err := applyMigrations(sqlDB, fsys); err != nil {
 		t.Fatalf("applyMigrations: %v", err)

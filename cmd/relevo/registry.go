@@ -52,6 +52,8 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"config set":         installer(configSetFlagSet),
 	"config unset":       installer(configUnsetFlagSet),
 	"daemon":             installer(daemonFlagSet),
+	"db":                 dbFlagSet,
+	"db query":           installer(dbQueryFlagSet),
 	"doctor":             installer(doctorFlagSet),
 	"done":               installer(doneFlagSet),
 	"gate":               installer(gateFlagSet),

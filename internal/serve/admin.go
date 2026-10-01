@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
@@ -25,6 +26,17 @@ type OwnerStatus struct {
 	Report   view.Report // relevo.Status over that owner's runtime
 }
 
+// isolationView stamps the server's isolation facts onto v: the mode always,
+// and the container image only in container mode. Both surfaces -- whoami and
+// the status document -- report through it, so they cannot disagree.
+func (s *Server) isolationView(v remote.BuildersView) remote.BuildersView {
+	v.Isolation = string(s.cfg.Isolation)
+	if s.cfg.Isolation == isolate.ModeContainer {
+		v.Image = s.cfg.IsolationImage
+	}
+	return v
+}
+
 // AdminStatus returns every owner who has a bindings directory, sorted by
 // Label, plus the builder census. Every queued row gains its Queued position
 // and a "queued <age> (<ahead> ahead)" BuilderStatus.
@@ -32,7 +44,7 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	builders := remote.BuildersView{Cap: s.cap()}
+	builders := s.isolationView(remote.BuildersView{Cap: s.cap()})
 
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)

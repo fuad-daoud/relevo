@@ -24,16 +24,36 @@ func (s *Store) roundFile(name string, round int, suffix, ext string) string {
 // name: the cockpit spec's agent key, with no slash and no leading dot.
 var actorNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-// ArtifactDir is a round's artifact directory, <state>/<binding>/NNN-<actor>/.
-// It may hold any files, in subdirectories too; summary.md in it is a reader
-// runner's pre-rename final message.
+// ArtifactDir is a round's artifact directory, <state>/<binding>/out/NNN-<actor>/
+// for the new layout, or <state>/<binding>/NNN-<actor>/ for one still on the
+// old layout. It is a total resolver like ReportPath: out/ when it exists on
+// disk, else the old directory when it exists, else out/ -- the name a fresh
+// round writes. It may hold any files, in subdirectories too; summary.md in it
+// is a reader runner's pre-rename final message.
 //
 // An actor that cannot be a directory name is a programming error, not input:
 // the actor came from validated config, and every other helper here is total,
 // so this panics rather than returning an error.
 func (s *Store) ArtifactDir(name string, round int, actor string) string {
 	mustActor(actor)
-	return filepath.Join(s.Dir(name), fmt.Sprintf("%03d-%s", round, actor))
+	base := fmt.Sprintf("%03d-%s", round, actor)
+	newDir := filepath.Join(s.OutDir(name), base)
+	if dirOnDisk(newDir) {
+		return newDir
+	}
+	oldDir := filepath.Join(s.Dir(name), base)
+	if dirOnDisk(oldDir) {
+		return oldDir
+	}
+	return newDir
+}
+
+// dirOnDisk reports whether path is a directory on disk, following no symlink:
+// a symlink (even one to a real directory) is not a directory here, so a
+// symlinked artifact directory is refused rather than named.
+func dirOnDisk(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.IsDir()
 }
 
 // OutputPath is where a reader round's final message is saved: the artifact
@@ -58,10 +78,12 @@ func mustActor(actor string) {
 }
 
 // roundFileRel resolves path, which must live inside dir, into the round_file
-// name it belongs to: the flat base of a path directly in dir, or
-// "NNN-<actor>/<rel>" with forward slashes for a path inside a top-level round
-// directory. ok is false for a path outside dir, a name that is not a round
-// file, and any path containing "..".
+// name it belongs to: the flat base of a path directly in dir -- or one element
+// under dir's out/ child -- or "NNN-<actor>/<rel>" with forward slashes for a
+// path inside a top-level round directory. One leading out/ element is stripped
+// so a file's two homes resolve to the same round_file name. ok is false for a
+// path outside dir, a name that is not a round file, and any path containing
+// "..".
 func roundFileRel(dir, path string) (string, bool) {
 	if containsDotDot(path) {
 		return "", false
@@ -71,6 +93,12 @@ func roundFileRel(dir, path string) (string, bool) {
 		return "", false
 	}
 	parts := strings.Split(rel, string(filepath.Separator))
+	if len(parts) > 0 && parts[0] == outDirName {
+		parts = parts[1:]
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
 	if len(parts) == 1 {
 		if !roundBaseRe.MatchString(parts[0]) {
 			return "", false
@@ -141,14 +169,18 @@ func (s *Store) PromptPath(name string, round int) string {
 	return newPath
 }
 
+// ReportPath returns the path of a round's report: out/ when it exists (on disk
+// or as a sealed row), else the old flat path when it exists, else out/ -- the
+// name a fresh round writes. Total, like PromptPath and StreamPath.
 func (s *Store) ReportPath(name string, round int) string {
-	return s.roundFile(name, round, "report", ".md")
+	return s.resolveRunnerOutput(name, round, "report", ".md")
 }
 
 // DonePath is the builder's completion marker for a round: an empty file it
-// creates as its last action. relevo only ever stats it.
+// creates as its last action. relevo only ever stats it. It resolves the same
+// way ReportPath does: out/ when it exists, else the old flat path, else out/.
 func (s *Store) DonePath(name string, round int) string {
-	return s.roundFile(name, round, "done", "")
+	return s.resolveRunnerOutput(name, round, "done", "")
 }
 
 // BuilderLogPath is the builder log of a round from before stderr was folded

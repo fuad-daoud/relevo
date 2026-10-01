@@ -139,7 +139,7 @@ func TestLoadErrors(t *testing.T) {
 		{
 			name:     "unknown role",
 			body:     `{"order":{"reviwer":["a/b/c"]}}`,
-			contains: []string{"order.reviwer", "unknown role", "builder reviewer researcher"},
+			contains: []string{"order.reviwer", "unknown role", "builder documentor reviewer researcher"},
 		},
 		{
 			name:     "null list",
@@ -809,6 +809,62 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestServeIsolationValidation pins the two serve isolation keys: a known mode
+// is accepted, an unknown mode is refused naming serve.isolation, and
+// container without an image is refused naming serve.isolation_image. All
+// refusals wrap ErrBadPolicy.
+func TestServeIsolationValidation(t *testing.T) {
+	good := []struct {
+		name  string
+		body  string
+		mode  string
+		image string
+	}{
+		{name: "absent", body: `{}`, mode: "", image: ""},
+		{name: "none", body: `{"serve":{"isolation":"none"}}`, mode: "none"},
+		{name: "user", body: `{"serve":{"isolation":"user"}}`, mode: "user"},
+		{name: "container with image", body: `{"serve":{"isolation":"container","isolation_image":"relevo-builder:latest"}}`, mode: "container", image: "relevo-builder:latest"},
+		{name: "image unused in none", body: `{"serve":{"isolation":"none","isolation_image":"relevo-builder:latest"}}`, mode: "none", image: "relevo-builder:latest"},
+	}
+	for _, gc := range good {
+		t.Run(gc.name, func(t *testing.T) {
+			p, err := load(t, gc.body)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := p.ServeIsolation(); got != gc.mode {
+				t.Errorf("ServeIsolation() = %q, want %q", got, gc.mode)
+			}
+			if got := p.ServeIsolationImage(); got != gc.image {
+				t.Errorf("ServeIsolationImage() = %q, want %q", got, gc.image)
+			}
+		})
+	}
+
+	bad := []struct {
+		name     string
+		body     string
+		contains string
+	}{
+		{name: "unknown mode", body: `{"serve":{"isolation":"host"}}`, contains: "serve.isolation"},
+		{name: "container without image", body: `{"serve":{"isolation":"container"}}`, contains: "serve.isolation_image"},
+	}
+	for _, bc := range bad {
+		t.Run(bc.name, func(t *testing.T) {
+			_, err := load(t, bc.body)
+			if err == nil {
+				t.Fatal("Load: got nil error, want a refusal")
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+			}
+			if !strings.Contains(err.Error(), bc.contains) {
+				t.Fatalf("Load error %q does not mention %s", err.Error(), bc.contains)
+			}
+		})
+	}
 }
 
 func TestServeScopeValidation(t *testing.T) {

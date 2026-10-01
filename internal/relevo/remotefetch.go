@@ -18,15 +18,20 @@ import (
 // remoteFetch is what the fetch half read from the server for one binding,
 // without the state lock, for the apply half to act on under it.
 type remoteFetch struct {
-	Name    string             // b.Name at snapshot
-	Server  string             // b.Builder.Server at snapshot
-	Round   int                // b.Round at snapshot
-	View    remote.BindingView // GetBinding's result; zero when Err != nil
-	Err     error              // GetBinding's error, classified by the apply half exactly as today
-	Log     *logMirror         // nil: nothing fetched to write (not running, legacy log, error, no growth)
-	Legacy  bool               // the round's log is the legacy file form: apply runs the legacy mirror inline
-	Drift   []byte             // nil: nothing fetched
-	CatchUp *catchUpFetch      // nil: no catch-up was fetched
+	Name   string             // b.Name at snapshot
+	Server string             // b.Builder.Server at snapshot
+	Round  int                // b.Round at snapshot
+	View   remote.BindingView // GetBinding's result; zero when Err != nil
+	Err    error              // GetBinding's error, classified by the apply half exactly as today
+	// Observe is set for a member of a chain that runs on a server. Such a
+	// member observes the live round only: the fetch reads no catch-up, whose
+	// install and ack the chain pull owns, and the apply half writes the status
+	// word and stops short of the halt and settle a close would drive.
+	Observe bool
+	Log     *logMirror    // nil: nothing fetched to write (not running, legacy log, error, no growth)
+	Legacy  bool          // the round's log is the legacy file form: apply runs the legacy mirror inline
+	Drift   []byte        // nil: nothing fetched
+	CatchUp *catchUpFetch // nil: no catch-up was fetched
 	// Settle is what the apply half still owes once the lock is released: the
 	// closed round's ack, which must not run under the lock, and the report the
 	// ack gates. The apply half writes it; the caller that held the lock runs it
@@ -60,20 +65,26 @@ func fetchRemote(ctx context.Context, rt Runtime, b store.Binding) remoteFetch {
 		return f
 	}
 
+	f.Observe = serverChainMemberStore(rt.Store, b.Name)
+
 	view, err := rt.Remote.GetBinding(ctx, f.Server, f.Name)
 	if err != nil {
 		f.Err = err
 		return f
 	}
 	f.View = view
-	if view.RoundState == remote.RoundClosed && view.ClosedRound >= f.Round {
-		f.CatchUp = fetchCatchUp(ctx, rt, b, view)
-		return f
-	}
-	if view.RoundState == remote.RoundIdle && view.ClosedRound >= f.Round &&
-		reportMissingForRound(rt, f.Name, f.Round) {
-		f.CatchUp = fetchCatchUp(ctx, rt, b, view)
-		return f
+	// An observing member never fetches a catch-up: the chain pull is the one
+	// collector that installs its closed rounds and acks them.
+	if !f.Observe {
+		if view.RoundState == remote.RoundClosed && view.ClosedRound >= f.Round {
+			f.CatchUp = fetchCatchUp(ctx, rt, b, view)
+			return f
+		}
+		if view.RoundState == remote.RoundIdle && view.ClosedRound >= f.Round &&
+			reportMissingForRound(rt, f.Name, f.Round) {
+			f.CatchUp = fetchCatchUp(ctx, rt, b, view)
+			return f
+		}
 	}
 	if view.RoundState != remote.RoundRunning {
 		return f

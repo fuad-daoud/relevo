@@ -115,13 +115,12 @@ func rowNow(b view.BindingStatus, now time.Time) string {
 
 	switch g {
 	case groupWorking:
-		var statusPart string
-		if b.BuilderStatus != "" && b.BuilderStatus != "working" {
+		// The word comes from the shared rule; a runner the rule does not
+		// recognise (unknown, or a word a row must not claim) still says what
+		// its status says.
+		statusPart := view.ActivityWord(b)
+		if statusPart == "" {
 			statusPart = b.BuilderStatus
-		} else if b.QuietFor != "" {
-			statusPart = "quiet " + b.QuietFor
-		} else {
-			statusPart = "working"
 		}
 		if !b.RoundStart.IsZero() {
 			if age := ago(b.RoundStart, now); age != "" {
