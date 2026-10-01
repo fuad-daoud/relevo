@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -18,24 +19,48 @@ import (
 
 // dbUsage is what a bare `relevo db` prints: the verb only dispatches
 // subcommands, and query is the one there is.
-const dbUsage = "usage: relevo db query '<SQL>' [--json]\n\n" +
+const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout D]\n\n" +
 	"One read-only statement: SELECT, WITH or a read-only PRAGMA. RECURSIVE is\n" +
 	"refused: the owner protocol cannot interrupt a statement, so a recursive CTE\n" +
-	"could run until the process is killed.\n"
+	"could run until the process is killed. --limit caps the rows printed (default\n" +
+	"1000); --timeout bounds dial, open and read (default 10s, at most 12s).\n"
+
+// The db query defaults: a row cap that keeps a broad SELECT from filling
+// memory, and a hold budget that leaves the owner's own open-lock wait a margin.
+const (
+	dbQueryDefaultLimit   = 1000
+	dbQueryDefaultTimeout = 10 * time.Second
+)
+
+// errQueryLimitReached stops the read once the row cap is hit. cmdDBQuery treats
+// it as a normal truncation, not a failure: it is the onRow stop signal, not an
+// engine error.
+var errQueryLimitReached = errors.New("db query: row limit reached")
+
+// dbQueryRead is the read cmdDBQuery runs. It is a var so a test can replace it
+// with a read that ignores ctx, proving the deadline ends the command even when
+// the engine does not.
+var dbQueryRead = func(ctx context.Context, d *db.DB, stmt string, onRow func([]string, []any) error) error {
+	return d.QueryReadOnly(ctx, stmt, onRow)
+}
 
 // dbFlagSet declares no flags: `relevo db` is a dispatcher, and every flag
 // lives on its subcommands.
 func dbFlagSet(*flag.FlagSet) {}
 
-// dbQueryFlagValues holds the pointer db query parses into.
+// dbQueryFlagValues holds the pointers db query parses into.
 type dbQueryFlagValues struct {
-	asJSON *bool
+	asJSON  *bool
+	limit   *int
+	timeout *time.Duration
 }
 
-// dbQueryFlagSet defines --json on fs and returns what it parses into.
+// dbQueryFlagSet defines the flags on fs and returns what they parse into.
 func dbQueryFlagSet(fs *flag.FlagSet) *dbQueryFlagValues {
 	v := &dbQueryFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the rows as a JSON document")
+	v.limit = fs.Int("limit", dbQueryDefaultLimit, "print at most this many rows")
+	v.timeout = fs.Duration("timeout", dbQueryDefaultTimeout, "bound the dial, open and read")
 	return v
 }
 
@@ -65,30 +90,88 @@ func cmdDBQuery(args []string) error {
 	if len(positional) != 1 {
 		return fail(codeUsage, "relevo db query wants exactly one SQL statement, got %d arguments", len(positional))
 	}
+	if err := checkDBQueryBounds(*v.limit, *v.timeout); err != nil {
+		return err
+	}
 
-	d, err := openDBQuery()
+	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout)
+	defer cancel()
+	if ctx.Err() != nil {
+		// The deadline was already past before anything ran: refuse rather than
+		// fall through to an open the caller's budget no longer covers.
+		return dbQueryTimeout(*v.timeout)
+	}
+
+	d, err := openDBQuery(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = d.Close() }()
 
 	var (
-		columns []string
-		rows    [][]any
+		columns   []string
+		rows      [][]any
+		truncated bool
 	)
-	err = d.QueryReadOnly(context.Background(), positional[0], func(cols []string, values []any) error {
+	onRow := func(cols []string, values []any) error {
 		columns = cols
+		if len(rows) >= *v.limit {
+			// One extra row proves another follows, so the cut is real rather
+			// than the statement returning exactly --limit rows.
+			truncated = true
+			return errQueryLimitReached
+		}
 		rows = append(rows, values)
 		return nil
-	})
-	if err != nil {
-		return classifyDBQuery(err)
+	}
+
+	// The read runs on its own goroutine so the deadline ends the command even
+	// when the engine ignores ctx inside a step. main's os.Exit then ends the
+	// process, and with it the direct flock the abandoned read still holds.
+	readErr := make(chan error, 1)
+	go func() { readErr <- dbQueryRead(ctx, d, positional[0], onRow) }()
+
+	select {
+	case rerr := <-readErr:
+		if rerr != nil && !errors.Is(rerr, errQueryLimitReached) {
+			if ctx.Err() != nil {
+				return dbQueryTimeout(*v.timeout)
+			}
+			return classifyDBQuery(rerr)
+		}
+	case <-ctx.Done():
+		return dbQueryTimeout(*v.timeout)
+	}
+
+	if truncated {
+		fmt.Fprintf(os.Stderr, "truncated at %d rows (raise --limit)\n", *v.limit)
 	}
 
 	if *v.asJSON {
 		return writeDBQueryJSON(os.Stdout, columns, rows)
 	}
 	return writeDBQueryTable(os.Stdout, columns, rows)
+}
+
+// checkDBQueryBounds refuses a limit below one and a timeout that is not
+// positive or exceeds ReadOnlyHoldBudget. The open-lock wait outlasts the
+// budget, so a longer deadline could hold the lock past any fixed wait.
+func checkDBQueryBounds(limit int, timeout time.Duration) error {
+	switch {
+	case limit < 1:
+		return fail(codeUsage, "relevo db query --limit must be at least 1, got %d", limit)
+	case timeout <= 0:
+		return fail(codeUsage, "relevo db query --timeout must be positive, got %s", timeout)
+	case timeout > db.ReadOnlyHoldBudget:
+		return fail(codeUsage, "relevo db query --timeout must be at most %s, got %s", db.ReadOnlyHoldBudget, timeout)
+	}
+	return nil
+}
+
+// dbQueryTimeout is the refusal a passed deadline produces: the statement did
+// not finish in time, and no fallback to a direct open follows.
+func dbQueryTimeout(timeout time.Duration) error {
+	return fail(codeRefused, "relevo db query: the statement did not finish within %s", timeout)
 }
 
 // classifyDBQuery maps the read-only seam's failure to the frame's codes: a
@@ -104,8 +187,9 @@ func classifyDBQuery(err error) error {
 
 // openDBQuery reaches relevo.db read-only: the owner when its socket answers,
 // the file itself when it does not, and one re-dial when the direct open finds
-// the daemon holding the file. It never starts the owner.
-func openDBQuery() (*db.DB, error) {
+// the daemon holding the file. It never starts the owner. ctx bounds the dial,
+// and an expired ctx refuses rather than falling back to a direct open.
+func openDBQuery(ctx context.Context) (*db.DB, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {
 		return nil, err
@@ -115,8 +199,10 @@ func openDBQuery() (*db.DB, error) {
 		return nil, fail(codeRefused, "no relevo.db at %s", path)
 	}
 
-	if d, derr := dialOwner(root, verbDialBudget); derr == nil {
+	if d, derr := dialOwner(ctx, root, verbDialBudget); derr == nil {
 		return d, nil
+	} else if ctx.Err() != nil {
+		return nil, failWrap(codeRefused, ctx.Err(), "relevo db query: the deadline passed before the owner answered")
 	}
 	d, err := openReadOnlyDB(path, db.Options{})
 	if err == nil {
@@ -128,10 +214,14 @@ func openDBQuery() (*db.DB, error) {
 	// The file is held, so the owner is the only reader. One more dial covers a
 	// daemon that bound its socket between the first attempt and the open;
 	// after that the file stays out of reach.
-	if d, derr := dialOwner(root, verbDialBudget); derr == nil {
+	if d, derr := dialOwner(ctx, root, verbDialBudget); derr == nil {
 		return d, nil
 	}
-	return nil, failWrap(codeConflict, err, "relevo.db is held by the daemon and the owner did not answer")
+	if sock, sockErr := ownerSocket(root); sockErr != nil {
+		return nil, failWrap(codeConflict, err, "relevo.db is locked (%s) and no owner socket is available: %v", path+".lock", sockErr)
+	} else {
+		return nil, failWrap(codeConflict, err, "relevo.db is locked (%s) and the owner socket at %s did not answer", path+".lock", sock)
+	}
 }
 
 // dbQueryDoc is the --json shape: the statement's columns and one array of

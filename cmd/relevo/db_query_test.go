@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 )
 
@@ -164,6 +166,137 @@ func TestDBQueryRunsAListedPragma(t *testing.T) {
 	}
 	if !strings.Contains(string(stdout), "label") {
 		t.Errorf("table_info output = %q, want the probe columns", stdout)
+	}
+}
+
+// TestDBQueryDeadlineRefusesADirectReadThatIsAlreadyPast pins the deadline's
+// own refusal: a budget that is already spent when the verb starts ends the
+// command with a refused timeout, not a direct read.
+func TestDBQueryDeadlineRefusesADirectReadThatIsAlreadyPast(t *testing.T) {
+	seedQueryRoot(t)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `SELECT 1`, "--timeout", "1ns"})
+	})
+	ce := requireCLIError(t, err, codeRefused, "")
+	if !strings.Contains(ce.message, "did not finish within") {
+		t.Errorf("message = %q, want the deadline refusal", ce.message)
+	}
+}
+
+// TestDBQueryDeadlineAbandonsAReadTheEngineIgnores pins that the command is not
+// hostage to a read that never checks ctx: the read blocks on a channel the test
+// holds, and the deadline must still end the command. The mutation to a
+// context.Background() read makes this hang.
+func TestDBQueryDeadlineAbandonsAReadTheEngineIgnores(t *testing.T) {
+	seedQueryRoot(t)
+
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	prev := dbQueryRead
+	dbQueryRead = func(context.Context, *db.DB, string, func([]string, []any) error) error {
+		<-release
+		close(finished)
+		return nil
+	}
+	t.Cleanup(func() {
+		close(release)
+		<-finished
+		dbQueryRead = prev
+	})
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `SELECT 1`, "--timeout", "100ms"})
+	})
+	ce := requireCLIError(t, err, codeRefused, "")
+	if !strings.Contains(ce.message, "did not finish within") {
+		t.Errorf("message = %q, want the deadline refusal", ce.message)
+	}
+}
+
+// TestDBQueryRowLimitPrintsWhatFitsAndSaysTruncated pins the row cap: the rows
+// that fit are printed, one extra row is consumed only to prove the cut, and
+// the truncation is noted on stderr while stdout stays a valid document.
+func TestDBQueryRowLimitPrintsWhatFitsAndSaysTruncated(t *testing.T) {
+	seedQueryRoot(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `SELECT n, label FROM probe ORDER BY n`, "--limit", "1"})
+	})
+	if err != nil {
+		t.Fatalf("db query --limit: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(string(stdout), "one") || strings.Contains(string(stdout), "two") {
+		t.Errorf("stdout = %q, want the first row only", stdout)
+	}
+	if !strings.Contains(string(stderr), "truncated at 1 rows (raise --limit)") {
+		t.Errorf("stderr = %q, want the truncation note", stderr)
+	}
+
+	jsonOut, _, jerr := captureOutput(t, func() error {
+		return run([]string{"db", "query", `SELECT n, label FROM probe ORDER BY n`, "--limit", "1", "--json"})
+	})
+	if jerr != nil {
+		t.Fatalf("db query --json --limit: %v", jerr)
+	}
+	var doc struct {
+		Columns []string `json:"columns"`
+		Rows    [][]any  `json:"rows"`
+	}
+	if uerr := json.Unmarshal(jsonOut, &doc); uerr != nil {
+		t.Fatalf("truncated --json is not valid JSON: %v (%q)", uerr, jsonOut)
+	}
+	if len(doc.Rows) != 1 {
+		t.Errorf("truncated --json rows = %d, want 1", len(doc.Rows))
+	}
+}
+
+// TestDBQueryConflictNamesTheLockNotTheDaemon pins the conflict message: when
+// the file is held and no owner answers, the message names the lock and the
+// socket, never the daemon that may not exist.
+func TestDBQueryConflictNamesTheLockNotTheDaemon(t *testing.T) {
+	seedQueryRoot(t)
+
+	prev := openReadOnlyDB
+	openReadOnlyDB = func(string, db.Options) (*db.DB, error) { return nil, db.ErrLocked }
+	t.Cleanup(func() { openReadOnlyDB = prev })
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `SELECT 1`})
+	})
+	ce := requireCLIError(t, err, codeConflict, "")
+	if strings.Contains(ce.message, "daemon") {
+		t.Errorf("message = %q, want it not to blame the daemon", ce.message)
+	}
+	if !strings.Contains(ce.message, "relevo.db.lock") {
+		t.Errorf("message = %q, want it to name the lock", ce.message)
+	}
+	if !strings.Contains(ce.message, "relevo.sock") {
+		t.Errorf("message = %q, want it to name the unanswered socket", ce.message)
+	}
+}
+
+// TestDBQueryTimeoutFlagIsCappedBelowTheOpenLockWait pins the flag's bound: a
+// deadline above the read-only hold budget is a usage error, and the budget
+// itself is accepted.
+func TestDBQueryTimeoutFlagIsCappedBelowTheOpenLockWait(t *testing.T) {
+	seedQueryRoot(t)
+
+	for _, args := range [][]string{
+		{"db", "query", `SELECT 1`, "--timeout", "13s"},
+		{"db", "query", `SELECT 1`, "--timeout", "15s"},
+		{"db", "query", `SELECT 1`, "--timeout", "1m"},
+		{"db", "query", `SELECT 1`, "--timeout", "0s"},
+		{"db", "query", `SELECT 1`, "--limit", "0"},
+	} {
+		_, _, err := captureOutput(t, func() error { return run(args) })
+		requireCLIError(t, err, codeUsage, "relevo help")
+	}
+
+	if _, _, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `SELECT 1`, "--timeout", "12s"})
+	}); err != nil {
+		t.Errorf("--timeout 12s = %v, want it accepted", err)
 	}
 }
 

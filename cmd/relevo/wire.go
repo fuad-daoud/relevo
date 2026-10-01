@@ -351,7 +351,7 @@ func loadConfigFromFile(path string) (config.Loaded, error) {
 // The dial carries the verb budget and never starts the owner; a failure names
 // both the held file and the failed dial.
 func loadConfigFromOwner(root string, lockErr error) (config.Loaded, error) {
-	d, err := dialOwner(root, verbDialBudget)
+	d, err := dialOwner(context.Background(), root, verbDialBudget)
 	if err != nil {
 		return config.Loaded{}, fmt.Errorf("relevo.db is held by the daemon and the owner did not answer: %w (the file open failed with: %v)", err, lockErr)
 	}
@@ -360,13 +360,14 @@ func loadConfigFromOwner(root string, lockErr error) (config.Loaded, error) {
 }
 
 // dialOwner dials the owner on root's socket within budget, without starting
-// it: a missing or unanswering socket is an error.
-func dialOwner(root string, budget time.Duration) (*db.DB, error) {
+// it: a missing or unanswering socket is an error. The caller's ctx bounds the
+// whole call, so a command deadline can end the dial sooner than the budget.
+func dialOwner(ctx context.Context, root string, budget time.Duration) (*db.DB, error) {
 	sock, err := ownerSocket(root)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	return db.DialContext(ctx, sock)
 }

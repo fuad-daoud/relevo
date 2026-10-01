@@ -79,7 +79,7 @@ func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 		case errors.Is(err, db.ErrLocked):
 			// The daemon holds the file: read through the owner instead. A
 			// failed dial omits the database-backed sections, as today.
-			d, err = dialOwner(root, verbDialBudget)
+			d, err = dialOwner(context.Background(), root, verbDialBudget)
 			if err != nil {
 				d = nil
 			}
