@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -25,8 +26,9 @@ const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout 
 	"refused as a cheap first line, not as the guarantee: SQLite decides recursion\n" +
 	"structurally, so a runaway statement is ended by the owner, which refuses\n" +
 	"ad-hoc reads and reaps the daemon. --limit caps the rows printed (default\n" +
-	"1000); --max-bytes caps the value bytes held (default 16777216, 16 MiB);\n" +
-	"--timeout bounds dial, open and read (default 10s, at most 12s).\n"
+	"1000); --max-bytes caps the value bytes held (default 16777216, 16 MiB, at\n" +
+	"most 67108864, the owner's ad-hoc value ceiling); --timeout bounds dial, open\n" +
+	"and read (default 10s, at most 12s).\n"
 
 // The db query defaults: a row cap and a byte cap that keep a broad SELECT
 // from filling memory, and a hold budget that leaves the owner's own open-lock
@@ -209,6 +211,8 @@ func checkDBQueryBounds(limit int, timeout time.Duration, maxBytes int) error {
 		return fail(codeUsage, "relevo db query --limit must be at least 1, got %d", limit)
 	case maxBytes < 1:
 		return fail(codeUsage, "relevo db query --max-bytes must be at least 1, got %d", maxBytes)
+	case maxBytes > wire.AdHocReadCeiling:
+		return fail(codeUsage, "relevo db query --max-bytes must be at most %d, the owner's ad-hoc value ceiling, got %d", wire.AdHocReadCeiling, maxBytes)
 	case timeout <= 0:
 		return fail(codeUsage, "relevo db query --timeout must be positive, got %s", timeout)
 	case timeout > db.ReadOnlyHoldBudget:

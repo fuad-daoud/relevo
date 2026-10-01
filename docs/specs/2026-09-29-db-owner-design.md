@@ -137,10 +137,13 @@ client can no longer know the stream's state.
 
 **Abandoned statements.** A statement the engine will not interrupt outlives the
 client that sent it: the owner's cleanup returns the pin slot, then registers the
-still-running rollback and discard as *the* abandoned statement (at most one at a
-time; a second registration is dropped). After a 30 s grace an `OnAbandoned` hook
-fires once and the daemon re-execs its own binary, whose fresh thread ends the
-statement. While a registration is live the owner refuses requests on connections
+still-running rollback and discard as an abandoned statement, keeping every
+registration -- two clients can abandon statements at once, and dropping the
+second would let its runaway escape the refusal and the reap as soon as the first
+clears. After a 30 s grace, once any registration is still live, an `OnAbandoned`
+hook fires (at most once; one re-exec ends them all) and the daemon re-execs its
+own binary, whose fresh thread ends the statement. While any registration is live
+the owner refuses requests on connections
 that marked themselves ad-hoc in the handshake, with the refusal code `reaping`;
 every other verb runs on a connection without the bit and is never refused, and the
 handshake itself is never refused, because a refused dial would make `db query`
@@ -150,6 +153,16 @@ fall back to a direct open and report a false lock conflict.
 (`client.Connector`, `db.DialContextAdHoc`) and clear for every other client. Both
 fields are additive and `version` stays 1: an owner that predates `ad_hoc` ignores
 it and never refuses, and a client that predates it never sends one.
+
+**Ad-hoc value ceiling.** The engine materialises a whole value -- up to SQLite's
+1 GB per-value limit -- before relevo can see it. That transient cannot be bounded
+without an engine limit, so an ad-hoc read of one huge value would still grow the
+daemon's heap by it however small the client's `--max-bytes` is. The owner
+therefore checks each value's size the moment the engine yields the row and
+refuses a value over 64 MiB (`wire.AdHocReadCeiling`) before it copies the value
+into a batch or peeks the next row; `relevo db query` caps `--max-bytes` at the
+same ceiling and says so. A connection without the ad-hoc bit is never capped:
+relevo's own blobs must still flow.
 
 **Errors.** `error{id, code, extended_code, message}`. The client rebuilds an
 error carrying `Code()`, so `ErrBusy`, `ErrInvalid` and `retryBusy` work

@@ -40,6 +40,14 @@ const readChunk = 64 << 10
 // to meet it, so one large blob yields a batch larger than the budget.
 const BatchBudget = 1 << 20
 
+// AdHocReadCeiling is the largest single value the owner carries to an ad-hoc
+// connection (`db query`). The engine materialises a whole value before relevo
+// can see it, so the owner refuses one above this before it copies it into a
+// batch or peeks the next row; a normal connection is not capped, because
+// relevo's own blobs may be large. db query caps --max-bytes here, and the owner
+// keeps a var defaulting to this so a test can shrink it.
+const AdHocReadCeiling = 64 << 20
+
 // Conn reads and writes length-prefixed frames on one stream. Writes are
 // serialised: a cancel can be sent while a request is in flight, and the two
 // must not interleave on the wire.

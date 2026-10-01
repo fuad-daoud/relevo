@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
 
 // seedQueryRoot points the state root at a fresh temp directory and writes a
@@ -297,14 +299,16 @@ func TestDBQueryByteCapStopsAValueOverTheBudget(t *testing.T) {
 	}
 }
 
-// TestDBQueryMaxBytesFlagBounds pins the flag's lower bound: a byte cap below
-// one is a usage error.
+// TestDBQueryMaxBytesFlagBounds pins the flag's bounds: a byte cap below one is
+// a usage error, and so is one above the owner's ad-hoc value ceiling, which no
+// ad-hoc read may exceed.
 func TestDBQueryMaxBytesFlagBounds(t *testing.T) {
 	seedQueryRoot(t)
 
 	for _, args := range [][]string{
 		{"db", "query", `SELECT 1`, "--max-bytes", "0"},
 		{"db", "query", `SELECT 1`, "--max-bytes", "-1"},
+		{"db", "query", `SELECT 1`, "--max-bytes", strconv.Itoa(wire.AdHocReadCeiling + 1)},
 	} {
 		_, _, err := captureOutput(t, func() error { return run(args) })
 		requireCLIError(t, err, codeUsage, "relevo help")

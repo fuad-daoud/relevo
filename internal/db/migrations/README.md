@@ -45,6 +45,10 @@ What binds a migration:
   one, so a path that carries one would silently open another file.
 - Text that is not valid UTF-8 is repaired to U+FFFD on the way in, in both
   engines: an invalid TEXT value makes a file Turso refuses to read.
+- The engine still materialises one value (up to SQLite's 1 GB per-value limit)
+  before relevo can see it; relevo cannot bound that transient without an engine
+  limit. It bounds what it copies instead: an ad-hoc read (`relevo db query`) is
+  refused when a single value exceeds 64 MiB.
 - No foreign key that cascades or takes NO ACTION to one parent, and no
   partial index on a foreign-key column: Turso mishandles both, so a
   migration must not rely on either.
