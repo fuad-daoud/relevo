@@ -1919,3 +1919,54 @@ func TestRunnerLineWordMatchesActivityWord(t *testing.T) {
 		t.Errorf("the runner line must keep the definite word working, not quiet: %q", builderSb.String())
 	}
 }
+
+// TestPlainStatusLineMatchesTheColouredLines pins the one renderer: for every
+// fixture the visible text RenderStatusLine draws (SGR stripped) and the plain
+// rows agree line for line, including a chain row, the 40-column case and the
+// unpadded short-width fallback.
+func TestPlainStatusLineMatchesTheColouredLines(t *testing.T) {
+	t.Parallel()
+
+	type fixture struct {
+		name string
+		rep  Report
+	}
+	chain := Report{Bindings: []BindingStatus{{
+		Name:    "x",
+		Display: "ACTIVE",
+		Chain: &ChainFacts{
+			Status: "running", Phase: "build", Step: "reviewing",
+			Plan: 2, Plans: 4, Corrections: 1, Awaiting: "reviewer",
+		},
+	}}}
+
+	fixtures := []fixture{
+		{"statusline fixture", statuslineFixture(baseTime)},
+		{"row rule", srrRep},
+		{"chain", chain},
+	}
+	for _, c := range rowStatusCases {
+		fixtures = append(fixtures, fixture{c.name, Report{Bindings: []BindingStatus{c.binding}}})
+	}
+	for _, c := range waitingFallthroughCases {
+		fixtures = append(fixtures, fixture{c.name, Report{Bindings: []BindingStatus{c.binding}}})
+	}
+
+	for _, f := range fixtures {
+		for _, columns := range []int{80, 40, 20, 0} {
+			t.Run(f.name+"/"+strconv.Itoa(columns), func(t *testing.T) {
+				rows := StatusLineRows(f.rep, baseTime)
+				plain := PlainStatusLineRows(rows, columns)
+				lines := splitLines(stripSGR(RenderStatusLine(f.rep, baseTime, columns)))
+				if len(plain) != len(lines) {
+					t.Fatalf("columns %d: plain has %d rows and the coloured line %d, want one each", columns, len(plain), len(lines))
+				}
+				for i := range lines {
+					if plain[i] != lines[i] {
+						t.Errorf("columns %d: line %d plain = %q, coloured = %q", columns, i, plain[i], lines[i])
+					}
+				}
+			})
+		}
+	}
+}

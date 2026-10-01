@@ -58,8 +58,18 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 	}
 
 	rows := StatusLineRows(r, now)
+	nameW, statusW, clockW := statusLineColumns(rows)
 
-	nameW, statusW, clockW := 0, 0, 0
+	var sb strings.Builder
+	for _, row := range rows {
+		sb.WriteString(renderedStatusLineRow(row, nameW, statusW, clockW, columns))
+	}
+	return sb.String()
+}
+
+// statusLineColumns is the shared name, status and clock column widths of a row
+// set, so the status and the clock never move when another row's text changes.
+func statusLineColumns(rows []StatusLineRow) (nameW, statusW, clockW int) {
 	for _, row := range rows {
 		if w := utf8.RuneCountInString(row.Name); w > nameW {
 			nameW = w
@@ -71,21 +81,19 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 			clockW = w
 		}
 	}
-
-	var sb strings.Builder
-	for _, row := range rows {
-		sb.WriteString(renderedStatusLineRow(row, nameW, statusW, clockW, columns))
-	}
-	return sb.String()
+	return nameW, statusW, clockW
 }
 
-// renderedStatusLineRow lays out one StatusLineRow at the shared column
-// widths. The tone colours only the visible status text; the padding counts
-// the uncoloured runes, so the colour never widens the column.
-func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns int) string {
-	dotColoured := ansiDim + "○" + ansiReset
+// statusLineRowText lays out one StatusLineRow's visible text at the shared
+// column widths. Non-empty dotColour and statusColour wrap the dot and the
+// status, so padding counts the uncoloured runes; "" for both is the plain path.
+func statusLineRowText(row StatusLineRow, nameW, statusW, clockW, columns int, dotColour, statusColour string) string {
+	dot := "○"
 	if row.NeedsYou {
-		dotColoured = ansiNeedsYou + "●" + ansiReset
+		dot = "●"
+	}
+	if dotColour != "" {
+		dot = dotColour + dot + ansiReset
 	}
 
 	round := row.Round
@@ -113,16 +121,6 @@ func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns in
 		}
 	}
 
-	colour := ""
-	switch row.Tone {
-	case "needs":
-		colour = ansiNeedsYou
-	case "report":
-		colour = ansiReportIn
-	case "phase":
-		colour = ansiDim
-	}
-
 	leftW := 2 + nameW + 2
 	midW := columns - leftW - 1 - statusW - 2 - clockW
 
@@ -130,18 +128,51 @@ func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns in
 		// Unpadded fallback: a row this narrow cannot afford three aligned
 		// columns, so the status and the clock follow the middle cell.
 		status := row.Status
-		if colour != "" {
-			status = colour + status + ansiReset
+		if statusColour != "" {
+			status = statusColour + status + ansiReset
 		}
-		return dotColoured + " " + row.Name + "  " + mid + " · " + status + " · " + row.Clock + "\n"
+		return dot + " " + row.Name + "  " + mid + " · " + status + " · " + row.Clock + "\n"
 	}
-
 	status := pad(row.Status, statusW)
-	if colour != "" {
-		status = colour + status + ansiReset
+	if statusColour != "" {
+		status = statusColour + status + ansiReset
 	}
-	right := status + "  " + padLeft(row.Clock, clockW)
-	return dotColoured + " " + pad(row.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + right + "\n"
+	return dot + " " + pad(row.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + status + "  " + padLeft(row.Clock, clockW) + "\n"
+}
+
+// renderedStatusLineRow lays out one StatusLineRow with its SGR codes: the dot
+// keeps its dim or needs colour, and the tone colours only the visible status
+// text, so the padding never counts the colour and the column never widens.
+func renderedStatusLineRow(row StatusLineRow, nameW, statusW, clockW, columns int) string {
+	dotColour := ansiDim
+	if row.NeedsYou {
+		dotColour = ansiNeedsYou
+	}
+	statusColour := ""
+	switch row.Tone {
+	case "needs":
+		statusColour = ansiNeedsYou
+	case "report":
+		statusColour = ansiReportIn
+	case "phase":
+		statusColour = ansiDim
+	}
+	return statusLineRowText(row, nameW, statusW, clockW, columns, dotColour, statusColour)
+}
+
+// PlainStatusLineRows returns each row's visible text, in order, with no SGR
+// codes and no trailing newline: the row exactly as RenderStatusLine renders it
+// at the same column widths. columns <= 0 is the renderer's default width (80).
+func PlainStatusLineRows(rows []StatusLineRow, columns int) []string {
+	if columns <= 0 {
+		columns = 80
+	}
+	nameW, statusW, clockW := statusLineColumns(rows)
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, strings.TrimSuffix(statusLineRowText(row, nameW, statusW, clockW, columns, "", ""), "\n"))
+	}
+	return out
 }
 
 // RenderMasterMindLine is the statusline's first line: the mastermind's own name,
@@ -425,6 +456,11 @@ type StatusLineRow struct {
 	// chain: "chain x · plan 2/4 · reviewing · 1 correction". Empty on every
 	// ordinary row, which then keeps the round-and-actor middle.
 	Chain string `json:"chain,omitempty"`
+	// Text is the row exactly as relevo status --line renders it, without SGR
+	// codes and without the trailing newline, laid out at the renderer's
+	// default width. Only the --line --json path fills it; it is the OpenCode
+	// sidebar's row, so no consumer composes one.
+	Text string `json:"text,omitempty"`
 }
 
 // StatusLineDoc is the top-level document emitted by relevo status --line --json.
