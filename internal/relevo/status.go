@@ -41,7 +41,7 @@ func mastermindRoute(rt Runtime, b store.Binding) (route string, live bool) {
 
 // Status builds every row from the store and what relevo can determine
 // locally: the mastermind record, a live channel claim and the configured
-// deliverers. Only store failures fail the call. Each live chain's member rows
+// deliverers. Only store failures fail the call. Each chain's member rows
 // are replaced by the chain's own row (applyChains).
 func Status(ctx context.Context, rt Runtime) (view.Report, error) {
 	bindings, err := rt.Store.List()

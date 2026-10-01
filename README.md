@@ -1161,8 +1161,9 @@ that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 
 ## Status line
 
-`relevo status --line` shows this MasterMind's live bindings, one row each, under
-the Claude Code prompt; it shows nothing on error and never probes a builder.
+`relevo status --line` shows this MasterMind's bindings, one row each (one entry
+per chain in place of its members), under the Claude Code prompt; it shows nothing
+on error and never probes a builder.
 The first line names the MasterMind (`MasterMind architect-14`), so each terminal
 shows which MasterMind it is; `relevo mastermind list` maps that name to its chat.
 Each row shows the round's harness (`harness@server` for a remote builder),

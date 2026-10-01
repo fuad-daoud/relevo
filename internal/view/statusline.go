@@ -417,9 +417,9 @@ type StatusLineRow struct {
 	Display  string `json:"display"`
 	NeedsYou bool   `json:"needs_you"`
 	// ReportIn is true when the newest to-mastermind report/question has been
-	// delivered: it is a to-mastermind payload and nothing is pending on the
-	// mastermind. A delivered report is handled, so the consumer shows REPORT IN
-	// rather than NEEDS YOU.
+	// delivered and not consumed by a chain: it is a to-mastermind payload and
+	// nothing is pending on the mastermind. A delivered report is handled, so
+	// the consumer shows REPORT IN rather than NEEDS YOU.
 	ReportIn    bool   `json:"report_in"`
 	ReportRound int    `json:"report_round,omitempty"`
 	Harness     string `json:"harness"`
@@ -534,11 +534,13 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 	if toMasterMindPayload {
 		reportRound = b.LastPayload.Round
 	}
-	reportIn := toMasterMindPayload && !pending
+	reportIn := toMasterMindPayload && !pending && !isConsumedPayload(b.LastPayload)
 	status, tone := rowStatus(b, needsYou, reportIn)
 	reason := ""
 	if needsYou {
 		reason = waiting(b)
+	} else if isConsumedPayload(b.LastPayload) {
+		reason = b.LastPayload.Note
 	} else if b.Detail != "" {
 		reason = b.Detail
 	}
@@ -567,7 +569,7 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 	}
 }
 
-// statusLineRowOfChain builds the statusline row that stands in for a live
+// statusLineRowOfChain builds the statusline row that stands in for a
 // chain: one entry per chain in place of its members' rows. The middle is the
 // chain's plan segment, and the status column follows the chain -- NEEDS YOU
 // while it waits on a human, DONE once it finished, ACTIVE while it works.

@@ -9,7 +9,7 @@ import (
 )
 
 // MasterMindStatus filters stored bindings to one mastermind id and builds rows
-// through buildReport from the store alone. Each of that mastermind's live
+// through buildReport from the store alone. Each of that mastermind's
 // chains then replaces its member rows with one chain row (applyChains), so the
 // statusline shows one entry per chain.
 func MasterMindStatus(ctx context.Context, rt Runtime, mastermindID string) (view.Report, error) {

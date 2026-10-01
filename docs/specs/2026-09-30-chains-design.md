@@ -334,7 +334,8 @@ artifacts. The trace holds references, not copies.
 - A member round closed while its chain is running records a
   `consumed by chain <n>` entry in place of a MasterMind-bound payload. Members
   of a running chain are never pending and never NEEDS YOU on the MasterMind's
-  surfaces.
+  surfaces; a consumed payload stays clean after the chain settles, showing its
+  phase word rather than REPORT IN and carrying the note as reason.
 - When the chain finishes, halts or is stopped, relevo queues exactly one
   MasterMind-bound payload for the chain, delivered through today's routes
   (`wait`, push, `show`). It carries:
@@ -350,7 +351,8 @@ artifacts. The trace holds references, not copies.
 - `relevo status`: the chain row (§3), with its members listed under it.
 - The statusline: one entry per chain, for example
   `chain x · plan 2/4 · reviewing · 1 correction`, in place of its members'
-  rows. A halted chain shows NEEDS YOU there.
+  rows. A halted chain shows NEEDS YOU there; a settled chain shows DONE
+  while its members are present and conjures no row once its members are released.
 - The cockpit shows members as ordinary bindings. A chain view is later work.
 
 ## 10. Storage
