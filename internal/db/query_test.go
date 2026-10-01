@@ -177,6 +177,54 @@ func TestQueryReadOnlyAllowsRecursiveInAStringOrComment(t *testing.T) {
 	}
 }
 
+// TestQueryReadOnlyRefusesParenOnABarePragma pins the form split: SQLite reads
+// the paren form of a bare-only name as an assignment, so it is refused rather
+// than run as a read.
+func TestQueryReadOnlyRefusesParenOnABarePragma(t *testing.T) {
+	d := openTestDB(t)
+
+	for _, stmt := range []string{
+		`PRAGMA user_version(7)`,
+		`PRAGMA schema_version(9)`,
+		`PRAGMA page_size(512)`,
+		`PRAGMA page_count(0)`,
+		`PRAGMA journal_mode(delete)`,
+	} {
+		err := d.QueryReadOnly(context.Background(), stmt, noQueryRows)
+		if !errors.Is(err, ErrPragmaNotReadOnly) {
+			t.Errorf("QueryReadOnly(%q) = %v, want ErrPragmaNotReadOnly", stmt, err)
+		}
+	}
+}
+
+// TestQueryReadOnlyChecksPragmaUnderExplain pins that an EXPLAIN does not slip
+// the pragma check: the PRAGMA that follows is checked as if it were the
+// statement, so a writing pragma and a bare-only paren form stay out, while an
+// EXPLAIN of anything else is left to the engine.
+func TestQueryReadOnlyChecksPragmaUnderExplain(t *testing.T) {
+	d := openTestDB(t)
+
+	for _, stmt := range []string{
+		`EXPLAIN PRAGMA writable_schema = 1`,
+		`EXPLAIN PRAGMA user_version(7)`,
+		`EXPLAIN QUERY PLAN PRAGMA schema_version(9)`,
+	} {
+		err := d.QueryReadOnly(context.Background(), stmt, noQueryRows)
+		if !errors.Is(err, ErrPragmaNotReadOnly) {
+			t.Errorf("QueryReadOnly(%q) = %v, want ErrPragmaNotReadOnly", stmt, err)
+		}
+	}
+
+	for _, stmt := range []string{
+		`EXPLAIN SELECT 1`,
+		`EXPLAIN PRAGMA page_count`,
+	} {
+		if err := d.QueryReadOnly(context.Background(), stmt, noQueryRows); err != nil {
+			t.Errorf("QueryReadOnly(%q) = %v, want a result", stmt, err)
+		}
+	}
+}
+
 func TestQueryReadOnlyRefusesTwoStatements(t *testing.T) {
 	d := openTestDB(t)
 

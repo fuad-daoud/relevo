@@ -29,10 +29,10 @@ var ErrPragmaNotReadOnly = errors.New("pragma is not one of the read-only forms"
 // caller that maps malformed arguments to usage still sees a usage error.
 var ErrRecursive = errors.New("recursive is not allowed in a read-only statement")
 
-// readOnlyPragmas are the PRAGMA names the read-only seam accepts, in the order
-// the refusal names them. A pragma outside this list can change the connection
-// or the file -- writable_schema being the one that did -- and belongs on the
-// writable handle, not behind a read-only verb.
+// readOnlyPragmas are the PRAGMA names the read-only seam accepts in the bare
+// form `PRAGMA name`, in the order the refusal names them. A pragma outside this
+// list can change the connection or the file -- writable_schema being the one
+// that did -- and belongs on the writable handle, not behind a read-only verb.
 var readOnlyPragmas = []string{
 	"table_info",
 	"table_list",
@@ -48,17 +48,47 @@ var readOnlyPragmas = []string{
 	"quick_check",
 }
 
+// readOnlyPragmaArgs are the names that also take the argument form
+// `PRAGMA name(argument)`. SQLite reads the paren form of any other name as an
+// assignment, so journal_mode, page_count, page_size, user_version and
+// schema_version are bare-only: accepting `PRAGMA user_version(7)` would let a
+// write through a read-only verb.
+var readOnlyPragmaArgs = []string{
+	"table_info",
+	"table_list",
+	"index_list",
+	"index_info",
+	"foreign_key_list",
+	"integrity_check",
+	"quick_check",
+}
+
+// pragmaForm is the shape a PRAGMA statement has: the bare read form, the
+// parenthesised argument form, or neither.
+type pragmaForm int
+
+const (
+	pragmaNone pragmaForm = iota
+	pragmaBare
+	pragmaArguments
+)
+
 // checkReadOnlyPragma refuses a PRAGMA that is not one of the read forms the
-// seam allows: `PRAGMA name` or `PRAGMA name(argument)`, for a name on
-// readOnlyPragmas. The writing form `PRAGMA name = value`, a schema-qualified
-// name and anything the lexer does not recognise are all refused, because none
-// of them can be checked against the list.
+// seam allows: `PRAGMA name` for a name on readOnlyPragmas, or
+// `PRAGMA name(argument)` for a name that really takes an argument. The writing
+// form `PRAGMA name = value`, a schema-qualified name and anything the lexer
+// does not recognise are all refused, because none of them can be checked
+// against the lists.
 func checkReadOnlyPragma(stmt string) error {
-	if name, ok := pragmaName(stmt); ok && readOnlyPragma(name) {
+	name, form := pragmaName(stmt)
+	switch {
+	case form == pragmaBare && readOnlyPragma(name):
+		return nil
+	case form == pragmaArguments && readOnlyPragmaArg(name):
 		return nil
 	}
-	return fmt.Errorf("db: query read-only: PRAGMA is allowed only as `PRAGMA name` or `PRAGMA name(argument)`, and only for %s: %w: %w",
-		strings.Join(readOnlyPragmas, ", "), ErrInvalid, ErrPragmaNotReadOnly)
+	return fmt.Errorf("db: query read-only: PRAGMA is allowed only as `PRAGMA name` for %s, or `PRAGMA name(argument)` for %s: %w: %w",
+		strings.Join(readOnlyPragmas, ", "), strings.Join(readOnlyPragmaArgs, ", "), ErrInvalid, ErrPragmaNotReadOnly)
 }
 
 // readOnlyPragma reports whether name is on the read-only list; the match is
@@ -72,22 +102,33 @@ func readOnlyPragma(name string) bool {
 	return false
 }
 
+// readOnlyPragmaArg reports whether name may take the parenthesised argument
+// form; the match is case-insensitive, the way SQLite reads pragma names.
+func readOnlyPragmaArg(name string) bool {
+	for _, allowed := range readOnlyPragmaArgs {
+		if strings.EqualFold(allowed, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // pragmaName returns the name a `PRAGMA name` or `PRAGMA name(argument)`
-// statement reads, and whether the statement is in that read form at all.
-func pragmaName(stmt string) (string, bool) {
+// statement reads, and the form it is in.
+func pragmaName(stmt string) (string, pragmaForm) {
 	_, afterKeyword := word(stmt, skipSpace(stmt, 0))
 	name, afterName := word(stmt, skipSpace(stmt, afterKeyword))
 	if name == "" {
-		return "", false
+		return "", pragmaNone
 	}
 	rest := strings.TrimSpace(stmt[skipSpace(stmt, afterName):])
 	switch {
 	case rest == "" || rest == ";":
-		return name, true
+		return name, pragmaBare
 	case strings.HasPrefix(rest, "(") && strings.HasSuffix(rest, ")"):
-		return name, true
+		return name, pragmaArguments
 	}
-	return "", false
+	return "", pragmaNone
 }
 
 // word returns the identifier that starts at i and the index just past it, or
@@ -156,6 +197,15 @@ func (d *DB) QueryReadOnly(ctx context.Context, stmt string, onRow func(columns 
 	case keyword == "PRAGMA":
 		if err := checkReadOnlyPragma(one); err != nil {
 			return err
+		}
+	case keyword == "EXPLAIN":
+		// EXPLAIN of a PRAGMA would compile a writing pragma without running
+		// it, so the pragma that follows is checked as though it were the
+		// statement. EXPLAIN of anything else is left to the engine.
+		if pragma := explainPragma(one); pragma != "" {
+			if err := checkReadOnlyPragma(pragma); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -335,6 +385,33 @@ func firstKeyword(stmt string) string {
 // with: an ASCII letter, digit or underscore.
 func isKeywordByte(c byte) bool {
 	return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// explainPragma returns the PRAGMA statement an `EXPLAIN` or `EXPLAIN QUERY
+// PLAN` prefixes, so the same read-only check runs on the statement that
+// follows. It returns "" when the statement is not an EXPLAIN of a PRAGMA,
+// which is left to the engine.
+func explainPragma(stmt string) string {
+	i := skipSpace(stmt, 0)
+	keyword, after := word(stmt, i)
+	if !strings.EqualFold(keyword, "EXPLAIN") {
+		return ""
+	}
+	i = skipSpace(stmt, after)
+	keyword, after = word(stmt, i)
+	if strings.EqualFold(keyword, "QUERY") {
+		i = skipSpace(stmt, after)
+		plan, afterPlan := word(stmt, i)
+		if !strings.EqualFold(plan, "PLAN") {
+			return ""
+		}
+		i = skipSpace(stmt, afterPlan)
+		keyword, _ = word(stmt, i)
+	}
+	if !strings.EqualFold(keyword, "PRAGMA") {
+		return ""
+	}
+	return strings.TrimSpace(stmt[i:])
 }
 
 // mentionsRecursive reports whether stmt names RECURSIVE outside a string, a
