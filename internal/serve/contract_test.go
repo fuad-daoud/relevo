@@ -231,12 +231,14 @@ func TestContractRoutesComplete(t *testing.T) {
 
 func TestContractStatusDocument(t *testing.T) {
 	builders := remote.BuildersView{
-		Running: 1,
-		Queued:  2,
-		Cap:     4,
-		Scopes:  true,
-		Slice:   "relevo.slice",
-		Quota:   "150%",
+		Running:   1,
+		Queued:    2,
+		Cap:       4,
+		Scopes:    true,
+		Slice:     "relevo.slice",
+		Quota:     "150%",
+		Isolation: "container",
+		Image:     "registry.example/relevo-builder:latest",
 	}
 
 	owner1 := OwnerStatus{
