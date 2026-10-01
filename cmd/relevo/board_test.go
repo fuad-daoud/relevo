@@ -412,3 +412,16 @@ func TestBoardResolutionNeverStartsTheDaemon(t *testing.T) {
 		t.Errorf("resolution created a socket: stat error = %v, want not-exist", err)
 	}
 }
+
+// TestBoardServerInfoComposition pins the advertisement a live board composes:
+// nil for a repo board, the five fields for a live one (S6).
+func TestBoardServerInfoComposition(t *testing.T) {
+	if got := boardServerInfo("board", "http://127.0.0.1:41234/#t=x", 7, 1700000000, ""); got != nil {
+		t.Errorf("repo scope = %+v, want nil", got)
+	}
+	got := boardServerInfo("board", "http://127.0.0.1:41234/#t=x", 7, 1700000000, "/live")
+	want := board.ServerInfo{Scene: "board", URL: "http://127.0.0.1:41234/#t=x", Port: 41234, PID: 7, StartedAt: 1700000000}
+	if got == nil || *got != want {
+		t.Errorf("live scope = %+v, want %+v", got, want)
+	}
+}
