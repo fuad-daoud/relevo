@@ -18,6 +18,13 @@ type pathHandle struct {
 	// the same file. A nil lock with a ready channel means the path is being
 	// opened; the map entry is removed and ready is closed on failure.
 	ready chan struct{}
+	// created is closed when the first opener has finished its direct open, so a
+	// later opener waits for it before it opens a pool of its own. The engine
+	// keeps one database per file in this process, and a fresh file's first page
+	// must be created once: two pools writing a fresh file at once race that
+	// creation and leave a short or corrupt WAL. A nil channel means the first
+	// open is done, so a later opener proceeds at once.
+	created chan struct{}
 }
 
 // directHandles is the per-path state for every open direct handle. Vacuum
@@ -53,19 +60,27 @@ func canonicalPath(path string) string {
 // one tries once. A lock another process holds returns ErrLocked. A second
 // handle in this process on the same path shares the existing lock and count.
 //
+// first reports whether this call created the path's entry, which makes it the
+// only opener that performs the engine's first-time creation; it must call
+// signalCreated when its direct open is done. Every other opener must call
+// awaitCreated before it opens its own pool.
+//
 // The wait happens with directHandles unlocked: every other direct open or
 // close in the process must not queue behind one path's long open-lock wait.
-func acquireHandle(path string, writable bool) error {
+func acquireHandle(path string, writable bool) (first bool, err error) {
 	key := canonicalPath(path)
 	for {
 		directHandles.Lock()
 		h := directHandles.paths[key]
 		switch {
 		case h == nil:
-			h = &pathHandle{ready: make(chan struct{})}
+			h = &pathHandle{ready: make(chan struct{}), created: make(chan struct{})}
 			directHandles.paths[key] = h
 			directHandles.Unlock()
-			return openFirstHandle(key, writable, h)
+			if err := openFirstHandle(key, writable, h); err != nil {
+				return false, err
+			}
+			return true, nil
 		case h.lock == nil:
 			// Another goroutine is taking this path's lock. Wait for its
 			// outcome rather than contending for a flock on the same file.
@@ -75,7 +90,7 @@ func acquireHandle(path string, writable bool) error {
 		default:
 			h.count++
 			directHandles.Unlock()
-			return nil
+			return false, nil
 		}
 	}
 }
@@ -96,6 +111,40 @@ func openFirstHandle(key string, writable bool, h *pathHandle) error {
 	h.lock, h.count = lock, 1
 	close(h.ready)
 	return nil
+}
+
+// signalCreated records that the first opener has finished its direct open, so
+// a later opener on the same path may open its pool. Only the first opener
+// calls it, so the channel is closed at most once. It runs before the entry is
+// released, so a waiting opener still finds the entry and wakes.
+func signalCreated(path string) {
+	directHandles.Lock()
+	h := directHandles.paths[canonicalPath(path)]
+	var created chan struct{}
+	if h != nil {
+		created = h.created
+		h.created = nil
+	}
+	directHandles.Unlock()
+	if created != nil {
+		close(created)
+	}
+}
+
+// awaitCreated blocks a later opener until the first opener's direct open is
+// done, so two pools never write a fresh file at once. It returns at once when
+// the entry carries no open in progress, which is also the case for a path that
+// already had a handle before this open arrived.
+func awaitCreated(path string) {
+	directHandles.Lock()
+	var created chan struct{}
+	if h := directHandles.paths[canonicalPath(path)]; h != nil {
+		created = h.created
+	}
+	directHandles.Unlock()
+	if created != nil {
+		<-created
+	}
 }
 
 // releaseHandle records one fewer open direct handle on path, releasing the

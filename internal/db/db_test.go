@@ -232,6 +232,116 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 	}
 }
 
+// TestDirectHandlesOnOneFreshPathWriteTogether pins the production shape: the
+// daemon's owner handle on a direct open, plus the same process's second direct
+// open of that fresh path -- what store.New(root).DB does in the daemon -- with
+// writes through both at once. The engine keeps one database per file in this
+// process, so a fresh file's first page must be created once; two pools racing
+// that creation leave a short or corrupt WAL. The mutation is the creation gate
+// in handles.go: without it the concurrent opens meet the engine's own page-1
+// race and an open fails before the writes.
+func TestDirectHandlesOnOneFreshPathWriteTogether(t *testing.T) {
+	for i := 0; i < 30; i++ {
+		handles := openFreshPair(t, filepath.Join(t.TempDir(), "relevo.db"))
+		// One handle is the owner's, as the daemon's first open is.
+		_ = NewOwner(handles[0])
+		if _, err := handles[0].sqlDB.Exec(`CREATE TABLE direct_probe (n INTEGER)`); err != nil {
+			t.Fatalf("iteration %d: create direct_probe: %v", i, err)
+		}
+		writeThroughBoth(t, i, handles)
+		assertProbeIntact(t, i, handles[0])
+		for _, d := range handles {
+			if err := d.Close(); err != nil {
+				t.Fatalf("iteration %d: close: %v", i, err)
+			}
+		}
+	}
+}
+
+// directProbePerHandle is the rows each concurrent writer inserts, so
+// directProbeRows is what both together must leave behind.
+const (
+	directProbePerHandle = 25
+	directProbeRows      = 2 * directProbePerHandle
+)
+
+// openFreshPair opens path twice at once, from a start gate so both enter Open
+// together. That is the shape the daemon's owner handle and store.New(root).DB
+// share: two direct handles on one fresh file, which the creation gate in
+// handles.go must serialise.
+func openFreshPair(t *testing.T, path string) []*DB {
+	t.Helper()
+	handles := make([]*DB, 2)
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for j := range handles {
+		wg.Add(1)
+		go func(j int) {
+			defer wg.Done()
+			<-start
+			d, err := Open(path)
+			if err != nil {
+				errs[j] = err
+				return
+			}
+			handles[j] = d
+		}(j)
+	}
+	close(start)
+	wg.Wait()
+	for j, err := range errs {
+		if err != nil {
+			t.Fatalf("direct open %d: %v", j, err)
+		}
+	}
+	return handles
+}
+
+// writeThroughBoth writes directProbePerHandle rows through each handle at once,
+// so the two pools contend on the one engine database.
+func writeThroughBoth(t *testing.T, iteration int, handles []*DB) {
+	t.Helper()
+	var writers sync.WaitGroup
+	for j, d := range handles {
+		writers.Add(1)
+		go func(j int, d *DB) {
+			defer writers.Done()
+			for n := 0; n < directProbePerHandle; n++ {
+				err := d.Tx(func(tx *Tx) error {
+					_, err := tx.exec(`INSERT INTO direct_probe (n) VALUES (?)`, j*directProbePerHandle+n)
+					return err
+				})
+				if err != nil {
+					t.Errorf("iteration %d: insert through handle %d: %v", iteration, j, err)
+					return
+				}
+			}
+		}(j, d)
+	}
+	writers.Wait()
+}
+
+// assertProbeIntact pins the post-condition: every row is present and the file
+// passes integrity_check.
+func assertProbeIntact(t *testing.T, iteration int, d *DB) {
+	t.Helper()
+	var rows int
+	if err := d.sqlDB.QueryRow(`SELECT COUNT(*) FROM direct_probe`).Scan(&rows); err != nil {
+		t.Fatalf("iteration %d: count rows: %v", iteration, err)
+	}
+	if rows != directProbeRows {
+		t.Errorf("iteration %d: direct_probe has %d rows, want %d", iteration, rows, directProbeRows)
+	}
+	var integrity string
+	if err := d.sqlDB.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil {
+		t.Fatalf("iteration %d: integrity_check: %v", iteration, err)
+	}
+	if integrity != "ok" {
+		t.Errorf("iteration %d: integrity_check = %q, want ok", iteration, integrity)
+	}
+}
+
 // TestTxRefusesANewerSchema pins that a newer schema is not written by a Tx.
 func TestTxRefusesANewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")

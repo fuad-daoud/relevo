@@ -155,7 +155,8 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 	// The relevo open lock: one process opens the path at a time, and every
 	// handle in this process on this path shares the one lock. It is taken
 	// before the one-time conversion, which reads and rewrites the file.
-	if err = acquireHandle(path, true); err != nil {
+	first, err := acquireHandle(path, true)
+	if err != nil {
 		return nil, fmt.Errorf("db: open %s: %w", path, err)
 	}
 	defer func() {
@@ -163,6 +164,16 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 			releaseHandle(path)
 		}
 	}()
+	// This handle's engine open is the only one allowed to create a fresh
+	// file's first page; a later handle waits for it to finish before it opens a
+	// pool of its own, so two pools never write the new file at once. The signal
+	// is deferred before the release above runs, so a waiting opener wakes even
+	// when this open fails.
+	if first {
+		defer signalCreated(path)
+	} else {
+		awaitCreated(path)
+	}
 
 	// A file an earlier, modernc build wrote is converted once here, under
 	// modernc, before the engine opens it; a file the engine already wrote is

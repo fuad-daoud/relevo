@@ -219,7 +219,8 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 	// A read-only open takes the same path lock but never waits for it: a
 	// caller that must not write needs an answer now, and ErrLocked lets it
 	// fall back to the owner.
-	if err = acquireHandle(path, false); err != nil {
+	first, err := acquireHandle(path, false)
+	if err != nil {
 		return nil, fmt.Errorf("db: open readonly %s: %w", path, err)
 	}
 	defer func() {
@@ -227,6 +228,13 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 			releaseHandle(path)
 		}
 	}()
+	// A read-only open never creates, but it may still be the first handle on
+	// the path: it signals so a writable handle that is waiting for the first
+	// open does not wait forever. It never waits itself, because it needs an
+	// answer now to fall back to the owner.
+	if first {
+		defer signalCreated(path)
+	}
 
 	// The marker check runs after the lock and before the pool: a held file
 	// still reports ErrLocked, and a refused file never opens the engine, so no
