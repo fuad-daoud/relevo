@@ -534,6 +534,10 @@ func tickUntilChainFinishes(t *testing.T, ctx context.Context, daemon *relevo.Da
 func dumpChainHaltDiagnostics(t *testing.T, rt relevo.Runtime, c db.ChainRow) {
 	t.Helper()
 	t.Logf("chain halted: status %s phase %s awaiting %s round %d reason %q", c.Status, c.Phase, c.AwaitingMember, c.AwaitingRound, c.Reason)
+	nameForPart := map[string]string{"builder": c.Builder, "reviewer": c.Reviewer, "planner": c.Planner, "security": c.Security}
+	if name := nameForPart[c.AwaitingMember]; name != "" {
+		dumpMemberRound(t, rt, name, c.AwaitingRound)
+	}
 	for _, member := range []string{c.Builder, c.Reviewer, c.Planner, c.Security} {
 		if member == "" {
 			continue
@@ -543,19 +547,33 @@ func dumpChainHaltDiagnostics(t *testing.T, rt relevo.Runtime, c db.ChainRow) {
 			t.Logf("member %s: load: %v", member, err)
 			continue
 		}
-		donePath := rt.Store.DonePath(member, b.Round)
-		streamPath := rt.Store.StreamPath(member, b.Round)
-		ds, dmt, dok, derr := rt.Store.StatFile(donePath)
-		ss, smt, sok, serr := rt.Store.StatFile(streamPath)
-		stream, rerr := rt.Store.ReadFile(streamPath)
-		t.Logf("member %s round %d state %s pid=%d started=%d segments=%+v", member, b.Round, b.State, b.Builder.PID, b.Builder.StartedAt, b.Builder.StreamSegments)
-		t.Logf("done   %s stat=(size=%d mtime=%s ok=%v err=%v)", donePath, ds, dmt, dok, derr)
-		t.Logf("stream %s stat=(size=%d mtime=%s ok=%v err=%v) readErr=%v bytes=%d", streamPath, ss, smt, sok, serr, rerr, len(stream))
-		if len(stream) > 1200 {
-			stream = stream[:1200]
+		if b.Round == c.AwaitingRound && member == nameForPart[c.AwaitingMember] {
+			continue
 		}
-		t.Logf("stream content:\n%s", stream)
+		dumpMemberRound(t, rt, member, b.Round)
 	}
+}
+
+// dumpMemberRound prints one member round's process and file state.
+func dumpMemberRound(t *testing.T, rt relevo.Runtime, member string, round int) {
+	t.Helper()
+	b, err := rt.Store.Load(member)
+	if err != nil {
+		t.Logf("member %s: load: %v", member, err)
+		return
+	}
+	donePath := rt.Store.DonePath(member, round)
+	streamPath := rt.Store.StreamPath(member, round)
+	ds, dmt, dok, derr := rt.Store.StatFile(donePath)
+	ss, smt, sok, serr := rt.Store.StatFile(streamPath)
+	stream, rerr := rt.Store.ReadFile(streamPath)
+	t.Logf("member %s round %d (current %d) state %s pid=%d started=%d segments=%+v", member, round, b.Round, b.State, b.Builder.PID, b.Builder.StartedAt, b.Builder.StreamSegments)
+	t.Logf("done   %s stat=(size=%d mtime=%s ok=%v err=%v)", donePath, ds, dmt, dok, derr)
+	t.Logf("stream %s stat=(size=%d mtime=%s ok=%v err=%v) readErr=%v bytes=%d", streamPath, ss, smt, sok, serr, rerr, len(stream))
+	if len(stream) > 1200 {
+		stream = stream[:1200]
+	}
+	t.Logf("stream content:\n%s", stream)
 }
 
 // chainMembersNote names every member's state, round and halt, for a failure
