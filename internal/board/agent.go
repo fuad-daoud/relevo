@@ -24,10 +24,10 @@ const (
 	textLineHeight = 24
 )
 
-// TextElement is one text element as the agent leg reads it: the four fields a
+// AgentText is one text element as the agent leg reads it: the four fields a
 // caller needs to place and describe a label, in the order the JSON document
 // carries them.
-type TextElement struct {
+type AgentText struct {
 	ID   string  `json:"id"`
 	X    float64 `json:"x"`
 	Y    float64 `json:"y"`
@@ -46,14 +46,6 @@ type sceneElement struct {
 	Height    *float64 `json:"height"`
 	Text      string   `json:"text"`
 	IsDeleted bool     `json:"isDeleted"`
-}
-
-// num returns a pointer's value, or zero when the scene omitted the field.
-func num(p *float64) float64 {
-	if p == nil {
-		return 0
-	}
-	return *p
 }
 
 // notFoundError carries ErrNotFound while printing the refusal text alone.
@@ -88,7 +80,7 @@ func decodeElements(data []byte) ([]sceneElement, error) {
 
 // TextElements lists the scene's non-deleted text elements in array order. A
 // missing scene is ErrNotFound, never a new scene.
-func TextElements(path string) ([]TextElement, error) {
+func TextElements(path string) ([]AgentText, error) {
 	data, _, isNew, err := Load(path)
 	if err != nil {
 		return nil, err
@@ -100,12 +92,12 @@ func TextElements(path string) ([]TextElement, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]TextElement, 0)
+	out := make([]AgentText, 0)
 	for _, el := range els {
 		if el.IsDeleted || el.Type != "text" {
 			continue
 		}
-		out = append(out, TextElement{ID: el.ID, X: num(el.X), Y: num(el.Y), Text: el.Text})
+		out = append(out, AgentText{ID: el.ID, X: num(el.X), Y: num(el.Y), Text: el.Text})
 	}
 	return out, nil
 }
@@ -343,33 +335,33 @@ func defaultPosition(els []sceneElement) (float64, float64) {
 // Annotate appends one text element to the scene at path and returns it. A
 // missing scene is ErrNotFound, a non-finite coordinate or a malformed request
 // is ErrUsage, and the rest of the scene keeps every byte.
-func Annotate(path string, opts AnnotateOptions) (TextElement, error) {
+func Annotate(path string, opts AnnotateOptions) (AgentText, error) {
 	if opts.Text == "" {
-		return TextElement{}, usagef("--text must not be empty")
+		return AgentText{}, usagef("--text must not be empty")
 	}
 	if opts.HasX != opts.HasY {
-		return TextElement{}, usagef("--x and --y come together")
+		return AgentText{}, usagef("--x and --y come together")
 	}
 	if opts.HasX && (math.IsNaN(opts.X) || math.IsInf(opts.X, 0)) {
-		return TextElement{}, usagef("--x must be a finite number")
+		return AgentText{}, usagef("--x must be a finite number")
 	}
 	if opts.HasY && (math.IsNaN(opts.Y) || math.IsInf(opts.Y, 0)) {
-		return TextElement{}, usagef("--y must be a finite number")
+		return AgentText{}, usagef("--y must be a finite number")
 	}
 	if opts.Theme == nil {
-		return TextElement{}, usagef("annotate needs a theme")
+		return AgentText{}, usagef("annotate needs a theme")
 	}
 
 	data, _, isNew, err := Load(path)
 	if err != nil {
-		return TextElement{}, err
+		return AgentText{}, err
 	}
 	if isNew {
-		return TextElement{}, &notFoundError{msg: "no scene at " + path}
+		return AgentText{}, &notFoundError{msg: "no scene at " + path}
 	}
 	els, err := decodeElements(data)
 	if err != nil {
-		return TextElement{}, err
+		return AgentText{}, err
 	}
 
 	x, y := opts.X, opts.Y
@@ -379,14 +371,14 @@ func Annotate(path string, opts AnnotateOptions) (TextElement, error) {
 
 	id, raw, err := buildElementBytes(opts.Text, x, y, opts.Theme)
 	if err != nil {
-		return TextElement{}, err
+		return AgentText{}, err
 	}
 	spliced, err := spliceElement(data, raw)
 	if err != nil {
-		return TextElement{}, err
+		return AgentText{}, err
 	}
 	if err := writeAtomic(path, spliced); err != nil {
-		return TextElement{}, err
+		return AgentText{}, err
 	}
-	return TextElement{ID: id, X: x, Y: y, Text: opts.Text}, nil
+	return AgentText{ID: id, X: x, Y: y, Text: opts.Text}, nil
 }

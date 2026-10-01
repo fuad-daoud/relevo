@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -487,5 +490,270 @@ func TestBoardServerInfoComposition(t *testing.T) {
 	want := board.ServerInfo{Scene: "board", URL: "http://127.0.0.1:41234/#t=x", Port: 41234, PID: 7, StartedAt: 1700000000}
 	if got == nil || *got != want {
 		t.Errorf("live scope = %+v, want %+v", got, want)
+	}
+}
+
+// cockpitConfig points the theme resolver at the built-in default, so a test
+// never reads the machine's git config.
+func cockpitConfig(t *testing.T) {
+	t.Helper()
+	orig := boardGitConfig
+	boardGitConfig = func(string, string) (string, error) { return "", nil }
+	t.Cleanup(func() { boardGitConfig = orig })
+}
+
+// seedBoardScene writes a scene into root and returns its absolute path.
+func seedBoardScene(t *testing.T, root, name, body string) string {
+	t.Helper()
+	p := filepath.Join(root, name)
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatalf("write scene: %v", err)
+	}
+	return p
+}
+
+// readBoardElements reads path's elements as generic objects.
+func readBoardElements(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read scene: %v", err)
+	}
+	var doc struct {
+		Elements []map[string]any `json:"elements"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode scene: %v", err)
+	}
+	return doc.Elements
+}
+
+// TestBoardTextJSONDocument pins `board text --json`: one line, field order
+// id/x/y/text, x/y as JSON numbers, deleted and non-text elements skipped.
+func TestBoardTextJSONDocument(t *testing.T) {
+	cockpitConfig(t)
+	root := withTempRepoRoot(t)
+	t.Chdir(root)
+	seedBoardScene(t, root, "board.excalidraw",
+		`{"type":"excalidraw","elements":[`+
+			`{"id":"a","type":"text","x":10,"y":20,"text":"hello"},`+
+			`{"id":"r","type":"rectangle","x":0,"y":0},`+
+			`{"id":"b","type":"text","x":12.5,"y":0,"text":"two"},`+
+			`{"id":"c","type":"text","x":1,"y":1,"text":"gone","isDeleted":true}]}`)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"board", "text", "board.excalidraw", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("board text --json: %v (stderr %s)", err, stderr)
+	}
+	want := "[{\"id\":\"a\",\"x\":10,\"y\":20,\"text\":\"hello\"}," +
+		"{\"id\":\"b\",\"x\":12.5,\"y\":0,\"text\":\"two\"}]\n"
+	if string(stdout) != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+// TestTextJSONEmptyIsEmptyArray pins the empty document as `[]`, never `null`.
+func TestTextJSONEmptyIsEmptyArray(t *testing.T) {
+	cockpitConfig(t)
+	root := withTempRepoRoot(t)
+	t.Chdir(root)
+	seedBoardScene(t, root, "board.excalidraw", `{"type":"excalidraw","elements":[]}`)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"board", "text", "board.excalidraw", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("board text --json: %v (stderr %s)", err, stderr)
+	}
+	if string(stdout) != "[]\n" {
+		t.Errorf("stdout = %q, want %q", stdout, "[]\n")
+	}
+}
+
+// TestBoardTextHumanRows pins the human form: one row per element through the
+// tabwriter, no header, and nothing at all for an empty scene.
+func TestBoardTextHumanRows(t *testing.T) {
+	cockpitConfig(t)
+	root := withTempRepoRoot(t)
+	t.Chdir(root)
+	seedBoardScene(t, root, "board.excalidraw",
+		`{"type":"excalidraw","elements":[`+
+			`{"id":"a","type":"text","x":10,"y":20,"text":"hello"},`+
+			`{"id":"b","type":"text","x":12.5,"y":0,"text":"two"}]}`)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"board", "text", "board.excalidraw"})
+	})
+	if err != nil {
+		t.Fatalf("board text: %v (stderr %s)", err, stderr)
+	}
+	lines := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("rows = %q, want two", stdout)
+	}
+	if got := strings.Fields(lines[0]); len(got) != 4 || got[0] != "a" || got[1] != "10" || got[2] != "20" || got[3] != "hello" {
+		t.Errorf("row 0 = %v, want a 10 20 hello", got)
+	}
+	if got := strings.Fields(lines[1]); len(got) != 4 || got[0] != "b" || got[1] != "12.5" || got[2] != "0" || got[3] != "two" {
+		t.Errorf("row 1 = %v, want b 12.5 0 two", got)
+	}
+
+	seedBoardScene(t, root, "empty.excalidraw", `{"type":"excalidraw","elements":[]}`)
+	stdout, _, err = captureOutput(t, func() error {
+		return run([]string{"board", "text", "empty.excalidraw"})
+	})
+	if err != nil {
+		t.Fatalf("board text empty: %v", err)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("empty scene printed %q, want nothing", stdout)
+	}
+}
+
+// TestBoardAnnotateAppends pins the annotate happy path: the stdout line, and
+// a well-formed appended element that keeps the scene's other bytes.
+func TestBoardAnnotateAppends(t *testing.T) {
+	cockpitConfig(t)
+	root := withTempRepoRoot(t)
+	t.Chdir(root)
+	path := seedBoardScene(t, root, "board.excalidraw", `{"type":"excalidraw","elements":[]}`)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"board", "annotate", "board.excalidraw", "--text", "hello"})
+	})
+	if err != nil {
+		t.Fatalf("board annotate: %v (stderr %s)", err, stderr)
+	}
+	els := readBoardElements(t, path)
+	if len(els) != 1 {
+		t.Fatalf("elements = %d, want 1", len(els))
+	}
+	el := els[0]
+	id, _ := el["id"].(string)
+	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(id) {
+		t.Errorf("id = %q, want 32 hex characters", id)
+	}
+	want := fmt.Sprintf("board: annotated %s (id %s)\n", path, id)
+	if string(stdout) != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+	if el["text"] != "hello" || el["type"] != "text" {
+		t.Errorf("element = %v, want text hello", el)
+	}
+	if el["autoResize"] != true || el["fontFamily"] != float64(3) {
+		t.Errorf("font safety fields = autoResize %v fontFamily %v", el["autoResize"], el["fontFamily"])
+	}
+	if w, _ := el["width"].(float64); w < 60 {
+		t.Errorf("width = %v, want >= 60 (12 per byte)", el["width"])
+	}
+	if el["strokeColor"] != "#e6e8ec" {
+		t.Errorf("strokeColor = %v, want the cockpit ink", el["strokeColor"])
+	}
+	if seed, _ := el["seed"].(float64); seed < 0 || seed >= float64(int64(1)<<31) {
+		t.Errorf("seed = %v, want [0, 2^31)", el["seed"])
+	}
+	if updated, _ := el["updated"].(float64); updated <= 0 {
+		t.Errorf("updated = %v, want a positive unix ms", el["updated"])
+	}
+}
+
+// TestBoardAnnotateThemeInk pins that the repo-local theme key reaches the
+// appended element's stroke colour.
+func TestBoardAnnotateThemeInk(t *testing.T) {
+	orig := boardGitConfig
+	boardGitConfig = func(string, string) (string, error) { return "blueprint", nil }
+	t.Cleanup(func() { boardGitConfig = orig })
+
+	root := withTempRepoRoot(t)
+	t.Chdir(root)
+	path := seedBoardScene(t, root, "board.excalidraw", `{"type":"excalidraw","elements":[]}`)
+
+	if _, _, err := captureOutput(t, func() error {
+		return run([]string{"board", "annotate", "board.excalidraw", "--text", "hi"})
+	}); err != nil {
+		t.Fatalf("board annotate: %v", err)
+	}
+	if got := readBoardElements(t, path)[0]["strokeColor"]; got != "#dbe4f0" {
+		t.Errorf("strokeColor = %v, want the blueprint ink", got)
+	}
+}
+
+// TestBoardTextRefusals pins text's usage and refused outcomes.
+func TestBoardTextRefusals(t *testing.T) {
+	cockpitConfig(t)
+	root := withTempRepoRoot(t)
+	t.Chdir(root)
+	seedBoardScene(t, root, "bad.excalidraw", `{"type":"other","elements":[]}`)
+
+	cases := []struct {
+		name string
+		args []string
+		code errorCode
+		msg  string
+	}{
+		{"no path", []string{"board", "text"}, codeUsage, "needs one scene path"},
+		{"two paths", []string{"board", "text", "a.excalidraw", "b.excalidraw"}, codeUsage, "needs one scene path"},
+		{"unknown flag", []string{"board", "text", "--bogus", "a.excalidraw"}, codeUsage, ""},
+		{"bad extension", []string{"board", "text", "notes.txt"}, codeUsage, "excalidraw"},
+		{"missing scene", []string{"board", "text", "missing.excalidraw"}, codeRefused, "no scene at"},
+		{"invalid scene", []string{"board", "text", "bad.excalidraw"}, codeRefused, "scene type is not"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := captureOutput(t, func() error { return run(tc.args) })
+			ce := requireCLIError(t, err, tc.code, "")
+			if tc.msg != "" && !strings.Contains(ce.message, tc.msg) {
+				t.Errorf("message = %q, want it to contain %q", ce.message, tc.msg)
+			}
+		})
+	}
+
+	t.Run("outside repo", func(t *testing.T) {
+		orig := boardRepoRootFn
+		boardRepoRootFn = func(string) (string, error) { return "", errors.New("not a git repository") }
+		t.Cleanup(func() { boardRepoRootFn = orig })
+		_, _, err := captureOutput(t, func() error {
+			return run([]string{"board", "text", "a.excalidraw"})
+		})
+		requireCLIError(t, err, codeUsage, "")
+	})
+}
+
+// TestBoardAnnotateRefusals pins annotate's usage and refused outcomes, and
+// that every usage check runs before any repository or file work.
+func TestBoardAnnotateRefusals(t *testing.T) {
+	cockpitConfig(t)
+	root := withTempRepoRoot(t)
+	t.Chdir(root)
+	seedBoardScene(t, root, "bad.excalidraw", `{"type":"other","elements":[]}`)
+
+	cases := []struct {
+		name string
+		args []string
+		code errorCode
+		msg  string
+	}{
+		{"no path", []string{"board", "annotate"}, codeUsage, "needs one scene path"},
+		{"two paths", []string{"board", "annotate", "a.excalidraw", "b.excalidraw"}, codeUsage, "needs one scene path"},
+		{"text absent", []string{"board", "annotate", "a.excalidraw"}, codeUsage, "--text is required"},
+		{"text empty", []string{"board", "annotate", "a.excalidraw", "--text", ""}, codeUsage, "--text must not be empty"},
+		{"lone x", []string{"board", "annotate", "a.excalidraw", "--text", "hi", "--x", "1"}, codeUsage, "--x and --y come together"},
+		{"lone y", []string{"board", "annotate", "a.excalidraw", "--text", "hi", "--y", "1"}, codeUsage, "--x and --y come together"},
+		{"non-finite x", []string{"board", "annotate", "a.excalidraw", "--text", "hi", "--x", "NaN", "--y", "1"}, codeUsage, "--x must be a finite number"},
+		{"non-finite y", []string{"board", "annotate", "a.excalidraw", "--text", "hi", "--x", "1", "--y", "Inf"}, codeUsage, "--y must be a finite number"},
+		{"unknown flag", []string{"board", "annotate", "--bogus", "a.excalidraw", "--text", "hi"}, codeUsage, ""},
+		{"missing scene", []string{"board", "annotate", "missing.excalidraw", "--text", "hi"}, codeRefused, "no scene at"},
+		{"invalid scene", []string{"board", "annotate", "bad.excalidraw", "--text", "hi"}, codeRefused, "scene type is not"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := captureOutput(t, func() error { return run(tc.args) })
+			ce := requireCLIError(t, err, tc.code, "")
+			if tc.msg != "" && !strings.Contains(ce.message, tc.msg) {
+				t.Errorf("message = %q, want it to contain %q", ce.message, tc.msg)
+			}
+		})
 	}
 }

@@ -80,7 +80,7 @@ func TestTextElementsInSceneOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TextElements: %v", err)
 	}
-	want := []TextElement{
+	want := []AgentText{
 		{ID: "a", X: 1, Y: 2, Text: "one"},
 		{ID: "b", X: 3.5, Y: 4, Text: "two"},
 	}
