@@ -521,9 +521,12 @@ func (s *Server) handleDoneChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := relevo.ChainDone(r.Context(), rt, name); err != nil {
+		var open *relevo.RoundOpenError
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+		case errors.As(err, &open):
+			writeErr(w, http.StatusConflict, remote.CodeRoundOpen, err.Error())
 		case errors.Is(err, relevo.ErrChainRunning):
 			writeErr(w, http.StatusConflict, remote.CodeChainRunning, err.Error())
 		default:

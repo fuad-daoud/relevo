@@ -230,16 +230,19 @@ func TestChainE2E(t *testing.T) {
 		t.Errorf("the reviewer's round 1 seed does not name the round diff copy %s:\n%s", firstDiffCopy, reviewerOne)
 	}
 
-	// The reviewer writes a recap after the message that carries its block, so
-	// its written output is the recap and holds no verdict. The verdict on the
-	// trace above is still pass, so it must have been read from the stream:
-	// an event build that dropped the stream fallback would halt here with
-	// "reviewer gave no verdict".
+	// The reviewer writes a recap after the message that carries its block.
+	// The saved artifact is the block-carrying message, stripped of the block
+	// the parse already read; the verdict on the trace above is still pass, so
+	// it must have been read from the stream: an event build that dropped the
+	// stream fallback would halt here with "reviewer gave no verdict".
 	for _, round := range []int{1, 2} {
 		outPath := rt.Store.OutputPath(reviewerName, round, "reviewer", "findings")
 		body := chainStaged(t, rt, outPath)
-		if !strings.Contains(body, chainRecapMarker) {
-			t.Errorf("the reviewer's round %d output does not carry the recap %q:\n%s", round, chainRecapMarker, body)
+		if !strings.Contains(body, "I read the plan, the report, the round diff") {
+			t.Errorf("the reviewer's round %d output lost the review's own text:\n%s", round, body)
+		}
+		if strings.Contains(body, chainRecapMarker) {
+			t.Errorf("the reviewer's round %d output is the recap, not the block-carrying message:\n%s", round, body)
 		}
 		if strings.Contains(body, "verdict:") {
 			t.Errorf("the reviewer's round %d output carries the verdict block; the verdict must come from the stream:\n%s", round, body)
