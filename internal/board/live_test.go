@@ -225,3 +225,120 @@ func TestResolveLiveDirJoins(t *testing.T) {
 		t.Errorf("ResolveLiveDir = %+v", res)
 	}
 }
+
+func TestServerInfoRoundTrip(t *testing.T) {
+	liveRoot, id := testLiveRoot(t)
+	liveDir := filepath.Join(liveRoot, id)
+	want := ServerInfo{Scene: "board", URL: "http://127.0.0.1:9/#t=abc", Port: 9, PID: 1234, StartedAt: 1700000000}
+	if err := WriteServerInfo(liveDir, want); err != nil {
+		t.Fatalf("WriteServerInfo: %v", err)
+	}
+	got, ok, err := ReadServerInfo(liveDir)
+	if err != nil || !ok {
+		t.Fatalf("ReadServerInfo = %+v, %v, %v", got, ok, err)
+	}
+	if got != want {
+		t.Errorf("round trip = %+v, want %+v", got, want)
+	}
+}
+
+func TestServerInfoMostRecentWins(t *testing.T) {
+	liveRoot, id := testLiveRoot(t)
+	liveDir := filepath.Join(liveRoot, id)
+	a := ServerInfo{Scene: "board", URL: "http://127.0.0.1:1/#t=a", Port: 1, PID: 1, StartedAt: 1}
+	b := ServerInfo{Scene: "board", URL: "http://127.0.0.1:2/#t=b", Port: 2, PID: 2, StartedAt: 2}
+	if err := WriteServerInfo(liveDir, a); err != nil {
+		t.Fatalf("WriteServerInfo A: %v", err)
+	}
+	if err := WriteServerInfo(liveDir, b); err != nil {
+		t.Fatalf("WriteServerInfo B: %v", err)
+	}
+	if got, _, _ := ReadServerInfo(liveDir); got != b {
+		t.Errorf("most recent writer = %+v, want B", got)
+	}
+}
+
+func TestRemoveServerInfoGuard(t *testing.T) {
+	liveRoot, id := testLiveRoot(t)
+	liveDir := filepath.Join(liveRoot, id)
+	a := ServerInfo{Scene: "board", URL: "http://127.0.0.1:1/#t=a", Port: 1, PID: 1, StartedAt: 1}
+	b := ServerInfo{Scene: "board", URL: "http://127.0.0.1:2/#t=b", Port: 2, PID: 2, StartedAt: 2}
+	if err := WriteServerInfo(liveDir, a); err != nil {
+		t.Fatalf("WriteServerInfo A: %v", err)
+	}
+	if err := WriteServerInfo(liveDir, b); err != nil {
+		t.Fatalf("WriteServerInfo B: %v", err)
+	}
+
+	// A's shutdown must leave B's advertisement alone.
+	if err := RemoveServerInfo(liveDir, a); err != nil {
+		t.Fatalf("RemoveServerInfo A: %v", err)
+	}
+	if _, ok, _ := ReadServerInfo(liveDir); !ok {
+		t.Fatal("RemoveServerInfo A removed B's advertisement")
+	}
+
+	// B's own shutdown removes it.
+	if err := RemoveServerInfo(liveDir, b); err != nil {
+		t.Fatalf("RemoveServerInfo B: %v", err)
+	}
+	if _, ok, _ := ReadServerInfo(liveDir); ok {
+		t.Error("RemoveServerInfo B left the advertisement")
+	}
+}
+
+func TestReadServerInfoAbsent(t *testing.T) {
+	liveRoot, id := testLiveRoot(t)
+	liveDir := filepath.Join(liveRoot, id)
+
+	if _, ok, err := ReadServerInfo(liveDir); ok || err != nil {
+		t.Errorf("missing server.json = ok %v, err %v; want false, nil", ok, err)
+	}
+	if err := os.WriteFile(filepath.Join(liveDir, serverFileName), []byte("not json"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, ok, err := ReadServerInfo(liveDir); ok || err != nil {
+		t.Errorf("corrupt server.json = ok %v, err %v; want false, nil", ok, err)
+	}
+}
+
+func TestLiveURL(t *testing.T) {
+	liveRoot, id := testLiveRoot(t)
+	liveDir := filepath.Join(liveRoot, id)
+	info := ServerInfo{Scene: "board", URL: "http://127.0.0.1:9/#t=abc", Port: 9, PID: 1234, StartedAt: 1700000000}
+	if err := WriteServerInfo(liveDir, info); err != nil {
+		t.Fatalf("WriteServerInfo: %v", err)
+	}
+
+	alive := func(pid int) (int64, error) {
+		if pid != info.PID {
+			return 0, errors.New("no such process")
+		}
+		return info.StartedAt, nil
+	}
+	if url, ok, err := LiveURL(liveDir, "board", alive); err != nil || !ok || url != info.URL {
+		t.Errorf("LiveURL(alive) = %q, %v, %v; want the URL", url, ok, err)
+	}
+
+	// A dead or unmeasurable pid.
+	dead := func(int) (int64, error) { return 0, errors.New("gone") }
+	if _, ok, _ := LiveURL(liveDir, "board", dead); ok {
+		t.Error("LiveURL(dead pid) is live, want not live")
+	}
+	// A reused pid: the measured start differs.
+	reused := func(int) (int64, error) { return info.StartedAt + 1, nil }
+	if _, ok, _ := LiveURL(liveDir, "board", reused); ok {
+		t.Error("LiveURL(reused pid) is live, want not live")
+	}
+	// A scene mismatch.
+	if _, ok, _ := LiveURL(liveDir, "other", alive); ok {
+		t.Error("LiveURL(scene mismatch) is live, want not live")
+	}
+	// started_at == 0 (a startup measurement failure) reads as not live.
+	if err := WriteServerInfo(liveDir, ServerInfo{Scene: "board", URL: info.URL, PID: 1234, StartedAt: 0}); err != nil {
+		t.Fatalf("WriteServerInfo: %v", err)
+	}
+	if _, ok, _ := LiveURL(liveDir, "board", alive); ok {
+		t.Error("LiveURL(started_at 0) is live, want not live")
+	}
+}

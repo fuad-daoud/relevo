@@ -1,6 +1,7 @@
 package board
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -210,4 +211,101 @@ func WritePointer(liveDir, name string) error {
 		return fmt.Errorf("create live directory %s: %w", liveDir, err)
 	}
 	return writeAtomic(filepath.Join(liveDir, pointerName), []byte(name+"\n"))
+}
+
+// serverFileName is the file a running live board writes its address into so a
+// reader can find and copy the URL (S6).
+const serverFileName = "server.json"
+
+// ServerInfo is one live board server's advertisement (S6). The json keys are
+// exactly scene, url, port, pid and started_at.
+type ServerInfo struct {
+	Scene     string `json:"scene"`
+	URL       string `json:"url"`
+	Port      int    `json:"port"`
+	PID       int    `json:"pid"`
+	StartedAt int64  `json:"started_at"`
+}
+
+// WriteServerInfo writes info to liveDir/server.json atomically (0600),
+// creating the live directory 0700. A second server on the same board is
+// allowed: the most recent writer wins, and nothing here refuses an existing
+// advertisement (S6).
+func WriteServerInfo(liveDir string, info ServerInfo) error {
+	if err := os.MkdirAll(liveDir, 0o700); err != nil {
+		return fmt.Errorf("create live directory %s: %w", liveDir, err)
+	}
+	data, err := json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(filepath.Join(liveDir, serverFileName), append(data, '\n'))
+}
+
+// ReadServerInfo reads liveDir/server.json. A missing or corrupt file reads as
+// absent with no error: a stale advertisement is ignored, never fatal (S6).
+func ReadServerInfo(liveDir string) (ServerInfo, bool, error) {
+	data, err := os.ReadFile(filepath.Join(liveDir, serverFileName))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ServerInfo{}, false, nil
+		}
+		return ServerInfo{}, false, err
+	}
+	var info ServerInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return ServerInfo{}, false, nil
+	}
+	return info, true, nil
+}
+
+// RemoveServerInfo removes liveDir/server.json only when the file still carries
+// own's pid and started_at, so a first server's shutdown never deletes a second
+// server's advertisement (S6).
+func RemoveServerInfo(liveDir string, own ServerInfo) error {
+	cur, ok, err := ReadServerInfo(liveDir)
+	if err != nil || !ok {
+		return err
+	}
+	if cur.PID != own.PID || cur.StartedAt != own.StartedAt {
+		return nil
+	}
+	if err := os.Remove(filepath.Join(liveDir, serverFileName)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// LiveURL reads a live board's advertisement and returns its URL when the
+// advertised scene matches and the server is still live: its pid is alive and
+// its recorded start time still matches (S7/S9). procStart is the liveness
+// seam the caller supplies (procStartUnix in production, a stub in tests). A
+// missing, absent or stale advertisement is not live.
+func LiveURL(liveDir, scene string, procStart func(pid int) (int64, error)) (string, bool, error) {
+	info, ok, err := ReadServerInfo(liveDir)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	if info.Scene != scene {
+		return "", false, nil
+	}
+	if !serverLive(info, procStart) {
+		return "", false, nil
+	}
+	return info.URL, true, nil
+}
+
+// serverLive reports whether info's process is live under the RecordState
+// pattern (S7): a positive pid and start, and a measured start that still
+// matches. started_at 0 -- the measurement failure at startup -- reads as not
+// live; a dead or unmeasurable pid and a reused one read the same way.
+func serverLive(info ServerInfo, procStart func(pid int) (int64, error)) bool {
+	if info.PID <= 0 || info.StartedAt <= 0 || procStart == nil {
+		return false
+	}
+	started, err := procStart(info.PID)
+	if err != nil {
+		return false
+	}
+	return started == info.StartedAt
 }
