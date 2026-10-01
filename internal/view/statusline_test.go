@@ -647,6 +647,47 @@ var rowStatusCases = []struct {
 		wantTone:   "report",
 	},
 	{
+		name: "consumed writer report",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            4,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, Round: 4, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "report in",
+		wantTone:   "phase",
+		wantReason: "consumed by chain 1",
+	},
+	{
+		name: "consumed reader artifact",
+		binding: BindingStatus{
+			Name:             "atlas",
+			Round:            2,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			Role:             "reviewer",
+			Shape:            store.ShapeReader,
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToMasterMind, Round: 2, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "artifact in",
+		wantTone:   "phase",
+		wantReason: "consumed by chain 1",
+	},
+	{
+		name: "consumed question",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            3,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindQuestion, Direction: store.DirToMasterMind, Round: 3, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "question in",
+		wantTone:   "phase",
+		wantReason: "consumed by chain 1",
+	},
+	{
 		name: "report still in flight on a live deliverer route",
 		binding: BindingStatus{
 			Name:                "api",
@@ -1968,5 +2009,105 @@ func TestPlainStatusLineMatchesTheColouredLines(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+var consumedStatusCases = []struct {
+	name       string
+	binding    BindingStatus
+	wantStatus string
+	wantTone   string
+	wantRound  int
+}{
+	{
+		name: "writer report",
+		binding: BindingStatus{
+			Name:    "api",
+			Round:   5,
+			Display: "ACTIVE",
+			LastPayload: &LastEvent{
+				Kind: store.KindReport, Direction: store.DirToMasterMind,
+				Round: 4, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute),
+			},
+		},
+		wantStatus: "report in",
+		wantTone:   "phase",
+		wantRound:  4,
+	},
+	{
+		name: "reader artifact",
+		binding: BindingStatus{
+			Name:    "rev",
+			Round:   3,
+			Display: "ACTIVE",
+			Role:    "reviewer", Shape: store.ShapeReader,
+			LastPayload: &LastEvent{
+				Kind: store.KindReport, Direction: store.DirToMasterMind,
+				Round: 2, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute),
+			},
+		},
+		wantStatus: "artifact in",
+		wantTone:   "phase",
+		wantRound:  2,
+	},
+	{
+		name: "question",
+		binding: BindingStatus{
+			Name:    "api",
+			Round:   2,
+			Display: "ACTIVE",
+			LastPayload: &LastEvent{
+				Kind: store.KindQuestion, Direction: store.DirToMasterMind,
+				Round: 1, Note: "consumed by chain 1", TS: rsNow.Add(-2 * time.Minute),
+			},
+		},
+		wantStatus: "question in",
+		wantTone:   "phase",
+		wantRound:  1,
+	},
+}
+
+// TestStatusLineRowsConsumed pins the consumed-round clean read: a payload
+// consumed by a chain reads as phase, not REPORT IN / QUESTION IN, with
+// ReportIn false, the round naming the report round, and the note in Reason.
+func TestStatusLineRowsConsumed(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range consumedStatusCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := StatusLineRows(Report{Bindings: []BindingStatus{tc.binding}}, rsNow)
+			if len(rows) != 1 {
+				t.Fatalf("len(rows) = %d, want 1", len(rows))
+			}
+			r := rows[0]
+			if r.ReportIn || r.Status != tc.wantStatus || r.Tone != tc.wantTone || r.Reason != "consumed by chain 1" || r.ReportRound != tc.wantRound {
+				t.Errorf("row = %+v", r)
+			}
+		})
+	}
+
+	rep := Report{Bindings: []BindingStatus{consumedStatusCases[0].binding}}
+	plain := stripSGR(splitLines(RenderStatusLine(rep, rsNow, 120))[0])
+	if !strings.Contains(plain, "r4 · builder · consumed by chain 1") || !strings.Contains(plain, "report in") {
+		t.Errorf("rendered line = %q", plain)
+	}
+}
+
+// TestStatusLineRowsConsumedContrast pins the contrast: unconsumed payload reads REPORT IN.
+func TestStatusLineRowsConsumedContrast(t *testing.T) {
+	t.Parallel()
+
+	rep := Report{Bindings: []BindingStatus{{
+		Name:    "api",
+		Round:   5,
+		Display: "ACTIVE",
+		LastPayload: &LastEvent{
+			Kind: store.KindReport, Direction: store.DirToMasterMind,
+			Round: 4, Note: "ordinary note", TS: rsNow.Add(-2 * time.Minute),
+		},
+	}}}
+	rows := StatusLineRows(rep, rsNow)
+	if !rows[0].ReportIn || rows[0].Status != "REPORT IN · ordinary note" || rows[0].Tone != "report" || rows[0].Reason != "" {
+		t.Errorf("contrast row = %+v", rows[0])
 	}
 }

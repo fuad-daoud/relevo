@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // The report bodies the chain tests write. A builder's body must parse as a
@@ -171,6 +172,24 @@ func TestConsumedMemberCloseReadsAsSeen(t *testing.T) {
 	}
 	if row.Unread {
 		t.Error("a consumed report must read as seen")
+	}
+
+	rows := view.StatusLineRows(view.Report{Bindings: []view.BindingStatus{row}}, rt.Now())
+	if len(rows) != 1 {
+		t.Fatalf("len(rows) = %d, want 1", len(rows))
+	}
+	slRow := rows[0]
+	if slRow.ReportIn {
+		t.Errorf("ReportIn = true, want false")
+	}
+	if slRow.Status != "report in" {
+		t.Errorf("Status = %q, want 'report in'", slRow.Status)
+	}
+	if slRow.Tone != "phase" {
+		t.Errorf("Tone = %q, want 'phase'", slRow.Tone)
+	}
+	if !strings.Contains(slRow.Reason, "consumed by chain") {
+		t.Errorf("Reason = %q, want to contain 'consumed by chain'", slRow.Reason)
 	}
 }
 
