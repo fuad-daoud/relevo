@@ -174,16 +174,68 @@ func TestChainE2E(t *testing.T) {
 
 	// The reviewer's round-2 seed names the plan's whole span as well as the
 	// correction round's own diff: the plan's start through the correction
-	// round's tree, captured beside the round diff.
+	// round's tree, captured beside the round diff. Each is a copy under the
+	// chain's own directory -- a path a runner can open, not the round_file key
+	// itself -- holding the key's bytes.
 	reviewerTwo := chainStaged(t, rt, rt.Store.PromptPath(reviewerName, 2))
-	if want := "Plan diff, every round of this plan so far: " + rt.Store.PlanDiffPath(builderName, 2); !strings.Contains(reviewerTwo, want) {
-		t.Errorf("the reviewer's round 2 seed does not name the cumulative plan diff %s:\n%s", rt.Store.PlanDiffPath(builderName, 2), reviewerTwo)
+
+	planDiffKey := rt.Store.PlanDiffPath(builderName, 2)
+	planDiffCopy, ok := rt.Store.ChainInputPath(chainE2EName, planDiffKey)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", planDiffKey)
 	}
-	if want := "This round's diff: " + rt.Store.DiffPath(builderName, 2); !strings.Contains(reviewerTwo, want) {
-		t.Errorf("the reviewer's round 2 seed does not name the correction round's diff %s:\n%s", rt.Store.DiffPath(builderName, 2), reviewerTwo)
+	if !rt.Store.DiskRegularFile(planDiffCopy) {
+		t.Errorf("the reviewer's round 2 plan-diff copy %s is not a regular file on disk", planDiffCopy)
 	}
-	if patch := chainStaged(t, rt, rt.Store.PlanDiffPath(builderName, 2)); patch == "" {
-		t.Errorf("the plan's cumulative diff at %s is empty", rt.Store.PlanDiffPath(builderName, 2))
+	if want := "Plan diff, every round of this plan so far: " + planDiffCopy + "."; !strings.Contains(reviewerTwo, want) {
+		t.Errorf("the reviewer's round 2 seed does not name the cumulative plan diff copy %s:\n%s", planDiffCopy, reviewerTwo)
+	}
+	if got, want := chainStaged(t, rt, planDiffCopy), chainStaged(t, rt, planDiffKey); got != want {
+		t.Errorf("the plan-diff copy %s = %q, want the key's bytes %q", planDiffCopy, got, want)
+	}
+	if patch := chainStaged(t, rt, planDiffKey); patch == "" {
+		t.Errorf("the plan's cumulative diff at %s is empty", planDiffKey)
+	}
+
+	// The correction round changes no tracked content, so its own round diff was
+	// never captured: the seed words that input path-free -- a seed never names
+	// a key a runner cannot open.
+	diffKey := rt.Store.DiffPath(builderName, 2)
+	if _, err := rt.Store.ReadFile(diffKey); err == nil {
+		diffCopy, ok := rt.Store.ChainInputPath(chainE2EName, diffKey)
+		if !ok {
+			t.Fatalf("ChainInputPath(%s) = false", diffKey)
+		}
+		if !rt.Store.DiskRegularFile(diffCopy) {
+			t.Errorf("the reviewer's round 2 diff copy %s is not a regular file on disk", diffCopy)
+		}
+		if want := "This round's diff: " + diffCopy + "."; !strings.Contains(reviewerTwo, want) {
+			t.Errorf("the reviewer's round 2 seed does not name the correction round's diff copy %s:\n%s", diffCopy, reviewerTwo)
+		}
+		if got, want := chainStaged(t, rt, diffCopy), chainStaged(t, rt, diffKey); got != want {
+			t.Errorf("the diff copy %s = %q, want the key's bytes %q", diffCopy, got, want)
+		}
+	} else if want := "This round's diff: not available:"; !strings.Contains(reviewerTwo, want) {
+		t.Errorf("the reviewer's round 2 seed neither names a round diff copy nor words its miss:\n%s", reviewerTwo)
+	}
+
+	// The reviewer's round-1 seed judged the builder's round 1, whose diff was
+	// captured: that seed names the diff copy, and the copy holds the key's
+	// bytes.
+	reviewerOne := chainStaged(t, rt, rt.Store.PromptPath(reviewerName, 1))
+	firstDiffKey := rt.Store.DiffPath(builderName, 1)
+	firstDiffCopy, ok := rt.Store.ChainInputPath(chainE2EName, firstDiffKey)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", firstDiffKey)
+	}
+	if !rt.Store.DiskRegularFile(firstDiffCopy) {
+		t.Errorf("the reviewer's round 1 diff copy %s is not a regular file on disk", firstDiffCopy)
+	}
+	if want := "This round's diff: " + firstDiffCopy + "."; !strings.Contains(reviewerOne, want) {
+		t.Errorf("the reviewer's round 1 seed does not name the round diff copy %s:\n%s", firstDiffCopy, reviewerOne)
+	}
+	if got, want := chainStaged(t, rt, firstDiffCopy), chainStaged(t, rt, firstDiffKey); got != want {
+		t.Errorf("the round 1 diff copy %s = %q, want the key's bytes %q", firstDiffCopy, got, want)
 	}
 
 	// The correction planner's seed names the builder round the reviewer's
@@ -215,17 +267,17 @@ func TestChainE2E(t *testing.T) {
 	// matched any round would add a second row per close, and a missing
 	// verdict read as a pass would drop the reviewer's first round.
 	want := []chainE2EStep{
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberPlanner},
-		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberBuilder},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberSecurity},
-		{member: securityName, event: chain.EventSecurityClosed, action: chain.ActionSend, to: chain.MemberPlanner},
-		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionFinish},
+		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 1},
+		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberPlanner, plan: 1},
+		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder, plan: 1},
+		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 1},
+		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberBuilder, plan: 1},
+		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 2},
+		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberSecurity, plan: 2},
+		{member: securityName, event: chain.EventSecurityClosed, action: chain.ActionSend, to: chain.MemberPlanner, plan: 2},
+		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder, plan: 2},
+		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 2},
+		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionFinish, plan: 2},
 	}
 	doc, err := relevo.ChainTrace(ctx, rt, chainE2EName)
 	if err != nil {
@@ -250,6 +302,9 @@ func TestChainE2E(t *testing.T) {
 		}
 		if step.to != "" && got.Action.Member != step.to {
 			t.Errorf("trace row %d action sends to %q, want %q", i, got.Action.Member, step.to)
+		}
+		if got.Plan != step.plan {
+			t.Errorf("trace row %d plan = %d, want %d: each row keeps the plan it was written on", i, got.Plan, step.plan)
 		}
 	}
 	if got := doc.Events[1].Event.Verdict; got != chain.VerdictChanges {
@@ -311,12 +366,14 @@ func TestChainE2E(t *testing.T) {
 }
 
 // chainE2EStep is one expected trace row: the member whose round closed, the
-// event that close raised, the action it produced, and the part a send names.
+// event that close raised, the action it produced, the part a send names, and
+// the plan the row was written on.
 type chainE2EStep struct {
 	member string
 	event  chain.EventKind
 	action chain.ActionKind
 	to     string
+	plan   int
 }
 
 // writeChainCandidatesAndPolicy writes the config the chain's members resolve
