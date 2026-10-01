@@ -20,6 +20,7 @@ const (
 	claudePluginName      = "relevo@relevo"
 	claudeHooksRel        = "hooks/hooks.json"
 	pluginHookInitCommand = "mastermind init"
+	pluginHookInitScript  = "scripts/mastermind-init.sh"
 	pluginHookEvent       = "SessionStart"
 )
 
@@ -345,7 +346,7 @@ func hasSessionStartMasterMindInit(v any) bool {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
-			if k == pluginHookEvent && jsonContains(val, pluginHookInitCommand) {
+			if k == pluginHookEvent && (jsonContains(val, pluginHookInitCommand) || jsonContains(val, pluginHookInitScript)) {
 				return true
 			}
 			if hasSessionStartMasterMindInit(val) {

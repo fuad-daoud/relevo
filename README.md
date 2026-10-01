@@ -99,9 +99,12 @@ session loads the new server without a restart.
 
 ### The Claude Code plugin
 
-A Claude Code MasterMind installs relevo as a plugin. The plugin provides the
-`relevo mcp` MCP server and a `SessionStart` hook that runs
-`relevo mastermind init`, so relevo knows which MasterMind session is calling:
+A Claude Code MasterMind installs relevo as a plugin. The plugin's MCP server,
+its `SessionStart` and `UserPromptSubmit` hooks and its slash commands all run
+through tiny scripts under `${CLAUDE_PLUGIN_ROOT}/scripts/` that exec `relevo`
+from `PATH`, so relevo knows which MasterMind session is calling. Without
+`relevo` on `PATH` the hooks stay silent, and the MCP server and the commands
+print one install hint:
 
     /plugin marketplace add fuad-daoud/relevo
     /plugin install relevo@relevo
@@ -2271,10 +2274,13 @@ at runtime with a clear error rather than running without a state lock.
 ## Claude Code plugin
 
 The relevo plugin gives a Claude Code MasterMind two things: the `relevo mcp` MCP
-server (`relevo` from `PATH`), which exposes `status`, `send`, `done`, `show`
-and `gate` as tools, and a `SessionStart` hook that runs
-`relevo mastermind init`. The hook exports `RELEVO_MASTERMIND` and tells the model its
-MasterMind name. Install it once per machine:
+server, which exposes `status`, `send`, `done`, `show` and `gate` as tools, and
+a `SessionStart` hook that runs `relevo mastermind init`. The MCP server, the
+hooks and the slash commands below all run through tiny scripts under
+`${CLAUDE_PLUGIN_ROOT}/scripts/` that exec `relevo` from `PATH`; without it the
+hooks stay silent, and the MCP server and the commands print one install hint.
+The hook exports `RELEVO_MASTERMIND` and tells the model its MasterMind name.
+Install it once per machine:
 
     /plugin marketplace add fuad-daoud/relevo
     /plugin install relevo@relevo

@@ -7,6 +7,6 @@
   "repository": "https://github.com/fuad-daoud/relevo",
   "license": "MIT",
   "mcpServers": {
-    "relevo": {"command": "relevo", "args": ["mcp"]}
+    "relevo": {"command": "${CLAUDE_PLUGIN_ROOT}/scripts/mcp.sh"}
   }
 }
