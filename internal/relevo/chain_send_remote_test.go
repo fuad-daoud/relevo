@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -13,7 +14,9 @@ import (
 
 // advanceRemoteChain moves a chain's builder member and its awaiting round to a
 // later round -- the state a collected close leaves -- so a test can stage and
-// ship the next round without driving the close path round 3 owns.
+// ship the next round without driving the close path round 3 owns. A chain that
+// carries an engine state advances it too: the awaited round a send resolves is
+// the state's.
 func advanceRemoteChain(t *testing.T, rt Runtime, round int) {
 	t.Helper()
 	b := chainBinding(t, rt, "shop")
@@ -25,6 +28,19 @@ func advanceRemoteChain(t *testing.T, rt Runtime, round int) {
 		c, err := tx.Chain("shop")
 		if err != nil {
 			return err
+		}
+		if len(c.StateJSON) > 0 {
+			st, serr := chainWorkflowState(c)
+			if serr != nil {
+				return serr
+			}
+			st.Awaiting.Member = "builder"
+			st.Awaiting.Round = round
+			raw, merr := json.Marshal(st)
+			if merr != nil {
+				return merr
+			}
+			c.StateJSON = raw
 		}
 		c.AwaitingMember = chain.MemberBuilder
 		c.AwaitingRound = round
@@ -230,4 +246,34 @@ func TestChainSendPendingFailureHaltsTheChain(t *testing.T) {
 
 func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+// TestChainSendPendingResolvesAwaitedFromState pins the state arm: a custom
+// workflow whose builder actor fills no legacy part leaves the awaiting column
+// empty, so the step must resolve the awaited member from the state through
+// chain_member to ship the staged plan.
+func TestChainSendPendingResolvesAwaitedFromState(t *testing.T) {
+	t.Parallel()
+
+	fr := chainRemoteFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	startFlowChain(t, rt, flowReviewWorkflow)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.AwaitingMember != "" {
+		t.Fatalf("awaiting column = %q, want empty for a custom workflow", row.AwaitingMember)
+	}
+	st, err := chainWorkflowState(row)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.Awaiting.Member != "builder" {
+		t.Fatalf("state awaiting = %+v, want the builder actor", st.Awaiting)
+	}
+	if string(fr.startRoundPlan) != "build it" {
+		t.Errorf("shipped plan = %q, want the staged plan resolved from the state", fr.startRoundPlan)
+	}
+	if fr.startRoundVerify == nil || *fr.startRoundVerify {
+		t.Errorf("verify = %v, want an explicit false", fr.startRoundVerify)
+	}
 }

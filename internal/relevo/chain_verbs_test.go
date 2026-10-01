@@ -273,6 +273,30 @@ func TestDoneAndUnbindAllowedAfterTheChainStops(t *testing.T) {
 	})
 }
 
+// TestRefuseRunningMemberReadsState pins the refusal's state read: a custom
+// workflow's member sits in chain_member, never in a legacy part column, and a
+// manual send to it while the chain runs is still refused.
+func TestRefuseRunningMemberReadsState(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Reviewer != "" || row.Planner != "" || row.Security != "" {
+		t.Fatalf("member columns = %q/%q/%q, want none for a custom workflow",
+			row.Reviewer, row.Planner, row.Security)
+	}
+
+	err := rt.Store.WithLock(func(tx *store.Tx) error { return refuseRunningChainMember(tx, "shop-assistant") })
+	if !errors.Is(err, ErrRunningChainMember) {
+		t.Errorf("refuseRunningChainMember = %v, want ErrRunningChainMember", err)
+	}
+	if err := refuseRunningChainMemberStore(rt.Store, "shop-assistant"); !errors.Is(err, ErrRunningChainMember) {
+		t.Errorf("refuseRunningChainMemberStore = %v, want ErrRunningChainMember", err)
+	}
+}
+
 // TestStopOnARunningChainMemberStaysAllowed pins that stop is not guarded: a
 // member's stop closes its round through the chain's own stopped event, which is
 // the spec's "a stopped member stops the chain". Fails if the guard is later put

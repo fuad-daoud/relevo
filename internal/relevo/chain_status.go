@@ -28,17 +28,18 @@ func chainMembersOf(c db.ChainRow) []string {
 // the row reads the chain's own status word and names the round in flight
 // instead of claiming NEEDS YOU.
 func chainFactsOf(s *store.Store, c db.ChainRow) view.ChainFacts {
+	lf := chainStoredFactsOf(c)
 	f := view.ChainFacts{
 		Status:      c.Status,
-		Phase:       c.Phase,
-		Step:        c.Step,
-		Plan:        c.Plan,
-		Plans:       c.Plans,
-		Corrections: c.Corrections,
-		Awaiting:    c.AwaitingMember,
+		Phase:       lf.Phase,
+		Step:        lf.Step,
+		Plan:        lf.Plan,
+		Plans:       lf.Plans,
+		Corrections: lf.Corrections,
+		Awaiting:    lf.Awaiting,
 		Reason:      c.Reason,
 	}
-	if len(c.WorkflowJSON) > 0 {
+	if len(c.StateJSON) > 0 {
 		chainFlowFacts(&f, c)
 	}
 	if (c.Status == string(chain.StatusHalted) || c.Status == string(chain.StatusStopped)) &&
@@ -128,7 +129,7 @@ func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Rep
 			continue
 		}
 		live = append(live, c)
-		for _, name := range chainMembersOf(c) {
+		for _, name := range chainReadMembers(s, c) {
 			member[name] = c
 		}
 	}
@@ -186,7 +187,7 @@ func ChainStatus(ctx context.Context, rt Runtime, name string) (view.Report, err
 	}
 
 	rows := []view.BindingStatus{viewChainRow(rt.Store, c)}
-	for _, member := range chainMembersOf(c) {
+	for _, member := range chainReadMembers(rt.Store, c) {
 		for _, b := range rep.Bindings {
 			if b.Name == member {
 				rows = append(rows, b)
