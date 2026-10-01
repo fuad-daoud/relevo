@@ -159,11 +159,21 @@ func TestTwoHandlesInOneProcessShareTheLock(t *testing.T) {
 // TestAWaitingOpenDoesNotBlockAnotherPath pins that waiting for the open lock
 // never holds the process-wide handle map: a writable open that is polling for a
 // lock another process holds must not queue every other path's open behind it.
+// The second path is created and migrated, then closed, before the timed window
+// starts, so the open inside it is a plain lock acquisition; the assertion is
+// ordering, not a clock: the second path's open returns while the first is
+// still polling.
 func TestAWaitingOpenDoesNotBlockAnotherPath(t *testing.T) {
-	shrinkOpenLockWait(t, 3*time.Second)
+	shrinkOpenLockWait(t, 5*time.Second)
 
 	held := filepath.Join(t.TempDir(), "held.db")
 	startLockHelper(t, "flock", held)
+
+	other := filepath.Join(t.TempDir(), "other.db")
+	seed := directOpen(t, other, Options{})
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close the second path's seed handle: %v", err)
+	}
 
 	waited := make(chan error, 1)
 	go func() {
@@ -173,16 +183,16 @@ func TestAWaitingOpenDoesNotBlockAnotherPath(t *testing.T) {
 	// Let the waiting open reach the lock before the second path is opened.
 	time.Sleep(100 * time.Millisecond)
 
-	other := filepath.Join(t.TempDir(), "other.db")
-	start := time.Now()
 	d, err := openDirect(other, Options{})
-	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("openDirect on a second path while the first waits: %v", err)
 	}
 	_ = d.Close()
-	if elapsed > time.Second {
-		t.Errorf("the second path's open took %v, want it not to wait behind the first", elapsed)
+
+	select {
+	case werr := <-waited:
+		t.Fatalf("the waiting open ended before the second path's open returned: %v", werr)
+	default:
 	}
 
 	if err := <-waited; !errors.Is(err, ErrLocked) {
