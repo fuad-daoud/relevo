@@ -166,7 +166,35 @@ func chainRenderShippedSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflo
 	if err != nil {
 		return "", err
 	}
+	// An engine chain runs its checks as steps, so the check the seed names
+	// comes from the engine's recorded result, not from a member-gate record.
+	if v.GateLogPath == "" {
+		if result, log := flowCheckResult(st); log != "" {
+			v.GateResult = result
+			v.GateLogPath = chainSeedInput(rt, c, log)
+		}
+	}
 	return workflow.RenderShipped(name, v)
+}
+
+// flowCheckResult names the newest check the engine recorded: the result word
+// and the sealed log a seed can name. Nothing is returned when the engine ran
+// no check, which the seed words as "No check ran".
+func flowCheckResult(st workflow.State) (string, string) {
+	result, log, round := "", "", -1
+	for _, r := range st.Results {
+		if r.Status != chainCheckGreen && r.Status != chainCheckRed {
+			continue
+		}
+		logs := r.Artifacts["log"]
+		if len(logs) == 0 || logs[0] == "" {
+			continue
+		}
+		if r.Round >= round {
+			round, result, log = r.Round, r.Status, logs[0]
+		}
+	}
+	return result, log
 }
 
 // chainRenderRepairSeed renders the repair seed a workflow's repair step hands

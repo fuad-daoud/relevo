@@ -154,9 +154,14 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		if result == "" {
 			return nil
 		}
+		before, err := chainWorkflowState(c)
+		if err != nil {
+			return err
+		}
 		return chainAdvance(ctx, rt, tx, c, workflow.Event{
 			Kind: workflow.EventCheckClosed, Step: row.Step, Run: run,
 			Result: result, Log: logKey,
+			RepeatRed: chainRepeatRedCheck(rt, before, row.Step, logKey),
 		})
 	}
 }

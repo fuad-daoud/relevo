@@ -106,10 +106,12 @@ func (p Per) names(id string) bool {
 }
 
 // applyBudget counts a step's visit and returns its then target once the count
-// passes the rendered max. The target is zero when the step is still under.
+// passes the rendered max. A repeated-red event counts as over budget, so the
+// same failure the last repair already saw buys no second repair. The target is
+// zero when the step is still under.
 func applyBudget(def Definition, s State, id string, b *Budget) (State, Target) {
 	s.Visits[id]++
-	if s.Visits[id] > renderLimit(def, b.Max) {
+	if s.repeatRed || s.Visits[id] > renderLimit(def, b.Max) {
 		return s, b.Then
 	}
 	return s, Target{}

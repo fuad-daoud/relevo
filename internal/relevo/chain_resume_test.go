@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // The resume decision is a pure function of the chain row's step and two round
@@ -118,7 +119,7 @@ func TestResumeReSeedsFixesForPlanningFixes(t *testing.T) {
 // builder. That is the state a resume exists for.
 func stoppedChain(t *testing.T, rt Runtime, opts ChainOptions) {
 	t.Helper()
-	startedChain(t, rt, opts)
+	startedFlowChain(t, rt, opts)
 	if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
 		t.Fatalf("Stop shop: %v", err)
 	}
@@ -210,7 +211,7 @@ func TestChainResumeResetsCorrections(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+	startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 
 	// One correction round, then a builder round that halts: the chain holds
 	// a spent correction when the resume arrives.
@@ -250,7 +251,7 @@ func TestChainResumeRefusesRunningOrDone(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedChain(t, rt, ChainOptions{})
+		startedFlowChain(t, rt, ChainOptions{})
 
 		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err == nil {
 			t.Fatal("ChainResume on a running chain = nil, want a refusal")
@@ -268,7 +269,7 @@ func TestChainResumeRefusesRunningOrDone(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedChain(t, rt, ChainOptions{})
+		startedFlowChain(t, rt, ChainOptions{})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
 		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
 		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusDone) {
@@ -396,9 +397,10 @@ func TestChainResumeAppliesOnlyGivenFlags(t *testing.T) {
 	}
 }
 
-// TestChainResumeGateFlagsUpdateTheBuilder pins the gate flags' member half: an
-// explicit --gate/--regate writes the stored settings and the builder member, a
-// --no-gate clears both, and a resume that names none keeps the stored check.
+// TestChainResumeGateFlagsUpdateTheBuilder pins the gate flags' half on a
+// workflow chain: an explicit --gate/--regate writes the stored settings and the
+// workflow's params, a --no-gate clears both, and a resume that names none keeps
+// the stored check.
 func TestChainResumeGateFlagsUpdateTheBuilder(t *testing.T) {
 	t.Parallel()
 
@@ -414,13 +416,13 @@ func TestChainResumeGateFlagsUpdateTheBuilder(t *testing.T) {
 			t.Fatalf("ChainResume: %v", err)
 		}
 
-		set := storedSettings(t, chainStoredRow(t, rt, "shop"))
+		row := chainStoredRow(t, rt, "shop")
+		set := storedSettings(t, row)
 		if set.Gate != "go test ./..." || set.Regate != 1 {
 			t.Errorf("settings gate/regate = %q/%d, want go test ./.../1", set.Gate, set.Regate)
 		}
-		builder := chainBinding(t, rt, "shop")
-		if builder.Gate != "go test ./..." || builder.Regate != 1 {
-			t.Errorf("builder gate/regate = %q/%d, want go test ./.../1", builder.Gate, builder.Regate)
+		if got := storedFlowParam(t, row, "gate"); got != "go test ./..." {
+			t.Errorf("workflow gate param = %q, want go test ./...", got)
 		}
 	})
 
@@ -434,11 +436,12 @@ func TestChainResumeGateFlagsUpdateTheBuilder(t *testing.T) {
 			t.Fatalf("ChainResume: %v", err)
 		}
 
-		if set := storedSettings(t, chainStoredRow(t, rt, "shop")); set.Gate != "" {
+		row := chainStoredRow(t, rt, "shop")
+		if set := storedSettings(t, row); set.Gate != "" {
 			t.Errorf("settings gate = %q, want none", set.Gate)
 		}
-		if builder := chainBinding(t, rt, "shop"); builder.Gate != "" {
-			t.Errorf("builder gate = %q, want none", builder.Gate)
+		if got := storedFlowParam(t, row, "gate"); got != "" {
+			t.Errorf("workflow gate param = %q, want none", got)
 		}
 	})
 
@@ -452,11 +455,12 @@ func TestChainResumeGateFlagsUpdateTheBuilder(t *testing.T) {
 			t.Fatalf("ChainResume: %v", err)
 		}
 
-		if set := storedSettings(t, chainStoredRow(t, rt, "shop")); set.Gate != "make check" || set.Regate != 2 {
+		row := chainStoredRow(t, rt, "shop")
+		if set := storedSettings(t, row); set.Gate != "make check" || set.Regate != 2 {
 			t.Errorf("settings gate/regate = %q/%d, want the stored make check/2", set.Gate, set.Regate)
 		}
-		if builder := chainBinding(t, rt, "shop"); builder.Gate != "make check" || builder.Regate != 2 {
-			t.Errorf("builder gate/regate = %q/%d, want the stored make check/2", builder.Gate, builder.Regate)
+		if got := storedFlowParam(t, row, "gate"); got != "make check" {
+			t.Errorf("workflow gate param = %q, want the stored make check", got)
 		}
 	})
 }
@@ -530,22 +534,21 @@ func TestChainResumeWritesOneTraceRow(t *testing.T) {
 	if row.Seq != len(after) {
 		t.Errorf("resume row seq = %d, want %d", row.Seq, len(after))
 	}
-	if row.Phase != string(chain.PhaseBuild) || row.Step != string(chain.StepBuilding) {
-		t.Errorf("resume row = phase %q step %q, want the state before it (build/building)", row.Phase, row.Step)
+	if row.Phase != "" || row.Step != "build" {
+		t.Errorf("resume row = phase %q step %q, want the build step with no legacy phase", row.Phase, row.Step)
 	}
-	ev, err := chain.DecodeEvent(row.Event)
+	ev, err := workflow.DecodeEvent(row.Event)
 	if err != nil {
 		t.Fatalf("DecodeEvent: %v", err)
 	}
-	wantReason := chain.ResumeReason(chain.StepBuilding)
-	if ev.Kind != chain.EventNeedsYou || ev.Reason != wantReason {
-		t.Errorf("event = %+v, want the chain's %q event carrying %q", ev, chain.EventNeedsYou, wantReason)
+	if ev.Kind != workflow.EventNeedsYou || ev.Step != "build" {
+		t.Errorf("event = %+v, want a needs_you on build", ev)
 	}
-	act, err := chain.DecodeAction(row.Action)
+	act, err := workflow.DecodeAction(row.Action)
 	if err != nil {
 		t.Fatalf("DecodeAction: %v", err)
 	}
-	if act.Kind != chain.ActionSend || act.Member != chain.MemberBuilder {
+	if act.Kind != workflow.ActionSend || act.Actor != "builder" {
 		t.Errorf("action = %+v, want the send to the builder", act)
 	}
 	if builder := chainBinding(t, rt, "shop"); row.Round != builder.Round {
@@ -569,7 +572,7 @@ func TestChainResumeTraceRowNamesTheStepItMovedTo(t *testing.T) {
 		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
 			t.Fatalf("ChainResume: %v", err)
 		}
-		assertResumeRowReason(t, rt, chain.ResumeReason(chain.StepBuilding))
+		assertResumeRowStep(t, rt, "build")
 	})
 
 	t.Run("a reviewed manual round", func(t *testing.T) {
@@ -585,30 +588,31 @@ func TestChainResumeTraceRowNamesTheStepItMovedTo(t *testing.T) {
 		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
 			t.Fatalf("ChainResume: %v", err)
 		}
-		assertResumeRowReason(t, rt, chain.ResumeReason(chain.StepReviewing))
+		assertResumeRowStep(t, rt, "review")
 	})
 }
 
-// assertResumeRowReason pins that the chain's last trace row carries want as the
-// resume's reason, in the stored event and the rendered line.
-func assertResumeRowReason(t *testing.T, rt Runtime, want string) {
+// assertResumeRowStep pins that the chain's last trace row carries a needs_you
+// event naming want, the step the resume moved to, in the stored event and the
+// rendered line.
+func assertResumeRowStep(t *testing.T, rt Runtime, want string) {
 	t.Helper()
 
 	events := chainTrace(t, rt, "shop")
 	last := events[len(events)-1]
-	ev, err := chain.DecodeEvent(last.Event)
+	ev, err := workflow.DecodeEvent(last.Event)
 	if err != nil {
 		t.Fatalf("DecodeEvent: %v", err)
 	}
-	if ev.Kind != chain.EventNeedsYou || ev.Reason != want {
-		t.Errorf("resume event = %+v, want a needs_you carrying %q", ev, want)
+	if ev.Kind != workflow.EventNeedsYou || ev.Step != want {
+		t.Errorf("resume event = %+v, want a needs_you on %q", ev, want)
 	}
 	doc, err := ChainTrace(context.Background(), rt, "shop")
 	if err != nil {
 		t.Fatalf("ChainTrace: %v", err)
 	}
-	if out := RenderTrace(doc); !strings.Contains(out, want) {
-		t.Errorf("RenderTrace = %q, want it to carry %q", out, want)
+	if out := RenderTrace(doc); !strings.Contains(out, "needs you") {
+		t.Errorf("RenderTrace = %q, want it to carry the resume's needs_you row", out)
 	}
 }
 
@@ -855,7 +859,7 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+		startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
 		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
 		chainReaderClose(t, rt, "shop-plan", "# Correction plan\n\nDo it.\n")
@@ -871,14 +875,9 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedChain(t, rt, ChainOptions{})
-		b := chainBinding(t, rt, "shop")
-		b.Regate = 2
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-		chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+		startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
+		chainRedCheck(t, rt, "shop", "FAIL the same thing\n")
 
 		// The repair round is open; stop the chain there.
 		if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
@@ -891,14 +890,9 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedChain(t, rt, ChainOptions{})
-		b := chainBinding(t, rt, "shop")
-		b.Regate = 2
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-		chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+		startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
+		chainRedCheck(t, rt, "shop", "FAIL the same thing\n")
 
 		// The repair round is open; stop the chain there, then resume with a
 		// replaced check.
@@ -934,7 +928,7 @@ func TestChainResumeSupersedesTheStaleEndDelivery(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedChain(t, rt, ChainOptions{})
+	startedFlowChain(t, rt, ChainOptions{})
 	chainBuilderClose(t, rt, "shop", chainHaltedBody("the step failed"))
 
 	pendingChain := func() int {

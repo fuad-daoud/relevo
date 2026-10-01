@@ -12,6 +12,7 @@ func Next(def Definition, s State, e Event) (State, []Action) {
 	if s.Status.terminal() || !s.awaits(e) {
 		return s, nil
 	}
+	s.repeatRed = e.RepeatRed
 	switch e.Kind {
 	case EventStepClosed:
 		return s.stepClosed(def, e)
@@ -66,9 +67,13 @@ func (s State) stepClosed(def Definition, e Event) (State, []Action) {
 	return route(def, s, e.Step, t, 0)
 }
 
-// unmatchedRun halts a run close that matched no edge: a status other than
-// done carries the runner's reason, and an unmatched done names the outcomes.
+// unmatchedRun halts a run close that matched no edge: a caller-rendered halt
+// reason is used as it stands, a status other than done carries the runner's
+// reason, and an unmatched done names the outcomes.
 func (s State) unmatchedRun(e Event) (State, []Action) {
+	if e.HaltReason != "" {
+		return halt(s, e.Step, e.HaltReason)
+	}
 	if e.Status == "done" {
 		return halt(s, e.Step, doneUnmatchedReason(e))
 	}

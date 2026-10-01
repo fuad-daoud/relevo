@@ -205,7 +205,7 @@ func chainPlanDiffFrom(c db.ChainRow, s chain.State) string {
 // its prompt entry says so, else a correction or fix-plan round when it ran the
 // planner's newest plan, else a round a human sent.
 func chainBuilderRoundKind(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, builder string, builderRound int) string {
-	if chainBuilderRoundIsRepair(tx, builder, builderRound) {
+	if chainBuilderRoundIsRepair(rt, tx, builder, builderRound) {
 		return workflow.BuilderRoundRepair
 	}
 	if chainBuilderRanThePlannerPlan(rt, tx, c, builder, builderRound) {
@@ -220,7 +220,12 @@ func chainBuilderRoundKind(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.Stat
 // chainBuilderRoundIsRepair reports whether the builder's prompt entry for the
 // round carries a repair note: the repair round is the only send that writes
 // one.
-func chainBuilderRoundIsRepair(tx *store.Tx, builder string, round int) bool {
+func chainBuilderRoundIsRepair(rt Runtime, tx *store.Tx, builder string, round int) bool {
+	// An engine chain's repair send writes the repair text but not a legacy
+	// "repair k/M" note, so the staged prompt itself identifies the round.
+	if staged, err := rt.Store.ReadFile(rt.Store.PromptPath(builder, round)); err == nil && isRepairPlan(string(staged)) {
+		return true
+	}
 	entries, err := tx.ReadLog(builder)
 	if err != nil {
 		return false

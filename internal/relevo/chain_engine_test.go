@@ -343,9 +343,18 @@ func TestWorkflowResumeFromStep(t *testing.T) {
 	if got := flowChainRow(t, rt); got.Status != string(workflow.StatusHalted) {
 		t.Fatalf("status = %s, want halted", got.Status)
 	}
-	// Close the builder's round so the resume can open the next one.
+	// Close the builder's round so the resume can open the next one: its report
+	// entry and a dead process, as a closed local round leaves behind.
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("shop", store.LogEntry{TS: baseTime, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md"})
+		if err := tx.AppendLog("shop", store.LogEntry{TS: baseTime, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md"}); err != nil {
+			return err
+		}
+		b, err := tx.Load("shop")
+		if err != nil {
+			return err
+		}
+		b.Builder = clearProcess(b.Builder)
+		return tx.Save(b)
 	}); err != nil {
 		t.Fatalf("close builder round: %v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -13,8 +14,8 @@ import (
 
 // chainResumeWorkflow continues a halted or stopped workflow chain: it
 // re-enters the step the engine is on -- or the one --from names -- applies
-// --param to the stored definition, creates the members the params brought in,
-// and runs the resumed action.
+// --param and the old flags to the stored definition, creates the members the
+// params brought in, and runs the resumed action.
 func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) (ChainResult, error) {
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
@@ -23,12 +24,29 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err != nil {
 		return ChainResult{}, err
 	}
+	set, err := resumeSettings(rt, c, opts)
+	if err != nil {
+		return ChainResult{}, err
+	}
 	before, err := chainWorkflowState(c)
 	if err != nil {
 		return ChainResult{}, err
 	}
-	if len(opts.Params) > 0 {
-		if def, err = workflow.WithParams(def, opts.Params); err != nil {
+	// The old flags fill the workflow's params exactly as a start's do, so a
+	// resume can replace the check or the budgets the chain runs under.
+	flagParams, err := chainResumeFlagParams(def, rt, opts)
+	if err != nil {
+		return ChainResult{}, err
+	}
+	merged := map[string]string{}
+	for key, value := range flagParams {
+		merged[key] = value
+	}
+	for key, value := range opts.Params {
+		merged[key] = value
+	}
+	if len(merged) > 0 {
+		if def, err = workflow.WithParams(def, merged); err != nil {
 			return ChainResult{}, refuse("%v", err)
 		}
 		given := workflow.Given{Plans: len(before.Iter["plans"].Items) > 0}
@@ -36,6 +54,9 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 			return ChainResult{}, err
 		}
 	}
+	// A human has looked at the plan: every budget starts fresh, exactly as a
+	// resume resets the correction count on the fixed state machine.
+	before.Visits = map[string]int{}
 	if err := supersedeChainDelivery(rt, c); err != nil {
 		return ChainResult{}, err
 	}
@@ -49,11 +70,16 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 		if err := resumeRefusal(row); err != nil {
 			return err
 		}
-		if len(opts.Params) > 0 {
+		if len(merged) > 0 {
 			if row, err = chainResumeAddMembers(ctx, rt, tx, row, def); err != nil {
 				return err
 			}
 		}
+		settingsJSON, err := json.Marshal(set)
+		if err != nil {
+			return fmt.Errorf("encode chain %s settings: %w", row.Name, err)
+		}
+		row.SettingsJSON = settingsJSON
 		closed, err := chainResumeClosed(rt, tx, row, before)
 		if err != nil {
 			return err
@@ -61,6 +87,19 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 		resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: opts.From, Closed: closed})
 		if err != nil {
 			return refuse("%v", err)
+		}
+		// The target member's own round must be closed before anything is
+		// written: starting a new one would overwrite the round in flight.
+		for _, act := range acts {
+			if act.Kind != workflow.ActionSend {
+				continue
+			}
+			if name, merr := chainFlowMemberName(tx, row, act.Actor); merr == nil {
+				if rerr := resumeOpenRoundRefusal(tx, row, name); rerr != nil {
+					return rerr
+				}
+			}
+			break
 		}
 		defJSON, err := json.Marshal(def)
 		if err != nil {
@@ -78,8 +117,9 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 		if err := tx.ChainPut(row); err != nil {
 			return err
 		}
+		gateChanged := opts.Gate != "" || opts.NoGate
 		for _, act := range acts {
-			if err := chainResumeRunAction(ctx, rt, tx, row, def, before, &resumed, act); err != nil {
+			if err := chainResumeRunAction(ctx, rt, tx, row, def, before, &resumed, act, gateChanged); err != nil {
 				return err
 			}
 		}
@@ -87,11 +127,69 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 		if err != nil {
 			return err
 		}
+		// The run actions opened the resumed round; the result carries the row
+		// as the store now holds it.
+		if current, cerr := tx.Chain(opts.Name); cerr == nil {
+			row = current
+		}
 		out = ChainResult{Chain: row, Members: members, Plans: len(before.Iter["plans"].Items)}
 		return nil
 	})
 	if err != nil {
 		return ChainResult{}, err
+	}
+	// A resume whose send could not start halts the chain, exactly as the fixed
+	// state machine's resume returns the send's own error.
+	if out.Chain.Status == string(workflow.StatusHalted) {
+		return out, fmt.Errorf("chain %s: %s", out.Chain.Name, out.Chain.Reason)
+	}
+	return out, nil
+}
+
+// chainResumeFlagParams translates a resume's old flags into workflow params,
+// the same slots a start's flags fill. A flag the workflow has no slot for is
+// refused, so a human never believes a setting took effect when it did not.
+func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptions) (map[string]string, error) {
+	out := map[string]string{}
+	add := func(flag, param, value string) error {
+		if !hasChainParam(def, param) {
+			return refuse("%s: workflow %q has no param %q", flag, def.Name, param)
+		}
+		out[param] = value
+		return nil
+	}
+	if opts.MaxCorrections != nil {
+		if err := add("--max-corrections", "max_corrections", strconv.Itoa(*opts.MaxCorrections)); err != nil {
+			return nil, err
+		}
+	}
+	if opts.Regate != nil {
+		if err := add("--regate", "regate", strconv.Itoa(*opts.Regate)); err != nil {
+			return nil, err
+		}
+	}
+	if opts.Security != nil {
+		if err := add("--security/--no-security", "scan", strconv.FormatBool(*opts.Security)); err != nil {
+			return nil, err
+		}
+	}
+	for _, f := range []struct{ flag, param, value string }{
+		{"--reviewer-actor", "reviewer", opts.ReviewerActor},
+		{"--planner-actor", "planner", opts.PlannerActor},
+		{"--security-actor", "security", opts.SecurityActor},
+	} {
+		if f.value == "" {
+			continue
+		}
+		if err := add(f.flag, f.param, f.value); err != nil {
+			return nil, err
+		}
+	}
+	if opts.Gate != "" || opts.NoGate {
+		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"))
+		if err := add("--gate/--no-gate", "gate", gate); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -159,10 +257,11 @@ func memberReportEntry(tx *store.Tx, name string, round int) (store.LogEntry, bo
 // chainResumeRunAction performs one action a resume produced. A send that
 // re-runs the very round the chain was stopped on re-hands that round's own
 // staged prompt, so the member sees the bytes it was already given; anything
-// else is the engine's ordinary action.
-func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, act workflow.Action) error {
+// else is the engine's ordinary action. gateChanged says the resume replaced
+// the check, so a stale repair prompt is walked back to the step's own seed.
+func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, act workflow.Action, gateChanged bool) error {
 	if act.Kind == workflow.ActionSend {
-		if name, text, ok := chainResumeStagedText(rt, tx, c, before, act); ok {
+		if name, text, ok := chainResumeStagedText(rt, tx, c, before, act, gateChanged); ok {
 			ev := workflow.Event{Kind: workflow.EventNeedsYou, Step: next.At}
 			return chainFlowSendText(ctx, rt, tx, c, def, before, next, ev, act, name, text)
 		}
@@ -172,8 +271,9 @@ func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 
 // chainResumeStagedText returns the staged prompt a resume re-sends: the round
 // the state awaited, when the action re-runs that same member's step and the
-// round's staged file is still there.
-func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workflow.State, act workflow.Action) (string, string, bool) {
+// round's staged file is still there. A replaced check walks back past any
+// repair prompts, because their bytes name the check that failed.
+func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workflow.State, act workflow.Action, gateChanged bool) (string, string, bool) {
 	if before.Awaiting.Member == "" || before.Awaiting.Round <= 0 || act.Actor != before.Awaiting.Member {
 		return "", "", false
 	}
@@ -181,7 +281,17 @@ func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workf
 	if err != nil {
 		return "", "", false
 	}
-	body, err := rt.Store.ReadFile(rt.Store.PromptPath(name, before.Awaiting.Round))
+	round := before.Awaiting.Round
+	if gateChanged {
+		for round > 1 {
+			body, berr := rt.Store.ReadFile(rt.Store.PromptPath(name, round))
+			if berr != nil || !isRepairPlan(string(body)) {
+				break
+			}
+			round--
+		}
+	}
+	body, err := rt.Store.ReadFile(rt.Store.PromptPath(name, round))
 	if err != nil {
 		return "", "", false
 	}

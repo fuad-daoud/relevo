@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -206,7 +207,29 @@ func chainWorkflowMembers(def workflow.Definition, planned []plannedMember, keep
 		}
 		out = append(out, chainMember{part: part, name: m.Name, actor: m.Actor, shape: shape, writer: m.Writer})
 	}
+	// The legacy four parts keep their historical order -- builder, reviewer,
+	// planner, security -- so a terminal delivery names the member it always
+	// did; every other actor follows, in the sorted actor order planned holds.
+	slices.SortStableFunc(out, func(a, b chainMember) int {
+		return chainPartRank(a.part) - chainPartRank(b.part)
+	})
 	return out
+}
+
+// chainPartRank orders a member's part after the legacy four, which come first
+// in the order the fixed state machine named them. Any other part is last.
+func chainPartRank(part string) int {
+	switch part {
+	case chain.MemberBuilder:
+		return 0
+	case chain.MemberReviewer:
+		return 1
+	case chain.MemberPlanner:
+		return 2
+	case chain.MemberSecurity:
+		return 3
+	}
+	return 4
 }
 
 // chainRefuseTwoCheckCommandsOnPlacedWriter refuses a workflow that places a
@@ -400,6 +423,11 @@ func chainCreateWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, pla
 		if err := chainSendPending(ctx, rt); err != nil {
 			return ChainResult{}, fmt.Errorf("chain %q started, but its remote member could not be handed its round: %w", opts.Name, err)
 		}
+	}
+	// The start actions opened the first round; the result carries the row as
+	// the store now holds it, so its awaiting round is the one just sent.
+	if current, cerr := rt.Store.Chain(opts.Name); cerr == nil {
+		row = current
 	}
 	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: gate}, nil
 }

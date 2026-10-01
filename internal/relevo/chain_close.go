@@ -2,8 +2,10 @@ package relevo
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -17,6 +19,9 @@ type chainCloseWF struct {
 	Path    string
 	Outcome string
 	Stopped bool
+	// Note is the close's own note from the runner, folded into a non-done
+	// builder's one-line reason when its report names no source.
+	Note string
 	// Round is the round that closed. The close's caller advances the binding
 	// before the chain moves, so the closing binding's own round is no longer
 	// the closed one by then; the event must name the round the step awaited.
@@ -67,6 +72,14 @@ func chainEventFromCloseWF(rt Runtime, tx *store.Tx, c db.ChainRow, b store.Bind
 		ev.Status = chainReaderStatus(bodies, outs)
 	} else {
 		ev.Status = wf.Outcome
+		// A builder close that is not done carries why in one line from its
+		// report tail, under the plan the chain halted on; the caller-rendered
+		// wording is what the engine's unmatched-run halt uses verbatim.
+		if wf.Outcome != reporttail.OutcomeDone {
+			tail, _, _ := reporttail.ParseWithReason(wf.Body)
+			ev.Reason = chain.BuilderHaltReason(tail, wf.Note, wf.Outcome)
+			ev.HaltReason = fmt.Sprintf("builder halted on plan %d: %s", c.Plan, ev.Reason)
+		}
 	}
 
 	artifacts := chainCloseArtifacts(rt, b, wf.Path, outs)

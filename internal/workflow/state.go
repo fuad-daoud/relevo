@@ -68,6 +68,10 @@ type State struct {
 	Visits   map[string]int
 	Iter     map[string]Iter
 	Results  map[string]Result
+	// repeatRed is set for the one transition a repeated-red event drives: a
+	// budgeted step entered then counts as over budget. It is unexported, so it
+	// lives only for that transition and is never stored.
+	repeatRed bool
 }
 
 // EventKind names the close an event carries.
@@ -98,6 +102,13 @@ type Event struct {
 	Log       string
 	Child     string
 	Reason    string
+	// RepeatRed says a red check's output repeats the previous red's, so a
+	// budgeted repair is not bought twice for the same failure.
+	RepeatRed bool
+	// HaltReason is a close's final halt wording when the caller has already
+	// rendered it: an unmatched run close halts with exactly this, so a caller
+	// that owns the vocabulary keeps its own reason.
+	HaltReason string
 }
 
 // ActionKind is what relevo does with a transition.

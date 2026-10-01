@@ -49,7 +49,7 @@ func TestChainSecuritySeedNamesTheWholeChainDiff(t *testing.T) {
 	fg.snapshotTreeID = chainEnd
 	fg.diffFunc = secDiffFunc(base, chainEnd)
 
-	startedChain(t, rt, ChainOptions{
+	startedFlowChain(t, rt, ChainOptions{
 		Plans:          []string{writePlan(t, "plan one"), writePlan(t, "plan two")},
 		MaxCorrections: ptr(1),
 		Security:       ptr(true),
@@ -146,7 +146,7 @@ func TestChainSecuritySeedListsEveryPlanCopy(t *testing.T) {
 
 	rt, fg := chainRuntime(t)
 	fg.snapshotTreeID = "tree-end"
-	startedChain(t, rt, ChainOptions{
+	startedFlowChain(t, rt, ChainOptions{
 		Plans:    []string{writePlan(t, "plan one"), writePlan(t, "plan two")},
 		Security: ptr(true),
 	})
@@ -187,7 +187,7 @@ func TestChainSecuritySeedNamesTheBaseWhenTheBranchDiffIsTruncated(t *testing.T)
 		Stat:      git.Stat{FilesChanged: 312, Insertions: 48120, Deletions: 9033},
 		Truncated: true,
 	}
-	startedChain(t, rt, ChainOptions{Security: ptr(true)})
+	startedFlowChain(t, rt, ChainOptions{Security: ptr(true)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
@@ -222,7 +222,7 @@ func TestChainSecuritySeedNamesTheBaseWhenTheBuilderHasNoClosedTree(t *testing.T
 
 	rt, fg := chainRuntime(t)
 	fg.snapshotTreeID = "tree-end"
-	startedChain(t, rt, ChainOptions{Security: ptr(true)})
+	startedFlowChain(t, rt, ChainOptions{Security: ptr(true)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
@@ -270,7 +270,7 @@ func TestChainFixesSeedNamesTheSameWholeChainDiff(t *testing.T) {
 	fg.snapshotTreeID = chainEnd
 	fg.diffFunc = secDiffFunc(base, chainEnd)
 
-	startedChain(t, rt, ChainOptions{
+	startedFlowChain(t, rt, ChainOptions{
 		MaxCorrections: ptr(1),
 		Security:       ptr(true),
 	})
