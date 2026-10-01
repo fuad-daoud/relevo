@@ -511,6 +511,9 @@ func tickUntilChainFinishes(t *testing.T, ctx context.Context, daemon *relevo.Da
 		}
 		c := chainE2ERow(t, rt, name)
 		if chain.Status(c.Status) != chain.StatusRunning {
+			if chain.Status(c.Status) != chain.StatusDone {
+				dumpChainHaltDiagnostics(t, rt, c)
+			}
 			return
 		}
 		if observe != nil {
@@ -523,6 +526,35 @@ func tickUntilChainFinishes(t *testing.T, ctx context.Context, daemon *relevo.Da
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// dumpChainHaltDiagnostics prints the halted member's round state -- its pid
+// and stream segments, the marker and stream stats, and the stream's own bytes
+// -- so a reader close that found no verdict is diagnosable from the CI log.
+func dumpChainHaltDiagnostics(t *testing.T, rt relevo.Runtime, c db.ChainRow) {
+	t.Helper()
+	t.Logf("chain halted: status %s phase %s awaiting %s round %d reason %q", c.Status, c.Phase, c.AwaitingMember, c.AwaitingRound, c.Reason)
+	member := c.AwaitingMember
+	if member == "" {
+		member = c.Reviewer
+	}
+	b, err := rt.Store.Load(member)
+	if err != nil {
+		t.Logf("member %s: load: %v", member, err)
+		return
+	}
+	donePath := rt.Store.DonePath(member, b.Round)
+	streamPath := rt.Store.StreamPath(member, b.Round)
+	ds, dmt, dok, derr := rt.Store.StatFile(donePath)
+	ss, smt, sok, serr := rt.Store.StatFile(streamPath)
+	stream, rerr := rt.Store.ReadFile(streamPath)
+	t.Logf("member %s round %d state %s pid=%d started=%s segments=%+v", member, b.Round, b.State, b.Builder.PID, b.Builder.StartedAt, b.Builder.StreamSegments)
+	t.Logf("done   %s stat=(size=%d mtime=%s ok=%v err=%v)", donePath, ds, dmt, dok, derr)
+	t.Logf("stream %s stat=(size=%d mtime=%s ok=%v err=%v) readErr=%v bytes=%d", streamPath, ss, smt, sok, serr, rerr, len(stream))
+	if len(stream) > 1200 {
+		stream = stream[:1200]
+	}
+	t.Logf("stream content:\n%s", stream)
 }
 
 // chainMembersNote names every member's state, round and halt, for a failure
