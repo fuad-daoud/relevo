@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
@@ -307,6 +309,65 @@ func TestDBQueryMaxBytesFlagBounds(t *testing.T) {
 		_, _, err := captureOutput(t, func() error { return run(args) })
 		requireCLIError(t, err, codeUsage, "relevo help")
 	}
+}
+
+// TestDBQueryReleasesTheLockBeforePrinting pins the print-phase lock: the
+// handle is closed before any row or note goes out, so a stalled stdout cannot
+// hold relevo.db.lock past the read phase. While the writer blocks, the lock
+// file must be free. The mutation to a deferred close makes the flock fail.
+func TestDBQueryReleasesTheLockBeforePrinting(t *testing.T) {
+	stateHome := seedQueryRoot(t)
+
+	w := newBlockingWriter()
+	prev := dbQueryOut
+	dbQueryOut = w
+	t.Cleanup(func() { dbQueryOut = prev })
+
+	done := make(chan error, 1)
+	go func() {
+		done <- run([]string{"db", "query", `SELECT n FROM probe ORDER BY n`})
+	}()
+
+	select {
+	case <-w.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the command never reached its print")
+	}
+
+	lockPath := filepath.Join(stateHome, "relevo", "relevo.db.lock")
+	if !flockIsFree(lockPath) {
+		t.Error("relevo.db.lock is still held while stdout is stalled")
+	}
+
+	w.unblock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("db query: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the command never finished after the print was released")
+	}
+}
+
+// blockingWriter signals when its first write starts and blocks until released,
+// so a test can act while the command is printing.
+type blockingWriter struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newBlockingWriter() *blockingWriter {
+	return &blockingWriter{started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (w *blockingWriter) unblock() { close(w.release) }
+
+func (w *blockingWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.started) })
+	<-w.release
+	return len(p), nil
 }
 
 // TestDBQueryConflictNamesTheLockNotTheDaemon pins the conflict message: when

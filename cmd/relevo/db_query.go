@@ -49,6 +49,11 @@ var dbQueryRead = func(ctx context.Context, d *db.DB, stmt string, onRow func([]
 	return d.QueryReadOnly(ctx, stmt, onRow)
 }
 
+// dbQueryOut is where db query prints its rows, resolved to os.Stdout at call
+// time when nil. It is a seam so a test can capture the print, or stall it to
+// prove the handle is already closed by then.
+var dbQueryOut io.Writer
+
 // dbFlagSet declares the flags `relevo db`'s subcommands take. The verb itself
 // is a dispatcher and parses none, but the registry lists the flags a caller
 // reaches through it, and the parity test requires the installer to declare
@@ -117,7 +122,14 @@ func cmdDBQuery(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = d.Close() }()
+	// closed records that the handle is already released, so the deferred close
+	// does not run a second time.
+	closed := false
+	defer func() {
+		if !closed {
+			_ = d.Close()
+		}
+	}()
 
 	var (
 		columns   []string
@@ -165,6 +177,12 @@ func cmdDBQuery(args []string) error {
 		return dbQueryTimeout(*v.timeout)
 	}
 
+	// Release the file before the note and the rows go out: a stalled stdout --
+	// a pipe nobody drains, `| less` then Ctrl-Z -- must not hold relevo.db.lock
+	// through the print, or the read-vs-open budget would not cover this phase.
+	_ = d.Close()
+	closed = true
+
 	if rowsCut {
 		fmt.Fprintf(os.Stderr, "truncated at %d rows (raise --limit)\n", *v.limit)
 	}
@@ -172,10 +190,14 @@ func cmdDBQuery(args []string) error {
 		fmt.Fprintf(os.Stderr, "truncated at %d bytes (raise --max-bytes)\n", *v.maxBytes)
 	}
 
-	if *v.asJSON {
-		return writeDBQueryJSON(os.Stdout, columns, rows)
+	out := dbQueryOut
+	if out == nil {
+		out = os.Stdout
 	}
-	return writeDBQueryTable(os.Stdout, columns, rows)
+	if *v.asJSON {
+		return writeDBQueryJSON(out, columns, rows)
+	}
+	return writeDBQueryTable(out, columns, rows)
 }
 
 // checkDBQueryBounds refuses a limit or byte cap below one and a timeout that
