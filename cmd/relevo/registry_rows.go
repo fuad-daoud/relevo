@@ -28,6 +28,18 @@ var registry = []verbEntry{
 		Errors:  []string{"internal", "mastermind_not_found", "refused", "usage"},
 	},
 	{
+		Name: "board comment", Summary: "append one comment to a live or repo board scene",
+		Args:  "[path] [--board NAME] --text S [--x X --y Y] [--by B]",
+		Flags: []string{"--board", "--by", "--text", "--x", "--y"},
+		Exit:  []int{0, 1, 2}, Errors: []string{"internal", "mastermind_not_found", "refused", "usage"},
+	},
+	{
+		Name: "board comments", Summary: "list a live or repo board scene's comments in scene order",
+		Args:  "[path] [--board NAME] [--json]",
+		Flags: []string{"--board", "--json"}, Output: "json:[]Comment",
+		Exit: []int{0, 1, 2}, Errors: []string{"internal", "mastermind_not_found", "refused", "usage"},
+	},
+	{
 		Name:    "board url",
 		Summary: "print the live board's URL for a shell copy",
 		Args:    "[--board NAME] [--mastermind M]",

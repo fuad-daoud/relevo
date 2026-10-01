@@ -198,6 +198,10 @@ func cmdBoard(args []string) error {
 	switch sub {
 	case "url":
 		return cmdBoardURL(args[1:])
+	case "comments":
+		return cmdBoardComments(args[1:])
+	case "comment":
+		return cmdBoardComment(args[1:])
 	}
 	fs := flag.NewFlagSet("relevo board", flag.ContinueOnError)
 	v := boardFlagSet(fs)
@@ -260,6 +264,9 @@ func boardResolveTheme(cwd, flagTheme string) (*board.Theme, error) {
 func boardRefusal(err error) error {
 	if errors.Is(err, board.ErrUsage) {
 		return fail(codeUsage, "%s", err)
+	}
+	if errors.Is(err, board.ErrInvalid) {
+		return fail(codeRefused, "%s", err)
 	}
 	return fail(codeInternal, "%s", err)
 }

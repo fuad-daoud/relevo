@@ -16,7 +16,7 @@ import (
 // TestBoardIsAPeekVerb pins the route: board and its subverbs neither dial the
 // machine database nor capture the agy environment.
 func TestBoardIsAPeekVerb(t *testing.T) {
-	for _, args := range [][]string{{"board"}, {"board", "url"}} {
+	for _, args := range [][]string{{"board"}, {"board", "url"}, {"board", "comments"}, {"board", "comment"}} {
 		if !isPeekArgs(args) {
 			t.Errorf("isPeekArgs(%q) = false, want true", args)
 		}
