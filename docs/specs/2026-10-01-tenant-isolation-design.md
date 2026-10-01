@@ -1,8 +1,8 @@
 # Tenant isolation for served builders: `user` and `container` modes
 
-**Status:** draft for owner review 2026-10-01 (issue #204). Not agreed; the
-owner's decisions are asked at the end (§14). This document is the round's only
-write and exists so the draft can be reviewed; it is not an approved design.
+**Status:** owner decisions recorded 2026-10-01 (§14); ready for the slice plan
+(issue #204). This document is the round's only write and exists so the draft
+can be reviewed; it is not an approved design.
 **Issue:** #204.
 **Related:** `docs/specs/2026-09-19-remote-builders-design.md` §2.5 (the wire's
 threat model), #485 (account pools — it gates the serve half of this design and
@@ -141,8 +141,10 @@ Additive only.
 - A new client reading a server with no `isolation` renders "none (server
   predates isolation)".
 - No endpoint, request or response changes semantics. Client-side display of
-  the mode is named as a later, optional slice; nothing in this design requires
-  the client to understand it.
+  the mode is a later, optional slice; nothing in this design requires the
+  client to understand it. A client-side require-isolation — a client refusing
+  to send to a server below a minimum mode — is likewise a later, optional slice
+  (owner, 2026-10-01): the mode stays a server-side fact the client displays.
 
 ## 4. User mode (D2)
 
@@ -173,12 +175,12 @@ added; `HOME`, `USER` and `LOGNAME` are set to the tenant (§4.5).
 - `<serve root>/bindings/<owner-hex>/` and `<serve root>/repos/<owner-hex>/` are
   `0700` and owned by the tenant. They are created by root and `chown`ed, so the
   tenant can write its own tree and cannot see a sibling's.
-- The serve root must be tenant-traversable: `--state /var/lib/relevo` with
-  `0711` on the components a tenant must pass through (the root itself and the
-  `bindings`/`repos` parents). `EnsureStateRoot`
-  (`internal/serve/serve.go:EnsureStateRoot`) is where the root is created; the
-  per-owner roots are `internal/serve/serve.go:ownerRoot` and
-  `internal/serve/serve.go:repoRoot`.
+- The serve root is tenant-traversable: `--state /var/lib/relevo` is the
+  decided default (owner, 2026-10-01), with `0711` on the components a tenant
+  must pass through (the root itself and the `bindings`/`repos` parents).
+  `EnsureStateRoot` (`internal/serve/serve.go:EnsureStateRoot`) is where the
+  root is created; the per-owner roots are
+  `internal/serve/serve.go:ownerRoot` and `internal/serve/serve.go:repoRoot`.
 - The machine DB stays in the admin's own `0700` state root, outside the
   tenant-traversable tree.
 
@@ -217,8 +219,8 @@ it under the same wrapper.
   `internal/relevo/headless.go:roundEnvFor` (the per-account home entry);
   the strip follows the rule `roundEnv` already applies to the runner marker.
 - **Per-user logins are the recommended setup** (each tenant logs each harness
-  in under its own HOME). A group-readable shared login is an explicit opt-in
-  fallback that doctor warns on.
+  in under its own HOME). A group-readable shared login is **allowed** as an
+  explicit opt-in fallback that doctor warns on (owner, 2026-10-01).
 - #100's shared credentials apply to `none` only; under `user` they would be a
   cross-tenant read.
 - #485 account homes must be per-owner here. The accounts design names this gap
@@ -241,10 +243,11 @@ Rootless `podman` per spawn; no root; today's user unit
 
 ### 5.1 Image
 
-The image is admin-built and named by `serve.isolation_image`. It must contain
-git, a POSIX `sh`, and the harness binaries/runtimes on `PATH`. Ship a
-`dist/Containerfile` and document the build. Doctor checks `podman info`
-(rootless) and `podman image exists`.
+The image is named by `serve.isolation_image` as a full reference — a registry
+reference or a local path (owner, 2026-10-01) — admin-built, and must contain
+git, a POSIX `sh`, and the harness binaries/runtimes on `PATH`. A shipped
+`dist/Containerfile` is the reference build; document the build. Doctor checks
+`podman info` (rootless) and `podman image exists`.
 
 ### 5.2 Command
 
@@ -329,8 +332,9 @@ Nothing else in the spawn contract changes.
 ### 6.3 Owner-path git
 
 `internal/git/client.go:run` is the single exec site. In `user` mode it runs as
-the tenant; in `container` mode it runs inside the container. This is what binds
-the server's own git — repo config, hooks, `fsmonitor`, filters — to the
+the tenant; in `container` mode it runs inside the container alongside the
+round (owner, 2026-10-01) — one boundary. This is what binds the server's own
+git — repo config, hooks, `fsmonitor`, filters — to the
 boundary (seed-vs-tree 7). The server's git is otherwise "repo-config code
 execution" on a tenant-writable repo, which is the whole point of the finding.
 
@@ -356,6 +360,10 @@ execution" on a tenant-writable repo, which is the whole point of the finding.
 | **A** (ships first) | config + wire + doctor + seam pass-through; `isolation: none` is byte-identical | pure `internal/isolate` tables; serve/whoami `-race` |
 | **B** | user mode: enrollment `--user`, root serve, credential wrapper, dirs, git-as-tenant, logins | `internal/isolate.UserSpec` tables; serve wrapper test |
 | **C** | container mode: image, argv render, mounts, bounds, kill | `internal/isolate.ContainerArgv` tables; local podman test (skips) |
+| **D** (later, optional) | client-side require-isolation: a client refuses to send to a server below a minimum mode | client tests |
+
+**D is later and optional** (owner, 2026-10-01): the mode stays a server-side
+fact the client displays; nothing in S0/A/B/C depends on it.
 
 Order and why:
 
@@ -455,23 +463,22 @@ One line each; per mode where they differ.
   cross-tenant read; kept only as an explicit, doctor-warned fallback (§4.6).
 - **Container mode before user mode** — §8.
 
-## 14. Open owner questions
+## 14. Owner decisions (2026-10-01)
 
-These are questions, not decisions buried as recommendations.
+The owner answered the five questions the draft posed on 2026-10-01; no open
+questions remain.
 
-1. **The server's own git in container mode.** Should it run inside the
-   container alongside the round (one boundary, more mounts), or as a separate
-   per-owner process outside it (simpler mounts, a second exec surface to keep
-   bound)? §6.3 assumes "inside".
-2. **Serve-root placement for root `user` mode.** Is `/var/lib/relevo` (0711
-   traversal, DB elsewhere) the intended default, or does the owner prefer a
-   different root and a different DB location?
-3. **Is the shared-login fallback offered at all?** §4.6 recommends per-user
-   logins and permits an opt-in shared login with a doctor warning. Should the
-   fallback exist, or should `user` mode refuse a shared login outright?
-4. **Image naming and ownership.** Who owns `serve.isolation_image` — the admin
-   by path, a registry reference, or both — and is `dist/Containerfile` the
-   intended build artifact?
-5. **An optional client-side require-isolation.** Should a client be able to
-   demand a minimum mode (refusing to send to a server below it), or is the mode
-   purely an admin/server-side fact the client only displays?
+1. **The server's own git in container mode runs inside the container**
+   alongside the round — one boundary; §6.3's assumption becomes the decision.
+2. **The serve root for root `user` mode is `/var/lib/relevo`**, made
+   tenant-traversable (`0711` on the components a tenant passes), with the
+   machine DB in the admin's own `0700` state root; §4.3's example is the
+   decided default.
+3. **The shared, group-readable login fallback is allowed**, explicitly opt-in,
+   with per-user logins recommended and doctor warning; §4.6 stays as written,
+   phrased as allowed rather than proposed.
+4. **The container image is a full reference** (a registry reference or a local
+   path) in `serve.isolation_image`, with a shipped `dist/Containerfile` as the
+   reference build; §5.1.
+5. **Client-side require-isolation is a later, optional slice**; the mode stays
+   a server-side fact the client displays; §3.4 and §8.
