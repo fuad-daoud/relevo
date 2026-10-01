@@ -117,7 +117,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 		if err != nil {
 			t.Fatalf("LoadClients: %v", err)
 		}
-		cl, err := cls.Add("testclient", pub, time.Now())
+		cl, err := cls.Add("testclient", pub, "", time.Now())
 		if err != nil {
 			t.Fatalf("Add client: %v", err)
 		}

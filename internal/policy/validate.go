@@ -301,6 +301,9 @@ func validateThresholds(path string, p Policy) error {
 		if p.Serve.Isolation == "container" && p.Serve.IsolationImage == "" {
 			return fmt.Errorf("%s: serve.isolation_image: required when serve.isolation is \"container\": %w", path, ErrBadPolicy)
 		}
+		if p.Serve.IsolationSharedLogins && p.Serve.Isolation != "user" {
+			return fmt.Errorf("%s: serve.isolation_shared_logins: only meaningful when serve.isolation is \"user\", got isolation %q: %w", path, p.Serve.Isolation, ErrBadPolicy)
+		}
 	}
 	return nil
 }

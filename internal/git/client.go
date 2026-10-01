@@ -18,6 +18,18 @@ type Client struct {
 	bin           string
 	timeout       time.Duration
 	maxPatchBytes int
+
+	// credUID and credGID are the tenant identity every git child runs as when
+	// credentialSet is true; otherwise the git child runs as the serve uid.
+	// They are plain numbers, not a syscall.Credential, so the client compiles
+	// on every target -- only the helper that applies them is unix-only.
+	credUID       uint32
+	credGID       uint32
+	credentialSet bool
+	// gitEnvExtra is the tenant environment appended to every git child's env
+	// (a user-mode client carries the tenant's HOME/USER/LOGNAME), so a git
+	// process running as the tenant resolves paths against its own home.
+	gitEnvExtra []string
 }
 
 // NewClient returns a Client invoking bin, defaulting to "git", a 10s timeout
@@ -46,11 +58,67 @@ func NewClient(bin string, timeout time.Duration, maxPatchBytes int) *Client {
 // '.../index.lock'". Commands that must write the index still take their
 // mandatory lock, so it is safe everywhere. extra comes last, so a caller can
 // override it.
-func gitEnv(extra ...string) []string {
-	env := make([]string, 0, len(os.Environ())+1+len(extra))
-	env = append(env, os.Environ()...)
+//
+// deny names variables removed from parent before extra is appended: a
+// credentialed client passes its own tenant names so the daemon's HOME/USER/
+// LOGNAME cannot survive beside the tenant's, which would leave the lookup to
+// duplicate-name semantics (undefined by POSIX).
+func gitEnv(parent, deny []string, extra []string) []string {
+	if len(deny) > 0 {
+		denied := make(map[string]struct{}, len(deny))
+		for _, d := range deny {
+			denied[d] = struct{}{}
+		}
+		kept := parent[:0:0]
+		for _, e := range parent {
+			name, _, _ := strings.Cut(e, "=")
+			if _, ok := denied[name]; ok {
+				continue
+			}
+			kept = append(kept, e)
+		}
+		parent = kept
+	}
+	env := make([]string, 0, len(parent)+1+len(extra))
+	env = append(env, parent...)
 	env = append(env, "GIT_OPTIONAL_LOCKS=0")
 	return append(env, extra...)
+}
+
+// envNames returns the variable names an environment slice sets, in order.
+func envNames(env []string) []string {
+	names := make([]string, 0, len(env))
+	for _, e := range env {
+		name, _, _ := strings.Cut(e, "=")
+		names = append(names, name)
+	}
+	return names
+}
+
+// WithCredential returns a copy of c whose every git child runs as uid/gid with
+// env appended to its environment. It never mutates the receiver, so the
+// server-wide client stays available for none-mode owners.
+func (c *Client) WithCredential(uid, gid uint32, env []string) *Client {
+	cp := *c
+	cp.credUID, cp.credGID, cp.credentialSet = uid, gid, true
+	cp.gitEnvExtra = append([]string(nil), env...)
+	return &cp
+}
+
+// command is the one exec.Cmd assembler for every git child the client starts:
+// the binary, args, working directory, the git environment (with the client's
+// own tenant env appended) and, when set, the tenant credential. It is pure --
+// no child is started -- so the identity and environment a git call carries can
+// be pinned without running git. run and diffPatch both build through it.
+func (c *Client) command(ctx context.Context, dir string, env []string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, c.bin, args...)
+	cmd.Dir = dir
+	extra := append(append([]string(nil), c.gitEnvExtra...), env...)
+	// Deny the inherited copies of every name the tenant env sets, so the
+	// tenant's HOME/USER/LOGNAME are the only ones the git child sees.
+	cmd.Env = gitEnv(os.Environ(), envNames(c.gitEnvExtra), extra)
+	applyCredential(cmd, c.credUID, c.credGID, c.credentialSet)
+	return cmd
 }
 
 func (c *Client) run(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {
@@ -58,9 +126,7 @@ func (c *Client) run(ctx context.Context, dir string, env []string, args ...stri
 	defer cancel()
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, c.bin, args...)
-	cmd.Dir = dir
-	cmd.Env = gitEnv(env...)
+	cmd := c.command(ctx, dir, env, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

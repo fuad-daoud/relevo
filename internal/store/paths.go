@@ -1,7 +1,9 @@
 package store
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -413,4 +415,38 @@ func (s *Store) PruneWorktreeDirs() {
 	_ = os.Remove(filepath.Join(s.WorktreeDir(), ".verify"))
 	_ = os.Remove(s.ScratchWorktreeDir())
 	_ = os.Remove(s.WorktreeDir())
+}
+
+// EnsureScratchDir creates .worktrees/.scratch when it is absent, the directory
+// a reader's throwaway worktree is cut into. It replaces the raw MkdirAll the
+// scratch path used to call, so a user-mode server reaches the same tenant
+// chown callback EnsureOutDir uses. A symlink or any other non-directory
+// already at the path is refused: the tenant owns this directory, and a link
+// planted there must not redirect relevo's writes.
+func (s *Store) EnsureScratchDir() error {
+	dir := s.ScratchWorktreeDir()
+	if fi, err := os.Lstat(dir); err == nil {
+		if !fi.IsDir() {
+			return fmt.Errorf("scratch dir %s is not a directory", dir)
+		}
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	// .worktrees is the root the scratch directory lives under; create it when
+	// it is absent, then create .scratch through the root, so a .scratch entry
+	// swapped for a symlink out of .worktrees is refused rather than followed.
+	if err := os.MkdirAll(s.WorktreeDir(), scratchDirMode); err != nil {
+		return err
+	}
+	root, err := s.WorktreeRoot()
+	if err != nil {
+		return err
+	}
+	if err := root.MkdirAll(filepath.Base(dir), scratchDirMode); err != nil {
+		_ = root.Close()
+		return err
+	}
+	_ = root.Close()
+	return s.chownCreated(dir)
 }

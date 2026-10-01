@@ -207,7 +207,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	// Absorb OUTSIDE s.mu.
 	s.mu.Unlock()
 
-	if !s.absorbRoundBundle(w, r, bare, outRef, req.Bundle) {
+	if !s.absorbRoundBundle(w, r, rt.Transport, bare, outRef, req.Bundle) {
 		return
 	}
 
@@ -216,11 +216,11 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	s.finishRoundStart(w, r, rt, caller, name, bare, outRef, b, req)
 }
 
-func (s *Server) absorbRoundBundle(w http.ResponseWriter, r *http.Request, bare, outRef string, bundle io.Reader) bool {
+func (s *Server) absorbRoundBundle(w http.ResponseWriter, r *http.Request, transport remote.TreeTransport, bare, outRef string, bundle io.Reader) bool {
 	if bundle == nil {
 		return true
 	}
-	_, err := s.transport.Absorb(r.Context(), bare, remote.ContentTypeGitBundle, bundle, []string{outRef})
+	_, err := transport.Absorb(r.Context(), bare, remote.ContentTypeGitBundle, bundle, []string{outRef})
 	if err == nil {
 		return true
 	}
@@ -238,7 +238,7 @@ func (s *Server) absorbRoundBundle(w http.ResponseWriter, r *http.Request, bare,
 // applyRoundTags sets the client's shipped tags whose commit is already in bare;
 // an unrelated tag is skipped. old = "" is unconditional, so a tag the client
 // moved moves here too.
-func (s *Server) applyRoundTags(ctx context.Context, w http.ResponseWriter, bare, rawTags string) bool {
+func (s *Server) applyRoundTags(ctx context.Context, w http.ResponseWriter, g relevo.Git, bare, rawTags string) bool {
 	if rawTags == "" {
 		return true
 	}
@@ -252,27 +252,27 @@ func (s *Server) applyRoundTags(ctx context.Context, w http.ResponseWriter, bare
 			slog.Debug("tag skipped", "tag", tag.Name, "err", err)
 			continue
 		}
-		if err := s.cfg.Git.UpdateRef(ctx, bare, "refs/tags/"+tag.Name, tag.SHA, ""); err != nil {
+		if err := g.UpdateRef(ctx, bare, "refs/tags/"+tag.Name, tag.SHA, ""); err != nil {
 			slog.Debug("tag not set", "tag", tag.Name, "err", err)
 		}
 	}
 	return true
 }
 
-func (s *Server) syncRoundWorktree(ctx context.Context, w http.ResponseWriter, bare, outRef string, b store.Binding, outSHA string) bool {
+func (s *Server) syncRoundWorktree(ctx context.Context, w http.ResponseWriter, g relevo.Git, bare, outRef string, b store.Binding, outSHA string) bool {
 	if _, statErr := os.Stat(b.Worktree); os.IsNotExist(statErr) {
-		if err := s.cfg.Git.UpdateRef(ctx, bare, "refs/heads/"+b.Branch, outSHA, ""); err != nil {
+		if err := g.UpdateRef(ctx, bare, "refs/heads/"+b.Branch, outSHA, ""); err != nil {
 			writeErr(w, http.StatusInternalServerError, "", err.Error())
 			return false
 		}
-		if err := s.cfg.Git.CheckoutWorktree(ctx, bare, b.Worktree, b.Branch); err != nil {
+		if err := g.CheckoutWorktree(ctx, bare, b.Worktree, b.Branch); err != nil {
 			writeErr(w, http.StatusInternalServerError, "", err.Error())
 			return false
 		}
 		return true
 	}
 
-	err := s.cfg.Git.MergeFF(ctx, b.Worktree, outRef)
+	err := g.MergeFF(ctx, b.Worktree, outRef)
 	switch {
 	case err == nil:
 		return true
@@ -356,7 +356,7 @@ func (s *Server) finishRoundStart(w http.ResponseWriter, r *http.Request, rt rel
 		b = reloaded
 	}
 
-	outSHA, ok, refErr := s.cfg.Git.RefSHA(r.Context(), bare, outRef)
+	outSHA, ok, refErr := rt.Git.RefSHA(r.Context(), bare, outRef)
 	if refErr != nil {
 		writeErr(w, http.StatusInternalServerError, "", refErr.Error())
 		return
@@ -365,10 +365,10 @@ func (s *Server) finishRoundStart(w http.ResponseWriter, r *http.Request, rt rel
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "no outbound ref; send a bundle first")
 		return
 	}
-	if !s.applyRoundTags(r.Context(), w, bare, r.FormValue("tags")) {
+	if !s.applyRoundTags(r.Context(), w, rt.Git, bare, r.FormValue("tags")) {
 		return
 	}
-	if !s.syncRoundWorktree(r.Context(), w, bare, outRef, b, outSHA) {
+	if !s.syncRoundWorktree(r.Context(), w, rt.Git, bare, outRef, b, outSHA) {
 		return
 	}
 

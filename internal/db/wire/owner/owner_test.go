@@ -370,3 +370,23 @@ func TestOwnerDropsADifferentUid(t *testing.T) {
 		t.Fatal("owner served a peer with a different uid")
 	}
 }
+
+// TestPeerAllowedAcceptsRoot pins the socket peer rule: root and the owner's
+// own uid are allowed, any other uid is refused.
+func TestPeerAllowedAcceptsRoot(t *testing.T) {
+	cases := []struct {
+		peer, own int
+		want      bool
+	}{
+		{0, 1000, true},    // root reaches every owner's socket
+		{0, 0, true},       // root owns a root-owned socket
+		{1000, 1000, true}, // the owner itself
+		{1001, 1000, false},
+		{1000, 0, false},
+	}
+	for _, tc := range cases {
+		if got := peerAllowed(tc.peer, tc.own); got != tc.want {
+			t.Errorf("peerAllowed(%d, %d) = %v, want %v", tc.peer, tc.own, got, tc.want)
+		}
+	}
+}

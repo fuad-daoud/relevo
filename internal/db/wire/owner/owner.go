@@ -259,13 +259,21 @@ func (s *Server) ConnCount() int {
 	return len(s.conns)
 }
 
+// peerAllowed reports whether the peer uid may speak to an owner socket whose
+// server runs as own: the owner itself, or root. Root may reach every owner's
+// socket because the served daemon runs as root and switches to a tenant only
+// for the processes it starts.
+func peerAllowed(peer, own int) bool {
+	return peer == own || peer == 0
+}
+
 func (s *Server) handle(nc net.Conn) {
 	uc, ok := nc.(*net.UnixConn)
 	if !ok {
 		_ = nc.Close()
 		return
 	}
-	if uid, err := peerUID(uc); err != nil || int(uid) != s.uid {
+	if uid, err := peerUID(uc); err != nil || !peerAllowed(int(uid), s.uid) {
 		_ = nc.Close()
 		return
 	}

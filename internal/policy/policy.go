@@ -88,6 +88,11 @@ type ServePolicy struct {
 	// IsolationImage names the container image; it is required when
 	// Isolation is "container", and accepted but unused in the other modes.
 	IsolationImage string `json:"isolation_image,omitempty"`
+	// IsolationSharedLogins, when true, keeps the server's account-home
+	// entries (CLAUDE_CONFIG_DIR, CODEX_HOME, ...) in a user-mode round's
+	// environment instead of stripping them. It defaults to false and is only
+	// meaningful in user mode; the doctor warns when it is on.
+	IsolationSharedLogins bool `json:"isolation_shared_logins,omitempty"`
 }
 
 // ScopePolicy configures the per-round systemd scope a served headless
@@ -410,6 +415,14 @@ func (p Policy) ServeIsolationImage() string {
 		return ""
 	}
 	return p.Serve.IsolationImage
+}
+
+// ServeIsolationSharedLogins reports whether the server keeps its own
+// account-home entries in a user-mode round's environment. It defaults to
+// false, which strips them; only a host that deliberately shares one login pool
+// sets it.
+func (p Policy) ServeIsolationSharedLogins() bool {
+	return p.Serve != nil && p.Serve.IsolationSharedLogins
 }
 
 func (p Policy) MaxBuildersOrDefault() int {

@@ -66,7 +66,7 @@ func TestServeOldClientSkew(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := s.clients.Add("old", remote.MarshalPublic(kp.Public, "old"), time.Now()); err != nil {
+	if _, err := s.clients.Add("old", remote.MarshalPublic(kp.Public, "old"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	handler := s.Handler()
@@ -152,7 +152,7 @@ func TestReplayAcrossServersIsRefused(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
-		if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+		if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 			t.Fatalf("clients.Add: %v", err)
 		}
 		return s
@@ -258,7 +258,7 @@ func TestServeAudiencesFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	requireAuthError(t, s.Handler(), signedRequest(t, kp, "GET", "/v1/whoami", nil), remote.CodeWrongAudience)

@@ -18,18 +18,52 @@ var _ TreeTransport = (*BundleTransport)(nil)
 type BundleTransport struct {
 	git *git.Client
 	tmp string
+	// ownerUID/ownerGID, when hasOwner is set, are the tenant identity every
+	// temp bundle file is Lchown'ed to before git touches it: a git process
+	// running as the tenant must be able to read the bundle it is handed.
+	ownerUID uint32
+	ownerGID uint32
+	hasOwner bool
+}
+
+// BundleOption configures a BundleTransport.
+type BundleOption func(*BundleTransport)
+
+// WithOwnerTmp marks the transport user-mode: its temp bundle files are created
+// in dir and Lchown'ed to uid/gid before git touches them. A none-mode
+// transport takes no option and behaves exactly as before.
+func WithOwnerTmp(dir string, uid, gid uint32) BundleOption {
+	return func(t *BundleTransport) {
+		if dir != "" {
+			t.tmp = dir
+		}
+		t.ownerUID, t.ownerGID, t.hasOwner = uid, gid, true
+	}
 }
 
 // NewBundleTransport creates a new BundleTransport using g and tmpDir for temporary bundle files.
 // If tmpDir is "", os.TempDir() is used.
-func NewBundleTransport(g *git.Client, tmpDir string) *BundleTransport {
+func NewBundleTransport(g *git.Client, tmpDir string, opts ...BundleOption) *BundleTransport {
 	if tmpDir == "" {
 		tmpDir = os.TempDir()
 	}
-	return &BundleTransport{
+	t := &BundleTransport{
 		git: g,
 		tmp: tmpDir,
 	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
+}
+
+// chownTemp hands a freshly created temp bundle to the tenant. A none-mode
+// transport leaves it as the serve uid.
+func (t *BundleTransport) chownTemp(path string) error {
+	if !t.hasOwner {
+		return nil
+	}
+	return os.Lchown(path, int(t.ownerUID), int(t.ownerGID))
 }
 
 type fileRemover struct {
@@ -55,6 +89,10 @@ func (t *BundleTransport) Snapshot(ctx context.Context, repo string, refs []stri
 	}
 	tmpPath := f.Name()
 	_ = f.Close()
+	if err := t.chownTemp(tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return Snapshot{}, err
+	}
 
 	heads, empty, err := t.git.BundleCreate(ctx, repo, tmpPath, refs, since)
 	if err != nil {
@@ -74,7 +112,7 @@ func (t *BundleTransport) Snapshot(ctx context.Context, repo string, refs []stri
 		}, nil
 	}
 
-	opened, err := os.Open(tmpPath)
+	opened, err := openBundleRegular(tmpPath)
 	if err != nil {
 		_ = os.Remove(tmpPath)
 		return Snapshot{}, err
@@ -100,6 +138,10 @@ func (t *BundleTransport) Absorb(ctx context.Context, repo, contentType string, 
 	}
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
+	if err := t.chownTemp(tmpPath); err != nil {
+		_ = tmpFile.Close()
+		return nil, err
+	}
 
 	n, err := io.Copy(tmpFile, body)
 	_ = tmpFile.Close()
@@ -126,4 +168,26 @@ func (t *BundleTransport) Absorb(ctx context.Context, repo, contentType string, 
 	}
 
 	return t.git.FetchBundle(ctx, repo, tmpPath, refs)
+}
+
+// openBundleRegular re-opens a just-written temp bundle for reading: O_NOFOLLOW
+// so a symlink swapped in where the bundle was cannot redirect the read out of
+// the temp directory, and a handle Stat so anything that is not a regular file
+// (a fifo that would block, a device) is refused. The temp dir may be
+// tenant-writable, so both checks are needed.
+func openBundleRegular(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|noFollow, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, fmt.Errorf("bundle %s is not a regular file", path)
+	}
+	return f, nil
 }

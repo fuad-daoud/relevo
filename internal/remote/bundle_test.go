@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -342,5 +343,106 @@ func TestBundleTransportLeavesNoTempFiles(t *testing.T) {
 			names = append(names, e.Name())
 		}
 		t.Fatalf("temp directory not empty: %v", names)
+	}
+}
+
+// TestSnapshotRefusesSwappedSymlink pins the re-open rule: a regular temp
+// bundle swapped for a symlink between git writing it and relevo re-opening it
+// is refused (O_NOFOLLOW plus a handle Stat), and its target is never read.
+func TestSnapshotRefusesSwappedSymlink(t *testing.T) {
+	ctx := context.Background()
+	swapDir := t.TempDir()
+	stubDir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "secret")
+	const planted = "secret\n"
+	if err := os.WriteFile(target, []byte(planted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stub := filepath.Join(stubDir, "git")
+	script := `#!/bin/sh
+if [ "$1" = "rev-parse" ]; then
+  echo 1111111111111111111111111111111111111111
+  exit 0
+fi
+if [ "$1" = "bundle" ] && [ "$2" = "create" ]; then
+  rm -f "$3"
+  ln -s "$RELEVO_SWAP_TARGET" "$3"
+  exit 0
+fi
+exit 0
+`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RELEVO_SWAP_TARGET", target)
+
+	g := git.NewClient(stub, 5*time.Second, git.DefaultMaxPatchBytes)
+	transport := NewBundleTransport(g, swapDir)
+
+	snap, err := transport.Snapshot(ctx, t.TempDir(), []string{"refs/heads/x"}, "")
+	if err == nil {
+		if snap.Body != nil {
+			_ = snap.Body.Close()
+		}
+		t.Fatal("Snapshot followed a swapped symlink; want a refusal")
+	}
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("read the target: %v", readErr)
+	}
+	if string(got) != planted {
+		t.Errorf("target = %q, want byte-unchanged %q: the symlink must not be read", got, planted)
+	}
+}
+
+// TestAbsorbChownsTempToOwner pins that a user-mode transport hands its temp
+// bundle to the owner before git touches it: the first git call sees the temp
+// file owned by the configured uid:gid.
+func TestAbsorbChownsTempToOwner(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	stubDir := t.TempDir()
+	logPath := filepath.Join(stubDir, "owner.log")
+	stub := filepath.Join(stubDir, "git")
+	script := `#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    *relevo-bundle-*) if [ -f "$a" ]; then ls -ln "$a" | awk 'NR==1{print $3":"$4}' >> "$RELEVO_OWNER_LOG"; fi ;;
+  esac
+done
+if [ "$1" = "bundle" ] && [ "$2" = "list-heads" ]; then
+  echo "0000000000000000000000000000000000000000 refs/heads/x"
+fi
+exit 0
+`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RELEVO_OWNER_LOG", logPath)
+
+	g := git.NewClient(stub, 5*time.Second, git.DefaultMaxPatchBytes)
+	transport := NewBundleTransport(g, tmpDir, WithOwnerTmp(tmpDir, uint32(os.Getuid()), uint32(os.Getgid())))
+
+	moved, err := transport.Absorb(ctx, tmpDir, ContentTypeGitBundle, strings.NewReader("BUNDLE"), []string{"refs/heads/x"})
+	if err != nil {
+		t.Fatalf("Absorb: %v", err)
+	}
+	if moved["refs/heads/x"] != "0000000000000000000000000000000000000000" {
+		t.Fatalf("moved = %v, want the head the stub printed", moved)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("the stub never saw the temp bundle: %v", err)
+	}
+	want := strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid())
+	lines := strings.Fields(string(data))
+	if len(lines) == 0 {
+		t.Fatal("the stub recorded no temp-file owner")
+	}
+	for _, line := range lines {
+		if line != want {
+			t.Errorf("temp bundle owner = %q, want %q", line, want)
+		}
 	}
 }

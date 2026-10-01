@@ -194,7 +194,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	// The absorb is the long git step and must not hold s.mu.
-	if !s.chainInitAndAbsorb(w, r, bare, outRef, bundle) {
+	if !s.chainInitAndAbsorb(w, r, rt, bare, outRef, bundle) {
 		return
 	}
 
@@ -237,7 +237,7 @@ func (s *Server) chainFinishCreate(w http.ResponseWriter, r *http.Request, rt re
 	worktree := rt.Store.WorktreePath(name)
 	branch := "relevo/" + name
 	unwind := func(hasWorktree, hasBranch bool) {
-		s.unwindChainCreate(ctx, bare, name, worktree, hasWorktree, hasBranch)
+		s.unwindChainCreate(ctx, rt.Git, bare, name, worktree, hasWorktree, hasBranch)
 	}
 
 	if _, err := rt.Store.Chain(name); err == nil {
@@ -259,7 +259,7 @@ func (s *Server) chainFinishCreate(w http.ResponseWriter, r *http.Request, rt re
 		return
 	}
 
-	if !s.cutChainWorktree(ctx, w, bare, name, outRef, branch, worktree, req.BaseCommit) {
+	if !s.cutChainWorktree(ctx, w, rt.Git, bare, name, outRef, branch, worktree, req.BaseCommit) {
 		return
 	}
 
@@ -284,11 +284,11 @@ func (s *Server) chainFinishCreate(w http.ResponseWriter, r *http.Request, rt re
 // does not resolve to base, refuses an existing branch, cuts the branch at base
 // and checks out the builder's worktree. It writes its own failure and returns
 // false, unwinding what it made.
-func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, bare, name, outRef, branch, worktree, base string) bool {
+func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, g relevo.Git, bare, name, outRef, branch, worktree, base string) bool {
 	unwind := func(hasWorktree, hasBranch bool) {
-		s.unwindChainCreate(ctx, bare, name, worktree, hasWorktree, hasBranch)
+		s.unwindChainCreate(ctx, g, bare, name, worktree, hasWorktree, hasBranch)
 	}
-	got, found, err := s.cfg.Git.RefSHA(ctx, bare, outRef)
+	got, found, err := g.RefSHA(ctx, bare, outRef)
 	if err != nil {
 		unwind(false, false)
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
@@ -299,7 +299,7 @@ func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, ba
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "the bundle does not carry the base commit")
 		return false
 	}
-	if _, exists, err := s.cfg.Git.RefSHA(ctx, bare, "refs/heads/"+branch); err != nil {
+	if _, exists, err := g.RefSHA(ctx, bare, "refs/heads/"+branch); err != nil {
 		unwind(false, false)
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return false
@@ -308,12 +308,12 @@ func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, ba
 		writeErr(w, http.StatusConflict, remote.CodeInvalid, "branch "+branch+" already exists")
 		return false
 	}
-	if err := s.cfg.Git.UpdateRef(ctx, bare, "refs/heads/"+branch, base, ""); err != nil {
+	if err := g.UpdateRef(ctx, bare, "refs/heads/"+branch, base, ""); err != nil {
 		unwind(false, false)
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return false
 	}
-	if err := s.cfg.Git.CheckoutWorktree(ctx, bare, worktree, branch); err != nil {
+	if err := g.CheckoutWorktree(ctx, bare, worktree, branch); err != nil {
 		unwind(false, true)
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return false
@@ -323,17 +323,18 @@ func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, ba
 
 // chainInitAndAbsorb creates the owner's bare repo, then absorbs the shipped
 // base bundle into refs/relevo/<name>/out. It reports the response itself and
-// returns false when it wrote a failure.
-func (s *Server) chainInitAndAbsorb(w http.ResponseWriter, r *http.Request, bare, outRef string, bundle io.Reader) bool {
+// returns false when it wrote a failure. Both steps run through the owner's
+// runtime: a user-mode owner's git and bundle transport run as the tenant.
+func (s *Server) chainInitAndAbsorb(w http.ResponseWriter, r *http.Request, rt relevo.Runtime, bare, outRef string, bundle io.Reader) bool {
 	ctx := r.Context()
-	if err := s.cfg.Git.InitBare(ctx, bare); err != nil {
+	if err := rt.Git.InitBare(ctx, bare); err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return false
 	}
 	if bundle == nil {
 		return true
 	}
-	_, err := s.transport.Absorb(ctx, bare, remote.ContentTypeGitBundle, bundle, []string{outRef})
+	_, err := rt.Transport.Absorb(ctx, bare, remote.ContentTypeGitBundle, bundle, []string{outRef})
 	if err == nil {
 		return true
 	}
@@ -349,18 +350,18 @@ func (s *Server) chainInitAndAbsorb(w http.ResponseWriter, r *http.Request, bare
 // unwindChainCreate removes what a refused chain create made: the worktree and
 // the branch once they exist, and always the out ref. The bare repo is left for
 // pruneUnusedRepos.
-func (s *Server) unwindChainCreate(ctx context.Context, bare, name, worktree string, hasWorktree, hasBranch bool) {
+func (s *Server) unwindChainCreate(ctx context.Context, g relevo.Git, bare, name, worktree string, hasWorktree, hasBranch bool) {
 	if hasWorktree {
-		if err := s.cfg.Git.RemoveWorktree(ctx, bare, worktree, true); err != nil {
+		if err := g.RemoveWorktree(ctx, bare, worktree, true); err != nil {
 			slog.Warn("chain unwind worktree", "chain", name, "err", err)
 		}
 	}
 	if hasBranch {
-		if err := s.cfg.Git.DeleteBranch(ctx, bare, "relevo/"+name); err != nil {
+		if err := g.DeleteBranch(ctx, bare, "relevo/"+name); err != nil {
 			slog.Warn("chain unwind branch", "chain", name, "err", err)
 		}
 	}
-	if err := s.cfg.Git.DeleteRef(ctx, bare, "refs/relevo/"+name+"/out"); err != nil {
+	if err := g.DeleteRef(ctx, bare, "refs/relevo/"+name+"/out"); err != nil {
 		slog.Warn("chain unwind out ref", "chain", name, "err", err)
 	}
 }

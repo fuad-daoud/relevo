@@ -117,6 +117,9 @@ type fakeGit struct {
 	snapshotCalls   int
 	lastSnapshotDir string
 
+	initBareErr   error
+	initBareCalls []string
+
 	diffResult git.Diff
 	diffErr    error
 	// diffFunc, when set, answers DiffTrees from the (from, to) pair instead
@@ -530,6 +533,12 @@ func (f *fakeGit) RefOnRemote(ctx context.Context, dir, ref string) (bool, error
 		return false, f.refOnRemoteErr
 	}
 	return f.refOnRemote[ref], nil
+}
+
+func (f *fakeGit) InitBare(ctx context.Context, path string) error {
+	f.calls++
+	f.initBareCalls = append(f.initBareCalls, path)
+	return f.initBareErr
 }
 
 func (f *fakeGit) CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error) {

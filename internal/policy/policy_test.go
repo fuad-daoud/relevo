@@ -1367,3 +1367,32 @@ func TestChainValidateRefusesAnEmptyActorWhenSet(t *testing.T) {
 		})
 	}
 }
+
+// TestServeIsolationSharedLogins pins the serve.isolation_shared_logins key:
+// absent or false is off, true beside isolation "user" is on, and true without
+// user mode is refused rather than silently kept.
+func TestServeIsolationSharedLogins(t *testing.T) {
+	off, err := load(t, `{"serve":{"isolation":"user"}}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if off.ServeIsolationSharedLogins() {
+		t.Error("default IsolationSharedLogins = true, want false")
+	}
+
+	on, err := load(t, `{"serve":{"isolation":"user","isolation_shared_logins":true}}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !on.ServeIsolationSharedLogins() {
+		t.Error("IsolationSharedLogins = false, want true")
+	}
+
+	_, err = load(t, `{"serve":{"isolation":"none","isolation_shared_logins":true}}`)
+	if err == nil {
+		t.Fatal("Load: got nil error, want the key refused outside user mode")
+	}
+	if !strings.Contains(err.Error(), "isolation_shared_logins") {
+		t.Errorf("Load error %q does not name isolation_shared_logins", err.Error())
+	}
+}

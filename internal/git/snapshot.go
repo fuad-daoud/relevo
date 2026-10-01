@@ -135,9 +135,7 @@ func (c *Client) diffPatch(ctx context.Context, dir, from, to string) ([]byte, b
 	ctxTimeout, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctxTimeout, c.bin, "diff", from, to)
-	cmd.Dir = dir
-	cmd.Env = gitEnv()
+	cmd := c.command(ctxTimeout, dir, nil, "diff", from, to)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 

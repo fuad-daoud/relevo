@@ -627,6 +627,22 @@ func TestServeInitRootFailureIsAnError(t *testing.T) {
 	})
 }
 
+// TestServeEnrollRefusesUnknownUser pins step 6's refusal: `serve enroll
+// --user <name>` with a name that is not on this host is refused with the
+// useradd sentence, before anything is written. The name cannot exist, so only
+// /etc/passwd is read: no harness, no network.
+func TestServeEnrollRefusesUnknownUser(t *testing.T) {
+	_, _, runErr := captureOutput(t, func() error {
+		return run([]string{"serve", "enroll", "--label", "x", "--key", "ed25519 AAAA", "--user", "relevo-no-such-user-zz"})
+	})
+	if runErr == nil {
+		t.Fatal("serve enroll with an unknown --user must fail")
+	}
+	if !strings.Contains(runErr.Error(), "useradd --create-home relevo-no-such-user-zz") {
+		t.Errorf("error = %q, want it to name the useradd command", runErr)
+	}
+}
+
 // TestServeRunRefusesUnavailableIsolation pins slice A's one rule at the
 // command: a configured serve.isolation=user is refused at startup with
 // not_available naming the mode, before any side effect. The wait is bounded:
@@ -659,6 +675,43 @@ func TestServeRunRefusesUnavailableIsolation(t *testing.T) {
 		ce := requireCLIError(t, err, codeNotAvailable, "")
 		if !strings.Contains(ce.message, "serve.isolation=user") {
 			t.Errorf("message = %q, want it to name serve.isolation=user", ce.message)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("relevo serve did not refuse isolation=user within 10s; it may have started a daemon")
+	}
+}
+
+// TestServeRunRefusesUserModeWithoutRoot pins step 8's rule at the command: a
+// configured serve.isolation=user with a non-root euid is refused with
+// not_available naming root, before any side effect. Skipped when the test runs
+// as root, where user mode is permitted and the daemon would start.
+func TestServeRunRefusesUserModeWithoutRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: user mode is permitted")
+	}
+	stateHome := t.TempDir()
+	configHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	policyDir := filepath.Join(configHome, "relevo")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir policy dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "policy.json"), []byte(`{"serve":{"isolation":"user"}}`), 0o644); err != nil {
+		t.Fatalf("write policy.json: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- run([]string{"serve", "--listen", "127.0.0.1:0", "--insecure-http"})
+	}()
+
+	select {
+	case err := <-done:
+		ce := requireCLIError(t, err, codeNotAvailable, "")
+		if !strings.Contains(ce.message, "requires root") {
+			t.Errorf("message = %q, want it to say root is required", ce.message)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("relevo serve did not refuse isolation=user within 10s; it may have started a daemon")

@@ -377,6 +377,12 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), cpuPinText(b))
 	h, err := rt.Runner.Start(ctx, spec)
 	if err != nil {
+		// A tenant-boundary refusal is the operator's to fix, not the
+		// candidate's: it neither gates the candidate nor is a spawnFailure
+		// (which the lost-builder path would answer with a fresh relaunch).
+		if errors.Is(err, spawn.ErrBoundarySetup) {
+			return b, fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)
+		}
 		availability.RecordSpawnFailureLocked(AvailabilityDeps(rt), c.Ref().String(), b.Name, err)
 		return b, spawnFailure{fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)}
 	}
