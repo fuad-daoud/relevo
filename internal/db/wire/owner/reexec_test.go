@@ -51,6 +51,11 @@ const (
 	helperDBEnv    = "RELEVO_OWNER_REEXEC_DB"
 	helperReadyEnv = "RELEVO_OWNER_REEXEC_READY"
 	helperAdoptEnv = "RELEVO_OWNER_REEXEC_ADOPTED"
+	// helperReapEnv names the marker a forced reap appends to; helperForceEnv,
+	// when set, registers an abandoned statement that never finishes so the
+	// owner's grace elapses without a real runaway statement.
+	helperReapEnv  = "RELEVO_OWNER_REEXEC_REAP"
+	helperForceEnv = "RELEVO_OWNER_REEXEC_FORCE"
 )
 
 func TestMain(m *testing.M) {
@@ -115,13 +120,34 @@ func runReexecHelper() {
 	srv := New(sqlDB, 3, 9, "01ORIGIN", nil)
 	go func() { _ = srv.Serve(ln) }()
 
+	// The reap wiring runs before the ready marker: a test that drives the
+	// forced registration must find the hook and the grace already installed.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGUSR1)
+	reap := make(chan struct{}, 1)
+	if marker := os.Getenv(helperReapEnv); marker != "" {
+		srv.OnAbandoned = func() {
+			if err := os.WriteFile(marker, []byte("reap\n"), 0o600); err != nil {
+				fmt.Fprintln(os.Stderr, "reap marker:", err)
+			}
+			reap <- struct{}{}
+		}
+	}
+	if os.Getenv(helperForceEnv) != "" {
+		SetReapGrace(100 * time.Millisecond)
+		srv.noteAbandoned(make(chan struct{}))
+	}
+
 	if ready := os.Getenv(helperReadyEnv); ready != "" {
 		_ = os.WriteFile(ready, []byte("ready\n"), 0o600)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGUSR1)
-	<-sig
+	// Either the ordinary signal drives the re-exec or the owner's own reap
+	// does; both end in the same drain, handoff and exec.
+	select {
+	case <-sig:
+	case <-reap:
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	_ = srv.Drain(ctx)
@@ -382,4 +408,65 @@ func TestListenerSurvivesARealReexecUnderLoad(t *testing.T) {
 	close(fails)
 	assertLoadFailuresWithin(t, fails, signalAt, adoptedAt.Add(2*time.Second))
 	assertServing(t, loadDB)
+}
+
+// startReapHelper runs the test binary as its own daemon with a forced
+// abandoned-statement registration, so the owner's grace elapses and its hook
+// drives the re-exec without a real runaway statement.
+func startReapHelper(t *testing.T, self, root, dbPath, ready, adopted, reap string) (*exec.Cmd, *syncBuffer) {
+	t.Helper()
+	out := &syncBuffer{}
+	cmd := exec.Command(self)
+	cmd.Env = append(os.Environ(),
+		helperEnv+"=1",
+		helperRootEnv+"="+root,
+		helperDBEnv+"="+dbPath,
+		helperReadyEnv+"="+ready,
+		helperAdoptEnv+"="+adopted,
+		helperReapEnv+"="+reap,
+		helperForceEnv+"=1",
+		"RELEVO_LISTEN_FD=",
+	)
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start helper: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return cmd, out
+}
+
+// TestReapReExecsAndTheNewImageServes pins the reap end to end: the owner's
+// hook fires on the forced abandoned statement, the helper drains and execs,
+// the new image adopts the listener and serves a query.
+func TestReapReExecsAndTheNewImageServes(t *testing.T) {
+	root, sock, dbPath, ready, adopted := reexecRoots(t)
+	reap := filepath.Join(root, "reap")
+	client.SetHandshakeTimeout(10 * time.Second)
+	t.Cleanup(func() { client.SetHandshakeTimeout(0) })
+
+	self, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatalf("resolve test binary: %v", err)
+	}
+	cmd, out := startReapHelper(t, self, root, dbPath, ready, adopted, reap)
+
+	waitForFile(t, ready, "the helper never became ready: "+out.String())
+	waitForFile(t, reap, "the owner never fired its reap hook: "+out.String())
+	awaitAdoption(t, cmd, adopted, out)
+
+	d, err := sql.Open(client.DriverName, sock)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	var one int
+	if err := d.QueryRow(`SELECT 1`).Scan(&one); err != nil {
+		t.Fatalf("query through the new image: %v", err)
+	}
+	if one != 1 {
+		t.Errorf("SELECT 1 = %d, want 1", one)
+	}
 }

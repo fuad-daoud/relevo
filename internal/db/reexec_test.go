@@ -28,6 +28,10 @@ const (
 	reexecReadyEnv   = "RELEVO_DB_REEXEC_READY"
 	reexecAdoptedEnv = "RELEVO_DB_REEXEC_ADOPTED"
 	reexecOpenedEnv  = "RELEVO_DB_REEXEC_OPENED"
+	// reexecReapEnv names the marker the owner's reap hook appends to, and
+	// reexecGraceEnv the grace that hook waits out.
+	reexecReapEnv  = "RELEVO_DB_REEXEC_REAP"
+	reexecGraceEnv = "RELEVO_DB_REEXEC_GRACE"
 )
 
 // replaceEnv sets key=value in env, replacing any inherited duplicate so the
@@ -63,6 +67,20 @@ func writeMarker(path string) {
 		return
 	}
 	_ = os.WriteFile(path, []byte("1\n"), 0o600)
+}
+
+// appendMarker appends one line to path, ignoring an empty path, so a test can
+// count how many times a hook fired: one line per call.
+func appendMarker(path string) {
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	_, _ = f.WriteString("reap\n")
+	_ = f.Close()
 }
 
 // TestDBReexecHelper is the helper the re-exec test runs as its own image. It
@@ -113,6 +131,23 @@ func runDBReexecHelper(t *testing.T) {
 	srv := NewOwner(d)
 	go func() { _ = srv.Serve(ln) }()
 
+	// The reap wiring must be in place before the ready marker: the test draws
+	// its abandoned statement as soon as it sees the marker.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGUSR1)
+	reap := make(chan struct{}, 1)
+	if marker := os.Getenv(reexecReapEnv); marker != "" {
+		srv.OnAbandoned = func() {
+			appendMarker(marker)
+			reap <- struct{}{}
+		}
+		if g := os.Getenv(reexecGraceEnv); g != "" {
+			if grace, perr := time.ParseDuration(g); perr == nil {
+				owner.SetReapGrace(grace)
+			}
+		}
+	}
+
 	if inherited != "" {
 		writeMarker(os.Getenv(reexecAdoptedEnv))
 	}
@@ -121,9 +156,12 @@ func runDBReexecHelper(t *testing.T) {
 		writeMarker(os.Getenv(reexecReadyEnv))
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGUSR1)
-	<-sig
+	// Either SIGUSR1 drives the re-exec or the owner's own reap hook does; both
+	// end in the same drain, handoff and exec.
+	select {
+	case <-sig:
+	case <-reap:
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	_ = srv.Drain(ctx)
