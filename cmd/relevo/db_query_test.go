@@ -251,6 +251,64 @@ func TestDBQueryRowLimitPrintsWhatFitsAndSaysTruncated(t *testing.T) {
 	}
 }
 
+// TestDBQueryByteCapPrintsWhatFitsAndSaysTruncated pins the byte cap: rows
+// whose values fit are printed, the row that would pass the budget is not, and
+// the truncation is noted on stderr while stdout stays a valid table.
+func TestDBQueryByteCapPrintsWhatFitsAndSaysTruncated(t *testing.T) {
+	seedQueryRoot(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{
+			"db", "query",
+			`SELECT zeroblob(300) AS b FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3)`,
+			"--max-bytes", "700",
+		})
+	})
+	if err != nil {
+		t.Fatalf("db query --max-bytes: %v (stderr: %s)", err, stderr)
+	}
+	if got := strings.Count(string(stdout), "<blob 300 bytes>"); got != 2 {
+		t.Errorf("stdout has %d blob rows, want 2:\n%s", got, stdout)
+	}
+	if !strings.Contains(string(stderr), "truncated at 700 bytes (raise --max-bytes)") {
+		t.Errorf("stderr = %q, want the byte truncation note", stderr)
+	}
+}
+
+// TestDBQueryByteCapStopsAValueOverTheBudget pins that one value larger than
+// the whole budget is never printed: the row is not appended, the read stops,
+// and the command still exits 0 with a valid document.
+func TestDBQueryByteCapStopsAValueOverTheBudget(t *testing.T) {
+	seedQueryRoot(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `SELECT zeroblob(1000000) AS b`, "--max-bytes", "1024"})
+	})
+	if err != nil {
+		t.Fatalf("db query --max-bytes: %v (stderr: %s)", err, stderr)
+	}
+	if strings.Contains(string(stdout), "<blob") {
+		t.Errorf("stdout printed an over-budget value:\n%s", stdout)
+	}
+	if !strings.Contains(string(stderr), "truncated at 1024 bytes (raise --max-bytes)") {
+		t.Errorf("stderr = %q, want the byte truncation note", stderr)
+	}
+}
+
+// TestDBQueryMaxBytesFlagBounds pins the flag's lower bound: a byte cap below
+// one is a usage error.
+func TestDBQueryMaxBytesFlagBounds(t *testing.T) {
+	seedQueryRoot(t)
+
+	for _, args := range [][]string{
+		{"db", "query", `SELECT 1`, "--max-bytes", "0"},
+		{"db", "query", `SELECT 1`, "--max-bytes", "-1"},
+	} {
+		_, _, err := captureOutput(t, func() error { return run(args) })
+		requireCLIError(t, err, codeUsage, "relevo help")
+	}
+}
+
 // TestDBQueryConflictNamesTheLockNotTheDaemon pins the conflict message: when
 // the file is held and no owner answers, the message names the lock and the
 // socket, never the daemon that may not exist.

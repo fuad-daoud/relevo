@@ -20,23 +20,26 @@ import (
 
 // dbUsage is what a bare `relevo db` prints: the verb only dispatches
 // subcommands, and query is the one there is.
-const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout D]\n\n" +
+const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout D] [--max-bytes N]\n\n" +
 	"One read-only statement: SELECT, WITH or a read-only PRAGMA. RECURSIVE is\n" +
 	"refused as a cheap first line, not as the guarantee: SQLite decides recursion\n" +
 	"structurally, so a runaway statement is ended by the owner, which refuses\n" +
 	"ad-hoc reads and reaps the daemon. --limit caps the rows printed (default\n" +
-	"1000); --timeout bounds dial, open and read (default 10s, at most 12s).\n"
+	"1000); --max-bytes caps the value bytes held (default 16777216, 16 MiB);\n" +
+	"--timeout bounds dial, open and read (default 10s, at most 12s).\n"
 
-// The db query defaults: a row cap that keeps a broad SELECT from filling
-// memory, and a hold budget that leaves the owner's own open-lock wait a margin.
+// The db query defaults: a row cap and a byte cap that keep a broad SELECT
+// from filling memory, and a hold budget that leaves the owner's own open-lock
+// wait a margin.
 const (
-	dbQueryDefaultLimit   = 1000
-	dbQueryDefaultTimeout = 10 * time.Second
+	dbQueryDefaultLimit    = 1000
+	dbQueryDefaultTimeout  = 10 * time.Second
+	dbQueryDefaultMaxBytes = 16 * 1024 * 1024
 )
 
-// errQueryLimitReached stops the read once the row cap is hit. cmdDBQuery treats
-// it as a normal truncation, not a failure: it is the onRow stop signal, not an
-// engine error.
+// errQueryLimitReached stops the read once the row cap or the byte cap is hit.
+// cmdDBQuery treats it as a normal truncation, not a failure: it is the onRow
+// stop signal, not an engine error.
 var errQueryLimitReached = errors.New("db query: row limit reached")
 
 // dbQueryRead is the read cmdDBQuery runs. It is a var so a test can replace it
@@ -56,9 +59,10 @@ func dbFlagSet(fs *flag.FlagSet) {
 
 // dbQueryFlagValues holds the pointers db query parses into.
 type dbQueryFlagValues struct {
-	asJSON  *bool
-	limit   *int
-	timeout *time.Duration
+	asJSON   *bool
+	limit    *int
+	timeout  *time.Duration
+	maxBytes *int
 }
 
 // dbQueryFlagSet defines the flags on fs and returns what they parse into.
@@ -67,6 +71,7 @@ func dbQueryFlagSet(fs *flag.FlagSet) *dbQueryFlagValues {
 	v.asJSON = fs.Bool("json", false, "print the rows as a JSON document")
 	v.limit = fs.Int("limit", dbQueryDefaultLimit, "print at most this many rows")
 	v.timeout = fs.Duration("timeout", dbQueryDefaultTimeout, "bound the dial, open and read")
+	v.maxBytes = fs.Int("max-bytes", dbQueryDefaultMaxBytes, "print at most this many value bytes")
 	return v
 }
 
@@ -96,7 +101,7 @@ func cmdDBQuery(args []string) error {
 	if len(positional) != 1 {
 		return fail(codeUsage, "relevo db query wants exactly one SQL statement, got %d arguments", len(positional))
 	}
-	if err := checkDBQueryBounds(*v.limit, *v.timeout); err != nil {
+	if err := checkDBQueryBounds(*v.limit, *v.timeout, *v.maxBytes); err != nil {
 		return err
 	}
 
@@ -117,16 +122,27 @@ func cmdDBQuery(args []string) error {
 	var (
 		columns   []string
 		rows      [][]any
-		truncated bool
+		rowsCut   bool
+		bytesCut  bool
+		bytesHeld int
 	)
 	onRow := func(cols []string, values []any) error {
 		columns = cols
 		if len(rows) >= *v.limit {
 			// One extra row proves another follows, so the cut is real rather
 			// than the statement returning exactly --limit rows.
-			truncated = true
+			rowsCut = true
 			return errQueryLimitReached
 		}
+		add := dbQueryRowBytes(values)
+		if bytesHeld+add > *v.maxBytes {
+			// The row that would pass the budget is not appended at all, so
+			// one value larger than the whole budget stops the read before it
+			// is ever held.
+			bytesCut = true
+			return errQueryLimitReached
+		}
+		bytesHeld += add
 		rows = append(rows, values)
 		return nil
 	}
@@ -149,8 +165,11 @@ func cmdDBQuery(args []string) error {
 		return dbQueryTimeout(*v.timeout)
 	}
 
-	if truncated {
+	if rowsCut {
 		fmt.Fprintf(os.Stderr, "truncated at %d rows (raise --limit)\n", *v.limit)
+	}
+	if bytesCut {
+		fmt.Fprintf(os.Stderr, "truncated at %d bytes (raise --max-bytes)\n", *v.maxBytes)
 	}
 
 	if *v.asJSON {
@@ -159,19 +178,40 @@ func cmdDBQuery(args []string) error {
 	return writeDBQueryTable(os.Stdout, columns, rows)
 }
 
-// checkDBQueryBounds refuses a limit below one and a timeout that is not
-// positive or exceeds ReadOnlyHoldBudget. The open-lock wait outlasts the
-// budget, so a longer deadline could hold the lock past any fixed wait.
-func checkDBQueryBounds(limit int, timeout time.Duration) error {
+// checkDBQueryBounds refuses a limit or byte cap below one and a timeout that
+// is not positive or exceeds ReadOnlyHoldBudget. The open-lock wait outlasts
+// the budget, so a longer deadline could hold the lock past any fixed wait.
+func checkDBQueryBounds(limit int, timeout time.Duration, maxBytes int) error {
 	switch {
 	case limit < 1:
 		return fail(codeUsage, "relevo db query --limit must be at least 1, got %d", limit)
+	case maxBytes < 1:
+		return fail(codeUsage, "relevo db query --max-bytes must be at least 1, got %d", maxBytes)
 	case timeout <= 0:
 		return fail(codeUsage, "relevo db query --timeout must be positive, got %s", timeout)
 	case timeout > db.ReadOnlyHoldBudget:
 		return fail(codeUsage, "relevo db query --timeout must be at most %s, got %s", db.ReadOnlyHoldBudget, timeout)
 	}
 	return nil
+}
+
+// dbQueryRowBytes is one row's weight against --max-bytes: the length of every
+// blob and string, and a small constant for the rest, which carry no length of
+// their own once the row is held in memory.
+func dbQueryRowBytes(values []any) int {
+	const otherValueBytes = 8
+	n := 0
+	for _, value := range values {
+		switch t := value.(type) {
+		case []byte:
+			n += len(t)
+		case string:
+			n += len(t)
+		default:
+			n += otherValueBytes
+		}
+	}
+	return n
 }
 
 // dbQueryTimeout is the refusal a passed deadline produces: the statement did

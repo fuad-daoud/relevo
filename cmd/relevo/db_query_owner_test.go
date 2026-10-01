@@ -29,3 +29,24 @@ func TestDBQueryReadsThroughTheOwnerWhenItIsUp(t *testing.T) {
 		t.Error("the query read no connection through the owner")
 	}
 }
+
+// TestDBQueryByteCapStopsTheOwnerStream pins the byte cap through the owner:
+// the same over-budget value that stops the direct read stops the owner stream
+// too, so nothing larger is ever sent.
+func TestDBQueryByteCapStopsTheOwnerStream(t *testing.T) {
+	stateHome := seedQueryRoot(t)
+	startTestOwner(t, stateHome)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `SELECT zeroblob(1000000) AS b`, "--max-bytes", "1024"})
+	})
+	if err != nil {
+		t.Fatalf("db query --max-bytes through the owner: %v (stderr: %s)", err, stderr)
+	}
+	if strings.Contains(string(stdout), "<blob") {
+		t.Errorf("stdout printed an over-budget value:\n%s", stdout)
+	}
+	if !strings.Contains(string(stderr), "truncated at 1024 bytes (raise --max-bytes)") {
+		t.Errorf("stderr = %q, want the byte truncation note", stderr)
+	}
+}
