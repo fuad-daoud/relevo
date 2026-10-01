@@ -121,8 +121,15 @@ if it proves false, the hand check records it and the spec is corrected in S1.
   preserved), and writes `LICENSES.txt` (all MIT and OFL notices) and
   `assets.sha256`.
 - `make board-assets` runs that script. It is dev-only: CI never runs node.
-- The page sets `window.EXCALIDRAW_ASSET_PATH` to the server's asset prefix, so
-  no CDN is used.
+- The page sets `window.EXCALIDRAW_ASSET_PATH` to the server's asset prefix.
+  That alone is not enough: the vendored 0.18.1 prod bundle compiles a fallback
+  base (`https://esm.sh/…/dist/prod/`) into `bundle.js` and appends it to every
+  font candidate list, so the override adds a local candidate but never removes
+  the CDN one. `scripts/board-assets.sh` therefore rewrites the compiled-in
+  fallback base to `/assets/` after the esbuild step and asserts the rewrite:
+  exactly one occurrence of the 0.18.1 template before the replace, and no
+  `https://esm.sh/` after. A miss fails the script, so an Excalidraw bump cannot
+  silently reintroduce the CDN. With both in place no CDN is used.
 - Integrity: `internal/board` embeds `assets/` and a Go test checks the
   manifest both ways. Every embedded file must be listed with a matching
   sha256, and every listed file must exist. This mirrors
@@ -209,9 +216,11 @@ Both palettes are a Go table, with every hex value from the seed:
 Both use Cascadia (fontFamily 3) and roughness 0.
 
 - A theme maps to `currentItemStrokeColor` = ink, `currentItemBackgroundColor`
-  = transparent, `currentItemFontFamily` 3, `currentItemRoughness` 0, the
-  `currentItemStrokeColor` used for lines = line, plus the page's own chrome
-  colours (bg, muted, faint, panel, accent, good, warn, bad).
+  = transparent, `currentItemFontFamily` 3 and `currentItemRoughness` 0, plus
+  the page's own chrome colours (bg, muted, faint, panel, accent, good, warn,
+  bad). Ink is the **single** new-element stroke default; `line` is page chrome
+  (and, in S3, the Mermaid edge colour), never a second element default. There
+  is no per-element stroke default keyed to `line`.
 - `viewBackgroundColor` is set **only when `isNew`**. An existing scene's
   appState and elements are never rewritten.
 - Unknown names are `usage`, exit 2, and list the valid names.

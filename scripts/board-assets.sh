@@ -26,6 +26,37 @@ node_modules/.bin/esbuild src/index.jsx \
 	--legal-comments=none --log-level=warning \
 	--outfile="$out/bundle.js"
 
+# Rewrite the compiled-in assets fallback. Excalidraw 0.18.1's prod bundle
+# compiles its CDN base (https://esm.sh/.../dist/prod/) in as
+# ASSETS_FALLBACK_URL and appends it to every font candidate list, so setting
+# window.EXCALIDRAW_ASSET_PATH adds a local candidate but never removes the CDN
+# one. Replace that base with the local /assets/ and fail hard unless the 0.18.1
+# template is found exactly once and no https://esm.sh/ remains, so an
+# Excalidraw bump cannot silently reintroduce the CDN.
+BOARD_BUNDLE="$out/bundle.js" node --input-type=module <<'NODE'
+import { readFileSync, writeFileSync } from "node:fs";
+
+const file = process.env.BOARD_BUNDLE;
+const template = 'https://esm.sh/${Cr.PKG_NAME?`${Cr.PKG_NAME}@${Cr.PKG_VERSION}`:"@excalidraw/excalidraw"}/dist/prod/';
+const local = "/assets/";
+
+const js = readFileSync(file, "utf8");
+const found = js.split(template).length - 1;
+if (found !== 1) {
+  console.error(
+    `board-assets: expected exactly one Excalidraw 0.18.1 assets-fallback template in ${file}, found ${found}`,
+  );
+  process.exit(1);
+}
+
+const rewritten = js.replace(template, local);
+if (rewritten.includes("https://esm.sh/")) {
+  console.error(`board-assets: a https://esm.sh/ reference remains in ${file}`);
+  process.exit(1);
+}
+writeFileSync(file, rewritten);
+NODE
+
 cp index.html "$out/index.html"
 cp node_modules/@excalidraw/excalidraw/dist/prod/index.css "$out/index.css"
 cp -R node_modules/@excalidraw/excalidraw/dist/prod/fonts/. "$out/fonts/"
