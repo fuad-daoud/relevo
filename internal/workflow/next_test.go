@@ -330,6 +330,30 @@ func TestNextBudgetResetsWhenForEachAdvances(t *testing.T) {
 	}
 }
 
+// TestBudgetPerForEachKeepsTheCountWhenEmptied pins the scope reset to an
+// advance: entering the for-each on its empty edge leaves the budgets it names
+// as they were, so the count the last plan spent survives into the walk's end.
+func TestBudgetPerForEachKeepsTheCountWhenEmptied(t *testing.T) {
+	def := tdef("f", map[string]Step{
+		"f": {ForEach: "plans", On: map[string]Target{"next": StepTarget("a"), "empty": StepTarget("e")}},
+		"a": {Run: "builder", Budget: &Budget{Max: Limit{Count: 3}, Per: Per{Steps: []string{"f"}}, Then: StepTarget("t")},
+			On: map[string]Target{"done": StepTarget("f")}},
+		"e": {Run: "builder"},
+		"t": {Run: "builder"},
+	})
+	s, _ := Start(def, StartInputs{Plans: []string{"i1"}})
+	if s.At != "a" || s.Visits["a"] != 1 {
+		t.Fatalf("start: at = %q visits = %d, want a and 1", s.At, s.Visits["a"])
+	}
+	s, _ = Next(def, s, Event{Kind: EventStepClosed, Step: "a", Member: "builder", Round: 0, Status: "done"})
+	if s.At != "e" {
+		t.Fatalf("at = %q, want e: the single plan is exhausted", s.At)
+	}
+	if s.Visits["a"] != 1 {
+		t.Errorf("visits = %d, want 1: emptying the for-each must not reset the scope it names", s.Visits["a"])
+	}
+}
+
 func TestNextBudgetResetsWhenAPerStepIsEntered(t *testing.T) {
 	def := tdef("q", map[string]Step{
 		"q": {Run: "builder", On: map[string]Target{"done": StepTarget("p")}},

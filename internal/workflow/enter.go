@@ -38,7 +38,11 @@ func enter(def Definition, s State, id string, walked int) (State, []Action) {
 		return halt(s, id, id+": not a step")
 	}
 	s = ensureMaps(s)
-	s = resetVisits(def, s, id)
+	// A for-each resets the scopes it names only when it advances, so its
+	// entry does not reset them; its next edge does, further down.
+	if kindOf(step) != "for-each" {
+		s = resetVisits(def, s, id)
+	}
 	if step.Budget != nil {
 		var then Target
 		if s, then = applyBudget(def, s, id, step.Budget); then.Kind != "" {
@@ -82,7 +86,8 @@ func ensureMaps(s State) State {
 
 // resetVisits clears the count of every budget whose per names the step being
 // entered, so a fresh scope starts its count again. A per: chain budget never
-// resets.
+// resets. A for-each resets only when it advances: its empty edge leaves the
+// counts as they were, so the last scope's count survives the walk's end.
 func resetVisits(def Definition, s State, id string) State {
 	for _, b := range sortedKeys(def.Steps) {
 		budget := def.Steps[b].Budget
@@ -158,6 +163,7 @@ func walkForEach(def Definition, s State, id string, step Step, walked int) (Sta
 	if it.Index < len(it.Items) {
 		it.Done = false
 		s.Iter[id] = it
+		s = resetVisits(def, s, id)
 		return controlRoute(def, s, id, step.On, "next", walked)
 	}
 	it.Index = -1
