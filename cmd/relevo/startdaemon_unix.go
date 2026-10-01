@@ -3,12 +3,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -53,8 +55,15 @@ func daemonPlistInstalled() bool {
 	return fileExists(filepath.Join(home, "Library", "LaunchAgents", daemonLabel+".plist"))
 }
 
+// daemonAutoExitAfter is how long a CLI-spawned daemon waits, with nothing to
+// do, before it exits. It is internal: only the daemon the CLI spawns gets it,
+// so a service-managed or hand-started daemon never auto-exits.
+const daemonAutoExitAfter = 10 * time.Minute
+
 // daemonArgv is the command line of the daemon relevo spawns itself.
-func daemonArgv(exe string) []string { return []string{exe, "daemon"} }
+func daemonArgv(exe string) []string {
+	return []string{exe, "daemon", "--auto-exit-after", daemonAutoExitAfter.String()}
+}
 
 // daemonLogPath is where a spawned daemon appends its output.
 func daemonLogPath(root string) string { return filepath.Join(root, "daemon.log") }
@@ -98,4 +107,82 @@ func spawnDetachedDaemon() error {
 		return fmt.Errorf("relevo daemon: start: %w", err)
 	}
 	return nil
+}
+
+// The stop seams: a test replaces them, so no test ever signals a process or
+// opens a real daemon lock. daemonStopRunning defaults to the daemon lock over
+// the default root, which is what tells a started daemon from a dead one.
+var (
+	daemonStopSignal  = func(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
+	daemonStopRunning = func(root string) (bool, error) { return store.New(root).DaemonRunning() }
+	daemonStopSleep   = time.Sleep
+)
+
+const (
+	// daemonStopBound is how long daemonStop waits for the lock to clear after
+	// SIGTERM before it gives up and reports.
+	daemonStopBound = 5 * time.Second
+	// daemonStopPoll is how often daemonStop re-checks the lock.
+	daemonStopPoll = 50 * time.Millisecond
+)
+
+// daemonStop stops the daemon this CLI started: the one recorded in this root's
+// daemon.json and holding the daemon lock. It sends SIGTERM to the recorded pid
+// and waits, bounded, for the lock to clear. A service-managed daemon is
+// refused, so the stop never fights the service manager's restart policy, and
+// there is no SIGKILL and no escalation.
+func daemonStop() error {
+	if relevoUnitInstalled() {
+		return errors.New("relevo daemon: the systemd user unit owns the daemon; stop it with systemctl --user stop relevo")
+	}
+	if daemonPlistInstalled() {
+		return fmt.Errorf("relevo daemon: the launchd agent owns the daemon; stop it with launchctl kill SIGTERM gui/%d/%s", os.Getuid(), daemonLabel)
+	}
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return err
+	}
+	info, ok, err := store.New(root).ReadDaemonInfo()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		fmt.Println("no daemon is running")
+		return nil
+	}
+	running, err := daemonStopRunning(root)
+	if err != nil {
+		return err
+	}
+	if !running {
+		fmt.Println("no daemon is running")
+		return nil
+	}
+
+	if err := daemonStopSignal(info.PID); err != nil {
+		// A pid already gone is the friendly outcome: there is nothing left to
+		// stop, and no signal was delivered.
+		if errors.Is(err, syscall.ESRCH) {
+			fmt.Println("no daemon is running")
+			return nil
+		}
+		return fmt.Errorf("relevo daemon: signal %d: %w", info.PID, err)
+	}
+
+	// The loop's nominal wait, not the wall clock, is the bound: each pass
+	// sleeps one poll, so a real run waits about daemonStopBound and a test
+	// that no-ops the sleep still terminates at the same poll count.
+	for waited := time.Duration(0); waited < daemonStopBound; waited += daemonStopPoll {
+		running, err := daemonStopRunning(root)
+		if err != nil {
+			return err
+		}
+		if !running {
+			fmt.Printf("stopped daemon %d\n", info.PID)
+			return nil
+		}
+		daemonStopSleep(daemonStopPoll)
+	}
+	return fmt.Errorf("relevo daemon: pid %d did not stop within %s", info.PID, daemonStopBound)
 }
