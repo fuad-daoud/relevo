@@ -4,6 +4,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/url"
@@ -237,25 +238,197 @@ func TestConvertLeavesNoSQLiteSidecars(t *testing.T) {
 	}
 }
 
-// TestConvertSkipsAFileSQLiteClosedCleanly pins the trigger: a file with no
-// -shm is not converted and gets no backup.
-func TestConvertSkipsAFileSQLiteClosedCleanly(t *testing.T) {
+// TestConvertSkipsAFileSQLiteClosedCleanly is replaced by
+// TestConvertRunsOnACleanlyClosedLegacyFile and TestConvertSkipsAMarkedFile:
+// a clean close no longer means "do not convert", so what it pinned is now the
+// two halves those tests hold.
+// headerApplicationID reads the application_id field straight out of the file
+// header, so a test never has to open a file another engine holds.
+func headerApplicationID(t *testing.T, path string) int64 {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if len(data) < applicationIDOffset+4 {
+		return -1
+	}
+	return int64(binary.BigEndian.Uint32(data[applicationIDOffset : applicationIDOffset+4]))
+}
+
+// TestConvertRunsOnACleanlyClosedLegacyFile pins the upgrade path: a file a
+// pre-Turso build closed cleanly has no -shm and no marker, so the old trigger
+// skipped it. Opening it must still back it up, repair its text and mark it,
+// and Turso must then read every row.
+func TestConvertRunsOnACleanlyClosedLegacyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	pool := openSQLiteTestDB(t, path)
-	seedRows(t, pool, 2)
+	if _, err := pool.Exec(`CREATE TABLE t (n INTEGER, s TEXT)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	bad := string([]byte{0xff, 0xfe, 'x'})
+	if _, err := pool.Exec(`INSERT INTO t (n, s) VALUES (0, ?)`, bad); err != nil {
+		t.Fatalf("insert invalid text: %v", err)
+	}
+	if _, err := pool.Exec(`INSERT INTO t (n, s) VALUES (1, 'ok')`); err != nil {
+		t.Fatalf("insert valid text: %v", err)
+	}
 	if err := pool.Close(); err != nil {
 		t.Fatalf("clean close: %v", err)
 	}
-	if _, err := os.Stat(path + "-shm"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a clean close left a -shm: %v", err)
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(path + suffix); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("a clean close left a %s: stat error = %v", suffix, err)
+		}
+	}
+
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open a cleanly closed legacy file: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	if _, err := os.Stat(path + ".pre-turso"); err != nil {
+		t.Errorf("converting a cleanly closed file made no backup: %v", err)
+	}
+	if got := headerApplicationID(t, path); got != relevoApplicationID {
+		t.Errorf("application_id = %d after the conversion, want the relevo marker %d", got, relevoApplicationID)
+	}
+	var count int
+	if err := d.sqlDB.QueryRow(`SELECT count(*) FROM t`).Scan(&count); err != nil {
+		t.Fatalf("Turso count: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Turso read %d rows, want 2", count)
+	}
+	var value string
+	if err := d.sqlDB.QueryRow(`SELECT s FROM t WHERE n = 0`).Scan(&value); err != nil {
+		t.Fatalf("Turso read the repaired row: %v", err)
+	}
+	if !utf8.ValidString(value) || !strings.Contains(value, "x") {
+		t.Errorf("the repaired value = %q, want valid UTF-8 ending in x", value)
+	}
+}
+
+// TestConvertSkipsAMarkedFile pins the trigger's other half: a file that already
+// carries the marker is settled, so a second call converts nothing -- no step
+// runs, nothing in the directory moves, and the backup it removes stays removed.
+func TestConvertSkipsAMarkedFile(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "relevo.db")
+	sqliteWALSnapshot(t, dst, func(pool *sql.DB) { seedRows(t, pool, 3) })
+	if err := convertLegacy(dst); err != nil {
+		t.Fatalf("first convertLegacy: %v", err)
+	}
+	if got := headerApplicationID(t, dst); got != relevoApplicationID {
+		t.Fatalf("application_id = %d after the first conversion, want %d", got, relevoApplicationID)
+	}
+	// Removing the backup makes a second one visible: a run that converted again
+	// would write it back.
+	if err := os.Remove(dst + ".pre-turso"); err != nil {
+		t.Fatalf("remove the first backup: %v", err)
+	}
+
+	before := snapshotFacts(t, dst)
+	convertStepHook = func(step string) error {
+		t.Errorf("a marked file was converted again, at the %s step", step)
+		return nil
+	}
+	if err := convertLegacy(dst); err != nil {
+		t.Fatalf("second convertLegacy: %v", err)
+	}
+	convertStepHook = nil
+
+	if !equalFacts(before, snapshotFacts(t, dst)) {
+		t.Error("a marked file changed when the conversion was called again")
+	}
+	if _, err := os.Stat(dst + ".pre-turso"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a marked file was backed up a second time: stat error = %v, want not-exist", err)
+	}
+}
+
+// TestFreshTursoFileIsMarked pins the fresh path: a database the Turso build
+// creates carries the marker at creation, so it is never converted and never
+// backed up.
+func TestFreshTursoFileIsMarked(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open a fresh database: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if got := headerApplicationID(t, path); got != relevoApplicationID {
+		t.Fatalf("application_id = %d on a fresh Turso file, want the marker %d", got, relevoApplicationID)
 	}
 
 	if err := convertLegacy(path); err != nil {
-		t.Fatalf("convertLegacy on a clean file: %v", err)
+		t.Fatalf("convertLegacy on a fresh Turso file: %v", err)
 	}
 	if _, err := os.Stat(path + ".pre-turso"); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("a clean-close file was backed up: stat error = %v, want not-exist", err)
+		t.Errorf("a fresh Turso file was backed up: stat error = %v, want not-exist", err)
 	}
+}
+
+// TestConvertReRunsUntilTheMarkerIsSet pins the kill boundary around the marker:
+// a kill before it leaves the file unmarked, so the next open converts again; a
+// kill after it leaves a file whose header already carries the marker.
+func TestConvertReRunsUntilTheMarkerIsSet(t *testing.T) {
+	killed := errors.New("killed")
+	for _, tc := range []struct {
+		step   string
+		marked bool
+	}{
+		{convertRepair, false},
+		{convertMarker, true},
+	} {
+		t.Run(tc.step, func(t *testing.T) {
+			dst := filepath.Join(t.TempDir(), "relevo.db")
+			sqliteWALSnapshot(t, dst, func(pool *sql.DB) { seedRows(t, pool, 4) })
+
+			convertStepHook = func(step string) error {
+				if step == tc.step {
+					return killed
+				}
+				return nil
+			}
+			if err := convertLegacy(dst); !errors.Is(err, killed) {
+				t.Fatalf("the conversion killed at %s = %v, want the kill sentinel", tc.step, err)
+			}
+			convertStepHook = nil
+
+			if got := headerApplicationID(t, dst); (got == relevoApplicationID) != tc.marked {
+				t.Errorf("application_id = %d after a kill at %s, want marked = %v", got, tc.step, tc.marked)
+			}
+
+			var steps []string
+			convertStepHook = func(step string) error {
+				steps = append(steps, step)
+				return nil
+			}
+			if err := convertLegacy(dst); err != nil {
+				convertStepHook = nil
+				t.Fatalf("the conversion after a kill at %s: %v", tc.step, err)
+			}
+			convertStepHook = nil
+			if !containsStep(steps, convertMarker) {
+				t.Errorf("the conversion after a kill at %s did not run again: steps = %v", tc.step, steps)
+			}
+			if got := tursoRowCount(t, dst); got != 4 {
+				t.Errorf("after a kill at %s Turso read %d rows, want 4", tc.step, got)
+			}
+		})
+	}
+}
+
+// containsStep reports whether the conversion visited step.
+func containsStep(steps []string, step string) bool {
+	for _, s := range steps {
+		if s == step {
+			return true
+		}
+	}
+	return false
 }
 
 // TestConvertRepairsInvalidTextInAWALOnlyRow pins the amendment: a text value

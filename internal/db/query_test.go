@@ -79,9 +79,8 @@ func TestQueryReadOnlyRefusesAnInsert(t *testing.T) {
 func TestQueryReadOnlyLeavesAWritingPragmaWithoutEffect(t *testing.T) {
 	d := openTestDB(t)
 
-	// A writing PRAGMA is not on Turso's query_only list, so the transaction --
-	// not the engine -- is what has to undo it. Either outcome is fine here:
-	// the assertion is that the value never moved.
+	// The assignment form is refused before the database is touched; the
+	// assertion is the same either way: the value never moved.
 	_ = d.QueryReadOnly(context.Background(), `PRAGMA user_version = 7`, noQueryRows)
 
 	var version int
@@ -90,6 +89,58 @@ func TestQueryReadOnlyLeavesAWritingPragmaWithoutEffect(t *testing.T) {
 	}
 	if version != 0 {
 		t.Errorf("user_version = %d after a rolled-back write, want 0", version)
+	}
+}
+
+// TestQueryReadOnlyRefusesAPragmaAssignment pins the narrowed PRAGMA allowance:
+// the writing form never reaches the engine, so a pragma outside query_only's
+// list cannot change anything.
+func TestQueryReadOnlyRefusesAPragmaAssignment(t *testing.T) {
+	d := openTestDB(t)
+
+	err := d.QueryReadOnly(context.Background(), `PRAGMA user_version = 7`, noQueryRows)
+	if !errors.Is(err, ErrInvalid) || !errors.Is(err, ErrPragmaNotReadOnly) {
+		t.Fatalf("PRAGMA user_version = 7 = %v, want ErrInvalid and ErrPragmaNotReadOnly", err)
+	}
+
+	var version int
+	if err := d.sqlDB.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if version != 0 {
+		t.Errorf("user_version = %d after a refused assignment, want 0", version)
+	}
+}
+
+// TestQueryReadOnlyRefusesAnUnlistedPragma pins the list: a pragma in the read
+// form is still refused when its name is not one of the read-only ones.
+func TestQueryReadOnlyRefusesAnUnlistedPragma(t *testing.T) {
+	d := openTestDB(t)
+
+	for _, stmt := range []string{`PRAGMA writable_schema`, `PRAGMA schema.cache_size`} {
+		err := d.QueryReadOnly(context.Background(), stmt, noQueryRows)
+		if !errors.Is(err, ErrPragmaNotReadOnly) {
+			t.Errorf("QueryReadOnly(%q) = %v, want ErrPragmaNotReadOnly", stmt, err)
+		}
+	}
+}
+
+// TestQueryReadOnlyRunsTheListedPragmas pins the other side of the allowance:
+// both read forms run for a name on the list, whatever its case.
+func TestQueryReadOnlyRunsTheListedPragmas(t *testing.T) {
+	d := openTestDB(t)
+
+	for _, stmt := range []string{
+		`PRAGMA page_count`,
+		`PRAGMA page_size`,
+		`PRAGMA journal_mode`,
+		`PRAGMA integrity_check`,
+		`PRAGMA table_info(schema_version)`,
+		`pragma TABLE_LIST`,
+	} {
+		if err := d.QueryReadOnly(context.Background(), stmt, noQueryRows); err != nil {
+			t.Errorf("QueryReadOnly(%q) = %v, want a result", stmt, err)
+		}
 	}
 }
 

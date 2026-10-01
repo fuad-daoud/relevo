@@ -93,7 +93,7 @@ func cmdDBQuery(args []string) error {
 // seam or the engine refused -- a disallowed keyword, a write, a syntax error
 // -- is refused with the engine's own message.
 func classifyDBQuery(err error) error {
-	if errors.Is(err, db.ErrNotOneStatement) {
+	if errors.Is(err, db.ErrNotOneStatement) || errors.Is(err, db.ErrPragmaNotReadOnly) {
 		return failNext(codeUsage, "relevo help", "%v", err)
 	}
 	return failWrap(codeRefused, err, "%v", err)

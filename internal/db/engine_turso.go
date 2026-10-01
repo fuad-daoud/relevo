@@ -53,11 +53,34 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	if err := createFile(path + "-wal"); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, fmt.Errorf("db: open %s: create -wal: %w: %w", path, ErrOpen, err)
 	}
+	// A database with no SQLite header is one this build is creating, not a
+	// legacy file: it is marked at creation, so the one-time conversion never
+	// touches a file Turso wrote. The read-only open never marks, because the
+	// marker is a write.
+	fresh, err := freshDatabase(path)
+	if err != nil {
+		return nil, fmt.Errorf("db: open %s: read the header: %w: %w", path, ErrOpen, err)
+	}
 	conn, err := turso.NewConnector(fmt.Sprintf("%s?_busy_timeout=%d", path, busy.Milliseconds()))
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: connector: %w: %w", path, ErrOpen, err)
 	}
-	return sql.OpenDB(repairConnector{Connector: &pragmaConnector{base: conn, pragmas: openPragmas(readOnly)}}), nil
+	pool := sql.OpenDB(repairConnector{Connector: &pragmaConnector{base: conn, pragmas: openPragmas(readOnly)}})
+	if fresh && !readOnly {
+		if err := markFreshDatabase(pool); err != nil {
+			_ = pool.Close()
+			return nil, fmt.Errorf("db: open %s: mark: %w", path, err)
+		}
+	}
+	return pool, nil
+}
+
+// freshDatabase reports whether path has no SQLite header yet: absent, empty or
+// too short to hold one. A file SQLite wrote always carries the header, so only
+// a database this build creates is fresh.
+func freshDatabase(path string) (bool, error) {
+	_, fresh, err := fileMarker(path)
+	return fresh, err
 }
 
 // openPragmas is the per-connection pragma sequence: WAL always, and then the

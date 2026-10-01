@@ -119,6 +119,43 @@ func TestDBQueryTwoStatementsIsUsage(t *testing.T) {
 	requireCLIError(t, err, codeUsage, "relevo help")
 }
 
+// TestDBQueryPragmaAssignmentIsUsage pins the narrowed PRAGMA allowance: the
+// writing form is a malformed argument, not a statement the engine refused.
+func TestDBQueryPragmaAssignmentIsUsage(t *testing.T) {
+	seedQueryRoot(t)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `PRAGMA user_version = 7`})
+	})
+	requireCLIError(t, err, codeUsage, "relevo help")
+}
+
+// TestDBQueryUnlistedPragmaIsUsage pins the list itself: a pragma in the read
+// form is still a usage error when its name is not one db query accepts.
+func TestDBQueryUnlistedPragmaIsUsage(t *testing.T) {
+	seedQueryRoot(t)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `PRAGMA writable_schema`})
+	})
+	requireCLIError(t, err, codeUsage, "relevo help")
+}
+
+// TestDBQueryRunsAListedPragma pins the accepted side of the allowance.
+func TestDBQueryRunsAListedPragma(t *testing.T) {
+	seedQueryRoot(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `PRAGMA table_info(probe)`})
+	})
+	if err != nil {
+		t.Fatalf("db query of a listed pragma: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(string(stdout), "label") {
+		t.Errorf("table_info output = %q, want the probe columns", stdout)
+	}
+}
+
 // TestDBIsNoLongerARetiredVerb pins that `db` is dispatched now: it is not in
 // the retired-verb map, and a bare `relevo db` prints the usage line for its
 // own subcommand rather than the removal notice.

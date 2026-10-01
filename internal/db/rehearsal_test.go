@@ -15,8 +15,11 @@ import (
 // TestTursoConversionRehearsal runs the one-time conversion against a copy of a
 // real database and checks its promise: every table keeps its row count, the
 // schema version is unchanged, and the file passes integrity_check under Turso.
-// It is skipped unless RELEVO_TURSO_REHEARSAL names a database image to convert,
-// so it runs only when a real pre-Turso file is at hand.
+// It runs both arrival paths: a copy carrying SQLite's -wal and -shm, and one a
+// clean modernc close left with no sidecars, where only the absent marker can
+// trigger the conversion. It is skipped unless RELEVO_TURSO_REHEARSAL names a
+// database image to convert, so it runs only when a real pre-Turso file is at
+// hand.
 func TestTursoConversionRehearsal(t *testing.T) {
 	src := os.Getenv("RELEVO_TURSO_REHEARSAL")
 	if src == "" {
@@ -36,37 +39,85 @@ func TestTursoConversionRehearsal(t *testing.T) {
 	copyDBImage(t, src, converted)
 
 	wantCounts, wantVersion := sqliteTableCounts(t, baseline)
-	repairs := sqliteRepairCounts(t, repairSrc)
+	logRepairs(t, "wal path", sqliteRepairCounts(t, repairSrc))
+	rehearseConversion(t, "wal path", converted, wantCounts, wantVersion)
 
+	// The upgrade path a pre-Turso daemon leaves: it drained and closed the
+	// database cleanly before re-execing, so the copy has no sidecars and the
+	// absent marker is the only trigger left.
+	upgradeRepair := filepath.Join(dir, "upgrade-repair-"+base)
+	upgrade := filepath.Join(dir, "upgrade-"+base)
+	copyDBImage(t, src, upgradeRepair)
+	copyDBImage(t, src, upgrade)
+	for _, path := range []string{upgradeRepair, upgrade} {
+		sqliteCleanClose(t, path)
+	}
+	logRepairs(t, "upgrade path", sqliteRepairCounts(t, upgradeRepair))
+	rehearseConversion(t, "upgrade path", upgrade, wantCounts, wantVersion)
+}
+
+// rehearseConversion opens converted under Turso and checks the conversion's
+// promise against the modernc baseline.
+func rehearseConversion(t *testing.T, label, converted string, wantCounts map[string]int, wantVersion int) {
+	t.Helper()
 	d, err := Open(converted)
 	if err != nil {
-		t.Fatalf("db.Open(%s): %v", converted, err)
+		t.Fatalf("%s: db.Open(%s): %v", label, converted, err)
 	}
 	defer func() { _ = d.Close() }()
 
 	gotCounts := countsFrom(t, d.sqlDB)
 	if len(gotCounts) != len(wantCounts) {
-		t.Errorf("Turso sees %d tables, modernc saw %d", len(gotCounts), len(wantCounts))
+		t.Errorf("%s: Turso sees %d tables, modernc saw %d", label, len(gotCounts), len(wantCounts))
 	}
 	for name, want := range wantCounts {
 		if got := gotCounts[name]; got != want {
-			t.Errorf("table %s: Turso has %d rows, modernc had %d", name, got, want)
+			t.Errorf("%s: table %s: Turso has %d rows, modernc had %d", label, name, got, want)
 		}
 	}
 	if have, know := d.SchemaVersions(); have != wantVersion {
-		t.Errorf("schema version after conversion = %d, want the %d modernc read (this binary knows %d)", have, wantVersion, know)
+		t.Errorf("%s: schema version after conversion = %d, want the %d modernc read (this binary knows %d)", label, have, wantVersion, know)
 	}
 	var check string
 	if err := d.sqlDB.QueryRow(`PRAGMA integrity_check`).Scan(&check); err != nil {
-		t.Fatalf("integrity_check: %v", err)
+		t.Fatalf("%s: integrity_check: %v", label, err)
 	}
 	if check != "ok" {
-		t.Errorf("integrity_check = %q, want ok", check)
+		t.Errorf("%s: integrity_check = %q, want ok", label, check)
 	}
+	t.Logf("rehearsal %s: %d tables compared, schema version %d, integrity_check %q", label, len(wantCounts), wantVersion, check)
+}
 
-	t.Logf("rehearsal: %d tables compared, schema version %d, integrity_check %q", len(wantCounts), wantVersion, check)
+// logRepairs writes one line per column the repair touched, so a rehearsal
+// records what the conversion changed.
+func logRepairs(t *testing.T, label string, repairs []ColumnRepair) {
+	t.Helper()
 	for _, r := range repairs {
-		t.Logf("rehearsal repair: %s.%s: %d values repaired", r.Table, r.Column, r.Repaired)
+		t.Logf("rehearsal %s repair: %s.%s: %d values repaired", label, r.Table, r.Column, r.Repaired)
+	}
+}
+
+// sqliteCleanClose opens path under modernc, drains its -wal and closes it, then
+// removes any sidecar left behind: the state the old build leaves when its
+// daemon drains and closes the database before re-execing onto the new binary.
+func sqliteCleanClose(t *testing.T, path string) {
+	t.Helper()
+	dsn := (&url.URL{Scheme: "file", Path: path}).String() + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	pool, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("modernc open %s: %v", path, err)
+	}
+	if _, err := pool.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		_ = pool.Close()
+		t.Fatalf("modernc checkpoint %s: %v", path, err)
+	}
+	if err := pool.Close(); err != nil {
+		t.Fatalf("modernc close %s: %v", path, err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("remove %s%s: %v", path, suffix, err)
+		}
 	}
 }
 

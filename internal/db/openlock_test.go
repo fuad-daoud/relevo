@@ -155,3 +155,83 @@ func TestTwoHandlesInOneProcessShareTheLock(t *testing.T) {
 	}
 	_ = d2
 }
+
+// TestAWaitingOpenDoesNotBlockAnotherPath pins that waiting for the open lock
+// never holds the process-wide handle map: a writable open that is polling for a
+// lock another process holds must not queue every other path's open behind it.
+func TestAWaitingOpenDoesNotBlockAnotherPath(t *testing.T) {
+	shrinkOpenLockWait(t, 3*time.Second)
+
+	held := filepath.Join(t.TempDir(), "held.db")
+	startLockHelper(t, "flock", held)
+
+	waited := make(chan error, 1)
+	go func() {
+		_, err := openDirect(held, Options{})
+		waited <- err
+	}()
+	// Let the waiting open reach the lock before the second path is opened.
+	time.Sleep(100 * time.Millisecond)
+
+	other := filepath.Join(t.TempDir(), "other.db")
+	start := time.Now()
+	d, err := openDirect(other, Options{})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("openDirect on a second path while the first waits: %v", err)
+	}
+	_ = d.Close()
+	if elapsed > time.Second {
+		t.Errorf("the second path's open took %v, want it not to wait behind the first", elapsed)
+	}
+
+	if err := <-waited; !errors.Is(err, ErrLocked) {
+		t.Errorf("the waiting open = %v, want ErrLocked", err)
+	}
+}
+
+// TestTwoSpellingsOfOnePathShareTheLock pins the handle map's key: a path
+// through a symlink and a path that reaches the same file through a `..` both
+// name one database, so they must share the open lock instead of waiting out
+// flock against this process's own handle.
+func TestTwoSpellingsOfOnePathShareTheLock(t *testing.T) {
+	shrinkOpenLockWait(t, 3*time.Second)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "relevo.db")
+	first, err := openDirect(path, Options{})
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+
+	link := filepath.Join(dir, "linked.db")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatalf("symlink %s: %v", link, err)
+	}
+	// An absolute path with a `..` in it: a second spelling the handle map must
+	// fold onto the first. filepath.Join would clean it away, so it is built by
+	// hand.
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	indirect := dir + "/sub/../relevo.db"
+
+	start := time.Now()
+	second, err := openDirect(link, Options{})
+	if err != nil {
+		t.Fatalf("open through a symlink while the file is open: %v", err)
+	}
+	third, err := openDirect(indirect, Options{})
+	if err != nil {
+		t.Fatalf("open through %s while the file is open: %v", indirect, err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("the two spellings waited %v, want them to share the lock at once", elapsed)
+	}
+	if got := handleCount(link); got != 3 {
+		t.Errorf("handleCount of the symlink = %d, want the three handles on one file", got)
+	}
+	_ = second
+	_ = third
+}

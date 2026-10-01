@@ -190,6 +190,13 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 		}
 	}
 
+	return finishDirectOpen(sqlDB, path, o, busy, retry)
+}
+
+// finishDirectOpen settles the schema on a pool that is already open: a file
+// whose schema is newer than this binary is left untouched, a current file needs
+// no write at all, and an older one is migrated.
+func finishDirectOpen(sqlDB *sql.DB, path string, o Options, busy, retry time.Duration) (*DB, error) {
 	have, err := maxVersion(sqlDB)
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: version: %w: %w", path, ErrOpen, err)
@@ -198,24 +205,25 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: migrations: %w: %w", path, ErrOpen, err)
 	}
+	handle := func(have int, newer bool) *DB {
+		return &DB{sqlDB: sqlDB, beginRetry: retry, newer: newer, have: have, know: know, origin: o.Origin, route: "file", path: path, busy: busy}
+	}
 	if have > know {
-		return &DB{sqlDB: sqlDB, beginRetry: retry, newer: true, have: have, know: know, origin: o.Origin, route: "file", path: path, busy: busy}, nil
+		return handle(have, true), nil
 	}
 	// A current schema needs no write: BEGIN IMMEDIATE here failed under load.
 	if have == know {
-		return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin, route: "file", path: path, busy: busy}, nil
+		return handle(have, false), nil
 	}
 
-	if err = applyMigrations(sqlDB, migrationFiles); err != nil {
+	if err := applyMigrations(sqlDB, migrationFiles); err != nil {
 		return nil, fmt.Errorf("db: open %s: migrate: %w: %w", path, ErrOpen, err)
 	}
-
 	have, err = maxVersion(sqlDB)
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: version: %w: %w", path, ErrOpen, err)
 	}
-
-	return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know, origin: o.Origin, route: "file", path: path, busy: busy}, nil
+	return handle(have, false), nil
 }
 
 // Newer reports whether the database's schema is newer than this relevo's.

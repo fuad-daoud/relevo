@@ -53,6 +53,20 @@ What binds a migration:
   triggers, FTS, virtual tables and generated columns as its own choice
   (persistence spec, decision 2).
 
+## Conversion
+
+A file a pre-Turso build wrote is converted once on its first open after the
+swap: it is backed up to `<path>.pre-turso`, its `-wal` is drained, its invalid
+UTF-8 text is repaired, and then the conversion records that it happened in the
+file's own header, in `application_id`, which is relevo's marker. A converted
+file keeps the marker, so it is never backed up or repaired twice, and a
+database this build creates carries the marker from creation. Running a
+pre-Turso relevo against a converted file writes no marker and repairs nothing,
+so upgrading again afterwards converts nothing either. To force the conversion
+again, clear the marker back to 0 -- with `-tags modernc`, `PRAGMA
+application_id = 0`, or by zeroing the four header bytes at offset 68 -- and
+open the file once more.
+
 ## Known gaps (checked, avoided)
 
 - `CREATE VIEW IF NOT EXISTS` errors on the second run.

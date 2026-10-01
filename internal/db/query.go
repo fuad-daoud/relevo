@@ -15,6 +15,102 @@ import (
 // from a statement the read-only seam refused can tell the two apart.
 var ErrNotOneStatement = errors.New("not exactly one statement")
 
+// ErrPragmaNotReadOnly reports a PRAGMA the read-only seam will not run. The
+// engine's query_only does not cover `PRAGMA x = ...`, so an assignment would
+// reach the database; only the read form is allowed, and only for the names on
+// readOnlyPragmas. It is wrapped with ErrInvalid, and a caller that must tell a
+// malformed argument from a refused statement maps it to usage.
+var ErrPragmaNotReadOnly = errors.New("pragma is not one of the read-only forms")
+
+// readOnlyPragmas are the PRAGMA names the read-only seam accepts, in the order
+// the refusal names them. A pragma outside this list can change the connection
+// or the file -- writable_schema being the one that did -- and belongs on the
+// writable handle, not behind a read-only verb.
+var readOnlyPragmas = []string{
+	"table_info",
+	"table_list",
+	"index_list",
+	"index_info",
+	"foreign_key_list",
+	"journal_mode",
+	"page_count",
+	"page_size",
+	"user_version",
+	"schema_version",
+	"integrity_check",
+	"quick_check",
+}
+
+// checkReadOnlyPragma refuses a PRAGMA that is not one of the read forms the
+// seam allows: `PRAGMA name` or `PRAGMA name(argument)`, for a name on
+// readOnlyPragmas. The writing form `PRAGMA name = value`, a schema-qualified
+// name and anything the lexer does not recognise are all refused, because none
+// of them can be checked against the list.
+func checkReadOnlyPragma(stmt string) error {
+	if name, ok := pragmaName(stmt); ok && readOnlyPragma(name) {
+		return nil
+	}
+	return fmt.Errorf("db: query read-only: PRAGMA is allowed only as `PRAGMA name` or `PRAGMA name(argument)`, and only for %s: %w: %w",
+		strings.Join(readOnlyPragmas, ", "), ErrInvalid, ErrPragmaNotReadOnly)
+}
+
+// readOnlyPragma reports whether name is on the read-only list; the match is
+// case-insensitive, the way SQLite reads pragma names.
+func readOnlyPragma(name string) bool {
+	for _, allowed := range readOnlyPragmas {
+		if strings.EqualFold(allowed, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// pragmaName returns the name a `PRAGMA name` or `PRAGMA name(argument)`
+// statement reads, and whether the statement is in that read form at all.
+func pragmaName(stmt string) (string, bool) {
+	_, afterKeyword := word(stmt, skipSpace(stmt, 0))
+	name, afterName := word(stmt, skipSpace(stmt, afterKeyword))
+	if name == "" {
+		return "", false
+	}
+	rest := strings.TrimSpace(stmt[skipSpace(stmt, afterName):])
+	switch {
+	case rest == "" || rest == ";":
+		return name, true
+	case strings.HasPrefix(rest, "(") && strings.HasSuffix(rest, ")"):
+		return name, true
+	}
+	return "", false
+}
+
+// word returns the identifier that starts at i and the index just past it, or
+// an empty word when none starts there.
+func word(stmt string, i int) (string, int) {
+	j := i
+	for j < len(stmt) && isKeywordByte(stmt[j]) {
+		j++
+	}
+	return stmt[i:j], j
+}
+
+// skipSpace returns the index of the first byte of stmt at or after i that is
+// neither whitespace nor part of a comment.
+func skipSpace(stmt string, i int) int {
+	for i < len(stmt) {
+		switch c := stmt[i]; {
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v':
+			i++
+		case c == '-' && i+1 < len(stmt) && stmt[i+1] == '-':
+			i = skipLineComment(stmt, i)
+		case c == '/' && i+1 < len(stmt) && stmt[i+1] == '*':
+			i = skipBlockComment(stmt, i)
+		default:
+			return i
+		}
+	}
+	return i
+}
+
 // readOnlyKeywords are the words a read-only statement may start with. The
 // check is defence in depth, not the enforcement: the engine's query_only
 // blocks DML, DDL and VACUUM, but not ATTACH (which creates a missing file),
@@ -44,8 +140,13 @@ func (d *DB) QueryReadOnly(ctx context.Context, stmt string, onRow func(columns 
 	if err != nil {
 		return err
 	}
-	if !readOnlyKeywords[strings.ToUpper(firstKeyword(one))] {
+	switch keyword := strings.ToUpper(firstKeyword(one)); {
+	case !readOnlyKeywords[keyword]:
 		return fmt.Errorf("db: query read-only: the statement must start with SELECT, WITH, VALUES, EXPLAIN or PRAGMA: %w", ErrInvalid)
+	case keyword == "PRAGMA":
+		if err := checkReadOnlyPragma(one); err != nil {
+			return err
+		}
 	}
 
 	conn, err := d.sqlDB.Conn(ctx)
@@ -69,8 +170,10 @@ func (d *DB) QueryReadOnly(ctx context.Context, stmt string, onRow func(columns 
 	if _, err := conn.ExecContext(ctx, "PRAGMA query_only = 1"); err != nil {
 		return fmt.Errorf("db: query read-only: %w", err)
 	}
-	// BEGIN is what undoes a writing PRAGMA: query_only does not block
-	// `PRAGMA x = ...`, so the transaction is the only thing that rolls it back.
+	// BEGIN is defence in depth: query_only does not block `PRAGMA x = ...`, so
+	// a writing assignment that slipped past the read-form check would still be
+	// rolled back here. Turso's own query_only refuses the writing pragmas that
+	// matter, so the transaction is the second line, not the first.
 	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
 		return fmt.Errorf("db: query read-only: %w", err)
 	}

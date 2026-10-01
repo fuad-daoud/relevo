@@ -401,6 +401,15 @@ func (r *rows) Close() error {
 }
 
 func (r *rows) Next(dest []driver.Value) error {
+	// A statement whose result carries no columns -- a bare PRAGMA assignment,
+	// say -- can carry no rows either, but database/sql still calls Next with a
+	// zero-length destination. Without this the loop below neither advances nor
+	// ends, so the caller spins on the same empty row forever: Close drains the
+	// done frame the owner already sent after the empty batch, so the stream
+	// stays in sync.
+	if len(dest) == 0 {
+		return io.EOF
+	}
 	for r.pos+len(dest) > len(r.buf) {
 		if r.done {
 			return io.EOF
