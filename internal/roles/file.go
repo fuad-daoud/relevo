@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/jsonshape"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 )
 
 // ErrBadRoles reports a roles.json that does not validate. Callers treat it
@@ -80,6 +81,12 @@ type Row struct {
 
 	// Tier is the role's default permission tier.
 	Tier *string `json:"tier"`
+
+	// Scope is the scope the actors conversion carried for a writer role
+	// (#801): the paths its rounds may change, and whether a Go comment-only
+	// edit is allowed. It is refused on a reader. A legacy roles.json may
+	// carry the key; it flows the same way.
+	Scope *pathscope.Scope `json:"scope,omitempty"`
 }
 
 // DefRow is one role's definition for one harness kind.
@@ -183,6 +190,16 @@ func validate(path string, f *File) error {
 		// gate
 		if row.Check != nil && *row.Check && shape == harness.ShapeConsult {
 			return badField("gate", "a reader role has no gate")
+		}
+
+		// scope: a writer's declared paths; a reader has none.
+		if row.Scope != nil {
+			if shape == harness.ShapeConsult {
+				return badField("scope", "a reader role has no scope")
+			}
+			if err := row.Scope.Validate(); err != nil {
+				return badField("scope", err.Error())
+			}
 		}
 
 		// definitions
