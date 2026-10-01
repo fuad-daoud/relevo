@@ -24,6 +24,8 @@ it, from migration 014.
 | `chains` | A chain and its members. `origin` is a live key column, and `(origin, owner, name)` is its natural key. |
 | `binding_event` | A binding record's append-only log. No column: it inherits origin through `record_id`. |
 | `chain_event` | A chain's append-only trace. No column: it inherits origin through `chain_id`. |
+| `chain_member` | A chain's members: the binding that fills each actor's slot, in order. No column: it inherits origin through `chain_id`. |
+| `chain_check` | A check step's run for a chain: its command, result and log. No column: it inherits origin through `chain_id`; its `pid` names a process on the machine that wrote the row. |
 | `round_file` | A closed round's sealed files. No column: it inherits origin through `record_id`. |
 | `installation` | The display label of every installation seen, so another machine can name the writer of a row. A projection of the installation file that sits beside the database; the file is authoritative and never syncs. |
 | mirror `repo` | A git repository relevo has seen. `origin` is part of the natural keys `(origin, origin_url)` and `(origin, common_dir)`. |

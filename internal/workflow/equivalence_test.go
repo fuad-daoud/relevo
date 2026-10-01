@@ -158,6 +158,16 @@ var equivCases = []equivCase{
 		event:  chain.Event{Kind: chain.EventPlannerClosed, Member: chain.MemberPlanner, Round: 2, PlanPresent: true},
 	},
 	{
+		source: "TestNextCorrectionPlanSendsBuilderAndCounts",
+		name:   "a correction plan with a spent correction goes to the builder",
+		state: func() chain.State {
+			s := eqAwaited(chain.StepCorrecting, chain.MemberPlanner, 2)
+			s.Corrections = 2
+			return s
+		}(),
+		event: chain.Event{Kind: chain.EventPlannerClosed, Member: chain.MemberPlanner, Round: 2, PlanPresent: true},
+	},
+	{
 		source:   "TestNextCorrectionPlanMissingHalts",
 		name:     "a missing correction plan halts",
 		state:    eqAwaited(chain.StepCorrecting, chain.MemberPlanner, 2),
@@ -307,8 +317,17 @@ func TestEquivalenceWithChainNext(t *testing.T) {
 	for _, tc := range equivCases {
 		t.Run(tc.name, func(t *testing.T) {
 			oldGot, oldAct := chain.Next(tc.state, tc.event)
-			def := equivDef(t, tc.state.Settings, equivGateParam(tc.event))
-			ns := equivState(def, tc.state)
+			def, ns, err := FromLegacy(equivLegacy(tc.state, equivGateParam(tc.event)))
+			if err != nil {
+				t.Fatalf("FromLegacy: %v", err)
+			}
+			// The migrated state must project back onto the old row it came
+			// from: the correction budget in particular, since the engine
+			// spends it on a step entry rather than on a close.
+			if view := LegacyView(def, ns); view.Step != string(tc.state.Step) || view.Corrections != tc.state.Corrections {
+				t.Fatalf("the migrated state projects back to %s/%d, want %s/%d",
+					view.Step, view.Corrections, tc.state.Step, tc.state.Corrections)
+			}
 			nstate, nacts := equivReplay(t, def, ns, tc.event, tc.event.Round, tc.state.Settings.Regate)
 			checkEquiv(t, tc, oldGot, oldAct, ns, nstate, nacts)
 		})
@@ -353,31 +372,49 @@ func TestEquivalenceCoversEveryChainNextCase(t *testing.T) {
 	}
 }
 
+// equivLegacy is a legacy row built from an old chain state and the gate its
+// closing round ran.
+func equivLegacy(s chain.State, gate string) Legacy {
+	items := make([]string, 0, s.Plans)
+	for i := 1; i <= s.Plans; i++ {
+		items = append(items, "plan-"+strconv.Itoa(i)+".md")
+	}
+	l := equivSettingsLegacy(s.Settings, gate)
+	l.Status = string(s.Status)
+	l.Reason = s.Reason
+	l.Phase = string(s.Phase)
+	l.Step = string(s.Step)
+	l.Plan = s.Plan
+	l.Plans = s.Plans
+	l.Corrections = s.Corrections
+	l.AwaitingRound = s.Awaiting.Round
+	l.PlanPaths = items
+	return l
+}
+
+// equivSettingsLegacy is a legacy row carrying only a chain's settings and the
+// round's gate.
+func equivSettingsLegacy(s chain.Settings, gate string) Legacy {
+	return Legacy{Settings: LegacySettings{
+		MaxCorrections: s.MaxCorrections,
+		ReviewerActor:  s.ReviewerActor,
+		PlannerActor:   s.PlannerActor,
+		SecurityActor:  s.SecurityActor,
+		Security:       s.Security,
+		Gate:           gate,
+		Regate:         s.Regate,
+	}}
+}
+
 // equivDef is the shipped default with the params a chain's settings and the
 // round's gate resolve to.
 func equivDef(t *testing.T, s chain.Settings, gate string) Definition {
 	t.Helper()
-	def, err := WithParams(Default(), map[string]string{
-		"reviewer":        equivNameOr(s.ReviewerActor, "reviewer"),
-		"planner":         equivNameOr(s.PlannerActor, "lite-planner"),
-		"security":        equivNameOr(s.SecurityActor, "security"),
-		"scan":            strconv.FormatBool(s.Security),
-		"max_corrections": strconv.Itoa(s.MaxCorrections),
-		"regate":          strconv.Itoa(s.Regate),
-		"gate":            gate,
-	})
+	def, _, err := FromLegacy(equivSettingsLegacy(s, gate))
 	if err != nil {
 		t.Fatalf("resolve the default's params: %v", err)
 	}
 	return def
-}
-
-// equivNameOr is an actor setting, or the default it falls back to.
-func equivNameOr(name, fallback string) string {
-	if name == "" {
-		return fallback
-	}
-	return name
 }
 
 // equivGateParam is the gate param an old close implies: empty when the round
@@ -387,86 +424,6 @@ func equivGateParam(e chain.Event) string {
 		return ""
 	}
 	return "make check"
-}
-
-// equivState is the new state a chain state migrates to, by phase and
-// corrections. The plans walk is placed on the plan the chain is on, and the
-// corrections budget holds the count the chain has spent.
-func equivState(def Definition, s chain.State) State {
-	items := make([]string, 0, s.Plans)
-	for i := 1; i <= s.Plans; i++ {
-		items = append(items, "plan-"+strconv.Itoa(i)+".md")
-	}
-	at := equivStepAt(s)
-	corrections := s.Corrections
-	if at == "correct" || at == "fix-correct" {
-		corrections++
-	}
-	ns := State{
-		Status:  Status(s.Status),
-		Reason:  s.Reason,
-		At:      at,
-		Visits:  map[string]int{},
-		Iter:    map[string]Iter{"plans": {Index: s.Plan - 1, Items: items}},
-		Results: map[string]Result{},
-	}
-	if s.Phase == chain.PhaseSecurity {
-		ns.Visits["fix-correct"] = corrections
-	} else {
-		ns.Visits["correct"] = corrections
-	}
-	if at != "" {
-		ns.Awaiting = Awaiting{Step: at, Member: equivActorOfStep(def, at), Round: s.Awaiting.Round}
-	}
-	return ns
-}
-
-// equivStepAt is the new step an old step migrates to.
-func equivStepAt(s chain.State) string {
-	security := s.Phase == chain.PhaseSecurity
-	switch s.Step {
-	case chain.StepBuilding:
-		if security {
-			if s.Corrections == 0 {
-				return "fix-build"
-			}
-			return "fix-rebuild"
-		}
-		if s.Corrections == 0 {
-			return "build"
-		}
-		return "build-fix"
-	case chain.StepReviewing:
-		if security {
-			return "fix-review"
-		}
-		return "review"
-	case chain.StepCorrecting:
-		if security {
-			return "fix-correct"
-		}
-		return "correct"
-	case chain.StepScanning:
-		return "scan"
-	case chain.StepPlanningFixes:
-		return "fix-plan"
-	}
-	return ""
-}
-
-// equivActorOfStep is the actor a mapped step runs.
-func equivActorOfStep(def Definition, at string) string {
-	switch at {
-	case "build", "build-fix", "fix-build", "fix-rebuild":
-		return def.Params["builder"].Str
-	case "review", "fix-review":
-		return def.Params["reviewer"].Str
-	case "correct", "fix-correct", "fix-plan":
-		return def.Params["planner"].Str
-	case "scan":
-		return def.Params["security"].Str
-	}
-	return ""
 }
 
 // equivStepMember is the fixed part a new step's actor fills, for comparing a
