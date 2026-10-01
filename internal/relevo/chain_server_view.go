@@ -229,6 +229,9 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 		if remoteCode(err, 409, remote.CodeChainRunning) {
 			return DoneResult{}, fmt.Errorf("chain %s is running; relevo stop %s first: %w", c.Name, c.Name, ErrChainRunning)
 		}
+		if remoteCode(err, 409, remote.CodeRoundOpen) {
+			return DoneResult{}, roundOpenFromWire(err)
+		}
 		return DoneResult{}, err
 	}
 
