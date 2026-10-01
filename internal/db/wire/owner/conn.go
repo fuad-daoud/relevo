@@ -35,6 +35,10 @@ type conn struct {
 	// the SQL already on the wire because relevo's Tx sends BEGIN/COMMIT as
 	// plain statements rather than through database/sql's BeginTx.
 	inTx bool
+	// adHoc is the marker this connection's client sent in the handshake: only
+	// such a connection may be refused while the owner reaps a runaway
+	// statement, so every other verb keeps being served.
+	adHoc bool
 }
 
 type request struct {
@@ -79,6 +83,7 @@ func (c *conn) serve() error {
 	if hello.Proto != wire.Proto || hello.Version != wire.Version {
 		return c.refuse(wire.RefuseWrongProto, "protocol mismatch")
 	}
+	c.adHoc = hello.AdHoc
 	w := &wire.Welcome{
 		Header:     wire.Header{Type: wire.TypeWelcome},
 		Proto:      wire.Proto,
@@ -210,6 +215,14 @@ func (c *conn) start(kind byte, frame []byte) error {
 	raw, err := wire.Decode(frame, &m)
 	if err != nil {
 		return err
+	}
+
+	// An ad-hoc connection is refused while an abandoned statement is being
+	// reaped: the owner cannot interrupt that statement, so an ad-hoc read
+	// could not be bounded. A connection that did not mark itself ad-hoc --
+	// every normal relevo verb -- is never refused here.
+	if c.adHoc && c.s.reaping() {
+		return c.refuse(wire.RefuseReaping, "the owner is ending a statement that will not stop; retry in a moment")
 	}
 
 	// A drain refuses a request on a connection with no open transaction: the
@@ -353,7 +366,7 @@ func (c *conn) query(ctx context.Context, r *request, pinned *sql.Conn, query st
 		return
 	}
 
-	stream := &rowStream{rows: rows, cols: cols}
+	stream := &rowStream{rows: rows, cols: cols, ceiling: c.adHocCeiling()}
 	for first := true; ; first = false {
 		body, n, more, err := stream.next(wire.BatchBudget)
 		if err != nil {
@@ -388,6 +401,10 @@ type rowStream struct {
 	cols        []string
 	pending     []any
 	havePending bool
+	// ceiling is the largest value this stream may carry, or 0 for no bound.
+	// It is set from the connection's ad-hoc marker, so a normal verb's own
+	// blobs still flow.
+	ceiling int
 }
 
 // next fills a batch up to budget and reports whether another row follows.
@@ -448,6 +465,11 @@ func (s *rowStream) read() ([]any, bool, error) {
 	if err := s.rows.Scan(ptrs...); err != nil {
 		return nil, false, err
 	}
+	// The check runs the moment the engine yields the row, before the caller
+	// copies the value into a batch or peeks the next row.
+	if err := s.checkCeiling(vals); err != nil {
+		return nil, false, err
+	}
 	return vals, true, nil
 }
 
@@ -476,12 +498,36 @@ func (c *conn) cleanup() {
 		}
 	}
 	if pinned != nil {
-		_, _ = pinned.ExecContext(context.Background(), "ROLLBACK")
-		_ = pinned.Raw(func(any) error { return driver.ErrBadConn })
-		_ = pinned.Close()
+		finish := discardPinned(pinned)
+		select {
+		case <-finish:
+		case <-time.After(discardTimeout):
+			// The statement is still running and the engine will not
+			// interrupt it. The slot returns anyway, so a statement that never
+			// ends cannot wedge a pin slot; the server tracks it as the
+			// abandoned statement so ad-hoc reads are refused and the daemon
+			// can reap it.
+			c.s.noteAbandoned(finish)
+		}
 		<-c.s.sem
 	}
 	_ = c.nc.Close()
+}
+
+// discardPinned best-effort rolls a pinned connection back and drops it, and
+// returns a channel closed when that finished. The rollback runs on the
+// connection's single-operation mutex, so a statement the engine will not
+// interrupt parks it; the caller must return the slot regardless and may
+// register the returned channel as an abandoned statement.
+func discardPinned(pinned *sql.Conn) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = pinned.ExecContext(context.Background(), "ROLLBACK")
+		_ = pinned.Raw(func(any) error { return driver.ErrBadConn })
+		_ = pinned.Close()
+	}()
+	return done
 }
 
 // takePinned detaches the client's pinned connection, returning nil when there
@@ -518,8 +564,7 @@ func (c *conn) refuse(code, message string) error {
 }
 
 func (c *conn) sendError(id int, err error) {
-	code, _ := wire.CodeOf(err)
-	ext := wire.ExtendedCodeOf(err)
+	code, ext := c.s.errorCode(err)
 	_ = c.send(wire.KindError, wire.NewError(id, code, ext, err.Error()), nil)
 }
 

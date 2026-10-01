@@ -1,0 +1,157 @@
+package db
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// mkdirVacuumTemp creates the backup's temp directory. It is a var so a test can
+// observe the directory's mode before the deferred remove takes it away.
+var mkdirVacuumTemp = os.MkdirTemp
+
+// BackupTo copies the whole database to path with VACUUM INTO. The copy is
+// built in an owner-only temp directory and linked into place as its last step,
+// so it never exists world-readable even for the instant before a chmod; a path
+// that already exists is refused, because VACUUM INTO would overwrite it.
+func (d *DB) BackupTo(path string) error {
+	if err := vacuumInto(d.sqlDB, path); err != nil {
+		return fmt.Errorf("db: backup to %s: %w", path, err)
+	}
+	return nil
+}
+
+// vacuumInto copies the whole database to target with the engine's VACUUM INTO.
+// The copy lands in an owner-only temp directory beside the target, so a
+// failure never leaves a world-readable file, and is hard-linked to target:
+// the link fails rather than clobbering a target that appeared meanwhile.
+func vacuumInto(pool *sql.DB, target string) error {
+	if _, err := os.Stat(target); err == nil {
+		return fmt.Errorf("db: vacuum into %s: file already exists: %w", target, ErrInvalid)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("db: vacuum into %s: %w", target, err)
+	}
+
+	// Refuse a target the engine's VACUUM INTO literal cannot express before
+	// anything is created, so the failure names the destination the caller
+	// asked for rather than the private temp copy.
+	if _, _, err := vacuumIntoStmt(target); err != nil {
+		return err
+	}
+
+	dir, err := mkdirVacuumTemp(filepath.Dir(target), ".vacuum-")
+	if err != nil {
+		return fmt.Errorf("db: vacuum into %s: temp dir: %w", target, err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("db: vacuum into %s: chmod temp dir: %w", target, err)
+	}
+
+	copyPath := filepath.Join(dir, "copy")
+	query, args, err := vacuumIntoStmt(copyPath)
+	if err != nil {
+		return err
+	}
+	if _, err := pool.ExecContext(context.Background(), query, args...); err != nil {
+		return fmt.Errorf("db: vacuum into %s: %w", target, mapBusy(err))
+	}
+	if err := chmodPrivate(copyPath); err != nil {
+		return fmt.Errorf("db: vacuum into %s: chmod: %w", target, err)
+	}
+	if err := os.Link(copyPath, target); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("db: vacuum into %s: file already exists: %w", target, ErrInvalid)
+		}
+		return fmt.Errorf("db: vacuum into %s: link: %w", target, err)
+	}
+	return nil
+}
+
+// Vacuum compacts the database in place, outside any transaction, as sqlite
+// requires. It refuses when this is not the only direct handle on the file: the
+// swap closes and reopens the pool, which would strand every other handle.
+func (d *DB) Vacuum() error {
+	if err := d.vacuumAllowed(); err != nil {
+		return err
+	}
+	if err := d.walCheckpoint(); err != nil {
+		return err
+	}
+
+	sibling := d.path + ".vacuum"
+	if err := os.Remove(sibling); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("db: vacuum: remove stale %s: %w", sibling, err)
+	}
+	if err := vacuumInto(d.sqlDB, sibling); err != nil {
+		return fmt.Errorf("db: vacuum: %w", err)
+	}
+	return d.swapInVacuum(sibling)
+}
+
+// vacuumAllowed refuses the handle kinds a vacuum cannot swap under.
+func (d *DB) vacuumAllowed() error {
+	switch {
+	case d.served:
+		return fmt.Errorf("db: vacuum: the owner serves this handle: %w", ErrInvalid)
+	case d.path == "":
+		return fmt.Errorf("db: vacuum: not a direct handle: %w", ErrInvalid)
+	case handleCount(d.path) > 1:
+		return fmt.Errorf("db: vacuum: %d direct handles are open on %s: %w", handleCount(d.path), d.path, ErrInvalid)
+	}
+	return nil
+}
+
+// swapInVacuum replaces the database file with the vacuumed sibling and reopens
+// the pool. Every failure after the close reopens the original, so the handle
+// keeps serving the file it had.
+func (d *DB) swapInVacuum(sibling string) error {
+	if err := d.sqlDB.Close(); err != nil {
+		return fmt.Errorf("db: vacuum: close: %w", err)
+	}
+	if err := requireDrainedWAL(d.path); err != nil {
+		return d.reopenOriginal(err)
+	}
+	if err := os.Rename(sibling, d.path); err != nil {
+		return d.reopenOriginal(fmt.Errorf("db: vacuum: rename %s: %w", sibling, err))
+	}
+	// The old -shm describes the replaced file and would confuse the reopen.
+	_ = os.Remove(d.path + "-shm")
+
+	pool, err := openPool(d.path, d.busy, false)
+	if err != nil {
+		return d.reopenOriginal(fmt.Errorf("db: vacuum: reopen: %w", err))
+	}
+	d.sqlDB = pool
+	return nil
+}
+
+// requireDrainedWAL refuses the swap while the write-ahead log still holds
+// pages: renaming the database over the file would drop them.
+func requireDrainedWAL(path string) error {
+	fi, err := os.Stat(path + "-wal")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("db: vacuum: stat -wal: %w", err)
+	}
+	if fi.Size() == 0 {
+		return nil
+	}
+	return fmt.Errorf("db: vacuum: the -wal still holds %d bytes: %w", fi.Size(), ErrInvalid)
+}
+
+// reopenOriginal restores d's pool after a failed vacuum, joining a reopen
+// failure to the cause so neither is lost.
+func (d *DB) reopenOriginal(cause error) error {
+	pool, err := openPool(d.path, d.busy, false)
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("db: vacuum: reopen %s: %w: %w", d.path, ErrOpen, err))
+	}
+	d.sqlDB = pool
+	return cause
+}

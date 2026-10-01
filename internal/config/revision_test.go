@@ -2,7 +2,6 @@ package config
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 )
 
 func TestPutRecordsRevision(t *testing.T) {
@@ -246,10 +246,7 @@ func TestRevisionInsertFailureRollsBackWrite(t *testing.T) {
 
 	// Drop the revision table through a separate connection, so the write's
 	// insert fails and the whole transaction must roll back.
-	raw, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
+	raw := dbtest.RawOpen(t, path)
 	if _, err := raw.Exec(`DROP TABLE config_revision`); err != nil {
 		_ = raw.Close()
 		t.Fatalf("drop config_revision: %v", err)

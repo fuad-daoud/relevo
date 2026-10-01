@@ -58,6 +58,26 @@ func TestInstallSetsAndClears(t *testing.T) {
 	}
 }
 
+// TestRawOpenUsesTheSelectedEngine pins the raw-driver seam: RawOpen hands back
+// a working pool on the caller's path, without migrating it.
+func TestRawOpenUsesTheSelectedEngine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "raw.db")
+	pool := RawOpen(t, path)
+	if _, err := pool.Exec(`CREATE TABLE t (n INTEGER)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := pool.Exec(`INSERT INTO t (n) VALUES (1)`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	var n int
+	if err := pool.QueryRow(`SELECT count(*) FROM t`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("count = %d, want 1", n)
+	}
+}
+
 // TestOwnerModeRoutesOpenThroughASocket pins the on mode: with the variable set
 // OwnerMode installs the hop, and the first Open of a path is reached through
 // an owner listening on a short /tmp socket.

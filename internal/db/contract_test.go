@@ -49,7 +49,7 @@ func TestContractSchema(t *testing.T) {
 	have, know := d.SchemaVersions()
 	fmt.Fprintf(&buf, "schema_versions have=%d know=%d\n", have, know)
 
-	path2 := filepath.Join("testdata", "schema.golden")
+	path2 := filepath.Join("testdata", schemaGoldenName)
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(path2), 0o755); err != nil {
 			t.Fatalf("mkdir golden dir: %v", err)

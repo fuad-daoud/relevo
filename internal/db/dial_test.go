@@ -130,3 +130,51 @@ func TestNewOwnerServesRowsReadByADirectHandle(t *testing.T) {
 		t.Fatalf("owner read = %q, %v, %v", raw, ok, err)
 	}
 }
+
+// TestVacuumRefusesADialledHandle pins that Vacuum refuses a handle reached over
+// the wire: the swap closes and reopens the pool, which only the handle that
+// owns the file may do, so a dialled handle is refused rather than left with a
+// stranded pool.
+func TestVacuumRefusesADialledHandle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	direct := directOpen(t, path, Options{})
+	sock := startOwner(t, direct)
+	dialled := dialDB(t, sock)
+
+	if err := dialled.Vacuum(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Vacuum on a dialled handle = %v, want ErrInvalid", err)
+	}
+}
+
+// TestCloseNotifiesTheOwnerHopObserver pins the seam dbtest's owner mode uses:
+// when a handle opened through the hop closes, the observer installed beside the
+// hop is told once with the socket, so the harness can stop that path's owner
+// and close its direct handle the way the daemon does on its own stop.
+func TestCloseNotifiesTheOwnerHopObserver(t *testing.T) {
+	prevHop, prevClosed := ownerHop, ownerHopClosed
+	t.Cleanup(func() { ownerHop, ownerHopClosed = prevHop, prevClosed })
+
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	direct := directOpen(t, path, Options{})
+	sock := startOwner(t, direct)
+
+	SetOwnerHop(func(string, Options, func() (*DB, error)) (string, error) { return sock, nil })
+	var closed []string
+	SetOwnerHopClosed(func(s string) { closed = append(closed, s) })
+
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open through the hop: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("Close dialled handle: %v", err)
+	}
+	if len(closed) != 1 || closed[0] != sock {
+		t.Fatalf("close observer got %v, want [%s]", closed, sock)
+	}
+	// A second close must not notify again.
+	_ = d.Close()
+	if len(closed) != 1 {
+		t.Errorf("close observer ran %d times, want 1", len(closed))
+	}
+}
