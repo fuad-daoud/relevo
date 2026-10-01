@@ -105,9 +105,10 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		resultCommit = b.Serve.ResultCommit
 		dirtyCommit = b.Serve.DirtyCommit
 	}
-	// facts are the closed round's per-round facts, byte-for-byte what the
-	// four scans below used to read for b.Serve.ClosedRound. A round that is
-	// not closed yet leaves the zero value.
+	// facts is the closed round's per-round facts: round ClosedRound's report
+	// outcome, usage and rusage, its gate result, its diff note and tree, and
+	// how it was stopped. A binding whose round has not closed leaves the zero
+	// value.
 	var facts remote.ClosedRoundView
 	if b.Serve != nil && b.Serve.ClosedRound > 0 {
 		facts = servedRoundFacts(entries, b.Serve.ClosedRound)
