@@ -41,9 +41,15 @@ baseline recorded, or a failed git read leaves `Live` nil, and the row is
 byte-identical to the row before this change.
 
 The JSON is additive only: `rows[].live` appears only when carried, and every
-existing key is unchanged. The `cmd/relevo` contract goldens stay byte-identical
-(their fixture carries no live diff); the live cases are pinned in
-`internal/view`.
+existing key is unchanged. The `cmd/relevo` contract goldens change only by the
+additive `text` key below; the text-mode golden and every `internal/ui` golden
+stay byte-identical. The live cases are pinned in `internal/view`.
+
+`StatusLineRow` also gains `Text` (`json:"text,omitempty"`): the row exactly as
+`relevo status --line` renders it, without SGR codes and without the trailing
+newline, laid out at the renderer's default width. Only the `--line --json` path
+fills it. `RenderStatusLine` and the plain builder share one layout, so the two
+can never disagree about the visible text.
 
 ## 4. Surfaces
 
@@ -52,8 +58,13 @@ existing key is unchanged. The `cmd/relevo` contract goldens stay byte-identical
 - **`internal/ui`**: `rowNow` takes its working word from `view.ActivityWord`,
   falling back to `b.BuilderStatus` when the rule is empty, so an `unknown` row
   still says `unknown`; the private copy of the rule is gone.
-- **OpenCode sidebar**: line B appends the same diff segment before the tokens,
-  mirroring the statusline; line A already takes its word from the document.
+- **OpenCode sidebar**: prints the row's `text` verbatim, wrapped by the
+  37-column sidebar and coloured by the row's tone (`needs` bold warning,
+  `report` info, else base). An older relevo that carries no `text` keeps the
+  two-line composition as the fallback.
+- **OpenCode fleet**: a `DIFF` column between `TIME` and `REASON` shows the
+  round's live diff (`+A/-R in F`, ` (shared)` for a shared tree), ellipsized and
+  padded like its neighbours; `reasonPad` shrinks by the column's width.
 - **`relevo status` (human)**: byte-identical. Its runner line already prints
   `b.BuilderStatus`, which is the same word for every definite word; a quiet
   working row keeps `quiet X` on the round line, where the round's progress

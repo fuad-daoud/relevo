@@ -1196,7 +1196,8 @@ since the last prompt, report or question crossed, and a `+A/-R in F` segment in
 the middle is the round's live diff against its baseline. `relevo status --line
 --json` carries that diff as an additive `live` object on the row (`files`,
 `added`, `removed`, and `shared` for a `--cwd` binding); the key is present only
-while a round runs.
+while a round runs. It also carries `text`: the row exactly as the text mode
+renders it, without colour codes, which the OpenCode sidebar prints.
 
 ## Candidates
 
