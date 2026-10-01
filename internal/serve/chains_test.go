@@ -566,6 +566,51 @@ func TestResumeChainRefusesOutOfBoundSettings(t *testing.T) {
 	}
 }
 
+// TestServedResumeMapsWireToParams pins the served resume's mapping: every wire
+// field that was given becomes the workflow param it fills, so the engine a
+// served chain runs reads the value through its own params.
+func TestServedResumeMapsWireToParams(t *testing.T) {
+	t.Parallel()
+
+	maxCorrections, regate := 5, 2
+	security := true
+	gate := "make test"
+	opts, bad := resumeOptionsFromWire("shop", remote.ChainResumeRequest{
+		MaxCorrections: &maxCorrections, Regate: &regate, Security: &security, Gate: &gate,
+		ReviewerActor: "reviewer", PlannerActor: "planner", SecurityActor: "security",
+	})
+	if bad != "" {
+		t.Fatalf("resumeOptionsFromWire = %q, want no refusal", bad)
+	}
+	want := map[string]string{
+		"max_corrections": "5", "regate": "2", "scan": "true", "gate": "make test",
+		"reviewer": "reviewer", "planner": "planner", "security": "security",
+	}
+	if !reflect.DeepEqual(opts.Params, want) {
+		t.Errorf("params = %v, want %v", opts.Params, want)
+	}
+
+	// A body that names nothing maps onto no params, so a resume that changes
+	// nothing leaves the stored definition alone.
+	empty, bad := resumeOptionsFromWire("shop", remote.ChainResumeRequest{})
+	if bad != "" {
+		t.Fatalf("resumeOptionsFromWire(empty) = %q, want no refusal", bad)
+	}
+	if len(empty.Params) != 0 {
+		t.Errorf("params for an empty body = %v, want none", empty.Params)
+	}
+
+	// A present empty gate clears the check, and the param reads empty too.
+	clear := ""
+	noGate, bad := resumeOptionsFromWire("shop", remote.ChainResumeRequest{Gate: &clear})
+	if bad != "" {
+		t.Fatalf("resumeOptionsFromWire(--no-gate) = %q, want no refusal", bad)
+	}
+	if got, ok := noGate.Params["gate"]; !ok || got != "" {
+		t.Errorf("gate param = %q (present %v), want present and empty", got, ok)
+	}
+}
+
 // TestWriteChainResumeErrorMapsTheOpenRoundRefusal pins the wire shape: an open
 // member round on a resume is a 409 round_open, not the 500 the default arm
 // used to write, so the client can rebuild the typed refusal.

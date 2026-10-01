@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // remoteCode reports whether err is the server's own refusal for one code at
@@ -45,7 +46,11 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 	if v, gerr := chainGetView(ctx, rt, c); gerr != nil {
 		row.Detail = fmt.Sprintf("server %s unreachable: %v", c.Server, gerr)
 	} else {
-		row = viewChainRow(rt.Store, chainRowFromView(c, v, rt.Now().UTC()))
+		mirrored, merr := chainRowFromView(c, v, rt.Now().UTC())
+		if merr != nil {
+			return view.Report{}, merr
+		}
+		row = viewChainRow(rt.Store, mirrored)
 	}
 
 	rows := []view.BindingStatus{row}
@@ -75,6 +80,25 @@ func chainServerTrace(ctx context.Context, rt Runtime, c db.ChainRow) (ChainTrac
 		Plans: chainIntOr(v.Plans, c.Plans), Corrections: v.Corrections,
 	}
 	for _, r := range v.Trace {
+		// A mirror whose row carries a workflow was written by the engine, so
+		// its rows are workflow events; a legacy mirror keeps the fixed state
+		// machine's vocabulary.
+		if len(c.WorkflowJSON) > 0 {
+			fev, ferr := workflow.DecodeEvent(r.Event)
+			if ferr != nil {
+				return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, ferr)
+			}
+			act, aerr := workflow.DecodeAction(r.Action)
+			if aerr != nil {
+				return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, aerr)
+			}
+			doc.Events = append(doc.Events, ChainTraceEvent{
+				Seq: r.Seq, TS: r.TS, Step: r.Step,
+				Member: r.Member, Round: r.Round, Plan: r.Plan, Reason: r.Reason,
+				Flow: &fev, FlowAction: &act,
+			})
+			continue
+		}
 		ev, err := chain.DecodeEvent(r.Event)
 		if err != nil {
 			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, err)

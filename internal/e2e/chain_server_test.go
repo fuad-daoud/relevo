@@ -32,6 +32,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 const (
@@ -197,14 +198,17 @@ func TestChainServerE2E(t *testing.T) {
 	if serverRow.Corrections != 0 {
 		t.Errorf("server chain ended with %d corrections, want 0: the plan pass resets the count", serverRow.Corrections)
 	}
-	want := []chainE2EStep{
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberPlanner},
-		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberBuilder},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionFinish},
+	want := []chainFlowStep{
+		{step: "build", round: 1, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionRunCheck, to: "check", plan: 1},
+		{step: "check", round: 0, member: reviewerName, event: workflow.EventCheckClosed, action: workflow.ActionSend, to: "review", plan: 1},
+		{step: "review", round: 1, member: plannerName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "correct", plan: 1},
+		{step: "correct", round: 1, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "build-fix", plan: 1},
+		{step: "build-fix", round: 2, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionRunCheck, to: "check", plan: 1},
+		{step: "check", round: 0, member: reviewerName, event: workflow.EventCheckClosed, action: workflow.ActionSend, to: "review", plan: 1},
+		{step: "review", round: 2, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "build", plan: 2},
+		{step: "build", round: 3, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionRunCheck, to: "check", plan: 2},
+		{step: "check", round: 0, member: reviewerName, event: workflow.EventCheckClosed, action: workflow.ActionSend, to: "review", plan: 2},
+		{step: "review", round: 3, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionFinish, to: "", plan: 2},
 	}
 	serverDoc, err := relevo.ChainTrace(ctx, serverRT, chainServerName)
 	if err != nil {
@@ -215,18 +219,19 @@ func TestChainServerE2E(t *testing.T) {
 	}
 	for i, step := range want {
 		got := serverDoc.Events[i]
-		if got.Seq != i+1 || got.Member != step.member || got.Event.Kind != step.event || got.Action.Kind != step.action {
-			t.Errorf("server trace row %d = seq %d member %s event %q action %q, want seq %d member %s event %q action %q",
-				i, got.Seq, got.Member, got.Event.Kind, got.Action.Kind, i+1, step.member, step.event, step.action)
+		if got.Seq != i+1 || got.Step != step.step || got.Member != step.member ||
+			got.Flow == nil || got.Flow.Kind != step.event || got.FlowAction == nil || got.FlowAction.Kind != step.action {
+			t.Errorf("server trace row %d = seq %d step %s member %s event %+v action %+v, want seq %d step %s member %s event %q action %q",
+				i, got.Seq, got.Step, got.Member, got.Flow, got.FlowAction, i+1, step.step, step.member, step.event, step.action)
 		}
-		if step.to != "" && got.Action.Member != step.to {
-			t.Errorf("server trace row %d action sends to %q, want %q", i, got.Action.Member, step.to)
+		if step.to != "" && got.FlowAction.Step != step.to {
+			t.Errorf("server trace row %d action sends to step %q, want %q", i, got.FlowAction.Step, step.to)
 		}
 	}
-	if got := serverDoc.Events[1].Event.Verdict; got != chain.VerdictChanges {
+	if got := serverDoc.Events[2].Flow.Outcomes["verdict"]; got != "changes" {
 		t.Errorf("the reviewer's first verdict = %q, want changes", got)
 	}
-	if got := serverDoc.Events[6].Event.Verdict; got != chain.VerdictPass {
+	if got := serverDoc.Events[9].Flow.Outcomes["verdict"]; got != "pass" {
 		t.Errorf("the reviewer's final verdict = %q, want pass", got)
 	}
 
@@ -394,13 +399,14 @@ func TestChainServerE2E(t *testing.T) {
 	}
 	for i, step := range want {
 		got := doc.Events[i]
-		if got.Seq != i+1 || got.Member != step.member || got.Event.Kind != step.event || got.Action.Kind != step.action {
-			t.Errorf("pulled trace row %d = seq %d member %s event %q action %q, want seq %d member %s event %q action %q",
-				i, got.Seq, got.Member, got.Event.Kind, got.Action.Kind, i+1, step.member, step.event, step.action)
+		if got.Seq != i+1 || got.Step != step.step || got.Member != step.member ||
+			got.Flow == nil || got.Flow.Kind != step.event || got.FlowAction == nil || got.FlowAction.Kind != step.action {
+			t.Errorf("pulled trace row %d = seq %d step %s member %s event %+v action %+v, want seq %d step %s member %s event %q action %q",
+				i, got.Seq, got.Step, got.Member, got.Flow, got.FlowAction, i+1, step.step, step.member, step.event, step.action)
 		}
 	}
-	if last := doc.Events[len(doc.Events)-1]; last.Action.Kind != chain.ActionFinish {
-		t.Errorf("the last pulled trace row's action = %q, want finish", last.Action.Kind)
+	if last := doc.Events[len(doc.Events)-1]; last.FlowAction.Kind != workflow.ActionFinish {
+		t.Errorf("the last pulled trace row's action = %q, want finish", last.FlowAction.Kind)
 	}
 }
 
@@ -437,14 +443,9 @@ func driveServedChain(t *testing.T, rt relevo.Runtime, runner *scriptRunner, bui
 		return
 	}
 	if isGateSpec(spec) {
-		b, err := rt.Store.Load(builder)
-		if err != nil {
-			t.Fatalf("drive: load %s: %v", builder, err)
-		}
-		if _, err := os.Stat(rt.Store.DonePath(builder, b.Round)); err != nil {
-			t.Fatalf("a gate is running but %s has no done marker for round %d", builder, b.Round)
-		}
-		runner.completeGate(t, rt.Store.GateLogPath(builder, b.Round), 0)
+		// A chain check runs as its own step, so its log is the spec's own
+		// check-log path; the run ends when the runner's exit is scripted.
+		runner.completeGate(t, spec.LogPath, 0)
 		return
 	}
 	name, b, ok := servedOpenMember(t, rt.Store, append([]string{builder}, members...)...)

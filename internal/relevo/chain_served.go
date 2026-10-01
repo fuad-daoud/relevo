@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // ServedChainRequest is what a server has to create and drive a chain for a
@@ -80,10 +81,12 @@ type servedFacts struct {
 }
 
 // ServedChainPlan is everything a served chain's read-only preflight resolved:
-// the request, the settings, the members every start names, and each member's
-// own pick. Nothing exists yet, so a refusal has nothing to undo.
+// the request, the shipped default with the wire settings on its params, the
+// settings, the members every start names, and each member's own pick. Nothing
+// exists yet, so a refusal has nothing to undo.
 type ServedChainPlan struct {
 	req      ServedChainRequest
+	def      workflow.Definition
 	settings chain.Settings
 	members  []chainMember
 	picks    map[string]servedPick
@@ -108,6 +111,10 @@ func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, 
 	settings := chainSettingsFromWire(req.Settings)
 	opts := ChainOptions{Name: req.Name, BuilderActor: req.BuilderActor, Feature: req.Feature, Ticket: req.Ticket}
 	members := chainMembersFor(opts, settings)
+	def, err := servedChainDefinition(req)
+	if err != nil {
+		return ServedChainPlan{}, err
+	}
 	if err := chainFreeNames(rt, members); err != nil {
 		return ServedChainPlan{}, err
 	}
@@ -126,19 +133,19 @@ func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, 
 		}
 		picks[m.part] = pick
 	}
-	return ServedChainPlan{req: req, settings: settings, members: members, picks: picks}, nil
+	return ServedChainPlan{req: req, def: def, settings: settings, members: members, picks: picks}, nil
 }
 
 // ServedChainCreate creates the chain a preflight resolved, all-or-none through
-// the row: it builds every member in the served shape, writes the chain row and
-// every member in one transaction, copies the plans into the chain's own
-// directory, then hands plan 1 to the builder. worktree is the builder's served
-// worktree, already cut from the base bundle by the caller.
+// the row: it builds every member in the served shape, writes the chain row
+// with the shipped default resolved onto the wire settings and the engine's
+// start state, copies the plans into the chain's own directory, then runs the
+// start actions, so plan 1 is queued for the server's admit. worktree is the
+// builder's served worktree, already cut from the base bundle by the caller.
 //
 // A failing transaction leaves neither the chain row nor any member. A failure
 // after it -- the plan copies or plan 1 -- leaves the chain started, exactly as
-// chainCreate does. Plan 1 goes through sendChainRound, so a served builder's
-// first round is queued for admit rather than started here.
+// chainCreate does.
 func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, worktree string) (ChainResult, error) {
 	req := plan.req
 	name := req.Name
@@ -170,9 +177,8 @@ func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, wo
 	// every member binding: a shared store scopes every read to its owner, so a
 	// row written with no owner is invisible to its own chain's reads.
 	row.Owner = rt.Store.Owner()
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return tx.CreateChain(row, built)
-	}); err != nil {
+	row, err = servedChainEngineCreate(ctx, rt, plan, row, built, planPaths)
+	if err != nil {
 		return ChainResult{}, err
 	}
 
@@ -180,31 +186,7 @@ func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, wo
 	if err != nil {
 		return ChainResult{}, err
 	}
-	bodies := make([][]byte, len(req.Plans))
-	for i, p := range req.Plans {
-		bodies[i] = []byte(p)
-	}
-	if err := chainCopyPlans(rt, name, bodies); err != nil {
-		return ChainResult{}, fmt.Errorf("chain %q started, but copying its plans failed: %w", name, err)
-	}
-	// Plan 1 goes through the chain's own sender, so a running chain's refusal
-	// never bites its own start. A served builder's round is queued, not
-	// started: admit runs it once a builder slot is free.
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		b, err := tx.Load(name)
-		if err != nil {
-			return err
-		}
-		body, err := rt.Store.ReadFile(rt.Store.ChainPlanPath(name, 1))
-		if err != nil {
-			return err
-		}
-		_, err = sendChainRound(ctx, rt, tx, b, string(body))
-		return err
-	}); err != nil {
-		return ChainResult{}, fmt.Errorf("chain %q started, but plan 1 could not be handed to %s: %w", name, name, err)
-	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(bodies), Check: chainBuilderCheck(stored, name)}, nil
+	return ChainResult{Chain: row, Members: stored, Plans: len(planPaths), Check: chainBuilderCheck(stored, name)}, nil
 }
 
 // servedChainMember is one chain member's binding in the served shape. The
@@ -351,6 +333,21 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 		Ticket:          c.Ticket,
 		PlanStartCommit: c.PlanStartCommit,
 		Settings:        chainSettingsToWire(state.Settings),
+	}
+	// A workflow chain's position is its engine state, so the view projects the
+	// state onto the legacy columns rather than reading the row's saved copy.
+	if len(c.WorkflowJSON) > 0 {
+		def, derr := chainWorkflowDef(c)
+		if derr != nil {
+			return remote.ChainView{}, derr
+		}
+		st, serr := chainWorkflowState(c)
+		if serr != nil {
+			return remote.ChainView{}, serr
+		}
+		f := workflow.LegacyView(def, st)
+		view.Phase, view.Step = f.Phase, f.Step
+		view.Plan, view.Plans, view.Corrections = f.Plan, f.Plans, f.Corrections
 	}
 	for _, member := range chainMembersOf(c) {
 		b, err := rt.Store.Load(member)

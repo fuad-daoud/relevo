@@ -2,16 +2,19 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // servedChainRuntime is a runtime a served chain can be created on: the chain
@@ -195,12 +198,128 @@ func TestServedChainCreateWritesTheChainAndMembersAtomically(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ServedChainPreflight: %v", err)
 		}
-		plan.req.Plans = nil
+		// A member directory that is a file refuses the row's transaction
+		// after an earlier member was prepared, so the whole create unwinds.
+		if err := os.WriteFile(rt.Store.Dir("shop-rev"), []byte("not a directory"), 0o644); err != nil {
+			t.Fatalf("plant the blocking file: %v", err)
+		}
 		if _, err := ServedChainCreate(context.Background(), rt, plan, rt.Store.WorktreePath("shop")); err == nil {
-			t.Fatal("ServedChainCreate = nil, want the invalid-row refusal")
+			t.Fatal("ServedChainCreate = nil, want the transaction refusal")
 		}
 		assertServedChainAbsent(t, rt, "shop")
 	})
+}
+
+// TestServedChainCreateMapsSettingsToDefaultParams pins the served create's
+// settings mapping: the wire settings land on the shipped default's params, so
+// the chain's stored definition is what its engine run reads.
+func TestServedChainCreateMapsSettingsToDefaultParams(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := servedChainRuntime(t)
+	req := servedChainRequest("shop")
+	req.Settings.Security = true
+	req.Settings.SecurityActor = "security"
+	req.Settings.Gate = "make test"
+	req.Settings.Regate = 3
+	servedChainStart(t, rt, req)
+
+	row := chainStoredRow(t, rt, "shop")
+	def, err := workflow.Parse(row.WorkflowJSON)
+	if err != nil {
+		t.Fatalf("parse stored workflow: %v", err)
+	}
+	for name, want := range map[string]string{
+		"reviewer": "reviewer", "planner": "lite-planner",
+		"security": "security", "gate": "make test",
+	} {
+		if got := def.Params[name].Str; got != want {
+			t.Errorf("param %s = %q, want %q", name, got, want)
+		}
+	}
+	if !def.Params["scan"].Bool {
+		t.Error("scan = false, want true")
+	}
+	if got := def.Params["regate"].Int; got != 3 {
+		t.Errorf("regate = %d, want 3", got)
+	}
+	if got := def.Params["max_corrections"].Int; got != 2 {
+		t.Errorf("max_corrections = %d, want 2", got)
+	}
+}
+
+// TestServedMemberNamesMatchClientMirror pins the member names a served create
+// writes: they are exactly the names the 8b rule gives and the names the
+// client's own mirror plans, so a resume never creates a second member for an
+// actor the chain already runs.
+func TestServedMemberNamesMatchClientMirror(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := servedChainRuntime(t)
+	req := servedChainRequest("shop")
+	req.Settings.Security = true
+	req.Settings.SecurityActor = "security"
+	servedChainStart(t, rt, req)
+
+	row := chainStoredRow(t, rt, "shop")
+	def, err := workflow.Parse(row.WorkflowJSON)
+	if err != nil {
+		t.Fatalf("parse stored workflow: %v", err)
+	}
+	planned, err := chainMemberNames("shop", def, rt.RoleRegistry().WorkflowActors())
+	if err != nil {
+		t.Fatalf("chainMemberNames: %v", err)
+	}
+	engineNames := map[string]string{}
+	for _, m := range planned {
+		engineNames[m.Name] = m.Actor
+	}
+	mirrorNames := map[string]string{}
+	for _, m := range chainMembersFor(ChainOptions{Name: "shop"}, chainSettingsFromWire(req.Settings)) {
+		mirrorNames[m.name] = m.actor
+	}
+	if !reflect.DeepEqual(engineNames, mirrorNames) {
+		t.Fatalf("engine names = %v, mirror names = %v, want them equal", engineNames, mirrorNames)
+	}
+	for name := range engineNames {
+		if _, err := rt.Store.Load(name); err != nil {
+			t.Errorf("served member %q is missing: %v", name, err)
+		}
+	}
+}
+
+// TestServedChainViewFillsLegacyFields pins the served view's vocabulary: a
+// workflow chain's phase, step, plan, plans and corrections come from the
+// engine state through workflow.LegacyView, not from the row's saved columns.
+func TestServedChainViewFillsLegacyFields(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := servedChainRuntime(t)
+	servedChainStart(t, rt, servedChainRequest("shop"))
+
+	// The row's legacy columns are overwritten so a view that read them would
+	// report the wrong position.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		row, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		row.Phase = "security"
+		row.Step = "scanning"
+		row.Plan, row.Plans, row.Corrections = 9, 9, 4
+		return tx.ChainPut(row)
+	}); err != nil {
+		t.Fatalf("overwrite the columns: %v", err)
+	}
+
+	view, err := ServedChainView(rt, "shop", func(string) string { return "" }, "")
+	if err != nil {
+		t.Fatalf("ServedChainView: %v", err)
+	}
+	if view.Phase != "build" || view.Step != "building" || view.Plan != 1 || view.Plans != 1 || view.Corrections != 0 {
+		t.Errorf("view legacy fields = %s/%s plan %d/%d corrections %d, want build/building 1/1 0",
+			view.Phase, view.Step, view.Plan, view.Plans, view.Corrections)
+	}
 }
 
 // TestServedChainReadersShareTheBuilderTree pins the shared-tree rule: every
@@ -239,17 +358,11 @@ func TestServedChainMemberSendQueues(t *testing.T) {
 		rt, _, fr := servedChainRuntime(t)
 		servedChainStart(t, rt, servedChainRequest("shop"))
 
-		builder := chainBinding(t, rt, "shop")
-		ev := chain.Event{
-			Kind: chain.EventBuilderClosed, Member: chain.MemberBuilder, Round: 1,
-			Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
-		}
-		if err := rt.Store.WithLock(func(tx *store.Tx) error {
-			_, err := chainApply(context.Background(), rt, tx, builder, ev, nil, nil)
-			return err
-		}); err != nil {
-			t.Fatalf("chainApply: %v", err)
-		}
+		// The builder's close routes build -> check (empty, so green with no
+		// run) -> review, which queues the served reviewer's round.
+		flowAdvance(t, rt, workflow.Event{
+			Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done",
+		})
 
 		rev := chainBinding(t, rt, "shop-rev")
 		if rev.QueuedAt.IsZero() {
@@ -333,29 +446,15 @@ func TestServedChainEndQueuesNoDelivery(t *testing.T) {
 		rt, _, _ := servedChainRuntime(t)
 		servedChainStart(t, rt, servedChainRequest("shop"))
 
-		builder := chainBinding(t, rt, "shop")
-		builderEv := chain.Event{
-			Kind: chain.EventBuilderClosed, Member: chain.MemberBuilder, Round: 1,
-			Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
-		}
-		if err := rt.Store.WithLock(func(tx *store.Tx) error {
-			_, err := chainApply(context.Background(), rt, tx, builder, builderEv, nil, nil)
-			return err
-		}); err != nil {
-			t.Fatalf("builder chainApply: %v", err)
-		}
-
-		rev := chainBinding(t, rt, "shop-rev")
-		revEv := chain.Event{
-			Kind: chain.EventReviewerClosed, Member: chain.MemberReviewer, Round: 1,
-			Verdict: chain.VerdictPass,
-		}
-		if err := rt.Store.WithLock(func(tx *store.Tx) error {
-			_, err := chainApply(context.Background(), rt, tx, rev, revEv, nil, nil)
-			return err
-		}); err != nil {
-			t.Fatalf("reviewer chainApply: %v", err)
-		}
+		// The builder's close routes build -> check (empty, so green) ->
+		// review, and the reviewer's pass exhausts the one plan and finishes.
+		flowAdvance(t, rt, workflow.Event{
+			Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done",
+		})
+		flowAdvance(t, rt, workflow.Event{
+			Kind: workflow.EventStepClosed, Step: "review", Member: "reviewer", Round: 1, Status: "done",
+			Outcomes: map[string]string{"verdict": "pass"},
+		})
 
 		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusDone) {
 			t.Errorf("chain status = %q, want done", row.Status)
@@ -408,6 +507,16 @@ func TestServedChainResumeCreatesAServedSecurityMember(t *testing.T) {
 			return err
 		}
 		row.Status = string(chain.StatusHalted)
+		var st workflow.State
+		if err := json.Unmarshal(row.StateJSON, &st); err != nil {
+			return err
+		}
+		st.Status = workflow.StatusHalted
+		stateJSON, err := json.Marshal(st)
+		if err != nil {
+			return err
+		}
+		row.StateJSON = stateJSON
 		return tx.ChainPut(row)
 	}); err != nil {
 		t.Fatalf("halt the chain: %v", err)

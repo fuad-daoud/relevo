@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainPullRuntime is a chain runtime whose remote is the given fake and whose
@@ -572,6 +574,47 @@ func TestChainPullSkipsTheBindingCatchUp(t *testing.T) {
 	}
 	if !store.SameBinding(next, b) {
 		t.Errorf("reconcileRemote changed the mirror: %+v -> %+v", b, next)
+	}
+}
+
+// TestChainPullSetsStateFromView pins the mirror's engine state: the pull
+// stores the shipped default and the engine state the server's legacy columns
+// describe, through workflow.FromLegacy, so the mirror's read surfaces see the
+// position the server drove.
+func TestChainPullSetsStateFromView(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 0, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	view := fr.getChainResp
+	view.Phase = string(chain.PhaseBuild)
+	view.Step = string(chain.StepReviewing)
+	view.Plan, view.Plans, view.Corrections = 2, 2, 1
+	view.AwaitingMember = chain.MemberReviewer
+	view.AwaitingRound = 2
+	fr.getChainResp = view
+
+	pullRounds(t, rt, "shop")
+
+	row := chainStoredRow(t, rt, "shop")
+	if len(row.WorkflowJSON) == 0 || len(row.StateJSON) == 0 {
+		t.Fatalf("mirror row carries workflow %d state %d bytes, want both", len(row.WorkflowJSON), len(row.StateJSON))
+	}
+	def, err := workflow.Parse(row.WorkflowJSON)
+	if err != nil {
+		t.Fatalf("parse the stored workflow: %v", err)
+	}
+	if def.Name != workflow.Default().Name {
+		t.Errorf("stored workflow name = %q, want the shipped default", def.Name)
+	}
+	var st workflow.State
+	if err := json.Unmarshal(row.StateJSON, &st); err != nil {
+		t.Fatalf("decode the stored state: %v", err)
+	}
+	if st.At != "review" || st.Iter["plans"].Index != 1 {
+		t.Errorf("state = at %q plan index %d, want review and 1", st.At, st.Iter["plans"].Index)
 	}
 }
 

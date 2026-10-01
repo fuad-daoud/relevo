@@ -337,6 +337,11 @@ func chainResumeAddMembers(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 	if err != nil {
 		return c, fmt.Errorf("chain %s has no builder member to place the new members beside: %w", c.Name, err)
 	}
+	// A served chain's new member is built in the served shape, the server
+	// picking its own candidate and tier, exactly as the start built the others.
+	if builder.Owner != "" {
+		return servedChainAddMembers(rt, tx, c, builder, add, len(rows))
+	}
 	set, err := resumeSettings(rt, c, ResumeOptions{})
 	if err != nil {
 		return c, err
