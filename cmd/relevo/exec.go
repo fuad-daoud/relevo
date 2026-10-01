@@ -6,14 +6,32 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
+
+	"github.com/fuad-daoud/relevo/internal/proc"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // binExec is usage.Exec over the real PATH. Stderr rides on the error so
 // the reader can quote its first line.
-type binExec struct{}
+//
+// It optionally runs the child as a tenant (credential) with the tenant's
+// environment (deny/extra, from isolate.UserSpec's rule), which is how a
+// user-mode server's session reaper deletes a session as the tenant.
+type binExec struct {
+	credential *spawn.Credential
+	deny       []string
+	extra      []string
+}
 
-func (binExec) Run(ctx context.Context, bin string, args ...string) ([]byte, error) {
+func (e binExec) Run(ctx context.Context, bin string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
+	if len(e.deny) > 0 || len(e.extra) > 0 {
+		cmd.Env = proc.ChildEnv(os.Environ(), e.deny, e.extra)
+	}
+	if e.credential != nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: e.credential.UID, Gid: e.credential.GID}}
+	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

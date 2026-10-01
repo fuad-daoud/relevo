@@ -76,7 +76,10 @@ type Git interface {
 	// RefOnRemote is the ref cleanup's safety check (nothing unpushed is deleted).
 	RefOnRemote(ctx context.Context, dir, ref string) (bool, error)
 	CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error)
-	// CommitAll stages the whole working tree (git add -A) and commits it
+	// InitBare initializes a bare repository at path; an existing bare repo is
+	// left as it is. It is on the runtime so a user-mode server creates the
+	// owner's bare repo through the owner's credentialed git client.
+	InitBare(ctx context.Context, path string) error // CommitAll stages the whole working tree (git add -A) and commits it
 	// with relevo's fixed identity, returning the new HEAD sha, or ("", nil)
 	// when there was nothing to commit (#137).
 	CommitAll(ctx context.Context, dir, message string) (string, error)

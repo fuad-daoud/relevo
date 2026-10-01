@@ -27,6 +27,10 @@ const (
 	MaxAgentNameLen = 32
 	bindingFileMode = 0o644
 	bindingDirMode  = 0o755
+	// scratchDirMode is the mode of a binding's .worktrees/.scratch directory,
+	// the parent of a reader's throwaway worktree. It is tenant-owned in user
+	// mode, so it is owner-only.
+	scratchDirMode = 0o700
 	// StateRootMode is the state root's own mode: owner-only, because the root
 	// holds the database and every binding's files. MkdirAll never chmods, so a
 	// root that already exists keeps whatever mode it has.
@@ -71,6 +75,12 @@ type Store struct {
 	// store, which opens <root>/relevo.db lazily.
 	shared *db.DB
 
+	// tenantChown, when set, is called with each directory the store creates
+	// that lives under a tenant-owned root (out/ and .worktrees/.scratch), so a
+	// user-mode server hands ownership to the tenant. Nil in none mode leaves
+	// the created directory owned by the serve uid, exactly as today.
+	tenantChown func(string) error
+
 	mu sync.Mutex
 
 	// The database at <root>/relevo.db holds the bindings, their logs and the
@@ -104,6 +114,22 @@ func NewShared(root, owner string, d *db.DB) *Store {
 // a shared one. Callers that write a row the store itself scopes -- a chain row,
 // which no prepareSave stamps -- carry it so the row stays readable.
 func (s *Store) Owner() string { return s.owner }
+
+// SetTenantChown installs the chown callback the store calls with each
+// directory it creates under a tenant-owned root. The server sets it per
+// resolution in user mode; a nil callback (the default, and every none-mode
+// store) leaves ownership alone. The callback is the seam that keeps internal/
+// serve's tenant layout out of this package.
+func (s *Store) SetTenantChown(fn func(string) error) { s.tenantChown = fn }
+
+// chownCreated hands a just-created directory to the tenant, or leaves it alone
+// when no callback is installed.
+func (s *Store) chownCreated(path string) error {
+	if s.tenantChown == nil {
+		return nil
+	}
+	return s.tenantChown(path)
+}
 
 // maxLog is the binding log's entry cap: logCap when a test set one, else the
 // package default.

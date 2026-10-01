@@ -119,7 +119,7 @@ func prepareScratchPath(ctx context.Context, rt Runtime, b store.Binding, round 
 		}
 	}
 
-	if err := os.MkdirAll(rt.Store.ScratchWorktreeDir(), 0o755); err != nil {
+	if err := rt.Store.EnsureScratchDir(); err != nil {
 		return "", fmt.Errorf("%w: leftover: %w", ErrScratch, err)
 	}
 	return path, nil

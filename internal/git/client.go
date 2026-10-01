@@ -55,11 +55,41 @@ func NewClient(bin string, timeout time.Duration, maxPatchBytes int) *Client {
 // '.../index.lock'". Commands that must write the index still take their
 // mandatory lock, so it is safe everywhere. extra comes last, so a caller can
 // override it.
-func gitEnv(extra ...string) []string {
-	env := make([]string, 0, len(os.Environ())+1+len(extra))
-	env = append(env, os.Environ()...)
+//
+// deny names variables removed from parent before extra is appended: a
+// credentialed client passes its own tenant names so the daemon's HOME/USER/
+// LOGNAME cannot survive beside the tenant's, which would leave the lookup to
+// duplicate-name semantics (undefined by POSIX).
+func gitEnv(parent, deny []string, extra []string) []string {
+	if len(deny) > 0 {
+		denied := make(map[string]struct{}, len(deny))
+		for _, d := range deny {
+			denied[d] = struct{}{}
+		}
+		kept := parent[:0:0]
+		for _, e := range parent {
+			name, _, _ := strings.Cut(e, "=")
+			if _, ok := denied[name]; ok {
+				continue
+			}
+			kept = append(kept, e)
+		}
+		parent = kept
+	}
+	env := make([]string, 0, len(parent)+1+len(extra))
+	env = append(env, parent...)
 	env = append(env, "GIT_OPTIONAL_LOCKS=0")
 	return append(env, extra...)
+}
+
+// envNames returns the variable names an environment slice sets, in order.
+func envNames(env []string) []string {
+	names := make([]string, 0, len(env))
+	for _, e := range env {
+		name, _, _ := strings.Cut(e, "=")
+		names = append(names, name)
+	}
+	return names
 }
 
 // WithCredential returns a copy of c whose every git child runs as uid/gid with
@@ -81,7 +111,9 @@ func (c *Client) command(ctx context.Context, dir string, env []string, args ...
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	cmd.Dir = dir
 	extra := append(append([]string(nil), c.gitEnvExtra...), env...)
-	cmd.Env = gitEnv(extra...)
+	// Deny the inherited copies of every name the tenant env sets, so the
+	// tenant's HOME/USER/LOGNAME are the only ones the git child sees.
+	cmd.Env = gitEnv(os.Environ(), envNames(c.gitEnvExtra), extra)
 	if c.credential != nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: c.credential}
 	}

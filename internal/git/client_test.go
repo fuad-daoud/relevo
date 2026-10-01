@@ -45,6 +45,38 @@ func TestCommandAppliesCredential(t *testing.T) {
 	}
 }
 
+// TestCommandEnvCarriesOneHome pins the review fix: a credentialed client's git
+// child sees exactly one HOME, the tenant's, even when the daemon's own HOME is
+// in the inherited environment. A reader that takes the first match must never
+// see the daemon's home.
+func TestCommandEnvCarriesOneHome(t *testing.T) {
+	t.Setenv("HOME", "/home/daemon")
+	t.Setenv("USER", "daemon")
+	t.Setenv("LOGNAME", "daemon")
+
+	base := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	tenant := base.WithCredential(1001, 1002, []string{"HOME=/home/alice", "USER=alice", "LOGNAME=alice"})
+	cmd := tenant.command(context.Background(), "/round", nil, "status")
+
+	for _, name := range []string{"HOME", "USER", "LOGNAME"} {
+		var got []string
+		for _, e := range cmd.Env {
+			if strings.HasPrefix(e, name+"=") {
+				got = append(got, e)
+			}
+		}
+		if len(got) != 1 {
+			t.Errorf("%s entries = %v, want exactly one", name, got)
+		}
+	}
+	if !slices.Contains(cmd.Env, "HOME=/home/alice") {
+		t.Errorf("child env = %v, want the tenant HOME", cmd.Env)
+	}
+	if slices.Contains(cmd.Env, "HOME=/home/daemon") {
+		t.Errorf("child env kept the daemon HOME: %v", cmd.Env)
+	}
+}
+
 // TestDiffPatchUsesCommand pins that diffPatch builds its child through the
 // shared command: the client's extra env reaches the git process, so a
 // user-mode diff runs with the tenant's home.

@@ -680,3 +680,40 @@ func TestServeRunRefusesUnavailableIsolation(t *testing.T) {
 		t.Fatal("relevo serve did not refuse isolation=user within 10s; it may have started a daemon")
 	}
 }
+
+// TestServeRunRefusesUserModeWithoutRoot pins step 8's rule at the command: a
+// configured serve.isolation=user with a non-root euid is refused with
+// not_available naming root, before any side effect. Skipped when the test runs
+// as root, where user mode is permitted and the daemon would start.
+func TestServeRunRefusesUserModeWithoutRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: user mode is permitted")
+	}
+	stateHome := t.TempDir()
+	configHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	policyDir := filepath.Join(configHome, "relevo")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir policy dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "policy.json"), []byte(`{"serve":{"isolation":"user"}}`), 0o644); err != nil {
+		t.Fatalf("write policy.json: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- run([]string{"serve", "--listen", "127.0.0.1:0", "--insecure-http"})
+	}()
+
+	select {
+	case err := <-done:
+		ce := requireCLIError(t, err, codeNotAvailable, "")
+		if !strings.Contains(ce.message, "requires root") {
+			t.Errorf("message = %q, want it to say root is required", ce.message)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("relevo serve did not refuse isolation=user within 10s; it may have started a daemon")
+	}
+}

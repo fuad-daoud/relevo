@@ -207,6 +207,11 @@ func TestUserSpec(t *testing.T) {
 				t.Errorf("DenyEnv = %v, want it to name %s", got.DenyEnv, name)
 			}
 		}
+		for _, name := range TenantIdentityVars {
+			if !slices.Contains(got.DenyEnv, name) {
+				t.Errorf("DenyEnv = %v, want it to deny %s", got.DenyEnv, name)
+			}
+		}
 	})
 
 	t.Run("shared logins keep the account home", func(t *testing.T) {

@@ -6,13 +6,53 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/isolate"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/serve"
 )
+
+// tenantEUID reports the effective uid the user-mode isolation row checks. It
+// is a var so a test can pin root or a non-root euid.
+var tenantEUID = os.Geteuid
+
+// tenantLookup resolves a login name to its uid and primary gid. It is a var so
+// the user-mode row is testable without the host's real account database.
+var tenantLookup = func(name string) (uid, gid uint32, err error) {
+	u, err := user.Lookup(name)
+	if err != nil {
+		return 0, 0, err
+	}
+	uid64, err := strconv.ParseUint(u.Uid, 10, 32)
+	if err != nil {
+		return 0, 0, err
+	}
+	gid64, err := strconv.ParseUint(u.Gid, 10, 32)
+	if err != nil {
+		return 0, 0, err
+	}
+	return uint32(uid64), uint32(gid64), nil
+}
+
+// tenantStat reads a path's owner, group and permission bits. It is a var so
+// the owner-root check is testable without real chowns.
+var tenantStat = func(path string) (uid, gid uint32, mode os.FileMode, err error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	sys, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, fi.Mode().Perm(), nil
+	}
+	return sys.Uid, sys.Gid, fi.Mode().Perm(), nil
+}
 
 // ServeChecks evaluates the health of a relevo serve installation. It runs
 // when the machine database holds the serve.tls.key secret: the certificate
@@ -22,8 +62,9 @@ import (
 // show on a box started with a non-default --state.
 //
 // isolation is the raw serve.isolation policy value; the isolation row parses
-// it, so a hand-built unknown reads as a failure.
-func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time, isolation string) []Check {
+// it, so a hand-built unknown reads as a failure. sharedLogins is the parsed
+// serve.isolation_shared_logins value: the user-mode row warns when it is on.
+func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time, isolation string, sharedLogins bool) []Check {
 	if d == nil {
 		return nil
 	}
@@ -39,7 +80,7 @@ func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time, isolation s
 	return []Check{
 		serveCertificateCheck(d, now),
 		serveClientsCheck(d),
-		serveIsolationCheck(d, isolation),
+		serveIsolationCheck(d, root, isolation, sharedLogins),
 		serveStateCheck(env, root),
 	}
 }
@@ -105,44 +146,63 @@ func serveClientsCheck(d *db.DB) Check {
 	return c
 }
 
-// serveClientCount reads the serve.clients registry and reports the number of
-// active (non-revoked) clients, whether the row was present at all, and any
-// read or parse error. A malformed row is an error, so a broken registry can
-// never read as a clean zero.
-func serveClientCount(d *db.DB) (active int, present bool, err error) {
+// doctorClient is the slice of an enrolled client the doctor reads: enough to
+// count actives and to check a user-mode owner's declared user and owner root.
+type doctorClient struct {
+	ID        string    `json:"id"`
+	Label     string    `json:"label"`
+	RevokedAt time.Time `json:"revoked_at,omitempty"`
+	UnixUser  string    `json:"unix_user,omitempty"`
+}
+
+// serveActiveClients reads the serve.clients registry and returns its active
+// (non-revoked) entries, whether the row was present at all, and any read or
+// parse error.
+func serveActiveClients(d *db.DB) (clients []doctorClient, present bool, err error) {
 	raw, ok, err := d.KVGet("serve.clients")
 	if err != nil {
-		return 0, false, err
+		return nil, false, err
 	}
 	if !ok {
-		return 0, false, nil
+		return nil, false, nil
 	}
-	var list []struct {
-		ID        string    `json:"id"`
-		RevokedAt time.Time `json:"revoked_at,omitempty"`
-	}
+	var list []doctorClient
 	if err := json.Unmarshal(raw, &list); err != nil {
-		return 0, true, err
+		return nil, true, err
 	}
 	for _, cl := range list {
 		if cl.RevokedAt.IsZero() {
-			active++
+			clients = append(clients, cl)
 		}
 	}
-	return active, true, nil
+	return clients, true, nil
+}
+
+// serveClientCount reports the number of active (non-revoked) clients, whether
+// the row was present at all, and any read or parse error. A malformed row is
+// an error, so a broken registry can never read as a clean zero.
+func serveClientCount(d *db.DB) (active int, present bool, err error) {
+	clients, present, err := serveActiveClients(d)
+	if err != nil {
+		return 0, present, err
+	}
+	return len(clients), present, nil
 }
 
 // serveIsolationCheck is the serve isolation row. It parses the raw policy
 // value and reports:
 //
 //   - none with at most one active client: OK, Detail "none".
-//   - none with two or more: Warn, naming the count and the shared unix user;
-//     no Fix, because enabling a mode is not a pasteable command in slice A.
-//   - user or container: Fail with Available's sentence and the config Fix.
+//   - none with two or more: Warn, naming the count and the shared unix user.
+//   - user: Fail with the first unmet prerequisite -- not root, an active
+//     client with no unix_user, a user missing on this host, or an owner root
+//     with the wrong owner, group or mode -- and otherwise OK (or Warn when
+//     shared logins are on), Detail "scopes=off (isolation=user)".
+//   - container: Fail with Available's sentence and the config Fix.
 //   - an unknown value: Fail naming serve.isolation.
 //   - an unreadable or unparseable serve.clients row: Fail, so a broken
 //     registry can never read as a clean none.
-func serveIsolationCheck(d *db.DB, raw string) Check {
+func serveIsolationCheck(d *db.DB, root, raw string, sharedLogins bool) Check {
 	c := Check{Group: "serve", Name: "isolation"}
 	const fix = `relevo config set policy.serve '{"isolation":"none"}'`
 
@@ -155,29 +215,87 @@ func serveIsolationCheck(d *db.DB, raw string) Check {
 		c.Severity, c.Detail, c.Fix = SevFail, err.Error(), fix
 		return c
 	}
-	// User mode needs root to switch builders to the tenant identity; without
-	// it every served round would refuse. The remaining user-mode prerequisites
-	// (a declared unix_user, a user that exists, the owner root's ownership and
-	// mode) are checked in a later slice.
-	if mode == isolate.ModeUser {
-		if err := isolate.CheckPrivilege(mode, os.Geteuid()); err != nil {
-			c.Severity, c.Detail, c.Fix = SevFail, err.Error(), fix
-			return c
-		}
-	}
 
-	active, _, err := serveClientCount(d)
+	clients, _, err := serveActiveClients(d)
 	if err != nil {
 		c.Severity, c.Detail, c.Fix = SevFail, "serve.clients unreadable", "fix the serve.clients row in the database"
 		return c
 	}
-	if active <= 1 {
+
+	if mode == isolate.ModeUser {
+		return serveUserIsolationCheck(c, root, clients, sharedLogins, fix)
+	}
+
+	if len(clients) <= 1 {
 		c.Severity, c.Detail = SevOK, "none"
 		return c
 	}
 	c.Severity = SevWarn
-	c.Detail = fmt.Sprintf("%d active clients share one unix user", active)
+	c.Detail = fmt.Sprintf("%d active clients share one unix user", len(clients))
 	return c
+}
+
+// serveUserIsolationCheck is the user-mode half of the isolation row. It fails
+// with a fix on the first unmet prerequisite and otherwise reports the
+// scopes-off detail, warning when shared logins are on.
+func serveUserIsolationCheck(c Check, root string, clients []doctorClient, sharedLogins bool, fix string) Check {
+	fail := func(detail, fixLine string) Check {
+		c.Severity, c.Detail, c.Fix = SevFail, detail, fixLine
+		return c
+	}
+
+	if err := isolate.CheckPrivilege(isolate.ModeUser, tenantEUID()); err != nil {
+		return fail(err.Error(), fix)
+	}
+	for _, cl := range clients {
+		if cl.UnixUser == "" {
+			return fail(
+				fmt.Sprintf("client %s has no unix user declared", cl.Label),
+				fmt.Sprintf("relevo serve enroll --label %s --key <line> --user <user>", cl.Label))
+		}
+		uid, gid, err := tenantLookup(cl.UnixUser)
+		if err != nil {
+			return fail(
+				fmt.Sprintf("unix user %q is not on this host", cl.UnixUser),
+				fmt.Sprintf("useradd --create-home %s", cl.UnixUser))
+		}
+		if line, bad := ownerRootMismatch(root, cl.ID, uid, gid); bad {
+			return fail(line, "")
+		}
+	}
+
+	c.Severity = SevOK
+	c.Detail = "scopes=off (isolation=user)"
+	if sharedLogins {
+		c.Severity = SevWarn
+		c.Detail += "; shared logins on"
+	}
+	return c
+}
+
+// ownerRootMismatch checks one owner's bindings/<hex> directory against the
+// approved layout -- root-owned, group the tenant's primary gid, mode 0710. A
+// missing root is not a mismatch: the create has not run yet. bad is true with
+// the exact chown/chmod line when the owner, group or mode is wrong.
+func ownerRootMismatch(root, id string, uid, gid uint32) (string, bool) {
+	dir, ok := remote.ClientID(id).Dir()
+	if !ok {
+		// A hand-written id the server would refuse; the create refuses it too.
+		return "", false
+	}
+	path := filepath.Join(root, "bindings", dir)
+	gotUID, gotGID, mode, err := tenantStat(path)
+	if err != nil {
+		return "", false
+	}
+	_ = uid
+	if mode != 0o710 {
+		return fmt.Sprintf("%s has mode %04o, want 0710: run `chmod 0710 %s`", path, mode, path), true
+	}
+	if gotGID != gid || gotUID != 0 {
+		return fmt.Sprintf("%s is owned by %d:%d, want root:%d: run `chown root:%d %s`", path, gotUID, gotGID, gid, gid, path), true
+	}
+	return "", false
 }
 
 func serveStateCheck(env Env, root string) Check {

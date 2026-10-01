@@ -70,6 +70,18 @@ type Config struct {
 	// SessionReaper deletes harness sessions a served round abandoned; nil
 	// means the deletes are skipped and the entries stay on the binding.
 	SessionReaper relevo.SessionDeleter
+	// LookupUser resolves an owner's declared unix_user to a tenant. It is
+	// required in user mode; os/user.Lookup is the production value, and tests
+	// inject a fake so setup stays pure.
+	LookupUser func(string) (isolate.Tenant, error)
+	// SharedLogins keeps the server's account-home entries in a user-mode
+	// round's environment instead of stripping them, from
+	// serve.isolation_shared_logins.
+	SharedLogins bool
+	// ReaperFor builds the session reaper for one tenant, so a user-mode
+	// server's deletes run as the tenant. Nil keeps SessionReaper for every
+	// owner.
+	ReaperFor func(isolate.Tenant) relevo.SessionDeleter
 	// Installation is this server's own identity: its id is the origin of
 	// every row the server writes and the id WhoAmI advertises, and its label
 	// lets a client show a name for the machine. The zero value serves
@@ -110,6 +122,30 @@ type Server struct {
 // database and every binding's files, and MkdirAll never chmods an existing one.
 func EnsureStateRoot(root string) error {
 	return os.MkdirAll(filepath.Join(root, "bindings"), store.StateRootMode)
+}
+
+// UserModeRoot is where a user-mode server keeps its state when --state is
+// unset: a fixed, root-owned directory outside any tenant's home, so the daemon
+// and its tenants agree on one location regardless of whose HOME the daemon was
+// started with.
+const UserModeRoot = "/var/lib/relevo"
+
+// EnsureUserModeRoot creates the user-mode serve root and its bindings/, repos/
+// and tmp/ children with the 0711 modes a tenant needs to traverse them. It is
+// idempotent, and refuses a symlink or a non-directory where one of them should
+// be.
+func EnsureUserModeRoot(root string) error {
+	for _, d := range []string{
+		root,
+		filepath.Join(root, "bindings"),
+		filepath.Join(root, "repos"),
+		filepath.Join(root, "tmp"),
+	} {
+		if err := ensureRootDir(d, serveRootMode); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func New(cfg Config) (*Server, error) {
@@ -265,10 +301,11 @@ func (s *Server) runtime(id remote.ClientID) (relevo.Runtime, error) {
 
 func (s *Server) runtimeAt(root string) relevo.Runtime {
 	st := s.ownerStore(root)
-	return relevo.Runtime{
+	rt := relevo.Runtime{
 		Git:        s.cfg.Git,
 		Runner:     s.cfg.Runner,
 		Store:      st,
+		Transport:  s.transport,
 		Candidates: s.cfg.Candidates,
 		Accounts:   s.cfg.Accounts,
 		Policy:     s.cfg.Policy,
@@ -286,6 +323,37 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		// runs the harness binary, which is the same for every owner.
 		SessionReaper: s.cfg.SessionReaper,
 	}
+	if s.cfg.Isolation == isolate.ModeUser {
+		s.applyTenant(root, st, &rt)
+	}
+	return rt
+}
+
+// applyTenant rewires rt for one user-mode owner: the boundary refuses when the
+// tenant could not be resolved, and otherwise every process the owner starts --
+// rounds, gates, consults, owner-path git and the session reaper -- runs as the
+// tenant, with the tenant's own environment and a per-owner bundle transport.
+// ensureTenantRoots runs on every resolution because the daemon's prunes remove
+// empty tenant directories.
+func (s *Server) applyTenant(root string, st *store.Store, rt *relevo.Runtime) {
+	owner := ownerIDOf(root)
+	t, err := s.tenantFor(owner)
+	if b, ok := s.cfg.Runner.(isolate.Boundary); ok {
+		rt.Runner = b.ForTenant(t, err)
+	}
+	if t == nil {
+		st.SetTenantChown(nil)
+		return
+	}
+	gc := s.cfg.Git.WithCredential(t.UID, t.GID, tenantEnv(*t))
+	rt.Git = gc
+	if s.cfg.ReaperFor != nil {
+		rt.SessionReaper = s.cfg.ReaperFor(*t)
+	}
+	rt.Transport = s.ownerTransport(root, *t, gc)
+	st.SetTenantChown(func(path string) error {
+		return os.Lchown(path, int(t.UID), int(t.GID))
+	})
 }
 
 // heldCPUs is the server's cross-owner core census, injected as

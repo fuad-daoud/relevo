@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/installation"
+	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -247,31 +248,6 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, reg *roles.R
 	}
 }
 
-// scopeFromPolicy is the systemd scope template a served round launches
-// under, from an already-resolved policy scope block (#244, #216, #295).
-// nil turns scopes off: sc.Enabled explicitly false. Otherwise (no block,
-// or one present but silent on Enabled) scopes are on by default, with
-// CPUWeight defaulting to 100 and every other field passed through as
-// given (its own zero value means "omit" to ScopeArgv).
-func scopeFromPolicy(sc *policy.ScopePolicy) *spawn.ScopeSpec {
-	if sc != nil && sc.Enabled != nil && !*sc.Enabled {
-		return nil
-	}
-	spec := &spawn.ScopeSpec{CPUWeight: 100}
-	if sc != nil {
-		spec.Slice = sc.Slice
-		if sc.CPUWeight != 0 {
-			spec.CPUWeight = sc.CPUWeight
-		}
-		spec.MemoryMax = sc.MemoryMax
-		spec.CPUQuota = sc.CPUQuota
-		spec.GateCPUQuota = sc.GateCPUQuota
-		spec.AllowedCPUs = sc.AllowedCPUs
-		spec.TasksMax = sc.TasksMax
-	}
-	return spec
-}
-
 // scopeStatusText is the startup line's scopes word for a resolved spec:
 // "on (slice relevo.slice, 200%)", "on (200%)", "on (slice relevo.slice)",
 // "on", or "off" for nil (#285, #295). A spec carrying a gate quota (#313)
@@ -435,6 +411,13 @@ func cmdServeRun(args []string) error {
 	if err != nil {
 		return fail(codeNotAvailable, "%v", err)
 	}
+	userMode := isoMode == isolate.ModeUser
+	// A user-mode server keeps its state in one fixed root-owned place when
+	// --state is unset, so the daemon and its tenants agree on it regardless of
+	// whose HOME the daemon was started with.
+	if userMode && fs.Lookup("state").Value.String() == "" {
+		root = serve.UserModeRoot
+	}
 
 	// The server's own installation: its rows carry its id as their origin,
 	// and WhoAmI advertises it so a client can link its row to this server's
@@ -493,7 +476,12 @@ func cmdServeRun(args []string) error {
 	// refuses, scopes are off for the daemon's lifetime with one log line.
 	scopesStatus := "off"
 	scope := scopeFromPolicy(pol.ScopeFor(true))
-	if scope != nil {
+	if userMode {
+		// User mode runs scopes off: systemd-run --user would target root's
+		// own user manager, not the tenant's (plan §0.2). The cap still applies.
+		scope = nil
+		scopesStatus = "off (isolation=user)"
+	} else if scope != nil {
 		if err := proc.ProbeScopes(context.Background(), scope.Slice); err != nil {
 			slog.Warn("scopes unavailable; builders will run in the daemon's cgroup", "err", err)
 			scope = nil
@@ -530,6 +518,9 @@ func cmdServeRun(args []string) error {
 		Isolation:      isoMode,
 		IsolationImage: L.Policy.ServeIsolationImage(),
 		SessionReaper:  relevo.NewSessionReaper(binExec{}),
+		LookupUser:     lookupUnixUser,
+		SharedLogins:   L.Policy.ServeIsolationSharedLogins(),
+		ReaperFor:      userReaperFor(L.Policy.ServeIsolationSharedLogins()),
 		Installation:   inst,
 		Audiences:      audiences,
 	}

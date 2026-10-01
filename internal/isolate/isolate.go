@@ -105,16 +105,25 @@ var InheritedHomeVars = append([]string{
 	"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
 }, AccountHomeVars...)
 
+// TenantIdentityVars names the login identity a user-mode round must carry
+// exactly once: HOME, USER and LOGNAME. UserSpec appends the tenant's copies
+// last and denies the inherited names, so a reader that takes the first match
+// can never see the daemon's home or login. The deny entries exist only on
+// user-mode specs, so a none-mode spec stays byte-identical.
+var TenantIdentityVars = []string{"HOME", "USER", "LOGNAME"}
+
 // UserSpec translates spec into the spec a user-mode round runs as t: the
 // tenant credential, the tenant's HOME/USER/LOGNAME appended last (so the
 // later entry wins over any inherited one), the inherited home variables
-// denied, and no scope (user mode runs scopes off). When sharedLogins is
-// false, an account-home entry the caller added is removed too; when true it
-// is kept, and the doctor warns about the sharing.
+// denied, the identity names denied so exactly one HOME/USER/LOGNAME survives,
+// and no scope (user mode runs scopes off). When sharedLogins is false, an
+// account-home entry the caller added is removed too; when true it is kept,
+// and the doctor warns about the sharing.
 func UserSpec(spec spawn.ProcSpec, t Tenant, sharedLogins bool) spawn.ProcSpec {
 	spec.Credential = &spawn.Credential{UID: t.UID, GID: t.GID}
 	spec.Scope = nil
 	spec.DenyEnv = append(slices.Clone(spec.DenyEnv), InheritedHomeVars...)
+	spec.DenyEnv = append(spec.DenyEnv, TenantIdentityVars...)
 
 	env := spec.Env
 	if !sharedLogins {

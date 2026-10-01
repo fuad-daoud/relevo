@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/serve"
@@ -48,15 +49,30 @@ func cmdServeInitRun(args []string) error {
 		return err
 	}
 
-	if err := serve.EnsureStateRoot(root); err != nil {
-		return err
-	}
-
 	d, _, err := openMachineDB()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = d.Close() }()
+
+	// A user-mode server keeps its state at the fixed root-owned directory and
+	// needs the traversable 0711 modes; every other mode keeps the owner-only
+	// state root it always had.
+	L, err := loadConfig(d)
+	if err != nil {
+		return err
+	}
+	if m, perr := isolate.Parse(L.Policy.ServeIsolation()); perr == nil && m == isolate.ModeUser {
+		if fs.Lookup("state").Value.String() == "" {
+			root = serve.UserModeRoot
+		}
+		if err := serve.EnsureUserModeRoot(root); err != nil {
+			return err
+		}
+	} else if err := serve.EnsureStateRoot(root); err != nil {
+		return err
+	}
+
 	secrets := serve.SecretStore{DB: d}
 
 	fp, err := serve.InitTLS(secrets, *v.hosts, time.Now())

@@ -45,7 +45,7 @@ func (s *Store) EnsureOutDir(name string) error {
 	if err := os.MkdirAll(dir, bindingDirMode); err != nil {
 		return err
 	}
-	return nil
+	return s.chownCreated(dir)
 }
 
 // runnerOutputExists reports whether the exact runner-output path exists either
