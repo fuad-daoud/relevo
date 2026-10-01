@@ -81,13 +81,13 @@ func candFixtureDoc(t *testing.T) relevo.ConfigDoc {
 	return doc
 }
 
-// candFixtureDocWithDocumentor is candFixtureDoc plus the scoped documentor
+// candFixtureDocWithLibrarian is candFixtureDoc plus the scoped librarian
 // writer, for the scope-line golden: the seeded actor's docs-only scope.
-func candFixtureDocWithDocumentor(t *testing.T) relevo.ConfigDoc {
+func candFixtureDocWithLibrarian(t *testing.T) relevo.ConfigDoc {
 	t.Helper()
 	doc := candFixtureDoc(t)
-	doc.Actors["documentor"] = roles.Actor{
-		Agent:      "documentor",
+	doc.Actors["librarian"] = roles.Actor{
+		Agent:      "librarian",
 		Candidates: []roles.Entry{{Candidate: "sonnet"}},
 		Tier:       "yolo",
 		Scope:      &pathscope.Scope{Paths: []string{"@docs"}, Comments: true},

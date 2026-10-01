@@ -17,7 +17,7 @@ type ShippedAgent struct {
 // mastermind's own definition: shipped, but not a roleTable entry.
 var shippedAgents = []ShippedAgent{
 	{Name: "plan-executor", Shape: agentsrc.ShapeWriter, Output: "report", Requires: []string{"researcher"}},
-	{Name: "documentor", Shape: agentsrc.ShapeWriter, Output: "report"},
+	{Name: "librarian", Shape: agentsrc.ShapeWriter, Output: "report"},
 	{Name: "reviewer", Shape: agentsrc.ShapeReader, Output: "findings"},
 	{Name: "security-reviewer", Shape: agentsrc.ShapeReader, Output: "findings"},
 	{Name: "researcher", Shape: agentsrc.ShapeReader, Output: "notes"},

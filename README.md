@@ -137,7 +137,7 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
    It finds the harness binaries on `PATH`, writes one builder candidate per
    harness to the candidates section except claude, which only plans (it gets the
    `planner` actor), writes the policy section and the builder
-   actor, plus a `documentor` writer over the same candidates and a `planner`
+   actor, plus a `librarian` writer over the same candidates and a `planner`
    and a `lite-planner` reader actor for claude and
    opencode, and installs the agent definitions into each of those harnesses. The
    configuration lives in relevo.db under the state root, not in a file; a
@@ -149,7 +149,7 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
    the command to run next, e.g.:
    ```
    wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)
-   wrote actors (builder: glm-5.3-flash; documentor: glm-5.3-flash; planner: opus; lite-planner: deepseek-v4.1-flash)
+   wrote actors (builder: glm-5.3-flash; librarian: glm-5.3-flash; planner: opus; lite-planner: deepseek-v4.1-flash)
    wrote  ~/.claude/agents/plan-executor.md
    wrote  ~/.config/opencode/agents/plan-executor.md
    next: edit the model names, then run: relevo doctor
@@ -185,7 +185,7 @@ One line per file says `wrote`, `updated (unchanged since relevo wrote it)`,
 `kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
 name a harness that is not on `PATH` yet, `--agent` for one definition,
 `--dry-run` to look first. This writes `plan-executor`, `researcher`, `reviewer`,
-`security-reviewer`, `architect` and `documentor` for every kind; `relevo config agents --dry-run` shows what
+`security-reviewer`, `architect` and `librarian` for every kind; `relevo config agents --dry-run` shows what
 would be written.
 
 `researcher` is the read-only agent the builder's own sub-agents run as. It
@@ -380,7 +380,7 @@ gives a MasterMind a name of your own.
   once and records its time to first output.
 - `relevo config init` — seed the candidates, policy and actors sections from
   the harnesses on `PATH` (one builder candidate per harness except claude,
-  which only plans, plus a `documentor` writer over the same candidates and a
+  which only plans, plus a `librarian` writer over the same candidates and a
   `planner` and a `lite-planner` reader actor for
   claude and opencode) and install the agent definitions (`--force`,
   `--no-agents`).
@@ -1298,6 +1298,7 @@ A section that does not validate is refused with a message naming the entry; an 
 | actor | shape | agent |
 | --- | --- | --- |
 | `builder` | writer | `plan-executor` |
+| `librarian` | writer | `librarian` |
 | `reviewer` | reader | `reviewer` |
 | `researcher` | reader | `researcher` |
 
@@ -1449,7 +1450,7 @@ who runs it -- the agent plus an ordered list of candidates, a tier, and, for a
 writer, whether its round closes on a gate.
 
 - A **shipped** agent is one relevo renders and installs: `plan-executor`,
-  `documentor`, `reviewer`, `researcher` and `architect`. It needs no `agents`
+  `librarian`, `reviewer`, `researcher` and `architect`. It needs no `agents`
   entry -- an actor names it directly.
 - A **custom** agent is one you write, carried in the `agents` section as its
   `source` text (an `agentsrc` definition; its `name` must equal its key).
@@ -1460,12 +1461,12 @@ writer, whether its round closes on a gate.
 | shipped agent | shape | output | requires |
 | --- | --- | --- | --- |
 | `plan-executor` | writer | `report` | `researcher` |
-| `documentor` | writer | `report` | -- |
+| `librarian` | writer | `report` | -- |
 | `reviewer` | reader | `findings` | -- |
 | `researcher` | reader | `notes` | -- |
 | `architect` | reader | `plan` | -- |
 
-`documentor` is a writer whose definition states the docs-only contract: it
+`librarian` is a writer whose definition states the docs-only contract: it
 edits markdown, agent instruction files, sketches and diagrams, and code
 comments, and never anything that changes behaviour. That contract is a
 **scope**, and relevo enforces it when a round closes.
@@ -1489,7 +1490,7 @@ the offending file, and the gate never runs. A round relevo cannot judge (no
 baseline tree, or a git error) refuses the same way. A writer with no `scope`
 closes exactly as before.
 
-`relevo config init` seeds `documentor` with
+`relevo config init` seeds `librarian` with
 `{"paths": ["@docs"], "comments": true}`. There is no migration: an existing DB
 adds the scope with `relevo config edit`. The scope is actor config, so a served
 binding is judged by the server's own `actors` section, the same rule that
@@ -1558,8 +1559,8 @@ Actor entries:
 - `check` -- writers only: whether a round closes on a gate; defaults to true.
   An actor whose agent is a reader must not set it.
 
-An actor named `builder`, `reviewer` or `researcher` keeps that builtin's
-shape: `builder` must run a writer agent, `reviewer` and `researcher` a reader.
+An actor named `builder`, `librarian`, `reviewer` or `researcher` keeps that builtin's
+shape: `builder` and `librarian` must run a writer agent, `reviewer` and `researcher` a reader.
 An unknown agent, a reader with `check`, or a builtin actor with the wrong
 shape is refused when the config loads.
 

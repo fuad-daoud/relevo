@@ -43,7 +43,7 @@ func TestLookupUnknown(t *testing.T) {
 }
 
 func TestRoleTable(t *testing.T) {
-	wantNames := []string{"builder", "documentor", "reviewer", "researcher"}
+	wantNames := []string{"builder", "librarian", "reviewer", "researcher"}
 	if got := RoleNames(); !reflect.DeepEqual(got, wantNames) {
 		t.Errorf("RoleNames() = %v, want %v", got, wantNames)
 	}
@@ -59,15 +59,15 @@ func TestRoleTable(t *testing.T) {
 		t.Errorf("RoleByName(\"builder\").Definition = %q, want %q", b.Definition, "plan-executor")
 	}
 
-	d, ok := RoleByName("documentor")
+	d, ok := RoleByName("librarian")
 	if !ok {
-		t.Fatal("RoleByName(\"documentor\") returned ok=false")
+		t.Fatal("RoleByName(\"librarian\") returned ok=false")
 	}
 	if d.Shape != ShapeBuilder {
-		t.Errorf("RoleByName(\"documentor\").Shape = %v, want %v", d.Shape, ShapeBuilder)
+		t.Errorf("RoleByName(\"librarian\").Shape = %v, want %v", d.Shape, ShapeBuilder)
 	}
-	if d.Definition != "documentor" {
-		t.Errorf("RoleByName(\"documentor\").Definition = %q, want %q", d.Definition, "documentor")
+	if d.Definition != "librarian" {
+		t.Errorf("RoleByName(\"librarian\").Definition = %q, want %q", d.Definition, "librarian")
 	}
 
 	for _, name := range []string{"reviewer", "researcher"} {
@@ -98,17 +98,17 @@ func TestCanServe(t *testing.T) {
 		want bool
 	}{
 		{"agy", "builder", true},
-		{"agy", "documentor", true},
+		{"agy", "librarian", true},
 		{"agy", "reviewer", true},
 		{"agy", "researcher", true},
 		{"agy", "nope", false},
 		{"claude", "builder", true},
-		{"claude", "documentor", true},
+		{"claude", "librarian", true},
 		{"claude", "reviewer", true},
 		{"claude", "researcher", true},
 		{"claude", "nope", false},
 		{"opencode", "builder", true},
-		{"opencode", "documentor", true},
+		{"opencode", "librarian", true},
 		{"opencode", "reviewer", true},
 		{"opencode", "researcher", true},
 		{"opencode", "nope", false},
@@ -128,7 +128,7 @@ func TestCanServe(t *testing.T) {
 func TestRoleDefinitionsIncludeDispatchTargets(t *testing.T) {
 	want := map[string][]string{
 		"builder":    {"plan-executor", "researcher"},
-		"documentor": {"documentor"},
+		"librarian":  {"librarian"},
 		"reviewer":   {"reviewer"},
 		"researcher": {"researcher"},
 	}
@@ -802,7 +802,7 @@ var harnessTableExpected = map[string]Harness{
 			{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
 			{Name: "security-reviewer", Path: ".gemini/config/agents/security-reviewer.md", Doc: "security-reviewer.agy", ExpectModel: "inherit"},
 			{Name: "architect", Path: ".gemini/config/agents/architect.md", Doc: "architect.agy", ExpectModel: "inherit"},
-			{Name: "documentor", Path: ".gemini/config/agents/documentor.md", Doc: "documentor.agy", ExpectModel: "inherit"},
+			{Name: "librarian", Path: ".gemini/config/agents/librarian.md", Doc: "librarian.agy", ExpectModel: "inherit"},
 		},
 	},
 	"claude": {
@@ -826,7 +826,7 @@ var harnessTableExpected = map[string]Harness{
 			{Name: "reviewer", Path: ".claude/agents/reviewer.md", Doc: "reviewer.claude"},
 			{Name: "security-reviewer", Path: ".claude/agents/security-reviewer.md", Doc: "security-reviewer.claude"},
 			{Name: "architect", Path: ".claude/agents/architect.md", Doc: "architect.claude"},
-			{Name: "documentor", Path: ".claude/agents/documentor.md", Doc: "documentor.claude"},
+			{Name: "librarian", Path: ".claude/agents/librarian.md", Doc: "librarian.claude"},
 		},
 	},
 	"opencode": {
@@ -851,7 +851,7 @@ var harnessTableExpected = map[string]Harness{
 			{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
 			{Name: "security-reviewer", Path: ".config/opencode/agents/security-reviewer.md", Doc: "security-reviewer.opencode"},
 			{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
-			{Name: "documentor", Path: ".config/opencode/agents/documentor.md", Doc: "documentor.opencode"},
+			{Name: "librarian", Path: ".config/opencode/agents/librarian.md", Doc: "librarian.opencode"},
 		},
 		Files: []ShippedFile{
 			{Name: "opencode-plugin/package.json", Path: ".config/opencode/plugins/relevo/package.json", Embed: "opencodeplugin/package.json"},
@@ -883,7 +883,7 @@ var harnessTableExpected = map[string]Harness{
 			{Name: "reviewer", Path: ".codex/reviewer.config.toml", Doc: "reviewer.codex"},
 			{Name: "security-reviewer", Path: ".codex/security-reviewer.config.toml", Doc: "security-reviewer.codex"},
 			{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},
-			{Name: "documentor", Path: ".codex/documentor.config.toml", Doc: "documentor.codex"},
+			{Name: "librarian", Path: ".codex/librarian.config.toml", Doc: "librarian.codex"},
 		},
 	},
 }

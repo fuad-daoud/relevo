@@ -66,8 +66,8 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 	want := "builder  (config actors)\n" +
 		"  1  b  order     <- would pick\n" +
 		"  2  a  order\n" +
-		"documentor  (config actors)\n" +
-		"  no candidate listed in config actors documentor.candidates\n" +
+		"librarian  (config actors)\n" +
+		"  no candidate listed in config actors librarian.candidates\n" +
 		"reviewer  (config actors)\n" +
 		"  no candidate listed in config actors reviewer.candidates\n" +
 		"researcher  (config actors)\n" +
