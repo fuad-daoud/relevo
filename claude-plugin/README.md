@@ -57,7 +57,7 @@ relevo has no telemetry or analytics, and nothing is sent to its developer.
 - **`api.typesafe.ai`.** Only when `TYPESAFE_API_KEY` is set: the jev classifier sends it the text being classified.
 - **Webhooks and `relevo serve` servers.** Only when you configure them. relevo sends lifecycle events, or a round's work, to the endpoints and servers you chose.
 
-Privacy policy: https://relevo-site.fuad-daoud.com/privacy
+Privacy policy: https://relevo.sh/privacy
 
 ## More
 

@@ -5,6 +5,10 @@
   "version": "0.15.0",
   "author": {"name": "Fuad Daoud"},
   "repository": "https://github.com/fuad-daoud/relevo",
+  "homepage": "https://relevo.sh",
+  "documentationUrl": "https://relevo.sh/docs",
+  "supportUrl": "https://github.com/fuad-daoud/relevo/issues",
+  "privacyPolicyUrl": "https://relevo.sh/privacy",
   "license": "MIT",
   "mcpServers": {
     "relevo": {"command": "${CLAUDE_PLUGIN_ROOT}/scripts/mcp.sh"}
