@@ -25,12 +25,12 @@ const (
 const artifactPreviewLines = 2000
 
 // artifactOpenKind is how a file is opened, from its extension: markdown in
-// the pager, HTML in the browser, everything else in the editor.
+// the pager, HTML and SVG in the browser, everything else in the editor.
 func artifactOpenKind(rel string) string {
 	switch strings.ToLower(filepath.Ext(rel)) {
 	case ".md":
 		return "pager"
-	case ".html", ".htm":
+	case ".html", ".htm", ".svg":
 		return "browser"
 	default:
 		return "editor"

@@ -28,6 +28,7 @@ func installer[V any](f func(*flag.FlagSet) V) func(*flag.FlagSet) {
 // per entry, both ways.
 var verbFlagSets = map[string]func(*flag.FlagSet){
 	"bind":               installer(bindFlagSet),
+	"board":              installer(boardFlagSet),
 	"bugreport":          installer(bugreportFlagSet),
 	"chain":              installer(chainFlagSet),
 	"config":             installer(configShowFlagSet),
