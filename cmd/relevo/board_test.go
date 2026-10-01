@@ -276,6 +276,114 @@ func TestBoardIDRefNeedsNoDatabase(t *testing.T) {
 	}
 }
 
+// seedLiveBoard writes a pointer and a live server.json (this process's own
+// pid and start) for id, returning the live directory.
+func seedLiveBoard(t *testing.T, liveRoot, id, scene, url string) string {
+	t.Helper()
+	liveDir := filepath.Join(liveRoot, id)
+	if err := board.WritePointer(liveDir, scene); err != nil {
+		t.Fatalf("WritePointer: %v", err)
+	}
+	started, err := procStartUnix(os.Getpid())
+	if err != nil {
+		t.Skipf("process start time unavailable: %v", err)
+	}
+	info := board.ServerInfo{Scene: scene, URL: url, Port: 1, PID: os.Getpid(), StartedAt: started}
+	if err := board.WriteServerInfo(liveDir, info); err != nil {
+		t.Fatalf("WriteServerInfo: %v", err)
+	}
+	return liveDir
+}
+
+func TestBoardURLAlive(t *testing.T) {
+	liveRoot := boardStateRoot(t)
+	id := "mm_aaaaaaaaaaaa"
+	url := "http://127.0.0.1:41234/#t=deadbeef"
+	seedLiveBoard(t, liveRoot, id, "board", url)
+	t.Setenv("RELEVO_MASTERMIND", id)
+
+	stdout, stderr, err := captureOutput(t, func() error { return cmdBoardURL(nil) })
+	if err != nil {
+		t.Fatalf("board url: %v (stderr %s)", err, stderr)
+	}
+	if string(stdout) != url+"\n" {
+		t.Errorf("stdout = %q, want exactly %q", stdout, url+"\n")
+	}
+}
+
+func TestBoardURLBoardFlag(t *testing.T) {
+	liveRoot := boardStateRoot(t)
+	id := "mm_aaaaaaaaaaaa"
+	url := "http://127.0.0.1:40001/#t=cafe"
+	seedLiveBoard(t, liveRoot, id, "notes", url)
+	t.Setenv("RELEVO_MASTERMIND", id)
+
+	stdout, stderr, err := captureOutput(t, func() error { return cmdBoardURL([]string{"--board", "notes"}) })
+	if err != nil {
+		t.Fatalf("board url --board notes: %v (stderr %s)", err, stderr)
+	}
+	if string(stdout) != url+"\n" {
+		t.Errorf("stdout = %q, want exactly %q", stdout, url+"\n")
+	}
+}
+
+func TestBoardURLNotAvailable(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, liveRoot, id string) string
+	}{
+		{"missing pointer", func(t *testing.T, liveRoot, id string) string {
+			return board.DefaultBoard
+		}},
+		{"pointer without server", func(t *testing.T, liveRoot, id string) string {
+			if err := board.WritePointer(filepath.Join(liveRoot, id), "board"); err != nil {
+				t.Fatalf("WritePointer: %v", err)
+			}
+			return "board"
+		}},
+		{"dead pid", func(t *testing.T, liveRoot, id string) string {
+			liveDir := filepath.Join(liveRoot, id)
+			if err := board.WritePointer(liveDir, "board"); err != nil {
+				t.Fatalf("WritePointer: %v", err)
+			}
+			info := board.ServerInfo{Scene: "board", URL: "http://127.0.0.1:1/#t=x", Port: 1, PID: 1 << 30, StartedAt: 123}
+			if err := board.WriteServerInfo(liveDir, info); err != nil {
+				t.Fatalf("WriteServerInfo: %v", err)
+			}
+			return "board"
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			liveRoot := boardStateRoot(t)
+			id := "mm_aaaaaaaaaaaa"
+			scene := tc.setup(t, liveRoot, id)
+			t.Setenv("RELEVO_MASTERMIND", id)
+
+			stdout, _, err := captureOutput(t, func() error { return cmdBoardURL(nil) })
+			ce := requireCLIError(t, err, codeNotAvailable, "")
+			if len(stdout) != 0 {
+				t.Errorf("stdout = %q, want it empty", stdout)
+			}
+			if !strings.Contains(ce.message, scene) || !strings.Contains(ce.message, id) {
+				t.Errorf("refusal %q must name scene %q and MasterMind %s", ce.message, scene, id)
+			}
+		})
+	}
+}
+
+func TestBoardURLDoesNotWritePointer(t *testing.T) {
+	liveRoot := boardStateRoot(t)
+	id := "mm_aaaaaaaaaaaa"
+	t.Setenv("RELEVO_MASTERMIND", id)
+
+	_, _, err := captureOutput(t, func() error { return cmdBoardURL(nil) })
+	requireCLIError(t, err, codeNotAvailable, "")
+	if _, statErr := os.Stat(filepath.Join(liveRoot, id, "current")); !os.IsNotExist(statErr) {
+		t.Errorf("board url wrote the pointer: stat error = %v, want not-exist", statErr)
+	}
+}
+
 // TestBoardResolutionNeverStartsTheDaemon is R5's proof: resolving a name
 // against a seeded database starts nothing, binds no socket and writes nothing.
 func TestBoardResolutionNeverStartsTheDaemon(t *testing.T) {

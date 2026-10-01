@@ -28,6 +28,14 @@ var registry = []verbEntry{
 		Errors:  []string{"internal", "mastermind_not_found", "refused", "usage"},
 	},
 	{
+		Name:    "board url",
+		Summary: "print the live board's URL for a shell copy",
+		Args:    "[--board NAME] [--mastermind M]",
+		Flags:   []string{"--board", "--mastermind"},
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"internal", "mastermind_not_found", "not_available", "refused", "usage"},
+	},
+	{
 		Name:    "bugreport",
 		Summary: "assemble a local, redacted bug-report bundle and print the gh line",
 		Args:    "[--name N] [--round N] [--logs] [--raw] [--out PATH] [--title T] [--body FILE] [--stdout|--json|--gh]",

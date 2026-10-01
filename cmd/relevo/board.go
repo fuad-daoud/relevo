@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -88,10 +89,95 @@ type boardOptions struct {
 	noOpen bool
 }
 
+// boardURLFlagValues holds the pointers `board url` parses into.
+type boardURLFlagValues struct {
+	board      *string
+	mastermind *string
+}
+
+// boardURLFlagSet defines `board url`'s flags on fs and returns what it parses
+// into.
+func boardURLFlagSet(fs *flag.FlagSet) *boardURLFlagValues {
+	v := &boardURLFlagValues{}
+	v.board = fs.String("board", "", "the live scene name whose URL to print (default: the pointer)")
+	v.mastermind = fs.String("mastermind", "", "the MasterMind whose live board URL to print (id or name)")
+	return v
+}
+
+// cmdBoardURL prints the live board's URL for a shell copy when the statusline
+// is not at hand (S9). It is read-only: no pointer write, no database write, no
+// listener. The scene is --board, else the pointer -- never the default and
+// never written. Without a live server it exits 1 not_available, printing
+// nothing on stdout and one line naming the scene and the MasterMind.
+func cmdBoardURL(args []string) error {
+	fs := flag.NewFlagSet("relevo board url", flag.ContinueOnError)
+	v := boardURLFlagSet(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if len(fs.Args()) > 0 {
+		return fail(codeUsage, "relevo board url takes no scene path, got %q", fs.Args()[0])
+	}
+
+	id, err := boardMasterMind(*v.mastermind)
+	if err != nil {
+		return err
+	}
+	liveRoot, err := boardLiveRoot()
+	if err != nil {
+		return fail(codeInternal, "%v", err)
+	}
+	liveDir := filepath.Join(liveRoot, id)
+
+	scene := *v.board
+	if scene != "" {
+		if err := board.ValidSceneName(scene); err != nil {
+			return boardRefusal(err)
+		}
+	} else {
+		name, present, err := board.Pointer(liveDir)
+		if err != nil {
+			return boardRefusal(err)
+		}
+		if !present {
+			return boardNotAvailable(scene, id)
+		}
+		scene = name
+	}
+
+	url, ok, err := board.LiveURL(liveDir, scene, procStartUnix)
+	if err != nil {
+		return fail(codeInternal, "%v", err)
+	}
+	if !ok {
+		return boardNotAvailable(scene, id)
+	}
+	fmt.Println(url)
+	return nil
+}
+
+// boardNotAvailable is S9's refusal: exit 1 not_available, one line naming the
+// scene and the MasterMind, nothing on stdout.
+func boardNotAvailable(scene, id string) error {
+	if scene == "" {
+		scene = board.DefaultBoard
+	}
+	return fail(codeNotAvailable, "relevo board url: no live server for scene %s of MasterMind %s", scene, id)
+}
+
 // cmdBoard parses the verb, resolves the scene and scope, writes the pointer
 // for a live board that was not read from the pointer, and then runs the
-// foreground server.
+// foreground server. The `url` subverb is dispatched first: a scene path always
+// ends in .excalidraw, so it can never collide with the subverb name.
 func cmdBoard(args []string) error {
+	var sub string
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "url":
+		return cmdBoardURL(args[1:])
+	}
 	fs := flag.NewFlagSet("relevo board", flag.ContinueOnError)
 	v := boardFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
