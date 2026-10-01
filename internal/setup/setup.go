@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -125,8 +126,13 @@ func Plan(env harness.InstallEnv) (Files, error) {
 // candidate names DeriveNames produced.
 func starterActors(builderNames []string, planners []PlannerDefault, plannerNames []string) map[string]roles.Actor {
 	actors := map[string]roles.Actor{
-		"builder":    {Agent: "plan-executor", Tier: "yolo", Candidates: candidateEntries(builderNames)},
-		"documentor": {Agent: "documentor", Tier: "yolo", Candidates: candidateEntries(builderNames)},
+		"builder": {Agent: "plan-executor", Tier: "yolo", Candidates: candidateEntries(builderNames)},
+		"documentor": {
+			Agent:      "documentor",
+			Tier:       "yolo",
+			Candidates: candidateEntries(builderNames),
+			Scope:      &pathscope.Scope{Paths: []string{"@docs"}, Comments: true},
+		},
 	}
 	for i, p := range planners {
 		actors[p.Actor] = roles.Actor{Agent: "architect", Candidates: candidateEntries(plannerNames[i : i+1])}

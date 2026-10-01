@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
@@ -17,6 +18,7 @@ import (
 //	<name>  <agent>  <writer|reader>  <shipped|custom>  tier <tier or ->[  check on|off]
 //	  candidates  <name>, <name> (off)
 //	  placement   <name>, <name>                                  (only when set)
+//	  scope       <path>, <path> + comments                       (only when set)
 //
 // -- a writer carries its check state, a reader has none -- then, only when the
 // agents section is non-empty, an `agents` line and one line per custom or
@@ -82,7 +84,23 @@ func formatActor(L config.Loaded, reg *roles.Registry, name string, a roles.Acto
 	if len(a.Placement) > 0 {
 		b.WriteString("\n  placement  " + strings.Join(a.Placement, ", "))
 	}
+	if a.Scope != nil {
+		b.WriteString("\n  scope  " + formatScope(a.Scope))
+	}
 	return b.String()
+}
+
+// formatScope renders a writer's scope for the listings: its path entries,
+// then "+ comments" when a comment-only Go edit is allowed.
+func formatScope(scope *pathscope.Scope) string {
+	parts := strings.Join(scope.Paths, ", ")
+	if scope.Comments {
+		if parts == "" {
+			return "comments"
+		}
+		parts += " + comments"
+	}
+	return parts
 }
 
 // actorCheckOn renders an actor's check: nil means on for a writer.

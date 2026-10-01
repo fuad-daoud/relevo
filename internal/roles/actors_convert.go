@@ -50,9 +50,13 @@ func rowFor(name string, actor Actor, agents map[string]AgentEntry) (Row, error)
 		}
 	}
 
-	// check is a writer's gate; a reader has none.
+	// check is a writer's gate; a reader has none. scope is a writer's
+	// declared paths; a reader is refused one for the same reason.
 	if actor.Check != nil && *actor.Check && shape == string(agentsrc.ShapeReader) {
 		return Row{}, fmt.Errorf("actor %s: check is only for a writer agent: %w", name, ErrBadRoles)
+	}
+	if actor.Scope != nil && shape == string(agentsrc.ShapeReader) {
+		return Row{}, fmt.Errorf("actor %s: scope is only for a writer agent: %w", name, ErrBadRoles)
 	}
 
 	rowShape := shape
@@ -73,6 +77,9 @@ func rowFor(name string, actor Actor, agents map[string]AgentEntry) (Row, error)
 	}
 	if actor.Check != nil {
 		row.Check = actor.Check
+	}
+	if actor.Scope != nil {
+		row.Scope = copyScope(actor.Scope)
 	}
 	return row, nil
 }

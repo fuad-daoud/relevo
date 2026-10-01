@@ -1337,6 +1337,15 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "actor-documentor-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenActorsModel(t, 132, 34,
+					&fakeActions{doc: candFixtureDocWithDocumentor(t)}, candGatedReport())
+				m = candDown(t, m, 3) // documentor, after builder, reviewer, researcher
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			},
+		},
+		{
 			name: "agents-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				fa := &fakeActions{doc: candFixtureDoc(t), files: agentFileFixtures(t)}
