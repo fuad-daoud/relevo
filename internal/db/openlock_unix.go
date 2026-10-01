@@ -12,9 +12,11 @@ import (
 )
 
 // openLockWait is how long a writable open polls for a lock another process
-// holds before it gives up; it is a var so a test can shrink it. A read-only
+// holds before it gives up; it is a var so a test can shrink it. It outlasts
+// ReadOnlyHoldBudget, so a read-only caller that holds the lock for its whole
+// deadline never makes a concurrent daemon start fail its open. A read-only
 // open never waits.
-var openLockWait = 10 * time.Second
+var openLockWait = ReadOnlyHoldBudget + 3*time.Second
 
 // openLockPoll is the pause between two lock attempts.
 const openLockPoll = 50 * time.Millisecond

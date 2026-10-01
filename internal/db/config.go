@@ -182,6 +182,14 @@ func (t *Tx) ConfigImportRecord(name, sourcePath string, body []byte, now time.T
 	return nil
 }
 
+// ReadOnlyHoldBudget is the longest a read-only caller may hold the database
+// before it must answer: `db query`'s --timeout default and its cap. The
+// writable open's lock wait is derived from it, so the wait outlasts any
+// read-only deadline by a margin and a slow reader never makes a daemon start
+// fail its open. It is defined beside the read-only open so the two are one
+// expression.
+const ReadOnlyHoldBudget = 12 * time.Second
+
 // OpenReadOnly opens path without ever migrating or writing it, for readers
 // that must not create or change the database; a missing file's error wraps
 // os.ErrNotExist.

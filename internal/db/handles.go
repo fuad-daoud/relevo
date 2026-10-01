@@ -54,7 +54,7 @@ func canonicalPath(path string) string {
 // handle in this process on the same path shares the existing lock and count.
 //
 // The wait happens with directHandles unlocked: every other direct open or
-// close in the process must not queue behind one path's ten-second wait.
+// close in the process must not queue behind one path's long open-lock wait.
 func acquireHandle(path string, writable bool) error {
 	key := canonicalPath(path)
 	for {

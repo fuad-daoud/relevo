@@ -190,6 +190,16 @@ func TestAWaitingOpenDoesNotBlockAnotherPath(t *testing.T) {
 	}
 }
 
+// TestOpenLockWaitOutlastsTheReadOnlyHoldBudget pins the relation the wait and
+// the deadline share: a read-only caller may hold the database for its whole
+// budget, so the writable open's lock wait must outlast that budget or a slow
+// reader would make a daemon start fail its open.
+func TestOpenLockWaitOutlastsTheReadOnlyHoldBudget(t *testing.T) {
+	if openLockWait <= ReadOnlyHoldBudget {
+		t.Errorf("openLockWait = %v, want it to outlast ReadOnlyHoldBudget = %v", openLockWait, ReadOnlyHoldBudget)
+	}
+}
+
 // TestTwoSpellingsOfOnePathShareTheLock pins the handle map's key: a path
 // through a symlink and a path that reaches the same file through a `..` both
 // name one database, so they must share the open lock instead of waiting out
