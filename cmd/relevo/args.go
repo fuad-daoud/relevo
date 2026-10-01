@@ -256,11 +256,16 @@ func writeError(err error) error {
 	if errors.As(err, &ce) {
 		return err
 	}
+	var openMember *relevo.RoundOpenError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return fail(codeBindingNotFound, "%v", err)
+	case errors.Is(err, relevo.ErrSeedOverCap):
+		return failNext(codeUsage, "trim the seed or pass --force", "%v", err)
 	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, relevo.ErrRunningChainMember), errors.Is(err, relevo.ErrChainRunning):
 		return fail(codeConflict, "%v", err)
+	case errors.As(err, &openMember):
+		return failNext(codeConflict, "relevo stop "+openMember.Member, "%v", err)
 	case errors.Is(err, relevo.ErrTierAboveMax), errors.Is(err, harness.ErrTierUnsupported):
 		return fail(codeTierCap, "%v", err)
 	case errors.Is(err, relevo.ErrAllGated):
