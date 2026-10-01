@@ -1092,25 +1092,28 @@ const readerFinalMessageGrace = 2 * time.Minute
 // not a completed final message.
 const readerSummaryEarlyNote = "runner still running after its marker; summary taken early"
 
-// holdReaderOnMarker reports whether a reader round whose marker is already on
-// disk must stay open instead of closing. A reader's marker is not the end of
-// its stream: the runner writes its final message just after the marker and
-// then exits, and that message is the round's summary. So the round waits for
-// the exit -- held is true while the process is alive inside
-// readerFinalMessageGrace -- and a runner still alive after the grace is
-// stopped the way `relevo stop` stops one, with early true so the caller closes
-// on the stream as it is.
+// holdReaderOnMarker reports whether a reader round must stay open instead of
+// closing. A reader's marker is not the end of its stream: the runner writes
+// its final message just after the marker and then exits, and that message is
+// the round's summary. So a reader is held whenever its runner is alive -- the
+// marker is read only to time readerFinalMessageGrace -- and closes when the
+// runner exits (the final message is then on the stream) or, past the grace,
+// after stopProcess ends the lingering runner, with early true so the caller
+// closes on the stream as it is.
 //
-// No marker, no pid and no Runner all leave the round to the ordinary close.
-// An unreadable liveness check holds this tick, as the unmarked path treats it
-// as alive.
+// Holding on liveness, not on having already observed the marker, closes a
+// race: the caller (markerClose) then calls closeOnMarker, which stats the
+// marker again. If the runner wrote its marker between the two stats, an
+// observe-the-marker-first hold saw none, declined, and closeOnMarker closed a
+// live reader on that fresh marker before its final message was printed -- the
+// empty-stream "closed without a report" halt. Checking liveness first means a
+// live reader is never closed, whatever stat races it.
+//
+// No pid and no Runner leave the round to the ordinary close. An unreadable
+// liveness check holds this tick, as the unmarked path treats it as alive.
 func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (held, early bool, err error) {
 	if b.Builder.PID == 0 || rt.Runner == nil {
 		return false, false, nil
-	}
-	fi, serr := os.Stat(rt.Store.DonePath(b.Name, b.Round))
-	if serr != nil {
-		return false, false, nil // no marker yet: nothing to hold on
 	}
 	alive, aerr := rt.Runner.Alive(ctx, handleOf(b.Builder))
 	if aerr != nil {
@@ -1123,6 +1126,10 @@ func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (held,
 	// A sighting: this daemon now knows the process is alive, so a later tick
 	// never classifies it as lost to a restart.
 	rt.Watched.Mark(b.Builder.PID, b.Builder.StartedAt)
+	fi, serr := os.Stat(rt.Store.DonePath(b.Name, b.Round))
+	if serr != nil {
+		return true, false, nil // alive, no marker yet: the round stays open until it exits
+	}
 	if rt.Now().Sub(fi.ModTime()) < readerFinalMessageGrace {
 		return true, false, nil
 	}

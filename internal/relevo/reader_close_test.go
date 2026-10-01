@@ -585,6 +585,31 @@ func TestReaderRoundWaitsForExitAfterMarker(t *testing.T) {
 	}
 }
 
+// TestReaderHoldOnALiveRunnerWithoutItsMarker pins that a reader whose runner
+// is alive is held even before its marker is seen. markerClose stats the marker
+// once to decide the hold and closeOnMarker stats it again to close; if the
+// runner writes its marker between the two stats, a hold that first required to
+// see the marker would decline and the close would fire on a live reader before
+// it printed its final message -- the empty-stream "closed without a report"
+// halt. Holding on liveness closes that window.
+func TestReaderHoldOnALiveRunnerWithoutItsMarker(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo) // live runner, marker not written yet
+	if _, err := os.Stat(rt.Store.DonePath("reader-bind", 1)); !os.IsNotExist(err) {
+		t.Fatalf("the marker is already on disk: %v", err)
+	}
+
+	held, early, err := holdReaderOnMarker(context.Background(), rt, b)
+	if err != nil {
+		t.Fatalf("holdReaderOnMarker: %v", err)
+	}
+	if !held || early {
+		t.Errorf("holdReaderOnMarker(live runner, no marker) = held %v, early %v; want held true, early false", held, early)
+	}
+}
+
 // TestReaderRoundGraceClosesALingeringRunner: a runner still alive more than
 // readerFinalMessageGrace after its marker must not hold the round forever. The
 // round closes with the summary taken from the stream as it is, the note says
