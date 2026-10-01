@@ -20,7 +20,7 @@ func TestBindingZeroValueOmitsOptionalKeys(t *testing.T) {
 	}{
 		{"empty binding", func() Binding { return Binding{} }, []string{"round_closed_tree", "round_switches"}},
 		{"no consults", func() Binding { return newBinding("webshop", "/repo") }, []string{"consults", "consult_cap"}},
-		{"no repo ref or feature", func() Binding { return newBinding("webshop", "/repo") }, []string{"repo_ref", "feature", "ticket", "transcript_locator"}},
+		{"no repo ref or feature", func() Binding { return newBinding("webshop", "/repo") }, []string{"repo_ref", "feature", "ticket"}},
 		{"no commit facts", func() Binding { return Binding{} }, []string{"branch", "base", "round_baseline_head"}},
 		{"no headless endpoint fields", func() Binding {
 			return Binding{Builder: Endpoint{AgentName: "b", PaneID: "w1:p2", Kind: "opencode"}}
@@ -54,7 +54,6 @@ func bindingWithRepoRef() Binding {
 	b.RepoRef = &RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
 	b.Feature = "auth"
 	b.Ticket = "o/r#607"
-	b.MasterMind.TranscriptLocator = "/home/x/.claude/projects/slug/S.jsonl"
 	return b
 }
 
@@ -94,7 +93,7 @@ func TestBindingFieldGroupsRoundTrip(t *testing.T) {
 			build: func() Binding { return Binding{Branch: "relevo/api-auth", Base: "c0ffee", RoundBaselineHead: "beef"} },
 			want:  []string{`"branch"`, `"base"`, `"round_baseline_head"`},
 		},
-		{"repo ref, feature and transcript locator", bindingWithRepoRef, []string{`"repo_ref"`, `"feature"`, `"ticket"`, `"transcript_locator"`}},
+		{"repo ref and feature", bindingWithRepoRef, []string{`"repo_ref"`, `"feature"`, `"ticket"`}},
 		{"a consult and its cap", bindingWithConsult, []string{`"consults"`, `"consult_cap"`}},
 	}
 
