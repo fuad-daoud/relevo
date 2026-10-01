@@ -223,6 +223,12 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, err
 	}
+	// A chain that runs on a server is advanced by that server's daemon, not
+	// by a close here: this machine mirrors it, and the chain pull is what
+	// moves the mirror.
+	if chainOnServer(c) {
+		return b, nil
+	}
 
 	before, err := chainStateOf(c)
 	if err != nil {
@@ -513,6 +519,9 @@ func chainTerminal(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow,
 		TS: rt.Now().UTC(), Round: carrier.Round,
 		Direction: store.DirToMasterMind, Kind: store.KindChain,
 		Payload: chainTerminalPayload(c, next, findings),
+	}
+	if chainServedCarrier(carrier) {
+		return nil
 	}
 	return delivery.Queue(ctx, deliveryDeps(rt), tx, member, entry)
 }

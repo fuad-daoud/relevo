@@ -1,0 +1,9 @@
+{
+  "max_corrections": 3,
+  "reviewer_actor": "reviewer",
+  "planner_actor": "planner",
+  "security_actor": "security",
+  "security": true,
+  "gate": "make check",
+  "regate": 2
+}

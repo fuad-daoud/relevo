@@ -77,6 +77,11 @@ func WaitChain(ctx context.Context, rt Runtime, name string, timeout, interval t
 	if interval <= 0 {
 		return WaitResult{}, fmt.Errorf("wait: interval must be positive")
 	}
+	// A chain that runs on a server waits by pulling the mirror; a name that
+	// is no chain, or a local one, keeps the loop below.
+	if c, err := rt.Store.Chain(name); err == nil && chainOnServer(c) {
+		return chainServerWait(ctx, rt, name, timeout, interval, peek)
+	}
 
 	start := rt.Now()
 	for {

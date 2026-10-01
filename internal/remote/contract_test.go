@@ -309,6 +309,125 @@ func filledErrorBody() ErrorBody {
 	}
 }
 
+func filledChainSettings() ChainSettings {
+	return ChainSettings{
+		MaxCorrections: 3,
+		ReviewerActor:  "reviewer",
+		PlannerActor:   "planner",
+		SecurityActor:  "security",
+		Security:       true,
+		Gate:           "make check",
+		Regate:         2,
+	}
+}
+
+func filledCreateChainRequest() CreateChainRequest {
+	author := filledGitIdentity()
+	return CreateChainRequest{
+		Name:               "test-chain",
+		RepoID:             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		BaseCommit:         "1111222233334444555566667777888899990000",
+		Plans:              []string{"# Plan one\n", "# Plan two\n"},
+		Settings:           filledChainSettings(),
+		Feature:            "auth",
+		Ticket:             "o/r#607",
+		Author:             &author,
+		ClientInstallation: "01CLIENTINSTALLATION0000000",
+		ClientBindingIDs: map[string]string{
+			"builder":  "01CLIENTBINDINGBUILDER000000",
+			"reviewer": "01CLIENTBINDINGREVIEWER00000",
+		},
+	}
+}
+
+func filledClosedRoundView() ClosedRoundView {
+	u := filledUsage()
+	rusage := store.Rusage{CPUMS: 2500, PeakMemBytes: 52428800}
+	return ClosedRoundView{
+		Round:         2,
+		ReportOutcome: "completed",
+		GateResult:    "pass",
+		Stopped:       "killed",
+		DiffNote:      "refactored remote wire",
+		DiffCommits:   2,
+		DiffTree:      "5555666677778888999900001111222233334444",
+		Usage:         &u,
+		Rusage:        &rusage,
+	}
+}
+
+func filledChainMemberView() ChainMemberView {
+	return ChainMemberView{
+		Part:   "builder",
+		Name:   "test-binding",
+		Actor:  "builder",
+		View:   filledBindingView(),
+		Rounds: []ClosedRoundView{filledClosedRoundView()},
+	}
+}
+
+func filledChainEventView() ChainEventView {
+	return ChainEventView{
+		Seq:    3,
+		TS:     fixedTime,
+		Phase:  "build",
+		Step:   "reviewing",
+		Member: "builder",
+		Round:  2,
+		Plan:   1,
+		Event:  `{"kind":"builder_closed","gate":"green"}`,
+		Action: `{"member":"reviewer","round":2}`,
+		Reason: "check red after regate",
+	}
+}
+
+func filledChainView() ChainView {
+	return ChainView{
+		Name:            "test-chain",
+		Status:          "running",
+		Phase:           "build",
+		Step:            "reviewing",
+		Plan:            2,
+		Plans:           4,
+		Corrections:     1,
+		AwaitingMember:  "reviewer",
+		AwaitingRound:   2,
+		Base:            "1111222233334444555566667777888899990000",
+		Branch:          "relevo/test-chain",
+		Feature:         "auth",
+		Ticket:          "o/r#607",
+		PlanStartCommit: "6666777788889999000011112222333344445555",
+		Settings:        filledChainSettings(),
+		Findings:        1,
+		Members:         []ChainMemberView{filledChainMemberView()},
+		Trace:           []ChainEventView{filledChainEventView()},
+	}
+}
+
+func filledChainResumeRequest() ChainResumeRequest {
+	maxCorrections := 2
+	security := true
+	gate := "make check"
+	regate := 1
+	return ChainResumeRequest{
+		MaxCorrections: &maxCorrections,
+		ReviewerActor:  "reviewer",
+		PlannerActor:   "planner",
+		SecurityActor:  "security",
+		Security:       &security,
+		Gate:           &gate,
+		Regate:         &regate,
+	}
+}
+
+func filledChainStopResponse() ChainStopResponse {
+	return ChainStopResponse{
+		Round:  2,
+		Action: "stopped",
+		Chain:  filledChainView(),
+	}
+}
+
 type protoTypeCase struct {
 	name string
 	val  any
@@ -334,6 +453,14 @@ var protoCases = []protoTypeCase{
 	{"CandidateView", filledCandidateView(), func() any { return new(CandidateView) }},
 	{"CandidatesResponse", filledCandidatesResponse(), func() any { return new(CandidatesResponse) }},
 	{"ActorView", filledActorView(), func() any { return new(ActorView) }},
+	{"ChainSettings", filledChainSettings(), func() any { return new(ChainSettings) }},
+	{"CreateChainRequest", filledCreateChainRequest(), func() any { return new(CreateChainRequest) }},
+	{"ClosedRoundView", filledClosedRoundView(), func() any { return new(ClosedRoundView) }},
+	{"ChainMemberView", filledChainMemberView(), func() any { return new(ChainMemberView) }},
+	{"ChainEventView", filledChainEventView(), func() any { return new(ChainEventView) }},
+	{"ChainView", filledChainView(), func() any { return new(ChainView) }},
+	{"ChainResumeRequest", filledChainResumeRequest(), func() any { return new(ChainResumeRequest) }},
+	{"ChainStopResponse", filledChainStopResponse(), func() any { return new(ChainStopResponse) }},
 	{"ErrorBody", filledErrorBody(), func() any { return new(ErrorBody) }},
 }
 
@@ -384,29 +511,59 @@ func TestGateFieldsAreAdditive(t *testing.T) {
 	}
 }
 
-func TestContractProtoTypesComplete(t *testing.T) {
-	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, "proto.go", nil, 0)
+// TestChainResumeRequestKeepsAbsentDistinctFromEmpty pins the pointer that
+// separates an absent gate from one cleared: an empty request marshals with no
+// gate key, while a gate pointing at "" keeps the key.
+//
+// Mutation: make Gate a plain string with omitempty and the cleared gate is
+// dropped.
+func TestChainResumeRequestKeepsAbsentDistinctFromEmpty(t *testing.T) {
+	absent, err := json.Marshal(ChainResumeRequest{})
 	if err != nil {
-		t.Fatalf("ParseFile proto.go: %v", err)
+		t.Fatalf("marshal empty resume request: %v", err)
+	}
+	if bytes.Contains(absent, []byte(`"gate"`)) {
+		t.Fatalf("absent gate marshaled a key: %s", absent)
 	}
 
+	var empty ChainResumeRequest
+	if err := json.Unmarshal([]byte(`{"gate":""}`), &empty); err != nil {
+		t.Fatalf("unmarshal cleared gate: %v", err)
+	}
+	out, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatalf("marshal cleared gate: %v", err)
+	}
+	if !bytes.Contains(out, []byte(`"gate":""`)) {
+		t.Fatalf("gate pointing at \"\" marshaled %s, want a gate key", out)
+	}
+}
+
+func TestContractProtoTypesComplete(t *testing.T) {
+	fset := token.NewFileSet()
+
 	var exportedStructs []string
-	for _, decl := range node.Decls {
-		gen, ok := decl.(*ast.GenDecl)
-		if !ok || gen.Tok != token.TYPE {
-			continue
+	for _, file := range []string{"proto.go", "chain.go"} {
+		node, err := parser.ParseFile(fset, file, nil, 0)
+		if err != nil {
+			t.Fatalf("ParseFile %s: %v", file, err)
 		}
-		for _, spec := range gen.Specs {
-			ts, ok := spec.(*ast.TypeSpec)
-			if !ok {
+		for _, decl := range node.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
 				continue
 			}
-			if !ast.IsExported(ts.Name.Name) {
-				continue
-			}
-			if _, ok := ts.Type.(*ast.StructType); ok {
-				exportedStructs = append(exportedStructs, ts.Name.Name)
+			for _, spec := range gen.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				if !ast.IsExported(ts.Name.Name) {
+					continue
+				}
+				if _, ok := ts.Type.(*ast.StructType); ok {
+					exportedStructs = append(exportedStructs, ts.Name.Name)
+				}
 			}
 		}
 	}
@@ -420,7 +577,7 @@ func TestContractProtoTypesComplete(t *testing.T) {
 	sort.Strings(pinnedNames)
 
 	if !reflect.DeepEqual(exportedStructs, pinnedNames) {
-		t.Fatalf("proto.go exported struct types do not match pinned types in contract_test.go:\nfound in proto.go: %v\npinned in test:   %v", exportedStructs, pinnedNames)
+		t.Fatalf("wire exported struct types do not match pinned types in contract_test.go:\nfound in proto.go and chain.go: %v\npinned in test:   %v", exportedStructs, pinnedNames)
 	}
 }
 

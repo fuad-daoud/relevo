@@ -1,0 +1,201 @@
+{
+  "name": "test-chain",
+  "status": "running",
+  "phase": "build",
+  "step": "reviewing",
+  "plan": 2,
+  "plans": 4,
+  "corrections": 1,
+  "awaiting_member": "reviewer",
+  "awaiting_round": 2,
+  "base": "1111222233334444555566667777888899990000",
+  "branch": "relevo/test-chain",
+  "feature": "auth",
+  "ticket": "o/r#607",
+  "plan_start_commit": "6666777788889999000011112222333344445555",
+  "settings": {
+    "max_corrections": 3,
+    "reviewer_actor": "reviewer",
+    "planner_actor": "planner",
+    "security_actor": "security",
+    "security": true,
+    "gate": "make check",
+    "regate": 2
+  },
+  "findings": 1,
+  "members": [
+    {
+      "part": "builder",
+      "name": "test-binding",
+      "actor": "builder",
+      "view": {
+        "name": "test-binding",
+        "state": "active",
+        "round": 2,
+        "round_state": "running",
+        "closed_round": 1,
+        "halt": "user-requested halt",
+        "result_commit": "3333444455556666777788889999000011112222",
+        "dirty_commit": "4444555566667777888899990000111122223333",
+        "report_outcome": "completed",
+        "gate_result": "pass",
+        "stopped": "killed",
+        "shape": "reader",
+        "diff_note": "refactored remote wire",
+        "diff_commits": 2,
+        "diff_tree": "5555666677778888999900001111222233334444",
+        "acked_round": 1,
+        "candidate": "agy/openai/gpt-4",
+        "account": "work",
+        "round_started_at": "2026-01-02T03:04:05Z",
+        "round_cap": 10,
+        "round_timeout_ms": 60000,
+        "tier": "edit",
+        "feature": "auth",
+        "ticket": "o/r#607",
+        "usage": {
+          "harness": "opencode",
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "duration_ms": 12500,
+          "tokens": {
+            "in": 1000,
+            "cache_read": 3000,
+            "cache_write": 500,
+            "out": 250
+          },
+          "cost": {
+            "usd": 0.05,
+            "basis": "measured",
+            "plan": true
+          },
+          "samples": 2,
+          "steps": 5,
+          "tool_calls": 3,
+          "step_p50_ms": 1200,
+          "first_output_p50_ms": 400,
+          "note": "sample note"
+        },
+        "rusage": {
+          "cpu_ms": 2500,
+          "peak_mem_bytes": 52428800
+        },
+        "prior_tokens": {
+          "in": 50,
+          "cache_read": 100,
+          "cache_write": 20,
+          "out": 10
+        },
+        "stalled_since": "2026-01-02T03:04:05Z",
+        "queue": {
+          "position": 2,
+          "ahead": 1,
+          "running": 3,
+          "cap": 5,
+          "since": "2026-01-02T03:04:05Z"
+        },
+        "live": {
+          "at": "2026-01-02T03:04:05Z",
+          "pid": 4242,
+          "started_at": "2026-01-02T03:04:05Z",
+          "exit_code": "0",
+          "tail": [
+            "output line 1",
+            "output line 2"
+          ],
+          "usage": {
+            "harness": "opencode",
+            "provider": "anthropic",
+            "model": "claude-sonnet-5",
+            "duration_ms": 12500,
+            "tokens": {
+              "in": 1000,
+              "cache_read": 3000,
+              "cache_write": 500,
+              "out": 250
+            },
+            "cost": {
+              "usd": 0.05,
+              "basis": "measured",
+              "plan": true
+            },
+            "samples": 2,
+            "steps": 5,
+            "tool_calls": 3,
+            "step_p50_ms": 1200,
+            "first_output_p50_ms": 400,
+            "note": "sample note"
+          },
+          "prior_tokens": {
+            "in": 100,
+            "cache_read": 200,
+            "cache_write": 50,
+            "out": 25
+          },
+          "diff": {
+            "files": 3,
+            "added": 42,
+            "removed": 7
+          },
+          "last_progress_at": "2026-01-02T03:04:05Z",
+          "exploring_since": "2026-01-02T03:04:05Z",
+          "gating_since": "2026-01-02T03:04:05Z"
+        },
+        "id": "01SERVERBINDINGRECORD00000000",
+        "installation": "01SERVERINSTALLATION0000000"
+      },
+      "rounds": [
+        {
+          "round": 2,
+          "report_outcome": "completed",
+          "gate_result": "pass",
+          "stopped": "killed",
+          "diff_note": "refactored remote wire",
+          "diff_commits": 2,
+          "diff_tree": "5555666677778888999900001111222233334444",
+          "usage": {
+            "harness": "opencode",
+            "provider": "anthropic",
+            "model": "claude-sonnet-5",
+            "duration_ms": 12500,
+            "tokens": {
+              "in": 1000,
+              "cache_read": 3000,
+              "cache_write": 500,
+              "out": 250
+            },
+            "cost": {
+              "usd": 0.05,
+              "basis": "measured",
+              "plan": true
+            },
+            "samples": 2,
+            "steps": 5,
+            "tool_calls": 3,
+            "step_p50_ms": 1200,
+            "first_output_p50_ms": 400,
+            "note": "sample note"
+          },
+          "rusage": {
+            "cpu_ms": 2500,
+            "peak_mem_bytes": 52428800
+          }
+        }
+      ]
+    }
+  ],
+  "trace": [
+    {
+      "seq": 3,
+      "ts": "2026-01-02T03:04:05Z",
+      "phase": "build",
+      "step": "reviewing",
+      "member": "builder",
+      "round": 2,
+      "plan": 1,
+      "event": "{\"kind\":\"builder_closed\",\"gate\":\"green\"}",
+      "action": "{\"member\":\"reviewer\",\"round\":2}",
+      "reason": "check red after regate"
+    }
+  ]
+}

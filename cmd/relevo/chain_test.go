@@ -561,6 +561,27 @@ func TestChainResumedTextNamesPlacement(t *testing.T) {
 	}
 }
 
+// TestChainServerFlag pins --server at the CLI edge: a start carries it into
+// ChainOptions, and a resume refuses it because the chain already names its
+// server. Parse-only: no state is opened and no harness needs to run.
+func TestChainServerFlag(t *testing.T) {
+	opts, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--feature", "auth", "--server", "zen")
+	if err != nil {
+		t.Fatalf("chainOptions --server: %v", err)
+	}
+	if opts.Server != "zen" {
+		t.Errorf("Server = %q, want zen", opts.Server)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return run([]string{"chain", "--resume", "--name", "shop", "--server", "zen"})
+	})
+	ce := requireCLIError(t, err, codeUsage, "")
+	if !strings.Contains(ce.message, "--server") {
+		t.Errorf("message = %q, want it to name --server", ce.message)
+	}
+}
+
 // TestChainDoneOnARunningChainIsAConflict pins the refusal's class: a script
 // must be able to tell "stop it first" from an internal failure.
 func TestChainDoneOnARunningChainIsAConflict(t *testing.T) {

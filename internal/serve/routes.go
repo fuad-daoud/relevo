@@ -71,6 +71,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/bundle", s.handleRoundBundle)
 	mux.HandleFunc("POST /v1/bindings/{name}/rounds/{n}/ack", s.handleAckRound)
 	mux.HandleFunc("POST /v1/bindings/{name}/unavailable", s.handleUnavailable)
+	mux.HandleFunc("POST /v1/chains", s.handleCreateChain)
+	mux.HandleFunc("GET /v1/chains/{name}", s.handleGetChain)
+	mux.HandleFunc("POST /v1/chains/{name}/stop", s.handleStopChain)
+	mux.HandleFunc("POST /v1/chains/{name}/resume", s.handleResumeChain)
+	mux.HandleFunc("POST /v1/chains/{name}/done", s.handleDoneChain)
 	mux.HandleFunc("POST /v1/unavailable", s.handleUnavailable)
 	mux.HandleFunc("POST /v1/available", s.handleAvailable)
 
@@ -117,7 +122,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		InstallationLabel: s.cfg.Installation.Label,
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain}
 		who.BuilderTier = string(relevo.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()

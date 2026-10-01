@@ -46,6 +46,15 @@ func closeServedRound(ctx context.Context, rt Runtime, b store.Binding) store.Bi
 		return b
 	}
 	closed := b.Round - 1
+	// A served reader that shares the builder's tree carries no branch and no
+	// worktree of its own: there is nothing to resolve and nothing to commit,
+	// so the close records the round with no git facts.
+	if b.Branch == "" {
+		b.Serve.ClosedRound = closed
+		b.Serve.ResultCommit = ""
+		b.Serve.DirtyCommit = ""
+		return b
+	}
 	head, ok, err := rt.Git.RefSHA(ctx, b.Serve.BareRepo, "refs/heads/"+b.Branch)
 	if err != nil || !ok {
 		slog.Warn("branch missing at close", "binding", b.Name, "branch", b.Branch, "err", err)
@@ -96,59 +105,13 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		resultCommit = b.Serve.ResultCommit
 		dirtyCommit = b.Serve.DirtyCommit
 	}
-	var reportOutcome string
-	var reportUsage *usage.Usage
-	var reportRusage *store.Rusage
+	// facts is the closed round's per-round facts: round ClosedRound's report
+	// outcome, usage and rusage, its gate result, its diff note and tree, and
+	// how it was stopped. A binding whose round has not closed leaves the zero
+	// value.
+	var facts remote.ClosedRoundView
 	if b.Serve != nil && b.Serve.ClosedRound > 0 {
-		for i := len(entries) - 1; i >= 0; i-- {
-			if entries[i].Round == b.Serve.ClosedRound && entries[i].Kind == store.KindReport {
-				reportOutcome = entries[i].Outcome
-				reportUsage = entries[i].Usage
-				reportRusage = entries[i].Rusage
-				break
-			}
-		}
-	}
-	// gateResult is the closed round's gate result: the newest KindReport
-	// entry for ClosedRound that carries a gate record, and only that round's.
-	// "" when the binding had no gate, the round is unclosed, or no report
-	// entry carries a record.
-	var gateResult string
-	if b.Serve != nil && b.Serve.ClosedRound > 0 {
-		for i := len(entries) - 1; i >= 0; i-- {
-			if entries[i].Round == b.Serve.ClosedRound && entries[i].Kind == store.KindReport && entries[i].Gate != nil {
-				gateResult = entries[i].Gate.Result
-				break
-			}
-		}
-	}
-	var diffNote, diffTree string
-	var diffCommits int
-	if b.Serve != nil && b.Serve.ClosedRound > 0 {
-		for i := len(entries) - 1; i >= 0; i-- {
-			if entries[i].Round == b.Serve.ClosedRound && entries[i].Kind == store.KindDiff {
-				diffNote = entries[i].Note
-				diffCommits = entries[i].Commits
-				diffTree = entries[i].Tree
-				break
-			}
-		}
-	}
-	// stopped is how the closed round was stopped: the newest KindStop entry
-	// for ClosedRound whose note names one ("stopped/killed",
-	// "stopped/reaped", "stopped/gone" or "stopped/dequeued"). A close any
-	// other way writes no such entry, and the field stays "" (#344).
-	var stopped string
-	if b.Serve != nil && b.Serve.ClosedRound > 0 {
-		for i := len(entries) - 1; i >= 0; i-- {
-			if entries[i].Round == b.Serve.ClosedRound && entries[i].Kind == store.KindStop {
-				stopped = strings.TrimPrefix(entries[i].Note, "stopped/")
-				if stopped == entries[i].Note {
-					stopped = ""
-				}
-				break
-			}
-		}
+		facts = servedRoundFacts(entries, b.Serve.ClosedRound)
 	}
 	var ackedRound int
 	var closedRound int
@@ -174,13 +137,13 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		Halt:           halt,
 		ResultCommit:   resultCommit,
 		DirtyCommit:    dirtyCommit,
-		ReportOutcome:  reportOutcome,
-		GateResult:     gateResult,
-		Stopped:        stopped,
+		ReportOutcome:  facts.ReportOutcome,
+		GateResult:     facts.GateResult,
+		Stopped:        facts.Stopped,
 		Shape:          b.Shape,
-		DiffNote:       diffNote,
-		DiffCommits:    diffCommits,
-		DiffTree:       diffTree,
+		DiffNote:       facts.DiffNote,
+		DiffCommits:    facts.DiffCommits,
+		DiffTree:       facts.DiffTree,
 		AckedRound:     ackedRound,
 		Candidate:      b.BuilderCandidate,
 		Account:        b.BuilderAccount,
@@ -190,11 +153,61 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		Tier:           string(effectiveTier(b)),
 		Feature:        b.Feature,
 		Ticket:         b.Ticket,
-		Usage:          reportUsage,
+		Usage:          facts.Usage,
 		PriorTokens:    priorTokens,
-		Rusage:         reportRusage,
+		Rusage:         facts.Rusage,
 		StalledSince:   b.StalledSince,
 	}
+}
+
+// servedRoundFacts is the per-round scan ServedView used to run for its
+// ClosedRound: round n's report outcome, usage and rusage; its gate result; its
+// diff note, commit count and tree; and how it was stopped. n <= 0 yields the
+// zero value. Every field names the newest entry for round n of its kind, the
+// order the four original scans walked.
+func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
+	var f remote.ClosedRoundView
+	if n <= 0 {
+		return f
+	}
+	f.Round = n
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Round == n && entries[i].Kind == store.KindReport {
+			f.ReportOutcome = entries[i].Outcome
+			f.Usage = entries[i].Usage
+			f.Rusage = entries[i].Rusage
+			break
+		}
+	}
+	// gateResult is the round's gate result: the newest KindReport entry for n
+	// that carries a gate record, and only that round's.
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Round == n && entries[i].Kind == store.KindReport && entries[i].Gate != nil {
+			f.GateResult = entries[i].Gate.Result
+			break
+		}
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Round == n && entries[i].Kind == store.KindDiff {
+			f.DiffNote = entries[i].Note
+			f.DiffCommits = entries[i].Commits
+			f.DiffTree = entries[i].Tree
+			break
+		}
+	}
+	// stopped is how the round was stopped: the newest KindStop entry for n
+	// whose note names one ("stopped/killed", "stopped/reaped", "stopped/gone"
+	// or "stopped/dequeued"). A close any other way writes no such entry.
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Round == n && entries[i].Kind == store.KindStop {
+			stopped := strings.TrimPrefix(entries[i].Note, "stopped/")
+			if stopped != entries[i].Note {
+				f.Stopped = stopped
+			}
+			break
+		}
+	}
+	return f
 }
 
 // ResolveServedTierFor is the served counterpart of add.go's
