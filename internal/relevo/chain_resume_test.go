@@ -456,8 +456,9 @@ func TestChainResumeWritesOneTraceRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeEvent: %v", err)
 	}
-	if ev.Kind != chain.EventNeedsYou || ev.Reason != resumeEvent {
-		t.Errorf("event = %+v, want the chain's %q event carrying %q", ev, chain.EventNeedsYou, resumeEvent)
+	wantReason := chain.ResumeReason(chain.StepBuilding)
+	if ev.Kind != chain.EventNeedsYou || ev.Reason != wantReason {
+		t.Errorf("event = %+v, want the chain's %q event carrying %q", ev, chain.EventNeedsYou, wantReason)
 	}
 	act, err := chain.DecodeAction(row.Action)
 	if err != nil {
@@ -468,6 +469,65 @@ func TestChainResumeWritesOneTraceRow(t *testing.T) {
 	}
 	if builder := chainBinding(t, rt, "shop"); row.Round != builder.Round {
 		t.Errorf("resume row round = %d, want the round it sent %d", row.Round, builder.Round)
+	}
+}
+
+// TestChainResumeTraceRowNamesTheStepItMovedTo pins the resume's trace wording:
+// the row's reason says where the resume moved the chain, in the trace's own
+// step words -- a re-sent build round reads `resumed -> build`, a reviewed
+// manual round `resumed -> review` -- in the stored event and the rendered line.
+func TestChainResumeTraceRowNamesTheStepItMovedTo(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a re-sent build round", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{})
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+		assertResumeRowReason(t, rt, chain.ResumeReason(chain.StepBuilding))
+	})
+
+	t.Run("a reviewed manual round", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{})
+		if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+			t.Fatalf("Send after the stop: %v", err)
+		}
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+		assertResumeRowReason(t, rt, chain.ResumeReason(chain.StepReviewing))
+	})
+}
+
+// assertResumeRowReason pins that the chain's last trace row carries want as the
+// resume's reason, in the stored event and the rendered line.
+func assertResumeRowReason(t *testing.T, rt Runtime, want string) {
+	t.Helper()
+
+	events := chainTrace(t, rt, "shop")
+	last := events[len(events)-1]
+	ev, err := chain.DecodeEvent(last.Event)
+	if err != nil {
+		t.Fatalf("DecodeEvent: %v", err)
+	}
+	if ev.Kind != chain.EventNeedsYou || ev.Reason != want {
+		t.Errorf("resume event = %+v, want a needs_you carrying %q", ev, want)
+	}
+	doc, err := ChainTrace(context.Background(), rt, "shop")
+	if err != nil {
+		t.Fatalf("ChainTrace: %v", err)
+	}
+	if out := RenderTrace(doc); !strings.Contains(out, want) {
+		t.Errorf("RenderTrace = %q, want it to carry %q", out, want)
 	}
 }
 
@@ -584,7 +644,8 @@ func TestChainResumeRefusesAGateFlagOnARemoteBuilder(t *testing.T) {
 // TestChainCorrectionSeedNamesTheJudgedBuilderRound pins the manual-round
 // resume: after a resume reviews a newer manual builder round and the reviewer
 // asks for changes, the correction seed names that builder round -- its report,
-// diff, prompt and cumulative diff -- not the reviewer's own round.
+// the copies of its diff and cumulative diff, and its prompt -- not the
+// reviewer's own round.
 func TestChainCorrectionSeedNamesTheJudgedBuilderRound(t *testing.T) {
 	t.Parallel()
 
@@ -614,15 +675,26 @@ func TestChainCorrectionSeedNamesTheJudgedBuilderRound(t *testing.T) {
 		t.Fatalf("read the correction prompt: %v", err)
 	}
 	got := string(text)
+	diffCopy, ok := rt.Store.ChainInputPath("shop", rt.Store.DiffPath("shop", builderRound))
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", rt.Store.DiffPath("shop", builderRound))
+	}
+	planDiffCopy, ok := rt.Store.ChainInputPath("shop", rt.Store.PlanDiffPath("shop", builderRound))
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", rt.Store.PlanDiffPath("shop", builderRound))
+	}
 	for _, want := range []string{
 		rt.Store.ReportPath("shop", builderRound),
-		"This round's diff: " + rt.Store.DiffPath("shop", builderRound),
+		"This round's diff: " + diffCopy,
 		"This round's prompt: " + rt.Store.PromptPath("shop", builderRound),
-		"Plan diff, every round of this plan so far: " + rt.Store.PlanDiffPath("shop", builderRound),
+		"Plan diff, every round of this plan so far: " + planDiffCopy,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("correction seed does not name %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, rt.Store.DiffPath("shop", builderRound)) || strings.Contains(got, rt.Store.PlanDiffPath("shop", builderRound)) {
+		t.Errorf("correction seed names a round_file key:\n%s", got)
 	}
 }
 

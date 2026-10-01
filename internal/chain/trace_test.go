@@ -1,6 +1,9 @@
 package chain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestChainTraceLineFormatsPlanPhaseStepMemberRound pins the one trace line's
 // columns: plan i/N, the state the chain was in before the event, the closing
@@ -148,6 +151,16 @@ var traceLineCases = []struct {
 		},
 		want: "plan 2/4  review   x-rev r2   no verdict  reviewer gave no verdict",
 	},
+	{
+		name: "a resume names the step it moved to",
+		line: TraceLine{
+			Plan: 1, Plans: 1, Phase: PhaseBuild, Step: StepBuilding,
+			Member: "shop", Round: 2,
+			Event:  Event{Kind: EventNeedsYou, Member: MemberBuilder, Round: 2, Reason: ResumeReason(StepReviewing)},
+			Action: Action{Kind: ActionSend, Member: MemberReviewer, Seed: SeedReviewer},
+		},
+		want: "plan 1/1  build    shop r2    resumed -> review",
+	},
 }
 
 // TestTraceLineDetailWords pins the word each kind of close renders, the
@@ -163,5 +176,32 @@ func TestTraceLineDetailWords(t *testing.T) {
 				t.Errorf("Line() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestResumeReasonNamesTheStepItMovedTo pins the resume reason's vocabulary:
+// every step renders in the trace's own word, and a step the state machine does
+// not name has no word, so its reason ends at the arrow.
+func TestResumeReasonNamesTheStepItMovedTo(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		step Step
+		want string
+	}{
+		{StepBuilding, "resumed -> build"},
+		{StepReviewing, "resumed -> review"},
+		{StepCorrecting, "resumed -> correct"},
+		{StepScanning, "resumed -> scan"},
+		{StepPlanningFixes, "resumed -> planning"},
+		{Step(""), "resumed -> "},
+		{Step("mystery"), "resumed -> "},
+	} {
+		if got := ResumeReason(tc.step); got != tc.want {
+			t.Errorf("ResumeReason(%q) = %q, want %q", tc.step, got, tc.want)
+		}
+		if got := tc.step.Word(); !strings.HasSuffix(tc.want, got) {
+			t.Errorf("Step(%q).Word() = %q, want the reason's own word", tc.step, got)
+		}
 	}
 }

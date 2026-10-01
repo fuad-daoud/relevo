@@ -197,7 +197,7 @@ CREATE TABLE chain_event (
     round INTEGER NOT NULL,
     event TEXT NOT NULL,   -- JSON: {"kind":"builder_closed","outcome":"done","gate":"green"}
     action TEXT NOT NULL,  -- JSON: {"kind":"send","member":"x-rev","seed":"reviewer"}
-    reason TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '', plan INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (chain_id, seq)
 )
 
@@ -402,4 +402,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 , record_json_codec INTEGER NOT NULL DEFAULT 0, rendered_codec INTEGER NOT NULL DEFAULT 0)
 
-schema_versions have=18 know=18
+schema_versions have=19 know=19

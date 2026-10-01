@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -310,6 +311,39 @@ func (s *Store) ChainDir(name string) string {
 // stores, so a later edit of a source plan changes nothing.
 func (s *Store) ChainPlanPath(name string, i int) string {
 	return filepath.Join(s.ChainDir(name), fmt.Sprintf("plan-%d.md", i))
+}
+
+// ChainInputDir is where a chain keeps the copies of the round files its seeds
+// name: <chainDir>/inputs. It is under ChainDir, so it is dot-prefixed and no
+// store walk, seal pass or binding name can reach it.
+func (s *Store) ChainInputDir(name string) string {
+	return filepath.Join(s.ChainDir(name), "inputs")
+}
+
+// ChainInputPath names the copy a chain keeps of a source round file:
+// <chainDir>/inputs/<source binding>-<NNN>/<source base name>. source must be
+// a path under the state root that resolves to a binding round file; ok is
+// false for a path outside the root or one the store cannot name, so a source
+// that is not a binding round file resolves no copy.
+func (s *Store) ChainInputPath(chain, source string) (string, bool) {
+	binding, name, ok := s.bindingRelOf(source)
+	if !ok {
+		return "", false
+	}
+	return filepath.Join(s.ChainInputDir(chain), binding+"-"+name[:3], path.Base(name)), true
+}
+
+// DiskRegularFile reports whether path is a regular file the store reads as
+// itself: os.Lstat says a regular file, and the name is not a reserved
+// round-file name. A reserved name is row-only -- the row is the record -- so a
+// plant at one is never the record, and a symlink or any other non-regular file
+// is never opened.
+func (s *Store) DiskRegularFile(path string) bool {
+	if _, name, ok := s.bindingRelOf(path); ok && reservedRoundFile(name) {
+		return false
+	}
+	fi, err := os.Lstat(path)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // VerifyWorktreePath lives under its own dot-prefixed subdirectory so a human

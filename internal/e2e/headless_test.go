@@ -396,6 +396,32 @@ if [ ! -s "$plan" ]; then
 	exit 2
 fi
 
+# Every path a chain seed names must be openable: the seed builder names the
+# input's own regular file or a copy under the chain's own directory, and a seed
+# that names a path the store could not produce says "not available:" instead.
+# This opens each path line the staged seed carries and fails loudly -- with no
+# marker, so the round closes without a verdict and the chain halts -- when one
+# is not readable, so a seed that names a key a runner cannot open fails the e2e
+# rather than passing silently.
+check_seed_inputs() {
+	while IFS= read -r line; do
+		case "$line" in
+		*": "*)
+			path=${line##*": "}
+			path=${path%.}
+			case "$path" in
+			/*)
+				if [ ! -r "$path" ]; then
+					echo "fake-claude: seed names a missing input: $path" >&2
+					exit 3
+				fi
+				;;
+			esac
+			;;
+		esac
+	done < "$plan"
+}
+
 # A reader round: fill the artifact directory, edit the throwaway tree, create
 # the marker, then -- after the marker, as a real runner does -- print the final
 # message the summary is taken from and exit.
@@ -418,6 +444,7 @@ if [ -n "$artifact" ]; then
 	msg=""
 	case "$seed" in
 	"Review the round and give a verdict.")
+		check_seed_inputs
 		state="${XDG_STATE_HOME:-$HOME/.local/state}/chain-e2e"
 		mkdir -p "$state"
 		count=0
@@ -433,12 +460,15 @@ if [ -n "$artifact" ]; then
 		msg='# Reviewer output\n\nI read the plan, the report, the round diff and the check result.\n\n'"$fence"'relevo\nverdict: '"$verdict"'\n'"$fence"'\n\n'"$fence"'relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n'"$fence"'\n'
 		;;
 	"Write a correction plan for the builder.")
+		check_seed_inputs
 		msg='# Correction plan\n\n1. Make the change the reviewer asked for.\n2. Re-run the check.\n'
 		;;
 	"Write a plan that fixes the security findings.")
+		check_seed_inputs
 		msg='# Fix plan\n\n1. Fix the finding the security scan reported.\n2. Re-run the check.\n'
 		;;
 	"Scan the branch for security problems.")
+		check_seed_inputs
 		msg='# Security scan\n\nThe branch has one finding: a shell variable expanded unquoted in the fake harness.\n\n'"$fence"'relevo\nfindings: 1\n'"$fence"'\n\n'"$fence"'relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n'"$fence"'\n'
 		;;
 	esac
