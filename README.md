@@ -271,6 +271,10 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   existing binding's MasterMind side at the calling MasterMind without touching the
   builder; on a resume `--feature` sets the label, `--no-feature` clears it, and
   naming neither keeps it, while `--ticket` sets one. `relevo unbind N` is the other way out.
+- `relevo board [path] [--theme NAME] [--no-open]` — open a local Excalidraw
+  whiteboard for one scene in the repo, served on `127.0.0.1` with a per-run
+  token, saving the scene and a companion `.svg` beside it. Foreground;
+  Ctrl-C stops. See "relevo board" below.
 - `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
   prompt and hand it to the builder as the prompt of a fresh process started in
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
@@ -1146,6 +1150,49 @@ $ relevo show api-auth --report
 api-auth round 3 of 4 · report
 report text here
 ```
+
+### relevo board
+
+`relevo board [path] [--theme NAME] [--no-open]` opens a local
+[Excalidraw](https://excalidraw.com) whiteboard for one scene that lives in the
+repository. It binds `127.0.0.1:0`, prints one line,
+`board: http://127.0.0.1:<port>/#t=…  (Ctrl-C to stop)`, and opens that URL in
+the browser unless `--no-open` is given. Ctrl-C stops it, draining an in-flight
+save through `http.Server.Shutdown`.
+
+```
+relevo board                                  edits docs/boards/board.excalidraw
+relevo board docs/boards/api.excalidraw       edits a named scene
+relevo board --theme blueprint                a different palette for new elements
+```
+
+The scene is fixed at startup and confined to the repository: a path must end
+in `.excalidraw` and, after symlinks are resolved on its deepest existing
+ancestor, sit under the git top level, so neither `..` nor a symlinked parent
+escapes. A missing file is a new scene, and it and its parent directories are
+created on the first save, never at startup. Outside a repository the verb is a
+usage error, exit 2.
+
+The theme chooses the colours of **new** elements only -- an existing scene
+keeps the colours it stores. Precedence is `--theme`, then the repo-local git
+config key `relevo.boardTheme` (`git config relevo.boardTheme blueprint`), then
+`cockpit`. An unknown name is a usage error, exit 2, listing the built-ins.
+
+On save the page writes the scene and a companion `<name>.svg` beside it,
+exported for the cockpit, agents and PR diffs; both are committed. The export
+runs with dark mode off and the view background set from the palette, so what
+is stored, shown and exported is the same colour. `Ctrl-S` (or the Save button)
+writes the scene and its companion `.svg`.
+
+The page and its assets (bundle, stylesheet and self-hosted fonts) are vendored,
+committed and embedded, so no CDN is contacted. The page talks to three
+loopback-only routes: `GET /` and `GET /assets/*` are the page, `GET /api/scene`
+returns the scene, and `PUT /api/scene` saves it. A per-run token, carried in
+the URL fragment and sent on every `/api/*` call, plus a `Host` check, guard the
+API; `If-Match` carries the scene's etag, and a stale one is a 409 the page
+reports as `the file changed on disk; reload to continue`. `make board-assets`
+regenerates the vendored assets and their integrity manifest; it is dev-only,
+and CI only reads them.
 
 ### done and unbind are the destructive verbs
 

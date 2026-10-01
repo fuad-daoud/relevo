@@ -61,6 +61,7 @@ Commands:
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
   bugreport assemble a local, redacted bug-report bundle and print the gh line
+  board     open a local Excalidraw whiteboard for a scene in the repo [--theme NAME] [--no-open]
   db        query '<SQL>' [--json]
             read relevo.db with one read-only SQL statement, through the daemon
             when it runs; use it instead of sqlite3, which the daemon's lock
@@ -240,6 +241,8 @@ func run(args []string) error {
 		return cmdDoctor(args[1:])
 	case "bugreport":
 		return cmdBugreport(args[1:])
+	case "board":
+		return cmdBoard(args[1:])
 	case "db":
 		return cmdDB(args[1:])
 	case "chain":
