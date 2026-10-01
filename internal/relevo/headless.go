@@ -1092,44 +1092,50 @@ const readerFinalMessageGrace = 2 * time.Minute
 // not a completed final message.
 const readerSummaryEarlyNote = "runner still running after its marker; summary taken early"
 
-// holdReaderOnMarker reports whether a reader round whose marker is already on
-// disk must stay open instead of closing. A reader's marker is not the end of
-// its stream: the runner writes its final message just after the marker and
-// then exits, and that message is the round's summary. So the round waits for
-// the exit -- held is true while the process is alive inside
-// readerFinalMessageGrace -- and a runner still alive after the grace is
-// stopped the way `relevo stop` stops one, with early true so the caller closes
-// on the stream as it is.
+// holdReaderOnMarker reads a reader round's marker once and reports what the
+// close must do with it. A reader's marker is not the end of its stream: the
+// runner writes its final message just after the marker and then exits, and
+// that message is the round's summary. So the round waits for the exit -- held
+// is true while the process is alive inside readerFinalMessageGrace -- and a
+// runner still alive after the grace is stopped the way `relevo stop` stops
+// one, with early true so the caller closes on the stream as it is.
 //
-// No marker, no pid and no Runner all leave the round to the ordinary close.
+// present is false when the marker is not on disk this tick: the round is
+// still live, and the caller must close nothing at all. That is what keeps the
+// reader's marker read and its close on one observation: a marker written
+// between this read and closeOnMarker's own would otherwise close the round
+// the instant it appeared, before the runner printed the final message.
+//
+// A present marker with no pid and no Runner is left to the ordinary close.
 // An unreadable liveness check holds this tick, as the unmarked path treats it
 // as alive.
-func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (held, early bool, err error) {
-	if b.Builder.PID == 0 || rt.Runner == nil {
-		return false, false, nil
-	}
+func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (present, held, early bool, err error) {
 	fi, serr := os.Stat(rt.Store.DonePath(b.Name, b.Round))
 	if serr != nil {
-		return false, false, nil // no marker yet: nothing to hold on
+		return false, false, false, nil // no marker yet: the round is live, close nothing
+	}
+	present = true
+	if b.Builder.PID == 0 || rt.Runner == nil {
+		return present, false, false, nil
 	}
 	alive, aerr := rt.Runner.Alive(ctx, handleOf(b.Builder))
 	if aerr != nil {
 		slog.Warn("reader liveness check failed; holding the round", "binding", b.Name, "pid", b.Builder.PID, "err", aerr)
-		return true, false, nil
+		return present, true, false, nil
 	}
 	if !alive {
-		return false, false, nil
+		return present, false, false, nil
 	}
 	// A sighting: this daemon now knows the process is alive, so a later tick
 	// never classifies it as lost to a restart.
 	rt.Watched.Mark(b.Builder.PID, b.Builder.StartedAt)
 	if rt.Now().Sub(fi.ModTime()) < readerFinalMessageGrace {
-		return true, false, nil
+		return present, true, false, nil
 	}
 	if _, err := stopProcess(ctx, rt, b, "stop"); err != nil {
-		return false, false, err
+		return present, false, false, err
 	}
-	return false, true, nil
+	return present, false, true, nil
 }
 
 // markerClose is the marker branch of reconcileHeadless: it calls
@@ -1147,12 +1153,19 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// once the process has gone. While the runner is alive the round stays
 	// open; past the grace the runner is stopped and the round closes with the
 	// summary taken early.
+	//
+	// The reader's marker is read exactly here, and a marker that is absent
+	// this tick closes nothing: the round is still live and the next tick
+	// re-reads it. Reading it here and again in closeOnMarker would let a
+	// marker written between the two reads close the round the instant it
+	// appeared, before the runner printed the final message the summary is
+	// taken from.
 	if b.Shape == store.ShapeReader {
-		held, early, err := holdReaderOnMarker(ctx, rt, b)
+		present, held, early, err := holdReaderOnMarker(ctx, rt, b)
 		if err != nil {
 			return b, false, false, err
 		}
-		if held {
+		if !present || held {
 			return b, false, false, nil
 		}
 		if early {
