@@ -242,6 +242,15 @@ everything is reversible by not merging.
   `TestEngineCodeMapsARealBusyAndConstraint`. `TestVacuumRefusesADialledHandle`
   pins the refusal itself. This is a listed exception to passing unchanged, not
   a bent test.
+- **Round 2's direct-only tests.** The relevo open lock, the one-time conversion
+  and the direct re-exec are direct-only for the same reason, and their tests
+  open through the same helper: `TestOpenLockedByAnotherProcessIsErrLocked`,
+  `TestWritableOpenWaitsForTheLockThenFails`,
+  `TestTwoHandlesInOneProcessShareTheLock`,
+  `TestTursoLockHeldByAnotherProcessIsErrLocked` and
+  `TestReexecNewImageOpensTheDatabaseAtOnce`. The conversion tests call
+  `convertLegacy` directly and open the raw engine (`OpenRaw`), so they too are
+  unaffected by the owner switch.
 - **Protocol tests (0b):** client killed mid-transaction rolls back and the
   `seq` invariants hold; three or more concurrent connections while one is
   pinned in a transaction; `cancel`; a ~5 MB blob and a ~50 MB result set;
