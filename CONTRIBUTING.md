@@ -77,6 +77,23 @@ git push origin vX.Y.Z
 Pushing `vX.Y.Z` starts `release.yml`, which re-runs `make check`, matches the
 tag against both manifests, and publishes the binaries.
 
+`plugin-release` is the ref Anthropic's plugin directory tracks, so every commit
+on it is a published plugin version; `main` carries unreleased plugin changes
+ahead of the shipped binary. `release.yml` moves `plugin-release` as its last
+step — after the release and its archives exist — fast-forward only, creating the
+branch on the first run. Only that workflow pushes it: do not push by hand except
+to recover, and configure the repository ruleset to allow pushes only from the
+release workflow, with the maintainer's bypass kept for a hand move.
+
+If the step refuses — the tag is not a descendant of the branch, e.g. a tag cut
+from an older commit — the release stays published and the branch stays put.
+Decide whether the plugin directory should serve that older tag, then
+`git fetch origin plugin-release`, inspect the branch, and either run
+`scripts/promote-plugin-release.sh vX.Y.Z` for a clean fast-forward or
+`git push --force origin vX.Y.Z:refs/heads/plugin-release` only when moving the
+published plugin back is intended. `make release VERSION=X.Y.Z` cuts the tag
+directly on `main` and triggers the same move, because it pushes a tag too.
+
 `make release VERSION=X.Y.Z` still cuts directly on `main` — bump, check and
 tag in one step — when a PR round-trip is not wanted.
 
