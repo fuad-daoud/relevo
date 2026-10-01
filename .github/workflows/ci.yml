@@ -303,6 +303,27 @@ jobs:
       - name: test through an in-process owner
         run: go test -race -count=1 ./internal/db/... ./internal/store/...
 
+  # The way back: the same internal/db and internal/store suites under the
+  # modernc engine. The default binary links modernc too, for the one-time
+  # conversion, so this leg is what keeps -tags modernc from rotting.
+  modernc:
+    name: modernc
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: vet under modernc
+        run: go vet -tags modernc ./internal/db/...
+
+      - name: test under modernc
+        run: go test -race -count=1 -tags modernc ./internal/db/... ./internal/store/...
+
   portability:
     name: cross-compile
     needs: changes
@@ -318,9 +339,11 @@ jobs:
       # relevo is supported on Linux and macOS only, but the tree must keep
       # compiling elsewhere: this is what catches a platform-specific syscall
       # sneaking back in outside a build-tagged file.
-      # CGO_ENABLED=0 because relevo is pure Go: without it a same-GOOS
-      # cross-compile (linux/arm64 from linux/amd64) keeps cgo on and reaches
-      # for the host's gcc, which cannot target arm64.
+      # CGO_ENABLED=0 because purego loads the embedded Turso library without a
+      # C toolchain: without it a same-GOOS cross-compile (linux/arm64 from
+      # linux/amd64) keeps cgo on and reaches for the host's gcc, which cannot
+      # target arm64. The default binary is dynamically linked at run time, but
+      # that linkage is purego's own dlopen, not cgo.
       - name: build for every target
         env:
           CGO_ENABLED: '0'
@@ -328,4 +351,5 @@ jobs:
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             echo "==> $target"
             GOOS=${target%/*} GOARCH=${target#*/} go build ./...
+            GOOS=${target%/*} GOARCH=${target#*/} go build -tags modernc ./...
           done

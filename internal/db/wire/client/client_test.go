@@ -179,3 +179,71 @@ func TestClientMapsRestartingRefusal(t *testing.T) {
 		t.Errorf("refusal code = %q, want %q", ref.Code, wire.RefuseRestarting)
 	}
 }
+
+// sawHello accepts one connection, reads its hello, answers a welcome, and
+// reports the hello's ad-hoc marker on the returned channel.
+func sawHello(t *testing.T, l net.Listener) <-chan bool {
+	t.Helper()
+	got := make(chan bool, 1)
+	go func() {
+		nc, err := l.Accept()
+		if err != nil {
+			got <- false
+			return
+		}
+		defer func() { _ = nc.Close() }()
+		w := wire.NewConn(nc)
+		frame, err := w.Read()
+		if err != nil {
+			got <- false
+			return
+		}
+		var h wire.Hello
+		if _, err := wire.Decode(frame, &h); err != nil {
+			got <- false
+			return
+		}
+		got <- h.AdHoc
+		payload, err := wire.Encode(wire.KindWelcome, &wire.Welcome{
+			Header:  wire.Header{Type: wire.TypeWelcome},
+			Proto:   wire.Proto,
+			Version: wire.Version,
+		}, nil)
+		if err == nil {
+			_ = w.Write(payload)
+		}
+	}()
+	return got
+}
+
+// TestConnectorMarksItsHelloAdHoc pins the ad-hoc marker: a pool built from
+// client.Connector sends the bit in its handshake, and a plain
+// sql.Open(client.DriverName, ...) never does. The fake owner answers the
+// handshake and closes; Ping is enough to open the connection, so no request
+// frame is sent.
+func TestConnectorMarksItsHelloAdHoc(t *testing.T) {
+	l, sock := shortListener(t)
+	got := sawHello(t, l)
+	adhoc := sql.OpenDB(client.Connector(sock, true))
+	t.Cleanup(func() { _ = adhoc.Close() })
+	if err := adhoc.Ping(); err != nil {
+		t.Fatalf("ping the ad-hoc pool: %v", err)
+	}
+	if !<-got {
+		t.Error("the ad-hoc connector's hello did not carry the ad-hoc bit")
+	}
+
+	l2, sock2 := shortListener(t)
+	got2 := sawHello(t, l2)
+	plain, err := sql.Open(client.DriverName, sock2)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = plain.Close() })
+	if err := plain.Ping(); err != nil {
+		t.Fatalf("ping the plain pool: %v", err)
+	}
+	if <-got2 {
+		t.Error("a plain sql.Open hello carried the ad-hoc bit")
+	}
+}

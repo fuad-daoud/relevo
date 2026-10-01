@@ -128,14 +128,49 @@ its in-flight request, issues `ROLLBACK`, and closes the pinned connection
 rather than returning it to a pool.
 
 **Cancellation.** `cancel{id}` cancels the context of a running request on the
-owner, which interrupts the statement.
+owner, which interrupts the statement where the engine can. Under Turso it
+cannot: tursogo v0.8.1 exposes no statement interrupt -- `turso_connection_interrupt`
+in the C ABI would lift that -- so a cancel releases the client at once, after a
+short grace for the owner's reply, while the statement runs to completion on the
+owner. That connection is then discarded rather than served again, because the
+client can no longer know the stream's state.
+
+**Abandoned statements.** A statement the engine will not interrupt outlives the
+client that sent it: the owner's cleanup returns the pin slot, then registers the
+still-running rollback and discard as an abandoned statement, keeping every
+registration -- two clients can abandon statements at once, and dropping the
+second would let its runaway escape the refusal and the reap as soon as the first
+clears. After a 30 s grace, once any registration is still live, an `OnAbandoned`
+hook fires (at most once; one re-exec ends them all) and the daemon re-execs its
+own binary, whose fresh thread ends the statement. While any registration is live
+the owner refuses requests on connections
+that marked themselves ad-hoc in the handshake, with the refusal code `reaping`;
+every other verb runs on a connection without the bit and is never refused, and the
+handshake itself is never refused, because a refused dial would make `db query`
+fall back to a direct open and report a false lock conflict.
+
+**Ad-hoc reads.** `hello` carries `ad_hoc`, set by `db query`'s dial
+(`client.Connector`, `db.DialContextAdHoc`) and clear for every other client. Both
+fields are additive and `version` stays 1: an owner that predates `ad_hoc` ignores
+it and never refuses, and a client that predates it never sends one.
+
+**Ad-hoc value ceiling.** The engine materialises a whole value -- up to SQLite's
+1 GB per-value limit -- before relevo can see it. That transient cannot be bounded
+without an engine limit, so an ad-hoc read of one huge value would still grow the
+daemon's heap by it however small the client's `--max-bytes` is. The owner
+therefore checks each value's size the moment the engine yields the row and
+refuses a value over 64 MiB (`wire.AdHocReadCeiling`) before it copies the value
+into a batch or peeks the next row; `relevo db query` caps `--max-bytes` at the
+same ceiling and says so. A connection without the ad-hoc bit is never capped:
+relevo's own blobs must still flow.
 
 **Errors.** `error{id, code, extended_code, message}`. The client rebuilds an
 error carrying `Code()`, so `ErrBusy`, `ErrInvalid` and `retryBusy` work
 unchanged. Owner refusals have their own codes: `wrong_proto`,
-`shutting_down`, `restarting`.
+`shutting_down`, `restarting`, `reaping`.
 
-**Handshake.** The client sends `hello{proto, version, exe_id, schema_know}`.
+**Handshake.** The client sends `hello{proto, version, exe_id, schema_know,
+ad_hoc}`.
 The owner answers `welcome{proto, min_client, version, schema_have, schema_know,
 origin, features}` -- `origin` is the installation id a scoped handle needs and
 must not read from the file -- or `refuse{code, message}`. The client answers
@@ -154,7 +189,8 @@ and the one-shot startup passes (dedupe, compression) happen in the daemon.
 `relevo.sock` → write `daemon.json` → tick. `installation.json` is minted by
 writing a temp file and renaming it into place. A daemon that loses the lock
 exits "already running" before touching anything. `--check` and `--preflight`
-never dial and never auto-start.
+never auto-start; when the file is held they read through the owner (see the
+correction below).
 
 **Auto-start.** On a dial failure with no socket or a refused connection, the
 client asks the service manager -- `systemctl --user start --no-block relevo`
@@ -199,9 +235,24 @@ write lock held by pid 1234 (relevo daemon ingest) for 28s". stdout stays
 clean on every failure. `relevo doctor` gains an owner row: socket, pid,
 protocol, open connections.
 
-**Escape hatch.** `RELEVO_DB_DIRECT=1` makes a client open the file directly,
-as today. It is safe only while the driver is modernc, is not documented for
-users, and is removed with the Turso swap.
+**Correction (2026-10-01, with the Turso swap).** Three things in this section
+are now different, and the removed escape hatch is the first of them.
+
+- **The escape hatch is gone.** `RELEVO_DB_DIRECT` no longer exists: `routeDirect`
+  remains only as the fallback on a platform with no owner socket, and no verb
+  and no environment variable selects it.
+- **`--check`, `--preflight` and `bugreport` dial.** `--check`/`--preflight` and
+  `bugreport` still never auto-start the owner, but when the file is held they
+  read the config (or the bundle's sections) through the owner that holds it,
+  rather than skipping the database. A held file with no owner answering is an
+  error naming both.
+- **relevo takes its own lock.** Turso's file lock is per file descriptor, and
+  each pooled connection holds its own fd: dropping one pooled connection
+  releases the engine's lock while another still holds the file open. relevo
+  therefore `flock`s `relevo.db.lock` itself, once per path per process, and
+  keeps it until the last handle on that path closes. A direct open by a second
+  process fails with `db.ErrLocked` while the daemon holds it, which is what
+  makes the owner the only reader.
 
 ## 7. Stages
 
@@ -225,6 +276,27 @@ everything is reversible by not merging.
   every database through an in-process owner over a socketpair, and the
   `internal/db` and `internal/store` suites run that way in CI. Passing
   unchanged is the transparency proof.
+- **Direct-only tests (the Turso swap).** Five tests hold a direct handle even
+  when the switch is on, because the operation they exercise is direct-only by
+  design: `Vacuum` refuses a handle reached over the wire (`vacuum.go`), the
+  per-path handle count tracks direct handles only (`handles.go`), and
+  `engineCode` maps an engine's own sentinel before the error is put on the wire
+  (`engine_turso.go`). They open through `directOpen`/`directOpenTestDB`
+  (`internal/db/helpers_test.go`), the direct opener the hop wraps:
+  `TestVacuumKeepsRows`, `TestVacuumShrinksTheFileAndKeepsTheHandleUsable`,
+  `TestCompressHistoryOnce`, `TestTwoDirectHandlesOnOnePathAreCounted` and
+  `TestEngineCodeMapsARealBusyAndConstraint`. `TestVacuumRefusesADialledHandle`
+  pins the refusal itself. This is a listed exception to passing unchanged, not
+  a bent test.
+- **Round 2's direct-only tests.** The relevo open lock, the one-time conversion
+  and the direct re-exec are direct-only for the same reason, and their tests
+  open through the same helper: `TestOpenLockedByAnotherProcessIsErrLocked`,
+  `TestWritableOpenWaitsForTheLockThenFails`,
+  `TestTwoHandlesInOneProcessShareTheLock`,
+  `TestTursoLockHeldByAnotherProcessIsErrLocked` and
+  `TestReexecNewImageOpensTheDatabaseAtOnce`. The conversion tests call
+  `convertLegacy` directly and open the raw engine (`OpenRaw`), so they too are
+  unaffected by the owner switch.
 - **Protocol tests (0b):** client killed mid-transaction rolls back and the
   `seq` invariants hold; three or more concurrent connections while one is
   pinned in a transaction; `cancel`; a ~5 MB blob and a ~50 MB result set;

@@ -24,13 +24,17 @@ type Header struct {
 }
 
 // Hello opens the handshake; SchemaKnow is this client's highest embedded
-// migration, carried as information for the owner.
+// migration, carried as information for the owner. AdHoc marks a connection on
+// the ad-hoc read path (`db query`), which the owner may refuse while it is
+// reaping an abandoned statement; it is additive, so an owner that predates the
+// bit ignores it and a client that predates it never sends one.
 type Hello struct {
 	Header
 	Proto      string `json:"proto"`
 	Version    int    `json:"version"`
 	ExeID      string `json:"exe_id"`
 	SchemaKnow int    `json:"schema_know"`
+	AdHoc      bool   `json:"ad_hoc"`
 }
 
 // Welcome answers Hello. SchemaHave is the served database's version and

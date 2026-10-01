@@ -612,6 +612,33 @@ func TestChainDoneOnARunningChainIsAConflict(t *testing.T) {
 	}
 }
 
+// TestChainResumeOnASettledChainIsAConflict pins both settle refusals at the
+// CLI edge: a chain still in flight and a finished chain are conflicts, not
+// internal failures.
+func TestChainResumeOnASettledChainIsAConflict(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{"running", "running", "is running"},
+		{"done", "done", "is done"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			name := "cli" + tc.name + "resume"
+			seedCLIChain(t, name, tc.status)
+
+			_, _, err := captureOutput(t, func() error {
+				return run([]string{"chain", "--resume", "--name", name})
+			})
+			ce := requireCLIError(t, err, codeConflict, "")
+			if !strings.Contains(ce.message, tc.want) {
+				t.Errorf("message = %q, want it to say the chain %s", ce.message, tc.want)
+			}
+		})
+	}
+}
+
 // TestSeedOverCapIsAUsageRefusal pins the class of the planner seed cap: the
 // refusal is a usage error naming the escape, not an internal failure. Pure: it
 // classifies an error and touches no state.

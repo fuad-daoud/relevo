@@ -10,8 +10,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 )
@@ -137,9 +135,9 @@ func TestTxRetriesARestartingBegin(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	raw, err := sql.Open("sqlite", "file:"+path)
+	raw, err := db.OpenRaw(path)
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenRaw: %v", err)
 	}
 	t.Cleanup(func() { _ = raw.Close() })
 

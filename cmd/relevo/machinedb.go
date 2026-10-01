@@ -27,8 +27,9 @@ const (
 	// routeNone leaves the route off: the machine database is opened directly,
 	// which is what the daemon, the peek verbs and a test get.
 	routeNone dbRoute = iota
-	// routeDirect opens the file directly even with an owner listening, which
-	// is what the hidden RELEVO_DB_DIRECT escape hatch selects.
+	// routeDirect opens the file directly. It is not selectable by any verb:
+	// installDBRoute falls back to it only on a platform with no owner socket,
+	// where the direct open is the only route there is.
 	routeDirect
 	// routeOwner dials the owner, starting it when the socket is missing.
 	routeOwner
@@ -94,15 +95,12 @@ func installRouteForArgs(args []string) (peek bool) {
 
 // routeForArgs maps a command line to its route, its dial budget and how long
 // it may wait for a daemon that is still starting: the peek verbs and the
-// daemon open directly, RELEVO_DB_DIRECT keeps the direct open, the statusline
-// gets the short budget, a hook gets the verb budget with no start wait, and
-// every other verb dials with the default budget and the start wait.
+// daemon open directly, the statusline gets the short budget, a hook gets the
+// verb budget with no start wait, and every other verb dials with the default
+// budget and the start wait.
 func routeForArgs(args []string) (dbRoute, time.Duration, time.Duration) {
 	if isPeekArgs(args) || (len(args) > 0 && args[0] == "daemon") {
 		return routeNone, verbDialBudget, 0
-	}
-	if os.Getenv("RELEVO_DB_DIRECT") != "" {
-		return routeDirect, verbDialBudget, 0
 	}
 	if isStatuslineArgs(args) {
 		return routeOwner, statuslineDialBudget, 0
@@ -113,17 +111,19 @@ func routeForArgs(args []string) (dbRoute, time.Duration, time.Duration) {
 	return routeOwner, verbDialBudget, ownerStartWait
 }
 
-// isPeekArgs reports the read-only verbs, which never dial and never start the
-// owner: the daemon's --check/--preflight probes, and bugreport, whose read-only
-// runtime opens the machine database itself and must leave the route alone. A
-// peek verb also skips captureAgyEnv, which would open -- and can migrate -- the
-// very database the verb promises not to touch. bugreport's own flags
-// (--name/--round/--logs) pick what it reads and never change the route.
+// isPeekArgs reports the read-only verbs, which install no route and never
+// start the owner: the daemon's --check/--preflight probes, bugreport, whose
+// read-only runtime opens the machine database itself, and db query, which
+// reads the file directly or through an owner that is already up. A peek verb
+// also skips captureAgyEnv, which would open -- and can migrate -- the very
+// database the verb promises not to touch. bugreport's own flags
+// (--name/--round/--logs) pick what it reads and never change the route, and db
+// query's SQL never does either.
 func isPeekArgs(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "bugreport" {
+	if args[0] == "bugreport" || args[0] == "db" {
 		return true
 	}
 	return args[0] == "daemon" && hasArg(args[1:], "--check", "--preflight")

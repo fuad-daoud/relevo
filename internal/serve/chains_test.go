@@ -587,6 +587,24 @@ func TestWriteChainResumeErrorMapsTheOpenRoundRefusal(t *testing.T) {
 	}
 }
 
+// TestWriteChainResumeErrorMapsTheChainDone pins the done refusal's wire shape:
+// a finished chain is 409 chain_done, the code the client rebuilds as the
+// typed done refusal, not a bare invalid.
+func TestWriteChainResumeErrorMapsTheChainDone(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeChainResumeError(rec, errors.New("chain shop is done"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeChainDone {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainDone)
+	}
+}
+
 func TestWhoAmIAdvertisesChain(t *testing.T) {
 	s, _ := newTestServer(t, 0)
 	kp, err := remote.Generate()

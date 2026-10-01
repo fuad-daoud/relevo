@@ -62,6 +62,29 @@ func databaseCheck(st *store.Store) doctor.Check {
 	return c
 }
 
+// engineCheck is doctor's `engine` row: the driver this binary opens databases
+// with, and whether its library is usable. A missing library warns -- a fresh
+// root has none until something opens a database there -- and a library the
+// loader refuses fails, because nothing can open until it is removed.
+func engineCheck(status db.EngineState) doctor.Check {
+	c := doctor.Check{Name: "engine", Severity: doctor.SevOK}
+	switch {
+	case status.Err != nil:
+		c.Severity = doctor.SevFail
+		c.Detail = fmt.Sprintf("%s · %s · %v", status.Name, status.Library, status.Err)
+		c.Fix = fmt.Sprintf("remove %s and restart the daemon", status.CacheDir)
+	case status.Missing:
+		c.Severity = doctor.SevWarn
+		c.Detail = fmt.Sprintf("%s · no library under %s yet", status.Name, status.CacheDir)
+	default:
+		c.Detail = status.Name
+		if status.Library != "" {
+			c.Detail = status.Name + " · " + status.Library
+		}
+	}
+	return c
+}
+
 // ownerCheck is doctor's `owner` row: whether the daemon serves relevo.sock,
 // and what it answers. A refused dial or an absent socket warns with the fix,
 // since a daemon that predates the socket still runs.
