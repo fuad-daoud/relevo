@@ -22,6 +22,13 @@ var ErrNotOneStatement = errors.New("not exactly one statement")
 // malformed argument from a refused statement maps it to usage.
 var ErrPragmaNotReadOnly = errors.New("pragma is not one of the read-only forms")
 
+// ErrRecursive reports a statement that names RECURSIVE. The owner protocol has
+// no way to interrupt a statement, so a recursive CTE that never terminates
+// would run until the process is killed; keeping RECURSIVE out of the verb is a
+// limit of the verb, not of the engine. It is wrapped with ErrInvalid, so a
+// caller that maps malformed arguments to usage still sees a usage error.
+var ErrRecursive = errors.New("recursive is not allowed in a read-only statement")
+
 // readOnlyPragmas are the PRAGMA names the read-only seam accepts, in the order
 // the refusal names them. A pragma outside this list can change the connection
 // or the file -- writable_schema being the one that did -- and belongs on the
@@ -139,6 +146,9 @@ func (d *DB) QueryReadOnly(ctx context.Context, stmt string, onRow func(columns 
 	one, err := singleStatement(stmt)
 	if err != nil {
 		return err
+	}
+	if mentionsRecursive(one) {
+		return fmt.Errorf("db: query read-only: RECURSIVE is not allowed: %w: %w", ErrInvalid, ErrRecursive)
 	}
 	switch keyword := strings.ToUpper(firstKeyword(one)); {
 	case !readOnlyKeywords[keyword]:
@@ -325,4 +335,36 @@ func firstKeyword(stmt string) string {
 // with: an ASCII letter, digit or underscore.
 func isKeywordByte(c byte) bool {
 	return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// mentionsRecursive reports whether stmt names RECURSIVE outside a string, a
+// quoted identifier or a comment. The word-boundary, case-insensitive scan is
+// what refuses a recursive CTE at the verb, where a substring match would also
+// refuse `SELECT 'recursive'` and a comment. It reuses the same quoted-region
+// and comment skips as the statement splitter, so the two agree on what is code.
+func mentionsRecursive(stmt string) bool {
+	for i := 0; i < len(stmt); {
+		switch c := stmt[i]; {
+		case c == '\'' || c == '"' || c == '`':
+			i = skipQuoted(stmt, i, c)
+		case c == '[':
+			i = skipQuoted(stmt, i, ']')
+		case c == '-' && i+1 < len(stmt) && stmt[i+1] == '-':
+			i = skipLineComment(stmt, i)
+		case c == '/' && i+1 < len(stmt) && stmt[i+1] == '*':
+			i = skipBlockComment(stmt, i)
+		case isKeywordByte(c):
+			j := i
+			for j < len(stmt) && isKeywordByte(stmt[j]) {
+				j++
+			}
+			if strings.EqualFold(stmt[i:j], "RECURSIVE") {
+				return true
+			}
+			i = j
+		default:
+			i++
+		}
+	}
+	return false
 }

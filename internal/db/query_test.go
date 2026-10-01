@@ -144,6 +144,39 @@ func TestQueryReadOnlyRunsTheListedPragmas(t *testing.T) {
 	}
 }
 
+// TestQueryReadOnlyRefusesRecursive pins the verb's own limit: a statement that
+// names RECURSIVE is refused, because the owner protocol cannot interrupt a
+// statement the CTE would otherwise never end.
+func TestQueryReadOnlyRefusesRecursive(t *testing.T) {
+	d := openTestDB(t)
+
+	err := d.QueryReadOnly(context.Background(),
+		`WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT count(*) FROM c`, noQueryRows)
+	if !errors.Is(err, ErrInvalid) || !errors.Is(err, ErrRecursive) {
+		t.Fatalf("recursive CTE = %v, want ErrInvalid and ErrRecursive", err)
+	}
+}
+
+// TestQueryReadOnlyAllowsRecursiveInAStringOrComment pins the scan's boundary:
+// the word only counts outside a string, a quoted identifier and a comment, so
+// a value or a comment that merely spells it stays allowed.
+func TestQueryReadOnlyAllowsRecursiveInAStringOrComment(t *testing.T) {
+	d := openTestDB(t)
+
+	for _, stmt := range []string{
+		`SELECT 'recursive'`,
+		`SELECT 1 AS "recursive"`,
+		"SELECT 1 AS `recursive`",
+		`SELECT 1 AS [recursive]`,
+		"SELECT 1 -- recursive",
+		`SELECT 1 /* recursive */`,
+	} {
+		if err := d.QueryReadOnly(context.Background(), stmt, noQueryRows); err != nil {
+			t.Errorf("QueryReadOnly(%q) = %v, want a result", stmt, err)
+		}
+	}
+}
+
 func TestQueryReadOnlyRefusesTwoStatements(t *testing.T) {
 	d := openTestDB(t)
 

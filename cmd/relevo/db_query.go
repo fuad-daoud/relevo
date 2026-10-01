@@ -18,7 +18,10 @@ import (
 
 // dbUsage is what a bare `relevo db` prints: the verb only dispatches
 // subcommands, and query is the one there is.
-const dbUsage = "usage: relevo db query '<SQL>' [--json]\n"
+const dbUsage = "usage: relevo db query '<SQL>' [--json]\n\n" +
+	"One read-only statement: SELECT, WITH or a read-only PRAGMA. RECURSIVE is\n" +
+	"refused: the owner protocol cannot interrupt a statement, so a recursive CTE\n" +
+	"could run until the process is killed.\n"
 
 // dbFlagSet declares no flags: `relevo db` is a dispatcher, and every flag
 // lives on its subcommands.
@@ -93,7 +96,7 @@ func cmdDBQuery(args []string) error {
 // seam or the engine refused -- a disallowed keyword, a write, a syntax error
 // -- is refused with the engine's own message.
 func classifyDBQuery(err error) error {
-	if errors.Is(err, db.ErrNotOneStatement) || errors.Is(err, db.ErrPragmaNotReadOnly) {
+	if errors.Is(err, db.ErrNotOneStatement) || errors.Is(err, db.ErrPragmaNotReadOnly) || errors.Is(err, db.ErrRecursive) {
 		return failNext(codeUsage, "relevo help", "%v", err)
 	}
 	return failWrap(codeRefused, err, "%v", err)

@@ -119,6 +119,17 @@ func TestDBQueryTwoStatementsIsUsage(t *testing.T) {
 	requireCLIError(t, err, codeUsage, "relevo help")
 }
 
+// TestDBQueryRecursiveIsUsage pins the verb's RECURSIVE limit: the statement is
+// a malformed argument for this verb, not a statement the engine refused.
+func TestDBQueryRecursiveIsUsage(t *testing.T) {
+	seedQueryRoot(t)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", `WITH RECURSIVE c(x) AS (SELECT 1) SELECT x FROM c`})
+	})
+	requireCLIError(t, err, codeUsage, "relevo help")
+}
+
 // TestDBQueryPragmaAssignmentIsUsage pins the narrowed PRAGMA allowance: the
 // writing form is a malformed argument, not a statement the engine refused.
 func TestDBQueryPragmaAssignmentIsUsage(t *testing.T) {
