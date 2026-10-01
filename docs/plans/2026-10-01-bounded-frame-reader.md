@@ -137,3 +137,25 @@ make check
 - **Not done:** read deadlines; serve/HTTP/TLS; a protocol version bump;
   anything under `internal/db/` outside `wire/`; client behaviour; any
   `make`/encode semantics beyond the shared constant.
+
+## 8. Correction round: pin the allocation, not only the read-request size
+
+Section 7 named the gap and it was real: the request-size tests pin the sizes
+handed to the stream, not what the reader allocates. A mutant that keeps the
+chunked reads but reserves the declared length up front in `(*Conn).Read` --
+changing `payload := make([]byte, 0, readChunk)` to
+`payload := make([]byte, 0, int(n))` -- passed every check, because a peer that
+declares 64 MiB and sends nothing then reserves 64 MiB on that connection, and
+the live cap allows 256 of them.
+
+`TestReadOfADeclaredHugeFrameDoesNotAllocateIt` closes it by measuring memory
+instead of request sizes. A fake source declares `maxFrameLen` and serves a
+1 KiB prefix before EOF, so the measured window is one short failing `Read`;
+`runtime.ReadMemStats` is sampled before and after and the `TotalAlloc` delta
+must stay under 8 MiB. The shipped reader allocates about one chunk for this
+frame; the mutant adds the 64 MiB declared length. The budget is an order below
+that 64 MiB and far above the delta a single-goroutine, non-parallel package
+sees, so the test fails on the regression and not on the allocator.
+
+`wire.go` is unchanged: the fix is a test that fails when the allocation
+regresses, not a change to the reader.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -180,6 +181,33 @@ func TestReadOfADeclaredHugeFrameBoundsEveryReadRequest(t *testing.T) {
 			t.Fatal("Read did not return after the peer ended")
 		}
 	})
+}
+
+// TestReadOfADeclaredHugeFrameDoesNotAllocateIt measures the memory the reader
+// commits, not the size of the requests it issues: a reader that keeps the
+// chunked requests but reserves the declared length up front would pass
+// TestReadOfADeclaredHugeFrameBoundsEveryReadRequest yet still cost the declared
+// length. The fake declares maxFrameLen and serves only a one-kilobyte prefix
+// before EOF, so the measured window is one short Read that must fail.
+//
+// The shipped reader allocates about one chunk (readChunk, 64 KiB) of capacity
+// plus one chunk-sized buffer for this frame. A regression that reserves the
+// declared length adds 64 MiB. The 8 MiB budget is an order below that 64 MiB
+// and far above the TotalAlloc noise a single-goroutine, non-parallel package
+// sees, so the test fails on the regression and not on the allocator.
+func TestReadOfADeclaredHugeFrameDoesNotAllocateIt(t *testing.T) {
+	src := newFrameSource(maxFrameLen, 1<<10, nil)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	got, err := NewConn(src).Read()
+	runtime.ReadMemStats(&after)
+	if err == nil {
+		t.Fatalf("Read of a peer that ended 1 KiB into a declared %d-byte frame returned %d bytes and no error", maxFrameLen, len(got))
+	}
+	const budget = 8 << 20
+	if delta := after.TotalAlloc - before.TotalAlloc; delta >= budget {
+		t.Fatalf("Read of a declared %d-byte frame allocated %d bytes of TotalAlloc, want under the %d-byte budget", maxFrameLen, delta, budget)
+	}
 }
 
 func TestFrameAtTheCapIsAccepted(t *testing.T) {
