@@ -13,6 +13,39 @@ import (
 	"time"
 )
 
+// reapHelperEnv is the environment the reap helper runs with: the ordinary
+// helper variables plus the reap marker and a short grace.
+func reapHelperEnv(root, path, ready, adopted, opened, reap string) []string {
+	env := envWithout(os.Environ(), "RELEVO_DBTEST_OWNER")
+	env = replaceEnv(env, reexecHelperEnv, "1")
+	env = replaceEnv(env, reexecRootEnv, root)
+	env = replaceEnv(env, reexecPathEnv, path)
+	env = replaceEnv(env, reexecReadyEnv, ready)
+	env = replaceEnv(env, reexecAdoptedEnv, adopted)
+	env = replaceEnv(env, reexecOpenedEnv, opened)
+	env = replaceEnv(env, reexecReapEnv, reap)
+	env = replaceEnv(env, reexecGraceEnv, "300ms")
+	return replaceEnv(env, "RELEVO_LISTEN_FD", "")
+}
+
+// abandonAStatement leaves one statement the engine will not interrupt running
+// on the helper's owner, so its cleanup registers it as the abandoned statement.
+func abandonAStatement(t *testing.T, sock string) {
+	t.Helper()
+	d, err := Dial(sock)
+	if err != nil {
+		t.Fatalf("dial the helper: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	const runaway = `WITH c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT count(*) FROM c`
+	if _, qerr := d.sqlDB.QueryContext(ctx, runaway); !errors.Is(qerr, context.DeadlineExceeded) {
+		t.Fatalf("the runaway query = %v, want the deadline", qerr)
+	}
+}
+
 // TestReExecReapsAnAbandonedStatement pins the reap end to end: a statement the
 // engine will not interrupt abandons its pinned connection, the owner fires its
 // hook after the grace, the helper drains and execs, and the new image serves a
@@ -36,19 +69,8 @@ func TestReExecReapsAnAbandonedStatement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve the test binary: %v", err)
 	}
-	env := envWithout(os.Environ(), "RELEVO_DBTEST_OWNER")
-	env = replaceEnv(env, reexecHelperEnv, "1")
-	env = replaceEnv(env, reexecRootEnv, root)
-	env = replaceEnv(env, reexecPathEnv, path)
-	env = replaceEnv(env, reexecReadyEnv, ready)
-	env = replaceEnv(env, reexecAdoptedEnv, adopted)
-	env = replaceEnv(env, reexecOpenedEnv, opened)
-	env = replaceEnv(env, reexecReapEnv, reap)
-	env = replaceEnv(env, reexecGraceEnv, "300ms")
-	env = replaceEnv(env, "RELEVO_LISTEN_FD", "")
-
 	cmd := exec.Command(self, "-test.run=TestDBReexecHelper")
-	cmd.Env = env
+	cmd.Env = reapHelperEnv(root, path, ready, adopted, opened, reap)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start the helper: %v", err)
@@ -62,18 +84,7 @@ func TestReExecReapsAnAbandonedStatement(t *testing.T) {
 
 	// A statement the engine will not interrupt: the client's deadline is what
 	// returns, and the pinned owner connection is left stepping.
-	d, err := Dial(sock)
-	if err != nil {
-		t.Fatalf("dial the helper: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	const runaway = `WITH c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT count(*) FROM c`
-	if _, qerr := d.sqlDB.QueryContext(ctx, runaway); !errors.Is(qerr, context.DeadlineExceeded) {
-		cancel()
-		t.Fatalf("the runaway query = %v, want the deadline", qerr)
-	}
-	cancel()
-	_ = d.Close()
+	abandonAStatement(t, sock)
 
 	waitForPath(t, reap, "the owner never reaped the abandoned statement")
 	waitForPath(t, adopted, "the new image never adopted the listener")

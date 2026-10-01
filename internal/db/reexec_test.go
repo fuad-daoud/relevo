@@ -83,6 +83,27 @@ func appendMarker(path string) {
 	_ = f.Close()
 }
 
+// wireReap installs the reap hook and the grace the helper's environment asks
+// for, and returns the channel the hook signals on. With no marker named there
+// is no hook and the channel never fires, so the helper waits for SIGUSR1 only.
+func wireReap(srv *owner.Server) <-chan struct{} {
+	reap := make(chan struct{}, 1)
+	marker := os.Getenv(reexecReapEnv)
+	if marker == "" {
+		return reap
+	}
+	srv.OnAbandoned = func() {
+		appendMarker(marker)
+		reap <- struct{}{}
+	}
+	if g := os.Getenv(reexecGraceEnv); g != "" {
+		if grace, perr := time.ParseDuration(g); perr == nil {
+			owner.SetReapGrace(grace)
+		}
+	}
+	return reap
+}
+
 // TestDBReexecHelper is the helper the re-exec test runs as its own image. It
 // does nothing unless RELEVO_DB_REEXEC_HELPER is set.
 func TestDBReexecHelper(t *testing.T) {
@@ -135,18 +156,7 @@ func runDBReexecHelper(t *testing.T) {
 	// its abandoned statement as soon as it sees the marker.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGUSR1)
-	reap := make(chan struct{}, 1)
-	if marker := os.Getenv(reexecReapEnv); marker != "" {
-		srv.OnAbandoned = func() {
-			appendMarker(marker)
-			reap <- struct{}{}
-		}
-		if g := os.Getenv(reexecGraceEnv); g != "" {
-			if grace, perr := time.ParseDuration(g); perr == nil {
-				owner.SetReapGrace(grace)
-			}
-		}
-	}
+	reap := wireReap(srv)
 
 	if inherited != "" {
 		writeMarker(os.Getenv(reexecAdoptedEnv))
