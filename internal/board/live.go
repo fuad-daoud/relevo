@@ -121,7 +121,7 @@ func ResolveLiveDir(repoRoot, liveDir, name string) (Resolved, error) {
 	if err := ValidSceneName(name); err != nil {
 		return Resolved{}, err
 	}
-	if err := disjointScopes(repoRoot, liveDir); err != nil {
+	if err := DisjointScopes(repoRoot, liveDir); err != nil {
 		return Resolved{}, err
 	}
 	liveDir = filepath.Clean(liveDir)
@@ -133,26 +133,28 @@ func ResolveLiveDir(repoRoot, liveDir, name string) (Resolved, error) {
 	}, nil
 }
 
-// disjointScopes refuses two scopes that nest (S5). It is a no-op when either
-// root is unknown, which is what a caller that never consulted the repository
-// passes.
-func disjointScopes(repoRoot, liveDir string) error {
-	if repoRoot == "" || liveDir == "" {
+// DisjointScopes refuses two scopes that nest (S5): either scope inside the
+// other. It is a no-op when either root is unknown, which is what a caller that
+// never resolved the repository passes. It is exported so the explicit-path
+// branches of `relevo board` apply the same rule to the live root, not only to
+// one MasterMind's live directory.
+func DisjointScopes(repoRoot, live string) error {
+	if repoRoot == "" || live == "" {
 		return nil
 	}
 	repo := filepath.Clean(repoRoot)
 	if real, err := filepath.EvalSymlinks(repoRoot); err == nil {
 		repo = real
 	}
-	live := filepath.Clean(liveDir)
-	if real, err := filepath.EvalSymlinks(liveDir); err == nil {
-		live = real
+	liveReal := filepath.Clean(live)
+	if real, err := filepath.EvalSymlinks(live); err == nil {
+		liveReal = real
 	}
-	if underRoot(repo, live) {
-		return usagef("the live board directory %s is inside the repository root %s", liveDir, repoRoot)
+	if underRoot(repo, liveReal) {
+		return usagef("the live scope %s is inside the repository root %s", live, repoRoot)
 	}
-	if underRoot(live, repo) {
-		return usagef("the repository root %s is inside the live board directory %s", repoRoot, liveDir)
+	if underRoot(liveReal, repo) {
+		return usagef("the repository root %s is inside the live scope %s", repoRoot, live)
 	}
 	return nil
 }
