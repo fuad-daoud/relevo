@@ -235,7 +235,7 @@ var registry = []verbEntry{
 	},
 	{
 		Name:    "db query",
-		Summary: "run one read-only SQL statement against relevo.db; RECURSIVE is refused",
+		Summary: "run one read-only SQL statement against relevo.db; RECURSIVE is refused as a first line, not the guarantee",
 		Args:    "<SQL> [--json] [--limit N] [--timeout D]",
 		Flags:   []string{"--json", "--limit", "--timeout"},
 		Output:  "json:{columns,rows}",

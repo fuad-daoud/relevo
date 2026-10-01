@@ -22,8 +22,9 @@ import (
 // subcommands, and query is the one there is.
 const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout D]\n\n" +
 	"One read-only statement: SELECT, WITH or a read-only PRAGMA. RECURSIVE is\n" +
-	"refused: the owner protocol cannot interrupt a statement, so a recursive CTE\n" +
-	"could run until the process is killed. --limit caps the rows printed (default\n" +
+	"refused as a cheap first line, not as the guarantee: SQLite decides recursion\n" +
+	"structurally, so a runaway statement is ended by the owner, which refuses\n" +
+	"ad-hoc reads and reaps the daemon. --limit caps the rows printed (default\n" +
 	"1000); --timeout bounds dial, open and read (default 10s, at most 12s).\n"
 
 // The db query defaults: a row cap that keeps a broad SELECT from filling

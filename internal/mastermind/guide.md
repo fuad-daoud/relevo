@@ -19,8 +19,9 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 - `relevo db query '<SQL>' [--json]` reads relevo.db with one read-only
   statement (SELECT, WITH or a read-only PRAGMA), through the daemon when it
   runs; use it instead of `sqlite3`, which the daemon's lock keeps out.
-  RECURSIVE is refused: the owner cannot interrupt a statement, so a recursive
-  CTE could run until the process is killed.
+  RECURSIVE is refused as a cheap first line, not the guarantee: SQLite decides
+  recursion structurally, and a runaway statement is ended by the owner, which
+  refuses ad-hoc reads and reaps the daemon by re-execing it.
 
 ## Output and errors
 

@@ -23,10 +23,12 @@ var ErrNotOneStatement = errors.New("not exactly one statement")
 var ErrPragmaNotReadOnly = errors.New("pragma is not one of the read-only forms")
 
 // ErrRecursive reports a statement that names RECURSIVE. The owner protocol has
-// no way to interrupt a statement, so a recursive CTE that never terminates
-// would run until the process is killed; keeping RECURSIVE out of the verb is a
-// limit of the verb, not of the engine. It is wrapped with ErrInvalid, so a
-// caller that maps malformed arguments to usage still sees a usage error.
+// no way to interrupt a statement, so RECURSIVE is refused as a cheap first
+// line -- not as the guarantee: SQLite decides recursion structurally, so the
+// same runaway statement is one keyword away. What actually ends one is the
+// owner, which refuses ad-hoc reads while it reaps the daemon. It is wrapped
+// with ErrInvalid, so a caller that maps malformed arguments to usage still
+// sees a usage error.
 var ErrRecursive = errors.New("recursive is not allowed in a read-only statement")
 
 // readOnlyPragmas are the PRAGMA names the read-only seam accepts in the bare
