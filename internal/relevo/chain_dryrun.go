@@ -87,7 +87,7 @@ func ChainDryRun(ctx context.Context, rt Runtime, opts ChainOptions) (DryRunDoc,
 	for _, m := range members {
 		doc.Members = append(doc.Members, DryRunMember{Name: m.Name, Actor: m.Actor, Writer: m.Writer})
 	}
-	doc.Cap = chainNameCap(members)
+	doc.Cap = chainNameCap(opts.Name, members)
 	return doc, nil
 }
 

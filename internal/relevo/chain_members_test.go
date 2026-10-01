@@ -17,9 +17,9 @@ func memberNames(t *testing.T, members []plannedMember) map[string]string {
 	return out
 }
 
-// TestMemberNamesBuilderKeepsChainName pins Q1's common case: the workflow's
-// single writer takes the chain's own name, and every reader takes
-// "<chain>-<actor>".
+// TestMemberNamesBuilderKeepsChainName pins the shipped default's names: the
+// workflow's single writer takes the chain's own name, and its reviewer,
+// planner and security members take the suffixes a legacy chain always wrote.
 func TestMemberNamesBuilderKeepsChainName(t *testing.T) {
 	rt, _ := chainRuntime(t)
 	got, err := chainMemberNames("shop", workflow.Default(), rt.RoleRegistry().WorkflowActors())
@@ -28,10 +28,10 @@ func TestMemberNamesBuilderKeepsChainName(t *testing.T) {
 	}
 	names := memberNames(t, got)
 	want := map[string]string{
-		"shop":              "builder",
-		"shop-lite-planner": "lite-planner",
-		"shop-reviewer":     "reviewer",
-		"shop-security":     "security",
+		"shop":      "builder",
+		"shop-rev":  "reviewer",
+		"shop-plan": "lite-planner",
+		"shop-sec":  "security",
 	}
 	for name, actor := range want {
 		if names[name] != actor {
@@ -68,20 +68,20 @@ func TestMemberNamesNoWriter(t *testing.T) {
 	}
 }
 
-// TestChainNameCapFromLongestActor pins Q3: the cap is the binding name cap
-// less the "<chain>-" prefix and the longest actor the members run, so a chain
-// with lite-planner caps at 19.
-func TestChainNameCapFromLongestActor(t *testing.T) {
+// TestChainNameCapFromLongestMemberSuffix pins the cap: the binding name cap
+// less the longest member suffix, so the default's "-plan" caps a chain at 27
+// and a custom workflow running lite-planner caps at 19.
+func TestChainNameCapFromLongestMemberSuffix(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		members []plannedMember
 		want    int
 	}{
-		{"lite-planner sets 19", []plannedMember{{Actor: "builder"}, {Actor: "lite-planner"}, {Actor: "reviewer"}}, 19},
-		{"reviewer sets 23", []plannedMember{{Actor: "reviewer"}}, 23},
+		{"the default's -plan sets 27", []plannedMember{{Name: "shop"}, {Name: "shop-rev"}, {Name: "shop-plan"}, {Name: "shop-sec"}}, 27},
+		{"lite-planner sets 19", []plannedMember{{Name: "shop"}, {Name: "shop-lite-planner"}, {Name: "shop-reviewer"}}, 19},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := chainNameCap(tc.members); got != tc.want {
+			if got := chainNameCap("shop", tc.members); got != tc.want {
 				t.Errorf("chainNameCap(%v) = %d, want %d", tc.members, got, tc.want)
 			}
 		})

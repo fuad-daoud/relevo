@@ -85,8 +85,8 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	}
 	plan.planned = planned
 	plan.keeper = chainWriterKeeper(def, workflow.UsedActors(def), actors)
-	if cap := chainNameCap(planned); len(opts.Name) > cap {
-		return chainWFStart{}, refuse("chain name %q exceeds %d characters (the longest actor it runs is %s)", opts.Name, cap, longestWorkflowActor(planned))
+	if cap := chainNameCap(opts.Name, planned); len(opts.Name) > cap {
+		return chainWFStart{}, refuse("chain name %q exceeds %d characters (the longest member suffix is %s)", opts.Name, cap, longestMemberSuffix(opts.Name, planned))
 	}
 	plan.members = chainWorkflowMembers(def, planned, plan.keeper)
 	if err := chainFreeNames(rt, plan.members); err != nil {
@@ -187,15 +187,10 @@ func chainValidateWorkflow(rt Runtime, def workflow.Definition, given workflow.G
 
 // chainWorkflowMembers converts the planned members into the chainMember shape
 // the member builders take. The keeper writer takes the builder part; the
-// workflow's reviewer, planner and security params name their parts; every
-// other actor keeps its own name as its part.
+// shipped default's reviewer, planner and security params name their parts;
+// every other actor keeps its own name as its part.
 func chainWorkflowMembers(def workflow.Definition, planned []plannedMember, keeper string) []chainMember {
-	parts := map[string]string{}
-	for _, part := range []string{chain.MemberReviewer, chain.MemberPlanner, chain.MemberSecurity} {
-		if p, ok := def.Params[part]; ok && p.Kind == workflow.ParamString && p.Str != "" {
-			parts[p.Str] = part
-		}
-	}
+	parts := chainDefaultParts(def)
 	out := make([]chainMember, 0, len(planned))
 	for _, m := range planned {
 		shape := store.ShapeReader
@@ -212,18 +207,6 @@ func chainWorkflowMembers(def workflow.Definition, planned []plannedMember, keep
 		out = append(out, chainMember{part: part, name: m.Name, actor: m.Actor, shape: shape, writer: m.Writer})
 	}
 	return out
-}
-
-// longestWorkflowActor names the longest actor a set of members runs, for the
-// chain-name cap refusal.
-func longestWorkflowActor(members []plannedMember) string {
-	longest := ""
-	for _, m := range members {
-		if len(m.Actor) > len(longest) {
-			longest = m.Actor
-		}
-	}
-	return longest
 }
 
 // chainRefuseTwoCheckCommandsOnPlacedWriter refuses a workflow that places a

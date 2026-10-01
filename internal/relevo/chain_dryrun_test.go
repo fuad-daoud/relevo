@@ -42,8 +42,8 @@ func TestDryRunPrintsGraphActorsPlacementRefs(t *testing.T) {
 		"placement=zen,local",
 		"refs={{params.builder}} {{plans.current}}",
 		"done=check",
-		"shop-reviewer",
-		"shop-lite-planner",
+		"shop-rev",
+		"shop-plan",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("dry run output missing %q:\n%s", want, got)
@@ -64,7 +64,7 @@ func TestDryRunStartsNothing(t *testing.T) {
 		t.Fatalf("ChainDryRun: %v", err)
 	}
 	assertNothingCreated(t, rt, fg, "shop")
-	for _, name := range []string{"shop-reviewer", "shop-lite-planner"} {
+	for _, name := range []string{"shop-rev", "shop-plan"} {
 		if _, err := rt.Store.Load(name); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("binding %q exists after a dry run: %v", name, err)
 		}
