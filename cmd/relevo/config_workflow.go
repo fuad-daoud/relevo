@@ -319,16 +319,17 @@ func cmdWorkflowEdit(args []string) error {
 	if !ok {
 		return fail(codeConfigPathNotSet, "workflow %q is not saved", name)
 	}
-	return editWorkflowLoop(rt, name, saved.Source)
+	return editWorkflowLoop(rt, name, saved)
 }
 
 // editWorkflowLoop is the $EDITOR half of the update loop. It writes the buffer,
 // runs the editor, and lets WorkflowEditRound decide: a valid workflow is saved,
 // an unchanged or empty buffer is a no-op, and any other result reopens the
-// editor with the problems on top.
-func editWorkflowLoop(rt relevo.Runtime, name, source string) error {
+// editor with the problems on top. The round returns the definition to store,
+// so the saved source and the embedded file: seeds stay in step.
+func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflow) error {
 	actors := rt.RoleRegistry().WorkflowActors()
-	prev := []byte(source)
+	prev := []byte(saved.Source)
 
 	tmp, err := os.CreateTemp("", "relevo-workflow-*.yaml")
 	if err != nil {
@@ -355,7 +356,7 @@ func editWorkflowLoop(rt relevo.Runtime, name, source string) error {
 			return err
 		}
 
-		stored, problems, done := relevo.WorkflowEditRound(prev, edited, actors)
+		stored, def, problems, done := relevo.WorkflowEditRound(prev, edited, saved, actors)
 		if !done {
 			prev = reopenWith(problems, edited)
 			continue
@@ -369,11 +370,6 @@ func editWorkflowLoop(rt relevo.Runtime, name, source string) error {
 			return nil
 		}
 
-		def, perr := workflow.Parse(stored)
-		if perr != nil {
-			prev = reopenWith([]string{"# " + perr.Error()}, stored)
-			continue
-		}
 		if def.Name != name {
 			problem := fmt.Sprintf("# workflow name %q does not match %q", def.Name, name)
 			prev = reopenWith([]string{problem}, stored)

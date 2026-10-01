@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -26,6 +28,25 @@ start: gate
 steps:
   gate: { when: "{{params.scan}}", on: { true: done, false: { halt: "no" } } }
 `
+
+// wfSeedSource is a workflow whose one step names a seed file, the shape add
+// keeps as its source and embeds the named file's contents into its definition.
+const wfSeedSource = `name: custom
+start: build
+steps:
+  build: { run: builder, seed: "file:prompt.txt", on: { done: done } }
+`
+
+// wfEmbedded parses source and replaces its build step's seed with embedded, the
+// source-and-definition pair add saves when it embeds a file: seed.
+func wfEmbedded(t *testing.T, source, embedded string) workflow.Definition {
+	t.Helper()
+	def := wfParse(t, source)
+	step := def.Steps["build"]
+	step.Seed = embedded
+	def.Steps["build"] = step
+	return def
+}
 
 func wfParse(t *testing.T, source string) workflow.Definition {
 	t.Helper()
@@ -145,5 +166,50 @@ func TestExportImportCarriesWorkflows(t *testing.T) {
 	}
 	if !reflect.DeepEqual(w.Definition, wfParse(t, wfValidSource)) {
 		t.Errorf("imported definition = %+v, want the parsed source", w.Definition)
+	}
+}
+
+func TestLoadReturnsTheEmbeddedFileSeed(t *testing.T) {
+	t.Parallel()
+
+	s := openStore(t)
+	body := wfBody(t, "custom", wfSeedSource, wfRaw(t, wfEmbedded(t, wfSeedSource, "hello seed\n")))
+	if _, err := s.Put(Workflows, body); err != nil {
+		t.Fatalf("Put(workflows): %v", err)
+	}
+
+	L, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	w, ok := L.Workflows["custom"]
+	if !ok {
+		t.Fatal("custom missing after load")
+	}
+	if got := w.Definition.Steps["build"].Seed; got != "hello seed\n" {
+		t.Errorf("build seed = %q, want the embedded contents", got)
+	}
+}
+
+func TestLoadRefusesABodyThatRegressedToTheFileLiteral(t *testing.T) {
+	t.Parallel()
+
+	// The source names file:prompt.txt and the stored definition repeats the
+	// reference, where add would have embedded the file's contents. It is
+	// written without a Store write, so Load itself has to refuse it.
+	body := wfBody(t, "custom", wfSeedSource, wfRaw(t, wfParse(t, wfSeedSource)))
+	s := openStore(t)
+	if err := s.db.Tx(func(tx *db.Tx) error {
+		return tx.ConfigPut(string(Workflows), body, s.now().UTC())
+	}); err != nil {
+		t.Fatalf("ConfigPut: %v", err)
+	}
+
+	_, err := s.Load()
+	if err == nil {
+		t.Fatal("Load accepted a body whose stored seed is the file: reference")
+	}
+	if !strings.Contains(err.Error(), "build") {
+		t.Errorf("Load error = %v, want it to name the step", err)
 	}
 }

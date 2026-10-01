@@ -16,6 +16,18 @@ steps:
   gate: { when: "{{params.scan}}", on: { true: done, false: done } }
 `
 
+// configWorkflowSeedSource is a workflow whose one step names a seed file, the
+// shape add embeds when it saves the workflow.
+const configWorkflowSeedSource = `name: custom
+start: build
+steps:
+  build: { run: builder, seed: "file:prompt.txt", on: { done: done } }
+`
+
+// seededPrompt is the contents of the seed file fixture, embedded into a saved
+// workflow's definition when it is added.
+const seededPrompt = "hello seed\n"
+
 func writeWorkflowFile(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "workflow.yaml")
@@ -32,6 +44,21 @@ func addConfigWorkflow(t *testing.T, path string) {
 	}); err != nil {
 		t.Fatalf("config workflow add: %v (stderr: %s)", err, stderr)
 	}
+}
+
+// writeSeededWorkflow writes a seed file and a workflow naming it into one temp
+// dir and returns the workflow file's path, so add embeds the seed's contents.
+func writeSeededWorkflow(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "prompt.txt"), []byte(seededPrompt), 0o644); err != nil {
+		t.Fatalf("write prompt.txt: %v", err)
+	}
+	path := filepath.Join(dir, "workflow.yaml")
+	if err := os.WriteFile(path, []byte(configWorkflowSeedSource), 0o644); err != nil {
+		t.Fatalf("write seeded workflow: %v", err)
+	}
+	return path
 }
 
 func TestConfigWorkflowAddRefusesExistingWithoutReplace(t *testing.T) {
@@ -131,5 +158,56 @@ func TestConfigShowListsWorkflows(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("config output does not contain %q:\n%s", want, out)
 		}
+	}
+}
+
+// appendEditedLine is the editor script `config workflow edit` tests share: it
+// appends one comment line to the buffer, so the edit is valid and changed.
+const appendEditedLine = `printf '\n# edited\n' >> "$1"`
+
+func TestConfigWorkflowEditSavesAChange(t *testing.T) {
+	initRoot(t)
+	addConfigWorkflow(t, writeWorkflowFile(t, configWorkflowSource))
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", writeEditor(t, appendEditedLine))
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "workflow", "edit", "custom"})
+	})
+	if err != nil {
+		t.Fatalf("edit: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(string(stdout), "saved (config version") {
+		t.Errorf("edit stdout = %q, want the saved line", stdout)
+	}
+
+	src := storedConfig(t).Workflows["custom"].Source
+	if !strings.Contains(src, "# edited") {
+		t.Errorf("stored source = %q, want the edited line", src)
+	}
+}
+
+func TestConfigWorkflowEditKeepsEmbeddedFileSeed(t *testing.T) {
+	initRoot(t)
+	addConfigWorkflow(t, writeSeededWorkflow(t))
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", writeEditor(t, appendEditedLine))
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "workflow", "edit", "custom"})
+	})
+	if err != nil {
+		t.Fatalf("edit: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(string(stdout), "saved (config version") {
+		t.Errorf("edit stdout = %q, want the saved line", stdout)
+	}
+
+	w := storedConfig(t).Workflows["custom"]
+	if !strings.Contains(w.Source, "file:prompt.txt") {
+		t.Errorf("stored source = %q, want the file: reference kept", w.Source)
+	}
+	if got := w.Definition.Steps["build"].Seed; got != seededPrompt {
+		t.Errorf("build seed = %q, want the embedded contents", got)
 	}
 }

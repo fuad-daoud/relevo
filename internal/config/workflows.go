@@ -91,14 +91,20 @@ func parseWorkflowEntry(name string, entry workflowBody) (StoredWorkflow, error)
 	if !matches {
 		return StoredWorkflow{}, fmt.Errorf("%s: workflow %q: the stored definition is not the parse of its source", Workflows, name)
 	}
-	return StoredWorkflow{Source: entry.Source, Definition: def}, nil
+	stored, err := workflow.ParseJSON(entry.Definition)
+	if err != nil {
+		return StoredWorkflow{}, fmt.Errorf("%s: workflow %q: %w", Workflows, name, err)
+	}
+	return StoredWorkflow{Source: entry.Source, Definition: stored}, nil
 }
 
 // definitionMatches reports whether the stored definition is the parse of def.
 // A step whose source seed is a file: reference is the one exception: the saved
 // definition carries that file's contents and the file is not re-read here, so
-// the stored seed is taken as given for that step. Every other field must agree,
-// which is what catches a hand-edited body whose two halves drifted apart.
+// the stored seed is taken as given for that step. That stored seed must itself
+// be contents, not a file: reference: a saved workflow always embeds the file,
+// so a body that regressed to the reference is refused. Every other field must
+// agree, which is what catches a hand-edited body whose two halves drifted apart.
 func definitionMatches(def workflow.Definition, stored json.RawMessage) (bool, error) {
 	marshalled, err := json.Marshal(def)
 	if err != nil {
@@ -112,29 +118,38 @@ func definitionMatches(def workflow.Definition, stored json.RawMessage) (bool, e
 	if err != nil {
 		return false, err
 	}
-	syncFileSeeds(want, got)
+	if err := syncFileSeeds(want, got); err != nil {
+		return false, err
+	}
 	return reflect.DeepEqual(got, want), nil
 }
 
 // syncFileSeeds copies each stored seed back onto the parse of a source step
 // that names a file:, so the comparison ignores the one field the stored
-// definition had to change when it embedded the file.
-func syncFileSeeds(want, got any) {
+// definition had to change when it embedded the file. A stored seed that is
+// itself a file: reference names the step in the refusal: the stored definition
+// dropped the contents add embedded.
+func syncFileSeeds(want, got any) error {
 	wantObj, ok := want.(map[string]any)
 	if !ok {
-		return
+		return nil
 	}
 	gotObj, ok := got.(map[string]any)
 	if !ok {
-		return
+		return nil
 	}
 	wantSteps, ok := wantObj["steps"].(map[string]any)
 	if !ok {
-		return
+		return nil
 	}
 	gotSteps, _ := gotObj["steps"].(map[string]any)
-	for id, w := range wantSteps {
-		step, ok := w.(map[string]any)
+	ids := make([]string, 0, len(wantSteps))
+	for id := range wantSteps {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		step, ok := wantSteps[id].(map[string]any)
 		if !ok {
 			continue
 		}
@@ -142,10 +157,17 @@ func syncFileSeeds(want, got any) {
 		if !strings.HasPrefix(seed, "file:") {
 			continue
 		}
-		if g, ok := gotSteps[id].(map[string]any); ok {
-			step["seed"] = g["seed"]
+		g, ok := gotSteps[id].(map[string]any)
+		if !ok {
+			continue
 		}
+		storedSeed, _ := g["seed"].(string)
+		if strings.HasPrefix(storedSeed, "file:") {
+			return fmt.Errorf("step %s stores the file: reference instead of the file's contents", id)
+		}
+		step["seed"] = g["seed"]
 	}
+	return nil
 }
 
 // decodeJSONValue decodes one JSON value, keeping numbers as their literal text
