@@ -172,6 +172,34 @@ func TestChainE2E(t *testing.T) {
 			rt.Store.ReportPath(builderName, 2), got)
 	}
 
+	// The reviewer's round-2 seed names the plan's whole span as well as the
+	// correction round's own diff: the plan's start through the correction
+	// round's tree, captured beside the round diff.
+	reviewerTwo := chainStaged(t, rt, rt.Store.PromptPath(reviewerName, 2))
+	if want := "Plan diff, every round of this plan so far: " + rt.Store.PlanDiffPath(builderName, 2); !strings.Contains(reviewerTwo, want) {
+		t.Errorf("the reviewer's round 2 seed does not name the cumulative plan diff %s:\n%s", rt.Store.PlanDiffPath(builderName, 2), reviewerTwo)
+	}
+	if want := "This round's diff: " + rt.Store.DiffPath(builderName, 2); !strings.Contains(reviewerTwo, want) {
+		t.Errorf("the reviewer's round 2 seed does not name the correction round's diff %s:\n%s", rt.Store.DiffPath(builderName, 2), reviewerTwo)
+	}
+	if patch := chainStaged(t, rt, rt.Store.PlanDiffPath(builderName, 2)); patch == "" {
+		t.Errorf("the plan's cumulative diff at %s is empty", rt.Store.PlanDiffPath(builderName, 2))
+	}
+
+	// The correction planner's seed names the builder round the reviewer's
+	// changes verdict judged, so the planner reads the report and diff that
+	// verdict was about.
+	correctionSeed := chainStaged(t, rt, rt.Store.PromptPath(plannerName, 1))
+	if want := "Builder's report: " + rt.Store.ReportPath(builderName, 1); !strings.Contains(correctionSeed, want) {
+		t.Errorf("the correction planner's seed does not name the judged builder round's report %s:\n%s", rt.Store.ReportPath(builderName, 1), correctionSeed)
+	}
+
+	// The builder's round 2 is the planner's correction plan itself, not the
+	// chain's copy of plan 1: the correction plan reaches the builder.
+	if got := chainStaged(t, rt, rt.Store.PromptPath(builderName, 2)); !strings.Contains(got, "# Correction plan") {
+		t.Errorf("the builder's round 2 prompt is not the planner's correction plan:\n%s", got)
+	}
+
 	// The security member scanned once and found one thing; that finding is
 	// what bought the planner's fix plan and the builder's fourth round.
 	if !chainPromptOpen(t, rt, securityName, 1) {

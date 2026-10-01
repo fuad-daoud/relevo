@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -36,6 +38,7 @@ func seedWaitChain(t *testing.T, name string) {
 	}
 	for _, e := range []store.LogEntry{
 		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Confirmed: true},
 		{
 			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindChain,
 			Payload: "chain " + name + " finished: status done, phase finished, plan 1/1, corrections 0, findings 0.",
@@ -84,6 +87,99 @@ func TestWaitOnAChainReturnsItsEnd(t *testing.T) {
 	}
 	if doc.Payload != "" {
 		t.Errorf("document payload = %q, want it already delivered", doc.Payload)
+	}
+}
+
+// seedWaitChainOpenBuilderRound seeds the default state root with a halted
+// chain whose builder then took a manual round that is still open: a prompt
+// entry for the builder's current round and no report for it. Store-only.
+func seedWaitChainOpenBuilderRound(t *testing.T, name string) {
+	t.Helper()
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	if err := s.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 2, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	now := time.Now().UTC()
+	c := db.ChainRow{
+		ID: db.NewID(), Name: name, Status: "halted", Reason: "reviewer gave no verdict",
+		Phase: "build", Step: "reviewing", Plan: 1, Plans: 1,
+		PlanPathsJSON: []byte(`["/p/plan-1.md"]`), SettingsJSON: []byte(`{}`),
+		Builder: name, Reviewer: name + "-rev", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.WithLock(func(tx *store.Tx) error { return tx.ChainPut(c) }); err != nil {
+		t.Fatalf("ChainPut: %v", err)
+	}
+	if err := s.AppendLog(name, store.LogEntry{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+}
+
+// TestWaitOnAHaltedChainFollowsAnOpenBuilderRound pins gap 4: a human who sent
+// a manual round to a halted chain's builder waits on that round, not on the
+// chain's old halt. The round never closes, so the wait times out -- the point
+// is that it took the binding path at all, printing no chain end line.
+func TestWaitOnAHaltedChainFollowsAnOpenBuilderRound(t *testing.T) {
+	const name = "waitgap"
+	seedWaitChainOpenBuilderRound(t, name)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"wait", name, "--json", "--timeout", "1ms"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != relevo.WaitTimeout {
+		t.Fatalf("wait exit = %v, want the wait timeout %d: it must follow the open builder round, not the chain's halt", err, relevo.WaitTimeout)
+	}
+	var doc WaitDoc
+	if derr := json.Unmarshal(stdout, &doc); derr != nil {
+		t.Fatalf("decode WaitDoc: %v\n%s", derr, stdout)
+	}
+	if doc.Code != relevo.WaitTimeout || doc.Line != "" {
+		t.Errorf("document = %+v, want a binding-round timeout with no chain end line", doc)
+	}
+}
+
+// TestWaitOnAHaltedChainWithNoOpenRoundReturnsTheHalt pins the unchanged
+// branch of gap 4: with no builder round open, the name still waits on the
+// chain and reports its halt.
+func TestWaitOnAHaltedChainWithNoOpenRoundReturnsTheHalt(t *testing.T) {
+	const name = "waitnohalt"
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	if err := s.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 2, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	now := time.Now().UTC()
+	c := db.ChainRow{
+		ID: db.NewID(), Name: name, Status: "halted", Reason: "reviewer gave no verdict",
+		Phase: "build", Step: "reviewing", Plan: 1, Plans: 1,
+		PlanPathsJSON: []byte(`["/p/plan-1.md"]`), SettingsJSON: []byte(`{}`),
+		Builder: name, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.WithLock(func(tx *store.Tx) error { return tx.ChainPut(c) }); err != nil {
+		t.Fatalf("ChainPut: %v", err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error { return run([]string{"wait", name, "--json"}) })
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != relevo.WaitNeedsYou {
+		t.Fatalf("wait exit = %v, want %d: a halted chain with no open round returns the halt", err, relevo.WaitNeedsYou)
+	}
+	var doc WaitDoc
+	if derr := json.Unmarshal(stdout, &doc); derr != nil {
+		t.Fatalf("decode WaitDoc: %v\n%s", derr, stdout)
+	}
+	if !strings.Contains(doc.Line, "chain "+name+": halted") {
+		t.Errorf("document line = %q, want the chain's halt", doc.Line)
 	}
 }
 

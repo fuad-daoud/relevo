@@ -618,3 +618,22 @@ func memberByName(t *testing.T, members []store.Binding, name string) store.Bind
 	t.Fatalf("no member %q in %d members", name, len(members))
 	return store.Binding{}
 }
+
+// TestChainStartRecordsThePlanStartCommit pins plan 1's start: the chain row
+// carries the commit its worktree was cut from.
+func TestChainStartRecordsThePlanStartCommit(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	res := startedChain(t, rt, ChainOptions{})
+
+	if fg.headCommitID == "" {
+		t.Fatal("test premise: the fake git must report a head commit")
+	}
+	if res.Chain.PlanStartCommit != fg.headCommitID {
+		t.Errorf("result plan start = %q, want the cut commit %q", res.Chain.PlanStartCommit, fg.headCommitID)
+	}
+	if got := chainStoredRow(t, rt, "shop").PlanStartCommit; got != fg.headCommitID {
+		t.Errorf("stored plan start = %q, want %q", got, fg.headCommitID)
+	}
+}

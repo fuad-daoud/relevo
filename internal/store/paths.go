@@ -209,6 +209,13 @@ func (s *Store) DiffPath(name string, round int) string {
 	return s.roundFile(name, round, "diff", ".patch")
 }
 
+// PlanDiffPath is a round_file key for a plan's cumulative diff, stored with
+// Tx.PutRoundFile and never written to disk; read it with Store.ReadFile. It is
+// keyed to the closing round, beside the round diff.
+func (s *Store) PlanDiffPath(name string, round int) string {
+	return s.roundFile(name, round, "plan-diff", ".patch")
+}
+
 func (s *Store) DriftPath(name string, round int) string {
 	return s.roundFile(name, round, "drift", ".patch")
 }

@@ -218,6 +218,62 @@ func RoundDiff(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) DiffR
 	return DiffResult{Available: true, Path: patchPath, Stat: diff.Stat, EndTree: end}
 }
 
+// PlanDiffSpec is what one plan's cumulative diff needs: the binding the patch
+// is stored against, the worktree to diff, the plan-start commit, the closing
+// round's closed tree, and the round_file key to store the patch at.
+type PlanDiffSpec struct {
+	Name           string
+	Round          int
+	Dir, From, End string
+	Path           string
+}
+
+// PlanDiff closes out a plan's cumulative diff: it compares the closing round's
+// closed tree against the commit the plan started at and stores the patch as a
+// round_file row at spec.Path. It is RoundDiff's twin for a span that crosses
+// rounds -- the plan's whole diff, not one round's.
+//
+// It NEVER returns an error: no git, an empty From or End, a git failure, an
+// empty stat and a truncated patch all land in DiffResult, exactly as RoundDiff
+// does. It takes the trees it is given rather than snapshotting, so it makes no
+// SnapshotTree call and adds no git method to the Git seam.
+//
+// Preconditions:  none.
+// Postconditions: Available is false with a Reason when d.Git is nil, From or
+// End is empty ("no baseline"), or git failed. When Available is true, Stat is
+// exact and Path resolves through Store.ReadFile (a round_file row) unless the
+// diff was empty or truncated.
+func PlanDiff(ctx context.Context, d Deps, tx *store.Tx, spec PlanDiffSpec) DiffResult {
+	if d.Git == nil {
+		return DiffResult{Available: false}
+	}
+	if spec.From == "" || spec.End == "" {
+		return DiffResult{Available: false, Reason: "no baseline"}
+	}
+
+	diff, err := d.Git.DiffTrees(ctx, spec.Dir, spec.From, spec.End)
+	if errors.Is(err, git.ErrNotRepo) {
+		return DiffResult{Available: false}
+	}
+	if err != nil {
+		return DiffResult{Available: false, Reason: brief(err)}
+	}
+
+	if diff.Stat.Empty() {
+		return DiffResult{Available: true, Stat: diff.Stat}
+	}
+	if diff.Truncated {
+		return DiffResult{Available: true, Stat: diff.Stat, Truncated: true}
+	}
+	if spec.Path == "" {
+		return DiffResult{Available: false, Reason: "no path"}
+	}
+	if err := tx.PutRoundFile(spec.Name, spec.Round, spec.Path, diff.Patch); err != nil {
+		return DiffResult{Available: false, Reason: brief(err)}
+	}
+	return DiffResult{Available: true, Path: spec.Path, Stat: diff.Stat}
+}
+
 // CommitResult is what one round-end commit-facts capture produced. Known is
 // all-or-nothing: either both facts were captured or neither was, and Reason
 // names the step that failed ("" for a non-repository, which is not worth a

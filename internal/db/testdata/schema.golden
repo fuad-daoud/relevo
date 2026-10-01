@@ -232,7 +232,7 @@ CREATE TABLE chains (
     mastermind_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-)
+, plan_start_commit TEXT NOT NULL DEFAULT '')
 
 table config_doc config_doc
 CREATE TABLE config_doc (
@@ -402,4 +402,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 , record_json_codec INTEGER NOT NULL DEFAULT 0, rendered_codec INTEGER NOT NULL DEFAULT 0)
 
-schema_versions have=17 know=17
+schema_versions have=18 know=18
