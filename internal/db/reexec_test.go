@@ -142,7 +142,7 @@ func runDBReexecHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-// TestReexecNewImageOpensTheDatabaseAtOnce pins #768's product requirement: the
+// TestReexecNewImageOpensTheDatabaseAtOnce pins the product requirement: the
 // image that execs closes its open lock's descriptor with the exec, so the next
 // image opens the database at once instead of blocking on a lock the previous
 // image left behind.
