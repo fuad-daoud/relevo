@@ -174,6 +174,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// round for a remote member, and the step is what hands it over.
 	d.safely("chain pending send", func() { chainSendPending(ctx, d.rt) })
 
+	// A server chain is moved by the pull: it collects every mirror chain's
+	// missing rounds and queues each chain's end delivery, outside every lock.
+	d.safely("chain pull", func() { chainPullServers(ctx, d.rt) })
+
 	fresh, err := d.rt.Store.List()
 	if err != nil {
 		slog.Warn("list bindings for metadata sync", "err", err)

@@ -528,6 +528,13 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 		}
 	}
 
+	// A server chain is moved by the chain pull, never by the per-binding pass
+	// above: the pull reads the server's view, installs every member's missing
+	// closed rounds and queues the chain's one end delivery.
+	if err := chainPullServers(ctx, rt); err != nil {
+		errs = append(errs, err)
+	}
+
 	// The chain's own staged rounds ship here, after the per-binding loop: a
 	// remote member's round is staged wherever a local send would start it, and
 	// this pass is what collects and ships it when no daemon is running.
