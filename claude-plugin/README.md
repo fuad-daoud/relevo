@@ -34,6 +34,17 @@ Everything goes through small shell scripts in `scripts/`, which run `relevo` fr
 - **The MCP server:** `relevo mcp`, which provides relevo's tools.
 - **The commands:** `/relevo:enable`, `/relevo:disable`, `/relevo:enable-repo`, `/relevo:disable-repo`, `/relevo:reset`, `/relevo:status` and `/relevo:show`, each running the matching `relevo` command.
 
+## Builder permissions
+
+Builders run without a person watching, so relevo starts each one at a permission tier that you set per candidate or actor:
+
+- `harness` (the default): the builder's own settings decide.
+- `read`: plan mode only.
+- `edit`: file edits are allowed. For `claude`, this is `--permission-mode acceptEdits`.
+- `yolo`: the builder's permission prompts are skipped. For `claude` and `agy`, this is `--dangerously-skip-permissions`.
+
+relevo never goes above `edit` unless you say so. The `max_tier` policy defaults to `edit`, and a tier above it is refused unless you pass `--allow-yolo` or raise `max_tier` yourself. Each builder works in its own git worktree unless you bind it to an existing tree.
+
 ## What relevo reads, sends and keeps
 
 relevo has no telemetry or analytics, and nothing is sent to its developer.
