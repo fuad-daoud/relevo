@@ -55,7 +55,7 @@ Commands:
   stop      kill the runner process and close its round without a report unless one is already on disk
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
               --done clears every binding the MasterMind marked DONE [--delete] [--dry-run]
-  daemon    run the long-running reconciler
+  daemon    run the long-running reconciler (daemon stop stops the daemon this CLI started)
   mcp       run an MCP server over stdio for a Claude Code MasterMind pane: status/send/show/gate/done
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
             NEEDS YOU into the session instead of typing them into its pane

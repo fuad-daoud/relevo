@@ -88,7 +88,7 @@ func (c *conn) serve() error {
 		SchemaKnow: c.s.know,
 		Origin:     c.s.origin,
 		PID:        os.Getpid(),
-		Conns:      c.s.connCount(),
+		Conns:      c.s.ConnCount(),
 	}
 	if err := c.send(wire.KindWelcome, w, nil); err != nil {
 		return err
