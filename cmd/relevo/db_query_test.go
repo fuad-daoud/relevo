@@ -300,6 +300,38 @@ func TestDBQueryTimeoutFlagIsCappedBelowTheOpenLockWait(t *testing.T) {
 	}
 }
 
+// TestDBQueryTableSanitisesHeaderAndCells pins the terminal boundary: an ESC in
+// a value or in a quoted column alias is replaced with U+FFFD in the table, so a
+// stored string cannot drive the terminal, while --json keeps the raw value.
+func TestDBQueryTableSanitisesHeaderAndCells(t *testing.T) {
+	seedQueryRoot(t)
+
+	stmt := "SELECT char(27)||'[31mRED' AS c, 1 AS \"\x1b[31mH\""
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"db", "query", stmt})
+	})
+	if err != nil {
+		t.Fatalf("db query: %v (stderr: %s)", err, stderr)
+	}
+	if strings.ContainsRune(string(stdout), '\x1b') {
+		t.Errorf("table stdout still holds an ESC: %q", stdout)
+	}
+	if !strings.ContainsRune(string(stdout), '\uFFFD') {
+		t.Errorf("table stdout = %q, want the U+FFFD replacement", stdout)
+	}
+
+	jsonOut, _, jerr := captureOutput(t, func() error {
+		return run([]string{"db", "query", stmt, "--json"})
+	})
+	if jerr != nil {
+		t.Fatalf("db query --json: %v", jerr)
+	}
+	if !strings.Contains(string(jsonOut), `\u001b`) {
+		t.Errorf("--json stdout = %q, want the raw ESC kept in the machine form", jsonOut)
+	}
+}
+
 // TestDBIsNoLongerARetiredVerb pins that `db` is dispatched now: it is not in
 // the retired-verb map, and a bare `relevo db` prints the usage line for its
 // own subcommand rather than the removal notice.

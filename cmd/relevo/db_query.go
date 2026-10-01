@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -244,16 +245,23 @@ func writeDBQueryJSON(w io.Writer, columns []string, rows [][]any) error {
 }
 
 // writeDBQueryTable prints one tabwriter row per record, the header first, so
-// the output lines up in a terminal the way sqlite3's did.
+// the output lines up in a terminal the way sqlite3's did. Every header cell and
+// every value cell is sanitised: a value or a column name in relevo.db is
+// untrusted text, and a raw ESC would let it manipulate the terminal. --json
+// stays the machine form and is not sanitised.
 func writeDBQueryTable(w io.Writer, columns []string, rows [][]any) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if len(columns) > 0 {
-		fmt.Fprintln(tw, strings.Join(columns, "\t"))
+		header := make([]string, len(columns))
+		for i, column := range columns {
+			header[i] = sanitize.Text(column)
+		}
+		fmt.Fprintln(tw, strings.Join(header, "\t"))
 	}
 	for _, row := range rows {
 		cells := make([]string, len(row))
 		for i, value := range row {
-			cells[i] = formatDBQueryValue(value)
+			cells[i] = sanitize.Text(formatDBQueryValue(value))
 		}
 		fmt.Fprintln(tw, strings.Join(cells, "\t"))
 	}
