@@ -21,11 +21,11 @@ var registry = []verbEntry{
 	},
 	{
 		Name:    "board",
-		Summary: "open a local Excalidraw whiteboard for a scene in the repo",
-		Args:    "[path] [--theme NAME] [--no-open]",
-		Flags:   []string{"--no-open", "--theme"},
+		Summary: "open a live or repo Excalidraw whiteboard for a scene",
+		Args:    "[path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]",
+		Flags:   []string{"--board", "--mastermind", "--no-open", "--theme"},
 		Exit:    []int{0, 1, 2},
-		Errors:  []string{"internal", "usage"},
+		Errors:  []string{"internal", "mastermind_not_found", "refused", "usage"},
 	},
 	{
 		Name:    "bugreport",

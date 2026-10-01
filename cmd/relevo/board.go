@@ -20,8 +20,10 @@ import (
 
 // boardFlagValues holds the pointers board parses into.
 type boardFlagValues struct {
-	noOpen *bool
-	theme  *string
+	noOpen     *bool
+	theme      *string
+	board      *string
+	mastermind *string
 }
 
 // boardFlagSet defines board's flags on fs and returns what it parses into, so
@@ -30,6 +32,8 @@ func boardFlagSet(fs *flag.FlagSet) *boardFlagValues {
 	v := &boardFlagValues{}
 	v.noOpen = fs.Bool("no-open", false, "print the URL without opening a browser")
 	v.theme = fs.String("theme", "", "the theme for new elements: cockpit or blueprint")
+	v.board = fs.String("board", "", "the live scene name to open (default: the pointer, else board)")
+	v.mastermind = fs.String("mastermind", "", "the MasterMind whose live board to open (id or name)")
 	return v
 }
 
@@ -84,8 +88,9 @@ type boardOptions struct {
 	noOpen bool
 }
 
-// cmdBoard parses the verb, refuses before any listener exists, and then runs
-// the foreground server.
+// cmdBoard parses the verb, resolves the scene and scope, writes the pointer
+// for a live board that was not read from the pointer, and then runs the
+// foreground server.
 func cmdBoard(args []string) error {
 	fs := flag.NewFlagSet("relevo board", flag.ContinueOnError)
 	v := boardFlagSet(fs)
@@ -100,10 +105,6 @@ func cmdBoard(args []string) error {
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
-	root, err := boardRepoRootFn(cwd)
-	if err != nil {
-		return fail(codeUsage, "not inside a git repository: %v", err)
-	}
 	theme, err := boardResolveTheme(cwd, *v.theme)
 	if err != nil {
 		return boardRefusal(err)
@@ -113,11 +114,18 @@ func cmdBoard(args []string) error {
 	if len(fs.Args()) == 1 {
 		arg = fs.Args()[0]
 	}
-	scene, err := board.Resolve(root, cwd, arg)
+	res, err := resolveBoard(cwd, *v.mastermind, *v.board, arg)
 	if err != nil {
-		return boardRefusal(err)
+		return err
 	}
-	return runBoard(boardOptions{scene: scene, theme: theme, noOpen: *v.noOpen})
+	// S4: the pointer is written when a live board is opened or selected and the
+	// name differs; WritePointer is the "only when it differs" rule.
+	if res.Scope == board.ScopeLive && !res.FromPointer {
+		if err := board.WritePointer(res.LiveDir, res.Scene); err != nil {
+			return fail(codeInternal, "%v", err)
+		}
+	}
+	return runBoard(boardOptions{scene: res.Path, theme: theme, noOpen: *v.noOpen})
 }
 
 // boardResolveTheme applies the precedence: --theme, then the repo-local
