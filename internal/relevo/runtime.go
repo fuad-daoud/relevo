@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -39,6 +40,12 @@ type Git interface {
 	// leaving every difference unstaged and files outside HEAD untracked.
 	MaterializeTree(ctx context.Context, dir, tree string) error
 	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
+	// ChangedFiles lists the paths that differ between two trees with their
+	// status, modes and blob ids, for the scope check (#801).
+	ChangedFiles(ctx context.Context, dir, from, to string) ([]pathscope.Change, error)
+	// ReadBlob reads one blob's contents by object id, for the scope check's
+	// comment judge (#801).
+	ReadBlob(ctx context.Context, dir, oid string) ([]byte, error)
 	// DiffWorktreeStat compares tree against dir's current working tree and
 	// returns just the stat, no patch (#143): the live "+N/-M in F" a status
 	// row shows while a round is open, cheaper than DiffTrees because it
