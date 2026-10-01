@@ -266,6 +266,49 @@ func TestChainStopAndDoneThroughTheCLI(t *testing.T) {
 	}
 }
 
+// TestChainMemberDoneAndUnbindRefusedWhileRunning pins the guards at the CLI
+// edge: on a running chain's member, done and unbind are both conflicts naming
+// the chain and `relevo stop <n> first`, and unbind on the chain's own name is
+// refused through the member that name is. Store-only: seedCLIChain needs no
+// harness, no git and no network.
+func TestChainMemberDoneAndUnbindRefusedWhileRunning(t *testing.T) {
+	const name = "climembers"
+	seedCLIChain(t, name, "running")
+
+	for _, tc := range []struct {
+		what string
+		args []string
+	}{
+		{"done on a member", []string{"done", name + "-rev"}},
+		{"unbind on a member", []string{"unbind", name + "-rev"}},
+		{"unbind on the chain", []string{"unbind", name}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			_, _, err := captureOutput(t, func() error { return run(tc.args) })
+			ce := requireCLIError(t, err, codeConflict, "")
+			if !strings.Contains(ce.message, name) || !strings.Contains(ce.message, "relevo stop "+name+" first") {
+				t.Errorf("message = %q, want it to name the chain and `relevo stop %s first`", ce.message, name)
+			}
+		})
+	}
+}
+
+// TestChainMemberDoneAndUnbindAllowedAfterTheChainStops pins the other half at
+// the CLI edge: a chain that is not running has handed its members back, so done
+// and unbind both succeed on one. The seeded member has no worktree and no PID,
+// so neither verb runs git or a harness.
+func TestChainMemberDoneAndUnbindAllowedAfterTheChainStops(t *testing.T) {
+	const name = "clistop"
+	seedCLIChain(t, name, "stopped")
+
+	if _, stderr, err := captureOutput(t, func() error { return run([]string{"done", name + "-rev"}) }); err != nil {
+		t.Fatalf("done %s-rev = %v (stderr: %s), want it allowed", name, err, stderr)
+	}
+	if _, stderr, err := captureOutput(t, func() error { return run([]string{"unbind", name + "-rev"}) }); err != nil {
+		t.Fatalf("unbind %s-rev = %v (stderr: %s), want it allowed", name, err, stderr)
+	}
+}
+
 // chainOptionsFrom parses args through chain's own flag set and maps them with
 // chainOptions, the way cmdChain's start arm does -- parse and mapping only, no
 // runtime.

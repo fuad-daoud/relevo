@@ -37,6 +37,15 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 			return err
 		}
 
+		// A running chain owns its member's rounds, so done is refused the
+		// same way the send path refuses one: a DONE member is neither gone
+		// nor NEEDS YOU, and the chain would wait forever for a close that
+		// can no longer come. Checked in this critical section, with the
+		// state write below, exactly as the send path checks it.
+		if err := refuseRunningChainMember(tx, name); err != nil {
+			return err
+		}
+
 		// A served binding still queued has no process to stop and no
 		// completed round to hand back; refuse the same way the wire does, so
 		// the server-local `relevo serve` admin verbs agree with it.

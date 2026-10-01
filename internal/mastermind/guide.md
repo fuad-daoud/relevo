@@ -39,6 +39,15 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 - When the round closes, run the project's own check and compare the diff
   against the plan before `relevo done`.
 
+## Chains
+
+- When several reviewed plans run in a row with no MasterMind turn between
+  rounds, run them as one chain instead of driving each round by hand.
+- Start it with `relevo chain --name <n> --plan r1.md --plan r2.md --feature
+  <label> [--security]`; a planner actor writes the plans first, as above.
+- `relevo wait --name <n>` returns once -- 0 the chain finished, 3 it halted or was stopped; then `relevo show <n> --trace`, and `relevo chain --resume --name <n>` after a halt.
+- Never drive a running chain's members by hand: `send`, `done` and `unbind` on a member are refused until the chain is stopped.
+
 ## When something is stuck
 
 - `relevo gate <token> --reason '<what it said>'` when a runner reports a usage
