@@ -161,8 +161,12 @@ func (c *conn) transactionOpen() bool {
 }
 
 // recordTransaction moves this connection's transaction membership from the
-// statement that just succeeded. A failed COMMIT leaves the flag set: SQLite
-// keeps that transaction open, so the connection still counts as in one.
+// statement that just succeeded. The caller orders it against that statement's
+// ack: a drain reads this flag to decide whether to wait for the connection, so
+// an opener is recorded before its ack is sent and a closer only after, keeping
+// the flag true for every moment an answer is on the wire. A failed COMMIT
+// leaves the flag set: SQLite keeps that transaction open, so the connection
+// still counts as in one.
 func (c *conn) recordTransaction(query string) {
 	open, closeTx := txEffect(query)
 	if !open && !closeTx {
@@ -313,7 +317,15 @@ func (c *conn) exec(ctx context.Context, r *request, pinned *sql.Conn, query str
 		c.sendError(r.id, err)
 		return
 	}
-	c.recordTransaction(query)
+	// Bracket the ack with the membership change: a BEGIN records before the
+	// Done so a drain already sees the transaction, and a COMMIT, END or
+	// ROLLBACK clears only after the Done so a drain that starts while the ack
+	// is in flight waits for it rather than dropping the connection with the
+	// answer unsent.
+	open, closeTx := txEffect(query)
+	if open {
+		c.recordTransaction(query)
+	}
 	rows, _ := res.RowsAffected()
 	id, _ := res.LastInsertId()
 	_ = c.send(wire.KindDone, &wire.Done{
@@ -321,6 +333,9 @@ func (c *conn) exec(ctx context.Context, r *request, pinned *sql.Conn, query str
 		RowsAffected: rows,
 		LastInsertID: id,
 	}, nil)
+	if closeTx {
+		c.recordTransaction(query)
+	}
 }
 
 func (c *conn) query(ctx context.Context, r *request, pinned *sql.Conn, query string, args []any) {
