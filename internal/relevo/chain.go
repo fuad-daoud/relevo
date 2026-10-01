@@ -492,6 +492,10 @@ func chainTerminal(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow,
 	if err := chainSaveWithTrace(rt, tx, c, before, next, ev, act, closing); err != nil {
 		return err
 	}
+	// A done or stopped chain has no further use for its input copies; a
+	// halted one keeps them. The sweep is best-effort and never fails the
+	// transition.
+	chainInputsSweep(rt, c.Name, string(next.Status))
 	member, carrier, ok, err := chainDeliveryMember(tx, c)
 	if err != nil {
 		return err

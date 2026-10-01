@@ -240,6 +240,12 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		clientBindingID = db.NewID()
 	}
 
+	// The gate resolves exactly as the local path does: with the client's
+	// policy and the actor's role. The resolved value rides on the wire -- the
+	// field chains already use -- and is stored on the client mirror, so both
+	// sides read the same acceptance check.
+	gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), bindingRole(store.Binding{Role: normRole(opts.Role)})))
+
 	createReq := remote.CreateBindingRequest{
 		Name:               opts.Name,
 		RepoID:             repoID,
@@ -249,6 +255,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		Role:               actor,
 		Feature:            opts.Feature,
 		Ticket:             opts.Ticket,
+		Gate:               gate,
 		Author:             &remote.GitIdentity{Name: authorName, Email: authorEmail},
 		ClientInstallation: clientInstallation,
 		ClientBindingID:    clientBindingID,
@@ -341,6 +348,9 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		Round:            1,
 		State:            store.StateActive,
 		Tier:             view.Tier,
+		// The gate the create request carried: the client's resolved check,
+		// recorded on the mirror so `relevo status` shows what the server runs.
+		Gate: gate,
 		// The actor travels as the client asked it: the server resolved it
 		// against its own actors, and the mirror records it so
 		// `relevo status` shows it (#382 §5.3).

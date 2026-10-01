@@ -1,6 +1,9 @@
 package chain
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // TraceLine is one chain_event row as the trace's line renderer reads it: the
 // plan the chain was on, the phase and step before the event, the member whose
@@ -20,11 +23,15 @@ type TraceLine struct {
 
 // Line renders l as one trace line: plan i/N, the state before the event, the
 // closing member and its round, then the event's detail. The columns are padded
-// so a trace lines up, and a halt appends its reason.
+// so a trace lines up, and a halt appends its reason -- but only when the
+// rendered detail does not already carry that same string, so a needs-you row
+// whose detail is the event's own reason prints it once, while a distinct
+// event detail and action reason both still show.
 func (l TraceLine) Line() string {
+	detail := l.detail()
 	line := fmt.Sprintf("plan %d/%d  %-8s %-9s  %s",
-		l.Plan, l.Plans, l.stateWord(), l.memberRound(), l.detail())
-	if l.Reason != "" {
+		l.Plan, l.Plans, l.stateWord(), l.memberRound(), detail)
+	if l.Reason != "" && !strings.Contains(detail, l.Reason) {
 		line += "  " + l.Reason
 	}
 	return line

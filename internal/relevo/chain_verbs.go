@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -151,7 +153,26 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 	}); err != nil {
 		return DoneResult{}, err
 	}
+	// The chain is released: its end is done, so the seed copies it kept are no
+	// longer needed. The stored row is done whether the verb wrote it now or
+	// found it already there.
+	chainInputsSweep(rt, name, string(chain.StatusDone))
 	return out, nil
+}
+
+// chainInputsSweep removes a chain's inputs directory when the chain has ended
+// done or stopped: the copies of round files its seeds named are no longer
+// needed. A halted chain keeps them -- it may still be resumed -- and the
+// chain's own plan-i.md copies, which live beside the directory, are never
+// touched. A removal failure is logged, never returned: the transition has
+// already been written, and failing it would undo a fact.
+func chainInputsSweep(rt Runtime, name, status string) {
+	if status != string(chain.StatusDone) && status != string(chain.StatusStopped) {
+		return
+	}
+	if err := os.RemoveAll(rt.Store.ChainInputDir(name)); err != nil {
+		slog.Warn("chain inputs sweep", "chain", name, "status", status, "err", err)
+	}
 }
 
 // chainDoneRow is the chain's own close: status done, phase finished, and one

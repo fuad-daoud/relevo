@@ -179,6 +179,42 @@ func TestTraceLineDetailWords(t *testing.T) {
 	}
 }
 
+// TestTraceLinePrintsAHaltReasonOnce pins the needs-you de-duplication: a row
+// whose detail column already is the event's reason prints that reason once,
+// not twice, while a distinct event detail and action reason still both print.
+func TestTraceLinePrintsAHaltReasonOnce(t *testing.T) {
+	t.Parallel()
+
+	const reason = "member shop could not start: boom"
+	line := TraceLine{
+		Plan: 1, Plans: 1, Phase: PhaseBuild, Step: StepBuilding,
+		Member: "shop", Round: 2,
+		Event:  Event{Kind: EventNeedsYou, Member: MemberBuilder, Round: 2, Reason: reason},
+		Action: Action{Kind: ActionHalt, Reason: reason},
+		Reason: reason,
+	}
+	got := line.Line()
+	if n := strings.Count(got, reason); n != 1 {
+		t.Errorf("Line() = %q, the reason appears %d times, want 1", got, n)
+	}
+	if want := "plan 1/1  build    shop r2    " + reason; got != want {
+		t.Errorf("Line() = %q, want %q", got, want)
+	}
+
+	// A distinct event detail and action reason are not the same string: both
+	// still print.
+	distinct := TraceLine{
+		Plan: 2, Plans: 4, Phase: PhaseBuild, Step: StepReviewing,
+		Member: "x-rev", Round: 2,
+		Event:  Event{Kind: EventReviewerClosed},
+		Action: Action{Kind: ActionHalt, Reason: "reviewer gave no verdict"},
+		Reason: "reviewer gave no verdict",
+	}
+	if out := distinct.Line(); !strings.HasSuffix(out, "no verdict  reviewer gave no verdict") {
+		t.Errorf("Line() = %q, want the detail and the reason both printed", out)
+	}
+}
+
 // TestResumeReasonNamesTheStepItMovedTo pins the resume reason's vocabulary:
 // every step renders in the trace's own word, and a step the state machine does
 // not name has no word, so its reason ends at the arrow.

@@ -649,3 +649,30 @@ func TestChainResumeOpenMemberRoundIsAConflict(t *testing.T) {
 		t.Errorf("message = %q, want the round-open refusal", ce.message)
 	}
 }
+
+// TestChainResumeOpenRoundIsAConflict pins item 1 at the CLI edge: a resume
+// whose target member's round is open is a conflict whose next command is the
+// stop that ends it, not an internal failure. Store-only: the refusal precedes
+// the send, so no daemon starts, no harness is spawned and no network is
+// reached.
+func TestChainResumeOpenRoundIsAConflict(t *testing.T) {
+	const name = "cliresumeopen"
+	seedCLIChain(t, name, "stopped")
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	if err := s.AppendLog(name, store.LogEntry{
+		TS: time.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+	}); err != nil {
+		t.Fatalf("open the builder's round: %v", err)
+	}
+
+	_, _, err = captureOutput(t, func() error { return run([]string{"chain", "--resume", "--name", name}) })
+	ce := requireCLIError(t, err, codeConflict, "relevo stop "+name)
+	if !strings.Contains(ce.message, "round 1 is still open") {
+		t.Errorf("message = %q, want it to say the round is still open", ce.message)
+	}
+}
