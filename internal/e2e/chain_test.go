@@ -28,7 +28,9 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,7 +182,8 @@ func TestChainE2E(t *testing.T) {
 	// correction round's own diff: the plan's start through the correction
 	// round's tree, captured beside the round diff. Each is a copy under the
 	// chain's own directory -- a path a runner can open, not the round_file key
-	// itself -- holding the key's bytes.
+	// itself. The chain finished done, so the copies were swept; the seed text
+	// still names where they were.
 	reviewerTwo := chainStaged(t, rt, rt.Store.PromptPath(reviewerName, 2))
 
 	planDiffKey := rt.Store.PlanDiffPath(builderName, 2)
@@ -188,14 +191,9 @@ func TestChainE2E(t *testing.T) {
 	if !ok {
 		t.Fatalf("ChainInputPath(%s) = false", planDiffKey)
 	}
-	if !rt.Store.DiskRegularFile(planDiffCopy) {
-		t.Errorf("the reviewer's round 2 plan-diff copy %s is not a regular file on disk", planDiffCopy)
-	}
+	chainInputCopyGone(t, planDiffCopy)
 	if want := "Plan diff, every round of this plan so far: " + planDiffCopy + "."; !strings.Contains(reviewerTwo, want) {
 		t.Errorf("the reviewer's round 2 seed does not name the cumulative plan diff copy %s:\n%s", planDiffCopy, reviewerTwo)
-	}
-	if got, want := chainStaged(t, rt, planDiffCopy), chainStaged(t, rt, planDiffKey); got != want {
-		t.Errorf("the plan-diff copy %s = %q, want the key's bytes %q", planDiffCopy, got, want)
 	}
 	if patch := chainStaged(t, rt, planDiffKey); patch == "" {
 		t.Errorf("the plan's cumulative diff at %s is empty", planDiffKey)
@@ -211,36 +209,25 @@ func TestChainE2E(t *testing.T) {
 		if !ok {
 			t.Fatalf("ChainInputPath(%s) = false", diffKey)
 		}
-		if !rt.Store.DiskRegularFile(diffCopy) {
-			t.Errorf("the reviewer's round 2 diff copy %s is not a regular file on disk", diffCopy)
-		}
+		chainInputCopyGone(t, diffCopy)
 		if want := "This round's diff: " + diffCopy + "."; !strings.Contains(reviewerTwo, want) {
 			t.Errorf("the reviewer's round 2 seed does not name the correction round's diff copy %s:\n%s", diffCopy, reviewerTwo)
-		}
-		if got, want := chainStaged(t, rt, diffCopy), chainStaged(t, rt, diffKey); got != want {
-			t.Errorf("the diff copy %s = %q, want the key's bytes %q", diffCopy, got, want)
 		}
 	} else if want := "This round's diff: not available:"; !strings.Contains(reviewerTwo, want) {
 		t.Errorf("the reviewer's round 2 seed neither names a round diff copy nor words its miss:\n%s", reviewerTwo)
 	}
 
 	// The reviewer's round-1 seed judged the builder's round 1, whose diff was
-	// captured: that seed names the diff copy, and the copy holds the key's
-	// bytes.
+	// captured: that seed names the diff copy the chain kept while it ran.
 	reviewerOne := chainStaged(t, rt, rt.Store.PromptPath(reviewerName, 1))
 	firstDiffKey := rt.Store.DiffPath(builderName, 1)
 	firstDiffCopy, ok := rt.Store.ChainInputPath(chainE2EName, firstDiffKey)
 	if !ok {
 		t.Fatalf("ChainInputPath(%s) = false", firstDiffKey)
 	}
-	if !rt.Store.DiskRegularFile(firstDiffCopy) {
-		t.Errorf("the reviewer's round 1 diff copy %s is not a regular file on disk", firstDiffCopy)
-	}
+	chainInputCopyGone(t, firstDiffCopy)
 	if want := "This round's diff: " + firstDiffCopy + "."; !strings.Contains(reviewerOne, want) {
 		t.Errorf("the reviewer's round 1 seed does not name the round diff copy %s:\n%s", firstDiffCopy, reviewerOne)
-	}
-	if got, want := chainStaged(t, rt, firstDiffCopy), chainStaged(t, rt, firstDiffKey); got != want {
-		t.Errorf("the round 1 diff copy %s = %q, want the key's bytes %q", firstDiffCopy, got, want)
 	}
 
 	// The reviewer writes a recap after the message that carries its block, so
@@ -284,27 +271,23 @@ func TestChainE2E(t *testing.T) {
 
 	// The security member's seed names the whole branch diff -- the chain's base
 	// to the builder's newest closed round (3), copied under the chain's own
-	// directory -- and the copy carries every round's line, so a one-round diff
-	// cannot stand in for it.
+	// directory. The chain finished done, so the copy was swept, but the key
+	// itself still carries every round's line, so a one-round diff cannot stand
+	// in for it. The seed text still names where the copy was.
 	securitySeed := chainStaged(t, rt, rt.Store.PromptPath(securityName, 1))
 	chainDiffKey := rt.Store.ChainDiffPath(builderName, 3)
 	chainDiffCopy, ok := rt.Store.ChainInputPath(chainE2EName, chainDiffKey)
 	if !ok {
 		t.Fatalf("ChainInputPath(%s) = false", chainDiffKey)
 	}
-	if !rt.Store.DiskRegularFile(chainDiffCopy) {
-		t.Errorf("the security seed's whole-branch diff copy %s is not a regular file on disk", chainDiffCopy)
-	}
+	chainInputCopyGone(t, chainDiffCopy)
 	if !strings.Contains(securitySeed, chainDiffCopy) {
 		t.Errorf("the security seed does not name the whole branch diff copy %s:\n%s", chainDiffCopy, securitySeed)
 	}
-	if got, want := chainStaged(t, rt, chainDiffCopy), chainStaged(t, rt, chainDiffKey); got != want {
-		t.Errorf("the whole-branch diff copy %s = %q, want the key's bytes %q", chainDiffCopy, got, want)
-	}
 	for round := 1; round <= 3; round++ {
 		line := fmt.Sprintf("one round of fake work %03d", round)
-		if !strings.Contains(chainStaged(t, rt, chainDiffCopy), line) {
-			t.Errorf("the whole branch diff copy does not carry %q; a one-round diff cannot stand in:\n%s", line, chainStaged(t, rt, chainDiffCopy))
+		if !strings.Contains(chainStaged(t, rt, chainDiffKey), line) {
+			t.Errorf("the whole branch diff at %s does not carry %q; a one-round diff cannot stand in:\n%s", chainDiffKey, line, chainStaged(t, rt, chainDiffKey))
 		}
 	}
 	if oldCopy, ok := rt.Store.ChainInputPath(chainE2EName, rt.Store.DiffPath(builderName, 3)); ok && strings.Contains(securitySeed, oldCopy) {
@@ -556,4 +539,13 @@ func chainMembersNote(t *testing.T, rt relevo.Runtime, c db.ChainRow) string {
 		fmt.Fprintf(&b, "%s state=%s round=%d halt=%q; ", member, mb.State, mb.Round, mb.Halt)
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// chainInputCopyGone asserts a chain's input copy was swept when the chain
+// ended done: the copy the seed named while the chain ran is gone from disk.
+func chainInputCopyGone(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the chain's input copy %s is still there (err %v), want it swept when the chain ended done", path, err)
+	}
 }

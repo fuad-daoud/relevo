@@ -1,6 +1,9 @@
 package view
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ChainFacts is one chain's state as a status surface shows it: the state
 // machine's own words, the plan the chain holds, and the member it waits on.
@@ -15,15 +18,28 @@ type ChainFacts struct {
 	Corrections int    `json:"corrections"`
 	Awaiting    string `json:"awaiting,omitempty"` // the active member
 	Reason      string `json:"reason,omitempty"`
+	// ManualRound is the builder's current round while a halted or stopped
+	// chain has a manual round running on it; 0 when nothing is in flight.
+	// It is the fact that turns the row from NEEDS YOU into the chain's own
+	// status word with the round in the segment.
+	ManualRound int `json:"manual_round,omitempty"`
 }
 
 // ChainSegment is the text a chain row shows after its name: the plan in
 // progress, the step the active member is on and the correction rounds spent,
 // for example "plan 2/4 · reviewing · 1 correction". Zero corrections leaves
 // the segment off entirely; one takes the singular.
+//
+// A halted or stopped chain with a manual round running reads only that round
+// ("manual round 3 running"). A done or stopped chain omits the step: the work
+// is over, and the step word no longer describes anything happening; a halted
+// chain keeps it.
 func ChainSegment(f ChainFacts) string {
+	if f.ManualRound > 0 {
+		return fmt.Sprintf("manual round %d running", f.ManualRound)
+	}
 	s := fmt.Sprintf("plan %d/%d", f.Plan, f.Plans)
-	if f.Step != "" {
+	if f.Step != "" && f.Status != "done" && f.Status != "stopped" {
 		s += " · " + f.Step
 	}
 	if f.Corrections > 0 {
@@ -38,9 +54,16 @@ func ChainSegment(f ChainFacts) string {
 // ChainDisplay maps a chain's status to the word a status surface shows: a
 // halted or stopped chain waits on a human, a done one is finished, and a
 // running one is working. It is the chain rows' counterpart of DisplayState.
+//
+// A halted or stopped chain whose builder has a manual round running is not
+// waiting on a human: it reads as its own status word, so the row does not
+// claim NEEDS YOU while work is in flight.
 func ChainDisplay(f ChainFacts) string {
 	switch f.Status {
 	case "halted", "stopped":
+		if f.ManualRound > 0 {
+			return strings.ToUpper(f.Status)
+		}
 		return "NEEDS YOU"
 	case "done":
 		return "DONE"
