@@ -192,6 +192,9 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 		if remoteCode(err, 409, remote.CodeChainRunning) {
 			return ChainResult{}, fmt.Errorf("chain %s is running: %w", c.Name, ErrChainRunning)
 		}
+		if remoteCode(err, 409, remote.CodeChainDone) {
+			return ChainResult{}, fmt.Errorf("chain %s is done: %w", c.Name, ErrChainDone)
+		}
 		if remoteCode(err, 409, remote.CodeRoundOpen) {
 			return ChainResult{}, roundOpenFromWire(err)
 		}

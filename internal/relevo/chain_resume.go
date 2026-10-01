@@ -177,12 +177,15 @@ func resumeRemoteGateRefusal(rt Runtime, c db.ChainRow) error {
 
 // resumeRefusal is the one refusal a resume makes on its own chain: running and
 // done are both terminal for this verb, and the wording is the chain's own.
+// Both are typed so the CLI maps them to conflicts -- a script can tell a
+// settled chain from an internal failure -- exactly as the server's own
+// answers are rebuilt.
 func resumeRefusal(c db.ChainRow) error {
 	switch chain.Status(c.Status) {
 	case chain.StatusRunning:
-		return fmt.Errorf("chain %s is running", c.Name)
+		return fmt.Errorf("chain %s is running: %w", c.Name, ErrChainRunning)
 	case chain.StatusDone:
-		return fmt.Errorf("chain %s is done", c.Name)
+		return fmt.Errorf("chain %s is done: %w", c.Name, ErrChainDone)
 	}
 	return nil
 }

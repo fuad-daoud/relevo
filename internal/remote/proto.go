@@ -357,6 +357,9 @@ const (
 	// the server. It is the wire twin of relevo.ErrUnknownRole, so a client
 	// can classify the refusal like its local one.
 	CodeUnknownActor Code = "unknown_actor"
+	// CodeChainDone is a 409: the chain has finished and nothing continues it.
+	// It is the wire twin of relevo.ErrChainDone.
+	CodeChainDone Code = "chain_done"
 	// CodeWrongAudience is a 401: the request's Relevo-Audience is not one of
 	// the server's accepted audiences, so the signature was made for another
 	// server identity.
