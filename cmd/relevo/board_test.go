@@ -125,21 +125,19 @@ func boardStateRoot(t *testing.T) string {
 	return filepath.Join(stateHome, "relevo", "boards")
 }
 
-// stubRepoSeamFails makes any consultation of the repository seam fail the test:
-// a bare live board must never touch the repository (S2).
-func stubRepoSeamFails(t *testing.T) {
+// stubRepoSeamAbsent stubs the repository seam to report no repository. A live
+// board outside a repository still resolves (S2/R6), so a missing repository is
+// tolerated rather than a test failure.
+func stubRepoSeamAbsent(t *testing.T) {
 	t.Helper()
 	orig := boardRepoRootFn
-	boardRepoRootFn = func(string) (string, error) {
-		t.Errorf("the repository seam was consulted on a live-only resolution")
-		return "", errors.New("no repository")
-	}
+	boardRepoRootFn = func(string) (string, error) { return "", errors.New("no repository") }
 	t.Cleanup(func() { boardRepoRootFn = orig })
 }
 
 func TestBoardResolvesExplicitLivePath(t *testing.T) {
 	liveRoot := boardStateRoot(t)
-	stubRepoSeamFails(t)
+	stubRepoSeamAbsent(t)
 	id := "mm_aaaaaaaaaaaa"
 	liveDir := filepath.Join(liveRoot, id)
 	if err := os.MkdirAll(liveDir, 0o700); err != nil {
@@ -175,7 +173,7 @@ func TestBoardResolvesExplicitRepoPath(t *testing.T) {
 func TestBoardBareAndFlagAreLiveWithoutARepo(t *testing.T) {
 	liveRoot := boardStateRoot(t)
 	seedBoardRecords(t, filepath.Dir(filepath.Dir(liveRoot)), boardRecord("mm_aaaaaaaaaaaa", "alpha"))
-	stubRepoSeamFails(t)
+	stubRepoSeamAbsent(t)
 	cwd := t.TempDir()
 
 	res, err := resolveBoard(cwd, "", "", "")
@@ -195,6 +193,56 @@ func TestBoardBareAndFlagAreLiveWithoutARepo(t *testing.T) {
 	}
 	if res.Scope != board.ScopeLive || res.Scene != "notes" {
 		t.Errorf("--board notes = %+v, want live notes", res)
+	}
+}
+
+// TestBoardRefusesNestedScopes pins S5 at the CLI: every form of `relevo board`
+// refuses when the repository root and the live scope nest, in either
+// direction, before any pointer write or listener.
+func TestBoardRefusesNestedScopes(t *testing.T) {
+	forms := []struct {
+		name string
+		flag string
+		arg  string
+	}{
+		{"bare", "", ""},
+		{"--board notes", "notes", ""},
+		{"explicit live path", "", "live"},
+		{"explicit repo path", "", "docs/boards/api.excalidraw"},
+	}
+	dirs := []struct {
+		name     string
+		repoRoot func(liveRoot, id string) string
+	}{
+		{"live scope under the repository root", func(liveRoot, _ string) string {
+			return filepath.Dir(filepath.Dir(liveRoot))
+		}},
+		{"repository root under the live scope", func(liveRoot, id string) string {
+			return filepath.Join(liveRoot, id, "repo")
+		}},
+	}
+	for _, dir := range dirs {
+		for _, form := range forms {
+			t.Run(dir.name+"/"+form.name, func(t *testing.T) {
+				liveRoot := boardStateRoot(t)
+				id := "mm_aaaaaaaaaaaa"
+				liveDir := filepath.Join(liveRoot, id)
+				if err := os.MkdirAll(liveDir, 0o700); err != nil {
+					t.Fatalf("MkdirAll: %v", err)
+				}
+				arg := form.arg
+				if arg == "live" {
+					arg = filepath.Join(liveDir, "board.excalidraw")
+				}
+
+				orig := boardRepoRootFn
+				boardRepoRootFn = func(string) (string, error) { return dir.repoRoot(liveRoot, id), nil }
+				t.Cleanup(func() { boardRepoRootFn = orig })
+
+				_, err := resolveBoard(t.TempDir(), id, form.flag, arg)
+				requireCLIError(t, err, codeUsage, "")
+			})
+		}
 	}
 }
 
@@ -396,7 +444,7 @@ func TestBoardResolutionNeverStartsTheDaemon(t *testing.T) {
 	var calls int32
 	daemonStarter = func() error { atomic.AddInt32(&calls, 1); return nil }
 	t.Cleanup(func() { daemonStarter = startDaemon })
-	stubRepoSeamFails(t)
+	stubRepoSeamAbsent(t)
 
 	res, err := resolveBoard(t.TempDir(), "alpha", "", "")
 	if err != nil {
