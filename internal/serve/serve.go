@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/installation"
+	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -59,6 +60,13 @@ type Config struct {
 	Hooks hooks.Dispatcher
 	// Scope is the systemd scope template served rounds launch under; nil means none.
 	Scope *spawn.ScopeSpec
+	// Isolation is the tenant-isolation mode this server runs under. The zero
+	// value is normalized to isolate.ModeNone by New, so every server emits
+	// "isolation":"none". A configured user or container never reaches New:
+	// cmdServeRun refuses it first.
+	Isolation isolate.Mode
+	// IsolationImage names the container image, set only in container mode.
+	IsolationImage string
 	// SessionReaper deletes harness sessions a served round abandoned; nil
 	// means the deletes are skipped and the entries stay on the binding.
 	SessionReaper relevo.SessionDeleter
@@ -113,6 +121,11 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.Git == nil {
 		cfg.Git = git.NewClient("git", 0, 0)
+	}
+	// Normalize the unset isolation mode, so every server -- including one
+	// whose config predates the key -- emits "isolation":"none".
+	if cfg.Isolation == "" {
+		cfg.Isolation = isolate.ModeNone
 	}
 	tmpDir := filepath.Join(cfg.Root, "tmp")
 	if err := os.MkdirAll(tmpDir, store.StateRootMode); err != nil {

@@ -766,6 +766,24 @@ func TestServeStatusJSONKeysBurstReads(t *testing.T) {
 	}
 }
 
+// TestStatusDocumentCarriesIsolation pins slice A's status fact: the builder
+// view `relevo serve status` prints carries the server's isolation mode, none
+// when the server configured nothing.
+func TestStatusDocumentCarriesIsolation(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	s := newAdminServer(t, now)
+	_, builders, err := AdminStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("AdminStatus: %v", err)
+	}
+	if builders.Isolation != "none" {
+		t.Fatalf("builders.Isolation = %q, want none", builders.Isolation)
+	}
+	if builders.Image != "" {
+		t.Fatalf("builders.Image = %q, want empty in none mode", builders.Image)
+	}
+}
+
 // requireKeys fails unless obj is a JSON object holding every key. Each
 // missing key names the external reader that depends on it.
 func requireKeys(t *testing.T, obj any, keys ...string) {

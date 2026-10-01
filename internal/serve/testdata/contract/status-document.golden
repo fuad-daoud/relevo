@@ -5,7 +5,9 @@
     "cap": 4,
     "scopes": true,
     "slice": "relevo.slice",
-    "quota": "150%"
+    "quota": "150%",
+    "isolation": "container",
+    "image": "registry.example/relevo-builder:latest"
   },
   "last_contact": "2026-01-02T05:04:05Z",
   "owners": [

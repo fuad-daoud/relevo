@@ -122,11 +122,12 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		InstallationLabel: s.cfg.Installation.Label,
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain, remote.FeatureIsolation}
 		who.BuilderTier = string(relevo.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()
-		who.Builders = &remote.BuildersView{Running: c.Running, Queued: len(c.Queued), Cap: s.cap()}
+		view := s.isolationView(remote.BuildersView{Running: c.Running, Queued: len(c.Queued), Cap: s.cap()})
+		who.Builders = &view
 		who.Builders.Scopes = s.cfg.Scope != nil
 		if s.cfg.Scope != nil {
 			who.Builders.Slice = s.cfg.Scope.Slice

@@ -284,6 +284,11 @@ type BuildersView struct {
 	Scopes  bool   `json:"scopes"`          // part 3 sets it; false here
 	Slice   string `json:"slice,omitempty"` // part 3 sets it; "" here
 	Quota   string `json:"quota,omitempty"` // "" = no CPU quota; else e.g. "200%"
+	// Isolation is the tenant-isolation mode in force: "none", "user" or
+	// "container". "" from a server that predates isolation.
+	Isolation string `json:"isolation,omitempty"`
+	// Image is the container image, set only in container mode; "" otherwise.
+	Image string `json:"image,omitempty"`
 }
 
 // UnavailableRequest reports builder unavailability with a diagnostic reason.
@@ -439,6 +444,11 @@ const FeatureChainMember = "chain_member"
 // cannot resolve, so a client holding one refuses that server instead of
 // sending it.
 const FeatureAccounts = "accounts"
+
+// FeatureIsolation is the WhoAmI.Features token a server that reports its
+// tenant-isolation mode in BuildersView advertises. A client that reads the
+// field can tell a server that predates isolation, whose view lacks it.
+const FeatureIsolation = "isolation"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {
