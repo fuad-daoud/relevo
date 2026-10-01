@@ -1,21 +1,21 @@
   ◆ relevo    agents                                                                                           v0.13.0-28    14:02  
                                                                                                                                     
-   5 agents   1 writer   4 readers                                                                                                  
+   6 agents   2 writers   4 readers                                                                                                 
                                                                                                                                     
    AGENT                                             SHAPE   SOURCE   USED BY              AGY       CLAUDE    CODEX     OPENCODE   
    plan-executor                                     writer  shipped  builder              ok        ok        ok        ok         
+   documentor                                        writer  shipped  no actor             ok        ok        ok        ok         
    reviewer                                          reader  shipped  reviewer             ok        ok        ok        ok         
    security-reviewer                                 reader  shipped  no actor             ok        ok        ok        ok         
    researcher                                        reader  shipped  builder, researcher  ok        ok        ok        ok         
    architect                                         reader  shipped  no actor             ok        ok        ok        ok         
                                                                                                                                     
                                                                                                                                     
-   security-reviewer   shipped · reader · no actor uses it                                                                          
-   agy       ~/.gemini/config/agents/security-reviewer.md    up to date                                                             
-   claude    ~/.claude/agents/security-reviewer.md           up to date                                                             
-   codex     ~/.codex/security-reviewer.config.toml          up to date                                                             
-   opencode  ~/.config/opencode/agents/security-reviewer.md  up to date                                                             
-                                                                                                                                    
+   researcher   shipped · reader · used by builder, researcher                                                                      
+   agy       ~/.gemini/config/agents/researcher.md         up to date    model inherit                                              
+   claude    ~/.claude/agents/researcher.md                up to date    model haiku                                                
+   codex     ~/.codex/researcher.config.toml               up to date    model gpt-5.6-luna                                         
+   opencode  ~/.config/opencode/agents/researcher.md       up to date    model openrouter/z-ai/glm-5.3-flash                        
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     

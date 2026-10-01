@@ -19,20 +19,13 @@ const clockLayout = "15:04:05"
 // renderStreamFrom call, one drainStream pass, or one streamTranscriptRecords
 // batch.
 type Renderer struct {
-	// stamps is false for the session-record path (RenderRecord): a record is
-	// shown as it was written, never with the stream's clocks and durations.
-	stamps  bool
 	pending map[string]time.Time // claude tool_use id -> the event time that made the call
 }
 
 // NewRenderer returns a renderer for one pass over a stream.
 func NewRenderer() *Renderer {
-	return &Renderer{stamps: true, pending: make(map[string]time.Time)}
+	return &Renderer{pending: make(map[string]time.Time)}
 }
-
-// recordRenderer returns a renderer for one session record: the same tables,
-// stamping nothing.
-func recordRenderer() *Renderer { return &Renderer{} }
 
 // Render turns one raw line of the stream (without its trailing newline) into
 // the lines to append to the log, sanitised so a control byte in a harness's
@@ -80,9 +73,9 @@ type stamp struct {
 }
 
 // at builds the stamp carrying the event's own clock. The zero time carries
-// none, and a record renderer never stamps.
+// none.
 func (r *Renderer) at(t time.Time) stamp {
-	if !r.stamps || t.IsZero() {
+	if t.IsZero() {
 		return stamp{}
 	}
 	return stamp{clock: t.Local().Format(clockLayout)}
@@ -91,9 +84,6 @@ func (r *Renderer) at(t time.Time) stamp {
 // span builds the stamp part for a duration_seconds-style field: absent when
 // the field is missing, not a number, or negative.
 func (r *Renderer) span(v any) stamp {
-	if !r.stamps {
-		return stamp{}
-	}
 	secs, ok := v.(float64)
 	if !ok {
 		return stamp{}
@@ -223,9 +213,6 @@ func opencodeAt(obj map[string]any) time.Time {
 // milliseconds, absent when either end is missing or the end precedes the
 // start.
 func (r *Renderer) timeSpan(v any) string {
-	if !r.stamps {
-		return ""
-	}
 	m := asMap(v)
 	start, sok := m["start"].(float64)
 	end, eok := m["end"].(float64)
@@ -242,7 +229,7 @@ func (r *Renderer) timeSpan(v any) string {
 func (r *Renderer) callSpan(id string, end time.Time) stamp {
 	s := r.at(end)
 	start, ok := r.pending[id]
-	if !r.stamps || !ok {
+	if !ok {
 		return s
 	}
 	delete(r.pending, id)

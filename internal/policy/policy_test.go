@@ -139,7 +139,7 @@ func TestLoadErrors(t *testing.T) {
 		{
 			name:     "unknown role",
 			body:     `{"order":{"reviwer":["a/b/c"]}}`,
-			contains: []string{"order.reviwer", "unknown role", "builder reviewer researcher"},
+			contains: []string{"order.reviwer", "unknown role", "builder documentor reviewer researcher"},
 		},
 		{
 			name:     "null list",

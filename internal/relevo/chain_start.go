@@ -203,9 +203,6 @@ func chainResolveStart(ctx context.Context, rt Runtime, opts ChainOptions) (chai
 	}
 	plan.mastermindID = rec.ID
 	plan.mastermind = recordEndpoint(rec)
-	if plan.mastermind.TranscriptLocator == "" {
-		plan.mastermind.TranscriptLocator = mastermindLocator(rt, plan.mastermind.Kind, plan.mastermind.SessionID)
-	}
 	return plan, nil
 }
 

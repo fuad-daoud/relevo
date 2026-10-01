@@ -275,11 +275,11 @@ func TestTranscriptPaging(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		recs = append(recs, TranscriptRecord{Seq: i, RecordJSON: "{}", Rendered: "line"})
 	}
-	if _, err := d.AppendTranscript(OwnerMasterMind, "sess-1", recs); err != nil {
+	if _, err := d.AppendTranscript(OwnerRound, "sess-1", recs); err != nil {
 		t.Fatalf("AppendTranscript: %v", err)
 	}
 
-	got, err := d.Transcript(OwnerMasterMind, "sess-1", 2, 2)
+	got, err := d.Transcript(OwnerRound, "sess-1", 2, 2)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}

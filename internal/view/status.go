@@ -64,7 +64,8 @@ type BindingStatus struct {
 	MasterMindID   string `json:"mastermind_id,omitempty"`
 	MasterMindName string `json:"mastermind_name,omitempty"`
 	// MasterMindChatLabel and MasterMindChatLink are the harness's own name for the
-	// mastermind's session: Label.Text and Label.Link. Only cmd/relevo fills
+	// mastermind's session: Label.Text and Label.Link, resolved from an opencode
+	// session's own title and empty for every other kind. Only cmd/relevo fills
 	// them, inside the command a person ran, and only to print them; Status
 	// itself leaves them empty, so no label is ever computed on, or sent to,
 	// a server. They are never stored or logged.
@@ -210,7 +211,7 @@ type BindingStatus struct {
 	// AdminStatus/FlatStatus; always nil from a mastermind's own Status.
 	Queued *remote.QueueView `json:"queued,omitempty"`
 	// Chain is the chain's state, set only on the synthetic row that stands in
-	// for a live chain's members; nil on every ordinary binding row, whose
+	// for a chain's members; nil on every ordinary binding row, whose
 	// document then keeps exactly the keys it always had.
 	Chain *ChainFacts `json:"chain,omitempty"`
 }

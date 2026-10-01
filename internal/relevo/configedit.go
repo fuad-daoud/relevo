@@ -425,6 +425,7 @@ func EditActor(d ConfigDoc, actor, agent, tier string, check bool) (ConfigEdit, 
 	a.Tier = tier
 	if shape == string(agentsrc.ShapeReader) {
 		a.Check = nil
+		a.Scope = nil
 	} else {
 		a.Check = &check
 	}

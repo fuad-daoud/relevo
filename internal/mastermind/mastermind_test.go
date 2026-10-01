@@ -314,7 +314,7 @@ func TestParseHookInputRequiresSessionAndCWD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseHookInput: %v", err)
 	}
-	if in.SessionID != "sess-1" || in.CWD != "/tmp/p" || in.TranscriptPath != "/tmp/t.jsonl" {
+	if in.SessionID != "sess-1" || in.CWD != "/tmp/p" {
 		t.Errorf("ParseHookInput = %+v", in)
 	}
 	if in.Source != SourceResume {

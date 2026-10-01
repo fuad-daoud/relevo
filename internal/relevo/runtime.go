@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -39,6 +40,12 @@ type Git interface {
 	// leaving every difference unstaged and files outside HEAD untracked.
 	MaterializeTree(ctx context.Context, dir, tree string) error
 	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
+	// ChangedFiles lists the paths that differ between two trees with their
+	// status, modes and blob ids, for the scope check (#801).
+	ChangedFiles(ctx context.Context, dir, from, to string) ([]pathscope.Change, error)
+	// ReadBlob reads one blob's contents by object id, for the scope check's
+	// comment judge (#801).
+	ReadBlob(ctx context.Context, dir, oid string) ([]byte, error)
 	// DiffWorktreeStat compares tree against dir's current working tree and
 	// returns just the stat, no patch (#143): the live "+N/-M in F" a status
 	// row shows while a round is open, cheaper than DiffTrees because it
@@ -189,12 +196,6 @@ type Runtime struct {
 	// reader, and rounds close exactly as before.
 	Usage usage.Reader
 
-	// Sessions locates a session record so a round's transcript can be
-	// recorded (#184). mastermindLocator (bind.go) also calls it at bind time
-	// to fill MasterMind.TranscriptLocator (#172), the same file path, for the
-	// coming history database.
-	Sessions SessionLocator
-
 	// Classify judges report and dialog paragraphs for instruction-shaped
 	// content beside the regex scan (#211). Nil means no classifier is
 	// configured and the regex result stands alone; cmd/relevo wires
@@ -317,15 +318,11 @@ func (rt Runtime) RoleRegistry() *roles.Registry {
 
 // IngestDeps builds internal/ingest's Deps from rt: Git carries through
 // nil-safe (a nil rt.Git converts to a nil ingest.GitFacts, since both are
-// true nil interfaces), Sessions is converted to ingest's own
-// SessionLocator type at this boundary (internal/ingest cannot import this
-// package -- it is ingest's caller -- so it declares an identical function
-// type rather than reusing SessionLocator directly), and Now is time.Now.
+// true nil interfaces), and Now is time.Now.
 func IngestDeps(rt Runtime) ingest.Deps {
 	return ingest.Deps{
-		Git:      rt.Git,
-		Sessions: ingest.SessionLocator(rt.Sessions),
-		Now:      time.Now,
+		Git: rt.Git,
+		Now: time.Now,
 	}
 }
 

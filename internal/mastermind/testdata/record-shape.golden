@@ -12,4 +12,3 @@ session_id
 sessions[].from
 sessions[].session_id
 sessions[].to
-transcript_locator

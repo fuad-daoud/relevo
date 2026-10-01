@@ -62,7 +62,7 @@ func chainStoreState(status string) store.State {
 	}
 }
 
-// viewChainRow is the synthetic row that stands in for a live chain: the
+// viewChainRow is the synthetic row that stands in for a chain: the
 // chain's name, the tree it works in, the display word every surface shares,
 // and the chain's own facts. It names the mastermind the chain belongs to, so
 // the mastermind filter and the attention sort read it like any other row.
@@ -86,21 +86,14 @@ func viewChainRow(s *store.Store, c db.ChainRow) view.BindingStatus {
 	return row
 }
 
-// applyChains replaces the member rows of every chain that is still live with
-// the chain's own row, so the mastermind reads one row per chain instead of its
-// members'. A chain whose status is done leaves its members' rows alone: that
-// work is over, and each member's own row is the honest one.
+// applyChains replaces the member rows of every chain with the chain's own
+// row, so the mastermind reads one row per chain instead of its members'.
 //
 // The rows are re-sorted, so a chain that waits on a human rises to the top of
 // the listing like any other NEEDS YOU row.
 func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Report {
 	member := map[string]db.ChainRow{}
-	live := make([]db.ChainRow, 0, len(chains))
 	for _, c := range chains {
-		if c.Status == string(chain.StatusDone) {
-			continue
-		}
-		live = append(live, c)
 		for _, name := range chainMembersOf(c) {
 			member[name] = c
 		}
@@ -110,7 +103,7 @@ func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Rep
 	}
 
 	placed := map[string]bool{}
-	rows := make([]view.BindingStatus, 0, len(rep.Bindings)+len(live))
+	rows := make([]view.BindingStatus, 0, len(rep.Bindings))
 	for _, b := range rep.Bindings {
 		c, ok := member[b.Name]
 		if !ok {
@@ -126,7 +119,10 @@ func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Rep
 	}
 	// A chain whose member rows are all gone from the report still exists, so
 	// it still gets its row. Chains() orders by name, so the tail is stable.
-	for _, c := range live {
+	for _, c := range chains {
+		if c.Status == string(chain.StatusDone) {
+			continue
+		}
 		if !placed[c.Name] {
 			rows = append(rows, viewChainRow(s, c))
 		}

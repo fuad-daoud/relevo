@@ -151,6 +151,78 @@ func TestMigration007RenamesRoundColumnsAndKeepsRows(t *testing.T) {
 	}
 }
 
+// TestMigration020RemovesMasterMindTranscript pins the data cleanup: a database
+// at 19 with a planner-owned transcript row sharing its owner id with a round
+// row and a planner:: ingest cursor beside a live log cursor comes out with only
+// the planner row and the planner cursor gone, and a second apply records
+// nothing.
+func TestMigration020RemovesMasterMindTranscript(t *testing.T) {
+	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 19)); err != nil {
+		t.Fatalf("applyMigrations through 019: %v", err)
+	}
+
+	const ownerID = "shared-owner"
+	insertTranscript := func(id, kind string) {
+		t.Helper()
+		if _, err := sqlDB.Exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, ts, record_json, rendered)
+			VALUES (?, ?, ?, 0, NULL, '{}', 'line')`, id, kind, ownerID); err != nil {
+			t.Fatalf("insert transcript %s: %v", id, err)
+		}
+	}
+	insertTranscript("t-planner", "planner")
+	insertTranscript("t-round", "round")
+
+	insertCursor := func(source string) {
+		t.Helper()
+		if _, err := sqlDB.Exec(`INSERT INTO ingest_cursor (source, byte_offset, head_sha, updated_at)
+			VALUES (?, 0, '', '2026-09-01T10:00:00.000Z')`, source); err != nil {
+			t.Fatalf("insert cursor %s: %v", source, err)
+		}
+	}
+	insertCursor("planner::/x/session.jsonl")
+	insertCursor("log::/x/log.jsonl")
+
+	twenty := migrationFilesUpTo(t, 20)
+	if err := applyMigrations(sqlDB, twenty); err != nil {
+		t.Fatalf("applyMigrations 020: %v", err)
+	}
+
+	count := func(query string) int {
+		t.Helper()
+		var n int
+		if err := sqlDB.QueryRow(query).Scan(&n); err != nil {
+			t.Fatalf("count %q: %v", query, err)
+		}
+		return n
+	}
+	if got := count(`SELECT COUNT(*) FROM transcript WHERE owner_kind = 'planner'`); got != 0 {
+		t.Errorf("planner transcript rows = %d, want 0", got)
+	}
+	if got := count(`SELECT COUNT(*) FROM transcript WHERE owner_kind = 'round' AND owner_id = 'shared-owner'`); got != 1 {
+		t.Errorf("round transcript rows = %d, want the shared-owner row kept", got)
+	}
+	if got := count(`SELECT COUNT(*) FROM ingest_cursor WHERE source LIKE 'planner::%'`); got != 0 {
+		t.Errorf("planner cursors = %d, want 0", got)
+	}
+	if got := count(`SELECT COUNT(*) FROM ingest_cursor WHERE source = 'log::/x/log.jsonl'`); got != 1 {
+		t.Errorf("live cursors = %d, want the log cursor kept", got)
+	}
+
+	// A second apply records nothing: the version guard means the DELETEs never
+	// run twice.
+	if err := applyMigrations(sqlDB, twenty); err != nil {
+		t.Fatalf("second applyMigrations 020: %v", err)
+	}
+	if got := count(`SELECT COUNT(*) FROM schema_version WHERE version = 20`); got != 1 {
+		t.Errorf("schema_version rows for 20 = %d, want 1", got)
+	}
+	if got := count(`SELECT COUNT(*) FROM transcript WHERE owner_kind = 'round'`); got != 1 {
+		t.Errorf("round transcript rows after the second apply = %d, want 1", got)
+	}
+}
+
 func TestMigrationsApplyInOrderIsIdempotent(t *testing.T) {
 	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
 

@@ -1,12 +1,12 @@
-  ◆ relevo   agents ›  security-reviewer                                                                       v0.13.0-28    14:02  
+  ◆ relevo   agents ›  researcher                                                                              v0.13.0-28    14:02  
                                                                                                                                     
-   shipped · reader · no actor uses it   4 harnesses                                                                                
+   shipped · reader · used by builder, researcher   4 harnesses                                                                     
                                                                                                                                     
    HARNESS   FILE                                                                    MODEL                           STATE          
-   agy       ~/.gemini/config/agents/security-reviewer.md                                                            up to date     
-   claude    ~/.claude/agents/security-reviewer.md                                                                   up to date     
-   codex     ~/.codex/security-reviewer.config.toml                                                                  up to date     
-   opencode  ~/.config/opencode/agents/security-reviewer.md                                                          up to date     
+   agy       ~/.gemini/config/agents/researcher.md                                   inherit                         up to date     
+   claude    ~/.claude/agents/researcher.md                                          haiku                           up to date     
+   codex     ~/.codex/researcher.config.toml                                         gpt-5.6-luna                    up to date     
+   opencode  ~/.config/opencode/agents/researcher.md                                 openrouter/z-ai/glm-5.3-flash   up to date     
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     

@@ -40,6 +40,12 @@ var roleTable = []RoleSpec{
 		Definitions: []string{"plan-executor", "researcher"},
 	},
 	{
+		Name:        "documentor",
+		Shape:       ShapeBuilder,
+		Definition:  "documentor",
+		Definitions: []string{"documentor"},
+	},
+	{
 		Name:        "reviewer",
 		Shape:       ShapeConsult,
 		Definition:  "reviewer",
@@ -132,6 +138,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
 			{Name: "security-reviewer", Path: ".gemini/config/agents/security-reviewer.md", Doc: "security-reviewer.agy", ExpectModel: "inherit"},
 			{Name: "architect", Path: ".gemini/config/agents/architect.md", Doc: "architect.agy", ExpectModel: "inherit"},
+			{Name: "documentor", Path: ".gemini/config/agents/documentor.md", Doc: "documentor.agy", ExpectModel: "inherit"},
 		},
 	},
 	"claude": {
@@ -155,6 +162,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "reviewer", Path: ".claude/agents/reviewer.md", Doc: "reviewer.claude"},
 			{Name: "security-reviewer", Path: ".claude/agents/security-reviewer.md", Doc: "security-reviewer.claude"},
 			{Name: "architect", Path: ".claude/agents/architect.md", Doc: "architect.claude"},
+			{Name: "documentor", Path: ".claude/agents/documentor.md", Doc: "documentor.claude"},
 		},
 	},
 	"opencode": {
@@ -182,6 +190,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
 			{Name: "security-reviewer", Path: ".config/opencode/agents/security-reviewer.md", Doc: "security-reviewer.opencode"},
 			{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
+			{Name: "documentor", Path: ".config/opencode/agents/documentor.md", Doc: "documentor.opencode"},
 		},
 		Files: []ShippedFile{
 			{Name: "opencode-plugin/package.json", Path: ".config/opencode/plugins/relevo/package.json", Embed: "opencodeplugin/package.json"},
@@ -213,6 +222,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "reviewer", Path: ".codex/reviewer.config.toml", Doc: "reviewer.codex"},
 			{Name: "security-reviewer", Path: ".codex/security-reviewer.config.toml", Doc: "security-reviewer.codex"},
 			{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},
+			{Name: "documentor", Path: ".codex/documentor.config.toml", Doc: "documentor.codex"},
 		},
 	},
 }

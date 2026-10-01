@@ -1,6 +1,6 @@
-// Package chatlabel turns a mastermind record's harness kind, session id and
-// transcript locator into the harness's own human-facing name for that
-// session. Nothing here errors, writes relevo state, or is logged.
+// Package chatlabel turns a mastermind record's harness kind and session id
+// into the harness's own human-facing name for that session. Nothing here
+// errors, writes relevo state, or is logged.
 package chatlabel
 
 import (
@@ -10,11 +10,6 @@ import (
 
 // MaxTextRunes is the longest Text a Label carries, excluding surrounding quotes.
 const MaxTextRunes = 50
-
-// DefaultTailBytes is how much of a transcript's end ReadTail reads by
-// default: across the 60 largest transcripts seen, every entry type used here
-// sat within 35 KB of the end, and Claude Code keeps re-appending them.
-const DefaultTailBytes int64 = 256 << 10
 
 // OpencodeTimeout bounds the sqlite3 read of an opencode title so a listing never hangs.
 const OpencodeTimeout = 2 * time.Second
@@ -66,11 +61,4 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return string(runes[:max-1]) + "…"
-}
-
-func quote(s string) string {
-	if s == "" {
-		return ""
-	}
-	return "\"" + s + "\""
 }

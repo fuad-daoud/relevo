@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -130,16 +131,31 @@ type fakeGit struct {
 	lastDiffFrom string
 	lastDiffTo   string
 
+	// The scope check's git seam (#801): changedFiles is the fixed answer,
+	// changedFilesFunc, when set, answers per (from, to) so a test can move
+	// the tree between the pre-gate and post-gate judgements; blobs is what
+	// ReadBlob returns per object id.
+	changedFiles         []pathscope.Change
+	changedFilesErr      error
+	changedFilesFunc     func(ctx context.Context, dir, from, to string) ([]pathscope.Change, error)
+	changedFilesCalls    int
+	lastChangedFilesDir  string
+	lastChangedFilesFrom string
+	lastChangedFilesTo   string
+
+	blobs     map[string][]byte
+	blobErr   error
+	blobCalls int
+
 	worktreeStat         git.Stat
 	worktreeStatErr      error
 	worktreeStatCalls    int
 	lastWorktreeStatDir  string
 	lastWorktreeStatTree string
-
-	headCommitID  string
-	headCommitErr error
-	headCalls     int
-	lastHeadDir   string
+	headCommitID         string
+	headCommitErr        error
+	headCalls            int
+	lastHeadDir          string
 
 	branchExists    bool
 	branchExistsErr error
@@ -314,6 +330,33 @@ func (f *fakeGit) DiffWorktreeStat(ctx context.Context, dir, tree string) (git.S
 		return git.Stat{}, f.worktreeStatErr
 	}
 	return f.worktreeStat, nil
+}
+
+// ChangedFiles answers the scope check's raw diff (#801): the fixed list, or
+// changedFilesFunc's per-call answer.
+func (f *fakeGit) ChangedFiles(ctx context.Context, dir, from, to string) ([]pathscope.Change, error) {
+	f.calls++
+	f.changedFilesCalls++
+	f.lastChangedFilesDir = dir
+	f.lastChangedFilesFrom = from
+	f.lastChangedFilesTo = to
+	if f.changedFilesFunc != nil {
+		return f.changedFilesFunc(ctx, dir, from, to)
+	}
+	if f.changedFilesErr != nil {
+		return nil, f.changedFilesErr
+	}
+	return f.changedFiles, nil
+}
+
+// ReadBlob answers the comment judge's blob read (#801).
+func (f *fakeGit) ReadBlob(ctx context.Context, dir, oid string) ([]byte, error) {
+	f.calls++
+	f.blobCalls++
+	if f.blobErr != nil {
+		return nil, f.blobErr
+	}
+	return f.blobs[oid], nil
 }
 
 func (f *fakeGit) HeadCommit(ctx context.Context, dir string) (string, error) {

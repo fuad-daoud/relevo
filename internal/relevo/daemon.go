@@ -365,11 +365,6 @@ func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFet
 	if d.rt.Remote == nil {
 		return nil
 	}
-	// A server chain's member is collected by the chain pull, not by the
-	// per-binding catch-up: there is no fetch to prefetch for it.
-	if serverChainMemberStore(d.rt.Store, b.Name) {
-		return nil
-	}
 	if !b.Builder.Remote() || b.State == store.StateDone || b.State == store.StatePaused {
 		return nil
 	}
@@ -423,7 +418,7 @@ func mirrorArchived(ctx context.Context, rt Runtime) {
 		if stats != (ingest.Stats{}) {
 			slog.Info("ingest", "binding", a.Binding.Name, "archived", true,
 				"rounds", stats.Rounds, "events", stats.Events,
-				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
+				"artifacts", stats.Artifacts)
 		}
 	}
 }
@@ -592,7 +587,7 @@ func (d *Daemon) ingestLiveBindings(ctx context.Context, bindings []store.Bindin
 		if stats != (ingest.Stats{}) {
 			slog.Info("ingest", "binding", b.Name,
 				"rounds", stats.Rounds, "events", stats.Events,
-				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
+				"artifacts", stats.Artifacts)
 		}
 	}
 	d.ingestSeen = seen

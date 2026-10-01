@@ -75,18 +75,3 @@ func logOnlyTranscriptRecords(lines [][]byte, startSeq int) []db.TranscriptRecor
 	}
 	return recs
 }
-
-// mastermindTranscriptRecords turns a mastermind harness's own session-record lines
-// into TranscriptRecord rows, rendered with transcript.RenderRecord. Rendered is
-// often "" for a record RenderRecord recognises but has nothing to show for.
-func mastermindTranscriptRecords(kind string, lines [][]byte, startSeq int) []db.TranscriptRecord {
-	recs := make([]db.TranscriptRecord, 0, len(lines))
-	for i, line := range lines {
-		recs = append(recs, db.TranscriptRecord{
-			Seq:        startSeq + i,
-			RecordJSON: string(line),
-			Rendered:   strings.Join(transcript.RenderRecord(kind, line), "\n"),
-		})
-	}
-	return recs
-}

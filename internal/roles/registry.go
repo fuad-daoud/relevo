@@ -6,6 +6,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
@@ -78,6 +79,10 @@ type Role struct {
 	// means no preference, which is the local path. The config build copies
 	// it from the row; the client-side resolver reads it.
 	Placement []string
+	// Scope is the writer's declared scope (#801), copied from the row: the
+	// paths its rounds may change, and whether a Go comment-only edit is
+	// allowed. nil means unscoped. The round close resolves it here.
+	Scope *pathscope.Scope
 	// Definitions is the resolved definition per harness kind, for the kinds
 	// the role can run on.
 	Definitions map[string]Definition
@@ -220,6 +225,9 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 		if row.Placement != nil {
 			base.Placement = append([]string(nil), row.Placement...)
 		}
+		if row.Scope != nil {
+			base.Scope = copyScope(row.Scope)
+		}
 		if len(row.Off) > 0 {
 			offRaw[name] = append([]string(nil), row.Off...)
 		}
@@ -302,6 +310,17 @@ func canonicalTokens(ranked []Ranked) []string {
 		toks = append(toks, r.Token)
 	}
 	return toks
+}
+
+// copyScope returns a deep copy of s, nil-safe: the registry hands out
+// copies, so a caller cannot mutate a scope through one.
+func copyScope(s *pathscope.Scope) *pathscope.Scope {
+	if s == nil {
+		return nil
+	}
+	out := *s
+	out.Paths = append([]string(nil), s.Paths...)
+	return &out
 }
 
 // customDefinition reports whether kind has to be installed by hand for d:
@@ -452,6 +471,7 @@ func copyRole(role Role) Role {
 	out.Ranked = append([]Ranked(nil), role.Ranked...)
 	out.Resolved = append([]string(nil), role.Resolved...)
 	out.Placement = append([]string(nil), role.Placement...)
+	out.Scope = copyScope(role.Scope)
 	if role.Definitions != nil {
 		out.Definitions = make(map[string]Definition, len(role.Definitions))
 		for kind, d := range role.Definitions {
