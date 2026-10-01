@@ -438,7 +438,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	var closeWF *chainCloseWF
 	if chainErr == nil {
 		if len(chainRow.WorkflowJSON) > 0 {
-			closeWF = &chainCloseWF{Body: body, Path: path, Outcome: outcome, Stopped: stopped}
+			closeWF = &chainCloseWF{Body: body, Path: path, Outcome: outcome, Stopped: stopped, Round: closedRound}
 		} else if part := chainPartOf(chainRow, b.Name); part != "" {
 			chainEvent = chainEventFromClose(rt, part, b, body, outcome, gate, stopped, tail, note)
 		}

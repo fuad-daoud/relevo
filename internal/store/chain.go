@@ -33,6 +33,24 @@ func (s *Store) ChainByMember(member string) (db.ChainRow, error) {
 	return c, err
 }
 
+// SameChain reports whether two bindings are members of one chain. A binding
+// that is in no chain shares none, so a lone writer beside a chain member is
+// not exempt from the working-tree clash.
+func (s *Store) SameChain(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	ca, err := s.chainByMember(a)
+	if err != nil {
+		return false
+	}
+	cb, err := s.chainByMember(b)
+	if err != nil {
+		return false
+	}
+	return ca.ID == cb.ID
+}
+
 // Chains returns every chain, by name.
 func (s *Store) Chains() ([]db.ChainRow, error) {
 	var chains []db.ChainRow
@@ -92,8 +110,12 @@ func (t *Tx) ChainEventAppend(name string, e db.ChainEventRow) error {
 func (t *Tx) CreateChain(c db.ChainRow, members []Binding) error {
 	recs := make([]db.Record, 0, len(members))
 	rows := make([]db.ChainMemberRow, 0, len(members))
+	siblings := make([]string, 0, len(members))
 	for _, m := range members {
-		b, rec, err := t.s.prepareSave(m)
+		siblings = append(siblings, m.Name)
+	}
+	for _, m := range members {
+		b, rec, err := t.s.prepareSave(m, siblings)
 		if err != nil {
 			return err
 		}

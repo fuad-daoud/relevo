@@ -204,7 +204,13 @@ func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 	if err := chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member); err != nil {
 		return err
 	}
-	return chainAdvance(ctx, rt, tx, c, workflow.Event{
+	// The check closes against the state just written, so the row is re-read
+	// rather than the stale value carried in from this call's caller.
+	saved, err := tx.Chain(c.Name)
+	if err != nil {
+		return err
+	}
+	return chainAdvance(ctx, rt, tx, saved, workflow.Event{
 		Kind: workflow.EventCheckClosed, Step: act.Step, Run: round,
 		Result: chainGateResult(rec), Log: rec.LogPath,
 	})

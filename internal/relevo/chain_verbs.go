@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // The two words a chain's own stop and done write. The reason is the trace
@@ -62,6 +63,9 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 	if c.Status != string(chain.StatusRunning) {
 		return StopResult{}, ErrNothingToStop
 	}
+	if len(c.WorkflowJSON) > 0 {
+		return chainStopWorkflow(ctx, rt, c)
+	}
 
 	memberName := chainMemberName(c, c.AwaitingMember)
 	if memberName == "" {
@@ -81,6 +85,87 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 		return StopResult{}, err
 	}
 	return res, nil
+}
+
+// chainStopWorkflow stops a workflow chain's awaited member. The actor the
+// engine is on resolves through chain_member, and stopping that member's round
+// raises the chain's stopped event. A chain whose engine awaits a check has no
+// member to stop, and a member whose round already closed has nothing to stop,
+// so each is stopped directly under the lock.
+func chainStopWorkflow(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		return StopResult{}, err
+	}
+	if st.Awaiting.Member == "" {
+		if derr := chainStopWorkflowDirect(ctx, rt, c.Name); derr != nil {
+			return StopResult{}, derr
+		}
+		return StopResult{Round: st.Awaiting.Round, Action: ChainStopActionStopped}, nil
+	}
+	memberName, err := chainStoredMemberName(rt, c, st.Awaiting.Member)
+	if err != nil {
+		return StopResult{}, err
+	}
+	res, err := Stop(ctx, rt, memberName, StopOptions{})
+	if errors.Is(err, ErrNothingToStop) {
+		if derr := chainStopWorkflowDirect(ctx, rt, c.Name); derr != nil {
+			return StopResult{}, derr
+		}
+		return StopResult{Round: st.Awaiting.Round, Action: ChainStopActionStopped}, nil
+	}
+	if err != nil {
+		return StopResult{}, err
+	}
+	return res, nil
+}
+
+// chainStoredMemberName resolves the binding that runs actor on a stored chain,
+// so a stop names the member the engine's awaited step runs on.
+func chainStoredMemberName(rt Runtime, c db.ChainRow, actor string) (string, error) {
+	rows, err := rt.Store.ChainMembers(c.Name)
+	if err != nil {
+		return "", err
+	}
+	for _, m := range rows {
+		if chainFlowActorMatch(m.Actor, actor) {
+			return m.Binding, nil
+		}
+	}
+	return "", fmt.Errorf("chain %s has no %s member to stop", c.Name, actor)
+}
+
+// chainStopWorkflowDirect marks a running workflow chain stopped when the step
+// it awaits has no open member round to end: the engine's stopped state, one
+// trace row and the one end delivery, written under the state lock in the shape
+// the engine's own stop uses.
+func chainStopWorkflowDirect(ctx context.Context, rt Runtime, name string) error {
+	return rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		if c.Status != string(chain.StatusRunning) {
+			return nil
+		}
+		def, err := chainWorkflowDef(c)
+		if err != nil {
+			return err
+		}
+		before, err := chainWorkflowState(c)
+		if err != nil {
+			return err
+		}
+		next := before
+		next.Status = workflow.StatusStopped
+		ev := workflow.Event{
+			Kind: workflow.EventStopped, Step: before.Awaiting.Step,
+			Member: before.Awaiting.Member, Round: before.Awaiting.Round, Run: before.Awaiting.Run,
+			Reason: chainStopNoRoundReason,
+		}
+		act := workflow.Action{Kind: workflow.ActionStop, Step: before.Awaiting.Step, Reason: chainStopNoRoundReason}
+		return chainTerminalWF(ctx, rt, tx, c, def, before, next, ev, act)
+	})
 }
 
 // chainStopDirect marks a running chain stopped when the member it awaits had

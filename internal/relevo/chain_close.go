@@ -17,6 +17,10 @@ type chainCloseWF struct {
 	Path    string
 	Outcome string
 	Stopped bool
+	// Round is the round that closed. The close's caller advances the binding
+	// before the chain moves, so the closing binding's own round is no longer
+	// the closed one by then; the event must name the round the step awaited.
+	Round int
 }
 
 // chainEventFromCloseWF maps one member close onto the workflow event the
@@ -34,7 +38,10 @@ func chainEventFromCloseWF(rt Runtime, tx *store.Tx, c db.ChainRow, b store.Bind
 	if actor == "" {
 		actor = BindingRole(b)
 	}
-	ev := workflow.Event{Step: st.Awaiting.Step, Member: actor, Round: b.Round}
+	ev := workflow.Event{Step: st.Awaiting.Step, Member: actor, Round: wf.Round}
+	if wf.Round == 0 {
+		ev.Round = b.Round
+	}
 	if wf.Stopped {
 		ev.Kind = workflow.EventStopped
 		return ev, nil

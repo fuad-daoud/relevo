@@ -68,6 +68,35 @@ func memberNames(t *testing.T, d *db.DB) []string {
 	return out
 }
 
+// TestCWDExemptOnlyAmongSameChain pins the working-tree exemption: two writer
+// members of one chain may share a tree, a later save of either is exempt
+// through chain_member, and a writer that is in no chain is still refused.
+func TestCWDExemptOnlyAmongSameChain(t *testing.T) {
+	s := New(t.TempDir())
+	first := newBinding("x", "/repo")
+	second := newBinding("x-fix", "/repo")
+	second.Role = "builder"
+
+	if err := s.WithLock(func(tx *Tx) error {
+		return tx.CreateChain(testStoreChain("x"), []Binding{first, second})
+	}); err != nil {
+		t.Fatalf("CreateChain with two writers on one tree: %v", err)
+	}
+	if err := s.Save(first); err != nil {
+		t.Fatalf("Save a chain member beside its sibling: %v", err)
+	}
+	if err := s.Save(second); err != nil {
+		t.Fatalf("Save the sibling member: %v", err)
+	}
+	if !s.SameChain("x", "x-fix") {
+		t.Error("SameChain(x, x-fix) = false, want true")
+	}
+
+	if err := s.Save(newBinding("y", "/repo")); !errors.Is(err, ErrCWDTaken) {
+		t.Fatalf("Save a writer in no chain = %v, want ErrCWDTaken", err)
+	}
+}
+
 // TestCreateChainWritesEveryMemberAndTheChainAtomically pins the all-or-none
 // create: a member whose directory cannot be made leaves no chain row and no
 // member row.
