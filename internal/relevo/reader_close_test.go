@@ -250,6 +250,37 @@ func TestReaderCloseStripsARunnerWrittenSummaryWithABlock(t *testing.T) {
 	}
 }
 
+// TestReaderCloseOfARecapRoundIsNotUnstructured pins the incident: a plain
+// reader writes its findings with a relevo block and then recaps, and the close
+// must record the reader's own status from the block-carrying message rather
+// than "unstructured" from the recap.
+func TestReaderCloseOfARecapRoundIsNotUnstructured(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	writeReaderMessages(t, rt, "reader-bind", 1, readerCloseFinal, "Done.")
+	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	e := reportEntryFor(t, rt, "reader-bind", 1)
+	if e.Outcome != reporttail.OutcomeDone {
+		t.Errorf("entry.Outcome = %q, want the reader's own status %q", e.Outcome, reporttail.OutcomeDone)
+	}
+	output := rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings")
+	got, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("read findings.md: %v", err)
+	}
+	if strings.Contains(string(got), "```relevo") {
+		t.Errorf("findings.md still carries the block after the close:\n%s", got)
+	}
+}
+
 // TestReaderCloseRefusesToStripThroughASymlink pins that a runner-planted
 // symlink at the output path is left alone by the strip: the target keeps the
 // planted body, the path stays a symlink, and the round still closes.
