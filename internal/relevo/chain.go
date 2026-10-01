@@ -373,15 +373,14 @@ func chainSeedText(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 // cumulative diff and the round's own prompt when it differs from the plan
 // copy. The correction and fixes seeds name a reader's own output file rather
 // than the flat NNN-report.md no reader writes. The security and fixes seeds
-// keep the closing round's values and render no gate.
+// name the whole branch diff -- the chain's base to the builder's newest closed
+// round -- and render no gate.
 func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (chain.SeedView, error) {
 	v := chain.SeedView{
 		Plan: s.Plan, Plans: s.Plans, Corrections: s.Corrections,
 		Branch: c.Branch, Base: c.Base,
 	}
-	if paths, err := chainPlanPaths(c); err == nil && s.Plan >= 1 && s.Plan <= len(paths) {
-		v.PlanPath = chainSeedInput(rt, c, paths[s.Plan-1])
-	}
+	chainSeedPlanView(rt, c, s.Plan, &v)
 
 	// The correction and fixes seeds name a reader's own output: the path its
 	// report entry carries, never the flat NNN-report.md no reader writes. A
@@ -431,13 +430,11 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 			v.OutputPath = reviewerOutput
 		}
 	case chain.SeedSecurity, chain.SeedFixes:
-		v.OutputPath = chainSeedInput(rt, c, rt.Store.ReportPath(c.Security, closedRound))
 		if act.Seed == chain.SeedFixes {
 			v.OutputPath = securityOutput
 		}
-		v.ReportPath = chainSeedInput(rt, c, rt.Store.ReportPath(c.Builder, closedRound))
-		v.DiffPath = chainSeedInput(rt, c, rt.Store.DiffPath(c.Builder, closedRound))
-		v.BranchDiffPath = v.DiffPath
+		v.BranchDiffPath = chainSeedInput(rt, c,
+			chainBranchDiff(rt, tx, c, c.Builder, memberNewestClosedRound(tx, c.Builder)))
 	}
 	return v, nil
 }

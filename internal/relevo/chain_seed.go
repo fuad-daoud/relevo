@@ -42,6 +42,50 @@ func chainPlanDiff(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, buil
 	return path
 }
 
+// chainBranchDiff captures the whole branch's diff -- the chain's base commit to
+// the builder's newest closed tree -- as a row-only round_file key and returns
+// that key, or "" when there is nothing to capture. It is chainPlanDiff's twin
+// for the span that judges the branch as a whole: the base the builder's
+// worktree was cut from to the tree the store snapshotted when the builder round
+// closed, not the worktree's moving HEAD. It NEVER fails the close: no base, a
+// round below the first, no builder record, an empty closed tree, no git and a
+// git failure all read as "not captured".
+func chainBranchDiff(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, builderRound int) string {
+	if c.Base == "" || builderRound < 1 {
+		return ""
+	}
+	b, err := tx.Load(builder)
+	if err != nil || b.RoundClosedTree == "" {
+		return ""
+	}
+	path := rt.Store.ChainDiffPath(builder, builderRound)
+	res := capture.PlanDiff(context.Background(), captureDeps(rt), tx, capture.PlanDiffSpec{
+		Name: builder, Round: builderRound,
+		Dir: b.CWD, From: c.Base, End: b.RoundClosedTree, Path: path,
+	})
+	if res.Path == "" {
+		return ""
+	}
+	return path
+}
+
+// chainSeedPlanView fills the plan copies a seed may name: every plan copy the
+// chain holds, in plan order, made seed-openable by chainSeedInput, and the copy
+// for the current plan. A decode error leaves both empty, as the plan block did
+// before it moved here.
+func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *chain.SeedView) {
+	paths, err := chainPlanPaths(c)
+	if err != nil {
+		return
+	}
+	for _, p := range paths {
+		v.PlanPaths = append(v.PlanPaths, chainSeedInput(rt, c, p))
+	}
+	if plan >= 1 && plan <= len(paths) {
+		v.PlanPath = chainSeedInput(rt, c, paths[plan-1])
+	}
+}
+
 // chainReaderVerdict reads a reviewer close's verdict. The output body is the
 // first attempt; when it carries no key the round's stream is rescanned newest
 // assistant message first, so a recap the runner wrote after its verdict does
