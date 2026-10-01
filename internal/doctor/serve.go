@@ -9,7 +9,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -47,11 +46,11 @@ var tenantStat = func(path string) (uid, gid uint32, mode os.FileMode, err error
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	sys, ok := fi.Sys().(*syscall.Stat_t)
+	uid, gid, ok := statOwner(fi)
 	if !ok {
 		return 0, 0, fi.Mode().Perm(), nil
 	}
-	return sys.Uid, sys.Gid, fi.Mode().Perm(), nil
+	return uid, gid, fi.Mode().Perm(), nil
 }
 
 // ServeChecks evaluates the health of a relevo serve installation. It runs

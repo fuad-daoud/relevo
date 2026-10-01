@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -20,9 +19,13 @@ type Client struct {
 	timeout       time.Duration
 	maxPatchBytes int
 
-	// credential, when non-nil, is the tenant identity every git child runs as.
-	// nil means the git child runs as the serve uid.
-	credential *syscall.Credential
+	// credUID and credGID are the tenant identity every git child runs as when
+	// credentialSet is true; otherwise the git child runs as the serve uid.
+	// They are plain numbers, not a syscall.Credential, so the client compiles
+	// on every target -- only the helper that applies them is unix-only.
+	credUID       uint32
+	credGID       uint32
+	credentialSet bool
 	// gitEnvExtra is the tenant environment appended to every git child's env
 	// (a user-mode client carries the tenant's HOME/USER/LOGNAME), so a git
 	// process running as the tenant resolves paths against its own home.
@@ -97,7 +100,7 @@ func envNames(env []string) []string {
 // server-wide client stays available for none-mode owners.
 func (c *Client) WithCredential(uid, gid uint32, env []string) *Client {
 	cp := *c
-	cp.credential = &syscall.Credential{Uid: uid, Gid: gid}
+	cp.credUID, cp.credGID, cp.credentialSet = uid, gid, true
 	cp.gitEnvExtra = append([]string(nil), env...)
 	return &cp
 }
@@ -114,9 +117,7 @@ func (c *Client) command(ctx context.Context, dir string, env []string, args ...
 	// Deny the inherited copies of every name the tenant env sets, so the
 	// tenant's HOME/USER/LOGNAME are the only ones the git child sees.
 	cmd.Env = gitEnv(os.Environ(), envNames(c.gitEnvExtra), extra)
-	if c.credential != nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: c.credential}
-	}
+	applyCredential(cmd, c.credUID, c.credGID, c.credentialSet)
 	return cmd
 }
 

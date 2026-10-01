@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -30,7 +29,7 @@ func (e binExec) Run(ctx context.Context, bin string, args ...string) ([]byte, e
 		cmd.Env = proc.ChildEnv(os.Environ(), e.deny, e.extra)
 	}
 	if e.credential != nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: e.credential.UID, Gid: e.credential.GID}}
+		applyCredential(cmd, e.credential)
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr

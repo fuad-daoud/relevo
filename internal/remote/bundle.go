@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/fuad-daoud/relevo/internal/git"
 )
@@ -177,7 +176,7 @@ func (t *BundleTransport) Absorb(ctx context.Context, repo, contentType string, 
 // (a fifo that would block, a device) is refused. The temp dir may be
 // tenant-writable, so both checks are needed.
 func openBundleRegular(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := os.OpenFile(path, os.O_RDONLY|noFollow, 0)
 	if err != nil {
 		return nil, err
 	}

@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"syscall"
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/isolate"
@@ -180,15 +179,15 @@ func (s *Server) ensureOwnerRoot(path string, t isolate.Tenant) error {
 	if st.Mode().Perm() != ownerRootMode {
 		return fmt.Errorf("%s has mode %04o, want %04o: run `chmod %04o %s`", path, st.Mode().Perm(), ownerRootMode, ownerRootMode, path)
 	}
-	sys, ok := st.Sys().(*syscall.Stat_t)
+	uid, gid, ok := statOwner(st)
 	if !ok {
 		return nil
 	}
-	if int(sys.Gid) != int(t.GID) {
-		return fmt.Errorf("%s is group %d, want the tenant group %d: run `chown root:%d %s`", path, sys.Gid, t.GID, t.GID, path)
+	if int(gid) != int(t.GID) {
+		return fmt.Errorf("%s is group %d, want the tenant group %d: run `chown root:%d %s`", path, gid, t.GID, t.GID, path)
 	}
-	if os.Geteuid() == 0 && sys.Uid != 0 {
-		return fmt.Errorf("%s is owned by uid %d, want root: run `chown root:%d %s`", path, sys.Uid, t.GID, path)
+	if os.Geteuid() == 0 && uid != 0 {
+		return fmt.Errorf("%s is owned by uid %d, want root: run `chown root:%d %s`", path, uid, t.GID, path)
 	}
 	return nil
 }
