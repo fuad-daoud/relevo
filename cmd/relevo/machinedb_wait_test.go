@@ -63,7 +63,7 @@ func bindTestOwner(t *testing.T, stateHome string) *boundOwner {
 // serve starts accepting on the bound socket, the way the daemon does.
 func (b *boundOwner) serve(t *testing.T) *owner.Server {
 	t.Helper()
-	srv, err := serveOwner(b.db, b.ln)
+	srv, err := serveOwner(b.db, b.ln, nil)
 	if err != nil {
 		t.Fatalf("serveOwner: %v", err)
 	}
@@ -86,7 +86,7 @@ func (b *boundOwner) serveAfter(t *testing.T, delay time.Duration) {
 	go func() {
 		defer close(done)
 		time.Sleep(delay)
-		s, err := serveOwner(b.db, b.ln)
+		s, err := serveOwner(b.db, b.ln, nil)
 		if err != nil {
 			t.Errorf("serveOwner: %v", err)
 			return
@@ -124,7 +124,7 @@ func ownerLater(t *testing.T, stateHome string, delay time.Duration) {
 			berr = err
 			return
 		}
-		srv, err := serveOwner(b.db, b.ln)
+		srv, err := serveOwner(b.db, b.ln, nil)
 		if err != nil {
 			berr = fmt.Errorf("serveOwner: %w", err)
 			_ = b.ln.Close()
@@ -401,31 +401,26 @@ func TestStatuslineKeepsItsShortBudgetWhileAnOwnerStarts(t *testing.T) {
 }
 
 // TestRouteStartWaitExemptions pins which command lines carry a start wait: the
-// statusline, the hooks, the peek verbs, the daemon and the direct escape hatch
-// carry none, and every other verb carries the full one.
+// statusline, the hooks, the peek verbs and the daemon carry none, and every
+// other verb carries the full one.
 func TestRouteStartWaitExemptions(t *testing.T) {
 	cases := []struct {
 		name      string
 		args      []string
-		direct    bool
 		mode      dbRoute
 		budget    time.Duration
 		startWait time.Duration
 	}{
-		{"statusline", []string{"status", "--line"}, false, routeOwner, statuslineDialBudget, 0},
-		{"mastermind init hook", []string{"mastermind", "init", "--hook", "claude"}, false, routeOwner, verbDialBudget, 0},
-		{"mastermind notice hook", []string{"mastermind", "notice", "--hook", "claude"}, false, routeOwner, verbDialBudget, 0},
-		{"config agents", []string{"config", "agents", "--force"}, false, routeOwner, verbDialBudget, ownerStartWait},
-		{"daemon", []string{"daemon"}, false, routeNone, verbDialBudget, 0},
-		{"daemon check", []string{"daemon", "--check"}, false, routeNone, verbDialBudget, 0},
-		{"bugreport", []string{"bugreport"}, false, routeNone, verbDialBudget, 0},
-		{"direct env", []string{"status"}, true, routeDirect, verbDialBudget, 0},
+		{"statusline", []string{"status", "--line"}, routeOwner, statuslineDialBudget, 0},
+		{"mastermind init hook", []string{"mastermind", "init", "--hook", "claude"}, routeOwner, verbDialBudget, 0},
+		{"mastermind notice hook", []string{"mastermind", "notice", "--hook", "claude"}, routeOwner, verbDialBudget, 0},
+		{"config agents", []string{"config", "agents", "--force"}, routeOwner, verbDialBudget, ownerStartWait},
+		{"daemon", []string{"daemon"}, routeNone, verbDialBudget, 0},
+		{"daemon check", []string{"daemon", "--check"}, routeNone, verbDialBudget, 0},
+		{"bugreport", []string{"bugreport"}, routeNone, verbDialBudget, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.direct {
-				t.Setenv("RELEVO_DB_DIRECT", "1")
-			}
 			mode, budget, startWait := routeForArgs(tc.args)
 			if mode != tc.mode || budget != tc.budget || startWait != tc.startWait {
 				t.Errorf("routeForArgs(%q) = %v, %v, %v; want %v, %v, %v",

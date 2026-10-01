@@ -41,6 +41,10 @@ const (
 	RefuseWrongProto   = "wrong_proto"
 	RefuseShuttingDown = "shutting_down"
 	RefuseRestarting   = "restarting"
+	// RefuseReaping answers a request on an ad-hoc connection while the owner
+	// is ending a statement that will not stop. It is never sent for the
+	// handshake and never for a connection that did not mark itself ad-hoc.
+	RefuseReaping = "reaping"
 )
 
 // coder is anything exposing a SQLite result code, which is both the modernc

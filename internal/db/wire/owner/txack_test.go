@@ -77,7 +77,7 @@ func newAckConn(t *testing.T) (*conn, *sql.Conn, *ackGate) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	gate := newAckGate()
-	c := newConn(New(db, 0, 0, "test"), gate)
+	c := newConn(New(db, 0, 0, "test", nil), gate)
 	pinned, err := c.pin(context.Background())
 	if err != nil {
 		t.Fatalf("pin: %v", err)

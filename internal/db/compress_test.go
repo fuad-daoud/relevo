@@ -18,6 +18,21 @@ import (
 // normally so 013 runs: the pass sees rows that predate the codec columns.
 func schema12Fixture(t *testing.T) (*DB, string) {
 	t.Helper()
+	return schema12FixtureOpened(t, Open)
+}
+
+// schema12DirectFixture is schema12Fixture on a direct handle. The pass test
+// asserts that the vacuum it runs succeeded, and a vacuum refuses a dialled
+// handle, so that test needs a direct handle even under the owner-mode switch.
+func schema12DirectFixture(t *testing.T) (*DB, string) {
+	t.Helper()
+	return schema12FixtureOpened(t, func(path string) (*DB, error) {
+		return openDirect(path, Options{})
+	})
+}
+
+func schema12FixtureOpened(t *testing.T, open func(string) (*DB, error)) (*DB, string) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	sqlDB := rawSQLDB(t, path)
 	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 12)); err != nil {
@@ -27,7 +42,7 @@ func schema12Fixture(t *testing.T) (*DB, string) {
 		t.Fatalf("close the raw handle: %v", err)
 	}
 
-	d, err := Open(path)
+	d, err := open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -193,7 +208,9 @@ func codecOf(t *testing.T, d *DB, query string) int {
 // every decoded value reads back byte-identical, the backup holds the same
 // history, and the stats and kv record the run.
 func TestCompressHistoryOnce(t *testing.T) {
-	d, _ := schema12Fixture(t)
+	// The pass ends by vacuuming, and the test asserts that vacuum succeeded;
+	// a vacuum refuses a dialled handle, so the fixture is opened directly.
+	d, _ := schema12DirectFixture(t)
 	seedPlainHistory(t, d)
 	before := historyManifest(t, d)
 

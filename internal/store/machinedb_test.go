@@ -1,15 +1,13 @@
 package store
 
 import (
-	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 )
 
 // routedStore roots a store at a fresh directory and installs open as the
@@ -70,10 +68,7 @@ func TestRoutedOpenDoesNotMintTheInstallationFile(t *testing.T) {
 // ErrNewerSchema, never handed to the caller.
 func TestRoutedOpenStillRefusesANewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ahead.db")
-	raw, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
+	raw := dbtest.RawOpen(t, path)
 	if _, err := raw.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)`); err != nil {
 		t.Fatalf("create schema_version: %v", err)
 	}

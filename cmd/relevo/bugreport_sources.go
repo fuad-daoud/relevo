@@ -49,9 +49,16 @@ func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 	if err != nil {
 		return relevo.Runtime{}, config.Loaded{}, err
 	}
-	L, err := loadConfigReadOnly(root, filepath.Join(configDir, "relevo"))
+	configDirPath := filepath.Join(configDir, "relevo")
+	L, err := loadConfigReadOnly(root, configDirPath, lockedDial)
 	if err != nil {
-		return relevo.Runtime{}, config.Loaded{}, err
+		// The file is held and the owner did not answer: fall back to the
+		// config files and omit the database-backed sections, the way a machine
+		// with no database does today. A bundle must not fail on a held file.
+		L, err = loadConfigReadOnly(root, configDirPath, lockedSkip)
+		if err != nil {
+			return relevo.Runtime{}, config.Loaded{}, err
+		}
 	}
 
 	// Read the installation without minting one: a read verb must not write.
@@ -67,8 +74,16 @@ func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 		if ok {
 			origin = inst.ID
 		}
-		d, err = db.OpenReadOnlyWith(filepath.Join(root, "relevo.db"), db.Options{Origin: origin})
-		if err != nil {
+		d, err = openReadOnlyDB(filepath.Join(root, "relevo.db"), db.Options{Origin: origin})
+		switch {
+		case errors.Is(err, db.ErrLocked):
+			// The daemon holds the file: read through the owner instead. A
+			// failed dial omits the database-backed sections, as today.
+			d, err = dialOwner(context.Background(), root, verbDialBudget)
+			if err != nil {
+				d = nil
+			}
+		case err != nil:
 			return relevo.Runtime{}, config.Loaded{}, err
 		}
 	}
