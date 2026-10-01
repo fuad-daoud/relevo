@@ -604,3 +604,42 @@ servers are redeployed only between chains.
 | **W4: remote** | Checks on a placed writer (feature `check`); `--server` chains carry the workflow (feature `workflow`, with the old-client mapping). Server redeploy. | medium |
 
 This spec ships in W1's PR, with the sketch.
+
+## 11. Clarifications from W1 planning
+
+The W1 planning round found these gaps. They are settled as follows.
+
+1. **YAML is read as YAML 1.2** (`go.yaml.in/yaml/v3`). Under YAML 1.1 the key
+   `on` and the values `yes`/`no` would decode as booleans. YAML is decoded,
+   its map keys are made strings, and it goes through the same strict JSON
+   decoder as a `.json` file.
+2. **Rule 5 (budgets).** A cycle that passes through a `for-each` is bounded by
+   the list's length. A budget whose `per` resets inside the same cycle does not
+   bound that cycle. A cycle made only of control steps is always rejected.
+3. **Halt reasons may read params**, and only params, like `when`.
+4. **Artifacts are lists of keys.** A single file is a list of one. A `for-each`
+   may walk any declared `artifact` output.
+5. **`stop` is an action.** It mirrors the `stopped` event.
+6. **A `check` whose command renders empty** routes as `green` inside `Next`,
+   with no action and no log. This is how `--no-gate` works on the default
+   workflow.
+7. **The shipped seeds** are named `repair`, `review`, `correct`, `scan` and
+   `fix`. The templates move from `internal/chain/seeds` in W2.
+8. **Until W3**, entering a `fork` step halts the chain with "fork steps are not
+   run by this engine". W1 parses and validates forks, and W3 adds the merge
+   event and their execution.
+9. **The migration mapping** (section 8) is by phase and corrections.
+   - `building` maps to `build` / `build-fix` in the build phase, and to
+     `fix-build` / `fix-rebuild` in the security phase.
+   - `reviewing` and `correcting` in the security phase map to `fix-review` and
+     `fix-correct`.
+   - `Visits[correct]` is `corrections + 1` while the chain is at `correct`.
+10. **`Visits` are plain counts.** Entering a step resets the count of every
+    step whose `per` names it.
+11. **Step-matching order on a `run` close:**
+    1. A status other than `done` matches only `status=<s>` edges, or halts.
+    2. Then declared exact matches, in sorted key order.
+    3. Then count arms.
+    4. Then `done`.
+    5. Then `else`.
+12. **`internal/workflow` owns `ValidName`** (the actor-name pattern).
