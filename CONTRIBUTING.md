@@ -82,8 +82,10 @@ on it is a published plugin version; `main` carries unreleased plugin changes
 ahead of the shipped binary. `release.yml` moves `plugin-release` as its last
 step — after the release and its archives exist — fast-forward only, creating the
 branch on the first run. Only that workflow pushes it: do not push by hand except
-to recover, and configure the repository ruleset to allow pushes only from the
-release workflow, with the maintainer's bypass kept for a hand move.
+to recover. The `plugin-release` repository ruleset blocks deleting the branch and
+force-pushing to it, and the repository admin role bypasses both for a hand move.
+A personal repository's ruleset cannot limit pushes to GitHub Actions, so keeping
+hand pushes out is a convention.
 
 If the step refuses — the tag is not a descendant of the branch, e.g. a tag cut
 from an older commit — the release stays published and the branch stays put.
