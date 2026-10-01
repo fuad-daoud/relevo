@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"sort"
 	"time"
 
@@ -44,10 +42,9 @@ func (r *ingestRun) upsertMasterMind(tx *db.Tx) (*string, error) {
 		return nil, nil
 	}
 	record := db.MasterMind{
-		ID:                r.b.MasterMindID,
-		HarnessKind:       r.b.MasterMind.Kind,
-		SessionID:         r.b.MasterMind.SessionID,
-		TranscriptLocator: nonEmptyPtr(r.b.MasterMind.TranscriptLocator),
+		ID:          r.b.MasterMindID,
+		HarnessKind: r.b.MasterMind.Kind,
+		SessionID:   r.b.MasterMind.SessionID,
 	}
 	id, err := tx.UpsertMasterMind(record)
 	if err != nil {
@@ -311,43 +308,6 @@ func (r *ingestRun) upsertRound(tx *db.Tx, bindingID string, n int, all []store.
 		}
 	}
 	return roundID, nil
-}
-
-// appendMasterMindTranscript reads a live mastermind's own transcript past its cursor.
-func (r *ingestRun) appendMasterMindTranscript(tx *db.Tx, mastermindID *string) error {
-	if mastermindID == nil || r.kind != "live" || r.locator == "" {
-		return nil
-	}
-	if _, err := os.Stat(r.locator); err != nil {
-		return nil
-	}
-
-	// why: the ingest cursor's "planner::" prefix is state already written.
-	key := "planner::" + r.locator
-	cur, found, err := tx.Cursor(key)
-	if err != nil {
-		return fmt.Errorf("mastermind transcript cursor: %w", err)
-	}
-	opener := func() (io.ReadSeekCloser, error) { return os.Open(r.locator) }
-	lines, startSeq, next, reset, err := readAppendOnly(opener, key, cur, found)
-	if err != nil {
-		return fmt.Errorf("read mastermind transcript: %w", err)
-	}
-	if reset {
-		r.logger.Info("ingest: cursor reset", "binding", r.b.Name, "member", "mastermind transcript")
-	}
-	if len(lines) > 0 {
-		recs := mastermindTranscriptRecords(r.b.MasterMind.Kind, lines, startSeq)
-		added, err := tx.AppendTranscript(db.OwnerMasterMind, *mastermindID, recs)
-		if err != nil {
-			return fmt.Errorf("append mastermind transcript: %w", err)
-		}
-		r.stats.TranscriptRecords += added
-	}
-	if err := tx.SaveCursor(next); err != nil {
-		return fmt.Errorf("save mastermind transcript cursor: %w", err)
-	}
-	return nil
 }
 
 // logEntryToEvent keeps entryJSON as the exact line read from the source.

@@ -275,7 +275,7 @@ func cmdMasterMindList(args []string) error {
 	res := chatResolver()
 	labels := make([]chatlabel.Label, len(records))
 	for i, rec := range records {
-		labels[i] = res.Resolve(context.Background(), rec.HarnessKind, rec.SessionID, rec.TranscriptLocator)
+		labels[i] = res.Resolve(context.Background(), rec.HarnessKind, rec.SessionID)
 	}
 
 	if *asJSON {
@@ -324,9 +324,9 @@ type mastermindListView struct {
 	ChatLink  string `json:"chat_link,omitempty"`
 }
 
-// chatResolver is the label reader `relevo mastermind list` uses (#386): a claude
-// transcript is read directly, and an opencode session title is read through
-// the sqlite3 shell-out, which is wired only when sqlite3 is on PATH.
+// chatResolver is the label reader `relevo mastermind list` uses (#386): an
+// opencode session title is read through the sqlite3 shell-out, which is wired
+// only when sqlite3 is on PATH.
 func chatResolver() chatlabel.Resolver {
 	if _, err := exec.LookPath("sqlite3"); err != nil {
 		return chatlabel.Resolver{}
@@ -356,7 +356,7 @@ func annotateMasterMindChat(rt relevo.Runtime, rep *view.Report, res chatlabel.R
 			if rec, err := rt.MasterMinds.Get(b.MasterMindID); err != nil {
 				lbl = chatlabel.Label{}
 			} else {
-				lbl = res.Resolve(context.Background(), rec.HarnessKind, rec.SessionID, rec.TranscriptLocator)
+				lbl = res.Resolve(context.Background(), rec.HarnessKind, rec.SessionID)
 			}
 			labels[b.MasterMindID] = lbl
 		}

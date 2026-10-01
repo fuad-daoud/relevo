@@ -121,12 +121,11 @@ func TestUpsertMasterMindByID(t *testing.T) {
 
 	const id = "pl_aaaaaaaaaaaa"
 	got, err := d.UpsertMasterMind(MasterMind{
-		ID:                id,
-		HarnessKind:       "claude",
-		SessionID:         "sess-1",
-		TranscriptLocator: ptr("/tmp/t1.jsonl"),
-		FirstSeen:         t1,
-		LastSeen:          t1,
+		ID:          id,
+		HarnessKind: "claude",
+		SessionID:   "sess-1",
+		FirstSeen:   t1,
+		LastSeen:    t1,
 	})
 	if err != nil {
 		t.Fatalf("UpsertMasterMind (insert): %v", err)
@@ -135,8 +134,14 @@ func TestUpsertMasterMindByID(t *testing.T) {
 		t.Fatalf("UpsertMasterMind returned %q, want the record's own id %q", got, id)
 	}
 
-	// The same id, a moved session, no new transcript locator: the row keeps
-	// its id and its locator and takes the new session and last_seen.
+	// A locator an older relevo wrote into the column is state already on
+	// disk: this write API no longer carries one, and must not clear it.
+	if _, err := d.sqlDB.Exec(`UPDATE mastermind SET transcript_locator = '/tmp/t1.jsonl' WHERE id = ?`, id); err != nil {
+		t.Fatalf("seed transcript_locator: %v", err)
+	}
+
+	// The same id, a moved session: the row keeps its id and takes the new
+	// session and last_seen.
 	got, err = d.UpsertMasterMind(MasterMind{
 		ID:          id,
 		HarnessKind: "claude",
@@ -160,14 +165,19 @@ func TestUpsertMasterMindByID(t *testing.T) {
 	if p.ID != id || p.HarnessKind != "claude" {
 		t.Errorf("row = %+v, want id %s kind claude", p, id)
 	}
-	if p.TranscriptLocator == nil || *p.TranscriptLocator != "/tmp/t1.jsonl" {
-		t.Errorf("transcript_locator = %v, want the existing /tmp/t1.jsonl kept", p.TranscriptLocator)
-	}
 	if !p.LastSeen.Equal(t2) {
 		t.Errorf("last_seen = %v, want %v", p.LastSeen, t2)
 	}
 	if !p.FirstSeen.Equal(t1) {
 		t.Errorf("first_seen = %v, want %v (unchanged)", p.FirstSeen, t1)
+	}
+
+	var locator sql.Null[string]
+	if err := d.sqlDB.QueryRow(`SELECT transcript_locator FROM mastermind WHERE id = ?`, id).Scan(&locator); err != nil {
+		t.Fatalf("select transcript_locator: %v", err)
+	}
+	if !locator.Valid || locator.V != "/tmp/t1.jsonl" {
+		t.Errorf("transcript_locator = %v, want the stored /tmp/t1.jsonl untouched", locator)
 	}
 
 	var count int
@@ -225,11 +235,10 @@ func TestMasterMindBySession(t *testing.T) {
 	t2 := time.Date(2026, 9, 22, 11, 0, 0, 0, time.UTC)
 
 	id, err := d.UpsertMasterMind(MasterMind{
-		HarnessKind:       "claude",
-		SessionID:         "sess-1",
-		TranscriptLocator: ptr("/tmp/t.jsonl"),
-		FirstSeen:         t1,
-		LastSeen:          t2,
+		HarnessKind: "claude",
+		SessionID:   "sess-1",
+		FirstSeen:   t1,
+		LastSeen:    t2,
 	})
 	if err != nil {
 		t.Fatalf("UpsertMasterMind: %v", err)
@@ -244,9 +253,6 @@ func TestMasterMindBySession(t *testing.T) {
 	}
 	if p.ID != id || p.HarnessKind != "claude" || p.SessionID != "sess-1" {
 		t.Errorf("row = %+v", p)
-	}
-	if p.TranscriptLocator == nil || *p.TranscriptLocator != "/tmp/t.jsonl" {
-		t.Errorf("transcript_locator = %v", p.TranscriptLocator)
 	}
 	if !p.FirstSeen.Equal(t1) || !p.LastSeen.Equal(t2) {
 		t.Errorf("times = %v..%v, want %v..%v", p.FirstSeen, p.LastSeen, t1, t2)

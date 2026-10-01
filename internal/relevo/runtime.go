@@ -193,12 +193,6 @@ type Runtime struct {
 	// reader, and rounds close exactly as before.
 	Usage usage.Reader
 
-	// Sessions locates a session record so a round's transcript can be
-	// recorded (#184). mastermindLocator (bind.go) also calls it at bind time
-	// to fill MasterMind.TranscriptLocator (#172), the same file path, for the
-	// coming history database.
-	Sessions SessionLocator
-
 	// Classify judges report and dialog paragraphs for instruction-shaped
 	// content beside the regex scan (#211). Nil means no classifier is
 	// configured and the regex result stands alone; cmd/relevo wires
@@ -321,15 +315,11 @@ func (rt Runtime) RoleRegistry() *roles.Registry {
 
 // IngestDeps builds internal/ingest's Deps from rt: Git carries through
 // nil-safe (a nil rt.Git converts to a nil ingest.GitFacts, since both are
-// true nil interfaces), Sessions is converted to ingest's own
-// SessionLocator type at this boundary (internal/ingest cannot import this
-// package -- it is ingest's caller -- so it declares an identical function
-// type rather than reusing SessionLocator directly), and Now is time.Now.
+// true nil interfaces), and Now is time.Now.
 func IngestDeps(rt Runtime) ingest.Deps {
 	return ingest.Deps{
-		Git:      rt.Git,
-		Sessions: ingest.SessionLocator(rt.Sessions),
-		Now:      time.Now,
+		Git: rt.Git,
+		Now: time.Now,
 	}
 }
 

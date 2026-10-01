@@ -1,12 +1,12 @@
 {
   "name": "relevo",
   "displayName": "relevo",
-  "description": "MasterMind/runner handoff: runner reports and NEEDS YOU pushed into this session; status/send/show/gate/done as tools",
+  "description": "MasterMind/builder handoff for Claude Code: builder reports and NEEDS YOU stops pushed into this session; status/send/show/gate/done as tools",
   "version": "0.15.0",
   "author": {"name": "Fuad Daoud"},
   "repository": "https://github.com/fuad-daoud/relevo",
   "license": "MIT",
   "mcpServers": {
-    "relevo": {"command": "relevo", "args": ["mcp"]}
+    "relevo": {"command": "${CLAUDE_PLUGIN_ROOT}/scripts/mcp.sh"}
   }
 }

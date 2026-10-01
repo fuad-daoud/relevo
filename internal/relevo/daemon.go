@@ -418,7 +418,7 @@ func mirrorArchived(ctx context.Context, rt Runtime) {
 		if stats != (ingest.Stats{}) {
 			slog.Info("ingest", "binding", a.Binding.Name, "archived", true,
 				"rounds", stats.Rounds, "events", stats.Events,
-				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
+				"artifacts", stats.Artifacts)
 		}
 	}
 }
@@ -587,7 +587,7 @@ func (d *Daemon) ingestLiveBindings(ctx context.Context, bindings []store.Bindin
 		if stats != (ingest.Stats{}) {
 			slog.Info("ingest", "binding", b.Name,
 				"rounds", stats.Rounds, "events", stats.Events,
-				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
+				"artifacts", stats.Artifacts)
 		}
 	}
 	d.ingestSeen = seen

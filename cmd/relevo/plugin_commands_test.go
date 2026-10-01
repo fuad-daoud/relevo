@@ -47,11 +47,15 @@ func frontmatterField(front, key string) (string, bool) {
 }
 
 // TestPluginCommandFiles pins the slash-command files in
-// claude-plugin/commands: each has a leading frontmatter block naming it and
-// allowing exactly Bash(relevo:*), and exactly one line in the file starts
-// `relevo `, whose verb is one the CLI actually dispatches. The realistic
-// failure is a verb renamed in the CLI and not in the plugin. Files only, so
-// no harness, no network and no Claude Code.
+// claude-plugin/commands: each has a leading frontmatter block with a
+// non-empty description and allowed-tools naming exactly its own script
+// (`Bash(${CLAUDE_PLUGIN_ROOT}/scripts/<base>.sh:*)`), a guard as the first
+// non-empty body line, and exactly one body line running that script.
+// show.md and status.md forward the command's arguments ($ARGUMENTS); the
+// other five take none. The script itself exists under
+// claude-plugin/scripts, is executable, and execs exactly one relevo verb the
+// CLI dispatches. The realistic failure is a verb renamed in the CLI and not
+// in the plugin. Files only, so no harness, no network and no Claude Code.
 func TestPluginCommandFiles(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("..", "..", "claude-plugin", "commands", "*.md"))
 	if err != nil {
@@ -61,6 +65,7 @@ func TestPluginCommandFiles(t *testing.T) {
 		t.Fatalf("found %d command file(s), want at least 2: %v", len(paths), paths)
 	}
 
+	execRelevo := regexp.MustCompile(`(?m)^exec relevo ([a-z-]+)`)
 	verbs := commandVerbs(t)
 	for _, path := range paths {
 		raw, err := os.ReadFile(path)
@@ -89,29 +94,87 @@ func TestPluginCommandFiles(t *testing.T) {
 		if desc, ok := frontmatterField(front, "description:"); !ok || desc == "" {
 			t.Errorf("%s: frontmatter needs a non-empty `description:` (got %q, present=%v)", path, desc, ok)
 		}
-		if tools, ok := frontmatterField(front, "allowed-tools:"); !ok || tools != "Bash(relevo:*)" {
-			t.Errorf("%s: allowed-tools must be exactly `Bash(relevo:*)` (got %q, present=%v)", path, tools, ok)
+
+		// The command runs one script under ${CLAUDE_PLUGIN_ROOT}/scripts, and
+		// allowed-tools must name that exact script: a bare Bash(relevo:*) is
+		// refused by Claude Code, so the ! block would never run.
+		base := strings.TrimSuffix(filepath.Base(path), ".md")
+		scriptRef := "${CLAUDE_PLUGIN_ROOT}/scripts/" + base + ".sh"
+		wantTools := "Bash(" + scriptRef + ":*)"
+		if tools, ok := frontmatterField(front, "allowed-tools:"); !ok || tools != wantTools {
+			t.Errorf("%s: allowed-tools must be exactly %q (got %q, present=%v)", path, wantTools, tools, ok)
 		}
 
-		// Exactly one line in the file starts `relevo `: the bang-fenced
-		// preamble that Claude Code runs.
-		var preambles []string
-		for _, line := range lines {
-			if strings.HasPrefix(strings.TrimSpace(line), "relevo ") {
-				preambles = append(preambles, strings.TrimSpace(line))
+		// Exactly one body line names the script: the bang-fenced preamble
+		// Claude Code runs.
+		scriptLine := -1
+		scriptText := ""
+		for i := end + 1; i < len(lines); i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			if !strings.HasPrefix(trimmed, "${CLAUDE_PLUGIN_ROOT}/scripts/") {
+				continue
 			}
+			if scriptLine >= 0 {
+				t.Errorf("%s: more than one line starts with `${CLAUDE_PLUGIN_ROOT}/scripts/`", path)
+			}
+			scriptLine, scriptText = i, trimmed
 		}
-		if len(preambles) != 1 {
-			t.Errorf("%s: %d line(s) start with `relevo `, want exactly 1: %v", path, len(preambles), preambles)
+		if scriptLine < 0 {
+			t.Errorf("%s: no line starts with `${CLAUDE_PLUGIN_ROOT}/scripts/`", path)
 			continue
 		}
-		fields := strings.Fields(preambles[0])
-		if len(fields) < 2 {
-			t.Errorf("%s: preamble %q has no verb", path, preambles[0])
+
+		fields := strings.Fields(scriptText)
+		if fields[0] != scriptRef {
+			t.Errorf("%s: script line %q does not name %q", path, scriptText, scriptRef)
+		}
+		if base == "show" || base == "status" {
+			if len(fields) != 2 || fields[1] != "$ARGUMENTS" {
+				t.Errorf("%s: script line %q must end in $ARGUMENTS", path, scriptText)
+			}
+		} else if len(fields) != 1 {
+			t.Errorf("%s: script line %q must take no argument", path, scriptText)
+		}
+
+		// The script exists, is executable, and execs exactly one dispatched
+		// verb.
+		scriptPath := filepath.Join("..", "..", "claude-plugin", "scripts", base+".sh")
+		info, err := os.Stat(scriptPath)
+		if err != nil {
+			t.Errorf("%s: script %s: %v", path, scriptPath, err)
 			continue
 		}
-		if verb := fields[1]; !verbs[verb] {
-			t.Errorf("%s: preamble verb %q is not one of main.go's commands", path, verb)
+		if !info.Mode().IsRegular() {
+			t.Errorf("%s: script %s is not a regular file", path, scriptPath)
+		}
+		if info.Mode().Perm() == 0 {
+			t.Errorf("%s: script %s has no permission bit set", path, scriptPath)
+		}
+		scriptRaw, err := os.ReadFile(scriptPath)
+		if err != nil {
+			t.Errorf("%s: read %s: %v", path, scriptPath, err)
+			continue
+		}
+		execs := execRelevo.FindAllStringSubmatch(string(scriptRaw), -1)
+		if len(execs) != 1 {
+			t.Errorf("%s: script %s has %d `^exec relevo <verb>` line(s), want 1", path, scriptPath, len(execs))
+		} else if !verbs[execs[0][1]] {
+			t.Errorf("%s: script %s execs verb %q, which main.go does not dispatch", path, scriptPath, execs[0][1])
+		}
+
+		// The guard is the first non-empty body line, above the script line.
+		guardLine, guardText := -1, ""
+		for i := end + 1; i < len(lines); i++ {
+			if strings.TrimSpace(lines[i]) == "" {
+				continue
+			}
+			guardLine, guardText = i, strings.TrimSpace(lines[i])
+			break
+		}
+		if !strings.Contains(guardText, "relevo MCP tools are not available") {
+			t.Errorf("%s: the first non-empty body line must be the guard (got %q)", path, guardText)
+		} else if guardLine > scriptLine {
+			t.Errorf("%s: the guard must precede the script line", path)
 		}
 	}
 }

@@ -626,12 +626,11 @@ func runMasterMindHook(t *testing.T, reg *mastermind.DBRegistry, now func() time
 		t.Fatalf("ParseHookInput(%s): %v", raw, err)
 	}
 	rec, _, err := mastermind.Init(reg, mastermind.InitInput{
-		Kind:           "claude",
-		SessionID:      in.SessionID,
-		TranscriptPath: in.TranscriptPath,
-		CWD:            in.CWD,
-		HostPID:        os.Getpid(),
-		Now:            now(),
+		Kind:      "claude",
+		SessionID: in.SessionID,
+		CWD:       in.CWD,
+		HostPID:   os.Getpid(),
+		Now:       now(),
 	})
 	if err != nil {
 		t.Fatalf("mastermind.Init(%s): %v", in.SessionID, err)

@@ -392,7 +392,7 @@ func TestAppendTranscriptIgnoresKnownSeq(t *testing.T) {
 		return TranscriptRecord{Seq: seq, RecordJSON: "{}", Rendered: "line"}
 	}
 
-	added, err := d.AppendTranscript(OwnerMasterMind, "sess-1", []TranscriptRecord{mkRecord(0), mkRecord(1)})
+	added, err := d.AppendTranscript(OwnerRound, "sess-1", []TranscriptRecord{mkRecord(0), mkRecord(1)})
 	if err != nil {
 		t.Fatalf("AppendTranscript (1st): %v", err)
 	}
@@ -400,7 +400,7 @@ func TestAppendTranscriptIgnoresKnownSeq(t *testing.T) {
 		t.Fatalf("added = %d, want 2", added)
 	}
 
-	added, err = d.AppendTranscript(OwnerMasterMind, "sess-1", []TranscriptRecord{mkRecord(0), mkRecord(1), mkRecord(2)})
+	added, err = d.AppendTranscript(OwnerRound, "sess-1", []TranscriptRecord{mkRecord(0), mkRecord(1), mkRecord(2)})
 	if err != nil {
 		t.Fatalf("AppendTranscript (2nd): %v", err)
 	}
@@ -484,8 +484,8 @@ func TestDeleteArtifactRemovesOnlyTheNamedRow(t *testing.T) {
 }
 
 // TestDeleteRoundTranscriptLeavesMasterMindRows pins that only round-owned rows
-// go: a mastermind-owned row with the same owner id survives because the owner
-// kind is hard-coded, never taken from the caller.
+// go: a row an older relevo wrote under the literal 'planner' owner kind
+// survives because the owner kind is hard-coded, never taken from the caller.
 func TestDeleteRoundTranscriptLeavesMasterMindRows(t *testing.T) {
 	d := openTestDB(t)
 	const ownerID = "owner-shared-by-both-kinds"
@@ -497,8 +497,13 @@ func TestDeleteRoundTranscriptLeavesMasterMindRows(t *testing.T) {
 	if _, err := d.AppendTranscript(OwnerRound, ownerID, recs); err != nil {
 		t.Fatalf("AppendTranscript(round): %v", err)
 	}
-	if _, err := d.AppendTranscript(OwnerMasterMind, ownerID, recs); err != nil {
-		t.Fatalf("AppendTranscript(mastermind): %v", err)
+	// The write API refuses the 'planner' owner kind now, so the surviving row
+	// is seeded directly, as a legacy database holds it.
+	for _, r := range recs {
+		if _, err := d.sqlDB.Exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, ts, record_json, record_json_codec, rendered, rendered_codec)
+			VALUES (?, 'planner', ?, ?, NULL, '', 0, ?, 0)`, NewID(), ownerID, r.Seq, r.Rendered); err != nil {
+			t.Fatalf("seed planner transcript: %v", err)
+		}
 	}
 
 	var n int64
@@ -521,12 +526,12 @@ func TestDeleteRoundTranscriptLeavesMasterMindRows(t *testing.T) {
 		t.Errorf("round transcript has %d rows after the delete, want 0", len(roundRows))
 	}
 
-	mastermindRows, err := d.Transcript(OwnerMasterMind, ownerID, 0, 0)
+	plannerRows, err := d.Transcript("planner", ownerID, 0, 0)
 	if err != nil {
-		t.Fatalf("Transcript(mastermind): %v", err)
+		t.Fatalf("Transcript(planner): %v", err)
 	}
-	if len(mastermindRows) != len(recs) {
-		t.Errorf("mastermind transcript has %d rows, want %d (it must be untouched)", len(mastermindRows), len(recs))
+	if len(plannerRows) != len(recs) {
+		t.Errorf("planner transcript has %d rows, want %d (it must be untouched)", len(plannerRows), len(recs))
 	}
 }
 

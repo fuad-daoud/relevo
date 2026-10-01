@@ -1,11 +1,13 @@
 ---
 description: Show a round's prompt, report, diff, drift, log or transcript
 argument-hint: "[<binding>] [--round N] [--diff|--drift|--log|--report|--prompt|--transcript]"
-allowed-tools: Bash(relevo:*)
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/show.sh:*)
 ---
 
+If the relevo MCP tools are not available in this session, or the block below printed the install hint, tell the user that relevo runs only in Claude Code with the relevo binary installed, then stop.
+
 ```!
-relevo show $ARGUMENTS
+${CLAUDE_PLUGIN_ROOT}/scripts/show.sh $ARGUMENTS
 ```
 
 The block above is the round's content, already fetched. Say what happened

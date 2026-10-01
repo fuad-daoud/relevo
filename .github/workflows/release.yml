@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -56,3 +58,8 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --generate-notes \
             dist/relevo_*.tar.gz dist/checksums.txt
+
+      # The plugin directory publishes every commit on plugin-release, so the
+      # branch moves only after the release and its archives are out.
+      - name: move plugin-release to the tagged commit
+        run: scripts/promote-plugin-release.sh "${{ github.ref_name }}"
