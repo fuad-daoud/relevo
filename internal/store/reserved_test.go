@@ -46,17 +46,19 @@ func writePlant(t *testing.T, path, body string) {
 	}
 }
 
-// reservedKeyCases names the five reserved shapes and the path helper each one
-// resolves through.
-func reservedKeyCases() []struct {
+// reservedKeyCase names one reserved shape and the path helper it resolves
+// through.
+type reservedKeyCase struct {
 	name string
 	path func(s *Store, binding string) string
-} {
-	return []struct {
-		name string
-		path func(s *Store, binding string) string
-	}{
+}
+
+// reservedKeyCases names the six reserved shapes and the path helper each one
+// resolves through.
+func reservedKeyCases() []reservedKeyCase {
+	return []reservedKeyCase{
 		{"001-diff.patch", func(s *Store, b string) string { return s.DiffPath(b, 1) }},
+		{"001-plan-diff.patch", func(s *Store, b string) string { return s.PlanDiffPath(b, 1) }},
 		{"001-drift.patch", func(s *Store, b string) string { return s.DriftPath(b, 1) }},
 		{"001-builder-segments.json", func(s *Store, b string) string { return s.BuilderSegmentsPath(b, 1) }},
 		{"001-7f2a3c1d-findings.md", func(s *Store, b string) string { return s.FindingsPath(b, 1, "7f2a3c1d") }},
@@ -216,66 +218,82 @@ func sealRound(t *testing.T, s *Store, binding string, round int) int {
 // TestSealRoundLeavesAReservedRoundFileAlone pins the disk side: the round-file
 // walk never treats a reserved name as a round file. A plant is not read, not
 // sealed and not removed, the row the name belongs to keeps its bytes, and a
-// plant alone neither becomes a row nor makes its round appear on disk.
+// plant alone neither becomes a row nor makes its round appear on disk. It
+// walks reservedKeyCases, so every reserved key is pinned once.
 func TestSealRoundLeavesAReservedRoundFileAlone(t *testing.T) {
-	t.Run("a row plus a plant", func(t *testing.T) {
-		s, binding := seedReservedStore(t)
-		const row = "the row's bytes\n"
-		const plant = "the plant's bytes\n"
+	for _, tc := range reservedKeyCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("a row plus a plant", func(t *testing.T) { assertSealKeepsTheRow(t, tc) })
+			t.Run("a plant with no row", func(t *testing.T) { assertSealLeavesThePlant(t, tc) })
+		})
+	}
+}
 
-		path := s.DiffPath(binding, 1)
-		putRow(t, s, binding, 1, path, []byte(row))
-		writePlant(t, path, plant)
+// assertSealKeepsTheRow pins the row-plus-plant case for one reserved key: the
+// walk seals nothing, the row answers a read, and the plant stays on disk.
+func assertSealKeepsTheRow(t *testing.T, tc reservedKeyCase) {
+	t.Helper()
 
-		if n := sealRound(t, s, binding, 1); n != 0 {
-			t.Errorf("SealRound sealed %d files, want 0", n)
-		}
+	s, binding := seedReservedStore(t)
+	const row = "the row's bytes\n"
+	const plant = "the plant's bytes\n"
 
-		body, err := s.ReadFile(path)
-		if err != nil || string(body) != row {
-			t.Errorf("ReadFile(%s) = %q (err %v), want the row's %q", path, body, err, row)
-		}
-		onDisk, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("the plant must stay on disk: %v", err)
-		}
-		if string(onDisk) != plant {
-			t.Errorf("plant bytes = %q, want them byte-identical %q", onDisk, plant)
-		}
-		names, err := s.RoundFiles(binding)
-		if err != nil {
-			t.Fatalf("RoundFiles: %v", err)
-		}
-		if !slices.Contains(names, "001-diff.patch") {
-			t.Errorf("RoundFiles = %v, want 001-diff.patch from the row", names)
-		}
-	})
+	path := tc.path(s, binding)
+	putRow(t, s, binding, 1, path, []byte(row))
+	writePlant(t, path, plant)
 
-	t.Run("a plant with no row", func(t *testing.T) {
-		s, binding := seedReservedStore(t)
-		path := s.DiffPath(binding, 1)
-		writePlant(t, path, "the plant's bytes\n")
+	if n := sealRound(t, s, binding, 1); n != 0 {
+		t.Errorf("SealRound sealed %d files, want 0", n)
+	}
 
-		if n := sealRound(t, s, binding, 1); n != 0 {
-			t.Errorf("SealRound sealed %d files, want 0", n)
-		}
+	body, err := s.ReadFile(path)
+	if err != nil || string(body) != row {
+		t.Errorf("ReadFile(%s) = %q (err %v), want the row's %q", path, body, err, row)
+	}
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the plant must stay on disk: %v", err)
+	}
+	if string(onDisk) != plant {
+		t.Errorf("plant bytes = %q, want them byte-identical %q", onDisk, plant)
+	}
+	names, err := s.RoundFiles(binding)
+	if err != nil {
+		t.Fatalf("RoundFiles: %v", err)
+	}
+	if !slices.Contains(names, tc.name) {
+		t.Errorf("RoundFiles = %v, want %s from the row", names, tc.name)
+	}
+}
 
-		if body, err := s.ReadFile(path); !errors.Is(err, fs.ErrNotExist) || body != nil {
-			t.Errorf("ReadFile(%s) = %q (err %v), want a miss: no row was created", path, body, err)
-		}
-		names, err := s.RoundFiles(binding)
-		if err != nil {
-			t.Fatalf("RoundFiles: %v", err)
-		}
-		if slices.Contains(names, "001-diff.patch") {
-			t.Errorf("RoundFiles = %v, want the plant unlisted", names)
-		}
-		rounds, err := s.RoundsOnDisk(binding)
-		if err != nil {
-			t.Fatalf("RoundsOnDisk: %v", err)
-		}
-		if len(rounds) != 0 {
-			t.Errorf("RoundsOnDisk = %v, want empty: a plant is not a round", rounds)
-		}
-	})
+// assertSealLeavesThePlant pins the plant-only case for one reserved key: no
+// row is created, the plant is unlisted, and its round never appears.
+func assertSealLeavesThePlant(t *testing.T, tc reservedKeyCase) {
+	t.Helper()
+
+	s, binding := seedReservedStore(t)
+	path := tc.path(s, binding)
+	writePlant(t, path, "the plant's bytes\n")
+
+	if n := sealRound(t, s, binding, 1); n != 0 {
+		t.Errorf("SealRound sealed %d files, want 0", n)
+	}
+
+	if body, err := s.ReadFile(path); !errors.Is(err, fs.ErrNotExist) || body != nil {
+		t.Errorf("ReadFile(%s) = %q (err %v), want a miss: no row was created", path, body, err)
+	}
+	names, err := s.RoundFiles(binding)
+	if err != nil {
+		t.Fatalf("RoundFiles: %v", err)
+	}
+	if slices.Contains(names, tc.name) {
+		t.Errorf("RoundFiles = %v, want the plant unlisted", names)
+	}
+	rounds, err := s.RoundsOnDisk(binding)
+	if err != nil {
+		t.Fatalf("RoundsOnDisk: %v", err)
+	}
+	if len(rounds) != 0 {
+		t.Errorf("RoundsOnDisk = %v, want empty: a plant is not a round", rounds)
+	}
 }

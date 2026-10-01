@@ -68,13 +68,6 @@ func resumeStep(ch db.ChainRow, lastEventRound, newestBuilderRound int) chain.Se
 	return ""
 }
 
-// resumeEvent is the word a resumed chain's trace row carries. Round 1's event
-// vocabulary has no "resumed" kind, and the chain's own word for "a human acted
-// on this chain" is needs_you, whose text the trace renders from the event's
-// reason -- the same shape the member sweep records its own non-close
-// transition with.
-const resumeEvent = "resumed"
-
 // ChainResume continues a chain a human has looked at: `relevo chain --resume
 // --name <n>`. The flags override the chain's stored settings (a flag that was
 // not given keeps its setting), and the chain re-runs the step it halted or was
@@ -271,7 +264,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	}
 	next.Awaiting.Round = sent.Round
 
-	ev := chain.Event{Kind: chain.EventNeedsYou, Member: targetPart, Round: sent.Round, Reason: resumeEvent}
+	ev := chain.Event{Kind: chain.EventNeedsYou, Member: targetPart, Round: sent.Round, Reason: chain.ResumeReason(next.Step)}
 	if err := chainSaveWithTrace(rt, tx, c, before, next, ev, act, memberName); err != nil {
 		return ChainResult{}, err
 	}

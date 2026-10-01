@@ -38,6 +38,7 @@ type ChainTraceEvent struct {
 	Step   string
 	Member string
 	Round  int
+	Plan   int
 	Event  chain.Event
 	Action chain.Action
 	Reason string
@@ -71,18 +72,24 @@ func ChainTrace(ctx context.Context, rt Runtime, name string) (ChainTraceDoc, er
 		}
 		doc.Events = append(doc.Events, ChainTraceEvent{
 			Seq: r.Seq, TS: r.TS, Phase: r.Phase, Step: r.Step,
-			Member: r.Member, Round: r.Round, Event: ev, Action: act, Reason: r.Reason,
+			Member: r.Member, Round: r.Round, Plan: r.Plan, Event: ev, Action: act, Reason: r.Reason,
 		})
 	}
 	return doc, nil
 }
 
 // RenderTrace renders a trace document as one line per event, in seq order.
+// Each line carries its own row's plan; a row written before the plan column
+// existed (plan 0) falls back to the chain's current plan.
 func RenderTrace(doc ChainTraceDoc) string {
 	var b strings.Builder
 	for _, e := range doc.Events {
+		plan := e.Plan
+		if plan == 0 {
+			plan = doc.Plan
+		}
 		b.WriteString(chain.TraceLine{
-			Plan: doc.Plan, Plans: doc.Plans,
+			Plan: plan, Plans: doc.Plans,
 			Phase: chain.Phase(e.Phase), Step: chain.Step(e.Step),
 			Member: e.Member, Round: e.Round,
 			Event: e.Event, Action: e.Action, Reason: e.Reason,

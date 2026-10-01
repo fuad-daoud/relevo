@@ -62,6 +62,7 @@ type ChainEventRow struct {
 	Step    string
 	Member  string
 	Round   int
+	Plan    int
 	Event   string
 	Action  string
 	Reason  string
@@ -182,7 +183,7 @@ func (d *DB) ChainList(owner string) ([]ChainRow, error) {
 	return out, nil
 }
 
-const chainEventCols = `chain_id, seq, ts, phase, step, member, round, event, action, reason`
+const chainEventCols = `chain_id, seq, ts, phase, step, member, round, event, action, reason, plan`
 
 // ChainEvents returns chain id's trace rows in seq order. A database that
 // predates the chains tables reads as empty.
@@ -209,7 +210,7 @@ func scanChainEvent(s rowScanner) (ChainEventRow, error) {
 	var e ChainEventRow
 	var ts string
 	if err := s.Scan(&e.ChainID, &e.Seq, &ts, &e.Phase, &e.Step, &e.Member, &e.Round,
-		&e.Event, &e.Action, &e.Reason); err != nil {
+		&e.Event, &e.Action, &e.Reason, &e.Plan); err != nil {
 		return ChainEventRow{}, err
 	}
 
@@ -291,9 +292,9 @@ func (t *Tx) ChainDelete(owner, name string) error {
 // ChainEventAppend appends one trace row for chain id, with the next seq after
 // the chain's current maximum, so a caller never names a seq.
 func (t *Tx) ChainEventAppend(id string, e ChainEventRow) error {
-	if _, err := t.exec(`INSERT INTO chain_event (chain_id, seq, ts, phase, step, member, round, event, action, reason)
-		SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ? FROM chain_event WHERE chain_id = ?`,
-		id, formatTime(e.TS), e.Phase, e.Step, e.Member, e.Round, e.Event, e.Action, e.Reason, id); err != nil {
+	if _, err := t.exec(`INSERT INTO chain_event (chain_id, seq, ts, phase, step, member, round, event, action, reason, plan)
+		SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM chain_event WHERE chain_id = ?`,
+		id, formatTime(e.TS), e.Phase, e.Step, e.Member, e.Round, e.Event, e.Action, e.Reason, e.Plan, id); err != nil {
 		return fmt.Errorf("db: chain event append %s: %w", id, mapBusy(err))
 	}
 	return nil
