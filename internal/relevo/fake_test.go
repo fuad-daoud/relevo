@@ -116,8 +116,12 @@ type fakeGit struct {
 	snapshotCalls   int
 	lastSnapshotDir string
 
-	diffResult   git.Diff
-	diffErr      error
+	diffResult git.Diff
+	diffErr    error
+	// diffFunc, when set, answers DiffTrees from the (from, to) pair instead
+	// of the fixed diffResult, so a test can give different spans different
+	// patches.
+	diffFunc     func(ctx context.Context, dir, from, to string) (git.Diff, error)
 	diffCalls    int
 	lastDiffDir  string
 	lastDiffFrom string
@@ -291,6 +295,9 @@ func (f *fakeGit) DiffTrees(ctx context.Context, dir, from, to string) (git.Diff
 	f.lastDiffTo = to
 	if f.diffErr != nil {
 		return git.Diff{}, f.diffErr
+	}
+	if f.diffFunc != nil {
+		return f.diffFunc(ctx, dir, from, to)
 	}
 	return f.diffResult, nil
 }

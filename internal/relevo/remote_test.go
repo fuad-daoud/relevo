@@ -7405,3 +7405,87 @@ func TestRemoteStoppedCloseStopsTheChain(t *testing.T) {
 		t.Error("the member's report entry must still exist for a stopped close")
 	}
 }
+
+// TestAddRemoteCarriesTheGate pins item 7: the client resolves the gate exactly
+// as the local add does and puts it on the create request and the mirror
+// binding -- an unnamed flag takes policy gate.default, an explicit --gate
+// travels as given, --no-gate sends "", and a reader role is still refused
+// before any create.
+func TestAddRemoteCarriesTheGate(t *testing.T) {
+	ctx := context.Background()
+
+	pol := policy.Policy{Gate: &policy.GatePolicy{Default: "make check"}}
+	registry := func(t *testing.T) *roles.Registry {
+		t.Helper()
+		return rolesFileRegistry(t, candidateSet(t, testCandidatesJSON), policy.Policy{}, map[string]roles.Row{
+			"builder": {Candidates: []string{testClaudeRef}},
+		})
+	}
+	add := func(t *testing.T, opts AddOptions) (*fakeRemote, store.Binding) {
+		t.Helper()
+		st := store.New(t.TempDir())
+		fg := &fakeGit{
+			headCommitID:  "1111111111111111111111111111111111111111",
+			rootCommitSHA: "2222222222222222222222222222222222222222",
+		}
+		fr := &fakeRemote{
+			createBindingResp: remote.BindingView{Name: opts.Name, Candidate: "claude/anthropic/haiku"},
+		}
+		rt := Runtime{
+			Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t),
+			Policy: pol, Registry: registry(t),
+		}
+		if _, err := Add(ctx, rt, opts); err != nil {
+			t.Fatalf("Add %+v: %v", opts, err)
+		}
+		stored, err := st.Load(opts.Name)
+		if err != nil {
+			t.Fatalf("Load %s: %v", opts.Name, err)
+		}
+		return fr, stored
+	}
+
+	t.Run("an unnamed flag takes gate.default", func(t *testing.T) {
+		fr, stored := add(t, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
+		if fr.createBindingReq.Gate != "make check" {
+			t.Errorf("CreateBindingRequest.Gate = %q, want make check", fr.createBindingReq.Gate)
+		}
+		if stored.Gate != "make check" {
+			t.Errorf("mirror Gate = %q, want make check", stored.Gate)
+		}
+	})
+
+	t.Run("an explicit --gate travels", func(t *testing.T) {
+		fr, stored := add(t, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo", Gate: "go test ./..."})
+		if fr.createBindingReq.Gate != "go test ./..." {
+			t.Errorf("CreateBindingRequest.Gate = %q, want go test ./...", fr.createBindingReq.Gate)
+		}
+		if stored.Gate != "go test ./..." {
+			t.Errorf("mirror Gate = %q, want go test ./...", stored.Gate)
+		}
+	})
+
+	t.Run("--no-gate sends none", func(t *testing.T) {
+		fr, stored := add(t, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo", NoGate: true})
+		if fr.createBindingReq.Gate != "" {
+			t.Errorf("CreateBindingRequest.Gate = %q, want none", fr.createBindingReq.Gate)
+		}
+		if stored.Gate != "" {
+			t.Errorf("mirror Gate = %q, want none", stored.Gate)
+		}
+	})
+
+	t.Run("a reader role is refused before any create", func(t *testing.T) {
+		fr := &fakeRemote{whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureRoles}}}
+		rt, _ := readerAddRuntime(t, fr)
+		_, err := Add(ctx, rt, AddOptions{Name: "review", Server: "zen", Repo: "/fake/repo", Role: "reviewer"})
+		if err == nil {
+			t.Fatal("Add(reader role) = nil, want a refusal")
+		}
+		for _, c := range fr.calls {
+			if strings.HasPrefix(c, "CreateBinding") {
+				t.Fatalf("calls = %v, want no CreateBinding for a refused reader", fr.calls)
+			}
+		}
+	})
+}

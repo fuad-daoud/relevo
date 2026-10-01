@@ -39,11 +39,11 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 		return view.Report{}, err
 	}
 
-	row := viewChainRow(c)
+	row := viewChainRow(rt.Store, c)
 	if v, gerr := chainGetView(ctx, rt, c); gerr != nil {
 		row.Detail = fmt.Sprintf("server %s unreachable: %v", c.Server, gerr)
 	} else {
-		row = viewChainRow(chainRowFromView(c, v, rt.Now().UTC()))
+		row = viewChainRow(rt.Store, chainRowFromView(c, v, rt.Now().UTC()))
 	}
 
 	rows := []view.BindingStatus{row}

@@ -208,16 +208,43 @@ func resumeSettings(rt Runtime, c db.ChainRow, opts ResumeOptions) (chain.Settin
 	return set, nil
 }
 
-// chainResumeLocked is the resume's work under the state lock: it settles the
+// chainResumeLocked is the resume's work under the state lock: it decides which
+// step to re-run, refuses a target member whose round is still open, settles the
 // settings, creates the security member when the phase was just turned on,
-// decides which step to re-run, starts that round, and writes the new state and
-// the resume's one trace row in a single transaction.
+// starts that round, and writes the new state and the resume's one trace row in
+// a single transaction.
 func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, set chain.Settings, opts ResumeOptions) (ChainResult, error) {
 	settingsJSON, err := json.Marshal(set)
 	if err != nil {
 		return ChainResult{}, fmt.Errorf("encode chain %s settings: %w", c.Name, err)
 	}
 	c.SettingsJSON = settingsJSON
+
+	before, err := chainStateOf(c)
+	if err != nil {
+		return ChainResult{}, err
+	}
+	// The two rounds the decision reads: the builder's newest closed round,
+	// and the newest round the chain itself mapped as a builder close.
+	newest := memberNewestClosedRound(tx, c.Builder)
+	last := chainLastBuilderRound(tx, c)
+	seed := resumeStep(c, last, newest)
+
+	act, targetPart := chainResumeAction(seed)
+	memberName := chainMemberName(c, targetPart)
+	if memberName == "" {
+		return ChainResult{}, fmt.Errorf("chain %s has no %s member", c.Name, targetPart)
+	}
+	act.Member = targetPart
+	step, closedRound := chainResumeWhere(tx, c, seed, newest)
+
+	// The target member's own round must be closed before anything is written:
+	// starting a new one would overwrite the round in flight. The refusal is
+	// the same RoundOpenError the send path raises, so the CLI maps it to a
+	// conflict and names `relevo stop <member>`.
+	if err := resumeOpenRoundRefusal(tx, c, memberName); err != nil {
+		return ChainResult{}, err
+	}
 
 	// The gate flags are settings, but they also live on the builder member.
 	// Only the flags that were given are written, so a resume that names none
@@ -252,24 +279,6 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 		c.Security = name
 	}
 
-	before, err := chainStateOf(c)
-	if err != nil {
-		return ChainResult{}, err
-	}
-	// The two rounds the decision reads: the builder's newest closed round,
-	// and the newest round the chain itself mapped as a builder close.
-	newest := memberNewestClosedRound(tx, c.Builder)
-	last := chainLastBuilderRound(tx, c)
-	seed := resumeStep(c, last, newest)
-
-	act, targetPart := chainResumeAction(seed)
-	memberName := chainMemberName(c, targetPart)
-	if memberName == "" {
-		return ChainResult{}, fmt.Errorf("chain %s has no %s member", c.Name, targetPart)
-	}
-	act.Member = targetPart
-	step, closedRound := chainResumeWhere(tx, c, seed, newest)
-
 	next := before
 	next.Status = chain.StatusRunning
 	next.Reason = ""
@@ -281,7 +290,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	// The send fills the round; until it does, the chain waits on no round.
 	next.Awaiting = chain.Awaiting{Member: targetPart}
 
-	text, err := chainSeedText(rt, tx, c, next, act, closedRound, false)
+	text, err := chainResumeText(rt, tx, c, before, next, act, closedRound)
 	if err != nil {
 		return ChainResult{}, err
 	}
@@ -314,6 +323,46 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 		return ChainResult{}, err
 	}
 	return ChainResult{Chain: chainRowWithState(c, next, rt.Now().UTC()), Members: members, Plans: c.Plans, Check: chainBuilderCheck(members, c.Builder)}, nil
+}
+
+// resumeOpenRoundRefusal refuses a resume whose target member's current round
+// is still open: the round a resume would start would overwrite the one in
+// flight, and the human must stop it first. It returns the send path's
+// RoundOpenError, whose wording and CLI conflict mapping name `relevo stop
+// <member>`. A member
+// record that is missing or unreadable has no open round it can prove, and is
+// left to the send's own failure.
+func resumeOpenRoundRefusal(tx *store.Tx, c db.ChainRow, memberName string) error {
+	member, err := tx.Load(memberName)
+	if err != nil {
+		return nil
+	}
+	entries, err := tx.ReadLog(memberName)
+	if err != nil {
+		return nil
+	}
+	if roundOpenIn(entries, member.Round) {
+		return &RoundOpenError{Member: memberName, Round: member.Round}
+	}
+	return nil
+}
+
+// chainResumeText is the text a resumed send hands over. When the resume's
+// action is a builder send and the chain was waiting on the builder's own
+// nonzero round, the text is that round's staged prompt -- the exact bytes the
+// stopped or halted round was handed, whether the plan copy, the planner's
+// correction or fix text, or the repair prompt. Anything else, and a staged
+// prompt that is gone, falls back to chainSeedText's plan copy, so a plain plan
+// round reads exactly as it always did.
+func chainResumeText(rt Runtime, tx *store.Tx, c db.ChainRow, before, next chain.State, act chain.Action, closedRound int) (string, error) {
+	if act.Member == chain.MemberBuilder &&
+		before.Awaiting.Member == chain.MemberBuilder && before.Awaiting.Round > 0 {
+		path := rt.Store.PromptPath(c.Builder, before.Awaiting.Round)
+		if body, err := rt.Store.ReadFile(path); err == nil {
+			return string(body), nil
+		}
+	}
+	return chainSeedText(rt, tx, c, next, act, closedRound, false)
 }
 
 // chainResumeAction is the action a resume's seed names: the member it sends to

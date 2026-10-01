@@ -500,7 +500,13 @@ fi
 ` + fakeReportBody + `RELEVO_FAKE_REPORT
 } > "$report"
 
-printf 'one round of fake work\n' > "$worktree/fake-round.txt"
+# Every round appends its own line, so the worktree file carries the whole
+# chain's span. The reviewer's round-diff assertions and the security seed's
+# whole-branch-diff assertion both depend on a later round's diff being
+# distinguishable from the base-to-newest span; overwriting a constant would
+# make every round's diff empty or identical.
+round=$(basename "$plan" | cut -c1-3)
+printf 'one round of fake work %s\n' "$round" >> "$worktree/fake-round.txt"
 
 # One commit in the round's own worktree. The daemon reads that tree with git
 # while the round is open (truthful diff capture, the escape check), but every

@@ -22,9 +22,13 @@ func chainMembersOf(c db.ChainRow) []string {
 	return out
 }
 
-// chainFactsOf is one chain row as the view types carry it.
-func chainFactsOf(c db.ChainRow) view.ChainFacts {
-	return view.ChainFacts{
+// chainFactsOf is one chain row as the view types carry it. A halted or
+// stopped chain whose builder member has a round open -- a manual round a
+// human sent while the chain was down -- carries that round as ManualRound, so
+// the row reads the chain's own status word and names the round in flight
+// instead of claiming NEEDS YOU.
+func chainFactsOf(s *store.Store, c db.ChainRow) view.ChainFacts {
+	f := view.ChainFacts{
 		Status:      c.Status,
 		Phase:       c.Phase,
 		Step:        c.Step,
@@ -34,6 +38,13 @@ func chainFactsOf(c db.ChainRow) view.ChainFacts {
 		Awaiting:    c.AwaitingMember,
 		Reason:      c.Reason,
 	}
+	if (c.Status == string(chain.StatusHalted) || c.Status == string(chain.StatusStopped)) &&
+		chainBuilderRoundOpen(s, c) {
+		if b, err := s.Load(c.Builder); err == nil {
+			f.ManualRound = b.Round
+		}
+	}
+	return f
 }
 
 // chainStoreState maps a chain's status onto the stored binding state the
@@ -55,8 +66,8 @@ func chainStoreState(status string) store.State {
 // chain's name, the tree it works in, the display word every surface shares,
 // and the chain's own facts. It names the mastermind the chain belongs to, so
 // the mastermind filter and the attention sort read it like any other row.
-func viewChainRow(c db.ChainRow) view.BindingStatus {
-	f := chainFactsOf(c)
+func viewChainRow(s *store.Store, c db.ChainRow) view.BindingStatus {
+	f := chainFactsOf(s, c)
 	row := view.BindingStatus{
 		Name:            c.Name,
 		CWD:             c.Worktree,
@@ -82,7 +93,7 @@ func viewChainRow(c db.ChainRow) view.BindingStatus {
 //
 // The rows are re-sorted, so a chain that waits on a human rises to the top of
 // the listing like any other NEEDS YOU row.
-func applyChains(rep view.Report, chains []db.ChainRow) view.Report {
+func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Report {
 	member := map[string]db.ChainRow{}
 	live := make([]db.ChainRow, 0, len(chains))
 	for _, c := range chains {
@@ -110,14 +121,14 @@ func applyChains(rep view.Report, chains []db.ChainRow) view.Report {
 		// other member rows go with it.
 		if !placed[c.Name] {
 			placed[c.Name] = true
-			rows = append(rows, viewChainRow(c))
+			rows = append(rows, viewChainRow(s, c))
 		}
 	}
 	// A chain whose member rows are all gone from the report still exists, so
 	// it still gets its row. Chains() orders by name, so the tail is stable.
 	for _, c := range live {
 		if !placed[c.Name] {
-			rows = append(rows, viewChainRow(c))
+			rows = append(rows, viewChainRow(s, c))
 		}
 	}
 	rep.Bindings = view.SortRows(rows, true)
@@ -147,7 +158,7 @@ func ChainStatus(ctx context.Context, rt Runtime, name string) (view.Report, err
 		return view.Report{}, err
 	}
 
-	rows := []view.BindingStatus{viewChainRow(c)}
+	rows := []view.BindingStatus{viewChainRow(rt.Store, c)}
 	for _, member := range chainMembersOf(c) {
 		for _, b := range rep.Bindings {
 			if b.Name == member {
