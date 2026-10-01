@@ -434,6 +434,22 @@ func TestFleetWorkingRowShowsTheRoundInFlight(t *testing.T) {
 	}
 }
 
+// TestFleetRowNowWords pins the cockpit's working word: it comes from the one
+// activity rule (quiet while the sampler is silent, the definite words
+// verbatim) and falls back to the runner's own status for a word the rule does
+// not claim, so an unknown row still says unknown.
+func TestFleetRowNowWords(t *testing.T) {
+	quiet := view.BindingStatus{Name: "b-quiet", Round: 3, Display: "ACTIVE", BuilderStatus: "working", QuietFor: "3m"}
+	if got := stripANSI(rowNow(quiet, railNow)); got != "r3 · quiet 3m" {
+		t.Errorf("rowNow(quiet) = %q, want %q", got, "r3 · quiet 3m")
+	}
+
+	unknown := view.BindingStatus{Name: "b-unknown", Round: 2, Display: "ACTIVE", BuilderStatus: "unknown"}
+	if got := stripANSI(rowNow(unknown, railNow)); got != "r2 · unknown" {
+		t.Errorf("rowNow(unknown) = %q, want %q", got, "r2 · unknown")
+	}
+}
+
 func TestGatedLineEndsInEllipsisWhenCut(t *testing.T) {
 	env := Env{
 		Now: railNow,
