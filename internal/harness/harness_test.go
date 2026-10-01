@@ -570,7 +570,7 @@ func TestLaunchCodex(t *testing.T) {
 		t.Errorf("Print = %v, want %v", got.Print, wantPrint)
 	}
 
-	wantPrintEdit := append(append([]string(nil), wantPrint...), "-s", "workspace-write", "-c", StatePlaceholder)
+	wantPrintEdit := append(append([]string(nil), wantPrint...), "-s", "workspace-write", "-c", WritableRootPlaceholder)
 	got, err = h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierEdit)
 	if err != nil {
 		t.Fatalf("Launch() TierEdit error = %v", err)
@@ -659,7 +659,7 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 		t.Errorf("claude PrintArgs = %v", got)
 	}
 	for _, a := range got {
-		if a == BudgetPlaceholder || a == PromptPlaceholder || a == DirPlaceholder || a == StatePlaceholder || a == "/w" || a == "/state" {
+		if a == BudgetPlaceholder || a == PromptPlaceholder || a == DirPlaceholder || a == WritableRootPlaceholder || a == "/w" || a == "/state" {
 			t.Errorf("placeholder survived substitution, or an ignored dir leaked in: %v", got)
 		}
 	}
@@ -683,8 +683,8 @@ func TestPrintArgsFillsState(t *testing.T) {
 	stateDir := "/home/u/.local/state/relevo/x"
 	got := l.PrintArgs("p", 0, "/wt", stateDir)
 	for _, a := range got {
-		if a == StatePlaceholder {
-			t.Errorf("StatePlaceholder survived PrintArgs: %v", got)
+		if a == WritableRootPlaceholder {
+			t.Errorf("WritableRootPlaceholder survived PrintArgs: %v", got)
 		}
 	}
 	wantRoot := `sandbox_workspace_write.writable_roots=["/home/u/.local/state/relevo/x"]`

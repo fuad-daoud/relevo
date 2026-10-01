@@ -81,8 +81,8 @@ func TestOutputPathIsTheLabelUnderTheArtifactDir(t *testing.T) {
 		round              int
 		actor, label, want string
 	}{
-		{"reviewer findings", 3, "reviewer", "findings", "/state/webshop/003-reviewer/findings.md"},
-		{"planner plan", 12, "planner", "plan", "/state/webshop/012-planner/plan.md"},
+		{"reviewer findings", 3, "reviewer", "findings", "/state/webshop/out/003-reviewer/findings.md"},
+		{"planner plan", 12, "planner", "plan", "/state/webshop/out/012-planner/plan.md"},
 	}
 	for _, tc := range cases {
 		if got := s.OutputPath("webshop", tc.round, tc.actor, tc.label); got != tc.want {

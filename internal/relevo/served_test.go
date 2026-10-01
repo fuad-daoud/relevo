@@ -858,6 +858,9 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 	}
 
 	// Write report and marker
+	if err := os.MkdirAll(st.OutDir("api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(st.ReportPath("api", 1), []byte("report\n```relevo\nstatus: done\n```\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -955,6 +958,9 @@ func TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts(t *testing.T) {
 	t.Parallel()
 
 	rt, b, _, sha := ownedExitFixture(t)
+	if err := os.MkdirAll(rt.Store.OutDir("api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte("report\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

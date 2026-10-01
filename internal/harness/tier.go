@@ -99,7 +99,7 @@ func (h Harness) PermissionArgs(tier Tier) ([]string, error) {
 		case TierRead:
 			return nil, fmt.Errorf("%w: codex cannot honour tier read: -s read-only cannot write the report relevo needs (writable_roots is ignored under read-only); use --tier edit or --tier harness", ErrTierUnsupported)
 		case TierEdit:
-			return []string{"-s", "workspace-write", "-c", StatePlaceholder}, nil
+			return []string{"-s", "workspace-write", "-c", WritableRootPlaceholder}, nil
 		case TierYolo:
 			return []string{"--dangerously-bypass-approvals-and-sandbox"}, nil
 		default:

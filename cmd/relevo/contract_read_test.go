@@ -29,6 +29,9 @@ func seedWaitJSONBinding(t *testing.T, name string) {
 	}); err != nil {
 		t.Fatalf("Save %s: %v", name, err)
 	}
+	if err := os.MkdirAll(s.OutDir(name), 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
 	if err := os.WriteFile(s.ReportPath(name, 1), []byte("# report body\n"), 0o644); err != nil {
 		t.Fatalf("write report %s: %v", name, err)
 	}

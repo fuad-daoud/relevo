@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -307,7 +306,7 @@ func joinNotes(a, b string) string {
 // The gate record is returned alongside the close (nil when no gate ran) so
 // the caller can act on a failure after the report is queued (#132 part 2).
 func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, extraNote string) (store.Binding, bool, bool, *store.GateRecord, error) {
-	if _, err := os.Stat(rt.Store.DonePath(b.Name, b.Round)); err != nil {
+	if _, _, ok, _ := rt.Store.StatFile(rt.Store.DonePath(b.Name, b.Round)); !ok {
 		return b, false, false, nil, nil
 	}
 
@@ -345,7 +344,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if serr != nil {
 		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 	}
-	if _, err := os.Stat(reportPath); err == nil {
+	if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
 			fmt.Sprintf("The runner finished round %d. %s", b.Round, closeClause(rt, b, b.Round))+gateSuffix, joinNotes("", note), rec, nil, nil, nil, "", false)
@@ -400,7 +399,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		note = joinNotes(note, "stopped")
 	}
 
-	body, _ := os.ReadFile(path)
+	body, _ := rt.Store.ReadFile(path)
 	var (
 		tail   reporttail.Tail
 		ok     bool
