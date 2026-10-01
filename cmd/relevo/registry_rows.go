@@ -421,8 +421,8 @@ var registry = []verbEntry{
 	{
 		Name:    "serve enroll",
 		Summary: "enroll a client's public key",
-		Args:    "--label <label> --key \"<ed25519 line>\" [--state <dir>] [--json]",
-		Flags:   []string{"--json", "--key", "--label", "--state"},
+		Args:    "--label <label> --key \"<ed25519 line>\" [--user <unix user>] [--state <dir>] [--json]",
+		Flags:   []string{"--json", "--key", "--label", "--state", "--user"},
 		Output:  "json:ServeEnrollDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"conflict", "internal", "usage"},

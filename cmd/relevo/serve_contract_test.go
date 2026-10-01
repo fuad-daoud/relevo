@@ -65,7 +65,7 @@ func seedSecondOwner(t *testing.T, root, label string) (*store.Store, remote.Cli
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	cl, err := clients.Add(label, remote.MarshalPublic(kp.Public, label), time.Now())
+	cl, err := clients.Add(label, remote.MarshalPublic(kp.Public, label), "", time.Now())
 	if err != nil {
 		t.Fatalf("clients.Add: %v", err)
 	}

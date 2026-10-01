@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -18,6 +19,14 @@ type Client struct {
 	bin           string
 	timeout       time.Duration
 	maxPatchBytes int
+
+	// credential, when non-nil, is the tenant identity every git child runs as.
+	// nil means the git child runs as the serve uid.
+	credential *syscall.Credential
+	// gitEnvExtra is the tenant environment appended to every git child's env
+	// (a user-mode client carries the tenant's HOME/USER/LOGNAME), so a git
+	// process running as the tenant resolves paths against its own home.
+	gitEnvExtra []string
 }
 
 // NewClient returns a Client invoking bin, defaulting to "git", a 10s timeout
@@ -53,14 +62,38 @@ func gitEnv(extra ...string) []string {
 	return append(env, extra...)
 }
 
+// WithCredential returns a copy of c whose every git child runs as uid/gid with
+// env appended to its environment. It never mutates the receiver, so the
+// server-wide client stays available for none-mode owners.
+func (c *Client) WithCredential(uid, gid uint32, env []string) *Client {
+	cp := *c
+	cp.credential = &syscall.Credential{Uid: uid, Gid: gid}
+	cp.gitEnvExtra = append([]string(nil), env...)
+	return &cp
+}
+
+// command is the one exec.Cmd assembler for every git child the client starts:
+// the binary, args, working directory, the git environment (with the client's
+// own tenant env appended) and, when set, the tenant credential. It is pure --
+// no child is started -- so the identity and environment a git call carries can
+// be pinned without running git. run and diffPatch both build through it.
+func (c *Client) command(ctx context.Context, dir string, env []string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, c.bin, args...)
+	cmd.Dir = dir
+	extra := append(append([]string(nil), c.gitEnvExtra...), env...)
+	cmd.Env = gitEnv(extra...)
+	if c.credential != nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: c.credential}
+	}
+	return cmd
+}
+
 func (c *Client) run(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, c.bin, args...)
-	cmd.Dir = dir
-	cmd.Env = gitEnv(env...)
+	cmd := c.command(ctx, dir, env, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

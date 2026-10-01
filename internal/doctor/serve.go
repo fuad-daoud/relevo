@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -153,6 +154,16 @@ func serveIsolationCheck(d *db.DB, raw string) Check {
 	if err := mode.Available(); err != nil {
 		c.Severity, c.Detail, c.Fix = SevFail, err.Error(), fix
 		return c
+	}
+	// User mode needs root to switch builders to the tenant identity; without
+	// it every served round would refuse. The remaining user-mode prerequisites
+	// (a declared unix_user, a user that exists, the owner root's ownership and
+	// mode) are checked in a later slice.
+	if mode == isolate.ModeUser {
+		if err := isolate.CheckPrivilege(mode, os.Geteuid()); err != nil {
+			c.Severity, c.Detail, c.Fix = SevFail, err.Error(), fix
+			return c
+		}
 	}
 
 	active, _, err := serveClientCount(d)

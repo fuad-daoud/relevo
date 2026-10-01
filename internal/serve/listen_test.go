@@ -130,7 +130,7 @@ func TestListenWhoAmI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := srv.clients.Add(tc.label, remote.MarshalPublic(kp.Public, tc.label), now); err != nil {
+			if _, err := srv.clients.Add(tc.label, remote.MarshalPublic(kp.Public, tc.label), "", now); err != nil {
 				t.Fatal(err)
 			}
 

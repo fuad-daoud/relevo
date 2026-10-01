@@ -173,7 +173,7 @@ func adminRootFor(state string) (string, *db.DB, error) {
 func cmdServe(args []string) error {
 	const usage = `usage: relevo serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N] [--max-builders N]
        relevo serve init [--host <name>]... [--state <dir>]
-       relevo serve enroll --label <label> --key "<ed25519 line>" [--state <dir>]
+       relevo serve enroll --label <label> --key "<ed25519 line>" [--user <unix user>] [--state <dir>]
        relevo serve clients [--state <dir>]
        relevo serve revoke <id> [--state <dir>]
        relevo serve fingerprint [--state <dir>]
@@ -431,7 +431,7 @@ func cmdServeRun(args []string) error {
 	// Fail closed before any side effect: a configured mode this build cannot
 	// run is refused, never started and warned (spec §10), and the mode and
 	// image ride into the server config so whoami and status report them.
-	runner, isoMode, err := resolveIsolation(L.Policy.ServeIsolation())
+	runner, isoMode, err := resolveIsolation(L.Policy.ServeIsolation(), os.Geteuid())
 	if err != nil {
 		return fail(codeNotAvailable, "%v", err)
 	}

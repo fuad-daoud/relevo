@@ -89,6 +89,7 @@ func cmdServeInitRun(args []string) error {
 type serveEnrollFlagValues struct {
 	label  *string
 	key    *string
+	user   *string
 	asJSON *bool
 }
 
@@ -98,6 +99,7 @@ func serveEnrollFlagSet(fs *flag.FlagSet) *serveEnrollFlagValues {
 	v := &serveEnrollFlagValues{}
 	v.label = fs.String("label", "", "client label")
 	v.key = fs.String("key", "", "client ed25519 public key line")
+	v.user = fs.String("user", "", "unix user this owner's builders run as (user mode)")
 	_ = fs.String("state", "", "state directory")
 	v.asJSON = fs.Bool("json", false, "print the document the enroll produced")
 	return v
@@ -111,13 +113,21 @@ func cmdServeEnrollRun(args []string) error {
 	fs := flag.NewFlagSet("relevo serve enroll", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := serveEnrollFlagSet(fs)
-	label, key, asJSON := v.label, v.key, v.asJSON
+	label, key, asJSON, unixUser := v.label, v.key, v.asJSON, v.user
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	if *label == "" || *key == "" {
-		return fail(codeUsage, "serve enroll wants --label <label> --key \"<ed25519 line>\" [--state <dir>]")
+		return fail(codeUsage, "serve enroll wants --label <label> --key \"<ed25519 line>\" [--user <unix user>] [--state <dir>]")
+	}
+
+	// A declared user is checked against this host before anything is written:
+	// an unknown name is refused with the exact command that creates it.
+	if *unixUser != "" {
+		if _, err := serve.CheckUnixUser(lookupUnixUser, *unixUser); err != nil {
+			return err
+		}
 	}
 
 	d, _, err := openMachineDB()
@@ -131,7 +141,7 @@ func cmdServeEnrollRun(args []string) error {
 		return err
 	}
 
-	cl, err := clients.Add(*label, *key, time.Now())
+	cl, err := clients.Add(*label, *key, *unixUser, time.Now())
 	if err != nil {
 		return err
 	}

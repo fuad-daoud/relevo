@@ -627,6 +627,22 @@ func TestServeInitRootFailureIsAnError(t *testing.T) {
 	})
 }
 
+// TestServeEnrollRefusesUnknownUser pins step 6's refusal: `serve enroll
+// --user <name>` with a name that is not on this host is refused with the
+// useradd sentence, before anything is written. The name cannot exist, so only
+// /etc/passwd is read: no harness, no network.
+func TestServeEnrollRefusesUnknownUser(t *testing.T) {
+	_, _, runErr := captureOutput(t, func() error {
+		return run([]string{"serve", "enroll", "--label", "x", "--key", "ed25519 AAAA", "--user", "relevo-no-such-user-zz"})
+	})
+	if runErr == nil {
+		t.Fatal("serve enroll with an unknown --user must fail")
+	}
+	if !strings.Contains(runErr.Error(), "useradd --create-home relevo-no-such-user-zz") {
+		t.Errorf("error = %q, want it to name the useradd command", runErr)
+	}
+}
+
 // TestServeRunRefusesUnavailableIsolation pins slice A's one rule at the
 // command: a configured serve.isolation=user is refused at startup with
 // not_available naming the mode, before any side effect. The wait is bounded:

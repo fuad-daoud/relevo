@@ -192,7 +192,7 @@ func enrollTestClient(t *testing.T, machineDB *db.DB, serverRoot string, kp remo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cls.Add("alice", remote.MarshalPublic(kp.Public, "alice@test"), time.Now()); err != nil {
+	if _, err := cls.Add("alice", remote.MarshalPublic(kp.Public, "alice@test"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -57,7 +57,7 @@ func enrol(t *testing.T, s *Server, label string) remote.ClientID {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	if _, err := s.clients.Add(label, remote.MarshalPublic(kp.Public, label), time.Now()); err != nil {
+	if _, err := s.clients.Add(label, remote.MarshalPublic(kp.Public, label), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	return id

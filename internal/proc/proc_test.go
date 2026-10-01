@@ -1061,8 +1061,68 @@ func TestStartDisablesFsmonitor(t *testing.T) {
 	}
 }
 
+// TestBuildCmdAppliesCredential pins the identity rule: a spec with a
+// credential produces a command whose SysProcAttr carries it with no extra
+// groups, and a spec without one stays the serve uid. Setsid must survive both.
+func TestBuildCmdAppliesCredential(t *testing.T) {
+	spec := spawn.ProcSpec{
+		Dir: "/tmp", Argv: []string{"echo", "hi"}, Env: []string{"A=1"},
+		Credential: &spawn.Credential{UID: 1234, GID: 5678},
+	}
+	cmd := buildCmd(spec, "/usr/bin/echo")
+	if cmd.SysProcAttr == nil {
+		t.Fatal("buildCmd left SysProcAttr nil")
+	}
+	if !cmd.SysProcAttr.Setsid {
+		t.Error("buildCmd must keep Setsid")
+	}
+	cred := cmd.SysProcAttr.Credential
+	if cred == nil {
+		t.Fatal("buildCmd did not apply the spec's Credential")
+	}
+	if cred.Uid != 1234 || cred.Gid != 5678 {
+		t.Errorf("credential = %+v, want uid 1234 gid 5678", cred)
+	}
+	if len(cred.Groups) != 0 {
+		t.Errorf("credential Groups = %v, want empty: only the primary gid is set", cred.Groups)
+	}
+
+	plain := buildCmd(spawn.ProcSpec{Dir: "/tmp", Argv: []string{"echo", "hi"}}, "/usr/bin/echo")
+	if plain.SysProcAttr == nil || plain.SysProcAttr.Credential != nil {
+		t.Errorf("buildCmd without a Credential = %+v, want Setsid and a nil Credential", plain.SysProcAttr)
+	}
+	if plain.SysProcAttr != nil && !plain.SysProcAttr.Setsid {
+		t.Error("buildCmd must keep Setsid for a spec with no credential")
+	}
+	if plain.Dir != "/tmp" {
+		t.Errorf("buildCmd Dir = %q, want /tmp", plain.Dir)
+	}
+}
+
+// TestSpawnEnvDeniesSpecDenyEnv pins that the spec's own DenyEnv names are
+// filtered from the inherited parent, while the spec's Env entries survive
+// untouched and an unrelated parent entry is kept.
+func TestSpawnEnvDeniesSpecDenyEnv(t *testing.T) {
+	parent := []string{"XDG_RUNTIME_DIR=/run/1", "KEEP=yes", "CLAUDE_CONFIG_DIR=/root/.claude"}
+	got := spawnEnv(parent, []string{"HOME=/home/tenant"}, nil,
+		[]string{"XDG_RUNTIME_DIR", "CLAUDE_CONFIG_DIR"})
+	if slices.Contains(got, "XDG_RUNTIME_DIR=/run/1") {
+		t.Errorf("spawnEnv kept a denied entry: %v", got)
+	}
+	if slices.Contains(got, "CLAUDE_CONFIG_DIR=/root/.claude") {
+		t.Errorf("spawnEnv kept a denied account-home entry: %v", got)
+	}
+	if !slices.Contains(got, "KEEP=yes") {
+		t.Errorf("spawnEnv dropped an unrelated parent entry: %v", got)
+	}
+	if !slices.Contains(got, "HOME=/home/tenant") {
+		t.Errorf("spawnEnv dropped the spec's own HOME entry: %v", got)
+	}
+}
+
 // The real git reads Start's GIT_CONFIG_* entries and reports false.
 func TestStartDisablesFsmonitorForGit(t *testing.T) {
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
