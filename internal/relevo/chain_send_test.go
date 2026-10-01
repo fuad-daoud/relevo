@@ -196,6 +196,52 @@ func TestChainReaderRoundsAskForTheChainsOwnBlock(t *testing.T) {
 	}
 }
 
+// TestRoundPromptIsChainAwareForEveryStarter pins the one composer every round
+// starter uses: a chain member's reader round asks for the chain's own block
+// wherever the round starts, while a builder round and a chain planner (whose
+// artifact is the plan) keep the ordinary templates.
+func TestRoundPromptIsChainAwareForEveryStarter(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{Security: ptr(true)})
+
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		rev, err := tx.Load("shop-rev")
+		if err != nil {
+			return err
+		}
+		if prompt := roundPrompt(rt, tx, rev, "p", "r", "d"); !strings.Contains(prompt, "verdict: pass") || strings.Contains(prompt, "status: done") {
+			t.Errorf("chain reviewer prompt is not chain-aware:\n%s", prompt)
+		}
+		sec, err := tx.Load("shop-sec")
+		if err != nil {
+			return err
+		}
+		if prompt := roundPrompt(rt, tx, sec, "p", "r", "d"); !strings.Contains(prompt, "findings: 0") || strings.Contains(prompt, "status: done") {
+			t.Errorf("chain security prompt is not chain-aware:\n%s", prompt)
+		}
+		builder, err := tx.Load("shop")
+		if err != nil {
+			return err
+		}
+		if prompt := roundPrompt(rt, tx, builder, "p", "r", "d"); !strings.Contains(prompt, "status: done") {
+			t.Errorf("builder prompt lost its reporttail block:\n%s", prompt)
+		}
+		planner, err := tx.Load("shop-plan")
+		if err != nil {
+			return err
+		}
+		if prompt := roundPrompt(rt, tx, planner, "p", "r", "d"); !strings.Contains(prompt, "status: done") {
+			t.Errorf("planner prompt must keep the ordinary reader block:\n%s", prompt)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+}
+
 // TestSendChainRoundRefusesOpenRound pins that a member round still open is
 // refused as a typed RoundOpenError naming the member and the round, so the CLI
 // can map it to a conflict with `relevo stop <member>` as the next command.

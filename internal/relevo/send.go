@@ -895,6 +895,20 @@ func composeChainReaderPrompt(rt Runtime, b store.Binding, promptPath, donePath,
 	return origin + "\n\n" + chainReaderPromptFor(rt, b, promptPath, donePath, block)
 }
 
+// roundPrompt composes one round's handoff prompt. It is the one composer every
+// round starter uses -- the send path, the served admit, a candidate switch and
+// a relaunch after a daemon restart -- so a chain member's reader round gets the
+// chain's own block wherever the round actually starts.
+func roundPrompt(rt Runtime, tx *store.Tx, b store.Binding, promptPath, reportPath, donePath string) string {
+	prompt := composePrompt(rt, b, promptPath, reportPath, donePath)
+	if b.Shape == store.ShapeReader {
+		if block, ok := chainMemberBlock(tx, b.Name); ok {
+			prompt = composeChainReaderPrompt(rt, b, promptPath, donePath, block)
+		}
+	}
+	return prompt
+}
+
 // chainReaderPromptFor renders chainReaderPrompt for one chain reader round,
 // resolving the output label and path exactly as readerPromptFor does.
 func chainReaderPromptFor(rt Runtime, b store.Binding, promptPath, donePath, block string) string {

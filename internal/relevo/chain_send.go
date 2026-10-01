@@ -77,16 +77,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	}
 
 	baseline, baselineHead := capture.Baseline(ctx, captureDeps(rt), cur)
-	prompt := composePrompt(rt, cur, planPath, reportPath, donePath)
-	// A chain's reader members carry a second contract on top of the ordinary
-	// reader hand-off: the chain parses a verdict or a finding count out of the
-	// round. The two must not compete, so the chain's own block
-	// replaces the reporttail block in the prompt.
-	if cur.Shape == store.ShapeReader {
-		if block, ok := chainMemberBlock(tx, name); ok {
-			prompt = composeChainReaderPrompt(rt, cur, planPath, donePath, block)
-		}
-	}
+	prompt := roundPrompt(rt, tx, cur, planPath, reportPath, donePath)
 
 	var pending []store.LogEntry
 	cur, res, err := repickStale(rt, cur, false)
