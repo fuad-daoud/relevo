@@ -111,7 +111,7 @@ func TestPermissionArgsTable(t *testing.T) {
 
 		{"codex", TierHarness, nil, nil, ""},
 		{"codex", TierRead, nil, ErrTierUnsupported, "writable_roots"},
-		{"codex", TierEdit, []string{"-s", "workspace-write", "-c", StatePlaceholder}, nil, ""},
+		{"codex", TierEdit, []string{"-s", "workspace-write", "-c", WritableRootPlaceholder}, nil, ""},
 		{"codex", TierYolo, []string{"--dangerously-bypass-approvals-and-sandbox"}, nil, ""},
 	}
 

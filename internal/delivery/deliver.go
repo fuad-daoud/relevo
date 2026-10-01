@@ -99,6 +99,42 @@ func DeliverPending(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) 
 	}, nil
 }
 
+// ConfirmAdmitted settles a pending mastermind entry a push route already
+// admitted before the binding's state changed. It reads that route's queue
+// back once and confirms on OutcomeDelivered; it NEVER pushes, so a done or
+// paused binding cannot get a new payload after its state changed. An entry
+// that was not admitted is left untouched.
+//
+// A done or paused binding's tick reaches delivery through this and only this
+// call: without it an admitted entry stays pending forever, because an admitted
+// entry is not claimable (ClaimableForMasterMind excludes it), so neither the
+// background wait nor a reader can take it.
+func ConfirmAdmitted(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) (store.Binding, Delivery, error) {
+	pending, idx, found, err := tx.PendingForMasterMind(b.Name)
+	if err != nil {
+		return b, Delivery{}, err
+	}
+	if !found {
+		return b, Delivery{Empty: true, Reason: "nothing pending"}, nil
+	}
+	if pending.AdmittedAt == nil {
+		return b, Delivery{Route: "pull", Reason: "the pending entry was not admitted", Round: pending.Round}, nil
+	}
+
+	kind := b.MasterMind.Kind
+	del, ok := d.Deliverers[kind]
+	if !ok || kind == "" {
+		return b, Delivery{Route: "pull", Reason: fmt.Sprintf("no deliverer for mastermind kind %q", kind), Round: pending.Round}, nil
+	}
+	route := "deliverer:" + kind
+	text, _ := PushText(pending, b, d.Store.ReadFile)
+	out, reason, err := del.ConfirmOnce(ctx, b.MasterMind, text, pending.TS)
+	if err != nil {
+		return b, Delivery{}, fmt.Errorf("confirm to mastermind: %w", err)
+	}
+	return deliveryOf(tx, b, idx, route, out, reason, pending.Round)
+}
+
 // deliverViaDeliverer runs one deliverer attempt for an entry the channel check
 // did not take: Deliver when nobody has pushed the payload yet, Confirm when the
 // push of this same tick admitted it, and ConfirmOnce -- one read-back, no poll

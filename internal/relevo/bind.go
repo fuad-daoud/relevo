@@ -812,7 +812,7 @@ func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOpti
 	if tier == "" {
 		tier = harness.TierHarness
 	}
-	if _, err := spawn.HeadlessLaunch(c, role, tier, 0, "", opts.CWD, rt.Store.Dir(name)); err != nil {
+	if _, err := spawn.HeadlessLaunch(c, role, tier, 0, "", opts.CWD, rt.Store.OutDir(name)); err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}
 

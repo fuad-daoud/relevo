@@ -199,8 +199,8 @@ func TestPathShapes(t *testing.T) {
 		name, got, want string
 	}{
 		{"PromptPath", s.PromptPath("webshop", 3), "/state/webshop/003-prompt.md"},
-		{"ReportPath", s.ReportPath("webshop", 12), "/state/webshop/012-report.md"},
-		{"DonePath", s.DonePath("webshop", 7), "/state/webshop/007-done"},
+		{"ReportPath", s.ReportPath("webshop", 12), "/state/webshop/out/012-report.md"},
+		{"DonePath", s.DonePath("webshop", 7), "/state/webshop/out/007-done"},
 		{"DiffPath", s.DiffPath("ai", 2), "/state/ai/002-diff.patch"},
 		{"QuestionPath", s.QuestionPath("ai", 2), "/state/ai/002-question.md"},
 		{"DriftPath", s.DriftPath("webshop", 5), "/state/webshop/005-drift.patch"},

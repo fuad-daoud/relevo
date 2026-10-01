@@ -238,6 +238,9 @@ func TestWriteReaderSummaryRefusesASymlinkedArtifactDir(t *testing.T) {
 	if err := os.MkdirAll(rt.Store.Dir(b.Name), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(rt.Store.OutDir(b.Name), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(target, filepath.Dir(out)); err != nil {
 		t.Fatal(err)
 	}

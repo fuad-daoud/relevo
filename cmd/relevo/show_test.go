@@ -332,6 +332,9 @@ func seedShowPendingStore(t *testing.T, name string) *store.Store {
 	if err := s.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 2, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
+	if err := os.MkdirAll(s.OutDir(name), 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
 	if err := os.WriteFile(s.ReportPath(name, 1), []byte("# round 1 report\n"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}

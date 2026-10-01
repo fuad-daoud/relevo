@@ -299,6 +299,9 @@ func seedShowSectionsFixture(t *testing.T) (name string, roots []string) {
 	if err := os.WriteFile(s.PromptPath(name, 1), []byte("# plan body\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
+	if err := os.MkdirAll(s.OutDir(name), 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
 	if err := os.WriteFile(s.ReportPath(name, 1), []byte("# report body\n"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}

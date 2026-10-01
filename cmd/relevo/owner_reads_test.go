@@ -52,6 +52,9 @@ func seedOwnerStore(t *testing.T, s *store.Store, owner string) {
 	if err := s.AppendLog("api", ownerTabEntry()); err != nil {
 		t.Fatalf("AppendLog report: %v", err)
 	}
+	if err := os.MkdirAll(s.OutDir("api"), 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
 	if err := os.WriteFile(s.ReportPath("api", 1), []byte("# report body\n"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}

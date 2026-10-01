@@ -33,6 +33,9 @@ func seedReadVerbStore(t *testing.T) (*store.Store, relevo.Runtime, []store.LogE
 			t.Fatalf("AppendLog: %v", err)
 		}
 	}
+	if err := os.MkdirAll(s.OutDir("api"), 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
 	if err := os.WriteFile(s.ReportPath("api", 1), []byte("# report body\n"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
