@@ -10,6 +10,7 @@ require (
 	github.com/klauspost/compress v1.18.4
 	github.com/muesli/termenv v0.15.2
 	github.com/tursodatabase/turso-go-platform-libs v0.8.1
+	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.59.0
 	turso.tech/database/tursogo v0.8.1

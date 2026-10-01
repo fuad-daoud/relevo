@@ -1,0 +1,45 @@
+name: default
+description: plans built, checked and reviewed, then one security scan
+inputs:
+  plans: required          # none | optional | required
+  task: none
+params:                    # the only values a CLI flag changes
+  builder: builder
+  reviewer: reviewer
+  planner: lite-planner
+  security: security
+  scan: true
+  gate: make check
+  regate: 1
+  max_corrections: 3
+start: plans
+steps:
+  plans:      { for-each: plans, on: { next: build, empty: scan-gate } }
+  build:      { run: "{{params.builder}}", seed: "{{plans.current}}", on: { done: check } }
+  check:      { check: "{{params.gate}}", on: { green: review, red: repair } }
+  repair:     { run: "{{params.builder}}", seed: shipped:repair,
+                budget: { max: "{{params.regate}}", per: [build, build-fix], then: review },
+                on: { done: check } }
+  review:     { run: "{{params.reviewer}}", seed: shipped:review,
+                on: { verdict=pass: plans, verdict=changes: correct } }
+  correct:    { run: "{{params.planner}}", seed: shipped:correct,
+                budget: { max: "{{params.max_corrections}}", per: plans,
+                          then: { halt: "reviewer still wants changes after {{params.max_corrections}} corrections" } },
+                on: { done: build-fix } }
+  build-fix:  { run: "{{params.builder}}", seed: "{{correct.plan}}", on: { done: check } }
+  scan-gate:  { when: "{{params.scan}}", on: { true: scan, false: done } }
+  scan:       { run: "{{params.security}}", seed: shipped:scan,
+                on: { findings=0: done, findings>0: fix-plan } }
+  fix-plan:   { run: "{{params.planner}}", seed: shipped:fix, on: { done: fix-build } }
+  fix-build:  { run: "{{params.builder}}", seed: "{{fix-plan.plan}}", on: { done: fix-check } }
+  fix-check:  { check: "{{params.gate}}", on: { green: fix-review, red: fix-repair } }
+  fix-repair: { run: "{{params.builder}}", seed: shipped:repair,
+                budget: { max: "{{params.regate}}", per: [fix-build, fix-rebuild], then: fix-review },
+                on: { done: fix-check } }
+  fix-review: { run: "{{params.reviewer}}", seed: shipped:review,
+                on: { verdict=pass: done, verdict=changes: fix-correct } }
+  fix-correct: { run: "{{params.planner}}", seed: shipped:correct,
+                 budget: { max: "{{params.max_corrections}}", per: fix-plan,
+                           then: { halt: "reviewer still wants changes after {{params.max_corrections}} corrections" } },
+                 on: { done: fix-rebuild } }
+  fix-rebuild: { run: "{{params.builder}}", seed: "{{fix-correct.plan}}", on: { done: fix-check } }
