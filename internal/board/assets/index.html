@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>relevo board</title>
+    <link rel="stylesheet" href="/assets/index.css" />
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        height: 100%;
+        background: #0f1115;
+        color: #e6e8ec;
+        font-family: system-ui, sans-serif;
+      }
+      .board-root {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      .board-bar {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.5rem 0.75rem;
+        background: #1a1f28;
+        border-bottom: 1px solid #3a4150;
+        font-size: 13px;
+      }
+      .board-name {
+        font-weight: 600;
+      }
+      .board-notice {
+        color: #9097a3;
+        flex: 1;
+      }
+      .board-save {
+        background: #6ea8fe;
+        color: #0f1115;
+        border: 0;
+        border-radius: 6px;
+        padding: 0.35rem 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .board-save:disabled {
+        background: #3a4150;
+        color: #9097a3;
+        cursor: default;
+      }
+      .board-canvas {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="/assets/bundle.js"></script>
+  </body>
+</html>
