@@ -1638,9 +1638,30 @@ func TestChainRemoteRedGateAfterTheBudgetReachesTheReviewer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the reviewer seed: %v", err)
 	}
-	want := fmt.Sprintf("Check result: red; its output is at %s.", rt.Store.GateLogPath("shop", 1))
-	if !strings.Contains(string(text), want) {
-		t.Errorf("reviewer seed does not name the red check %q:\n%s", want, text)
+	// The seed names a red check and a gate log a runner can open: the log's
+	// own path when the store reads it as a regular file, a copy otherwise.
+	// Read the file the seed names rather than a fixed path, and hold its bytes
+	// to the gate log the store keeps.
+	const gateLine = "Check result: red; its output: "
+	seed := string(text)
+	i := strings.Index(seed, gateLine)
+	if i < 0 {
+		t.Fatalf("reviewer seed does not carry the red check line:\n%s", seed)
+	}
+	namedGate := strings.TrimSuffix(strings.SplitN(seed[i+len(gateLine):], "\n", 2)[0], ".")
+	if !rt.Store.DiskRegularFile(namedGate) {
+		t.Errorf("the seed's red gate log %s is not a regular file on disk", namedGate)
+	}
+	gotGate, err := rt.Store.ReadFile(namedGate)
+	if err != nil {
+		t.Fatalf("read the seed's red gate log %s: %v", namedGate, err)
+	}
+	wantGate, err := rt.Store.ReadFile(rt.Store.GateLogPath("shop", 1))
+	if err != nil {
+		t.Fatalf("read the gate log: %v", err)
+	}
+	if string(gotGate) != string(wantGate) {
+		t.Errorf("the seed's red gate log %s = %q, want the gate log's %q", namedGate, gotGate, wantGate)
 	}
 	events := chainTrace(t, rt, "shop")
 	if len(events) != 1 {
@@ -1678,18 +1699,43 @@ func TestRemoteBuilderCloseSeedsTheReviewerWithThePulledRound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the reviewer seed: %v", err)
 	}
-	for _, p := range []string{
+	seed := string(text)
+	for _, key := range []string{
 		rt.Store.ReportPath("shop", 1),
 		rt.Store.DiffPath("shop", 1),
 		rt.Store.GateLogPath("shop", 1),
 		rt.Store.PlanDiffPath("shop", 1),
 		rt.Store.PromptPath("shop", 1),
 	} {
-		if !strings.Contains(string(text), p) {
-			t.Errorf("reviewer seed does not name %s:\n%s", p, text)
+		// The seed names the input's own path when the store reads it as a
+		// regular file, and a copy under the chain's directory otherwise; either
+		// way the named path exists on disk and holds what the store holds for
+		// the original key.
+		named := key
+		if !rt.Store.DiskRegularFile(named) {
+			copy, ok := rt.Store.ChainInputPath("shop", key)
+			if !ok {
+				t.Fatalf("ChainInputPath(%s) = false", key)
+			}
+			named = copy
 		}
-		if _, err := rt.Store.ReadFile(p); err != nil {
-			t.Errorf("named file %s does not exist: %v", p, err)
+		if !rt.Store.DiskRegularFile(named) {
+			t.Errorf("reviewer seed's input %s is not a regular file on disk", named)
+		}
+		if !strings.Contains(seed, named) {
+			t.Errorf("reviewer seed does not name %s:\n%s", named, seed)
+		}
+		got, err := rt.Store.ReadFile(named)
+		if err != nil {
+			t.Errorf("read the seed's named file %s: %v", named, err)
+			continue
+		}
+		want, err := rt.Store.ReadFile(key)
+		if err != nil {
+			t.Fatalf("read %s: %v", key, err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("the seed's named file %s = %q, want the store's %q", named, got, want)
 		}
 	}
 	if fg.lastDiffFrom != seedRemoteBase || fg.lastDiffTo != "result-r1" {

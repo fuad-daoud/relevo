@@ -253,32 +253,81 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 		t.Errorf("the reviewer's final verdict = %q, want pass", got)
 	}
 
-	// -- The seed #779 built: the reviewer's prompts -------------------------
+	// -- The reviewer's seed: the prompts and the round they judge -----------
 	// Round 1 of the reviewer judged the builder's green repair round (round
 	// 2): its seed names the check line, the round's own diff and prompt, and
-	// the plan's cumulative diff.
+	// the plan's cumulative diff. The repair round's diff and the plan's whole
+	// diff are sealed round files, so the seed names copies under the chain's
+	// own directory -- a path a runner can open, holding the key's bytes.
 	rev1 := chainRemoteRead(t, rt.Store, rt.Store.PromptPath(reviewerName, 1))
-	if want := "Plan diff, every round of this plan so far: " + rt.Store.PlanDiffPath(builderName, 2); !strings.Contains(rev1, want) {
-		t.Errorf("the reviewer's round 1 seed does not name the cumulative plan diff %s:\n%s", rt.Store.PlanDiffPath(builderName, 2), rev1)
+	planDiffKey := rt.Store.PlanDiffPath(builderName, 2)
+	planDiffCopy, ok := rt.Store.ChainInputPath(chainRemoteName, planDiffKey)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", planDiffKey)
 	}
-	if want := "This round's diff: " + rt.Store.DiffPath(builderName, 2); !strings.Contains(rev1, want) {
-		t.Errorf("the reviewer's round 1 seed does not name the repair round's diff %s:\n%s", rt.Store.DiffPath(builderName, 2), rev1)
+	if !rt.Store.DiskRegularFile(planDiffCopy) {
+		t.Errorf("the reviewer's round 1 plan-diff copy %s is not a regular file on disk", planDiffCopy)
 	}
+	if want := "Plan diff, every round of this plan so far: " + planDiffCopy + "."; !strings.Contains(rev1, want) {
+		t.Errorf("the reviewer's round 1 seed does not name the cumulative plan diff copy %s:\n%s", planDiffCopy, rev1)
+	}
+	if got, want := chainRemoteRead(t, rt.Store, planDiffCopy), chainRemoteRead(t, rt.Store, planDiffKey); got != want {
+		t.Errorf("the plan-diff copy %s = %q, want the key's bytes %q", planDiffCopy, got, want)
+	}
+	if patch := chainRemoteRead(t, rt.Store, planDiffKey); patch == "" {
+		t.Errorf("the plan's cumulative diff at %s is empty", planDiffKey)
+	}
+
+	diffKey := rt.Store.DiffPath(builderName, 2)
+	diffCopy, ok := rt.Store.ChainInputPath(chainRemoteName, diffKey)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", diffKey)
+	}
+	if !rt.Store.DiskRegularFile(diffCopy) {
+		t.Errorf("the reviewer's round 1 diff copy %s is not a regular file on disk", diffCopy)
+	}
+	if want := "This round's diff: " + diffCopy + "."; !strings.Contains(rev1, want) {
+		t.Errorf("the reviewer's round 1 seed does not name the repair round's diff copy %s:\n%s", diffCopy, rev1)
+	}
+	if got, want := chainRemoteRead(t, rt.Store, diffCopy), chainRemoteRead(t, rt.Store, diffKey); got != want {
+		t.Errorf("the diff copy %s = %q, want the key's bytes %q", diffCopy, got, want)
+	}
+
 	if want := "This round's prompt: " + rt.Store.PromptPath(builderName, 2); !strings.Contains(rev1, want) {
 		t.Errorf("the reviewer's round 1 seed does not name the repair round's own prompt %s:\n%s", rt.Store.PromptPath(builderName, 2), rev1)
 	}
-	if want := "Check result: green; its output is at " + rt.Store.GateLogPath(builderName, 2); !strings.Contains(rev1, want) {
-		t.Errorf("the reviewer's round 1 seed does not carry the green check line %q:\n%s", want, rev1)
-	}
-	if patch := chainRemoteRead(t, rt.Store, rt.Store.PlanDiffPath(builderName, 2)); patch == "" {
-		t.Errorf("the plan's cumulative diff at %s is empty", rt.Store.PlanDiffPath(builderName, 2))
+
+	// The check line names the gate log the seed can read: read the file the
+	// seed names, not a fixed path, and hold it to the gate log the store keeps.
+	// The store serves it whether it still sits on disk or was sealed to a row.
+	const gateLine = "Check result: green; its output: "
+	if i := strings.Index(rev1, gateLine); i < 0 {
+		t.Errorf("the reviewer's round 1 seed does not carry the green check line:\n%s", rev1)
+	} else {
+		namedGate := strings.TrimSuffix(strings.SplitN(rev1[i+len(gateLine):], "\n", 2)[0], ".")
+		got := chainRemoteRead(t, rt.Store, namedGate)
+		want := chainRemoteRead(t, rt.Store, rt.Store.GateLogPath(builderName, 2))
+		if got != want {
+			t.Errorf("the seed's green gate log %s = %q, want the gate log's %q", namedGate, got, want)
+		}
 	}
 
 	// Round 2 of the reviewer judged the builder's correction round (round 3):
-	// its seed names the cumulative plan diff and the round's own prompt.
+	// its seed names the cumulative plan diff copy and the round's own prompt.
 	rev2 := chainRemoteRead(t, rt.Store, rt.Store.PromptPath(reviewerName, 2))
-	if want := "Plan diff, every round of this plan so far: " + rt.Store.PlanDiffPath(builderName, 3); !strings.Contains(rev2, want) {
-		t.Errorf("the reviewer's round 2 seed does not name the cumulative plan diff %s:\n%s", rt.Store.PlanDiffPath(builderName, 3), rev2)
+	planDiffKey2 := rt.Store.PlanDiffPath(builderName, 3)
+	planDiffCopy2, ok := rt.Store.ChainInputPath(chainRemoteName, planDiffKey2)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", planDiffKey2)
+	}
+	if !rt.Store.DiskRegularFile(planDiffCopy2) {
+		t.Errorf("the reviewer's round 2 plan-diff copy %s is not a regular file on disk", planDiffCopy2)
+	}
+	if want := "Plan diff, every round of this plan so far: " + planDiffCopy2 + "."; !strings.Contains(rev2, want) {
+		t.Errorf("the reviewer's round 2 seed does not name the cumulative plan diff copy %s:\n%s", planDiffCopy2, rev2)
+	}
+	if got, want := chainRemoteRead(t, rt.Store, planDiffCopy2), chainRemoteRead(t, rt.Store, planDiffKey2); got != want {
+		t.Errorf("the plan-diff copy %s = %q, want the key's bytes %q", planDiffCopy2, got, want)
 	}
 	if want := "This round's prompt: " + rt.Store.PromptPath(builderName, 3); !strings.Contains(rev2, want) {
 		t.Errorf("the reviewer's round 2 seed does not name the correction round's own prompt %s:\n%s", rt.Store.PromptPath(builderName, 3), rev2)
