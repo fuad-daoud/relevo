@@ -67,6 +67,10 @@ type DB struct {
 	// served is true while an owner serves this handle: a vacuum must not close
 	// the pool out from under its clients.
 	served bool
+	// readOnly is true on a handle that must not write. A read-only open sets
+	// it, and Close then skips the checkpoint that would otherwise write
+	// through a verb advertised as read-only.
+	readOnly bool
 	// onClosed, when set, runs after this handle's pool is closed. The test
 	// owner hop uses it to learn that a dialled client handle is gone.
 	onClosed func()
@@ -260,20 +264,32 @@ func ping(sqlDB *sql.DB) error {
 	return err
 }
 
+// Close checkpoints a writable direct handle, closes its pool, releases the
+// path's handle and flock, then notifies onClosed. The path is cleared first, so
+// a second Close is a no-op, and the handle is released on the way out even when
+// the pool close errors: leaving the flock held after a failed close would wedge
+// every later opener.
 func (d *DB) Close() error {
-	if d.path != "" {
-		releaseHandle(d.path)
+	path := d.path
+	d.path = ""
+	if path != "" && !d.readOnly {
 		// Turso keeps the write-ahead log across a close, so checkpoint it
 		// here: callers and the template seeder copy the main file alone, and
-		// a non-empty -wal would leave that copy without its schema.
+		// a non-empty -wal would leave that copy without its schema. A
+		// read-only handle must not write, so it never checkpoints.
 		_ = d.walCheckpoint()
-		d.path = ""
 	}
-	if err := d.sqlDB.Close(); err != nil {
-		d.runOnClosed()
-		return fmt.Errorf("db: close: %w", err)
+	closeErr := d.sqlDB.Close()
+	if path != "" {
+		// The path and its flock are released only after the pool is closed,
+		// so a concurrent opener cannot win the flock while this handle's own
+		// connections still hold the engine's file lock.
+		releaseHandle(path)
 	}
 	d.runOnClosed()
+	if closeErr != nil {
+		return fmt.Errorf("db: close: %w", closeErr)
+	}
 	return nil
 }
 
