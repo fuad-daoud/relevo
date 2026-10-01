@@ -164,9 +164,17 @@ func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult
 // server: the resolved settings and an explicit gate are posted, then the
 // mirror is pulled so the answer is this machine's own view of the resumed
 // chain. A chain the server still runs is the running refusal.
+//
+// The mirror's own queued end payload is confirmed first, exactly as the local
+// resume confirms it: the halt it carries says the chain needs the human, and
+// that stops being true the moment they resume it -- a later wait or pull must
+// not deliver the stale NEEDS YOU.
 func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) (ChainResult, error) {
 	if rt.Remote == nil {
 		return ChainResult{}, ErrRemoteUnavailable
+	}
+	if err := supersedeChainDelivery(rt, c); err != nil {
+		return ChainResult{}, err
 	}
 	req := remote.ChainResumeRequest{
 		MaxCorrections: opts.MaxCorrections,

@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -354,7 +355,7 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain}
+	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain, remote.FeatureIsolation}
 	if !slices.Equal(who.Features, wantFeatures) {
 		t.Fatalf("Features = %v, want %v", who.Features, wantFeatures)
 	}
@@ -366,6 +367,50 @@ func TestWhoAmI(t *testing.T) {
 	}
 	if who.Builders.Quota != "" {
 		t.Fatalf("Builders.Quota = %q, want empty without a scope", who.Builders.Quota)
+	}
+}
+
+// TestWhoAmIIsolation pins slice A's wire fact: a server always reports its
+// isolation mode, "none" for a server that configured nothing, and advertises
+// the matching feature token.
+func TestWhoAmIIsolation(t *testing.T) {
+	env := setupTestEnv(t)
+	resp, body := doSigned(t, env.ts, env.kp, "GET", "/v1/whoami", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	var who remote.WhoAmI
+	if err := json.Unmarshal(body, &who); err != nil {
+		t.Fatalf("decode whoami: %v", err)
+	}
+	if !slices.Contains(who.Features, remote.FeatureIsolation) {
+		t.Errorf("Features = %v, want %q", who.Features, remote.FeatureIsolation)
+	}
+	if who.Builders == nil || who.Builders.Isolation != "none" {
+		t.Fatalf("Builders = %+v, want Isolation none", who.Builders)
+	}
+	if who.Builders.Image != "" {
+		t.Fatalf("Builders.Image = %q, want empty in none mode", who.Builders.Image)
+	}
+}
+
+// TestServedRunnerPassesSpecThrough pins slice A's inert seam through the
+// server's own config: setupTestEnv wraps the fake base in a none boundary, so
+// a spec handed to the server's runner reaches the base identical.
+func TestServedRunnerPassesSpecThrough(t *testing.T) {
+	env := setupTestEnv(t)
+	spec := spawn.ProcSpec{
+		Dir:        "/round/tree",
+		Argv:       []string{"claude", "-p", "plan.md"},
+		Env:        []string{"A=1"},
+		LogPath:    "/round/log",
+		StreamPath: "/round/stream",
+		Scope:      &spawn.ScopeSpec{Unit: "relevo-round-alice-1", CPUWeight: 100},
+	}
+	if _, err := env.srv.cfg.Runner.Start(context.Background(), spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	got := startedSpecs(env)
+	if len(got) != 1 || !reflect.DeepEqual(got[0], spec) {
+		t.Fatalf("base specs = %+v, want the identical %+v", got, spec)
 	}
 }
 

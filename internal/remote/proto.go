@@ -284,6 +284,11 @@ type BuildersView struct {
 	Scopes  bool   `json:"scopes"`          // part 3 sets it; false here
 	Slice   string `json:"slice,omitempty"` // part 3 sets it; "" here
 	Quota   string `json:"quota,omitempty"` // "" = no CPU quota; else e.g. "200%"
+	// Isolation is the tenant-isolation mode in force: "none", "user" or
+	// "container". "" from a server that predates isolation.
+	Isolation string `json:"isolation,omitempty"`
+	// Image is the container image, set only in container mode; "" otherwise.
+	Image string `json:"image,omitempty"`
 }
 
 // UnavailableRequest reports builder unavailability with a diagnostic reason.
@@ -348,6 +353,10 @@ const (
 	CodeVersion        Code = "version"
 	CodeInvalid        Code = "invalid"
 	CodeTierAboveMax   Code = "tier_above_max"
+	// CodeUnknownActor is a 400: the create named an actor no role defines on
+	// the server. It is the wire twin of relevo.ErrUnknownRole, so a client
+	// can classify the refusal like its local one.
+	CodeUnknownActor Code = "unknown_actor"
 	// CodeWrongAudience is a 401: the request's Relevo-Audience is not one of
 	// the server's accepted audiences, so the signature was made for another
 	// server identity.
@@ -439,6 +448,11 @@ const FeatureChainMember = "chain_member"
 // cannot resolve, so a client holding one refuses that server instead of
 // sending it.
 const FeatureAccounts = "accounts"
+
+// FeatureIsolation is the WhoAmI.Features token a server that reports its
+// tenant-isolation mode in BuildersView advertises. A client that reads the
+// field can tell a server that predates isolation, whose view lacks it.
+const FeatureIsolation = "isolation"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

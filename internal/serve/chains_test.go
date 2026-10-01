@@ -256,6 +256,29 @@ func TestCreateChainRefusesUntrustedFields(t *testing.T) {
 	}
 }
 
+// TestCreateChainUnknownActorIsTyped pins the refusal's wire code: an actor no
+// role defines is 400 unknown_actor, the twin of relevo.ErrUnknownRole the
+// client re-types, not a bare invalid.
+func TestCreateChainUnknownActorIsTyped(t *testing.T) {
+	env := setupTestEnv(t)
+	req := chainWireRequest("shop", env.repoID, env.headSHA)
+	req.Settings.ReviewerActor = "ghost"
+	form, ct := makeChainForm(t, req, nil)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, string(body))
+	}
+	var errBody remote.ErrorBody
+	if err := json.Unmarshal(body, &errBody); err != nil {
+		t.Fatalf("decode error body: %v; body: %s", err, string(body))
+	}
+	if errBody.Code != remote.CodeUnknownActor {
+		t.Errorf("error code = %q, want %q; body: %s", errBody.Code, remote.CodeUnknownActor, string(body))
+	}
+	requireChainAbsent(t, env, "shop")
+	requireChainRepoAbsent(t, env)
+}
+
 // TestCreateChainRefusesATierAboveMax pins the preflight's tier mapping: a
 // server whose policy tier for the builder is above its max_tier refuses the
 // create 422 tier_above_max with nothing created.

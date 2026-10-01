@@ -269,6 +269,69 @@ func TestChainResumeOnAServerChainSendsTheResolvedGate(t *testing.T) {
 	}
 }
 
+// TestChainServerResumeSupersedesTheMirrorsQueuedHalt pins the client half of
+// the stale delivery rule: the mirror's own queued end payload is confirmed by
+// the resume, so a stale NEEDS YOU is never delivered after a chain that runs
+// on a server has moved on.
+func TestChainServerResumeSupersedesTheMirrorsQueuedHalt(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusHalted), 1, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	// The halt the mirror pulled: the chain row is terminal and the end
+	// payload sits undelivered on the builder member.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		row, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		row.Status = string(chain.StatusHalted)
+		if err := tx.ChainPut(row); err != nil {
+			return err
+		}
+		return tx.AppendLog("shop", store.LogEntry{
+			TS: rt.Now().UTC(), Round: 3,
+			Direction: store.DirToMasterMind, Kind: store.KindChain,
+			Payload: "chain shop halted: builder halted on plan 1",
+		})
+	}); err != nil {
+		t.Fatalf("seed the mirror's halt: %v", err)
+	}
+
+	pendingChain := func() int {
+		t.Helper()
+		n := 0
+		err := rt.Store.WithLock(func(tx *store.Tx) error {
+			entries, err := tx.PendingForMasterMindThrough("shop", 0)
+			if err != nil {
+				return err
+			}
+			for _, p := range entries {
+				if p.Entry.Kind == store.KindChain {
+					n++
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("read pending entries: %v", err)
+		}
+		return n
+	}
+	if pendingChain() == 0 {
+		t.Fatal("test premise: the halt must queue the mirror's end delivery")
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	if n := pendingChain(); n != 0 {
+		t.Errorf("pending chain deliveries after a server resume = %d, want 0", n)
+	}
+}
+
 // TestChainDoneOnAServerChainPostsDone pins done: the server releases the
 // chain, the mirror members are released locally (the chain's own verb already
 // released them there, so no second round-trip per member), and the mirror row

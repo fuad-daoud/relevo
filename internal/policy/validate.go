@@ -292,6 +292,16 @@ func validateThresholds(path string, p Policy) error {
 	if p.Serve != nil && p.Serve.MaxBuilders != nil && *p.Serve.MaxBuilders < 1 {
 		return fmt.Errorf("%s: serve.max_builders: must be at least 1, got %d: %w", path, *p.Serve.MaxBuilders, ErrBadPolicy)
 	}
+	if p.Serve != nil {
+		switch p.Serve.Isolation {
+		case "", "none", "user", "container":
+		default:
+			return fmt.Errorf("%s: serve.isolation: unknown %q (known: none, user, container): %w", path, p.Serve.Isolation, ErrBadPolicy)
+		}
+		if p.Serve.Isolation == "container" && p.Serve.IsolationImage == "" {
+			return fmt.Errorf("%s: serve.isolation_image: required when serve.isolation is \"container\": %w", path, ErrBadPolicy)
+		}
+	}
 	return nil
 }
 
