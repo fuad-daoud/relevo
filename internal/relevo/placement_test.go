@@ -2,7 +2,9 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -223,6 +225,33 @@ func TestChoosePlacement(t *testing.T) {
 				t.Fatalf("choosePlacement = %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestProbePlacementRetypesAnUnknownActor pins the probe refusal's class: the
+// actor route's 404 is the server's unknown actor, and it must surface as
+// ErrUnknownRole -- the policy refusal a local start gives -- not internal.
+func TestProbePlacementRetypesAnUnknownActor(t *testing.T) {
+	t.Parallel()
+
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeaturePlacement}},
+		actorErr: map[string]error{"zen": &client.HTTPError{
+			Status: http.StatusNotFound,
+			Body:   remote.ErrorBody{Code: remote.CodeNotFound, Message: `unknown actor "ghost" (known: [builder]): unknown actor`},
+		}},
+	}
+	rt := placementRuntime(t, fr, rowsWithPlacement("zen"), nil)
+
+	_, err := choosePlacement(context.Background(), rt, "builder", "", placementFlags{})
+	if err == nil {
+		t.Fatal("choosePlacement = nil, want the unknown-actor refusal")
+	}
+	if !errors.Is(err, ErrUnknownRole) {
+		t.Errorf("err = %v, want errors.Is(err, ErrUnknownRole)", err)
+	}
+	if !strings.Contains(err.Error(), `unknown actor "ghost"`) {
+		t.Errorf("err = %q, want the server's own message kept", err)
 	}
 }
 

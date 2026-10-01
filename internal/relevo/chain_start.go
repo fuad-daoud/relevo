@@ -331,10 +331,10 @@ func chainSettings(pol policy.Policy, opts ChainOptions, checks bool) chain.Sett
 // chainValidate refuses a name or a feature choice before anything exists.
 func chainValidate(opts ChainOptions) error {
 	if err := store.ValidName(opts.Name); err != nil {
-		return err
+		return refuse("%v", err)
 	}
 	if len(opts.Name) > chainMaxNameLen {
-		return fmt.Errorf("chain name %q exceeds %d characters (the longest member suffix is -plan)", opts.Name, chainMaxNameLen)
+		return refuse("chain name %q exceeds %d characters (the longest member suffix is -plan)", opts.Name, chainMaxNameLen)
 	}
 	if err := RequireFeatureChoice(opts.Feature, opts.NoFeature, false); err != nil {
 		return err
@@ -359,16 +359,16 @@ func chainTicket(ctx context.Context, rt Runtime, raw, repo string) (string, err
 // chainPlanBodies reads every plan and refuses an empty or unreadable one.
 func chainPlanBodies(paths []string) ([][]byte, error) {
 	if len(paths) == 0 {
-		return nil, errors.New("a chain needs at least one --plan <file>")
+		return nil, refuse("a chain needs at least one --plan <file>")
 	}
 	bodies := make([][]byte, len(paths))
 	for i, path := range paths {
 		body, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("read plan %s: %w", path, err)
+			return nil, refuse("read plan %s: %v", path, err)
 		}
 		if len(bytes.TrimSpace(body)) == 0 {
-			return nil, fmt.Errorf("plan %s is empty", path)
+			return nil, refuse("plan %s is empty", path)
 		}
 		bodies[i] = body
 	}
@@ -406,12 +406,12 @@ func chainFreeNames(rt Runtime, members []chainMember) error {
 			return err
 		}
 		if _, err := rt.Store.Load(m.name); err == nil {
-			return fmt.Errorf("binding %q already exists: `relevo unbind %s` to start fresh", m.name, m.name)
+			return refuse("binding %q already exists: `relevo unbind %s` to start fresh", m.name, m.name)
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
 		if _, err := rt.Store.Chain(m.name); err == nil {
-			return fmt.Errorf("chain %q already exists", m.name)
+			return refuse("chain %q already exists", m.name)
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return err
 		}

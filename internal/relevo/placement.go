@@ -155,6 +155,13 @@ func probePlacement(ctx context.Context, rt Runtime, server, role, pinned string
 	}
 	view, err := rt.Remote.Actor(ctx, server, role, pinned)
 	if err != nil {
+		// The actor route answers 404 only for an actor no role defines: it is
+		// the server's ErrUnknownRole, re-typed so a bad actor classifies like
+		// its local twin instead of an internal failure.
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
+			return "", classed(ErrUnknownRole, httpErr.Body.Message)
+		}
 		return classifyProbeError(err)
 	}
 	if !view.Accepted {

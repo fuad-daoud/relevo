@@ -706,6 +706,9 @@ func TestChainResumeRefusesAGateFlagOnARemoteBuilder(t *testing.T) {
 		if !strings.Contains(err.Error(), "fixed at create") {
 			t.Errorf("err = %q, want it to say the check is fixed at create", err)
 		}
+		if !errors.Is(err, ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, ErrRefused): a replaced check on a remote builder is refused, not internal", err)
+		}
 	}
 
 	// The chain was left halted by the refusals; --regate alone is accepted and
