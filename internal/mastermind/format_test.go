@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/jsonshape"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -155,11 +156,11 @@ func TestRecordShapeFailurePath(t *testing.T) {
 }
 
 func TestStoredFormat(t *testing.T) {
-	if got := storedFormat(1); got != 0 {
-		t.Errorf("storedFormat(1) = %d, want 0: format 1 is absent on disk", got)
+	if got := storedFormat(MasterMindFormat); got != 0 {
+		t.Errorf("storedFormat(%d) = %d, want 0: format 1 is absent on disk", MasterMindFormat, got)
 	}
-	if got := storedFormat(MasterMindFormat); got != MasterMindFormat {
-		t.Errorf("storedFormat(%d) = %d, want %d", MasterMindFormat, got, MasterMindFormat)
+	if got := storedFormat(2); got != 2 {
+		t.Errorf("storedFormat(2) = %d, want 2", got)
 	}
 }
 
@@ -197,7 +198,7 @@ func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 	if newer.Kind != "mastermind record" || newer.Name != rec.Name || newer.Have != MasterMindFormat+1 || newer.Know != MasterMindFormat {
 		t.Errorf("ErrNewerFormat = %+v", newer)
 	}
-	wantText := `mastermind record "alpha" was written by a newer relevo (format 3; this relevo knows 2): upgrade relevo; a mastermind session reconnects relevo mcp with /mcp`
+	wantText := `mastermind record "alpha" was written by a newer relevo (format 2; this relevo knows 1): upgrade relevo; a mastermind session reconnects relevo mcp with /mcp`
 	if err.Error() != wantText {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}
@@ -209,4 +210,91 @@ func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 	if !bytes.Equal(raw, after) {
 		t.Error("a refused write must leave the record byte-identical")
 	}
+}
+
+// TestOldTranscriptLocatorKeyLoadsAndIsDroppedOnSave pins the compatibility the
+// format reverts buy: a bind.json at format 12 and a mastermind record at
+// format 1 may still carry the removed transcript_locator key, and both load
+// without error and come back without it after a save.
+func TestOldTranscriptLocatorKeyLoadsAndIsDroppedOnSave(t *testing.T) {
+	s := store.New(t.TempDir())
+	const name = "webshop"
+	if err := s.Save(store.Binding{Name: name, CWD: "/repo", State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	d, err := s.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	rec, ok, err := d.RecordGet(s.Owner(), name)
+	if err != nil || !ok {
+		t.Fatalf("RecordGet = (ok %v, err %v), want the row", ok, err)
+	}
+	rec.JSON = string(seedJSONKey(t, rec.JSON, "planner", "transcript_locator", "/tmp/old-planner.jsonl"))
+	if _, err := d.RecordPut(rec); err != nil {
+		t.Fatalf("RecordPut: %v", err)
+	}
+
+	b, err := s.Load(name)
+	if err != nil {
+		t.Fatalf("Load of a format-12 binding carrying the old key = %v, want nil", err)
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	after, ok, err := d.RecordGet(s.Owner(), name)
+	if err != nil || !ok {
+		t.Fatalf("RecordGet after Save = (ok %v, err %v), want the row", ok, err)
+	}
+	if strings.Contains(after.JSON, "transcript_locator") {
+		t.Errorf("a saved binding still carries transcript_locator:\n%s", after.JSON)
+	}
+
+	reg := testRegistry(t)
+	mm := record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-1", 0)
+	mmRaw, err := json.Marshal(mm)
+	if err != nil {
+		t.Fatalf("marshal record: %v", err)
+	}
+	old := seedJSONKey(t, string(mmRaw), "", "transcript_locator", "/tmp/old-mastermind.jsonl")
+	if err := reg.KV.KVPut(registryKey(mm.ID), old); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+	if _, err := reg.Get(mm.ID); err != nil {
+		t.Fatalf("Get of a format-1 record carrying the old key = %v, want nil", err)
+	}
+	if err := reg.Touch(mm.ID, testNow.Add(time.Minute)); err != nil {
+		t.Fatalf("Touch: %v", err)
+	}
+	got, ok, err := reg.KV.KVGet(registryKey(mm.ID))
+	if err != nil || !ok {
+		t.Fatalf("KVGet after Touch = (ok %v, err %v), want the row", ok, err)
+	}
+	if strings.Contains(string(got), "transcript_locator") {
+		t.Errorf("a saved mastermind record still carries transcript_locator:\n%s", got)
+	}
+}
+
+// seedJSONKey returns raw JSON with key set, nested inside parent when parent is
+// non-empty, so a test can seed a key the current types no longer write.
+func seedJSONKey(t *testing.T, raw, parent, key string, value any) []byte {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	holder := doc
+	if parent != "" {
+		inner, _ := doc[parent].(map[string]any)
+		if inner == nil {
+			t.Fatalf("JSON has no %s object:\n%s", parent, raw)
+		}
+		holder = inner
+	}
+	holder[key] = value
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal JSON: %v", err)
+	}
+	return out
 }

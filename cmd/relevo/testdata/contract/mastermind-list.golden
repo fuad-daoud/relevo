@@ -1,6 +1,5 @@
 [
   {
-    "format": 2,
     "id": "<PLANNER>",
     "name": "architect-1",
     "harness_kind": "claude",
