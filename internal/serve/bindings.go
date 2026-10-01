@@ -165,24 +165,40 @@ func pickServedTier(w http.ResponseWriter, rt relevo.Runtime, roleName, candidat
 	return token, kind, string(resolved), true
 }
 
-// buildServedBinding resolves the request's role against this server's own
-// registry -- the client's roles.json never travels -- creates the bare repo and
-// picks the role's candidate and tier. It writes the failure itself and returns
-// ok=false, so a refused create leaves no bare repo behind.
-func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, rt relevo.Runtime, caller remote.ClientID, req remote.CreateBindingRequest) (store.Binding, bool) {
-	if req.Role == "" {
+// servedShape resolves a create's role against this server's registry and
+// refuses a gate on a reader: a reader round has no check. It writes the
+// failure itself and returns ok=false.
+func (s *Server) servedShape(w http.ResponseWriter, rt relevo.Runtime, reqRole, gate string) (string, bool) {
+	if reqRole == "" {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "actor is required")
-		return store.Binding{}, false
+		return "", false
 	}
-	role := relevo.NormRole(req.Role)
+	role := relevo.NormRole(reqRole)
 	shape := store.ShapeWriter
 	if role != "" {
 		s, err := relevo.ActorShape(rt, role)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
-			return store.Binding{}, false
+			return "", false
 		}
 		shape = s
+	}
+	if shape == store.ShapeReader && gate != "" {
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "--gate: a reader round has no check")
+		return "", false
+	}
+	return shape, true
+}
+
+// buildServedBinding resolves the request's role against this server's own
+// registry -- the client's roles.json never travels -- creates the bare repo and
+// picks the role's candidate and tier. It writes the failure itself and returns
+// ok=false, so a refused create leaves no bare repo behind.
+func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, rt relevo.Runtime, caller remote.ClientID, req remote.CreateBindingRequest) (store.Binding, bool) {
+	role := relevo.NormRole(req.Role)
+	shape, ok := s.servedShape(w, rt, req.Role, req.Gate)
+	if !ok {
+		return store.Binding{}, false
 	}
 
 	repoRoot, err := s.repoRoot(caller)
@@ -232,6 +248,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		RoundTimeoutMS:   req.RoundTimeoutMS,
 		Feature:          req.Feature,
 		Ticket:           req.Ticket,
+		Gate:             req.Gate,
 		Serve: &store.ServeFacts{
 			RepoID:      req.RepoID,
 			BareRepo:    bare,

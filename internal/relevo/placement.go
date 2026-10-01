@@ -55,7 +55,19 @@ type placementFlags struct {
 	Tier    string
 	Feature string
 	Ticket  string
+	// ChainMember asks a server whether it can carry one chain member's round
+	// (a gate on a create, its result and log on the view, verify on the round
+	// form); a server without remote.FeatureChainMember is a skip.
+	ChainMember bool
+	// ChainReader marks a chain's reader member: every server entry is a skip
+	// with one fixed reason and is never probed, because a reader reads the
+	// builder's artifacts on this machine.
+	ChainReader bool
 }
+
+// chainReaderSkip is the one reason a chain reader's server entry is passed
+// over, unprobed.
+const chainReaderSkip = "a chain reader reads the builder's artifacts on this machine"
 
 // createPlacement is the placement a fresh create runs under. An explicit
 // --server or --local wins and is taken as given, with no probe and no
@@ -95,6 +107,13 @@ func choosePlacement(ctx context.Context, rt Runtime, role, pinned string, flags
 				continue
 			}
 			return PlacementResolution{Name: name, How: placementHowActor, Skipped: skipped}, nil
+		}
+		// A chain reader never lands on a server: its seed names paths in the
+		// builder's tree, which exist only where the builder ran. The entry is
+		// passed over with one fixed reason and no probe at all.
+		if flags.ChainReader {
+			skipped = append(skipped, PlacementSkip{Name: name, Reason: chainReaderSkip})
+			continue
 		}
 		reason, err := probePlacement(ctx, rt, name, role, pinned, flags)
 		if err != nil {
@@ -165,6 +184,9 @@ func unsupportedFeature(reg *roles.Registry, role string, who remote.WhoAmI, fla
 	}
 	if flags.Tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
 		return "permission tiers unsupported; upgrade the server"
+	}
+	if flags.ChainMember && !slices.Contains(who.Features, remote.FeatureChainMember) {
+		return "chain members unsupported; upgrade the server"
 	}
 	return ""
 }

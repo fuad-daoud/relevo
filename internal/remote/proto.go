@@ -121,6 +121,10 @@ type CreateBindingRequest struct {
 	Feature string `json:"feature,omitempty"`
 	Ticket  string `json:"ticket,omitempty"`
 
+	// Gate is the acceptance command this binding's rounds are checked with;
+	// "" means no check. It is additive: an old server ignores it.
+	Gate string `json:"gate,omitempty"`
+
 	// Author is the client's git identity; the server runs this binding's
 	// builders as it (#335). nil means an old client that sent none.
 	Author *GitIdentity `json:"author,omitempty"`
@@ -171,6 +175,9 @@ type BindingView struct {
 	ResultCommit  string     `json:"result_commit,omitempty"`
 	DirtyCommit   string     `json:"dirty_commit,omitempty"`
 	ReportOutcome string     `json:"report_outcome,omitempty"` // reporttail.Tail.Status or "unstructured"
+	// GateResult is the closed round's (ClosedRound) gate result, "pass" or
+	// "fail"; "" when it had none.
+	GateResult string `json:"gate_result,omitempty"`
 	// Stopped is how the closed round (ClosedRound) was stopped: "killed",
 	// "reaped", "gone" or "dequeued". It is "" when that round closed any
 	// other way, on a pre-stop server, or when ClosedRound is 0.
@@ -419,6 +426,12 @@ const FeatureForce = "force"
 // whether a placement would be accepted before it creates anything, so a
 // server without the token is missing the only way to ask.
 const FeaturePlacement = "placement"
+
+// FeatureChainMember is the WhoAmI.Features token a server that can carry one
+// chain member's round advertises: a server that accepts a gate on a create,
+// reports the closed round's gate result, serves its log, and honours the
+// round form's verify.
+const FeatureChainMember = "chain_member"
 
 // FeatureAccounts is the WhoAmI.Features token a server that understands
 // group@account gate keys advertises, on both the gate and the clear routes.

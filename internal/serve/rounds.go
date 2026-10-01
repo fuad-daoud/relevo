@@ -39,6 +39,7 @@ type roundRequest struct {
 	Tier      string
 	Candidate string
 	Force     bool
+	Verify    *bool
 	Bundle    io.Reader
 }
 
@@ -68,6 +69,18 @@ func parseRoundRequest(r *http.Request) (req roundRequest, close func(), bad str
 	}
 	req.Candidate = r.FormValue("candidate")
 	req.Force = r.FormValue("force") != ""
+	switch v := r.FormValue("verify"); v {
+	case "":
+		// absent: the server's own policy decides.
+	case "0":
+		f := false
+		req.Verify = &f
+	case "1":
+		t := true
+		req.Verify = &t
+	default:
+		return req, close, "invalid verify"
+	}
 
 	file, _, fileErr := r.FormFile("bundle")
 	if fileErr != nil {
@@ -366,7 +379,7 @@ func (s *Server) finishRoundStart(w http.ResponseWriter, r *http.Request, rt rel
 	}
 	defer func() { _ = os.Remove(tmpFilePath) }()
 
-	if _, sendErr := relevo.Send(r.Context(), rt, name, tmpFilePath, relevo.SendOptions{Tier: req.Tier, Builder: req.Candidate, Force: req.Force, Defer: true}); sendErr != nil {
+	if _, sendErr := relevo.Send(r.Context(), rt, name, tmpFilePath, relevo.SendOptions{Tier: req.Tier, Builder: req.Candidate, Force: req.Force, Verify: req.Verify, Defer: true}); sendErr != nil {
 		writeSendError(w, rt, name, b, sendErr)
 		return
 	}

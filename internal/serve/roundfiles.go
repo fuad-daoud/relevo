@@ -27,6 +27,8 @@ func roundFilePath(rt relevo.Runtime, name string, n int, kind string) (string, 
 		return rt.Store.PromptPath(name, n), true
 	case "drift":
 		return rt.Store.DriftPath(name, n), true
+	case "gate":
+		return rt.Store.GateLogPath(name, n), true
 	}
 	return "", false
 }

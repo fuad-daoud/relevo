@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -560,6 +561,83 @@ func TestChainResumeHaltsWhenTheSendFails(t *testing.T) {
 	}
 	if !strings.Contains(row.Reason, "could not start") {
 		t.Errorf("halt reason = %q, want it to name the member that could not start", row.Reason)
+	}
+}
+
+// TestChainResumeRemoteBuilderShipsThroughThePendingStep pins the remote
+// resume: the resumed round is staged like any send, and the unlocked step
+// ships it -- one StartRound with verify off, the prompt entry with the chain
+// step note, and the chain running on that round.
+func TestChainResumeRemoteBuilderShipsThroughThePendingStep(t *testing.T) {
+	t.Parallel()
+
+	fr := chainRemoteFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	startedChain(t, rt, ChainOptions{})
+	advanceRemoteChain(t, rt, 2)
+	haltRemoteChain(t, rt)
+
+	fr.calls = nil
+	res, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	if err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	if !slices.Contains(fr.calls, "StartRound:zen:shop:2") {
+		t.Errorf("calls = %v, want the resumed round shipped to zen", fr.calls)
+	}
+	if fr.startRoundVerify == nil || *fr.startRoundVerify {
+		t.Errorf("verify = %v, want an explicit false", fr.startRoundVerify)
+	}
+	if string(fr.startRoundPlan) != "build it" {
+		t.Errorf("shipped plan = %q, want the plan copy", fr.startRoundPlan)
+	}
+	if !promptNoteFor(chainLog(t, rt, "shop"), 2, "chain builder") {
+		t.Errorf("log = %+v, want the round-2 prompt entry with the chain step note", chainLog(t, rt, "shop"))
+	}
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusRunning) || row.AwaitingMember != chain.MemberBuilder || row.AwaitingRound != 2 {
+		t.Errorf("chain = status %q awaiting (%s, %d), want running on the builder's round 2",
+			row.Status, row.AwaitingMember, row.AwaitingRound)
+	}
+	if res.Chain.Status != string(chain.StatusRunning) {
+		t.Errorf("result chain = %+v, want the resumed row", res.Chain)
+	}
+}
+
+// TestChainResumeRefusesAGateFlagOnARemoteBuilder pins the one refusal: the
+// wire has no route that updates a served binding's check, so --gate and
+// --no-gate are refused; --regate, which is the chain's own repair budget,
+// still travels.
+func TestChainResumeRefusesAGateFlagOnARemoteBuilder(t *testing.T) {
+	t.Parallel()
+
+	fr := chainRemoteFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	startedChain(t, rt, ChainOptions{})
+	advanceRemoteChain(t, rt, 2)
+	haltRemoteChain(t, rt)
+
+	for _, opts := range []ResumeOptions{
+		{Name: "shop", Gate: "make check"},
+		{Name: "shop", NoGate: true},
+	} {
+		_, err := ChainResume(context.Background(), rt, opts)
+		if err == nil {
+			t.Fatalf("ChainResume %+v = nil, want the refusal", opts)
+		}
+		if !strings.Contains(err.Error(), "fixed at create") {
+			t.Errorf("err = %q, want it to say the check is fixed at create", err)
+		}
+	}
+
+	// The chain was left halted by the refusals; --regate alone is accepted and
+	// the resume ships round 2.
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Regate: ptr(3)}); err != nil {
+		t.Fatalf("ChainResume --regate: %v", err)
+	}
+	if b := chainBinding(t, rt, "shop"); b.Regate != 3 {
+		t.Errorf("builder regate = %d, want the flag's 3", b.Regate)
 	}
 }
 

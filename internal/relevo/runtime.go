@@ -429,7 +429,7 @@ type RemoteClient interface {
 	// dedupes a repeated send may be sent the same round twice (#373 §4.4).
 	// force carries SendOptions.Force to the server's own seed-cap check, and
 	// is gated on remote.FeatureForce before the call (#702).
-	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error)
+	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool, verify *bool) (remote.BindingView, error)
 	RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
 	RoundFileFrom(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error)
 	// RoundArtifacts and RoundArtifact read a closed reader round's artifacts;

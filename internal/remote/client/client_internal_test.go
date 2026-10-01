@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -110,7 +112,7 @@ func retryPolicyCases() []retryCase {
 			name:   "StartRound without the idempotent flag is one attempt",
 			status: http.StatusBadGateway,
 			call: func(cl *Client, ctx context.Context) error {
-				_, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, nil, false)
+				_, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", false, nil, false, nil)
 				return err
 			},
 			wantAttempts: 1,
@@ -215,7 +217,7 @@ func TestStartRoundRetryReReadsTheSpooledBody(t *testing.T) {
 
 	plan := []byte("# Round 1 plan\n")
 	bundle := []byte("bundle-bytes-0123456789")
-	view, err := cl.StartRound(context.Background(), "zen", "api", 1, plan, bytes.NewReader(bundle), "", "", false, nil, true)
+	view, err := cl.StartRound(context.Background(), "zen", "api", 1, plan, bytes.NewReader(bundle), "", "", false, nil, true, nil)
 	if err != nil {
 		t.Fatalf("StartRound: %v", err)
 	}
@@ -234,6 +236,41 @@ func TestStartRoundRetryReReadsTheSpooledBody(t *testing.T) {
 	}
 	if got[1].bundle != string(bundle) {
 		t.Fatalf("retry bundle = %q, want %q", got[1].bundle, string(bundle))
+	}
+}
+
+// TestStartRoundCarriesVerifyField pins the round form's verify field: a
+// non-nil verify spools "verify=0"/"1"; nil omits it, leaving the server's own
+// policy in charge.
+func TestStartRoundCarriesVerifyField(t *testing.T) {
+	parse := func(t *testing.T, verify *bool) map[string][]string {
+		t.Helper()
+		tmp, _, _, ct, err := spoolStartRound(1, []byte("# Plan"), nil, "", "", false, nil, verify)
+		if err != nil {
+			t.Fatalf("spoolStartRound: %v", err)
+		}
+		defer func() { _ = tmp.Close(); _ = os.Remove(tmp.Name()) }()
+		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+			t.Fatalf("seek: %v", err)
+		}
+		mr := multipart.NewReader(tmp, strings.Split(ct, "boundary=")[1])
+		form, err := mr.ReadForm(1 << 20)
+		if err != nil {
+			t.Fatalf("ReadForm: %v", err)
+		}
+		return form.Value
+	}
+
+	no := false
+	if got := parse(t, &no)["verify"]; len(got) != 1 || got[0] != "0" {
+		t.Fatalf("verify=0 spooled %v, want [0]", got)
+	}
+	yes := true
+	if got := parse(t, &yes)["verify"]; len(got) != 1 || got[0] != "1" {
+		t.Fatalf("verify=1 spooled %v, want [1]", got)
+	}
+	if got, ok := parse(t, nil)["verify"]; ok {
+		t.Fatalf("nil verify did not omit the field: %v", got)
 	}
 }
 

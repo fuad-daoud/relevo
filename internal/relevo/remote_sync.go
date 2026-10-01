@@ -517,6 +517,13 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 		}
 	}
 
+	// The chain's own staged rounds ship here, after the per-binding loop: a
+	// remote member's round is staged wherever a local send would start it, and
+	// this pass is what collects and ships it when no daemon is running.
+	if err := chainSendPending(ctx, rt); err != nil {
+		errs = append(errs, err)
+	}
+
 	return synced, errors.Join(errs...)
 }
 

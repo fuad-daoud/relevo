@@ -117,6 +117,13 @@ func applyCatchUpFiles(rt Runtime, tx *store.Tx, b store.Binding, view remote.Bi
 			return false
 		}
 	}
+	gatePath := rt.Store.GateLogPath(name, n)
+	if cf.GateTemp != "" {
+		if err := os.Rename(cf.GateTemp, gatePath); err != nil {
+			slog.Warn("write gate failed", "path", gatePath, "err", err)
+			return false
+		}
+	}
 	return true
 }
 
@@ -209,6 +216,21 @@ func clearAbsorbHalt(b store.Binding) store.Binding {
 	return b
 }
 
+// remoteGateRecord is the closed remote round's gate record for its report
+// entry: the view's result with the locally fetched log path, or nil when the
+// server ran no check. The record carries no Command -- the chain's repair text
+// names the member's own Gate -- because the server's command is not part of
+// the view. A nil record reads as chain.GateNone: the round ran no check.
+func remoteGateRecord(rt Runtime, b store.Binding, a *catchUpAck) *store.GateRecord {
+	if a.View.GateResult == "" {
+		return nil
+	}
+	return &store.GateRecord{
+		Result:  a.View.GateResult,
+		LogPath: rt.Store.GateLogPath(b.Name, a.View.ClosedRound),
+	}
+}
+
 // applyCatchUpReport queues the round's report entry: the client's own diff
 // entry from the server's facts first, then the payload, the stop entry and
 // the idle status, in the order the inline catch-up used.
@@ -244,7 +266,7 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		// sent none rather than reading a record the client does not have.
 		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
 	}
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPathFor(rt, b), payload, note, nil, u, a.View.Rusage, a.View.PriorTokens, a.View.ReportOutcome, false)
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPathFor(rt, b), payload, note, remoteGateRecord(rt, b, a), u, a.View.Rusage, a.View.PriorTokens, a.View.ReportOutcome, a.View.Stopped != "")
 	if err != nil {
 		return b, err
 	}
