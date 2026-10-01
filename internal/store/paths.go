@@ -200,6 +200,14 @@ func (s *Store) GateLogPath(name string, round int) string {
 	return s.roundFile(name, round, "gate", ".log")
 }
 
+// CheckLogPath is a round_file key for one chain check run's log, sealed at
+// the check's end. The member is the chain's writer and round its newest
+// closed round; the run number keeps a re-run from overwriting an earlier
+// log. It is read with Store.ReadFile.
+func (s *Store) CheckLogPath(name string, round, run int) string {
+	return s.roundFile(name, round, fmt.Sprintf("check-%03d", run), ".log")
+}
+
 func (s *Store) QuestionPath(name string, round int) string {
 	return s.roundFile(name, round, "question", ".md")
 }
