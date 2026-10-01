@@ -26,16 +26,6 @@ func storedFlowParam(t *testing.T, row db.ChainRow, name string) string {
 	return p.Str
 }
 
-// startedFlowChain starts one chain on the shipped default workflow: startedChain
-// with Workflow set, so a test that used to drive the fixed state machine runs on
-// the engine instead. The chain's row columns stay projected, so a test keeps
-// its plan and step assertions.
-func startedFlowChain(t *testing.T, rt Runtime, opts ChainOptions) ChainResult {
-	t.Helper()
-	opts.Workflow = "default"
-	return startedChain(t, rt, opts)
-}
-
 // flowCheckRun is a chain's oldest unsettled check run, failing when the chain
 // has none.
 func flowCheckRun(t *testing.T, rt Runtime, name string) (int, db.ChainCheckRow) {

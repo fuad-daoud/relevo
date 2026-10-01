@@ -162,7 +162,7 @@ func TestConsumedMemberCloseReadsAsSeen(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	row, err := statusRow(context.Background(), rt, chainBinding(t, rt, "shop"))
@@ -181,7 +181,7 @@ func TestConsumedMemberCloseIsNotPending(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
@@ -215,7 +215,7 @@ func TestChainBuilderCloseSeedsReviewer(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
@@ -261,7 +261,7 @@ func TestChainReviewerSeedSaysNoCheckRan(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
@@ -314,7 +314,7 @@ func TestChainReviewerSeedNamesTheCheckThatRan(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{Gate: "make check"})
+		startedChain(t, rt, ChainOptions{Gate: "make check"})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
 		chainGreenCheck(t, rt, "shop")
 
@@ -325,7 +325,7 @@ func TestChainReviewerSeedNamesTheCheckThatRan(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(1)})
+		startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(1)})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
 		chainRedCheck(t, rt, "shop", "FAIL one\n")
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
@@ -411,7 +411,7 @@ func TestChainBuilderRedGateRepairsBeforeTheReviewer(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
+	startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainRedCheck(t, rt, "shop", "FAIL the same thing\n")
@@ -448,7 +448,7 @@ func TestChainBuilderRedAfterRegateSeedsReviewer(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(1)})
+	startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(1)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainRedCheck(t, rt, "shop", "FAIL one\n")
@@ -483,7 +483,7 @@ func TestChainBuilderRedWithUnchangedGateOutputSeedsReviewer(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(3)})
+	startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(3)})
 
 	// The failure equals the one the last repair round already saw, with room
 	// left in the budget: only the stall bound can stop the second repair.
@@ -514,7 +514,7 @@ func TestChainRepairHaltHaltsTheChain(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
+	startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
 
 	// A symlinked plan path: the repair round cannot stage its plan, so the
 	// send halts the chain instead of opening round 2.
@@ -548,7 +548,7 @@ func TestChainRepairRoundCloseReachesTheReviewer(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
+	startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainRedCheck(t, rt, "shop", "FAIL the same thing\n")
@@ -617,7 +617,7 @@ func TestChainAwaitsTheSentMembersOwnRound(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	// The reviewer is rounds ahead of the builder's first: its next send opens
 	// round 4, which the builder's stale round 1 must not shadow.
@@ -654,7 +654,7 @@ func TestChainReviewerPassAdvancesToPlanTwo(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Plans: []string{writePlan(t, "plan one"), writePlan(t, "plan two")}})
+	startedChain(t, rt, ChainOptions{Plans: []string{writePlan(t, "plan one"), writePlan(t, "plan two")}})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
@@ -682,7 +682,7 @@ func TestChainReviewerChangesSeedsCorrection(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+	startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
@@ -707,7 +707,7 @@ func TestChainCorrectionPlanSendsTheBuilderAndSpendsOneCorrection(t *testing.T) 
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+	startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
@@ -729,7 +729,7 @@ func TestChainSecurityFindingsSeedTheFixPlanner(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Security: ptr(true)})
+	startedChain(t, rt, ChainOptions{Security: ptr(true)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
@@ -756,7 +756,7 @@ func TestChainSecurityNoFindingsFinishes(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Security: ptr(true)})
+	startedChain(t, rt, ChainOptions{Security: ptr(true)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
@@ -774,7 +774,7 @@ func TestChainFinishQueuesExactlyOneDelivery(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
@@ -814,7 +814,7 @@ func TestChainHaltQueuesTheReasonAndResumeCommand(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainNoVerdictBody())
@@ -843,35 +843,58 @@ func TestChainHaltQueuesTheReasonAndResumeCommand(t *testing.T) {
 	}
 }
 
+// plantLegacyChain writes a fixed-state-machine chain row and its three
+// members -- the state a legacy chain start left -- so a test can drive the
+// legacy path after the default start moved onto the engine. planPaths is the
+// row's stored plan-path JSON; a broken value exercises a staging failure.
+func plantLegacyChain(t *testing.T, rt Runtime, name, planPaths string, plans int) {
+	t.Helper()
+	row := testChainRow(name)
+	row.Plan = plans
+	row.Plans = plans
+	row.PlanPathsJSON = []byte(planPaths)
+	row.AwaitingMember = chain.MemberBuilder
+	row.AwaitingRound = 1
+	row.Reviewer = name + "-rev"
+	row.Planner = name + "-plan"
+	row.SettingsJSON = []byte(`{}`)
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.ChainPut(row); err != nil {
+			return err
+		}
+		for _, m := range []store.Binding{
+			{Name: name, CWD: "/legacy/" + name, Round: 1, State: store.StateActive, Role: "builder", Shape: store.ShapeWriter},
+			{Name: name + "-rev", CWD: "/legacy/" + name, Round: 1, State: store.StateActive, Role: "reviewer", Shape: store.ShapeReader},
+			{Name: name + "-plan", CWD: "/legacy/" + name, Round: 1, State: store.StateActive, Role: "lite-planner", Shape: store.ShapeReader},
+		} {
+			if err := tx.Save(m); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("plant legacy chain %s: %v", name, err)
+	}
+}
+
 // TestChainAdvanceWritesStateAndTraceInOneTransaction pins the atomicity of the
-// chain's state and its trace row: when the advance cannot be staged, neither
-// is written and the old state stands.
+// legacy chain's state and its trace row: when the advance cannot be staged,
+// neither is written and the old state stands.
 func TestChainAdvanceWritesStateAndTraceInOneTransaction(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedChain(t, rt, ChainOptions{})
-
 	// Break the stored plan copies, so the reviewer's seed cannot be built:
 	// the advance fails before either write.
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		row, err := tx.Chain("shop")
-		if err != nil {
-			return err
-		}
-		row.PlanPathsJSON = []byte("{not json")
-		return tx.ChainPut(row)
-	})
-	if err != nil {
-		t.Fatalf("plant the staging failure: %v", err)
-	}
+	plantLegacyChain(t, rt, "shop", "{not json", 1)
 
 	b := chainBinding(t, rt, "shop")
 	ev := chain.Event{
 		Kind: chain.EventBuilderClosed, Member: chain.MemberBuilder, Round: 1,
 		Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
 	}
-	err = rt.Store.WithLock(func(tx *store.Tx) error {
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		_, err := chainApply(context.Background(), rt, tx, b, ev, nil, nil)
 		return err
 	})
@@ -889,13 +912,14 @@ func TestChainAdvanceWritesStateAndTraceInOneTransaction(t *testing.T) {
 	}
 }
 
-// TestChainIgnoresACloseForAnotherRound pins the awaited-round guard: a close
-// that does not name the awaited round changes nothing and writes no trace.
+// TestChainIgnoresACloseForAnotherRound pins the legacy awaited-round guard: a
+// close that does not name the awaited round changes nothing and writes no
+// trace.
 func TestChainIgnoresACloseForAnotherRound(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedChain(t, rt, ChainOptions{})
+	plantLegacyChain(t, rt, "shop", `["/p/plan-1.md"]`, 1)
 
 	b := chainBinding(t, rt, "shop")
 	ev := chain.Event{
@@ -926,27 +950,11 @@ func TestChainReviewerCloseWithoutAVerdictHalts(t *testing.T) {
 	rt, _ := chainRuntime(t)
 	startedChain(t, rt, ChainOptions{})
 
-	// Put the chain where it awaits the reviewer's first close, so the test
-	// names only the verdict.
-	row := chainStoredRow(t, rt, "shop")
-	row.AwaitingMember = chain.MemberReviewer
-	row.AwaitingRound = 1
-	row.Step = string(chain.StepReviewing)
-	if err := rt.Store.WithLock(func(tx *store.Tx) error { return tx.ChainPut(row) }); err != nil {
-		t.Fatalf("seed the awaiting row: %v", err)
-	}
-
-	rev := chainBinding(t, rt, "shop-rev")
-	ev := chain.Event{Kind: chain.EventReviewerClosed, Member: chain.MemberReviewer, Round: 1}
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		_, err := chainApply(context.Background(), rt, tx, rev, ev, nil, nil)
-		return err
-	}); err != nil {
-		t.Fatalf("chainApply: %v", err)
-	}
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-rev", chainNoVerdictBody())
 
 	after := chainStoredRow(t, rt, "shop")
-	if after.Status != string(chain.StatusHalted) || !strings.Contains(after.Reason, "reviewer gave no verdict") {
+	if after.Status != string(chain.StatusHalted) || !strings.Contains(after.Reason, "no relevo block carries it") {
 		t.Errorf("chain = status %q reason %q, want a halt on the missing verdict", after.Status, after.Reason)
 	}
 	if after.Plan != 1 {
@@ -960,8 +968,8 @@ func TestChainTraceSeqIsPerChain(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Name: "alpha"})
-	startedFlowChain(t, rt, ChainOptions{Name: "beta"})
+	startedChain(t, rt, ChainOptions{Name: "alpha"})
+	startedChain(t, rt, ChainOptions{Name: "beta"})
 
 	chainBuilderClose(t, rt, "alpha", chainDoneBody())
 	chainBuilderClose(t, rt, "beta", chainDoneBody())
@@ -995,7 +1003,7 @@ func TestChainBuilderHaltedWithRedGateHaltsTheChain(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	// A repair is still in budget, and the gate fails: without the outcome
 	// guard this is exactly the repair path's input.
@@ -1039,7 +1047,7 @@ func TestChainHaltWithTheBuilderGoneDeliversOnASurvivingMember(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	// The builder's record is the one that is gone; the reviewer's survives.
 	if err := rt.Store.Delete("shop"); err != nil {
@@ -1076,7 +1084,7 @@ func TestSendRefusedOnARunningChainMember(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	plan := writePlan(t, "x")
 	if _, err := Send(context.Background(), rt, "shop", plan, SendOptions{}); !errors.Is(err, ErrRunningChainMember) {
@@ -1105,7 +1113,7 @@ func TestSendAllowedAfterTheChainStops(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
 		t.Fatalf("Stop: %v", err)
@@ -1141,7 +1149,7 @@ func TestChainBuilderHaltCarriesTheReportTailReason(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	chainBuilderClose(t, rt, "shop", chainHaltedBody("waiting on a decision"))
 
@@ -1188,7 +1196,7 @@ func TestChainBuilderHaltReasonSources(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{})
+		startedChain(t, rt, ChainOptions{})
 
 		// A marker with no report closes with the note "noreport": the tail
 		// parses to nothing, so the note is the only source left.
@@ -1205,7 +1213,7 @@ func TestChainBuilderHaltReasonSources(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{})
+		startedChain(t, rt, ChainOptions{})
 
 		chainBuilderClose(t, rt, "shop", chainSourceBody("halted", "", "finish the tests, then the docs"))
 
@@ -1218,7 +1226,7 @@ func TestChainBuilderHaltReasonSources(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{})
+		startedChain(t, rt, ChainOptions{})
 
 		chainBuilderClose(t, rt, "shop", chainSourceBody("blocked", "", ""))
 
@@ -1248,7 +1256,7 @@ func TestChainReviewerSeedNamesThePlanCumulativeDiff(t *testing.T) {
 
 	rt, fg := chainRuntime(t)
 	chainPlanDiffFixtures(fg)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
@@ -1302,7 +1310,7 @@ func TestChainPlanDiffStartsAtThePlanStartCommit(t *testing.T) {
 
 	rt, fg := chainRuntime(t)
 	chainPlanDiffFixtures(fg)
-	startedFlowChain(t, rt, ChainOptions{Plans: []string{writePlan(t, "plan one"), writePlan(t, "plan two")}})
+	startedChain(t, rt, ChainOptions{Plans: []string{writePlan(t, "plan one"), writePlan(t, "plan two")}})
 
 	if got := chainStoredRow(t, rt, "shop").PlanStartCommit; got != "commit-head-123" {
 		t.Fatalf("plan 1 start = %q, want the cut commit", got)
@@ -1341,7 +1349,7 @@ func TestChainPlanStartCommitResetOnlyOnNewPlans(t *testing.T) {
 
 	rt, fg := chainRuntime(t)
 	chainPlanDiffFixtures(fg)
-	startedFlowChain(t, rt, ChainOptions{
+	startedChain(t, rt, ChainOptions{
 		Plans:          []string{writePlan(t, "plan one"), writePlan(t, "plan two")},
 		MaxCorrections: ptr(2),
 		Security:       ptr(true),
@@ -1392,7 +1400,7 @@ func TestChainCorrectionRoundRunsThePlannersPlan(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+	startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
@@ -1424,7 +1432,7 @@ func TestChainReviewerSeedNamesTheRoundPromptOfACorrection(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+	startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
@@ -1447,7 +1455,7 @@ func TestChainReviewerSeedOmitsThePlanCopyAsRoundPrompt(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
@@ -1763,7 +1771,7 @@ func TestChainTraceRowsKeepTheirOwnPlan(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Plans: []string{writePlan(t, "plan one"), writePlan(t, "plan two")}})
+	startedChain(t, rt, ChainOptions{Plans: []string{writePlan(t, "plan one"), writePlan(t, "plan two")}})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
@@ -1793,13 +1801,7 @@ func TestChainTraceRowWithoutAPlanUsesTheChainsPlan(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedChain(t, rt, ChainOptions{Plans: []string{writePlan(t, "plan one"), writePlan(t, "plan two")}})
-
-	chainBuilderClose(t, rt, "shop", chainDoneBody())
-	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
-	if row := chainStoredRow(t, rt, "shop"); row.Plan != 2 {
-		t.Fatalf("chain plan = %d, want 2", row.Plan)
-	}
+	plantLegacyChain(t, rt, "shop", `["/p/plan-1.md","/p/plan-2.md"]`, 2)
 
 	// A row written before 019: its stored plan reads 0, and the trace shows
 	// the chain's current plan.
@@ -1836,7 +1838,7 @@ func TestChainReviewerSeedNamesACopyOfTheSealedDiff(t *testing.T) {
 
 	rt, fg := chainRuntime(t)
 	chainPlanDiffFixtures(fg)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	key := rt.Store.DiffPath("shop", 1)
@@ -1878,7 +1880,7 @@ func TestChainReviewerSeedNamesACopyOfThePlanDiff(t *testing.T) {
 
 	rt, fg := chainRuntime(t)
 	chainPlanDiffFixtures(fg)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	key := rt.Store.PlanDiffPath("shop", 1)
@@ -1922,7 +1924,7 @@ func TestChainCorrectionSeedCopiesASealedBuilderReport(t *testing.T) {
 
 	rt, fg := chainRuntime(t)
 	chainPlanDiffFixtures(fg)
-	startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+	startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	// Seal the builder's judged round: its report is now a row, not a file.
@@ -1973,7 +1975,7 @@ func TestChainReviewerSeedSaysNotAvailableForAnUnreadableGateLog(t *testing.T) {
 
 	rt, fg := chainRuntime(t)
 	chainPlanDiffFixtures(fg)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 	chainArmPassingGate(t, rt, "shop", "")
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
@@ -2008,7 +2010,7 @@ func TestChainCorrectionSeedNamesTheReviewersOutputFile(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+	startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	reviewerRound := chainBinding(t, rt, "shop-rev").Round
@@ -2040,7 +2042,7 @@ func TestRepairRoundSeedFramesThePlanAndListsEveryBuilderRound(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(1)})
+	startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(1)})
 
 	// Round 1's red check buys a repair: round 2 opens with a repair note.
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
@@ -2090,7 +2092,7 @@ func TestChainReviewerSeedNamesTheCorrectionRoundKind(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+	startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
@@ -2123,7 +2125,7 @@ func TestReviewerSeedNamesTheDiffFromWhenNoPlanDiffWasCaptured(t *testing.T) {
 
 	rt, fg := chainRuntime(t)
 	fg.refSHA = map[string]string{"release/v1": "commit-base-456"}
-	startedFlowChain(t, rt, ChainOptions{Base: "release/v1"})
+	startedChain(t, rt, ChainOptions{Base: "release/v1"})
 
 	// A chain started before the plan-start commit was recorded: no commit on
 	// the row, so the seed must fall back to the base for plan 1.
@@ -2184,7 +2186,7 @@ func TestReviewerRecapAfterTheBlockKeepsTheBlockMessage(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	rev := chainBinding(t, rt, "shop-rev")
@@ -2223,7 +2225,7 @@ func TestSecurityRecapAfterTheBlockStillYieldsTheFindings(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{Security: ptr(true)})
+	startedChain(t, rt, ChainOptions{Security: ptr(true)})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
 
@@ -2283,7 +2285,7 @@ func TestChainInputsAreRemovedWhenTheChainEnds(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{})
+		startedChain(t, rt, ChainOptions{})
 		dir := openInputs(t, rt)
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
 		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
@@ -2298,7 +2300,7 @@ func TestChainInputsAreRemovedWhenTheChainEnds(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{})
+		startedChain(t, rt, ChainOptions{})
 		dir := openInputs(t, rt)
 		if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
 			t.Fatalf("Stop: %v", err)
@@ -2314,7 +2316,7 @@ func TestChainInputsAreRemovedWhenTheChainEnds(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{})
+		startedChain(t, rt, ChainOptions{})
 		dir := openInputs(t, rt)
 		chainBuilderClose(t, rt, "shop", chainHaltedBody("stuck"))
 		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {

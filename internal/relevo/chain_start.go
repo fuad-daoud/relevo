@@ -14,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
-	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainMaxNameLen is the longest chain name: the longest member suffix is
@@ -150,160 +149,12 @@ func ChainStart(ctx context.Context, rt Runtime, opts ChainOptions) (ChainResult
 	if opts.Server != "" {
 		return chainStartServer(ctx, rt, opts)
 	}
-	// A chain started with a named workflow runs on the workflow engine; the
-	// shipped default reached through no --workflow keeps the old path.
-	if opts.Workflow != "" {
-		return chainStartWorkflow(ctx, rt, opts)
+	// The shipped default is the workflow every chain runs when no --workflow
+	// names another, so a start always runs on the engine.
+	if opts.Workflow == "" {
+		opts.Workflow = "default"
 	}
-	plan, err := chainResolveStart(ctx, rt, opts)
-	if err != nil {
-		return ChainResult{}, err
-	}
-	return chainCreate(ctx, rt, opts, plan)
-}
-
-// chainResolveStart runs every precondition of a start: the settings, the
-// names, the plans, the actor shapes, their candidates and the caller's
-// mastermind. It reads and writes nothing.
-func chainResolveStart(ctx context.Context, rt Runtime, opts ChainOptions) (chainStartPlan, error) {
-	plan := chainStartPlan{settings: chainSettings(rt.Policy, opts, roleChecks(rt.RoleRegistry(), "builder"))}
-
-	repo, err := os.Getwd()
-	if err != nil {
-		return chainStartPlan{}, fmt.Errorf("resolve working directory: %w", err)
-	}
-	plan.repo = repo
-	if err := chainValidate(opts); err != nil {
-		return chainStartPlan{}, err
-	}
-	if plan.ticket, err = chainTicket(ctx, rt, opts.Ticket, repo); err != nil {
-		return chainStartPlan{}, err
-	}
-	if plan.bodies, err = chainPlanBodies(opts.Plans); err != nil {
-		return chainStartPlan{}, err
-	}
-
-	plan.members = chainMembersFor(opts, plan.settings)
-	if err := chainFreeNames(rt, plan.members); err != nil {
-		return chainStartPlan{}, err
-	}
-	if plan.resolutions, err = chainResolveActors(rt, plan.members); err != nil {
-		return chainStartPlan{}, err
-	}
-	if err := chainValidateDefault(rt, plan.settings, workflow.Given{Plans: len(plan.bodies) > 0}); err != nil {
-		return chainStartPlan{}, err
-	}
-	// Every member's placement is resolved before anything is created: the
-	// builder first (its list is walked exactly as `bind --actor` would), then
-	// each reader's, whose server entries are skipped unprobed. A remote
-	// builder also resolves its read-only preflight here, so no refusal fires
-	// after the server has been asked to create anything.
-	if plan.placements, err = chainResolvePlacements(ctx, rt, opts, plan); err != nil {
-		return chainStartPlan{}, err
-	}
-	// Each resolution carries its placement, so the member's pick note records
-	// where it landed and every entry its actor's list passed over -- exactly as
-	// a local bind's does.
-	for part, p := range plan.placements {
-		res := plan.resolutions[part]
-		res.Placement = p
-		plan.resolutions[part] = res
-	}
-	if p := plan.placements[chain.MemberBuilder]; !p.local() {
-		if plan.remote, err = chainRemotePreflight(ctx, rt, opts, plan, p); err != nil {
-			return chainStartPlan{}, err
-		}
-	}
-
-	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
-	if err != nil {
-		return chainStartPlan{}, err
-	}
-	if !haveRec {
-		return chainStartPlan{}, ErrNoMasterMindSession
-	}
-	plan.mastermindID = rec.ID
-	plan.mastermind = recordEndpoint(rec)
-	if plan.mastermind.TranscriptLocator == "" {
-		plan.mastermind.TranscriptLocator = mastermindLocator(rt, plan.mastermind.Kind, plan.mastermind.SessionID)
-	}
-	return plan, nil
-}
-
-// chainCreate is the half of a start that creates things: it cuts the
-// builder's worktree, builds every member, writes the chain row and the
-// members in one transaction, copies the plans and sends plan 1. A builder
-// whose placement named a server takes the remote path instead; the local path
-// is unchanged.
-func chainCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan) (ChainResult, error) {
-	if plan.remote != nil {
-		return chainCreateWithRemoteBuilder(ctx, rt, opts, plan)
-	}
-	worktree, branch, commit, baseRef, err := cutWorktree(ctx, rt, opts.Name, plan.repo, opts.Base)
-	if err != nil {
-		return ChainResult{}, err
-	}
-	base := chainBase{
-		cwd: worktree, mastermind: plan.mastermind, mastermindID: plan.mastermindID,
-		repo: plan.repo, repoRef: captureRepo(ctx, rt, plan.repo), feature: opts.Feature, ticket: plan.ticket,
-		worktree: worktree, branch: branch, commit: commit, baseRef: baseRef,
-	}
-	built, err := chainBuildMembers(ctx, rt, plan.members, plan.resolutions, base, plan.settings)
-	if err != nil {
-		chainRollback(ctx, rt, plan.repo, worktree, branch)
-		return ChainResult{}, err
-	}
-
-	planPaths := make([]string, len(plan.bodies))
-	for i := range plan.bodies {
-		planPaths[i] = rt.Store.ChainPlanPath(opts.Name, i+1)
-	}
-	now := time.Now
-	if rt.Now != nil {
-		now = rt.Now
-	}
-	row, err := chainRow(opts, plan.settings, plan.members, base, planPaths, now())
-	if err != nil {
-		chainRollback(ctx, rt, plan.repo, worktree, branch)
-		return ChainResult{}, err
-	}
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		if err := tx.CreateChain(row, built); err != nil {
-			return err
-		}
-		return chainAppendPickNotes(tx, rt, plan.members, plan.resolutions)
-	}); err != nil {
-		chainRollback(ctx, rt, plan.repo, worktree, branch)
-		return ChainResult{}, err
-	}
-
-	stored, err := chainStoredMembers(rt, plan.members)
-	if err != nil {
-		return ChainResult{}, err
-	}
-	if err := chainCopyPlans(rt, opts.Name, plan.bodies); err != nil {
-		return ChainResult{}, fmt.Errorf("chain %q started, but copying its plans failed: %w", opts.Name, err)
-	}
-	// Plan 1 goes through the chain's own sender, so a running chain's
-	// refusal never bites its own start. The member carries its resolved
-	// candidate already, so none of Send's preflight is needed. A failure
-	// leaves the chain row running and the builder member NEEDS YOU; a later
-	// round's sweep turns that into a halt.
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		b, err := tx.Load(opts.Name)
-		if err != nil {
-			return err
-		}
-		body, err := rt.Store.ReadFile(rt.Store.ChainPlanPath(opts.Name, 1))
-		if err != nil {
-			return err
-		}
-		_, err = sendChainRound(ctx, rt, tx, b, string(body))
-		return err
-	}); err != nil {
-		return ChainResult{}, fmt.Errorf("chain %q started, but plan 1 could not be handed to %s: %w", opts.Name, opts.Name, err)
-	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chainBuilderCheck(stored, opts.Name)}, nil
+	return chainStartWorkflow(ctx, rt, opts)
 }
 
 // chainRollback removes what a failed start created: the worktree and the

@@ -119,7 +119,7 @@ func TestResumeReSeedsFixesForPlanningFixes(t *testing.T) {
 // builder. That is the state a resume exists for.
 func stoppedChain(t *testing.T, rt Runtime, opts ChainOptions) {
 	t.Helper()
-	startedFlowChain(t, rt, opts)
+	startedChain(t, rt, opts)
 	if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
 		t.Fatalf("Stop shop: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestChainResumeResetsCorrections(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+	startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 
 	// One correction round, then a builder round that halts: the chain holds
 	// a spent correction when the resume arrives.
@@ -251,7 +251,7 @@ func TestChainResumeRefusesRunningOrDone(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{})
+		startedChain(t, rt, ChainOptions{})
 
 		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err == nil {
 			t.Fatal("ChainResume on a running chain = nil, want a refusal")
@@ -269,7 +269,7 @@ func TestChainResumeRefusesRunningOrDone(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{})
+		startedChain(t, rt, ChainOptions{})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
 		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
 		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusDone) {
@@ -658,7 +658,7 @@ func TestChainResumeRemoteBuilderShipsThroughThePendingStep(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
-	startedChain(t, rt, ChainOptions{})
+	seedRemoteChain(t, rt, "shop", remoteChainOpts{})
 	advanceRemoteChain(t, rt, 2)
 	haltRemoteChain(t, rt)
 
@@ -674,7 +674,7 @@ func TestChainResumeRemoteBuilderShipsThroughThePendingStep(t *testing.T) {
 	if fr.startRoundVerify == nil || *fr.startRoundVerify {
 		t.Errorf("verify = %v, want an explicit false", fr.startRoundVerify)
 	}
-	if string(fr.startRoundPlan) != "build it" {
+	if string(fr.startRoundPlan) != "plan 1\n" {
 		t.Errorf("shipped plan = %q, want the plan copy", fr.startRoundPlan)
 	}
 	if !promptNoteFor(chainLog(t, rt, "shop"), 2, "chain builder") {
@@ -699,7 +699,7 @@ func TestChainResumeRefusesAGateFlagOnARemoteBuilder(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
-	startedChain(t, rt, ChainOptions{})
+	seedRemoteChain(t, rt, "shop", remoteChainOpts{})
 	advanceRemoteChain(t, rt, 2)
 	haltRemoteChain(t, rt)
 
@@ -859,7 +859,7 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+		startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
 		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
 		chainReaderClose(t, rt, "shop-plan", "# Correction plan\n\nDo it.\n")
@@ -875,7 +875,7 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
+		startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
 		chainRedCheck(t, rt, "shop", "FAIL the same thing\n")
 
@@ -890,7 +890,7 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedFlowChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
+		startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
 		chainRedCheck(t, rt, "shop", "FAIL the same thing\n")
 
@@ -928,7 +928,7 @@ func TestChainResumeSupersedesTheStaleEndDelivery(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	startedFlowChain(t, rt, ChainOptions{})
+	startedChain(t, rt, ChainOptions{})
 	chainBuilderClose(t, rt, "shop", chainHaltedBody("the step failed"))
 
 	pendingChain := func() int {
@@ -981,10 +981,10 @@ func TestChainResumeClosesADeadMemberRound(t *testing.T) {
 		t.Fatal("test premise: the reviewer's round must be open")
 	}
 
-	// The reviewer dies without a close: NEEDS YOU, no process, and the chain
-	// halted on the member -- the state a round that died without a report
-	// leaves.
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
+	// The reviewer dies without a close: NEEDS YOU and no process, so the next
+	// sweep halts the chain on the member -- the state a round that died
+	// without a report leaves.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		rev, err := tx.Load("shop-rev")
 		if err != nil {
 			return err
@@ -994,23 +994,13 @@ func TestChainResumeClosesADeadMemberRound(t *testing.T) {
 			return err
 		}
 		rev.Builder = clearProcess(rev.Builder)
-		if err := tx.Save(rev); err != nil {
-			return err
-		}
-		row, err := tx.Chain("shop")
-		if err != nil {
-			return err
-		}
-		s, err := chainStateOf(row)
-		if err != nil {
-			return err
-		}
-		s.Status = chain.StatusHalted
-		s.Reason = "member shop-rev: exited without an output"
-		return tx.ChainPut(chainRowWithState(row, s, rt.Now().UTC()))
-	})
-	if err != nil {
-		t.Fatalf("halt the reviewer and the chain: %v", err)
+		return tx.Save(rev)
+	}); err != nil {
+		t.Fatalf("halt the reviewer: %v", err)
+	}
+	tickChains(context.Background(), rt)
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted on the dead reviewer", row.Status)
 	}
 
 	// The resume closes the dead round the way a stop would and re-runs the

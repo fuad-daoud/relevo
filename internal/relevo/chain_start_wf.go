@@ -59,6 +59,9 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 		return chainWFStart{}, refuse("%v", err)
 	}
 	plan := chainWFStart{def: def, settings: chainSettings(rt.Policy, opts, roleChecks(rt.RoleRegistry(), "builder"))}
+	if err := chainRefuseReaderBuilder(def, rt.RoleRegistry().WorkflowActors()); err != nil {
+		return chainWFStart{}, err
+	}
 
 	repo, err := os.Getwd()
 	if err != nil {
@@ -137,6 +140,23 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 		}
 	}
 	return plan, nil
+}
+
+// chainRefuseReaderBuilder refuses a workflow whose builder param names an
+// actor that is not a writer: that param names the member that owns the chain's
+// tree, so a reader there would leave the chain with no writer member at all.
+// A workflow with no builder param is free to name no writer, and every member
+// then takes the "<chain>-<actor>" form.
+func chainRefuseReaderBuilder(def workflow.Definition, actors map[string]workflow.ActorInfo) error {
+	p, ok := def.Params["builder"]
+	if !ok || p.Kind != workflow.ParamString {
+		return nil
+	}
+	name := workflow.RenderParams(def, "{{params.builder}}")
+	if info, ok := actors[name]; ok && info.Shape != workflow.ShapeWriter {
+		return refuse("chain builder actor %q must be a writer actor, not a reader", name)
+	}
+	return nil
 }
 
 // chainValidateWorkflowOpts refuses a bad name or feature choice before

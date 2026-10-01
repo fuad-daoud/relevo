@@ -20,6 +20,12 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
 	}
+	// A workflow chain whose awaited member's round died without a close --
+	// its process gone and no report -- would otherwise be refused for an open
+	// round. Close it the way a stop does, so the resume can open the next one.
+	if err := closeDeadMemberRound(ctx, rt, c); err != nil {
+		return ChainResult{}, err
+	}
 	def, err := chainWorkflowDef(c)
 	if err != nil {
 		return ChainResult{}, err

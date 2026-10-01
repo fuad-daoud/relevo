@@ -68,6 +68,7 @@ func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOption
 // so the tier above it stands.
 func chainParamFlags(opts ChainOptions) []chainParamFlag {
 	flags := []chainParamFlag{
+		{flag: "--builder-actor", param: "builder", value: opts.BuilderActor, given: opts.BuilderActor != ""},
 		{flag: "--reviewer-actor", param: "reviewer", value: opts.ReviewerActor, given: opts.ReviewerActor != ""},
 		{flag: "--planner-actor", param: "planner", value: opts.PlannerActor, given: opts.PlannerActor != ""},
 		{flag: "--security-actor", param: "security", value: opts.SecurityActor, given: opts.SecurityActor != ""},

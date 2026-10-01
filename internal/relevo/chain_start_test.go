@@ -116,7 +116,7 @@ func TestChainStartCreatesMembersAndSendsPlanOne(t *testing.T) {
 	t.Parallel()
 
 	rt, fg := chainRuntime(t)
-	res := startedFlowChain(t, rt, ChainOptions{})
+	res := startedChain(t, rt, ChainOptions{})
 
 	if res.Plans != 1 || len(res.Members) != 3 {
 		t.Fatalf("result = %d plans, %d members; want 1 plan, 3 members", res.Plans, len(res.Members))
@@ -197,7 +197,7 @@ func TestChainStartCreatesTheSecurityMemberWhenOn(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainRuntime(t)
-	res := startedFlowChain(t, rt, ChainOptions{Security: ptr(true)})
+	res := startedChain(t, rt, ChainOptions{Security: ptr(true)})
 
 	if len(res.Members) != 4 {
 		t.Fatalf("members = %d, want 4", len(res.Members))
@@ -223,8 +223,8 @@ func TestChainStartRefusesAnEmptyOrUnreadablePlan(t *testing.T) {
 		_, err := ChainStart(context.Background(), rt, ChainOptions{
 			Name: "shop", Plans: []string{}, Feature: "auth", MasterMindID: testMasterMindName,
 		})
-		if err == nil || !strings.Contains(err.Error(), "--plan") {
-			t.Fatalf("err = %v, want a refusal naming --plan", err)
+		if err == nil || !strings.Contains(err.Error(), "plans is required") {
+			t.Fatalf("err = %v, want the workflow's missing-plans refusal", err)
 		}
 		if !errors.Is(err, ErrRefused) {
 			t.Errorf("err = %v, want errors.Is(err, ErrRefused): a bad argument is refused, not internal", err)
@@ -365,7 +365,8 @@ func TestChainStartRefusesAMissingBase(t *testing.T) {
 }
 
 // TestChainStartRefusesAWriterReviewer pins the reviewer's shape: a writer
-// actor cannot fill the part.
+// actor cannot fill the review part, so the default workflow refuses it against
+// the actor's declared outputs.
 func TestChainStartRefusesAWriterReviewer(t *testing.T) {
 	t.Parallel()
 
@@ -374,14 +375,18 @@ func TestChainStartRefusesAWriterReviewer(t *testing.T) {
 		Name: "shop", Plans: []string{writePlan(t, "p")}, Feature: "auth",
 		ReviewerActor: "builder", MasterMindID: testMasterMindName,
 	})
-	if err == nil || !strings.Contains(err.Error(), "chain reviewer actor") {
-		t.Fatalf("err = %v, want a refusal naming the reviewer actor", err)
+	if err == nil || !strings.Contains(err.Error(), "rule 3") {
+		t.Fatalf("err = %v, want the workflow's reviewer refusal", err)
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, ErrRefused): a bad reviewer actor is refused, not internal", err)
 	}
 	assertNothingCreated(t, rt, fg, "shop")
 }
 
-// TestChainStartRefusesAReaderBuilder pins the builder's shape: a reader actor
-// cannot fill the part.
+// TestChainStartRefusesAReaderBuilder pins the builder's shape: the builder
+// param names the member that owns the chain's tree, so a reader there is
+// refused rather than left as the chain's writer.
 func TestChainStartRefusesAReaderBuilder(t *testing.T) {
 	t.Parallel()
 
@@ -404,7 +409,7 @@ func TestChainStartCutsTheBuilderFromBase(t *testing.T) {
 	rt, fg := chainRuntime(t)
 	fg.refSHA = map[string]string{"release/v1": "commit-base-456"}
 
-	res := startedFlowChain(t, rt, ChainOptions{Base: "release/v1"})
+	res := startedChain(t, rt, ChainOptions{Base: "release/v1"})
 
 	if len(fg.refSHACalls) == 0 || fg.refSHACalls[0].Ref != "release/v1" {
 		t.Fatalf("RefSHA calls = %+v, want release/v1 resolved", fg.refSHACalls)
@@ -425,7 +430,7 @@ func TestChainStartCopiesPlansSoLaterEditsDoNotChangeThem(t *testing.T) {
 
 	rt, _ := chainRuntime(t)
 	source := writePlan(t, "the original plan")
-	startedFlowChain(t, rt, ChainOptions{Plans: []string{source}})
+	startedChain(t, rt, ChainOptions{Plans: []string{source}})
 
 	if err := os.WriteFile(source, []byte("edited after the start"), 0o644); err != nil {
 		t.Fatalf("edit the source: %v", err)
@@ -501,7 +506,7 @@ func TestChainStartStoresTheResolvedSettings(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		res := startedFlowChain(t, rt, ChainOptions{Security: ptr(true)})
+		res := startedChain(t, rt, ChainOptions{Security: ptr(true)})
 
 		set := storedSettings(t, res.Chain)
 		want := chain.Settings{
@@ -527,7 +532,7 @@ func TestChainStartStoresTheResolvedSettings(t *testing.T) {
 			SecurityActor:  "security",
 			Security:       ptr(true),
 		}}
-		res := startedFlowChain(t, rt, ChainOptions{})
+		res := startedChain(t, rt, ChainOptions{})
 
 		set := storedSettings(t, res.Chain)
 		if set.MaxCorrections != 5 || !set.Security {
@@ -539,7 +544,7 @@ func TestChainStartStoresTheResolvedSettings(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		res := startedFlowChain(t, rt, ChainOptions{
+		res := startedChain(t, rt, ChainOptions{
 			MaxCorrections: ptr(1),
 			ReviewerActor:  "assistant",
 			Security:       ptr(false),
@@ -568,7 +573,7 @@ func TestChainStartResolvesTheBuilderCheck(t *testing.T) {
 
 		rt, _ := chainRuntime(t)
 		rt.Policy = gatePolicy()
-		res := startedFlowChain(t, rt, ChainOptions{})
+		res := startedChain(t, rt, ChainOptions{})
 
 		assertBuilderCheck(t, rt, res, "make check")
 		if set := storedSettings(t, res.Chain); set.Regate != 2 {
@@ -581,7 +586,7 @@ func TestChainStartResolvesTheBuilderCheck(t *testing.T) {
 
 		rt, _ := chainRuntime(t)
 		rt.Policy = gatePolicy()
-		res := startedFlowChain(t, rt, ChainOptions{Gate: "go test ./..."})
+		res := startedChain(t, rt, ChainOptions{Gate: "go test ./..."})
 
 		assertBuilderCheck(t, rt, res, "go test ./...")
 	})
@@ -591,7 +596,7 @@ func TestChainStartResolvesTheBuilderCheck(t *testing.T) {
 
 		rt, _ := chainRuntime(t)
 		rt.Policy = gatePolicy()
-		res := startedFlowChain(t, rt, ChainOptions{NoGate: true})
+		res := startedChain(t, rt, ChainOptions{NoGate: true})
 
 		assertBuilderCheck(t, rt, res, "")
 	})
@@ -601,7 +606,7 @@ func TestChainStartResolvesTheBuilderCheck(t *testing.T) {
 
 		rt, _ := chainRuntime(t)
 		rt.Policy = gatePolicy()
-		res := startedFlowChain(t, rt, ChainOptions{Regate: ptr(5)})
+		res := startedChain(t, rt, ChainOptions{Regate: ptr(5)})
 
 		if set := storedSettings(t, res.Chain); set.Regate != 5 {
 			t.Errorf("settings regate = %d, want the flag's 5", set.Regate)
@@ -612,7 +617,7 @@ func TestChainStartResolvesTheBuilderCheck(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		res := startedFlowChain(t, rt, ChainOptions{})
+		res := startedChain(t, rt, ChainOptions{})
 
 		assertBuilderCheck(t, rt, res, "")
 	})
@@ -668,7 +673,7 @@ func TestChainStartRecordsThePlanStartCommit(t *testing.T) {
 	t.Parallel()
 
 	rt, fg := chainRuntime(t)
-	res := startedFlowChain(t, rt, ChainOptions{})
+	res := startedChain(t, rt, ChainOptions{})
 
 	if fg.headCommitID == "" {
 		t.Fatal("test premise: the fake git must report a head commit")

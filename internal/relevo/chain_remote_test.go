@@ -356,8 +356,11 @@ func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
 			t.Errorf("create Gate = %q, want the resolved make check", fr.createBindingReq.Gate)
 		}
 		builder := memberByName(t, res.Members, "shop")
-		if builder.Gate != "make check" || builder.Regate != 2 {
-			t.Errorf("member gate/regate = %q/%d, want make check/2", builder.Gate, builder.Regate)
+		if builder.Gate != "make check" || builder.Regate != 0 {
+			t.Errorf("member gate/regate = %q/%d, want make check/0: a workflow chain's check is a step", builder.Gate, builder.Regate)
+		}
+		if got := storedSettings(t, res.Chain).Regate; got != 2 {
+			t.Errorf("settings regate = %d, want the policy's 2", got)
 		}
 		if res.Check != "make check" {
 			t.Errorf("result check = %q, want make check", res.Check)
@@ -392,8 +395,11 @@ func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
 		if fr.createBindingReq.Gate != "" {
 			t.Errorf("create Gate = %q, want none with no gate flag", fr.createBindingReq.Gate)
 		}
-		if builder := memberByName(t, res.Members, "shop"); builder.Regate != 3 {
-			t.Errorf("member regate = %d, want the flag's 3", builder.Regate)
+		if builder := memberByName(t, res.Members, "shop"); builder.Regate != 0 {
+			t.Errorf("member regate = %d, want 0: the workflow runs the check as a step", builder.Regate)
+		}
+		if got := storedSettings(t, res.Chain).Regate; got != 3 {
+			t.Errorf("settings regate = %d, want the flag's 3", got)
 		}
 	})
 }

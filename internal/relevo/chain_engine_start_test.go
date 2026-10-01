@@ -105,6 +105,52 @@ func TestPlacedWriterTwoCheckCommandsRefused(t *testing.T) {
 	}
 }
 
+// TestDefaultChainStartsOnWorkflowEngine pins that a start with no --workflow
+// runs the shipped default on the engine: the row stores the definition and the
+// start state, and its member rows map the actors that definition runs.
+func TestDefaultChainStartsOnWorkflowEngine(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	res := startedChain(t, rt, ChainOptions{})
+
+	row := chainStoredRow(t, rt, "shop")
+	if len(row.WorkflowJSON) == 0 {
+		t.Error("chain row stores no workflow definition")
+	}
+	if len(row.StateJSON) == 0 {
+		t.Error("chain row stores no workflow state")
+	}
+	for _, tc := range []struct{ name, actor string }{
+		{"shop", "builder"},
+		{"shop-rev", "reviewer"},
+		{"shop-plan", "lite-planner"},
+	} {
+		if m := memberByName(t, res.Members, tc.name); m.Role != tc.actor {
+			t.Errorf("member %s maps actor %q, want %q", tc.name, m.Role, tc.actor)
+		}
+	}
+}
+
+// TestDefaultChainMemberNamesPerActor pins the shipped default's member names:
+// the builder keeps the chain's own name and each reader actor takes the legacy
+// suffix its part carries.
+func TestDefaultChainMemberNamesPerActor(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	res := startedChain(t, rt, ChainOptions{Security: ptr(true)})
+
+	for _, name := range []string{"shop", "shop-rev", "shop-plan", "shop-sec"} {
+		memberByName(t, res.Members, name)
+	}
+	row := chainStoredRow(t, rt, "shop")
+	if row.Builder != "shop" || row.Reviewer != "shop-rev" || row.Planner != "shop-plan" || row.Security != "shop-sec" {
+		t.Errorf("member columns = %q/%q/%q/%q, want shop/shop-rev/shop-plan/shop-sec",
+			row.Builder, row.Reviewer, row.Planner, row.Security)
+	}
+}
+
 // TestPlacedWriterCheckAnsweredFromPulledGate pins the placed writer's check:
 // a check whose writer runs on a server starts no local run; it answers green
 // from the gate record the writer's newest closed round carries.

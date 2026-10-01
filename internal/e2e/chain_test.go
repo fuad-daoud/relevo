@@ -106,7 +106,6 @@ func TestChainE2E(t *testing.T) {
 	res, err := relevo.ChainStart(ctx, rt, relevo.ChainOptions{
 		Name:         chainE2EName,
 		Plans:        plans,
-		Workflow:     "default",
 		Feature:      "chains-s1-e2e",
 		MasterMindID: rec.ID,
 		// The reader actors: planner on architect and security on security-reviewer.

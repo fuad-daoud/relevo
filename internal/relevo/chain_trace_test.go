@@ -26,8 +26,8 @@ func traceChain(t *testing.T, rt Runtime) {
 }
 
 // TestShowTraceRendersEveryStepInOrder pins the trace's whole text: one line
-// per transition, in seq order, each naming the state before it, the member
-// that closed, its round and what the close said.
+// per transition, in seq order, each naming the step it moved from, its round
+// and the target it chose.
 func TestShowTraceRendersEveryStepInOrder(t *testing.T) {
 	t.Parallel()
 
@@ -38,19 +38,19 @@ func TestShowTraceRendersEveryStepInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChainTrace: %v", err)
 	}
-	const want = "plan 1/1  build    shop r1    no check\n" +
-		"plan 1/1  review   shop-rev r1  changes\n" +
-		"plan 1/1  correct  shop-plan r1  correction plan\n" +
-		"plan 1/1  build    shop r2    no check\n" +
-		"plan 1/1  review   shop-rev r2  pass\n"
+	const want = "build r1 → review\n" +
+		"review r1  verdict=changes → correct\n" +
+		"correct r1 → build-fix\n" +
+		"build-fix r2 → review\n" +
+		"review r2  verdict=pass → done\n"
 	if got := RenderTrace(doc); got != want {
 		t.Errorf("RenderTrace = \n%s\nwant\n%s", got, want)
 	}
 }
 
 // TestShowTraceNamesTheRoundOfEachLine pins that every rendered line names the
-// member and the round whose close produced it, and that the lines keep the
-// stored seq order.
+// step it moved from and the round whose close produced it, and that the lines
+// keep the stored seq order.
 func TestShowTraceNamesTheRoundOfEachLine(t *testing.T) {
 	t.Parallel()
 
@@ -75,14 +75,14 @@ func TestShowTraceNamesTheRoundOfEachLine(t *testing.T) {
 			t.Errorf("event %d has seq %d after %d, want the stored order", i, e.Seq, lastSeq)
 		}
 		lastSeq = e.Seq
-		if want := fmt.Sprintf("%s r%d", e.Member, e.Round); !strings.Contains(lines[i], want) {
+		if want := fmt.Sprintf("%s r%d", e.Step, e.Round); !strings.Contains(lines[i], want) {
 			t.Errorf("line %d = %q, want it to name %s", i, lines[i], want)
 		}
 	}
 }
 
-// TestShowTraceHaltCarriesTheReason pins the halt: the last line says what the
-// reviewer's close was and why the chain stopped on it.
+// TestShowTraceHaltCarriesTheReason pins the halt: the last line names the
+// review's halt and the row carries why the chain stopped on it.
 func TestShowTraceHaltCarriesTheReason(t *testing.T) {
 	t.Parallel()
 
@@ -99,9 +99,12 @@ func TestShowTraceHaltCarriesTheReason(t *testing.T) {
 	if doc.Status != string(chain.StatusHalted) {
 		t.Errorf("status = %q, want halted", doc.Status)
 	}
-	out := RenderTrace(doc)
-	if !strings.Contains(out, "no verdict  reviewer gave no verdict") {
-		t.Errorf("RenderTrace = %q, want the halt line to carry its reason", out)
+	last := doc.Events[len(doc.Events)-1]
+	if !strings.Contains(last.Reason, "no relevo block carries it") {
+		t.Errorf("halt row reason = %q, want the missing-verdict reason", last.Reason)
+	}
+	if out := RenderTrace(doc); !strings.HasSuffix(out, "review r1 → halt\n") {
+		t.Errorf("RenderTrace = %q, want the halt line to name the review's halt", out)
 	}
 }
 

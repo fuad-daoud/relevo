@@ -98,23 +98,22 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	return v
 }
 
-// ChainDoc is `relevo chain --json`: the chain it started, its members by
-// part, how many plans it holds, and the state it begins in.
+// ChainDoc is `relevo chain --json`: the chain it started, its members, how
+// many plans it holds, and the state it begins in.
 type ChainDoc struct {
 	Name    string           `json:"name"`
 	Members []ChainMemberDoc `json:"members"`
 	Plans   int              `json:"plans"`
 	Status  string           `json:"status"`
-	Phase   string           `json:"phase"`
+	Step    string           `json:"step"`
 	// Check is the builder member's resolved acceptance command, rendered
 	// "none" when it ran no check.
 	Check string `json:"check"`
 }
 
-// ChainMemberDoc is one member in the document: the part it fills, its binding
-// name, the actor it runs and where it runs.
+// ChainMemberDoc is one member in the document: its binding name, the actor it
+// runs and where it runs.
 type ChainMemberDoc struct {
-	Part  string `json:"part"`
 	Name  string `json:"name"`
 	Actor string `json:"actor"`
 	// Placement names where the member runs: "local", or the server a remote
@@ -385,19 +384,17 @@ func chainFlagGiven(fs *flag.FlagSet, name string) bool {
 	return given
 }
 
-// chainDocOf is chain's document. Each member's part comes from the chain
-// row's own columns, so the document cannot disagree with what was written.
+// chainDocOf is chain's document.
 func chainDocOf(res relevo.ChainResult) ChainDoc {
 	doc := ChainDoc{
 		Name:   res.Chain.Name,
 		Plans:  res.Plans,
 		Status: res.Chain.Status,
-		Phase:  res.Chain.Phase,
+		Step:   res.Chain.Step,
 		Check:  chainCheckText(res.Check),
 	}
 	for _, m := range res.Members {
 		doc.Members = append(doc.Members, ChainMemberDoc{
-			Part:      chainPartOf(res.Chain, m.Name),
 			Name:      m.Name,
 			Actor:     relevo.BindingRole(m),
 			Placement: chainMemberPlacement(m),
@@ -433,8 +430,8 @@ func chainPartOf(row db.ChainRow, name string) string {
 // chainStartedText is what a start prints for a human: the chain, its members
 // with where each runs and the command that watches it.
 func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
-	fmt.Printf("started chain %s: %d plan(s), status %s, phase %s\n",
-		res.Chain.Name, res.Plans, res.Chain.Status, res.Chain.Phase)
+	fmt.Printf("started chain %s: %d plan(s), status %s\n",
+		res.Chain.Name, res.Plans, res.Chain.Status)
 	builderPlacement := ""
 	for _, m := range res.Members {
 		actor := relevo.BindingRole(m)
@@ -470,8 +467,8 @@ func chainCheckText(check string) string {
 // the round it awaits, where each member runs and the command that watches it.
 func chainResumedText(res relevo.ChainResult) {
 	c := res.Chain
-	fmt.Printf("resumed chain %s: status %s, phase %s, step %s, plan %d/%d\n",
-		c.Name, c.Status, c.Phase, c.Step, c.Plan, c.Plans)
+	fmt.Printf("resumed chain %s: status %s, step %s\n",
+		c.Name, c.Status, c.Step)
 	for _, m := range res.Members {
 		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(c, m.Name), m.Name, chainMemberPlacement(m), relevo.BindingRole(m))
 	}

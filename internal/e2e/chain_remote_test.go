@@ -108,7 +108,6 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 	res, err := relevo.ChainStart(ctx, rt, relevo.ChainOptions{
 		Name:          chainRemoteName,
 		Plans:         []string{plan},
-		Workflow:      "default",
 		Feature:       "chains-s2-r5",
 		MasterMindID:  rec.ID,
 		ReviewerActor: "reviewer",
