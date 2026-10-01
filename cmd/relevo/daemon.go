@@ -11,6 +11,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -351,7 +353,22 @@ func cmdDaemon(args []string) error {
 	// daemon.json: what this image runs. Written under the lock, so its
 	// presence with the lock held means a #371 daemon; removed on a clean
 	// shutdown, kept across a re-exec (#371 §4.7).
-	srv, err = serveOwner(d, ln)
+	// An abandoned statement the owner cannot interrupt is ended by re-execing
+	// this binary: the hook the owner calls once logs the reap and asks the
+	// upgrade hook below to return true on its next tick. With re-exec
+	// unavailable the hook is not wired, so the owner keeps refusing ad-hoc
+	// reads without any way to end the statement -- a safe degradation.
+	var reapRequested atomic.Bool
+	var onAbandoned func()
+	if reexecOK {
+		var reapLogged sync.Once
+		onAbandoned = func() {
+			reapLogged.Do(func() { slog.Warn("relevo daemon: reaping an abandoned statement") })
+			reapRequested.Store(true)
+		}
+	}
+
+	srv, err = serveOwner(d, ln, onAbandoned)
 	if err != nil {
 		slog.Warn("relevo daemon: owner socket not served", "err", err)
 	}
@@ -413,6 +430,13 @@ func cmdDaemon(args []string) error {
 		reaper.Reap()
 		if !reexecOK {
 			return false
+		}
+		// The owner's grace elapsed on a statement the engine will not
+		// interrupt. Only the new image ends it: execing gives the process a
+		// fresh thread for the abandoned statement while the drain lets
+		// ordinary work finish.
+		if reapRequested.Load() {
+			return true
 		}
 
 		prev := up.Refused()

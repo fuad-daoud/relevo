@@ -63,7 +63,7 @@ func bindTestOwner(t *testing.T, stateHome string) *boundOwner {
 // serve starts accepting on the bound socket, the way the daemon does.
 func (b *boundOwner) serve(t *testing.T) *owner.Server {
 	t.Helper()
-	srv, err := serveOwner(b.db, b.ln)
+	srv, err := serveOwner(b.db, b.ln, nil)
 	if err != nil {
 		t.Fatalf("serveOwner: %v", err)
 	}
@@ -86,7 +86,7 @@ func (b *boundOwner) serveAfter(t *testing.T, delay time.Duration) {
 	go func() {
 		defer close(done)
 		time.Sleep(delay)
-		s, err := serveOwner(b.db, b.ln)
+		s, err := serveOwner(b.db, b.ln, nil)
 		if err != nil {
 			t.Errorf("serveOwner: %v", err)
 			return
@@ -124,7 +124,7 @@ func ownerLater(t *testing.T, stateHome string, delay time.Duration) {
 			berr = err
 			return
 		}
-		srv, err := serveOwner(b.db, b.ln)
+		srv, err := serveOwner(b.db, b.ln, nil)
 		if err != nil {
 			berr = fmt.Errorf("serveOwner: %w", err)
 			_ = b.ln.Close()

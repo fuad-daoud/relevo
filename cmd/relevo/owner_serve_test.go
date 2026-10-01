@@ -75,7 +75,7 @@ func TestOwnerServesANewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openOwnerListener: %v", err)
 	}
-	srv, err := serveOwner(d, ln)
+	srv, err := serveOwner(d, ln, nil)
 	if err != nil {
 		t.Fatalf("serveOwner: %v", err)
 	}
