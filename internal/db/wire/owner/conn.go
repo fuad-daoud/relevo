@@ -35,6 +35,10 @@ type conn struct {
 	// the SQL already on the wire because relevo's Tx sends BEGIN/COMMIT as
 	// plain statements rather than through database/sql's BeginTx.
 	inTx bool
+	// adHoc is the marker this connection's client sent in the handshake: only
+	// such a connection may be refused while the owner reaps a runaway
+	// statement, so every other verb keeps being served.
+	adHoc bool
 }
 
 type request struct {
@@ -79,6 +83,7 @@ func (c *conn) serve() error {
 	if hello.Proto != wire.Proto || hello.Version != wire.Version {
 		return c.refuse(wire.RefuseWrongProto, "protocol mismatch")
 	}
+	c.adHoc = hello.AdHoc
 	w := &wire.Welcome{
 		Header:     wire.Header{Type: wire.TypeWelcome},
 		Proto:      wire.Proto,
@@ -206,6 +211,14 @@ func (c *conn) start(kind byte, frame []byte) error {
 	raw, err := wire.Decode(frame, &m)
 	if err != nil {
 		return err
+	}
+
+	// An ad-hoc connection is refused while an abandoned statement is being
+	// reaped: the owner cannot interrupt that statement, so an ad-hoc read
+	// could not be bounded. A connection that did not mark itself ad-hoc --
+	// every normal relevo verb -- is never refused here.
+	if c.adHoc && c.s.reaping() {
+		return c.refuse(wire.RefuseReaping, "the owner is ending a statement that will not stop; retry in a moment")
 	}
 
 	// A drain refuses a request on a connection with no open transaction: the
@@ -461,21 +474,28 @@ func (c *conn) cleanup() {
 		}
 	}
 	if pinned != nil {
-		discardPinned(pinned)
-		// The slot returns whether or not the discard finished: a statement the
-		// engine will not interrupt must not wedge a pin slot, so the abandoned
-		// statement keeps running until the engine finishes it.
+		finish := discardPinned(pinned)
+		select {
+		case <-finish:
+		case <-time.After(discardTimeout):
+			// The statement is still running and the engine will not
+			// interrupt it. The slot returns anyway, so a statement that never
+			// ends cannot wedge a pin slot; the server tracks it as the
+			// abandoned statement so ad-hoc reads are refused and the daemon
+			// can reap it.
+			c.s.noteAbandoned(finish)
+		}
 		<-c.s.sem
 	}
 	_ = c.nc.Close()
 }
 
-// discardPinned best-effort rolls a pinned connection back and drops it, bounded
-// by discardTimeout. The rollback runs on the connection's single-operation
-// mutex, so a statement the engine will not interrupt parks it; the caller must
-// return the slot regardless, and the abandoned statement keeps running until
-// the engine finishes it.
-func discardPinned(pinned *sql.Conn) {
+// discardPinned best-effort rolls a pinned connection back and drops it, and
+// returns a channel closed when that finished. The rollback runs on the
+// connection's single-operation mutex, so a statement the engine will not
+// interrupt parks it; the caller must return the slot regardless and may
+// register the returned channel as an abandoned statement.
+func discardPinned(pinned *sql.Conn) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -483,10 +503,7 @@ func discardPinned(pinned *sql.Conn) {
 		_ = pinned.Raw(func(any) error { return driver.ErrBadConn })
 		_ = pinned.Close()
 	}()
-	select {
-	case <-done:
-	case <-time.After(discardTimeout):
-	}
+	return done
 }
 
 // takePinned detaches the client's pinned connection, returning nil when there

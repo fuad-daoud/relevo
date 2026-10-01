@@ -52,6 +52,17 @@ type Server struct {
 	// on it inside pin, and cleanup returns it when that connection is
 	// discarded. Idle handshaken connections never take a slot.
 	sem chan struct{}
+
+	// OnAbandoned, when set, runs once when an abandoned statement has not
+	// finished within reapGrace. The daemon uses it to ask for a re-exec, the
+	// only way to end a statement the engine cannot interrupt.
+	OnAbandoned func()
+
+	// reapMu guards the abandoned-statement registration: the one finish
+	// channel the server tracks and whether its hook already ran.
+	reapMu      sync.Mutex
+	reapPending <-chan struct{}
+	reapFired   bool
 }
 
 // New wraps a database handle, its schema versions and the installation id
