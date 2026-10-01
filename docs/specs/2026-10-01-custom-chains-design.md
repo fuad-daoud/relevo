@@ -520,6 +520,26 @@ Configuration:
 - Actor `outputs` travel in the `actors` section. A saved workflow cannot shadow
   a shipped name unless it is added with `--force`, as actors do.
 
+### 7.1 Updating a saved workflow
+
+- `relevo config workflow edit <name>` opens the stored source in `$EDITOR`.
+  - Saving validates it.
+  - An invalid workflow reopens with its problems listed at the top as comments
+    (`# step review: undeclared match verdict=maybe`), until it is valid or the
+    user quits without changes.
+- `relevo config workflow add <file>` refuses an existing name unless
+  `--replace` is given, so a workflow is never overwritten by accident.
+- `relevo config workflow show <name>` prints the source the user wrote,
+  comments kept. `--json` prints the stored form.
+- relevo stores the source text next to the parsed JSON, so `edit` and `show`
+  round-trip the user's own file, not a re-encoding.
+- A running chain keeps the copy it took at start. An edit applies to the next
+  chain started with that name, and `relevo show <chain> --workflow` shows the
+  copy a chain runs.
+- The database keeps no version history. A user who wants history keeps the
+  source in git and runs `add --replace`.
+- The cockpit's Workflows settings section (#823) is built on these verbs.
+
 ## 8. Migration
 
 One additive database migration.
