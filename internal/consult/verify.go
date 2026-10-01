@@ -277,7 +277,14 @@ func (v verifyStart) launch(wt, diff, gateLog string) (store.Binding, error) {
 // reservation back before every reported failure.
 func (v verifyStart) start(b store.Binding, consult store.Consult, askPath, prompt, wt string, c candidate.Candidate, role harness.RoleSpec, tier harness.Tier) (store.Binding, error) {
 	streamPath := v.d.Store.ConsultStreamPath(v.b.Name, v.round, consult.ID)
-	argv, err := spawn.HeadlessLaunch(c, role, tier, Timeout, prompt, wt, v.d.Store.Dir(v.b.Name))
+	if err := v.d.Store.EnsureOutDir(v.b.Name); err != nil {
+		b.Consults = b.Consults[:len(b.Consults)-1]
+		if saveErr := v.tx.Save(b); saveErr != nil {
+			return b, saveErr
+		}
+		return v.fail("ensure out dir: " + brief(err))
+	}
+	argv, err := spawn.HeadlessLaunch(c, role, tier, Timeout, prompt, wt, v.d.Store.OutDir(v.b.Name))
 	if err != nil {
 		b.Consults = b.Consults[:len(b.Consults)-1]
 		if saveErr := v.tx.Save(b); saveErr != nil {

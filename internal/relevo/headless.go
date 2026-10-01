@@ -267,7 +267,7 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, err
 	}
-	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.Dir(b.Name))
+	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.OutDir(b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -305,6 +305,11 @@ func legacyLog(rt Runtime, name string, round int) bool {
 // Preconditions: rt.Runner non-nil (both callers check it before building
 // argv); argv is a complete command line. Postconditions: as startRound's.
 func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, argv []string, c candidate.Candidate) (store.Binding, error) {
+	// The harness's writable root is <binding>/out; create it before the
+	// process starts so the report, done marker and artifacts all land there.
+	if err := rt.Store.EnsureOutDir(b.Name); err != nil {
+		return b, fmt.Errorf("ensure out dir for %q: %w", b.Name, err)
+	}
 	if b.Builder.StreamRound != b.Round {
 		// A new round is a new stream file; a mid-round switch (same
 		// round) keeps rendering the file both processes append to.
@@ -433,7 +438,7 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if l.PromptAt < 0 {
 		return b, fmt.Errorf("harness %q has no print form", c.Harness)
 	}
-	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), roundTree(rt, b), rt.Store.Dir(b.Name))
+	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), roundTree(rt, b), rt.Store.OutDir(b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -734,7 +739,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// lock. That per-tick pair was the largest cost of a live headless tick
 	// and it warned every tick for a repository git could not read.
 	markerNote := ""
-	if _, err := os.Stat(rt.Store.DonePath(b.Name, b.Round)); err == nil {
+	if _, _, ok, _ := rt.Store.StatFile(rt.Store.DonePath(b.Name, b.Round)); ok {
 		if escapeCheck(ctx, rt, b, true) == EscapeNote {
 			markerNote = escapeNote
 		}
@@ -819,7 +824,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// liveness observation: a builder that writes its marker and exits inside
 	// one tick must close as marked, not as unmarked (#328). Re-check the
 	// marker now and close through the marker path if it is there.
-	if _, err := os.Stat(rt.Store.DonePath(b.Name, b.Round)); err == nil {
+	if _, _, ok, _ := rt.Store.StatFile(rt.Store.DonePath(b.Name, b.Round)); ok {
 		slog.Debug("marker appeared before exit was observed", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID)
 		markerNote := ""
 		if escapeCheck(ctx, rt, b, true) == EscapeNote {
@@ -839,7 +844,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if serr != nil {
 		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 	}
-	if _, err := os.Stat(reportPath); err == nil {
+	if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
 		_, m, _, err := gateOnLimit(ctx, rt, tx, b, limitText(ctx, rt, b), false)
 		if err != nil {
 			return b, err

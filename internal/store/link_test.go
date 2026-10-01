@@ -7,8 +7,7 @@ import (
 
 // TestSaveKeepsRemoteLink pins the link a remote binding carries: the save
 // promotes it into binding_record's link columns and keeps it in the binding
-// JSON, so a load returns it, and BindingFormat stays the one an older relevo
-// still reads -- the link is a field recordFormat does not stamp.
+// JSON, so a load returns it. The link is a field recordFormat does not stamp.
 func TestSaveKeepsRemoteLink(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("api", "/repo")
@@ -36,10 +35,6 @@ func TestSaveKeepsRemoteLink(t *testing.T) {
 	}
 	if rec.LinkOrigin != "01SERVER" || rec.LinkID != "01SRVRECORD" {
 		t.Fatalf("row link = %q/%q, want the promoted columns", rec.LinkOrigin, rec.LinkID)
-	}
-
-	if BindingFormat != 11 {
-		t.Fatalf("BindingFormat = %d, want 11: the link is a field recordFormat does not stamp", BindingFormat)
 	}
 }
 

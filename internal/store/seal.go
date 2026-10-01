@@ -23,127 +23,6 @@ import (
 // artifact directory, one level under the binding dir.
 var roundBaseRe = regexp.MustCompile(`^\d{3}-`)
 
-// ReadFile returns path's bytes from disk, or from the sealed round_file row
-// when a seal pass already moved a round file into the database. A reserved
-// round-file name is row-only: relevo never writes one to disk, so a file with
-// that name is a plant or a stale copy and the bytes come from the row, live or
-// archived, or the call is a miss. A miss returns os.ReadFile's own error, so
-// errors.Is(err, fs.ErrNotExist) and os.IsNotExist keep working.
-func (s *Store) ReadFile(path string) ([]byte, error) {
-	if _, name, ok := s.bindingRelOf(path); ok && reservedRoundFile(name) {
-		body, _, found, err := s.sealedRoundFile(path)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
-		}
-		return body, nil
-	}
-
-	data, err := os.ReadFile(path)
-	if err == nil {
-		return data, nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
-
-	body, _, found, lerr := s.sealedRoundFile(path)
-	if lerr != nil {
-		return nil, lerr
-	}
-	if !found {
-		return nil, err
-	}
-	return body, nil
-}
-
-// StatFile is ReadFile for os.Stat callers: the file's size and mtime when it
-// is on disk, and the sealed row's when it was sealed. A reserved round-file
-// name is row-only, so its size and mtime come from the row and never from a
-// file: a plant cannot set them. A miss returns os.Stat's own error alongside
-// ok == false.
-func (s *Store) StatFile(path string) (size int64, mtime time.Time, ok bool, err error) {
-	if _, name, resolved := s.bindingRelOf(path); resolved && reservedRoundFile(name) {
-		body, mt, found, ferr := s.sealedRoundFile(path)
-		if ferr != nil {
-			return 0, time.Time{}, false, ferr
-		}
-		if !found {
-			return 0, time.Time{}, false, &fs.PathError{Op: "stat", Path: path, Err: fs.ErrNotExist}
-		}
-		return int64(len(body)), mt, true, nil
-	}
-
-	info, err := os.Stat(path)
-	if err == nil {
-		return info.Size(), info.ModTime(), true, nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return 0, time.Time{}, false, err
-	}
-	missErr := err
-
-	body, mt, found, lerr := s.sealedRoundFile(path)
-	if lerr != nil {
-		return 0, time.Time{}, false, lerr
-	}
-	if !found {
-		return 0, time.Time{}, false, missErr
-	}
-	return int64(len(body)), mt, true, nil
-}
-
-// sealedRoundFile answers path from the row that holds it: the name's live
-// record, or its most recently archived one, where archive() put its round
-// files. found is false when no row holds the name, so the caller keeps its own
-// not-exist error.
-func (s *Store) sealedRoundFile(path string) (body []byte, mtime time.Time, found bool, err error) {
-	d, recordID, name, ok, lerr := s.sealedLookup(path)
-	if lerr != nil || !ok {
-		return nil, time.Time{}, false, lerr
-	}
-	body, mtime, found, err = d.RoundFileGet(recordID, name)
-	if err != nil {
-		return nil, time.Time{}, false, err
-	}
-	return body, mtime, found, nil
-}
-
-// sealedLookup resolves path as a round file of the binding it names under
-// s.root and returns the record id whose round_file rows hold it: the name's
-// live record, or its most recently archived one, where archive() put its
-// round files. A flat path resolves to its base name; a path inside a
-// top-level NNN-<actor>/ directory resolves to its nested "NNN-<actor>/<rel>"
-// name.
-//
-// found is false when the path is not such a path, when the name has neither a
-// live nor an archived record, and when the root has no database at all, so a
-// miss costs no error and leaves the caller's own ErrNotExist in place.
-func (s *Store) sealedLookup(path string) (d *db.DB, recordID, name string, found bool, err error) {
-	binding, name, ok := s.bindingRelOf(path)
-	if !ok {
-		return nil, "", "", false, nil
-	}
-
-	d, err = s.dbForRead()
-	if err != nil || d == nil {
-		return nil, "", "", false, err
-	}
-	rec, ok, err := d.RecordGet(s.owner, binding)
-	if err != nil {
-		return nil, "", "", false, err
-	}
-	if !ok {
-		rec, ok, err = d.RecordGetArchivedByName(s.owner, binding)
-		if err != nil || !ok {
-			return nil, "", "", false, err
-		}
-	}
-	return d, rec.ID, name, true, nil
-}
-
 // RoundFiles is what is in name's directory -- the flat round files and every
 // file under its round artifact directories -- plus the sealed names in the
 // database, sorted and de-duplicated. A reserved round-file name is never a
@@ -416,158 +295,25 @@ func (t *Tx) SealRound(name string, round int) (int, error) {
 	return len(sealed), nil
 }
 
-// diskRoundFile is one file found under a binding's directory: the path to its
-// bytes, the round_file name it uses -- a flat file's base, or
-// "NNN-<actor>/<rel>" with forward slashes under a round's artifact directory
-// -- and its round (0 for a flat file that is not a round file).
-type diskRoundFile struct {
-	path  string
-	name  string
-	round int
-}
-
-// roundFilesOfDir returns dir's round files whose leading NNN- is round: the
-// flat files and the files under NNN-*/ artifact directories of that round,
-// sorted by round_file name.
-func roundFilesOfDir(dir string, round int) ([]diskRoundFile, error) {
-	files, err := diskFiles(dir)
-	if err != nil {
-		return nil, err
-	}
-	out := files[:0]
-	for _, f := range files {
-		if f.round > 0 && f.round == round {
-			out = append(out, f)
-		}
-	}
-	return out, nil
-}
-
-// diskFiles walks every file below dir: dir's flat files, whatever their name,
-// and everything under a top-level NNN-* directory, recursively, which is
-// where a round's artifact directory and its subdirectories live. It returns
-// them sorted by round_file name. A missing dir is an empty list, not an
-// error. A flat file whose name has no NNN- prefix has round 0; a file under an
-// NNN-* directory takes that directory's round.
-//
-// Security: a reserved round-file name is skipped with one warning per path,
-// because relevo authors those keys only as rows and a file with one of those
-// names is a plant or a stale copy; a symlink, file or dir, is skipped with one
-// warning per path; a dot-file or dot-dir is skipped; a relative path
-// containing ".." is refused.
-func diskFiles(dir string) ([]diskRoundFile, error) {
-	var out []diskRoundFile
-	if err := walkRoundDir(dir, func(f diskRoundFile) { out = append(out, f) }); err != nil {
-		return nil, err
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
-	return out, nil
-}
-
-// walkRoundDir reads dir's flat files and descends into its top-level NNN-*
-// artifact directories, one level under dir and everything below them.
-func walkRoundDir(dir string, fn func(diskRoundFile)) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("read binding dir %s: %w", dir, err)
-	}
-
-	for _, e := range entries {
-		base := e.Name()
-		if strings.HasPrefix(base, ".") {
-			continue
-		}
-		path := filepath.Join(dir, base)
-		if e.Type()&fs.ModeSymlink != 0 {
-			slog.Warn("round walk: skipping symlink", "path", path)
-			continue
-		}
-		if e.IsDir() {
-			// Only a directory whose name matches ^\d{3}- is a round artifact
-			// directory; anything else under the binding is not ours.
-			if !roundBaseRe.MatchString(base) {
-				continue
-			}
-			round, ok := roundOfFile(base)
-			if !ok {
-				continue
-			}
-			if err := walkArtifactDir(path, base, round, fn); err != nil {
-				return err
-			}
-			continue
-		}
-		// A reserved name is row-only: relevo never writes one to disk, so a
-		// file with it is a plant or a stale copy and never a round file.
-		if reservedRoundFile(base) {
-			slog.Warn("round walk: skipping reserved round file", "path", path)
-			continue
-		}
-		// round is 0 for a flat file that is not a round file: it is listed,
-		// but it is not sealed by any round.
-		round, _ := roundOfFile(base)
-		fn(diskRoundFile{path: path, name: base, round: round})
-	}
-	return nil
-}
-
-// walkArtifactDir walks one NNN-<actor>/ directory and everything below it,
-// naming each file NNN-<actor>/<rel> with forward slashes. Symlinks are not
-// followed, dot entries are skipped, and a relative path containing ".." is
-// refused.
-func walkArtifactDir(dir, rel string, round int, fn func(diskRoundFile)) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("read artifact dir %s: %w", dir, err)
-	}
-
-	for _, e := range entries {
-		base := e.Name()
-		if strings.HasPrefix(base, ".") {
-			continue
-		}
-		path := filepath.Join(dir, base)
-		// A nested file's round_file name is "NNN-<actor>/<rel>". Its row goes
-		// in round_file, not the cockpit spec's `artifact` table: round_file is
-		// the record today, and this is a deliberate refinement of that wording.
-		name := rel + "/" + base
-		if e.Type()&fs.ModeSymlink != 0 {
-			slog.Warn("round walk: skipping symlink", "path", path)
-			continue
-		}
-		if e.IsDir() {
-			if err := walkArtifactDir(path, name, round, fn); err != nil {
-				return err
-			}
-			continue
-		}
-		if containsDotDot(name) {
-			continue
-		}
-		fn(diskRoundFile{path: path, name: name, round: round})
-	}
-	return nil
-}
-
 // removeEmptyRoundDirs removes round's artifact directories under name once
-// they are empty, bottom up, with os.Remove: a directory that still holds an
-// unsealed file -- a skipped symlink or dot-file -- is never removed.
+// they are empty, bottom up, in both homes -- the binding directory and its
+// out/ child -- with os.Remove: a directory that still holds an unsealed file
+// -- a skipped symlink or dot-file -- is never removed.
 func (s *Store) removeEmptyRoundDirs(name string, round int) {
-	entries, err := os.ReadDir(s.Dir(name))
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || !roundBaseRe.MatchString(e.Name()) {
+	for _, root := range []string{s.Dir(name), s.OutDir(name)} {
+		entries, err := os.ReadDir(root)
+		if err != nil {
 			continue
 		}
-		if r, ok := roundOfFile(e.Name()); !ok || r != round {
-			continue
+		for _, e := range entries {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || !roundBaseRe.MatchString(e.Name()) {
+				continue
+			}
+			if r, ok := roundOfFile(e.Name()); !ok || r != round {
+				continue
+			}
+			removeEmptyDirsBelow(filepath.Join(root, e.Name()))
 		}
-		removeEmptyDirsBelow(filepath.Join(s.Dir(name), e.Name()))
 	}
 }
 

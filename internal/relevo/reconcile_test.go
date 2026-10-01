@@ -52,6 +52,9 @@ func closeOnMarkerUnderLockGating(t *testing.T, rt Runtime, b store.Binding) (st
 
 func touch(t *testing.T, path string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatalf("touch %s: %v", path, err)
 	}
@@ -392,6 +395,9 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 		b.Builder.PID = 9001
 		b.Builder.StartedAt = 1_700_000_000
 		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(rt.Store.ReportPath(b.Name, b.Round)), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(rt.Store.ReportPath(b.Name, b.Round), []byte("report body"), 0o644); err != nil {
