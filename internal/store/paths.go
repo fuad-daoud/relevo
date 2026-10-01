@@ -208,6 +208,23 @@ func (s *Store) CheckLogPath(name string, round, run int) string {
 	return s.roundFile(name, round, fmt.Sprintf("check-%03d", run), ".log")
 }
 
+// CheckLogTarget resolves a check log path built by CheckLogPath back to the
+// member and round it was keyed with, so a seal reuses the round the row was
+// written under instead of recomputing one. It uses the store's own round-file
+// rules, so a check log path always resolves; ok is false for a path outside
+// the state root or a name that carries no round.
+func (s *Store) CheckLogTarget(path string) (member string, round int, ok bool) {
+	member, name, ok := s.bindingRelOf(path)
+	if !ok {
+		return "", 0, false
+	}
+	round, ok = roundOfFile(name)
+	if !ok {
+		return "", 0, false
+	}
+	return member, round, true
+}
+
 func (s *Store) QuestionPath(name string, round int) string {
 	return s.roundFile(name, round, "question", ".md")
 }

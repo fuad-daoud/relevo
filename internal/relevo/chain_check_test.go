@@ -284,3 +284,55 @@ func TestChainCheckLogIsARoundFile(t *testing.T) {
 		t.Errorf("the log is still on disk after sealing: %v", err)
 	}
 }
+
+// TestChainCheckSealsUnderTheRoundItStartedWith pins the seal to the round the
+// row was keyed with: a writer that closes a new round while the check runs
+// must not make the seal recompute a different round and corrupt its own
+// round-file key.
+func TestChainCheckSealsUnderTheRoundItStartedWith(t *testing.T) {
+	t.Parallel()
+
+	rt, fr, c := chainCheckFixture(t)
+	run := chainStartCheckForTest(t, rt, c, "check", "make check")
+	row := loadChainCheck(t, rt, run)
+
+	body := []byte("check output\nsecond line\n")
+	if err := os.WriteFile(row.Log, body, 0o644); err != nil {
+		t.Fatalf("write check log: %v", err)
+	}
+
+	// The writer closes a new round while the run is live.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("shop", store.LogEntry{
+			TS: baseTime.Add(time.Minute), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport,
+			Path: "/x/002-report.md",
+		})
+	}); err != nil {
+		t.Fatalf("close round 2: %v", err)
+	}
+
+	pid := fr.handles[0].PID
+	fr.script(pid, false)
+	fr.exit(pid, 0)
+
+	result, logKey := chainAdvanceCheckForTest(t, rt, c, run)
+	if result != chainCheckGreen {
+		t.Fatalf("result = %q, want green", result)
+	}
+	if logKey != row.Log {
+		t.Errorf("logKey = %q, want the captured row.Log %q", logKey, row.Log)
+	}
+	if sealed := loadChainCheck(t, rt, run); sealed.Result != "pass" {
+		t.Errorf("row.Result = %q, want pass", sealed.Result)
+	}
+	got, err := rt.Store.ReadFile(row.Log)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", row.Log, err)
+	}
+	if string(got) != string(body) {
+		t.Errorf("ReadFile = %q, want %q", got, body)
+	}
+	if _, err := os.Stat(row.Log); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the log is still on disk after sealing: %v", err)
+	}
+}

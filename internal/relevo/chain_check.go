@@ -207,9 +207,9 @@ func chainCheckSealLog(rt Runtime, tx *store.Tx, c db.ChainRow, row db.ChainChec
 	default:
 		return err
 	}
-	member, round, err := chainCheckLogTarget(tx, c)
-	if err != nil {
-		return err
+	member, round, ok := rt.Store.CheckLogTarget(row.Log)
+	if !ok {
+		return fmt.Errorf("chain check: cannot resolve the check log path %s", row.Log)
 	}
 	if err := tx.PutRoundFile(member, round, row.Log, body); err != nil {
 		return err
