@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -182,9 +184,35 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 		if remoteCode(err, 409, remote.CodeChainRunning) {
 			return ChainResult{}, fmt.Errorf("chain %s is running: %w", c.Name, ErrChainRunning)
 		}
+		if remoteCode(err, 409, remote.CodeRoundOpen) {
+			return ChainResult{}, roundOpenFromWire(err)
+		}
 		return ChainResult{}, err
 	}
 	return chainResultFromMirror(ctx, rt, c.Name)
+}
+
+// roundOpenFromWire rebuilds the send path's typed round-open refusal from the
+// server's 409 round_open, so the CLI prints the conflict and its `relevo stop
+// <member>` next line exactly as a local refusal does. The member and round are
+// read back from the refusal's own message, whose shape the send path already
+// generates; anything unparseable stays the server's error.
+func roundOpenFromWire(err error) error {
+	var httpErr *client.HTTPError
+	if !errors.As(err, &httpErr) {
+		return err
+	}
+	msg := httpErr.Body.Message
+	i := strings.Index(msg, ": round ")
+	j := strings.Index(msg, " is still open")
+	if i < 0 || j <= i {
+		return err
+	}
+	round, perr := strconv.Atoi(strings.TrimSpace(msg[i+len(": round ") : j]))
+	if perr != nil || round <= 0 {
+		return err
+	}
+	return &RoundOpenError{Member: strings.TrimSpace(msg[:i]), Round: round}
 }
 
 // chainServerDone is `relevo done <chain>` for a chain that runs on a server:

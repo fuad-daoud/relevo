@@ -14,6 +14,37 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// TestRoundOpenFromWireRebuildsTheTypedRefusal pins the client half of the
+// round-open mapping: the server's 409 round_open becomes the send path's own
+// typed refusal, so the CLI prints the conflict and its `relevo stop <member>`
+// next line; anything unparseable stays the server's error.
+func TestRoundOpenFromWireRebuildsTheTypedRefusal(t *testing.T) {
+	t.Parallel()
+
+	err := roundOpenFromWire(&client.HTTPError{
+		Status: 409,
+		Body: remote.ErrorBody{
+			Code:    remote.CodeRoundOpen,
+			Message: "shop-plan: round 3 is still open; relevo stop shop-plan ends it",
+		},
+	})
+	var open *RoundOpenError
+	if !errors.As(err, &open) {
+		t.Fatalf("err = %v, want *RoundOpenError", err)
+	}
+	if open.Member != "shop-plan" || open.Round != 3 {
+		t.Errorf("RoundOpenError = %+v, want member shop-plan round 3", open)
+	}
+
+	raw := errors.New("boom")
+	if got := roundOpenFromWire(raw); !errors.Is(got, raw) {
+		t.Errorf("roundOpenFromWire(non-HTTP error) = %v, want the original error", got)
+	}
+	if got := roundOpenFromWire(&client.HTTPError{Status: 409, Body: remote.ErrorBody{Message: "no round here"}}); got == nil || errors.As(got, &open) {
+		t.Errorf("roundOpenFromWire(unparseable message) = %v, want the server's error kept", got)
+	}
+}
+
 // TestChainStatusOnAServerChainReadsTheServer pins the status verb's source:
 // the chain row is the server's view, not this machine's mirror, and a server
 // this machine cannot read is named on the row instead of guessed at.

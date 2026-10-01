@@ -920,6 +920,75 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 	})
 }
 
+// TestChainResumeClosesADeadMemberRound pins the wedge fix: a member round
+// that died without a close leaves a halted chain with no working command --
+// the resume refuses an open round and the stop path refuses a halted one. The
+// resume now closes the dead round the way a stop would and re-runs the step.
+func TestChainResumeClosesADeadMemberRound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	// The builder closes green: the reviewer's round opens.
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	before := chainBinding(t, rt, "shop-rev")
+	if !HasPromptEntry(chainLog(t, rt, "shop-rev"), before.Round) {
+		t.Fatal("test premise: the reviewer's round must be open")
+	}
+
+	// The reviewer dies without a close: NEEDS YOU, no process, and the chain
+	// halted on the member -- the state a round that died without a report
+	// leaves.
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		rev, err := tx.Load("shop-rev")
+		if err != nil {
+			return err
+		}
+		rev, err = haltBinding(context.Background(), rt, rev, "reviewer exited without an output")
+		if err != nil {
+			return err
+		}
+		rev.Builder = clearProcess(rev.Builder)
+		if err := tx.Save(rev); err != nil {
+			return err
+		}
+		row, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		s, err := chainStateOf(row)
+		if err != nil {
+			return err
+		}
+		s.Status = chain.StatusHalted
+		s.Reason = "member shop-rev: exited without an output"
+		return tx.ChainPut(chainRowWithState(row, s, rt.Now().UTC()))
+	})
+	if err != nil {
+		t.Fatalf("halt the reviewer and the chain: %v", err)
+	}
+
+	// The resume closes the dead round the way a stop would and re-runs the
+	// review.
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	after := chainBinding(t, rt, "shop-rev")
+	if after.Round <= before.Round {
+		t.Errorf("reviewer round = %d, want a round after %d", after.Round, before.Round)
+	}
+	if after.State != store.StateActive {
+		t.Errorf("reviewer state = %q, want active (a fresh review round)", after.State)
+	}
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusRunning) || row.AwaitingMember != chain.MemberReviewer {
+		t.Errorf("chain row = %s awaiting %s, want running awaiting reviewer", row.Status, row.AwaitingMember)
+	}
+}
+
 // assertResumeReSendsTheStagedPrompt stops on a chain awaiting the builder on
 // the round whose staged prompt contains marker (the planner's text or the
 // repair plan), resumes it, and pins that the re-sent round was handed that
