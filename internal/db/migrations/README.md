@@ -19,25 +19,35 @@ list in their headers; that text is applied history and stays as it is.
 - Nothing inside a file guards its version: the runner applies each file
   once and records it.
 
-## The movable list
+## The rules the live driver runs under
 
-The schema stays movable to Turso. Checked against Turso v0.8.0-pre.12
-(2026-09-25) and re-checked at v0.8.1 (2026-09-29); sources: Turso's
-`COMPAT.md`, `docs/manual.md`, and the embedded `tursogo` driver at those
-tags.
+The schema runs on `turso.tech/database/tursogo` v0.8.1 behind `internal/db`,
+the default build; `-tags modernc` is the way back. Checked against v0.8.1
+(2026-09-29); sources: Turso's `COMPAT.md`, `docs/manual.md`, and the embedded
+`tursogo` driver at that tag.
 
 What binds a migration:
 
 - No dependence on in-place `VACUUM` (it needs Turso's experimental
-  `vacuum` flag); `VACUUM INTO` is fine.
-- No pragmas outside Turso's compatibility list. In particular,
+  `vacuum` flag); `VACUUM INTO` is fine. `VACUUM INTO` takes a string
+  literal, so the path cannot hold a quote, and the target must not exist
+  yet.
+- No pragmas outside the live driver's list. In particular,
   `foreign_key_check`, `defer_foreign_keys` and `wal_autocheckpoint` are
-  not supported; `journal_mode` (`wal` and `mvcc`), `busy_timeout` and
+  not supported, and `journal_size_limit` applies under `-tags modernc`
+  only; `journal_mode` (`wal` and `mvcc`), `busy_timeout` and
   `foreign_keys` are.
-- Driver errors are mapped in one place: `mapBusy` and `mapPlannerKey` in
-  `internal/db`.
-- One process opens the file until upstream's `multiprocess_wal` leaves
-  experimental status (#466); nothing here may assume several openers.
+- Driver errors are mapped in one place: `mapBusy` and `mapMasterMindKey`
+  in `internal/db`.
+- The daemon is the only process that opens the file, and
+  `multiprocess_wal` is never set (#466).
+- A database path must not contain `?`: Turso ends the path at the first
+  one, so a path that carries one would silently open another file.
+- Text that is not valid UTF-8 is repaired to U+FFFD on the way in, in both
+  engines: an invalid TEXT value makes a file Turso refuses to read.
+- No foreign key that cascades or takes NO ACTION to one parent, and no
+  partial index on a foreign-key column: Turso mishandles both, so a
+  migration must not rely on either.
 - `RETURNING`, `AUTOINCREMENT`, triggers and plain views are supported by
   Turso and are not banned on its account. The phase-1 schema still avoids
   triggers, FTS, virtual tables and generated columns as its own choice
@@ -47,6 +57,6 @@ What binds a migration:
 
 - `CREATE VIEW IF NOT EXISTS` errors on the second run.
 - A second active write statement on one connection returns BUSY.
-- Window functions lack `lag`, `lead`, `ntile` and custom frames;
-  `WITH RECURSIVE` is unsupported.
+- Recursive aggregate queries are unsupported; Turso's `COMPAT.md` still
+  lists them as missing.
 - Page codecs cannot combine with `multiprocess_wal`, MVCC or partial sync.

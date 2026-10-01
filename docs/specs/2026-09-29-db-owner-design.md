@@ -159,7 +159,8 @@ and the one-shot startup passes (dedupe, compression) happen in the daemon.
 `relevo.sock` → write `daemon.json` → tick. `installation.json` is minted by
 writing a temp file and renaming it into place. A daemon that loses the lock
 exits "already running" before touching anything. `--check` and `--preflight`
-never dial and never auto-start.
+never auto-start; when the file is held they read through the owner (see the
+correction below).
 
 **Auto-start.** On a dial failure with no socket or a refused connection, the
 client asks the service manager -- `systemctl --user start --no-block relevo`
@@ -204,9 +205,24 @@ write lock held by pid 1234 (relevo daemon ingest) for 28s". stdout stays
 clean on every failure. `relevo doctor` gains an owner row: socket, pid,
 protocol, open connections.
 
-**Escape hatch.** `RELEVO_DB_DIRECT=1` makes a client open the file directly,
-as today. It is safe only while the driver is modernc, is not documented for
-users, and is removed with the Turso swap.
+**Correction (2026-10-01, with the Turso swap).** Three things in this section
+are now different, and the removed escape hatch is the first of them.
+
+- **The escape hatch is gone.** `RELEVO_DB_DIRECT` no longer exists: `routeDirect`
+  remains only as the fallback on a platform with no owner socket, and no verb
+  and no environment variable selects it.
+- **`--check`, `--preflight` and `bugreport` dial.** `--check`/`--preflight` and
+  `bugreport` still never auto-start the owner, but when the file is held they
+  read the config (or the bundle's sections) through the owner that holds it,
+  rather than skipping the database. A held file with no owner answering is an
+  error naming both.
+- **relevo takes its own lock.** Turso's file lock is per file descriptor, and
+  each pooled connection holds its own fd: dropping one pooled connection
+  releases the engine's lock while another still holds the file open. relevo
+  therefore `flock`s `relevo.db.lock` itself, once per path per process, and
+  keeps it until the last handle on that path closes. A direct open by a second
+  process fails with `db.ErrLocked` while the daemon holds it, which is what
+  makes the owner the only reader.
 
 ## 7. Stages
 

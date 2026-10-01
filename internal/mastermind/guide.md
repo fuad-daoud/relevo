@@ -16,6 +16,9 @@ This is the guide to relevo, the tool that hands work between you and a runner.
   the round's output, 3 is NEEDS YOU -- ask the human, 4 is DONE.
 - `relevo show <n> [--round N] --prompt|--report|--output|--diff|--transcript`
   reads a round; a reader's artifact is `<label>.md`, printed with `--output`.
+- `relevo db query '<SQL>' [--json]` reads relevo.db with one read-only
+  statement (SELECT, WITH or a read-only PRAGMA), through the daemon when it
+  runs; use it instead of `sqlite3`, which the daemon's lock keeps out.
 
 ## Output and errors
 
