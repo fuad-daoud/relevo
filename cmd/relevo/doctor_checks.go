@@ -359,7 +359,7 @@ func mastermindCheckInput(rt relevo.Runtime, kinds []string) doctor.MasterMindCh
 				// #386: the mastermind's chat label, read here so the row can
 				// name the mastermind as the harness does. An empty label
 				// leaves the detail byte-identical.
-				if lbl := chatResolver().Resolve(context.Background(), rec.HarnessKind, rec.SessionID, rec.TranscriptLocator); lbl != (chatlabel.Label{}) {
+				if lbl := chatResolver().Resolve(context.Background(), rec.HarnessKind, rec.SessionID); lbl != (chatlabel.Label{}) {
 					in.Chat = lbl.String()
 				}
 				if rt.Channels != nil {

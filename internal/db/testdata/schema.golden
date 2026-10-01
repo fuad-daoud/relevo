@@ -402,4 +402,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 , record_json_codec INTEGER NOT NULL DEFAULT 0, rendered_codec INTEGER NOT NULL DEFAULT 0)
 
-schema_versions have=19 know=19
+schema_versions have=20 know=20

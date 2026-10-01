@@ -30,14 +30,13 @@ func (t *Tx) MasterMindBySession(kind, session string) (MasterMind, bool, error)
 func mastermindBySession(ctx context.Context, q queryer, origin, kind, session string) (MasterMind, bool, error) {
 	var (
 		p         MasterMind
-		locator   sql.Null[string]
 		firstSeen string
 		lastSeen  string
 	)
 	err := q.QueryRowContext(ctx,
-		`SELECT id, harness_kind, session_id, transcript_locator, first_seen, last_seen
+		`SELECT id, harness_kind, session_id, first_seen, last_seen
 		   FROM mastermind WHERE `+originScope+` AND harness_kind = ? AND session_id = ?`,
-		origin, kind, session).Scan(&p.ID, &p.HarnessKind, &p.SessionID, &locator, &firstSeen, &lastSeen)
+		origin, kind, session).Scan(&p.ID, &p.HarnessKind, &p.SessionID, &firstSeen, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MasterMind{}, false, nil
 	}
@@ -45,7 +44,6 @@ func mastermindBySession(ctx context.Context, q queryer, origin, kind, session s
 		return MasterMind{}, false, fmt.Errorf("db: mastermind by session: %w", err)
 	}
 
-	p.TranscriptLocator = ptrIfValid(locator)
 	if p.FirstSeen, err = parseTime(firstSeen); err != nil {
 		return MasterMind{}, false, fmt.Errorf("db: mastermind by session: parse first_seen: %w", err)
 	}

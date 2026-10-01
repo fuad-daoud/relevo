@@ -10,22 +10,12 @@ import (
 type Resolver struct {
 	Exec       usage.Exec // nil -> opencode labels are empty
 	OpencodeDB string     // "" -> opencode labels are empty
-	TailBytes  int64      // 0 -> DefaultTailBytes
 }
 
 // Resolve returns the harness's own name for one session. Every failure ends
 // in the empty Label; it never returns an error.
-func (r Resolver) Resolve(ctx context.Context, kind, sessionID, locator string) Label {
+func (r Resolver) Resolve(ctx context.Context, kind, sessionID string) Label {
 	switch kind {
-	case "claude":
-		if locator == "" {
-			return Label{}
-		}
-		tail, err := ReadTail(locator, r.TailBytes)
-		if err != nil {
-			return Label{}
-		}
-		return Claude(tail)
 	case "opencode":
 		if r.Exec == nil || r.OpencodeDB == "" || !opencodeSessionID.MatchString(sessionID) {
 			return Label{}

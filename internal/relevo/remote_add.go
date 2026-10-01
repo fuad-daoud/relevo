@@ -31,9 +31,6 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	}
 	opts.MasterMindID = rec.ID
 	mastermindEP := recordEndpoint(rec)
-	if mastermindEP.TranscriptLocator == "" {
-		mastermindEP.TranscriptLocator = mastermindLocator(rt, mastermindEP.Kind, mastermindEP.SessionID)
-	}
 
 	if opts.CWD != "" {
 		return AddResult{}, errors.New("remote builders are add-only: --cwd and --server cannot be combined")

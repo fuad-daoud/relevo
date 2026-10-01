@@ -20,6 +20,7 @@ const (
 	claudePluginName      = "relevo@relevo"
 	claudeHooksRel        = "hooks/hooks.json"
 	pluginHookInitCommand = "mastermind init"
+	pluginHookInitScript  = "scripts/mastermind-init.sh"
 	pluginHookEvent       = "SessionStart"
 )
 
@@ -58,7 +59,7 @@ type MasterMindCheckInput struct {
 
 	Detected  bool               // mastermind.Detect: relevo runs inside a Claude Code session
 	Resolved  *mastermind.Record // the mastermind Resolve found; nil on a miss
-	Chat      string             // the resolved mastermind's chatlabel, "" when Resolved is nil
+	Chat      string             // the resolved mastermind's chatlabel (opencode only); "" when Resolved is nil
 	ClaimLive bool               // a live channel claim exists for Resolved
 	MCPChild  bool               // a `relevo mcp` process is a child of the mastermind's host; false is FAIL
 
@@ -345,7 +346,7 @@ func hasSessionStartMasterMindInit(v any) bool {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
-			if k == pluginHookEvent && jsonContains(val, pluginHookInitCommand) {
+			if k == pluginHookEvent && (jsonContains(val, pluginHookInitCommand) || jsonContains(val, pluginHookInitScript)) {
 				return true
 			}
 			if hasSessionStartMasterMindInit(val) {

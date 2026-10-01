@@ -82,13 +82,12 @@ func resolveVerbMasterMind(rt Runtime, ref string) (mastermind.Record, bool, err
 }
 
 // recordEndpoint is the mastermind endpoint a resolved record supplies (§3.2):
-// its kind, session and transcript locator. MasterMind.PaneID is written by
-// nothing since #303; it stays a field only so an older bind.json loads.
+// its kind and session. MasterMind.PaneID is written by nothing since #303; it
+// stays a field only so an older bind.json loads.
 func recordEndpoint(rec mastermind.Record) store.Endpoint {
 	return store.Endpoint{
-		Kind:              rec.HarnessKind,
-		SessionID:         rec.SessionID,
-		TranscriptLocator: rec.TranscriptLocator,
+		Kind:      rec.HarnessKind,
+		SessionID: rec.SessionID,
 	}
 }
 
@@ -223,9 +222,6 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 	}
 	opts.MasterMindID = rec.ID
 	mastermindEP := recordEndpoint(rec)
-	if mastermindEP.TranscriptLocator == "" {
-		mastermindEP.TranscriptLocator = mastermindLocator(rt, mastermindEP.Kind, mastermindEP.SessionID)
-	}
 
 	if opts.Resume {
 		return resume(ctx, rt, opts, mastermindEP)
@@ -437,14 +433,8 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		// RepoRef and Feature are deliberately left untouched here (beyond
 		// the explicit Feature/Ticket overrides below): a resume re-points
 		// endpoints, it does not rediscover facts a fresh bind already
-		// captured. The mastermind transcript locator is the one exception:
-		// the endpoint mastermindEP carries the record's, so a live agent's
-		// absent field cannot wipe a locator the binding already had.
-		oldTranscriptLocator := b.MasterMind.TranscriptLocator
+		// captured.
 		b.MasterMind = mastermindEP
-		if oldTranscriptLocator != "" {
-			b.MasterMind.TranscriptLocator = oldTranscriptLocator
-		}
 		if opts.MasterMindID != "" {
 			b.MasterMindID = opts.MasterMindID
 		}

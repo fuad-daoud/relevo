@@ -144,7 +144,7 @@ func TestRoundFilePutGetCompresses(t *testing.T) {
 func TestTranscriptPutReadCompresses(t *testing.T) {
 	d := openTestDB(t)
 	big := string(bigHistoryValue())
-	if _, err := d.AppendTranscript(OwnerMasterMind, "sess-big", []TranscriptRecord{{Seq: 0, RecordJSON: big, Rendered: big}}); err != nil {
+	if _, err := d.AppendTranscript(OwnerRound, "sess-big", []TranscriptRecord{{Seq: 0, RecordJSON: big, Rendered: big}}); err != nil {
 		t.Fatalf("AppendTranscript: %v", err)
 	}
 
@@ -157,7 +157,7 @@ func TestTranscriptPutReadCompresses(t *testing.T) {
 		t.Fatalf("stored codecs = %d/%d, want %d/%d", jsonCodec, renderedCodec, codecZstd, codecZstd)
 	}
 
-	got, err := d.Transcript(OwnerMasterMind, "sess-big", 0, 0)
+	got, err := d.Transcript(OwnerRound, "sess-big", 0, 0)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestSmallRowsKeepTheirStorageClass(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RoundFilePut: %v", err)
 	}
-	if _, err := d.AppendTranscript(OwnerMasterMind, "sess-small", []TranscriptRecord{{Seq: 0, RecordJSON: "{}", Rendered: "line"}}); err != nil {
+	if _, err := d.AppendTranscript(OwnerRound, "sess-small", []TranscriptRecord{{Seq: 0, RecordJSON: "{}", Rendered: "line"}}); err != nil {
 		t.Fatalf("AppendTranscript: %v", err)
 	}
 
@@ -236,13 +236,13 @@ func TestReadRefusesUnknownCodec(t *testing.T) {
 		t.Errorf("RoundFileGet(unknown codec) err = %v, want ErrInvalid", err)
 	}
 
-	if _, err := d.AppendTranscript(OwnerMasterMind, "sess-bad", []TranscriptRecord{{Seq: 0, Rendered: "line"}}); err != nil {
+	if _, err := d.AppendTranscript(OwnerRound, "sess-bad", []TranscriptRecord{{Seq: 0, Rendered: "line"}}); err != nil {
 		t.Fatalf("AppendTranscript: %v", err)
 	}
 	if _, err := d.sqlDB.Exec(`UPDATE transcript SET rendered_codec = 9 WHERE owner_id = 'sess-bad'`); err != nil {
 		t.Fatalf("set an unknown codec: %v", err)
 	}
-	if _, err := d.Transcript(OwnerMasterMind, "sess-bad", 0, 0); !errors.Is(err, ErrInvalid) {
+	if _, err := d.Transcript(OwnerRound, "sess-bad", 0, 0); !errors.Is(err, ErrInvalid) {
 		t.Errorf("Transcript(unknown codec) err = %v, want ErrInvalid", err)
 	}
 }

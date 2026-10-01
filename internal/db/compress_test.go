@@ -79,7 +79,7 @@ func seedPlainHistory(t *testing.T, d *DB) string {
 
 	now := formatTime(time.Now().UTC())
 	if _, err := d.sqlDB.Exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, ts, record_json, record_json_codec, rendered, rendered_codec)
-		VALUES (?,?,?,?,?,?,0,?,0)`, NewID(), OwnerMasterMind, "sess-plain", 0, now, big, "line\n"); err != nil {
+		VALUES (?,?,?,?,?,?,0,?,0)`, NewID(), OwnerRound, "sess-plain", 0, now, big, "line\n"); err != nil {
 		t.Fatalf("insert transcript: %v", err)
 	}
 	return id
@@ -97,7 +97,7 @@ func seedFullyCompressible(t *testing.T, d *DB) {
 	insertPlainRoundFile(t, d, id, "001-big.jsonl", big)
 	now := formatTime(time.Now().UTC())
 	if _, err := d.sqlDB.Exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, ts, record_json, record_json_codec, rendered, rendered_codec)
-		VALUES (?,?,?,?,?,?,0,?,0)`, NewID(), OwnerMasterMind, "sess-big", 0, now, big, big); err != nil {
+		VALUES (?,?,?,?,?,?,0,?,0)`, NewID(), OwnerRound, "sess-big", 0, now, big, big); err != nil {
 		t.Fatalf("insert transcript: %v", err)
 	}
 }

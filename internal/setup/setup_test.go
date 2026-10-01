@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -177,6 +178,10 @@ func TestPlanSeedsDocumentorActor(t *testing.T) {
 	}
 	if documentor.Check != nil {
 		t.Errorf("documentor check = %v, want nil (the writer default)", *documentor.Check)
+	}
+	wantScope := &pathscope.Scope{Paths: []string{"@docs"}, Comments: true}
+	if !reflect.DeepEqual(documentor.Scope, wantScope) {
+		t.Errorf("documentor scope = %+v, want %+v", documentor.Scope, wantScope)
 	}
 	if !reflect.DeepEqual(documentor.Candidates, builder.Candidates) {
 		t.Errorf("documentor candidates = %v, want the builder's %v", documentor.Candidates, builder.Candidates)

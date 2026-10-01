@@ -32,7 +32,7 @@ func (r *Renderer) claudeAssistant(obj map[string]any, at time.Time, s stamp) []
 	for _, blk := range contentBlocks(obj) {
 		switch str(blk["type"]) {
 		case "tool_use":
-			if id := str(blk["id"]); r.stamps && id != "" && !at.IsZero() {
+			if id := str(blk["id"]); id != "" && !at.IsZero() {
 				r.pending[id] = at
 			}
 			out = append(out, s.line(toolLine(str(blk["name"]), asMap(blk["input"]))))

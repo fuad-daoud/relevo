@@ -99,9 +99,12 @@ session loads the new server without a restart.
 
 ### The Claude Code plugin
 
-A Claude Code MasterMind installs relevo as a plugin. The plugin provides the
-`relevo mcp` MCP server and a `SessionStart` hook that runs
-`relevo mastermind init`, so relevo knows which MasterMind session is calling:
+A Claude Code MasterMind installs relevo as a plugin. The plugin's MCP server,
+its `SessionStart` and `UserPromptSubmit` hooks and its slash commands all run
+through tiny scripts under `${CLAUDE_PLUGIN_ROOT}/scripts/` that exec `relevo`
+from `PATH`, so relevo knows which MasterMind session is calling. Without
+`relevo` on `PATH` the hooks stay silent, and the MCP server and the commands
+print one install hint:
 
     /plugin marketplace add fuad-daoud/relevo
     /plugin install relevo@relevo
@@ -248,12 +251,12 @@ the relevo plugin's `SessionStart` hook exports, or through the harness
 process the `relevo mcp` server shares with the session. Run
 `relevo mastermind list` to see the MasterMinds relevo knows.
 
-Its `chat` column names each MasterMind as a person sees it: a Claude Code chat's
-title, or its last prompt, plus the claude.ai link when the session is bridged;
-an opencode session's title; and `-` when nothing can be read. The label is read
-from the harness's own files when the command runs and is never stored. The same
-label follows the MasterMind's name in `relevo status` and `relevo doctor`.
-`relevo mastermind rename <id|name> <new-name>` gives a MasterMind a name of your own.
+Its `chat` column names each opencode MasterMind as a person sees it: the
+session's own title, read from opencode's database when the command runs. Every
+other kind, and an opencode session whose title cannot be read, shows `-`. The
+label is never stored. The same label follows the MasterMind's name in `relevo
+status` and `relevo doctor`. `relevo mastermind rename <id|name> <new-name>`
+gives a MasterMind a name of your own.
 
 ## Command surface
 
@@ -987,14 +990,13 @@ or the working index, and they are reclaimed automatically by the repository's
 own `git gc`.
 
 **What a binding records.** Beyond its round history and live state, a fresh
-`bind` fills in five more facts about the binding: which
+`bind` fills in four more facts about the binding: which
 repository it works in (the origin URL, normalised, and the git common
 directory — best-effort, so a directory git can't read leaves this blank
 rather than failing the command), the `--feature` label grouping it with
 other bindings (or that it serves none), the `--ticket` issue it serves
-(stored as `#N`, or `owner/repo#N` when the repository is known), which
-binding and round it was forked from, and the MasterMind's own harness
-transcript file path, when relevo can locate one at bind time. None of this
+(stored as `#N`, or `owner/repo#N` when the repository is known), and which
+binding and round it was forked from. None of this
 changes what you see day to day; it exists for `relevo history`, the ui's
 dashboard and the database below.
 
@@ -1004,8 +1006,9 @@ relevo keeps a pure-Go sqlite database at `$XDG_STATE_HOME/relevo/relevo.db`
 (defaulting to `~/.local/state/relevo/relevo.db`), mode 0600, and it is the
 record: the configuration sections and secrets, every binding with its round
 log and rounds, gates, MasterMind records, and every file a closed round produced
-(artifact and transcript rows). Nothing else is a source of truth, and no verb
-needs it closed.
+(artifact rows, and transcript rows holding a builder round's rendered stream).
+relevo never reads or records the MasterMind's own harness transcript. Nothing
+else is a source of truth, and no verb needs it closed.
 
 One process opens the file: `relevo daemon`. Every other process -- every verb,
 the lifecycle hooks, `mcp`, `wait`, the ui and `relevo serve` -- reaches it
@@ -1464,8 +1467,33 @@ writer, whether its round closes on a gate.
 
 `documentor` is a writer whose definition states the docs-only contract: it
 edits markdown, agent instruction files, sketches and diagrams, and code
-comments, and never anything that changes behaviour. That contract is prose in
-the definition; nothing inspects the diff.
+comments, and never anything that changes behaviour. That contract is a
+**scope**, and relevo enforces it when a round closes.
+
+`actors.<name>.scope` is `{"paths": [...], "comments": bool}`. Each `paths`
+entry is a glob over the repo-relative path -- `*` matches within one segment,
+`**` matches any number of segments, a leading `!` excludes, and the last match
+wins -- or `@docs`, which expands to `**/*.md`, `**/*.markdown`, `**/*.mdx`,
+`**/*.mmd`, `**/*.svg` and `**/*.excalidraw`, excluding `!**/testdata/**`,
+`!vendor/**` and `!**/node_modules/**`. With `comments` true, an edit to an
+out-of-scope `.go` file is still in scope when the old and new contents differ
+only in non-directive comments; a change to a directive comment (`//go:`,
+`// +build`, `//line`, `//export`, `//nolint`, `//lint:`, anything containing
+`#nosec`, the `// Code generated ... DO NOT EDIT.` marker, a test `Output:`
+comment) or to any code token is refused, as is any other extension, a binary
+or a symlink.
+
+A refusal still closes the round -- its report, diff and usage are recorded --
+but its outcome is forced to `halted`, the binding goes to **NEEDS YOU** naming
+the offending file, and the gate never runs. A round relevo cannot judge (no
+baseline tree, or a git error) refuses the same way. A writer with no `scope`
+closes exactly as before.
+
+`relevo config init` seeds `documentor` with
+`{"paths": ["@docs"], "comments": true}`. There is no migration: an existing DB
+adds the scope with `relevo config edit`. The scope is actor config, so a served
+binding is judged by the server's own `actors` section, the same rule that
+applies to its shape and definitions.
 
 Agents and actors are the `agents` and `actors` sections of relevo.db; read
 them with `relevo config get agents` and `relevo config get actors`, and change
@@ -2318,10 +2346,13 @@ at runtime with a clear error rather than running without a state lock.
 ## Claude Code plugin
 
 The relevo plugin gives a Claude Code MasterMind two things: the `relevo mcp` MCP
-server (`relevo` from `PATH`), which exposes `status`, `send`, `done`, `show`
-and `gate` as tools, and a `SessionStart` hook that runs
-`relevo mastermind init`. The hook exports `RELEVO_MASTERMIND` and tells the model its
-MasterMind name. Install it once per machine:
+server, which exposes `status`, `send`, `done`, `show` and `gate` as tools, and
+a `SessionStart` hook that runs `relevo mastermind init`. The MCP server, the
+hooks and the slash commands below all run through tiny scripts under
+`${CLAUDE_PLUGIN_ROOT}/scripts/` that exec `relevo` from `PATH`; without it the
+hooks stay silent, and the MCP server and the commands print one install hint.
+The hook exports `RELEVO_MASTERMIND` and tells the model its MasterMind name.
+Install it once per machine:
 
     /plugin marketplace add fuad-daoud/relevo
     /plugin install relevo@relevo

@@ -274,9 +274,6 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	opts.MasterMindID = rec.ID
 	mastermindEP := recordEndpoint(rec)
-	if mastermindEP.TranscriptLocator == "" {
-		mastermindEP.TranscriptLocator = mastermindLocator(rt, mastermindEP.Kind, mastermindEP.SessionID)
-	}
 
 	if _, err := rt.Store.Load(opts.Name); err == nil {
 		return AddResult{}, fmt.Errorf(

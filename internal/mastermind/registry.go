@@ -27,7 +27,7 @@ type Registry interface {
 	ByHost(pid int, startedAt int64) (Record, error)
 	List() ([]Record, error)
 	Create(r Record) (Record, error)
-	MoveSession(id, sessionID, transcript string, now time.Time) (Record, error)
+	MoveSession(id, sessionID string, now time.Time) (Record, error)
 	SetHost(id string, pid int, startedAt int64) (Record, error)
 	Rename(id, name string) (Record, error)
 	Touch(id string, now time.Time) error
@@ -76,8 +76,8 @@ func (o kvOps) bySession(kind, sessionID string) (Record, error) {
 
 func (o kvOps) create(r Record) (Record, error) { return o.reg.createIn(o.kv, r) }
 
-func (o kvOps) moveSession(id, sessionID, transcript string, now time.Time) (Record, error) {
-	return o.reg.moveSessionIn(o.kv, id, sessionID, transcript, now)
+func (o kvOps) moveSession(id, sessionID string, now time.Time) (Record, error) {
+	return o.reg.moveSessionIn(o.kv, id, sessionID, now)
 }
 
 func (o kvOps) setHost(id string, pid int, startedAt int64) (Record, error) {
@@ -255,17 +255,17 @@ func (r *DBRegistry) createIn(kv db.KVTx, rec Record) (Record, error) {
 
 // MoveSession points the record at a new session, appending the old one to
 // its history with To = now.
-func (r *DBRegistry) MoveSession(id, sessionID, transcript string, now time.Time) (Record, error) {
+func (r *DBRegistry) MoveSession(id, sessionID string, now time.Time) (Record, error) {
 	var out Record
 	err := r.KV.Tx(func(tx db.KVTx) error {
 		var e error
-		out, e = r.moveSessionIn(tx, id, sessionID, transcript, now)
+		out, e = r.moveSessionIn(tx, id, sessionID, now)
 		return e
 	})
 	return out, err
 }
 
-func (r *DBRegistry) moveSessionIn(kv db.KVTx, id, sessionID, transcript string, now time.Time) (Record, error) {
+func (r *DBRegistry) moveSessionIn(kv db.KVTx, id, sessionID string, now time.Time) (Record, error) {
 	rec, err := r.getFrom(kv, id)
 	if err != nil {
 		return Record{}, err
@@ -294,10 +294,6 @@ func (r *DBRegistry) moveSessionIn(kv db.KVTx, id, sessionID, transcript string,
 			To:        now,
 		})
 		rec.SessionID = sessionID
-	}
-	// An empty transcript path leaves the stored locator alone.
-	if transcript != "" {
-		rec.TranscriptLocator = transcript
 	}
 
 	if err := rec.Validate(); err != nil {

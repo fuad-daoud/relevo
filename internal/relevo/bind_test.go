@@ -79,20 +79,16 @@ func newTestRuntime(t *testing.T, fg *fakeGit) Runtime {
 }
 
 // runtimeWithMasterMind is newRuntime with its one registry record replaced, for
-// the tests that need a mastermind whose session id, kind or transcript locator
-// a case names. An empty locator leaves MasterMind.TranscriptLocator for
-// mastermindLocator (rt.Sessions) to fill, exactly as a real record without one
-// would.
-func runtimeWithMasterMind(t *testing.T, sessionID, locator string) Runtime {
+// the tests that need a mastermind whose session id or kind a case names.
+func runtimeWithMasterMind(t *testing.T, sessionID string) Runtime {
 	t.Helper()
 	rt := newRuntime(t)
 	reg, _ := testMasterMindRegistry(t, mastermind.Record{
-		ID:                testMasterMindID,
-		Name:              testMasterMindName,
-		HarnessKind:       "claude",
-		SessionID:         sessionID,
-		CWD:               "/repo",
-		TranscriptLocator: locator,
+		ID:          testMasterMindID,
+		Name:        testMasterMindName,
+		HarnessKind: "claude",
+		SessionID:   sessionID,
+		CWD:         "/repo",
 	})
 	rt.MasterMinds = reg
 	return rt
@@ -111,24 +107,17 @@ func testMasterMindRegistry(t *testing.T, rec mastermind.Record) (*mastermind.DB
 	return reg, created
 }
 
-// TestBindRecordsRepoFeatureAndLocator pins #172: a fresh bind captures the
-// git repo identity (normalised), the human-given --feature label, and the
-// mastermind's own transcript file path (via rt.Sessions), and stamps CreatedAt.
-// TestBindRepoFactsFailureIsNil pins that a git failure never fails a bind:
-// captureRepo swallows it and RepoRef stays nil.
-func TestBindRecordsRepoFeatureAndLocator(t *testing.T) {
+// TestBindRecordsRepoFeature pins #172: a fresh bind captures the git repo
+// identity (normalised) and the human-given --feature label, and stamps
+// CreatedAt. TestBindRepoFactsFailureIsNil pins that a git failure never fails a
+// bind: captureRepo swallows it and RepoRef stays nil.
+func TestBindRecordsRepoFeature(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
 	rt.Git = &fakeGit{
 		repoFactsOrigin:    "git@github.com:o/r.git",
 		repoFactsCommonDir: "/repo/.git",
-	}
-	rt.Sessions = func(kind, sessionID string) (string, bool) {
-		if kind == "claude" && sessionID == "sess-architect" {
-			return "/home/x/.claude/projects/slug/S.jsonl", true
-		}
-		return "", false
 	}
 
 	b, err := Bind(context.Background(), rt, BindOptions{
@@ -144,9 +133,6 @@ func TestBindRecordsRepoFeatureAndLocator(t *testing.T) {
 	}
 	if b.Feature != "auth" {
 		t.Errorf("Feature = %q, want auth", b.Feature)
-	}
-	if b.MasterMind.TranscriptLocator != "/home/x/.claude/projects/slug/S.jsonl" {
-		t.Errorf("MasterMind.TranscriptLocator = %q, want the resolved session path", b.MasterMind.TranscriptLocator)
 	}
 	if b.CreatedAt.IsZero() {
 		t.Error("CreatedAt must be stamped at bind")
@@ -178,7 +164,7 @@ func TestBindRepoFactsFailureIsNil(t *testing.T) {
 func TestBindRecordsMasterMindFromRegistry(t *testing.T) {
 	t.Parallel()
 
-	rt := runtimeWithMasterMind(t, "sess-from-record", "/home/x/.claude/projects/slug/S.jsonl")
+	rt := runtimeWithMasterMind(t, "sess-from-record")
 
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name:         "webshop",
@@ -201,9 +187,6 @@ func TestBindRecordsMasterMindFromRegistry(t *testing.T) {
 	}
 	if b.MasterMind.PaneID != "" {
 		t.Errorf("MasterMind.PaneID = %q, want empty: nothing writes a pane id since #303", b.MasterMind.PaneID)
-	}
-	if b.MasterMind.TranscriptLocator != "/home/x/.claude/projects/slug/S.jsonl" {
-		t.Errorf("MasterMind.TranscriptLocator = %q, want the record's", b.MasterMind.TranscriptLocator)
 	}
 }
 
@@ -441,7 +424,7 @@ func TestBindRefusesSecondBindingOnSameTree(t *testing.T) {
 func TestBindResumeRepointsMasterMindAndKeepsRound(t *testing.T) {
 	t.Parallel()
 
-	rt := runtimeWithMasterMind(t, "mastermind-sess-2", "")
+	rt := runtimeWithMasterMind(t, "mastermind-sess-2")
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: testOpencodeRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	})
@@ -474,15 +457,13 @@ func TestBindResumeRepointsMasterMindAndKeepsRound(t *testing.T) {
 	}
 }
 
-// TestResumeKeepsFieldsAndRefreshesLocator pins the resume rule for #172's
-// new fields: a mastermind-only resume leaves RepoRef and Feature exactly as
-// the binding already had them, and refreshes MasterMind.TranscriptLocator
-// (which endpointOf wipes along with the rest of the old MasterMind endpoint)
-// since it was previously empty.
-func TestResumeKeepsFieldsAndRefreshesLocator(t *testing.T) {
+// TestResumeKeepsFields pins the resume rule for #172's fields: a
+// mastermind-only resume leaves RepoRef and Feature exactly as the binding
+// already had them.
+func TestResumeKeepsFields(t *testing.T) {
 	t.Parallel()
 
-	rt := runtimeWithMasterMind(t, "mastermind-sess", "")
+	rt := runtimeWithMasterMind(t, "mastermind-sess")
 
 	existing := store.Binding{
 		Name:       "webshop",
@@ -498,13 +479,6 @@ func TestResumeKeepsFieldsAndRefreshesLocator(t *testing.T) {
 		t.Fatalf("seed existing binding: %v", err)
 	}
 
-	rt.Sessions = func(kind, sessionID string) (string, bool) {
-		if kind == "claude" && sessionID == "mastermind-sess" {
-			return "/home/x/.claude/projects/slug/S.jsonl", true
-		}
-		return "", false
-	}
-
 	got, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Resume: true, MasterMindID: testMasterMindName, CWD: "/repo",
 	})
@@ -518,45 +492,6 @@ func TestResumeKeepsFieldsAndRefreshesLocator(t *testing.T) {
 	}
 	if got.Feature != "auth" {
 		t.Errorf("Feature = %q, want kept as auth", got.Feature)
-	}
-	if got.MasterMind.TranscriptLocator != "/home/x/.claude/projects/slug/S.jsonl" {
-		t.Errorf("MasterMind.TranscriptLocator = %q, want refreshed to the resolved session path", got.MasterMind.TranscriptLocator)
-	}
-}
-
-// TestResumeKeepsExistingLocatorWhenAlreadySet is the other half of the
-// refresh rule: when the binding already has a TranscriptLocator, resume
-// must not overwrite it with whatever rt.Sessions resolves for the new
-// mastermind pane's session.
-func TestResumeKeepsExistingLocatorWhenAlreadySet(t *testing.T) {
-	t.Parallel()
-
-	rt := newRuntime(t)
-
-	existing := store.Binding{
-		Name:       "webshop",
-		CWD:        "/repo",
-		Round:      3,
-		State:      store.StateBroken,
-		MasterMind: store.Endpoint{Kind: "claude", SessionID: "sess-architect", TranscriptLocator: "/already/set.jsonl"},
-		Builder:    store.Endpoint{AgentName: "webshop-builder", Kind: "opencode", Mode: store.ModeHeadless},
-	}
-	if err := rt.Store.Save(existing); err != nil {
-		t.Fatalf("seed existing binding: %v", err)
-	}
-
-	rt.Sessions = func(kind, sessionID string) (string, bool) {
-		return "/would/overwrite.jsonl", true
-	}
-
-	got, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, MasterMindID: testMasterMindName, CWD: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("resume Bind: %v", err)
-	}
-	if got.MasterMind.TranscriptLocator != "/already/set.jsonl" {
-		t.Errorf("MasterMind.TranscriptLocator = %q, want the existing value kept, not re-resolved", got.MasterMind.TranscriptLocator)
 	}
 }
 
@@ -2201,7 +2136,7 @@ func TestResumeAppliesLabelFlags(t *testing.T) {
 
 	seed := func(t *testing.T) Runtime {
 		t.Helper()
-		rt := runtimeWithMasterMind(t, "mastermind-sess", "")
+		rt := runtimeWithMasterMind(t, "mastermind-sess")
 		b := store.Binding{
 			Name:       "webshop",
 			CWD:        "/repo",
