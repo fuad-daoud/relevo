@@ -813,6 +813,7 @@ export default {
               const lineB = ellipsize(
                 `  r${displayRound} · ${rowActor(row)} on ${row.on || row.harness || "opencode"}` +
                   (row.reason ? ` · ${row.reason}` : "") +
+                  (row.live ? ` · +${row.live.added}/-${row.live.removed} in ${row.live.files}${row.live.shared ? " (shared)" : ""}` : "") +
                   (row.tokens ? ` · ${row.tokens}` : ""),
                 37,
               );
