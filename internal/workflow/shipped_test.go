@@ -47,3 +47,19 @@ func TestShippedSeeds(t *testing.T) {
 		t.Fatalf("ShippedSeeds = %v, want %v", got, want)
 	}
 }
+
+func TestDefaultCheckRoutesGreenToReviewAndRedToRepair(t *testing.T) {
+	def := Default()
+	if got, want := def.Steps["check"].On, map[string]Target{
+		"green": StepTarget("review"),
+		"red":   StepTarget("repair"),
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("check on = %+v, want %+v", got, want)
+	}
+	if got, want := def.Steps["fix-check"].On, map[string]Target{
+		"green": StepTarget("fix-review"),
+		"red":   StepTarget("fix-repair"),
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fix-check on = %+v, want %+v", got, want)
+	}
+}

@@ -309,7 +309,7 @@ func TestEquivalenceWithChainNext(t *testing.T) {
 			oldGot, oldAct := chain.Next(tc.state, tc.event)
 			def := equivDef(t, tc.state.Settings, equivGateParam(tc.event))
 			ns := equivState(def, tc.state)
-			nstate, nacts := equivReplay(t, def, ns, tc.event, tc.event.Round)
+			nstate, nacts := equivReplay(t, def, ns, tc.event, tc.event.Round, tc.state.Settings.Regate)
 			checkEquiv(t, tc, oldGot, oldAct, ns, nstate, nacts)
 		})
 	}
@@ -501,8 +501,9 @@ var equivSecurityOutputs = Outputs{"findings": {Kind: OutputCount}, "report": {K
 // equivReplay translates one old close into the new events it becomes and
 // feeds them to the new engine, returning the actions in order. A builder
 // close answers the engine's own actions until the next send that is not a
-// repair round, or a terminal state.
-func equivReplay(t *testing.T, def Definition, st State, e chain.Event, round int) (State, []Action) {
+// repair round, or a terminal state, then asserts the repair and check counts
+// the close implies. regate is the old settings' repair budget.
+func equivReplay(t *testing.T, def Definition, st State, e chain.Event, round, regate int) (State, []Action) {
 	t.Helper()
 	var all []Action
 	feed := func(ev Event) {
@@ -526,16 +527,16 @@ func equivReplay(t *testing.T, def Definition, st State, e chain.Event, round in
 			case ActionRunCheck:
 				feed(Event{Kind: EventCheckClosed, Step: last.Step, Run: st.Awaiting.Run,
 					Result: equivCheckResult(e.Gate), Log: "check.log"})
+				continue
 			case ActionSend:
 				if last.Step == "repair" || last.Step == "fix-repair" {
 					feedRun(Event{Kind: EventStepClosed, Step: last.Step, Member: last.Actor, Round: round, Status: "done"})
 					continue
 				}
-				return st, all
-			default:
-				return st, all
 			}
+			break
 		}
+		eqBuilderCounts(t, all, e, regate)
 		return st, all
 	case chain.EventReviewerClosed:
 		outcomes, reason := equivReviewOutcomes(e.Verdict)
@@ -588,6 +589,41 @@ func equivCheckResult(gate string) string {
 		return "red"
 	}
 	return "green"
+}
+
+// eqBuilderCounts asserts the repair sends and run_check actions one old
+// builder close implies. A green close checks once; a close with no check
+// routes green inside Next and so checks not at all; a red close only reports
+// red after the regate budget is spent, so it repairs Regate times and checks
+// Regate+1. Repair sends are otherwise dropped from the send comparison, so
+// these counts are what pin them.
+func eqBuilderCounts(t *testing.T, all []Action, e chain.Event, regate int) {
+	t.Helper()
+	if len(all) == 0 {
+		// An inert close -- a terminal run, or one that names no awaited
+		// close -- produces no actions, so there is nothing to count.
+		return
+	}
+	var repairs, checks int
+	for _, a := range all {
+		switch {
+		case a.Kind == ActionRunCheck:
+			checks++
+		case a.Kind == ActionSend && (a.Step == "repair" || a.Step == "fix-repair"):
+			repairs++
+		}
+	}
+	var wantRepairs, wantChecks int
+	switch e.Gate {
+	case chain.GateGreen:
+		wantRepairs, wantChecks = 0, 1
+	case chain.GateRed:
+		wantRepairs, wantChecks = regate, regate+1
+	}
+	if repairs != wantRepairs || checks != wantChecks {
+		t.Fatalf("case %s: gate %q: the old close implies %d repair sends and %d run_check actions; the new engine produced %d and %d",
+			t.Name(), e.Gate, wantRepairs, wantChecks, repairs, checks)
+	}
 }
 
 // equivReviewOutcomes parses a synthetic reviewer body carrying the verdict.
@@ -902,7 +938,7 @@ func runEquivScenario(t *testing.T, sc eqScenario) {
 			newState.Awaiting.Round = round
 		}
 		var nacts []Action
-		newState, nacts = equivReplay(t, def, newState, e, round)
+		newState, nacts = equivReplay(t, def, newState, e, round, sc.settings.Regate)
 		newSends = append(newSends, eqScenarioSends(t, nacts)...)
 	}
 
