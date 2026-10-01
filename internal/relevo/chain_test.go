@@ -2375,6 +2375,51 @@ func TestSecurityRecapAfterTheBlockStillYieldsTheFindings(t *testing.T) {
 	}
 }
 
+// TestChainReaderClosesRecordTheirParsedBlockAsDone pins the member's own
+// outcome: a chain reviewer or security member's artifact is relevo's to write
+// and its block is stripped before the close parses it, so the tail parse
+// reads unstructured; the verdict or finding count the chain parsed from the
+// stream is the round's real end and must record the member's round as done.
+func TestChainReaderClosesRecordTheirParsedBlockAsDone(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{Security: ptr(true)})
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	rev := chainBinding(t, rt, "shop-rev")
+	revStream := chainStreamResultLine(t, "Review done.\n\n"+chainFence+"relevo\nverdict: pass\n"+chainFence+"\n")
+	if err := os.WriteFile(rt.Store.StreamPath("shop-rev", rev.Round), []byte(revStream), 0o644); err != nil {
+		t.Fatalf("write the reviewer stream: %v", err)
+	}
+	chainReaderClose(t, rt, "shop-rev", "Review done.")
+
+	sec := chainBinding(t, rt, "shop-sec")
+	secStream := chainStreamResultLine(t, "Scan done.\n\n"+chainFence+"relevo\nfindings: 0\n"+chainFence+"\n")
+	if err := os.WriteFile(rt.Store.StreamPath("shop-sec", sec.Round), []byte(secStream), 0o644); err != nil {
+		t.Fatalf("write the security stream: %v", err)
+	}
+	chainReaderClose(t, rt, "shop-sec", "Scan done.")
+
+	for _, tc := range []struct {
+		name  string
+		round int
+	}{
+		{"shop-rev", rev.Round},
+		{"shop-sec", sec.Round},
+	} {
+		got := ""
+		for _, e := range chainLog(t, rt, tc.name) {
+			if e.Round == tc.round && e.Kind == store.KindReport {
+				got = e.Outcome
+			}
+		}
+		if got != reporttail.OutcomeDone {
+			t.Errorf("%s round %d report outcome = %q, want %q", tc.name, tc.round, got, reporttail.OutcomeDone)
+		}
+	}
+}
+
 // TestChainInputsAreRemovedWhenTheChainEnds pins item 5: a chain's inputs
 // directory is swept when the chain ends done or stopped -- through the state
 // machine, a stop, and the done verb -- while a halted chain keeps it, and the

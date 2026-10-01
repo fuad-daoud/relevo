@@ -607,10 +607,10 @@ func resolveGateFor(gate string, noGate bool, pol policy.Policy, roleChecks bool
 	return pol.GateDefault()
 }
 
-// resolveRegate applies the repair-round rule (#132 part 2): an explicit
+// ResolveRegate applies the repair-round rule (#132 part 2): an explicit
 // --regate is used as given (0 disables repair), and an unset flag falls back
 // to policy.json's gate.regate.
-func resolveRegate(regate *int, pol policy.Policy) int {
+func ResolveRegate(regate *int, pol policy.Policy) int {
 	if regate != nil {
 		return *regate
 	}
@@ -723,7 +723,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		Role:             normRole(opts.Role),
 		Shape:            shape,
 		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
-		Regate:           resolveRegate(opts.Regate, rt.Policy),
+		Regate:           ResolveRegate(opts.Regate, rt.Policy),
 		RepoRef:          repoRef,
 		Feature:          opts.Feature,
 		Ticket:           ticket,
