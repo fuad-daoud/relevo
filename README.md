@@ -1237,7 +1237,8 @@ ancestor, sit under the git top level, so neither `..` nor a symlinked parent
 escapes. A missing file is a new scene, and it and its parent directories are
 created on the first save, never at startup. An explicit repo path outside a
 repository is a usage error, exit 2; a bare `relevo board` is the live board and
-never consults the repository.
+never requires a repository. A live board refuses a state root that sits inside
+a repository (or a repository inside it), because the two scopes may not nest.
 
 The theme chooses the colours of **new** elements only -- an existing scene
 keeps the colours it stores. Precedence is `--theme`, then the repo-local git
