@@ -818,6 +818,23 @@ export default {
                 37,
               );
 
+              // §4.2: the row the statusline itself draws, when the document
+              // carries one. An older relevo has no `text`, so the two-line
+              // composition below stays as the fallback. The sidebar's 37
+              // columns wrap the row's own text.
+              if (row.text) {
+                const colour =
+                  sw.tone === "needs" ? warningColor : sw.tone === "report" ? infoColor : baseColor;
+                return (
+                  <box
+                    flexDirection="column"
+                    onMouseDown={() => openBinding(row, displayRound)}
+                  >
+                    <text fg={colour}>{sw.tone === "needs" ? <b>{row.text}</b> : row.text}</text>
+                  </box>
+                );
+              }
+
               return (
                 <box
                   flexDirection="column"
@@ -1078,7 +1095,7 @@ export default {
 
             <box marginTop={1}>
               <text fg={mutedColor}>
-                {`${ROW_PREFIX}NAME           ACTOR     ON                   RND  TOKENS    STATUS              TIME   REASON`}
+                {`${ROW_PREFIX}NAME           ACTOR     ON                   RND  TOKENS    STATUS              TIME   DIFF                  REASON`}
               </text>
             </box>
 
@@ -1097,10 +1114,16 @@ export default {
               const tokensPad = (row.tokens || "").padEnd(9, " ");
               const statusPad = ellipsize(status, 19).padEnd(20, " ");
               const clockPad = (row.clock || "--").padEnd(7, " ");
+              // The live diff, ellipsized and padded like the status column, so
+              // the reason that follows starts at the same cell on every row.
+              const diff = row.live
+                ? `+${row.live.added}/-${row.live.removed} in ${row.live.files}${row.live.shared ? " (shared)" : ""}`
+                : "";
+              const diffPad = ellipsize(diff, 21).padEnd(22, " ");
 
               // The reason takes whatever width the terminal has left after
               // the fixed columns, so it runs to the page's real right edge.
-              const fixed = `${namePad} ${actorPad} ${modelPad}${rndPad}${tokensPad} ${statusPad}${clockPad}`;
+              const fixed = `${namePad} ${actorPad} ${modelPad}${rndPad}${tokensPad} ${statusPad}${clockPad}${diffPad}`;
               const reasonPad = Math.max(0, fleetPageWidth - ROW_PREFIX.length - fixed.length);
               const line = `${fixed}${ellipsize(row.reason || "", reasonPad)}`;
 
