@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -293,6 +294,49 @@ func TestChainStartServerLocalFailureLeavesNoBranch(t *testing.T) {
 	for _, name := range []string{"shop", "shop-rev", "shop-plan"} {
 		if _, lerr := rt.Store.Load(name); !errors.Is(lerr, store.ErrNotFound) {
 			t.Errorf("binding %q exists after the failed mirror: %v", name, lerr)
+		}
+	}
+	deleted := false
+	for _, c := range fg.deleteBranchCalls {
+		if c.Branch == "relevo/shop" {
+			deleted = true
+		}
+	}
+	if !deleted {
+		t.Errorf("DeleteBranch calls = %+v, want relevo/shop removed", fg.deleteBranchCalls)
+	}
+}
+
+// TestChainStartServerPlanCopyFailureLeavesNothing pins the plan copies' order:
+// they land before the mirror row, so a copy that cannot be written leaves no
+// row and no branch and asks for the same command again.
+func TestChainStartServerPlanCopyFailureLeavesNothing(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	rt, fg, _ := chainServerRuntime(t, fr)
+	// A file where the chain's own plan directory belongs refuses the copy.
+	chainDir := rt.Store.ChainDir("shop")
+	if err := os.MkdirAll(filepath.Dir(chainDir), 0o755); err != nil {
+		t.Fatalf("mkdir the chains directory: %v", err)
+	}
+	if err := os.WriteFile(chainDir, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("plant the blocking file: %v", err)
+	}
+
+	_, err := ChainStart(context.Background(), rt, chainServerOpts(t))
+	if err == nil {
+		t.Fatal("ChainStart with an impossible plan copy = nil, want the record-it-again failure")
+	}
+	if !strings.Contains(err.Error(), "run the same relevo chain command again") || !strings.Contains(err.Error(), "zen") {
+		t.Errorf("err = %q, want the record-it-again message naming zen", err.Error())
+	}
+	if _, cerr := rt.Store.Chain("shop"); !errors.Is(cerr, store.ErrNotFound) {
+		t.Errorf("chain exists after a failed plan copy: %v", cerr)
+	}
+	for _, name := range []string{"shop", "shop-rev", "shop-plan"} {
+		if _, lerr := rt.Store.Load(name); !errors.Is(lerr, store.ErrNotFound) {
+			t.Errorf("binding %q exists after a failed plan copy: %v", name, lerr)
 		}
 	}
 	deleted := false

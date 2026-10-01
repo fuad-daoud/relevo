@@ -195,6 +195,12 @@ func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan 
 	for i := range plan.bodies {
 		planPaths[i] = rt.Store.ChainPlanPath(name, i+1)
 	}
+	// The plan copies land before the row that records the chain: a copy
+	// failure then leaves at most stray copy files, which a re-run overwrites,
+	// and never a mirror row naming plans that are not there.
+	if err := chainCopyPlans(rt, name, plan.bodies); err != nil {
+		return localFail(err)
+	}
 	now := time.Now
 	if rt.Now != nil {
 		now = rt.Now
@@ -207,9 +213,6 @@ func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		return tx.CreateChain(row, members)
 	}); err != nil {
-		return localFail(err)
-	}
-	if err := chainCopyPlans(rt, name, plan.bodies); err != nil {
 		return localFail(err)
 	}
 	stored, err := chainStoredMembers(rt, plan.members)

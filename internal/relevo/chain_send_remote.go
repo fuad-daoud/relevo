@@ -93,9 +93,8 @@ func chainSendPending(ctx context.Context, rt Runtime) error {
 		if c.Status != string(chain.StatusRunning) {
 			continue
 		}
-		// A server chain's rounds ship from this machine's staging to the
-		// server that drives it; the chain pull is what collects them, so the
-		// pending-send step leaves the chain alone.
+		// The server drives a server chain's sends and the chain pull collects
+		// them, so the pending-send step leaves it alone.
 		if chainOnServer(c) {
 			continue
 		}
