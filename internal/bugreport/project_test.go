@@ -3,6 +3,7 @@ package bugreport
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -90,6 +91,41 @@ func TestRoundsSectionKeepsTheTail(t *testing.T) {
 				t.Errorf("a rounds row carries entry content: %q", cell)
 			}
 		}
+	}
+}
+
+// TestRoundsSectionCarriesTheNote pins the note column: it sits directly after
+// halted_at, carries an unstructured report's reject reason, and is cut at 200
+// runes with the cut marked.
+func TestRoundsSectionCarriesTheNote(t *testing.T) {
+	reason := "tail: line 267: commands_run list is not closed"
+	long := strings.Repeat("n", noteRunes+5)
+	logs := []BindingLog{{Name: "alpha", Entries: []store.LogEntry{
+		{Seq: 1, Round: 1, Kind: store.KindReport, HaltedAt: "2026-09-30T00:00:00Z", Note: reason},
+		{Seq: 2, Round: 1, Kind: store.KindPrompt, Note: long},
+	}}}
+
+	sec := RoundsSection(logs, "", 0)
+	want := []string{
+		"binding", "seq", "ts", "round", "direction", "kind", "route", "confirmed",
+		"late", "tier", "outcome", "halted_at", "note",
+		"tokens_in", "tokens_cache_read", "tokens_cache_write", "tokens_out",
+	}
+	if !slices.Equal(sec.Columns, want) {
+		t.Fatalf("columns = %v, want %v", sec.Columns, want)
+	}
+	noteAt := len(want) - 5
+	if sec.Columns[noteAt-1] != "halted_at" {
+		t.Errorf("note sits after %q, want halted_at", sec.Columns[noteAt-1])
+	}
+	if got := sec.Rows[0][noteAt]; got != reason {
+		t.Errorf("note cell = %q, want the report's reason %q", got, reason)
+	}
+	if got := sec.Rows[1][noteAt]; got != truncateRunes(long, noteRunes) {
+		t.Errorf("long note = %q, want the 200-rune cut", got)
+	}
+	if !strings.HasSuffix(sec.Rows[1][noteAt], "…") {
+		t.Error("the cut note is not marked")
 	}
 }
 

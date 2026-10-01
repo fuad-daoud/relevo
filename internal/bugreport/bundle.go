@@ -11,6 +11,7 @@ import (
 // The bundle's section names: one identity per part, used as the heading, the
 // word an omission line starts with, and the name a projection sets.
 const (
+	SectionDescription = "description"
 	SectionEnvironment = "environment"
 	SectionLastError   = "last_error"
 	SectionDoctor      = "doctor"

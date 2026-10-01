@@ -49,12 +49,12 @@ warnings: 1
 
 ## Rounds
 
-| binding | seq | ts | round | direction | kind | route | confirmed | late | tier | outcome | halted_at | tokens_in | tokens_cache_read | tokens_cache_write | tokens_out |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| alpha | 1 | 2026-09-30T00:13:12Z | 3 | to_runner | prompt | deliverer | true | false |  |  |  | 0 | 0 | 0 | 0 |
-| alpha | 2 | 2026-09-30T00:33:12Z | 3 | to_planner | report |  | true | true | plan | done |  | 1200 | 100 | 0 | 30 |
-| alpha | 3 | 2026-09-30T00:34:12Z | 3 | to_planner | diff | pull | false | false |  |  |  | 0 | 0 | 0 | 0 |
-| beta | 1 | 2026-09-28T00:43:12Z | 1 | to_runner | prompt | channel | true | false |  |  |  | 0 | 0 | 0 | 0 |
+| binding | seq | ts | round | direction | kind | route | confirmed | late | tier | outcome | halted_at | note | tokens_in | tokens_cache_read | tokens_cache_write | tokens_out |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| alpha | 1 | 2026-09-30T00:13:12Z | 3 | to_runner | prompt | deliverer | true | false |  |  |  | round 3 sent with <redacted> | 0 | 0 | 0 | 0 |
+| alpha | 2 | 2026-09-30T00:33:12Z | 3 | to_planner | report |  | true | true | plan | done |  |  | 1200 | 100 | 0 | 30 |
+| alpha | 3 | 2026-09-30T00:34:12Z | 3 | to_planner | diff | pull | false | false |  |  |  | diff recorded for round 3 | 0 | 0 | 0 | 0 |
+| beta | 1 | 2026-09-28T00:43:12Z | 1 | to_runner | prompt | channel | true | false |  |  |  |  | 0 | 0 | 0 | 0 |
 
 ## Hooks
 

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,6 +121,54 @@ func TestMarkdownOmitsWithOneLine(t *testing.T) {
 		if !bytes.Contains([]byte(md), []byte(want)) {
 			t.Errorf("markdown lacks %q:\n%s", want, md)
 		}
+	}
+}
+
+// TestMarkdownCappedFitsTheLimit pins the file render's cap: a bundle at or
+// under the limit is Markdown's own bytes, an over-limit render is cut on a
+// line boundary with one marked final line naming the limit and --stdout, and a
+// bundle whose first line cannot fit beside that marker is an error naming its
+// size and the limit.
+func TestMarkdownCappedFitsTheLimit(t *testing.T) {
+	small := Bundle{Title: "t", Sections: []Section{{Name: SectionStatus, Lines: []string{"nothing yet"}}}}
+	full := Markdown(small)
+	got, err := MarkdownCapped(small, 1<<20)
+	if err != nil {
+		t.Fatalf("under-limit cap: %v", err)
+	}
+	if got != full {
+		t.Errorf("under-limit render differs from Markdown:\n%s", got)
+	}
+
+	big := Bundle{Title: "t", Sections: []Section{{Name: SectionStatus, Lines: []string{
+		strings.Repeat("x", 100), strings.Repeat("y", 100), strings.Repeat("z", 100),
+	}}}}
+	over := len(Markdown(big))
+	limit := over - 60
+	got, err = MarkdownCapped(big, limit)
+	if err != nil {
+		t.Fatalf("over-limit cap: %v", err)
+	}
+	if len(got) > limit {
+		t.Errorf("capped render is %d bytes, want at most %d", len(got), limit)
+	}
+	lastLine := got[strings.LastIndex(strings.TrimRight(got, "\n"), "\n")+1:]
+	if !strings.Contains(lastLine, strconv.Itoa(limit)) || !strings.Contains(lastLine, "--stdout") {
+		t.Errorf("final line = %q, want it to name %d and --stdout", lastLine, limit)
+	}
+	kept := got[:len(got)-len(lastLine)]
+	if !strings.HasSuffix(kept, "\n") || !strings.HasPrefix(Markdown(big), kept) {
+		t.Errorf("the cap did not cut on a line boundary:\n%q", kept)
+	}
+
+	huge := Bundle{Title: strings.Repeat("h", 500)}
+	hugeFull := Markdown(huge)
+	_, err = MarkdownCapped(huge, 200)
+	if err == nil {
+		t.Fatal("an uncuttable bundle did not error")
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(len(hugeFull))) || !strings.Contains(err.Error(), "200") {
+		t.Errorf("error = %q, want the bundle's size %d and the limit 200", err, len(hugeFull))
 	}
 }
 
