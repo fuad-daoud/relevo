@@ -1,0 +1,227 @@
+package board
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+)
+
+// testLiveRoot makes a live root and one valid MasterMind id directory under it.
+func testLiveRoot(t *testing.T) (string, string) {
+	t.Helper()
+	root := realDir(t, t.TempDir())
+	liveRoot := filepath.Join(root, "boards")
+	id := "mm_aaaaaaaaaaaa"
+	if err := os.MkdirAll(filepath.Join(liveRoot, id), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	return liveRoot, id
+}
+
+func TestValidSceneName(t *testing.T) {
+	for _, ok := range []string{"board", "a", "abc-123", "0"} {
+		if err := ValidSceneName(ok); err != nil {
+			t.Errorf("ValidSceneName(%q) = %v, want nil", ok, err)
+		}
+	}
+	long := strings.Repeat("a", 65)
+	for _, bad := range []string{"", "-x", "Board", "a_b", "a/b", long} {
+		if err := ValidSceneName(bad); !errors.Is(err, ErrUsage) {
+			t.Errorf("ValidSceneName(%q) = %v, want ErrUsage", bad, err)
+		}
+	}
+}
+
+func TestSelectScenePrecedence(t *testing.T) {
+	liveRoot, _ := testLiveRoot(t)
+	liveDir := filepath.Join(liveRoot, "mm_aaaaaaaaaaaa")
+
+	// No flag, no pointer: the default, not from the pointer.
+	if name, fromPtr, err := SelectScene(liveDir, ""); err != nil || name != DefaultBoard || fromPtr {
+		t.Errorf("SelectScene(no pointer) = %q, %v, %v; want %q, false, nil", name, fromPtr, err, DefaultBoard)
+	}
+
+	if err := WritePointer(liveDir, "alpha"); err != nil {
+		t.Fatalf("WritePointer: %v", err)
+	}
+	// The pointer now wins, and reports itself as from the pointer.
+	if name, fromPtr, err := SelectScene(liveDir, ""); err != nil || name != "alpha" || !fromPtr {
+		t.Errorf("SelectScene(pointer) = %q, %v, %v; want alpha, true, nil", name, fromPtr, err)
+	}
+	// --board wins over the pointer, not from the pointer.
+	if name, fromPtr, err := SelectScene(liveDir, "beta"); err != nil || name != "beta" || fromPtr {
+		t.Errorf("SelectScene(--board) = %q, %v, %v; want beta, false, nil", name, fromPtr, err)
+	}
+}
+
+func TestWritePointerOnlyWhenDifferent(t *testing.T) {
+	liveRoot, _ := testLiveRoot(t)
+	liveDir := filepath.Join(liveRoot, "mm_aaaaaaaaaaaa")
+
+	if err := WritePointer(liveDir, "alpha"); err != nil {
+		t.Fatalf("WritePointer: %v", err)
+	}
+	path := filepath.Join(liveDir, pointerName)
+	past := time.Unix(1000000000, 0).UTC()
+	if err := os.Chtimes(path, past, past); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	if err := WritePointer(liveDir, "alpha"); err != nil {
+		t.Fatalf("WritePointer (same): %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if !info.ModTime().Equal(past) {
+		t.Errorf("WritePointer rewrote an unchanged pointer: mtime = %v, want %v", info.ModTime(), past)
+	}
+
+	if err := WritePointer(liveDir, "beta"); err != nil {
+		t.Fatalf("WritePointer (different): %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "beta\n" {
+		t.Errorf("pointer = %q, want %q", data, "beta\n")
+	}
+}
+
+func TestWritePointerCreatesLiveDir0700(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are not reliable on windows")
+	}
+	liveDir := filepath.Join(t.TempDir(), "boards", "mm_aaaaaaaaaaaa")
+	if err := WritePointer(liveDir, "board"); err != nil {
+		t.Fatalf("WritePointer: %v", err)
+	}
+	info, err := os.Stat(liveDir)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("live dir mode = %o, want 0700", got)
+	}
+}
+
+func TestPointerCorruptRefused(t *testing.T) {
+	liveRoot, id := testLiveRoot(t)
+	liveDir := filepath.Join(liveRoot, id)
+	if err := os.WriteFile(filepath.Join(liveDir, pointerName), []byte("Not A Slug\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	_, _, err := Pointer(liveDir)
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("Pointer(corrupt) = %v, want ErrUsage", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(liveDir, pointerName)) {
+		t.Errorf("refusal %q does not name the pointer file", err)
+	}
+}
+
+func TestResolveLiveArgAcceptsLiveShape(t *testing.T) {
+	liveRoot, id := testLiveRoot(t)
+	path := filepath.Join(liveRoot, id, "board.excalidraw")
+	res, ok, err := ResolveLiveArg(liveRoot, liveRoot, path)
+	if err != nil || !ok {
+		t.Fatalf("ResolveLiveArg = %+v, %v, %v; want a live resolution", res, ok, err)
+	}
+	if res.Scope != ScopeLive || res.Scene != "board" || res.Path != path || res.LiveDir != filepath.Join(liveRoot, id) {
+		t.Errorf("ResolveLiveArg = %+v, want live board at %s", res, path)
+	}
+}
+
+func TestResolveLiveArgNotUnderLiveRoot(t *testing.T) {
+	liveRoot, _ := testLiveRoot(t)
+	cwd := realDir(t, t.TempDir())
+	if _, ok, err := ResolveLiveArg(liveRoot, cwd, "docs/boards/api.excalidraw"); ok || err != nil {
+		t.Errorf("ResolveLiveArg(repo path) = ok %v, err %v; want false, nil", ok, err)
+	}
+}
+
+func TestResolveLiveArgRefusals(t *testing.T) {
+	liveRoot, id := testLiveRoot(t)
+	cases := []struct{ name, arg string }{
+		{"dotdot", filepath.Join(liveRoot, id, "..", "board.excalidraw")},
+		{"wrong extension", filepath.Join(liveRoot, id, "board.svg")},
+		{"nested dirs", filepath.Join(liveRoot, id, "sub", "board.excalidraw")},
+		{"bad id segment", filepath.Join(liveRoot, "not-an-id", "board.excalidraw")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := ResolveLiveArg(liveRoot, liveRoot, tc.arg)
+			if !errors.Is(err, ErrUsage) {
+				t.Fatalf("ResolveLiveArg(%q) = %v, want ErrUsage", tc.arg, err)
+			}
+		})
+	}
+}
+
+func TestResolveLiveArgRefusesEscapingSymlinkParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks are not reliable on windows")
+	}
+	liveRoot, id := testLiveRoot(t)
+	repo := realDir(t, t.TempDir())
+	// The live directory is a symlink into the repository, so a live-shaped path
+	// resolves under the repo root: the live scope must refuse it (S1's rule).
+	liveDir := filepath.Join(liveRoot, id)
+	if err := os.RemoveAll(liveDir); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+	if err := os.Symlink(repo, liveDir); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	_, _, err := ResolveLiveArg(liveRoot, liveRoot, filepath.Join(liveDir, "board.excalidraw"))
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("ResolveLiveArg(symlinked parent into repo) = %v, want ErrUsage", err)
+	}
+}
+
+func TestResolveLiveArgRefusesRepoPathThroughSymlinkIntoLiveDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks are not reliable on windows")
+	}
+	liveRoot, id := testLiveRoot(t)
+	repoRoot := realDir(t, t.TempDir())
+	// A repo path whose parent symlinks into the live directory must be refused
+	// by the repo scope's own EvalSymlinks rule (S1).
+	if err := os.Symlink(filepath.Join(liveRoot, id), filepath.Join(repoRoot, "link")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	_, err := Resolve(repoRoot, repoRoot, "link/board.excalidraw")
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("Resolve(repo path through symlink into live dir) = %v, want ErrUsage", err)
+	}
+}
+
+func TestResolveLiveDirRefusesNestedScopes(t *testing.T) {
+	repoRoot := realDir(t, t.TempDir())
+	liveDir := filepath.Join(repoRoot, "boards", "mm_aaaaaaaaaaaa")
+	if _, err := ResolveLiveDir(repoRoot, liveDir, "board"); !errors.Is(err, ErrUsage) {
+		t.Fatalf("ResolveLiveDir(live under repo) = %v, want ErrUsage", err)
+	}
+	// And the reverse: a repo root that sits under the live directory.
+	if _, err := ResolveLiveDir(filepath.Join(liveDir, "repo"), liveDir, "board"); !errors.Is(err, ErrUsage) {
+		t.Fatalf("ResolveLiveDir(repo under live) = %v, want ErrUsage", err)
+	}
+}
+
+func TestResolveLiveDirJoins(t *testing.T) {
+	repoRoot := realDir(t, t.TempDir())
+	liveDir := filepath.Join(t.TempDir(), "boards", "mm_aaaaaaaaaaaa")
+	res, err := ResolveLiveDir(repoRoot, liveDir, "notes")
+	if err != nil {
+		t.Fatalf("ResolveLiveDir: %v", err)
+	}
+	if res.Scope != ScopeLive || res.Scene != "notes" || res.Path != filepath.Join(liveDir, "notes.excalidraw") || res.LiveDir != liveDir {
+		t.Errorf("ResolveLiveDir = %+v", res)
+	}
+}
