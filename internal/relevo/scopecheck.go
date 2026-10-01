@@ -22,7 +22,7 @@ type scopeVerdict struct {
 }
 
 // judgeRoundScope resolves the closing binding's actor and judges the round's
-// changed paths against its scope (#801).
+// changed paths against its scope.
 //
 // It returns the zero verdict for an actor with no scope, and for a role the
 // registry no longer knows -- treated as unscoped, with a warning, so a

@@ -1,5 +1,5 @@
 // Package pathscope judges the paths a writer actor's round changed against
-// the actor's declared scope (#801 slice 2).
+// the actor's declared scope.
 //
 // A scope is a list of globs over repo-relative paths plus, for Go files,
 // whether a comment-only edit is allowed. Scope itself is pure; Judge walks a

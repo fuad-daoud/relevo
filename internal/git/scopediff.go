@@ -9,7 +9,7 @@ import (
 )
 
 // ChangedFiles lists every path that differs between the trees from and to,
-// with each path's status, modes and blob ids, for the scope check (#801).
+// with each path's status, modes and blob ids, for the scope check.
 //
 // It runs `git diff --raw -z --no-renames --abbrev=40`: renames are turned
 // off, so a rename is reported as a delete plus an add, and the NUL
@@ -24,7 +24,7 @@ func (c *Client) ChangedFiles(ctx context.Context, dir, from, to string) ([]path
 }
 
 // ReadBlob reads one blob's contents by its git object id, as the scope
-// check's comment judge needs (#801).
+// check's comment judge needs.
 func (c *Client) ReadBlob(ctx context.Context, dir, oid string) ([]byte, error) {
 	return c.run(ctx, dir, nil, "cat-file", "blob", oid)
 }
