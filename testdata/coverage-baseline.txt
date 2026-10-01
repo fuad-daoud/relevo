@@ -46,3 +46,4 @@ github.com/fuad-daoud/relevo/internal/ui/dash 86.5
 github.com/fuad-daoud/relevo/internal/upgrade 66.7
 github.com/fuad-daoud/relevo/internal/usage 93.9
 github.com/fuad-daoud/relevo/internal/view 86.7
+github.com/fuad-daoud/relevo/internal/workflow 97.2
