@@ -2,33 +2,11 @@ package usage
 
 import (
 	"bufio"
-	"encoding/json"
 	"io"
-	"io/fs"
-	"path"
-	"strings"
-	"time"
 )
 
 // maxLine bounds one line; claude's tool results can run to megabytes.
 const maxLine = 16 << 20
-
-// ProjectSlug is the directory name claude keeps a cwd's transcripts under
-// (~/.claude/projects/<slug>): every byte of the absolute path outside
-// [A-Za-z0-9] becomes '-'. Verified against five entries on 2026-09-18.
-func ProjectSlug(cwd string) string {
-	var b strings.Builder
-	for i := 0; i < len(cwd); i++ {
-		c := cwd[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-			b.WriteByte(c)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	return b.String()
-}
 
 type claudeUsage struct {
 	Input      int64 `json:"input_tokens"`
@@ -76,43 +54,4 @@ func claudeStream(r io.Reader, fallbackProvider string) []Sample {
 	c, _ := newCarry("claude", fallbackProvider, "")
 	scanLines(r, c.feed)
 	return c.samples()
-}
-
-// claudeProject reads every *.jsonl under fsys (subagents included) and returns one
-// sample per assistant message.id inside [start, end] whose cwd equals worktree.
-// Files older than start are skipped unread: one untouched since before the round
-// cannot hold a record inside it.
-func claudeProject(fsys fs.FS, worktree string, start, end time.Time, provider string) []Sample {
-	var out []Sample
-	seen := map[string]bool{}
-	_ = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || path.Ext(p) != ".jsonl" {
-			return nil
-		}
-		if info, err := d.Info(); err == nil && info.ModTime().Before(start) {
-			return nil
-		}
-		f, err := fsys.Open(p)
-		if err != nil {
-			return nil
-		}
-		defer func() { _ = f.Close() }()
-		scanLines(f, func(line []byte) {
-			var ev claudeEvent
-			if json.Unmarshal(line, &ev) != nil || ev.Type != "assistant" || ev.Message == nil || ev.Message.Usage == nil {
-				return
-			}
-			if ev.CWD != worktree || seen[ev.Message.ID] {
-				return
-			}
-			ts, err := time.Parse(time.RFC3339Nano, ev.Timestamp)
-			if err != nil || ts.Before(start) || ts.After(end) {
-				return
-			}
-			seen[ev.Message.ID] = true
-			out = append(out, Sample{Provider: provider, Model: ev.Message.Model, Tokens: ev.Message.Usage.tokens()})
-		})
-		return nil
-	})
-	return out
 }
