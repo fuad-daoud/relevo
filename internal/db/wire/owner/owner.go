@@ -21,6 +21,12 @@ import (
 // client over the cap waits rather than being refused.
 var maxConns = 64
 
+// maxLiveConns caps every connection the owner tracks at once -- handshaken,
+// idle, pinned, or still waiting for hello -- not only the pinned slots
+// maxConns bounds. It is 4x the pinned cap, so a burst of real work still
+// fits; a connection accepted over it is dropped rather than served.
+var maxLiveConns = 256
+
 // ownerUID is the uid every peer must match. It is read once by New, so a test
 // can require a different one before starting a server and watch the
 // connection drop.
@@ -43,6 +49,9 @@ type Server struct {
 	draining bool
 	ln       net.Listener
 	conns    map[*conn]struct{}
+	// maxLive is the live-connection bound read once in New, so a test can
+	// shrink the package var before the accept goroutines start.
+	maxLive int
 	// sem holds one slot per pinned connection; a request that needs one waits
 	// on it inside pin, and cleanup returns it when that connection is
 	// discarded. Idle handshaken connections never take a slot.
@@ -53,13 +62,14 @@ type Server struct {
 // every scoped query needs.
 func New(dbh *sql.DB, have, know int, origin string) *Server {
 	return &Server{
-		dbh:    dbh,
-		have:   have,
-		know:   know,
-		origin: origin,
-		uid:    ownerUID,
-		conns:  make(map[*conn]struct{}),
-		sem:    make(chan struct{}, maxConns),
+		dbh:     dbh,
+		have:    have,
+		know:    know,
+		origin:  origin,
+		uid:     ownerUID,
+		conns:   make(map[*conn]struct{}),
+		maxLive: maxLiveConns,
+		sem:     make(chan struct{}, maxConns),
 	}
 }
 
@@ -238,7 +248,12 @@ func (s *Server) handle(nc net.Conn) {
 	}
 
 	c := newConn(s, nc)
-	s.addConn(c)
+	if !s.addConn(c) {
+		// Over the live bound the connection is dropped without a frame; an
+		// existing connection keeps working and the client retries.
+		_ = nc.Close()
+		return
+	}
 	defer s.removeConn(c)
 	_ = c.serve()
 	c.cleanup()
@@ -248,10 +263,18 @@ func newConn(s *Server, nc net.Conn) *conn {
 	return &conn{s: s, nc: nc, w: wire.NewConn(nc)}
 }
 
-func (s *Server) addConn(c *conn) {
+// addConn records a live connection, refusing it when the bound is already
+// reached. The check and the insertion share one critical section, so
+// concurrent accepts cannot both pass it. It reports whether the connection was
+// admitted; the caller must close a refused connection without any frame.
+func (s *Server) addConn(c *conn) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.conns) >= s.maxLive {
+		return false
+	}
 	s.conns[c] = struct{}{}
-	s.mu.Unlock()
+	return true
 }
 
 func (s *Server) removeConn(c *conn) {
