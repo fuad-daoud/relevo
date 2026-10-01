@@ -57,7 +57,7 @@ func Status(ctx context.Context, rt Runtime) (view.Report, error) {
 	if err != nil {
 		return view.Report{}, err
 	}
-	return applyChains(rep, chains), nil
+	return applyChains(rt.Store, rep, chains), nil
 }
 
 func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (view.Report, error) {

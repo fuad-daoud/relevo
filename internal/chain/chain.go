@@ -189,6 +189,9 @@ type SeedView struct {
 	OutputPath, BranchDiffPath     string
 	PlanDiffPath, RoundPromptPath  string
 	Branch, Base                   string
+	// PlanPaths lists every plan copy the chain holds, in plan order, for the
+	// seeds that judge the branch as a whole.
+	PlanPaths []string
 	// BuilderRoundKind names what the closing builder round is when it is not
 	// the plan's first; "" means it is. BuilderRoundOn is the round it sits on
 	// top of, and BuilderRounds lists every builder round of the plan with the

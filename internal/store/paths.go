@@ -217,6 +217,14 @@ func (s *Store) PlanDiffPath(name string, round int) string {
 	return s.roundFile(name, round, "plan-diff", ".patch")
 }
 
+// ChainDiffPath is a round_file key for the whole branch's diff, stored with
+// Tx.PutRoundFile and never written to disk; read it with Store.ReadFile. It is
+// a row-only key like the round and plan diffs, keyed to the builder's newest
+// closed round.
+func (s *Store) ChainDiffPath(name string, round int) string {
+	return s.roundFile(name, round, "chain-diff", ".patch")
+}
+
 func (s *Store) DriftPath(name string, round int) string {
 	return s.roundFile(name, round, "drift", ".patch")
 }

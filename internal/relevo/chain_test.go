@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -2329,5 +2330,98 @@ func TestSecurityRecapAfterTheBlockStillYieldsTheFindings(t *testing.T) {
 	}
 	if strings.Contains(string(out), "findings:") {
 		t.Errorf("the security member's written output carries the findings block:\n%s", out)
+	}
+}
+
+// TestChainInputsAreRemovedWhenTheChainEnds pins item 5: a chain's inputs
+// directory is swept when the chain ends done or stopped -- through the state
+// machine, a stop, and the done verb -- while a halted chain keeps it, and the
+// chain's plan-i.md copies are never touched.
+func TestChainInputsAreRemovedWhenTheChainEnds(t *testing.T) {
+	t.Parallel()
+
+	openInputs := func(t *testing.T, rt Runtime) string {
+		t.Helper()
+		dir := rt.Store.ChainInputDir("shop")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir inputs: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "copy.patch"), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write the inputs copy: %v", err)
+		}
+		return dir
+	}
+	assertPlanCopySurvives := func(t *testing.T, rt Runtime) {
+		t.Helper()
+		if _, err := os.Stat(rt.Store.ChainPlanPath("shop", 1)); err != nil {
+			t.Errorf("the plan copy plan-1.md is gone: %v", err)
+		}
+	}
+
+	t.Run("done", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{})
+		dir := openInputs(t, rt)
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
+		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusDone) {
+			t.Fatalf("chain status = %q, want done", row.Status)
+		}
+		assertInputsGone(t, dir)
+		assertPlanCopySurvives(t, rt)
+	})
+
+	t.Run("stopped", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{})
+		dir := openInputs(t, rt)
+		if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusStopped) {
+			t.Fatalf("chain status = %q, want stopped", row.Status)
+		}
+		assertInputsGone(t, dir)
+		assertPlanCopySurvives(t, rt)
+	})
+
+	t.Run("halted keeps them", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{})
+		dir := openInputs(t, rt)
+		chainBuilderClose(t, rt, "shop", chainHaltedBody("stuck"))
+		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+			t.Fatalf("chain status = %q, want halted", row.Status)
+		}
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("a halted chain must keep its inputs: %v", err)
+		}
+	})
+
+	t.Run("done verb", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{})
+		dir := openInputs(t, rt)
+		if _, err := ChainDone(context.Background(), rt, "shop"); err != nil {
+			t.Fatalf("ChainDone: %v", err)
+		}
+		assertInputsGone(t, dir)
+		assertPlanCopySurvives(t, rt)
+	})
+}
+
+// assertInputsGone asserts the chain's inputs directory was removed.
+func assertInputsGone(t *testing.T, dir string) {
+	t.Helper()
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("inputs dir %s is still there (err %v), want it swept", dir, err)
 	}
 }

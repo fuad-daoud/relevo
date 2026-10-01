@@ -3,7 +3,10 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -558,6 +561,27 @@ func TestChainResumedTextNamesPlacement(t *testing.T) {
 	}
 }
 
+// TestChainServerFlag pins --server at the CLI edge: a start carries it into
+// ChainOptions, and a resume refuses it because the chain already names its
+// server. Parse-only: no state is opened and no harness needs to run.
+func TestChainServerFlag(t *testing.T) {
+	opts, err := chainOptionsFrom(t, "--name", "shop", "--plan", chainPlanArg(t), "--feature", "auth", "--server", "zen")
+	if err != nil {
+		t.Fatalf("chainOptions --server: %v", err)
+	}
+	if opts.Server != "zen" {
+		t.Errorf("Server = %q, want zen", opts.Server)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return run([]string{"chain", "--resume", "--name", "shop", "--server", "zen"})
+	})
+	ce := requireCLIError(t, err, codeUsage, "")
+	if !strings.Contains(ce.message, "--server") {
+		t.Errorf("message = %q, want it to name --server", ce.message)
+	}
+}
+
 // TestChainDoneOnARunningChainIsAConflict pins the refusal's class: a script
 // must be able to tell "stop it first" from an internal failure.
 func TestChainDoneOnARunningChainIsAConflict(t *testing.T) {
@@ -568,5 +592,108 @@ func TestChainDoneOnARunningChainIsAConflict(t *testing.T) {
 	ce := requireCLIError(t, err, codeConflict, "")
 	if !strings.Contains(ce.message, "relevo stop "+name+" first") {
 		t.Errorf("message = %q, want it to name `relevo stop %s first`", ce.message, name)
+	}
+}
+
+// TestSeedOverCapIsAUsageRefusal pins the class of the planner seed cap: the
+// refusal is a usage error naming the escape, not an internal failure. Pure: it
+// classifies an error and touches no state.
+func TestSeedOverCapIsAUsageRefusal(t *testing.T) {
+	err := writeError(fmt.Errorf("binding \"planner\": the seed is 4097 bytes: %w", relevo.ErrSeedOverCap))
+	ce := requireCLIError(t, err, codeUsage, "trim the seed or pass --force")
+	if !strings.Contains(ce.message, "4097") {
+		t.Errorf("message = %q, want the wrapping error's text", ce.message)
+	}
+}
+
+// seedCLIOpenMemberChain writes a halted chain whose builder member's round is
+// still open: a prompt log entry with no report. Store-only, so a resume of it
+// reaches the round-open refusal with no daemon, no harness and no network; the
+// refusal precedes startRound, so nothing spawns.
+func seedCLIOpenMemberChain(t *testing.T, name string) {
+	t.Helper()
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	now := time.Now().UTC()
+	plan := filepath.Join(t.TempDir(), "plan-1.md")
+	if err := os.WriteFile(plan, []byte("build it"), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	c := db.ChainRow{
+		ID: db.NewID(), Name: name, Status: "halted", Phase: "build", Step: "building",
+		Plan: 1, Plans: 1, PlanPathsJSON: []byte(`[` + strconv.Quote(plan) + `]`), SettingsJSON: []byte(`{}`),
+		AwaitingMember: "builder", AwaitingRound: 1,
+		Builder: name, Reviewer: name + "-rev", Planner: name + "-plan",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	err = s.WithLock(func(tx *store.Tx) error {
+		for _, m := range []store.Binding{
+			{Name: name, CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive},
+			{Name: name + "-rev", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Shape: store.ShapeReader},
+			{Name: name + "-plan", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Shape: store.ShapeReader},
+		} {
+			if err := tx.Save(m); err != nil {
+				return err
+			}
+		}
+		if err := tx.ChainPut(c); err != nil {
+			return err
+		}
+		// The builder's round 1 is open: its prompt entry exists, no report.
+		return tx.AppendLog(name, store.LogEntry{
+			TS: now, Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+			Path: plan, Confirmed: true,
+		})
+	})
+	if err != nil {
+		t.Fatalf("seed open chain %s: %v", name, err)
+	}
+}
+
+// TestChainResumeOpenMemberRoundIsAConflict pins the class of a resume that
+// finds its member's round still open: a conflict naming `relevo stop <member>`
+// as the next command, not an internal failure.
+func TestChainResumeOpenMemberRoundIsAConflict(t *testing.T) {
+	const name = "cliresumeopen"
+	seedCLIOpenMemberChain(t, name)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"chain", "--resume", "--name", name})
+	})
+	ce := requireCLIError(t, err, codeConflict, "relevo stop "+name)
+	if !strings.Contains(ce.message, "still open") {
+		t.Errorf("message = %q, want the round-open refusal", ce.message)
+	}
+}
+
+// TestChainResumeOpenRoundIsAConflict pins item 1 at the CLI edge: a resume
+// whose target member's round is open is a conflict whose next command is the
+// stop that ends it, not an internal failure. Store-only: the refusal precedes
+// the send, so no daemon starts, no harness is spawned and no network is
+// reached.
+func TestChainResumeOpenRoundIsAConflict(t *testing.T) {
+	const name = "cliresumeopen"
+	seedCLIChain(t, name, "stopped")
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	if err := s.AppendLog(name, store.LogEntry{
+		TS: time.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+	}); err != nil {
+		t.Fatalf("open the builder's round: %v", err)
+	}
+
+	_, _, err = captureOutput(t, func() error { return run([]string{"chain", "--resume", "--name", name}) })
+	ce := requireCLIError(t, err, codeConflict, "relevo stop "+name)
+	if !strings.Contains(ce.message, "round 1 is still open") {
+		t.Errorf("message = %q, want it to say the round is still open", ce.message)
 	}
 }

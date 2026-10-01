@@ -88,39 +88,9 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	server := p.Name
 	repo := plan.repo
 
-	base := opts.Base
-	if base == "" {
-		var err error
-		if base, err = rt.Git.HeadCommit(ctx, repo); err != nil {
-			return nil, fmt.Errorf("head commit: %w", err)
-		}
-	}
-	if !is40Hex(base) {
-		sha, ok, err := rt.Git.RefSHA(ctx, repo, base)
-		if err != nil {
-			return nil, fmt.Errorf("resolve base %s: %w", base, err)
-		}
-		if !ok {
-			return nil, fmt.Errorf("base %q not found", base)
-		}
-		base = sha
-	}
-
-	root, err := rt.Git.RootCommit(ctx, repo)
+	base, repoID, authorName, authorEmail, err := chainRemoteFacts(ctx, rt, repo, opts.Base)
 	if err != nil {
-		return nil, fmt.Errorf("root commit: %w", err)
-	}
-	repoID, err := remote.RepoID(root)
-	if err != nil {
-		return nil, fmt.Errorf("repo id: %w", err)
-	}
-
-	authorName, authorEmail, err := rt.Git.Identity(ctx, repo)
-	if err != nil {
-		return nil, fmt.Errorf("git identity for %s: %w", repo, err)
-	}
-	if authorName == "" || authorEmail == "" {
-		return nil, fmt.Errorf("%w for %s: a remote builder commits as you; set git config user.name and git config user.email (in the repo or --global)", ErrNoGitIdentity, repo)
+		return nil, err
 	}
 
 	res := plan.resolutions[chain.MemberBuilder]
@@ -144,6 +114,49 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 		authorName: authorName, authorEmail: authorEmail,
 		tier: string(tier), candidate: srv, role: role,
 	}, nil
+}
+
+// chainRemoteFacts resolves the base commit, the repository id and the git
+// identity a remote create needs. It is read-only, so a placed builder's
+// preflight and a whole-chain start both answer every refusal it can before
+// the server is asked to create anything. base is the caller's --base value,
+// "" meaning HEAD.
+func chainRemoteFacts(ctx context.Context, rt Runtime, repo, base string) (resolved, repoID, authorName, authorEmail string, err error) {
+	if rt.Git == nil {
+		return "", "", "", "", ErrGitRequired
+	}
+	resolved = base
+	if resolved == "" {
+		if resolved, err = rt.Git.HeadCommit(ctx, repo); err != nil {
+			return "", "", "", "", fmt.Errorf("head commit: %w", err)
+		}
+	}
+	if !is40Hex(resolved) {
+		sha, ok, rerr := rt.Git.RefSHA(ctx, repo, resolved)
+		if rerr != nil {
+			return "", "", "", "", fmt.Errorf("resolve base %s: %w", resolved, rerr)
+		}
+		if !ok {
+			return "", "", "", "", fmt.Errorf("base %q not found", resolved)
+		}
+		resolved = sha
+	}
+
+	root, err := rt.Git.RootCommit(ctx, repo)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("root commit: %w", err)
+	}
+	if repoID, err = remote.RepoID(root); err != nil {
+		return "", "", "", "", fmt.Errorf("repo id: %w", err)
+	}
+
+	if authorName, authorEmail, err = rt.Git.Identity(ctx, repo); err != nil {
+		return "", "", "", "", fmt.Errorf("git identity for %s: %w", repo, err)
+	}
+	if authorName == "" || authorEmail == "" {
+		return "", "", "", "", fmt.Errorf("%w for %s: a remote builder commits as you; set git config user.name and git config user.email (in the repo or --global)", ErrNoGitIdentity, repo)
+	}
+	return resolved, repoID, authorName, authorEmail, nil
 }
 
 // chainBuildRemoteBuilder is `addRemote`'s create half, for a chain's builder

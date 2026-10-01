@@ -15,6 +15,11 @@ GET /v1/bindings/test-binding/rounds/1/artifacts/findings.md 401 not_enrolled
 GET /v1/bindings/test-binding/rounds/1/bundle 401 not_enrolled
 POST /v1/bindings/test-binding/rounds/1/ack 401 not_enrolled
 POST /v1/bindings/test-binding/unavailable 401 not_enrolled
+POST /v1/chains 401 not_enrolled
+GET /v1/chains/test-chain 401 not_enrolled
+POST /v1/chains/test-chain/stop 401 not_enrolled
+POST /v1/chains/test-chain/resume 401 not_enrolled
+POST /v1/chains/test-chain/done 401 not_enrolled
 POST /v1/unavailable 401 not_enrolled
 POST /v1/available 401 not_enrolled
 GET /v1/nope 404 not_found

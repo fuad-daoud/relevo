@@ -19,11 +19,13 @@ func TestOOMKilledFalseWithScopesOff(t *testing.T) {
 	t.Parallel()
 
 	fr := newFakeRunner()
-	fr.scopeResults = map[string]string{"relevo-round-local-webshop-1.scope": scopeResultOOM}
+	fr.scopeResults = map[string]spawn.ScopeResult{
+		"relevo-round-local-webshop-1.scope": {Result: scopeResultOOM},
+	}
 	rt, b := sentHeadless(t, fr)
 	rt.Scope = nil // scopes off
 
-	if oomKilled(context.Background(), rt, b) {
+	if peak, ok := oomKilled(context.Background(), rt, b); ok || peak != 0 {
 		t.Error("oomKilled with scopes off = true, want false")
 	}
 	if len(fr.scopeResultQueries) != 0 {
@@ -40,9 +42,9 @@ func TestOOMKilledFalseForSuccess(t *testing.T) {
 	rt, b := sentHeadless(t, fr)
 	rt.Scope = &spawn.ScopeSpec{Unit: "test", Slice: "relevo.slice", CPUWeight: 100}
 	unit := scopeUnitName(b)
-	fr.scopeResults = map[string]string{unit: "success"}
+	fr.scopeResults = map[string]spawn.ScopeResult{unit: {Result: "success"}}
 
-	if oomKilled(context.Background(), rt, b) {
+	if _, ok := oomKilled(context.Background(), rt, b); ok {
 		t.Error("oomKilled with result=success = true, want false")
 	}
 }
@@ -56,10 +58,14 @@ func TestOOMKilledTrueForOOMKill(t *testing.T) {
 	rt, b := sentHeadless(t, fr)
 	rt.Scope = &spawn.ScopeSpec{Unit: "test", Slice: "relevo.slice", CPUWeight: 100}
 	unit := scopeUnitName(b)
-	fr.scopeResults = map[string]string{unit: scopeResultOOM}
+	fr.scopeResults = map[string]spawn.ScopeResult{unit: {Result: scopeResultOOM, PeakBytes: 8178532352}}
 
-	if !oomKilled(context.Background(), rt, b) {
+	peak, ok := oomKilled(context.Background(), rt, b)
+	if !ok {
 		t.Error("oomKilled with result=oom-kill = false, want true")
+	}
+	if peak != 8178532352 {
+		t.Errorf("peak = %d, want the journal's 8178532352", peak)
 	}
 }
 
@@ -258,9 +264,84 @@ func TestOOMNoteContainsKeyWords(t *testing.T) {
 	t.Parallel()
 
 	note := oomNote(baseTime)
-	for _, want := range []string{"out of memory", "systemd-oomd", "git status", "git diff"} {
+	for _, want := range []string{"out of memory", "cgroup scope", "git status", "git diff"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("oomNote missing %q:\n%s", want, note)
 		}
+	}
+}
+
+// TestOOMNoteSaysScopeNotHost pins the fourth wording surface: the note in the
+// builder's own prompt names the round's cgroup scope and the kernel's killer,
+// never a host-wide systemd-oomd kill that would send the builder looking at
+// the wrong layer.
+func TestOOMNoteSaysScopeNotHost(t *testing.T) {
+	t.Parallel()
+
+	note := oomNote(baseTime)
+	for _, bad := range []string{"systemd-oomd", "host out of memory", "host ran out of memory"} {
+		if strings.Contains(note, bad) {
+			t.Errorf("oomNote contains %q, want a scope/kernel cause only:\n%s", bad, note)
+		}
+	}
+}
+
+// TestOOMWordsRendersThePeak pins the human rendering of the incident's peak:
+// 8178532352 bytes is 7.6 GiB, and an unknown peak says so rather than
+// printing zero.
+func TestOOMWordsRendersThePeak(t *testing.T) {
+	t.Parallel()
+
+	cases := map[int64]string{
+		0:          "killed: out of memory (peak unknown)",
+		8178532352: "killed: out of memory (peak 7.6 GiB)",
+	}
+	for peak, want := range cases {
+		if got := oomWords(peak); got != want {
+			t.Errorf("oomWords(%d) = %q, want %q", peak, got, want)
+		}
+	}
+}
+
+// TestOOMKilledProbesSinceTheProcessStart pins the since the probe passes: the
+// start of the current process's second, so a re-queued round that reused the
+// unit name does not read the previous attempt's oom-kill as its own.
+func TestOOMKilledProbesSinceTheProcessStart(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt = oomRT(rt, fr, b, scopeOOM)
+	if b.Builder.StartedAt == 0 {
+		t.Fatal("fixture left StartedAt zero; the probe would be skipped")
+	}
+
+	if _, ok := oomKilled(context.Background(), rt, b); !ok {
+		t.Fatal("oomKilled = false, want the scripted oom kill")
+	}
+	if len(fr.scopeResultSince) != 1 {
+		t.Fatalf("scopeResultSince = %v, want one query", fr.scopeResultSince)
+	}
+	if want := time.Unix(b.Builder.StartedAt, 0).UTC(); !fr.scopeResultSince[0].Equal(want) {
+		t.Errorf("since = %v, want the process start %v", fr.scopeResultSince[0], want)
+	}
+}
+
+// TestOOMKilledSkipsAnAnchorlessProcess pins the other guard: a round with no
+// recorded process start has no since to filter by, so nothing is probed and
+// the result is not an oom kill.
+func TestOOMKilledSkipsAnAnchorlessProcess(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt = oomRT(rt, fr, b, scopeOOM)
+	b.Builder.StartedAt = 0
+
+	if peak, ok := oomKilled(context.Background(), rt, b); ok || peak != 0 {
+		t.Error("oomKilled with no process start = true, want false")
+	}
+	if len(fr.scopeResultQueries) != 0 {
+		t.Errorf("scopeResultQueries = %v, want none", fr.scopeResultQueries)
 	}
 }

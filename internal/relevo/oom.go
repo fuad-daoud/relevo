@@ -25,23 +25,38 @@ const (
 	scopeResultOOM = "oom-kill"
 )
 
-// oomKilled reports an explicit oom-kill result; an unknown result counts as
-// not oom-killed, so detection can only ever take today's path.
-func oomKilled(ctx context.Context, rt Runtime, b store.Binding) bool {
-	if rt.Scope == nil {
-		return false
+// oomKilled reads the killed round's scope result from the user journal and
+// reports the memory peak it reached, or (0, false) when there is nothing to
+// report. It probes only a scoped round whose process start time is known,
+// because only entries at or after that start belong to this attempt; anything
+// else -- no scope, no probe, a probe error, a non-oom result -- counts as not
+// oom-killed, so detection can only ever take today's path.
+func oomKilled(ctx context.Context, rt Runtime, b store.Binding) (int64, bool) {
+	if rt.Scope == nil || b.Builder.StartedAt == 0 {
+		return 0, false
 	}
 	prober, ok := rt.Runner.(spawn.ScopeResultProber)
 	if !ok {
-		return false
+		return 0, false
 	}
-	result, err := prober.ScopeResult(ctx, scopeUnitName(b))
+	since := time.Unix(b.Builder.StartedAt, 0).UTC()
+	res, err := prober.ScopeResult(ctx, scopeUnitName(b), since)
 	if err != nil {
 		slog.Debug("scope result probe failed; treating as not oom-killed",
 			"binding", b.Name, "round", b.Round, "err", err)
-		return false
+		return 0, false
 	}
-	return result == scopeResultOOM
+	return res.PeakBytes, res.Result == scopeResultOOM
+}
+
+// oomWords is how every surface of an oom kill names it: a scoped cgroup was
+// killed by the kernel's out-of-memory killer, with the journal's peak when it
+// reported one. It never claims a host-wide kill, which a cgroup OOM is not.
+func oomWords(peak int64) string {
+	if peak <= 0 {
+		return "killed: out of memory (peak unknown)"
+	}
+	return fmt.Sprintf("killed: out of memory (peak %.1f GiB)", float64(peak)/(1<<30))
 }
 
 func runsLocally(b store.Binding) bool {
@@ -65,7 +80,7 @@ func localRunning(tx *store.Tx, self string) (int, error) {
 	return n, nil
 }
 
-func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, now time.Time) (store.Binding, error) {
+func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, peak int64, now time.Time) (store.Binding, error) {
 	b.RoundOOMKills++
 	b = abandonSession(b)
 	b.Builder.PID, b.Builder.StartedAt = 0, 0
@@ -74,8 +89,8 @@ func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 
 	if b.RoundOOMKills >= oomMaxKills {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
-			"%s: builder killed by systemd-oomd (host out of memory) %d times this round; free memory, then relevo send --name %s --file <plan> again",
-			b.Name, b.RoundOOMKills, b.Name))
+			"%s: builder %s %d times this round; free memory, then relevo send --name %s --file <plan> again",
+			b.Name, oomWords(peak), b.RoundOOMKills, b.Name))
 	}
 
 	running := 1
@@ -98,9 +113,9 @@ func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 
 	var note string
 	if b.Owner == "" {
-		note = fmt.Sprintf("re-queued (builder killed by systemd-oomd: host out of memory; %d local round(s) were running)", running)
+		note = fmt.Sprintf("re-queued (builder %s; %d local round(s) were running)", oomWords(peak), running)
 	} else {
-		note = "re-queued (builder killed by systemd-oomd: host out of memory)"
+		note = fmt.Sprintf("re-queued (builder %s)", oomWords(peak))
 	}
 	if err := tx.AppendLog(b.Name, store.LogEntry{
 		TS:        now,
@@ -184,4 +199,7 @@ func oomNote(t time.Time) string {
 	return fmt.Sprintf(oomNoteFormat, t.UTC().Format("2006-01-02T15:04:05Z"))
 }
 
-const oomNoteFormat = `This round was interrupted at %s because the host ran out of memory and systemd-oomd killed the builder process. The working tree may already hold partial edits from an earlier attempt at this same plan, and those edits are your own work, not someone else's. Run "git status" and "git diff" first, keep whatever is correct, and finish the plan.`
+// The cause is the round's own cgroup scope, ended by the kernel's OOM killer:
+// a scope hit its memory limit. It is never a host-wide kill, and naming
+// systemd-oomd sent readers looking at the wrong layer.
+const oomNoteFormat = `This round was interrupted at %s because the builder's cgroup scope ran out of memory and the kernel's out-of-memory killer ended the builder process. The working tree may already hold partial edits from an earlier attempt at this same plan, and those edits are your own work, not someone else's. Run "git status" and "git diff" first, keep whatever is correct, and finish the plan.`

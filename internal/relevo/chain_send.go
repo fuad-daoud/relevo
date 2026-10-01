@@ -10,6 +10,22 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// RoundOpenError is returned when a chain member's round is still open: its
+// prompt entry exists with no report entry, so a new round would overwrite the
+// one in flight. It carries the member the caller must stop, so the CLI can
+// name `relevo stop <member>` as the next command instead of an internal
+// failure.
+type RoundOpenError struct {
+	Member string
+	Round  int
+}
+
+// Error renders today's message, unchanged: the round number and the stop
+// command the member's own name completes.
+func (e *RoundOpenError) Error() string {
+	return fmt.Sprintf("%s: round %d is still open; relevo stop %s ends it", e.Member, e.Round, e.Member)
+}
+
 // sendChainRound starts one round for a chain member. It is Send's in-lock core
 // as a reusable helper: the caller holds the state lock and passes its tx, and
 // the member's new binding and its prompt entry are written in the same
@@ -34,7 +50,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		return b, fmt.Errorf("%s: %w", name, err)
 	}
 	if roundOpenIn(entries, cur.Round) {
-		return b, fmt.Errorf("%s: round %d is still open; relevo stop %s ends it", name, cur.Round, name)
+		return b, &RoundOpenError{Member: name, Round: cur.Round}
 	}
 	if path, found := pendingRoundFile(rt, name, cur.Round); found {
 		return b, fmt.Errorf("%s: round %d: %s exists: %w", name, cur.Round, filepath.Base(path), ErrReportPending)
@@ -71,28 +87,35 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		pending = append(pending, pickEntry(rt.Now().UTC(), cur.Round, bindingRole(cur), *res))
 	}
 
-	// A reader round runs in a throwaway scratch worktree, never in b.CWD:
-	// create it from the round's captured baseline before anything is
-	// spawned, exactly as Send does.
-	if cur.Shape == store.ShapeReader {
-		if _, err := CreateScratchFrom(ctx, rt, cur, cur.Round, baselineHead, baseline); err != nil {
+	// A served member (a chain member on a server) never starts its round
+	// here: like Send(Defer) it records the round as queued and lets the
+	// server's admit start it, so serve.max_builders and the tier cap decide.
+	// That also defers the reader's scratch worktree, which Admit builds.
+	served := cur.Owner != ""
+	if !served {
+		// A reader round runs in a throwaway scratch worktree, never in b.CWD:
+		// create it from the round's captured baseline before anything is
+		// spawned, exactly as Send does.
+		if cur.Shape == store.ShapeReader {
+			if _, err := CreateScratchFrom(ctx, rt, cur, cur.Round, baselineHead, baseline); err != nil {
+				return b, fmt.Errorf("%s: %w", name, err)
+			}
+		}
+
+		started, err := startRound(ctx, rt, tx, cur, prompt, false)
+		if err != nil {
+			// The plan is staged and the round is open; nothing was started.
+			// NEEDS YOU says so in status, exactly as Send's spawn failure does.
+			cur.State = store.StateNeedsYou
+			cur.Halt = "builder spawn failed: " + err.Error()
+			cur.HaltAt = rt.Now().UTC()
+			if saveErr := tx.SaveWithLog(cur, pending...); saveErr != nil {
+				return b, fmt.Errorf("%s: %v; saving NEEDS YOU failed: %w", name, err, saveErr)
+			}
 			return b, fmt.Errorf("%s: %w", name, err)
 		}
+		cur = started
 	}
-
-	started, err := startRound(ctx, rt, tx, cur, prompt, false)
-	if err != nil {
-		// The plan is staged and the round is open; nothing was started.
-		// NEEDS YOU says so in status, exactly as Send's spawn failure does.
-		cur.State = store.StateNeedsYou
-		cur.Halt = "builder spawn failed: " + err.Error()
-		cur.HaltAt = rt.Now().UTC()
-		if saveErr := tx.SaveWithLog(cur, pending...); saveErr != nil {
-			return b, fmt.Errorf("%s: %v; saving NEEDS YOU failed: %w", name, err, saveErr)
-		}
-		return b, fmt.Errorf("%s: %w", name, err)
-	}
-	cur = started
 
 	pending = append(pending, store.LogEntry{
 		TS: rt.Now().UTC(), Round: cur.Round,
@@ -105,7 +128,11 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	cur.RoundBaselineTree = baseline
 	cur.RoundBaselineHead = baselineHead
 	cur.RoundClosedTree = ""
-	cur.RoundStartedAt = rt.Now().UTC()
+	if served {
+		cur.QueuedAt = rt.Now().UTC()
+	} else {
+		cur.RoundStartedAt = rt.Now().UTC()
+	}
 	cur.FinishPending = true
 	cur.State = store.StateActive
 	// Verify off, whatever policy.verify.default says: the chain's reviewer

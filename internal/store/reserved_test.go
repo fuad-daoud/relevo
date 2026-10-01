@@ -53,12 +53,13 @@ type reservedKeyCase struct {
 	path func(s *Store, binding string) string
 }
 
-// reservedKeyCases names the six reserved shapes and the path helper each one
+// reservedKeyCases names the seven reserved shapes and the path helper each one
 // resolves through.
 func reservedKeyCases() []reservedKeyCase {
 	return []reservedKeyCase{
 		{"001-diff.patch", func(s *Store, b string) string { return s.DiffPath(b, 1) }},
 		{"001-plan-diff.patch", func(s *Store, b string) string { return s.PlanDiffPath(b, 1) }},
+		{"001-chain-diff.patch", func(s *Store, b string) string { return s.ChainDiffPath(b, 1) }},
 		{"001-drift.patch", func(s *Store, b string) string { return s.DriftPath(b, 1) }},
 		{"001-builder-segments.json", func(s *Store, b string) string { return s.BuilderSegmentsPath(b, 1) }},
 		{"001-7f2a3c1d-findings.md", func(s *Store, b string) string { return s.FindingsPath(b, 1, "7f2a3c1d") }},

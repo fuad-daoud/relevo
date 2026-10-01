@@ -116,8 +116,12 @@ type fakeGit struct {
 	snapshotCalls   int
 	lastSnapshotDir string
 
-	diffResult   git.Diff
-	diffErr      error
+	diffResult git.Diff
+	diffErr    error
+	// diffFunc, when set, answers DiffTrees from the (from, to) pair instead
+	// of the fixed diffResult, so a test can give different spans different
+	// patches.
+	diffFunc     func(ctx context.Context, dir, from, to string) (git.Diff, error)
 	diffCalls    int
 	lastDiffDir  string
 	lastDiffFrom string
@@ -291,6 +295,9 @@ func (f *fakeGit) DiffTrees(ctx context.Context, dir, from, to string) (git.Diff
 	f.lastDiffTo = to
 	if f.diffErr != nil {
 		return git.Diff{}, f.diffErr
+	}
+	if f.diffFunc != nil {
+		return f.diffFunc(ctx, dir, from, to)
 	}
 	return f.diffResult, nil
 }
@@ -693,10 +700,14 @@ type fakeRunner struct {
 	scopeQueries []string
 
 	// scopeResults is the answer ScopeResult gives per unit base name; a
-	// missing key returns "". scopeResultQueries records every unit asked for,
-	// in order, so a test can prove that no probe ran.
-	scopeResults       map[string]string
+	// missing key returns the zero result. scopeResultQueries records every
+	// unit asked for, scopeResultSince the since of every query, in order, so
+	// a test can prove what the probe asked for -- or that none ran.
+	// scopeResultErr, when set, is what ScopeResult returns.
+	scopeResults       map[string]spawn.ScopeResult
 	scopeResultQueries []string
+	scopeResultSince   []time.Time
+	scopeResultErr     error
 
 	// scopeStops records every unit StopScope was asked to end, in order, so
 	// a test can prove that a scope was reaped -- or that none was.
@@ -789,10 +800,15 @@ func (f *fakeRunner) ScopeActive(_ context.Context, unit string) (bool, error) {
 	return f.scopeActive[unit], nil
 }
 
-// ScopeResult implements ScopeResultProber: it records the unit and answers
-// from scopeResults, so a test can prove that oom detection ran or did not.
-func (f *fakeRunner) ScopeResult(_ context.Context, unit string) (string, error) {
+// ScopeResult implements ScopeResultProber: it records the unit and since and
+// answers from scopeResults, so a test can prove that oom detection ran, what
+// it asked for, and what it found.
+func (f *fakeRunner) ScopeResult(_ context.Context, unit string, since time.Time) (spawn.ScopeResult, error) {
 	f.scopeResultQueries = append(f.scopeResultQueries, unit)
+	f.scopeResultSince = append(f.scopeResultSince, since)
+	if f.scopeResultErr != nil {
+		return spawn.ScopeResult{}, f.scopeResultErr
+	}
 	return f.scopeResults[unit], nil
 }
 

@@ -4,11 +4,15 @@ import "sort"
 
 // attentionRank orders display states for a human: what needs a decision
 // first, what is waiting on the mastermind next, then what is working, then
-// what is finished. Unknown states (none today) sort after DONE.
+// what is finished. A halted or stopped chain with a manual round running
+// ranks with ACTIVE, so it does not sink below DONE. Unknown states (none
+// today) sort after DONE.
 var attentionRank = map[string]int{
 	"NEEDS YOU": 0,
 	"HELD":      1,
 	"ACTIVE":    2,
+	"HALTED":    2,
+	"STOPPED":   2,
 	"PAUSED":    3,
 	"DONE":      4,
 }

@@ -93,6 +93,11 @@ func chainSendPending(ctx context.Context, rt Runtime) error {
 		if c.Status != string(chain.StatusRunning) {
 			continue
 		}
+		// The server drives a server chain's sends and the chain pull collects
+		// them, so the pending-send step leaves it alone.
+		if chainOnServer(c) {
+			continue
+		}
 		if c.AwaitingMember == "" {
 			continue
 		}

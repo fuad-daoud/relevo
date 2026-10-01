@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
@@ -250,5 +251,191 @@ func TestFirstNonEmptyLine(t *testing.T) {
 				t.Errorf("firstNonEmptyLine(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// scopeJournalFixture is the incident a scope probe was built from: two JSON
+// lines for the same unit, one carrying the result and one the peak, each
+// stamped in microseconds since the epoch.
+const scopeJournalFixture = `{"__REALTIME_TIMESTAMP":"1759300000000000","UNIT_RESULT":"oom-kill","MESSAGE":"Failed with result 'oom-kill'."}
+{"__REALTIME_TIMESTAMP":"1759300000100000","MEMORY_PEAK":"8178532352","MESSAGE":"Consumed 8.1G memory."}
+`
+
+// TestParseScopeResult pins the pure parse: the incident fixture, an entry
+// older than since, a success, a peak with no result, a malformed line, an
+// entry with no timestamp, and an empty journal. It runs no journalctl.
+func TestParseScopeResult(t *testing.T) {
+	t.Parallel()
+
+	since := time.Unix(1_759_300_000, 0).UTC()
+	cases := map[string]struct {
+		lines []byte
+		want  spawn.ScopeResult
+	}{
+		"incident fixture": {
+			lines: []byte(scopeJournalFixture),
+			want:  spawn.ScopeResult{Result: "oom-kill", PeakBytes: 8178532352},
+		},
+		"before since": {
+			lines: []byte(`{"__REALTIME_TIMESTAMP":"1759299999000000","UNIT_RESULT":"oom-kill"}`),
+			want:  spawn.ScopeResult{},
+		},
+		"success": {
+			lines: []byte(`{"__REALTIME_TIMESTAMP":"1759300001000000","UNIT_RESULT":"success"}`),
+			want:  spawn.ScopeResult{Result: "success"},
+		},
+		"peak without result": {
+			lines: []byte(`{"__REALTIME_TIMESTAMP":"1759300001000000","MEMORY_PEAK":"1024"}`),
+			want:  spawn.ScopeResult{PeakBytes: 1024},
+		},
+		"malformed line": {
+			lines: []byte("not json\n" + `{"__REALTIME_TIMESTAMP":"1759300001000000","UNIT_RESULT":"oom-kill"}`),
+			want:  spawn.ScopeResult{Result: "oom-kill"},
+		},
+		// No timestamp places the entry before since, so it counts.
+		"missing timestamp": {
+			lines: []byte(`{"UNIT_RESULT":"oom-kill"}`),
+			want:  spawn.ScopeResult{Result: "oom-kill"},
+		},
+		"empty": {
+			lines: nil,
+			want:  spawn.ScopeResult{},
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := ParseScopeResult(c.lines, since); got != c.want {
+				t.Errorf("ParseScopeResult = %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestJournalArgv pins the one journalctl invocation a probe makes, with and
+// without a since. Pure; it runs no journalctl.
+func TestJournalArgv(t *testing.T) {
+	t.Parallel()
+
+	const unit = "relevo-round-local-turso-466-rev-5"
+	cases := map[string]struct {
+		since time.Time
+		want  []string
+	}{
+		"with since": {
+			since: time.Unix(1_759_300_000, 0),
+			want: []string{
+				"journalctl", "--user", "USER_UNIT=" + unit + ".scope",
+				"--since=@1759300000", "-o", "json",
+			},
+		},
+		"without since": {
+			since: time.Time{},
+			want: []string{
+				"journalctl", "--user", "USER_UNIT=" + unit + ".scope", "-o", "json",
+			},
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := journalArgv(unit, c.since); !reflect.DeepEqual(got, c.want) {
+				t.Errorf("journalArgv = %#v, want %#v", got, c.want)
+			}
+		})
+	}
+}
+
+// scriptJournal replaces the journal read for one test and restores it after.
+// The seam is package state, so these tests are not parallel.
+func scriptJournal(t *testing.T, fn func(context.Context, string, time.Time) ([]byte, error)) {
+	t.Helper()
+	origOut, origPause := journalOutput, scopeResultRetryPause
+	journalOutput, scopeResultRetryPause = fn, 0
+	t.Cleanup(func() { journalOutput, scopeResultRetryPause = origOut, origPause })
+}
+
+// TestScopeResultReadsTheJournal pins that the probe reads the journal seam and
+// returns the incident's result and peak from it. Mutation check: make
+// Runner.ScopeResult read systemctl again and the scripted journal is never
+// consulted, so this fails.
+func TestScopeResultReadsTheJournal(t *testing.T) {
+	calls := 0
+	scriptJournal(t, func(context.Context, string, time.Time) ([]byte, error) {
+		calls++
+		return []byte(scopeJournalFixture), nil
+	})
+
+	got, err := New().ScopeResult(context.Background(), "relevo-round-local-turso-466-rev-5", time.Unix(1_759_300_000, 0).UTC())
+	if err != nil {
+		t.Fatalf("ScopeResult: %v", err)
+	}
+	if got.Result != "oom-kill" || got.PeakBytes != 8178532352 {
+		t.Errorf("ScopeResult = %+v, want the incident's result and peak", got)
+	}
+	if calls != 1 {
+		t.Errorf("journal reads = %d, want 1 (a UNIT_RESULT stops the probe early)", calls)
+	}
+}
+
+// TestScopeResultRetriesUntilTheJournalLands pins the retry: an empty first
+// read is retried, and the second read's result is returned.
+func TestScopeResultRetriesUntilTheJournalLands(t *testing.T) {
+	calls := 0
+	scriptJournal(t, func(context.Context, string, time.Time) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return nil, nil // the user manager has not logged the result yet
+		}
+		return []byte(scopeJournalFixture), nil
+	})
+
+	got, err := New().ScopeResult(context.Background(), "relevo-round-local-turso-466-rev-5", time.Unix(1_759_300_000, 0).UTC())
+	if err != nil {
+		t.Fatalf("ScopeResult: %v", err)
+	}
+	if got.Result != "oom-kill" {
+		t.Errorf("ScopeResult = %+v, want the result read on the second attempt", got)
+	}
+	if calls != 2 {
+		t.Errorf("journal reads = %d, want 2", calls)
+	}
+}
+
+// TestScopeResultGivesUpAfterTheBound pins the attempt bound: a journal that
+// never carries a result is read scopeResultAttempts times, then reported as
+// the zero result with no error.
+func TestScopeResultGivesUpAfterTheBound(t *testing.T) {
+	calls := 0
+	scriptJournal(t, func(context.Context, string, time.Time) ([]byte, error) {
+		calls++
+		return nil, nil
+	})
+
+	got, err := New().ScopeResult(context.Background(), "relevo-round-local-turso-466-rev-5", time.Unix(1_759_300_000, 0).UTC())
+	if err != nil {
+		t.Fatalf("ScopeResult: %v", err)
+	}
+	if got != (spawn.ScopeResult{}) {
+		t.Errorf("ScopeResult = %+v, want the zero result", got)
+	}
+	if calls != scopeResultAttempts {
+		t.Errorf("journal reads = %d, want %d", calls, scopeResultAttempts)
+	}
+}
+
+// TestScopeResultMissingJournalctlIsNotAnError pins that a host with no
+// journalctl reads as an empty journal, not a failure. It uses the real
+// runJournal with an empty PATH, so it runs no journalctl.
+func TestScopeResultMissingJournalctlIsNotAnError(t *testing.T) {
+	origOut, origPause := journalOutput, scopeResultRetryPause
+	journalOutput, scopeResultRetryPause = runJournal, 0
+	t.Cleanup(func() { journalOutput, scopeResultRetryPause = origOut, origPause })
+	t.Setenv("PATH", t.TempDir())
+
+	got, err := New().ScopeResult(context.Background(), "relevo-round-local-turso-466-rev-5", time.Unix(1_759_300_000, 0).UTC())
+	if err != nil {
+		t.Fatalf("ScopeResult without journalctl: %v", err)
+	}
+	if got != (spawn.ScopeResult{}) {
+		t.Errorf("ScopeResult = %+v, want the zero result", got)
 	}
 }

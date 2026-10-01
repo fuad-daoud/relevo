@@ -58,7 +58,10 @@ func newServer(t *testing.T) (*serve.Server, string, string, func(pub string) re
 	return newServerWithContext(t, ctx, cancel, policy.Policy{})
 }
 
-func newServerWithContext(t *testing.T, ctx context.Context, cancel context.CancelFunc, pol policy.Policy) (*serve.Server, string, string, func(pub string) remote.ClientID, func(owner remote.ClientID) *store.Store, *scriptRunner) {
+// newServerWithContext builds the in-process server every remote e2e runs. The
+// variadic mutators let a scenario add server-side config -- a roles registry,
+// a builder cap -- without changing any existing caller's call site.
+func newServerWithContext(t *testing.T, ctx context.Context, cancel context.CancelFunc, pol policy.Policy, mut ...func(*serve.Config)) (*serve.Server, string, string, func(pub string) remote.ClientID, func(owner remote.ClientID) *store.Store, *scriptRunner) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "serve")
 	now := time.Now()
@@ -104,6 +107,9 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 		Interval:       time.Second,
 		MaxBundleBytes: 64 << 20,
 		Audiences:      []string{fp},
+	}
+	for _, m := range mut {
+		m(&cfg)
 	}
 
 	enroll := func(pub string) remote.ClientID {

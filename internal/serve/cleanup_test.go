@@ -182,6 +182,46 @@ func TestCollectSettledOnTick(t *testing.T) {
 	}
 }
 
+// TestTeardownServedSkipsAReaderMember pins the empty-path guards: tearing a
+// branchless reader down removes neither the builder's worktree nor the
+// builder's branch, while the reader's own refs are still dropped.
+func TestTeardownServedSkipsAReaderMember(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	bare, builderWT := seedServedBinding(t, env, "shop", store.ServeFacts{RepoID: env.repoID})
+
+	// A reader member of the same chain: it shares the builder's tree and
+	// carries no worktree and no branch of its own. Its own refs/relevo/* are
+	// still its own.
+	readerRef := "refs/relevo/shop-rev/out"
+	if err := env.gitClient.UpdateRef(ctx, bare, readerRef, env.headSHA, ""); err != nil {
+		t.Fatalf("update reader ref: %v", err)
+	}
+	rt := env.runtime(t)
+	if err := rt.Store.Save(store.Binding{
+		Name: "shop-rev", Owner: string(env.id), CWD: builderWT, Round: 1,
+		Shape: store.ShapeReader,
+		Serve: &store.ServeFacts{RepoID: env.repoID, BareRepo: bare},
+	}); err != nil {
+		t.Fatalf("save reader: %v", err)
+	}
+	reader, err := rt.Store.Load("shop-rev")
+	if err != nil {
+		t.Fatalf("load reader: %v", err)
+	}
+
+	if err := teardownServed(ctx, rt, reader); err != nil {
+		t.Fatalf("teardownServed: %v", err)
+	}
+
+	if _, err := os.Stat(builderWT); err != nil {
+		t.Errorf("builder worktree stat = %v, want it to survive the reader's teardown", err)
+	}
+	requireRefPresent(t, ctx, env.gitClient, bare, "refs/heads/relevo/shop")
+	requireRefGone(t, ctx, env.gitClient, bare, readerRef)
+}
+
 func TestUnusedRepos(t *testing.T) {
 	tests := []struct {
 		name  string
