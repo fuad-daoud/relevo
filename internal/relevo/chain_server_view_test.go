@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -329,6 +330,33 @@ func TestChainServerResumeSupersedesTheMirrorsQueuedHalt(t *testing.T) {
 	}
 	if n := pendingChain(); n != 0 {
 		t.Errorf("pending chain deliveries after a server resume = %d, want 0", n)
+	}
+}
+
+// TestChainServerResumeRetypesAChainDone pins the client half of the done
+// refusal: the server's 409 chain_done becomes the typed ErrChainDone, so the
+// CLI reports a conflict and a script can tell a settled chain from an
+// internal failure.
+func TestChainServerResumeRetypesAChainDone(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusDone), 1, 0, 0))
+	fr.chainResumeErr = &client.HTTPError{
+		Status: http.StatusConflict,
+		Body:   remote.ErrorBody{Code: remote.CodeChainDone, Message: "chain is done"},
+	}
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	if err == nil {
+		t.Fatal("ChainResume = nil, want the done refusal")
+	}
+	if !errors.Is(err, ErrChainDone) {
+		t.Errorf("err = %v, want errors.Is(err, ErrChainDone)", err)
+	}
+	if !strings.Contains(err.Error(), "chain shop is done") {
+		t.Errorf("err = %q, want it to name the chain's state", err)
 	}
 }
 
