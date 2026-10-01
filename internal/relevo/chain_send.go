@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -77,6 +78,15 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 
 	baseline, baselineHead := capture.Baseline(ctx, captureDeps(rt), cur)
 	prompt := composePrompt(rt, cur, planPath, reportPath, donePath)
+	// A chain's reader members carry a second contract on top of the ordinary
+	// reader hand-off: the chain parses a verdict or a finding count out of the
+	// round. The two must not compete, so the chain's own block
+	// replaces the reporttail block in the prompt.
+	if cur.Shape == store.ShapeReader {
+		if block, ok := chainMemberBlock(tx, name); ok {
+			prompt = composeChainReaderPrompt(rt, cur, planPath, donePath, block)
+		}
+	}
 
 	var pending []store.LogEntry
 	cur, res, err := repickStale(rt, cur, false)
@@ -155,4 +165,23 @@ func chainStepNote(tx *store.Tx, name string) string {
 		}
 	}
 	return "chain"
+}
+
+// chainMemberBlock is the block a chain member's final message must end with
+// and the chain parses: the reviewer's verdict or the security member's
+// finding count. The planner has none -- its final message is the plan
+// artifact the chain hands the builder next -- so it keeps the ordinary reader
+// prompt and its reporttail block.
+func chainMemberBlock(tx *store.Tx, name string) (string, bool) {
+	c, err := tx.ChainByMember(name)
+	if err != nil {
+		return "", false
+	}
+	switch chainPartOf(c, name) {
+	case chain.MemberReviewer:
+		return "verdict: pass        # or: changes", true
+	case chain.MemberSecurity:
+		return "findings: 0", true
+	}
+	return "", false
 }

@@ -92,6 +92,30 @@ Then create this empty file: %s
 The message carrying the block must be the last text you write; the marker is
 your final action, created after that message, with nothing written after the marker.`
 
+// chainReaderPrompt is readerPrompt for a chain member: the chain's own block
+// -- the reviewer's verdict or the security member's finding count -- replaces
+// the reporttail block, and the marker is created before the final message so
+// the block is both the round's last text and the artifact the round saves. A
+// chain reader that obeyed readerPrompt's "nothing written after the marker"
+// rule could only end on an empty reply, and the chain parsed no verdict or
+// finding count.
+//
+// It is a format string: scratch tree, b.CWD, prompt path, output label, output
+// path, done marker, block.
+const chainReaderPrompt = `Your working tree is: %s
+It is a throwaway copy of %s for this round: read anything in it, run
+anything read-only, change nothing you need to keep -- it is discarded when
+the round ends, and nothing in it is ever committed.
+
+Read: %s
+Your final message is your %s: it is saved as %s.
+When your review is complete, create this empty file: %s
+Then write your final message. It must end with this block, filled in honestly:
+
+` + "```relevo" + `
+%s
+` + "```" + ``
+
 // SendResult is what one successful Send produced.
 type SendResult struct {
 	Round int    // the round the plan was filed under
@@ -852,6 +876,8 @@ func absoluteOr(path string) string {
 // naming the round and actor, followed by a blank line and the handoff text
 // (#139). rt is needed to name a reader's scratch tree, artifact dir and output
 // label.
+// composePrompt is the round's handoff prompt: the origin line, then the
+// builder's or the reader's template.
 func composePrompt(rt Runtime, b store.Binding, promptPath, reportPath, donePath string) string {
 	origin := delivery.OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPrompt)
 	if b.Shape == store.ShapeReader {
@@ -859,6 +885,23 @@ func composePrompt(rt Runtime, b store.Binding, promptPath, reportPath, donePath
 	}
 	body := fmt.Sprintf(builderPrompt, b.CWD, promptPath, reportPath, donePath)
 	return origin + "\n\n" + body
+}
+
+// composeChainReaderPrompt is composePrompt for a chain's reader member: the
+// same origin line and reader header, with the chain's own closing block in
+// place of the reporttail block (chainReaderPrompt).
+func composeChainReaderPrompt(rt Runtime, b store.Binding, promptPath, donePath, block string) string {
+	origin := delivery.OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPrompt)
+	return origin + "\n\n" + chainReaderPromptFor(rt, b, promptPath, donePath, block)
+}
+
+// chainReaderPromptFor renders chainReaderPrompt for one chain reader round,
+// resolving the output label and path exactly as readerPromptFor does.
+func chainReaderPromptFor(rt Runtime, b store.Binding, promptPath, donePath, block string) string {
+	actor := bindingRole(b)
+	label := readerOutputLabel(rt, b)
+	outputPath := rt.Store.OutputPath(b.Name, b.Round, actor, label)
+	return fmt.Sprintf(chainReaderPrompt, roundTree(rt, b), b.CWD, promptPath, label, outputPath, donePath, block)
 }
 
 // readerPromptFor renders readerPrompt for one reader round. The output label
