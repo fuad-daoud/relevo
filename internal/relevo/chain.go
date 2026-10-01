@@ -513,6 +513,9 @@ func chainTerminal(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow,
 		Direction: store.DirToMasterMind, Kind: store.KindChain,
 		Payload: chainTerminalPayload(c, next, findings),
 	}
+	if chainServedCarrier(carrier) {
+		return nil
+	}
 	return delivery.Queue(ctx, deliveryDeps(rt), tx, member, entry)
 }
 

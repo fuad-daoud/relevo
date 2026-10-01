@@ -367,6 +367,28 @@ func chainCreateSecurityMember(ctx context.Context, rt Runtime, tx *store.Tx, c 
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return "", err
 	}
+	// A served builder's chain has no local mastermind and no local candidate
+	// policy to consult: the security member is created beside it in the served
+	// shape, the server picking its own candidate and tier.
+	if builder.Owner != "" {
+		if builder.Serve == nil {
+			return "", fmt.Errorf("chain %s has a served builder with no serve facts", c.Name)
+		}
+		pick, err := servedActorPick(rt, member.actor)
+		if err != nil {
+			return "", err
+		}
+		facts := servedFacts{
+			owner: builder.Owner, repoID: builder.Serve.RepoID, worktree: builder.CWD,
+			bare: builder.Serve.BareRepo, base: builder.Base, feature: c.Feature, ticket: c.Ticket,
+			authorName: builder.Serve.AuthorName, authorEmail: builder.Serve.AuthorEmail,
+			now: rt.Now().UTC(),
+		}
+		if err := tx.Save(servedChainMember(member, pick, facts)); err != nil {
+			return "", err
+		}
+		return member.name, nil
+	}
 	resolutions, err := chainResolveActors(rt, []chainMember{member})
 	if err != nil {
 		return "", err

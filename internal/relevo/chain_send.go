@@ -87,28 +87,35 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		pending = append(pending, pickEntry(rt.Now().UTC(), cur.Round, bindingRole(cur), *res))
 	}
 
-	// A reader round runs in a throwaway scratch worktree, never in b.CWD:
-	// create it from the round's captured baseline before anything is
-	// spawned, exactly as Send does.
-	if cur.Shape == store.ShapeReader {
-		if _, err := CreateScratchFrom(ctx, rt, cur, cur.Round, baselineHead, baseline); err != nil {
+	// A served member (a chain member on a server) never starts its round
+	// here: like Send(Defer) it records the round as queued and lets the
+	// server's admit start it, so serve.max_builders and the tier cap decide.
+	// That also defers the reader's scratch worktree, which Admit builds.
+	served := cur.Owner != ""
+	if !served {
+		// A reader round runs in a throwaway scratch worktree, never in b.CWD:
+		// create it from the round's captured baseline before anything is
+		// spawned, exactly as Send does.
+		if cur.Shape == store.ShapeReader {
+			if _, err := CreateScratchFrom(ctx, rt, cur, cur.Round, baselineHead, baseline); err != nil {
+				return b, fmt.Errorf("%s: %w", name, err)
+			}
+		}
+
+		started, err := startRound(ctx, rt, tx, cur, prompt, false)
+		if err != nil {
+			// The plan is staged and the round is open; nothing was started.
+			// NEEDS YOU says so in status, exactly as Send's spawn failure does.
+			cur.State = store.StateNeedsYou
+			cur.Halt = "builder spawn failed: " + err.Error()
+			cur.HaltAt = rt.Now().UTC()
+			if saveErr := tx.SaveWithLog(cur, pending...); saveErr != nil {
+				return b, fmt.Errorf("%s: %v; saving NEEDS YOU failed: %w", name, err, saveErr)
+			}
 			return b, fmt.Errorf("%s: %w", name, err)
 		}
+		cur = started
 	}
-
-	started, err := startRound(ctx, rt, tx, cur, prompt, false)
-	if err != nil {
-		// The plan is staged and the round is open; nothing was started.
-		// NEEDS YOU says so in status, exactly as Send's spawn failure does.
-		cur.State = store.StateNeedsYou
-		cur.Halt = "builder spawn failed: " + err.Error()
-		cur.HaltAt = rt.Now().UTC()
-		if saveErr := tx.SaveWithLog(cur, pending...); saveErr != nil {
-			return b, fmt.Errorf("%s: %v; saving NEEDS YOU failed: %w", name, err, saveErr)
-		}
-		return b, fmt.Errorf("%s: %w", name, err)
-	}
-	cur = started
 
 	pending = append(pending, store.LogEntry{
 		TS: rt.Now().UTC(), Round: cur.Round,
@@ -121,7 +128,11 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	cur.RoundBaselineTree = baseline
 	cur.RoundBaselineHead = baselineHead
 	cur.RoundClosedTree = ""
-	cur.RoundStartedAt = rt.Now().UTC()
+	if served {
+		cur.QueuedAt = rt.Now().UTC()
+	} else {
+		cur.RoundStartedAt = rt.Now().UTC()
+	}
 	cur.FinishPending = true
 	cur.State = store.StateActive
 	// Verify off, whatever policy.verify.default says: the chain's reviewer

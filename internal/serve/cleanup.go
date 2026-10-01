@@ -105,8 +105,12 @@ func releaseServedRefs(ctx context.Context, rt relevo.Runtime, b store.Binding) 
 		return nil
 	}
 	bare := b.Serve.BareRepo
-	if err := rt.Git.DeleteBranch(ctx, bare, b.Branch); err != nil {
-		return err
+	// A branchless reader (a chain reader that shares the builder's tree) has no
+	// branch of its own; its refs/relevo/<name>/* are still its own to drop.
+	if b.Branch != "" {
+		if err := rt.Git.DeleteBranch(ctx, bare, b.Branch); err != nil {
+			return err
+		}
 	}
 	refs, err := rt.Git.ListRefs(ctx, bare, "refs/relevo/"+b.Name+"/")
 	if err != nil {
@@ -125,8 +129,13 @@ func teardownServed(ctx context.Context, rt relevo.Runtime, b store.Binding) err
 		return nil
 	}
 	bare := b.Serve.BareRepo
-	if err := rt.Git.RemoveWorktree(ctx, bare, b.Worktree, true); err != nil {
-		return err
+	// A branchless reader names no worktree: removing the empty path would ask
+	// git to remove something -- and the builder's tree is not the reader's to
+	// remove.
+	if b.Worktree != "" {
+		if err := rt.Git.RemoveWorktree(ctx, bare, b.Worktree, true); err != nil {
+			return err
+		}
 	}
 	return releaseServedRefs(ctx, rt, b)
 }
