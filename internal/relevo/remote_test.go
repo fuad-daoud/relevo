@@ -1323,6 +1323,11 @@ func TestAddRemoteRefusesCWD(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "remote builders are add-only: --cwd and --server cannot be combined") {
 		t.Fatalf("got err %v, want '--cwd and --server cannot be combined'", err)
 	}
+	// The input boundary's class, so the CLI renders `refused` with exit 2
+	// rather than an `internal` failure with a bugreport hint.
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
+	}
 }
 
 func TestAddRemoteServerConflict(t *testing.T) {
