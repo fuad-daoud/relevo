@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1798,5 +1799,235 @@ func TestChainCorrectionSeedNamesTheReviewersOutputFile(t *testing.T) {
 	}
 	if flat := rt.Store.ReportPath("shop-rev", reviewerRound); strings.Contains(got, flat) {
 		t.Errorf("correction seed names the flat report path %s:\n%s", flat, got)
+	}
+}
+
+// TestRepairRoundSeedFramesThePlanAndListsEveryBuilderRound pins the repair
+// seed: a red gate repairs round 1 and a red close after the spent budget seeds
+// the reviewer, whose seed frames the plan as a whole, names the closing round
+// a repair round sitting on round 1, and lists rounds 1 and 2 with openable
+// prompt and report paths.
+func TestRepairRoundSeedFramesThePlanAndListsEveryBuilderRound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	b := chainBinding(t, rt, "shop")
+	b.Regate = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+
+	// Round 1's red gate buys a repair: round 2 opens with a repair note.
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	if b := chainBinding(t, rt, "shop"); b.Round != 2 {
+		t.Fatalf("builder round = %d, want the repair round 2", b.Round)
+	}
+
+	// The repair round's own gate fails and the budget is spent, so the event
+	// goes red to the reviewer rather than into a second repair.
+	b = chainBinding(t, rt, "shop")
+	b.RepairCount = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	rev := chainBinding(t, rt, "shop-rev")
+	text, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-rev", rev.Round))
+	if err != nil {
+		t.Fatalf("read the reviewer prompt: %v", err)
+	}
+	got := string(text)
+	for _, want := range []string{
+		"as a whole",
+		"This closing round is " + chain.BuilderRoundRepair + ", on top of round 1.",
+		"Builder rounds of this plan:",
+		"- round 1 prompt: " + rt.Store.PromptPath("shop", 1),
+		"- round 1 report: " + rt.Store.ReportPath("shop", 1),
+		"- round 2 prompt: " + rt.Store.PromptPath("shop", 2),
+		"- round 2 report: " + rt.Store.ReportPath("shop", 2),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("reviewer seed does not carry %q:\n%s", want, got)
+		}
+	}
+	for _, path := range []string{
+		rt.Store.PromptPath("shop", 1), rt.Store.ReportPath("shop", 1),
+		rt.Store.PromptPath("shop", 2), rt.Store.ReportPath("shop", 2),
+	} {
+		if !rt.Store.DiskRegularFile(path) {
+			t.Errorf("listed round path %s is not an openable file", path)
+		}
+	}
+}
+
+// TestChainReviewerSeedNamesTheCorrectionRoundKind pins the correction kind: a
+// reviewer seed after a builder round that ran the planner's correction plan
+// names that round a correction round on top of round 1, and lists both rounds.
+func TestChainReviewerSeedNamesTheCorrectionRoundKind(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
+	chainReaderClose(t, rt, "shop-plan", "# Correction plan\n\nDo it.\n")
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	rev := chainBinding(t, rt, "shop-rev")
+	text, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-rev", rev.Round))
+	if err != nil {
+		t.Fatalf("read the reviewer prompt: %v", err)
+	}
+	got := string(text)
+	for _, want := range []string{
+		"This closing round is " + chain.BuilderRoundCorrection + ", on top of round 1.",
+		"- round 1 prompt: " + rt.Store.PromptPath("shop", 1),
+		"- round 2 prompt: " + rt.Store.PromptPath("shop", 2),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("reviewer seed does not carry %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestReviewerSeedNamesTheDiffFromWhenNoPlanDiffWasCaptured pins the
+// diff-from-the-commit fallback: with no plan-start commit recorded on a plan 1
+// chain, the reviewer seed names the chain base and tells the reviewer to diff
+// the plan from it, and names no cumulative diff.
+func TestReviewerSeedNamesTheDiffFromWhenNoPlanDiffWasCaptured(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	fg.refSHA = map[string]string{"release/v1": "commit-base-456"}
+	startedChain(t, rt, ChainOptions{Base: "release/v1"})
+
+	// A chain started before the plan-start commit was recorded: no commit on
+	// the row, so the seed must fall back to the base for plan 1.
+	row := chainStoredRow(t, rt, "shop")
+	if row.PlanStartCommit == "" || row.Base != "commit-base-456" {
+		t.Fatalf("chain row = plan start %q base %q, want a recorded start and the cut base", row.PlanStartCommit, row.Base)
+	}
+	row.PlanStartCommit = ""
+	if err := rt.Store.WithLock(func(tx *store.Tx) error { return tx.ChainPut(row) }); err != nil {
+		t.Fatalf("clear the plan start: %v", err)
+	}
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	rev := chainBinding(t, rt, "shop-rev")
+	text, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-rev", rev.Round))
+	if err != nil {
+		t.Fatalf("read the reviewer prompt: %v", err)
+	}
+	got := string(text)
+	if want := "No cumulative plan diff was captured; diff the plan yourself from commit-base-456."; !strings.Contains(got, want) {
+		t.Errorf("reviewer seed does not name the diff-from commit %q:\n%s", want, got)
+	}
+	if strings.Contains(got, "Plan diff, every round of this plan so far:") {
+		t.Errorf("reviewer seed names a cumulative diff it does not have:\n%s", got)
+	}
+	if strings.Contains(got, "No cumulative plan diff was captured for this plan.") {
+		t.Errorf("reviewer seed names no commit to diff from while a base is set:\n%s", got)
+	}
+}
+
+// chainFence is the three-backtick fence a relevo block opens and closes with.
+const chainFence = "```"
+
+// chainRecapText is the block-free recap a reader writes after the message that
+// carries its relevo block: it reads as the round's final text, so a reader
+// that trusts only the output body would find no verdict or finding count.
+const chainRecapText = "# Recap\n\nI summarise the round; the block was written earlier."
+
+// chainStreamResultLine is one claude stream-json result line whose result is
+// text, encoded so a test can plant a verdict-bearing message beside a recap.
+func chainStreamResultLine(t *testing.T, text string) string {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{
+		"type": "result", "subtype": "success", "is_error": false, "result": text,
+	})
+	if err != nil {
+		t.Fatalf("marshal stream line: %v", err)
+	}
+	return string(b) + "\n"
+}
+
+// TestReviewerRecapAfterTheBlockStillYieldsTheVerdict pins the stream rescan: a
+// reviewer whose output file is a block-free recap closes with a verdict only
+// because the block-bearing message is still in the round's stream.
+func TestReviewerRecapAfterTheBlockStillYieldsTheVerdict(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	rev := chainBinding(t, rt, "shop-rev")
+	stream := chainStreamResultLine(t, "I reviewed the round.\n\n"+chainFence+"relevo\nverdict: pass\n"+chainFence+"\n") +
+		chainStreamResultLine(t, chainRecapText)
+	if err := os.WriteFile(rt.Store.StreamPath("shop-rev", rev.Round), []byte(stream), 0o644); err != nil {
+		t.Fatalf("write the reviewer stream: %v", err)
+	}
+
+	chainReaderClose(t, rt, "shop-rev", chainRecapText)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusDone) {
+		t.Fatalf("chain status = %q, want done: the verdict must come from the stream", row.Status)
+	}
+	outPath := rt.Store.OutputPath("shop-rev", rev.Round, bindingRole(rev), readerOutputLabel(rt, rev))
+	out, err := rt.Store.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read the reviewer output: %v", err)
+	}
+	if strings.Contains(string(out), "verdict:") {
+		t.Errorf("the reviewer's written output carries the verdict block:\n%s", out)
+	}
+	if !strings.Contains(string(out), "Recap") {
+		t.Errorf("the reviewer's written output is not the recap:\n%s", out)
+	}
+}
+
+// TestSecurityRecapAfterTheBlockStillYieldsTheFindings is the security twin:
+// the scan's output file is a block-free recap and the finding count comes from
+// the stream, so the fix planner is seeded rather than the chain halting.
+func TestSecurityRecapAfterTheBlockStillYieldsTheFindings(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{Security: ptr(true)})
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
+
+	sec := chainBinding(t, rt, "shop-sec")
+	stream := chainStreamResultLine(t, "I scanned the branch.\n\n"+chainFence+"relevo\nfindings: 2\n"+chainFence+"\n") +
+		chainStreamResultLine(t, chainRecapText)
+	if err := os.WriteFile(rt.Store.StreamPath("shop-sec", sec.Round), []byte(stream), 0o644); err != nil {
+		t.Fatalf("write the security stream: %v", err)
+	}
+
+	chainReaderClose(t, rt, "shop-sec", chainRecapText)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Step != string(chain.StepPlanningFixes) {
+		t.Fatalf("chain step = %q, want planning-fixes: the count must come from the stream", row.Step)
+	}
+	planner := chainBinding(t, rt, "shop-plan")
+	if !HasPromptEntry(chainLog(t, rt, "shop-plan"), planner.Round) {
+		t.Error("the planner must be seeded with a fix plan")
+	}
+	outPath := rt.Store.OutputPath("shop-sec", sec.Round, bindingRole(sec), readerOutputLabel(rt, sec))
+	out, err := rt.Store.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read the security output: %v", err)
+	}
+	if strings.Contains(string(out), "findings:") {
+		t.Errorf("the security member's written output carries the findings block:\n%s", out)
 	}
 }

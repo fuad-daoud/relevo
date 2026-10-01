@@ -10,17 +10,24 @@ import (
 func sampleSeedView() SeedView {
 	return SeedView{
 		Plan: 2, Plans: 4, Corrections: 1,
-		PlanPath:        "/tmp/chain/plan-2.md",
-		ReportPath:      "/tmp/chain/report.md",
-		DiffPath:        "/tmp/chain/round.diff",
-		GateLogPath:     "/tmp/chain/gate.log",
-		GateResult:      GateRed,
-		OutputPath:      "/tmp/chain/review.md",
-		BranchDiffPath:  "/tmp/chain/branch.diff",
-		PlanDiffPath:    "/tmp/chain/plan-diff.patch",
-		RoundPromptPath: "/tmp/chain/round-prompt.md",
-		Branch:          "relevo/x",
-		Base:            "main",
+		PlanPath:         "/tmp/chain/plan-2.md",
+		ReportPath:       "/tmp/chain/report.md",
+		DiffPath:         "/tmp/chain/round.diff",
+		GateLogPath:      "/tmp/chain/gate.log",
+		GateResult:       GateRed,
+		OutputPath:       "/tmp/chain/review.md",
+		BranchDiffPath:   "/tmp/chain/branch.diff",
+		PlanDiffPath:     "/tmp/chain/plan-diff.patch",
+		RoundPromptPath:  "/tmp/chain/round-prompt.md",
+		Branch:           "relevo/x",
+		Base:             "main",
+		BuilderRoundKind: BuilderRoundCorrection,
+		BuilderRoundOn:   1,
+		BuilderRounds: []SeedRound{
+			{Round: 1, PromptPath: "/tmp/chain/round-1-prompt.md", ReportPath: "/tmp/chain/round-1-report.md"},
+			{Round: 2, PromptPath: "/tmp/chain/round-2-prompt.md", ReportPath: "/tmp/chain/round-2-report.md"},
+		},
+		DiffFrom: "/tmp/chain/plan-start-commit",
 	}
 }
 
@@ -66,9 +73,70 @@ func TestReviewerSeedOmitsAnUnsetPlanDiff(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
 	v.PlanDiffPath = ""
+	// With no commit to diff from either, the seed words the plain miss.
+	v.DiffFrom = ""
 	out := assertSeedNames(t, SeedReviewer, v, "No cumulative plan diff was captured for this plan.")
 	if strings.Contains(out, "Plan diff, every round of this plan so far:") {
 		t.Errorf("reviewer seed names a cumulative diff it does not have:\n%s", out)
+	}
+}
+
+// TestReviewerSeedFramesThePlanAndListsTheRounds pins the plan framing and the
+// closing round's kind: the reviewer judges the plan as a whole, the closing
+// round is named with the round it sits on top of, and every builder round of
+// the plan is listed with both of its paths.
+func TestReviewerSeedFramesThePlanAndListsTheRounds(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	out := assertSeedNames(t, SeedReviewer, v,
+		"as a whole",
+		"the plan's cumulative diff is the primary input",
+		"this round's diff is its latest increment",
+		"This closing round is "+v.BuilderRoundKind+", on top of round 1.",
+		"Builder rounds of this plan:",
+		"- round 1 prompt: "+v.BuilderRounds[0].PromptPath,
+		"- round 1 report: "+v.BuilderRounds[0].ReportPath,
+		"- round 2 prompt: "+v.BuilderRounds[1].PromptPath,
+		"- round 2 report: "+v.BuilderRounds[1].ReportPath,
+	)
+	if strings.Contains(out, "judge the diff against the plan") {
+		t.Errorf("reviewer seed still judges the diff rather than the plan:\n%s", out)
+	}
+}
+
+// TestReviewerSeedNamesTheDiffFromWithoutAPlanDiff pins the diff-from-the-commit
+// rendering: with no cumulative diff captured but a commit to diff from, the
+// seed names that commit, says no cumulative diff exists, and names no
+// cumulative-diff line.
+func TestReviewerSeedNamesTheDiffFromWithoutAPlanDiff(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	v.PlanDiffPath = ""
+	out := assertSeedNames(t, SeedReviewer, v,
+		"No cumulative plan diff was captured; diff the plan yourself from "+v.DiffFrom+".",
+		"This round's diff: "+v.DiffPath)
+	if strings.Contains(out, "Plan diff, every round of this plan so far:") {
+		t.Errorf("reviewer seed names a cumulative diff it does not have:\n%s", out)
+	}
+	if strings.Contains(out, "No cumulative plan diff was captured for this plan.") {
+		t.Errorf("reviewer seed names no commit to diff from while DiffFrom is set:\n%s", out)
+	}
+}
+
+// TestCorrectionSeedFramesThePlan pins the correction template's plan framing:
+// it carries the same whole-plan framing and round list the reviewer's does.
+func TestCorrectionSeedFramesThePlan(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	out := assertSeedNames(t, SeedCorrection, v,
+		"as a whole",
+		"the plan's cumulative diff is the primary input",
+		"This closing round is "+v.BuilderRoundKind+", on top of round 1.",
+		"- round 1 prompt: "+v.BuilderRounds[0].PromptPath,
+		"- round 2 report: "+v.BuilderRounds[1].ReportPath,
+	)
+	if strings.Contains(out, "judge the diff against the plan") {
+		t.Errorf("correction seed still judges the diff rather than the plan:\n%s", out)
 	}
 }
 
