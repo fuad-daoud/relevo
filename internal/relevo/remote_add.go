@@ -245,6 +245,9 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	// field chains already use -- and is stored on the client mirror, so both
 	// sides read the same acceptance check.
 	gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), bindingRole(store.Binding{Role: normRole(opts.Role)})))
+	// The regate resolves the same way, and for the same reason: the mirror
+	// and the served binding must agree on the repair budget.
+	regate := ResolveRegate(opts.Regate, rt.Policy)
 
 	createReq := remote.CreateBindingRequest{
 		Name:               opts.Name,
@@ -256,6 +259,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		Feature:            opts.Feature,
 		Ticket:             opts.Ticket,
 		Gate:               gate,
+		Regate:             &regate,
 		Author:             &remote.GitIdentity{Name: authorName, Email: authorEmail},
 		ClientInstallation: clientInstallation,
 		ClientBindingID:    clientBindingID,
@@ -351,6 +355,9 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		// The gate the create request carried: the client's resolved check,
 		// recorded on the mirror so `relevo status` shows what the server runs.
 		Gate: gate,
+		// The regate the create request carried, resolved the same way, so
+		// the mirror's repair budget matches the served binding's.
+		Regate: regate,
 		// The actor travels as the client asked it: the server resolved it
 		// against its own actors, and the mirror records it so
 		// `relevo status` shows it (#382 §5.3).

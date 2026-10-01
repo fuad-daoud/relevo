@@ -64,6 +64,9 @@ func TestOOMKilledLocalRoundBecomesQueued(t *testing.T) {
 		// Only the killed round was running (no other local rounds).
 		t.Errorf("OOMRequeue.Running = %d, want 1", got.OOMRequeue.Running)
 	}
+	if got.OOMRequeue.PeakBytes != scopeOOM.PeakBytes {
+		t.Errorf("OOMRequeue.PeakBytes = %d, want the killed scope's peak %d", got.OOMRequeue.PeakBytes, scopeOOM.PeakBytes)
+	}
 	if got.RoundSwitches != 0 {
 		t.Errorf("RoundSwitches = %d, want 0 (not counted)", got.RoundSwitches)
 	}
