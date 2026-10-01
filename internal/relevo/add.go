@@ -497,7 +497,7 @@ func cutWorktree(ctx context.Context, rt Runtime, name, repo, base string) (work
 			return "", "", "", "", rerr
 		}
 		if !ok {
-			return "", "", "", "", fmt.Errorf("base %q not found", base)
+			return "", "", "", "", refuse("base %q not found", base)
 		}
 		commit = sha
 	} else if commit, err = rt.Git.HeadCommit(ctx, repo); err != nil {
