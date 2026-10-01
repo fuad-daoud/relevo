@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // TestChainStopStopsTheActiveMemberAndMarksTheChainStopped pins the ordinary
@@ -449,5 +450,65 @@ func TestChainDoneLeavesTheChainAloneWhenAMemberFails(t *testing.T) {
 	}
 	if events := chainTrace(t, rt, "shop"); len(events) != 1 {
 		t.Errorf("trace = %+v, want no done row for a failed release", events)
+	}
+}
+
+// TestWorkflowChainDoneReleasesEveryMember pins the release: a custom
+// workflow's non-legacy member is released too, not only the member the legacy
+// builder column names.
+func TestWorkflowChainDoneReleasesEveryMember(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+	if _, err := ChainStop(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainStop: %v", err)
+	}
+
+	if _, err := ChainDone(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainDone: %v", err)
+	}
+	for _, name := range []string{"shop", "shop-assistant"} {
+		if b := chainBinding(t, rt, name); b.State != store.StateDone {
+			t.Errorf("member %s state = %q, want done", name, b.State)
+		}
+	}
+}
+
+// TestWorkflowEndDeliveryCarrierIsAMember pins the carrier: the one end
+// delivery lands on the first surviving member in chain_member order, even when
+// that member fills no legacy part.
+func TestWorkflowEndDeliveryCarrierIsAMember(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+
+	// The builder's record is gone, so the first surviving member is the
+	// assistant, which the legacy columns never name.
+	if err := rt.Store.Delete("shop"); err != nil {
+		t.Fatalf("Delete shop: %v", err)
+	}
+	tickChains(context.Background(), rt)
+
+	row := flowChainRow(t, rt)
+	if row.Status != string(workflow.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+	if pending := chainPendingChain(t, rt, "shop-assistant"); len(pending) != 1 {
+		t.Fatalf("pending on shop-assistant = %d, want the one end delivery", len(pending))
+	}
+
+	var carrier string
+	var found bool
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		name, _, ok, cerr := chainDeliveryMember(tx, row)
+		carrier, found = name, ok
+		return cerr
+	}); err != nil {
+		t.Fatalf("chainDeliveryMember: %v", err)
+	}
+	if !found || carrier != "shop-assistant" {
+		t.Errorf("carrier = %q (found %v), want shop-assistant", carrier, found)
 	}
 }

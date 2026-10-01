@@ -67,6 +67,28 @@ func chainReadMembers(s *store.Store, c db.ChainRow) []string {
 	return chainMembersOf(c)
 }
 
+// chainEndMembers names the members a chain's end verbs walk: the bindings its
+// engine recorded in chain_member, in creation order, when the row carries a
+// workflow; the legacy part columns otherwise. A binding the row leaves empty
+// is skipped. A read failure keeps the legacy path, so an end verb on a legacy
+// row is unchanged.
+func chainEndMembers(m chainMemberLister, c db.ChainRow) []string {
+	if len(c.WorkflowJSON) == 0 {
+		return chainMembersOf(c)
+	}
+	rows, err := m.ChainMembers(c.Name)
+	if err != nil {
+		return chainMembersOf(c)
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.Binding != "" {
+			out = append(out, row.Binding)
+		}
+	}
+	return out
+}
+
 // chainStoredFacts is a chain's fixed-column facts as a read surface shows
 // them: the engine state's legacy projection when the row carries a state, the
 // stored columns otherwise.

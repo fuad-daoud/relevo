@@ -98,7 +98,14 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	// A chain that carries a workflow resumes on the engine, not on the fixed
 	// state machine's step words.
 	if len(c.WorkflowJSON) > 0 {
-		return chainResumeWorkflow(ctx, rt, c, opts)
+		out, err := chainResumeWorkflow(ctx, rt, c, opts)
+		if err != nil {
+			return ChainResult{}, err
+		}
+		if err := shipResumedRound(ctx, rt, opts.Name, out.Chain); err != nil {
+			return ChainResult{}, err
+		}
+		return out, nil
 	}
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
@@ -165,12 +172,8 @@ func ChainResume(ctx context.Context, rt Runtime, opts ResumeOptions) (ChainResu
 	// A resume whose target member is remote has only staged its round: the
 	// unlocked step ships it now, outside the state lock, exactly as a start's
 	// plan 1 is shipped. A failed ship records the halt and returns nil.
-	if name := chainMemberName(out.Chain, out.Chain.AwaitingMember); name != "" {
-		if b, lerr := rt.Store.Load(name); lerr == nil && b.Builder.Remote() {
-			if serr := chainSendPending(ctx, rt); serr != nil {
-				return ChainResult{}, fmt.Errorf("chain %s resumed, but its remote member could not be handed its round: %w", opts.Name, serr)
-			}
-		}
+	if err := shipResumedRound(ctx, rt, opts.Name, out.Chain); err != nil {
+		return ChainResult{}, err
 	}
 	return out, nil
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // advanceRemoteChain moves a chain's builder member and its awaiting round to a
@@ -51,7 +52,8 @@ func advanceRemoteChain(t *testing.T, rt Runtime, round int) {
 }
 
 // haltRemoteChain writes the halted status a resume exists for, without
-// exercising the stop path a served binding does not take.
+// exercising the stop path a served binding does not take. A row that carries
+// an engine state halts its state too, so a workflow resume reads a halted run.
 func haltRemoteChain(t *testing.T, rt Runtime) {
 	t.Helper()
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -60,6 +62,18 @@ func haltRemoteChain(t *testing.T, rt Runtime) {
 			return err
 		}
 		c.Status = string(chain.StatusHalted)
+		if len(c.StateJSON) > 0 {
+			st, serr := chainWorkflowState(c)
+			if serr != nil {
+				return serr
+			}
+			st.Status = workflow.StatusHalted
+			raw, merr := json.Marshal(st)
+			if merr != nil {
+				return merr
+			}
+			c.StateJSON = raw
+		}
 		return tx.ChainPut(c)
 	}); err != nil {
 		t.Fatalf("halt the chain: %v", err)

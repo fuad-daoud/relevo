@@ -223,7 +223,7 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 	// The builder's result is the chain's: its worktree and branch are the
 	// chain's tree, which is what the verb's document names.
 	var out DoneResult
-	for i, member := range chainMembersOf(c) {
+	for i, member := range chainEndMembers(rt.Store, c) {
 		res, derr := Done(ctx, rt, member)
 		if errors.Is(derr, store.ErrNotFound) {
 			// A member whose record is gone is already released.
@@ -303,7 +303,7 @@ func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 // no longer true the moment they resume it. The next end queues its own.
 func supersedeChainDelivery(rt Runtime, c db.ChainRow) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
-		for _, member := range chainMembersOf(c) {
+		for _, member := range chainEndMembers(tx, c) {
 			pending, err := tx.PendingForMasterMindThrough(member, 0)
 			if err != nil {
 				return err

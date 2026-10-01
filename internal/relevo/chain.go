@@ -536,7 +536,7 @@ func chainTerminal(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow,
 // which is the one case a chain ends silently. A read failure that is not
 // "gone" is returned rather than treated as a missing member.
 func chainDeliveryMember(tx *store.Tx, c db.ChainRow) (name string, b store.Binding, ok bool, err error) {
-	for _, member := range chainMembersOf(c) {
+	for _, member := range chainEndMembers(tx, c) {
 		mb, lerr := tx.Load(member)
 		if errors.Is(lerr, store.ErrNotFound) {
 			continue

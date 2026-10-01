@@ -3,9 +3,11 @@ package relevo
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -217,5 +219,56 @@ func TestPlacedWriterCheckAnsweredWhenTheGateRecordArrivesLater(t *testing.T) {
 	tickChainChecks(context.Background(), rt)
 	if got := flowChainRow(t, rt); got.Status != string(workflow.StatusDone) {
 		t.Errorf("status = %s (%q), want done from the pulled gate", got.Status, got.Reason)
+	}
+}
+
+// flowTriageBuildWorkflow gives a custom workflow a yes-no reader and a
+// builder: the builder is the chain's keeper writer, so it takes the chain's
+// own name, and the reader fills no legacy part, so a resume's awaited member
+// must resolve through chain_member.
+const flowTriageBuildWorkflow = `name: triagebuild
+inputs: { plans: required }
+start: plans
+steps:
+  plans: { for-each: plans, on: { next: build, empty: done } }
+  build: { run: builder, seed: "{{plans.current}}", on: { done: triage } }
+  triage: { run: yes-no, seed: "ship it?", on: { done: done } }
+`
+
+// flowTriageRemoteRows is the chain roles file with a yes-no reader added and
+// the builder placed on zen, so a custom workflow's keeper writer runs remotely.
+func flowTriageRemoteRows() map[string]roles.Row {
+	rows := chainRows()
+	rows["yes-no"] = roles.Row{
+		Shape:       ptr("reader"),
+		Candidates:  []string{testClaudeRef},
+		Definitions: map[string]roles.DefRow{"claude": {Agent: "yes-no"}},
+	}
+	b := rows["builder"]
+	b.Placement = []string{"zen"}
+	rows["builder"] = b
+	return rows
+}
+
+// TestWorkflowResumeShipsAPlacedCustomMembersRound pins the resume's ship: a
+// custom workflow whose awaited member is placed remotely stages the resumed
+// round, and the unlocked pending-send step hands it to the server.
+func TestWorkflowResumeShipsAPlacedCustomMembersRound(t *testing.T) {
+	t.Parallel()
+
+	fr := chainRemoteFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, flowTriageRemoteRows())
+
+	startFlowChain(t, rt, flowTriageBuildWorkflow)
+	advanceRemoteChain(t, rt, 2)
+	haltRemoteChain(t, rt)
+
+	fr.calls = nil
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	if !slices.Contains(fr.calls, "StartRound:zen:shop:2") {
+		t.Errorf("calls = %v, want the resumed round shipped to zen", fr.calls)
 	}
 }
