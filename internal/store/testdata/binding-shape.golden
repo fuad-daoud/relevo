@@ -1,4 +1,4 @@
-format 12
+format 13
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
@@ -116,6 +116,7 @@ link.id
 link.installation
 name
 oom_requeue.at
+oom_requeue.peak_bytes
 oom_requeue.running
 owner
 planner.agent_name

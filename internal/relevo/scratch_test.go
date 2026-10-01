@@ -309,10 +309,10 @@ func TestCreateScratchFromUsesTheGivenTree(t *testing.T) {
 	}
 }
 
-// TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone pins #821: releasing
-// a chain removes the builder's worktree first, and every reader cut from that
-// tree then cleans a scratch whose source no longer exists. Both gone means the
-// scratch is already removed -- no git call, no cleanup warning.
+// TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone pins the shared-tree
+// release: a chain done removes the builder's worktree first, and every reader
+// cut from that tree then cleans a scratch whose source no longer exists. Both
+// gone means the scratch is already removed -- no git call, no cleanup warning.
 func TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone(t *testing.T) {
 	t.Parallel()
 
