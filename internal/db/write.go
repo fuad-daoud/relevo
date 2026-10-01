@@ -120,21 +120,11 @@ func (t *Tx) UpsertMasterMind(p MasterMind) (string, error) {
 	}
 
 	var id string
-	var locator sql.Null[string]
-	err := t.queryRow(`SELECT id, transcript_locator FROM mastermind WHERE `+originScope+` AND harness_kind = ? AND session_id = ?`,
-		t.origin, p.HarnessKind, p.SessionID).Scan(&id, &locator)
+	err := t.queryRow(`SELECT id FROM mastermind WHERE `+originScope+` AND harness_kind = ? AND session_id = ?`,
+		t.origin, p.HarnessKind, p.SessionID).Scan(&id)
 	if err == nil {
-		// The locator updates only when p now carries one; otherwise the db's
-		// existing value (if any) is kept, not cleared.
-		var locatorArg any
-		if locator.Valid {
-			locatorArg = locator.V
-		}
-		if p.TranscriptLocator != nil {
-			locatorArg = *p.TranscriptLocator
-		}
-		if _, err := t.exec(`UPDATE mastermind SET last_seen = ?, transcript_locator = ? WHERE id = ?`,
-			formatTime(lastSeen), locatorArg, id); err != nil {
+		if _, err := t.exec(`UPDATE mastermind SET last_seen = ? WHERE id = ?`,
+			formatTime(lastSeen), id); err != nil {
 			return "", fmt.Errorf("db: upsert mastermind: update: %w", mapBusy(err))
 		}
 		return id, nil
@@ -148,8 +138,8 @@ func (t *Tx) UpsertMasterMind(p MasterMind) (string, error) {
 	if firstSeen.IsZero() {
 		firstSeen = lastSeen
 	}
-	if _, err := t.exec(`INSERT INTO mastermind (id, origin, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, t.origin, p.HarnessKind, p.SessionID, nullableString(p.TranscriptLocator), formatTime(firstSeen), formatTime(lastSeen)); err != nil {
+	if _, err := t.exec(`INSERT INTO mastermind (id, origin, harness_kind, session_id, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, t.origin, p.HarnessKind, p.SessionID, formatTime(firstSeen), formatTime(lastSeen)); err != nil {
 		return "", fmt.Errorf("db: upsert mastermind: insert: %w", mapBusy(err))
 	}
 	return id, nil
@@ -166,10 +156,6 @@ func (t *Tx) upsertMasterMindByID(p MasterMind, lastSeen time.Time) (string, err
 	case err == nil:
 		set := []string{"harness_kind = ?", "session_id = ?", "last_seen = ?"}
 		args := []any{p.HarnessKind, p.SessionID, formatTime(lastSeen)}
-		if p.TranscriptLocator != nil {
-			set = append(set, "transcript_locator = ?")
-			args = append(args, *p.TranscriptLocator)
-		}
 		args = append(args, p.ID)
 		if _, uerr := t.exec(`UPDATE mastermind SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...); uerr != nil {
 			return "", fmt.Errorf("db: upsert mastermind by id: update: %w", mapMasterMindKey(uerr))
@@ -180,8 +166,8 @@ func (t *Tx) upsertMasterMindByID(p MasterMind, lastSeen time.Time) (string, err
 		if firstSeen.IsZero() {
 			firstSeen = lastSeen
 		}
-		if _, ierr := t.exec(`INSERT INTO mastermind (id, origin, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			p.ID, t.origin, p.HarnessKind, p.SessionID, nullableString(p.TranscriptLocator),
+		if _, ierr := t.exec(`INSERT INTO mastermind (id, origin, harness_kind, session_id, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)`,
+			p.ID, t.origin, p.HarnessKind, p.SessionID,
 			formatTime(firstSeen), formatTime(lastSeen)); ierr != nil {
 			return "", fmt.Errorf("db: upsert mastermind by id: insert: %w", mapMasterMindKey(ierr))
 		}
@@ -423,8 +409,7 @@ func (t *Tx) DeleteArtifact(id string) error {
 }
 
 // DeleteRoundTranscript removes every transcript row of one mirror round and
-// returns how many rows went. The owner kind is hard-coded to OwnerRound, so
-// this cannot delete a mastermind transcript even if handed a mastermind's id.
+// returns how many rows went. The owner kind is hard-coded to OwnerRound.
 func (t *Tx) DeleteRoundTranscript(roundID string) (int64, error) {
 	res, err := t.exec(`DELETE FROM transcript WHERE owner_kind = ? AND owner_id = ?`, OwnerRound, roundID)
 	if err != nil {
