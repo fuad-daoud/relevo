@@ -218,6 +218,18 @@ var registry = []verbEntry{
 		Errors:  []string{"config_invalid", "internal", "usage"},
 	},
 	{
+		Name:    "config workflow",
+		Summary: "list, add, remove, show or edit saved workflows",
+		Args:    "add|rm|show|edit",
+		Flags:   []string{},
+		Exit:    []int{0, 2},
+		Errors:  []string{},
+	},
+	{Name: "config workflow add", Summary: "validate and save a workflow from a YAML or JSON file", Args: "<file> [--replace] [--force]", Flags: []string{"--force", "--replace"}, Exit: []int{0, 1, 2}, Errors: []string{"config_invalid", "conflict", "internal", "usage"}},
+	{Name: "config workflow edit", Summary: "edit a saved workflow's source in $EDITOR", Args: "<name>", Flags: []string{}, Exit: []int{0, 1, 2}, Errors: []string{"config_invalid", "config_path_not_set", "internal", "usage"}},
+	{Name: "config workflow rm", Summary: "forget a saved workflow", Args: "<name>", Flags: []string{}, Exit: []int{0, 1, 2}, Errors: []string{"config_path_not_set", "internal", "usage"}},
+	{Name: "config workflow show", Summary: "print a saved workflow's source, or its definition with --json", Args: "<name> [--json]", Flags: []string{"--json"}, Output: "json:the stored definition", Exit: []int{0, 1, 2}, Errors: []string{"config_path_not_set", "internal", "usage"}},
+	{
 		Name:    "daemon",
 		Summary: "run the long-running reconciler",
 		Args:    "[--interval D] [--check] [--pprof <path>]",

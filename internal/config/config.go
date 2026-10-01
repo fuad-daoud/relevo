@@ -32,11 +32,12 @@ const (
 	Prices     Section = "prices"
 	Servers    Section = "servers"
 	Hooks      Section = "hooks"
+	Workflows  Section = "workflows"
 )
 
 // Sections is the order an import checks and stores the sections, and the
 // order EncodeDoc and DiffDocs render them.
-var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks}
+var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows}
 
 // sectionFile maps a section to the file it is imported from.
 var sectionFile = map[Section]string{
@@ -86,6 +87,7 @@ type Loaded struct {
 	Prices     usage.Prices
 	Servers    remote.Servers
 	Hooks      HooksMap
+	Workflows  map[string]StoredWorkflow
 	ClientKey  []byte
 	Typesafe   string
 	Warnings   []string
@@ -392,6 +394,9 @@ func Validate(sec Section, body []byte) ([]string, error) {
 			return nil, fmt.Errorf("%s: %w", Hooks, err)
 		}
 		return nil, nil
+	case Workflows:
+		_, err := parseWorkflows(body)
+		return nil, err
 	default:
 		return nil, fmt.Errorf("unknown config section %q", sec)
 	}
