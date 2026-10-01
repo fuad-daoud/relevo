@@ -186,6 +186,117 @@ ARISING FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER
 DEALINGS IN THE FONT SOFTWARE.
 EOF
 
+# The derived block names the runtime closure the pinned
+# @excalidraw/mermaid-to-excalidraw import adds. It is walked from
+# board/package-lock.json over the package's dependencies: one
+# "name version SPDX-id" line per package, sorted, then one full licence text
+# per distinct SPDX id, copied from a representative installed package's
+# licence file. The walk order and the LC_ALL=C sort make a second run
+# byte-identical. The list is derived, never hand-typed, so it cannot drift
+# from the lock.
+node --input-type=module <<'NODE' >> "$out/LICENSES.txt"
+import { readFileSync, existsSync } from "node:fs";
+
+const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
+const packages = lock.packages || {};
+
+const nameFromPath = (p) => p.slice(p.lastIndexOf("node_modules/") + "node_modules/".length);
+const parentDir = (p) => {
+  if (p === "") return null;
+  const i = p.lastIndexOf("/node_modules/");
+  return i >= 0 ? p.slice(0, i) : "";
+};
+const resolve = (name, from) => {
+  let dir = from;
+  for (;;) {
+    const candidate = (dir ? dir + "/" : "") + "node_modules/" + name;
+    if (packages[candidate]) return candidate;
+    const parent = parentDir(dir);
+    if (parent === null) return null;
+    dir = parent;
+  }
+};
+
+const start = "node_modules/@excalidraw/mermaid-to-excalidraw";
+const seen = new Set();
+const queue = [start];
+const found = new Map();
+while (queue.length > 0) {
+  const path = queue.shift();
+  if (seen.has(path)) continue;
+  seen.add(path);
+  const entry = packages[path];
+  if (!entry) continue;
+  const name = entry.name || nameFromPath(path);
+  const version = entry.version || "";
+  found.set(name + "@" + version, { name, version, path, license: entry.license });
+  for (const dep of Object.keys(entry.dependencies || {})) {
+    const resolved = resolve(dep, path);
+    if (resolved) queue.push(resolved);
+  }
+}
+
+const LICENCE_FILES = [
+  "LICENSE", "LICENSE.md", "LICENSE.txt",
+  "LICENCE", "LICENCE.md", "LICENCE.txt",
+  "license", "license.md", "license.txt",
+];
+const licenceFile = (path) => {
+  for (const f of LICENCE_FILES) {
+    const candidate = path + "/" + f;
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+};
+
+const licenceId = (entry) => {
+  let id = entry.license || "";
+  if (!id) {
+    id = JSON.parse(readFileSync(entry.path + "/package.json", "utf8")).license || "";
+  }
+  if (id && typeof id === "object") id = id.type || "";
+  if (!id) {
+    const file = licenceFile(entry.path);
+    if (file) {
+      const match = readFileSync(file, "utf8").split("\n")[0].match(/\(([^)]+)\)/);
+      if (match) id = match[1];
+    }
+  }
+  return id || "UNKNOWN";
+};
+
+const rows = [...found.values()]
+  .map((entry) => Object.assign({}, entry, { id: licenceId(entry) }))
+  .sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : a.version < b.version ? -1 : a.version > b.version ? 1 : 0,
+  );
+
+const lines = [];
+lines.push("");
+lines.push("--------------------------------------------------------------------------------");
+lines.push("Runtime closure of @excalidraw/mermaid-to-excalidraw (name version SPDX-id):");
+for (const row of rows) {
+  lines.push("  " + row.name + " " + row.version + " " + row.id);
+}
+
+const byId = new Map();
+for (const row of rows) {
+  if (!byId.has(row.id)) byId.set(row.id, []);
+  byId.get(row.id).push(row);
+}
+for (const id of [...byId.keys()].sort()) {
+  const representative = byId.get(id).filter((row) => licenceFile(row.path))[0];
+  lines.push("");
+  lines.push("--------------------------------------------------------------------------------");
+  lines.push(id + (representative ? " (" + representative.name + " " + representative.version + ")" : ""));
+  lines.push("");
+  if (representative) {
+    lines.push(readFileSync(licenceFile(representative.path), "utf8").replace(/\s+$/, ""));
+  }
+}
+process.stdout.write(lines.join("\n") + "\n");
+NODE
+
 # assets.sha256 is the integrity list: one "<sha256>  <path>" line per file
 # beside it, paths relative to this directory and sorted, so a second run of
 # this script is byte-identical.
