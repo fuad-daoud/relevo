@@ -13,6 +13,7 @@ import (
 //
 //	<name>  <writer|reader>[  check]  tier <tier or ->  (<reg.Source()>)
 //	  candidates  <tok>, <tok>      or   candidates  (none)
+//	  scope       <path>, <path> + comments                          (only when set)
 //	  <kind>  <agent>[ + <req> ...][  (custom)]
 //
 // It is pure and never fails: `relevo config` lists what is there.
@@ -59,6 +60,10 @@ func formatRole(reg *roles.Registry, role roles.Role) string {
 		b.WriteString(legacyCandidates(reg, role.Ranked))
 	} else {
 		b.WriteString(fileCandidates(reg, role))
+	}
+
+	if role.Scope != nil {
+		b.WriteString("\n  scope  " + formatScope(role.Scope))
 	}
 
 	for _, kind := range sortedDefinitionKinds(role.Definitions) {
