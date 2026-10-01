@@ -1174,7 +1174,8 @@ config key `relevo.boardTheme` (`git config relevo.boardTheme blueprint`), then
 On save the page writes the scene and a companion `<name>.svg` beside it,
 exported for the cockpit, agents and PR diffs; both are committed. The export
 runs with dark mode off and the view background set from the palette, so what
-is stored, shown and exported is the same colour.
+is stored, shown and exported is the same colour. `Ctrl-S` (or the Save button)
+writes the scene and its companion `.svg`.
 
 The page and its assets (bundle, stylesheet and self-hosted fonts) are vendored,
 committed and embedded, so no CDN is contacted. The page talks to three

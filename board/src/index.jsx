@@ -107,15 +107,19 @@ function App() {
 
   useEffect(() => {
     // The hand check drives the save through the button; Ctrl-S is the same
-    // action for a human.
+    // action for a human. Excalidraw binds Ctrl-S on `document` in the capture
+    // phase, so this listener must capture on `window` -- ahead of it -- and
+    // stop the event there, or Excalidraw's own save runs and this one, which
+    // sits in the bubble phase, is never reached.
     const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
+        e.stopPropagation();
         save();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [save]);
 
   const initialData = doc
