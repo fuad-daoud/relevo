@@ -21,22 +21,14 @@ type GitFacts interface {
 	RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error)
 }
 
-// SessionLocator mirrors relevo.SessionLocator's signature, for the same reason
-// GitFacts mirrors relevo.Git.
-type SessionLocator func(kind, sessionID string) (path string, ok bool)
-
 // Deps are Ingest's optional collaborators. The zero value is usable: no repo is
-// resolved, no mastermind transcript is located, Now is time.Now and Logger is
-// slog.Default().
+// resolved, Now is time.Now and Logger is slog.Default().
 type Deps struct {
 	// Git resolves a live binding's repo identity when bind.json carries no
 	// RepoRef. Nil means never resolve.
-	Git GitFacts
-	// Sessions locates a mastermind's own transcript file when bind.json carries
-	// no locator. Nil means never locate.
-	Sessions SessionLocator
-	Now      func() time.Time
-	Logger   *slog.Logger
+	Git    GitFacts
+	Now    func() time.Time
+	Logger *slog.Logger
 }
 
 func (d Deps) defaults() Deps {
@@ -51,18 +43,17 @@ func (d Deps) defaults() Deps {
 
 // Stats summarises what one Ingest call wrote.
 type Stats struct {
-	Bindings, Rounds, Events, Artifacts, TranscriptRecords, Skipped int
+	Bindings, Rounds, Events, Artifacts, Skipped int
 }
 
 // Add returns the field-wise sum of s and o.
 func (s Stats) Add(o Stats) Stats {
 	return Stats{
-		Bindings:          s.Bindings + o.Bindings,
-		Rounds:            s.Rounds + o.Rounds,
-		Events:            s.Events + o.Events,
-		Artifacts:         s.Artifacts + o.Artifacts,
-		TranscriptRecords: s.TranscriptRecords + o.TranscriptRecords,
-		Skipped:           s.Skipped + o.Skipped,
+		Bindings:  s.Bindings + o.Bindings,
+		Rounds:    s.Rounds + o.Rounds,
+		Events:    s.Events + o.Events,
+		Artifacts: s.Artifacts + o.Artifacts,
+		Skipped:   s.Skipped + o.Skipped,
 	}
 }
 
@@ -134,11 +125,11 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 		return Stats{}, err
 	}
 	kind, _ := src.Origin()
-	ref, locator := resolveRefs(ctx, deps, b, kind)
+	ref := resolveRefs(ctx, deps, b)
 
 	run := &ingestRun{
 		src: src, b: b, members: members, kind: kind,
-		ref: ref, locator: locator, deps: deps, logger: deps.Logger,
+		ref: ref, deps: deps, logger: deps.Logger,
 	}
 	var stats Stats
 	err = d.Tx(func(tx *db.Tx) error {
@@ -164,10 +155,10 @@ func memberSet(src Source) (map[string]bool, error) {
 	return members, nil
 }
 
-// resolveRefs resolves git facts and the mastermind transcript locator before the
-// write transaction opens: repoRefFromGit shells out to git and Sessions searches
-// the disk, and holding the write lock across either starves every other writer.
-func resolveRefs(ctx context.Context, deps Deps, b store.Binding, kind string) (*store.RepoRef, string) {
+// resolveRefs resolves git facts before the write transaction opens: repoRefFromGit
+// shells out to git, and holding the write lock across it starves every other
+// writer.
+func resolveRefs(ctx context.Context, deps Deps, b store.Binding) *store.RepoRef {
 	ref := b.RepoRef
 	if ref == nil && deps.Git != nil {
 		ref = repoRefFromGit(ctx, deps.Git, b.CWD)
@@ -175,13 +166,7 @@ func resolveRefs(ctx context.Context, deps Deps, b store.Binding, kind string) (
 			ref = repoRefFromGit(ctx, deps.Git, b.Repo)
 		}
 	}
-	locator := b.MasterMind.TranscriptLocator
-	if locator == "" && deps.Sessions != nil && b.MasterMind.SessionID != "" && kind == "live" {
-		if p, ok := deps.Sessions(b.MasterMind.Kind, b.MasterMind.SessionID); ok {
-			locator = p
-		}
-	}
-	return ref, locator
+	return ref
 }
 
 // ingestRun carries one Ingest call's inputs and accumulated stats.
@@ -191,7 +176,6 @@ type ingestRun struct {
 	members map[string]bool
 	kind    string
 	ref     *store.RepoRef
-	locator string
 	deps    Deps
 	logger  *slog.Logger
 	stats   Stats
@@ -225,12 +209,9 @@ func (r *ingestRun) run(tx *db.Tx) (Stats, error) {
 	if err := linkEventsToRounds(tx, bindingID, roundIDs); err != nil {
 		return Stats{}, fmt.Errorf("link events to rounds: %w", err)
 	}
-	if err := r.appendMasterMindTranscript(tx, mastermindID); err != nil {
-		return Stats{}, err
-	}
 
 	stats := r.stats
-	if stats.Rounds > 0 || stats.Events > 0 || stats.Artifacts > 0 || stats.TranscriptRecords > 0 {
+	if stats.Rounds > 0 || stats.Events > 0 || stats.Artifacts > 0 {
 		stats.Bindings = 1
 	}
 	return stats, nil

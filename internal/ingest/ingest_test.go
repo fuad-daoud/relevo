@@ -22,8 +22,7 @@ func TestIngestFixtureLive(t *testing.T) {
 		t.Fatalf("Ingest: %v", err)
 	}
 
-	// The fixture's log carries no answer entry, so Artifacts is 0 and no
-	// mastermind transcript is located, so TranscriptRecords is 0.
+	// The fixture's log carries no answer entry, so Artifacts is 0.
 	wantStats := Stats{Bindings: 1, Rounds: 3, Events: 9}
 	if stats != wantStats {
 		t.Errorf("Stats = %+v, want %+v", stats, wantStats)
@@ -463,72 +462,97 @@ func TestIngestResolvesRepoWhenMissing(t *testing.T) {
 	}
 }
 
-func TestIngestMasterMindTranscript(t *testing.T) {
-	d := openTestDB(t)
-
-	sessionPath := filepath.Join(t.TempDir(), "S1.jsonl")
-	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`
-	if err := os.WriteFile(sessionPath, []byte(line+"\n"), 0o644); err != nil {
-		t.Fatalf("write session: %v", err)
-	}
-	fakeSessions := func(kind, sessionID string) (string, bool) {
-		if kind == "claude" && sessionID == "S1" {
-			return sessionPath, true
-		}
-		return "", false
-	}
-
-	if _, err := Ingest(context.Background(), DirSource(copyFixture(t)), d, Deps{Sessions: fakeSessions}); err != nil {
-		t.Fatalf("Ingest: %v", err)
-	}
-
-	b := mustBinding(t, d, "fixture")
-	if b.MasterMindID == nil {
-		t.Fatal("MasterMindID is nil")
-	}
-	recs, err := d.Transcript(db.OwnerMasterMind, *b.MasterMindID, 0, 0)
-	if err != nil {
-		t.Fatalf("Transcript: %v", err)
-	}
-	if len(recs) != 1 {
-		t.Fatalf("len(recs) = %d, want 1", len(recs))
-	}
-	if recs[0].RecordJSON != line {
-		t.Errorf("RecordJSON = %q, want %q", recs[0].RecordJSON, line)
-	}
-	if recs[0].Rendered == "" {
-		t.Error("Rendered is empty, want transcript.RenderRecord's output")
-	}
-}
-
-// TestIngestResolvesGitAndSessionsOutsideTheTransaction pins that the git facts and
-// the mastermind-session lookup run before Ingest opens its write transaction, so
-// neither holds the db's write lock while it shells out to git or searches the disk.
-func TestIngestResolvesGitAndSessionsOutsideTheTransaction(t *testing.T) {
+// TestIngestResolvesGitOutsideTheTransaction pins that the git facts resolve
+// before Ingest opens its write transaction, so it does not hold the db's write
+// lock while it shells out to git.
+func TestIngestResolvesGitOutsideTheTransaction(t *testing.T) {
 	d := openTestDB(t)
 
 	git := &txProbingGitFacts{d: d}
-	sessCalled := false
-	var sessTxErr error
-	sessions := func(kind, sessionID string) (string, bool) {
-		sessCalled = true
-		sessTxErr = d.Tx(func(*db.Tx) error { return nil })
-		return "", false
-	}
 
-	if _, err := Ingest(context.Background(), DirSource(copyLegacyFixture(t)), d, Deps{Git: git, Sessions: sessions}); err != nil {
+	if _, err := Ingest(context.Background(), DirSource(copyLegacyFixture(t)), d, Deps{Git: git}); err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
-	if !git.called || !sessCalled {
-		t.Errorf("called git=%v sessions=%v, want both", git.called, sessCalled)
+	if !git.called {
+		t.Errorf("called git=%v, want true", git.called)
 	}
-	if git.txErr != nil || sessTxErr != nil {
-		t.Errorf("Tx inside git/sessions = %v/%v, want nil (no write lock held)", git.txErr, sessTxErr)
+	if git.txErr != nil {
+		t.Errorf("Tx inside git = %v, want nil (no write lock held)", git.txErr)
 	}
 }
 
-// TestIngestWritesNoRoundFileMirror pins that every artifact row is an answer and no
-// transcript row carries owner_kind='round'.
+// TestIngestIgnoresTheMasterMindTranscriptLocator pins that a locator written into
+// bind.json is dead state: ingest neither opens the file, writes a transcript row,
+// nor saves a cursor, and the file is left byte-for-byte alone.
+func TestIngestIgnoresTheMasterMindTranscriptLocator(t *testing.T) {
+	dir := copyFixture(t)
+
+	sessionPath := filepath.Join(t.TempDir(), "planner-session.jsonl")
+	content := []byte(`{"type":"assistant","message":{"content":"hi"}}` + "\n")
+	if err := os.WriteFile(sessionPath, content, 0o644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	bindPath := filepath.Join(dir, "bind.json")
+	bindData, err := os.ReadFile(bindPath)
+	if err != nil {
+		t.Fatalf("read bind.json: %v", err)
+	}
+	// A raw rewrite keeps the key even though the store type no longer carries
+	// it: this is the "old bind.json still names a locator" case.
+	var doc map[string]any
+	if err := json.Unmarshal(bindData, &doc); err != nil {
+		t.Fatalf("unmarshal bind.json: %v", err)
+	}
+	planner, _ := doc["planner"].(map[string]any)
+	if planner == nil {
+		t.Fatal("bind.json has no planner object")
+	}
+	planner["transcript_locator"] = sessionPath
+	rewritten, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal bind.json: %v", err)
+	}
+	if err := os.WriteFile(bindPath, rewritten, 0o644); err != nil {
+		t.Fatalf("write bind.json: %v", err)
+	}
+
+	// The locator file is unreadable: a lingering read would fail the ingest.
+	if err := os.Chmod(sessionPath, 0o000); err != nil {
+		t.Fatalf("chmod session: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sessionPath, 0o644) })
+
+	d := openTestDB(t)
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	dbStats, err := d.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if dbStats.Rows["transcript"] != 0 {
+		t.Errorf("transcript rows = %d, want 0", dbStats.Rows["transcript"])
+	}
+	if _, found, err := d.Cursor("planner::" + sessionPath); err != nil || found {
+		t.Errorf("Cursor(planner) = (found %v, err %v), want (false, nil)", found, err)
+	}
+
+	if err := os.Chmod(sessionPath, 0o644); err != nil {
+		t.Fatalf("chmod session back: %v", err)
+	}
+	after, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatalf("read session after ingest: %v", err)
+	}
+	if string(after) != string(content) {
+		t.Errorf("session file changed: got %q, want %q", after, content)
+	}
+}
+
+// TestIngestWritesNoRoundFileMirror pins that every artifact row is an answer and
+// no transcript row is written at all.
 func TestIngestWritesNoRoundFileMirror(t *testing.T) {
 	d := openTestDB(t)
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
@@ -580,16 +604,8 @@ func TestIngestWritesNoRoundFileMirror(t *testing.T) {
 	if dbStats.Rows["artifact"] != answers {
 		t.Errorf("artifact rows = %d, want %d (one per answer artifact)", dbStats.Rows["artifact"], answers)
 	}
-	mastermindRows := 0
-	if b.MasterMindID != nil {
-		recs, err := d.Transcript(db.OwnerMasterMind, *b.MasterMindID, 0, 0)
-		if err != nil {
-			t.Fatalf("Transcript(mastermind): %v", err)
-		}
-		mastermindRows = len(recs)
-	}
-	if dbStats.Rows["transcript"] != mastermindRows {
-		t.Errorf("transcript rows = %d, want %d (mastermind-owned only)", dbStats.Rows["transcript"], mastermindRows)
+	if dbStats.Rows["transcript"] != 0 {
+		t.Errorf("transcript rows = %d, want 0", dbStats.Rows["transcript"])
 	}
 }
 
@@ -616,9 +632,9 @@ func TestIngestBadBindIsErrSourceAndWritesNothing(t *testing.T) {
 }
 
 func TestStatsAdd(t *testing.T) {
-	a := Stats{Bindings: 1, Rounds: 2, Events: 3, Artifacts: 4, TranscriptRecords: 5, Skipped: 6}
-	b := Stats{Bindings: 1, Rounds: 1, Events: 1, Artifacts: 1, TranscriptRecords: 1, Skipped: 1}
-	want := Stats{Bindings: 2, Rounds: 3, Events: 4, Artifacts: 5, TranscriptRecords: 6, Skipped: 7}
+	a := Stats{Bindings: 1, Rounds: 2, Events: 3, Artifacts: 4, Skipped: 6}
+	b := Stats{Bindings: 1, Rounds: 1, Events: 1, Artifacts: 1, Skipped: 1}
+	want := Stats{Bindings: 2, Rounds: 3, Events: 4, Artifacts: 5, Skipped: 7}
 	if got := a.Add(b); got != want {
 		t.Errorf("Add = %+v, want %+v", got, want)
 	}
