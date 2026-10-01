@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -10,13 +11,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// scopeOOM is the journal answer for an oom-killed round: the incident's
+// result and the 8178532352 bytes (7.6 GiB) its MEMORY_PEAK carried.
+var scopeOOM = spawn.ScopeResult{Result: scopeResultOOM, PeakBytes: 8178532352}
+
 // oomRT adds scopes and a scripted scope result to rt so oomKilled returns the
 // expected value. It is a test-local helper: no caller may replace rt.Runner.
-func oomRT(rt Runtime, fr *fakeRunner, b store.Binding, result string) Runtime {
+func oomRT(rt Runtime, fr *fakeRunner, b store.Binding, result spawn.ScopeResult) Runtime {
 	rt.Scope = &spawn.ScopeSpec{Unit: "test", Slice: "relevo.slice", CPUWeight: 100}
 	unit := scopeUnitName(b)
 	if fr.scopeResults == nil {
-		fr.scopeResults = map[string]string{}
+		fr.scopeResults = map[string]spawn.ScopeResult{}
 	}
 	fr.scopeResults[unit] = result
 	return rt
@@ -28,7 +33,7 @@ func oomRT(rt Runtime, fr *fakeRunner, b store.Binding, result string) Runtime {
 //
 // Pins: QueuedAt set, RoundStartedAt zero, OOMRequeue.Running set, RoundSwitches
 // unchanged, RoundExcluded empty, BuilderCandidate the same, queue log entry
-// written, exit entry note says "killed by systemd-oomd".
+// written, exit entry note says the cgroup scope ran out of memory.
 func TestOOMKilledLocalRoundBecomesQueued(t *testing.T) {
 	t.Parallel()
 
@@ -36,7 +41,7 @@ func TestOOMKilledLocalRoundBecomesQueued(t *testing.T) {
 	rt, b := sentHeadless(t, fr)
 	wantCandidate := b.BuilderCandidate
 	fr.script(b.Builder.PID, false) // exited; no exit() set: code unknown
-	rt = oomRT(rt, fr, b, scopeResultOOM)
+	rt = oomRT(rt, fr, b, scopeOOM)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -74,8 +79,11 @@ func TestOOMKilledLocalRoundBecomesQueued(t *testing.T) {
 	if len(ex) != 1 {
 		t.Fatalf("exit entries = %d, want 1", len(ex))
 	}
-	if !strings.Contains(ex[0].Note, "killed by systemd-oomd") {
-		t.Errorf("exit note = %q, want it to mention systemd-oomd", ex[0].Note)
+	if !strings.Contains(ex[0].Note, "killed: out of memory") {
+		t.Errorf("exit note = %q, want it to name the cgroup oom kill", ex[0].Note)
+	}
+	if strings.Contains(ex[0].Note, "systemd-oomd") || strings.Contains(ex[0].Note, "host out of memory") {
+		t.Errorf("exit note = %q, want no host-wide systemd-oomd claim", ex[0].Note)
 	}
 
 	// Exactly one queue entry.
@@ -89,8 +97,8 @@ func TestOOMKilledLocalRoundBecomesQueued(t *testing.T) {
 			queueEntries = append(queueEntries, e)
 		}
 	}
-	if len(queueEntries) != 1 || !strings.Contains(queueEntries[0].Note, "systemd-oomd") {
-		t.Errorf("queue entries = %+v, want one mentioning systemd-oomd", queueEntries)
+	if len(queueEntries) != 1 || !strings.Contains(queueEntries[0].Note, "out of memory") {
+		t.Errorf("queue entries = %+v, want one naming the oom kill", queueEntries)
 	}
 
 	// No switch entry.
@@ -132,7 +140,7 @@ func TestOOMKilledOpenCodeSessionIsAbandoned(t *testing.T) {
 		t.Fatal(err)
 	}
 	fr.script(b.Builder.PID, false) // exited; code unknown
-	rt = oomRT(rt, fr, b, scopeResultOOM)
+	rt = oomRT(rt, fr, b, scopeOOM)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -164,7 +172,7 @@ func TestOOMKilledServedRoundIsQueued(t *testing.T) {
 		t.Fatal(err)
 	}
 	fr.script(b.Builder.PID, false)
-	rt = oomRT(rt, fr, b, scopeResultOOM)
+	rt = oomRT(rt, fr, b, scopeOOM)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -197,7 +205,7 @@ func TestOOMKilledThirdKillHalts(t *testing.T) {
 		t.Fatal(err)
 	}
 	fr.script(b.Builder.PID, false)
-	rt = oomRT(rt, fr, b, scopeResultOOM)
+	rt = oomRT(rt, fr, b, scopeOOM)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -225,7 +233,7 @@ func TestOOMKilledStopRequestedAtWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	fr.script(b.Builder.PID, false)
-	rt = oomRT(rt, fr, b, scopeResultOOM)
+	rt = oomRT(rt, fr, b, scopeOOM)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -254,7 +262,7 @@ func TestOOMKilledSuccessResultTakesNormalPath(t *testing.T) {
 	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 	fr.script(b.Builder.PID, false) // exited; code unknown
-	rt = oomRT(rt, fr, b, "success")
+	rt = oomRT(rt, fr, b, spawn.ScopeResult{Result: "success"})
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -375,5 +383,161 @@ func TestTickAdmitsOOMQueuedPastCooldown(t *testing.T) {
 	bAfterPost, _ := rt.Store.Load("webshop")
 	if bAfterPost.Builder.PID == 0 {
 		t.Errorf("not admitted after cooldown: want PID != 0")
+	}
+}
+
+// TestOOMKilledSIGKILLExitIsQueued pins that the shell supervisor's 137
+// (128+SIGKILL, written when the kernel kills only the inner process) is probed
+// like an unknown exit: with the journal's oom-kill it re-queues the same
+// candidate.
+func TestOOMKilledSIGKILLExitIsQueued(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	wantCandidate := b.BuilderCandidate
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 137)
+	rt = oomRT(rt, fr, b, scopeOOM)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.OOMRequeue == nil {
+		t.Fatalf("OOMRequeue = nil, want the round re-queued on 137 + journal oom-kill")
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0 (not counted)", got.RoundSwitches)
+	}
+	if got.BuilderCandidate != wantCandidate {
+		t.Errorf("BuilderCandidate = %q, want %q", got.BuilderCandidate, wantCandidate)
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("specs = %d, want 1 (no new start)", len(fr.specs))
+	}
+}
+
+// TestOOMKilledJournalFailureTakesTodayPath pins that a failing probe is not an
+// oom kill: the round switches exactly as it did before.
+func TestOOMKilledJournalFailureTakesTodayPath(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.script(b.Builder.PID, false) // exited; code unknown
+	rt = oomRT(rt, fr, b, spawn.ScopeResult{})
+	fr.scopeResultErr = errors.New("journal read failed")
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.OOMRequeue != nil {
+		t.Errorf("OOMRequeue = %+v, want nil (a probe failure is not an oom kill)", got.OOMRequeue)
+	}
+	if sw := switches(t, rt); len(sw) != 1 {
+		t.Errorf("switch entries = %d, want 1 (today's path)", len(sw))
+	}
+}
+
+// TestOOMKilledJournalWithoutRecordTakesTodayPath pins that a readable journal
+// with no entry for the unit is not an oom kill: the round switches.
+func TestOOMKilledJournalWithoutRecordTakesTodayPath(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.script(b.Builder.PID, false)
+	rt.Scope = &spawn.ScopeSpec{Unit: "test", Slice: "relevo.slice", CPUWeight: 100}
+	// No scopeResults entry for the unit: the fake answers with the zero result.
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.OOMRequeue != nil {
+		t.Errorf("OOMRequeue = %+v, want nil (an empty journal is not an oom kill)", got.OOMRequeue)
+	}
+	if sw := switches(t, rt); len(sw) != 1 {
+		t.Errorf("switch entries = %d, want 1 (today's path)", len(sw))
+	}
+}
+
+// TestOOMKilledExitNoteNamesThePeak pins that the exit entry's suffix carries
+// the human peak the journal reported.
+func TestOOMKilledExitNoteNamesThePeak(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	fr.script(b.Builder.PID, false)
+	rt = oomRT(rt, fr, b, scopeOOM)
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	ex := exits(t, rt)
+	if len(ex) != 1 || !strings.Contains(ex[0].Note, "peak 7.6 GiB") {
+		t.Errorf("exit entries = %+v, want one naming the 7.6 GiB peak", ex)
+	}
+}
+
+// TestOOMKilledRequeueNoteNamesThePeak pins that the local re-queue note carries
+// the human peak the journal reported.
+func TestOOMKilledRequeueNoteNamesThePeak(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	fr.script(b.Builder.PID, false)
+	rt = oomRT(rt, fr, b, scopeOOM)
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindQueue && strings.Contains(e.Note, "peak 7.6 GiB") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("queue entries = %+v, want one naming the 7.6 GiB peak", entries)
+	}
+}
+
+// TestOOMKilledThirdKillHaltNamesThePeak pins that the oomMaxKills halt carries
+// the human peak the journal reported.
+func TestOOMKilledThirdKillHaltNamesThePeak(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	b.RoundOOMKills = oomMaxKills - 1 // one kill away from the limit
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	fr.script(b.Builder.PID, false)
+	rt = oomRT(rt, fr, b, scopeOOM)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you on the %d-th oom kill", got.State, oomMaxKills)
+	}
+	if !strings.Contains(got.Halt, "peak 7.6 GiB") {
+		t.Errorf("Halt = %q, want it to name the 7.6 GiB peak", got.Halt)
+	}
+	if strings.Contains(got.Halt, "systemd-oomd") {
+		t.Errorf("Halt = %q, want no host-wide systemd-oomd claim", got.Halt)
 	}
 }
