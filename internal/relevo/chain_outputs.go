@@ -28,7 +28,7 @@ func chainFillReaderClose(rt Runtime, b store.Binding, body []byte, part string,
 	switch part {
 	case chain.MemberReviewer:
 		ev.Kind = chain.EventReviewerClosed
-		values, _ := chainParseOutcomes(rt, b, body, info.Outputs)
+		values, _ := chainParseOutcomes(rt, b, b.Round, body, info.Outputs)
 		if v, ok := values["verdict"]; ok {
 			ev.Verdict = chain.Verdict(v)
 		}
@@ -47,7 +47,7 @@ func chainFillReaderClose(rt Runtime, b store.Binding, body []byte, part string,
 		}
 	case chain.MemberSecurity:
 		ev.Kind = chain.EventSecurityClosed
-		values, _ := chainParseOutcomes(rt, b, body, info.Outputs)
+		values, _ := chainParseOutcomes(rt, b, b.Round, body, info.Outputs)
 		if val, ok := values["findings"]; ok {
 			if n, err := strconv.Atoi(val); err == nil {
 				ev.Findings = n

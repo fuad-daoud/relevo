@@ -198,3 +198,28 @@ func TestLegacyViewClampsCorrections(t *testing.T) {
 		t.Errorf("corrections = %d, want 0", got.Corrections)
 	}
 }
+
+// TestLegacyViewPlanAtDoneIsTheLastPlan pins the exhausted walk: once the plans
+// for-each has passed its last item the projection reads the last plan, the
+// plan the legacy path leaves at done, not the first.
+func TestLegacyViewPlanAtDoneIsTheLastPlan(t *testing.T) {
+	s := State{
+		Status: StatusDone, At: "fix-review", Visits: map[string]int{},
+		Iter: map[string]Iter{"plans": {Index: -1, Items: []string{"p1", "p2"}, Done: true}},
+	}
+	if got := LegacyView(Default(), s); got.Plan != 2 {
+		t.Errorf("plan at done = %d, want 2: an exhausted walk reads the last plan", got.Plan)
+	}
+}
+
+// TestLegacyViewPlanBeforeStartIsOne pins the other -1: a walk that has not
+// entered its first item reads plan 1, not the last.
+func TestLegacyViewPlanBeforeStartIsOne(t *testing.T) {
+	s := State{
+		Status: StatusRunning, At: "plans", Visits: map[string]int{},
+		Iter: map[string]Iter{"plans": {Index: -1, Items: []string{"p1", "p2"}}},
+	}
+	if got := LegacyView(Default(), s); got.Plan != 1 {
+		t.Errorf("plan before the first item = %d, want 1", got.Plan)
+	}
+}

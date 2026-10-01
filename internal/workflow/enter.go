@@ -156,10 +156,12 @@ func walkForEach(def Definition, s State, id string, step Step, walked int) (Sta
 	it := forEachIter(def, s, id, step)
 	it.Index++
 	if it.Index < len(it.Items) {
+		it.Done = false
 		s.Iter[id] = it
 		return controlRoute(def, s, id, step.On, "next", walked)
 	}
 	it.Index = -1
+	it.Done = true
 	s.Iter[id] = it
 	return controlRoute(def, s, id, step.On, "empty", walked)
 }

@@ -218,6 +218,10 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 		if ferr != nil {
 			return b, ferr
 		}
+		// The seed reads the closing member's closed tree; persist the advanced round first.
+		if err := tx.Save(b); err != nil {
+			return b, err
+		}
 		return b, chainAdvance(ctx, rt, tx, c, fev)
 	}
 

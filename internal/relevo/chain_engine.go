@@ -171,7 +171,27 @@ func chainFlowSendText(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 		return chainTerminalWF(ctx, rt, tx, c, def, before, *next, ev, workflow.Action{Kind: workflow.ActionHalt, Reason: next.Reason})
 	}
 	next.Awaiting.Round = sent.Round
+	// A send that opens a plan records the commit the plan began at, so the
+	// plan's review can diff its whole span. The send that follows a next from
+	// the plans for-each is the one that opens a plan on the engine path.
+	if chainFlowPlanStart(def, act.Step) {
+		c.PlanStartCommit = sent.RoundBaselineHead
+	}
 	return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, name)
+}
+
+// chainFlowPlanStart reports whether a send opens a plan: its step is the
+// target the plans for-each routes its next item to.
+func chainFlowPlanStart(def workflow.Definition, step string) bool {
+	for _, s := range def.Steps {
+		if s.ForEach != "plans" {
+			continue
+		}
+		if t, ok := s.On["next"]; ok && t.Kind == workflow.TargetStep && t.Step == step {
+			return true
+		}
+	}
+	return false
 }
 
 // chainFlowCheck starts one check run for a check step. A check whose writer
@@ -296,9 +316,14 @@ func flowTraceStep(before workflow.State, ev workflow.Event) string {
 }
 
 // flowPlanPos is a state's current plan position for the trace's legacy plan
-// column.
+// column: the plan the transition reached. An exhausted walk holds index -1,
+// the same as one that has not started, so Done reads the last plan.
 func flowPlanPos(st workflow.State) int {
-	plan := st.Iter["plans"].Index + 1
+	it := st.Iter["plans"]
+	if it.Done && len(it.Items) > 0 {
+		return len(it.Items)
+	}
+	plan := it.Index + 1
 	if plan < 1 {
 		return 1
 	}

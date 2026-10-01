@@ -38,26 +38,36 @@ func chainEventFromCloseWF(rt Runtime, tx *store.Tx, c db.ChainRow, b store.Bind
 	if actor == "" {
 		actor = BindingRole(b)
 	}
-	ev := workflow.Event{Step: st.Awaiting.Step, Member: actor, Round: wf.Round}
-	if wf.Round == 0 {
-		ev.Round = b.Round
+	round := wf.Round
+	if round == 0 {
+		round = b.Round
 	}
+	ev := workflow.Event{Step: st.Awaiting.Step, Member: actor, Round: round}
 	if wf.Stopped {
 		ev.Kind = workflow.EventStopped
 		return ev, nil
 	}
 	ev.Kind = workflow.EventStepClosed
-	ev.Status = wf.Outcome
 
 	info, _ := rt.RoleRegistry().ActorInfo(actor)
 	outs := info.Outputs
-	values, reason := chainParseOutcomes(rt, b, wf.Body, outs)
+	bodies := chainOutcomeBodies(rt, b, round, wf.Body)
+	values, reason := workflow.ParseOutcomes(outs, bodies...)
 	if reason != "" {
 		ev.Status = reporttail.OutcomeHalted
 		ev.Reason = reason
 		return ev, nil
 	}
 	ev.Outcomes = values
+	// A writer's report status is the round's own outcome. A reader's output is
+	// a summary whose block the close already stripped, so its saved outcome
+	// says nothing about the step: the reader routes on the status its own
+	// block carries -- done when it carries outcomes without one.
+	if b.Shape == store.ShapeReader {
+		ev.Status = chainReaderStatus(bodies, outs)
+	} else {
+		ev.Status = wf.Outcome
+	}
 
 	artifacts := chainCloseArtifacts(rt, b, wf.Path, outs)
 	if miss := workflow.MissingArtifact(outs, chainArtifactSizes(rt, artifacts)); miss != "" {

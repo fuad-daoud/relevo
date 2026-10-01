@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -18,6 +19,9 @@ import (
 // the chain's own diff render inline. A seed that is exactly one file reference
 // hands that file over as bytes, the way a plan is handed over today.
 func chainRenderSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State, seed string) (string, error) {
+	if name, ok := strings.CutPrefix(seed, "shipped:"); ok {
+		return chainRenderShippedSeed(rt, tx, c, def, st, name)
+	}
 	refs, err := workflow.Refs(seed)
 	if err != nil {
 		return "", err
@@ -123,4 +127,72 @@ func chainSeedListFile(rt Runtime, c db.ChainRow, ref workflow.Ref, items []stri
 		return "", err
 	}
 	return path, nil
+}
+
+// shippedSeedKinds names the shipped seed templates that render from a
+// member-round view, keyed by the name a workflow's "shipped:<name>" names.
+var shippedSeedKinds = map[string]chain.SeedKind{
+	"review":  chain.SeedReviewer,
+	"correct": chain.SeedCorrection,
+	"scan":    chain.SeedSecurity,
+	"fix":     chain.SeedFixes,
+}
+
+// chainRenderShippedSeed renders one of the shipped seed templates for an
+// engine send. The member-round seeds render from the same view the fixed state
+// machine builds, so the shipped default hands a member the same prompt
+// whichever engine drives the chain. The repair seed renders from the failed
+// check's own record.
+func chainRenderShippedSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State, name string) (string, error) {
+	if name == "repair" {
+		return chainRenderRepairSeed(rt, tx, c, def)
+	}
+	kind, ok := shippedSeedKinds[name]
+	if !ok {
+		return "", fmt.Errorf("chain %s: unknown shipped seed %q", c.Name, name)
+	}
+	lv := workflow.LegacyView(def, st)
+	s := chain.State{Plan: lv.Plan, Plans: lv.Plans, Corrections: lv.Corrections, Phase: chain.Phase(lv.Phase)}
+	var closedRound int
+	switch kind {
+	case chain.SeedReviewer:
+		closedRound = memberNewestClosedRound(tx, c.Builder)
+	case chain.SeedCorrection:
+		closedRound = memberNewestClosedRound(tx, c.Reviewer)
+	case chain.SeedFixes:
+		closedRound = memberNewestClosedRound(tx, c.Security)
+	}
+	v, err := chainSeedView(rt, tx, c, s, chain.Action{Seed: kind}, closedRound)
+	if err != nil {
+		return "", err
+	}
+	return workflow.RenderShipped(name, v)
+}
+
+// chainRenderRepairSeed renders the repair seed a workflow's repair step hands
+// its writer: the round the send opens, the round whose check failed, the check
+// command, the failed round's own prompt and the tail of the failed check's log.
+func chainRenderRepairSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition) (string, error) {
+	failedRound := memberNewestClosedRound(tx, c.Builder)
+	b, err := tx.Load(c.Builder)
+	if err != nil {
+		return "", err
+	}
+	rec, err := chainRoundGate(tx, c.Builder, failedRound)
+	if err != nil {
+		return "", err
+	}
+	logPath := ""
+	if rec != nil {
+		logPath = rec.LogPath
+	}
+	return workflow.RenderShipped("repair", workflow.SeedView{
+		Name:        c.Builder,
+		RepairRound: b.Round,
+		FailedRound: failedRound,
+		Gate:        workflow.RenderParams(def, "{{params.gate}}"),
+		PlanPath:    rt.Store.PromptPath(c.Builder, failedRound),
+		GateLogPath: logPath,
+		Tail:        tailLines(rt.Store.ReadFile, logPath, repairTailLines),
+	})
 }

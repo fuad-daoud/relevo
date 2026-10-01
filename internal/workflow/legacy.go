@@ -169,7 +169,13 @@ func LegacyView(def Definition, s State) LegacyFields {
 	if s.Status == StatusDone {
 		phase = "finished"
 	}
+	// An exhausted walk holds index -1, the same as one that has not started:
+	// Done tells them apart, and an exhausted walk reads the last plan, the
+	// plan the legacy path leaves at done.
 	plan := s.Iter["plans"].Index + 1
+	if it := s.Iter["plans"]; it.Done && len(it.Items) > 0 {
+		plan = len(it.Items)
+	}
 	if plan < 1 {
 		plan = 1
 	}

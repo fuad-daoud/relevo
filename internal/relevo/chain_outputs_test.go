@@ -20,7 +20,7 @@ func TestChainParseOutcomesBodyThenStream(t *testing.T) {
 	}
 
 	body := []byte("Review complete.\n\n```relevo\nverdict: pass\n```\n")
-	vals, missing := chainParseOutcomes(rt, rev, body, info.Outputs)
+	vals, missing := chainParseOutcomes(rt, rev, rev.Round, body, info.Outputs)
 	if missing != "" {
 		t.Fatalf("expected no missing outcome, got %q", missing)
 	}
@@ -34,7 +34,7 @@ func TestChainParseOutcomesBodyThenStream(t *testing.T) {
 		t.Fatalf("write stream: %v", err)
 	}
 	recapBody := []byte("Recap only, no block here.\n")
-	vals, missing = chainParseOutcomes(rt, rev, recapBody, info.Outputs)
+	vals, missing = chainParseOutcomes(rt, rev, rev.Round, recapBody, info.Outputs)
 	if missing != "" {
 		t.Fatalf("expected stream fallback to find verdict, got %q", missing)
 	}
@@ -61,7 +61,7 @@ func TestChainParseOutcomesRecapAfterBlock(t *testing.T) {
 	}
 
 	body := []byte(chainRecapText)
-	vals, missing := chainParseOutcomes(rt, rev, body, info.Outputs)
+	vals, missing := chainParseOutcomes(rt, rev, rev.Round, body, info.Outputs)
 	if missing != "" {
 		t.Fatalf("expected stream scan newest-first to find verdict, got %q", missing)
 	}
@@ -82,7 +82,7 @@ func TestChainParseOutcomesMissingAndOutOfRange(t *testing.T) {
 	}
 
 	bodyNoBlock := []byte("no block here")
-	_, missing := chainParseOutcomes(rt, rev, bodyNoBlock, info.Outputs)
+	_, missing := chainParseOutcomes(rt, rev, rev.Round, bodyNoBlock, info.Outputs)
 	if missing == "" {
 		t.Fatal("expected missing error, got none")
 	}
@@ -91,7 +91,7 @@ func TestChainParseOutcomesMissingAndOutOfRange(t *testing.T) {
 	}
 
 	bodyInvalidVerdict := []byte("```relevo\nverdict: maybe\n```\n")
-	_, missing = chainParseOutcomes(rt, rev, bodyInvalidVerdict, info.Outputs)
+	_, missing = chainParseOutcomes(rt, rev, rev.Round, bodyInvalidVerdict, info.Outputs)
 	if missing == "" {
 		t.Fatal("expected invalid outcome error, got none")
 	}
@@ -103,7 +103,7 @@ func TestChainParseOutcomesMissingAndOutOfRange(t *testing.T) {
 		"findings": workflow.Output{Kind: workflow.OutputCount},
 	}
 	bodyBadCount := []byte("```relevo\nfindings: not-a-number\n```\n")
-	_, missing = chainParseOutcomes(rt, rev, bodyBadCount, secOutputs)
+	_, missing = chainParseOutcomes(rt, rev, rev.Round, bodyBadCount, secOutputs)
 	if missing == "" {
 		t.Fatal("expected invalid count error, got none")
 	}

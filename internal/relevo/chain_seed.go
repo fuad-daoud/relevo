@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -87,17 +88,58 @@ func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *workflow.SeedView
 	}
 }
 
-// chainParseOutcomes reads the declared outcomes of a chain reader round, trying
-// the output body first, then the round's stream newest assistant message first.
-func chainParseOutcomes(rt Runtime, b store.Binding, body []byte, outputs workflow.Outputs) (map[string]string, string) {
+// chainOutcomeBodies orders a closing round's bodies for the outcome parse: the
+// in-memory body first, then the round's stream newest assistant message first.
+// round names the round that closed, which is not always the binding's own: a
+// close advances the binding before the chain moves.
+func chainOutcomeBodies(rt Runtime, b store.Binding, round int, body []byte) [][]byte {
 	bodies := [][]byte{body}
-	if stream, err := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round)); err == nil {
+	if stream, err := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, round)); err == nil {
 		texts := transcript.Texts(lastStreamKind(b), stream)
 		for i := len(texts) - 1; i >= 0; i-- {
 			bodies = append(bodies, []byte(texts[i]))
 		}
 	}
-	return workflow.ParseOutcomes(outputs, bodies...)
+	return bodies
+}
+
+// chainParseOutcomes reads the declared outcomes of a chain reader round, trying
+// the output body first, then the round's stream newest assistant message first.
+// round names the round that closed: a close advances the binding before the
+// chain moves, so the binding's own round is no longer the closed one.
+func chainParseOutcomes(rt Runtime, b store.Binding, round int, body []byte, outputs workflow.Outputs) (map[string]string, string) {
+	return workflow.ParseOutcomes(outputs, chainOutcomeBodies(rt, b, round, body)...)
+}
+
+// chainReaderStatus reads the relevo status a reader's own block carries, from
+// the same block its outcomes were parsed from: the newest body whose block
+// names a declared outcome. A block that carries outcomes but no status line
+// reads done; a status the tail contract does not admit reads done too.
+func chainReaderStatus(bodies [][]byte, outputs workflow.Outputs) string {
+	for _, body := range bodies {
+		if !blockCarriesOutcome(body, outputs) {
+			continue
+		}
+		if s, ok := reporttail.BlockValue(body, "status"); ok {
+			switch s {
+			case reporttail.OutcomeDone, reporttail.OutcomeHalted, reporttail.OutcomeBlocked, reporttail.OutcomeDeferred:
+				return s
+			}
+		}
+		return reporttail.OutcomeDone
+	}
+	return reporttail.OutcomeDone
+}
+
+// blockCarriesOutcome reports whether a body's relevo block names any declared
+// outcome key.
+func blockCarriesOutcome(body []byte, outputs workflow.Outputs) bool {
+	for _, key := range outputs.Outcomes() {
+		if _, ok := reporttail.BlockValue(body, key); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // chainBuilderPlanView is the plan view the reviewer and correction seeds carry:

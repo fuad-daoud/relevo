@@ -41,10 +41,13 @@ type Awaiting struct {
 }
 
 // Iter is a for-each step's walk: the item index and the items it walks. The
-// index is -1 before the first item and after the last.
+// index is -1 before the first item and after the last. Done tells an exhausted
+// walk from one that has not started: both hold -1, and only a projection that
+// needs the last item can tell them apart.
 type Iter struct {
 	Index int
 	Items []string
+	Done  bool
 }
 
 // Result is a step's latest close: its round or run id, its status, the
