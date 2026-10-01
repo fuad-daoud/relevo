@@ -585,6 +585,49 @@ func TestReaderRoundWaitsForExitAfterMarker(t *testing.T) {
 	}
 }
 
+// TestReaderRoundDoesNotCloseOnAMarkerItDidNotSee pins the reader-close race:
+// the two readers of a reader's marker -- holdReaderOnMarker's os.Stat and
+// closeOnMarker's Store.StatFile -- can disagree, and a marker visible to the
+// second but not the first must not close the round. A sealed row (a file
+// already moved into the database, or a marker a prior resume left behind)
+// makes StatFile report a marker the disk does not hold: the round is live and
+// must stay open, not close with "noreport" a beat after the runner started.
+func TestReaderRoundDoesNotCloseOnAMarkerItDidNotSee(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+
+	// A done marker as a round_file row only: StatFile resolves it, os.Stat
+	// does not, exactly the disagreement that used to close the round.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("reader-bind", 1, rt.Store.DonePath("reader-bind", 1), nil)
+	}); err != nil {
+		t.Fatalf("seed a sealed done row: %v", err)
+	}
+	if _, err := os.Stat(rt.Store.DonePath("reader-bind", 1)); !os.IsNotExist(err) {
+		t.Fatalf("the done marker must have no disk file for this test: %v", err)
+	}
+	if _, _, ok, _ := rt.Store.StatFile(rt.Store.DonePath("reader-bind", 1)); !ok {
+		t.Fatal("StatFile must see the sealed done row, or the disagreement is not set up")
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Fatalf("round = %d, want the round still open on 1: a marker the hold read did not see must not close it", got.Round)
+	}
+	entries, err := rt.Store.ReadLog("reader-bind")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
+		t.Errorf("a report was queued for a reader round that closed on a marker the hold read did not see")
+	}
+}
+
 // TestReaderRoundGraceClosesALingeringRunner: a runner still alive more than
 // readerFinalMessageGrace after its marker must not hold the round forever. The
 // round closes with the summary taken from the stream as it is, the note says
