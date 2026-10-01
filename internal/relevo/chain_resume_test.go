@@ -920,6 +920,48 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 	})
 }
 
+// TestChainResumeSupersedesTheStaleEndDelivery pins the delivery bookkeeping: a
+// halt queues the chain's end payload, and a resume must confirm it so a
+// resolved chain cannot push a stale NEEDS YOU later.
+func TestChainResumeSupersedesTheStaleEndDelivery(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+	chainBuilderClose(t, rt, "shop", chainHaltedBody("the step failed"))
+
+	pendingChain := func() int {
+		t.Helper()
+		n := 0
+		err := rt.Store.WithLock(func(tx *store.Tx) error {
+			entries, err := tx.PendingForMasterMindThrough("shop", 0)
+			if err != nil {
+				return err
+			}
+			for _, p := range entries {
+				if p.Entry.Kind == store.KindChain {
+					n++
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("read pending entries: %v", err)
+		}
+		return n
+	}
+	if pendingChain() == 0 {
+		t.Fatal("test premise: the halt must queue the chain's end delivery")
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	if n := pendingChain(); n != 0 {
+		t.Errorf("pending chain deliveries after a resume = %d, want 0", n)
+	}
+}
+
 // TestChainResumeClosesADeadMemberRound pins the wedge fix: a member round
 // that died without a close leaves a halted chain with no working command --
 // the resume refuses an open round and the stop path refuses a halted one. The
