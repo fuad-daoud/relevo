@@ -410,6 +410,15 @@ type StatusLineMasterMind struct {
 	Name string `json:"name"`
 }
 
+// StatusLineBoard is the live board block in StatusLineDoc: the scene name, its
+// scope ("live") and the URL -- with its per-run token -- so it can be copied
+// straight into a browser (S8). It is null when no live board is running.
+type StatusLineBoard struct {
+	Name  string `json:"name"`
+	Scope string `json:"scope"`
+	URL   string `json:"url"`
+}
+
 // StatusLineRow is one binding row in StatusLineDoc.
 type StatusLineRow struct {
 	Name     string `json:"name"`
@@ -466,8 +475,25 @@ type StatusLineRow struct {
 // StatusLineDoc is the top-level document emitted by relevo status --line --json.
 type StatusLineDoc struct {
 	MasterMind *StatusLineMasterMind `json:"mastermind"`
-	Now        time.Time             `json:"now"`
-	Rows       []StatusLineRow       `json:"rows"`
+	// Board is the calling MasterMind's live board block, present only when a
+	// live board is running for it; null otherwise (S8).
+	Board *StatusLineBoard `json:"board"`
+	Now   time.Time        `json:"now"`
+	Rows  []StatusLineRow  `json:"rows"`
+}
+
+// RenderBoardLine is the statusline's board line: "board <name> · <url>", dim,
+// directly after the MasterMind line, truncated to the statusline width (S8).
+// A nil block renders nothing.
+func RenderBoardLine(b *StatusLineBoard, columns int) string {
+	if b == nil || b.Name == "" {
+		return ""
+	}
+	text := "board " + b.Name + " · " + b.URL
+	if columns > 0 && utf8.RuneCountInString(text) > columns {
+		text = truncate(text, columns)
+	}
+	return ansiDim + text + ansiReset + "\n"
 }
 
 // StatusLineRows produces one StatusLineRow per r.Bindings entry, in order.
