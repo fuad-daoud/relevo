@@ -172,7 +172,7 @@ func resumeRemoteGateRefusal(rt Runtime, c db.ChainRow) error {
 	if !b.Builder.Remote() {
 		return nil
 	}
-	return fmt.Errorf("chain %s: a remote builder's check is fixed at create; unbind and start again", c.Name)
+	return refuse("chain %s: a remote builder's check is fixed at create; unbind and start again", c.Name)
 }
 
 // resumeRefusal is the one refusal a resume makes on its own chain: running and
