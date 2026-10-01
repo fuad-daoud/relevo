@@ -172,6 +172,58 @@ func TestStatusHaltedChainIsNeedsYouWithReason(t *testing.T) {
 	}
 }
 
+// TestStatusShowsARunningManualRoundOnAHaltedChain pins item 4: a halted chain
+// whose builder has a manual round open reads its own status word with the
+// round in its segment -- not NEEDS YOU -- and carries manual_round in the
+// document. A halted chain with nothing running keeps NEEDS YOU (the test
+// above), and the same predicate is the one ChainWaitTarget already uses.
+func TestStatusShowsARunningManualRoundOnAHaltedChain(t *testing.T) {
+	rt := newRuntime(t)
+	c, _ := newChainFixture(t, rt, "halted")
+
+	// A manual round on the builder: a prompt entry for its current round,
+	// with no report yet.
+	if err := rt.Store.AppendLog(c.Builder, store.LogEntry{
+		TS: time.Now().UTC(), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+	}); err != nil {
+		t.Fatalf("open the builder's round: %v", err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	row := rep.Bindings[0]
+	if row.Display != "HALTED" {
+		t.Errorf("display = %q, want HALTED, not NEEDS YOU: a manual round is running", row.Display)
+	}
+	if row.Chain == nil || row.Chain.ManualRound != 2 {
+		t.Fatalf("chain facts = %+v, want manual_round 2", row.Chain)
+	}
+	if got := view.ChainSegment(*row.Chain); got != "manual round 2 running" {
+		t.Errorf("ChainSegment = %q, want %q", got, "manual round 2 running")
+	}
+	if !strings.Contains(view.RenderStatus(rep), "chain  halted  manual round 2 running") {
+		t.Errorf("human row missing the manual-round line:\n%s", view.RenderStatus(rep))
+	}
+
+	rows := view.StatusLineRows(rep, rt.Now())
+	if len(rows) != 1 || rows[0].NeedsYou {
+		t.Fatalf("statusline rows = %+v, want one non-NEEDS-YOU chain row", rows)
+	}
+	if rows[0].Display != "HALTED" {
+		t.Errorf("statusline display = %q, want HALTED", rows[0].Display)
+	}
+
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"manual_round":2`) {
+		t.Errorf("document is missing manual_round 2: %s", raw)
+	}
+}
+
 // TestStatusAllListsTheMembersUnderTheChain pins what a complete listing shows:
 // the live chain still replaces its member rows in the every-row report, and
 // the named chain view lists every member under the chain, builder first.

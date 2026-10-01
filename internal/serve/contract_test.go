@@ -88,6 +88,11 @@ var registeredRoutes = []routeEntry{
 	{"GET /v1/bindings/{name}/rounds/{n}/bundle", "GET", "/v1/bindings/test-binding/rounds/1/bundle"},
 	{"POST /v1/bindings/{name}/rounds/{n}/ack", "POST", "/v1/bindings/test-binding/rounds/1/ack"},
 	{"POST /v1/bindings/{name}/unavailable", "POST", "/v1/bindings/test-binding/unavailable"},
+	{"POST /v1/chains", "POST", "/v1/chains"},
+	{"GET /v1/chains/{name}", "GET", "/v1/chains/test-chain"},
+	{"POST /v1/chains/{name}/stop", "POST", "/v1/chains/test-chain/stop"},
+	{"POST /v1/chains/{name}/resume", "POST", "/v1/chains/test-chain/resume"},
+	{"POST /v1/chains/{name}/done", "POST", "/v1/chains/test-chain/done"},
 	{"POST /v1/unavailable", "POST", "/v1/unavailable"},
 	{"POST /v1/available", "POST", "/v1/available"},
 }

@@ -444,4 +444,12 @@ type RemoteClient interface {
 	Unbind(ctx context.Context, server, name string) error
 	Resume(ctx context.Context, server, name string) (remote.BindingView, error)
 	Stop(ctx context.Context, server, name string) (remote.BindingView, error)
+	// CreateChain's retry is safe only because the server dedupes an
+	// identical create: a repeated request answers 200 with the chain's
+	// current view rather than creating a second chain.
+	CreateChain(ctx context.Context, server string, req remote.CreateChainRequest, bundle io.Reader) (remote.ChainView, error)
+	GetChain(ctx context.Context, server, name string) (remote.ChainView, error)
+	ChainStop(ctx context.Context, server, name string) (remote.ChainStopResponse, error)
+	ChainResume(ctx context.Context, server, name string, req remote.ChainResumeRequest) (remote.ChainView, error)
+	ChainDone(ctx context.Context, server, name string) error
 }

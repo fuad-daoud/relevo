@@ -46,11 +46,12 @@ func (b *syncBuffer) String() string {
 // The variables a test passes to the test binary when it runs it as its own
 // daemon for the re-exec-under-load test.
 const (
-	helperEnv      = "RELEVO_OWNER_REEXEC_HELPER"
-	helperRootEnv  = "RELEVO_OWNER_REEXEC_ROOT"
-	helperDBEnv    = "RELEVO_OWNER_REEXEC_DB"
-	helperReadyEnv = "RELEVO_OWNER_REEXEC_READY"
-	helperAdoptEnv = "RELEVO_OWNER_REEXEC_ADOPTED"
+	helperEnv         = "RELEVO_OWNER_REEXEC_HELPER"
+	helperRootEnv     = "RELEVO_OWNER_REEXEC_ROOT"
+	helperDBEnv       = "RELEVO_OWNER_REEXEC_DB"
+	helperReadyEnv    = "RELEVO_OWNER_REEXEC_READY"
+	helperAdoptEnv    = "RELEVO_OWNER_REEXEC_ADOPTED"
+	helperDrainingEnv = "RELEVO_OWNER_REEXEC_DRAINING"
 	// helperReapEnv names the marker a forced reap appends to; helperForceEnv,
 	// when set, registers an abandoned statement that never finishes so the
 	// owner's grace elapses without a real runaway statement.
@@ -118,12 +119,17 @@ func runReexecHelper() {
 		os.Exit(1)
 	}
 	srv := New(sqlDB, 3, 9, "01ORIGIN", nil)
+
+	// Arm the SIGUSR1 watcher before serving anything: the ready file below is
+	// written only after, so a signal seen once ready exists is never dropped
+	// into the gap between the write and the handler.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGUSR1)
+
 	go func() { _ = srv.Serve(ln) }()
 
 	// The reap wiring runs before the ready marker: a test that drives the
 	// forced registration must find the hook and the grace already installed.
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGUSR1)
 	reap := make(chan struct{}, 1)
 	if marker := os.Getenv(helperReapEnv); marker != "" {
 		srv.OnAbandoned = func() {
@@ -147,6 +153,19 @@ func runReexecHelper() {
 	select {
 	case <-sig:
 	case <-reap:
+	}
+
+	// Expire the listener deadline before writing the draining marker: this
+	// image then accepts nothing more, so a dial made after the marker can only
+	// land in the kernel backlog for the next image. The marker lets the test
+	// time its drain-window work off the real event instead of a sleep. Serve's
+	// error is discarded because nothing here closes the listener -- the fd is
+	// inherited by the next image.
+	if dl, ok := ln.(interface{ SetDeadline(time.Time) error }); ok {
+		_ = dl.SetDeadline(time.Now())
+	}
+	if draining := os.Getenv(helperDrainingEnv); draining != "" {
+		_ = os.WriteFile(draining, []byte("draining\n"), 0o600)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -191,7 +210,7 @@ type loadFailure struct {
 
 // reexecRoots creates the short root the re-exec test uses and the paths under
 // it, and seeds the table the load writes to.
-func reexecRoots(t *testing.T) (root, sock, dbPath, ready, adopted string) {
+func reexecRoots(t *testing.T) (root, sock, dbPath, ready, adopted, draining string) {
 	t.Helper()
 	root, err := os.MkdirTemp("/tmp", "rvo-")
 	if err != nil {
@@ -202,6 +221,7 @@ func reexecRoots(t *testing.T) (root, sock, dbPath, ready, adopted string) {
 	dbPath = filepath.Join(root, "o.db")
 	ready = filepath.Join(root, "ready")
 	adopted = filepath.Join(root, "adopted")
+	draining = filepath.Join(root, "draining")
 
 	seed, err := sql.Open("sqlite", helperDSN(dbPath))
 	if err != nil {
@@ -211,11 +231,11 @@ func reexecRoots(t *testing.T) (root, sock, dbPath, ready, adopted string) {
 		t.Fatalf("seed table: %v", err)
 	}
 	_ = seed.Close()
-	return root, sock, dbPath, ready, adopted
+	return root, sock, dbPath, ready, adopted, draining
 }
 
 // startHelper runs the test binary as its own daemon with the helper variables.
-func startHelper(t *testing.T, self, root, dbPath, ready, adopted string) (*exec.Cmd, *syncBuffer) {
+func startHelper(t *testing.T, self, root, dbPath, ready, adopted, draining string) (*exec.Cmd, *syncBuffer) {
 	t.Helper()
 	out := &syncBuffer{}
 	cmd := exec.Command(self)
@@ -225,6 +245,7 @@ func startHelper(t *testing.T, self, root, dbPath, ready, adopted string) (*exec
 		helperDBEnv+"="+dbPath,
 		helperReadyEnv+"="+ready,
 		helperAdoptEnv+"="+adopted,
+		helperDrainingEnv+"="+draining,
 		"RELEVO_LISTEN_FD=",
 	)
 	cmd.Stdout, cmd.Stderr = out, out
@@ -276,8 +297,9 @@ func holdTransaction(t *testing.T, sock string) *sql.Conn {
 	return holder
 }
 
-// queueRequest sends one request after a short delay, so it lands inside the
-// drain window, and returns a channel for its result.
+// queueRequest dials one request and returns a channel for its result. The
+// caller waits for the helper's draining marker before calling it, so the dial
+// lands after this image stopped accepting and can only be served by the next.
 func queueRequest(t *testing.T, sock string) <-chan error {
 	t.Helper()
 	db, err := sql.Open(client.DriverName, sock)
@@ -286,7 +308,6 @@ func queueRequest(t *testing.T, sock string) <-chan error {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	time.Sleep(100 * time.Millisecond)
 	out := make(chan error, 1)
 	go func() {
 		_, err := db.Exec(`INSERT INTO t (n) VALUES (2)`)
@@ -349,14 +370,14 @@ func assertServing(t *testing.T, loadDB *sql.DB) {
 // the socket file is the same file (no unlink and rebind), and every failure is
 // inside the drain window.
 func TestListenerSurvivesARealReexecUnderLoad(t *testing.T) {
-	root, sock, dbPath, ready, adopted := reexecRoots(t)
+	root, sock, dbPath, ready, adopted, draining := reexecRoots(t)
 	client.SetHandshakeTimeout(10 * time.Second)
 	t.Cleanup(func() { client.SetHandshakeTimeout(0) })
 	self, err := filepath.Abs(os.Args[0])
 	if err != nil {
 		t.Fatalf("resolve test binary: %v", err)
 	}
-	cmd, out := startHelper(t, self, root, dbPath, ready, adopted)
+	cmd, out := startHelper(t, self, root, dbPath, ready, adopted, draining)
 
 	waitForFile(t, ready, "the helper never became ready: "+out.String())
 	before, err := os.Stat(sock)
@@ -386,8 +407,8 @@ func TestListenerSurvivesARealReexecUnderLoad(t *testing.T) {
 		t.Fatalf("signal helper: %v", err)
 	}
 
+	waitForFile(t, draining, "the helper never began draining: "+out.String())
 	queued := queueRequest(t, sock)
-	time.Sleep(300 * time.Millisecond)
 	if _, err := holder.ExecContext(context.Background(), "COMMIT"); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
@@ -442,7 +463,7 @@ func startReapHelper(t *testing.T, self, root, dbPath, ready, adopted, reap stri
 // hook fires on the forced abandoned statement, the helper drains and execs,
 // the new image adopts the listener and serves a query.
 func TestReapReExecsAndTheNewImageServes(t *testing.T) {
-	root, sock, dbPath, ready, adopted := reexecRoots(t)
+	root, sock, dbPath, ready, adopted, _ := reexecRoots(t)
 	reap := filepath.Join(root, "reap")
 	client.SetHandshakeTimeout(10 * time.Second)
 	t.Cleanup(func() { client.SetHandshakeTimeout(0) })

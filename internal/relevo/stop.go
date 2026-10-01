@@ -128,6 +128,11 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 			// Collect the close now instead of waiting for the next sync. The
 			// server has already stopped the round, so a catch-up that cannot
 			// finish is not an error: the next sync, pull or wait collects it.
+			// A server-chain member is the exception: its round stops on the
+			// server, and the chain pull is what collects it here.
+			if serverChainMember(tx, b.Name) {
+				return nil
+			}
 			next, _, oerr := observeRemote(ctx, rt, tx, b)
 			if oerr != nil {
 				return oerr

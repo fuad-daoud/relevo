@@ -391,6 +391,12 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 // (a halt, a running mirror, an error), delivers any pending payload. A nil
 // pre is the inline path: fetch and apply under the caller's lock.
 func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, pre *remoteFetch) (store.Binding, error) {
+	// A server chain's member is moved by the chain pull, never by the
+	// per-binding reconcile: a close collected here would advance the mirror
+	// the server owns.
+	if serverChainMember(tx, b.Name) {
+		return b, nil
+	}
 	var (
 		next    store.Binding
 		deliver bool
@@ -485,6 +491,11 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 		if !b.Builder.Remote() || b.State == store.StateDone || b.State == store.StatePaused {
 			continue
 		}
+		// A server chain's member is collected by the chain pull, never by
+		// this per-binding pass.
+		if serverChainMemberStore(rt.Store, b.Name) {
+			continue
+		}
 		name := b.Name
 		f := fetchRemote(ctx, rt, b)
 		err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -515,6 +526,13 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
+	}
+
+	// A server chain is moved by the chain pull, never by the per-binding pass
+	// above: the pull reads the server's view, installs every member's missing
+	// closed rounds and queues the chain's one end delivery.
+	if err := chainPullServers(ctx, rt); err != nil {
+		errs = append(errs, err)
 	}
 
 	// The chain's own staged rounds ship here, after the per-binding loop: a

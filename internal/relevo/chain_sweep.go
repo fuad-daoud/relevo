@@ -25,9 +25,15 @@ func tickChains(ctx context.Context, rt Runtime) {
 	}
 	var running []string
 	for _, c := range chains {
-		if c.Status == string(chain.StatusRunning) {
-			running = append(running, c.Name)
+		if c.Status != string(chain.StatusRunning) {
+			continue
 		}
+		// A server chain is swept by the server's daemon; this machine must
+		// not halt it from a mirror that has not been pulled.
+		if chainOnServer(c) {
+			continue
+		}
+		running = append(running, c.Name)
 	}
 	if len(running) == 0 {
 		return

@@ -1,0 +1,29 @@
+{
+  "name": "test-chain",
+  "repo_id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "base_commit": "1111222233334444555566667777888899990000",
+  "plans": [
+    "# Plan one\n",
+    "# Plan two\n"
+  ],
+  "settings": {
+    "max_corrections": 3,
+    "reviewer_actor": "reviewer",
+    "planner_actor": "planner",
+    "security_actor": "security",
+    "security": true,
+    "gate": "make check",
+    "regate": 2
+  },
+  "feature": "auth",
+  "ticket": "o/r#607",
+  "author": {
+    "name": "Test Builder",
+    "email": "builder@example.com"
+  },
+  "client_installation": "01CLIENTINSTALLATION0000000",
+  "client_binding_ids": {
+    "builder": "01CLIENTBINDINGBUILDER000000",
+    "reviewer": "01CLIENTBINDINGREVIEWER00000"
+  }
+}

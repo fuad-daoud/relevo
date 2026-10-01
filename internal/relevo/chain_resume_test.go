@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -287,6 +288,82 @@ func TestChainResumeRefusesRunningOrDone(t *testing.T) {
 			t.Errorf("ChainResume(nope) = %v, want store.ErrNotFound", err)
 		}
 	})
+}
+
+// TestChainResumeRefusesAnOpenMemberRound pins item 1: a resume whose target
+// member already has a round open refuses with the send path's RoundOpenError
+// before any write -- no junk halt trace row, no staged round, and the chain
+// row unchanged. Both the builder and the reviewer are covered; the reviewer
+// case
+// is the live shape where a newer manual builder round would be reviewed while
+// a manual reviewer round is open.
+func TestChainResumeRefusesAnOpenMemberRound(t *testing.T) {
+	t.Parallel()
+
+	t.Run("builder round open", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{})
+		// A manual round on the builder, sent after the stop and left open.
+		if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+			t.Fatalf("manual Send to the builder: %v", err)
+		}
+		assertResumeOpenRoundRefused(t, rt, chain.MemberBuilder)
+	})
+
+	t.Run("reviewer round open", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{})
+		// A manual builder round that closes, so the resume would review it...
+		if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+			t.Fatalf("manual Send to the builder: %v", err)
+		}
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+		// ...while a manual reviewer round is open: the resume's target is the
+		// reviewer, whose own round is in flight.
+		if _, err := Send(context.Background(), rt, "shop-rev", writePlan(t, "review this"), SendOptions{}); err != nil {
+			t.Fatalf("manual Send to the reviewer: %v", err)
+		}
+		assertResumeOpenRoundRefused(t, rt, chain.MemberReviewer)
+	})
+}
+
+// assertResumeOpenRoundRefused resumes a chain whose target member has an open
+// round and pins the refusal: the RoundOpenError names the member and its open
+// round, no trace row was added, the chain row is unchanged and the member's
+// round is the one that was open.
+func assertResumeOpenRoundRefused(t *testing.T, rt Runtime, part string) {
+	t.Helper()
+
+	memberName := "shop"
+	if part == chain.MemberReviewer {
+		memberName = "shop-rev"
+	}
+	want := chainBinding(t, rt, memberName)
+	before := chainStoredRow(t, rt, "shop")
+	traceBefore := len(chainTrace(t, rt, "shop"))
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	var open *RoundOpenError
+	if !errors.As(err, &open) {
+		t.Fatalf("ChainResume = %v, want a *RoundOpenError", err)
+	}
+	if open.Member != memberName || open.Round != want.Round {
+		t.Errorf("refusal = (%s, %d), want (%s, %d)", open.Member, open.Round, memberName, want.Round)
+	}
+
+	if after := chainStoredRow(t, rt, "shop"); !reflect.DeepEqual(before, after) {
+		t.Errorf("chain row changed by the refusal:\nbefore %+v\nafter  %+v", before, after)
+	}
+	if got := len(chainTrace(t, rt, "shop")); got != traceBefore {
+		t.Errorf("trace rows = %d, want the %d before the refusal: no junk halt row", got, traceBefore)
+	}
+	if b := chainBinding(t, rt, memberName); b.Round != want.Round {
+		t.Errorf("%s round = %d, want %d untouched", memberName, b.Round, want.Round)
+	}
 }
 
 // TestChainResumeAppliesOnlyGivenFlags pins the flag rule on the stored
@@ -757,5 +834,89 @@ func TestChainResumeReSendKeepsThePlanStartCommit(t *testing.T) {
 	}
 	if row.PlanStartCommit != before {
 		t.Errorf("plan start after a re-send = %q, want it held at %q", row.PlanStartCommit, before)
+	}
+}
+
+// TestChainResumeReSendsTheStoppedRoundsOwnPrompt pins item 6: a resume whose
+// action is a builder send re-sends the awaited round's own staged prompt --
+// the exact bytes the stopped round was handed -- so a correction or repair
+// round comes back, not the chain's plan copy.
+func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a stopped correction round", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
+		chainReaderClose(t, rt, "shop-plan", "# Correction plan\n\nDo it.\n")
+
+		// The builder's correction round is open; stop the chain there.
+		if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
+			t.Fatalf("Stop the correction round: %v", err)
+		}
+		assertResumeReSendsTheStagedPrompt(t, rt, "# Correction plan")
+	})
+
+	t.Run("a stopped repair round", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{})
+		b := chainBinding(t, rt, "shop")
+		b.Regate = 2
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+		// The repair round is open; stop the chain there.
+		if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
+			t.Fatalf("Stop the repair round: %v", err)
+		}
+		assertResumeReSendsTheStagedPrompt(t, rt, "# Repair round")
+	})
+}
+
+// assertResumeReSendsTheStagedPrompt stops on a chain awaiting the builder on
+// the round whose staged prompt contains marker (the planner's text or the
+// repair plan), resumes it, and pins that the re-sent round was handed that
+// same text rather than the plan copy.
+func assertResumeReSendsTheStagedPrompt(t *testing.T, rt Runtime, marker string) {
+	t.Helper()
+
+	awaiting := chainStoredRow(t, rt, "shop").AwaitingRound
+	if awaiting == 0 {
+		t.Fatal("test premise: the chain must await a nonzero builder round")
+	}
+	want, err := rt.Store.ReadFile(rt.Store.PromptPath("shop", awaiting))
+	if err != nil {
+		t.Fatalf("read the stopped round's prompt: %v", err)
+	}
+	if !strings.Contains(string(want), marker) {
+		t.Fatalf("the stopped round's prompt does not carry %q:\n%s", marker, want)
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	resent := chainBinding(t, rt, "shop")
+	got, err := rt.Store.ReadFile(rt.Store.PromptPath("shop", resent.Round))
+	if err != nil {
+		t.Fatalf("read the re-sent round's prompt: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("the re-sent round's prompt is not the stopped round's own text:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	planCopy, err := rt.Store.ReadFile(rt.Store.ChainPlanPath("shop", 1))
+	if err != nil {
+		t.Fatalf("read the plan copy: %v", err)
+	}
+	if string(got) == string(planCopy) {
+		t.Errorf("the re-sent round got the plan copy, not the stopped round's own text:\n%s", got)
 	}
 }

@@ -40,5 +40,5 @@ func MasterMindStatus(ctx context.Context, rt Runtime, mastermindID string) (vie
 			mine = append(mine, c)
 		}
 	}
-	return applyChains(rep, mine), nil
+	return applyChains(rt.Store, rep, mine), nil
 }
