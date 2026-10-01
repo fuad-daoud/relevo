@@ -135,12 +135,29 @@ short grace for the owner's reply, while the statement runs to completion on the
 owner. That connection is then discarded rather than served again, because the
 client can no longer know the stream's state.
 
+**Abandoned statements.** A statement the engine will not interrupt outlives the
+client that sent it: the owner's cleanup returns the pin slot, then registers the
+still-running rollback and discard as *the* abandoned statement (at most one at a
+time; a second registration is dropped). After a 30 s grace an `OnAbandoned` hook
+fires once and the daemon re-execs its own binary, whose fresh thread ends the
+statement. While a registration is live the owner refuses requests on connections
+that marked themselves ad-hoc in the handshake, with the refusal code `reaping`;
+every other verb runs on a connection without the bit and is never refused, and the
+handshake itself is never refused, because a refused dial would make `db query`
+fall back to a direct open and report a false lock conflict.
+
+**Ad-hoc reads.** `hello` carries `ad_hoc`, set by `db query`'s dial
+(`client.Connector`, `db.DialContextAdHoc`) and clear for every other client. Both
+fields are additive and `version` stays 1: an owner that predates `ad_hoc` ignores
+it and never refuses, and a client that predates it never sends one.
+
 **Errors.** `error{id, code, extended_code, message}`. The client rebuilds an
 error carrying `Code()`, so `ErrBusy`, `ErrInvalid` and `retryBusy` work
 unchanged. Owner refusals have their own codes: `wrong_proto`,
-`shutting_down`, `restarting`.
+`shutting_down`, `restarting`, `reaping`.
 
-**Handshake.** The client sends `hello{proto, version, exe_id, schema_know}`.
+**Handshake.** The client sends `hello{proto, version, exe_id, schema_know,
+ad_hoc}`.
 The owner answers `welcome{proto, min_client, version, schema_have, schema_know,
 origin, features}` -- `origin` is the installation id a scoped handle needs and
 must not read from the file -- or `refuse{code, message}`. The client answers
