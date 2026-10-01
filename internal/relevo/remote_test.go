@@ -102,6 +102,18 @@ type fakeRemote struct {
 	resumeErr           error
 	stopResp            remote.BindingView
 	stopErr             error
+	createChainResp     remote.ChainView
+	createChainErr      error
+	createChainReq      remote.CreateChainRequest
+	createChainBundle   []byte
+	getChainResp        remote.ChainView
+	getChainErr         error
+	chainStopResp       remote.ChainStopResponse
+	chainStopErr        error
+	chainResumeResp     remote.ChainView
+	chainResumeErr      error
+	chainResumeReq      remote.ChainResumeRequest
+	chainDoneErr        error
 
 	beforeCall func(call string)
 
@@ -272,6 +284,40 @@ func (f *fakeRemote) Resume(ctx context.Context, server, name string) (remote.Bi
 func (f *fakeRemote) Stop(ctx context.Context, server, name string) (remote.BindingView, error) {
 	f.calls = append(f.calls, fmt.Sprintf("Stop:%s:%s", server, name))
 	return f.stopResp, f.stopErr
+}
+
+func (f *fakeRemote) CreateChain(ctx context.Context, server string, req remote.CreateChainRequest, bundle io.Reader) (remote.ChainView, error) {
+	f.calls = append(f.calls, "CreateChain:"+server+":"+req.Name)
+	f.createChainReq = req
+	if bundle != nil {
+		b, err := io.ReadAll(bundle)
+		if err != nil {
+			return remote.ChainView{}, err
+		}
+		f.createChainBundle = b
+	}
+	return f.createChainResp, f.createChainErr
+}
+
+func (f *fakeRemote) GetChain(ctx context.Context, server, name string) (remote.ChainView, error) {
+	f.calls = append(f.calls, "GetChain:"+server+":"+name)
+	return f.getChainResp, f.getChainErr
+}
+
+func (f *fakeRemote) ChainStop(ctx context.Context, server, name string) (remote.ChainStopResponse, error) {
+	f.calls = append(f.calls, "ChainStop:"+server+":"+name)
+	return f.chainStopResp, f.chainStopErr
+}
+
+func (f *fakeRemote) ChainResume(ctx context.Context, server, name string, req remote.ChainResumeRequest) (remote.ChainView, error) {
+	f.calls = append(f.calls, "ChainResume:"+server+":"+name)
+	f.chainResumeReq = req
+	return f.chainResumeResp, f.chainResumeErr
+}
+
+func (f *fakeRemote) ChainDone(ctx context.Context, server, name string) error {
+	f.calls = append(f.calls, "ChainDone:"+server+":"+name)
+	return f.chainDoneErr
 }
 
 type fakeTransport struct {

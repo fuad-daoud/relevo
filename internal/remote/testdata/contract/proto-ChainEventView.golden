@@ -1,0 +1,12 @@
+{
+  "seq": 3,
+  "ts": "2026-01-02T03:04:05Z",
+  "phase": "build",
+  "step": "reviewing",
+  "member": "builder",
+  "round": 2,
+  "plan": 1,
+  "event": "{\"kind\":\"builder_closed\",\"gate\":\"green\"}",
+  "action": "{\"member\":\"reviewer\",\"round\":2}",
+  "reason": "check red after regate"
+}
