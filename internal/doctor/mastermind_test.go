@@ -187,6 +187,34 @@ func TestDoctorPluginHookRow(t *testing.T) {
 		}
 	})
 
+	t.Run("script hook present", func(t *testing.T) {
+		home := t.TempDir()
+		dir := filepath.Join(home, ".claude", "plugins", "cache", "relevo", "relevo", "0.1.0")
+		writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
+			`{"plugins":{"relevo@relevo":[{"installPath":"`+dir+`"}]}}`)
+		writeDoctorFile(t, filepath.Join(dir, "hooks", "hooks.json"),
+			`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/mastermind-init.sh"}]}]}}`)
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
+		c := findCheck(Report{Checks: checks}, "", "plugin hook")
+		if c == nil || c.Severity != SevOK {
+			t.Fatalf("plugin hook row = %+v, want ok", c)
+		}
+	})
+
+	t.Run("a different plugin script fails", func(t *testing.T) {
+		home := t.TempDir()
+		dir := filepath.Join(home, ".claude", "plugins", "cache", "relevo", "relevo", "0.1.0")
+		writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
+			`{"plugins":{"relevo@relevo":[{"installPath":"`+dir+`"}]}}`)
+		writeDoctorFile(t, filepath.Join(dir, "hooks", "hooks.json"),
+			`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/relevo-doctor.sh"}]}]}}`)
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
+		c := findCheck(Report{Checks: checks}, "", "plugin hook")
+		if c == nil || c.Severity != SevFail {
+			t.Fatalf("plugin hook row = %+v, want FAIL", c)
+		}
+	})
+
 	t.Run("hook missing", func(t *testing.T) {
 		home := t.TempDir()
 		dir := filepath.Join(home, ".claude", "plugins", "cache", "relevo", "relevo", "0.1.0")

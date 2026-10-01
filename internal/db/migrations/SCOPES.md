@@ -114,7 +114,7 @@ Path-valued columns:
 - `binding.cwd`, `binding.worktree`, `binding.archive_path`
 - `binding_record.cwd`
 - `repo.common_dir`
-- `planner.transcript_locator` (now `mastermind.transcript_locator`)
+- `planner.transcript_locator` (now `mastermind.transcript_locator`): the column is retained but no longer written or read.
 - `event.path`
 - `ingest_cursor.source`
 - `config_import.source_path`

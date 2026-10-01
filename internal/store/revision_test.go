@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -79,20 +80,46 @@ func TestRevisionTracksEveryMirrorSignal(t *testing.T) {
 	}
 }
 
-// TestRevisionTracksTheMasterMindTranscript pins the one member a mirror reads
-// outside the store: the mastermind's own transcript, seen by size and
-// modification time.
-func TestRevisionTracksTheMasterMindTranscript(t *testing.T) {
+// TestRevisionIgnoresAnOldTranscriptLocatorKey pins that a record still
+// carrying the removed planner.transcript_locator key does not make the
+// revision follow that file: the key is dead bytes, not a mirror signal.
+func TestRevisionIgnoresAnOldTranscriptLocatorKey(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
 	transcript := filepath.Join(t.TempDir(), "session.jsonl")
 	if err := os.WriteFile(transcript, []byte("one\n"), 0o644); err != nil {
 		t.Fatalf("write transcript: %v", err)
 	}
-	b := Binding{Name: "webshop", CWD: "/repo", State: StateActive, Round: 1}
-	b.MasterMind.TranscriptLocator = transcript
-	if err := s.Save(b); err != nil {
+
+	if err := s.Save(Binding{Name: "webshop", CWD: "/repo", State: StateActive, Round: 1}); err != nil {
 		t.Fatalf("Save: %v", err)
+	}
+
+	d, err := s.dbForRead()
+	if err != nil {
+		t.Fatalf("dbForRead: %v", err)
+	}
+	rec, ok, err := d.RecordGet("", "webshop")
+	if err != nil || !ok {
+		t.Fatalf("RecordGet = (ok %v, err %v), want the row", ok, err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(rec.JSON), &doc); err != nil {
+		t.Fatalf("decode record_json: %v", err)
+	}
+	planner, _ := doc["planner"].(map[string]any)
+	if planner == nil {
+		planner = map[string]any{}
+	}
+	planner["transcript_locator"] = transcript
+	doc["planner"] = planner
+	updated, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal record_json: %v", err)
+	}
+	rec.JSON = string(updated)
+	if _, err := d.RecordPut(rec); err != nil {
+		t.Fatalf("RecordPut: %v", err)
 	}
 
 	before, err := s.Revision("webshop")
@@ -114,8 +141,8 @@ func TestRevisionTracksTheMasterMindTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Revision after transcript append: %v", err)
 	}
-	if after == before {
-		t.Error("a growing transcript left the revision unchanged")
+	if after != before {
+		t.Error("a stale planner.transcript_locator moved the revision")
 	}
 }
 

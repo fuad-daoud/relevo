@@ -398,8 +398,8 @@ func copyRehearsalFile(t *testing.T, src, dst string) {
 }
 
 // seedPlannedScene seeds one mapped binding with a report artifact identical to
-// its round file, an answer artifact, a two-row round transcript re-derivable from
-// the round's stream, and a mastermind transcript under the same owner id.
+// its round file, an answer artifact, and a two-row round transcript re-derivable
+// from the round's stream.
 func seedPlannedScene(t *testing.T, d *db.DB) string {
 	t.Helper()
 	const name = "webshop"
@@ -417,9 +417,6 @@ func seedPlannedScene(t *testing.T, d *db.DB) string {
 	putRoundFile(t, d, recordID, "003-builder.jsonl", 3, line1+"\n"+line2+"\n")
 	recs, _ := streamTranscriptRecords("claude", [][]byte{[]byte(line1), []byte(line2)}, 0)
 	appendTranscript(t, d, db.OwnerRound, round3, recs)
-	appendTranscript(t, d, db.OwnerMasterMind, round3, []db.TranscriptRecord{
-		{Seq: 0, RecordJSON: line1, Rendered: "the mastermind's own line"},
-	})
 
 	return round3
 }

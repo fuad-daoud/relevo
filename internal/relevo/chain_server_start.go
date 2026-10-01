@@ -146,9 +146,6 @@ func chainServerMasterMind(rt Runtime, id string) (store.Endpoint, string, error
 		return store.Endpoint{}, "", ErrNoMasterMindSession
 	}
 	ep := recordEndpoint(rec)
-	if ep.TranscriptLocator == "" {
-		ep.TranscriptLocator = mastermindLocator(rt, ep.Kind, ep.SessionID)
-	}
 	return ep, rec.ID, nil
 }
 

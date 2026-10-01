@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -119,6 +120,19 @@ func actorCheckLine(doc relevo.ConfigDoc, name string, width int) (string, bool)
 		textStyle.Render(":settings"), true
 }
 
+// actorScopeText renders a writer's scope for the detail view: its path
+// entries, then "+ comments" when a comment-only Go edit is allowed (#801).
+func actorScopeText(scope *pathscope.Scope) string {
+	parts := strings.Join(scope.Paths, ", ")
+	if scope.Comments {
+		if parts == "" {
+			return "comments"
+		}
+		parts += " + comments"
+	}
+	return parts
+}
+
 // bodyLines is the whole detail body before it is windowed: a blank line under
 // the context row, the table, two blank lines and the check line (§4).
 func (v actorView) bodyLines(env Env, width int) []string {
@@ -139,6 +153,9 @@ func (v actorView) bodyLines(env Env, width int) []string {
 	lines = append(lines, "", "")
 	if check, ok := actorCheckLine(v.doc, v.name, width); ok {
 		lines = append(lines, fit(check, width))
+	}
+	if scope := a.Scope; scope != nil {
+		lines = append(lines, fit("   "+mutedStyle.Render("scope ")+textStyle.Render(actorScopeText(scope)), width))
 	}
 	return lines
 }

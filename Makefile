@@ -50,7 +50,7 @@ check-static:
 
 check-scripts:
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck scripts/*.sh; \
+		shellcheck scripts/*.sh claude-plugin/scripts/*.sh; \
 	else \
 		echo "shellcheck not installed; skipping shell lint"; \
 	fi

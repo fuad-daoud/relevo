@@ -15,11 +15,10 @@ import (
 // HookInput is the Claude Code SessionStart payload read from stdin. Unknown
 // fields are ignored.
 type HookInput struct {
-	HookEventName  string `json:"hook_event_name"`
-	Source         string `json:"source"`
-	SessionID      string `json:"session_id"`
-	TranscriptPath string `json:"transcript_path"`
-	CWD            string `json:"cwd"`
+	HookEventName string `json:"hook_event_name"`
+	Source        string `json:"source"`
+	SessionID     string `json:"session_id"`
+	CWD           string `json:"cwd"`
 }
 
 // The SessionStart sources Claude Code reports; any other value reads as
@@ -132,10 +131,9 @@ const (
 
 // InitInput is everything `relevo mastermind init` knows when it registers.
 type InitInput struct {
-	Kind           string
-	SessionID      string
-	TranscriptPath string
-	CWD            string
+	Kind      string
+	SessionID string
+	CWD       string
 	// Name is --name. Non-empty on an existing record renames it; empty
 	// takes DefaultName.
 	Name          string
@@ -173,7 +171,7 @@ type regOps interface {
 	byHost(pid int, startedAt int64) (Record, error)
 	bySession(kind, sessionID string) (Record, error)
 	create(r Record) (Record, error)
-	moveSession(id, sessionID, transcript string, now time.Time) (Record, error)
+	moveSession(id, sessionID string, now time.Time) (Record, error)
 	setHost(id string, pid int, startedAt int64) (Record, error)
 	rename(id, name string) (Record, error)
 	touchForced(id string, now time.Time) (Record, error)
@@ -191,8 +189,8 @@ func (a regAdapter) byHost(pid int, startedAt int64) (Record, error) {
 	return a.ByHost(pid, startedAt)
 }
 
-func (a regAdapter) moveSession(id, sessionID, transcript string, now time.Time) (Record, error) {
-	return a.MoveSession(id, sessionID, transcript, now)
+func (a regAdapter) moveSession(id, sessionID string, now time.Time) (Record, error) {
+	return a.MoveSession(id, sessionID, now)
 }
 
 func (a regAdapter) setHost(id string, pid int, startedAt int64) (Record, error) {
@@ -261,7 +259,7 @@ func reattach(reg regOps, rec Record, in InitInput) (Record, InitResult, error) 
 	}
 
 	if rec.SessionID != in.SessionID {
-		updated, err := reg.moveSession(rec.ID, in.SessionID, in.TranscriptPath, in.Now)
+		updated, err := reg.moveSession(rec.ID, in.SessionID, in.Now)
 		if err != nil {
 			return Record{}, "", err
 		}
@@ -305,16 +303,15 @@ func register(reg regOps, in InitInput) (Record, InitResult, error) {
 	}
 
 	created, err := reg.create(Record{
-		ID:                id,
-		Name:              name,
-		HarnessKind:       in.Kind,
-		SessionID:         in.SessionID,
-		HostPID:           in.HostPID,
-		HostStartedAt:     in.HostStartedAt,
-		CWD:               in.CWD,
-		TranscriptLocator: in.TranscriptPath,
-		CreatedAt:         in.Now,
-		SeenAt:            in.Now,
+		ID:            id,
+		Name:          name,
+		HarnessKind:   in.Kind,
+		SessionID:     in.SessionID,
+		HostPID:       in.HostPID,
+		HostStartedAt: in.HostStartedAt,
+		CWD:           in.CWD,
+		CreatedAt:     in.Now,
+		SeenAt:        in.Now,
 	})
 	if err != nil {
 		return Record{}, "", err

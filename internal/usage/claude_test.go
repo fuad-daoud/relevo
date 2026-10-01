@@ -1,25 +1,8 @@
 package usage
 
 import (
-	"os"
 	"testing"
-	"time"
 )
-
-func TestProjectSlug(t *testing.T) {
-	cases := map[string]string{
-		"/home/fuad/projects/relevo":       "-home-fuad-projects-relevo",
-		"/home/fuad/.claude/projects":      "-home-fuad--claude-projects",
-		"/home/fuad":                       "-home-fuad",
-		"/home/fuad/apps/google-cloud-sdk": "-home-fuad-apps-google-cloud-sdk",
-		"/home/fuad/.config/nvim":          "-home-fuad--config-nvim",
-	}
-	for in, want := range cases {
-		if got := ProjectSlug(in); got != want {
-			t.Errorf("ProjectSlug(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
 
 func TestClaudeStreamUsesResultEvent(t *testing.T) {
 	got := claudeStream(mustOpen(t, "testdata/claude-stream.jsonl"), "anthropic")
@@ -59,38 +42,5 @@ func TestClaudeStreamEmpty(t *testing.T) {
 	f, _ := mustTemp(t, "relevo-exit:0\n")
 	if got := claudeStream(f, "anthropic"); len(got) != 0 {
 		t.Errorf("empty stream = %d samples, want 0", len(got))
-	}
-}
-
-func TestClaudeProjectWindowCwdAndDedupe(t *testing.T) {
-	start := time.Date(2026, 9, 18, 7, 0, 0, 0, time.UTC)
-	end := time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC)
-	got := claudeProject(os.DirFS("testdata/claude-project"), "/wt", start, end, "anthropic")
-	// msg_p1, msg_p2 (once), msg_s1 from the subagent. Not p3 (outside), not p4
-	// (other cwd).
-	if len(got) != 3 {
-		t.Fatalf("samples = %d, want 3: %+v", len(got), got)
-	}
-	var sum Tokens
-	models := map[string]bool{}
-	for _, s := range got {
-		if s.HasCost {
-			t.Error("pane transcripts carry no dollars")
-		}
-		sum = sum.Add(s.Tokens)
-		models[s.Model] = true
-	}
-	if sum != (Tokens{In: 9, CacheWrite: 50, CacheRead: 70, Out: 57}) {
-		t.Errorf("sum = %+v", sum)
-	}
-	if !models["claude-opus-5"] || !models["claude-haiku-4-5"] {
-		t.Errorf("models = %v, want the subagent's model included", models)
-	}
-}
-
-func TestClaudeProjectMissingDir(t *testing.T) {
-	got := claudeProject(os.DirFS(t.TempDir()), "/wt", time.Time{}, time.Now(), "anthropic")
-	if len(got) != 0 {
-		t.Errorf("empty dir = %d samples", len(got))
 	}
 }

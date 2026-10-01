@@ -3,23 +3,20 @@ package store
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 )
 
 // Revision is a cheap digest of everything a mirror run reads from this store
-// for a live binding: the binding record, its log's extent, its sealed round
-// files and the mastermind transcript file on disk. Two equal revisions mean a
-// fresh mirror run would write nothing, so a caller that keeps the last
-// revision it mirrored may skip a run.
+// for a live binding: the binding record, its log's extent and its sealed round
+// files. Two equal revisions mean a fresh mirror run would write nothing, so a
+// caller that keeps the last revision it mirrored may skip a run.
 //
-// It reads one row and two stats -- the log is measured by event count and
-// highest seq, sealed files by count and highest name, the transcript by size
-// and modification time -- so it is far cheaper than the run it guards. The
-// binding directory's own mtime stands for its flat round files, the ones an
-// outcome reads; a file under a round artifact directory only names the round,
-// which the log names too.
+// It reads one row and a stat -- the log is measured by event count and highest
+// seq, sealed files by count and highest name -- so it is far cheaper than the
+// run it guards. The binding directory's own mtime stands for its flat round
+// files, the ones an outcome reads; a file under a round artifact directory only
+// names the round, which the log names too.
 //
 // It is deliberately conservative in one direction only: a signal it omits can
 // delay a mirror until the next signal changes, so every write that changes
@@ -52,22 +49,6 @@ func (s *Store) Revision(name string) (string, error) {
 	if fi, serr := os.Stat(s.Dir(name)); serr == nil {
 		buf = fmt.Appendf(buf, "\x00dir %d/%d", fi.Size(), fi.ModTime().UnixNano())
 	}
-	if loc := transcriptLocatorOf(rec.JSON); loc != "" {
-		if fi, serr := os.Stat(loc); serr == nil {
-			buf = fmt.Appendf(buf, "\x00transcript %d/%d", fi.Size(), fi.ModTime().UnixNano())
-		}
-	}
 	sum := sha256.Sum256(buf)
 	return hex.EncodeToString(sum[:]), nil
-}
-
-// transcriptLocatorOf returns the mastermind transcript path a record's JSON
-// names, the one member a mirror reads from outside the store. A record that
-// does not decode has none, exactly as the mirror would find it.
-func transcriptLocatorOf(recordJSON string) string {
-	var b Binding
-	if err := json.Unmarshal([]byte(recordJSON), &b); err != nil {
-		return ""
-	}
-	return b.MasterMind.TranscriptLocator
 }

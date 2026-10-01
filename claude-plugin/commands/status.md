@@ -1,11 +1,13 @@
 ---
 description: Show relevo's bindings for this MasterMind
 argument-hint: "[--name <binding>] [--all]"
-allowed-tools: Bash(relevo:*)
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/status.sh:*)
 ---
 
+If the relevo MCP tools are not available in this session, or the block below printed the install hint, tell the user that relevo runs only in Claude Code with the relevo binary installed, then stop.
+
 ```!
-relevo status $ARGUMENTS
+${CLAUDE_PLUGIN_ROOT}/scripts/status.sh $ARGUMENTS
 ```
 
 The block above is relevo's live state for this MasterMind, already fetched.

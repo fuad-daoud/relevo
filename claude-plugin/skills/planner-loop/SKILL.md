@@ -4,6 +4,8 @@ description: Drive a relevo round end to end -- send a plan, wait for the runner
 allowed-tools: Bash(relevo:*)
 ---
 
+If the relevo MCP tools are not available in this session, tell the user that relevo runs only in Claude Code with the relevo binary installed, then stop.
+
 # The planner loop
 
 You are the MasterMind. You hand a runner one round at a time, and you own the

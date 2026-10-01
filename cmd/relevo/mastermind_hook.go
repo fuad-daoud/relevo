@@ -120,15 +120,14 @@ func mastermindInitHook(nameFlag string) error {
 	host := os.Getppid()
 
 	rec, err := mastermindRegisterSession(d, rt, mastermind.InitInput{
-		Kind:           "claude",
-		SessionID:      in.SessionID,
-		TranscriptPath: in.TranscriptPath,
-		CWD:            in.CWD,
-		Name:           nameFlag,
-		Agent:          os.Getenv("CLAUDE_CODE_AGENT"),
-		HostPID:        host,
-		HostStartedAt:  mastermindHostStart(host),
-		Now:            rt.Now(),
+		Kind:          "claude",
+		SessionID:     in.SessionID,
+		CWD:           in.CWD,
+		Name:          nameFlag,
+		Agent:         os.Getenv("CLAUDE_CODE_AGENT"),
+		HostPID:       host,
+		HostStartedAt: mastermindHostStart(host),
+		Now:           rt.Now(),
 	})
 	if err != nil {
 		return mastermindInitHookFailure(err)
@@ -239,14 +238,13 @@ func mastermindNoticeHook() error {
 		if rec == nil && effective == mastermind.ConsentYes {
 			host := os.Getppid()
 			r, err := mastermindRegisterSession(d, rt, mastermind.InitInput{
-				Kind:           "claude",
-				SessionID:      in.SessionID,
-				TranscriptPath: in.TranscriptPath,
-				CWD:            in.CWD,
-				Agent:          os.Getenv("CLAUDE_CODE_AGENT"),
-				HostPID:        host,
-				HostStartedAt:  mastermindHostStart(host),
-				Now:            rt.Now(),
+				Kind:          "claude",
+				SessionID:     in.SessionID,
+				CWD:           in.CWD,
+				Agent:         os.Getenv("CLAUDE_CODE_AGENT"),
+				HostPID:       host,
+				HostStartedAt: mastermindHostStart(host),
+				Now:           rt.Now(),
 			})
 			if err != nil {
 				return mastermindNoticeFailure(err)
