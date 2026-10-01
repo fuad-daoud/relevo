@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -131,22 +132,137 @@ func firstNonEmptyLine(s string) string {
 	return ""
 }
 
-// ScopeResult returns the systemd Result of unit's transient scope, e.g.
-// "success" or "oom-kill". A missing systemctl returns ("", nil); any other
-// failure is returned and treated as not oom-killed by the caller.
-func (r *Runner) ScopeResult(ctx context.Context, unit string) (string, error) {
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+// scopeResultTimeout bounds one ScopeResult probe: every attempt and every
+// pause between them shares it, so a hung journalctl cannot stall a reconcile.
+const scopeResultTimeout = 5 * time.Second
 
-	cmd := exec.CommandContext(cctx, "systemctl", "--user", "show", "--property=Result", "--value", ScopeUnitFileName(unit))
+var (
+	// journalOutput is the seam a test replaces to script the journal read;
+	// runJournal reads the real one.
+	journalOutput = runJournal
+
+	// scopeResultRetryPause is the pause between the attempts of one probe: the
+	// user manager may log a unit's final result a moment after the daemon sees
+	// its process exit, so the first read can be legitimately empty.
+	scopeResultRetryPause = 200 * time.Millisecond
+
+	// scopeResultAttempts is how many times one probe reads the journal before
+	// giving up. Three attempts 200 ms apart fit in scopeResultTimeout.
+	scopeResultAttempts = 3
+)
+
+// journalArgv is the one journalctl invocation a scope probe makes: the user
+// journal for the unit's scope, rendered as JSON. A non-zero since adds
+// --since=@<unix>, so the journal itself drops the older attempts a reused
+// unit name carries; the parse also dates each entry. Pure.
+func journalArgv(unit string, since time.Time) []string {
+	argv := []string{"journalctl", "--user", "USER_UNIT=" + ScopeUnitFileName(unit)}
+	if !since.IsZero() {
+		argv = append(argv, "--since=@"+strconv.FormatInt(since.Unix(), 10))
+	}
+	return append(argv, "-o", "json")
+}
+
+// runJournal reads the user journal for unit's scope as JSON lines. A missing
+// journalctl is (nil, nil): there is no journal to read, which the caller
+// treats exactly like an empty journal. Any other failure is returned with
+// journalctl's own first stderr line.
+func runJournal(ctx context.Context, unit string, since time.Time) ([]byte, error) {
+	argv := journalArgv(unit, since)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
-			return "", nil
+			return nil, nil
 		}
-		return "", err
+		line := firstNonEmptyLine(stderr.String())
+		if line == "" {
+			line = err.Error()
+		}
+		return nil, fmt.Errorf("%s: %s", argv[0], line)
 	}
-	return firstNonEmptyLine(string(out)), nil
+	return out, nil
+}
+
+// ScopeResult reads unit's scope result from the user journal, retrying
+// scopeResultAttempts times scopeResultRetryPause apart inside one
+// scopeResultTimeout context. It stops early as soon as an entry carries a
+// UNIT_RESULT. A journal that holds no such entry is (zero, nil); only a read
+// that never succeeded at all is an error, which callers treat as not
+// oom-killed. unit is the base name ScopeUnitFileName takes.
+func (r *Runner) ScopeResult(ctx context.Context, unit string, since time.Time) (spawn.ScopeResult, error) {
+	cctx, cancel := context.WithTimeout(ctx, scopeResultTimeout)
+	defer cancel()
+
+	var (
+		lastErr  error
+		readable bool
+	)
+	for attempt := 0; attempt < scopeResultAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-cctx.Done():
+				if readable {
+					return spawn.ScopeResult{}, nil
+				}
+				return spawn.ScopeResult{}, lastErr
+			case <-time.After(scopeResultRetryPause):
+			}
+		}
+		out, err := journalOutput(cctx, unit, since)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		readable = true
+		if res := ParseScopeResult(out, since); res.Result != "" {
+			return res, nil
+		}
+	}
+	if !readable {
+		return spawn.ScopeResult{}, lastErr
+	}
+	return spawn.ScopeResult{}, nil
+}
+
+// scopeJournalEntry is the subset of a journalctl -o json line a scope probe
+// reads. __REALTIME_TIMESTAMP is microseconds since the epoch, as a string.
+type scopeJournalEntry struct {
+	Result    string `json:"UNIT_RESULT"`
+	Peak      string `json:"MEMORY_PEAK"`
+	Timestamp string `json:"__REALTIME_TIMESTAMP"`
+}
+
+// ParseScopeResult reads the UNIT_RESULT and MEMORY_PEAK a unit's journal
+// lines carry, ignoring every entry older than since. An entry with no
+// timestamp is kept: nothing places it before since, and the journal, not the
+// parse, is the witness. A line that is not JSON is skipped, a value that does
+// not parse leaves its field at its zero, and a later entry wins. Pure.
+func ParseScopeResult(lines []byte, since time.Time) spawn.ScopeResult {
+	var res spawn.ScopeResult
+	for _, line := range bytes.Split(lines, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var e scopeJournalEntry
+		if err := json.Unmarshal(line, &e); err != nil {
+			continue
+		}
+		if ts, err := strconv.ParseInt(e.Timestamp, 10, 64); err == nil && time.UnixMicro(ts).Before(since) {
+			continue
+		}
+		if e.Result != "" {
+			res.Result = e.Result
+		}
+		if e.Peak != "" {
+			if n, err := strconv.ParseInt(e.Peak, 10, 64); err == nil {
+				res.PeakBytes = n
+			}
+		}
+	}
+	return res
 }
 
 // ParseRusageTrailer parses a RusageTrailer line. Missing fields stay zero,

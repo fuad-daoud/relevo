@@ -1707,6 +1707,9 @@ func TestPlannerSeedCapRefusesOverCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("Send(4097 bytes to a planner) = nil, want the cap refusal")
 	}
+	if !errors.Is(err, ErrSeedOverCap) {
+		t.Errorf("refusal %v does not wrap ErrSeedOverCap", err)
+	}
 	for _, want := range []string{"4097", "--force"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal %q does not name %q", err, want)

@@ -174,14 +174,30 @@ type ScopeStopper interface {
 	StopScope(ctx context.Context, unit string) error
 }
 
+// ScopeResult is what a probe of a scope unit's journal reports: the unit's
+// final systemd Result and the memory peak the kernel recorded for it. Both
+// are zero when the journal holds no entry for the unit.
+type ScopeResult struct {
+	Result    string
+	PeakBytes int64
+}
+
 // ScopeResultProber is the optional half of a Runner that can report the
-// final systemd Result of a scope unit. Callers type-assert Runtime.Runner
-// to it; a Runner that lacks it, or whose probe errors, is treated as
-// "not oom-killed".
+// final systemd Result of a scope unit from its journal. Callers type-assert
+// Runtime.Runner to it; a Runner that lacks it, or whose probe errors, is
+// treated as "not oom-killed".
+//
+// A transient scope that failed is collected at once, so systemctl no longer
+// holds its result; the journal is where the unit's UNIT_RESULT survives.
 type ScopeResultProber interface {
-	// ScopeResult is the systemd Result of the scope unit <unit>.scope, e.g.
-	// "success" or "oom-kill"; "" when the unit is unknown or systemctl is missing.
-	ScopeResult(ctx context.Context, unit string) (string, error)
+	// ScopeResult reads the user journal for the scope unit <unit>.scope,
+	// considering only entries at or after since. Result carries the unit's
+	// UNIT_RESULT ("success", "oom-kill", ...) and PeakBytes its
+	// MEMORY_PEAK. The unit is the base name scopeUnitName returns (no
+	// ".scope"). A missing journalctl, and a journal that holds no entry
+	// for the unit, are not errors; an error means "could not tell", and
+	// callers treat it as not oom-killed.
+	ScopeResult(ctx context.Context, unit string, since time.Time) (ScopeResult, error)
 }
 
 // ErrRunnerUnavailable is returned by a headless path when Runtime.Runner is

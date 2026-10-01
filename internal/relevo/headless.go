@@ -886,10 +886,16 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	// Detect the oom kill before the exit entry, so the entry says it. A
-	// requested stop still wins and is checked below.
-	oom := codeText == "unknown" && oomKilled(ctx, rt, b)
-	if oom {
-		suffix += "; killed by systemd-oomd (host out of memory)"
+	// requested stop still wins and is checked below. The kernel reports a
+	// cgroup kill either as a process that left no trailer (unknown) or as the
+	// supervisor's own 128+SIGKILL (137), so both are probed.
+	var oomPeak int64
+	oom := false
+	if codeText == "unknown" || codeText == "137" {
+		if peak, killed := oomKilled(ctx, rt, b); killed {
+			oom, oomPeak = true, peak
+			suffix += "; " + oomWords(peak)
+		}
 	}
 
 	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix, builderTail(rt, b, logTailLines), b.Shape)); err != nil {
@@ -919,7 +925,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// An oom kill is not the candidate's failure, so re-queue on the same
 	// candidate with no switch and no exclusion.
 	if oom {
-		return requeueOOM(ctx, rt, tx, b, now)
+		return requeueOOM(ctx, rt, tx, b, oomPeak, now)
 	}
 
 	// A cgroup/group kill of the daemon (systemd restart, kill -9 of the
