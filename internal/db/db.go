@@ -144,17 +144,34 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open %s: create: %w: %w", path, ErrOpen, err)
 	}
 
+	// The relevo open lock: one process opens the path at a time, and every
+	// handle in this process on this path shares the one lock. It is taken
+	// before the one-time conversion, which reads and rewrites the file.
+	if err = acquireHandle(path, true); err != nil {
+		return nil, fmt.Errorf("db: open %s: %w", path, err)
+	}
+	defer func() {
+		if err != nil {
+			releaseHandle(path)
+		}
+	}()
+
+	// A file an earlier, modernc build wrote is converted once here, under
+	// modernc, before the engine opens it; a file the engine already wrote is
+	// left alone.
+	if err = convertLegacy(path); err != nil {
+		return nil, fmt.Errorf("db: open %s: %w", path, err)
+	}
+
 	sqlDB, err := openPool(path, busy, false)
 	if err != nil {
-		return nil, fmt.Errorf("db: open %s: %w: %w", path, ErrOpen, err)
+		return nil, fmt.Errorf("db: open %s: %w: %w", path, engineSentinel(err), err)
 	}
 	// Secrets live in this file, so a failure to make it and its WAL siblings
 	// owner-only fails the open: a world-readable secrets store is not a
 	// warning.
-	registerHandle(path)
 	defer func() {
 		if err != nil {
-			releaseHandle(path)
 			if cerr := sqlDB.Close(); cerr != nil {
 				err = fmt.Errorf("%w, and close failed: %w", err, cerr)
 			}
@@ -162,7 +179,7 @@ func openDirect(path string, o Options) (_ *DB, err error) {
 	}()
 
 	if err = ping(sqlDB); err != nil {
-		return nil, fmt.Errorf("db: open %s: ping: %w: %w", path, ErrOpen, err)
+		return nil, fmt.Errorf("db: open %s: ping: %w: %w", path, engineSentinel(err), err)
 	}
 	if err = chmodPrivate(path); err != nil {
 		return nil, fmt.Errorf("db: open %s: chmod: %w: %w", path, ErrOpen, err)
@@ -364,6 +381,16 @@ func errCode(err error) (code, ext int, ok bool) {
 		return code, wire.ExtendedCodeOf(err), true
 	}
 	return engineCode(err)
+}
+
+// engineSentinel picks the sentinel an engine error from an open carries: a
+// lock another process holds is ErrLocked, so a caller can fall back to the
+// owner, and everything else is ErrOpen.
+func engineSentinel(err error) error {
+	if engineLocked(err) {
+		return ErrLocked
+	}
+	return ErrOpen
 }
 
 // mapBusy turns a driver's SQLITE_BUSY into ErrBusy. It matches any error

@@ -15,3 +15,9 @@ var ErrInvalid = errors.New("invalid")
 // ErrNewerSchema reports a database whose schema is newer than this relevo's
 // embedded migrations. Open leaves such a database untouched.
 var ErrNewerSchema = errors.New("schema is newer than this relevo")
+
+// ErrLocked reports that another process holds the database: relevo's own
+// per-path open lock, or the engine's own file lock. The daemon is the only
+// process that may open relevo.db, so a caller that sees it must reach the
+// database through the owner instead of opening the file.
+var ErrLocked = errors.New("database is locked by another process")

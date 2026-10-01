@@ -113,6 +113,46 @@ func engineCode(err error) (int, int, bool) {
 	return 0, 0, false
 }
 
+// engineStatus reports the Turso library's state under root. No library under
+// root/turso-go means the daemon has not opened a database there yet: that is
+// Missing, not an error. Otherwise the extracted copy is verified through the
+// same loader an open uses, with the cache directory pointed at root, and the
+// load is never retried: a mismatch is reported, not healed.
+func engineStatus(root string) EngineState {
+	cacheDir := filepath.Join(root, "turso-go")
+	status := EngineState{Name: engineName, CacheDir: cacheDir}
+	matches, err := filepath.Glob(filepath.Join(cacheDir, "*", libraryFileName()))
+	if err != nil {
+		status.Err = fmt.Errorf("find the extracted turso library: %w", err)
+		return status
+	}
+	if len(matches) == 0 {
+		status.Missing = true
+		return status
+	}
+	status.Library = matches[0]
+
+	prev, had := os.LookupEnv(cacheEnv)
+	if err := os.Setenv(cacheEnv, root); err != nil {
+		status.Err = fmt.Errorf("set %s: %w", cacheEnv, err)
+		return status
+	}
+	defer restoreEnv(cacheEnv, prev, had)
+
+	if _, err := turso_libs.LoadTursoLibrary(turso_libs.LoadTursoLibraryConfig{}); err != nil {
+		status.Err = err
+	}
+	return status
+}
+
+// engineLocked reports whether err is the engine's own refusal to open a file
+// another process holds. Turso reports it as ErrTursoGeneric carrying "locked
+// by another process" (core/io/unix.rs); modernc's own lock is a busy error,
+// which mapBusy already handles, so it never reaches here.
+func engineLocked(err error) bool {
+	return errors.Is(err, turso.ErrTursoGeneric) && strings.Contains(err.Error(), "locked by another process")
+}
+
 // vacuumIntoStmt builds Turso's literal VACUUM INTO form: it accepts a string
 // literal only, not a placeholder. A path holding a quote cannot be embedded in
 // a literal, so it is refused.

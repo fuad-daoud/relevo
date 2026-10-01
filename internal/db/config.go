@@ -207,14 +207,25 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 	}
 
 	busy := time.Duration(busyTimeoutMS) * time.Millisecond
-	sqlDB, err := openPool(path, busy, true)
-	if err != nil {
-		return nil, fmt.Errorf("db: open readonly %s: %w: %w", path, ErrOpen, err)
+
+	// A read-only open takes the same path lock but never waits for it: a
+	// caller that must not write needs an answer now, and ErrLocked lets it
+	// fall back to the owner.
+	if err = acquireHandle(path, false); err != nil {
+		return nil, fmt.Errorf("db: open readonly %s: %w", path, err)
 	}
-	registerHandle(path)
 	defer func() {
 		if err != nil {
 			releaseHandle(path)
+		}
+	}()
+
+	sqlDB, err := openPool(path, busy, true)
+	if err != nil {
+		return nil, fmt.Errorf("db: open readonly %s: %w: %w", path, engineSentinel(err), err)
+	}
+	defer func() {
+		if err != nil {
 			if cerr := sqlDB.Close(); cerr != nil {
 				err = fmt.Errorf("%w, and close failed: %w", err, cerr)
 			}
@@ -222,7 +233,7 @@ func openReadOnly(path string, o Options) (_ *DB, err error) {
 	}()
 
 	if err = ping(sqlDB); err != nil {
-		return nil, fmt.Errorf("db: open readonly %s: ping: %w: %w", path, ErrOpen, err)
+		return nil, fmt.Errorf("db: open readonly %s: ping: %w: %w", path, engineSentinel(err), err)
 	}
 
 	have, err := maxVersion(sqlDB)

@@ -57,6 +57,10 @@ func openModernc(dsn string) (*sql.DB, error) {
 // wire.CodeOf reads it directly.
 func engineCode(error) (int, int, bool) { return 0, 0, false }
 
+// engineLocked reports no engine-level lock: modernc's SQLITE_BUSY is a busy
+// error, which mapBusy maps, not a separate locked sentinel.
+func engineLocked(error) bool { return false }
+
 // vacuumIntoStmt is the placeholder form modernc accepts, with the target
 // passed as an argument.
 func vacuumIntoStmt(path string) (string, []any, error) {
@@ -65,3 +69,11 @@ func vacuumIntoStmt(path string) (string, []any, error) {
 
 // prepareEngine is a no-op: modernc carries no external library to extract.
 func prepareEngine(string) error { return nil }
+
+// convertLegacy is a no-op under modernc: this engine reads the file an earlier
+// modernc build wrote, so there is nothing to convert.
+func convertLegacy(string) error { return nil }
+
+// engineStatus reports the modernc engine: it carries no external library, so
+// there is nothing to be missing and nothing to mismatch.
+func engineStatus(string) EngineState { return EngineState{Name: engineName} }
