@@ -21,6 +21,7 @@ func sampleSeedView() SeedView {
 		RoundPromptPath:  "/tmp/chain/round-prompt.md",
 		Branch:           "relevo/x",
 		Base:             "main",
+		PlanPaths:        []string{"/tmp/chain/plan-one.md", "/tmp/chain/plan-two.md"},
 		BuilderRoundKind: BuilderRoundCorrection,
 		BuilderRoundOn:   1,
 		BuilderRounds: []SeedRound{
@@ -205,6 +206,77 @@ func TestFixesSeedNamesSecurityOutput(t *testing.T) {
 	t.Parallel()
 	v := sampleSeedView()
 	assertSeedNames(t, SeedFixes, v, v.OutputPath, v.BranchDiffPath)
+}
+
+// TestSecuritySeedNamesTheWholeBranchDiffAndThePlanCopies pins the security
+// seed's whole-branch rendering: with a captured branch diff it names that
+// path, lists every plan copy under a Plan copies line, and renders no
+// fallback sentence.
+func TestSecuritySeedNamesTheWholeBranchDiffAndThePlanCopies(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	out := assertSeedNames(t, SeedSecurity, v,
+		v.BranchDiffPath,
+		"Plan copies:",
+		"Plan copy: "+v.PlanPaths[0]+".",
+		"Plan copy: "+v.PlanPaths[1]+".",
+	)
+	if strings.Contains(out, "No branch diff was captured") {
+		t.Errorf("security seed words a miss while a branch diff is named:\n%s", out)
+	}
+}
+
+// TestSecuritySeedSaysToDiffFromTheBaseWhenNoBranchDiffWasCaptured pins the
+// security seed's fallback: no branch diff but a base names the base and no
+// path, and an empty base says the plain miss with no dangling branch sentence.
+func TestSecuritySeedSaysToDiffFromTheBaseWhenNoBranchDiffWasCaptured(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	v.BranchDiffPath = ""
+	v.PlanPaths = nil
+	out := assertSeedNames(t, SeedSecurity, v,
+		"No branch diff was captured; diff the branch yourself from "+v.Base+".")
+	if strings.Contains(out, "Plan copies:") {
+		t.Errorf("security seed lists plan copies it does not have:\n%s", out)
+	}
+
+	v.Base = ""
+	out = assertSeedNames(t, SeedSecurity, v, "No branch diff was captured.")
+	if strings.Contains(out, "diff the branch yourself from") {
+		t.Errorf("security seed leaves a dangling branch sentence with no base:\n%s", out)
+	}
+}
+
+// TestFixesSeedNamesTheWholeBranchDiffAndThePlanCopies pins the fixes seed's
+// whole-branch rendering: it keeps the security output, names the branch diff
+// path, and lists every plan copy.
+func TestFixesSeedNamesTheWholeBranchDiffAndThePlanCopies(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	out := assertSeedNames(t, SeedFixes, v,
+		"Security output: "+v.OutputPath+".",
+		v.BranchDiffPath,
+		"Plan copies:",
+		"Plan copy: "+v.PlanPaths[0]+".",
+		"Plan copy: "+v.PlanPaths[1]+".",
+	)
+	if strings.Contains(out, "No branch diff was captured") {
+		t.Errorf("fixes seed words a miss while a branch diff is named:\n%s", out)
+	}
+}
+
+// TestFixesSeedSaysToDiffFromTheBaseWhenNoBranchDiffWasCaptured pins the fixes
+// seed's fallback: it names the base and no path.
+func TestFixesSeedSaysToDiffFromTheBaseWhenNoBranchDiffWasCaptured(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	v.BranchDiffPath = ""
+	v.PlanPaths = nil
+	out := assertSeedNames(t, SeedFixes, v,
+		"No branch diff was captured; diff the branch yourself from "+v.Base+".")
+	if strings.Contains(out, "Plan copies:") {
+		t.Errorf("fixes seed lists plan copies it does not have:\n%s", out)
+	}
 }
 
 func TestSeedRejectsAnUnknownKind(t *testing.T) {

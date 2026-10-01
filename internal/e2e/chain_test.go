@@ -201,9 +201,10 @@ func TestChainE2E(t *testing.T) {
 		t.Errorf("the plan's cumulative diff at %s is empty", planDiffKey)
 	}
 
-	// The correction round changes no tracked content, so its own round diff was
-	// never captured: the seed words that input path-free -- a seed never names
-	// a key a runner cannot open.
+	// The correction round appends its own line to the fake worktree file, so
+	// its own round diff was captured: the seed names a copy of that diff. A
+	// runner that could not produce one would instead read the path-free
+	// "not available" wording -- a seed never names a key a runner cannot open.
 	diffKey := rt.Store.DiffPath(builderName, 2)
 	if _, err := rt.Store.ReadFile(diffKey); err == nil {
 		diffCopy, ok := rt.Store.ChainInputPath(chainE2EName, diffKey)
@@ -279,6 +280,42 @@ func TestChainE2E(t *testing.T) {
 	}
 	if !chainPromptOpen(t, rt, plannerName, 1) || !chainPromptOpen(t, rt, plannerName, 2) {
 		t.Fatalf("the planner has no prompt entries for both seeds: a correction and a fix plan")
+	}
+
+	// The security member's seed names the whole branch diff -- the chain's base
+	// to the builder's newest closed round (3), copied under the chain's own
+	// directory -- and the copy carries every round's line, so a one-round diff
+	// cannot stand in for it.
+	securitySeed := chainStaged(t, rt, rt.Store.PromptPath(securityName, 1))
+	chainDiffKey := rt.Store.ChainDiffPath(builderName, 3)
+	chainDiffCopy, ok := rt.Store.ChainInputPath(chainE2EName, chainDiffKey)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", chainDiffKey)
+	}
+	if !rt.Store.DiskRegularFile(chainDiffCopy) {
+		t.Errorf("the security seed's whole-branch diff copy %s is not a regular file on disk", chainDiffCopy)
+	}
+	if !strings.Contains(securitySeed, chainDiffCopy) {
+		t.Errorf("the security seed does not name the whole branch diff copy %s:\n%s", chainDiffCopy, securitySeed)
+	}
+	if got, want := chainStaged(t, rt, chainDiffCopy), chainStaged(t, rt, chainDiffKey); got != want {
+		t.Errorf("the whole-branch diff copy %s = %q, want the key's bytes %q", chainDiffCopy, got, want)
+	}
+	for round := 1; round <= 3; round++ {
+		line := fmt.Sprintf("one round of fake work %03d", round)
+		if !strings.Contains(chainStaged(t, rt, chainDiffCopy), line) {
+			t.Errorf("the whole branch diff copy does not carry %q; a one-round diff cannot stand in:\n%s", line, chainStaged(t, rt, chainDiffCopy))
+		}
+	}
+	if oldCopy, ok := rt.Store.ChainInputPath(chainE2EName, rt.Store.DiffPath(builderName, 3)); ok && strings.Contains(securitySeed, oldCopy) {
+		t.Errorf("the security seed still names the old round-diff copy %s:\n%s", oldCopy, securitySeed)
+	}
+
+	// The fix planner's seed names the same whole branch diff copy: the
+	// builder's newest closed round is still 3 at the fixes send.
+	fixSeed := chainStaged(t, rt, rt.Store.PromptPath(plannerName, 2))
+	if !strings.Contains(fixSeed, chainDiffCopy) {
+		t.Errorf("the fix planner's seed does not name the same whole branch diff copy %s:\n%s", chainDiffCopy, fixSeed)
 	}
 
 	// The trace: one row per transition, in seq order, ending at finish. The
