@@ -33,7 +33,9 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	mastermindEP := recordEndpoint(rec)
 
 	if opts.CWD != "" {
-		return AddResult{}, errors.New("remote builders are add-only: --cwd and --server cannot be combined")
+		// The input is simply wrong, so this is the input boundary's refusal
+		// class: the CLI renders it as `refused` (exit 2), never `internal`.
+		return AddResult{}, refuse("remote builders are add-only: --cwd and --server cannot be combined")
 	}
 	if rt.Remote == nil {
 		return AddResult{}, ErrRemoteUnavailable
