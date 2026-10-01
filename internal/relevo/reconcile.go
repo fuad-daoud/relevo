@@ -448,6 +448,22 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		}
 	}
 
+	// A chain reviewer or security member's artifact is relevo's own, and its
+	// block is stripped before the tail parse above: that parse reads
+	// unstructured while the chain just parsed the verdict or finding count
+	// from the stream. The block the chain parsed is the round's real end, so
+	// the member's own outcome is done, not unstructured.
+	switch chainEvent.Kind {
+	case chain.EventReviewerClosed:
+		if chainEvent.Verdict != "" {
+			outcome = reporttail.OutcomeDone
+		}
+	case chain.EventSecurityClosed:
+		if chainEvent.FindingsGiven {
+			outcome = reporttail.OutcomeDone
+		}
+	}
+
 	pLines := strings.SplitN(payload, "\n", 2)
 	pFirst := pLines[0]
 	pRest := ""
