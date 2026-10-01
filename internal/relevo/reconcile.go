@@ -174,13 +174,21 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	// On those early-return paths deliverAndSettle is skipped, so queued
 	// findings wait on disk and the background wait's delivery retrieves them
 	// -- the same behaviour the halt comment below describes for a halted
-	// binding.
+	// binding. An entry a push route already admitted is the exception: no
+	// other route can take it (an admitted entry is not claimable), so the
+	// read-back runs here or it never runs at all.
 	b, err = consult.Reconcile(ctx, consultDeps(rt), tx, b)
 	if err != nil {
 		return b, err
 	}
 
 	if b.State == store.StateDone || b.State == store.StatePaused {
+		// No new push may start for a done or paused binding, but a payload a
+		// push route admitted before the state changed must still be settled.
+		var derr error
+		if b, _, derr = delivery.ConfirmAdmitted(ctx, deliveryDeps(rt), tx, b); derr != nil {
+			return b, derr
+		}
 		return b, nil
 	}
 
