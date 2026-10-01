@@ -306,3 +306,58 @@ func TestCreateScratchFromUsesTheGivenTree(t *testing.T) {
 		t.Fatalf("RemoveScratch: %v", err)
 	}
 }
+
+// TestSweepScratchDoesNotFollowSymlinkedScratchDir pins that a .scratch entry
+// swapped for a symlink out of .worktrees is refused by the sweep, by the
+// per-entry removal and by the .git read, so a directory outside the binding is
+// never removed. It covers scratch.go's SweepScratch, removeScratchEntry and
+// scratchRepoFromRoot, and removeScratchPath.
+func TestSweepScratchDoesNotFollowSymlinkedScratchDir(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	rt := Runtime{Store: st, Git: &fakeGit{}}
+
+	if err := os.MkdirAll(st.WorktreeDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := t.TempDir()
+	work := filepath.Join(victim, "x-001")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, ".git"), []byte("gitdir: /repo/.git/worktrees/x-001\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, st.ScratchWorktreeDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SweepScratch(ctx, rt, nil); err == nil {
+		t.Errorf("SweepScratch followed a symlinked .scratch, want a refusal")
+	}
+	if _, err := os.Stat(work); err != nil {
+		t.Fatalf("the outside worktree was removed by the sweep: %v", err)
+	}
+
+	root, err := st.WorktreeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	rel := filepath.Join(".scratch", "x-001")
+	if err := removeScratchEntry(ctx, rt, root, "x", rel, st.ScratchWorktreePath("x", 1)); err == nil {
+		t.Errorf("removeScratchEntry followed an escaping .scratch, want a refusal")
+	}
+	if _, err := os.Stat(work); err != nil {
+		t.Errorf("the outside worktree was removed by removeScratchEntry: %v", err)
+	}
+
+	if err := removeScratchPath(st, st.ScratchWorktreePath("x", 1)); err == nil {
+		t.Errorf("removeScratchPath followed an escaping .scratch, want a refusal")
+	}
+	if _, err := os.Stat(work); err != nil {
+		t.Errorf("the outside worktree was removed by removeScratchPath: %v", err)
+	}
+}

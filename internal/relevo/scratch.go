@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -113,7 +114,7 @@ func prepareScratchPath(ctx context.Context, rt Runtime, b store.Binding, round 
 			return "", fmt.Errorf("%w: leftover: %w", ErrScratch, err)
 		}
 		if _, err := os.Stat(path); err == nil {
-			if err := os.RemoveAll(path); err != nil {
+			if err := removeScratchPath(rt.Store, path); err != nil {
 				return "", fmt.Errorf("%w: leftover: %w", ErrScratch, err)
 			}
 		}
@@ -123,6 +124,32 @@ func prepareScratchPath(ctx context.Context, rt Runtime, b store.Binding, round 
 		return "", fmt.Errorf("%w: leftover: %w", ErrScratch, err)
 	}
 	return path, nil
+}
+
+// removeScratchPath removes a scratch entry through the .worktrees root, so a
+// .scratch directory swapped for a symlink out of .worktrees leads nowhere:
+// the removal refuses rather than deleting the target.
+func removeScratchPath(st *store.Store, path string) error {
+	rel, ok := scratchRel(st, path)
+	if !ok {
+		return fmt.Errorf("scratch path %s is outside .worktrees", path)
+	}
+	root, err := st.WorktreeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.RemoveAll(rel)
+}
+
+// scratchRel resolves path into the name a WorktreeRoot root takes, when path
+// lies under the binding's .worktrees directory.
+func scratchRel(st *store.Store, path string) (string, bool) {
+	rel, err := filepath.Rel(filepath.Clean(st.WorktreeDir()), path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
 }
 
 // RemoveScratch takes a reader round's throwaway worktree away. A path that is
@@ -141,12 +168,30 @@ func RemoveScratch(ctx context.Context, rt Runtime, b store.Binding, round int) 
 // sorted. Per-entry failures are collected and joined after the whole sweep,
 // so one bad entry never stops the others.
 func SweepScratch(ctx context.Context, rt Runtime, keep func(binding string, round int) bool) ([]string, error) {
-	entries, err := os.ReadDir(rt.Store.ScratchWorktreeDir())
+	root, err := rt.Store.WorktreeRoot()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+
+	scratchDir, ok := scratchRel(rt.Store, rt.Store.ScratchWorktreeDir())
+	if !ok {
+		return nil, nil
+	}
+	f, err := root.Open(scratchDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	entries, rerr := f.ReadDir(-1)
+	_ = f.Close()
+	if rerr != nil {
+		return nil, rerr
 	}
 
 	var (
@@ -166,8 +211,9 @@ func SweepScratch(ctx context.Context, rt Runtime, keep func(binding string, rou
 			continue
 		}
 
+		rel := filepath.Join(scratchDir, e.Name())
 		path := filepath.Join(rt.Store.ScratchWorktreeDir(), e.Name())
-		if err := removeScratchEntry(ctx, rt, name, path); err != nil {
+		if err := removeScratchEntry(ctx, rt, root, name, rel, path); err != nil {
 			errs = append(errs, err)
 			continue
 		}
@@ -182,16 +228,18 @@ func SweepScratch(ctx context.Context, rt Runtime, keep func(binding string, rou
 // binding's own tree names the repository. Without one -- the binding is gone
 // -- the worktree's .git file names it instead: the directory goes first, and
 // the RemoveWorktree call afterwards only prunes the now-stale admin entry.
-func removeScratchEntry(ctx context.Context, rt Runtime, name, path string) error {
+// Both the .git read and the removal go through the .worktrees root, so a
+// plant that escapes it is refused.
+func removeScratchEntry(ctx context.Context, rt Runtime, root *os.Root, name, rel, path string) error {
 	if b, err := rt.Store.Load(name); err == nil {
 		return rt.Git.RemoveWorktree(ctx, b.CWD, path, true)
 	}
 
-	repo, err := scratchRepoFromGitFile(path)
+	repo, err := scratchRepoFromRoot(root, rel)
 	if err != nil {
 		return err
 	}
-	if err := os.RemoveAll(path); err != nil {
+	if err := root.RemoveAll(rel); err != nil {
 		return err
 	}
 	return rt.Git.RemoveWorktree(ctx, repo, path, true)
@@ -218,15 +266,21 @@ func parseScratchName(entry string) (name string, round int, ok bool) {
 	return name, round, true
 }
 
-// scratchRepoFromGitFile derives the repository a scratch worktree belongs to
-// from the "gitdir: <repo>/.git/worktrees/<id>" line of its .git file: the
-// repository path to hand RemoveWorktree, with no relocation mapping.
-func scratchRepoFromGitFile(path string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(path, ".git"))
+// scratchRepoFromRoot derives the repository a scratch worktree belongs to
+// from the "gitdir: <repo>/.git/worktrees/<id>" line of its .git file, read
+// through the .worktrees root as a regular file, so a worktree swapped for a
+// symlink out of .worktrees refuses rather than redirects the read.
+func scratchRepoFromRoot(root *os.Root, rel string) (string, error) {
+	data, err := readRootRegularFile(root, filepath.Join(rel, ".git"))
 	if err != nil {
 		return "", err
 	}
+	return scratchRepoFromData(rel, data)
+}
 
+// scratchRepoFromData parses the repository path out of a scratch worktree's
+// .git file, with no relocation mapping.
+func scratchRepoFromData(path string, data []byte) (string, error) {
 	const prefix = "gitdir: "
 	line := strings.TrimSuffix(string(data), "\n")
 	if !strings.HasPrefix(line, prefix) || strings.ContainsAny(line, "\r\n") {
@@ -252,4 +306,31 @@ func scratchRepoFromGitFile(path string) (string, error) {
 		return "", fmt.Errorf("%s: gitdir %s names no repository", path, admin)
 	}
 	return repo, nil
+}
+
+// readRootRegularFile reads name inside root when it is a regular file,
+// refusing a symlink or any other non-regular file. It Lstats first and stats
+// the handle after opening, so a fifo cannot block the open and a component
+// swapped between the two refuses rather than follows.
+func readRootRegularFile(root *os.Root, name string) ([]byte, error) {
+	fi, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", filepath.Join(root.Name(), name))
+	}
+	f, err := root.OpenFile(name, os.O_RDONLY|oNoFollow, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	hfi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !hfi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", filepath.Join(root.Name(), name))
+	}
+	return io.ReadAll(f)
 }

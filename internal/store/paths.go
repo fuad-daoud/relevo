@@ -433,8 +433,20 @@ func (s *Store) EnsureScratchDir() error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if err := os.MkdirAll(dir, scratchDirMode); err != nil {
+	// .worktrees is the root the scratch directory lives under; create it when
+	// it is absent, then create .scratch through the root, so a .scratch entry
+	// swapped for a symlink out of .worktrees is refused rather than followed.
+	if err := os.MkdirAll(s.WorktreeDir(), scratchDirMode); err != nil {
 		return err
 	}
+	root, err := s.WorktreeRoot()
+	if err != nil {
+		return err
+	}
+	if err := root.MkdirAll(filepath.Base(dir), scratchDirMode); err != nil {
+		_ = root.Close()
+		return err
+	}
+	_ = root.Close()
 	return s.chownCreated(dir)
 }

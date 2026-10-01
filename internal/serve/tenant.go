@@ -13,9 +13,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
-// Layout modes for the root-owned split (plan §0.1): root owns the bindings
-// tree, and a tenant owns only out/, .worktrees/ and its repos/<hex> and
-// tmp/<hex>.
+// Layout modes for the root-owned split: root owns the bindings tree, and a
+// tenant owns only out/, .worktrees/ and its repos/<hex> and tmp/<hex>.
 const (
 	// serveRootMode is the mode of <root> and its bindings/, repos/ and tmp/
 	// children: traversable so a tenant can reach its own directories, not

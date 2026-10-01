@@ -6,6 +6,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -333,13 +334,20 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 // tenant could not be resolved, and otherwise every process the owner starts --
 // rounds, gates, consults, owner-path git and the session reaper -- runs as the
 // tenant, with the tenant's own environment and a per-owner bundle transport.
-// ensureTenantRoots runs on every resolution because the daemon's prunes remove
-// empty tenant directories.
+// A runner that is not a Boundary is wrapped to refuse every Start, so user
+// mode never falls back to the serve uid. ensureTenantRoots runs on every
+// resolution because the daemon's prunes remove empty tenant directories.
 func (s *Server) applyTenant(root string, st *store.Store, rt *relevo.Runtime) {
 	owner := ownerIDOf(root)
 	t, err := s.tenantFor(owner)
 	if b, ok := s.cfg.Runner.(isolate.Boundary); ok {
 		rt.Runner = b.ForTenant(t, err)
+	} else {
+		// User mode runs every builder under a tenant boundary. Production
+		// wraps the runner in resolveIsolation, so a runner that is not one is
+		// a wiring fault; it fails closed with a boundary-setup error, so a
+		// round halts NEEDS YOU rather than running as the serve uid.
+		rt.Runner = isolate.Refuse(s.cfg.Runner, fmt.Errorf("serve.isolation=user needs a tenant boundary runner, got %T", s.cfg.Runner))
 	}
 	if t == nil {
 		st.SetTenantChown(nil)

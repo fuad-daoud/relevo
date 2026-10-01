@@ -772,7 +772,45 @@ On the server machine, the admin runs these on the server host. No `--state` is 
 - `relevo serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
 - A **DONE** served binding is collected once its last round has been acked by the client, or after seven days without an ack: the daemon removes its worktree, deletes its branch and every `refs/relevo/<name>/*` ref in the owner's bare repo, and archives its record in the database (this cleanup lands in the server's next round). Every server unbind releases the binding's branch and refs as well. A bare repo is deleted once no live binding uses it, and the next bind of that repository recreates it.
 
-What `relevo serve` does not do: it runs no MasterMind and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Tenant isolation by unix user or container is tracked in #204.
+What `relevo serve` does not do: it runs no MasterMind and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Unix-user isolation is available as `serve.isolation: "user"` (above); container isolation is tracked in #204.
+
+### Tenant isolation: `user` mode
+
+By default (`serve.isolation: "none"`, and no config change needed) every
+builder runs as the serve uid. `serve.isolation: "user"` runs each owner's
+builders as that owner's declared unix user instead, so tenants cannot read
+each other's worktrees, logins, binding state or repos. It needs the server to
+run as **root**, and the fixed, root-owned state root `/var/lib/relevo` (the
+unit below does both). A server that is not root refuses to start, and a
+half-done switch fails closed: a round halts **NEEDS YOU** naming the missing
+piece (the user, or the exact `chown`/`chmod`), never running unisolated.
+
+To switch a host from `none` to `user` (spec §10):
+
+1. `useradd --create-home <unix-user>` once per tenant, then log each harness
+   in under that user's own HOME (per-user logins are the recommended setup).
+2. Enrol (or re-enrol) each client with its user:
+   `relevo serve enroll --label <client-label> --key "<public key line>" --user <unix-user>`.
+   An unknown user is refused with the exact `useradd` line; re-enrolling an
+   active key fills `unix_user` without revoking it.
+3. Set `serve.isolation: "user"` in the policy. Leave
+   `serve.isolation_shared_logins` off unless the host deliberately shares one
+   group-readable login; when it is on the doctor warns.
+4. Move to the root system unit, `dist/relevo-serve-system.service` (a system
+   unit with `User=root` and `--state /var/lib/relevo`):
+   ```
+   sudo cp dist/relevo-serve-system.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now relevo-serve-system
+   ```
+5. `relevo doctor` reports the mode in force (`scopes=off (isolation=user)`)
+   and every unmet prerequisite with its fix: not root, an active client with
+   no `unix_user`, a user missing on the host, an owner root with the wrong
+   owner, group or mode.
+
+Switching back to `none` keeps root (or chowns the owner roots back). User mode
+runs its builders without a scope — system-manager `--uid` scopes are a
+follow-up — while the `max_builders` cap still applies.
 
 ### Remote builders: the client
 

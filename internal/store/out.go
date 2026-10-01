@@ -49,10 +49,20 @@ func (s *Store) EnsureOutDir(name string) error {
 }
 
 // runnerOutputExists reports whether the exact runner-output path exists either
-// as a regular file on disk or as a sealed round_file row. A non-regular file
-// at the path is not "present": it is a plant the reads refuse.
-func (s *Store) runnerOutputExists(path string) bool {
-	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
+// as a regular file on disk or as a sealed round_file row. The out/ home is
+// checked through its os.Root, so a nested symlink that escapes out/ is
+// refused; the flat home stays raw because the binding directory is root-owned.
+// A non-regular file at either home is not "present": it is a plant the reads
+// refuse.
+func (s *Store) runnerOutputExists(binding, path string) bool {
+	if rel, ok := s.outRelOf(binding, path); ok {
+		if root, err := s.OutRoot(binding); err == nil {
+			defer func() { _ = root.Close() }()
+			if _, ok, rerr := rootStatRegularFile(root, rel); rerr == nil && ok {
+				return true
+			}
+		}
+	} else if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
 		return true
 	}
 	_, _, found, err := s.sealedRoundFile(path)
@@ -64,11 +74,11 @@ func (s *Store) runnerOutputExists(path string) bool {
 // when it exists, else out/ -- the name a fresh round writes.
 func (s *Store) resolveRunnerOutput(name string, round int, suffix, ext string) string {
 	newPath := s.outRoundFile(name, round, suffix, ext)
-	if s.runnerOutputExists(newPath) {
+	if s.runnerOutputExists(name, newPath) {
 		return newPath
 	}
 	oldPath := s.roundFile(name, round, suffix, ext)
-	if s.runnerOutputExists(oldPath) {
+	if s.runnerOutputExists(name, oldPath) {
 		return oldPath
 	}
 	return newPath
@@ -119,10 +129,12 @@ var outLayoutWarned sync.Map
 
 // MigrateOutLayout moves a binding's runner-output files into <binding>/out/:
 // the flat NNN-report.md and NNN-done files and every top-level NNN-* artifact
-// directory. It returns how many entries it moved. A destination that already
-// exists is never clobbered -- the old file is left in place, untouched, and
-// warned about once per process. A failed rename leaves the file for the next
-// tick. out/ being a child of the binding directory, the rename is
+// directory. The binding directory is opened as an os.Root and the renames run
+// through it, so out/ swapped for a symlink out of the binding is refused
+// before anything moves. It returns how many entries it moved. A destination
+// that already exists is never clobbered -- the old file is left in place,
+// untouched, and warned about once per process. A failed rename leaves the file
+// for the next tick. out/ being a child of the binding directory, the rename is
 // same-filesystem by construction, so no copy fallback is needed.
 func (s *Store) MigrateOutLayout(name string) (int, error) {
 	if err := s.EnsureOutDir(name); err != nil {
@@ -136,6 +148,11 @@ func (s *Store) MigrateOutLayout(name string) (int, error) {
 		}
 		return 0, err
 	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = root.Close() }()
 
 	moved := 0
 	for _, e := range entries {
@@ -143,9 +160,8 @@ func (s *Store) MigrateOutLayout(name string) (int, error) {
 		if !migratableRunnerOutput(base, e.IsDir()) {
 			continue
 		}
-		src := filepath.Join(dir, base)
-		dst := filepath.Join(s.OutDir(name), base)
-		if _, derr := os.Lstat(dst); derr == nil {
+		dst := outDirName + "/" + base
+		if _, derr := root.Lstat(dst); derr == nil {
 			if _, warned := outLayoutWarned.LoadOrStore(name+"\x00"+dst, struct{}{}); !warned {
 				slog.Warn("out layout: both homes exist, leaving the old file", "binding", name, "file", base)
 			}
@@ -153,7 +169,7 @@ func (s *Store) MigrateOutLayout(name string) (int, error) {
 		} else if !errors.Is(derr, fs.ErrNotExist) {
 			return moved, derr
 		}
-		if rerr := os.Rename(src, dst); rerr != nil {
+		if rerr := root.Rename(base, dst); rerr != nil {
 			if errors.Is(rerr, fs.ErrNotExist) {
 				continue
 			}

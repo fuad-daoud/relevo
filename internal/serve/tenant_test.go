@@ -266,3 +266,20 @@ func TestUserModeRoundWithForeignOwnerRootHaltsNeedsYou(t *testing.T) {
 		t.Errorf("halt error = %q, want it to name the chmod fix", err)
 	}
 }
+
+// TestUserModeNonBoundaryRunnerFailsClosed pins the guard in applyTenant: a
+// user-mode server whose runner is not an isolate.Boundary wraps it so every
+// Start refuses with spawn.ErrBoundarySetup, instead of falling back to the
+// serve uid. Production wraps the runner in resolveIsolation, so this is a
+// wiring fault the server must refuse rather than run through.
+func TestUserModeNonBoundaryRunnerFailsClosed(t *testing.T) {
+	env := newUserTestEnv(t, "alice", func(c *Config) { c.Runner = newScriptRunner() })
+	rt := env.srv.runtimeAt(ownerRootOf(t, env))
+	_, err := rt.Runner.Start(context.Background(), spawn.ProcSpec{Dir: ownerRootOf(t, env), Argv: []string{"true"}})
+	if !errors.Is(err, spawn.ErrBoundarySetup) {
+		t.Fatalf("Start = %v, want an error wrapping spawn.ErrBoundarySetup", err)
+	}
+	if !strings.Contains(err.Error(), "boundary") {
+		t.Errorf("halt error = %q, want it to name the missing tenant boundary", err)
+	}
+}

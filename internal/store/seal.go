@@ -30,7 +30,7 @@ var roundBaseRe = regexp.MustCompile(`^\d{3}-`)
 func (s *Store) RoundFiles(name string) ([]string, error) {
 	seen := map[string]bool{}
 
-	onDisk, err := diskFiles(s.Dir(name))
+	onDisk, err := s.regularDiskFiles(name)
 	if err != nil {
 		return nil, fmt.Errorf("read binding dir %q: %w", name, err)
 	}
@@ -70,7 +70,7 @@ func (s *Store) RoundFiles(name string) ([]string, error) {
 // flat NNN-* files and from any NNN-* artifact directory holding at least one
 // file, ascending; a round already sealed has none left.
 func (s *Store) RoundsOnDisk(name string) ([]int, error) {
-	files, err := diskFiles(s.Dir(name))
+	files, err := s.regularDiskFiles(name)
 	if err != nil {
 		return nil, fmt.Errorf("read binding dir %q: %w", name, err)
 	}
@@ -241,7 +241,7 @@ func consultActive(c Consult) bool {
 // rows, so a file with one of those names is skipped by the walk and left
 // where it is.
 func (t *Tx) SealRound(name string, round int) (int, error) {
-	files, err := roundFilesOfDir(t.s.Dir(name), round)
+	files, err := t.s.roundFilesOfDir(name, round)
 	if err != nil || len(files) == 0 {
 		return 0, err
 	}
@@ -258,18 +258,26 @@ func (t *Tx) SealRound(name string, round int) (int, error) {
 		return 0, nil
 	}
 
+	root, rerr := t.s.OutRoot(name)
+	if rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+		return 0, rerr
+	}
+	if root != nil {
+		defer func() { _ = root.Close() }()
+	}
+
 	now := time.Now().UTC()
 	sealed := make([]diskRoundFile, 0, len(files))
 	err = d.Tx(func(dtx *db.Tx) error {
 		sealed = sealed[:0]
 		for _, f := range files {
-			body, rerr := os.ReadFile(f.path)
+			body, info, skip, rerr := t.s.sealRead(root, name, f.path)
 			if rerr != nil {
 				return fmt.Errorf("seal %s: %w", f.name, rerr)
 			}
-			info, serr := os.Stat(f.path)
-			if serr != nil {
-				return fmt.Errorf("seal %s: %w", f.name, serr)
+			if skip {
+				slog.Warn("seal: skipping non-regular round file", "binding", name, "file", f.name)
+				continue
 			}
 			if perr := dtx.RoundFilePut(rec.ID, f.name, round, body, info.ModTime(), now); perr != nil {
 				return perr
@@ -283,11 +291,10 @@ func (t *Tx) SealRound(name string, round int) (int, error) {
 	}
 
 	// The seal committed: remove the sealed files, then the directories they
-	// leave empty, bottom up. os.Remove never removes a non-empty directory,
-	// so anything still in one stays. A removal error is logged, never
-	// returned.
+	// leave empty, bottom up. Remove never removes a non-empty directory, so
+	// anything still in one stays. A removal error is logged, never returned.
 	for _, f := range sealed {
-		if rerr := os.Remove(f.path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+		if rerr := t.s.sealRemove(root, name, f.path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
 			slog.Warn("seal: could not remove sealed round file", "binding", name, "file", f.name, "err", rerr)
 		}
 	}
@@ -295,16 +302,56 @@ func (t *Tx) SealRound(name string, round int) (int, error) {
 	return len(sealed), nil
 }
 
+// sealRead reads a round file for sealing: through the out/ root when it lives
+// under out/, raw from the binding directory (root-owned) otherwise. A plant
+// the root refuses -- a symlink swapped in after the walk, a fifo -- is
+// reported as skip, so an escaping link is neither sealed into a row nor
+// removed. skip is false and err nil for a regular file.
+func (s *Store) sealRead(root *os.Root, binding, path string) ([]byte, fs.FileInfo, bool, error) {
+	if rel, ok := s.outRelOf(binding, path); ok && root != nil {
+		f, info, ok, err := rootRegularFile(root, rel)
+		if err != nil {
+			if errors.Is(err, errNotRegular) {
+				return nil, nil, true, nil
+			}
+			return nil, nil, false, err
+		}
+		if !ok {
+			return nil, nil, false, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+		defer func() { _ = f.Close() }()
+		body, rerr := io.ReadAll(f)
+		if rerr != nil {
+			return nil, nil, false, rerr
+		}
+		return body, info, false, nil
+	}
+	body, rerr := os.ReadFile(path)
+	if rerr != nil {
+		return nil, nil, false, rerr
+	}
+	info, serr := os.Stat(path)
+	if serr != nil {
+		return nil, nil, false, serr
+	}
+	return body, info, false, nil
+}
+
+// sealRemove removes a sealed round file: through the out/ root when it is in
+// out/, raw otherwise.
+func (s *Store) sealRemove(root *os.Root, binding, path string) error {
+	if rel, ok := s.outRelOf(binding, path); ok && root != nil {
+		return root.Remove(rel)
+	}
+	return os.Remove(path)
+}
+
 // removeEmptyRoundDirs removes round's artifact directories under name once
 // they are empty, bottom up, in both homes -- the binding directory and its
 // out/ child -- with os.Remove: a directory that still holds an unsealed file
 // -- a skipped symlink or dot-file -- is never removed.
 func (s *Store) removeEmptyRoundDirs(name string, round int) {
-	for _, root := range []string{s.Dir(name), s.OutDir(name)} {
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			continue
-		}
+	if entries, err := os.ReadDir(s.Dir(name)); err == nil {
 		for _, e := range entries {
 			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || !roundBaseRe.MatchString(e.Name()) {
 				continue
@@ -312,8 +359,47 @@ func (s *Store) removeEmptyRoundDirs(name string, round int) {
 			if r, ok := roundOfFile(e.Name()); !ok || r != round {
 				continue
 			}
-			removeEmptyDirsBelow(filepath.Join(root, e.Name()))
+			removeEmptyDirsBelow(filepath.Join(s.Dir(name), e.Name()))
 		}
+	}
+	// The out/ home goes through its root, so a directory swapped for a symlink
+	// out of out/ is refused rather than descended.
+	root, err := s.OutRoot(name)
+	if err != nil {
+		return
+	}
+	defer func() { _ = root.Close() }()
+	entries, err := rootReadDir(root, ".")
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || !roundBaseRe.MatchString(e.Name()) {
+			continue
+		}
+		if r, ok := roundOfFile(e.Name()); !ok || r != round {
+			continue
+		}
+		removeEmptyDirsBelowRoot(root, e.Name())
+	}
+}
+
+// removeEmptyDirsBelowRoot removes dir's empty subdirectories and then dir
+// itself, bottom up, through the out/ root: a directory swapped for a symlink
+// that escapes the root is refused, and a directory that still holds a file is
+// never removed. It never returns an error; a removal that fails is logged.
+func removeEmptyDirsBelowRoot(root *os.Root, dir string) {
+	entries, err := rootReadDir(root, dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			removeEmptyDirsBelowRoot(root, joinRel(dir, e.Name()))
+		}
+	}
+	if derr := root.Remove(dir); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
+		slog.Warn("seal: could not remove empty round artifact dir", "dir", filepath.Join(root.Name(), filepath.FromSlash(dir)), "err", derr)
 	}
 }
 

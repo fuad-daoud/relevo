@@ -158,6 +158,57 @@ func cut(e string) (name, value string, ok bool) {
 	return e, "", false
 }
 
+// Refuse wraps base so every Start fails with a boundary-setup error carrying
+// cause's text, while Alive, ExitCode, Kill and Rusage still delegate to base.
+// It is how a user-mode server fails closed when its runner is not a Boundary:
+// a round halts NEEDS YOU instead of running as the serve uid.
+func Refuse(base spawn.Runner, cause error) spawn.Runner {
+	return refuseRunner{base: base, cause: cause}
+}
+
+// refuseRunner is the Runner Refuse returns.
+type refuseRunner struct {
+	base  spawn.Runner
+	cause error
+}
+
+// Start never launches: the boundary could not be established.
+func (r refuseRunner) Start(context.Context, spawn.ProcSpec) (spawn.ProcHandle, error) {
+	return spawn.ProcHandle{}, boundarySetupError(r.cause)
+}
+
+// Alive delegates to the base, nil-safe.
+func (r refuseRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
+	if r.base == nil {
+		return false, nil
+	}
+	return r.base.Alive(ctx, h)
+}
+
+// ExitCode delegates to the base, nil-safe.
+func (r refuseRunner) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath string) (int, bool) {
+	if r.base == nil {
+		return 0, false
+	}
+	return r.base.ExitCode(ctx, h, logPath)
+}
+
+// Kill delegates to the base, nil-safe.
+func (r refuseRunner) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string) error {
+	if r.base == nil {
+		return nil
+	}
+	return r.base.Kill(ctx, h, streamPath)
+}
+
+// Rusage delegates to the base, nil-safe.
+func (r refuseRunner) Rusage(ctx context.Context, h spawn.ProcHandle, streamPath string) (spawn.ProcRusage, bool) {
+	if r.base == nil {
+		return spawn.ProcRusage{}, false
+	}
+	return r.base.Rusage(ctx, h, streamPath)
+}
+
 // Boundary is the runner Wrap returns for a mode: a spawn.Runner plus the
 // per-owner variant a user-mode server binds to one tenant with ForTenant.
 type Boundary interface {

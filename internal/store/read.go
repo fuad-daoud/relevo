@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -55,18 +56,25 @@ func (s *Store) ReadFile(path string) ([]byte, error) {
 }
 
 // readRunnerOutput reads a runner-output name from its two homes, out/ first,
-// and then from the sealed row. Disk touches go through Lstat and O_NOFOLLOW so
-// a symlink at either home is refused, never followed; a regular disk file wins
-// over a row, as it always did.
+// and then from the sealed row. The out/ home is read through an os.Root, so a
+// nested NNN-<actor> directory or file swapped for a symlink out of out/ is
+// refused; the flat home stays raw because the binding directory is root-owned.
+// A regular disk file wins over a row, as it always did.
 func (s *Store) readRunnerOutput(binding, name, path string) ([]byte, error) {
-	for _, p := range []string{s.runnerPath(binding, name, true), s.runnerPath(binding, name, false)} {
-		data, ok, err := readRegularFile(p)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			return data, nil
-		}
+	data, ok, err := s.readOutRegularFile(binding, name)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return data, nil
+	}
+
+	data, ok, err = readRegularFile(s.runnerPath(binding, name, false))
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return data, nil
 	}
 
 	body, _, found, lerr := s.sealedRoundFile(path)
@@ -77,6 +85,22 @@ func (s *Store) readRunnerOutput(binding, name, path string) ([]byte, error) {
 		return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 	}
 	return body, nil
+}
+
+// readOutRegularFile reads name from the binding's out/ home through its root.
+// A missing out/ directory, and a missing name inside it, are both not-found:
+// (nil, false, nil). Any other error, including a refusal of a symlink that
+// escapes out/, is returned.
+func (s *Store) readOutRegularFile(binding, name string) ([]byte, bool, error) {
+	root, err := s.OutRoot(binding)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	defer func() { _ = root.Close() }()
+	return rootReadRegularFile(root, filepath.FromSlash(name))
 }
 
 // readRegularFile reads path when it is a regular file, refusing a symlink or
@@ -146,19 +170,24 @@ func (s *Store) StatFile(path string) (size int64, mtime time.Time, ok bool, err
 }
 
 // statRunnerOutput stats a runner-output name's two homes, out/ first,
-// refusing a non-regular file, then falls back to the sealed row.
+// refusing a non-regular file, then falls back to the sealed row. The out/ home
+// is statted through its os.Root, so a nested symlink that escapes out/ is
+// refused; the flat home stays raw because the binding directory is root-owned.
 func (s *Store) statRunnerOutput(binding, name, path string) (int64, time.Time, bool, error) {
-	for _, p := range []string{s.runnerPath(binding, name, true), s.runnerPath(binding, name, false)} {
-		fi, lerr := os.Lstat(p)
-		if lerr == nil {
-			if !fi.Mode().IsRegular() {
-				return 0, time.Time{}, false, fmt.Errorf("runner output %s is not a regular file", p)
-			}
-			return fi.Size(), fi.ModTime(), true, nil
+	if fi, ok, err := s.statOutRegularFile(binding, name); err != nil {
+		return 0, time.Time{}, false, err
+	} else if ok {
+		return fi.Size(), fi.ModTime(), true, nil
+	}
+
+	p := s.runnerPath(binding, name, false)
+	if fi, lerr := os.Lstat(p); lerr == nil {
+		if !fi.Mode().IsRegular() {
+			return 0, time.Time{}, false, fmt.Errorf("runner output %s is not a regular file", p)
 		}
-		if !errors.Is(lerr, fs.ErrNotExist) {
-			return 0, time.Time{}, false, lerr
-		}
+		return fi.Size(), fi.ModTime(), true, nil
+	} else if !errors.Is(lerr, fs.ErrNotExist) {
+		return 0, time.Time{}, false, lerr
 	}
 
 	body, mt, found, lerr := s.sealedRoundFile(path)
@@ -169,6 +198,21 @@ func (s *Store) statRunnerOutput(binding, name, path string) (int64, time.Time, 
 		return 0, time.Time{}, false, &fs.PathError{Op: "stat", Path: path, Err: fs.ErrNotExist}
 	}
 	return int64(len(body)), mt, true, nil
+}
+
+// statOutRegularFile stats name in the binding's out/ home through its root. A
+// missing out/ directory and a missing name are both not-found; a refusal of an
+// escaping symlink is an error.
+func (s *Store) statOutRegularFile(binding, name string) (fs.FileInfo, bool, error) {
+	root, err := s.OutRoot(binding)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	defer func() { _ = root.Close() }()
+	return rootStatRegularFile(root, filepath.FromSlash(name))
 }
 
 // sealedRoundFile answers path from the row that holds it: the name's live

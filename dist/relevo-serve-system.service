@@ -1,0 +1,23 @@
+[Unit]
+Description=relevo serve - remote builders for enrolled relevo clients (user isolation)
+# The system unit exists for `serve.isolation: "user"`, which needs root: only
+# root can switch a child to the tenant's uid and gid. A user unit cannot, and
+# dist/relevo-serve.service is that user unit. This unit replaces it on a host
+# that isolates tenants; it reaches relevo.db through a daemon's owner socket
+# like any other client, so the host's (system) daemon must be running.
+After=network.target
+
+[Service]
+Type=simple
+User=root
+# The fixed, root-owned state root user mode uses: outside every tenant's home,
+# so the server and its tenants agree on one location.
+ExecStart=/usr/local/bin/relevo serve --state /var/lib/relevo --listen :7777
+Restart=on-failure
+RestartSec=5
+# An OOM-killed builder is an exited builder; the daemon survives it and
+# switches or halts as policy says (see dist/relevo-serve.service).
+OOMPolicy=continue
+
+[Install]
+WantedBy=multi-user.target

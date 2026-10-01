@@ -251,6 +251,83 @@ func TestReadRunnerOutputRefusesSymlinks(t *testing.T) {
 	}
 }
 
+// TestReadRunnerOutputRefusesSymlinkedIntermediateDir pins that a nested
+// NNN-<actor> directory swapped for a symlink out of out/ is refused by the
+// reads, the stat and the resolver, and its outside target is never touched.
+// Covers read.go's two out/ homes and out.go's runnerOutputExists.
+func TestReadRunnerOutputRefusesSymlinkedIntermediateDir(t *testing.T) {
+	t.Parallel()
+
+	s, name := seedBinding(t)
+	if err := os.MkdirAll(s.OutDir(name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	const body = "outside-body\n"
+	if err := os.WriteFile(filepath.Join(target, "summary.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(s.OutDir(name), "001-reviewer")); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(s.OutDir(name), "001-reviewer", "summary.md")
+	if got, err := s.ReadFile(path); err == nil {
+		t.Errorf("ReadFile = %q, want the escaping artifact dir refused", got)
+	}
+	if _, _, ok, err := s.StatFile(path); err == nil || ok {
+		t.Errorf("StatFile = ok %v err %v, want a refusal", ok, err)
+	}
+
+	// A symlinked out/ file is not "present": an existing old flat file wins
+	// the resolver rather than being shadowed by the plant.
+	oldReport := filepath.Join(s.Dir(name), "001-report.md")
+	if err := os.WriteFile(oldReport, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(target, "summary.md"), filepath.Join(s.OutDir(name), "001-report.md")); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReportPath(name, 1); got != oldReport {
+		t.Errorf("ReportPath = %q, want the old flat path %q", got, oldReport)
+	}
+
+	if b, err := os.ReadFile(filepath.Join(target, "summary.md")); err != nil || string(b) != body {
+		t.Errorf("outside file = %q, %v; want it untouched", b, err)
+	}
+}
+
+// TestMigrateOutLayoutStaysInBindingDir pins that a symlinked out/ is refused
+// by the migration rather than followed, so nothing is moved outside the
+// binding directory.
+func TestMigrateOutLayoutStaysInBindingDir(t *testing.T) {
+	t.Parallel()
+
+	s, name := seedBinding(t)
+	dir := s.Dir(name)
+	if err := os.WriteFile(filepath.Join(dir, "001-report.md"), []byte("report\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	if err := os.Symlink(target, s.OutDir(name)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.MigrateOutLayout(name); err == nil {
+		t.Fatal("MigrateOutLayout followed a symlinked out/")
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "001-report.md")); err != nil {
+		t.Errorf("the report was moved out of the binding dir: %v", err)
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the outside directory holds %v, want nothing", entries)
+	}
+}
+
 // TestSealedRunnerOutputReadsThroughNewPath pins that a row, not a file, still
 // answers through the out/ name.
 func TestSealedRunnerOutputReadsThroughNewPath(t *testing.T) {
