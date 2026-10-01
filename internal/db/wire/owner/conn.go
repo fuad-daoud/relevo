@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -20,19 +19,6 @@ import (
 // discardTimeout bounds how long cleanup waits for an interrupted statement to
 // return before it rolls the pinned connection back anyway.
 const discardTimeout = 2 * time.Second
-
-// adHocValueCeiling is the largest single value the owner carries to an ad-hoc
-// connection. The engine materialises a whole value before relevo can see it,
-// so an ad-hoc read of one huge value would grow the daemon's heap by it (up to
-// SQLite's 1 GB per-value limit) however small the client's --max-bytes is; the
-// ceiling refuses such a value before the owner copies it into a batch or peeks
-// the next row. It is a var so a test can shrink it rather than allocate 64 MiB,
-// and defaults to the protocol constant db query caps --max-bytes at.
-var adHocValueCeiling = wire.AdHocReadCeiling
-
-// errAdHocValueTooLarge names a value the owner refused to carry to an ad-hoc
-// connection because it is over adHocValueCeiling.
-var errAdHocValueTooLarge = errors.New("ad-hoc read: value over the value ceiling")
 
 // conn is one client connection. It pins one database connection for its life,
 // runs one request at a time, and tracks that request so a cancel or a next can
@@ -480,38 +466,11 @@ func (s *rowStream) read() ([]any, bool, error) {
 		return nil, false, err
 	}
 	// The check runs the moment the engine yields the row, before the caller
-	// copies the value into a batch or peeks the next row, so an over-ceiling
-	// value is refused instead of multiplied.
-	if s.ceiling > 0 {
-		for _, v := range vals {
-			if n := valueBytes(v); n > s.ceiling {
-				return nil, false, fmt.Errorf("%w: %d bytes over %d", errAdHocValueTooLarge, n, s.ceiling)
-			}
-		}
+	// copies the value into a batch or peeks the next row.
+	if err := s.checkCeiling(vals); err != nil {
+		return nil, false, err
 	}
 	return vals, true, nil
-}
-
-// valueBytes is a column value's payload size, which is what the owner would
-// copy into a batch; the other storage classes carry a fixed token, not bytes.
-func valueBytes(v any) int {
-	switch t := v.(type) {
-	case []byte:
-		return len(t)
-	case string:
-		return len(t)
-	}
-	return 0
-}
-
-// adHocCeiling is the single-value ceiling in force for this connection: the
-// ad-hoc read path's cap for a client-marked connection, and none for every
-// other verb, whose own blobs may be large.
-func (c *conn) adHocCeiling() int {
-	if c.adHoc {
-		return adHocValueCeiling
-	}
-	return 0
 }
 
 // cleanup runs when the client goes away: it interrupts any running statement,
