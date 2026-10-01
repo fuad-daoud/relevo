@@ -109,6 +109,17 @@ func boardMasterMind(ref string) (string, error) {
 	}
 }
 
+// boardRepoRootBestEffort resolves cwd's repository root without failing: any
+// git error -- including "not a repository" -- is ("", false), so a bare live
+// board still resolves outside a repository (R6/S2).
+func boardRepoRootBestEffort(cwd string) (string, bool) {
+	root, err := boardRepoRootFn(cwd)
+	if err != nil {
+		return "", false
+	}
+	return root, true
+}
+
 // resolveBoard resolves one `relevo board` invocation to a scene (S2). An
 // explicit path is live-shaped or repo; otherwise --board selects a scene in
 // the resolved MasterMind's live directory, the pointer is used when no name is
@@ -120,10 +131,19 @@ func resolveBoard(cwd, ref, boardName, arg string) (board.Resolved, error) {
 	if err != nil {
 		return board.Resolved{}, fail(codeInternal, "%v", err)
 	}
+	// The repository root is resolved best-effort once, so the disjointness
+	// rule (S5) is real whenever the invocation is inside a repository while a
+	// bare board still works outside one (R6).
+	repoRoot, repoKnown := boardRepoRootBestEffort(cwd)
 
 	if arg != "" {
 		if boardName != "" {
 			return board.Resolved{}, fail(codeUsage, "relevo board: a scene path and --board are exclusive")
+		}
+		if repoKnown {
+			if err := board.DisjointScopes(repoRoot, liveRoot); err != nil {
+				return board.Resolved{}, boardRefusal(err)
+			}
 		}
 		if res, ok, err := board.ResolveLiveArg(liveRoot, cwd, arg); err != nil {
 			return board.Resolved{}, boardRefusal(err)
@@ -140,9 +160,8 @@ func resolveBoard(cwd, ref, boardName, arg string) (board.Resolved, error) {
 			}
 			return res, nil
 		}
-		repoRoot, err := boardRepoRootFn(cwd)
-		if err != nil {
-			return board.Resolved{}, fail(codeUsage, "not inside a git repository: %v", err)
+		if !repoKnown {
+			return board.Resolved{}, fail(codeUsage, "not inside a git repository")
 		}
 		scenePath, err := board.Resolve(repoRoot, cwd, arg)
 		if err != nil {
@@ -164,7 +183,7 @@ func resolveBoard(cwd, ref, boardName, arg string) (board.Resolved, error) {
 	if err != nil {
 		return board.Resolved{}, boardRefusal(err)
 	}
-	res, err := board.ResolveLiveDir("", liveDir, name)
+	res, err := board.ResolveLiveDir(repoRoot, liveDir, name)
 	if err != nil {
 		return board.Resolved{}, boardRefusal(err)
 	}
