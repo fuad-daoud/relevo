@@ -80,6 +80,14 @@ type ServePolicy struct {
 	MaxBuilders *int `json:"max_builders,omitempty"`
 	// Scope is the per-round systemd scope; nil is defaults.
 	Scope *ScopePolicy `json:"scope,omitempty"`
+	// Isolation is the tenant-isolation mode: "none" (the default), "user"
+	// or "container". It is the literal enum, not isolate.Mode, because
+	// policy must not import isolate (isolate imports spawn, and spawn
+	// imports policy). "" is "none".
+	Isolation string `json:"isolation,omitempty"`
+	// IsolationImage names the container image; it is required when
+	// Isolation is "container", and accepted but unused in the other modes.
+	IsolationImage string `json:"isolation_image,omitempty"`
 }
 
 // ScopePolicy configures the per-round systemd scope a served headless
@@ -382,6 +390,26 @@ func (p Policy) ChainSecurityOn() bool {
 		return false
 	}
 	return *p.Chain.Security
+}
+
+// ServeIsolation returns the configured serve.isolation value, "" when the
+// serve block is absent or the key is unset. It is the raw value: callers
+// parse it, so a hand-built unknown reads as a refusal rather than a default.
+func (p Policy) ServeIsolation() string {
+	if p.Serve == nil {
+		return ""
+	}
+	return p.Serve.Isolation
+}
+
+// ServeIsolationImage returns the configured serve.isolation_image, "" when
+// the serve block is absent or the key is unset. It matters only in container
+// mode.
+func (p Policy) ServeIsolationImage() string {
+	if p.Serve == nil {
+		return ""
+	}
+	return p.Serve.IsolationImage
 }
 
 func (p Policy) MaxBuildersOrDefault() int {

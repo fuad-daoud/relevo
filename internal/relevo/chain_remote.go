@@ -137,7 +137,7 @@ func chainRemoteFacts(ctx context.Context, rt Runtime, repo, base string) (resol
 			return "", "", "", "", fmt.Errorf("resolve base %s: %w", resolved, rerr)
 		}
 		if !ok {
-			return "", "", "", "", fmt.Errorf("base %q not found", resolved)
+			return "", "", "", "", refuse("base %q not found", resolved)
 		}
 		resolved = sha
 	}

@@ -11,6 +11,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,10 +30,11 @@ import (
 
 // daemonFlagValues holds the pointers daemon parses into.
 type daemonFlagValues struct {
-	interval  *time.Duration
-	check     *bool
-	preflight *bool
-	pprof     *string
+	interval      *time.Duration
+	check         *bool
+	preflight     *bool
+	pprof         *string
+	autoExitAfter *time.Duration
 }
 
 // daemonFlagSet defines those flags on fs and returns what they parse into.
@@ -44,6 +47,10 @@ func daemonFlagSet(fs *flag.FlagSet) *daemonFlagValues {
 	// --preflight before re-exec'ing into it (#371 §4.4). It stays out of
 	// the usage text and the README, so it is defined but not printed.
 	v.preflight = fs.Bool("preflight", false, "validate the runtime configuration and exit (internal)")
+	// --auto-exit-after is internal: only the daemon this CLI spawns gets it,
+	// so only a daemon with nothing to do exits on its own. It stays out of
+	// the usage text and the README, so it is defined but not printed.
+	v.autoExitAfter = fs.Duration("auto-exit-after", 0, "exit after this long idle (internal)")
 	return v
 }
 
@@ -51,11 +58,23 @@ func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	v := daemonFlagSet(fs)
 	interval, check, preflight, pprofSocket := v.interval, v.check, v.preflight, v.pprof
+	autoExitAfter := v.autoExitAfter
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: relevo daemon [--interval D] [--check] [--pprof <path>]")
+		fmt.Fprintln(fs.Output(), "       relevo daemon stop")
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+
+	// `daemon stop` is a positional form, checked before the --check/--preflight
+	// peek so `daemon stop --check` is a usage error rather than a silent
+	// --check. Any other positional is refused with the usage line.
+	if pos := fs.Args(); len(pos) > 0 {
+		if len(pos) == 1 && pos[0] == "stop" && !*check && !*preflight {
+			return daemonStop()
+		}
+		return fail(codeUsage, "usage: relevo daemon [--interval D] [--check] [--pprof <path>]; relevo daemon stop")
 	}
 
 	// --preflight and --check are the read-only peek. §4.6: neither writes;
@@ -110,7 +129,7 @@ func cmdDaemon(args []string) error {
 		return err
 	}
 	configDirPath := filepath.Join(configDir, "relevo")
-	if _, err := loadConfigReadOnly(root, configDirPath); err != nil {
+	if _, err := loadConfigReadOnly(root, configDirPath, lockedSkip); err != nil {
 		return err
 	}
 
@@ -351,7 +370,22 @@ func cmdDaemon(args []string) error {
 	// daemon.json: what this image runs. Written under the lock, so its
 	// presence with the lock held means a #371 daemon; removed on a clean
 	// shutdown, kept across a re-exec (#371 §4.7).
-	srv, err = serveOwner(d, ln)
+	// An abandoned statement the owner cannot interrupt is ended by re-execing
+	// this binary: the hook the owner calls once logs the reap and asks the
+	// upgrade hook below to return true on its next tick. With re-exec
+	// unavailable the hook is not wired, so the owner keeps refusing ad-hoc
+	// reads without any way to end the statement -- a safe degradation.
+	var reapRequested atomic.Bool
+	var onAbandoned func()
+	if reexecOK {
+		var reapLogged sync.Once
+		onAbandoned = func() {
+			reapLogged.Do(func() { slog.Warn("relevo daemon: reaping an abandoned statement") })
+			reapRequested.Store(true)
+		}
+	}
+
+	srv, err = serveOwner(d, ln, onAbandoned)
 	if err != nil {
 		slog.Warn("relevo daemon: owner socket not served", "err", err)
 	}
@@ -414,6 +448,13 @@ func cmdDaemon(args []string) error {
 		if !reexecOK {
 			return false
 		}
+		// The owner's grace elapsed on a statement the engine will not
+		// interrupt. Only the new image ends it: execing gives the process a
+		// fresh thread for the abandoned statement while the drain lets
+		// ordinary work finish.
+		if reapRequested.Load() {
+			return true
+		}
 
 		prev := up.Refused()
 		decision := up.Check(ctx)
@@ -442,6 +483,16 @@ func cmdDaemon(args []string) error {
 			return true
 		}
 		return false
+	}
+
+	// The idle watcher is the CLI-spawned daemon's own exit: the flag is
+	// internal, so a service-managed or hand-started daemon never gets it. It
+	// cancels this context once the daemon has been idle past the period, which
+	// Run reports as a clean shutdown.
+	if *autoExitAfter > 0 {
+		go watchDaemonIdle(ctx, stop, *autoExitAfter, idlePoll, rt.Now, func() daemonActivity {
+			return daemonActivityNow(root, srv, rt.Store)
+		})
 	}
 
 	slog.Info("relevo daemon starting", "interval", *interval)

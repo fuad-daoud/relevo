@@ -3,7 +3,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,10 +17,9 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/store"
-
-	_ "modernc.org/sqlite"
 )
 
 // cmdTestHelperEnv marks the one-opener child: TestMain answers it before any
@@ -155,30 +153,17 @@ func TestOpenDBDialsTheOwnerSocket(t *testing.T) {
 	}
 }
 
-// TestDirectEnvOpensTheFile pins the hidden escape hatch: with RELEVO_DB_DIRECT
-// set the machine path opens the file even when an owner is listening.
-func TestDirectEnvOpensTheFile(t *testing.T) {
+// TestRouteIgnoresTheRetiredDirectEnv pins that the RELEVO_DB_DIRECT escape
+// hatch is gone: setting it must not change the route.
+func TestRouteIgnoresTheRetiredDirectEnv(t *testing.T) {
 	root := shortStateRoot(t)
 	t.Setenv("XDG_STATE_HOME", root)
-	served := startTestOwner(t, root)
 	t.Setenv("RELEVO_DB_DIRECT", "1")
 
-	if mode, _, _ := routeForArgs([]string{"status"}); mode != routeDirect {
-		t.Errorf("routeForArgs with RELEVO_DB_DIRECT = %v, want direct", mode)
-	}
-	installDBRoute(routeDirect, verbDialBudget, 0)
-	t.Cleanup(func() { installDBRoute(routeNone, verbDialBudget, 0) })
-
-	d, err := openDB(machineDBPath())
-	if err != nil {
-		t.Fatalf("openDB: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
-	if got := d.Route(); got != "file" {
-		t.Errorf("route = %q, want %q", got, "file")
-	}
-	if got := atomic.LoadInt32(&served.ln.accepts); got != 0 {
-		t.Errorf("the owner accepted %d connections during a direct open, want 0", got)
+	mode, budget, startWait := routeForArgs([]string{"status"})
+	if mode != routeOwner || budget != verbDialBudget || startWait != ownerStartWait {
+		t.Errorf("routeForArgs(status) with RELEVO_DB_DIRECT = %v, %v, %v; want %v, %v, %v",
+			mode, budget, startWait, routeOwner, verbDialBudget, ownerStartWait)
 	}
 }
 
@@ -340,7 +325,7 @@ func TestStatuslineGivesUpSilently(t *testing.T) {
 // TestStartDaemonHelpers pins the pure helpers the detached spawn is built
 // from; no process is spawned.
 func TestStartDaemonHelpers(t *testing.T) {
-	if got := daemonArgv("/usr/bin/relevo"); !reflect.DeepEqual(got, []string{"/usr/bin/relevo", "daemon"}) {
+	if got := daemonArgv("/usr/bin/relevo"); !reflect.DeepEqual(got, []string{"/usr/bin/relevo", "daemon", "--auto-exit-after", daemonAutoExitAfter.String()}) {
 		t.Errorf("daemonArgv = %v", got)
 	}
 	if got, want := daemonLogPath("/tmp/rvo-x"), filepath.Join("/tmp/rvo-x", "daemon.log"); got != want {
@@ -641,16 +626,15 @@ func seedNewerSchema(t *testing.T, path string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	defer func() { _ = sqlDB.Close() }()
+	sqlDB := dbtest.RawOpen(t, path)
 
 	if _, err := sqlDB.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)`); err != nil {
 		t.Fatalf("create schema_version: %v", err)
 	}
 	if _, err := sqlDB.Exec(`INSERT INTO schema_version (version, applied_at) VALUES (999, '2026-01-01T00:00:00.000Z')`); err != nil {
 		t.Fatalf("insert version 999: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close: %v", err)
 	}
 }

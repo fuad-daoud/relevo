@@ -55,12 +55,16 @@ Commands:
   stop      kill the runner process and close its round without a report unless one is already on disk
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
               --done clears every binding the MasterMind marked DONE [--delete] [--dry-run]
-  daemon    run the long-running reconciler
+  daemon    run the long-running reconciler (daemon stop stops the daemon this CLI started)
   mcp       run an MCP server over stdio for a Claude Code MasterMind pane: status/send/show/gate/done
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
   bugreport assemble a local, redacted bug-report bundle and print the gh line
+  db        query '<SQL>' [--json]
+            read relevo.db with one read-only SQL statement, through the daemon
+            when it runs; use it instead of sqlite3, which the daemon's lock
+            keeps out
   chain     start a chain: build, review and correct across an ordered list of plans
               --plan F (repeatable) --feature L | --no-feature [--security[=false]] [--base R]
   update    replace this release binary with the latest release, checksum-verified [--check] [--to vX.Y.Z] [--release]
@@ -236,6 +240,8 @@ func run(args []string) error {
 		return cmdDoctor(args[1:])
 	case "bugreport":
 		return cmdBugreport(args[1:])
+	case "db":
+		return cmdDB(args[1:])
 	case "chain":
 		return cmdChain(args[1:])
 	case "update":
@@ -285,7 +291,6 @@ var removedVerbs = map[string]string{
 	"available":   "relevo gate --clear <provider>",
 	"tab":         "relevo history --tab",
 	"stats":       "relevo history --stats",
-	"db":          "relevo doctor (the database row)",
 
 	// The rename (D5): the verb is `relevo mastermind` now, and the old
 	// spelling exits 2 through this map exactly like every other removed verb.

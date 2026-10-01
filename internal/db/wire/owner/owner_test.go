@@ -44,7 +44,7 @@ func startServer(t *testing.T) (*Server, string) {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
 	l, sock := shortListener(t)
-	srv := New(sqlDB, 3, 9, "01ORIGIN")
+	srv := New(sqlDB, 3, 9, "01ORIGIN", nil)
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() {
 		_ = srv.Close()
@@ -152,6 +152,32 @@ func readDone(t *testing.T, w *wire.Conn, nc net.Conn) {
 	}
 }
 
+// TestConnCountCountsLiveConnections pins the count the welcome and the
+// daemon's idle watcher read: 0 with no client, 1 after a handshake, and back
+// to 0 once the client closes.
+func TestConnCountCountsLiveConnections(t *testing.T) {
+	srv, sock := startServer(t)
+	if got := srv.ConnCount(); got != 0 {
+		t.Fatalf("ConnCount with no client = %d, want 0", got)
+	}
+
+	w, nc := dialRaw(t, sock)
+	sendHello(t, w, wire.Version)
+	_ = welcome(t, w)
+	if got := srv.ConnCount(); got != 1 {
+		t.Fatalf("ConnCount after the handshake = %d, want 1", got)
+	}
+
+	_ = nc.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.ConnCount() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("ConnCount = %d after the client closed, want 0", srv.ConnCount())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestOwnerGreetsWithItsSchemaAndOrigin(t *testing.T) {
 	_, sock := startServer(t)
 	w, _ := dialRaw(t, sock)
@@ -241,6 +267,44 @@ func TestConnectionCapWaitsInsteadOfRefusing(t *testing.T) {
 	// Free the slot; the waiting request now succeeds.
 	_ = na.Close()
 	readDone(t, b, nb)
+}
+
+func TestLiveConnectionCapDropsTheExtra(t *testing.T) {
+	old := maxLiveConns
+	maxLiveConns = 1
+	defer func() { maxLiveConns = old }()
+
+	_, sock := startServer(t)
+
+	// The first connection handshakes and then sits idle, holding the one live
+	// slot for as long as it stays open.
+	a, na := dialRaw(t, sock)
+	sendHello(t, a, wire.Version)
+	welcome(t, a)
+
+	// The next dial is dropped without a frame, so its hello is either never
+	// written or never answered: one of the two fails within the deadline.
+	b, nb := dialRaw(t, sock)
+	if err := nb.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetWriteDeadline: %v", err)
+	}
+	if err := tryHello(b, wire.Version); err != nil {
+		// The owner closed the connection before the hello could be written.
+	} else {
+		if err := nb.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatalf("SetReadDeadline: %v", err)
+		}
+		if _, err := b.Read(); err == nil {
+			t.Fatal("owner served a connection over the live bound")
+		}
+	}
+	_ = nb.SetWriteDeadline(time.Time{})
+
+	// The holder is still served: its request pins a database connection and
+	// returns a done, so dropping the extra connection leaves existing work
+	// and the pinned path untouched.
+	execRaw(t, a, 1, `CREATE TABLE t (n INTEGER)`)
+	readDone(t, a, na)
 }
 
 // liveConn returns the server's one live connection.

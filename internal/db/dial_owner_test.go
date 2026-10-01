@@ -35,9 +35,9 @@ func shortSock(t *testing.T) (net.Listener, string) {
 func rawAheadDB(t *testing.T) (*sql.DB, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "ahead.db")
-	raw, err := sql.Open("sqlite", "file:"+path)
+	raw, err := db.OpenRaw(path)
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenRaw: %v", err)
 	}
 	t.Cleanup(func() { _ = raw.Close() })
 	if _, err := raw.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)`); err != nil {
@@ -62,7 +62,7 @@ func TestDialOfANewerDatabaseReportsNewer(t *testing.T) {
 	}
 
 	l, sock := shortSock(t)
-	srv := owner.New(raw, directHave, directKnow, "01ORIGIN")
+	srv := owner.New(raw, directHave, directKnow, "01ORIGIN", nil)
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() {
 		_ = srv.Close()
@@ -100,7 +100,7 @@ func TestDialKnowComesFromTheBinaryNotTheOwner(t *testing.T) {
 	// handle's answer: know is this binary's embedded maximum, exactly what a
 	// direct open computes.
 	l, sock := shortSock(t)
-	srv := owner.New(raw, 99, 1, "01ORIGIN")
+	srv := owner.New(raw, 99, 1, "01ORIGIN", nil)
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() {
 		_ = srv.Close()

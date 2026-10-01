@@ -66,6 +66,20 @@ func Texts(kind string, stream []byte) []string {
 	return out
 }
 
+// LastWithBlock returns the last text in the stream that carries a fenced
+// `relevo` block: the message a chain's verdict or finding-count parse reads,
+// which a reader that recaps afterwards would otherwise hide from the round's
+// saved artifact. "" when no message carries one.
+func LastWithBlock(kind string, stream []byte) string {
+	texts := Texts(kind, stream)
+	for i := len(texts) - 1; i >= 0; i-- {
+		if strings.Contains(texts[i], "```relevo") {
+			return texts[i]
+		}
+	}
+	return ""
+}
+
 func finalCandidates(kind string, obj map[string]any) (last, fallback string) {
 	switch kind {
 	case "claude":

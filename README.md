@@ -410,6 +410,11 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   `--pprof` serves `net/http/pprof` on a unix socket (owner-only, off by
   default) for profiling a daemon that is too slow or too large; fetch it with
   `curl --unix-socket <path> http://x/debug/pprof/profile?seconds=30 -o cpu.pprof`.
+- `relevo daemon stop` — stop the daemon this CLI started: it reads the recorded
+  pid, sends it SIGTERM and waits for it to exit, or says when none is running.
+  A service-managed daemon (systemd unit or launchd agent installed) is refused
+  with the service command to use instead, so the stop never fights the service
+  manager's restart policy.
 - `relevo mcp [--mode channel|tools|auto] [--mastermind P] [--interval D]` — run the
   MCP server over stdio for a Claude Code MasterMind pane. See
   [Claude Code plugin](#claude-code-plugin).
@@ -2111,7 +2116,9 @@ Only one daemon runs at a time. `relevo daemon` takes an exclusive lock on
 `$XDG_STATE_HOME/relevo/.daemon.lock` and refuses to start if another one holds
 it, so starting a second by hand next to the service is an error rather than
 two reconcilers racing. `relevo daemon --check` exits 0 if a daemon is running
-and 1 if not, printing nothing.
+and 1 if not, printing nothing. `relevo daemon stop` sends SIGTERM to the
+daemon's recorded pid and waits for it to exit, or says so when none is
+running; a service-managed daemon is refused with the service command instead.
 
 ## Lifecycle hooks
 

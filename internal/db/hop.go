@@ -11,3 +11,16 @@ var ownerHop func(path string, o Options, direct func() (*DB, error)) (string, e
 func SetOwnerHop(start func(path string, o Options, direct func() (*DB, error)) (sock string, err error)) {
 	ownerHop = start
 }
+
+// ownerHopClosed pairs with ownerHop: open calls it with the socket once a
+// handle it dialled through the hop has closed. dbtest's owner mode uses it to
+// stop the owner and close its direct handle when the last client handle for a
+// path is gone.
+var ownerHopClosed func(sock string)
+
+// SetOwnerHopClosed installs the close observer that pairs with SetOwnerHop:
+// open calls f with the socket once a handle dialled through the hop has
+// closed. Passing nil clears it.
+func SetOwnerHopClosed(f func(sock string)) {
+	ownerHopClosed = f
+}

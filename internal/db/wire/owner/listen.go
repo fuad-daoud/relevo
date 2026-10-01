@@ -54,14 +54,19 @@ func Listen(root string) (net.Listener, error) {
 // Adopt takes the listener an earlier image bound and passed as a file
 // descriptor. It never unlinks and never rebinds, so connections queued in the
 // backlog are served by this image instead of being reset.
+//
+// It takes ownership of fd: net.FileListener dups the descriptor, so the
+// *os.File Adopt builds is closed as soon as the dup exists. Leaving it open
+// would leave a second file whose finalizer closes the same fd number later,
+// after the caller had closed or reused it.
 func Adopt(fd int) (net.Listener, error) {
 	f := os.NewFile(uintptr(fd), socketName)
 	if f == nil {
 		return nil, fmt.Errorf("owner: invalid listen fd %d", fd)
 	}
 	ln, err := net.FileListener(f)
+	_ = f.Close()
 	if err != nil {
-		_ = f.Close()
 		return nil, fmt.Errorf("owner: adopt fd %d: %w", fd, err)
 	}
 	return ln, nil

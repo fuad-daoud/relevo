@@ -9,9 +9,11 @@ require (
 	github.com/charmbracelet/x/ansi v0.8.0
 	github.com/klauspost/compress v1.18.4
 	github.com/muesli/termenv v0.15.2
+	github.com/tursodatabase/turso-go-platform-libs v0.8.1
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.59.0
+	turso.tech/database/tursogo v0.8.1
 )
 
 require (
@@ -19,6 +21,7 @@ require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/ebitengine/purego v0.9.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect

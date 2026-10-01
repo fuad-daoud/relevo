@@ -3,7 +3,8 @@
     "running": 0,
     "queued": 0,
     "cap": 7,
-    "scopes": false
+    "scopes": false,
+    "isolation": "none"
   },
   "last_contact": null,
   "owners": [

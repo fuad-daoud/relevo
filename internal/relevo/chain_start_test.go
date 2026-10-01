@@ -221,6 +221,9 @@ func TestChainStartRefusesAnEmptyOrUnreadablePlan(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "--plan") {
 			t.Fatalf("err = %v, want a refusal naming --plan", err)
 		}
+		if !errors.Is(err, ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, ErrRefused): a bad argument is refused, not internal", err)
+		}
 		assertNothingCreated(t, rt, fg, "shop")
 	})
 
@@ -235,6 +238,9 @@ func TestChainStartRefusesAnEmptyOrUnreadablePlan(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "read plan") {
 			t.Fatalf("err = %v, want a read failure", err)
 		}
+		if !errors.Is(err, ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
+		}
 		assertNothingCreated(t, rt, fg, "shop")
 	})
 
@@ -248,6 +254,9 @@ func TestChainStartRefusesAnEmptyOrUnreadablePlan(t *testing.T) {
 		})
 		if err == nil || !strings.Contains(err.Error(), "is empty") {
 			t.Fatalf("err = %v, want an empty-plan refusal", err)
+		}
+		if !errors.Is(err, ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
 		}
 		assertNothingCreated(t, rt, fg, "shop")
 	})
@@ -272,6 +281,9 @@ func TestChainStartRefusesATakenMemberName(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), `"shop-rev" already exists`) {
 			t.Fatalf("err = %v, want a taken-name refusal", err)
 		}
+		if !errors.Is(err, ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, ErrRefused): a taken name is refused, not internal", err)
+		}
 		if len(fg.addWorktreeCalls) != 0 {
 			t.Errorf("a refusal must cut no worktree: %+v", fg.addWorktreeCalls)
 		}
@@ -290,6 +302,9 @@ func TestChainStartRefusesATakenMemberName(t *testing.T) {
 		})
 		if err == nil || !strings.Contains(err.Error(), `chain "shop-plan" already exists`) {
 			t.Fatalf("err = %v, want a taken-chain refusal", err)
+		}
+		if !errors.Is(err, ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
 		}
 		if len(fg.addWorktreeCalls) != 0 {
 			t.Errorf("a refusal must cut no worktree: %+v", fg.addWorktreeCalls)
@@ -315,7 +330,33 @@ func TestChainStartRefusesANameOver27(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "27") {
 		t.Fatalf("err = %v, want a refusal naming 27", err)
 	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
+	}
 	assertNothingCreated(t, rt, fg, name)
+}
+
+// TestChainStartRefusesAMissingBase pins the base refusal's class: a --base
+// that does not resolve is a refused input, not an internal failure, and it
+// cuts no worktree.
+func TestChainStartRefusesAMissingBase(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	fg.refSHA = map[string]string{} // every ref resolves to nothing
+	_, err := ChainStart(context.Background(), rt, ChainOptions{
+		Name: "shop", Plans: []string{writePlan(t, "p")}, Feature: "auth",
+		Base: "refs/heads/nope", MasterMindID: testMasterMindName,
+	})
+	if err == nil || !strings.Contains(err.Error(), `base "refs/heads/nope" not found`) {
+		t.Fatalf("err = %v, want a missing-base refusal", err)
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
+	}
+	if len(fg.addWorktreeCalls) != 0 {
+		t.Errorf("a refusal must cut no worktree: %+v", fg.addWorktreeCalls)
+	}
 }
 
 // TestChainStartRefusesAWriterReviewer pins the reviewer's shape: a writer

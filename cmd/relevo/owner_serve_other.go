@@ -24,7 +24,7 @@ func checkSocketPath(string) error { return unsupportedOwner() }
 
 func openOwnerListener(string) (net.Listener, error) { return nil, unsupportedOwner() }
 
-func serveOwner(*db.DB, net.Listener) (*owner.Server, error) { return nil, unsupportedOwner() }
+func serveOwner(*db.DB, net.Listener, func()) (*owner.Server, error) { return nil, unsupportedOwner() }
 
 func drainAndHandoff(*owner.Server, net.Listener) (int, error) { return -1, unsupportedOwner() }
 

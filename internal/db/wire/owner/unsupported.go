@@ -15,7 +15,7 @@ import (
 type Server struct{}
 
 // New returns a server that refuses to serve.
-func New(*sql.DB, int, int, string) *Server { return &Server{} }
+func New(*sql.DB, int, int, string, func(error) (int, int, bool)) *Server { return &Server{} }
 
 // Serve refuses: there is no socket transport on this platform.
 func (*Server) Serve(net.Listener) error {
@@ -25,3 +25,7 @@ func (*Server) Serve(net.Listener) error {
 
 // Close does nothing.
 func (*Server) Close() error { return nil }
+
+// ConnCount is always 0 off unix: there is no server and no socket a client
+// could hold open.
+func (*Server) ConnCount() int { return 0 }

@@ -19,13 +19,34 @@ const Version = 1
 // apart from a foreign version.
 const Proto = "relevo-owner"
 
-// maxFrameLen bounds a declared frame length. A batch is at most a few MB, so a
-// length past this is a corrupt or hostile stream, not a legitimate message.
-const maxFrameLen = 1 << 30
+// maxFrameLen bounds a declared frame length. A rows batch aims at BatchBudget
+// (1 MiB) and appends whole values, so the largest value in it sets the batch
+// size; the largest per-value limits in the tree are the 16 MiB JSON-RPC line
+// (internal/mcp/server.go) and the 16 MiB usage line (internal/usage/claude.go),
+// and 64 MiB is a 4x margin on those. Session-journal transcript lines have no
+// smaller bound -- the ingest tail is read whole (internal/ingest/cursor.go) and
+// the line is stored whole (internal/ingest/transcript.go) -- so one value above
+// this cap, or a rows batch that contains one, is refused by the protocol
+// rather than carried. A length past this is a corrupt or hostile stream, not a
+// legitimate message.
+const maxFrameLen = 64 << 20
+
+// readChunk bounds one read request handed to the underlying stream. A frame
+// larger than this is read in pieces, so a declared length never becomes one
+// allocation before any payload byte has arrived.
+const readChunk = 64 << 10
 
 // BatchBudget is the encoded size a rows batch aims for. A value is never split
 // to meet it, so one large blob yields a batch larger than the budget.
 const BatchBudget = 1 << 20
+
+// AdHocReadCeiling is the largest single value the owner carries to an ad-hoc
+// connection (`db query`). The engine materialises a whole value before relevo
+// can see it, so the owner refuses one above this before it copies it into a
+// batch or peeks the next row; a normal connection is not capped, because
+// relevo's own blobs may be large. db query caps --max-bytes here, and the owner
+// keeps a var defaulting to this so a test can shrink it.
+const AdHocReadCeiling = 64 << 20
 
 // Conn reads and writes length-prefixed frames on one stream. Writes are
 // serialised: a cancel can be sent while a request is in flight, and the two
@@ -47,9 +68,28 @@ func (c *Conn) Read() ([]byte, error) {
 	if n == 0 || n > maxFrameLen {
 		return nil, fmt.Errorf("wire: frame length %d out of range", n)
 	}
-	payload := make([]byte, n)
-	if _, err := io.ReadFull(c.rw, payload); err != nil {
-		return nil, err
+	if n <= readChunk {
+		payload := make([]byte, n)
+		if _, err := io.ReadFull(c.rw, payload); err != nil {
+			return nil, err
+		}
+		return payload, nil
+	}
+	// Above one chunk the payload is read in bounded pieces that grow the
+	// result only with bytes that arrived, so the declared length is never
+	// allocated up front. Each request handed to the stream stays chunk-sized.
+	payload := make([]byte, 0, readChunk)
+	for left := int(n); left > 0; {
+		step := left
+		if step > readChunk {
+			step = readChunk
+		}
+		buf := make([]byte, step)
+		if _, err := io.ReadFull(c.rw, buf); err != nil {
+			return nil, err
+		}
+		payload = append(payload, buf...)
+		left -= step
 	}
 	return payload, nil
 }

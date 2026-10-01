@@ -21,6 +21,12 @@ import (
 // client over the cap waits rather than being refused.
 var maxConns = 64
 
+// maxLiveConns caps every connection the owner tracks at once -- handshaken,
+// idle, pinned, or still waiting for hello -- not only the pinned slots
+// maxConns bounds. It is 4x the pinned cap, so a burst of real work still
+// fits; a connection accepted over it is dropped rather than served.
+var maxLiveConns = 256
+
 // ownerUID is the uid every peer must match. It is read once by New, so a test
 // can require a different one before starting a server and watch the
 // connection drop.
@@ -35,6 +41,11 @@ type Server struct {
 	origin string
 	uid    int
 
+	// codeOf resolves a driver error's sqlite result code. It is nil when the
+	// server was built without one: the wire's own CodeOf and ExtendedCodeOf
+	// then carry the code, which is what a modernc-backed owner needs.
+	codeOf func(error) (int, int, bool)
+
 	mu     sync.Mutex
 	closed bool
 	// draining is set for the life of a drain: the accept loop stops, a request
@@ -43,24 +54,55 @@ type Server struct {
 	draining bool
 	ln       net.Listener
 	conns    map[*conn]struct{}
+	// maxLive is the live-connection bound read once in New, so a test can
+	// shrink the package var before the accept goroutines start.
+	maxLive int
 	// sem holds one slot per pinned connection; a request that needs one waits
 	// on it inside pin, and cleanup returns it when that connection is
 	// discarded. Idle handshaken connections never take a slot.
 	sem chan struct{}
+
+	// OnAbandoned, when set, runs once when an abandoned statement has not
+	// finished within reapGrace. The daemon uses it to ask for a re-exec, the
+	// only way to end a statement the engine cannot interrupt.
+	OnAbandoned func()
+
+	// reapMu guards the abandoned-statement registrations: every finish channel
+	// the server is still waiting on, and whether the hook already ran.
+	reapMu      sync.Mutex
+	reapPending map[<-chan struct{}]struct{}
+	reapFired   bool
 }
 
 // New wraps a database handle, its schema versions and the installation id
-// every scoped query needs.
-func New(dbh *sql.DB, have, know int, origin string) *Server {
+// every scoped query needs. codeOf maps a driver error onto a SQLite result
+// code; nil falls back to the wire's own CodeOf and ExtendedCodeOf.
+func New(dbh *sql.DB, have, know int, origin string, codeOf func(error) (int, int, bool)) *Server {
 	return &Server{
-		dbh:    dbh,
-		have:   have,
-		know:   know,
-		origin: origin,
-		uid:    ownerUID,
-		conns:  make(map[*conn]struct{}),
-		sem:    make(chan struct{}, maxConns),
+		dbh:     dbh,
+		have:    have,
+		know:    know,
+		origin:  origin,
+		uid:     ownerUID,
+		codeOf:  codeOf,
+		conns:   make(map[*conn]struct{}),
+		maxLive: maxLiveConns,
+		sem:     make(chan struct{}, maxConns),
 	}
+}
+
+// errorCode resolves err's SQLite result code and extended code, preferring the
+// server's resolver when one was installed. A Turso error wraps a sentinel and
+// exposes no Code method, so only the resolver can name it; a modernc error
+// carries its code and needs no help.
+func (s *Server) errorCode(err error) (int, int) {
+	if s.codeOf != nil {
+		if code, ext, ok := s.codeOf(err); ok {
+			return code, ext
+		}
+	}
+	code, _ := wire.CodeOf(err)
+	return code, wire.ExtendedCodeOf(err)
 }
 
 // Serve accepts connections until the server is closed. Each accepted
@@ -208,9 +250,10 @@ func (s *Server) isClosed() bool {
 	return s.closed
 }
 
-// connCount is the number of live connections, read for the welcome a client
-// sees so its answer names the owner's real load.
-func (s *Server) connCount() int {
+// ConnCount is the number of live connections: the welcome a client sees so
+// its answer names the owner's real load, and the daemon's idle watcher, which
+// treats a live client as work in flight and keeps the daemon up.
+func (s *Server) ConnCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.conns)
@@ -238,7 +281,12 @@ func (s *Server) handle(nc net.Conn) {
 	}
 
 	c := newConn(s, nc)
-	s.addConn(c)
+	if !s.addConn(c) {
+		// Over the live bound the connection is dropped without a frame; an
+		// existing connection keeps working and the client retries.
+		_ = nc.Close()
+		return
+	}
 	defer s.removeConn(c)
 	_ = c.serve()
 	c.cleanup()
@@ -248,10 +296,18 @@ func newConn(s *Server, nc net.Conn) *conn {
 	return &conn{s: s, nc: nc, w: wire.NewConn(nc)}
 }
 
-func (s *Server) addConn(c *conn) {
+// addConn records a live connection, refusing it when the bound is already
+// reached. The check and the insertion share one critical section, so
+// concurrent accepts cannot both pass it. It reports whether the connection was
+// admitted; the caller must close a refused connection without any frame.
+func (s *Server) addConn(c *conn) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.conns) >= s.maxLive {
+		return false
+	}
 	s.conns[c] = struct{}{}
-	s.mu.Unlock()
+	return true
 }
 
 func (s *Server) removeConn(c *conn) {

@@ -3,10 +3,13 @@
 package owner
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestSocketPathRefusesAnOverLongPath(t *testing.T) {
@@ -65,6 +68,11 @@ func TestAdoptKeepsTheBoundSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
+	// The socket must survive the close below, the way the daemon's survives a
+	// re-exec: unlink-on-close is off.
+	if ul, ok := ln.(interface{ SetUnlinkOnClose(bool) }); ok {
+		ul.SetUnlinkOnClose(false)
+	}
 	path := filepath.Join(root, socketName)
 	before, err := os.Stat(path)
 	if err != nil {
@@ -77,7 +85,13 @@ func TestAdoptKeepsTheBoundSocket(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = f.Close() })
 
-	adopted, err := Adopt(int(f.Fd()))
+	// Adopt takes ownership of the descriptor it is given, so the test hands it
+	// its own dup: the inherited file must stay open for the comparison below.
+	dup, err := unix.Dup(int(f.Fd()))
+	if err != nil {
+		t.Fatalf("dup: %v", err)
+	}
+	adopted, err := Adopt(dup)
 	if err != nil {
 		t.Fatalf("Adopt: %v", err)
 	}
@@ -89,5 +103,52 @@ func TestAdoptKeepsTheBoundSocket(t *testing.T) {
 	}
 	if !os.SameFile(before, after) {
 		t.Errorf("adopt changed the socket file: %v is not %v", after, before)
+	}
+
+	// Closing the original listener does not unlink the socket the adopted one
+	// still serves: the same socket file is there afterwards.
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close the original listener: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("the socket file is gone after closing the original listener: %v", err)
+	}
+}
+
+// TestAdoptClosesTheDescriptorItWasGiven pins the ownership: Adopt dups the
+// listener's descriptor with net.FileListener and closes the one it was handed,
+// so the caller's fd number is not left held by an *os.File whose finalizer
+// would close it again later.
+func TestAdoptClosesTheDescriptorItWasGiven(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "rvo-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+
+	ln, err := Listen(root)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	f, err := Inherit(ln)
+	if err != nil {
+		t.Fatalf("Inherit: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+
+	dup, err := unix.Dup(int(f.Fd()))
+	if err != nil {
+		t.Fatalf("dup: %v", err)
+	}
+	adopted, err := Adopt(dup)
+	if err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	t.Cleanup(func() { _ = adopted.Close() })
+
+	if _, err := unix.FcntlInt(uintptr(dup), unix.F_GETFD, 0); !errors.Is(err, unix.EBADF) {
+		t.Errorf("F_GETFD on the handed fd = %v, want EBADF: Adopt left it open", err)
 	}
 }

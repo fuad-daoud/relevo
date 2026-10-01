@@ -39,7 +39,30 @@ type info struct {
 // Driver opens one wire connection per database/sql pooled connection.
 type Driver struct{}
 
-func (d *Driver) Open(name string) (driver.Conn, error) { return openConn(name) }
+func (d *Driver) Open(name string) (driver.Conn, error) { return openConn(name, false) }
+
+// Connector dials sock and marks every handshake it opens ad-hoc, which a plain
+// sql.Open(DriverName, sock) never does. A pool built from it with sql.OpenDB
+// reaches the owner on the ad-hoc read path, which the owner may refuse while it
+// reaps an abandoned statement.
+func Connector(sock string, adHoc bool) driver.Connector {
+	return &connector{sock: sock, adHoc: adHoc}
+}
+
+// connector is the driver.Connector sql.OpenDB pools from.
+type connector struct {
+	sock  string
+	adHoc bool
+}
+
+// Connect opens one pooled connection. The handshake budget bounds dial plus
+// handshake, exactly as Driver.Open does; the caller's context does not, so a
+// pool that opens a connection mid-request keeps the same two-second bound.
+func (c *connector) Connect(context.Context) (driver.Conn, error) {
+	return openConn(c.sock, c.adHoc)
+}
+
+func (c *connector) Driver() driver.Driver { return &Driver{} }
 
 // Info dials sock, performs the handshake and returns the owner's answer. It
 // closes its connection; the caller opens the handle it keeps separately.
@@ -64,14 +87,14 @@ func dialSock(ctx context.Context, sock string) (net.Conn, error) {
 	return d.DialContext(ctx, "unix", sock)
 }
 
-func openConn(sock string) (driver.Conn, error) {
+func openConn(sock string, adHoc bool) (driver.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), handshakeBudget)
 	defer cancel()
 	nc, err := dialSock(ctx, sock)
 	if err != nil {
 		return nil, err
 	}
-	c := &conn{nc: nc, w: wire.NewConn(nc)}
+	c := &conn{nc: nc, w: wire.NewConn(nc), adHoc: adHoc}
 	if err := c.handshake(ctx); err != nil {
 		_ = nc.Close()
 		return nil, err

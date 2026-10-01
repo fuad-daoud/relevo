@@ -304,6 +304,9 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	// `relevo db stats`. Every open migrates, so there is no separate
 	// migrate row.
 	rep.Checks = insertGlobalCheck(rep.Checks, databaseCheck(rt.Store))
+	// #466: the engine row sits next to the database row, so a library the
+	// engine cannot load is visible beside the database it would open.
+	rep.Checks = insertGlobalCheck(rep.Checks, engineCheck(db.EngineStatus(stateRoot)))
 	// The owner row dials the socket the daemon serves, the way the database
 	// row reads the file: a missing socket warns with the fix, and a socket
 	// that answers names its pid, protocol and open connections.
@@ -356,7 +359,7 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 		if d, derr := rt.Store.DB(); derr == nil {
 			serveDB = d
 		}
-		rep.Checks = append(rep.Checks, doctor.ServeChecks(env, serveDB, serveRoot, time.Now())...)
+		rep.Checks = append(rep.Checks, doctor.ServeChecks(env, serveDB, serveRoot, time.Now(), rt.Policy.ServeIsolation())...)
 	}
 
 	// #314: when a scope block asks for cpu pinning, doctor confirms the user

@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -416,11 +417,18 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 		t.Fatal(err)
 	}
 	runner := newScriptRunner()
+	// Slice A's seam: the server's runner is a none boundary over the fake.
+	// TestServedRunnerPassesSpecThrough pins that the base still receives the
+	// identical spec; env.runner stays the base so tests control liveness.
+	wrapped, err := isolate.Wrap(runner, isolate.ModeNone)
+	if err != nil {
+		t.Fatalf("isolate.Wrap: %v", err)
+	}
 	srvCfg := Config{
 		DB:         testServeDB(t),
 		Root:       serverRoot,
 		Candidates: cSet,
-		Runner:     runner,
+		Runner:     wrapped,
 		Git:        gitClient,
 		Now:        time.Now,
 		Audiences:  []string{testAudience},

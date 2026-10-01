@@ -207,3 +207,26 @@ func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	act := chain.Action{Kind: chain.ActionFinish}
 	return chainSaveWithTrace(rt, tx, c, before, next, ev, act, member)
 }
+
+// supersedeChainDelivery confirms a chain's undelivered end payload: a halt's
+// delivery queued before a resume says the chain needs the human, and that is
+// no longer true the moment they resume it. The next end queues its own.
+func supersedeChainDelivery(rt Runtime, c db.ChainRow) error {
+	return rt.Store.WithLock(func(tx *store.Tx) error {
+		for _, member := range chainMembersOf(c) {
+			pending, err := tx.PendingForMasterMindThrough(member, 0)
+			if err != nil {
+				return err
+			}
+			for _, p := range pending {
+				if p.Entry.Kind != store.KindChain {
+					continue
+				}
+				if err := tx.ConfirmIndex(member, p.Idx, "superseded by resume"); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}

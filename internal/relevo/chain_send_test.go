@@ -138,6 +138,110 @@ func TestChainStartSendsPlanOneThroughTheChainPath(t *testing.T) {
 	}
 }
 
+// TestChainReaderRoundsAskForTheChainsOwnBlock pins that a chain reviewer's
+// and security member's prompt ends with the chain's own block -- the verdict
+// or the finding count -- instead of the generic reader reporttail block, and
+// the marker is created before the final message so the round's last text is
+// the block itself.
+func TestChainReaderRoundsAskForTheChainsOwnBlock(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	fr := rt.Runner.(*fakeRunner)
+	startedChain(t, rt, ChainOptions{Security: ptr(true)})
+
+	// Plan 1 closes green: the chain sends the reviewer.
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	reviewerPrompt := ""
+	for _, s := range fr.specs {
+		j := strings.Join(s.Argv, " ")
+		if strings.Contains(j, "verdict: pass") {
+			reviewerPrompt = j
+		}
+	}
+	if reviewerPrompt == "" {
+		t.Fatalf("no reviewer round carried the verdict block; specs = %d", len(fr.specs))
+	}
+	for _, want := range []string{"verdict: pass", "create this empty file", "It must end with this block"} {
+		if !strings.Contains(reviewerPrompt, want) {
+			t.Errorf("reviewer prompt does not carry %q:\n%s", want, reviewerPrompt)
+		}
+	}
+	for _, unwanted := range []string{"status: done", "nothing written after the marker"} {
+		if strings.Contains(reviewerPrompt, unwanted) {
+			t.Errorf("reviewer prompt still carries %q:\n%s", unwanted, reviewerPrompt)
+		}
+	}
+
+	// The reviewer passes: the chain sends the security member.
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
+	securityPrompt := ""
+	for _, s := range fr.specs {
+		j := strings.Join(s.Argv, " ")
+		if strings.Contains(j, "findings: 0") {
+			securityPrompt = j
+		}
+	}
+	if securityPrompt == "" {
+		t.Fatalf("no security round carried the findings block; specs = %d", len(fr.specs))
+	}
+	for _, want := range []string{"findings: 0", "create this empty file"} {
+		if !strings.Contains(securityPrompt, want) {
+			t.Errorf("security prompt does not carry %q:\n%s", want, securityPrompt)
+		}
+	}
+	if strings.Contains(securityPrompt, "status: done") {
+		t.Errorf("security prompt still carries the reporttail block:\n%s", securityPrompt)
+	}
+}
+
+// TestRoundPromptIsChainAwareForEveryStarter pins the one composer every round
+// starter uses: a chain member's reader round asks for the chain's own block
+// wherever the round starts, while a builder round and a chain planner (whose
+// artifact is the plan) keep the ordinary templates.
+func TestRoundPromptIsChainAwareForEveryStarter(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{Security: ptr(true)})
+
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		rev, err := tx.Load("shop-rev")
+		if err != nil {
+			return err
+		}
+		if prompt := roundPrompt(rt, tx, rev, "p", "r", "d"); !strings.Contains(prompt, "verdict: pass") || strings.Contains(prompt, "status: done") {
+			t.Errorf("chain reviewer prompt is not chain-aware:\n%s", prompt)
+		}
+		sec, err := tx.Load("shop-sec")
+		if err != nil {
+			return err
+		}
+		if prompt := roundPrompt(rt, tx, sec, "p", "r", "d"); !strings.Contains(prompt, "findings: 0") || strings.Contains(prompt, "status: done") {
+			t.Errorf("chain security prompt is not chain-aware:\n%s", prompt)
+		}
+		builder, err := tx.Load("shop")
+		if err != nil {
+			return err
+		}
+		if prompt := roundPrompt(rt, tx, builder, "p", "r", "d"); !strings.Contains(prompt, "status: done") {
+			t.Errorf("builder prompt lost its reporttail block:\n%s", prompt)
+		}
+		planner, err := tx.Load("shop-plan")
+		if err != nil {
+			return err
+		}
+		if prompt := roundPrompt(rt, tx, planner, "p", "r", "d"); !strings.Contains(prompt, "status: done") {
+			t.Errorf("planner prompt must keep the ordinary reader block:\n%s", prompt)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+}
+
 // TestSendChainRoundRefusesOpenRound pins that a member round still open is
 // refused as a typed RoundOpenError naming the member and the round, so the CLI
 // can map it to a conflict with `relevo stop <member>` as the next command.

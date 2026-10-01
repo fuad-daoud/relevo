@@ -706,6 +706,9 @@ func TestChainResumeRefusesAGateFlagOnARemoteBuilder(t *testing.T) {
 		if !strings.Contains(err.Error(), "fixed at create") {
 			t.Errorf("err = %q, want it to say the check is fixed at create", err)
 		}
+		if !errors.Is(err, ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, ErrRefused): a replaced check on a remote builder is refused, not internal", err)
+		}
 	}
 
 	// The chain was left halted by the refusals; --regate alone is accepted and
@@ -879,6 +882,156 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		}
 		assertResumeReSendsTheStagedPrompt(t, rt, "# Repair round")
 	})
+
+	t.Run("a stopped repair round with a replaced gate", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{})
+		b := chainBinding(t, rt, "shop")
+		b.Regate = 2
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+		// The repair round is open; stop the chain there, then resume with a
+		// replaced check.
+		if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
+			t.Fatalf("Stop the repair round: %v", err)
+		}
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "make check"}); err != nil {
+			t.Fatalf("ChainResume with a replaced gate: %v", err)
+		}
+
+		resent := chainBinding(t, rt, "shop")
+		got, err := rt.Store.ReadFile(rt.Store.PromptPath("shop", resent.Round))
+		if err != nil {
+			t.Fatalf("read the re-sent round's prompt: %v", err)
+		}
+		if strings.Contains(string(got), repairPlanPrefix) {
+			t.Errorf("the re-sent round still carries the stale repair prompt:\n%s", got)
+		}
+		planCopy, err := rt.Store.ReadFile(rt.Store.ChainPlanPath("shop", 1))
+		if err != nil {
+			t.Fatalf("read the plan copy: %v", err)
+		}
+		if string(got) != string(planCopy) {
+			t.Errorf("the re-sent round is not the step's seed under the new gate:\ngot:\n%s\nwant:\n%s", got, planCopy)
+		}
+	})
+}
+
+// TestChainResumeSupersedesTheStaleEndDelivery pins the delivery bookkeeping: a
+// halt queues the chain's end payload, and a resume must confirm it so a
+// resolved chain cannot push a stale NEEDS YOU later.
+func TestChainResumeSupersedesTheStaleEndDelivery(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+	chainBuilderClose(t, rt, "shop", chainHaltedBody("the step failed"))
+
+	pendingChain := func() int {
+		t.Helper()
+		n := 0
+		err := rt.Store.WithLock(func(tx *store.Tx) error {
+			entries, err := tx.PendingForMasterMindThrough("shop", 0)
+			if err != nil {
+				return err
+			}
+			for _, p := range entries {
+				if p.Entry.Kind == store.KindChain {
+					n++
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("read pending entries: %v", err)
+		}
+		return n
+	}
+	if pendingChain() == 0 {
+		t.Fatal("test premise: the halt must queue the chain's end delivery")
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	if n := pendingChain(); n != 0 {
+		t.Errorf("pending chain deliveries after a resume = %d, want 0", n)
+	}
+}
+
+// TestChainResumeClosesADeadMemberRound pins the wedge fix: a member round
+// that died without a close leaves a halted chain with no working command --
+// the resume refuses an open round and the stop path refuses a halted one. The
+// resume now closes the dead round the way a stop would and re-runs the step.
+func TestChainResumeClosesADeadMemberRound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	// The builder closes green: the reviewer's round opens.
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	before := chainBinding(t, rt, "shop-rev")
+	if !HasPromptEntry(chainLog(t, rt, "shop-rev"), before.Round) {
+		t.Fatal("test premise: the reviewer's round must be open")
+	}
+
+	// The reviewer dies without a close: NEEDS YOU, no process, and the chain
+	// halted on the member -- the state a round that died without a report
+	// leaves.
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		rev, err := tx.Load("shop-rev")
+		if err != nil {
+			return err
+		}
+		rev, err = haltBinding(context.Background(), rt, rev, "reviewer exited without an output")
+		if err != nil {
+			return err
+		}
+		rev.Builder = clearProcess(rev.Builder)
+		if err := tx.Save(rev); err != nil {
+			return err
+		}
+		row, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		s, err := chainStateOf(row)
+		if err != nil {
+			return err
+		}
+		s.Status = chain.StatusHalted
+		s.Reason = "member shop-rev: exited without an output"
+		return tx.ChainPut(chainRowWithState(row, s, rt.Now().UTC()))
+	})
+	if err != nil {
+		t.Fatalf("halt the reviewer and the chain: %v", err)
+	}
+
+	// The resume closes the dead round the way a stop would and re-runs the
+	// review.
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	after := chainBinding(t, rt, "shop-rev")
+	if after.Round <= before.Round {
+		t.Errorf("reviewer round = %d, want a round after %d", after.Round, before.Round)
+	}
+	if after.State != store.StateActive {
+		t.Errorf("reviewer state = %q, want active (a fresh review round)", after.State)
+	}
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusRunning) || row.AwaitingMember != chain.MemberReviewer {
+		t.Errorf("chain row = %s awaiting %s, want running awaiting reviewer", row.Status, row.AwaitingMember)
+	}
 }
 
 // assertResumeReSendsTheStagedPrompt stops on a chain awaiting the builder on

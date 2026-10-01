@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -172,7 +174,7 @@ func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan 
 	}
 	view, err := rt.Remote.CreateChain(ctx, plan.server, chainServerRequest(opts, plan, ids), bundle)
 	if err != nil {
-		return ChainResult{}, err
+		return ChainResult{}, chainServerCreateError(err)
 	}
 
 	branchCreated := false
@@ -220,6 +222,18 @@ func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan 
 		return ChainResult{}, err
 	}
 	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chainBuilderCheck(stored, name)}, nil
+}
+
+// chainServerCreateError rebuilds the typed actor refusal from the create's own
+// answer: the wire names unknown_actor for the actor the server cannot resolve,
+// and the CLI classifies that sentinel like the local ErrUnknownRole. Anything
+// else is returned as it came.
+func chainServerCreateError(err error) error {
+	var httpErr *client.HTTPError
+	if errors.As(err, &httpErr) && httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeUnknownActor {
+		return classed(ErrUnknownRole, httpErr.Body.Message)
+	}
+	return err
 }
 
 // chainServerBundle names the out ref at base and snapshots it, the two steps
