@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestFrameRoundTripCarriesKindHeaderAndRaw(t *testing.T) {
@@ -53,6 +56,192 @@ func TestFrameRejectsMalformedLength(t *testing.T) {
 		if _, err := NewConn(&buf).Read(); err == nil {
 			t.Errorf("Read accepted length %d", n)
 		}
+	}
+}
+
+// frameSource is a fake io.ReadWriter that serves a 4-byte little-endian
+// declared length followed by generated payload bytes, recording the size of
+// every read request handed to it. It holds no source buffer proportional to
+// the declared length: the header is written from the declared value and each
+// payload byte is generated straight into the caller's slice. Once limit bytes
+// have been served, Read returns io.EOF, or blocks on hold until the test closes
+// it when hold is non-nil.
+type frameSource struct {
+	mu       sync.Mutex
+	declared uint32
+	limit    int
+	off      int
+	hold     chan struct{}
+	requests []int
+}
+
+func newFrameSource(declared uint32, payload int, hold chan struct{}) *frameSource {
+	return &frameSource{declared: declared, limit: 4 + payload, hold: hold}
+}
+
+func (s *frameSource) Read(p []byte) (int, error) {
+	s.mu.Lock()
+	s.requests = append(s.requests, len(p))
+	declared, limit, off, hold := s.declared, s.limit, s.off, s.hold
+	s.mu.Unlock()
+
+	n := 0
+	for n < len(p) && off+n < limit {
+		pos := off + n
+		if pos < 4 {
+			p[n] = byte(declared >> (8 * pos))
+		} else {
+			p[n] = byte(pos) // generated here, never stored
+		}
+		n++
+	}
+	if n > 0 {
+		s.mu.Lock()
+		s.off += n
+		s.mu.Unlock()
+	}
+	if n == len(p) {
+		return n, nil
+	}
+	if hold != nil {
+		<-hold
+	}
+	return n, io.EOF
+}
+
+func (s *frameSource) Write(p []byte) (int, error) { return len(p), nil }
+
+// maxRequest returns the largest buffer size any read request asked for.
+func (s *frameSource) maxRequest() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := 0
+	for _, r := range s.requests {
+		if r > m {
+			m = r
+		}
+	}
+	return m
+}
+
+// requestCount returns how many read requests have been handed to the fake.
+func (s *frameSource) requestCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.requests)
+}
+
+func TestReadOfADeclaredHugeFrameBoundsEveryReadRequest(t *testing.T) {
+	// The declared length is the largest the protocol accepts (maxFrameLen) and
+	// is far above one chunk, so the reader must never allocate it up front:
+	// every request it hands the stream stays chunk-sized while the peer
+	// disappears. A declared length over the cap is refused from the header
+	// alone and is pinned by TestFrameOverTheCapIsRefusedFromTheHeaderAlone.
+	t.Run("header then EOF", func(t *testing.T) {
+		src := newFrameSource(maxFrameLen, 0, nil)
+		got, err := NewConn(src).Read()
+		if err == nil {
+			t.Fatalf("Read of a peer that sent no payload returned %d bytes and no error", len(got))
+		}
+		if m := src.maxRequest(); m > readChunk {
+			t.Fatalf("largest read request = %d, want at most the %d-byte chunk", m, readChunk)
+		}
+	})
+
+	t.Run("header, one byte, then blocked", func(t *testing.T) {
+		release := make(chan struct{})
+		src := newFrameSource(maxFrameLen, 1, release)
+		errs := make(chan error, 1)
+		go func() {
+			_, err := NewConn(src).Read()
+			errs <- err
+		}()
+
+		// Wait for the reader to reach the payload before checking its
+		// requests: a blocked peer is waited for, not failed early.
+		deadline := time.Now().Add(2 * time.Second)
+		for src.maxRequest() <= 4 {
+			if time.Now().After(deadline) {
+				t.Fatal("reader never requested the payload")
+			}
+			time.Sleep(time.Millisecond)
+		}
+		if m := src.maxRequest(); m > readChunk {
+			t.Fatalf("largest read request = %d, want at most the %d-byte chunk", m, readChunk)
+		}
+
+		close(release)
+		select {
+		case err := <-errs:
+			if err == nil {
+				t.Fatal("Read returned no error after the peer sent one byte and ended")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Read did not return after the peer ended")
+		}
+	})
+}
+
+func TestFrameAtTheCapIsAccepted(t *testing.T) {
+	src := newFrameSource(maxFrameLen, int(maxFrameLen), nil)
+	got, err := NewConn(src).Read()
+	if err != nil {
+		t.Fatalf("Read at the cap: %v", err)
+	}
+	if len(got) != maxFrameLen {
+		t.Fatalf("payload length = %d, want %d", len(got), maxFrameLen)
+	}
+	if m := src.maxRequest(); m > readChunk {
+		t.Fatalf("largest read request = %d, want at most the %d-byte chunk", m, readChunk)
+	}
+}
+
+func TestFrameOverTheCapIsRefusedFromTheHeaderAlone(t *testing.T) {
+	for _, declared := range []uint32{0, maxFrameLen + 1} {
+		src := newFrameSource(declared, 0, nil)
+		if _, err := NewConn(src).Read(); err == nil {
+			t.Errorf("Read accepted declared length %d", declared)
+		}
+		if got := src.requestCount(); got != 1 {
+			t.Errorf("declared length %d: %d read requests, want only the header", declared, got)
+		}
+		if m := src.maxRequest(); m != 4 {
+			t.Errorf("declared length %d: largest read request = %d, want the 4-byte header", declared, m)
+		}
+	}
+}
+
+func TestFrameAcrossTheChunkBoundaryKeepsTheStreamAligned(t *testing.T) {
+	first := bytes.Repeat([]byte{0x11}, readChunk+1)
+	second := []byte("second frame")
+	var buf bytes.Buffer
+	writeFrame(t, &buf, first)
+	writeFrame(t, &buf, second)
+
+	c := NewConn(&buf)
+	got1, err := c.Read()
+	if err != nil {
+		t.Fatalf("first Read: %v", err)
+	}
+	if !bytes.Equal(got1, first) {
+		t.Fatalf("first frame = %d bytes, want %d equal bytes", len(got1), len(first))
+	}
+	got2, err := c.Read()
+	if err != nil {
+		t.Fatalf("second Read: %v", err)
+	}
+	if !bytes.Equal(got2, second) {
+		t.Fatalf("second frame = %q, want %q", got2, second)
+	}
+}
+
+func writeFrame(t *testing.T, buf *bytes.Buffer, payload []byte) {
+	t.Helper()
+	if err := binary.Write(buf, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("write length: %v", err)
+	}
+	if _, err := buf.Write(payload); err != nil {
+		t.Fatalf("write payload: %v", err)
 	}
 }
 
