@@ -36,10 +36,14 @@ type Report struct {
 	Since, Until time.Time
 	Totals       Totals
 	Scorecard    []ScoreRow
-	Spend        Spend
-	Reliability  Reliability
-	Repos        []RepoRow // key = RoundRow.Repo, "(none)" when nil, each with its features and their tickets
-	Outcomes     Outcomes
+	// Accounts is the same scorecard grouped by the login a round drew from
+	// instead of its candidate. Empty on every host with no accounts, so the
+	// report a host without them builds keeps the shape it always had.
+	Accounts    []ScoreRow
+	Spend       Spend
+	Reliability Reliability
+	Repos       []RepoRow // key = RoundRow.Repo, "(none)" when nil, each with its features and their tickets
+	Outcomes    Outcomes
 }
 
 type TokenCounts struct {
@@ -112,6 +116,7 @@ func Build(in Inputs) Report {
 
 	rep.Totals = buildTotals(in, rows)
 	rep.Scorecard = buildScorecard(in, rows)
+	rep.Accounts = buildAccountScorecard(in, rows)
 	rep.Spend = buildSpend(in, rows, rep.Since, loc)
 	rep.Reliability = buildReliability(in, rows, loc)
 	rep.Repos = buildRepos(in, rows)

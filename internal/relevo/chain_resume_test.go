@@ -314,6 +314,71 @@ func TestChainResumeAppliesOnlyGivenFlags(t *testing.T) {
 	}
 }
 
+// TestChainResumeGateFlagsUpdateTheBuilder pins the gate flags' member half: an
+// explicit --gate/--regate writes the stored settings and the builder member, a
+// --no-gate clears both, and a resume that names none keeps the stored check.
+func TestChainResumeGateFlagsUpdateTheBuilder(t *testing.T) {
+	t.Parallel()
+
+	t.Run("gate and regate", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{})
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{
+			Name: "shop", Gate: "go test ./...", Regate: ptr(1),
+		}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+
+		set := storedSettings(t, chainStoredRow(t, rt, "shop"))
+		if set.Gate != "go test ./..." || set.Regate != 1 {
+			t.Errorf("settings gate/regate = %q/%d, want go test ./.../1", set.Gate, set.Regate)
+		}
+		builder := chainBinding(t, rt, "shop")
+		if builder.Gate != "go test ./..." || builder.Regate != 1 {
+			t.Errorf("builder gate/regate = %q/%d, want go test ./.../1", builder.Gate, builder.Regate)
+		}
+	})
+
+	t.Run("no-gate clears both", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", NoGate: true}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+
+		if set := storedSettings(t, chainStoredRow(t, rt, "shop")); set.Gate != "" {
+			t.Errorf("settings gate = %q, want none", set.Gate)
+		}
+		if builder := chainBinding(t, rt, "shop"); builder.Gate != "" {
+			t.Errorf("builder gate = %q, want none", builder.Gate)
+		}
+	})
+
+	t.Run("none keeps the stored check", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+			t.Fatalf("ChainResume: %v", err)
+		}
+
+		if set := storedSettings(t, chainStoredRow(t, rt, "shop")); set.Gate != "make check" || set.Regate != 2 {
+			t.Errorf("settings gate/regate = %q/%d, want the stored make check/2", set.Gate, set.Regate)
+		}
+		if builder := chainBinding(t, rt, "shop"); builder.Gate != "make check" || builder.Regate != 2 {
+			t.Errorf("builder gate/regate = %q/%d, want the stored make check/2", builder.Gate, builder.Regate)
+		}
+	})
+}
+
 // TestChainResumeCreatesTheSecurityMemberWhenTurnedOn pins the late member:
 // turning the security phase on for a chain started without it creates the
 // reader member now, beside the builder, and names it on the chain row.
@@ -435,5 +500,112 @@ func TestChainResumeHaltsWhenTheSendFails(t *testing.T) {
 	}
 	if !strings.Contains(row.Reason, "could not start") {
 		t.Errorf("halt reason = %q, want it to name the member that could not start", row.Reason)
+	}
+}
+
+// TestChainCorrectionSeedNamesTheJudgedBuilderRound pins the manual-round
+// resume: after a resume reviews a newer manual builder round and the reviewer
+// asks for changes, the correction seed names that builder round -- its report,
+// diff, prompt and cumulative diff -- not the reviewer's own round.
+func TestChainCorrectionSeedNamesTheJudgedBuilderRound(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	chainPlanDiffFixtures(fg)
+	stoppedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
+
+	// A manual round while the chain is stopped: it closes without a chain
+	// transition, so its record is the one a later resume reviews.
+	if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+		t.Fatalf("Send after the stop: %v", err)
+	}
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	builderRound := chainBinding(t, rt, "shop").Round - 1
+	if builderRound != 2 {
+		t.Fatalf("manual builder round = %d, want 2", builderRound)
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
+
+	planner := chainBinding(t, rt, "shop-plan")
+	text, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-plan", planner.Round))
+	if err != nil {
+		t.Fatalf("read the correction prompt: %v", err)
+	}
+	got := string(text)
+	for _, want := range []string{
+		rt.Store.ReportPath("shop", builderRound),
+		"This round's diff: " + rt.Store.DiffPath("shop", builderRound),
+		"This round's prompt: " + rt.Store.PromptPath("shop", builderRound),
+		"Plan diff, every round of this plan so far: " + rt.Store.PlanDiffPath("shop", builderRound),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("correction seed does not name %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestChainResumeReviewKeepsThePlanStartCommit pins the resume's start: a
+// manual round's review diffs from the commit the chain stored, to the manual
+// round's own closed tree, even though the head moved before the resume.
+func TestChainResumeReviewKeepsThePlanStartCommit(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	chainPlanDiffFixtures(fg)
+	stoppedChain(t, rt, ChainOptions{})
+	stored := chainStoredRow(t, rt, "shop").PlanStartCommit
+	if stored == "" {
+		t.Fatal("test premise: the chain must record a plan-start commit")
+	}
+
+	// The manual round is sent at a different head from the stored plan start,
+	// so a commit recomputed at the resume would be visible.
+	fg.headCommitID = "head-manual"
+	if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+		t.Fatalf("Send after the stop: %v", err)
+	}
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	// A moved head must not be picked up: the stored commit is the plan start.
+	fg.headCommitID = "head-moved"
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	if fg.lastDiffFrom != stored {
+		t.Errorf("the cumulative diff ran from %q, want the stored plan start %q", fg.lastDiffFrom, stored)
+	}
+	if fg.lastDiffTo != "tree-end" {
+		t.Errorf("the cumulative diff ran to %q, want the manual round's closed tree %q", fg.lastDiffTo, "tree-end")
+	}
+}
+
+// TestChainResumeReSendKeepsThePlanStartCommit pins the re-send half: resuming
+// a stopped build round hands the plan to the builder again and leaves the
+// recorded start untouched.
+func TestChainResumeReSendKeepsThePlanStartCommit(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	stoppedChain(t, rt, ChainOptions{})
+	before := chainStoredRow(t, rt, "shop").PlanStartCommit
+	if before == "" {
+		t.Fatal("test premise: the chain must record a plan-start commit")
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Step != string(chain.StepBuilding) {
+		t.Fatalf("step = %q, want the building step re-sent", row.Step)
+	}
+	if row.PlanStartCommit != before {
+		t.Errorf("plan start after a re-send = %q, want it held at %q", row.PlanStartCommit, before)
 	}
 }

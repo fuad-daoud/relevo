@@ -61,7 +61,7 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 		"reviewer": {},
 	})
 
-	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, availability.History{}, baseTime, time.UTC)
+	got := FormatPolicyFor(reg, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
 
 	want := "builder  (config actors)\n" +
 		"  1  b  order     <- would pick\n" +
@@ -101,7 +101,7 @@ func TestRolesViewsFormatPolicyForLegacyMatches(t *testing.T) {
 
 	legacy, _ := roles.Build(nil, set, pol)
 	want := FormatPolicy(set, pol, gates, availability.History{}, baseTime, time.UTC)
-	got := FormatPolicyFor(legacy, set, pol, gates, availability.History{}, baseTime, time.UTC)
+	got := FormatPolicyFor(legacy, nil, set, pol, gates, nil, availability.History{}, baseTime, time.UTC)
 	if got != want {
 		t.Errorf("FormatPolicyFor(legacy) =\n%q\nwant FormatPolicy's:\n%q", got, want)
 	}

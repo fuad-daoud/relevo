@@ -63,6 +63,14 @@ type Policy struct {
 	Scope *ScopePolicy `json:"scope,omitempty"`
 	// Chain configures the chain policy group; nil is every default.
 	Chain *ChainPolicy `json:"chain,omitempty"`
+	// Accounts configures the account pools; nil is every default.
+	Accounts *AccountsPolicy `json:"accounts,omitempty"`
+}
+
+// AccountsPolicy configures how the pick rotates among the accounts of a pool.
+type AccountsPolicy struct {
+	// Rotation is RotationFailover (the default) or RotationRoundRobin.
+	Rotation string `json:"rotation,omitempty"`
 }
 
 // ServePolicy configures relevo serve.
@@ -207,6 +215,12 @@ const DefaultExploreAfter = 20 * time.Minute
 const DefaultStaleAfter = 4 * time.Hour
 
 const DefaultGateTimeout = 10 * time.Minute
+
+// Rotation modes for policy.accounts.rotation.
+const (
+	RotationFailover   = "failover"
+	RotationRoundRobin = "round-robin"
+)
 
 // Chain defaults: the correction rounds one plan may take before the chain
 // asks you, and the actors that fill the reviewer, planner and security
@@ -394,4 +408,13 @@ func (p Policy) ScopeFor(served bool) *ScopePolicy {
 // loaded policy by accident.
 func (p Policy) OrderFor(role string) []string {
 	return append([]string(nil), p.Order[role]...)
+}
+
+// AccountsRotation returns policy.accounts.rotation, or RotationFailover when
+// it is unset.
+func (p Policy) AccountsRotation() string {
+	if p.Accounts == nil || p.Accounts.Rotation == "" {
+		return RotationFailover
+	}
+	return p.Accounts.Rotation
 }

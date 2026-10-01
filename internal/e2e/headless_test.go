@@ -430,7 +430,7 @@ if [ -n "$artifact" ]; then
 		if [ "$count" -eq 1 ]; then
 			verdict=changes
 		fi
-		msg='# Reviewer output\n\nI read the plan, the report, the round diff and the check result.\n\n'"$fence"'relevo\nverdict: '"$verdict"'\n'"$fence"'\n'
+		msg='# Reviewer output\n\nI read the plan, the report, the round diff and the check result.\n\n'"$fence"'relevo\nverdict: '"$verdict"'\n'"$fence"'\n\n'"$fence"'relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n'"$fence"'\n'
 		;;
 	"Write a correction plan for the builder.")
 		msg='# Correction plan\n\n1. Make the change the reviewer asked for.\n2. Re-run the check.\n'
@@ -439,7 +439,7 @@ if [ -n "$artifact" ]; then
 		msg='# Fix plan\n\n1. Fix the finding the security scan reported.\n2. Re-run the check.\n'
 		;;
 	"Scan the branch for security problems.")
-		msg='# Security scan\n\nThe branch has one finding: a shell variable expanded unquoted in the fake harness.\n\n'"$fence"'relevo\nfindings: 1\n'"$fence"'\n'
+		msg='# Security scan\n\nThe branch has one finding: a shell variable expanded unquoted in the fake harness.\n\n'"$fence"'relevo\nfindings: 1\n'"$fence"'\n\n'"$fence"'relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n'"$fence"'\n'
 		;;
 	esac
 

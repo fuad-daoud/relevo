@@ -483,6 +483,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 				b.Builder = builder
 			}
 			b.BuilderCandidate = res.Token() // "" when adopting a pane
+			b.BuilderAccount = res.Account
 			b.HaltNotifiedRound = 0
 			b.Halt = ""
 			b.HaltAt = time.Time{}
@@ -725,6 +726,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		MasterMindID:     opts.MasterMindID,
 		Builder:          builder,
 		BuilderCandidate: res.Token(),
+		BuilderAccount:   res.Account,
 		Round:            1,
 		State:            store.StateActive,
 		Tier:             string(tier),
@@ -791,7 +793,7 @@ func builderAgentName(name string) (string, error) {
 // The second return is the resolution, for the pick line.
 func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, Resolution, error) {
 	roleName := bindingRole(store.Binding{Role: opts.Role})
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName, pickFor(rt))
 	if err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}

@@ -273,6 +273,7 @@ func (r *ingestRun) upsertRound(tx *db.Tx, bindingID string, n int, all []store.
 	rd.Switches = switchesForRound(all, n)
 
 	rd.Actor = actorOf(r.b)
+	rd.Account = nonEmptyPtr(r.b.BuilderAccount)
 	if cand, ref, ok := candidateForRound(all, n, r.b); ok {
 		candTok := cand
 		rd.Candidate = &candTok

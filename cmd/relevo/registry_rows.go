@@ -33,8 +33,8 @@ var registry = []verbEntry{
 		Summary: "start a chain: build, review and correct across a list of plans",
 		Args:    "--name <n> (--plan <file> [--plan <file>...] (--feature <label>|--no-feature) | --resume) [--json]",
 		Flags: []string{
-			"--base", "--feature", "--json", "--mastermind", "--max-corrections", "--name",
-			"--no-feature", "--no-security", "--plan", "--planner-actor", "--resume",
+			"--base", "--feature", "--gate", "--json", "--mastermind", "--max-corrections", "--name",
+			"--no-feature", "--no-gate", "--no-security", "--plan", "--planner-actor", "--regate", "--resume",
 			"--reviewer-actor", "--security", "--security-actor", "--ticket",
 		},
 		Output: "json:ChainDoc",

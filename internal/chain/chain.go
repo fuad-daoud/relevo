@@ -6,6 +6,7 @@ package chain
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 )
@@ -65,11 +66,13 @@ const (
 	MemberSecurity = "security"
 )
 
-// Gate results a builder close can carry. A red gate has already spent the
-// regate budget, so it still reaches the reviewer rather than a halt.
+// Gate results a builder close can carry. None is a round with no check at
+// all; a red gate has already spent the regate budget, so it still reaches the
+// reviewer rather than a halt.
 const (
 	GateGreen = "green"
 	GateRed   = "red"
+	GateNone  = "none"
 )
 
 // Settings is the chain's resolved configuration, stored when the chain starts
@@ -80,6 +83,10 @@ type Settings struct {
 	PlannerActor   string
 	SecurityActor  string
 	Security       bool
+	// Gate is the builder member's resolved acceptance command; "" means no
+	// check. Regate is its repair-round budget.
+	Gate   string
+	Regate int
 }
 
 // Awaiting names the member round whose close the chain waits for. The caller
@@ -123,7 +130,7 @@ type Event struct {
 	Member        string
 	Round         int
 	Outcome       string // builder: the report tail's outcome
-	Gate          string // builder: green or red after the regate budget
+	Gate          string // builder: green, red after the regate budget, or none when no check ran
 	Verdict       Verdict
 	PlanPresent   bool // planner: artifact present and non-empty
 	Findings      int  // security
@@ -163,6 +170,7 @@ type SeedView struct {
 	PlanPath, ReportPath, DiffPath string
 	GateLogPath, GateResult        string
 	OutputPath, BranchDiffPath     string
+	PlanDiffPath, RoundPromptPath  string
 	Branch, Base                   string
 }
 
@@ -203,6 +211,42 @@ func Next(s State, e Event) (State, Action) {
 	default:
 		return s, Action{}
 	}
+}
+
+// BuilderHaltReason is the one-line reason a builder close that is not done
+// carries onto the chain: the first present of the report tail's halted_at,
+// the close note and the first not_done item, each labelled; the outcome word
+// when none of them is set. A value that carries a newline is cut at its first
+// one and trimmed before it is labelled, and an empty source is skipped rather
+// than rendered as an empty label. Pure.
+func BuilderHaltReason(tail reporttail.Tail, note, outcome string) string {
+	for _, src := range []struct{ label, value string }{
+		{"halted_at", tail.HaltedAt},
+		{"note", note},
+		{"not_done", firstOrEmpty(tail.NotDone)},
+	} {
+		if v := firstLine(src.value); v != "" {
+			return src.label + ": " + v
+		}
+	}
+	return "status: " + outcome
+}
+
+// firstOrEmpty is the first element of a list, or "" for a list with none.
+func firstOrEmpty(list []string) string {
+	if len(list) == 0 {
+		return ""
+	}
+	return list[0]
+}
+
+// firstLine is value cut at its first newline and trimmed, or "" when nothing
+// but whitespace is left.
+func firstLine(value string) string {
+	if idx := strings.IndexByte(value, '\n'); idx != -1 {
+		value = value[:idx]
+	}
+	return strings.TrimSpace(value)
 }
 
 // builderClosed turns a builder's report into the next step. A halted, blocked

@@ -61,6 +61,21 @@ func TestResolveClearSubject(t *testing.T) {
 			wantErr: ErrUnknownProvider, notSubstr: "did you mean",
 		},
 		{
+			name: "account gate key with a live gate", set: twoProviders,
+			l:       Ledger{Entries: []Entry{{Kind: RateLimited, Subject: "test@cp1", At: baseTime, Source: "planner"}}},
+			subject: "test@cp1",
+			want:    "test",
+		},
+		{
+			name: "account gate key of a configured group", set: twoProviders,
+			subject: "test@cp1",
+			want:    "test",
+		},
+		{
+			name: "account gate key unknown group", set: twoProviders, subject: "zzz@cp1",
+			wantErr: ErrUnknownProvider, notSubstr: "did you mean",
+		},
+		{
 			name: "gate left by a removed candidate", set: testOnly, l: goneGate, subject: "gone",
 			want: "gone",
 		},

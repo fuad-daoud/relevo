@@ -13,28 +13,29 @@ import (
 func testChain(name string) ChainRow {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	return ChainRow{
-		ID:            NewID(),
-		Name:          name,
-		Status:        "running",
-		Phase:         "build",
-		Step:          "building",
-		Plan:          1,
-		Plans:         2,
-		PlanPathsJSON: []byte(`["/plans/001.md","/plans/002.md"]`),
-		SettingsJSON:  []byte(`{"max_corrections":1}`),
-		Builder:       name,
-		Reviewer:      name + "-rev",
-		Planner:       name + "-plan",
-		Security:      name + "-sec",
-		Base:          "main",
-		Branch:        "relevo/" + name,
-		Repo:          "https://example.test/r.git",
-		Worktree:      "/work/" + name,
-		Feature:       "f",
-		Ticket:        "#1",
-		MasterMindID:  "mm1",
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:              NewID(),
+		Name:            name,
+		Status:          "running",
+		Phase:           "build",
+		Step:            "building",
+		Plan:            1,
+		Plans:           2,
+		PlanPathsJSON:   []byte(`["/plans/001.md","/plans/002.md"]`),
+		SettingsJSON:    []byte(`{"max_corrections":1}`),
+		Builder:         name,
+		Reviewer:        name + "-rev",
+		Planner:         name + "-plan",
+		Security:        name + "-sec",
+		Base:            "main",
+		Branch:          "relevo/" + name,
+		Repo:            "https://example.test/r.git",
+		Worktree:        "/work/" + name,
+		Feature:         "f",
+		Ticket:          "#1",
+		MasterMindID:    "mm1",
+		PlanStartCommit: "commit-plan-start",
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 }
 
@@ -158,6 +159,45 @@ func TestMigration016KeepsExistingRows(t *testing.T) {
 	}
 }
 
+// TestMigration018AddsPlanStartCommit pins the plan-start column: applying 018
+// adds it with an empty default, leaves a row written before it reading ”, and
+// a second apply records nothing new.
+func TestMigration018AddsPlanStartCommit(t *testing.T) {
+	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 17)); err != nil {
+		t.Fatalf("applyMigrations through 017: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO chains
+			(id, name, status, phase, step, plan, plans, plan_paths, builder, created_at, updated_at)
+		VALUES ('c1', 'x', 'running', 'build', 'building', 1, 1, '["/p/1.md"]', 'x',
+			'2026-09-01T10:00:00.000Z', '2026-09-01T10:00:00.000Z')`); err != nil {
+		t.Fatalf("insert chains row: %v", err)
+	}
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 18)); err != nil {
+		t.Fatalf("applyMigrations 018: %v", err)
+	}
+	assertColumns(t, sqlDB, "chains", []string{"plan_start_commit"})
+	var start string
+	if err := sqlDB.QueryRow(`SELECT plan_start_commit FROM chains WHERE id = 'c1'`).Scan(&start); err != nil {
+		t.Fatalf("select plan_start_commit: %v", err)
+	}
+	if start != "" {
+		t.Errorf("old row plan_start_commit = %q, want the empty default", start)
+	}
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 18)); err != nil {
+		t.Fatalf("second applyMigrations 018: %v", err)
+	}
+	var rows, versions int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT version) FROM schema_version`).Scan(&rows, &versions); err != nil {
+		t.Fatalf("count schema_version: %v", err)
+	}
+	if rows != 18 || versions != 18 {
+		t.Errorf("schema_version has %d rows and %d versions, want 18 and 18", rows, versions)
+	}
+}
+
 func TestChainPutGetRoundTrip(t *testing.T) {
 	d := openTestDB(t)
 	c := testChain("x")
@@ -228,7 +268,8 @@ func assertChainMatches(t *testing.T, got, want ChainRow) {
 	}
 	if got.Base != want.Base || got.Branch != want.Branch || got.Repo != want.Repo ||
 		got.Worktree != want.Worktree || got.Feature != want.Feature || got.Ticket != want.Ticket ||
-		got.Server != want.Server || got.MasterMindID != want.MasterMindID {
+		got.Server != want.Server || got.MasterMindID != want.MasterMindID ||
+		got.PlanStartCommit != want.PlanStartCommit {
 		t.Errorf("placement/facts = %+v, want %+v", got, want)
 	}
 	if !got.CreatedAt.Equal(want.CreatedAt) || !got.UpdatedAt.Equal(want.UpdatedAt) {

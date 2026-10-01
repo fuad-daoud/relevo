@@ -5,11 +5,11 @@ import (
 	"fmt"
 )
 
-// BindingFormat is the format of the Binding JSON this binary writes. It is 10
-// because a record may now carry the ticket key: the ticket names the issue a
-// binding serves, and any binary that predates it must refuse the record
-// rather than saving one back with the ticket erased. That refusal is the
-// intended clean break.
+// BindingFormat is the format of the Binding JSON this binary writes. It is 11
+// because a record may now carry the builder's account: the account names the
+// login a round drew from, and any binary that predates it must refuse the
+// record rather than saving one back with the account erased, which would
+// over-gate the whole provider. That refusal is the intended clean break.
 //
 // Later fields (abandoned_sessions, oom_requeue, round_oom_kills, link,
 // remote_bundle_failures) are fields recordFormat never stamps: an older relevo
@@ -20,10 +20,10 @@ import (
 // failure run, which restarts from zero. Stamping a field would lock that older
 // relevo out of loading the binding. Bump BindingFormat whenever Binding's JSON
 // shape changes in a way that must lock an older relevo out.
-const BindingFormat = 10
+const BindingFormat = 11
 
-// recordFormat is the format to write b at. A record may carry the ticket key,
-// so every record is format 10.
+// recordFormat is the format to write b at. A record may carry the ticket key
+// or the builder's account, so every record is format 11.
 func recordFormat(b Binding) int {
 	return BindingFormat
 }

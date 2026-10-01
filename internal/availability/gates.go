@@ -4,12 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -140,23 +141,40 @@ func RecordSpawnFailureLocked(d Deps, token, binding string, cause error) {
 // sharing that provider shows as gated -- a quota is enforced per subscription
 // or key, not per model. token (a candidate name or a canonical token) must
 // resolve to a configured candidate: a typo is refused rather than recorded.
-func Unavailable(d Deps, token string, until time.Time, reason string) (provider string, err error) {
+//
+// keys names the account gates to record instead of the bare group, one
+// group@account entry each; it is empty on every host with no accounts, when
+// the bare group gates every candidate of the provider exactly as before.
+func Unavailable(d Deps, token string, until time.Time, reason string, keys ...string) (provider string, err error) {
 	c, err := d.Candidates.Resolve(token)
 	if err != nil {
 		return "", err
 	}
 	ref := c.Ref()
 
-	now := d.Now()
-	entry := Entry{
-		Kind:    RateLimited,
-		Subject: ref.Provider,
-		At:      now,
-		Until:   until,
-		Note:    sanitize.Text(reason),
-		Source:  "planner", // why: ClearedByMasterMind's value is state already written
+	subjects := keys
+	if len(subjects) == 0 {
+		subjects = []string{ref.Provider}
 	}
-	if err := d.Store.WithLock(func(*store.Tx) error { return AppendEntryLocked(d, entry) }); err != nil {
+
+	now := d.Now()
+	err = d.Store.WithLock(func(*store.Tx) error {
+		for _, subject := range subjects {
+			entry := Entry{
+				Kind:    RateLimited,
+				Subject: subject,
+				At:      now,
+				Until:   until,
+				Note:    sanitize.Text(reason),
+				Source:  "planner", // why: ClearedByMasterMind's value is state already written
+			}
+			if err := AppendEntryLocked(d, entry); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return "", err
 	}
 
@@ -193,18 +211,14 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 		if err != nil {
 			return err
 		}
+		// The account half of a group@account subject, empty for a bare group:
+		// a group clear lifts the bare entry and every account entry, an
+		// account clear lifts only that key.
+		_, accountName, _ := account.ParseGateKey(subject)
 
-		for _, e := range l.Entries {
-			if e.Kind != RateLimited || e.Subject != provider {
-				continue
-			}
-			removed++
-			if oldest.IsZero() || e.At.Before(oldest) {
-				oldest = e.At
-			}
-		}
+		l, removed, oldest = clearLedger(l, clearSubjects(l, provider, accountName))
 
-		if serr := SaveLedger(d.Gates, l.Clear(RateLimited, provider)); serr != nil {
+		if serr := SaveLedger(d.Gates, l); serr != nil {
 			return serr
 		}
 
@@ -213,6 +227,7 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 				At:       d.Now(),
 				Kind:     Cleared,
 				Provider: provider,
+				Account:  accountName,
 				Source:   source,
 				Note:     fmt.Sprintf("cleared %d entries", removed),
 				Since:    oldest,
@@ -235,10 +250,31 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 	return provider, removed, nil
 }
 
+// clearLedger removes every rate-limit entry on the named subjects and returns
+// the ledger without them, how many entries were removed, and the At of the
+// oldest removal -- how long the gate had been live.
+func clearLedger(l Ledger, subjects []string) (Ledger, int, time.Time) {
+	var removed int
+	var oldest time.Time
+	for _, subject := range subjects {
+		for _, e := range l.Entries {
+			if e.Kind != RateLimited || e.Subject != subject {
+				continue
+			}
+			removed++
+			if oldest.IsZero() || e.At.Before(oldest) {
+				oldest = e.At
+			}
+		}
+		l = l.Clear(RateLimited, subject)
+	}
+	return l, removed, oldest
+}
+
 // LedgerGates projects the live ledger onto tokens, whether or not the
 // configured set holds them: a rate limit gates every token of its provider, a
 // spawn failure gates its own token.
-func LedgerGates(d Deps, tokens []string) []Gate {
+func LedgerGates(d Deps, tokens []string, accounts ...account.Set) []Gate {
 	if d.Gates == nil {
 		return nil
 	}
@@ -249,19 +285,35 @@ func LedgerGates(d Deps, tokens []string) []Gate {
 		return nil
 	}
 
-	return Gated(l, tokens, ProviderOf, d.Now())
+	return Gated(l, tokens, ProviderOf, d.Now(), gateAccounts(d, accounts)...)
+}
+
+// gateAccounts picks the account set the projection reads: an explicit
+// argument wins, otherwise the Deps carry the configured pool. Empty on a host
+// with no accounts, where Gated takes no account set and every gate stays a
+// bare group.
+func gateAccounts(d Deps, accounts []account.Set) []account.Set {
+	for _, a := range accounts {
+		if len(a) > 0 {
+			return []account.Set{a}
+		}
+	}
+	if len(d.Accounts) == 0 {
+		return nil
+	}
+	return []account.Set{d.Accounts}
 }
 
 // Gates is what every reader renders from: the live ledger projected onto the
 // configured candidates. A load error is reported once on stderr and read as
 // an empty ledger -- status, candidates and doctor must not go down over a
 // bookkeeping file.
-func Gates(d Deps) []Gate {
+func Gates(d Deps, accounts ...account.Set) []Gate {
 	if d.Candidates == nil {
 		return nil
 	}
 
-	gates := LedgerGates(d, d.Candidates.Refs())
+	gates := LedgerGates(d, d.Candidates.Refs(), accounts...)
 	gates = append(gates, rolesMissingGates(d)...)
 
 	// Every gate carries the candidate's short name when the set holds its
@@ -283,6 +335,12 @@ func Gates(d Deps) []Gate {
 // the role it belongs to, so resolveRole can ignore the gates of every other
 // role. nil when d.Roles is nil: no checker configured (every test that does not
 // set one, and every caller before cmd/relevo wires harness.OSRoleChecker()).
+//
+// When a candidate's provider is served by an account pool, the definitions are
+// checked in each account's own home -- the builder reads them under that
+// account, not the default home -- and a missing account gates as
+// group@account, so one broken home gates only that account and the rest of the
+// pool stays usable.
 func rolesMissingGates(d Deps) []Gate {
 	if d.Roles == nil || d.Candidates == nil {
 		return nil
@@ -292,7 +350,8 @@ func rolesMissingGates(d Deps) []Gate {
 
 	// Missing is called once per distinct (kind, definition list), not once per
 	// candidate or role: several candidates commonly share a kind, and a role's
-	// definition list is usually the shipped one.
+	// definition list is usually the shipped one. The same cache keyed by home
+	// serves the account path.
 	cache := map[string][]string{}
 
 	var out []Gate
@@ -301,43 +360,115 @@ func rolesMissingGates(d Deps) []Gate {
 		if err != nil {
 			continue
 		}
-		kind := r.Harness
+		pool := d.Accounts.Pool(account.Kind(r.Harness), r.Provider)
 		for _, role := range reg.Names() {
-			if !reg.Serves(role, r) {
-				continue
-			}
-			spec, err := reg.Spec(role, kind)
-			if err != nil {
-				continue
-			}
-			key := kind + "\x00" + strings.Join(spec.Definitions, ",")
-			paths, ok := cache[key]
+			spec, ok := servedRoleSpec(reg, role, r)
 			if !ok {
-				paths = d.Roles.Missing(kind, spec.Definitions)
-				cache[key] = paths
-			}
-			if len(paths) == 0 {
 				continue
 			}
-			out = append(out, Gate{
-				Token:  ref,
-				Kind:   RolesMissing,
-				Role:   role,
-				Since:  d.Now(),
-				Note:   rolesMissingNote(role, kind, spec.Definitions, paths),
-				Source: "relevo",
-			})
+			out = append(out, roleMissingGates(d, ref, r, role, spec, pool, cache)...)
 		}
 	}
 	return out
 }
 
+// servedRoleSpec is role's resolved spec when the role serves r, and false when
+// it does not or its spec cannot be built.
+func servedRoleSpec(reg *roles.Registry, role string, r candidate.Ref) (harness.RoleSpec, bool) {
+	if !reg.Serves(role, r) {
+		return harness.RoleSpec{}, false
+	}
+	spec, err := reg.Spec(role, r.Harness)
+	if err != nil {
+		return harness.RoleSpec{}, false
+	}
+	return spec, true
+}
+
+// roleMissingGates is every RolesMissing gate for one role of one candidate:
+// the default-home gate when no account serves the provider, else one
+// group@account gate per account home that lacks the definitions.
+func roleMissingGates(d Deps, ref string, r candidate.Ref, role string, spec harness.RoleSpec, pool []account.Account, cache map[string][]string) []Gate {
+	defsKey := strings.Join(spec.Definitions, ",")
+	if len(pool) == 0 {
+		key := r.Harness + "\x00" + defsKey
+		paths := cachedMissing(cache, key, func() []string {
+			return d.Roles.Missing(r.Harness, spec.Definitions)
+		})
+		if len(paths) == 0 {
+			return nil
+		}
+		return []Gate{{
+			Token:  ref,
+			Kind:   RolesMissing,
+			Role:   role,
+			Since:  d.Now(),
+			Note:   rolesMissingNote(role, r.Harness, spec.Definitions, paths, ""),
+			Source: "relevo",
+		}}
+	}
+
+	var out []Gate
+	for _, a := range pool {
+		home, ok := harness.AccountHome(a)
+		if !ok {
+			continue
+		}
+		key := home + "\x00" + r.Harness + "\x00" + defsKey
+		paths := cachedMissing(cache, key, func() []string {
+			return missingInHome(d.Roles, home, r.Harness, spec.Definitions)
+		})
+		if len(paths) == 0 {
+			continue
+		}
+		out = append(out, Gate{
+			Token:  account.GateKey(r.Provider, a.Name),
+			Kind:   RolesMissing,
+			Role:   role,
+			Since:  d.Now(),
+			Note:   rolesMissingNote(role, r.Harness, spec.Definitions, paths, " in account "+a.Name+" ("+home+")"),
+			Source: "relevo",
+		})
+	}
+	return out
+}
+
+// cachedMissing is a missing-definitions lookup memoised under key, so one
+// (kind or home, definition list) pair is checked once per Gates call.
+func cachedMissing(cache map[string][]string, key string, load func() []string) []string {
+	if paths, ok := cache[key]; ok {
+		return paths
+	}
+	paths := load()
+	cache[key] = paths
+	return paths
+}
+
+// homeChecker is the account-aware half of harness.RoleChecker: the same
+// missing-definitions check rooted at one per-process home. A checker that does
+// not implement it (a test double, or a caller that predates accounts) falls
+// back to the default-home check, so a gate still appears rather than silently
+// vanishing.
+type homeChecker interface {
+	MissingIn(home, kind string, definitions []string) []string
+}
+
+// missingInHome asks c which definitions are missing from one account home;
+// c's default check answers when it is not account-aware.
+func missingInHome(c harness.RoleChecker, home, kind string, definitions []string) []string {
+	if hc, ok := c.(homeChecker); ok {
+		return hc.MissingIn(home, kind, definitions)
+	}
+	return c.Missing(kind, definitions)
+}
+
 // rolesMissingNote is one roles-missing gate's note: which of role's definitions
-// are missing on kind, and how to fix each class of them. A shipped path is
-// installed by `relevo config agents`; a custom one may be rendered from a
-// source agent by that same command, or be the user's own native definition,
-// so its fix names both.
-func rolesMissingNote(role, kind string, defs, paths []string) string {
+// are missing on kind, and how to fix each class of them. where names the
+// account home when the check was per account, and is empty for the default
+// home. A shipped path is installed by `relevo config agents`; a custom one may
+// be rendered from a source agent by that same command, or be the user's own
+// native definition, so its fix names both.
+func rolesMissingNote(role, kind string, defs, paths []string, where string) string {
 	var shipped, custom []string
 	for _, path := range paths {
 		if definitionIsShipped(kind, defs, path) {
@@ -354,7 +485,7 @@ func rolesMissingNote(role, kind string, defs, paths []string) string {
 	if len(custom) > 0 {
 		fixes = append(fixes, "run relevo config agents --kind "+kind+" for a custom agent relevo renders, or install "+strings.Join(custom, ", ")+" yourself")
 	}
-	return "agent definitions missing for " + role + ": " + strings.Join(paths, ", ") + "; " + strings.Join(fixes, "; ")
+	return "agent definitions missing for " + role + where + ": " + strings.Join(paths, ", ") + "; " + strings.Join(fixes, "; ")
 }
 
 // definitionIsShipped reports whether path is one of defs' shipped paths for
@@ -456,29 +587,4 @@ func gatedNote(d Deps, token string) string {
 // after bind, add, fork and ask spawn successfully.
 func GatedNote(d Deps, token string) string {
 	return gatedNote(d, token)
-}
-
-// BindingsOnProvider names the active bindings with an open round whose builder
-// runs on provider, sorted: the ones the daemon will switch once that provider
-// is gated. Pure, for cmdUnavailable's note.
-func BindingsOnProvider(bindings []store.Binding, provider string) []string {
-	var names []string
-	for _, b := range bindings {
-		if b.State != store.StateActive {
-			continue
-		}
-		if b.RoundStartedAt.IsZero() {
-			continue
-		}
-		if b.BuilderCandidate == "" {
-			continue
-		}
-		ref, err := candidate.ParseRef(b.BuilderCandidate)
-		if err != nil || ref.Provider != provider {
-			continue
-		}
-		names = append(names, b.Name)
-	}
-	sort.Strings(names)
-	return names
 }

@@ -304,12 +304,13 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 	err := t.queryRow(`SELECT id FROM round WHERE binding_id = ? AND number = ?`, r.BindingID, r.Number).Scan(&id)
 	if err == nil {
 		if _, uerr := t.exec(`UPDATE round SET started_at=?, closed_at=?, outcome=?, candidate=?,
-				harness=?, provider=?, model=?, mode=?, actor=?, tier=?,
+				account=?, harness=?, provider=?, model=?, mode=?, actor=?, tier=?,
 				commits=?, tree=?, gate_result=?, gate_exit=?, gate_duration_ms=?,
 				in_tokens=?, cache_tokens=?, write_tokens=?, out_tokens=?, cost_usd=?, cost_basis=?,
 				report_outcome=?, switches=?
 			WHERE id=?`,
 			formatTime(r.StartedAt), nullableTime(r.ClosedAt), r.Outcome, nullableString(r.Candidate),
+			nullableString(r.Account),
 			nullableString(r.Harness), nullableString(r.Provider), nullableString(r.Model),
 			nullableString(r.Mode), r.Actor, nullableString(r.Tier),
 			nullableInt(r.Commits), nullableString(r.Tree), nullableString(r.GateResult), nullableInt(r.GateExit),
@@ -332,13 +333,13 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 		startedAt = time.Now()
 	}
 	if _, err := t.exec(`INSERT INTO round (id, binding_id, number, started_at, closed_at, outcome,
-			candidate, harness, provider, model, mode, actor, tier,
+			candidate, account, harness, provider, model, mode, actor, tier,
 			commits, tree, gate_result, gate_exit, gate_duration_ms,
 			in_tokens, cache_tokens, write_tokens, out_tokens, cost_usd, cost_basis,
 			report_outcome, switches)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, r.BindingID, r.Number, formatTime(startedAt), nullableTime(r.ClosedAt), r.Outcome,
-		nullableString(r.Candidate), nullableString(r.Harness), nullableString(r.Provider),
+		nullableString(r.Candidate), nullableString(r.Account), nullableString(r.Harness), nullableString(r.Provider),
 		nullableString(r.Model), nullableString(r.Mode), r.Actor, nullableString(r.Tier),
 		nullableInt(r.Commits), nullableString(r.Tree), nullableString(r.GateResult), nullableInt(r.GateExit),
 		nullableInt64(r.GateDurationMS),

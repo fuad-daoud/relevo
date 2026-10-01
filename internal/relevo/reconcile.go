@@ -437,7 +437,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	var chainEvent chain.Event
 	if chainErr == nil {
 		if part := chainPartOf(chainRow, b.Name); part != "" {
-			chainEvent = chainEventFromClose(rt, part, b, body, outcome, gate, stopped)
+			chainEvent = chainEventFromClose(rt, part, b, body, outcome, gate, stopped, tail, note)
 		}
 	}
 

@@ -40,6 +40,15 @@ type ChainOptions struct {
 	Ticket    string
 	// Base is the commit or ref the builder is cut from; "" is HEAD.
 	Base string
+	// Gate is the builder member's acceptance command, exactly as bind's --gate;
+	// "" falls back to policy.gate.default when the builder role checks.
+	Gate string
+	// NoGate opts the builder member out of policy.gate.default; it wins over
+	// Gate, exactly as bind's --no-gate.
+	NoGate bool
+	// Regate is the builder member's repair-round budget after a failing gate;
+	// nil takes policy.gate.regate.
+	Regate *int
 	// MaxCorrections overrides policy.chain.max_corrections; nil takes it.
 	MaxCorrections *int
 	// ReviewerActor, PlannerActor and SecurityActor override the matching
@@ -59,6 +68,8 @@ type ChainResult struct {
 	Chain   db.ChainRow
 	Members []store.Binding
 	Plans   int
+	// Check is the builder member's resolved acceptance command; "" means none.
+	Check string
 }
 
 // chainMember is one part of a chain: which part it fills, the binding name it
@@ -129,7 +140,7 @@ func ChainStart(ctx context.Context, rt Runtime, opts ChainOptions) (ChainResult
 // names, the plans, the actor shapes, their candidates and the caller's
 // mastermind. It reads and writes nothing.
 func chainResolveStart(ctx context.Context, rt Runtime, opts ChainOptions) (chainStartPlan, error) {
-	plan := chainStartPlan{settings: chainSettings(rt.Policy, opts)}
+	plan := chainStartPlan{settings: chainSettings(rt.Policy, opts, roleChecks(rt.RoleRegistry(), "builder"))}
 
 	repo, err := os.Getwd()
 	if err != nil {
@@ -182,7 +193,7 @@ func chainCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan chainS
 		repo: plan.repo, repoRef: captureRepo(ctx, rt, plan.repo), feature: opts.Feature, ticket: plan.ticket,
 		worktree: worktree, branch: branch, commit: commit, baseRef: baseRef,
 	}
-	built, err := chainBuildMembers(ctx, rt, plan.members, plan.resolutions, base)
+	built, err := chainBuildMembers(ctx, rt, plan.members, plan.resolutions, base, plan.settings)
 	if err != nil {
 		chainRollback(ctx, rt, plan.repo, worktree, branch)
 		return ChainResult{}, err
@@ -234,7 +245,7 @@ func chainCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan chainS
 	}); err != nil {
 		return ChainResult{}, fmt.Errorf("chain %q started, but plan 1 could not be handed to %s: %w", opts.Name, opts.Name, err)
 	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies)}, nil
+	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chainBuilderCheck(stored, opts.Name)}, nil
 }
 
 // chainRollback removes what a failed start created: the worktree and the
@@ -249,14 +260,18 @@ func chainRollback(ctx context.Context, rt Runtime, repo, worktree, branch strin
 }
 
 // chainSettings resolves the chain's settings: a flag beats the setting, and
-// the setting beats the policy default.
-func chainSettings(pol policy.Policy, opts ChainOptions) chain.Settings {
+// the setting beats the policy default. checks is the builder role's own
+// check flag, which decides whether an unset gate flag takes policy's
+// gate.default -- exactly as a lone binding resolves it.
+func chainSettings(pol policy.Policy, opts ChainOptions, checks bool) chain.Settings {
 	set := chain.Settings{
 		MaxCorrections: pol.ChainMaxCorrections(),
 		ReviewerActor:  pol.ChainReviewerActor(),
 		PlannerActor:   pol.ChainPlannerActor(),
 		SecurityActor:  pol.ChainSecurityActor(),
 		Security:       pol.ChainSecurityOn(),
+		Gate:           resolveGateFor(opts.Gate, opts.NoGate, pol, checks),
+		Regate:         resolveRegate(opts.Regate, pol),
 	}
 	if opts.MaxCorrections != nil {
 		set.MaxCorrections = *opts.MaxCorrections
@@ -382,7 +397,7 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]Resolutio
 			return nil, fmt.Errorf("chain %s actor %q must be a %s actor, not a %s", m.part, m.actor, m.shape, shape)
 		}
 		res, err := resolveRole(rt.RoleRegistry(), rt.Candidates,
-			availability.Gates(AvailabilityDeps(rt)), "", bindingRole(store.Binding{Role: normRole(m.actor)}))
+			availability.Gates(AvailabilityDeps(rt)), "", bindingRole(store.Binding{Role: normRole(m.actor)}), pickFor(rt))
 		if err != nil {
 			return nil, err
 		}
@@ -393,9 +408,9 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]Resolutio
 
 // chainBuildMembers builds every member's stored binding: its tier resolved
 // from its actor's registry entry, its endpoint from resolveBuilder (so the
-// launch is validated before anything is written), and the builder's check and
-// regate budget exactly as a lone binding's.
-func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, resolutions map[string]Resolution, base chainBase) ([]store.Binding, error) {
+// launch is validated before anything is written), and, for the writer only,
+// the check and regate budget the chain resolved.
+func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, resolutions map[string]Resolution, base chainBase, set chain.Settings) ([]store.Binding, error) {
 	reg := rt.RoleRegistry()
 	built := make([]store.Binding, 0, len(members))
 	for _, m := range members {
@@ -419,10 +434,11 @@ func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, r
 			return nil, err
 		}
 		b := chainMemberBinding(m, ep, c.Ref().String(), base)
+		b.BuilderAccount = res.Account
 		b.Tier = string(tier)
 		if m.writer {
-			b.Gate = resolveGateFor("", false, rt.Policy, roleChecks(reg, "builder"))
-			b.Regate = resolveRegate(nil, rt.Policy)
+			b.Gate = set.Gate
+			b.Regate = set.Regate
 		}
 		built = append(built, b)
 	}
@@ -501,8 +517,12 @@ func chainRow(opts ChainOptions, set chain.Settings, members []chainMember, base
 		Feature:        opts.Feature,
 		Ticket:         base.ticket,
 		MasterMindID:   base.mastermindID,
-		CreatedAt:      at,
-		UpdatedAt:      at,
+		// Plan 1 starts here: the plan-start commit is the commit the
+		// builder's worktree was cut from, so plan 1's review can diff the
+		// plan's whole span.
+		PlanStartCommit: base.commit,
+		CreatedAt:       at,
+		UpdatedAt:       at,
 	}, nil
 }
 
@@ -534,4 +554,15 @@ func chainStoredMembers(rt Runtime, members []chainMember) ([]store.Binding, err
 		out = append(out, b)
 	}
 	return out, nil
+}
+
+// chainBuilderCheck is the builder member's resolved acceptance command from a
+// chain's members: "" when the member carries no gate.
+func chainBuilderCheck(members []store.Binding, builder string) string {
+	for _, m := range members {
+		if m.Name == builder {
+			return m.Gate
+		}
+	}
+	return ""
 }

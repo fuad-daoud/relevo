@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
@@ -33,8 +34,11 @@ type Config struct {
 	Root string // <state>/serve
 	// DB is the machine database, which the caller opens and closes; the server
 	// opens none of its own under Root.
-	DB             *db.DB
-	Candidates     *candidate.Set
+	DB         *db.DB
+	Candidates *candidate.Set
+	// Accounts is the server's own login pool, from its own config. Empty
+	// means every serve path is byte-identical to a host with no accounts.
+	Accounts       account.Set
 	Policy         policy.Policy
 	Runner         spawn.Runner
 	Git            *git.Client // concrete: the transport needs it too
@@ -253,6 +257,7 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		Runner:     s.cfg.Runner,
 		Store:      st,
 		Candidates: s.cfg.Candidates,
+		Accounts:   s.cfg.Accounts,
 		Policy:     s.cfg.Policy,
 		Gates:      s.gates, // server-wide, not the owner's own
 		Usage:      s.cfg.Usage,

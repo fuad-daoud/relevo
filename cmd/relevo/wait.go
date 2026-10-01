@@ -96,14 +96,17 @@ func cmdWait(args []string) error {
 		if err != nil {
 			return err
 		}
-		// A name that is a chain waits on the chain, not on a binding's round:
-		// the caller asked about the whole chain, and its end is one event.
-		if _, cerr := rt.Store.Chain(target); cerr == nil {
-			chain = target
-		} else if !errors.Is(cerr, store.ErrNotFound) {
-			return fail(codeInternal, "%v", cerr)
+		// A name that resolves to a chain waits on the chain -- unless the
+		// chain is no longer running and its builder has a manual round open,
+		// in which case the wait follows that round as any binding's would.
+		binding, isChain, err := relevo.ChainWaitTarget(rt, target)
+		if err != nil {
+			return fail(codeInternal, "%v", err)
 		}
-		names = []string{target}
+		if isChain {
+			chain = target
+		}
+		names = []string{binding}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

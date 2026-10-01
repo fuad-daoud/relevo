@@ -252,6 +252,9 @@ func Parse(name string, raw []byte) (Policy, []string, error) {
 	if err := validateChain(path, p.Chain); err != nil {
 		return Policy{}, warnings, err
 	}
+	if err := validateAccounts(path, p.Accounts); err != nil {
+		return Policy{}, warnings, err
+	}
 
 	return p, warnings, nil
 }
@@ -412,6 +415,35 @@ func validateChain(path string, c *ChainPolicy) error {
 		}
 	}
 	return nil
+}
+
+// validateAccounts checks the accounts group: the rotation mode must be one
+// relevo knows.
+func validateAccounts(path string, a *AccountsPolicy) error {
+	if a == nil {
+		return nil
+	}
+	switch a.Rotation {
+	case "", RotationFailover, RotationRoundRobin:
+		return nil
+	}
+	return fmt.Errorf("%s: accounts.rotation: unknown %q (known: %s, %s): %w", path, a.Rotation, RotationFailover, RotationRoundRobin, ErrBadPolicy)
+}
+
+// ValidateRotation checks the rotation mode and, because opencode keeps one
+// active credential per install, refuses round-robin for any group an opencode
+// account covers: a per-round rotation would move every other round on the
+// host.
+func ValidateRotation(path, rotation string, opencodeGroups []string) error {
+	if err := validateAccounts(path, &AccountsPolicy{Rotation: rotation}); err != nil {
+		return err
+	}
+	if rotation != RotationRoundRobin || len(opencodeGroups) == 0 {
+		return nil
+	}
+	groups := append([]string(nil), opencodeGroups...)
+	sort.Strings(groups)
+	return fmt.Errorf("%s: accounts.rotation: round-robin is not allowed for the opencode group %q: %w", path, groups[0], ErrBadPolicy)
 }
 
 func validateNotify(path string, n *NotifyPolicy) error {

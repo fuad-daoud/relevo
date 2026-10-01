@@ -1765,7 +1765,29 @@ func (v statsView) candidatesTabLines(env Env, width int) ([]string, int) {
 	}
 	out = append(out, "", "")
 	out = append(out, v.statsCandDetail(env, rows[cur])...)
+	if len(v.rep.Accounts) > 0 {
+		out = append(out, "", "")
+		out = append(out, v.accountTabLines(width)...)
+	}
 	return out, 1 + cur
+}
+
+// accountTabLines is the candidates tab's account section: the same columns as
+// the candidate table, one row per login a round drew from. It is only reached
+// when the report carries accounts, so a host with none shows the tab it
+// always did. Status is per candidate, so this table has none.
+func (v statsView) accountTabLines(width int) []string {
+	visible, nameW := statsCandVisible(width)
+	head := stats.FitKey("ACCOUNT", nameW, false)
+	for _, col := range visible {
+		head += fmt.Sprintf("%*s", col.W, col.Head)
+	}
+	out := []string{"   " + faintStyle.Bold(true).Render(head)}
+	for _, s := range v.rep.Accounts {
+		key, nums := statsCandCells(s, s.Token, visible, nameW)
+		out = append(out, "   "+fgStyle.Render(key)+mutedStyle.Render(nums))
+	}
+	return out
 }
 
 // statsCandCells is one candidates-tab row's plain parts (§4.3): the name
