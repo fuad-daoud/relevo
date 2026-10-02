@@ -149,6 +149,19 @@ func readerOutputText(kind string, stream []byte, chainReader bool) string {
 	return transcript.FinalText(kind, stream)
 }
 
+// readerHasReport reports whether a reader round already has something to
+// close with: an output file the runner wrote itself, or text the close would
+// take from the stream. A round with neither is the noreport case the marker
+// hold keeps open inside the grace, so this reads the two sources the close
+// writes from and no others.
+func readerHasReport(rt Runtime, b store.Binding) bool {
+	if fi, err := os.Lstat(reportPathFor(rt, b)); err == nil && fi.Mode().IsRegular() {
+		return true
+	}
+	stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
+	return readerOutputText(lastStreamKind(b), stream, chainReaderPart(rt, b.Name)) != ""
+}
+
 // chainReaderPart reports whether name is the reviewer or the security member
 // of a chain: the readers whose final message must carry the chain's block, so
 // their saved artifact is relevo's to write from the block-carrying message.
