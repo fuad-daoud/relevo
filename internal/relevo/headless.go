@@ -1112,15 +1112,37 @@ const readerSummaryEarlyNote = "runner still running after its marker; summary t
 // between this read and closeOnMarker's own would otherwise close the round
 // the instant it appeared, before the runner printed the final message.
 //
-// A present marker with no pid and no Runner is left to the ordinary close.
-// An unreadable liveness check holds this tick, as the unmarked path treats it
-// as alive.
+// A marker whose round has no report yet is held inside the grace even when
+// its process is gone: the message can land after the marker while the
+// process exits, so an empty stream must not close as noreport the moment the
+// marker is seen. Past the grace a genuinely empty round is left to the
+// ordinary close. An unreadable liveness check holds this tick, as the
+// unmarked path treats it as alive.
 func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (present, held, early bool, err error) {
 	fi, serr := os.Stat(rt.Store.DonePath(b.Name, b.Round))
 	if serr != nil {
 		return false, false, false, nil // no marker yet: the round is live, close nothing
 	}
 	present = true
+	withinGrace := rt.Now().Sub(fi.ModTime()) < readerFinalMessageGrace
+
+	// A marker can appear before the runner prints its final message and
+	// before it exits: while the round has no report and the grace has not
+	// run out, hold the close so a message still coming is not lost to a
+	// noreport entry. A live process is recorded so a later tick never
+	// classifies it as lost to a restart.
+	if withinGrace && !readerHasReport(rt, b) {
+		if b.Builder.PID != 0 && rt.Runner != nil {
+			alive, aerr := rt.Runner.Alive(ctx, handleOf(b.Builder))
+			if aerr != nil {
+				slog.Warn("reader liveness check failed; holding the round", "binding", b.Name, "pid", b.Builder.PID, "err", aerr)
+			} else if alive {
+				rt.Watched.Mark(b.Builder.PID, b.Builder.StartedAt)
+			}
+		}
+		return present, true, false, nil
+	}
+
 	if b.Builder.PID == 0 || rt.Runner == nil {
 		return present, false, false, nil
 	}
@@ -1135,7 +1157,7 @@ func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (prese
 	// A sighting: this daemon now knows the process is alive, so a later tick
 	// never classifies it as lost to a restart.
 	rt.Watched.Mark(b.Builder.PID, b.Builder.StartedAt)
-	if rt.Now().Sub(fi.ModTime()) < readerFinalMessageGrace {
+	if withinGrace {
 		return present, true, false, nil
 	}
 	if _, err := stopProcess(ctx, rt, b, "stop"); err != nil {

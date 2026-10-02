@@ -80,6 +80,15 @@ func TestReaderRoundRunsInScratchWorktree(t *testing.T) {
 		t.Fatalf("spawn Dir = the binding's own tree %q, want the scratch %q", b.CWD, scratch)
 	}
 
+	// A reader closes on its output file, not the writer's report path:
+	// give the round one so the close has a report to queue.
+	out := rt.Store.OutputPath("review", 1, "reviewer", "findings")
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, []byte("the findings\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	finishRound(t, env, rt, "review", 1)
 
 	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
