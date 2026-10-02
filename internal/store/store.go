@@ -34,8 +34,11 @@ const (
 	// StateRootMode is the state root's own mode: owner-only, because the root
 	// holds the database and every binding's files. MkdirAll never chmods, so a
 	// root that already exists keeps whatever mode it has.
-	StateRootMode   = 0o700
-	defaultRoundCap = 20
+	StateRootMode = 0o700
+	// DefaultRoundCap is the cap a binding gets when it names none. An
+	// ordinary binding runs this many rounds; a chain's writer member is
+	// built with a cap scaled to its chain and floored here.
+	DefaultRoundCap = 20
 	// defaultRoundMSecs is the round budget: 24 hours. A builder working a real
 	// stage runs for hours, so a short budget flags healthy work as needing a
 	// human. A runaway guard, not a progress estimate; `relevo bind --timeout`

@@ -264,6 +264,10 @@ func writeError(err error) error {
 		return fail(codeBindingNotFound, "%v", err)
 	case errors.Is(err, relevo.ErrSeedOverCap):
 		return failNext(codeUsage, "trim the seed or pass --force", "%v", err)
+	case errors.Is(err, relevo.ErrRoundCap):
+		// A binding that used every round its cap allows needs a fresh
+		// builder; the cap is not an internal failure.
+		return failWrap(codeRoundCap, err, "%v", err)
 	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, relevo.ErrRunningChainMember), errors.Is(err, relevo.ErrChainRunning), errors.Is(err, relevo.ErrChainDone):
 		return fail(codeConflict, "%v", err)
 	case errors.As(err, &openMember):

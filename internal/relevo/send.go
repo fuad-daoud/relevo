@@ -375,7 +375,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		return preflight{}, fmt.Errorf("binding %q is broken; rebind before sending", name)
 	}
 	if b.Round > b.RoundCap {
-		return preflight{}, fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
+		return preflight{}, roundCapRefusal(name, b.RoundCap)
 	}
 
 	// A headless builder (#99) is a process relevo starts per round, so the
@@ -502,7 +502,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			return fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
 		}
 		if b.Round > b.RoundCap {
-			return fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
+			return roundCapRefusal(name, b.RoundCap)
 		}
 		// One process per round (headless spec §5.2): a previous round's
 		// process still running means the human is early, not that relevo

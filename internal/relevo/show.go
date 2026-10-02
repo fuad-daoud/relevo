@@ -275,13 +275,10 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 			return ShowResult{}, err
 		}
 	} else if round == 0 {
-		if completed == 0 {
-			completed = b.Round - 1
+		round, err = defaultRound(rt, b, completed, opts.Section)
+		if err != nil {
+			return ShowResult{}, err
 		}
-		if completed < 1 {
-			return ShowResult{}, ErrNoCompletedRound
-		}
-		round = completed
 	} else if round < 1 || round > rounds {
 		return ShowResult{}, fmt.Errorf("round %d: binding has %d rounds", round, rounds)
 	}

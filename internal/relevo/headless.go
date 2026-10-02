@@ -684,7 +684,7 @@ func streamLastActivity(rt Runtime, b store.Binding) time.Time {
 // round is a stray relevo stops.
 func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	if b.Round > b.RoundCap {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: hit the round cap of %d", b.Name, b.RoundCap))
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s of %d", b.Name, ErrRoundCap, b.RoundCap))
 	}
 
 	// Render what the builder has streamed since the last tick before

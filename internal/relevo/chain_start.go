@@ -318,8 +318,9 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]Resolutio
 // chainBuildMembers builds every member's stored binding: its tier resolved
 // from its actor's registry entry, its endpoint from resolveBuilder (so the
 // launch is validated before anything is written), and, for the writer only,
-// the check and regate budget the chain resolved.
-func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, resolutions map[string]Resolution, base chainBase, set chain.Settings) ([]store.Binding, error) {
+// the check, regate budget and scaled round cap the chain resolved. plans is
+// the chain's plan count, which sizes the writer's cap.
+func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, resolutions map[string]Resolution, base chainBase, set chain.Settings, plans int) ([]store.Binding, error) {
 	reg := rt.RoleRegistry()
 	built := make([]store.Binding, 0, len(members))
 	for _, m := range members {
@@ -348,6 +349,7 @@ func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, r
 		if m.writer {
 			b.Gate = set.Gate
 			b.Regate = set.Regate
+			b.RoundCap = chainWriterRoundCap(plans, set)
 		}
 		built = append(built, b)
 	}

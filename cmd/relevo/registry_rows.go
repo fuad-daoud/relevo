@@ -417,7 +417,7 @@ var registry = []verbEntry{
 		},
 		Output: "json:SendDoc; --dry-run: relevo.DryRun",
 		Exit:   []int{0, 1, 2},
-		Errors: []string{"binding_not_found", "conflict", "gate_active", "internal", "policy_refused", "refused", "tier_cap", "usage"},
+		Errors: []string{"binding_not_found", "conflict", "gate_active", "internal", "policy_refused", "refused", "round_cap", "tier_cap", "usage"},
 	},
 	{
 		Name:    "serve",
