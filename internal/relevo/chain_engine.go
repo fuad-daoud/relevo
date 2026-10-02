@@ -237,7 +237,7 @@ func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 			return chainFlowPullCheck(ctx, rt, tx, c, def, before, next, ev, act, member)
 		}
 	}
-	run, err := chainStartCheck(ctx, rt, tx, c, act.Step, act.Command)
+	run, err := chainStartOrAdoptCheck(ctx, rt, tx, c, act.Step, act.Command)
 	if err != nil {
 		next.Status = workflow.StatusHalted
 		next.Reason = fmt.Sprintf("check %s could not start: %v", act.Step, err)
@@ -251,7 +251,11 @@ func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 // red's: the state before the event carries that red's sealed log, and the two
 // signatures agree. A green check, no previous red, or an unreadable log is not
 // a repeat, so a repair is only ever skipped for a failure already seen.
-func chainRepeatRedCheck(rt Runtime, before workflow.State, step, log string) bool {
+//
+// The previous red must belong to the for-each item the chain is on now: a
+// plan's first red is never a repeat, however closely it resembles the red the
+// plan before it saw.
+func chainRepeatRedCheck(rt Runtime, c db.ChainRow, before workflow.State, step, log string) bool {
 	prev, ok := before.Results[step]
 	if !ok || prev.Status != chainCheckRed {
 		return false
@@ -260,8 +264,34 @@ func chainRepeatRedCheck(rt Runtime, before workflow.State, step, log string) bo
 	if len(logs) == 0 || logs[0] == "" || log == "" {
 		return false
 	}
+	if !chainRepeatSameItem(rt, c, before, step) {
+		return false
+	}
 	sig := gateSignature(rt.Store.ReadFile, logs[0])
 	return sig != "" && sig == gateSignature(rt.Store.ReadFile, log)
+}
+
+// chainRepeatSameItem reports whether the previous red of a check step closed
+// under the for-each item the state is on. The trace row that recorded that
+// close carries the item position as the legacy plan column, so comparing it
+// with the state's own position keeps the repeat inside one repair loop.
+func chainRepeatSameItem(rt Runtime, c db.ChainRow, before workflow.State, step string) bool {
+	rows, err := rt.Store.ChainEvents(c.Name)
+	if err != nil {
+		return false
+	}
+	plan := flowPlanPos(before)
+	for i := len(rows) - 1; i >= 0; i-- {
+		if rows[i].Step != step {
+			continue
+		}
+		ev, derr := workflow.DecodeEvent(rows[i].Event)
+		if derr != nil || ev.Kind != workflow.EventCheckClosed {
+			continue
+		}
+		return rows[i].Plan == plan
+	}
+	return false
 }
 
 // chainFlowPullCheck answers a placed writer's check from the gate record its
@@ -289,7 +319,7 @@ func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 	return chainAdvance(ctx, rt, tx, saved, workflow.Event{
 		Kind: workflow.EventCheckClosed, Step: act.Step, Run: round,
 		Result: chainGateResult(rec), Log: rec.LogPath,
-		RepeatRed: chainRepeatRedCheck(rt, *next, act.Step, rec.LogPath),
+		RepeatRed: chainRepeatRedCheck(rt, c, *next, act.Step, rec.LogPath),
 	})
 }
 

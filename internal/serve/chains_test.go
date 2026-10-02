@@ -611,6 +611,45 @@ func TestServedResumeMapsWireToParams(t *testing.T) {
 	}
 }
 
+// TestServedResumeRefusesAGateChangeOnAPlacedWriter pins the wire half of the
+// refusal: a gate built by resumeOptionsFromWire is refused as a usage error
+// when the chain's writer member runs on a server, because relevo has no route
+// that updates a served binding's gate.
+func TestServedResumeRefusesAGateChangeOnAPlacedWriter(t *testing.T) {
+	env := setupTestEnv(t, func(c *Config) { c.MaxBuilders = 1 })
+
+	// Occupy the single builder slot so the chain's plan 1 stays queued, and
+	// stop the chain so the resume route is reachable.
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "decoy", "# Decoy")
+	requireCreated(t, resp, body, "decoy")
+	resp, body = createChain(t, env, "shop")
+	requireStatus(t, resp, body, http.StatusCreated)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/chains/shop/stop", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("shop")
+	if err != nil {
+		t.Fatalf("Load the chain's writer: %v", err)
+	}
+	b.Builder.Mode = store.ModeRemote
+	b.Builder.Server = "zen"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("place the writer remotely: %v", err)
+	}
+
+	gate := "make test"
+	opts, bad := resumeOptionsFromWire("shop", remote.ChainResumeRequest{Gate: &gate})
+	if bad != "" {
+		t.Fatalf("resumeOptionsFromWire = %q, want no refusal", bad)
+	}
+	if _, err := relevo.ChainResume(context.Background(), rt, opts); err == nil {
+		t.Fatal("ChainResume with a wire gate on a placed writer = nil, want the refusal")
+	} else if !errors.Is(err, relevo.ErrRefused) {
+		t.Errorf("ChainResume = %v, want relevo.ErrRefused", err)
+	}
+}
+
 // TestWriteChainResumeErrorMapsTheOpenRoundRefusal pins the wire shape: an open
 // member round on a resume is a 409 round_open, not the 500 the default arm
 // used to write, so the client can rebuild the typed refusal.

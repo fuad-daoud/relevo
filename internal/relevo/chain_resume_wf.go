@@ -20,6 +20,14 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
 	}
+	// A gate change on a chain whose writer runs on a server would be ignored
+	// where the check actually runs, so it is refused rather than silently
+	// dropped.
+	if chainResumeChangesGate(opts) {
+		if err := resumeRemoteGateRefusal(rt, c); err != nil {
+			return ChainResult{}, err
+		}
+	}
 	// A workflow chain whose awaited member's round died without a close --
 	// its process gone and no report -- would otherwise be refused for an open
 	// round. Close it the way a stop does, so the resume can open the next one.

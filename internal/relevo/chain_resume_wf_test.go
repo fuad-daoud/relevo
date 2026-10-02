@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -270,5 +271,43 @@ func TestWorkflowResumeShipsAPlacedCustomMembersRound(t *testing.T) {
 	}
 	if !slices.Contains(fr.calls, "StartRound:zen:shop:2") {
 		t.Errorf("calls = %v, want the resumed round shipped to zen", fr.calls)
+	}
+}
+
+// TestWorkflowResumeRefusesAGateChangeOnAPlacedWriter pins the refusal the base
+// code had and W2 dropped: a chain whose writer member runs on a server cannot
+// change its check on resume, because relevo has no route that updates a served
+// binding's gate and the change would be silently ignored. The flag, the
+// --param and the wire's shape are all refused as usage errors.
+func TestWorkflowResumeRefusesAGateChangeOnAPlacedWriter(t *testing.T) {
+	t.Parallel()
+
+	fr := chainRemoteFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, rt.Policy, flowTriageRemoteRows())
+
+	startFlowChain(t, rt, flowTriageBuildWorkflow)
+	advanceRemoteChain(t, rt, 2)
+	haltRemoteChain(t, rt)
+
+	for _, opts := range []ResumeOptions{
+		{Name: "shop", Gate: "make check"},
+		{Name: "shop", NoGate: true},
+		{Name: "shop", Params: map[string]string{"gate": "make check"}},
+	} {
+		_, err := ChainResume(context.Background(), rt, opts)
+		if err == nil {
+			t.Errorf("ChainResume(%+v) = nil, want the placed-writer gate refusal", opts)
+			continue
+		}
+		if !errors.Is(err, ErrRefused) {
+			t.Errorf("ChainResume(%+v) = %v, want ErrRefused", opts, err)
+		}
+		if !strings.Contains(err.Error(), "no route to change a served binding's gate") {
+			t.Errorf("ChainResume(%+v) refusal = %q, want it to name the missing route", opts, err)
+		}
+	}
+	if row := flowChainRow(t, rt); row.Status != string(workflow.StatusHalted) {
+		t.Errorf("chain status = %q, want it left halted: a refused resume changes nothing", row.Status)
 	}
 }

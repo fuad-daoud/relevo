@@ -375,6 +375,53 @@ func TestWorkflowResumeFromStep(t *testing.T) {
 	}
 }
 
+// TestRepeatedRedDoesNotCrossPlans pins the repeated-red comparison to one
+// repair loop: a plan's first red must not count as a "repeat" of the red the
+// plan before it saw, however closely the two logs match.
+func TestRepeatedRedDoesNotCrossPlans(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowCheckWorkflow)
+	c := flowChainRow(t, rt)
+
+	body := []byte("the same failure\n")
+	log := filepath.Join(t.TempDir(), "check.log")
+	if err := os.WriteFile(log, body, 0o644); err != nil {
+		t.Fatalf("write the check log: %v", err)
+	}
+
+	before := workflow.State{
+		Status:   workflow.StatusRunning,
+		At:       "check",
+		Awaiting: workflow.Awaiting{Step: "check"},
+		Iter:     map[string]workflow.Iter{"plans": {Index: 1, Items: []string{"p1", "p2"}}},
+		Results: map[string]workflow.Result{
+			"check": {Round: 2, Status: chainCheckRed, Artifacts: map[string][]string{"log": {log}}},
+		},
+	}
+	// The previous red closed under plan one.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.ChainEventAppend("shop", db.ChainEventRow{
+			TS: baseTime, Step: "check", Plan: 1,
+			Event:  workflow.EncodeEvent(workflow.Event{Kind: workflow.EventCheckClosed, Step: "check", Run: 2, Result: chainCheckRed, Log: log}),
+			Action: workflow.EncodeAction(workflow.Action{Kind: workflow.ActionHalt, Step: "check"}),
+		})
+	}); err != nil {
+		t.Fatalf("plant the previous red's trace: %v", err)
+	}
+
+	if chainRepeatRedCheck(rt, c, before, "check", log) {
+		t.Error("a new plan's first red repeated the previous plan's red")
+	}
+	// The same red inside one plan is still a repeat.
+	same := before
+	same.Iter = map[string]workflow.Iter{"plans": {Index: 0, Items: []string{"p1", "p2"}}}
+	if !chainRepeatRedCheck(rt, c, same, "check", log) {
+		t.Error("a same-plan repeated red was not detected")
+	}
+}
+
 // TestRenderTraceWorkflowRow pins the workflow trace line: the closing step,
 // its round and the target it chose.
 func TestRenderTraceWorkflowRow(t *testing.T) {

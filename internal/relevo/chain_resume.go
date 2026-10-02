@@ -125,6 +125,42 @@ func resumeSettings(rt Runtime, c db.ChainRow, opts ResumeOptions) (chain.Settin
 	return set, nil
 }
 
+// chainResumeChangesGate reports whether a resume would replace the chain's
+// gate: by an explicit --gate/--no-gate, by a --param gate=..., or by the wire's
+// gate field, which fills the same two slots.
+func chainResumeChangesGate(opts ResumeOptions) bool {
+	if opts.Gate != "" || opts.NoGate {
+		return true
+	}
+	_, ok := opts.Params["gate"]
+	return ok
+}
+
+// resumeRemoteGateRefusal refuses a resume that changes the gate on a chain
+// whose writer member is placed remotely: that binding's check is fixed where
+// it runs, and relevo has no route that updates a served binding's gate, so the
+// change would be silently ignored. A missing writer record is left to the
+// resume's own failure, exactly as the base refusal left it.
+func resumeRemoteGateRefusal(rt Runtime, c db.ChainRow) error {
+	member := c.Builder
+	if member == "" {
+		if rows, err := rt.Store.ChainMembers(c.Name); err == nil && len(rows) > 0 {
+			member = rows[0].Binding
+		}
+	}
+	if member == "" {
+		return nil
+	}
+	b, err := rt.Store.Load(member)
+	if err != nil {
+		return nil
+	}
+	if !b.Builder.Remote() {
+		return nil
+	}
+	return refuse("chain %s: the server has no route to change a served binding's gate yet; W4 adds it", c.Name)
+}
+
 // resumeOpenRoundRefusal refuses a resume whose target member's current round
 // is still open: the round a resume would start would overwrite the one in
 // flight, and the human must stop it first. It returns the send path's

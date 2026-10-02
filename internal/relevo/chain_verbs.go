@@ -117,7 +117,8 @@ func chainStoredMemberName(rt Runtime, c db.ChainRow, actor string) (string, err
 // chainStopWorkflowDirect marks a running workflow chain stopped when the step
 // it awaits has no open member round to end: the engine's stopped state, one
 // trace row and the one end delivery, written under the state lock in the shape
-// the engine's own stop uses.
+// the engine's own stop uses. A check still in flight is killed and recorded as
+// stopped first, so a stop never leaves it running beside the stopped chain.
 func chainStopWorkflowDirect(ctx context.Context, rt Runtime, name string) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
 		c, err := tx.Chain(name)
@@ -126,6 +127,9 @@ func chainStopWorkflowDirect(ctx context.Context, rt Runtime, name string) error
 		}
 		if c.Status != string(chain.StatusRunning) {
 			return nil
+		}
+		if err := chainKillRunningChecks(ctx, rt, tx, c); err != nil {
+			return err
 		}
 		def, err := chainWorkflowDef(c)
 		if err != nil {
@@ -169,6 +173,19 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 	}
 	if c.Status == string(chain.StatusRunning) {
 		return DoneResult{}, fmt.Errorf("chain %s is running; relevo stop %s first: %w", c.Name, c.Name, ErrChainRunning)
+	}
+
+	// A check left running by an earlier stop still owns the chain's tree: kill
+	// it and record it stopped before any member's worktree is released, so a
+	// done never takes the tree out from under a live check.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		row, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		return chainKillRunningChecks(ctx, rt, tx, row)
+	}); err != nil {
+		return DoneResult{}, err
 	}
 
 	// The builder's result is the chain's: its worktree and branch are the
