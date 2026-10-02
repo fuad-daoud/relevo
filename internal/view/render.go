@@ -77,16 +77,30 @@ func writeBindingRow(sb *strings.Builder, b BindingStatus) {
 // chain's name, the tree it works in, the chain's status and its plan segment,
 // then the halt reason when it has one. A member's own block still renders
 // through writeBindingRow, underneath, in the status <chain> view.
+//
+// A fork's child prints indented under the parent that forked it, and keeps its
+// own step and status: a child is a chain like any other, so it reads like one.
 func writeChainRow(sb *strings.Builder, b BindingStatus) {
 	cwd := b.CWD
 	if cwd == "" {
 		cwd = "-"
 	}
-	fmt.Fprintf(sb, "%-8s %-40s chain  %s  %s", b.Name, cwd, b.Chain.Status, ChainSegment(*b.Chain))
+	fmt.Fprintf(sb, "%-8s %-40s chain  %s  %s", indentName(b), cwd, b.Chain.Status, ChainSegment(*b.Chain))
 	if b.Detail != "" {
 		fmt.Fprintf(sb, "\n  reason   %s", b.Detail)
 	}
 	fmt.Fprint(sb, "\n")
+}
+
+// indentName is a row's name prefixed with two spaces per level. A fork child
+// takes its level from the parent its facts name, so the nesting has one source
+// and a surface cannot disagree with the statusline about it. An ordinary row
+// has no parent and starts at the margin, exactly as before.
+func indentName(b BindingStatus) string {
+	if b.Chain != nil && b.Chain.Parent != "" {
+		return "  " + b.Name
+	}
+	return b.Name
 }
 
 // writeRoundLine renders the binding's name, cwd, round and state, plus the

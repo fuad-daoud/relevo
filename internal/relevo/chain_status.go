@@ -38,9 +38,15 @@ func chainFactsOf(s *store.Store, c db.ChainRow) view.ChainFacts {
 		Corrections: lf.Corrections,
 		Awaiting:    lf.Awaiting,
 		Reason:      c.Reason,
+		Parent:      c.Parent,
 	}
 	if len(c.StateJSON) > 0 {
 		chainFlowFacts(&f, c)
+	}
+	// A parent's own children are the fork's progress; a child's row carries
+	// the parent instead, and its own children are none of its own rows' business.
+	if c.Parent == "" {
+		chainChildFacts(s, &f, c)
 	}
 	if (c.Status == string(chain.StatusHalted) || c.Status == string(chain.StatusStopped)) &&
 		chainBuilderRoundOpen(s, c) {
@@ -142,7 +148,7 @@ func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Rep
 		// other member rows go with it.
 		if !placed[c.Name] {
 			placed[c.Name] = true
-			rows = append(rows, viewChainRow(s, c))
+			rows = append(rows, chainTopRow(s, c))
 		}
 	}
 	// A chain whose member rows are all gone from the report still exists, so
@@ -152,11 +158,53 @@ func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Rep
 			continue
 		}
 		if !placed[c.Name] {
-			rows = append(rows, viewChainRow(s, c))
+			placed[c.Name] = true
+			rows = append(rows, chainTopRow(s, c))
 		}
 	}
+	// A fork's children print under the parent that forked them, in key order,
+	// each with its own step and status: a child is a chain, and a halted child
+	// says why. They never print as top-level rows of their own.
+	rows = appendChainChildRows(s, rows, chains)
 	rep.Bindings = view.SortRows(rows, true)
 	return rep
+}
+
+// chainTopRow is the row a chain prints when it is not a fork's child.
+func chainTopRow(s *store.Store, c db.ChainRow) view.BindingStatus {
+	return viewChainRow(s, c)
+}
+
+// appendChainChildRows inserts every fork child under the parent row it belongs
+// to, in key order. A child whose parent is not in the row set -- a parent that
+// is done, or a chain on another surface -- is skipped rather than printed at
+// the top level, because the child has no top level of its own.
+func appendChainChildRows(s *store.Store, rows []view.BindingStatus, chains []db.ChainRow) []view.BindingStatus {
+	children := map[string][]db.ChainRow{}
+	for _, c := range chains {
+		if c.Parent != "" {
+			children[c.Parent] = append(children[c.Parent], c)
+		}
+	}
+	for parent, kids := range children {
+		sortChainRowsByKey(kids)
+		at := -1
+		for i, r := range rows {
+			if r.Name == parent {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			continue
+		}
+		nested := make([]view.BindingStatus, 0, len(kids))
+		for _, k := range kids {
+			nested = append(nested, chainChildRowOf(s, k))
+		}
+		rows = append(rows[:at+1], append(nested, rows[at+1:]...)...)
+	}
+	return rows
 }
 
 // ChainStatus is `relevo status <chain>`: the chain's own row with its member

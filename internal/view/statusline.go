@@ -471,9 +471,24 @@ type StatusLineDoc struct {
 }
 
 // StatusLineRows produces one StatusLineRow per r.Bindings entry, in order.
+//
+// This is the one projection both the Go statusline and the status --line --json
+// document read, so a fork's children are collapsed here rather than by either
+// consumer: a parent row carries "split 1/2" and gains a row only for a child
+// that needs a human. A report with no fork produces exactly the rows it
+// produced before.
 func StatusLineRows(r Report, now time.Time) []StatusLineRow {
 	rows := make([]StatusLineRow, 0, len(r.Bindings))
 	for _, b := range r.Bindings {
+		// A fork child contributes a row only when a human must act on it; a
+		// running or done child is counted inside its parent's split and adds
+		// no row of its own.
+		if b.Chain != nil && b.Chain.Parent != "" {
+			if child, ok := ChainChildRow(b); ok {
+				rows = append(rows, child)
+			}
+			continue
+		}
 		rows = append(rows, statusLineRowOf(b, now))
 	}
 	return rows
@@ -566,34 +581,5 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		Status:      status,
 		Tone:        tone,
 		Reason:      reason,
-	}
-}
-
-// statusLineRowOfChain builds the statusline row that stands in for a
-// chain: one entry per chain in place of its members' rows. The middle is the
-// chain's plan segment, and the status column follows the chain -- NEEDS YOU
-// while it waits on a human, DONE once it finished, ACTIVE while it works.
-// The chain has no round and no candidate, so those cells stay empty and the
-// clock keeps the "--" every row without a round shows.
-func statusLineRowOfChain(b BindingStatus) StatusLineRow {
-	display := b.Display
-	status, tone := display, "quiet"
-	switch display {
-	case "ACTIVE":
-		tone = "phase"
-	case "NEEDS YOU":
-		tone = "needs"
-	}
-	actor := actorOf(b, "chain")
-	return StatusLineRow{
-		Name:     b.Name,
-		Chain:    "chain " + b.Name + " · " + ChainSegment(*b.Chain),
-		Display:  display,
-		NeedsYou: display == "NEEDS YOU",
-		Actor:    actor,
-		Clock:    "--",
-		Status:   status,
-		Tone:     tone,
-		Reason:   b.Detail,
 	}
 }
