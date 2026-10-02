@@ -32,6 +32,7 @@ const (
 	tursoBusy       = 5
 	tursoConstraint = 19
 	tursoReadOnly   = 8
+	sqliteIOErr     = 10
 )
 
 // cacheEnv is the directory the loader extracts the embedded library into.
@@ -47,6 +48,9 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	}
 	if err := prepareEngine(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("db: open %s: engine: %w: %w", path, ErrOpen, err)
+	}
+	if err := prepareTempDir(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("db: open %s: temp dir: %w: %w", path, ErrOpen, err)
 	}
 	// Pre-create the -wal owner-only before the engine derives anything from
 	// it; an existing file is fine.
@@ -87,9 +91,9 @@ func freshDatabase(path string) (bool, error) {
 // guard that matches the handle's mode.
 func openPragmas(readOnly bool) []string {
 	if readOnly {
-		return []string{"PRAGMA journal_mode = wal", "PRAGMA query_only = 1"}
+		return []string{"PRAGMA journal_mode = wal", "PRAGMA query_only = 1", "PRAGMA temp_store = MEMORY"}
 	}
-	return []string{"PRAGMA journal_mode = wal", "PRAGMA foreign_keys = ON"}
+	return []string{"PRAGMA journal_mode = wal", "PRAGMA foreign_keys = ON", "PRAGMA temp_store = MEMORY"}
 }
 
 // pragmaConnector runs pragmas on every new driver connection before
@@ -132,8 +136,23 @@ func engineCode(err error) (int, int, bool) {
 		return tursoConstraint, tursoConstraint, true
 	case errors.Is(err, turso.ErrTursoReadOnly):
 		return tursoReadOnly, tursoReadOnly, true
+	case errors.Is(err, turso.ErrTursoGeneric) && isTursoIOErr(err):
+		return sqliteIOErr, sqliteIOErr, true
 	}
 	return 0, 0, false
+}
+
+// isTursoIOErr reports whether err wraps an ErrTursoGeneric whose error text
+// indicates an I/O failure (starts with "I/O error").
+func isTursoIOErr(err error) bool {
+	for e := err; e != nil; {
+		msg := e.Error()
+		if strings.HasPrefix(msg, "I/O error") || strings.HasPrefix(strings.TrimPrefix(msg, "turso: error: "), "I/O error") {
+			return true
+		}
+		e = errors.Unwrap(e)
+	}
+	return false
 }
 
 // engineStatus reports the Turso library's state under root. No library under
@@ -202,11 +221,37 @@ func prepareEngine(dir string) error {
 	return enginePrepareErr
 }
 
+// prepareTempDir creates dir/tmp owner-only and sets TURSO_TMPDIR and
+// SQLITE_TMPDIR to it when not already set in the environment, so the library's
+// temp files land beside the database instead of in /tmp.
+func prepareTempDir(dir string) error {
+	tmpDir := filepath.Join(dir, "tmp")
+	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", tmpDir, err)
+	}
+	if err := os.Chmod(tmpDir, 0o700); err != nil {
+		return fmt.Errorf("chmod %s: %w", tmpDir, err)
+	}
+	for _, env := range []string{"TURSO_TMPDIR", "SQLITE_TMPDIR"} {
+		if val, ok := os.LookupEnv(env); !ok || val == "" {
+			if err := os.Setenv(env, tmpDir); err != nil {
+				return fmt.Errorf("set %s: %w", env, err)
+			}
+		} else {
+			_ = os.MkdirAll(val, 0o700)
+		}
+	}
+	return nil
+}
+
 // extractAndLoad creates dir/turso-go owner-only, points the loader's cache at
 // dir for the duration, and loads the library. A cached copy whose hash does not
 // match is removed and the load retried once, so a truncated or corrupted cache
 // heals instead of bricking every later open.
 func extractAndLoad(dir string) error {
+	if err := prepareTempDir(dir); err != nil {
+		return err
+	}
 	cacheDir := filepath.Join(dir, "turso-go")
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", cacheDir, err)

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // configGetFlagValues holds the pointer `config get` parses into. It prints
@@ -247,7 +248,11 @@ func configEdit(args []string) error {
 		doc = []byte("{}\n")
 	}
 
-	tmp, err := os.CreateTemp("", "relevo-config-*.json")
+	root := ""
+	if rt.Store != nil {
+		root = rt.Store.Root()
+	}
+	tmp, err := store.CreateTemp(root, "relevo-config-*.json")
 	if err != nil {
 		return err
 	}

@@ -446,3 +446,38 @@ exit 0
 		}
 	}
 }
+
+func TestBundlePathUnderStateRoot(t *testing.T) {
+	ctx := context.Background()
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	transport := NewBundleTransport(g, "")
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f.txt")
+	runGit(t, repo, "commit", "-m", "init")
+	head := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", "refs/heads/main", head)
+
+	snap, err := transport.Snapshot(ctx, repo, []string{"refs/heads/main"}, "")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	defer snap.Body.Close()
+
+	remover, ok := snap.Body.(*fileRemover)
+	if !ok {
+		t.Fatalf("snap.Body is %T, want *fileRemover", snap.Body)
+	}
+
+	wantPrefix := filepath.Join(stateHome, "relevo", "tmp")
+	if !strings.HasPrefix(remover.path, wantPrefix) {
+		t.Errorf("bundle path = %q, want prefix %q", remover.path, wantPrefix)
+	}
+}

@@ -158,6 +158,74 @@ func DefaultRoot() (string, error) {
 	return filepath.Join(home, ".local", "state", "relevo"), nil
 }
 
+// Root returns the store's root directory.
+func (s *Store) Root() string { return s.root }
+
+// TempDir returns <root>/tmp, created StateRootMode (0700). If root is empty, DefaultRoot is used.
+func TempDir(root string) (string, error) {
+	if root == "" {
+		var err error
+		root, err = DefaultRoot()
+		if err != nil {
+			return "", err
+		}
+	}
+	dir := filepath.Join(root, "tmp")
+	if err := os.MkdirAll(dir, StateRootMode); err != nil {
+		return "", fmt.Errorf("create state tmp dir: %w", err)
+	}
+	if err := os.Chmod(dir, StateRootMode); err != nil {
+		return "", fmt.Errorf("chmod state tmp dir: %w", err)
+	}
+	return dir, nil
+}
+
+// CreateTemp creates a new temporary file in <root>/tmp. If root is empty, DefaultRoot is used.
+func CreateTemp(root, pattern string) (*os.File, error) {
+	dir, err := TempDir(root)
+	if err != nil {
+		return nil, err
+	}
+	return os.CreateTemp(dir, pattern)
+}
+
+// MkdirTemp creates a new temporary directory in <root>/tmp. If root is empty, DefaultRoot is used.
+func MkdirTemp(root, pattern string) (string, error) {
+	dir, err := TempDir(root)
+	if err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(dir, pattern)
+}
+
+// StoreRoot returns s.Root() or an empty string when s is nil.
+func StoreRoot(s *Store) string {
+	if s == nil {
+		return ""
+	}
+	return s.Root()
+}
+
+// WriteTemp creates a temporary file in <root>/tmp, writes data to it, and closes it.
+// On failure, any created file is removed.
+func WriteTemp(root, pattern string, data []byte) (string, error) {
+	f, err := CreateTemp(root, pattern)
+	if err != nil {
+		return "", err
+	}
+	name := f.Name()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
 // ValidName enforces relevo's binding-name rule: a lowercase letter first,
 // then up to 31 more of [a-z0-9_-].
 func ValidName(name string) error {
