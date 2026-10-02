@@ -92,7 +92,18 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 		token, keys = byProvider, []string{req.Token}
 	}
 
-	if _, err := availability.Unavailable(relevo.AvailabilityDeps(rt), token, time.Time{}, req.Reason, keys...); err != nil {
+	// The gate expires when the reason names its own reset, by the same parse
+	// the daemon applies to builder output: a forwarded
+	// "RESOURCE_EXHAUSTED 429: ... Resets in 51m30s" ends at that reset rather
+	// than gating the provider until someone clears it by hand. A reason with
+	// no parseable reset records the zero Until -- until cleared -- because
+	// nothing in it states when the limit lifts.
+	until := time.Time{}
+	if reset, ok := availability.ResetFromReason(req.Reason, rt.Now()); ok {
+		until = reset
+	}
+
+	if _, err := availability.Unavailable(relevo.AvailabilityDeps(rt), token, until, req.Reason, keys...); err != nil {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 		return
 	}

@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -43,33 +45,58 @@ func accountRefusal(server string) string {
 	return fmt.Sprintf("%s: account gates unsupported; upgrade the server", server)
 }
 
+// staleBinding reports whether err is the server saying it no longer holds the
+// binding the client still has: the binding was unbound there, or was never
+// mirrored, while this client's copy still names that server. Forwarding a
+// gate to it changes nothing, so a stale binding is skipped rather than
+// reported one line at a time -- `relevo gate <token>` against a set of
+// bindings the servers have since dropped would otherwise print one "not
+// found" line per binding for a command whose result is identical either way.
+func staleBinding(err error) bool {
+	var httpErr *client.HTTPError
+	return errors.As(err, &httpErr) && httpErr.Body.Code == remote.CodeNotFound
+}
+
+// staleLine is the single summary the forwards emit in place of one line per
+// stale binding.
+func staleLine(n int) string {
+	return fmt.Sprintf("skipped %d binding(s) the server no longer has", n)
+}
+
 // forwardAccountKeys sends keys, each a group@account gate key, to every open
 // binding on server. It checks the feature first and, when server does not
 // advertise accounts, appends accountRefusal and reports false: the caller
-// then forwards nothing to that server. One line names the keys sent.
-func forwardAccountKeys(ctx context.Context, rt Runtime, server string, keys []string, open []store.Binding, reason string, lines *[]string) bool {
+// then forwards nothing to that server. One line names the keys sent. The
+// second result counts the bindings the server no longer has, which the caller
+// folds into one summary rather than a line each.
+func forwardAccountKeys(ctx context.Context, rt Runtime, server string, keys []string, open []store.Binding, reason string, lines *[]string) (bool, int) {
 	ok, err := serverHasAccounts(ctx, rt, server)
 	if err != nil {
 		*lines = append(*lines, fmt.Sprintf("%s: read features: %v", server, err))
-		return false
+		return false, 0
 	}
 	if !ok {
 		*lines = append(*lines, accountRefusal(server))
-		return false
+		return false, 0
 	}
 
 	*lines = append(*lines, fmt.Sprintf("%s: gated %s", server, strings.Join(keys, ", ")))
+	var stale int
 	for _, b := range open {
 		if b.Builder.Server != server {
 			continue
 		}
 		for _, key := range keys {
 			if err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, key, reason); err != nil {
+				if staleBinding(err) {
+					stale++
+					continue
+				}
 				*lines = append(*lines, fmt.Sprintf("%s: %s: %v", b.Name, b.Builder.Server, err))
 			}
 		}
 	}
-	return true
+	return true, stale
 }
 
 // forwardAccountNames names the login of each live group@account key this
@@ -291,9 +318,11 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 	direct := accountGateKey(token)
 	acctNames := forwardAccountNames(rt, token)
 
+	var stale int
 	for _, server := range servers {
 		if direct {
-			forwardAccountKeys(ctx, rt, server, []string{token}, open, reason, &lines)
+			_, n := forwardAccountKeys(ctx, rt, server, []string{token}, open, reason, &lines)
+			stale += n
 			continue
 		}
 
@@ -312,7 +341,8 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 				for i, n := range acctNames {
 					keys[i] = account.GateKey(ref.Provider, n)
 				}
-				forwardAccountKeys(ctx, rt, server, keys, open, reason, &lines)
+				_, n := forwardAccountKeys(ctx, rt, server, keys, open, reason, &lines)
+				stale += n
 				continue
 			}
 		}
@@ -324,9 +354,19 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 				continue
 			}
 			if err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, srv, reason); err != nil {
+				if staleBinding(err) {
+					stale++
+					continue
+				}
 				lines = append(lines, fmt.Sprintf("%s: %s: %v", b.Name, b.Builder.Server, err))
 			}
 		}
+	}
+
+	// One summary for every stale binding across every server, never one line
+	// each.
+	if stale > 0 {
+		lines = append(lines, staleLine(stale))
 	}
 
 	return lines
@@ -368,6 +408,7 @@ func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string 
 	sort.Strings(servers)
 
 	var lines []string
+	var stale int
 	for _, server := range servers {
 		// An account clear travels only to a server that understands the key;
 		// a server without the feature would refuse the subject it cannot
@@ -391,6 +432,12 @@ func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string 
 		}
 		resp, err := rt.Remote.Available(ctx, server, send)
 		if err != nil {
+			if staleBinding(err) {
+				// The server holds no such subject: nothing was gating it
+				// there. One count, folded into the single summary below.
+				stale++
+				continue
+			}
 			lines = append(lines, fmt.Sprintf("%s: %v", server, err))
 			continue
 		}
@@ -399,6 +446,10 @@ func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string 
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("%s: cleared %s (%d entries)", server, resp.Provider, resp.Removed))
+	}
+
+	if stale > 0 {
+		lines = append(lines, staleLine(stale))
 	}
 
 	return lines

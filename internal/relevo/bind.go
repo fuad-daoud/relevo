@@ -188,7 +188,7 @@ func RequireFeatureChoice(feature string, noFeature, resume bool) error {
 }
 
 // errFeatureChoice is the one line RequireFeatureChoice returns.
-var errFeatureChoice = errors.New("choose exactly one of --feature <label> or --no-feature")
+var errFeatureChoice = badInputf("choose exactly one of --feature <label> or --no-feature")
 
 // parseTicket turns a raw --ticket value into its stored form (#637), using
 // ref's origin as the repository hint when the value names no repository. An
@@ -214,7 +214,7 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 		return store.Binding{}, Resolution{}, err
 	}
 	if opts.CWD == "" {
-		return store.Binding{}, Resolution{}, errors.New("no working directory")
+		return store.Binding{}, Resolution{}, badInputf("no working directory")
 	}
 
 	if !haveRec {
@@ -533,12 +533,12 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 // error; or a message naming the binding when its branch is gone.
 func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, b store.Binding) (store.Binding, Resolution, error) {
 	if opts.Rebind || opts.Candidate != "" || opts.Headless {
-		return store.Binding{}, Resolution{}, errors.New("cannot change a remote builder; unbind and add")
+		return store.Binding{}, Resolution{}, badInputf("cannot change a remote builder; unbind and add")
 	}
 	// #637: --feature/--no-feature/--ticket have no server endpoint to reach,
 	// so a remote resume refuses them rather than changing only the mirror.
 	if opts.Feature != "" || opts.NoFeature || opts.Ticket != "" {
-		return store.Binding{}, Resolution{}, errors.New("cannot change a remote binding's feature or ticket; unbind and add")
+		return store.Binding{}, Resolution{}, badInputf("cannot change a remote binding's feature or ticket; unbind and add")
 	}
 	if rt.Remote == nil {
 		return store.Binding{}, Resolution{}, ErrRemoteUnavailable
@@ -626,10 +626,10 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	// bind, naming the flag (A5 §2).
 	if shape == store.ShapeReader {
 		if opts.Gate != "" {
-			return store.Binding{}, Resolution{}, errors.New("--gate: a reader round has no check")
+			return store.Binding{}, Resolution{}, badInputf("--gate: a reader round has no check")
 		}
 		if opts.Regate != nil {
-			return store.Binding{}, Resolution{}, errors.New("--regate: a reader round has no check")
+			return store.Binding{}, Resolution{}, badInputf("--regate: a reader round has no check")
 		}
 	}
 	name := opts.Name
@@ -651,7 +651,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	// session's round 1 and Reconcile would read that old report entry as
 	// "already handled" -- silently, with no error and no notification.
 	if _, err := rt.Store.Load(name); err == nil {
-		return store.Binding{}, Resolution{}, fmt.Errorf(
+		return store.Binding{}, Resolution{}, badInputf(
 			"binding %q already exists: `relevo unbind %s` to start fresh, or `relevo bind --resume --name %s` to adopt it",
 			name, name, name)
 	} else if !errors.Is(err, store.ErrNotFound) {

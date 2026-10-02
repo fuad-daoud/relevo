@@ -86,6 +86,21 @@ func MatchLimit(text string, patterns []*regexp.Regexp, now time.Time, fallback 
 	return LimitMatch{}, false
 }
 
+// ResetFromReason reports the reset instant a gate reason's own text names, and
+// whether it named one at all. It is parseReset applied to an operator- or
+// provider-supplied --reason rather than to a builder's output, so the same
+// wording that ends a gate when the daemon sees it also ends a gate a human
+// records by hand: a reason reading "RESOURCE_EXHAUSTED 429: ... Resets in
+// 51m30s" expires at that reset instead of staying until cleared.
+//
+// ok is false when the reason names no reset this parser trusts -- no reset at
+// all, or one outside the window a vaguer form may claim -- and the caller must
+// then keep the gate until cleared rather than inventing an expiry no provider
+// ever stated. The returned time is UTC.
+func ResetFromReason(reason string, now time.Time) (time.Time, bool) {
+	return parseReset(sanitize.Text(reason), now)
+}
+
 // matchesAny reports whether any pattern matches line.
 func matchesAny(line string, patterns []*regexp.Regexp) bool {
 	for _, p := range patterns {

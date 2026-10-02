@@ -262,6 +262,10 @@ func classifyReadErr(err error) error {
 		return fail(codeBindingNotFound, "%v", err)
 	case errors.Is(err, relevo.ErrNoCompletedRound):
 		return fail(codeRoundNotFound, "%v", err)
+	case errors.Is(err, relevo.ErrRoundNotFound):
+		// An out-of-range --round: the binding is there, the round asked for
+		// is not. Same code as an unreadable round, different cause.
+		return fail(codeRoundNotFound, "%v", err)
 	case errors.Is(err, relevo.ErrNoArtifact):
 		return fail(codeArtifactNotFound, "%v", err)
 	case errors.Is(err, relevo.ErrNotAChain):
@@ -416,6 +420,12 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 	}
 	if targetRound < 1 {
 		return fmt.Errorf("binding %q has no completed round yet: %w", name, relevo.ErrNoCompletedRound)
+	}
+	// Upper bound: a --round past the binding's counter is a missing round,
+	// not a missing diff. Without this the lookup below falls through to
+	// ErrNoArtifact and an out-of-range round reads as artifact_not_found.
+	if targetRound > b.Round {
+		return relevo.RoundOutOfRange(name, targetRound, b.Round, drift)
 	}
 
 	if stat {
