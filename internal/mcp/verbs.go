@@ -21,6 +21,7 @@ type Verbs interface {
 	Done(ctx context.Context, session string, a DoneArgs) (any, error)
 	Show(ctx context.Context, session string, a ShowArgs) (any, error)
 	Gate(ctx context.Context, session string, a GateArgs) (any, error)
+	Wait(ctx context.Context, session string, a WaitArgs) (any, error)
 }
 
 // RelevoVerbs adapts internal/relevo's functions to Verbs. MasterMind is the
@@ -32,6 +33,7 @@ type RelevoVerbs struct {
 	RT             relevo.Runtime
 	MasterMind     string
 	ResolveSession func(session string) (string, error)
+	WaitInterval   time.Duration
 }
 
 // masterMindFor is the identity of one call: the session's mastermind when the

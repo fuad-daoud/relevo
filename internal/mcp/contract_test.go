@@ -198,3 +198,39 @@ func TestContractShowAndGateToolResults(t *testing.T) {
 		assertGolden(t, c.golden, []byte(result.Content[0].Text))
 	}
 }
+
+// TestContractWaitToolResult pins the wait tool's result text. The call runs
+// in its own goroutine, so the server is driven over a pipe that stays open
+// until the response lands rather than one closed at once.
+func TestContractWaitToolResult(t *testing.T) {
+	verbs := &fakeVerbs{
+		waitFn: func(_ context.Context, _ string, a WaitArgs) (any, error) {
+			if a.Name != "webshop" {
+				t.Errorf("wait name = %q, want webshop", a.Name)
+			}
+			return "webshop round 2 closed\nrunner report body", nil
+		},
+	}
+	srv := &Server{Verbs: verbs, Version: "0.6.0-test", Mode: ModeTools}
+	is := newInteractiveServer(t, srv)
+
+	is.write(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"wait","arguments":{"name":"webshop","timeout":"10s"}}}`)
+
+	line := is.readLine(t, 5*time.Second)
+	resp := decodeResponse(t, []byte(line))
+	if resp.Error != nil {
+		t.Fatalf("wait call error: %+v", resp.Error)
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("marshal wait tool result: %v", err)
+	}
+	var result ToolResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("decode wait tool result: %v", err)
+	}
+	if len(result.Content) == 0 {
+		t.Fatal("wait tool result has no content")
+	}
+	assertGolden(t, "tool-wait", []byte(result.Content[0].Text))
+}

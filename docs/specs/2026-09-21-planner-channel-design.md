@@ -43,7 +43,9 @@ Goals:
 
 Non-goals:
 
-- A `wait` tool. The channel is the wait.
+- A `wait` tool. The channel is the wait. (Amended: tools mode for Claude
+  Code has a blocking `wait` tool; the channel still is the wait where there
+  is one.)
 - `diff`, `log`, `pull`, `unavailable/available`, `policy` as tools. Bash
   already shapes them. Later if wanted.
 - Pushing stalled, stale, switched, round_started. Observations the next

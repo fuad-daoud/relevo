@@ -14,13 +14,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// fakeVerbs is a Verbs whose five methods are swappable per test; a nil field returns (nil, nil).
+// fakeVerbs is a Verbs whose methods are swappable per test; a nil field returns (nil, nil).
 type fakeVerbs struct {
 	statusFn func(ctx context.Context, session string, a StatusArgs) (any, error)
 	sendFn   func(ctx context.Context, session string, a SendArgs) (any, error)
 	doneFn   func(ctx context.Context, session string, a DoneArgs) (any, error)
 	showFn   func(ctx context.Context, session string, a ShowArgs) (any, error)
 	gateFn   func(ctx context.Context, session string, a GateArgs) (any, error)
+	waitFn   func(ctx context.Context, session string, a WaitArgs) (any, error)
 }
 
 func (f *fakeVerbs) Status(ctx context.Context, session string, a StatusArgs) (any, error) {
@@ -56,6 +57,13 @@ func (f *fakeVerbs) Gate(ctx context.Context, session string, a GateArgs) (any, 
 		return nil, nil
 	}
 	return f.gateFn(ctx, session, a)
+}
+
+func (f *fakeVerbs) Wait(ctx context.Context, session string, a WaitArgs) (any, error) {
+	if f.waitFn == nil {
+		return nil, nil
+	}
+	return f.waitFn(ctx, session, a)
 }
 
 // runServer drives Serve over an in-memory pipe, one line per request, and returns everything it wrote.
@@ -153,33 +161,46 @@ func TestServerInitializeSameVersionAnswersSame(t *testing.T) {
 	}
 }
 
-func TestServerToolsListHasFiveToolsInOrderNoAdditionalProperties(t *testing.T) {
-	out := runServer(t, &fakeVerbs{}, []string{
-		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
-	})
-	resp := decodeResponse(t, splitLines(out)[0])
-	result := resp.Result.(map[string]any)
-	tools, ok := result["tools"].([]any)
-	if !ok || len(tools) != 5 {
-		t.Fatalf("tools = %#v, want exactly 5", result["tools"])
+func TestServerToolsListOrderAndStrictSchemasPerMode(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      Mode
+		kind      string
+		wantOrder []string
+	}{
+		{"tools mode adds wait after send", ModeTools, "", []string{"status", "send", "wait", "done", "show", "gate"}},
+		{"channel mode lists the five base verbs", ModeChannel, "", []string{"status", "send", "done", "show", "gate"}},
+		{"opencode lists the five base verbs", ModeTools, "opencode", []string{"status", "send", "done", "show", "gate"}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := runServerWith(t, &Server{Verbs: &fakeVerbs{}, Version: "0.6.0-test", Mode: tt.mode, Kind: tt.kind}, []string{
+				`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+			})
+			resp := decodeResponse(t, splitLines(out)[0])
+			result := resp.Result.(map[string]any)
+			tools, ok := result["tools"].([]any)
+			if !ok || len(tools) != len(tt.wantOrder) {
+				t.Fatalf("tools = %#v, want %d entries", result["tools"], len(tt.wantOrder))
+			}
 
-	wantOrder := []string{"status", "send", "done", "show", "gate"}
-	for i, raw := range tools {
-		tool, ok := raw.(map[string]any)
-		if !ok {
-			t.Fatalf("tools[%d] = %#v, want an object", i, raw)
-		}
-		if tool["name"] != wantOrder[i] {
-			t.Errorf("tools[%d].name = %v, want %v", i, tool["name"], wantOrder[i])
-		}
-		schema, ok := tool["inputSchema"].(map[string]any)
-		if !ok {
-			t.Fatalf("tools[%d].inputSchema = %#v", i, tool["inputSchema"])
-		}
-		if ap, ok := schema["additionalProperties"].(bool); !ok || ap {
-			t.Errorf("tools[%d].inputSchema.additionalProperties = %#v, want false", i, schema["additionalProperties"])
-		}
+			for i, raw := range tools {
+				tool, ok := raw.(map[string]any)
+				if !ok {
+					t.Fatalf("tools[%d] = %#v, want an object", i, raw)
+				}
+				if tool["name"] != tt.wantOrder[i] {
+					t.Errorf("tools[%d].name = %v, want %v", i, tool["name"], tt.wantOrder[i])
+				}
+				schema, ok := tool["inputSchema"].(map[string]any)
+				if !ok {
+					t.Fatalf("tools[%d].inputSchema = %#v", i, tool["inputSchema"])
+				}
+				if ap, ok := schema["additionalProperties"].(bool); !ok || ap {
+					t.Errorf("tools[%d].inputSchema.additionalProperties = %#v, want false", i, schema["additionalProperties"])
+				}
+			}
+		})
 	}
 }
 

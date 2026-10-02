@@ -165,7 +165,7 @@ func mastermindSessionCheck(in MasterMindCheckInput) Check {
 		return Check{
 			Name:     "MasterMind",
 			Severity: SevInfo,
-			Detail:   fmt.Sprintf("MasterMind %s: tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`", mastermindRef(in.Resolved, in.Chat)),
+			Detail:   fmt.Sprintf("MasterMind %s: tools mode: reports arrive through the blocking wait tool. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`", mastermindRef(in.Resolved, in.Chat)),
 		}
 	default:
 		return Check{

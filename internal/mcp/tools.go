@@ -88,24 +88,50 @@ func schemaObject(required []string, props map[string]any) map[string]any {
 	return s
 }
 
-// WaitCommand is the tools-mode background wait, run with run_in_background
-// while the round runs; budget is the round timeout for `relevo wait --timeout`.
-func WaitCommand(name, budget string) string {
-	return "background wait (run with run_in_background, then end your turn):\n" +
-		"  relevo wait --name " + name + " --timeout " + budget
+// WaitPointer points at the wait tool carrying the round budget.
+func WaitPointer(name, budget string) string {
+	return "wait tool:\n  wait(name: \"" + name + "\", timeout: \"" + budget + "\")"
 }
 
-// appendWaitCommand appends the background-wait block, unless there is no text or no budget.
-func appendWaitCommand(r ToolResult, name, budget string) ToolResult {
+// appendWaitPointer appends the wait tool pointer, unless there is no text or no budget.
+func appendWaitPointer(r ToolResult, name, budget string) ToolResult {
 	if budget == "" || len(r.Content) == 0 {
 		return r
 	}
-	r.Content[0].Text += "\n\n" + WaitCommand(name, budget)
+	r.Content[0].Text += "\n\n" + WaitPointer(name, budget)
 	return r
 }
 
-// Tools is the tools/list document: status, send, done, show, gate, in that
-// order.
+func waitToolSpec() ToolSpec {
+	return ToolSpec{
+		Name:        "wait",
+		Description: "Block until a round closes, needs attention, or times out. Omit name to wait on all active bindings this MasterMind owns.",
+		InputSchema: schemaObject(nil, map[string]any{
+			"name":    map[string]any{"type": "string", "description": "binding name; omit to wait on all active bindings this MasterMind owns"},
+			"round":   map[string]any{"type": "integer", "description": "the round to wait for; omit or 0 for the newest planned round"},
+			"timeout": map[string]any{"type": "string", "description": "maximum time to wait as a duration (e.g. 10m, 2h); defaults to the round budget"},
+		}),
+	}
+}
+
+// ToolsFor returns the tool list for mode and kind: tools mode for Claude Code
+// includes wait; channel mode and opencode list the five base verbs.
+func ToolsFor(mode Mode, kind string) []ToolSpec {
+	base := Tools()
+	if mode == ModeTools && kind != "opencode" {
+		return []ToolSpec{
+			base[0], // status
+			base[1], // send
+			waitToolSpec(),
+			base[2], // done
+			base[3], // show
+			base[4], // gate
+		}
+	}
+	return base
+}
+
+// Tools is the base tools/list document: status, send, done, show, gate, in that order.
 func Tools() []ToolSpec {
 	return []ToolSpec{
 		{
