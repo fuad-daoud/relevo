@@ -68,12 +68,12 @@ func ResolveLiveArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
 	}
 	path = filepath.Clean(path)
 
-	realRoot := filepath.Clean(liveRoot)
-	if real, err := filepath.EvalSymlinks(liveRoot); err == nil {
-		realRoot = real
-	}
-
-	rel, err := filepath.Rel(realRoot, path)
+	// Classification is textual (the raw live root against the raw path), so a
+	// path that is under the live root by name but escapes it through a symlink
+	// is still classified live and refused below, not silently treated as a repo
+	// path. Confinement below is the resolving check.
+	rawRoot := filepath.Clean(liveRoot)
+	rel, err := filepath.Rel(rawRoot, path)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return Resolved{}, false, nil
 	}
@@ -94,19 +94,12 @@ func ResolveLiveArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
 		return Resolved{}, false, err
 	}
 
-	// Confinement (S1's rule, live scope): after EvalSymlinks on the deepest
-	// existing ancestor the path must still sit under <live root>/<id>, so a
-	// symlinked parent can never steer a write outside the live directory.
+	// Confinement (S1's rule, live scope): after symlinks are resolved on the
+	// deepest existing ancestor the path must still sit under <live root>/<id>,
+	// so a symlinked parent can never steer a write outside the live directory.
+	realRoot := evalExisting(liveRoot)
 	liveDir := filepath.Join(realRoot, id)
-	tail, anchor, err := splitExisting(path)
-	if err != nil {
-		return Resolved{}, false, usagef("%v", err)
-	}
-	real, err := filepath.EvalSymlinks(anchor)
-	if err != nil {
-		return Resolved{}, false, usagef("resolve %s: %v", anchor, err)
-	}
-	full := filepath.Join(real, tail)
+	full := evalExisting(path)
 	if !underRoot(liveDir, full) {
 		return Resolved{}, false, usagef("%s is outside the live directory %s", path, liveDir)
 	}
@@ -142,14 +135,8 @@ func DisjointScopes(repoRoot, live string) error {
 	if repoRoot == "" || live == "" {
 		return nil
 	}
-	repo := filepath.Clean(repoRoot)
-	if real, err := filepath.EvalSymlinks(repoRoot); err == nil {
-		repo = real
-	}
-	liveReal := filepath.Clean(live)
-	if real, err := filepath.EvalSymlinks(live); err == nil {
-		liveReal = real
-	}
+	repo := evalExisting(repoRoot)
+	liveReal := evalExisting(live)
 	if underRoot(repo, liveReal) {
 		return usagef("the live scope %s is inside the repository root %s", live, repoRoot)
 	}

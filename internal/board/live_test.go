@@ -342,3 +342,37 @@ func TestLiveURL(t *testing.T) {
 		t.Error("LiveURL(started_at 0) is live, want not live")
 	}
 }
+
+// TestLiveScopePathsThroughASymlinkedAncestor pins the portability rule: the
+// live-scope comparisons resolve symlinks on the deepest existing ancestor of
+// both sides, so two spellings of one directory (macOS /var vs /private/var)
+// compare equal even when the deeper path does not exist yet. Without that, an
+// explicit live path reads "not under the live root" and a nested repo root is
+// not refused -- both on macOS only.
+func TestLiveScopePathsThroughASymlinkedAncestor(t *testing.T) {
+	t.Parallel()
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	liveRoot := filepath.Join(link, "boards")
+	dir := filepath.Join(liveRoot, "mm_aaaaaaaaaaaa")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	arg := filepath.Join(dir, "board.excalidraw")
+
+	res, ok, err := ResolveLiveArg(liveRoot, liveRoot, arg)
+	if err != nil || !ok || res.Scene != "board" {
+		t.Errorf("ResolveLiveArg through a symlinked ancestor = (%+v, ok %v, err %v), want the live scene", res, ok, err)
+	}
+
+	// Two roots that nest are refused even when one of them does not exist yet.
+	if err := DisjointScopes(filepath.Join(dir, "repo"), dir); err == nil {
+		t.Error("DisjointScopes(repo root under the live directory) = nil, want a refusal")
+	}
+	if err := DisjointScopes(real, liveRoot); err == nil {
+		t.Error("DisjointScopes(live root under the repo root) = nil, want a refusal")
+	}
+}

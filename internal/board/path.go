@@ -77,6 +77,28 @@ func splitExisting(path string) (tail, anchor string, err error) {
 	}
 }
 
+// evalExisting resolves symlinks on path's deepest existing ancestor and keeps
+// the not-yet-existing tail, so two spellings of one directory compare equal
+// even when the deeper path does not exist yet. A bare EvalSymlinks on a missing
+// path fails and falls back to the unresolved form, which compares two spellings
+// of one directory as different -- the macOS /var vs /private/var symlink is the
+// case that made the live-scope checks platform-dependent.
+func evalExisting(path string) string {
+	clean := filepath.Clean(path)
+	tail, anchor, err := splitExisting(clean)
+	if err != nil {
+		return clean
+	}
+	real, err := filepath.EvalSymlinks(anchor)
+	if err != nil {
+		return clean
+	}
+	if tail == "" {
+		return real
+	}
+	return filepath.Join(real, tail)
+}
+
 // underRoot reports whether path, a cleaned absolute path, is root itself or
 // sits beneath it.
 func underRoot(root, path string) bool {
