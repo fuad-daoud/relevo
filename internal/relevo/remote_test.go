@@ -1695,6 +1695,66 @@ func TestSendRemoteRecordsOnlyOnSuccess(t *testing.T) {
 	}
 }
 
+// TestSendDryRunRemoteContactsNoServer pins that a remote dry run makes no
+// call to the server: the branch resolves locally, and fakeRemote's beforeCall
+// fails the test outright if any call arrives, so a future change that makes
+// SendDryRun POST is caught even before the call count is read.
+func TestSendDryRunRemoteContactsNoServer(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:   "api",
+		CWD:    "/fake/repo",
+		Repo:   "/fake/repo",
+		Branch: "relevo/api",
+		Round:  1,
+		State:  store.StateActive,
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: "zen",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relevo/api": "1111111111111111111111111111111111111111",
+		},
+	}
+	fr := &fakeRemote{
+		beforeCall: func(call string) {
+			t.Errorf("SendDryRun contacted the server: %s", call)
+		},
+	}
+	rt := Runtime{
+		Store:     st,
+		Git:       fg,
+		Remote:    fr,
+		Transport: &fakeTransport{},
+		Now:       time.Now,
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := SendDryRun(ctx, rt, "api", planFile, SendOptions{})
+	if err != nil {
+		t.Fatalf("SendDryRun: %v", err)
+	}
+	if d.Mode != "remote" {
+		t.Errorf("Mode = %q, want remote", d.Mode)
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("SendDryRun made %d remote calls, want 0: %v", len(fr.calls), fr.calls)
+	}
+}
+
 func TestSendRemoteRoundStartedIsSuccess(t *testing.T) {
 	t.Parallel()
 

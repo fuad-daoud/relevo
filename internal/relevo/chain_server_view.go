@@ -71,6 +71,9 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 func chainServerTrace(ctx context.Context, rt Runtime, c db.ChainRow) (ChainTraceDoc, error) {
 	v, err := chainGetView(ctx, rt, c)
 	if err != nil {
+		if is404(err) {
+			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, store.ErrNotFound)
+		}
 		return ChainTraceDoc{}, err
 	}
 	doc := ChainTraceDoc{
@@ -229,11 +232,15 @@ func roundOpenFromWire(err error) error {
 // chainServerDone is `relevo done <chain>` for a chain that runs on a server:
 // the server releases the chain, then each mirror member is released through
 // the ordinary done, and the mirror is closed with the chain's own done row.
+//
+// A 404 from the server for the chain -- on the mirror pull or on the done
+// post -- means the server already released it: this machine settles the mirror
+// locally below. Every other remote error still fails the verb.
 func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult, error) {
 	if rt.Remote == nil {
 		return DoneResult{}, ErrRemoteUnavailable
 	}
-	if _, err := chainResultFromMirror(ctx, rt, c.Name); err != nil {
+	if _, err := chainResultFromMirror(ctx, rt, c.Name); err != nil && !is404(err) {
 		return DoneResult{}, err
 	}
 	if err := rt.Remote.ChainDone(ctx, c.Server, c.Name); err != nil {
@@ -243,7 +250,9 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 		if remoteCode(err, 409, remote.CodeRoundOpen) {
 			return DoneResult{}, roundOpenFromWire(err)
 		}
-		return DoneResult{}, err
+		if !is404(err) {
+			return DoneResult{}, err
+		}
 	}
 
 	row, err := rt.Store.Chain(c.Name)

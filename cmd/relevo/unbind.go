@@ -66,6 +66,20 @@ func cmdUnbind(args []string) error {
 		return fail(codeRefused, "--mastermind and --all-masterminds go with --done")
 	}
 
+	// The plain and --pick paths honour neither --dry-run nor --delete, and
+	// --done archives by default, so --archive contradicts it. Refuse here,
+	// before newRuntime and any store or network access: each flag is scoped
+	// to a path this command does not take.
+	if *dryRun && !*done {
+		return fail(codeRefused, "--dry-run goes with --done or --sweep")
+	}
+	if *delete && !*done {
+		return fail(codeRefused, "--delete goes with --done")
+	}
+	if *done && *archive {
+		return fail(codeRefused, "--archive goes with a named binding or --pick, not --done")
+	}
+
 	// --done is gc, not unbind: it clears every DONE binding, so naming one or
 	// asking to pick one contradicts it (§4.3).
 	if *done {
