@@ -54,9 +54,14 @@ type fakeActions struct {
 	candRole []string // the roles Candidates was asked for
 
 	candidates []string // what Candidates returns
-	pullText   string
-	pullOK     bool
-	pullErr    error
+	chainsDoc  relevo.ChainsDoc
+	chainsErr  error
+	// The scripted per-chain traces the trace view reads, by chain name.
+	chainTraces map[string]relevo.ChainTraceDoc
+	traceErr    error
+	pullText    string
+	pullOK      bool
+	pullErr     error
 
 	// The config views (round 2): the scripted stored doc and its error,
 	// plus the edits and probes the view made.
@@ -152,6 +157,17 @@ func (f *fakeActions) Candidates(role string) []string {
 }
 
 func (f *fakeActions) ConfigDoc() (relevo.ConfigDoc, error) { return f.doc, f.docErr }
+
+func (f *fakeActions) Chains(_ context.Context) (relevo.ChainsDoc, error) {
+	return f.chainsDoc, f.chainsErr
+}
+
+func (f *fakeActions) ChainTrace(_ context.Context, name string) (relevo.ChainTraceDoc, error) {
+	if f.traceErr != nil {
+		return relevo.ChainTraceDoc{}, f.traceErr
+	}
+	return f.chainTraces[name], nil
+}
 
 func (f *fakeActions) ApplyConfig(_ context.Context, e relevo.ConfigEdit) Result {
 	f.configEdits = append(f.configEdits, e)

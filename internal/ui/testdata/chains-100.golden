@@ -1,0 +1,30 @@
+  ◆ relevo    chains                                                           v0.13.0-28    14:02  
+                                                                                                    
+   5 chains   2 running   2 halted   1 done                                                         
+                                                                                                    
+   NAME                                                 STATUS    STEP            PLANS    AGE      
+   api-worker                                           running   building        1/3      4m       
+   db-migrate                                           halted    verify          2/2      12m      
+     migration failed: schema mismatch on table users                                               
+   feature-auth                                         running   review          1/1      25m      
+     feature-auth.oauth                                 halted    test            1/1      8m       
+       oauth callback endpoint returned 503                                                         
+     feature-auth.token                                 done      finish          1/1      15m      
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+
+ ↑↓  move      enter  steps      t  trace      :  command      ?  all keys      q  quit             

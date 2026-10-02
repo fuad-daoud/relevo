@@ -23,6 +23,7 @@ var commands = []command{
 	{"fleet", "", "bindings on this machine", false},
 	{"rounds", "[query…]", "every round, filtered", false},
 	{"round", "<binding> [N]", "open one binding's round", false},
+	{"chains", "", "chains and their steps", false},
 	{"stats", "[7d|30d|90d|all]", "rounds, cost and health", false},
 	{"candidates", "", "candidates, gates and who picks them", false},
 	{"actors", "", "who runs each job, and in what order", false},

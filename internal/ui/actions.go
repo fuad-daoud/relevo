@@ -40,6 +40,10 @@ type Actions interface {
 	Retry(ctx context.Context, key, candidate string) Result
 	Pull(ctx context.Context, key string) (text string, ok bool, err error)
 	Candidates(role string) []string // names, in the role's order
+	Chains(ctx context.Context) (relevo.ChainsDoc, error)
+	// ChainTrace is one chain's ordered trace rows, read the same way for a
+	// local and a server chain: a server chain's rows come from the server.
+	ChainTrace(ctx context.Context, name string) (relevo.ChainTraceDoc, error)
 
 	// The config views (round 2): the stored config, one validated edit
 	// applied and reloaded, and one candidate probed.
@@ -179,7 +183,6 @@ func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur tim
 	if err != nil {
 		return Result{Err: err, Refresh: true}
 	}
-
 	count := 0
 	if rt.Candidates != nil {
 		for _, ref := range rt.Candidates.Refs() {
@@ -224,33 +227,6 @@ func (a *mastermindActions) Ungate(ctx context.Context, subject string) Result {
 	lines = append(lines, relevo.ForwardAvailable(ctx, rt, subject)...)
 
 	return Result{Text: strings.Join(lines, "\n"), Refresh: true}
-}
-
-// Shell is a shell in the binding's own tree: its worktree when relevo made
-// one, else its recorded CWD. A remote binding has no local tree (§4.2).
-func (a *mastermindActions) Shell(key string) (*exec.Cmd, error) {
-	rt, name, ok := a.resolve(key)
-	if !ok {
-		return nil, errors.New("unknown binding")
-	}
-	b, err := rt.Store.Load(name)
-	if err != nil {
-		return nil, err
-	}
-	if b.Builder.Remote() {
-		return nil, errors.New("a remote binding has no local tree")
-	}
-	dir := b.Worktree
-	if dir == "" {
-		dir = b.CWD
-	}
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-	cmd := exec.Command(shell)
-	cmd.Dir = dir
-	return cmd, nil
 }
 
 // ensureYou returns the human mastermind's id, creating the record on first use
