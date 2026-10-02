@@ -1485,6 +1485,9 @@ func TestStatusLineRowsEmptyDoc(t *testing.T) {
 		if !strings.Contains(s, `"mastermind":null`) {
 			t.Errorf("json %q does not contain '\"mastermind\":null'", s)
 		}
+		if !strings.Contains(s, `"board":null`) {
+			t.Errorf("json %q does not contain '\"board\":null'", s)
+		}
 		if !strings.Contains(s, `"rows":[]`) {
 			t.Errorf("json %q does not contain '\"rows\":[]'", s)
 		}
@@ -2109,5 +2112,27 @@ func TestStatusLineRowsConsumedContrast(t *testing.T) {
 	rows := StatusLineRows(rep, rsNow)
 	if !rows[0].ReportIn || rows[0].Status != "REPORT IN · ordinary note" || rows[0].Tone != "report" || rows[0].Reason != "" {
 		t.Errorf("contrast row = %+v", rows[0])
+	}
+}
+
+// TestRenderBoardLine pins the board line: nil renders nothing, a block renders
+// dim "board <name> · <url>", and an over-wide line is truncated (S8).
+func TestRenderBoardLine(t *testing.T) {
+	t.Parallel()
+
+	if got := RenderBoardLine(nil, 80); got != "" {
+		t.Errorf("RenderBoardLine(nil) = %q, want empty", got)
+	}
+
+	b := &StatusLineBoard{Name: "board", Scope: "live", URL: "http://127.0.0.1:9/#t=abc"}
+	if got, want := RenderBoardLine(b, 80), ansiDim+"board board · http://127.0.0.1:9/#t=abc"+ansiReset+"\n"; got != want {
+		t.Errorf("RenderBoardLine = %q, want %q", got, want)
+	}
+
+	long := &StatusLineBoard{Name: "board", Scope: "live", URL: strings.Repeat("x", 200)}
+	got := RenderBoardLine(long, 20)
+	visible := strings.TrimSuffix(strings.TrimPrefix(got, ansiDim), ansiReset+"\n")
+	if n := utf8.RuneCountInString(visible); n != 20 {
+		t.Errorf("truncated board line = %q (%d runes), want 20", visible, n)
 	}
 }

@@ -1,3 +1,4 @@
+cmd/relevo/registry_rows.go
 internal/relevo/bind.go
 internal/relevo/configedit.go
 internal/relevo/daemon.go
