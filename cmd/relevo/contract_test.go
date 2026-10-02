@@ -300,8 +300,8 @@ func TestStatuslineBoardBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status --line: %v (stderr %s)", err, stderr)
 	}
-	if line := string(normalize(stdout, fx.roots...)); !strings.Contains(line, "board board · "+url) {
-		t.Errorf("statusline text = %q, want the board line", line)
+	if line := string(normalize(stdout, fx.roots...)); !strings.Contains(line, "board architect-1 · "+url) {
+		t.Errorf("statusline text = %q, want the board line naming the owner", line)
 	}
 
 	// A dead pid: the block is null and no board line is drawn.
@@ -317,7 +317,7 @@ func TestStatuslineBoardBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status --line (dead): %v (stderr %s)", err, stderr)
 	}
-	if line := string(stdout); strings.Contains(line, "board board ·") {
+	if line := string(stdout); strings.Contains(line, "board architect-1 ·") {
 		t.Errorf("statusline text (dead pid) = %q, want no board line", line)
 	}
 }

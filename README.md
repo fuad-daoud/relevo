@@ -1271,6 +1271,9 @@ A running live board writes `server.json` (`scene`, `url`, `port`, `pid`,
 its own; a second server on the same board is allowed and the most recent writer
 wins. `relevo board url [--board NAME] [--mastermind M]` prints that URL -- its
 token included -- for a shell copy, and exits 1 when no live server holds it.
+A live board's URL names its owner in the path,
+`http://127.0.0.1:<port>/<mastermind>/#t=<token>`, so a copied URL says whose
+board it is; the token still rides only the fragment.
 The URL also appears in the statusline (below). Promotion of a live board into
 the repo is a later cut.
 
@@ -1373,7 +1376,7 @@ per chain in place of its members), under the Claude Code prompt; it shows nothi
 on error and never probes a builder.
 The first line names the MasterMind (`MasterMind architect-14`), so each terminal
 shows which MasterMind it is; `relevo mastermind list` maps that name to its chat.
-While a live board runs for this MasterMind, the next line is `board <name> · <url>`,
+While a live board runs for this MasterMind, the next line is `board <mastermind> · <url>`,
 dim, carrying the full token-bearing URL; `status --line --json` carries the same
 as the top-level `board` block (`name`, `scope`, `url`, null when absent), and the
 OpenCode plugin's sidebar draws the same line. The block is a file read only --

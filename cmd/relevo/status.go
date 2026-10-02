@@ -261,7 +261,7 @@ func runStatusline(asJSON bool) error {
 		// binding row.
 		fmt.Print(view.RenderMasterMindLine(rec.Name, columns))
 		if root, rerr := store.DefaultRoot(); rerr == nil {
-			fmt.Print(view.RenderBoardLine(boardBlockFor(root, rec.ID, boardProcStart), columns))
+			fmt.Print(view.RenderBoardLine(boardBlockFor(root, rec.ID, boardProcStart), rec.Name, columns))
 		}
 		rep, err := relevo.MasterMindStatus(context.Background(), rt, rec.ID)
 		if err != nil {

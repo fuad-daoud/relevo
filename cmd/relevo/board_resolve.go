@@ -67,45 +67,47 @@ func openBoardRegistry() (*mastermind.DBRegistry, *db.DB, error) {
 
 // boardMasterMind resolves the MasterMind whose live board the verb acts on:
 // the --mastermind value, else RELEVO_MASTERMIND, else the single registered
-// MasterMind (R2, S2). An mm_/pl_/ULID id ref needs no database at all; a name
-// ref or the single-registered fallback opens the registry read-only.
-func boardMasterMind(ref string) (string, error) {
+// MasterMind (R2, S2). It returns the record's id and, when the registry was
+// read, its name (empty for a bare id ref). An mm_/pl_/ULID id ref needs no
+// database at all; a name ref or the single-registered fallback opens the
+// registry read-only.
+func boardMasterMind(ref string) (id, name string, err error) {
 	if ref == "" {
 		ref = os.Getenv("RELEVO_MASTERMIND")
 	}
 	if ref != "" && mastermind.ValidID(ref) == nil {
-		return ref, nil
+		return ref, "", nil
 	}
 
 	reg, d, err := openBoardRegistry()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer func() { _ = d.Close() }()
 
 	if ref != "" {
 		rec, err := mastermindLookup(reg, ref)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		return rec.ID, nil
+		return rec.ID, rec.Name, nil
 	}
 
 	recs, err := reg.List()
 	if err != nil {
-		return "", fail(codeInternal, "%v", err)
+		return "", "", fail(codeInternal, "%v", err)
 	}
 	switch len(recs) {
 	case 0:
-		return "", fail(codeUsage, "no MasterMind records; run relevo mastermind init")
+		return "", "", fail(codeUsage, "no MasterMind records; run relevo mastermind init")
 	case 1:
-		return recs[0].ID, nil
+		return recs[0].ID, recs[0].Name, nil
 	default:
 		names := make([]string, 0, len(recs))
 		for _, rec := range recs {
 			names = append(names, rec.ID+" ("+rec.Name+")")
 		}
-		return "", fail(codeUsage, "several MasterMinds are registered; name one with --mastermind: %s", strings.Join(names, ", "))
+		return "", "", fail(codeUsage, "several MasterMinds are registered; name one with --mastermind: %s", strings.Join(names, ", "))
 	}
 }
 
@@ -148,14 +150,18 @@ func resolveBoard(cwd, ref, boardName, arg string) (board.Resolved, error) {
 		if res, ok, err := board.ResolveLiveArg(liveRoot, cwd, arg); err != nil {
 			return board.Resolved{}, boardRefusal(err)
 		} else if ok {
+			res.Owner = filepath.Base(res.LiveDir)
 			if ref != "" {
-				id, err := boardMasterMind(ref)
+				id, name, err := boardMasterMind(ref)
 				if err != nil {
 					return board.Resolved{}, err
 				}
 				if id != filepath.Base(res.LiveDir) {
 					return board.Resolved{}, fail(codeUsage,
 						"--mastermind %s does not name the live path's MasterMind %s", ref, filepath.Base(res.LiveDir))
+				}
+				if name != "" {
+					res.Owner = name
 				}
 			}
 			return res, nil
@@ -174,7 +180,7 @@ func resolveBoard(cwd, ref, boardName, arg string) (board.Resolved, error) {
 		}, nil
 	}
 
-	id, err := boardMasterMind(ref)
+	id, owner, err := boardMasterMind(ref)
 	if err != nil {
 		return board.Resolved{}, err
 	}
@@ -188,5 +194,9 @@ func resolveBoard(cwd, ref, boardName, arg string) (board.Resolved, error) {
 		return board.Resolved{}, boardRefusal(err)
 	}
 	res.FromPointer = fromPointer
+	if owner == "" {
+		owner = id
+	}
+	res.Owner = owner
 	return res, nil
 }

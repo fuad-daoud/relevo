@@ -796,7 +796,7 @@ export default {
             {currentDoc?.board ? (
               // D7/S8: the live board's full URL (token included), un-ellipsized,
               // one line under the header so it can be copied into a browser.
-              <text fg={mutedColor}>{`board ${currentDoc.board.name} · ${currentDoc.board.url}`}</text>
+              <text fg={mutedColor}>{`board ${currentDoc.mastermind?.name || currentDoc.board.name} · ${currentDoc.board.url}`}</text>
             ) : null}
 
             {rows.map((row) => {
