@@ -149,7 +149,15 @@ func TestBoardResolvesExplicitLivePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveBoard: %v", err)
 	}
-	if res.Scope != board.ScopeLive || res.Scene != "board" || res.Path != scene || res.LiveDir != liveDir {
+	// Paths leave canonicalized, so compare against the symlink-resolved
+	// spellings: on macOS t.TempDir sits under /var, a symlink to /private/var.
+	// The scene file itself does not exist yet, so resolve its parent.
+	wantDir, err := filepath.EvalSymlinks(liveDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks liveDir: %v", err)
+	}
+	wantPath := filepath.Join(wantDir, "board.excalidraw")
+	if res.Scope != board.ScopeLive || res.Scene != "board" || res.Path != wantPath || res.LiveDir != wantDir {
 		t.Errorf("resolveBoard = %+v", res)
 	}
 }

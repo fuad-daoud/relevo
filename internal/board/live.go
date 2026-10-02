@@ -103,7 +103,10 @@ func ResolveLiveArg(liveRoot, cwd, arg string) (Resolved, bool, error) {
 	if !underRoot(liveDir, full) {
 		return Resolved{}, false, usagef("%s is outside the live directory %s", path, liveDir)
 	}
-	return Resolved{Scope: ScopeLive, Scene: name, Path: path, LiveDir: liveDir}, true, nil
+	// Both paths leave canonicalized: Path and LiveDir name the same directory
+	// once symlinks are resolved, so callers never compare two spellings of one
+	// directory (macOS /var vs /private/var).
+	return Resolved{Scope: ScopeLive, Scene: name, Path: full, LiveDir: liveDir}, true, nil
 }
 
 // ResolveLiveDir resolves name inside one MasterMind's live directory. When both
