@@ -295,6 +295,7 @@ type catchUpFetch struct {
 	LogTemp       string            // legacy-form log in a temp file, "" if none
 	StreamTemp    string            // temp file holding the stream, "" if none
 	GateTemp      string            // temp file holding the acceptance check's log, "" if none
+	GatePath      string            // the path that log is installed at, "" if none was fetched
 	CheckedOut    bool              // git refuses to move the branch (checked out somewhere): quiet retry
 	AbsorbErr     error             // any other reset, absorb or UpdateRef failure: apply counts it (halt at 10)
 	Fatal         error             // RefSHA failure after absorb: apply returns it as today
@@ -504,7 +505,9 @@ func fetchCatchUpStream(ctx context.Context, rt Runtime, b store.Binding, view r
 // fetchCatchUpGate fetches the closed round's acceptance-check log into a temp
 // file, so the apply half can rename it into the gate log path the chain and
 // the reviewer seed read. A round whose server ran no check has no gate file:
-// 404 is fine and leaves no temp.
+// 404 is fine and leaves no temp. The path the log is installed at is recorded
+// on the fetch, so the gate record names a file that arrived rather than one
+// this client may not have written.
 func fetchCatchUpGate(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch) bool {
 	server, name, n := b.Builder.Server, b.Name, view.ClosedRound
 	rc, err := rt.Remote.RoundFile(ctx, server, name, n, "gate")
@@ -518,6 +521,7 @@ func fetchCatchUpGate(ctx context.Context, rt Runtime, b store.Binding, view rem
 		return false
 	default:
 		path := rt.Store.GateLogPath(name, n)
+		cf.GatePath = path
 		cf.GateTemp, err = downloadTemp(rt.Store.Dir(name), path, rc)
 		if err != nil {
 			slog.Warn("write gate failed", "path", path, "err", err)
@@ -576,5 +580,6 @@ func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		View:         view,
 		HaveReport:   cf.ReportTemp != "",
 		HaveDiff:     cf.Diff != nil,
+		GatePath:     cf.GatePath,
 	}, nil
 }

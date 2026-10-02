@@ -351,6 +351,7 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 				Server: cur.Builder.Server, Name: name, Round: f.round,
 				BindingRound: f.round, View: f.view,
 				HaveReport: f.cf.ReportTemp != "", HaveDiff: f.cf.Diff != nil,
+				GatePath: f.cf.GatePath,
 			}
 			next, err := applyCatchUpReport(ctx, rt, tx, cur, a)
 			if err != nil {
