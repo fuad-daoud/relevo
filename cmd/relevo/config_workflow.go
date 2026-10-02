@@ -292,7 +292,7 @@ func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflo
 		}
 
 		if def.Name != name {
-			problem := fmt.Sprintf("# workflow name %q does not match %q", def.Name, name)
+			problem := relevo.WorkflowNameProblem(def.Name, name)
 			prev = reopenWith([]string{problem}, stored)
 			continue
 		}

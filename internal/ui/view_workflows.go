@@ -236,8 +236,7 @@ func (v workflowsView) Crumbs() []string { return []string{"workflows"} }
 // form is an overlay.
 func (v workflowsView) Capturing() bool { return false }
 
-// Keys are the list's keys, shown only when the shell has an Actions seam. The
-// e key is not here yet: it edits, which no round has built.
+// Keys are the list's keys, shown only when the shell has an Actions seam.
 func (v workflowsView) Keys() []KeyHelp {
 	if !v.actions {
 		return nil
@@ -247,6 +246,7 @@ func (v workflowsView) Keys() []KeyHelp {
 		{"enter", "view"},
 		{"a", "add"},
 		{"d", "remove"},
+		{"e", "edit"},
 	}
 }
 
@@ -320,6 +320,9 @@ func (v workflowsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		// table after a write's Refresh.
 		return v, workflowsDocCmd(env)
 
+	case workflowEditAfterMsg:
+		return v, v.editAfter(env, msg)
+
 	case tea.KeyMsg:
 		if !v.actions {
 			return v, nil
@@ -363,6 +366,11 @@ func (v workflowsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 			return v, nil
 		}
 		return v, v.removeCmd(env, candClamp(v.cur, n))
+	case "e":
+		if n == 0 {
+			return v, nil
+		}
+		return v, v.editCmd(env, v.list[candClamp(v.cur, n)])
 	}
 	return v, nil
 }

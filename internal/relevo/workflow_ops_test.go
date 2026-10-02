@@ -366,3 +366,14 @@ func loadWorkflowsOrFail(t *testing.T, rt Runtime) map[string]config.StoredWorkf
 	}
 	return L.Workflows
 }
+
+// TestWorkflowNameProblem pins the line both edit loops reopen a renamed source
+// with. They share this function, so a change here moves both of them at once and
+// this is what says the wording a user reads.
+func TestWorkflowNameProblem(t *testing.T) {
+	got := WorkflowNameProblem("other", "fix-first")
+	want := `# workflow name "other" does not match "fix-first"`
+	if got != want {
+		t.Errorf("WorkflowNameProblem = %q, want %q", got, want)
+	}
+}

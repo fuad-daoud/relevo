@@ -886,7 +886,21 @@ func workflowsFake() *fakeActions {
 		workflows: workflowsFixtureList(),
 		sources:   workflowsFixtureSources(),
 		graphs:    workflowsFixtureGraphs(),
+		actors:    workflowsFixtureActors(),
 		result:    Result{Text: "stored workflow fix-first", Refresh: true},
+		saveResult: Result{
+			Text:    "workflow edit fix-first (config version 4)",
+			Refresh: true,
+		},
+	}
+}
+
+// workflowsFixtureActors are the actors the fixture workflows name, so the edit
+// loop validates against the same names its sources run.
+func workflowsFixtureActors() map[string]workflow.ActorInfo {
+	return map[string]workflow.ActorInfo{
+		"builder":  {Shape: workflow.ShapeWriter},
+		"reviewer": {Shape: workflow.ShapeReader},
 	}
 }
 
@@ -1925,6 +1939,12 @@ func TestGoldenViews(t *testing.T) {
 			name: "workflow-remove-confirm-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				return candKeys(t, workflowsViewModel(t, 132, 34, "audit-only"), key('d'))
+			},
+		},
+		{
+			name: "workflow-edit-problems-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return workflowEditReopenModel(t, 132, 34)
 			},
 		},
 	}

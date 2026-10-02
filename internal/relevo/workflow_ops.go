@@ -130,6 +130,14 @@ func WorkflowList(rt Runtime) ([]WorkflowSummary, error) {
 	return out, nil
 }
 
+// WorkflowNameProblem is the problem line an edit loop reopens with when the
+// edited source names a workflow other than the one being edited. Both edit
+// loops take the line from here, so the wording the user reads cannot drift
+// between the CLI and the cockpit.
+func WorkflowNameProblem(got, want string) string {
+	return fmt.Sprintf("# workflow name %q does not match %q", got, want)
+}
+
 // WorkflowSource returns a workflow's source text as the user wrote it. The
 // saved workflows are consulted first, so a workflow that shadows the shipped
 // name serves its own source the way the CLI did before --force existed as a

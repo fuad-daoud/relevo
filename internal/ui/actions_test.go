@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // gateCall is one Gate invocation, recorded by fakeActions.
@@ -109,6 +110,13 @@ type fakeActions struct {
 	removes      []string
 	removeResult Result
 
+	// The edit loop: the actors an edited workflow may name, and the saves it
+	// was asked to store.
+	actors map[string]workflow.ActorInfo
+	saves  []workflowSaveCall
+
+	saveResult Result
+
 	result   Result
 	shellCmd *exec.Cmd
 	shellErr error
@@ -125,6 +133,13 @@ type workflowSourceText struct {
 type workflowAddCall struct {
 	path    string
 	replace bool
+}
+
+// workflowSaveCall is one WorkflowSave invocation, recorded by fakeActions.
+type workflowSaveCall struct {
+	name   string
+	source string
+	def    workflow.Definition
 }
 
 func (f *fakeActions) Stop(_ context.Context, key string) Result {
@@ -313,6 +328,26 @@ func (f *fakeActions) WorkflowAdd(_ context.Context, path string, replace bool) 
 func (f *fakeActions) WorkflowRemove(_ context.Context, name string) Result {
 	f.removes = append(f.removes, name)
 	return f.removeResult
+}
+
+// WorkflowDefinition parses the scripted source, so the definition the edit loop
+// validates against is the one the fixture's own text describes.
+func (f *fakeActions) WorkflowDefinition(name string) (workflow.Definition, error) {
+	s, ok := f.sources[name]
+	if !ok {
+		return workflow.Definition{}, errors.New("workflow " + name + " is not saved")
+	}
+	return workflow.Parse([]byte(s.text))
+}
+
+// WorkflowActors answers the scripted actors an edited workflow may name.
+func (f *fakeActions) WorkflowActors() map[string]workflow.ActorInfo { return f.actors }
+
+// WorkflowSave records what an edit loop asked to store and answers the shared
+// result.
+func (f *fakeActions) WorkflowSave(_ context.Context, name, source string, def workflow.Definition) Result {
+	f.saves = append(f.saves, workflowSaveCall{name: name, source: source, def: def})
+	return f.saveResult
 }
 
 // key is one rune keypress, as the tests send them.

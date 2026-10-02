@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // Actions is the cockpit's write seam (§1, §4.2): one method per key that
@@ -86,6 +87,13 @@ type Actions interface {
 	WorkflowGraph(name string) ([]relevo.GraphRow, error)
 	WorkflowAdd(ctx context.Context, path string, replace bool) Result
 	WorkflowRemove(ctx context.Context, name string) Result
+	// The edit loop's three reads and its write. WorkflowDefinition is the
+	// parsed definition WorkflowEditRound validates the edited source
+	// against, and WorkflowActors the actors it may name, both read the way the
+	// CLI's edit loop reads them.
+	WorkflowDefinition(name string) (workflow.Definition, error)
+	WorkflowActors() map[string]workflow.ActorInfo
+	WorkflowSave(ctx context.Context, name, source string, def workflow.Definition) Result
 }
 
 // BindInput is one b key's answers (§3): the new binding's name, the

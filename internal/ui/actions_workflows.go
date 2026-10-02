@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // Workflows is every workflow this machine can start a chain with: the shipped
@@ -78,6 +80,46 @@ func (a *mastermindActions) WorkflowRemove(_ context.Context, name string) Resul
 // workflowWriteKey is the action key a workflow write runs under, so a second
 // write on the same workflow is refused the way every other action is.
 func workflowWriteKey(verb, name string) string { return verb + " workflow:" + name }
+
+// WorkflowDefinition is a saved workflow's parsed definition, read the way the
+// CLI's edit loop reads it: the stored source with its file: seeds already
+// replaced by the contents they named, so an edit is checked against what is
+// really stored.
+func (a *mastermindActions) WorkflowDefinition(name string) (workflow.Definition, error) {
+	return relevo.WorkflowDefinition(a.runtime(), name)
+}
+
+// WorkflowActors are the actors a workflow may name, the same set the CLI
+// validates an edited workflow against.
+func (a *mastermindActions) WorkflowActors() map[string]workflow.ActorInfo {
+	reg := a.runtime().RoleRegistry()
+	if reg == nil {
+		return nil
+	}
+	return reg.WorkflowActors()
+}
+
+// WorkflowSave stores an edited workflow's source and definition. The write goes
+// through ApplyConfig, so it is recorded under the ui actor and reloads this
+// adapter's runtime, and the notice carries the config version the write left
+// behind, which is what tells two saves apart.
+func (a *mastermindActions) WorkflowSave(ctx context.Context, name, source string, def workflow.Definition) Result {
+	edit, err := relevo.WorkflowEdit(a.runtime(), name, []byte(source), def, "workflow edit "+name)
+	if err != nil {
+		return Result{Err: err, Refresh: true}
+	}
+	res := a.ApplyConfig(ctx, edit)
+	// A failure, or a write that landed but did not reload, already says
+	// everything worth saying; only a clean write takes a version.
+	if res.Err != nil || res.Text != edit.Message {
+		return res
+	}
+	version, verr := a.runtime().Config.Version()
+	if verr != nil {
+		return res
+	}
+	return Result{Text: fmt.Sprintf("%s (config version %d)", edit.Message, version), Refresh: res.Refresh}
+}
 
 // expandHome resolves a leading ~ in a path the way a shell does, so the form
 // takes the path a user would type at a prompt. A path with no ~ is unchanged,
