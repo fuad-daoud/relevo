@@ -130,6 +130,12 @@ func (p roundPane) openCmd(env Env) tea.Cmd {
 	if !c.loaded || c.artifactRel == "" || env.Actions == nil {
 		return nil
 	}
+	// The temp-file fallback below writes through the runtime's store, so the
+	// runtime must resolve exactly as the artifacts fetch did.
+	rt, _, ok := env.Src.Runtime(p.detail.name)
+	if !ok || rt.Store == nil {
+		return notice("cannot open " + c.artifactRel)
+	}
 	if c.artifactDir == "" {
 		return notice("cannot open " + c.artifactRel)
 	}
