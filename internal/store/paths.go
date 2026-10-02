@@ -248,6 +248,15 @@ func (s *Store) CheckLogPath(name string, round, run int) string {
 // rules, so a check log path always resolves; ok is false for a path outside
 // the state root or a name that carries no round.
 func (s *Store) CheckLogTarget(path string) (member string, round int, ok bool) {
+	return s.RoundFileTarget(path)
+}
+
+// RoundFileTarget resolves any round-file key under the state root back to the
+// binding and round it was keyed with. It is the resolver behind every
+// row-only artifact a seal writes -- a check log, a fork's conflict report --
+// so a seal reuses the round the key carries instead of recomputing one; ok is
+// false for a path outside the state root or a name that carries no round.
+func (s *Store) RoundFileTarget(path string) (member string, round int, ok bool) {
 	member, name, ok := s.bindingRelOf(path)
 	if !ok {
 		return "", 0, false
@@ -257,6 +266,17 @@ func (s *Store) CheckLogTarget(path string) (member string, round int, ok bool) 
 		return "", 0, false
 	}
 	return member, round, true
+}
+
+// ForkConflictPath is a round_file key for the conflict report one fork merge
+// leaves behind: the paths git marked unmerged and the branches the merge never
+// reached. It is keyed to the chain's writer and its newest closed round, the
+// same pair a check log uses, and is stored with Tx.PutRoundFile rather than
+// written to disk; read it with Store.ReadFile. The fork's builder round is
+// handed it through {{<fork>.conflict}}, so the key travels as that step's
+// "conflict" artifact.
+func (s *Store) ForkConflictPath(name string, round int) string {
+	return s.roundFile(name, round, "fork-conflict", ".txt")
 }
 
 func (s *Store) QuestionPath(name string, round int) string {

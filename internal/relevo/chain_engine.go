@@ -154,6 +154,8 @@ func chainRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 		return chainTerminalWF(ctx, rt, tx, c, def, before, *next, ev, act)
 	case workflow.ActionFork:
 		return chainFlowFork(ctx, rt, tx, c, def, before, next, ev, act)
+	case workflow.ActionMerge:
+		return chainFlowMerge(ctx, rt, tx, c, def, before, next, ev, act)
 	default:
 		return fmt.Errorf("chain %s: unhandled action %q", c.Name, string(act.Kind))
 	}
