@@ -1,6 +1,9 @@
 package workflow
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // stepEdges returns each step's step-targets: its on targets and its budget
 // then. done and halt targets are sinks and carry no edge.
@@ -29,6 +32,54 @@ func kindOf(s Step) string {
 		return ""
 	}
 	return kinds[0]
+}
+
+// StepKind returns the single kind a step declares, or "" when it does not
+// declare exactly one. It is kindOf over one id, so a caller outside this
+// package reads a step's kind the same way the rules do: a step with two kinds
+// reports rule 2 rather than being read as either.
+func StepKind(def Definition, id string) string {
+	step, ok := def.Steps[id]
+	if !ok {
+		return ""
+	}
+	return kindOf(step)
+}
+
+// StepEdges returns each step's step-targets: its on targets and its budget
+// then, sorted. done and halt targets are sinks and carry no edge, because
+// neither names a step to go to. It is stepEdges over a whole definition, for a
+// caller outside this package that draws the graph.
+func StepEdges(def Definition) map[string][]string {
+	return stepEdges(def)
+}
+
+// StepActors returns the actors one step names: the run actor, the check actor
+// or the fork's workflows, joined, and "" for a step that names none. It is how
+// a step's row says who does the work without the caller re-deriving the kinds.
+func StepActors(def Definition, id string) string {
+	step, ok := def.Steps[id]
+	if !ok {
+		return ""
+	}
+	var names []string
+	if step.Run != "" {
+		names = append(names, step.Run)
+	}
+	if step.Check != "" {
+		names = append(names, step.Check)
+	}
+	if step.Fork != nil {
+		// A fork carries either the each form's one workflow or a fixed child
+		// list, so only the fields the form actually has are named.
+		if step.Fork.Workflow != "" {
+			names = append(names, step.Fork.Workflow)
+		}
+		for _, child := range step.Fork.Children {
+			names = append(names, child.Workflow)
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 // reachable returns the steps reachable from start, or nil when start is not a

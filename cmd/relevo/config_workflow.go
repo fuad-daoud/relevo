@@ -2,10 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -97,98 +97,30 @@ func cmdWorkflowAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	return addWorkflow(rt, rest[0], *v.replace, *v.force)
-}
-
-// addWorkflow reads path, validates the workflow it holds against the current
-// actors, and saves its source beside the definition. file: seeds are embedded
-// relative to the file.
-func addWorkflow(rt relevo.Runtime, path string, replace, force bool) error {
-	raw, err := os.ReadFile(path)
+	name, err := relevo.WorkflowAdd(rt, rest[0], *v.replace, *v.force)
 	if err != nil {
-		return fail(codeConfigInvalid, "workflow add: %v", err)
+		return workflowError(err)
 	}
-	def, err := workflow.Parse(raw)
-	if err != nil {
-		return fail(codeConfigInvalid, "%v", err)
-	}
-	if err := checkWorkflowName(rt, def.Name, replace, force); err != nil {
-		return err
-	}
-	def, err = relevo.EmbedFileSeeds(def, filepath.Dir(path))
-	if err != nil {
-		return fail(codeConfigInvalid, "%v", err)
-	}
-	if err := validateWorkflow(rt, def); err != nil {
-		return err
-	}
-	if err := saveWorkflow(rt, def.Name, raw, def, "config workflow add "+def.Name); err != nil {
-		return err
-	}
-	fmt.Printf("stored workflow %s\n", def.Name)
+	fmt.Printf("stored workflow %s\n", name)
 	return nil
 }
 
-// checkWorkflowName refuses a name that is shipped, or already saved, unless the
-// caller asked for the one flag that allows it.
-func checkWorkflowName(rt relevo.Runtime, name string, replace, force bool) error {
-	if name == workflow.Default().Name && !force {
-		return fail(codeConflict, "workflow %q is shipped; pass --force to shadow it", name)
+// workflowError maps a workflow operation's class onto the catalog code that
+// class earns, keeping the message the operation wrote. The classes are one
+// place in internal/relevo so the cockpit can map them to text; this is the CLI's
+// side of the same table, and the code is picked from the class rather than
+// parsed out of the message.
+func workflowError(err error) error {
+	code := codeConfigInvalid
+	switch {
+	case errors.Is(err, relevo.ErrWorkflowShipped), errors.Is(err, relevo.ErrWorkflowSaved):
+		code = codeConflict
+	case errors.Is(err, relevo.ErrWorkflowNotSaved):
+		code = codeConfigPathNotSet
+	case errors.Is(err, relevo.ErrWorkflowEncode):
+		code = codeInternal
 	}
-	L, err := rt.Config.Load()
-	if err != nil {
-		return fail(codeConfigInvalid, "%v", err)
-	}
-	if _, ok := L.Workflows[name]; ok && !replace {
-		return fail(codeConflict, "workflow %q is already saved; pass --replace to overwrite it", name)
-	}
-	return nil
-}
-
-// validateWorkflow runs the full format and rule checks against the actors this
-// machine has. given is nil, so a rule about the chain's inputs is left to chain
-// start.
-func validateWorkflow(rt relevo.Runtime, def workflow.Definition) error {
-	env := workflow.Env{
-		Actors: rt.RoleRegistry().WorkflowActors(),
-		Given:  nil,
-		Seeds:  workflow.ShippedSeeds(),
-		Workflow: func(name string) (workflow.Definition, bool) {
-			d, _, err := relevo.ResolveWorkflow(rt, name)
-			return d, err == nil
-		},
-	}
-	problems := workflow.Validate(def, env)
-	if len(problems) == 0 {
-		return nil
-	}
-	lines := make([]string, 0, len(problems))
-	for _, p := range problems {
-		lines = append(lines, p.String())
-	}
-	return fail(codeConfigInvalid, "%s", strings.Join(lines, "; "))
-}
-
-// saveWorkflow writes name's source and definition into the workflows section,
-// leaving every other saved workflow in place.
-func saveWorkflow(rt relevo.Runtime, name string, source []byte, def workflow.Definition, message string) error {
-	L, err := rt.Config.Load()
-	if err != nil {
-		return fail(codeConfigInvalid, "%v", err)
-	}
-	saved := make(map[string]config.StoredWorkflow, len(L.Workflows)+1)
-	for key, w := range L.Workflows {
-		saved[key] = w
-	}
-	saved[name] = config.StoredWorkflow{Source: string(source), Definition: def}
-	body, err := config.EncodeWorkflows(saved)
-	if err != nil {
-		return fail(codeInternal, "%v", err)
-	}
-	if _, err := rt.Config.As("cli", message).Put(config.Workflows, body); err != nil {
-		return fail(codeConfigInvalid, "%v", err)
-	}
-	return nil
+	return failWrap(code, err, "%s", err)
 }
 
 // workflowRmFlagSet declares `config workflow rm`'s flags: none today.
@@ -212,25 +144,8 @@ func cmdWorkflowRm(args []string) error {
 	if err != nil {
 		return err
 	}
-	L, err := rt.Config.Load()
-	if err != nil {
-		return fail(codeConfigInvalid, "%v", err)
-	}
-	if _, ok := L.Workflows[name]; !ok {
-		return fail(codeConfigPathNotSet, "workflow %q is not saved", name)
-	}
-	saved := make(map[string]config.StoredWorkflow, len(L.Workflows))
-	for key, w := range L.Workflows {
-		if key != name {
-			saved[key] = w
-		}
-	}
-	body, err := config.EncodeWorkflows(saved)
-	if err != nil {
-		return fail(codeInternal, "%v", err)
-	}
-	if _, err := rt.Config.As("cli", "config workflow rm "+name).Put(config.Workflows, body); err != nil {
-		return fail(codeConfigInvalid, "%v", err)
+	if err := relevo.WorkflowRemove(rt, name); err != nil {
+		return workflowError(err)
 	}
 	fmt.Printf("removed workflow %s\n", name)
 	return nil
@@ -267,23 +182,26 @@ func cmdWorkflowShow(args []string) error {
 	if err != nil {
 		return err
 	}
-	L, err := rt.Config.Load()
-	if err != nil {
-		return fail(codeConfigInvalid, "%v", err)
-	}
-	w, ok := L.Workflows[name]
-	if !ok {
-		return fail(codeConfigPathNotSet, "workflow %q is not saved", name)
-	}
 	if *v.asJSON {
-		raw, err := json.Marshal(w.Definition)
+		def, err := relevo.WorkflowDefinition(rt, name)
+		if err != nil {
+			return workflowError(err)
+		}
+		raw, err := json.Marshal(def)
 		if err != nil {
 			return fail(codeInternal, "%v", err)
 		}
 		return printJSON(os.Stdout, raw)
 	}
-	fmt.Print(w.Source)
-	if !strings.HasSuffix(w.Source, "\n") {
+	source, shipped, err := relevo.WorkflowSource(rt, name)
+	if err != nil {
+		return workflowError(err)
+	}
+	if shipped {
+		return fail(codeConfigPathNotSet, "workflow %q is not saved", name)
+	}
+	fmt.Print(source)
+	if !strings.HasSuffix(source, "\n") {
 		fmt.Println()
 	}
 	return nil
@@ -311,15 +229,18 @@ func cmdWorkflowEdit(args []string) error {
 	if err != nil {
 		return err
 	}
-	L, err := rt.Config.Load()
+	source, shipped, err := relevo.WorkflowSource(rt, name)
 	if err != nil {
-		return fail(codeConfigInvalid, "%v", err)
+		return workflowError(err)
 	}
-	saved, ok := L.Workflows[name]
-	if !ok {
+	if shipped {
 		return fail(codeConfigPathNotSet, "workflow %q is not saved", name)
 	}
-	return editWorkflowLoop(rt, name, saved)
+	def, err := relevo.WorkflowDefinition(rt, name)
+	if err != nil {
+		return workflowError(err)
+	}
+	return editWorkflowLoop(rt, name, config.StoredWorkflow{Source: source, Definition: def})
 }
 
 // editWorkflowLoop is the $EDITOR half of the update loop. It writes the buffer,
@@ -375,8 +296,8 @@ func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflo
 			prev = reopenWith([]string{problem}, stored)
 			continue
 		}
-		if err := saveWorkflow(rt, name, stored, def, "config workflow edit "+name); err != nil {
-			return err
+		if err := relevo.WorkflowSave(rt, name, stored, def, "config workflow edit "+name); err != nil {
+			return workflowError(err)
 		}
 		version, err := rt.Config.Version()
 		if err != nil {

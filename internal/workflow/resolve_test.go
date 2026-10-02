@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -77,6 +78,78 @@ func TestResolveRefTable(t *testing.T) {
 				t.Fatalf("ResolveRef(%v) = %+v, want %+v", tc.ref, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestResolveRefRefusesWhatWorkflowStateDoesNotHold pins the four refusals that
+// are about the reference itself rather than the state: an unknown param, a
+// for-each with nothing current, an all on a step that is not a for-each, and a
+// step that exposes no such artifact. Each says which one it is, so a chain that
+// reads it can be fixed without reading the resolver.
+func TestResolveRefRefusesWhatWorkflowStateDoesNotHold(t *testing.T) {
+	t.Parallel()
+
+	def, s := resolveFixture()
+
+	for _, tc := range []struct {
+		name, want string
+		ref        Ref
+	}{
+		{"unknown param", `unknown param "nope"`, Ref{Root: "params", Attr: "nope"}},
+		{"all on a plain step", "build.all is not a for-each list", Ref{Root: "build", Attr: "all"}},
+		{"unknown artifact", `build exposes no artifact "report2"`, Ref{Root: "build", Attr: "report2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ResolveRef(def, s, tc.ref)
+			if err == nil {
+				t.Fatalf("ResolveRef(%+v): want an error, got none", tc.ref)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolveRefRefusesAnIterationWithNothingCurrent pins the refusal a
+// for-each reference raises before the chain has entered it: current is read
+// from the iteration the walk keeps, so an empty one has no current item.
+func TestResolveRefRefusesAnIterationWithNothingCurrent(t *testing.T) {
+	t.Parallel()
+
+	def, s := resolveFixture()
+	s.Iter["plans"] = Iter{Index: -1, Items: nil}
+
+	_, err := ResolveRef(def, s, Ref{Root: "plans", Attr: "current"})
+	if err == nil {
+		t.Fatal("plans.current before the iteration began: want an error, got none")
+	}
+	if !strings.Contains(err.Error(), "has no current item") {
+		t.Errorf("error = %q, want it to say there is no current item", err)
+	}
+}
+
+// TestResolveRefRefusesTheChainRecord pins the two roots that live on the chain
+// record rather than in workflow state, so a reference to one is a workflow
+// error rather than a silently empty value.
+func TestResolveRefRefusesTheChainRecord(t *testing.T) {
+	t.Parallel()
+
+	def, s := resolveFixture()
+	for _, tc := range []struct {
+		ref  Ref
+		want string
+	}{
+		{Ref{Root: "task", Attr: "text"}, "the task input is not workflow state"},
+		{Ref{Root: "chain", Attr: "branch"}, "chain.branch is not workflow state"},
+	} {
+		_, err := ResolveRef(def, s, tc.ref)
+		if err == nil {
+			t.Fatalf("ResolveRef(%+v): want an error, got none", tc.ref)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("error = %q, want it to contain %q", err, tc.want)
+		}
 	}
 }
 
