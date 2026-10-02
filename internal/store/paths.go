@@ -242,6 +242,15 @@ func (s *Store) CheckLogPath(name string, round, run int) string {
 	return s.roundFile(name, round, fmt.Sprintf("check-%03d", run), ".log")
 }
 
+// ServedCheckLogPath is where a served binding's check run streams: a file
+// under that binding's round-file area, named after the round so it sits beside
+// the round's gate log without ever being mistaken for it. The name carries no
+// run id, because one check runs at a time per binding and the next run on the
+// same round takes the file over.
+func (s *Store) ServedCheckLogPath(name string, round int) string {
+	return s.roundFile(name, round, "served-check", ".log")
+}
+
 // CheckLogTarget resolves a check log path built by CheckLogPath back to the
 // member and round it was keyed with, so a seal reuses the round the row was
 // written under instead of recomputing one. It uses the store's own round-file
