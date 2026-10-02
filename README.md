@@ -788,7 +788,7 @@ On the server machine, the admin runs these on the server host. No `--state` is 
 - `relevo serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
 - A **DONE** served binding is collected once its last round has been acked by the client, or after seven days without an ack: the daemon removes its worktree, deletes its branch and every `refs/relevo/<name>/*` ref in the owner's bare repo, and archives its record in the database (this cleanup lands in the server's next round). Every server unbind releases the binding's branch and refs as well. A bare repo is deleted once no live binding uses it, and the next bind of that repository recreates it.
 
-What `relevo serve` does not do: it runs no MasterMind and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Unix-user isolation is available as `serve.isolation: "user"` (above); container isolation is tracked in #204.
+What `relevo serve` does not do: it runs no MasterMind and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Unix-user isolation is available as `serve.isolation: "user"` (above); rootless-container isolation is available as `serve.isolation: "container"` (below).
 
 ### Tenant isolation: `user` mode
 
@@ -827,6 +827,35 @@ To switch a host from `none` to `user` (spec §10):
 Switching back to `none` keeps root (or chowns the owner roots back). User mode
 runs its builders without a scope — system-manager `--uid` scopes are a
 follow-up — while the `max_builders` cap still applies.
+
+### Tenant isolation: `container` mode
+
+`serve.isolation: "container"` runs every owner's builders in a rootless
+`podman` container instead of as a unix user. It needs no root and keeps the
+default user unit (`dist/relevo-serve.service`): the container runs as the
+serve uid through `--userns=keep-id`, so bind-mounted ownership and git's file
+checks match the host. Tenants cannot reach the server's database, TLS key or
+another owner's files because those paths are not mounted.
+
+To switch a host from `none` to `container`:
+
+1. Build an image containing `git`, a POSIX `sh` and the harness binaries on
+   `PATH`. `dist/Containerfile` is the reference build:
+   `podman build -t relevo-builder:local -f dist/Containerfile .`
+2. Set `serve.isolation: "container"` and `serve.isolation_image` to the full
+   image reference in the policy. The image is required; there is no default.
+3. `relevo doctor` reports the mode in force (`isolation=container`) and fails
+   with the exact fix when `podman` is not on `PATH` or the image is missing.
+
+A container round binds the round tree, the binding's `out/` directory, the
+owner's `repos/<hex>` and each owner harness home at their host absolute paths,
+with a private `/tmp` tmpfs. `serve.scope`'s memory, CPU and task limits render
+as `--memory`, `--cpus` and `--pids-limit`; `Slice`, `CPUWeight` and
+`AllowedCPUs` have no podman equivalent and are dropped, and `Rusage` reports no
+measurement. A round whose `podman` or image is missing halts **NEEDS YOU**
+naming the piece instead of running unisolated. The `podman` flags are reasoned
+from the `podman run` contract, not observed on every host; a host without
+`podman` cannot start a container server, and `relevo serve` refuses at startup.
 
 ### Remote builders: the client
 

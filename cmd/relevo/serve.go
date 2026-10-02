@@ -412,6 +412,7 @@ func cmdServeRun(args []string) error {
 		return fail(codeNotAvailable, "%v", err)
 	}
 	userMode := isoMode == isolate.ModeUser
+	containerMode := isoMode == isolate.ModeContainer
 	// A user-mode server keeps its state in one fixed root-owned place when
 	// --state is unset, so the daemon and its tenants agree on it regardless of
 	// whose HOME the daemon was started with.
@@ -478,9 +479,14 @@ func cmdServeRun(args []string) error {
 	scope := scopeFromPolicy(pol.ScopeFor(true))
 	if userMode {
 		// User mode runs scopes off: systemd-run --user would target root's
-		// own user manager, not the tenant's (plan §0.2). The cap still applies.
+		// own user manager, not the tenant's. The cap still applies.
 		scope = nil
 		scopesStatus = "off (isolation=user)"
+	} else if containerMode {
+		// Container mode runs no systemd scope: bounds travel on the podman
+		// command, and the scope here is only the carrier of those bounds and
+		// the round's container name. No probe is taken. The cap still applies.
+		scopesStatus = "off (isolation=container)"
 	} else if scope != nil {
 		if err := proc.ProbeScopes(context.Background(), scope.Slice); err != nil {
 			slog.Warn("scopes unavailable; builders will run in the daemon's cgroup", "err", err)
