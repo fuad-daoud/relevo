@@ -1,6 +1,8 @@
 package serve
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -39,6 +41,7 @@ func servedChainRequestOf(caller remote.ClientID, bare string, req remote.Create
 		Feature: req.Feature, Ticket: req.Ticket,
 		Owner: string(caller), Bare: bare, RepoID: req.RepoID, Base: req.BaseCommit,
 		ClientInstallation: req.ClientInstallation, ClientBindingIDs: req.ClientBindingIDs,
+		Workflow: []byte(req.Workflow), ClientActorIDs: req.ClientActorIDs,
 	}
 	if req.Author != nil {
 		out.AuthorName, out.AuthorEmail = req.Author.Name, req.Author.Email
@@ -62,6 +65,17 @@ func (s *Server) writeChainRetry(w http.ResponseWriter, rt relevo.Runtime, req r
 	writeErr(w, http.StatusConflict, remote.CodeInvalid, "chain exists")
 }
 
+// canonicalJSON decodes JSON data into an arbitrary value and re-encodes it
+// with sorted keys, so semantically identical JSON with different key order
+// produces byte-identical results.
+func canonicalJSON(data []byte) ([]byte, error) {
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		return nil, err
+	}
+	return json.Marshal(v)
+}
+
 // chainRequestMatches reports whether an existing chain is byte-for-byte the
 // request: its base, settings, labels and plan copies. The name and owner are
 // already the same, and the repo id is not part of the comparison.
@@ -69,7 +83,13 @@ func chainRequestMatches(rt relevo.Runtime, view remote.ChainView, req remote.Cr
 	if view.Base != req.BaseCommit || view.Feature != req.Feature || view.Ticket != req.Ticket {
 		return false
 	}
-	if view.Settings != req.Settings {
+	if len(req.Workflow) > 0 {
+		canonStored, err1 := canonicalJSON(view.Workflow)
+		canonReq, err2 := canonicalJSON(req.Workflow)
+		if err1 != nil || err2 != nil || !bytes.Equal(canonStored, canonReq) {
+			return false
+		}
+	} else if view.Settings != req.Settings {
 		return false
 	}
 	if view.Plans != len(req.Plans) {
@@ -97,7 +117,7 @@ func writeChainPreflightError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusBadRequest, remote.CodeUnknownActor, err.Error())
 	case strings.Contains(err.Error(), "already exists"):
 		writeErr(w, http.StatusConflict, remote.CodeInvalid, err.Error())
-	case strings.Contains(err.Error(), "must be a"):
+	case errors.Is(err, relevo.ErrRefused) || strings.Contains(err.Error(), "must be a"):
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 	default:
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
@@ -142,4 +162,65 @@ func (s *Server) writeChainReadError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeErr(w, http.StatusInternalServerError, "", err.Error())
+}
+
+func (s *Server) handleDoneChain(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rt, name, ok := s.chainRuntime(w, r)
+	if !ok {
+		return
+	}
+	if _, err := relevo.ChainDone(r.Context(), rt, name); err != nil {
+		var open *relevo.RoundOpenError
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+		case errors.As(err, &open):
+			writeErr(w, http.StatusConflict, remote.CodeRoundOpen, err.Error())
+		case errors.Is(err, relevo.ErrChainRunning):
+			writeErr(w, http.StatusConflict, remote.CodeChainRunning, err.Error())
+		default:
+			writeErr(w, http.StatusInternalServerError, "", err.Error())
+		}
+		return
+	}
+
+	// Settle every member's entries up to its closed round, the way handleDone
+	// settles a lone binding's.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		for _, member := range []string{c.Builder, c.Reviewer, c.Planner, c.Security} {
+			if member == "" {
+				continue
+			}
+			b, err := tx.Load(member)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if b.Serve == nil {
+				continue
+			}
+			if _, err := settleServed(tx, member, b.Serve.ClosedRound); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		slog.Warn("settle chain members", "chain", name, "err", err)
+	}
+
+	view, err := s.servedChainView(rt, name)
+	if err != nil {
+		s.writeChainReadError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }

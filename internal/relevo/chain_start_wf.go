@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -198,7 +199,11 @@ func chainValidateWorkflow(rt Runtime, def workflow.Definition, given workflow.G
 	}
 	problems := workflow.Validate(def, env)
 	if len(problems) > 0 {
-		return refuse("%s", problems[0])
+		p := problems[0]
+		if p.Rule == workflow.RuleKind && strings.Contains(p.Detail, "unknown actor") {
+			return classed(ErrUnknownRole, p.String())
+		}
+		return refuse("%s", p)
 	}
 	return nil
 }

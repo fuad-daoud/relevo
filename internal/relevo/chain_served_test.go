@@ -643,3 +643,54 @@ func TestServedChainViewCarriesRoundsAndTrace(t *testing.T) {
 		t.Errorf("trace = %+v, want the planted row", view.Trace)
 	}
 }
+
+// TestServedChainPreflightCustomWorkflow pins the preflight for a custom
+// workflow: the hand-built request yields a plan whose members match
+// chainMemberNames.
+func TestServedChainPreflightCustomWorkflow(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := servedChainRuntime(t)
+	const customYAML = `name: custom-flow
+inputs:
+  plans: required
+start: b
+steps:
+  b:
+    run: builder
+    on:
+      done: r
+  r:
+    run: reviewer
+    on:
+      verdict=pass: done
+      else: done
+`
+	req := servedChainRequest("custom")
+	req.Workflow = []byte(customYAML)
+	req.ClientActorIDs = map[string]string{
+		"builder":  "b-link-id",
+		"reviewer": "r-link-id",
+	}
+
+	plan, err := ServedChainPreflight(rt, req)
+	if err != nil {
+		t.Fatalf("ServedChainPreflight: %v", err)
+	}
+
+	def, err := workflow.Parse(req.Workflow)
+	if err != nil {
+		t.Fatalf("parse workflow: %v", err)
+	}
+	actors := rt.RoleRegistry().WorkflowActors()
+	wantPlanned, err := chainMemberNames(req.Name, def, actors)
+	if err != nil {
+		t.Fatalf("chainMemberNames: %v", err)
+	}
+	keeper := chainWriterKeeper(def, workflow.UsedActors(def), actors)
+	wantMembers := chainWorkflowMembers(def, wantPlanned, keeper)
+
+	if !reflect.DeepEqual(plan.members, wantMembers) {
+		t.Errorf("plan.members = %+v, want %+v", plan.members, wantMembers)
+	}
+}
