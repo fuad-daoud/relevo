@@ -49,9 +49,10 @@ func chainFlowMerge(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 
 	result := chainMergeJoined
 	var artifacts map[string][]string
+	var flagged string
 	if out.stopKey != "" {
 		result = chainMergeConflict
-		key, werr := chainWriteMergeConflict(rt, tx, c, out)
+		key, werr := chainWriteMergeConflict(ctx, rt, tx, c, out, &flagged)
 		if werr != nil {
 			return chainMergeHalt(ctx, rt, tx, c, def, before, next, ev,
 				fmt.Sprintf("chain %s: the conflict report could not be written: %v", c.Name, werr))
@@ -59,7 +60,7 @@ func chainFlowMerge(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 		artifacts = map[string][]string{"conflict": {key}}
 	}
 
-	act.Reason = out.trace(result)
+	act.Reason = out.trace(result) + flagged
 	if err := chainSaveFlow(rt, tx, c, def, before, *next, ev, act, writer); err != nil {
 		return err
 	}
@@ -141,13 +142,32 @@ func chainMergeDir(tx *store.Tx, writer string) (string, error) {
 // keyed to the parent's writer and its newest closed round, the same pair a
 // check's log uses, and the key it returns is what {{<fork>.conflict}} hands
 // the builder.
-func chainWriteMergeConflict(rt Runtime, tx *store.Tx, c db.ChainRow, out mergeOutcome) (string, error) {
+//
+// The body is scanned for injection before it is written, because the report is
+// not just read by a human: a workflow seeded with {{<fork>.conflict}} alone
+// has chainRenderSeed inline this file verbatim into the resolving builder's
+// prompt, so an instruction-shaped unmerged path would otherwise reach a model
+// unflagged. flagged receives the caveat when the scan found something, and is
+// left "" when it did not, which keeps the body and the trace line byte-for-byte
+// what they are for an ordinary conflict.
+func chainWriteMergeConflict(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, out mergeOutcome, flagged *string) (string, error) {
 	member, round, err := chainCheckLogTarget(tx, c)
 	if err != nil {
 		return "", err
 	}
+	body := out.report()
+	binding, lerr := tx.Load(member)
+	if lerr != nil {
+		return "", lerr
+	}
+	sc := scanForInjection(ctx, rt, "report", binding, []byte(body))
+	if sc.Flagged > 0 {
+		caveat := flaggedParenthetical(sc.Flagged, sc.Record)
+		*flagged = caveat
+		body += strings.TrimRight(caveat, " ") + "\n"
+	}
 	key := rt.Store.ForkConflictPath(member, round)
-	return key, tx.PutRoundFile(member, round, key, []byte(out.report()))
+	return key, tx.PutRoundFile(member, round, key, []byte(body))
 }
 
 // report renders the conflict file: the unmerged paths a builder has to

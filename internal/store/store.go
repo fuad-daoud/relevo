@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -156,7 +157,9 @@ func DefaultRoot() (string, error) {
 }
 
 // ValidName enforces relevo's binding-name rule: a lowercase letter first,
-// then up to 31 more of [a-z0-9_-].
+// then up to 31 more of [a-z0-9_-.]. A dot is accepted mid-name, because the
+// fork-child names ("shop.1") are built from it, but never where it would mint
+// a name git refuses as a ref: a trailing dot, "..", or a ".lock" suffix.
 func ValidName(name string) error {
 	if name == "" {
 		return errors.New("binding name is empty")
@@ -175,6 +178,20 @@ func ValidName(name string) error {
 		if !lower && !digit && c != '-' && c != '_' && c != '.' {
 			return fmt.Errorf("binding name %q has an invalid character %q", name, string(c))
 		}
+	}
+
+	// The dot is in the character class above because a fork child's name is
+	// "<parent>.<key>", but these three shapes are exactly the ones git's
+	// check-ref-format rejects. Every caller mints a branch from the name, so
+	// refusing them here is the one choke point that keeps a binding bindable.
+	if strings.HasSuffix(name, ".") {
+		return fmt.Errorf("binding name %q must not end with a dot", name)
+	}
+	if strings.Contains(name, "..") {
+		return fmt.Errorf("binding name %q must not contain %q", name, "..")
+	}
+	if strings.HasSuffix(name, ".lock") {
+		return fmt.Errorf("binding name %q must not end with %q", name, ".lock")
 	}
 
 	return nil

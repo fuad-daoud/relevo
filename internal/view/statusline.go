@@ -120,6 +120,11 @@ func statusLineRowText(row StatusLineRow, nameW, statusW, clockW, columns int, d
 			mid += " · " + row.Tokens
 		}
 	}
+	// One sanitizing point, once the middle is whole: it covers both the chain
+	// row's own Chain text and the Reason a member row concatenates, and it
+	// runs before truncate, so no downstream helper has to know a control byte
+	// can be here.
+	mid = sanitizeText(mid)
 
 	leftW := 2 + nameW + 2
 	midW := columns - leftW - 1 - statusW - 2 - clockW

@@ -87,7 +87,7 @@ func writeChainRow(sb *strings.Builder, b BindingStatus) {
 	}
 	fmt.Fprintf(sb, "%-8s %-40s chain  %s  %s", indentName(b), cwd, b.Chain.Status, ChainSegment(*b.Chain))
 	if b.Detail != "" {
-		fmt.Fprintf(sb, "\n  reason   %s", b.Detail)
+		fmt.Fprintf(sb, "\n  reason   %s", sanitizeText(b.Detail))
 	}
 	fmt.Fprint(sb, "\n")
 }
