@@ -628,6 +628,98 @@ func TestReaderRoundDoesNotCloseOnAMarkerItDidNotSee(t *testing.T) {
 	}
 }
 
+// TestReaderRoundHoldsAnEmptyStreamAtTheMarker pins the close race: the runner
+// writes its marker a beat before its final message, so a tick that sees the
+// marker, an empty stream and a runner already gone must hold the round open
+// rather than record noreport over a message still coming.
+func TestReaderRoundHoldsAnEmptyStreamAtTheMarker(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Fatalf("round = %d, want the round still open on 1: an empty stream at the marker must hold", got.Round)
+	}
+	entries, err := rt.Store.ReadLog("reader-bind")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
+		t.Errorf("a report was queued for a reader round whose stream was still empty")
+	}
+}
+
+// TestReaderRoundClosesAnEmptyStreamPastTheGrace: the hold is bounded. A
+// runner that never wrote its final message must not be waited on forever:
+// once readerFinalMessageGrace has passed, the empty round closes with the
+// noreport note.
+func TestReaderRoundClosesAnEmptyStreamPastTheGrace(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	marker := rt.Store.DonePath("reader-bind", 1)
+	touch(t, marker)
+	aged := baseTime.Add(-3 * time.Minute)
+	if err := os.Chtimes(marker, aged, aged); err != nil {
+		t.Fatalf("age the marker: %v", err)
+	}
+	exitReaderRunner(t, rt, b)
+
+	closed, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if closed.Round != 2 {
+		t.Fatalf("round = %d, want the empty round closed past the grace", closed.Round)
+	}
+	e := reportEntryFor(t, rt, "reader-bind", 1)
+	if !strings.Contains(e.Note, "noreport") {
+		t.Errorf("report note = %q, want it to carry noreport", e.Note)
+	}
+}
+
+// TestReaderRoundClosesOnItsOwnReport: a reader that wrote its output file
+// itself closes as before, empty stream or not. The hold waits for a report,
+// and the runner's own file is one.
+func TestReaderRoundClosesOnItsOwnReport(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	out := reportPathFor(rt, b)
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, []byte("# The runner's own findings\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
+
+	closed, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if closed.Round != 2 {
+		t.Fatalf("round = %d, want the reader closed on its own report", closed.Round)
+	}
+	e := reportEntryFor(t, rt, "reader-bind", 1)
+	if e.Note != "" {
+		t.Errorf("report note = %q, want the own-report close unchanged", e.Note)
+	}
+	if e.Path != out {
+		t.Errorf("report entry Path = %q, want the runner's own file %q", e.Path, out)
+	}
+}
+
 // TestReaderRoundGraceClosesALingeringRunner: a runner still alive more than
 // readerFinalMessageGrace after its marker must not hold the round forever. The
 // round closes with the summary taken from the stream as it is, the note says
@@ -689,14 +781,20 @@ func TestWriterRoundStillClosesOnMarker(t *testing.T) {
 }
 
 // TestReaderMarkerCloseWithoutOutputSaysOutput closes a reader round whose
-// marker is present and whose stream carried no final message: the close
-// payload names the missing output, not the writer's missing report.
+// marker is past the grace and whose stream carried no final message: the
+// close payload names the missing output, not the writer's missing report.
+// The marker is aged because a fresh one is held for the final message.
 func TestReaderMarkerCloseWithoutOutputSaysOutput(t *testing.T) {
 	t.Parallel()
 
 	repo := readerRepo(t)
 	rt, b := bindReader(t, repo)
-	touch(t, rt.Store.DonePath("reader-bind", 1))
+	marker := rt.Store.DonePath("reader-bind", 1)
+	touch(t, marker)
+	aged := baseTime.Add(-3 * time.Minute)
+	if err := os.Chtimes(marker, aged, aged); err != nil {
+		t.Fatalf("age the marker: %v", err)
+	}
 	exitReaderRunner(t, rt, b)
 
 	if _, err := reconcile(t, rt, b); err != nil {
