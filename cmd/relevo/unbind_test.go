@@ -7,13 +7,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestUnbindRefusesFlagsItsPathDoesNotHonour pins cases 1-4 of the refusal
-// fix (#862): a flag unbind's chosen path does not honour is refused by name,
-// with codeRefused and exit 2, before newRuntime and any store or network
-// access. The refusal is ahead of newRuntime, so a seeded binding is still
-// there -- untouched -- afterwards, and no harness is spawned and no network
-// is reached (the case list includes --pick, which would otherwise need a
-// terminal).
+// TestUnbindRefusesFlagsItsPathDoesNotHonour pins that a flag the chosen
+// unbind path does not honour is refused by name with codeRefused before any
+// store or network access, so a seeded binding survives untouched.
 func TestUnbindRefusesFlagsItsPathDoesNotHonour(t *testing.T) {
 	cases := []struct {
 		name    string

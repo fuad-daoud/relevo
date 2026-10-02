@@ -1695,11 +1695,10 @@ func TestSendRemoteRecordsOnlyOnSuccess(t *testing.T) {
 	}
 }
 
-// TestSendDryRunRemoteContactsNoServer pins §6's remote clause at the seam
-// that would betray it: a dry run of a remote binding resolves the branch
-// locally and never contacts the server. fakeRemote records every call, and
-// its beforeCall fails the test outright if any arrives, so a future change
-// that makes SendDryRun POST is caught even before the count is read.
+// TestSendDryRunRemoteContactsNoServer pins that a remote dry run makes no
+// call to the server: the branch resolves locally, and fakeRemote's beforeCall
+// fails the test outright if any call arrives, so a future change that makes
+// SendDryRun POST is caught even before the call count is read.
 func TestSendDryRunRemoteContactsNoServer(t *testing.T) {
 	t.Parallel()
 
