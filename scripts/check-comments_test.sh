@@ -9,7 +9,8 @@ trap 'rm -rf "$work" 2>/dev/null || :' EXIT
 fixtures="$here/testdata/check-comments"
 
 # stage starts an empty repository with the guard at its real path. The guard
-# reads the index (git ls-files), so every case needs a real, tracked tree.
+# reads the index and the untracked, non-ignored files (git ls-files), so every
+# case needs a real tree.
 stage() {
 	rm -rf "$work/repo"
 	mkdir -p "$work/repo/scripts"
@@ -38,6 +39,14 @@ put() {
 	)
 }
 
+# put_untracked copies one fixture into the staged repo without staging or
+# committing it, so the guard must find it through the untracked list rather
+# than the index.
+put_untracked() {
+	mkdir -p "$work/repo/fixtures"
+	cp "$fixtures/$1" "$work/repo/fixtures/$1"
+}
+
 fail=0
 # run executes the guard in the staged repo, leaving its exit status in $status
 # and its output in $work/out.
@@ -58,6 +67,12 @@ expect_line() { # description, expected output line
 		echo "FAIL: $1 (missing: $2)"; fail=1
 	fi
 }
+
+# A repository with no Go file at all lists nothing and passes.
+stage
+run
+expect_exit "an empty file list passes" 0
+expect_line "an empty file list prints ok" "check-comments: ok"
 
 # A clean file passes and says so.
 stage
@@ -111,6 +126,43 @@ put cites-issue.go
 printf 'fixtures/cites-issue.go\nfixtures/gone.go\n' > "$work/repo/scripts/check-comments.allow"
 run
 expect_exit "an allow-listed path and a missing path pass" 0
+
+# An untracked, non-ignored file citing an issue fails like a tracked one.
+stage
+put clean.go
+put_untracked cites-issue.go
+run
+expect_exit "an untracked issue citation fails" 1
+expect_line "the untracked issue number is reported" "fixtures/cites-issue.go:4: comment cites history (#NNN or §)"
+
+# An untracked clean file passes and says so.
+stage
+put_untracked clean.go
+run
+expect_exit "an untracked clean file passes" 0
+expect_line "an untracked clean file prints ok" "check-comments: ok"
+
+# An untracked file a .gitignore covers is not scanned at all.
+stage
+printf 'fixtures/cites-issue.go\n' > "$work/repo/.gitignore"
+(
+	cd "$work/repo"
+	git add -A
+	git -c user.name=test -c user.email=test@example.com -c commit.gpgsign=false commit -q -m test
+)
+put_untracked cites-issue.go
+run
+expect_exit "an untracked ignored citing file passes" 0
+expect_line "an untracked ignored file prints ok" "check-comments: ok"
+
+# An untracked file the allow-list names is skipped like a tracked one.
+stage
+put clean.go
+put_untracked cites-issue.go
+printf 'fixtures/cites-issue.go\n' > "$work/repo/scripts/check-comments.allow"
+run
+expect_exit "an untracked allow-listed file passes" 0
+expect_line "an untracked allow-listed file prints ok" "check-comments: ok"
 
 [ "$fail" -eq 0 ] && echo "check-comments: ok"
 exit "$fail"

@@ -25,6 +25,7 @@ type dispatcher struct {
 // fails the test whichever way the drift runs.
 var dispatchers = []dispatcher{
 	{"", "main.go", "run"},
+	{"board", "board.go", "cmdBoard"},
 	{"config", "config.go", "cmdConfig"},
 	{"config secret", "config_server.go", "configSecret"},
 	{"config server", "config_server.go", "configServer"},
