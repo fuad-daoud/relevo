@@ -471,6 +471,7 @@ type StatusLineRow struct {
 // StatusLineDoc is the top-level document emitted by relevo status --line --json.
 type StatusLineDoc struct {
 	MasterMind *StatusLineMasterMind `json:"mastermind"`
+	Board      *StatusLineBoard      `json:"board"` // the live board block, null when absent
 	Now        time.Time             `json:"now"`
 	Rows       []StatusLineRow       `json:"rows"`
 }

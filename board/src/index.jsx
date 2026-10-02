@@ -1,10 +1,13 @@
 // The relevo board page: one Excalidraw scene served by `relevo board`, saved
-// back over the small JSON API. The token rides in the URL fragment and is
-// read here, never in a request line.
+// back over the small JSON API, plus a Mermaid panel that renders a diagram to
+// text and imports it onto the canvas. The token rides in the URL fragment and
+// is read here, never in a request line.
 
 import { createRoot } from "react-dom/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Excalidraw, exportToSvg, serializeAsJSON } from "@excalidraw/excalidraw";
+import { convert, roleOf } from "./mermaid.js";
+import { importElements } from "./import.js";
 
 const TOKEN = new URLSearchParams(window.location.hash.slice(1)).get("t") || "";
 
@@ -14,6 +17,14 @@ function api(path, options) {
   const opts = Object.assign({}, options);
   opts.headers = Object.assign({ "X-Relevo-Board-Token": TOKEN }, opts.headers || {});
   return fetch(path, opts);
+}
+
+// firstLine is the one line of a thrown error the notices and the preview
+// carry: a Mermaid parse failure prints several, and only the first names the
+// line.
+function firstLine(err) {
+  const text = err && err.message ? err.message : String(err);
+  return text.split("\n")[0];
 }
 
 // themeAppState builds the appState a new scene starts with, from the palette
@@ -35,6 +46,9 @@ function App() {
   const [notice, setNotice] = useState("");
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [mermaidOpen, setMermaidOpen] = useState(false);
+  const [mermaidText, setMermaidText] = useState("");
+  const [preview, setPreview] = useState("");
   const apiRef = useRef(null);
   const etagRef = useRef("");
 
@@ -122,21 +136,115 @@ function App() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [save]);
 
+  // render shows the diagram's structure as text. It never touches the canvas:
+  // an invalid definition writes only the preview.
+  const render = useCallback(async () => {
+    if (!doc) return;
+    if (mermaidText.trim() === "") {
+      setPreview("nothing to render");
+      return;
+    }
+    try {
+      const converted = await convert(mermaidText, doc.theme);
+      setPreview(
+        converted.skeletons
+          .map((element) =>
+            [
+              roleOf(element, converted.skeletons),
+              element.id,
+              (element.label && element.label.text) || "",
+            ].join("\t"),
+          )
+          .join("\n"),
+      );
+    } catch (err) {
+      setPreview("mermaid: " + firstLine(err));
+    }
+  }, [doc, mermaidText]);
+
+  // doImport appends the diagram to the canvas. On failure it leaves the scene,
+  // the dirty flag and the textarea alone.
+  const doImport = useCallback(async () => {
+    const apiRefCurrent = apiRef.current;
+    if (!doc || !apiRefCurrent) return;
+    if (mermaidText.trim() === "") {
+      setNotice("nothing to import");
+      return;
+    }
+    try {
+      const converted = await convert(mermaidText, doc.theme);
+      const count = importElements(apiRefCurrent, converted);
+      setNotice("imported " + count + " elements");
+      setDirty(true);
+    } catch (err) {
+      setNotice("mermaid: " + firstLine(err));
+    }
+  }, [doc, mermaidText]);
+
   const initialData = doc
     ? doc.isNew
       ? { elements: [], appState: themeAppState(doc.theme), files: {} }
       : doc.scene
     : null;
 
+  // The Mermaid surface takes its colours from the theme the server sent, so
+  // the page carries no second palette; the stylesheet holds layout only.
+  const surface = doc
+    ? { background: doc.theme.bg, color: doc.theme.ink, borderColor: doc.theme.line }
+    : undefined;
+
   return (
     <div className="board-root">
       <div className="board-bar">
         <span className="board-name">{doc ? "relevo board" : "loading…"}</span>
         <span className="board-notice">{notice}</span>
+        {doc && (
+          <button
+            className="board-mermaid-toggle"
+            data-testid="mermaid-toggle"
+            onClick={() => setMermaidOpen((open) => !open)}
+            style={surface}
+          >
+            Mermaid
+          </button>
+        )}
         <button className="board-save" data-testid="save" disabled={!dirty || busy} onClick={save}>
           {busy ? "saving…" : dirty ? "Save" : "Saved"}
         </button>
       </div>
+      {doc && mermaidOpen && (
+        <div className="board-mermaid-panel">
+          <textarea
+            className="board-mermaid-text"
+            data-testid="mermaid-text"
+            value={mermaidText}
+            onChange={(e) => setMermaidText(e.target.value)}
+            style={surface}
+            spellCheck={false}
+          />
+          <div className="board-mermaid-actions">
+            <button
+              className="board-mermaid-button"
+              data-testid="mermaid-render"
+              onClick={render}
+              style={surface}
+            >
+              Render
+            </button>
+            <button
+              className="board-mermaid-button"
+              data-testid="mermaid-import"
+              onClick={doImport}
+              style={surface}
+            >
+              Import
+            </button>
+          </div>
+          <pre className="board-mermaid-preview" data-testid="mermaid-preview" style={surface}>
+            {preview}
+          </pre>
+        </div>
+      )}
       <div className="board-canvas">
         {initialData && (
           <Excalidraw

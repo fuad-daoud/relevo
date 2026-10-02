@@ -392,7 +392,7 @@ func chainResumeAddMembers(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 		repo: c.Repo, repoRef: builder.RepoRef, feature: c.Feature, ticket: c.Ticket,
 		worktree: builder.CWD,
 	}
-	built, err := chainBuildMembers(ctx, rt, add, resolutions, base, set)
+	built, err := chainBuildMembers(ctx, rt, add, resolutions, base, set, c.Plans)
 	if err != nil {
 		return c, err
 	}

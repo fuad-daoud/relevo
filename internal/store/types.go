@@ -5,6 +5,7 @@ package store
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -49,16 +50,25 @@ type Edge struct {
 	Result  string    `json:"result,omitempty"`
 }
 
+// ErrInvalidFeature is ValidFeature's class: a --feature label outside the
+// accepted shape. Like a binding name it is the caller's own argument, so the
+// CLI classifies it as usage.
+var ErrInvalidFeature = errors.New("invalid feature label")
+
+// ErrInvalidTicket is ValidTicket's and ParseTicket's class: a --ticket outside
+// the four accepted input forms. The caller's own argument, so usage.
+var ErrInvalidTicket = errors.New("invalid ticket")
+
 // ValidFeature reports whether s is a valid --feature label: 1..64 bytes,
 // every byte in [A-Za-z0-9._ -], no leading or trailing space.
 func ValidFeature(s string) error {
 	const errText = "feature: 1-64 chars of letters, digits, '.', '_', '-' and spaces"
 
 	if len(s) == 0 || len(s) > 64 {
-		return fmt.Errorf("%s", errText)
+		return invalidOf(ErrInvalidFeature, "%s", errText)
 	}
 	if s[0] == ' ' || s[len(s)-1] == ' ' {
-		return fmt.Errorf("%s", errText)
+		return invalidOf(ErrInvalidFeature, "%s", errText)
 	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -68,7 +78,7 @@ func ValidFeature(s string) error {
 		case c >= '0' && c <= '9':
 		case c == '.', c == '_', c == ' ', c == '-':
 		default:
-			return fmt.Errorf("%s", errText)
+			return invalidOf(ErrInvalidFeature, "%s", errText)
 		}
 	}
 	return nil
@@ -82,21 +92,21 @@ func ValidTicket(s string) error {
 	const errText = "ticket: #N or owner/repo#N"
 
 	if len(s) == 0 || len(s) > 128 {
-		return fmt.Errorf("%s", errText)
+		return invalidOf(ErrInvalidTicket, "%s", errText)
 	}
 	hash := strings.LastIndex(s, "#")
 	if hash < 0 {
-		return fmt.Errorf("%s", errText)
+		return invalidOf(ErrInvalidTicket, "%s", errText)
 	}
 	num, prefix := s[hash+1:], s[:hash]
 	if !validIssueNumber(num) {
-		return fmt.Errorf("%s", errText)
+		return invalidOf(ErrInvalidTicket, "%s", errText)
 	}
 	if prefix == "" {
 		return nil
 	}
 	if !validOwnerRepo(prefix) {
-		return fmt.Errorf("%s", errText)
+		return invalidOf(ErrInvalidTicket, "%s", errText)
 	}
 	return nil
 }
@@ -111,7 +121,7 @@ func ParseTicket(raw, ownerRepo string) (string, error) {
 
 	repo, num, err := splitTicket(strings.TrimSpace(raw))
 	if err != nil {
-		return "", fmt.Errorf("%s", errText)
+		return "", invalidOf(ErrInvalidTicket, "%s", errText)
 	}
 	if repo == "" {
 		repo = ownerRepo
@@ -121,7 +131,7 @@ func ParseTicket(raw, ownerRepo string) (string, error) {
 		stored = repo + "#" + num
 	}
 	if err := ValidTicket(stored); err != nil {
-		return "", fmt.Errorf("%s", errText)
+		return "", invalidOf(ErrInvalidTicket, "%s", errText)
 	}
 	return stored, nil
 }

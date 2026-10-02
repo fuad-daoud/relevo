@@ -55,12 +55,19 @@ const (
 // once: the pane wrap-up, its grace and its abandonment are gone. A queued
 // round is checked first, since it has a zero RoundStartedAt: it is dropped
 // from the queue rather than killed (#285, #344).
-func stopDecision(b store.Binding, now time.Time) stopAction {
+//
+// The log decides whether a round is open, not the timestamps. Keying on them
+// made `stop` disagree with the status and history that read the log: a round
+// whose RoundStartedAt was cleared or never stamped (a resend over a halt, a
+// binding restored from a backup, a round the close advanced past) was open to
+// every reader and yet had nothing to stop. store.RoundOpen is the shared
+// definition all three read, so the three now agree by construction.
+func stopDecision(b store.Binding, entries []store.LogEntry, now time.Time) stopAction {
+	if !store.RoundOpen(entries, b.Round) {
+		return stopNothing
+	}
 	if !b.QueuedAt.IsZero() {
 		return stopDequeue
-	}
-	if b.RoundStartedAt.IsZero() {
-		return stopNothing
 	}
 	return stopKill
 }
@@ -147,8 +154,13 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 		out.Round = b.Round
 		out.Shape = b.Shape
 
+		entries, err := tx.ReadLog(name)
+		if err != nil {
+			return err
+		}
+
 		how := ""
-		switch stopDecision(b, rt.Now().UTC()) {
+		switch stopDecision(b, entries, rt.Now().UTC()) {
 		case stopNothing:
 			return ErrNothingToStop
 		case stopKill:

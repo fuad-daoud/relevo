@@ -4,17 +4,20 @@
 // Runner that translates a round's spawn.ProcSpec before the base runner starts
 // it.
 //
-// Slice B ships none and user. A configured container is refused: Wrap returns
-// the mode's Available error, and the boundary it returns refuses at Start too.
-// The package reads only the stdlib, spawn and harness (to name every
-// harness's home variable); it is table-tested without a container runtime,
-// root or a live harness.
+// All three modes can run. A user-mode boundary is bound to one owner with
+// ForTenant; a container-mode boundary is bound to one owner's container spec
+// with ForContainer. The package reads only the stdlib, spawn and harness (to
+// name every harness's home variable); it is table-tested without a container
+// runtime, root or a live harness.
 package isolate
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -50,16 +53,15 @@ func Parse(s string) (Mode, error) {
 	return "", fmt.Errorf("serve.isolation: unknown mode %q (known: none, user, container)", s)
 }
 
-// Available reports whether this build can run the mode. none and user can; a
-// container server is refused at startup and failed by the doctor, never
-// started and warned. The sentence is what `relevo serve` refuses with and what
-// the doctor's serve isolation row prints.
+// Available reports whether this build can run the mode. Every mode this
+// parser knows can run, so it always returns nil; the method stays as the one
+// refusal point a future mode that needs a build capability would use, and so
+// `relevo serve` and the doctor keep calling it rather than branching on the
+// mode themselves. A mode whose runtime prerequisite is missing is refused
+// where that prerequisite is probed (podman on PATH, the image present), not
+// here.
 func (m Mode) Available() error {
-	switch m {
-	case ModeNone, ModeUser:
-		return nil
-	}
-	return fmt.Errorf("serve.isolation=%s: not available in this build (only \"none\" and \"user\" can run)", m)
+	return nil
 }
 
 // CheckPrivilege refuses a mode the running euid cannot serve. User mode needs
@@ -210,7 +212,7 @@ func (r refuseRunner) Rusage(ctx context.Context, h spawn.ProcHandle, streamPath
 }
 
 // Boundary is the runner Wrap returns for a mode: a spawn.Runner plus the
-// per-owner variant a user-mode server binds to one tenant with ForTenant.
+// per-owner variants a server binds one owner with.
 type Boundary interface {
 	spawn.Runner
 	// ForTenant returns the runner that serves one owner. A nil tenant refuses
@@ -218,6 +220,11 @@ type Boundary interface {
 	// setupErr's text; a non-nil tenant starts each process under its
 	// credential with UserSpec.
 	ForTenant(t *Tenant, setupErr error) spawn.Runner
+	// ForContainer returns the runner that serves one owner in container mode,
+	// bound to that owner's container spec. A container boundary with no spec
+	// bound refuses every Start with spawn.ErrBoundarySetup, like an unbound
+	// tenant.
+	ForContainer(c ContainerSpec) spawn.Runner
 }
 
 // Option configures the boundary Wrap builds.
@@ -230,15 +237,46 @@ func SharedLogins(on bool) Option {
 	return func(b *boundary) { b.sharedLogins = on }
 }
 
-// Wrap returns a boundary Runner that runs base's processes under mode. For a
-// mode this build cannot run it returns the mode's Available error along with a
-// boundary that refuses at Start (defence in depth: a caller that drops the
-// error still cannot start a process). ModeNone's Start hands base the
-// identical ProcSpec -- no field added, dropped or reordered -- and Alive,
-// ExitCode, Kill and Rusage delegate unchanged. ModeUser's Start refuses until
-// ForTenant binds a tenant.
+// PodmanBin names the container runtime binary the boundary probes and, by
+// default, runs. "podman" is the default.
+func PodmanBin(bin string) Option {
+	return func(b *boundary) { b.podmanBin = bin }
+}
+
+// LookPath resolves a binary name on PATH. It is a seam so a test can force
+// the container runtime absent without touching the host's PATH.
+func LookPath(fn func(string) (string, error)) Option {
+	return func(b *boundary) { b.lookPath = fn }
+}
+
+// PodmanRm is how an injected runtime removes a container by id. It is a seam
+// so the kill path is testable without podman.
+func PodmanRm(fn func(context.Context, string) error) Option {
+	return func(b *boundary) { b.podmanRm = fn }
+}
+
+// PodmanImageExists probes whether the container image is present. It is a
+// seam so a test can force the image missing without a container runtime.
+func PodmanImageExists(fn func(context.Context, string) error) Option {
+	return func(b *boundary) { b.podmanImageExists = fn }
+}
+
+// Wrap returns a boundary Runner that runs base's processes under mode. It
+// returns the mode's Available error if one exists along with a boundary that
+// refuses at Start (defence in depth: a caller that drops the error still
+// cannot start a process). ModeNone's Start hands base the identical ProcSpec
+// -- no field added, dropped or reordered -- and Alive, ExitCode, Kill and
+// Rusage delegate unchanged. ModeUser's Start refuses until ForTenant binds a
+// tenant, and ModeContainer's until ForContainer binds a container spec.
 func Wrap(base spawn.Runner, mode Mode, opts ...Option) (Boundary, error) {
-	b := &boundary{base: base, mode: mode}
+	b := &boundary{
+		base:              base,
+		mode:              mode,
+		podmanBin:         "podman",
+		lookPath:          exec.LookPath,
+		podmanRm:          defaultPodmanRm,
+		podmanImageExists: defaultPodmanImageExists,
+	}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -259,6 +297,17 @@ type boundary struct {
 	// nil tenant, so a tenant that could not be resolved refuses every spawn
 	// with a boundary-setup error instead of running as the serve uid.
 	refuse error
+	// container is the spec ForContainer bound this owner to; hasContainer
+	// tells a bound container boundary from an unbound one, which refuses like
+	// an unbound tenant.
+	container    ContainerSpec
+	hasContainer bool
+	// podmanBin, lookPath, podmanRm and podmanImageExists are the container
+	// seams, defaulting to the real podman via exec.
+	podmanBin         string
+	lookPath          func(string) (string, error)
+	podmanRm          func(context.Context, string) error
+	podmanImageExists func(context.Context, string) error
 }
 
 // boundary must stay transparent to every optional half of a Runner. Callers
@@ -270,8 +319,11 @@ var _ spawn.ScopeStopper = (*boundary)(nil)
 var _ spawn.ScopeResultProber = (*boundary)(nil)
 
 // Start translates the spec for the boundary's mode and hands it to the base.
-// An unavailable mode is refused here even if Wrap's error was dropped, and a
-// user-mode boundary with no bound tenant refuses with a boundary-setup error.
+// An unavailable mode is refused here even if Wrap's error was dropped; a
+// user-mode boundary with no bound tenant and a container-mode boundary with no
+// bound spec each refuse with a boundary-setup error. A container Start proves
+// the runtime and the image first, so a round with a missing prerequisite halts
+// naming the piece rather than starting podman to fail later.
 func (b *boundary) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
 	if err := b.mode.Available(); err != nil {
 		return spawn.ProcHandle{}, err
@@ -285,20 +337,60 @@ func (b *boundary) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHa
 			return spawn.ProcHandle{}, boundarySetupError(nil)
 		}
 		return b.base.Start(ctx, UserSpec(spec, *b.tenant, b.sharedLogins))
+	case ModeContainer:
+		if !b.hasContainer {
+			return spawn.ProcHandle{}, boundarySetupError(errContainerUnbound)
+		}
+		if err := b.checkContainer(ctx); err != nil {
+			return spawn.ProcHandle{}, boundarySetupError(err)
+		}
+		return b.base.Start(ctx, ContainerArgv(spec, b.container))
 	default:
 		return b.base.Start(ctx, translate(spec, b.mode))
 	}
 }
+
+// checkContainer proves the container runtime and image before a Start: a
+// missing podman or image is a configuration refusal that names the missing
+// piece, and the round halts instead of the candidate failing.
+func (b *boundary) checkContainer(ctx context.Context) error {
+	if _, err := b.lookPath(b.podmanBin); err != nil {
+		return fmt.Errorf("%s is not on PATH: install the container runtime and ensure it is on PATH", b.podmanBin)
+	}
+	if err := b.podmanImageExists(ctx, b.container.Image); err != nil {
+		return fmt.Errorf("container image %q is not available: build or pull it (see dist/Containerfile)", b.container.Image)
+	}
+	return nil
+}
+
+// errContainerUnbound is the refusal a container boundary Start gives before
+// ForContainer has bound an owner's container spec.
+var errContainerUnbound = fmt.Errorf("serve.isolation=container needs a container spec bound to this owner")
 
 // ForTenant returns the runner this boundary uses for one owner. A nil tenant
 // (a user that does not exist, or an owner root that failed its setup check)
 // refuses every Start with spawn.ErrBoundarySetup, so a misconfigured owner
 // halts instead of running as the serve uid.
 func (b *boundary) ForTenant(t *Tenant, setupErr error) spawn.Runner {
+	c := *b
 	if t == nil {
-		return &boundary{base: b.base, mode: b.mode, sharedLogins: b.sharedLogins, refuse: boundarySetupError(setupErr)}
+		c.tenant = nil
+		c.refuse = boundarySetupError(setupErr)
+		return &c
 	}
-	return &boundary{base: b.base, mode: b.mode, tenant: t, sharedLogins: b.sharedLogins}
+	c.tenant = t
+	c.refuse = nil
+	return &c
+}
+
+// ForContainer returns the runner this boundary uses for one owner in
+// container mode, bound to that owner's container spec. The seams and the base
+// are copied from the server-wide boundary.
+func (b *boundary) ForContainer(cs ContainerSpec) spawn.Runner {
+	c := *b
+	c.container = cs
+	c.hasContainer = true
+	return &c
 }
 
 // boundarySetupError wraps spawn.ErrBoundarySetup with whatever setupErr the
@@ -321,14 +413,56 @@ func (b *boundary) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath str
 	return b.base.ExitCode(ctx, h, logPath)
 }
 
-// Kill delegates to the base.
+// Kill removes a container round's container first (when one is bound), then
+// delegates to the base: podman is the process the base signals, and the
+// container itself needs an explicit remove because it does not share that
+// process group.
 func (b *boundary) Kill(ctx context.Context, h spawn.ProcHandle, streamPath string) error {
+	if b.mode == ModeContainer && b.hasContainer {
+		b.killContainer(ctx, streamPath)
+	}
 	return b.base.Kill(ctx, h, streamPath)
 }
 
-// Rusage delegates to the base.
+// killContainer reads the cidfile beside the stream and removes the container
+// it names. A missing, blank or stale cidfile is not an error: there is simply
+// no container to remove. The removal is best-effort, so a runtime that has
+// already collected the container never blocks the base Kill behind it.
+func (b *boundary) killContainer(ctx context.Context, streamPath string) {
+	cidPath := streamPath + ".cid"
+	raw, err := os.ReadFile(cidPath)
+	if err != nil {
+		return
+	}
+	cid := strings.TrimSpace(string(raw))
+	if cid != "" {
+		_ = b.podmanRm(ctx, cid)
+	}
+	_ = os.Remove(cidPath)
+}
+
+// Rusage reports no measurement for a container round: there is no systemd
+// scope and no rusage trailer, and no measurement is faked.
 func (b *boundary) Rusage(ctx context.Context, h spawn.ProcHandle, streamPath string) (spawn.ProcRusage, bool) {
+	if b.mode == ModeContainer && b.hasContainer {
+		return spawn.ProcRusage{}, false
+	}
 	return b.base.Rusage(ctx, h, streamPath)
+}
+
+// defaultPodmanRm removes a container by id with the real podman.
+func defaultPodmanRm(ctx context.Context, cid string) error {
+	return exec.CommandContext(ctx, "podman", "rm", "-f", cid).Run()
+}
+
+// defaultPodmanImageExists probes the image with `podman image exists`, which
+// exits zero only when the image is present locally.
+func defaultPodmanImageExists(ctx context.Context, image string) error {
+	out, err := exec.CommandContext(ctx, "podman", "image", "exists", image).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("podman image exists %s: %w (%s)", image, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // ScopeActive delegates to a base that can probe scope units, and answers "no
@@ -363,9 +497,9 @@ func (b *boundary) ScopeResult(ctx context.Context, unit string, since time.Time
 
 // translate maps a round's ProcSpec to the spec the base runner starts for
 // mode. ModeNone is identity: every field passes through unchanged, so a none
-// server is byte-identical to a server with no boundary. User mode is handled
-// by ForTenant, which binds a tenant and calls UserSpec; an unavailable mode
-// never reaches here (Wrap and Start refuse it).
+// server is byte-identical to a server with no boundary. User and container
+// modes never reach here: Start handles them before this call, user mode
+// through UserSpec and container mode through ContainerArgv.
 func translate(spec spawn.ProcSpec, mode Mode) spawn.ProcSpec {
 	return spec
 }

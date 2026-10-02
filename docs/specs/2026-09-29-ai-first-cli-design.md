@@ -113,6 +113,31 @@ the `mastermind * --hook` verbs (their stdout is already Claude's hook contract)
   `remote_unreachable`, `remote_auth`, `gate_active`, `not_available`, `internal`.
 - Exit codes: `usage` and `refused` are 2; every other failure is 1 unless §2.6
   pins otherwise.
+- A code is chosen by the class of the error, never by its prose. `internal` means
+  relevo's own failure; a caller's own argument is `usage`, and the state of a
+  thing that makes the call impossible right now is `refused`. Three families
+  follow that rule at the point the error is created, and each maps once:
+  - a name, feature label or ticket the rule refuses (`store.ErrInvalidName`,
+    `store.ErrInvalidFeature`, `store.ErrInvalidTicket`) and a caller's own
+    input in bind/add (`relevo.ErrBadInput`) → `usage`, `next: relevo help`;
+  - a send refused because a round's process, output or scope is still live
+    (`ErrBuilderBusy`, `ErrReportPending`, `ErrScopeActive`, all of which also
+    carry `ErrRefused`) → `refused`, `next` naming `relevo done`, `relevo wait`
+    or `relevo stop` as the way out;
+  - a `--round` past the binding's counter (`relevo.ErrRoundNotFound`) →
+    `round_not_found`, `next: relevo history`.
+  Classifying happens with `errors.Is` against a typed sentinel, so no site in
+  `cmd/relevo` matches on an error's text.
+
+### Gate expiry from a reason
+
+A gate recorded by hand (`relevo gate <token> --reason …` with no `--for`) and one
+recorded by a server (`POST /v1/unavailable`) expire when the reason names its own
+reset, using the same limit-text parse the decision point applies to builder output:
+a reason reading `RESOURCE_EXHAUSTED 429: … Resets in 51m30s` is gated until that
+reset and is pruned by the ledger's ordinary expiry. A reason naming no reset this
+parser trusts keeps the until-cleared default, because nothing in it states when the
+limit lifts and relevo does not invent one.
 
 ## 5. Discovery: `relevo help --json`
 

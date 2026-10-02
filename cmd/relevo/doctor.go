@@ -359,7 +359,7 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 		if d, derr := rt.Store.DB(); derr == nil {
 			serveDB = d
 		}
-		rep.Checks = append(rep.Checks, doctor.ServeChecks(env, serveDB, serveRoot, time.Now(), rt.Policy.ServeIsolation(), rt.Policy.ServeIsolationSharedLogins())...)
+		rep.Checks = append(rep.Checks, doctor.ServeChecks(env, serveDB, serveRoot, time.Now(), rt.Policy.ServeIsolation(), rt.Policy.ServeIsolationImage(), rt.Policy.ServeIsolationSharedLogins())...)
 	}
 
 	// #314: when a scope block asks for cpu pinning, doctor confirms the user

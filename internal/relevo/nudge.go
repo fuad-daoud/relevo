@@ -22,33 +22,46 @@ const nudgeNotePrefix = "nudged builder"
 // the foreground is the whole point.
 const nudgePromptFormat = `You ended your turn before writing the report, and nothing will wake you: this process exits when your turn ends. Finish now, in the foreground: run any pending check to completion and wait for it, write the report to %s, then create %s. Do not start background tasks and do not end your turn before both files exist.`
 
-// readerNudgePromptFormat is nudgePromptFormat for a reader: it names the
-// actor's own output label and the file that label resolves to, because a
-// reader writes no report.
-const readerNudgePromptFormat = `You ended your turn before writing your %[1]s, and nothing will wake you: this process exits when your turn ends. Finish now, in the foreground: run any pending check to completion and wait for it, write your %[1]s to %[2]s, then create %[3]s. Do not start background tasks and do not end your turn before both files exist.`
+// readerContinuationPromptFormat is the continuation prompt for a reader:
+// the reader's final message is the deliverable itself, so it is told to
+// continue and complete its deliverable in its final message ending with the
+// relevo block, followed by the marker.
+const readerContinuationPromptFormat = `you stopped before your deliverable; continue, and make your final message the complete deliverable. The final message must end with the relevo block, then create %s.`
+
+// readerNudgeLimit is how many continuations a reader is granted before halting.
+const readerNudgeLimit = 2
+
+// writerNudgeLimit is how many nudges a writer is granted before switching.
+const writerNudgeLimit = 1
+
+// nudgeLimit returns the continuation/nudge limit for b's shape.
+func nudgeLimit(shape string) int {
+	if shape == store.ShapeReader {
+		return readerNudgeLimit
+	}
+	return writerNudgeLimit
+}
 
 // nudgePrompt renders nudgePromptFormat for one round's report and done paths.
 func nudgePrompt(reportPath, donePath string) string {
 	return fmt.Sprintf(nudgePromptFormat, reportPath, donePath)
 }
 
-// nudgePromptFor renders the nudge for b: a writer is told its round's report
-// and done paths, a reader its output label and the file that label resolves
-// to.
+// nudgePromptFor renders the nudge prompt for b: a writer is told its round's
+// report and done paths, a reader is told to continue to its deliverable.
 func nudgePromptFor(rt Runtime, b store.Binding) string {
 	done := rt.Store.DonePath(b.Name, b.Round)
 	if b.Shape != store.ShapeReader {
 		return nudgePrompt(rt.Store.ReportPath(b.Name, b.Round), done)
 	}
-	label := readerOutputLabel(rt, b)
-	return fmt.Sprintf(readerNudgePromptFormat, label, rt.Store.OutputPath(b.Name, b.Round, bindingRole(b), label), done)
+	return fmt.Sprintf(readerContinuationPromptFormat, done)
 }
 
-// nudgedSincePlan reports whether a nudge switch entry already follows the
-// latest prompt sent for round: a prompt is nudged once, and a resend of the
-// same round (a newer prompt entry) allows another. A round with no prompt
-// entry in entries has not had one.
-func nudgedSincePlan(entries []store.LogEntry, round int) bool {
+// nudgesSincePlan returns the count of nudge switch entries that follow the
+// latest prompt sent for round: a prompt is nudged up to its shape limit, and a
+// resend of the same round (a newer prompt entry) resets the count. A round
+// with no prompt entry in entries has had none.
+func nudgesSincePlan(entries []store.LogEntry, round int) int {
 	plan := -1
 	for i, e := range entries {
 		if e.Round == round && e.Direction == store.DirToBuilder && store.IsPromptKind(e.Kind) {
@@ -56,14 +69,15 @@ func nudgedSincePlan(entries []store.LogEntry, round int) bool {
 		}
 	}
 	if plan < 0 {
-		return false
+		return 0
 	}
+	var count int
 	for _, e := range entries[plan+1:] {
 		if e.Round == round && e.Kind == store.KindSwitch && strings.HasPrefix(e.Note, nudgeNotePrefix) {
-			return true
+			count++
 		}
 	}
-	return false
+	return count
 }
 
 // nudgeResume resumes the session of a builder that ended its turn with code
@@ -82,7 +96,7 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if codeText != "0" || b.Builder.StreamSessionID == "" {
 		return b, false, nil
 	}
-	if nudgedSincePlan(entries, b.Round) {
+	if nudgesSincePlan(entries, b.Round) >= nudgeLimit(b.Shape) {
 		return b, false, nil
 	}
 	sess := b.Builder.StreamSessionID

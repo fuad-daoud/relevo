@@ -353,7 +353,7 @@ func chainBuildStartMembers(ctx context.Context, rt Runtime, opts ChainOptions, 
 	if remote {
 		synth := chainStartPlan{
 			settings: plan.settings, repo: plan.repo, ticket: plan.ticket,
-			members: plan.members, resolutions: plan.resolutions, remote: plan.remote,
+			bodies: plan.bodies, members: plan.members, resolutions: plan.resolutions, remote: plan.remote,
 		}
 		wb, unwind, err := chainBuildRemoteBuilder(ctx, rt, opts, synth)
 		if err != nil {
@@ -370,7 +370,7 @@ func chainBuildStartMembers(ctx context.Context, rt Runtime, opts ChainOptions, 
 				readers = append(readers, m)
 			}
 		}
-		rb, err := chainBuildMembers(ctx, rt, readers, plan.resolutions, readersBase, plan.settings)
+		rb, err := chainBuildMembers(ctx, rt, readers, plan.resolutions, readersBase, plan.settings, len(plan.bodies))
 		if err != nil {
 			unwind()
 			return nil, chainBase{}, nil, true, err
@@ -391,7 +391,7 @@ func chainBuildStartMembers(ctx context.Context, rt Runtime, opts ChainOptions, 
 		repo: plan.repo, repoRef: captureRepo(ctx, rt, plan.repo), feature: opts.Feature, ticket: plan.ticket,
 		worktree: worktree, branch: branch, commit: commit, baseRef: baseRef,
 	}
-	locals, berr := chainBuildMembers(ctx, rt, plan.members, plan.resolutions, rowBase, plan.settings)
+	locals, berr := chainBuildMembers(ctx, rt, plan.members, plan.resolutions, rowBase, plan.settings, len(plan.bodies))
 	if berr != nil {
 		chainRollback(ctx, rt, plan.repo, worktree, branch)
 		return nil, chainBase{}, nil, false, berr

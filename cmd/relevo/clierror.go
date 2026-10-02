@@ -32,6 +32,7 @@ const (
 	codeMastermindNotFound errorCode = "mastermind_not_found"
 	codeClientNotFound     errorCode = "client_not_found"
 	codeServerNotFound     errorCode = "server_not_found"
+	codeRoundCap           errorCode = "round_cap"
 	codeInternal           errorCode = "internal"
 )
 
@@ -66,6 +67,7 @@ var catalog = map[errorCode]catalogEntry{
 	codeMastermindNotFound: {exit: 1, next: "relevo mastermind list"},
 	codeClientNotFound:     {exit: 1, next: "relevo serve clients"},
 	codeServerNotFound:     {exit: 1, next: "relevo config server list"},
+	codeRoundCap:           {exit: 1, next: "relevo bind"},
 	codeInternal:           {exit: 1, next: "relevo bugreport"},
 }
 

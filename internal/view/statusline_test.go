@@ -1485,6 +1485,9 @@ func TestStatusLineRowsEmptyDoc(t *testing.T) {
 		if !strings.Contains(s, `"mastermind":null`) {
 			t.Errorf("json %q does not contain '\"mastermind\":null'", s)
 		}
+		if !strings.Contains(s, `"board":null`) {
+			t.Errorf("json %q does not contain '\"board\":null'", s)
+		}
 		if !strings.Contains(s, `"rows":[]`) {
 			t.Errorf("json %q does not contain '\"rows\":[]'", s)
 		}
@@ -2191,5 +2194,31 @@ func TestStatusLineJSONKeepsControlBytesEscaped(t *testing.T) {
 	// The rendered row, by contrast, drops it: the two paths differ by design.
 	if strings.Contains(PlainStatusLineRows([]StatusLineRow{row}, 0)[0], "\x1b") {
 		t.Error("the rendered row kept the control byte the JSON path escapes")
+	}
+}
+
+// TestRenderBoardLine pins the board line: nil renders nothing, a block renders
+// dim "board <mastermind> · <url>" (falling back to the scene name when the
+// owner is unknown), and an over-wide line is truncated (S8).
+func TestRenderBoardLine(t *testing.T) {
+	t.Parallel()
+
+	if got := RenderBoardLine(nil, "", 80); got != "" {
+		t.Errorf("RenderBoardLine(nil) = %q, want empty", got)
+	}
+
+	b := &StatusLineBoard{Name: "board", Scope: "live", URL: "http://127.0.0.1:9/#t=abc"}
+	if got, want := RenderBoardLine(b, "opencode-120", 80), ansiDim+"board opencode-120 · http://127.0.0.1:9/#t=abc"+ansiReset+"\n"; got != want {
+		t.Errorf("RenderBoardLine = %q, want %q", got, want)
+	}
+	if got, want := RenderBoardLine(b, "", 80), ansiDim+"board board · http://127.0.0.1:9/#t=abc"+ansiReset+"\n"; got != want {
+		t.Errorf("RenderBoardLine without an owner = %q, want %q", got, want)
+	}
+
+	long := &StatusLineBoard{Name: "board", Scope: "live", URL: strings.Repeat("x", 200)}
+	got := RenderBoardLine(long, "opencode-120", 20)
+	visible := strings.TrimSuffix(strings.TrimPrefix(got, ansiDim), ansiReset+"\n")
+	if n := utf8.RuneCountInString(visible); n != 20 {
+		t.Errorf("truncated board line = %q (%d runes), want 20", visible, n)
 	}
 }
