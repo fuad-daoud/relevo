@@ -18,7 +18,18 @@ import (
 
 // RoundStateOf returns the execution state of an owned binding (remote-builders spec §3.1).
 // It is derived live from the binding and its entries, never stored.
+//
+// An un-acked close outranks the halt that follows it. A round with a done
+// marker closes whatever the earlier state was, so a binding that closed and
+// then halted again -- a reader over its artifact cap, a refused scope, a
+// resend whose admit failed -- still owes its owner that close. Reporting
+// needs_you instead would hide it: the client fetches a catch-up by this word,
+// and a needs_you view makes it skip the fetch, so the round would never
+// close.
 func RoundStateOf(b store.Binding, entries []store.LogEntry) remote.RoundState {
+	if b.Serve != nil && b.Serve.ClosedRound > b.Serve.AckedRound {
+		return remote.RoundClosed
+	}
 	if b.State == store.StateNeedsYou {
 		return remote.RoundNeedsYou
 	}
@@ -29,9 +40,6 @@ func RoundStateOf(b store.Binding, entries []store.LogEntry) remote.RoundState {
 	}
 	if open {
 		return remote.RoundRunning
-	}
-	if b.Serve != nil && b.Serve.ClosedRound > b.Serve.AckedRound {
-		return remote.RoundClosed
 	}
 	return remote.RoundIdle
 }

@@ -344,6 +344,29 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 
 	case remote.RoundNeedsYou:
 		b.StalledSince = view.StalledSince
+		// Catch-up first, halt second. A halt and a close are not exclusive on
+		// the wire: a round that closed and then halted again reports both, and
+		// the close is the one that advances the round. Halting here without
+		// collecting it strands the round behind the halt word forever -- the
+		// close is never collected, so `wait` keeps answering needs_you on a
+		// round that is finished.
+		if view.ClosedRound >= b.Round {
+			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
+				next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
+				f.Settle = a
+				if err != nil || a != nil {
+					return next, true, err
+				}
+			} else {
+				next, err := catchUp(ctx, rt, tx, b, view)
+				if err != nil {
+					return next, true, err
+				}
+				// The catch-up advanced the round; there is nothing left to
+				// halt the advanced round for.
+				return next, true, nil
+			}
+		}
 		b, err := haltBinding(ctx, rt, b, name+": "+view.Halt)
 		return b, false, err
 

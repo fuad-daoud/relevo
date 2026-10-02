@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -50,8 +51,9 @@ func reopenRemoteRuntime(t *testing.T, b store.Binding) (Runtime, *fakeRemote) {
 	return Runtime{Store: st, Git: fg, Remote: fr, Transport: ft, Now: func() time.Time { return baseTime }}, fr
 }
 
-// roundFiles is the fakeRemote RoundFile answer a close needs: a report body,
-// no diff, and a builder log.
+// roundFiles is the fakeRemote RoundFile answer a close needs: a report body
+// and a builder log. Every other kind answers 404, which is how a server says
+// "this round has no such file" -- a plain error would abort the catch-up.
 func roundFiles(body string) func(context.Context, string, string, int, string) (io.ReadCloser, error) {
 	return func(_ context.Context, _, _ string, _ int, kind string) (io.ReadCloser, error) {
 		switch kind {
@@ -60,7 +62,7 @@ func roundFiles(body string) func(context.Context, string, string, int, string) 
 		case "log":
 			return io.NopCloser(bytes.NewReader([]byte("builder log\n"))), nil
 		}
-		return nil, os.ErrNotExist
+		return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound}}
 	}
 }
 
