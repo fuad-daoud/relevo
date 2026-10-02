@@ -152,12 +152,8 @@ func chainPullMembers(rt Runtime, c db.ChainRow, view remote.ChainView) (db.Chai
 				if !haveSibling {
 					continue
 				}
-				m := chainMember{
-					part: mv.Part, name: mv.Name, actor: mv.Actor,
-					shape: chainPullShape(mv), writer: mv.Part == chain.MemberBuilder,
-				}
 				opts := ChainOptions{Name: cur.Name, Feature: cur.Feature, Ticket: cur.Ticket}
-				nb := chainMirrorMember(opts, plan, m, mv, db.NewID(), repoRef)
+				nb := chainMirrorMember(opts, plan, mv, db.NewID(), repoRef)
 				// A fresh mirror holds none of this member's rounds, whatever
 				// round the server is on: the install in this same pass walks
 				// them from the first.
@@ -520,17 +516,13 @@ func chainStatusTerminal(status string) bool {
 // chainRowFromView is the mirror row carrying the server's state: the fields a
 // chain row shows and the view can answer for. The row's own stored facts --
 // its plan copies, its settings and its branch -- stay as this machine wrote
-// them, because the server does not own them. It also stores the shipped
-// default and the engine state the row's legacy columns describe, through
-// workflow.FromLegacy, so the mirror's read surfaces see the engine state the
-// server drove.
+// them, because the server does not own them. It copies the server's workflow
+// and engine state when the view carries them, falling back to workflow.FromLegacy
+// for an older server view.
 func chainRowFromView(c db.ChainRow, v remote.ChainView, now time.Time) (db.ChainRow, error) {
-	c.Status = chainOr(v.Status, c.Status)
-	c.Reason = v.Reason
-	c.Phase = chainOr(v.Phase, c.Phase)
-	c.Step = chainOr(v.Step, c.Step)
-	c.Plan = chainIntOr(v.Plan, c.Plan)
-	c.Plans = chainIntOr(v.Plans, c.Plans)
+	c.Status, c.Reason = chainOr(v.Status, c.Status), v.Reason
+	c.Phase, c.Step = chainOr(v.Phase, c.Phase), chainOr(v.Step, c.Step)
+	c.Plan, c.Plans = chainIntOr(v.Plan, c.Plan), chainIntOr(v.Plans, c.Plans)
 	c.Corrections = v.Corrections
 	c.AwaitingMember = chainOr(v.AwaitingMember, c.AwaitingMember)
 	c.AwaitingRound = chainIntOr(v.AwaitingRound, c.AwaitingRound)
@@ -538,6 +530,11 @@ func chainRowFromView(c db.ChainRow, v remote.ChainView, now time.Time) (db.Chai
 		c.PlanStartCommit = v.PlanStartCommit
 	}
 	c.UpdatedAt = now
+
+	if len(v.Workflow) > 0 && len(v.State) > 0 {
+		c.WorkflowJSON, c.StateJSON = v.Workflow, v.State
+		return c, nil
+	}
 
 	leg, err := chainViewLegacy(c, v)
 	if err != nil {
