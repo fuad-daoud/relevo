@@ -1850,6 +1850,9 @@ func TestStatusLineFlags(t *testing.T) {
 		if !strings.Contains(s, `"mastermind":null`) {
 			t.Errorf("output %q does not contain '\"mastermind\":null'", s)
 		}
+		if !strings.Contains(s, `"board":null`) {
+			t.Errorf("output %q does not contain '\"board\":null'", s)
+		}
 		if !strings.Contains(s, `"rows":[]`) {
 			t.Errorf("output %q does not contain '\"rows\":[]'", s)
 		}
