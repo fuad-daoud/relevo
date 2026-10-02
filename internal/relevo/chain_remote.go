@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -300,96 +299,4 @@ func chainWireRole(role string) string {
 		return "builder"
 	}
 	return role
-}
-
-// chainCreateWithRemoteBuilder is a start whose builder member lives on a
-// server. The order of side effects is the one the plan pins: the read-only
-// preflight already ran, so this is server create -> local branch -> the chain
-// row and members in one transaction -> plan copies -> plan staging -> the
-// pending-send step. Any failure through the transaction unwinds the server
-// binding and the branch; the readers stay local and read the chain's own
-// checkout.
-func chainCreateWithRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan) (ChainResult, error) {
-	builder, unwind, err := chainBuildRemoteBuilder(ctx, rt, opts, plan)
-	if err != nil {
-		return ChainResult{}, err
-	}
-	defer func() {
-		if unwind != nil {
-			unwind()
-		}
-	}()
-
-	// The readers read the chain's own checkout: CWD is the chain's repo, no
-	// worktree and no branch. The builder's row carries Worktree "" and the
-	// branch relevo/<name>.
-	readersBase := chainBase{
-		cwd: plan.repo, mastermind: plan.mastermind, mastermindID: plan.mastermindID,
-		repo: plan.repo, repoRef: captureRepo(ctx, rt, plan.repo), feature: opts.Feature, ticket: plan.ticket,
-		worktree: plan.repo,
-	}
-	rowBase := readersBase
-	rowBase.worktree = ""
-	rowBase.branch = "relevo/" + opts.Name
-	rowBase.commit = plan.remote.base
-
-	readers := make([]chainMember, 0, len(plan.members)-1)
-	for _, m := range plan.members {
-		if !m.writer {
-			readers = append(readers, m)
-		}
-	}
-	builtReaders, err := chainBuildMembers(ctx, rt, readers, plan.resolutions, readersBase, plan.settings)
-	if err != nil {
-		return ChainResult{}, err
-	}
-	built := append([]store.Binding{builder}, builtReaders...)
-
-	planPaths := make([]string, len(plan.bodies))
-	for i := range plan.bodies {
-		planPaths[i] = rt.Store.ChainPlanPath(opts.Name, i+1)
-	}
-	now := time.Now
-	if rt.Now != nil {
-		now = rt.Now
-	}
-	row, err := chainRow(opts, plan.settings, plan.members, rowBase, planPaths, now())
-	if err != nil {
-		return ChainResult{}, err
-	}
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		if err := tx.CreateChain(row, built); err != nil {
-			return err
-		}
-		return chainAppendPickNotes(tx, rt, plan.members, plan.resolutions)
-	}); err != nil {
-		return ChainResult{}, err
-	}
-	// The chain row now exists: a later failure is the local path's own shape
-	// (the chain is started, the plans or the handover did not land), so the
-	// unwind is disarmed.
-	unwind = nil
-
-	stored, err := chainStoredMembers(rt, plan.members)
-	if err != nil {
-		return ChainResult{}, err
-	}
-	if err := chainCopyPlans(rt, opts.Name, plan.bodies); err != nil {
-		return ChainResult{}, fmt.Errorf("chain %q started, but copying its plans failed: %w", opts.Name, err)
-	}
-
-	// Plan 1 is staged from the chain's plan copy, then the unlocked step ships
-	// it. The chain row is running and awaiting the builder before the step
-	// runs, so a crash between the two is repaired by the next tick's step.
-	body, err := rt.Store.ReadFile(rt.Store.ChainPlanPath(opts.Name, 1))
-	if err != nil {
-		return ChainResult{}, fmt.Errorf("chain %q started, but plan 1 could not be handed to %s: %w", opts.Name, opts.Name, err)
-	}
-	if err := stagePlan(rt.Store.PromptPath(opts.Name, 1), body); err != nil {
-		return ChainResult{}, fmt.Errorf("chain %q started, but plan 1 could not be handed to %s: %w", opts.Name, opts.Name, err)
-	}
-	if err := chainSendPending(ctx, rt); err != nil {
-		return ChainResult{}, fmt.Errorf("chain %q started, but plan 1 could not be handed to %s: %w", opts.Name, opts.Name, err)
-	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chainBuilderCheck(stored, opts.Name)}, nil
 }

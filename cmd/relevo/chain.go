@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -19,6 +20,17 @@ type planSlice []string
 func (p *planSlice) String() string { return strings.Join(*p, ",") }
 
 func (p *planSlice) Set(val string) error {
+	*p = append(*p, val)
+	return nil
+}
+
+// paramSlice collects the repeatable --param k=v flag; parseChainParams turns
+// it into the map a workflow takes.
+type paramSlice []string
+
+func (p *paramSlice) String() string { return strings.Join(*p, ",") }
+
+func (p *paramSlice) Set(val string) error {
 	*p = append(*p, val)
 	return nil
 }
@@ -44,6 +56,12 @@ type chainFlagValues struct {
 	mastermind     *string
 	asJSON         *bool
 	server         *string
+	workflow       *string
+	params         *paramSlice
+	task           *string
+	taskFile       *string
+	dryRun         *bool
+	from           *string
 }
 
 // chainFlagSet defines chain's flags on fs and returns what they parse into,
@@ -70,26 +88,32 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	v.mastermind = fs.String("mastermind", "", "act as this mastermind (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
 	v.asJSON = fs.Bool("json", false, "print the chain as a JSON document")
 	v.server = fs.String("server", "", "run the whole chain on this server; it continues when this machine is off")
+	v.workflow = fs.String("workflow", "", "run this workflow: a saved or shipped name, or a YAML/JSON file")
+	v.params = &paramSlice{}
+	fs.Var(v.params, "param", "fill a workflow param as key=value; repeatable")
+	v.task = fs.String("task", "", "the chain's task input text")
+	v.taskFile = fs.String("task-file", "", "read the chain's task input from this file")
+	v.dryRun = fs.Bool("dry-run", false, "resolve and validate the workflow and print its graph; start nothing")
+	v.from = fs.String("from", "", "re-enter a halted chain at this step; with --resume")
 	return v
 }
 
-// ChainDoc is `relevo chain --json`: the chain it started, its members by
-// part, how many plans it holds, and the state it begins in.
+// ChainDoc is `relevo chain --json`: the chain it started, its members, how
+// many plans it holds, and the state it begins in.
 type ChainDoc struct {
 	Name    string           `json:"name"`
 	Members []ChainMemberDoc `json:"members"`
 	Plans   int              `json:"plans"`
 	Status  string           `json:"status"`
-	Phase   string           `json:"phase"`
+	Step    string           `json:"step"`
 	// Check is the builder member's resolved acceptance command, rendered
 	// "none" when it ran no check.
 	Check string `json:"check"`
 }
 
-// ChainMemberDoc is one member in the document: the part it fills, its binding
-// name, the actor it runs and where it runs.
+// ChainMemberDoc is one member in the document: its binding name, the actor it
+// runs and where it runs.
 type ChainMemberDoc struct {
-	Part  string `json:"part"`
 	Name  string `json:"name"`
 	Actor string `json:"actor"`
 	// Placement names where the member runs: "local", or the server a remote
@@ -138,6 +162,9 @@ func cmdChain(args []string) error {
 	if err != nil {
 		return writeError(err)
 	}
+	if opts.DryRun {
+		return chainDryRun(context.Background(), rt, opts)
+	}
 	res, err := relevo.ChainStart(context.Background(), rt, opts)
 	if err != nil {
 		return writeError(err)
@@ -153,40 +180,37 @@ func cmdChain(args []string) error {
 // chainOptions turns the parsed flags into a start request, refusing the
 // combinations the verb's contract makes invalid: exactly one feature flag, a
 // named chain (a positional is not a name), at least one non-empty plan, and
-// one security flag.
+// one security flag. A dry run skips the start-input requirements, because the
+// workflow's own inputs decide what it needs and the dry run validates them.
 func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, error) {
 	if *v.name == "" {
 		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain needs --name NAME")
 	}
-	if err := relevo.RequireFeatureChoice(*v.feature, *v.noFeature, false); err != nil {
-		return relevo.ChainOptions{}, refuseFlag(err)
-	}
-	if *v.feature != "" {
-		if err := store.ValidFeature(*v.feature); err != nil {
-			return relevo.ChainOptions{}, refuseFlag(err)
-		}
-	}
-	if *v.ticket != "" {
-		if _, err := store.ParseTicket(*v.ticket, ""); err != nil {
-			return relevo.ChainOptions{}, refuseFlag(err)
-		}
-	}
 	if *v.security && *v.noSecurity {
 		return relevo.ChainOptions{}, fail(codeUsage, "--security and --no-security are exclusive")
 	}
-	if len(*v.plans) == 0 {
-		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain needs at least one --plan <file>")
+	if *v.task != "" && *v.taskFile != "" {
+		return relevo.ChainOptions{}, fail(codeUsage, "--task and --task-file are exclusive")
 	}
-	for _, path := range *v.plans {
-		if strings.TrimSpace(path) == "" {
-			return relevo.ChainOptions{}, fail(codeUsage, "--plan needs a file path")
-		}
+	params, err := parseChainParams(v.params)
+	if err != nil {
+		return relevo.ChainOptions{}, err
+	}
+	if *v.server != "" && (*v.workflow != "" || *v.task != "" || *v.taskFile != "" || *v.from != "" || len(params) > 0) {
+		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --server does not take --workflow, --param, --task or --from: the server's workflow feature is not available yet")
+	}
+	if *v.from != "" {
+		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --from applies with --resume: it re-enters a halted chain at another step")
 	}
 	maxCorrections, err := chainIntFlag(fs, "max-corrections", *v.maxCorrections)
 	if err != nil {
 		return relevo.ChainOptions{}, err
 	}
 	regate, err := regateFlag(fs, v.regate)
+	if err != nil {
+		return relevo.ChainOptions{}, err
+	}
+	task, err := chainTaskBody(v)
 	if err != nil {
 		return relevo.ChainOptions{}, err
 	}
@@ -207,13 +231,72 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 		SecurityActor:  *v.securityActor,
 		MasterMindID:   *v.mastermind,
 		Server:         *v.server,
+		Workflow:       *v.workflow,
+		Params:         params,
+		Task:           task,
+		DryRun:         *v.dryRun,
 	}
 	// --security/--no-security are exclusive (refused above), so an explicit
 	// value is whichever flag was given; neither leaves the policy's own.
 	if chainFlagGiven(fs, "security") || chainFlagGiven(fs, "no-security") {
 		opts.Security = v.security
 	}
+	if opts.DryRun {
+		return opts, nil
+	}
+	if err := relevo.RequireFeatureChoice(*v.feature, *v.noFeature, false); err != nil {
+		return relevo.ChainOptions{}, refuseFlag(err)
+	}
+	if *v.feature != "" {
+		if err := store.ValidFeature(*v.feature); err != nil {
+			return relevo.ChainOptions{}, refuseFlag(err)
+		}
+	}
+	if *v.ticket != "" {
+		if _, err := store.ParseTicket(*v.ticket, ""); err != nil {
+			return relevo.ChainOptions{}, refuseFlag(err)
+		}
+	}
+	if len(*v.plans) == 0 {
+		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain needs at least one --plan <file>")
+	}
+	for _, path := range *v.plans {
+		if strings.TrimSpace(path) == "" {
+			return relevo.ChainOptions{}, fail(codeUsage, "--plan needs a file path")
+		}
+	}
 	return opts, nil
+}
+
+// parseChainParams reads the repeatable --param k=v flag into the map a
+// workflow takes. An entry with no key or no equals sign is a usage error.
+func parseChainParams(params *paramSlice) (map[string]string, error) {
+	if params == nil || len(*params) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(*params))
+	for _, entry := range *params {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || strings.TrimSpace(key) == "" {
+			return nil, fail(codeUsage, "--param wants key=value, got %q", entry)
+		}
+		out[strings.TrimSpace(key)] = value
+	}
+	return out, nil
+}
+
+// chainTaskBody is the chain's task input: --task's own text, or the contents
+// of --task-file when it named one. The two are refused together before either
+// is read.
+func chainTaskBody(v *chainFlagValues) (string, error) {
+	if *v.taskFile == "" {
+		return *v.task, nil
+	}
+	body, err := os.ReadFile(*v.taskFile)
+	if err != nil {
+		return "", fail(codeUsage, "read task file %s: %v", *v.taskFile, err)
+	}
+	return string(body), nil
 }
 
 // chainResumeOptions turns the parsed flags into a resume request: the chain's
@@ -235,14 +318,18 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 		return relevo.ResumeOptions{}, fail(codeUsage, "--security and --no-security are exclusive")
 	}
 	// A start's own flags: --resume continues a chain that already holds its
-	// plans, its label and its mastermind, so these have nothing to act on.
-	// Silently ignoring one would leave the caller believing it took effect,
-	// so each is refused by name -- before any runtime is built (round 6's
-	// review; --mastermind is the same dead flag the sweep found).
-	for _, name := range []string{"plan", "base", "ticket", "feature", "no-feature", "mastermind"} {
+	// plans, its label, its workflow and its mastermind, so these have nothing
+	// to act on. Silently ignoring one would leave the caller believing it took
+	// effect, so each is refused by name -- before any runtime is built (round
+	// 6's review; --mastermind is the same dead flag the sweep found).
+	for _, name := range []string{"plan", "base", "ticket", "feature", "no-feature", "mastermind", "workflow", "task", "task-file", "dry-run"} {
 		if chainFlagGiven(fs, name) {
-			return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --%s: a resume continues the chain it names, which already holds its plans, label and mastermind", name)
+			return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --%s: a resume continues the chain it names, which already holds its plans, label, workflow and mastermind", name)
 		}
+	}
+	params, err := parseChainParams(v.params)
+	if err != nil {
+		return relevo.ResumeOptions{}, err
 	}
 	maxCorrections, err := chainIntFlag(fs, "max-corrections", *v.maxCorrections)
 	if err != nil {
@@ -262,6 +349,8 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 		Gate:           *v.gate,
 		NoGate:         *v.noGate,
 		Regate:         regate,
+		From:           *v.from,
+		Params:         params,
 	}
 	// --security/--no-security are exclusive (refused above), so an explicit
 	// value is whichever flag was given; neither leaves the stored setting.
@@ -295,19 +384,17 @@ func chainFlagGiven(fs *flag.FlagSet, name string) bool {
 	return given
 }
 
-// chainDocOf is chain's document. Each member's part comes from the chain
-// row's own columns, so the document cannot disagree with what was written.
+// chainDocOf is chain's document.
 func chainDocOf(res relevo.ChainResult) ChainDoc {
 	doc := ChainDoc{
 		Name:   res.Chain.Name,
 		Plans:  res.Plans,
 		Status: res.Chain.Status,
-		Phase:  res.Chain.Phase,
+		Step:   res.Chain.Step,
 		Check:  chainCheckText(res.Check),
 	}
 	for _, m := range res.Members {
 		doc.Members = append(doc.Members, ChainMemberDoc{
-			Part:      chainPartOf(res.Chain, m.Name),
 			Name:      m.Name,
 			Actor:     relevo.BindingRole(m),
 			Placement: chainMemberPlacement(m),
@@ -343,8 +430,8 @@ func chainPartOf(row db.ChainRow, name string) string {
 // chainStartedText is what a start prints for a human: the chain, its members
 // with where each runs and the command that watches it.
 func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
-	fmt.Printf("started chain %s: %d plan(s), status %s, phase %s\n",
-		res.Chain.Name, res.Plans, res.Chain.Status, res.Chain.Phase)
+	fmt.Printf("started chain %s: %d plan(s), status %s\n",
+		res.Chain.Name, res.Plans, res.Chain.Status)
 	builderPlacement := ""
 	for _, m := range res.Members {
 		actor := relevo.BindingRole(m)
@@ -380,8 +467,8 @@ func chainCheckText(check string) string {
 // the round it awaits, where each member runs and the command that watches it.
 func chainResumedText(res relevo.ChainResult) {
 	c := res.Chain
-	fmt.Printf("resumed chain %s: status %s, phase %s, step %s, plan %d/%d\n",
-		c.Name, c.Status, c.Phase, c.Step, c.Plan, c.Plans)
+	fmt.Printf("resumed chain %s: status %s, step %s\n",
+		c.Name, c.Status, c.Step)
 	for _, m := range res.Members {
 		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(c, m.Name), m.Name, chainMemberPlacement(m), relevo.BindingRole(m))
 	}

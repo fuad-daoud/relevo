@@ -72,7 +72,7 @@ check-test:
 # correction. CI runs it; it needs no session manager on PATH and is not part
 # of check.
 e2e:
-	go test ./internal/e2e/ -run 'TestHeadlessE2E|TestChainE2E|TestChainRemoteBuilderE2E|TestChainServerE2E' -count=1
+	go test ./internal/e2e/ -run 'TestHeadlessE2E|TestChainE2E|TestChainTriageE2E|TestChainRemoteBuilderE2E|TestChainServerE2E' -count=1
 
 # jev runs the classifier fixtures against the real TypeSafe endpoint
 # (docs/plans/2026-09-19-injection-classify.md §8). Local only: it needs

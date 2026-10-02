@@ -47,8 +47,14 @@ type ChainRow struct {
 	// PlanStartCommit is the commit the chain's current plan started at; ""
 	// for every chain created before the column existed.
 	PlanStartCommit string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// WorkflowJSON is the chain's stored workflow definition and StateJSON its
+	// engine state; both are "" for every chain created before the columns
+	// existed. Parent names a fork's parent chain.
+	WorkflowJSON []byte
+	StateJSON    []byte
+	Parent       string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // ChainEventRow is one chain_event row: the transition the trace shows. Event
@@ -95,21 +101,42 @@ func (c ChainRow) Valid() error {
 // hasChains reports whether this database carries the chains tables.
 func (d *DB) hasChains() bool { return d.have >= 16 }
 
+// hasChainCustom reports whether this database carries the custom-workflow
+// columns and the member and check tables.
+func (d *DB) hasChainCustom() bool { return d.have >= 20 }
+
+// hasChainCustom is the transaction's own schema test.
+func (t *Tx) hasChainCustom() bool { return t.have >= 20 }
+
 const chainCols = `id, origin, owner, name, status, reason, phase, step, plan, plans, plan_paths, corrections,
 	awaiting_member, awaiting_round, settings, builder, reviewer, planner, security,
 	base, branch, repo, worktree, feature, ticket, server, mastermind_id, created_at, updated_at, plan_start_commit`
 
-func scanChain(s rowScanner) (ChainRow, error) {
+// chainCustomCols are the columns migration 021 adds, read only when the
+// database carries them.
+const chainCustomCols = `workflow, state, parent`
+
+func scanChain(s rowScanner, custom bool) (ChainRow, error) {
 	var c ChainRow
 	var planPaths, settings, createdAt, updatedAt string
-	if err := s.Scan(&c.ID, &c.Origin, &c.Owner, &c.Name, &c.Status, &c.Reason, &c.Phase, &c.Step,
+	var workflow, state, parent string
+	dest := []any{&c.ID, &c.Origin, &c.Owner, &c.Name, &c.Status, &c.Reason, &c.Phase, &c.Step,
 		&c.Plan, &c.Plans, &planPaths, &c.Corrections, &c.AwaitingMember, &c.AwaitingRound, &settings,
 		&c.Builder, &c.Reviewer, &c.Planner, &c.Security, &c.Base, &c.Branch, &c.Repo, &c.Worktree,
-		&c.Feature, &c.Ticket, &c.Server, &c.MasterMindID, &createdAt, &updatedAt, &c.PlanStartCommit); err != nil {
+		&c.Feature, &c.Ticket, &c.Server, &c.MasterMindID, &createdAt, &updatedAt, &c.PlanStartCommit}
+	if custom {
+		dest = append(dest, &workflow, &state, &parent)
+	}
+	if err := s.Scan(dest...); err != nil {
 		return ChainRow{}, err
 	}
 	c.PlanPathsJSON = []byte(planPaths)
 	c.SettingsJSON = []byte(settings)
+	if custom {
+		c.WorkflowJSON = []byte(workflow)
+		c.StateJSON = []byte(state)
+		c.Parent = parent
+	}
 
 	var err error
 	if c.CreatedAt, err = parseTime(createdAt); err != nil {
@@ -121,6 +148,20 @@ func scanChain(s rowScanner) (ChainRow, error) {
 	return c, nil
 }
 
+// chainSelectCols is the column list a chain read selects: the legacy columns,
+// plus the custom-workflow ones when the schema carries them.
+func (d *DB) chainSelectCols() string {
+	if d.hasChainCustom() {
+		return chainCols + ", " + chainCustomCols
+	}
+	return chainCols
+}
+
+// chainScanner is the row scanner for the column list chainSelectCols returns.
+func (d *DB) chainScanner(s rowScanner) (ChainRow, error) {
+	return scanChain(s, d.hasChainCustom())
+}
+
 // ChainGet returns owner's chain named name within this handle's origin, and
 // whether it was found. A database that predates the chains tables reads as
 // absent, never an error.
@@ -128,8 +169,8 @@ func (d *DB) ChainGet(owner, name string) (ChainRow, bool, error) {
 	if !d.hasChains() {
 		return ChainRow{}, false, nil
 	}
-	c, err := scanChain(d.sqlDB.QueryRowContext(context.Background(),
-		`SELECT `+chainCols+` FROM chains WHERE `+originScope+` AND owner = ? AND name = ?`,
+	c, err := d.chainScanner(d.sqlDB.QueryRowContext(context.Background(),
+		`SELECT `+d.chainSelectCols()+` FROM chains WHERE `+originScope+` AND owner = ? AND name = ?`,
 		d.origin, owner, name))
 	if errors.Is(err, sql.ErrNoRows) || isMissingTable(err) {
 		return ChainRow{}, false, nil
@@ -147,8 +188,14 @@ func (d *DB) ChainGetByMember(owner, member string) (ChainRow, bool, error) {
 	if !d.hasChains() {
 		return ChainRow{}, false, nil
 	}
-	c, err := scanChain(d.sqlDB.QueryRowContext(context.Background(),
-		`SELECT `+chainCols+` FROM chains
+	if d.hasChainCustom() {
+		c, ok, err := d.chainByMemberTable(owner, member)
+		if err != nil || ok {
+			return c, ok, err
+		}
+	}
+	c, err := d.chainScanner(d.sqlDB.QueryRowContext(context.Background(),
+		`SELECT `+d.chainSelectCols()+` FROM chains
 			WHERE `+originScope+` AND owner = ? AND (builder = ? OR reviewer = ? OR planner = ? OR security = ?)
 			LIMIT 1`,
 		d.origin, owner, member, member, member, member))
@@ -161,6 +208,24 @@ func (d *DB) ChainGetByMember(owner, member string) (ChainRow, bool, error) {
 	return c, true, nil
 }
 
+// chainByMemberTable resolves a member through chain_member. A database that
+// predates the table reports nothing, so the caller falls back to the legacy
+// columns.
+func (d *DB) chainByMemberTable(owner, member string) (ChainRow, bool, error) {
+	c, err := d.chainScanner(d.sqlDB.QueryRowContext(context.Background(),
+		`SELECT `+d.chainSelectCols()+` FROM chains JOIN chain_member m ON m.chain_id = chains.id
+			WHERE `+originScope+` AND chains.owner = ? AND m.binding = ?
+			LIMIT 1`,
+		d.origin, owner, member))
+	if errors.Is(err, sql.ErrNoRows) || isMissingTable(err) {
+		return ChainRow{}, false, nil
+	}
+	if err != nil {
+		return ChainRow{}, false, fmt.Errorf("db: chain by member table %s/%q: %w", owner, member, mapBusy(err))
+	}
+	return c, true, nil
+}
+
 // ChainList returns owner's chains by name. A database that predates the
 // chains tables reads as empty.
 func (d *DB) ChainList(owner string) ([]ChainRow, error) {
@@ -168,7 +233,7 @@ func (d *DB) ChainList(owner string) ([]ChainRow, error) {
 		return nil, nil
 	}
 	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+chainCols+` FROM chains WHERE `+originScope+` AND owner = ? ORDER BY name ASC`,
+		`SELECT `+d.chainSelectCols()+` FROM chains WHERE `+originScope+` AND owner = ? ORDER BY name ASC`,
 		d.origin, owner)
 	if isMissingTable(err) {
 		return nil, nil
@@ -176,7 +241,7 @@ func (d *DB) ChainList(owner string) ([]ChainRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: chain list: %w", mapBusy(err))
 	}
-	out, err := collectRows(rows, scanChain)
+	out, err := collectRows(rows, d.chainScanner)
 	if err != nil {
 		return nil, fmt.Errorf("db: chain list: %w", mapBusy(err))
 	}
@@ -261,6 +326,20 @@ func (t *Tx) updateChain(id string, c ChainRow, updatedAt time.Time) error {
 		c.Feature, c.Ticket, c.Server, c.MasterMindID, c.PlanStartCommit, formatTime(updatedAt), id); err != nil {
 		return fmt.Errorf("db: chain put %q: update: %w", c.Name, mapBusy(err))
 	}
+	return t.chainCustomPut(id, c)
+}
+
+// chainCustomPut writes the custom-workflow columns, which are left out of the
+// legacy insert and update statements so a database that predates them still
+// round-trips.
+func (t *Tx) chainCustomPut(id string, c ChainRow) error {
+	if !t.hasChainCustom() {
+		return nil
+	}
+	if _, err := t.exec(`UPDATE chains SET workflow = ?, state = ?, parent = ? WHERE id = ?`,
+		string(c.WorkflowJSON), string(c.StateJSON), c.Parent, id); err != nil {
+		return fmt.Errorf("db: chain put %q: custom columns: %w", c.Name, mapBusy(err))
+	}
 	return nil
 }
 
@@ -276,15 +355,33 @@ func (t *Tx) insertChain(c ChainRow, createdAt, updatedAt time.Time) error {
 		c.Feature, c.Ticket, c.Server, c.MasterMindID, formatTime(createdAt), formatTime(updatedAt), c.PlanStartCommit); err != nil {
 		return fmt.Errorf("db: chain put %q: insert: %w", c.Name, mapBusy(err))
 	}
-	return nil
+	return t.chainCustomPut(c.ID, c)
 }
 
 // ChainDelete removes owner's chain named name; its trace goes with it through
-// the foreign key's ON DELETE CASCADE. No row is a no-op.
+// the foreign key's ON DELETE CASCADE. The member and check rows carry no
+// foreign key, so they are removed here first. No row is a no-op.
 func (t *Tx) ChainDelete(owner, name string) error {
+	if t.hasChainCustom() {
+		if err := t.chainDeleteChildren(owner, name); err != nil {
+			return err
+		}
+	}
 	if _, err := t.exec(`DELETE FROM chains WHERE `+originScope+` AND owner = ? AND name = ?`,
 		t.origin, owner, name); err != nil {
 		return fmt.Errorf("db: chain delete %q: %w", name, mapBusy(err))
+	}
+	return nil
+}
+
+// chainDeleteChildren removes the rows of the member and check tables for the
+// chain named name, before the chain row itself goes.
+func (t *Tx) chainDeleteChildren(owner, name string) error {
+	scope := `SELECT id FROM chains WHERE ` + originScope + ` AND owner = ? AND name = ?`
+	for _, table := range []string{"chain_member", "chain_check"} {
+		if _, err := t.exec(`DELETE FROM `+table+` WHERE chain_id IN (`+scope+`)`, t.origin, owner, name); err != nil {
+			return fmt.Errorf("db: chain delete %q: %s: %w", name, table, mapBusy(err))
+		}
 	}
 	return nil
 }

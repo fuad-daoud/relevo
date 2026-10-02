@@ -49,6 +49,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -431,10 +432,12 @@ if [ -n "$artifact" ]; then
 	printf 'body { color: #000; }\n' > "$artifact/style.css"
 	printf 'the reader edited this\n' > "$worktree/reader-edit.txt"
 
-	# A chain member's round reads a seed, not a plan: each of the four seed
-	# templates opens with its own sentence, and that first line is what says
-	# which part of the chain this round is. A first line that matches none of
-	# them is an ordinary reader round, and keeps the fixed final message.
+	# A chain member's round reads a seed, not a plan: each seed template opens
+	# with its own sentence, and that first line is what says which part of the
+	# chain this round is. The triage template's first line asks whether to
+	# build, and the task text it carries in the same line answers yes or no. A
+	# first line that matches none of them is an ordinary reader round, and
+	# keeps the fixed final message.
 	#
 	# The reviewer's verdict needs to tell its first round from its second. No
 	# per-round marker exists in the seed (and inventing one would be a design
@@ -476,6 +479,14 @@ if [ -n "$artifact" ]; then
 	"Scan the branch for security problems.")
 		check_seed_inputs
 		msg='# Security scan\n\nThe branch has one finding: a shell variable expanded unquoted in the fake harness.\n\n'"$fence"'relevo\nfindings: 1\n'"$fence"'\n\n'"$fence"'relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n'"$fence"'\n'
+		;;
+	"Should we build this?"*)
+		check_seed_inputs
+		answer=yes
+		case "$seed" in
+		*"answer no") answer=no ;;
+		esac
+		msg='# Triage\n\nThe task text decided this one.\n\n'"$fence"'relevo\nanswer: '"$answer"'\n'"$fence"'\n\n'"$fence"'relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n'"$fence"'\n'
 		;;
 	esac
 
@@ -558,6 +569,13 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 		t.Fatalf("load policy: %v", err)
 	}
 
+	var regRoles *roles.Registry
+	if rf, err := roles.Load(filepath.Join(configDir, "roles.json")); err == nil && rf != nil {
+		if r, err := roles.Build(rf, candidates, pol); err == nil {
+			regRoles = r
+		}
+	}
+
 	st := store.New(root)
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 
@@ -575,6 +593,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 		Runner:      proc.New(),
 		Store:       st,
 		Candidates:  candidates,
+		Registry:    regRoles,
 		Gates:       mdb,
 		Latency:     mdb,
 		Policy:      pol,

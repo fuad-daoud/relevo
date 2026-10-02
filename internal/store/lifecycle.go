@@ -152,7 +152,7 @@ func (t *Tx) Archive(name string) (string, error) {
 }
 
 func (s *Store) save(b Binding) error {
-	b, rec, err := s.prepareSave(b)
+	b, rec, err := s.prepareSave(b, nil)
 	if err != nil {
 		return err
 	}
@@ -186,7 +186,10 @@ func (s *Store) ensureBindingDir(name string) error {
 }
 
 // prepareSave validates and stamps a binding and builds the record Save writes.
-func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
+// siblings names the other bindings a create is about to write beside b, so a
+// chain's members, none of which is stored yet, are exempt from the
+// working-tree clash among themselves.
+func (s *Store) prepareSave(b Binding, siblings []string) (Binding, db.Record, error) {
 	// A binding written by a newer relevo is read-only for this binary: its
 	// rewrite would erase every field this relevo does not know.
 	if b.Format > BindingFormat {
@@ -211,7 +214,7 @@ func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
 		return b, db.Record{}, errors.New("binding has no working directory")
 	}
 
-	if err := s.assertCWDFree(b); err != nil {
+	if err := s.assertCWDFree(b, siblings); err != nil {
 		return b, db.Record{}, err
 	}
 
@@ -258,7 +261,7 @@ func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
 // saveWithLog saves the binding and appends entries in one transaction, so a
 // failure anywhere leaves neither the record nor an entry behind.
 func (s *Store) saveWithLog(b Binding, entries []LogEntry) error {
-	b, rec, err := s.prepareSave(b)
+	b, rec, err := s.prepareSave(b, nil)
 	if err != nil {
 		return err
 	}
@@ -302,12 +305,28 @@ func (s *Store) saveWithLog(b Binding, entries []LogEntry) error {
 // builder writes in, so it may share a CWD with any number of remote bindings.
 // Readers are exempt too: a reader leaves artifacts and never changes the
 // tree, so it never blocks a writer and is never blocked by one.
-func (s *Store) assertCWDFree(b Binding) error {
+//
+// Members of one chain share the chain's single tree by design: the writer b,
+// its already-stored siblings (found through chain_member) and the siblings a
+// create is writing beside it (passed in) are all exempt. Every other writer
+// on the tree is still refused, which is the point of the exemption.
+func (s *Store) assertCWDFree(b Binding, siblings []string) error {
 	if b.Builder.Remote() {
 		return nil
 	}
 	if !isWriter(b) {
 		return nil
+	}
+	exempt := map[string]bool{b.Name: true}
+	for _, name := range siblings {
+		exempt[name] = true
+	}
+	stored, err := s.chainMemberNames(b.Name)
+	if err != nil {
+		return err
+	}
+	for _, name := range stored {
+		exempt[name] = true
 	}
 	bindings, err := s.list()
 	if err != nil {
@@ -320,12 +339,41 @@ func (s *Store) assertCWDFree(b Binding) error {
 		if !isWriter(other) {
 			continue
 		}
-		if other.CWD == b.CWD && other.Name != b.Name && other.State != StateDone {
+		if other.CWD == b.CWD && !exempt[other.Name] && other.State != StateDone {
 			return fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
 				b.CWD, other.Name, other.BuilderCandidate, other.Round, ErrCWDTaken)
 		}
 	}
 	return nil
+}
+
+// chainMemberNames returns the names of every binding of the chain that names
+// name, in no particular order. A binding that is in no chain returns none, so
+// a lone writer is exempt only from itself.
+func (s *Store) chainMemberNames(name string) ([]string, error) {
+	c, err := s.chainByMember(name)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	d, err := s.dbForRead()
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		return nil, nil
+	}
+	rows, err := d.ChainMembers(c.ID)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		names = append(names, row.Binding)
+	}
+	return names, nil
 }
 
 // isWriter reports whether b's actor changes its tree. An empty shape is a

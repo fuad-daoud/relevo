@@ -902,7 +902,7 @@ func composeChainReaderPrompt(rt Runtime, b store.Binding, promptPath, donePath,
 func roundPrompt(rt Runtime, tx *store.Tx, b store.Binding, promptPath, reportPath, donePath string) string {
 	prompt := composePrompt(rt, b, promptPath, reportPath, donePath)
 	if b.Shape == store.ShapeReader {
-		if block, ok := chainMemberBlock(tx, b.Name); ok {
+		if block, ok := chainMemberBlock(rt, tx, b); ok {
 			prompt = composeChainReaderPrompt(rt, b, promptPath, donePath, block)
 		}
 	}

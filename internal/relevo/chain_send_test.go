@@ -287,3 +287,48 @@ func TestSendChainRoundRefusesOpenRound(t *testing.T) {
 		}
 	}
 }
+
+func TestChainReaderFooterFromDeclaration(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{Security: ptr(true)})
+
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		revBinding, err := tx.Load("shop-rev")
+		if err != nil {
+			return err
+		}
+		revFooter, ok := chainMemberBlock(rt, tx, revBinding)
+		if !ok {
+			t.Fatal("chainMemberBlock(shop-rev) returned false")
+		}
+		if want := "verdict: pass   # or: changes"; revFooter != want {
+			t.Errorf("reviewer footer = %q, want %q", revFooter, want)
+		}
+
+		secBinding, err := tx.Load("shop-sec")
+		if err != nil {
+			return err
+		}
+		secFooter, ok := chainMemberBlock(rt, tx, secBinding)
+		if !ok {
+			t.Fatal("chainMemberBlock(shop-sec) returned false")
+		}
+		if want := "findings: 0   # a count"; secFooter != want {
+			t.Errorf("security footer = %q, want %q", secFooter, want)
+		}
+
+		planBinding, err := tx.Load("shop-plan")
+		if err != nil {
+			return err
+		}
+		if _, ok := chainMemberBlock(rt, tx, planBinding); ok {
+			t.Error("chainMemberBlock(shop-plan) returned true, want false")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+}

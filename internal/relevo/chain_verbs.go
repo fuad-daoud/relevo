@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // The two words a chain's own stop and done write. The reason is the trace
@@ -62,20 +63,35 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 	if c.Status != string(chain.StatusRunning) {
 		return StopResult{}, ErrNothingToStop
 	}
+	return chainStopWorkflow(ctx, rt, c)
+}
 
-	memberName := chainMemberName(c, c.AwaitingMember)
-	if memberName == "" {
-		return StopResult{}, fmt.Errorf("chain %s has no %s member to stop", c.Name, c.AwaitingMember)
+// chainStopWorkflow stops a workflow chain's awaited member. The actor the
+// engine is on resolves through chain_member, and stopping that member's round
+// raises the chain's stopped event. A chain whose engine awaits a check has no
+// member to stop, and a member whose round already closed has nothing to stop,
+// so each is stopped directly under the lock.
+func chainStopWorkflow(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		return StopResult{}, err
 	}
-
-	res, err := Stop(ctx, rt, memberName, StopOptions{})
-	if errors.Is(err, ErrNothingToStop) {
-		// The member's round already closed, so no close will raise the
-		// chain's stopped event: the chain is stopped directly.
-		if derr := chainStopDirect(ctx, rt, name); derr != nil {
+	if st.Awaiting.Member == "" {
+		if derr := chainStopWorkflowDirect(ctx, rt, c.Name); derr != nil {
 			return StopResult{}, derr
 		}
-		return StopResult{Round: c.AwaitingRound, Action: ChainStopActionStopped}, nil
+		return StopResult{Round: st.Awaiting.Round, Action: ChainStopActionStopped}, nil
+	}
+	memberName, err := chainStoredMemberName(rt, c, st.Awaiting.Member)
+	if err != nil {
+		return StopResult{}, err
+	}
+	res, err := Stop(ctx, rt, memberName, StopOptions{})
+	if errors.Is(err, ErrNothingToStop) {
+		if derr := chainStopWorkflowDirect(ctx, rt, c.Name); derr != nil {
+			return StopResult{}, derr
+		}
+		return StopResult{Round: st.Awaiting.Round, Action: ChainStopActionStopped}, nil
 	}
 	if err != nil {
 		return StopResult{}, err
@@ -83,11 +99,27 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 	return res, nil
 }
 
-// chainStopDirect marks a running chain stopped when the member it awaits had
-// no open round to end: the status, the one trace row and the one end delivery,
-// written under the state lock in the shape the state machine's own stop uses.
-// A chain that ended between the caller's read and this lock is left alone.
-func chainStopDirect(ctx context.Context, rt Runtime, name string) error {
+// chainStoredMemberName resolves the binding that runs actor on a stored chain,
+// so a stop names the member the engine's awaited step runs on.
+func chainStoredMemberName(rt Runtime, c db.ChainRow, actor string) (string, error) {
+	rows, err := rt.Store.ChainMembers(c.Name)
+	if err != nil {
+		return "", err
+	}
+	for _, m := range rows {
+		if chainFlowActorMatch(m.Actor, actor) {
+			return m.Binding, nil
+		}
+	}
+	return "", fmt.Errorf("chain %s has no %s member to stop", c.Name, actor)
+}
+
+// chainStopWorkflowDirect marks a running workflow chain stopped when the step
+// it awaits has no open member round to end: the engine's stopped state, one
+// trace row and the one end delivery, written under the state lock in the shape
+// the engine's own stop uses. A check still in flight is killed and recorded as
+// stopped first, so a stop never leaves it running beside the stopped chain.
+func chainStopWorkflowDirect(ctx context.Context, rt Runtime, name string) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
 		c, err := tx.Chain(name)
 		if err != nil {
@@ -96,18 +128,26 @@ func chainStopDirect(ctx context.Context, rt Runtime, name string) error {
 		if c.Status != string(chain.StatusRunning) {
 			return nil
 		}
-		before, err := chainStateOf(c)
+		if err := chainKillRunningChecks(ctx, rt, tx, c); err != nil {
+			return err
+		}
+		def, err := chainWorkflowDef(c)
+		if err != nil {
+			return err
+		}
+		before, err := chainWorkflowState(c)
 		if err != nil {
 			return err
 		}
 		next := before
-		next.Status = chain.StatusStopped
-		ev := chain.Event{
-			Kind: chain.EventStopped, Member: c.AwaitingMember,
-			Round: before.Awaiting.Round, Reason: chainStopNoRoundReason,
+		next.Status = workflow.StatusStopped
+		ev := workflow.Event{
+			Kind: workflow.EventStopped, Step: before.Awaiting.Step,
+			Member: before.Awaiting.Member, Round: before.Awaiting.Round, Run: before.Awaiting.Run,
+			Reason: chainStopNoRoundReason,
 		}
-		act := chain.Action{Kind: chain.ActionStop, Reason: chainStopNoRoundReason}
-		return chainTerminal(ctx, rt, tx, c, before, next, ev, act, chainMemberName(c, c.AwaitingMember))
+		act := workflow.Action{Kind: workflow.ActionStop, Step: before.Awaiting.Step, Reason: chainStopNoRoundReason}
+		return chainTerminalWF(ctx, rt, tx, c, def, before, next, ev, act)
 	})
 }
 
@@ -135,10 +175,23 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 		return DoneResult{}, fmt.Errorf("chain %s is running; relevo stop %s first: %w", c.Name, c.Name, ErrChainRunning)
 	}
 
+	// A check left running by an earlier stop still owns the chain's tree: kill
+	// it and record it stopped before any member's worktree is released, so a
+	// done never takes the tree out from under a live check.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		row, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		return chainKillRunningChecks(ctx, rt, tx, row)
+	}); err != nil {
+		return DoneResult{}, err
+	}
+
 	// The builder's result is the chain's: its worktree and branch are the
 	// chain's tree, which is what the verb's document names.
 	var out DoneResult
-	for i, member := range chainMembersOf(c) {
+	for i, member := range chainEndMembers(rt.Store, c) {
 		res, derr := Done(ctx, rt, member)
 		if errors.Is(derr, store.ErrNotFound) {
 			// A member whose record is gone is already released.
@@ -186,17 +239,21 @@ func chainInputsSweep(rt Runtime, name, status string) {
 	}
 }
 
-// chainDoneRow is the chain's own close: status done, phase finished, and one
-// trace row naming the member the release was carried out from. No payload is
-// queued -- the human ran this verb, so there is nobody to tell.
+// chainDoneRow is the chain's own close: the engine state's status done, its
+// legacy columns projected, and one workflow trace row naming the member the
+// release was carried out from. No payload is queued -- the human ran this verb,
+// so there is nobody to tell.
 func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
-	before, err := chainStateOf(c)
+	def, err := chainWorkflowDef(c)
+	if err != nil {
+		return err
+	}
+	before, err := chainWorkflowState(c)
 	if err != nil {
 		return err
 	}
 	next := before
-	next.Status = chain.StatusDone
-	next.Phase = chain.PhaseFinished
+	next.Status = workflow.StatusDone
 
 	member, carrier, ok, err := chainDeliveryMember(tx, c)
 	if err != nil {
@@ -208,9 +265,9 @@ func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 		part = chainPartOf(c, member)
 		round = carrier.Round
 	}
-	ev := chain.Event{Kind: chain.EventNeedsYou, Member: part, Round: round, Reason: chainDoneReason}
-	act := chain.Action{Kind: chain.ActionFinish}
-	return chainSaveWithTrace(rt, tx, c, before, next, ev, act, member)
+	ev := workflow.Event{Kind: workflow.EventNeedsYou, Member: part, Round: round, Reason: chainDoneReason}
+	act := workflow.Action{Kind: workflow.ActionFinish}
+	return chainSaveFlow(rt, tx, c, def, before, next, ev, act, member)
 }
 
 // supersedeChainDelivery confirms a chain's undelivered end payload: a halt's
@@ -218,7 +275,7 @@ func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 // no longer true the moment they resume it. The next end queues its own.
 func supersedeChainDelivery(rt Runtime, c db.ChainRow) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
-		for _, member := range chainMembersOf(c) {
+		for _, member := range chainEndMembers(tx, c) {
 			pending, err := tx.PendingForMasterMindThrough(member, 0)
 			if err != nil {
 				return err

@@ -669,7 +669,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		if err != nil && !errors.Is(err, store.ErrAmbiguousCWD) {
 			return store.Binding{}, Resolution{}, err
 		}
-		if found && other.Name != name && other.State != store.StateDone && other.Shape == store.ShapeWriter {
+		if found && other.Name != name && other.State != store.StateDone && other.Shape == store.ShapeWriter && !rt.Store.SameChain(name, other.Name) {
 			return store.Binding{}, Resolution{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
 				opts.CWD, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)
 		}

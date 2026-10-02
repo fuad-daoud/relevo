@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -9,11 +10,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // advanceRemoteChain moves a chain's builder member and its awaiting round to a
 // later round -- the state a collected close leaves -- so a test can stage and
-// ship the next round without driving the close path round 3 owns.
+// ship the next round without driving the close path round 3 owns. A chain that
+// carries an engine state advances it too: the awaited round a send resolves is
+// the state's.
 func advanceRemoteChain(t *testing.T, rt Runtime, round int) {
 	t.Helper()
 	b := chainBinding(t, rt, "shop")
@@ -26,6 +30,19 @@ func advanceRemoteChain(t *testing.T, rt Runtime, round int) {
 		if err != nil {
 			return err
 		}
+		if len(c.StateJSON) > 0 {
+			st, serr := chainWorkflowState(c)
+			if serr != nil {
+				return serr
+			}
+			st.Awaiting.Member = "builder"
+			st.Awaiting.Round = round
+			raw, merr := json.Marshal(st)
+			if merr != nil {
+				return merr
+			}
+			c.StateJSON = raw
+		}
 		c.AwaitingMember = chain.MemberBuilder
 		c.AwaitingRound = round
 		return tx.ChainPut(c)
@@ -35,7 +52,8 @@ func advanceRemoteChain(t *testing.T, rt Runtime, round int) {
 }
 
 // haltRemoteChain writes the halted status a resume exists for, without
-// exercising the stop path a served binding does not take.
+// exercising the stop path a served binding does not take. A row that carries
+// an engine state halts its state too, so a workflow resume reads a halted run.
 func haltRemoteChain(t *testing.T, rt Runtime) {
 	t.Helper()
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -44,6 +62,18 @@ func haltRemoteChain(t *testing.T, rt Runtime) {
 			return err
 		}
 		c.Status = string(chain.StatusHalted)
+		if len(c.StateJSON) > 0 {
+			st, serr := chainWorkflowState(c)
+			if serr != nil {
+				return serr
+			}
+			st.Status = workflow.StatusHalted
+			raw, merr := json.Marshal(st)
+			if merr != nil {
+				return merr
+			}
+			c.StateJSON = raw
+		}
 		return tx.ChainPut(c)
 	}); err != nil {
 		t.Fatalf("halt the chain: %v", err)
@@ -228,6 +258,78 @@ func TestChainSendPendingFailureHaltsTheChain(t *testing.T) {
 	}
 }
 
+// TestWorkflowRemoteSendFailureHaltsTheEngineState pins the engine halt: a
+// failed remote ship ends the chain through the workflow state, so the row and
+// the state both read halted and a resume can move it again.
+func TestWorkflowRemoteSendFailureHaltsTheEngineState(t *testing.T) {
+	t.Parallel()
+
+	fr := chainRemoteFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	startedChain(t, rt, ChainOptions{})
+	advanceRemoteChain(t, rt, 2)
+	stageRemoteRoundFile(t, rt, "shop", 2, "the next plan")
+	fr.startRoundErr = errors.New("socket closed")
+
+	if err := chainSendPending(context.Background(), rt); err != nil {
+		t.Fatalf("chainSendPending = %v, want the failure recorded, not returned", err)
+	}
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+	st, err := chainWorkflowState(row)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.Status != workflow.StatusHalted {
+		t.Errorf("state status = %q, want halted", st.Status)
+	}
+	if st.Reason != "member shop could not start: socket closed" {
+		t.Errorf("state reason = %q, want the member-could-not-start wording", st.Reason)
+	}
+
+	// The engine halt is what a resume reads: it must accept the chain now.
+	fr.startRoundErr = nil
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume after the engine halt = %v, want it to continue", err)
+	}
+	if got := chainStoredRow(t, rt, "shop").Status; got != string(chain.StatusRunning) {
+		t.Errorf("resumed status = %q, want running", got)
+	}
+}
+
 func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+// TestChainSendPendingResolvesAwaitedFromState pins the state arm: a custom
+// workflow whose builder actor fills no legacy part leaves the awaiting column
+// empty, so the step must resolve the awaited member from the state through
+// chain_member to ship the staged plan.
+func TestChainSendPendingResolvesAwaitedFromState(t *testing.T) {
+	t.Parallel()
+
+	fr := chainRemoteFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	startFlowChain(t, rt, flowReviewWorkflow)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.AwaitingMember != "" {
+		t.Fatalf("awaiting column = %q, want empty for a custom workflow", row.AwaitingMember)
+	}
+	st, err := chainWorkflowState(row)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.Awaiting.Member != "builder" {
+		t.Fatalf("state awaiting = %+v, want the builder actor", st.Awaiting)
+	}
+	if string(fr.startRoundPlan) != "build it" {
+		t.Errorf("shipped plan = %q, want the staged plan resolved from the state", fr.startRoundPlan)
+	}
+	if fr.startRoundVerify == nil || *fr.startRoundVerify {
+		t.Errorf("verify = %v, want an explicit false", fr.startRoundVerify)
+	}
 }

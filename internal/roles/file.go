@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/jsonshape"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // ErrBadRoles reports a roles.json that does not validate. Callers treat it
@@ -82,6 +83,8 @@ type Row struct {
 	// Tier is the role's default permission tier.
 	Tier *string `json:"tier"`
 
+	// Outputs is the role's declared outputs.
+	Outputs workflow.Outputs `json:"outputs,omitempty"`
 	// Scope is the scope the actors conversion carried for a writer role
 	// (#801): the paths its rounds may change, and whether a Go comment-only
 	// edit is allowed. It is refused on a reader. A legacy roles.json may

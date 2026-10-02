@@ -370,6 +370,42 @@ func TestStatuslineChainRowReplacesMembers(t *testing.T) {
 	}
 }
 
+// TestChainStatusReadsState pins the status surfaces' state read: a custom
+// workflow's members come from chain_member, so the named view lists the
+// builder and the custom reader under the chain and the every-row listing
+// replaces both with the one chain row.
+func TestChainStatusReadsState(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+
+	named, err := ChainStatus(context.Background(), rt, "shop")
+	if err != nil {
+		t.Fatalf("ChainStatus: %v", err)
+	}
+	want := []string{"shop", "shop", "shop-assistant"}
+	if got := rowNames(named); len(got) != len(want) {
+		t.Fatalf("named rows = %v, want the chain row and its members %v", got, want)
+	}
+	if named.Bindings[0].Chain == nil || named.Bindings[0].Chain.StepAt != "build" {
+		t.Errorf("chain row = %+v, want the engine's build step", named.Bindings[0])
+	}
+	if named.Bindings[1].Name != "shop" || named.Bindings[2].Name != "shop-assistant" {
+		t.Errorf("member rows = %v, want the builder and the custom reader", rowNames(named))
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	for _, name := range rowNames(rep) {
+		if name == "shop-assistant" {
+			t.Errorf("custom member %q kept its own row in the every-row listing: %v", name, rowNames(rep))
+		}
+	}
+}
+
 // TestStatusJSONCarriesTheChainFacts pins the document: a chain row carries a
 // chain object, and an ordinary row carries no chain key at all.
 func TestStatusJSONCarriesTheChainFacts(t *testing.T) {

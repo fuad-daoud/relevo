@@ -43,6 +43,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 const (
@@ -107,12 +108,10 @@ func TestChainE2E(t *testing.T) {
 		Plans:        plans,
 		Feature:      "chains-s1-e2e",
 		MasterMindID: rec.ID,
-		// The shipped reader roles: the chain's own defaults (lite-planner,
-		// security) are not roles this machine's config names, and inventing
-		// actors for a test would be a config change, not a test.
+		// The reader actors: planner on architect and security on security-reviewer.
 		ReviewerActor: "reviewer",
-		PlannerActor:  "researcher",
-		SecurityActor: "reviewer",
+		PlannerActor:  "planner",
+		SecurityActor: "security",
 		Security:      chainBoolPtr(true),
 	})
 	if err != nil {
@@ -308,19 +307,22 @@ func TestChainE2E(t *testing.T) {
 	// pattern is the pin for the three design mutations -- a changes verdict
 	// advancing to plan 2 would drop the planner's first send, a close that
 	// matched any round would add a second row per close, and a missing
-	// verdict read as a pass would drop the reviewer's first round.
-	want := []chainE2EStep{
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 1},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberPlanner, plan: 1},
-		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder, plan: 1},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 1},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberBuilder, plan: 1},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 2},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberSecurity, plan: 2},
-		{member: securityName, event: chain.EventSecurityClosed, action: chain.ActionSend, to: chain.MemberPlanner, plan: 2},
-		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder, plan: 2},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer, plan: 2},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionFinish, plan: 2},
+	// verdict read as a pass would drop the reviewer's first round. The engine
+	// writes each row as a workflow event and action: the step the close was
+	// on, the member the action sends to, the target step, and the plan the
+	// row was written on.
+	want := []chainFlowStep{
+		{step: "build", round: 1, member: reviewerName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "review", plan: 1},
+		{step: "review", round: 1, member: plannerName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "correct", plan: 1},
+		{step: "correct", round: 1, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "build-fix", plan: 1},
+		{step: "build-fix", round: 2, member: reviewerName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "review", plan: 1},
+		{step: "review", round: 2, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "build", plan: 2},
+		{step: "build", round: 3, member: reviewerName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "review", plan: 2},
+		{step: "review", round: 3, member: securityName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "scan", plan: 2},
+		{step: "scan", round: 1, member: plannerName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "fix-plan", plan: 2},
+		{step: "fix-plan", round: 2, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "fix-build", plan: 2},
+		{step: "fix-build", round: 4, member: reviewerName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "fix-review", plan: 2},
+		{step: "fix-review", round: 4, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionFinish, to: "", plan: 2},
 	}
 	doc, err := relevo.ChainTrace(ctx, rt, chainE2EName)
 	if err != nil {
@@ -334,35 +336,41 @@ func TestChainE2E(t *testing.T) {
 		if got.Seq != i+1 {
 			t.Errorf("trace row %d has seq %d, want %d", i, got.Seq, i+1)
 		}
+		if got.Step != step.step {
+			t.Errorf("trace row %d step = %q, want %q", i, got.Step, step.step)
+		}
 		if got.Member != step.member {
-			t.Errorf("trace row %d closed %s, want %s", i, got.Member, step.member)
+			t.Errorf("trace row %d sends to %s, want %s", i, got.Member, step.member)
 		}
-		if got.Event.Kind != step.event {
-			t.Errorf("trace row %d event = %q, want %q", i, got.Event.Kind, step.event)
+		if got.Flow == nil || got.Flow.Kind != step.event {
+			t.Errorf("trace row %d event = %+v, want %q", i, got.Flow, step.event)
 		}
-		if got.Action.Kind != step.action {
-			t.Errorf("trace row %d action = %q, want %q", i, got.Action.Kind, step.action)
+		if got.FlowAction == nil || got.FlowAction.Kind != step.action {
+			t.Errorf("trace row %d action = %+v, want %q", i, got.FlowAction, step.action)
 		}
-		if step.to != "" && got.Action.Member != step.to {
-			t.Errorf("trace row %d action sends to %q, want %q", i, got.Action.Member, step.to)
+		if step.to != "" && got.FlowAction.Step != step.to {
+			t.Errorf("trace row %d action sends to step %q, want %q", i, got.FlowAction.Step, step.to)
+		}
+		if got.Round != step.round {
+			t.Errorf("trace row %d round = %d, want %d", i, got.Round, step.round)
 		}
 		if got.Plan != step.plan {
 			t.Errorf("trace row %d plan = %d, want %d: each row keeps the plan it was written on", i, got.Plan, step.plan)
 		}
 	}
-	if got := doc.Events[1].Event.Verdict; got != chain.VerdictChanges {
+	if got := doc.Events[1].Flow.Outcomes["verdict"]; got != "changes" {
 		t.Errorf("the reviewer's first verdict = %q, want changes: the fake harness's first reviewer round asks for a correction", got)
 	}
 	for _, i := range []int{4, 6, 10} {
-		if got := doc.Events[i].Event.Verdict; got != chain.VerdictPass {
+		if got := doc.Events[i].Flow.Outcomes["verdict"]; got != "pass" {
 			t.Errorf("the reviewer's verdict on trace row %d = %q, want pass", i, got)
 		}
 	}
-	if got := doc.Events[7].Event; !got.FindingsGiven || got.Findings != 1 {
-		t.Errorf("the security close = %+v, want one finding given", got)
+	if got := doc.Events[7].Flow.Outcomes["findings"]; got != "1" {
+		t.Errorf("the security close findings = %q, want 1", got)
 	}
-	if last := doc.Events[len(doc.Events)-1]; last.Action.Kind != chain.ActionFinish {
-		t.Errorf("the last trace row's action = %q, want finish", last.Action.Kind)
+	if last := doc.Events[len(doc.Events)-1]; last.FlowAction.Kind != workflow.ActionFinish {
+		t.Errorf("the last trace row's action = %q, want finish", last.FlowAction.Kind)
 	}
 
 	// A `show --trace` read renders exactly the same steps.
@@ -408,9 +416,9 @@ func TestChainE2E(t *testing.T) {
 	}
 }
 
-// chainE2EStep is one expected trace row: the member whose round closed, the
-// event that close raised, the action it produced, the part a send names, and
-// the plan the row was written on.
+// chainE2EStep is one expected trace row of a fixed-state-machine chain: the
+// member whose round closed, the event that close raised, the action it
+// produced, the part a send names, and the plan the row was written on.
 type chainE2EStep struct {
 	member string
 	event  chain.EventKind
@@ -419,10 +427,23 @@ type chainE2EStep struct {
 	plan   int
 }
 
+// chainFlowStep is one expected trace row of a workflow chain: the step the
+// close was on, the closing round, the member the action sends to, the workflow
+// event and action the engine wrote, the target step a send names, and the plan
+// the row was written on.
+type chainFlowStep struct {
+	step   string
+	round  int
+	member string
+	event  workflow.EventKind
+	action workflow.ActionKind
+	to     string
+	plan   int
+}
+
 // writeChainCandidatesAndPolicy writes the config the chain's members resolve
-// against. One candidate serves the builder plus the two shipped reader roles
-// the e2e points the chain's reviewer, planner and security members at: a
-// chain member's actor must be a reader unless it is the builder.
+// against: candidates, policy, and roles defining planner on architect and security
+// on security-reviewer.
 func writeChainCandidatesAndPolicy(t *testing.T, configDir string) {
 	t.Helper()
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -431,7 +452,33 @@ func writeChainCandidatesAndPolicy(t *testing.T, configDir string) {
 	token := "claude/anthropic/" + chainE2EModel
 	candidates := `[{"harness":"claude","provider":"anthropic","model":"` + chainE2EModel + `","roles":["builder","reviewer","researcher"]}]`
 	pol := `{"order":{"builder":["` + token + `"],"reviewer":["` + token + `"],"researcher":["` + token + `"]}}`
-	for name, body := range map[string]string{"candidates.json": candidates, "policy.json": pol} {
+	rolesJSON := `{
+  "builder": {
+    "candidates": ["` + token + `"]
+  },
+  "reviewer": {
+    "candidates": ["` + token + `"]
+  },
+  "planner": {
+    "shape": "reader",
+    "definitions": {
+      "claude": {"agent": "architect"}
+    },
+    "candidates": ["` + token + `"]
+  },
+  "security": {
+    "shape": "reader",
+    "definitions": {
+      "claude": {"agent": "security-reviewer"}
+    },
+    "candidates": ["` + token + `"]
+  }
+}`
+	for name, body := range map[string]string{
+		"candidates.json": candidates,
+		"policy.json":     pol,
+		"roles.json":      rolesJSON,
+	} {
 		if err := os.WriteFile(filepath.Join(configDir, name), []byte(body), 0o644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}

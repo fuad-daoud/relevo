@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // policyWithGate is the policy a chain's resolved check reads from.
@@ -109,6 +110,29 @@ func seedRemoteChain(t *testing.T, rt Runtime, name string, opts remoteChainOpts
 		Base: seedRemoteBase, Branch: "relevo/" + name, Repo: repo,
 		PlanStartCommit: seedRemoteBase,
 		CreatedAt:       now, UpdatedAt: now,
+	}
+	// The chain runs the shipped default on the engine, so a close maps onto a
+	// workflow event; FromLegacy builds the definition and the state its legacy
+	// columns describe.
+	def, st, derr := workflow.FromLegacy(workflow.Legacy{
+		Status: row.Status, Phase: row.Phase, Step: row.Step,
+		Plan: row.Plan, Plans: row.Plans, Corrections: row.Corrections,
+		AwaitingRound: row.AwaitingRound, PlanPaths: paths,
+		Settings: workflow.LegacySettings{
+			MaxCorrections: settings.MaxCorrections, ReviewerActor: settings.ReviewerActor,
+			PlannerActor: settings.PlannerActor, SecurityActor: settings.SecurityActor,
+			Security: settings.Security, Gate: settings.Gate, Regate: settings.Regate,
+		},
+		Builder: "builder",
+	})
+	if derr != nil {
+		t.Fatalf("seedRemoteChain: from legacy: %v", derr)
+	}
+	if row.WorkflowJSON, err = json.Marshal(def); err != nil {
+		t.Fatalf("seedRemoteChain: marshal workflow: %v", err)
+	}
+	if row.StateJSON, err = json.Marshal(st); err != nil {
+		t.Fatalf("seedRemoteChain: marshal state: %v", err)
 	}
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		return tx.CreateChain(row, built)
@@ -356,8 +380,11 @@ func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
 			t.Errorf("create Gate = %q, want the resolved make check", fr.createBindingReq.Gate)
 		}
 		builder := memberByName(t, res.Members, "shop")
-		if builder.Gate != "make check" || builder.Regate != 2 {
-			t.Errorf("member gate/regate = %q/%d, want make check/2", builder.Gate, builder.Regate)
+		if builder.Gate != "make check" || builder.Regate != 0 {
+			t.Errorf("member gate/regate = %q/%d, want make check/0: a workflow chain's check is a step", builder.Gate, builder.Regate)
+		}
+		if got := storedSettings(t, res.Chain).Regate; got != 2 {
+			t.Errorf("settings regate = %d, want the policy's 2", got)
 		}
 		if res.Check != "make check" {
 			t.Errorf("result check = %q, want make check", res.Check)
@@ -392,8 +419,11 @@ func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
 		if fr.createBindingReq.Gate != "" {
 			t.Errorf("create Gate = %q, want none with no gate flag", fr.createBindingReq.Gate)
 		}
-		if builder := memberByName(t, res.Members, "shop"); builder.Regate != 3 {
-			t.Errorf("member regate = %d, want the flag's 3", builder.Regate)
+		if builder := memberByName(t, res.Members, "shop"); builder.Regate != 0 {
+			t.Errorf("member regate = %d, want 0: the workflow runs the check as a step", builder.Regate)
+		}
+		if got := storedSettings(t, res.Chain).Regate; got != 3 {
+			t.Errorf("settings regate = %d, want the flag's 3", got)
 		}
 	})
 }

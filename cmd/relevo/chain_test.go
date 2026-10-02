@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainPlanArg is a --plan value for the refusals that fire before any plan is
@@ -199,17 +200,29 @@ func seedCLIChain(t *testing.T, name, status string) {
 		Builder: name, Reviewer: name + "-rev", Planner: name + "-plan",
 		CreatedAt: now, UpdatedAt: now,
 	}
+	// Every row carries the shipped default's definition and state, so the
+	// verbs run the engine the way a started chain does.
+	def, st, derr := workflow.FromLegacy(workflow.Legacy{
+		Status: status, Phase: "build", Step: "building",
+		Plan: 1, Plans: 1, PlanPaths: []string{"/p/plan-1.md"},
+		AwaitingRound: 1, Builder: "builder",
+	})
+	if derr != nil {
+		t.Fatalf("seed chain %s: from legacy: %v", name, derr)
+	}
+	if c.WorkflowJSON, err = json.Marshal(def); err != nil {
+		t.Fatalf("seed chain %s: marshal workflow: %v", name, err)
+	}
+	if c.StateJSON, err = json.Marshal(st); err != nil {
+		t.Fatalf("seed chain %s: marshal state: %v", name, err)
+	}
+	members := []store.Binding{
+		{Name: name, CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Role: "builder"},
+		{Name: name + "-rev", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Role: "reviewer", Shape: store.ShapeReader},
+		{Name: name + "-plan", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Role: "lite-planner", Shape: store.ShapeReader},
+	}
 	err = s.WithLock(func(tx *store.Tx) error {
-		for _, m := range []store.Binding{
-			{Name: name, CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive},
-			{Name: name + "-rev", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Shape: store.ShapeReader},
-			{Name: name + "-plan", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Shape: store.ShapeReader},
-		} {
-			if err := tx.Save(m); err != nil {
-				return err
-			}
-		}
-		return tx.ChainPut(c)
+		return tx.CreateChain(c, members)
 	})
 	if err != nil {
 		t.Fatalf("seed chain %s: %v", name, err)
@@ -675,17 +688,27 @@ func seedCLIOpenMemberChain(t *testing.T, name string) {
 		Builder: name, Reviewer: name + "-rev", Planner: name + "-plan",
 		CreatedAt: now, UpdatedAt: now,
 	}
+	def, st, derr := workflow.FromLegacy(workflow.Legacy{
+		Status: "halted", Phase: "build", Step: "building",
+		Plan: 1, Plans: 1, PlanPaths: []string{plan},
+		AwaitingRound: 1, Builder: "builder",
+	})
+	if derr != nil {
+		t.Fatalf("seed open chain %s: from legacy: %v", name, derr)
+	}
+	if c.WorkflowJSON, err = json.Marshal(def); err != nil {
+		t.Fatalf("seed open chain %s: marshal workflow: %v", name, err)
+	}
+	if c.StateJSON, err = json.Marshal(st); err != nil {
+		t.Fatalf("seed open chain %s: marshal state: %v", name, err)
+	}
+	members := []store.Binding{
+		{Name: name, CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Role: "builder"},
+		{Name: name + "-rev", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Role: "reviewer", Shape: store.ShapeReader},
+		{Name: name + "-plan", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Role: "lite-planner", Shape: store.ShapeReader},
+	}
 	err = s.WithLock(func(tx *store.Tx) error {
-		for _, m := range []store.Binding{
-			{Name: name, CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive},
-			{Name: name + "-rev", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Shape: store.ShapeReader},
-			{Name: name + "-plan", CWD: filepath.Join(root, "work", name), Round: 1, State: store.StateActive, Shape: store.ShapeReader},
-		} {
-			if err := tx.Save(m); err != nil {
-				return err
-			}
-		}
-		if err := tx.ChainPut(c); err != nil {
+		if err := tx.CreateChain(c, members); err != nil {
 			return err
 		}
 		// The builder's round 1 is open: its prompt entry exists, no report.

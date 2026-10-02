@@ -288,6 +288,12 @@ func seedVerbChain(t *testing.T, s *store.Store, name, status string) {
 	}); err != nil {
 		t.Fatalf("seed chain %s: %v", name, err)
 	}
+	// A chain runs on the engine now: convert the seeded legacy row, so its own
+	// verbs read an engine state rather than the old fixed machine.
+	rt := relevo.Runtime{Store: s, Now: func() time.Time { return now }}
+	if err := relevo.ConvertLegacyChains(rt); err != nil {
+		t.Fatalf("convert chain %s: %v", name, err)
+	}
 }
 
 // TestRelevoVerbsDoneOnAChainReleasesEveryMember pins the route: done on a name

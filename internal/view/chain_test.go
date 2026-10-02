@@ -103,6 +103,55 @@ func TestChainDisplayMapsEveryStatus(t *testing.T) {
 	}
 }
 
+// TestChainSegmentFlowRunningAtARunStep pins a workflow chain's running
+// segment: the step its engine is on, the round it awaits, and its position in
+// the plan input.
+func TestChainSegmentFlowRunningAtARunStep(t *testing.T) {
+	t.Parallel()
+
+	f := ChainFacts{Status: "running", StepAt: "building", Round: 2, PlanPos: 1, PlanTotal: 3}
+	if got, want := ChainSegment(f), "building r2 · plans 1/3"; got != want {
+		t.Errorf("ChainSegment(%+v) = %q, want %q", f, got, want)
+	}
+}
+
+// TestChainSegmentFlowRunningWhileACheckIsAwaited pins the check-awaited
+// variant: the segment names the check run, not a round.
+func TestChainSegmentFlowRunningWhileACheckIsAwaited(t *testing.T) {
+	t.Parallel()
+
+	f := ChainFacts{Status: "running", StepAt: "reviewing", Round: 5, Check: true, PlanPos: 2, PlanTotal: 3}
+	if got, want := ChainSegment(f), "reviewing check run 5 · plans 2/3"; got != want {
+		t.Errorf("ChainSegment(%+v) = %q, want %q", f, got, want)
+	}
+}
+
+// TestChainSegmentFlowOnATerminalChain pins the terminal rule: a halted chain
+// keeps the step, while a done chain drops it and keeps only its plan position.
+func TestChainSegmentFlowOnATerminalChain(t *testing.T) {
+	t.Parallel()
+
+	halted := ChainFacts{Status: "halted", StepAt: "building", Round: 2, PlanPos: 1, PlanTotal: 3}
+	if got, want := ChainSegment(halted), "building r2 · plans 1/3"; got != want {
+		t.Errorf("ChainSegment(%+v) = %q, want %q", halted, got, want)
+	}
+	done := ChainFacts{Status: "done", StepAt: "building", Round: 3, PlanPos: 3, PlanTotal: 3}
+	if got, want := ChainSegment(done), "plans 3/3"; got != want {
+		t.Errorf("ChainSegment(%+v) = %q, want %q", done, got, want)
+	}
+}
+
+// TestChainSegmentFlowWithoutPlans pins a task-only workflow: with no plan to
+// report the segment is just the step and its round.
+func TestChainSegmentFlowWithoutPlans(t *testing.T) {
+	t.Parallel()
+
+	f := ChainFacts{Status: "running", StepAt: "building", Round: 2}
+	if got, want := ChainSegment(f), "building r2"; got != want {
+		t.Errorf("ChainSegment(%+v) = %q, want %q", f, got, want)
+	}
+}
+
 // TestChainDisplayHaltedWithAManualRound pins item 4's display word: a halted
 // or stopped chain whose builder has an open round reads its own status word,
 // not NEEDS YOU, so the row does not claim a human must act while work runs.

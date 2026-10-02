@@ -183,7 +183,20 @@ func newRuntime() (relevo.Runtime, error) {
 // and serves: the runtime's store borrows d (store.NewShared), so nothing in
 // the daemon dials its own socket and the file is opened exactly once.
 func newRuntimeOn(root string, d *db.DB) (relevo.Runtime, error) {
-	return newRuntimeWith(root, d, store.NewShared(root, "", d))
+	rt, err := newRuntimeWith(root, d, store.NewShared(root, "", d))
+	if err != nil {
+		return relevo.Runtime{}, err
+	}
+	// The one-time chain conversion, at daemon start: every row written before
+	// chains carried a workflow gains the default one and its engine state, so
+	// the new engine drives it. Each row converts in its own transaction; a row
+	// that cannot convert is halted with the failure as its reason and the rows
+	// after it still convert, so only a store-level read or write failure warns
+	// here.
+	if err := relevo.ConvertLegacyChains(rt); err != nil {
+		slog.Warn("chains not converted to workflows", "err", err)
+	}
+	return rt, nil
 }
 
 // newRuntimeWith is the one body both constructors share: the config store

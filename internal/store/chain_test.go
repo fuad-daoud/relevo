@@ -68,6 +68,35 @@ func memberNames(t *testing.T, d *db.DB) []string {
 	return out
 }
 
+// TestCWDExemptOnlyAmongSameChain pins the working-tree exemption: two writer
+// members of one chain may share a tree, a later save of either is exempt
+// through chain_member, and a writer that is in no chain is still refused.
+func TestCWDExemptOnlyAmongSameChain(t *testing.T) {
+	s := New(t.TempDir())
+	first := newBinding("x", "/repo")
+	second := newBinding("x-fix", "/repo")
+	second.Role = "builder"
+
+	if err := s.WithLock(func(tx *Tx) error {
+		return tx.CreateChain(testStoreChain("x"), []Binding{first, second})
+	}); err != nil {
+		t.Fatalf("CreateChain with two writers on one tree: %v", err)
+	}
+	if err := s.Save(first); err != nil {
+		t.Fatalf("Save a chain member beside its sibling: %v", err)
+	}
+	if err := s.Save(second); err != nil {
+		t.Fatalf("Save the sibling member: %v", err)
+	}
+	if !s.SameChain("x", "x-fix") {
+		t.Error("SameChain(x, x-fix) = false, want true")
+	}
+
+	if err := s.Save(newBinding("y", "/repo")); !errors.Is(err, ErrCWDTaken) {
+		t.Fatalf("Save a writer in no chain = %v, want ErrCWDTaken", err)
+	}
+}
+
 // TestCreateChainWritesEveryMemberAndTheChainAtomically pins the all-or-none
 // create: a member whose directory cannot be made leaves no chain row and no
 // member row.
@@ -223,6 +252,136 @@ func TestStoreChainRoundTrip(t *testing.T) {
 
 	if _, err := s.Chain("missing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Chain(missing) = %v, want ErrNotFound", err)
+	}
+}
+
+// chainMemberCount counts the stored member rows directly, so a refused create
+// can be checked for the rows it must not have written.
+func chainMemberCount(t *testing.T, s *Store) int {
+	t.Helper()
+	sqlDB, err := db.OpenRaw(s.DBPath())
+	if err != nil {
+		t.Fatalf("OpenRaw: %v", err)
+	}
+	defer func() { _ = sqlDB.Close() }()
+	var n int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM chain_member`).Scan(&n); err != nil {
+		t.Fatalf("count chain_member: %v", err)
+	}
+	return n
+}
+
+// TestCreateChainWritesMemberRowsAtomically pins the member rows in the same
+// transaction as the chain: a successful create stores one row per member in
+// argument order, and a refused create stores none.
+func TestCreateChainWritesMemberRowsAtomically(t *testing.T) {
+	t.Run("a successful create", func(t *testing.T) {
+		s := New(t.TempDir())
+		builder := newBinding("x", "/repo")
+		reviewer := newBinding("x-rev", "/repo")
+		reviewer.Role = "reviewer"
+		reviewer.Shape = ShapeReader
+
+		if err := s.WithLock(func(tx *Tx) error {
+			return tx.CreateChain(testStoreChain("x"), []Binding{builder, reviewer})
+		}); err != nil {
+			t.Fatalf("CreateChain: %v", err)
+		}
+
+		members, err := s.ChainMembers("x")
+		if err != nil {
+			t.Fatalf("ChainMembers(x): %v", err)
+		}
+		if len(members) != 2 {
+			t.Fatalf("member rows = %+v, want 2", members)
+		}
+		if members[0].Binding != "x" || members[0].Actor != "builder" || members[0].Seq != 0 {
+			t.Errorf("builder member row = %+v, want x/builder/0", members[0])
+		}
+		if members[1].Binding != "x-rev" || members[1].Actor != "reviewer" || members[1].Seq != 1 {
+			t.Errorf("reviewer member row = %+v, want x-rev/reviewer/1", members[1])
+		}
+	})
+
+	t.Run("a refused create", func(t *testing.T) {
+		s := New(t.TempDir())
+		refused := testStoreChain("x")
+		refused.Plans = 0
+
+		if err := s.WithLock(func(tx *Tx) error {
+			return tx.CreateChain(refused, []Binding{newBinding("x", "/repo")})
+		}); err == nil {
+			t.Fatal("CreateChain = nil, want the chain row refused")
+		}
+		if n := chainMemberCount(t, s); n != 0 {
+			t.Errorf("chain_member rows = %d, want none", n)
+		}
+	})
+}
+
+// TestStoreChainMembersAndChecksRoundTrip pins the store twins of the member
+// and check reads and writes, and their not-found answers.
+func TestStoreChainMembersAndChecksRoundTrip(t *testing.T) {
+	s, c := seededChainStore(t)
+
+	if err := s.WithLock(func(tx *Tx) error {
+		return tx.ChainMembersPut("x", []db.ChainMemberRow{{Binding: "x-rev", Actor: "reviewer", Seq: 0}})
+	}); err != nil {
+		t.Fatalf("ChainMembersPut: %v", err)
+	}
+	members, err := s.ChainMembers("x")
+	if err != nil {
+		t.Fatalf("ChainMembers: %v", err)
+	}
+	if len(members) != 1 || members[0].Binding != "x-rev" || members[0].ChainID != c.ID || members[0].Actor != "reviewer" {
+		t.Fatalf("ChainMembers = %+v, want the written row for %s", members, c.ID)
+	}
+
+	var run int
+	if err := s.WithLock(func(tx *Tx) error {
+		var err error
+		run, err = tx.ChainCheckNextRun("x")
+		return err
+	}); err != nil || run != 1 {
+		t.Fatalf("ChainCheckNextRun = (%d, %v), want (1, nil)", run, err)
+	}
+	if err := s.WithLock(func(tx *Tx) error {
+		return tx.ChainCheckPut("x", db.ChainCheckRow{Run: run, Step: "check", Command: "make check", Result: "green"})
+	}); err != nil {
+		t.Fatalf("ChainCheckPut: %v", err)
+	}
+	check, err := s.ChainCheck("x", run)
+	if err != nil {
+		t.Fatalf("ChainCheck: %v", err)
+	}
+	if check.Run != run || check.Command != "make check" || check.Result != "green" || check.ChainID != c.ID {
+		t.Errorf("ChainCheck = %+v, want the written check for %s", check, c.ID)
+	}
+	if next, err := s.ChainCheckNextRun("x"); err != nil || next != 2 {
+		t.Errorf("ChainCheckNextRun after a put = (%d, %v), want (2, nil)", next, err)
+	}
+
+	if _, err := s.ChainCheck("x", 99); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ChainCheck(missing run) = %v, want ErrNotFound", err)
+	}
+	if _, err := s.ChainMembers("missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ChainMembers(missing) = %v, want ErrNotFound", err)
+	}
+	if _, err := s.ChainCheck("missing", 1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ChainCheck(missing chain) = %v, want ErrNotFound", err)
+	}
+	if err := s.WithLock(func(tx *Tx) error {
+		return tx.ChainCheckPut("missing", db.ChainCheckRow{Run: 1})
+	}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ChainCheckPut(missing) = %v, want ErrNotFound", err)
+	}
+	if err := s.WithLock(func(tx *Tx) error {
+		return tx.ChainMembersPut("missing", nil)
+	}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ChainMembersPut(missing) = %v, want ErrNotFound", err)
+	}
+	if _, err := s.ChainCheckNextRun("missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ChainCheckNextRun(missing) = %v, want ErrNotFound", err)
 	}
 }
 

@@ -78,10 +78,10 @@ func TestWaitChainHaltedReturnsThreeAndTheReason(t *testing.T) {
 	if !strings.Contains(res.Line, "chain shop: halted") {
 		t.Errorf("line = %q, want the halted status", res.Line)
 	}
-	if !strings.Contains(res.Line, "reviewer gave no verdict") {
+	if !strings.Contains(res.Line, "no relevo block carries it") {
 		t.Errorf("line = %q, want the halt reason", res.Line)
 	}
-	if !strings.Contains(res.Payload, "reviewer gave no verdict") {
+	if !strings.Contains(res.Payload, "no relevo block carries it") {
 		t.Errorf("payload = %q, want the halt reason", res.Payload)
 	}
 }

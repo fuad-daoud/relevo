@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainPullMaxPlanBytes bounds one pulled round prompt. The server caps a
@@ -99,14 +100,10 @@ func chainPullGone(ctx context.Context, rt Runtime, c db.ChainRow) error {
 		if !ok {
 			return nil
 		}
-		state, err := chainStateOf(cur)
-		if err != nil {
-			return err
-		}
 		entry := store.LogEntry{
 			TS: rt.Now().UTC(), Round: carrier.Round,
 			Direction: store.DirToMasterMind, Kind: store.KindChain,
-			Payload: chainTerminalPayload(cur, state, 0),
+			Payload: chainTerminalPayload(cur, 0),
 		}
 		return delivery.Queue(ctx, deliveryDeps(rt), tx, member, entry)
 	})
@@ -128,6 +125,14 @@ func chainPullMembers(rt Runtime, c db.ChainRow, view remote.ChainView) (db.Chai
 		if err != nil {
 			return err
 		}
+		// A member the server added gets a chain_member row beside its binding,
+		// so the state reads and the end verbs that walk chain_member see it.
+		// The existing rows set the next sequence.
+		existing, err := tx.ChainMembers(cur.Name)
+		if err != nil {
+			return err
+		}
+		var added []db.ChainMemberRow
 		changed := false
 		for _, mv := range view.Members {
 			if mv.Part == "" || mv.Name == "" || chainMemberName(cur, mv.Part) == mv.Name {
@@ -150,11 +155,19 @@ func chainPullMembers(rt Runtime, c db.ChainRow, view remote.ChainView) (db.Chai
 				if err := tx.Save(nb); err != nil {
 					return err
 				}
+				added = append(added, db.ChainMemberRow{
+					Binding: nb.Name, Actor: nb.Role, Seq: len(existing) + len(added),
+				})
 			} else if lerr != nil {
 				return lerr
 			}
 			setChainMemberColumn(&cur, mv.Part, mv.Name)
 			changed = true
+		}
+		if len(added) > 0 {
+			if err := tx.ChainMembersPut(cur.Name, added); err != nil {
+				return err
+			}
 		}
 		if changed {
 			cur.UpdatedAt = rt.Now().UTC()
@@ -431,7 +444,10 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 			return err
 		}
 		before := cur.Status
-		row := chainRowFromView(cur, view, now)
+		row, err := chainRowFromView(cur, view, now)
+		if err != nil {
+			return err
+		}
 		switch {
 		case chain.Status(view.Status) == chain.StatusRunning:
 			row.Status = string(chain.StatusRunning)
@@ -453,14 +469,10 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 		if !ok {
 			return nil
 		}
-		state, err := chainStateOf(row)
-		if err != nil {
-			return err
-		}
 		entry := store.LogEntry{
 			TS: now, Round: carrier.Round,
 			Direction: store.DirToMasterMind, Kind: store.KindChain,
-			Payload: chainTerminalPayload(row, state, view.Findings),
+			Payload: chainTerminalPayload(row, view.Findings),
 		}
 		return delivery.Queue(ctx, deliveryDeps(rt), tx, member, entry)
 	})
@@ -498,8 +510,11 @@ func chainStatusTerminal(status string) bool {
 // chainRowFromView is the mirror row carrying the server's state: the fields a
 // chain row shows and the view can answer for. The row's own stored facts --
 // its plan copies, its settings and its branch -- stay as this machine wrote
-// them, because the server does not own them.
-func chainRowFromView(c db.ChainRow, v remote.ChainView, now time.Time) db.ChainRow {
+// them, because the server does not own them. It also stores the shipped
+// default and the engine state the row's legacy columns describe, through
+// workflow.FromLegacy, so the mirror's read surfaces see the engine state the
+// server drove.
+func chainRowFromView(c db.ChainRow, v remote.ChainView, now time.Time) (db.ChainRow, error) {
 	c.Status = chainOr(v.Status, c.Status)
 	c.Reason = v.Reason
 	c.Phase = chainOr(v.Phase, c.Phase)
@@ -513,5 +528,58 @@ func chainRowFromView(c db.ChainRow, v remote.ChainView, now time.Time) db.Chain
 		c.PlanStartCommit = v.PlanStartCommit
 	}
 	c.UpdatedAt = now
-	return c
+
+	leg, err := chainViewLegacy(c, v)
+	if err != nil {
+		return db.ChainRow{}, err
+	}
+	def, st, err := workflow.FromLegacy(leg)
+	if err != nil {
+		return db.ChainRow{}, fmt.Errorf("chain %s: %w", c.Name, err)
+	}
+	if c.WorkflowJSON, err = json.Marshal(def); err != nil {
+		return db.ChainRow{}, fmt.Errorf("chain %s workflow: %w", c.Name, err)
+	}
+	if c.StateJSON, err = json.Marshal(st); err != nil {
+		return db.ChainRow{}, fmt.Errorf("chain %s state: %w", c.Name, err)
+	}
+	return c, nil
+}
+
+// chainViewLegacy is the legacy row a server's view describes: the merged
+// columns the view carries, the mirror's own plan copies, its own settings, and
+// the builder actor the view names.
+func chainViewLegacy(c db.ChainRow, v remote.ChainView) (workflow.Legacy, error) {
+	paths, err := chainPlanPaths(c)
+	if err != nil {
+		return workflow.Legacy{}, err
+	}
+	var set chain.Settings
+	if len(c.SettingsJSON) > 0 {
+		if err := json.Unmarshal(c.SettingsJSON, &set); err != nil {
+			return workflow.Legacy{}, fmt.Errorf("chain %s settings: %w", c.Name, err)
+		}
+	}
+	return workflow.Legacy{
+		Status: c.Status, Reason: c.Reason, Phase: c.Phase, Step: c.Step,
+		Plan: c.Plan, Plans: c.Plans, Corrections: c.Corrections,
+		AwaitingRound: c.AwaitingRound, PlanPaths: paths,
+		Settings: workflow.LegacySettings{
+			MaxCorrections: set.MaxCorrections, ReviewerActor: set.ReviewerActor,
+			PlannerActor: set.PlannerActor, SecurityActor: set.SecurityActor,
+			Security: set.Security, Gate: set.Gate, Regate: set.Regate,
+		},
+		Builder: chainViewBuilderActor(v),
+	}, nil
+}
+
+// chainViewBuilderActor is the actor the view's builder member runs, or "" when
+// the view names no builder.
+func chainViewBuilderActor(v remote.ChainView) string {
+	for _, m := range v.Members {
+		if m.Part == chain.MemberBuilder {
+			return m.Actor
+		}
+	}
+	return ""
 }

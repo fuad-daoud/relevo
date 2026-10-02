@@ -3,14 +3,14 @@ package e2e
 // TestChainRemoteBuilderE2E is slice 2 round 5's end-to-end pin: a chain whose
 // builder is a remote member on the in-process server. Plan 1 ships through the
 // pending-send step; the served builder runs (the script runner) and the server
-// runs the chain's gate. Round 1's gate exits non-zero, so chainApply stages a
-// chain-owned repair round and writes no trace row; round 2's gate exits zero
-// and the local reviewer is seeded with the check line, the plan's cumulative
-// diff and the round's own prompt. The reviewer asks for changes, so the
-// planner's correction plan is shipped to the remote builder the same way; the
-// chain finishes. The trace holds every transition (the red close has none),
-// the client's relevo/<n> branch holds the builder's commits and equals the
-// last pulled result commit, and the MasterMind receives exactly one delivery.
+// runs the chain's gate. Round 1's gate exits non-zero, so the chain's red check
+// routes to the repair step, whose green check then seeds the local reviewer
+// with the check line, the plan's cumulative diff and the round's own prompt.
+// The reviewer asks for changes, so the planner's correction plan is shipped to
+// the remote builder the same way; the chain finishes. The trace holds every
+// transition, the client's relevo/<n> branch holds the builder's commits and
+// equals the last pulled result commit, and the MasterMind receives exactly one
+// delivery.
 //
 // The two-runner seam holds in one test: the server runs its served rounds and
 // gates through the script runner, while the chain's local readers (reviewer,
@@ -42,6 +42,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 const (
@@ -154,8 +155,8 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 
 	// -- Drive the choreography ----------------------------------------------
 	// The gate's real exit travels: round 1's gate fails (2), rounds 2 and 3's
-	// pass (0). Round 1's red close buys exactly one chain-owned repair round;
-	// round 2's green close seeds the reviewer.
+	// pass (0). Round 1's red check routes to the repair step, which runs round
+	// 2; that round's green check seeds the reviewer.
 	gateExit := map[int]int{1: 2, 2: 0, 3: 0}
 
 	daemon := relevo.NewDaemon(rt, 200*time.Millisecond)
@@ -202,54 +203,76 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 		t.Errorf("chain ended on plan %d with %d corrections, want plan 1 with the one correction", row.Plan, row.Corrections)
 	}
 
-	// -- The trace: one row per transition, the red close has none -----------
-	want := []chainE2EStep{
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionSend, to: chain.MemberPlanner},
-		{member: plannerName, event: chain.EventPlannerClosed, action: chain.ActionSend, to: chain.MemberBuilder},
-		{member: builderName, event: chain.EventBuilderClosed, action: chain.ActionSend, to: chain.MemberReviewer},
-		{member: reviewerName, event: chain.EventReviewerClosed, action: chain.ActionFinish},
+	// -- The trace: one row per transition -----------------------------------
+	// The engine writes a row per transition, the red check along with the
+	// rest: the red gate routes to the repair step, and the repair's own green
+	// check seeds the reviewer. The pattern pins the send sequence per step and
+	// member, the one repair the red gate bought, and the verdicts the reviewer
+	// read. A check's row carries no round of its own: it names the run it
+	// answered.
+	want := []chainFlowStep{
+		{step: "build", round: 1, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionRunCheck, to: "check", plan: 1},
+		{step: "check", round: 0, member: builderName, event: workflow.EventCheckClosed, action: workflow.ActionSend, to: "repair", plan: 1},
+		{step: "repair", round: 2, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionRunCheck, to: "check", plan: 1},
+		{step: "check", round: 0, member: reviewerName, event: workflow.EventCheckClosed, action: workflow.ActionSend, to: "review", plan: 1},
+		{step: "review", round: 1, member: plannerName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "correct", plan: 1},
+		{step: "correct", round: 1, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionSend, to: "build-fix", plan: 1},
+		{step: "build-fix", round: 3, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionRunCheck, to: "check", plan: 1},
+		{step: "check", round: 0, member: reviewerName, event: workflow.EventCheckClosed, action: workflow.ActionSend, to: "review", plan: 1},
+		{step: "review", round: 2, member: builderName, event: workflow.EventStepClosed, action: workflow.ActionFinish, to: "", plan: 1},
 	}
 	doc, err := relevo.ChainTrace(ctx, rt, chainRemoteName)
 	if err != nil {
 		t.Fatalf("ChainTrace: %v", err)
 	}
 	if len(doc.Events) != len(want) {
-		t.Fatalf("the trace has %d rows, want %d -- the red close writes no row:\n%s", len(doc.Events), len(want), relevo.RenderTrace(doc))
+		t.Fatalf("the trace has %d rows, want %d -- one per transition:\n%s", len(doc.Events), len(want), relevo.RenderTrace(doc))
 	}
 	for i, step := range want {
 		got := doc.Events[i]
 		if got.Seq != i+1 {
 			t.Errorf("trace row %d has seq %d, want %d", i, got.Seq, i+1)
 		}
+		if got.Step != step.step {
+			t.Errorf("trace row %d step = %q, want %q", i, got.Step, step.step)
+		}
 		if got.Member != step.member {
-			t.Errorf("trace row %d closed %s, want %s", i, got.Member, step.member)
+			t.Errorf("trace row %d sends to %s, want %s", i, got.Member, step.member)
 		}
-		if got.Event.Kind != step.event {
-			t.Errorf("trace row %d event = %q, want %q", i, got.Event.Kind, step.event)
+		if got.Flow == nil || got.Flow.Kind != step.event {
+			t.Errorf("trace row %d event = %+v, want %q", i, got.Flow, step.event)
 		}
-		if got.Action.Kind != step.action {
-			t.Errorf("trace row %d action = %q, want %q", i, got.Action.Kind, step.action)
+		if got.FlowAction == nil || got.FlowAction.Kind != step.action {
+			t.Errorf("trace row %d action = %+v, want %q", i, got.FlowAction, step.action)
 		}
-		if step.to != "" && got.Action.Member != step.to {
-			t.Errorf("trace row %d action sends to %q, want %q", i, got.Action.Member, step.to)
+		if step.to != "" && got.FlowAction.Step != step.to {
+			t.Errorf("trace row %d action sends to step %q, want %q", i, got.FlowAction.Step, step.to)
+		}
+		if got.Round != step.round {
+			t.Errorf("trace row %d round = %d, want %d", i, got.Round, step.round)
+		}
+		if got.Plan != step.plan {
+			t.Errorf("trace row %d plan = %d, want %d: each row keeps the plan it was written on", i, got.Plan, step.plan)
 		}
 	}
-	// The red close (builder round 1) wrote no row: the first builder row is
-	// round 2's, and no row names round 1.
-	if doc.Events[0].Event.Kind != chain.EventBuilderClosed || doc.Events[0].Round != 2 {
-		t.Errorf("the first trace row is %s round %d, want builder_closed round 2: the red close must write no row",
-			doc.Events[0].Event.Kind, doc.Events[0].Round)
+	// The red gate bought exactly one repair step: the red check routes to
+	// repair, and no later row names another repair.
+	if got := doc.Events[1].FlowAction.Step; got != "repair" {
+		t.Errorf("the red check routes to step %q, want repair", got)
 	}
+	var repairs int
 	for _, e := range doc.Events {
-		if e.Member == builderName && e.Round == 1 {
-			t.Errorf("a trace row names the red builder round 1: %+v", e)
+		if e.Step == "repair" {
+			repairs++
 		}
 	}
-	if got := doc.Events[1].Event.Verdict; got != chain.VerdictChanges {
+	if repairs != 1 {
+		t.Errorf("the trace names %d repair rows, want exactly one: the red gate buys one repair", repairs)
+	}
+	if got := doc.Events[4].Flow.Outcomes["verdict"]; got != "changes" {
 		t.Errorf("the reviewer's first verdict = %q, want changes: the reviewer's first round asks for a correction", got)
 	}
-	if got := doc.Events[4].Event.Verdict; got != chain.VerdictPass {
+	if got := doc.Events[8].Flow.Outcomes["verdict"]; got != "pass" {
 		t.Errorf("the reviewer's final verdict = %q, want pass", got)
 	}
 
@@ -475,6 +498,12 @@ func newChainRemoteClient(t *testing.T, url, fingerprint, home string) (relevo.R
 			Placement:   []string{chainRemoteLocal},
 			Shape:       &reader,
 			Definitions: map[string]roles.DefRow{"claude": {Agent: "architect"}},
+		},
+		"security": {
+			Candidates:  []string{chainRemoteToken},
+			Placement:   []string{chainRemoteLocal},
+			Shape:       &reader,
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "security-reviewer"}},
 		},
 	}
 	registry, err := roles.Build(&roles.File{Rows: rows}, candidates, pol)

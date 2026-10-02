@@ -13,8 +13,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainPlanDiff captures the plan's cumulative diff -- the plan-start commit to
@@ -73,7 +75,7 @@ func chainBranchDiff(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, bu
 // chain holds, in plan order, made seed-openable by chainSeedInput, and the copy
 // for the current plan. A decode error leaves both empty, as the plan block did
 // before it moved here.
-func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *chain.SeedView) {
+func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *workflow.SeedView) {
 	paths, err := chainPlanPaths(c)
 	if err != nil {
 		return
@@ -86,46 +88,58 @@ func chainSeedPlanView(rt Runtime, c db.ChainRow, plan int, v *chain.SeedView) {
 	}
 }
 
-// chainReaderVerdict reads a reviewer close's verdict. The output body is the
-// first attempt; when it carries no key the round's stream is rescanned newest
-// assistant message first, so a recap the runner wrote after its verdict does
-// not hide it. An absent or unreadable stream, and a message that parses to
-// nothing, all fall through to no verdict, which halts the chain as before.
-func chainReaderVerdict(rt Runtime, b store.Binding, body []byte) chain.Verdict {
-	if v := chain.ParseVerdict(body); v != "" {
-		return v
-	}
-	stream, err := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
-	if err != nil {
-		return ""
-	}
-	texts := transcript.Texts(lastStreamKind(b), stream)
-	for i := len(texts) - 1; i >= 0; i-- {
-		if v := chain.ParseVerdict([]byte(texts[i])); v != "" {
-			return v
+// chainOutcomeBodies orders a closing round's bodies for the outcome parse: the
+// in-memory body first, then the round's stream newest assistant message first.
+// round names the round that closed, which is not always the binding's own: a
+// close advances the binding before the chain moves.
+func chainOutcomeBodies(rt Runtime, b store.Binding, round int, body []byte) [][]byte {
+	bodies := [][]byte{body}
+	if stream, err := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, round)); err == nil {
+		texts := transcript.Texts(lastStreamKind(b), stream)
+		for i := len(texts) - 1; i >= 0; i-- {
+			bodies = append(bodies, []byte(texts[i]))
 		}
 	}
-	return ""
+	return bodies
 }
 
-// chainReaderFindings is chainReaderVerdict's twin for a security close's
-// finding count: the output body first, then the round's stream newest message
-// first. A miss is no count, which halts the chain as before.
-func chainReaderFindings(rt Runtime, b store.Binding, body []byte) (int, bool) {
-	if n, ok := chain.ParseFindings(body); ok {
-		return n, true
+// chainParseOutcomes reads the declared outcomes of a chain reader round, trying
+// the output body first, then the round's stream newest assistant message first.
+// round names the round that closed: a close advances the binding before the
+// chain moves, so the binding's own round is no longer the closed one.
+func chainParseOutcomes(rt Runtime, b store.Binding, round int, body []byte, outputs workflow.Outputs) (map[string]string, string) {
+	return workflow.ParseOutcomes(outputs, chainOutcomeBodies(rt, b, round, body)...)
+}
+
+// chainReaderStatus reads the relevo status a reader's own block carries, from
+// the same block its outcomes were parsed from: the newest body whose block
+// names a declared outcome. A block that carries outcomes but no status line
+// reads done; a status the tail contract does not admit reads done too.
+func chainReaderStatus(bodies [][]byte, outputs workflow.Outputs) string {
+	for _, body := range bodies {
+		if !blockCarriesOutcome(body, outputs) {
+			continue
+		}
+		if s, ok := reporttail.BlockValue(body, "status"); ok {
+			switch s {
+			case reporttail.OutcomeDone, reporttail.OutcomeHalted, reporttail.OutcomeBlocked, reporttail.OutcomeDeferred:
+				return s
+			}
+		}
+		return reporttail.OutcomeDone
 	}
-	stream, err := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
-	if err != nil {
-		return 0, false
-	}
-	texts := transcript.Texts(lastStreamKind(b), stream)
-	for i := len(texts) - 1; i >= 0; i-- {
-		if n, ok := chain.ParseFindings([]byte(texts[i])); ok {
-			return n, true
+	return reporttail.OutcomeDone
+}
+
+// blockCarriesOutcome reports whether a body's relevo block names any declared
+// outcome key.
+func blockCarriesOutcome(body []byte, outputs workflow.Outputs) bool {
+	for _, key := range outputs.Outcomes() {
+		if _, ok := reporttail.BlockValue(body, key); ok {
+			return true
 		}
 	}
-	return 0, false
+	return false
 }
 
 // chainBuilderPlanView is the plan view the reviewer and correction seeds carry:
@@ -137,7 +151,7 @@ func chainReaderFindings(rt Runtime, b store.Binding, body []byte) (int, bool) {
 // start/advance send hands the builder that copy, while a correction, a repair
 // and a human round carry other bytes. A closing round that is the plan's first
 // (or a chain whose copy cannot be read) gets no kind and no list.
-func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, builder string, builderRound int) (kind string, on int, rounds []chain.SeedRound, diffFrom string) {
+func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, builder string, builderRound int) (kind string, on int, rounds []workflow.SeedRound, diffFrom string) {
 	diffFrom = chainPlanDiffFrom(c, s)
 	paths, err := chainPlanPaths(c)
 	if err != nil || s.Plan < 1 || s.Plan > len(paths) {
@@ -164,7 +178,7 @@ func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State
 	kind = chainBuilderRoundKind(rt, tx, c, s, builder, builderRound)
 	on = builderRound - 1
 	for r := first; r <= builderRound; r++ {
-		rounds = append(rounds, chain.SeedRound{
+		rounds = append(rounds, workflow.SeedRound{
 			Round:      r,
 			PromptPath: chainSeedInput(rt, c, rt.Store.PromptPath(builder, r)),
 			ReportPath: chainSeedInput(rt, c, rt.Store.ReportPath(builder, r)),
@@ -191,22 +205,27 @@ func chainPlanDiffFrom(c db.ChainRow, s chain.State) string {
 // its prompt entry says so, else a correction or fix-plan round when it ran the
 // planner's newest plan, else a round a human sent.
 func chainBuilderRoundKind(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, builder string, builderRound int) string {
-	if chainBuilderRoundIsRepair(tx, builder, builderRound) {
-		return chain.BuilderRoundRepair
+	if chainBuilderRoundIsRepair(rt, tx, builder, builderRound) {
+		return workflow.BuilderRoundRepair
 	}
 	if chainBuilderRanThePlannerPlan(rt, tx, c, builder, builderRound) {
 		if s.Phase == chain.PhaseSecurity {
-			return chain.BuilderRoundFix
+			return workflow.BuilderRoundFix
 		}
-		return chain.BuilderRoundCorrection
+		return workflow.BuilderRoundCorrection
 	}
-	return chain.BuilderRoundHuman
+	return workflow.BuilderRoundHuman
 }
 
 // chainBuilderRoundIsRepair reports whether the builder's prompt entry for the
 // round carries a repair note: the repair round is the only send that writes
 // one.
-func chainBuilderRoundIsRepair(tx *store.Tx, builder string, round int) bool {
+func chainBuilderRoundIsRepair(rt Runtime, tx *store.Tx, builder string, round int) bool {
+	// An engine chain's repair send writes the repair text but not a legacy
+	// "repair k/M" note, so the staged prompt itself identifies the round.
+	if staged, err := rt.Store.ReadFile(rt.Store.PromptPath(builder, round)); err == nil && isRepairPlan(string(staged)) {
+		return true
+	}
 	entries, err := tx.ReadLog(builder)
 	if err != nil {
 		return false

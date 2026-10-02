@@ -38,7 +38,11 @@ func enter(def Definition, s State, id string, walked int) (State, []Action) {
 		return halt(s, id, id+": not a step")
 	}
 	s = ensureMaps(s)
-	s = resetVisits(def, s, id)
+	// A for-each resets the scopes it names only when it advances, so its
+	// entry does not reset them; its next edge does, further down.
+	if kindOf(step) != "for-each" {
+		s = resetVisits(def, s, id)
+	}
 	if step.Budget != nil {
 		var then Target
 		if s, then = applyBudget(def, s, id, step.Budget); then.Kind != "" {
@@ -82,7 +86,8 @@ func ensureMaps(s State) State {
 
 // resetVisits clears the count of every budget whose per names the step being
 // entered, so a fresh scope starts its count again. A per: chain budget never
-// resets.
+// resets. A for-each resets only when it advances: its empty edge leaves the
+// counts as they were, so the last scope's count survives the walk's end.
 func resetVisits(def Definition, s State, id string) State {
 	for _, b := range sortedKeys(def.Steps) {
 		budget := def.Steps[b].Budget
@@ -101,10 +106,12 @@ func (p Per) names(id string) bool {
 }
 
 // applyBudget counts a step's visit and returns its then target once the count
-// passes the rendered max. The target is zero when the step is still under.
+// passes the rendered max. A repeated-red event counts as over budget, so the
+// same failure the last repair already saw buys no second repair. The target is
+// zero when the step is still under.
 func applyBudget(def Definition, s State, id string, b *Budget) (State, Target) {
 	s.Visits[id]++
-	if s.Visits[id] > renderLimit(def, b.Max) {
+	if s.repeatRed || s.Visits[id] > renderLimit(def, b.Max) {
 		return s, b.Then
 	}
 	return s, Target{}
@@ -156,10 +163,13 @@ func walkForEach(def Definition, s State, id string, step Step, walked int) (Sta
 	it := forEachIter(def, s, id, step)
 	it.Index++
 	if it.Index < len(it.Items) {
+		it.Done = false
 		s.Iter[id] = it
+		s = resetVisits(def, s, id)
 		return controlRoute(def, s, id, step.On, "next", walked)
 	}
 	it.Index = -1
+	it.Done = true
 	s.Iter[id] = it
 	return controlRoute(def, s, id, step.On, "empty", walked)
 }

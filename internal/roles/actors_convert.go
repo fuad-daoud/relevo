@@ -59,10 +59,19 @@ func rowFor(name string, actor Actor, agents map[string]AgentEntry) (Row, error)
 		return Row{}, fmt.Errorf("actor %s: scope is only for a writer agent: %w", name, ErrBadRoles)
 	}
 
+	outputs := EffectiveOutputs(actor.Agent, actor.Outputs)
+	if shape == "writer" && len(outputs.Artifacts()) > 0 {
+		return Row{}, fmt.Errorf("actor %s: a writer actor may not declare artifacts: %w", name, ErrBadRoles)
+	}
+	if shape == "reader" && len(outputs.Artifacts()) > 1 {
+		return Row{}, fmt.Errorf("actor %s: a reader actor may declare at most one artifact: %w", name, ErrBadRoles)
+	}
+
 	rowShape := shape
 	row := Row{
 		Shape:       &rowShape,
 		Definitions: defs,
+		Outputs:     outputs,
 	}
 	row.Placement = append([]string(nil), actor.Placement...)
 	for _, e := range actor.Candidates {

@@ -158,6 +158,9 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// swept: a member's record can be gone while the chain row says running,
 	// and then there is no binding left to reconcile it on.
 	d.safely("chain sweep", func() { tickChains(ctx, d.rt) })
+	// A check a workflow chain started is advanced here, next to the sweep: its
+	// end feeds check_closed through the same driver, under the same lock.
+	d.safely("chain check sweep", func() { tickChainChecks(ctx, d.rt) })
 
 	if len(bindings) == 0 {
 		return nil

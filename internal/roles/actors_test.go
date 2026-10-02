@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // validSource is a minimal valid agentsrc single source named my-exec.
@@ -299,5 +301,47 @@ func TestEncodeAgentsSortedKeys(t *testing.T) {
 	}
 	if !strings.Contains(s, "\n  ") {
 		t.Errorf("output must be two-space indented: %q", s)
+	}
+}
+
+func TestActorOutputsParseAndValidate(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+	  "reviewer": {
+	    "agent": "reviewer",
+	    "outputs": {
+	      "verdict": {"one-of": ["pass", "changes"]},
+	      "findings": "count",
+	      "report": "artifact"
+	    }
+	  }
+	}`)
+
+	actors, warnings, err := ParseActors(body)
+	if err != nil {
+		t.Fatalf("ParseActors: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none", warnings)
+	}
+
+	wantOutputs := workflow.Outputs{
+		"verdict":  {Kind: workflow.OutputOneOf, Values: []string{"pass", "changes"}},
+		"findings": {Kind: workflow.OutputCount},
+		"report":   {Kind: workflow.OutputArtifact},
+	}
+	if !reflect.DeepEqual(actors["reviewer"].Outputs, wantOutputs) {
+		t.Errorf("reviewer.outputs = %+v, want %+v", actors["reviewer"].Outputs, wantOutputs)
+	}
+
+	badKey := []byte(`{"reviewer": {"agent": "reviewer", "outputs": {"Bad_Key": "count"}}}`)
+	if _, _, err := ParseActors(badKey); err == nil || !errors.Is(err, ErrBadActors) {
+		t.Errorf("ParseActors(bad key) error = %v, want wrapping ErrBadActors", err)
+	}
+
+	badFormat := []byte(`{"reviewer": {"agent": "reviewer", "outputs": {"verdict": "unknown"}}}`)
+	if _, _, err := ParseActors(badFormat); err == nil || !errors.Is(err, ErrBadActors) {
+		t.Errorf("ParseActors(bad format) error = %v, want wrapping ErrBadActors", err)
 	}
 }

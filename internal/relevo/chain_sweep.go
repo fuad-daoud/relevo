@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // tickChains sweeps every running chain once per tick. A member whose record
@@ -66,41 +67,52 @@ func chainSweep(ctx context.Context, rt Runtime, tx *store.Tx, name string) erro
 	if c.Status != string(chain.StatusRunning) {
 		return nil
 	}
+	return chainSweepFlow(ctx, rt, tx, c)
+}
 
-	parts := []string{chain.MemberBuilder, chain.MemberReviewer, chain.MemberPlanner, chain.MemberSecurity}
-	for _, part := range parts {
-		member := chainMemberName(c, part)
-		if member == "" {
-			continue
+// chainSweepFlow decides a workflow chain: it walks chain_member in creation
+// order, and the first member whose record is gone, or that sits NEEDS YOU,
+// ends the chain with that member's reason. A chain member is the binding a
+// step's actor runs on, so the workflow's members are read from chain_member,
+// not from the four legacy columns.
+func chainSweepFlow(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
+	rows, err := chainFlowMembers(tx, c)
+	if err != nil {
+		return err
+	}
+	for _, m := range rows {
+		mb, lerr := tx.Load(m.Binding)
+		if errors.Is(lerr, store.ErrNotFound) {
+			return chainSweepFlowHalt(ctx, rt, tx, c, fmt.Sprintf("member %s gone", m.Binding))
 		}
-		m, err := tx.Load(member)
-		if errors.Is(err, store.ErrNotFound) {
-			return chainSweepHalt(ctx, rt, tx, c, part, member, fmt.Sprintf("member %s gone", member))
+		if lerr != nil {
+			return lerr
 		}
-		if err != nil {
-			return err
-		}
-		if m.State == store.StateNeedsYou {
-			return chainSweepHalt(ctx, rt, tx, c, part, member, m.Halt)
+		if mb.State == store.StateNeedsYou {
+			return chainSweepFlowHalt(ctx, rt, tx, c, mb.Halt)
 		}
 	}
 	return nil
 }
 
-// chainSweepHalt ends a chain the sweep found unable to move: the status, one
-// trace row and the one end delivery, all through chainTerminal. The halt
-// status is written under the same lock the decision was made in, so a second
-// tick re-reads a terminal chain and writes nothing more.
-func chainSweepHalt(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, part, member, reason string) error {
-	before, err := chainStateOf(c)
+// chainSweepFlowHalt ends a workflow chain the sweep found unable to move: the
+// engine's halt state, one trace row and the one end delivery, through the
+// workflow terminal so the chain's own payload and resume hint are written. The
+// step named is the one the engine is on, which is where the chain stopped.
+func chainSweepFlowHalt(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, reason string) error {
+	def, err := chainWorkflowDef(c)
 	if err != nil {
 		return err
 	}
+	before, err := chainWorkflowState(c)
+	if err != nil {
+		return err
+	}
+	step := flowTerminalStep(before)
 	next := before
-	next.Status = chain.StatusHalted
+	next.Status = workflow.StatusHalted
 	next.Reason = reason
-
-	ev := chain.Event{Kind: chain.EventNeedsYou, Member: part, Round: before.Awaiting.Round, Reason: reason}
-	act := chain.Action{Kind: chain.ActionHalt, Reason: reason}
-	return chainTerminal(ctx, rt, tx, c, before, next, ev, act, member)
+	ev := workflow.Event{Kind: workflow.EventNeedsYou, Step: step, Reason: reason}
+	act := workflow.Action{Kind: workflow.ActionHalt, Step: step, Reason: reason}
+	return chainTerminalWF(ctx, rt, tx, c, def, before, next, ev, act)
 }

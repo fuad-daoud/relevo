@@ -30,7 +30,11 @@ const configUsage = `usage: relevo config [--probe [token...]]
        relevo config server key
        relevo config secret set <typesafe|client.key>
        relevo config secret rm <typesafe|client.key>
-       relevo config secret list`
+       relevo config secret list
+       relevo config workflow add <file> [--replace] [--force]
+       relevo config workflow rm <name>
+       relevo config workflow show <name> [--json]
+       relevo config workflow edit <name>`
 
 // cmdConfig is the one verb that replaced init, candidates, policy, roles,
 // agent, client and servers (§4.1). A bare invocation, or one whose first
@@ -68,6 +72,8 @@ func cmdConfig(args []string) error {
 		return configServer(args[1:])
 	case "secret":
 		return configSecret(args[1:])
+	case "workflow":
+		return configWorkflow(args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprintln(os.Stderr, configUsage)
 		return nil
@@ -138,5 +144,7 @@ func configShow(args []string) error {
 	fmt.Print(formatPolicy(rt))
 	fmt.Println("candidates")
 	fmt.Print(formatCandidates(rt))
+	fmt.Println("workflows")
+	fmt.Print(formatWorkflows(L))
 	return nil
 }

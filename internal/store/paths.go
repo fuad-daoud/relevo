@@ -234,6 +234,31 @@ func (s *Store) GateLogPath(name string, round int) string {
 	return s.roundFile(name, round, "gate", ".log")
 }
 
+// CheckLogPath is a round_file key for one chain check run's log, sealed at
+// the check's end. The member is the chain's writer and round its newest
+// closed round; the run number keeps a re-run from overwriting an earlier
+// log. It is read with Store.ReadFile.
+func (s *Store) CheckLogPath(name string, round, run int) string {
+	return s.roundFile(name, round, fmt.Sprintf("check-%03d", run), ".log")
+}
+
+// CheckLogTarget resolves a check log path built by CheckLogPath back to the
+// member and round it was keyed with, so a seal reuses the round the row was
+// written under instead of recomputing one. It uses the store's own round-file
+// rules, so a check log path always resolves; ok is false for a path outside
+// the state root or a name that carries no round.
+func (s *Store) CheckLogTarget(path string) (member string, round int, ok bool) {
+	member, name, ok := s.bindingRelOf(path)
+	if !ok {
+		return "", 0, false
+	}
+	round, ok = roundOfFile(name)
+	if !ok {
+		return "", 0, false
+	}
+	return member, round, true
+}
+
 func (s *Store) QuestionPath(name string, round int) string {
 	return s.roundFile(name, round, "question", ".md")
 }
@@ -353,6 +378,12 @@ func (s *Store) ChainDir(name string) string {
 // stores, so a later edit of a source plan changes nothing.
 func (s *Store) ChainPlanPath(name string, i int) string {
 	return filepath.Join(s.ChainDir(name), fmt.Sprintf("plan-%d.md", i))
+}
+
+// ChainTaskPath is a chain's copy of its task input: <chainDir>/task.md,
+// beside the plan copies.
+func (s *Store) ChainTaskPath(name string) string {
+	return filepath.Join(s.ChainDir(name), "task.md")
 }
 
 // ChainInputDir is where a chain keeps the copies of the round files its seeds

@@ -36,6 +36,11 @@ func chainRows() map[string]roles.Row {
 		"assistant": {
 			Shape:       ptr("reader"),
 			Candidates:  []string{testClaudeRef},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "reviewer"}},
+		},
+		"researcher": {
+			Shape:       ptr("reader"),
+			Candidates:  []string{testClaudeRef},
 			Definitions: map[string]roles.DefRow{"claude": {Agent: "researcher"}},
 		},
 	}
@@ -218,8 +223,8 @@ func TestChainStartRefusesAnEmptyOrUnreadablePlan(t *testing.T) {
 		_, err := ChainStart(context.Background(), rt, ChainOptions{
 			Name: "shop", Plans: []string{}, Feature: "auth", MasterMindID: testMasterMindName,
 		})
-		if err == nil || !strings.Contains(err.Error(), "--plan") {
-			t.Fatalf("err = %v, want a refusal naming --plan", err)
+		if err == nil || !strings.Contains(err.Error(), "plans is required") {
+			t.Fatalf("err = %v, want the workflow's missing-plans refusal", err)
 		}
 		if !errors.Is(err, ErrRefused) {
 			t.Errorf("err = %v, want errors.Is(err, ErrRefused): a bad argument is refused, not internal", err)
@@ -360,7 +365,8 @@ func TestChainStartRefusesAMissingBase(t *testing.T) {
 }
 
 // TestChainStartRefusesAWriterReviewer pins the reviewer's shape: a writer
-// actor cannot fill the part.
+// actor cannot fill the review part, so the default workflow refuses it against
+// the actor's declared outputs.
 func TestChainStartRefusesAWriterReviewer(t *testing.T) {
 	t.Parallel()
 
@@ -369,14 +375,18 @@ func TestChainStartRefusesAWriterReviewer(t *testing.T) {
 		Name: "shop", Plans: []string{writePlan(t, "p")}, Feature: "auth",
 		ReviewerActor: "builder", MasterMindID: testMasterMindName,
 	})
-	if err == nil || !strings.Contains(err.Error(), "chain reviewer actor") {
-		t.Fatalf("err = %v, want a refusal naming the reviewer actor", err)
+	if err == nil || !strings.Contains(err.Error(), "rule 3") {
+		t.Fatalf("err = %v, want the workflow's reviewer refusal", err)
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, ErrRefused): a bad reviewer actor is refused, not internal", err)
 	}
 	assertNothingCreated(t, rt, fg, "shop")
 }
 
-// TestChainStartRefusesAReaderBuilder pins the builder's shape: a reader actor
-// cannot fill the part.
+// TestChainStartRefusesAReaderBuilder pins the builder's shape: the builder
+// param names the member that owns the chain's tree, so a reader there is
+// refused rather than left as the chain's writer.
 func TestChainStartRefusesAReaderBuilder(t *testing.T) {
 	t.Parallel()
 
@@ -613,26 +623,23 @@ func TestChainStartResolvesTheBuilderCheck(t *testing.T) {
 	})
 }
 
-// assertBuilderCheck pins the builder's check on the stored setting, the
-// member and the result, and that no reader holds a gate.
+// assertBuilderCheck pins the resolved gate on the stored setting and the
+// workflow's gate param, and that a local workflow writer and its readers carry
+// no member gate: a workflow chain runs its checks as steps.
 func assertBuilderCheck(t *testing.T, rt Runtime, res ChainResult, want string) {
 	t.Helper()
 	if set := storedSettings(t, res.Chain); set.Gate != want {
 		t.Errorf("settings gate = %q, want %q", set.Gate, want)
 	}
-	if res.Check != want {
-		t.Errorf("result check = %q, want %q", res.Check, want)
+	if got := storedFlowParam(t, res.Chain, "gate"); got != want {
+		t.Errorf("workflow gate param = %q, want %q", got, want)
 	}
-	builder := memberByName(t, res.Members, "shop")
-	if builder.Gate != want {
-		t.Errorf("builder member gate = %q, want %q", builder.Gate, want)
+	if res.Check != "" {
+		t.Errorf("result check = %q, want empty: a workflow chain runs its checks as steps", res.Check)
 	}
 	for _, m := range res.Members {
-		if m.Name == "shop" {
-			continue
-		}
 		if m.Gate != "" || m.Regate != 0 {
-			t.Errorf("reader %s carries gate %q regate %d, want none", m.Name, m.Gate, m.Regate)
+			t.Errorf("member %s carries gate %q regate %d, want none", m.Name, m.Gate, m.Regate)
 		}
 	}
 }

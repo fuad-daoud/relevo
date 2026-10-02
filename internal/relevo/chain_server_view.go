@@ -45,7 +45,11 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 	if v, gerr := chainGetView(ctx, rt, c); gerr != nil {
 		row.Detail = fmt.Sprintf("server %s unreachable: %v", c.Server, gerr)
 	} else {
-		row = viewChainRow(rt.Store, chainRowFromView(c, v, rt.Now().UTC()))
+		mirrored, merr := chainRowFromView(c, v, rt.Now().UTC())
+		if merr != nil {
+			return view.Report{}, merr
+		}
+		row = viewChainRow(rt.Store, mirrored)
 	}
 
 	rows := []view.BindingStatus{row}
@@ -75,18 +79,14 @@ func chainServerTrace(ctx context.Context, rt Runtime, c db.ChainRow) (ChainTrac
 		Plans: chainIntOr(v.Plans, c.Plans), Corrections: v.Corrections,
 	}
 	for _, r := range v.Trace {
-		ev, err := chain.DecodeEvent(r.Event)
+		// A mirror whose row carries a workflow may still hold rows the server
+		// wrote before its conversion: decode each row on its own, exactly as a
+		// local trace does.
+		ev, err := chainTraceEvent(r.Seq, r.TS, r.Phase, r.Step, r.Member, r.Round, r.Plan, r.Event, r.Action, r.Reason)
 		if err != nil {
 			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, err)
 		}
-		act, err := chain.DecodeAction(r.Action)
-		if err != nil {
-			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, err)
-		}
-		doc.Events = append(doc.Events, ChainTraceEvent{
-			Seq: r.Seq, TS: r.TS, Phase: r.Phase, Step: r.Step,
-			Member: r.Member, Round: r.Round, Plan: r.Plan, Event: ev, Action: act, Reason: r.Reason,
-		})
+		doc.Events = append(doc.Events, ev)
 	}
 	return doc, nil
 }

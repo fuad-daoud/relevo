@@ -387,7 +387,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	// Only a writer is refused here: a reader may share a writer's tree
 	// (A5 §3), so the refusal applies between two writers only.
-	if shape == store.ShapeWriter && found && other.Name != opts.Name && other.State != store.StateDone && other.Shape == store.ShapeWriter {
+	if shape == store.ShapeWriter && found && other.Name != opts.Name && other.State != store.StateDone && other.Shape == store.ShapeWriter && !rt.Store.SameChain(opts.Name, other.Name) {
 		rollback()
 		return AddResult{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
 			cwd, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)

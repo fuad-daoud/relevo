@@ -475,26 +475,18 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// The chain event this close produces, built from the in-memory body
 	// before the reader output is stripped below (a re-read there would find
 	// no block). It names the closing member and the round that closed.
-	var chainEvent chain.Event
+	var closeWF *chainCloseWF
 	if chainErr == nil {
-		if part := chainPartOf(chainRow, b.Name); part != "" {
-			chainEvent = chainEventFromClose(rt, part, b, body, outcome, gate, stopped, tail, note)
-		}
+		closeWF = &chainCloseWF{Body: body, Path: path, Outcome: outcome, Note: note, Stopped: stopped, Round: closedRound}
 	}
 
-	// A chain reviewer or security member's artifact is relevo's own, and its
-	// block is stripped before the tail parse above: that parse reads
-	// unstructured while the chain just parsed the verdict or finding count
-	// from the stream. The block the chain parsed is the round's real end, so
-	// the member's own outcome is done, not unstructured.
-	switch chainEvent.Kind {
-	case chain.EventReviewerClosed:
-		if chainEvent.Verdict != "" {
-			outcome = reporttail.OutcomeDone
-		}
-	case chain.EventSecurityClosed:
-		if chainEvent.FindingsGiven {
-			outcome = reporttail.OutcomeDone
+	// A chain reader member's saved output has its block stripped before the
+	// tail parse above, so that parse reads unstructured while the chain reads
+	// the member's real status from its block-carrying message. The member's
+	// recorded outcome is that status.
+	if closeWF != nil && b.Shape == store.ShapeReader {
+		if st := chainReaderCloseOutcome(rt, tx, b, closedRound, body); st != "" {
+			outcome = st
 		}
 	}
 
@@ -747,12 +739,12 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// member, halt, stop, finish) runs on the chain's own sender in this same
 	// critical section. A close that did not advance the chain writes no
 	// trace row.
-	if chainEvent.Kind != "" {
+	if closeWF != nil {
 		// chainApply returns the binding its action wrote: a remote member's
 		// staged repair carries the chain's own bookkeeping (RepairCount,
 		// LastGateSig, the staged round's baseline head), and the caller saves
 		// what it returns.
-		next, cerr := chainApply(ctx, rt, tx, b, chainEvent, gate)
+		next, cerr := chainApply(ctx, rt, tx, b, closeWF)
 		b = next
 		if cerr != nil {
 			return b, cerr

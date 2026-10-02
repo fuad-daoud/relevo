@@ -112,8 +112,8 @@ func WaitChain(ctx context.Context, rt Runtime, name string, timeout, interval t
 // reached and the corrections it spent. A halt carries its reason. Unless peek
 // is set, the chain's end payload is pulled off whichever member holds it -- the
 // first of builder, reviewer, planner and security whose record exists, the
-// same order chainTerminal queued it in; a delivery failure is returned in
-// DeliverErr and never changes the exit.
+// same order the terminal transition queued it in; a delivery failure is
+// returned in DeliverErr and never changes the exit.
 func waitChainEnd(ctx context.Context, rt Runtime, c db.ChainRow, peek bool) (WaitResult, error) {
 	res := WaitResult{Done: true, Line: chainEndLine(c)}
 	if c.Status == string(chain.StatusDone) {
@@ -127,7 +127,7 @@ func waitChainEnd(ctx context.Context, rt Runtime, c db.ChainRow, peek bool) (Wa
 	// A member whose record is gone has no log, so PullPendingThrough finds
 	// nothing there and confirms nothing: the walk reaches the surviving
 	// member that carries the delivery.
-	for _, member := range chainMembersOf(c) {
+	for _, member := range chainReadMembers(rt.Store, c) {
 		text, found, err := delivery.PullPendingThrough(ctx, rt.Store, member, "wait", 0)
 		if err != nil {
 			res.DeliverErr = err
@@ -145,7 +145,8 @@ func waitChainEnd(ctx context.Context, rt Runtime, c db.ChainRow, peek bool) (Wa
 // running, in the shape a chain row uses: its name and status, the plan it
 // reached and the correction rounds it spent, plus the halt reason.
 func chainEndLine(c db.ChainRow) string {
-	line := fmt.Sprintf("chain %s: %s · plan %d/%d · %d corrections", c.Name, c.Status, c.Plan, c.Plans, c.Corrections)
+	lf := chainStoredFactsOf(c)
+	line := fmt.Sprintf("chain %s: %s · plan %d/%d · %d corrections", c.Name, c.Status, lf.Plan, lf.Plans, lf.Corrections)
 	if c.Reason != "" {
 		line += " · " + c.Reason
 	}

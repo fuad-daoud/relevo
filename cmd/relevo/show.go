@@ -22,6 +22,7 @@ const showUsage = `usage: relevo show <name> [--round N] [--prompt|--report|--di
        relevo show <name> --diff|--drift [--stat] [--anchors]
        relevo show <name> --log [--follow] [--after N]
        relevo show <chain> --trace [--json]
+       relevo show <chain> --workflow [--json]
        relevo show <name> --owner <label|id> [--log] [--state DIR]`
 
 // flagGiven reports whether the named flag was set on the command line. It is
@@ -44,6 +45,7 @@ type showSectionArgs struct {
 	log, transcript, gate       bool
 	output, artifacts           bool
 	trace                       bool
+	workflow                    bool
 	findingsID                  string
 	artifactRel                 string
 }
@@ -70,6 +72,7 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 		{a.output, relevo.ShowOutput},
 		{a.artifacts || a.artifactRel != "", relevo.ShowArtifacts},
 		{a.trace, relevo.ShowTrace},
+		{a.workflow, relevo.ShowWorkflow},
 	}
 	var chosen relevo.ShowSection
 	n := 0
@@ -85,7 +88,7 @@ func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 	case 1:
 		return chosen, nil
 	default:
-		return "", fmt.Errorf("only one of --prompt, --report, --diff, --drift, --log, --transcript, --gate, --findings, --output, --artifacts, --trace may be given")
+		return "", fmt.Errorf("only one of --prompt, --report, --diff, --drift, --log, --transcript, --gate, --findings, --output, --artifacts, --trace, --workflow may be given")
 	}
 }
 
@@ -102,6 +105,7 @@ type showFlagValues struct {
 	output      *bool
 	artifacts   *bool
 	trace       *bool
+	workflow    *bool
 	artifact    *string
 	findings    *string
 	stat        *bool
@@ -129,6 +133,7 @@ func showFlagSet(fs *flag.FlagSet) *showFlagValues {
 	v.output = fs.Bool("output", false, "show the round's output file (a reader's <label>.md)")
 	v.artifacts = fs.Bool("artifacts", false, "show the round's artifact files")
 	v.trace = fs.Bool("trace", false, "on a chain: show its ordered trace")
+	v.workflow = fs.Bool("workflow", false, "on a chain: show the workflow it runs, as JSON")
 	v.artifact = fs.String("artifact", "", "show one artifact's bytes, raw: --artifact <rel>")
 	v.findings = fs.String("findings", "", "show a consult's findings: --findings <id>")
 	v.stat = fs.Bool("stat", false, "with --diff/--drift: print the summary line instead of the patch body")
@@ -153,7 +158,7 @@ func cmdShow(args []string) error {
 	round, prompt, report, diff := v.round, v.prompt, v.report, v.diff
 	drift, logSection, transcript, gateSection := v.drift, v.logSection, v.transcript, v.gateSection
 	output, artifacts, artifact, findings := v.output, v.artifacts, v.artifact, v.findings
-	trace := v.trace
+	trace, workflowSection := v.trace, v.workflow
 	stat, anchors, follow, after := v.stat, v.anchors, v.follow, v.after
 	asJSON, peek, owner, state := v.asJSON, v.peek, v.owner, v.state
 	fs.Usage = func() {
@@ -179,6 +184,7 @@ func cmdShow(args []string) error {
 		log: *logSection, transcript: *transcript, gate: *gateSection,
 		output: *output, artifacts: *artifacts,
 		trace:      *trace,
+		workflow:   *workflowSection,
 		findingsID: *findings, artifactRel: *artifact,
 	})
 	if serr != nil {
@@ -333,10 +339,13 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 		return nil
 	}
 
-	// A trace names no round: the header says chain and trace instead.
+	// A trace or a workflow names no round: the header says chain and the
+	// section instead.
 	var header string
 	if res.Section == relevo.ShowTrace {
 		header = fmt.Sprintf("%s%s · trace", headerPrefix, res.Name)
+	} else if res.Section == relevo.ShowWorkflow {
+		header = fmt.Sprintf("%s%s · workflow", headerPrefix, res.Name)
 	} else {
 		header = fmt.Sprintf("%s%s round %d of %d · %s", headerPrefix, res.Name, res.Round, res.Rounds, res.Section)
 		if res.Archived {

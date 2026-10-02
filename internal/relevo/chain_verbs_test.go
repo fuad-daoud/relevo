@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // TestChainStopStopsTheActiveMemberAndMarksTheChainStopped pins the ordinary
@@ -273,6 +274,30 @@ func TestDoneAndUnbindAllowedAfterTheChainStops(t *testing.T) {
 	})
 }
 
+// TestRefuseRunningMemberReadsState pins the refusal's state read: a custom
+// workflow's member sits in chain_member, never in a legacy part column, and a
+// manual send to it while the chain runs is still refused.
+func TestRefuseRunningMemberReadsState(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Reviewer != "" || row.Planner != "" || row.Security != "" {
+		t.Fatalf("member columns = %q/%q/%q, want none for a custom workflow",
+			row.Reviewer, row.Planner, row.Security)
+	}
+
+	err := rt.Store.WithLock(func(tx *store.Tx) error { return refuseRunningChainMember(tx, "shop-assistant") })
+	if !errors.Is(err, ErrRunningChainMember) {
+		t.Errorf("refuseRunningChainMember = %v, want ErrRunningChainMember", err)
+	}
+	if err := refuseRunningChainMemberStore(rt.Store, "shop-assistant"); !errors.Is(err, ErrRunningChainMember) {
+		t.Errorf("refuseRunningChainMemberStore = %v, want ErrRunningChainMember", err)
+	}
+}
+
 // TestStopOnARunningChainMemberStaysAllowed pins that stop is not guarded: a
 // member's stop closes its round through the chain's own stopped event, which is
 // the spec's "a stopped member stops the chain". Fails if the guard is later put
@@ -425,5 +450,100 @@ func TestChainDoneLeavesTheChainAloneWhenAMemberFails(t *testing.T) {
 	}
 	if events := chainTrace(t, rt, "shop"); len(events) != 1 {
 		t.Errorf("trace = %+v, want no done row for a failed release", events)
+	}
+}
+
+// TestWorkflowChainDoneReleasesEveryMember pins the release: a custom
+// workflow's non-legacy member is released too, not only the member the legacy
+// builder column names.
+func TestWorkflowChainDoneReleasesEveryMember(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+	if _, err := ChainStop(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainStop: %v", err)
+	}
+
+	if _, err := ChainDone(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainDone: %v", err)
+	}
+	for _, name := range []string{"shop", "shop-assistant"} {
+		if b := chainBinding(t, rt, name); b.State != store.StateDone {
+			t.Errorf("member %s state = %q, want done", name, b.State)
+		}
+	}
+}
+
+// TestWorkflowChainDoneWritesTheEngineState pins done on a workflow chain: the
+// engine state's status becomes done, so a later read sees done rather than the
+// stopped the chain carried before the verb.
+func TestWorkflowChainDoneWritesTheEngineState(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	stoppedChain(t, rt, ChainOptions{})
+
+	row := chainStoredRow(t, rt, "shop")
+	st, err := chainWorkflowState(row)
+	if err != nil {
+		t.Fatalf("chainWorkflowState before done: %v", err)
+	}
+	if st.Status != workflow.StatusStopped {
+		t.Fatalf("state before done = %q, want stopped", st.Status)
+	}
+
+	if _, err := ChainDone(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainDone: %v", err)
+	}
+
+	row = chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusDone) {
+		t.Fatalf("chain status = %q, want done", row.Status)
+	}
+	st, err = chainWorkflowState(row)
+	if err != nil {
+		t.Fatalf("chainWorkflowState after done: %v", err)
+	}
+	if st.Status != workflow.StatusDone {
+		t.Errorf("state status after done = %q, want done", st.Status)
+	}
+}
+
+// TestWorkflowEndDeliveryCarrierIsAMember pins the carrier: the one end
+// delivery lands on the first surviving member in chain_member order, even when
+// that member fills no legacy part.
+func TestWorkflowEndDeliveryCarrierIsAMember(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+
+	// The builder's record is gone, so the first surviving member is the
+	// assistant, which the legacy columns never name.
+	if err := rt.Store.Delete("shop"); err != nil {
+		t.Fatalf("Delete shop: %v", err)
+	}
+	tickChains(context.Background(), rt)
+
+	row := flowChainRow(t, rt)
+	if row.Status != string(workflow.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+	if pending := chainPendingChain(t, rt, "shop-assistant"); len(pending) != 1 {
+		t.Fatalf("pending on shop-assistant = %d, want the one end delivery", len(pending))
+	}
+
+	var carrier string
+	var found bool
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		name, _, ok, cerr := chainDeliveryMember(tx, row)
+		carrier, found = name, ok
+		return cerr
+	}); err != nil {
+		t.Fatalf("chainDeliveryMember: %v", err)
+	}
+	if !found || carrier != "shop-assistant" {
+		t.Errorf("carrier = %q (found %v), want shop-assistant", carrier, found)
 	}
 }

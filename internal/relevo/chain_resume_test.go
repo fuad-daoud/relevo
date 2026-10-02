@@ -11,106 +11,9 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
-	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
-
-// The resume decision is a pure function of the chain row's step and two round
-// numbers, so every row of the design's resume rule is pinned here without a
-// store, a runner or a clock: `resumeStep` returns the seed the resume applies,
-// and the zero seed is the builder's own plan.
-
-// TestResumeStepPicksTheReviewerForANewerBuilderRound pins the manual-round
-// rule: a builder round that closed after the last one the chain mapped is the
-// round the resume reviews, whatever step the chain halted on. The comparison
-// is what makes it a review rather than a re-run, so dropping it fails here.
-func TestResumeStepPicksTheReviewerForANewerBuilderRound(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name         string
-		step         chain.Step
-		last, newest int
-		want         chain.SeedKind
-	}{
-		{"a newer builder round is reviewed", chain.StepBuilding, 1, 2, chain.SeedReviewer},
-		{"a newer builder round wins over reviewing", chain.StepReviewing, 3, 4, chain.SeedReviewer},
-		{"a newer builder round wins over correcting", chain.StepCorrecting, 2, 5, chain.SeedReviewer},
-		{"the same round re-runs the step", chain.StepBuilding, 2, 2, ""},
-		{"an older builder round re-runs the step", chain.StepBuilding, 3, 2, ""},
-		{"no builder round at all re-runs the step", chain.StepBuilding, 1, 0, ""},
-	} {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			ch := db.ChainRow{Name: "shop", Step: string(tc.step), Plan: 1, Plans: 1}
-			if got := resumeStep(ch, tc.last, tc.newest); got != tc.want {
-				t.Errorf("resumeStep(step %q, last %d, newest %d) = %q, want %q",
-					tc.step, tc.last, tc.newest, got, tc.want)
-			}
-		})
-	}
-}
-
-// TestResumeReSendsPlanForBuilding pins the building row: the builder's seed is
-// the zero seed, because the plan itself is what it is sent. An unknown step
-// word is the builder's too -- the plan is the only thing a resume can re-send
-// without a seed.
-func TestResumeReSendsPlanForBuilding(t *testing.T) {
-	t.Parallel()
-
-	for _, step := range []string{string(chain.StepBuilding), ""} {
-		ch := db.ChainRow{Name: "shop", Step: step, Plan: 2, Plans: 3}
-		if got := resumeStep(ch, 2, 2); got != "" {
-			t.Errorf("resumeStep(step %q, awaiting a re-run) = %q, want the zero seed (the plan)", step, got)
-		}
-	}
-}
-
-// TestResumeReSeedsReviewerForReviewing pins the reviewing row: the reviewer is
-// seeded again for the builder's last closed round.
-func TestResumeReSeedsReviewerForReviewing(t *testing.T) {
-	t.Parallel()
-
-	ch := db.ChainRow{Name: "shop", Step: string(chain.StepReviewing), Plan: 2, Plans: 3}
-	if got := resumeStep(ch, 2, 2); got != chain.SeedReviewer {
-		t.Errorf("resumeStep(reviewing) = %q, want %q", got, chain.SeedReviewer)
-	}
-}
-
-// TestResumeReSeedsPlannerForCorrecting pins the correcting row: the planner is
-// seeded with a correction plan again.
-func TestResumeReSeedsPlannerForCorrecting(t *testing.T) {
-	t.Parallel()
-
-	ch := db.ChainRow{Name: "shop", Step: string(chain.StepCorrecting), Plan: 2, Plans: 3}
-	if got := resumeStep(ch, 2, 2); got != chain.SeedCorrection {
-		t.Errorf("resumeStep(correcting) = %q, want %q", got, chain.SeedCorrection)
-	}
-}
-
-// TestResumeReSeedsSecurityForScanning pins the scanning row: the security
-// member is seeded again for the branch diff.
-func TestResumeReSeedsSecurityForScanning(t *testing.T) {
-	t.Parallel()
-
-	ch := db.ChainRow{Name: "shop", Step: string(chain.StepScanning), Plan: 2, Plans: 3}
-	if got := resumeStep(ch, 2, 2); got != chain.SeedSecurity {
-		t.Errorf("resumeStep(scanning) = %q, want %q", got, chain.SeedSecurity)
-	}
-}
-
-// TestResumeReSeedsFixesForPlanningFixes pins the planning-fixes row: the
-// planner is seeded with the findings' fix plan again.
-func TestResumeReSeedsFixesForPlanningFixes(t *testing.T) {
-	t.Parallel()
-
-	ch := db.ChainRow{Name: "shop", Step: string(chain.StepPlanningFixes), Plan: 2, Plans: 3}
-	if got := resumeStep(ch, 2, 2); got != chain.SeedFixes {
-		t.Errorf("resumeStep(planning-fixes) = %q, want %q", got, chain.SeedFixes)
-	}
-}
 
 // stoppedChain starts a chain and stops it through the member: the active
 // builder's open round is ended the way `relevo stop` ends one, which raises the
@@ -396,9 +299,10 @@ func TestChainResumeAppliesOnlyGivenFlags(t *testing.T) {
 	}
 }
 
-// TestChainResumeGateFlagsUpdateTheBuilder pins the gate flags' member half: an
-// explicit --gate/--regate writes the stored settings and the builder member, a
-// --no-gate clears both, and a resume that names none keeps the stored check.
+// TestChainResumeGateFlagsUpdateTheBuilder pins the gate flags' half on a
+// workflow chain: an explicit --gate/--regate writes the stored settings and the
+// workflow's params, a --no-gate clears both, and a resume that names none keeps
+// the stored check.
 func TestChainResumeGateFlagsUpdateTheBuilder(t *testing.T) {
 	t.Parallel()
 
@@ -414,13 +318,13 @@ func TestChainResumeGateFlagsUpdateTheBuilder(t *testing.T) {
 			t.Fatalf("ChainResume: %v", err)
 		}
 
-		set := storedSettings(t, chainStoredRow(t, rt, "shop"))
+		row := chainStoredRow(t, rt, "shop")
+		set := storedSettings(t, row)
 		if set.Gate != "go test ./..." || set.Regate != 1 {
 			t.Errorf("settings gate/regate = %q/%d, want go test ./.../1", set.Gate, set.Regate)
 		}
-		builder := chainBinding(t, rt, "shop")
-		if builder.Gate != "go test ./..." || builder.Regate != 1 {
-			t.Errorf("builder gate/regate = %q/%d, want go test ./.../1", builder.Gate, builder.Regate)
+		if got := storedFlowParam(t, row, "gate"); got != "go test ./..." {
+			t.Errorf("workflow gate param = %q, want go test ./...", got)
 		}
 	})
 
@@ -434,11 +338,12 @@ func TestChainResumeGateFlagsUpdateTheBuilder(t *testing.T) {
 			t.Fatalf("ChainResume: %v", err)
 		}
 
-		if set := storedSettings(t, chainStoredRow(t, rt, "shop")); set.Gate != "" {
+		row := chainStoredRow(t, rt, "shop")
+		if set := storedSettings(t, row); set.Gate != "" {
 			t.Errorf("settings gate = %q, want none", set.Gate)
 		}
-		if builder := chainBinding(t, rt, "shop"); builder.Gate != "" {
-			t.Errorf("builder gate = %q, want none", builder.Gate)
+		if got := storedFlowParam(t, row, "gate"); got != "" {
+			t.Errorf("workflow gate param = %q, want none", got)
 		}
 	})
 
@@ -452,11 +357,12 @@ func TestChainResumeGateFlagsUpdateTheBuilder(t *testing.T) {
 			t.Fatalf("ChainResume: %v", err)
 		}
 
-		if set := storedSettings(t, chainStoredRow(t, rt, "shop")); set.Gate != "make check" || set.Regate != 2 {
+		row := chainStoredRow(t, rt, "shop")
+		if set := storedSettings(t, row); set.Gate != "make check" || set.Regate != 2 {
 			t.Errorf("settings gate/regate = %q/%d, want the stored make check/2", set.Gate, set.Regate)
 		}
-		if builder := chainBinding(t, rt, "shop"); builder.Gate != "make check" || builder.Regate != 2 {
-			t.Errorf("builder gate/regate = %q/%d, want the stored make check/2", builder.Gate, builder.Regate)
+		if got := storedFlowParam(t, row, "gate"); got != "make check" {
+			t.Errorf("workflow gate param = %q, want the stored make check", got)
 		}
 	})
 }
@@ -530,22 +436,21 @@ func TestChainResumeWritesOneTraceRow(t *testing.T) {
 	if row.Seq != len(after) {
 		t.Errorf("resume row seq = %d, want %d", row.Seq, len(after))
 	}
-	if row.Phase != string(chain.PhaseBuild) || row.Step != string(chain.StepBuilding) {
-		t.Errorf("resume row = phase %q step %q, want the state before it (build/building)", row.Phase, row.Step)
+	if row.Phase != "" || row.Step != "build" {
+		t.Errorf("resume row = phase %q step %q, want the build step with no legacy phase", row.Phase, row.Step)
 	}
-	ev, err := chain.DecodeEvent(row.Event)
+	ev, err := workflow.DecodeEvent(row.Event)
 	if err != nil {
 		t.Fatalf("DecodeEvent: %v", err)
 	}
-	wantReason := chain.ResumeReason(chain.StepBuilding)
-	if ev.Kind != chain.EventNeedsYou || ev.Reason != wantReason {
-		t.Errorf("event = %+v, want the chain's %q event carrying %q", ev, chain.EventNeedsYou, wantReason)
+	if ev.Kind != workflow.EventNeedsYou || ev.Step != "build" {
+		t.Errorf("event = %+v, want a needs_you on build", ev)
 	}
-	act, err := chain.DecodeAction(row.Action)
+	act, err := workflow.DecodeAction(row.Action)
 	if err != nil {
 		t.Fatalf("DecodeAction: %v", err)
 	}
-	if act.Kind != chain.ActionSend || act.Member != chain.MemberBuilder {
+	if act.Kind != workflow.ActionSend || act.Actor != "builder" {
 		t.Errorf("action = %+v, want the send to the builder", act)
 	}
 	if builder := chainBinding(t, rt, "shop"); row.Round != builder.Round {
@@ -569,7 +474,7 @@ func TestChainResumeTraceRowNamesTheStepItMovedTo(t *testing.T) {
 		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
 			t.Fatalf("ChainResume: %v", err)
 		}
-		assertResumeRowReason(t, rt, chain.ResumeReason(chain.StepBuilding))
+		assertResumeRowStep(t, rt, "build")
 	})
 
 	t.Run("a reviewed manual round", func(t *testing.T) {
@@ -585,30 +490,31 @@ func TestChainResumeTraceRowNamesTheStepItMovedTo(t *testing.T) {
 		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
 			t.Fatalf("ChainResume: %v", err)
 		}
-		assertResumeRowReason(t, rt, chain.ResumeReason(chain.StepReviewing))
+		assertResumeRowStep(t, rt, "review")
 	})
 }
 
-// assertResumeRowReason pins that the chain's last trace row carries want as the
-// resume's reason, in the stored event and the rendered line.
-func assertResumeRowReason(t *testing.T, rt Runtime, want string) {
+// assertResumeRowStep pins that the chain's last trace row carries a needs_you
+// event naming want, the step the resume moved to, in the stored event and the
+// rendered line.
+func assertResumeRowStep(t *testing.T, rt Runtime, want string) {
 	t.Helper()
 
 	events := chainTrace(t, rt, "shop")
 	last := events[len(events)-1]
-	ev, err := chain.DecodeEvent(last.Event)
+	ev, err := workflow.DecodeEvent(last.Event)
 	if err != nil {
 		t.Fatalf("DecodeEvent: %v", err)
 	}
-	if ev.Kind != chain.EventNeedsYou || ev.Reason != want {
-		t.Errorf("resume event = %+v, want a needs_you carrying %q", ev, want)
+	if ev.Kind != workflow.EventNeedsYou || ev.Step != want {
+		t.Errorf("resume event = %+v, want a needs_you on %q", ev, want)
 	}
 	doc, err := ChainTrace(context.Background(), rt, "shop")
 	if err != nil {
 		t.Fatalf("ChainTrace: %v", err)
 	}
-	if out := RenderTrace(doc); !strings.Contains(out, want) {
-		t.Errorf("RenderTrace = %q, want it to carry %q", out, want)
+	if out := RenderTrace(doc); !strings.Contains(out, "needs you") {
+		t.Errorf("RenderTrace = %q, want it to carry the resume's needs_you row", out)
 	}
 }
 
@@ -654,7 +560,7 @@ func TestChainResumeRemoteBuilderShipsThroughThePendingStep(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
-	startedChain(t, rt, ChainOptions{})
+	seedRemoteChain(t, rt, "shop", remoteChainOpts{})
 	advanceRemoteChain(t, rt, 2)
 	haltRemoteChain(t, rt)
 
@@ -670,7 +576,7 @@ func TestChainResumeRemoteBuilderShipsThroughThePendingStep(t *testing.T) {
 	if fr.startRoundVerify == nil || *fr.startRoundVerify {
 		t.Errorf("verify = %v, want an explicit false", fr.startRoundVerify)
 	}
-	if string(fr.startRoundPlan) != "build it" {
+	if string(fr.startRoundPlan) != "plan 1\n" {
 		t.Errorf("shipped plan = %q, want the plan copy", fr.startRoundPlan)
 	}
 	if !promptNoteFor(chainLog(t, rt, "shop"), 2, "chain builder") {
@@ -683,45 +589,6 @@ func TestChainResumeRemoteBuilderShipsThroughThePendingStep(t *testing.T) {
 	}
 	if res.Chain.Status != string(chain.StatusRunning) {
 		t.Errorf("result chain = %+v, want the resumed row", res.Chain)
-	}
-}
-
-// TestChainResumeRefusesAGateFlagOnARemoteBuilder pins the one refusal: the
-// wire has no route that updates a served binding's check, so --gate and
-// --no-gate are refused; --regate, which is the chain's own repair budget,
-// still travels.
-func TestChainResumeRefusesAGateFlagOnARemoteBuilder(t *testing.T) {
-	t.Parallel()
-
-	fr := chainRemoteFake()
-	rt, _, _ := chainRemoteRuntime(t, fr)
-	startedChain(t, rt, ChainOptions{})
-	advanceRemoteChain(t, rt, 2)
-	haltRemoteChain(t, rt)
-
-	for _, opts := range []ResumeOptions{
-		{Name: "shop", Gate: "make check"},
-		{Name: "shop", NoGate: true},
-	} {
-		_, err := ChainResume(context.Background(), rt, opts)
-		if err == nil {
-			t.Fatalf("ChainResume %+v = nil, want the refusal", opts)
-		}
-		if !strings.Contains(err.Error(), "fixed at create") {
-			t.Errorf("err = %q, want it to say the check is fixed at create", err)
-		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("err = %v, want errors.Is(err, ErrRefused): a replaced check on a remote builder is refused, not internal", err)
-		}
-	}
-
-	// The chain was left halted by the refusals; --regate alone is accepted and
-	// the resume ships round 2.
-	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Regate: ptr(3)}); err != nil {
-		t.Fatalf("ChainResume --regate: %v", err)
-	}
-	if b := chainBinding(t, rt, "shop"); b.Regate != 3 {
-		t.Errorf("builder regate = %d, want the flag's 3", b.Regate)
 	}
 }
 
@@ -871,14 +738,9 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedChain(t, rt, ChainOptions{})
-		b := chainBinding(t, rt, "shop")
-		b.Regate = 2
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-		chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+		startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
+		chainRedCheck(t, rt, "shop", "FAIL the same thing\n")
 
 		// The repair round is open; stop the chain there.
 		if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
@@ -891,14 +753,9 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
-		startedChain(t, rt, ChainOptions{})
-		b := chainBinding(t, rt, "shop")
-		b.Regate = 2
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-		chainArmFailingGate(t, rt, "shop", "FAIL the same thing\n")
+		startedChain(t, rt, ChainOptions{Gate: "make check", Regate: ptr(2)})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
+		chainRedCheck(t, rt, "shop", "FAIL the same thing\n")
 
 		// The repair round is open; stop the chain there, then resume with a
 		// replaced check.
@@ -987,10 +844,10 @@ func TestChainResumeClosesADeadMemberRound(t *testing.T) {
 		t.Fatal("test premise: the reviewer's round must be open")
 	}
 
-	// The reviewer dies without a close: NEEDS YOU, no process, and the chain
-	// halted on the member -- the state a round that died without a report
-	// leaves.
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
+	// The reviewer dies without a close: NEEDS YOU and no process, so the next
+	// sweep halts the chain on the member -- the state a round that died
+	// without a report leaves.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		rev, err := tx.Load("shop-rev")
 		if err != nil {
 			return err
@@ -1000,23 +857,13 @@ func TestChainResumeClosesADeadMemberRound(t *testing.T) {
 			return err
 		}
 		rev.Builder = clearProcess(rev.Builder)
-		if err := tx.Save(rev); err != nil {
-			return err
-		}
-		row, err := tx.Chain("shop")
-		if err != nil {
-			return err
-		}
-		s, err := chainStateOf(row)
-		if err != nil {
-			return err
-		}
-		s.Status = chain.StatusHalted
-		s.Reason = "member shop-rev: exited without an output"
-		return tx.ChainPut(chainRowWithState(row, s, rt.Now().UTC()))
-	})
-	if err != nil {
-		t.Fatalf("halt the reviewer and the chain: %v", err)
+		return tx.Save(rev)
+	}); err != nil {
+		t.Fatalf("halt the reviewer: %v", err)
+	}
+	tickChains(context.Background(), rt)
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted on the dead reviewer", row.Status)
 	}
 
 	// The resume closes the dead round the way a stop would and re-runs the

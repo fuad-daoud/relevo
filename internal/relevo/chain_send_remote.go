@@ -98,11 +98,8 @@ func chainSendPending(ctx context.Context, rt Runtime) error {
 		if chainOnServer(c) {
 			continue
 		}
-		if c.AwaitingMember == "" {
-			continue
-		}
-		name := chainMemberName(c, c.AwaitingMember)
-		if name == "" {
+		name, awaitedRound, ok := chainAwaited(rt.Store, c)
+		if !ok {
 			continue
 		}
 		b, err := rt.Store.Load(name)
@@ -113,7 +110,7 @@ func chainSendPending(ctx context.Context, rt Runtime) error {
 			continue
 		}
 		round := b.Round
-		if c.AwaitingRound != round {
+		if awaitedRound != round {
 			continue
 		}
 		entries, err := rt.Store.ReadLog(name)
@@ -158,7 +155,8 @@ func chainRemoteSend(ctx context.Context, rt Runtime, b store.Binding, round int
 		if c.Status != string(chain.StatusRunning) {
 			return nil
 		}
-		if chainMemberName(c, c.AwaitingMember) != b.Name || c.AwaitingRound != round {
+		awaited, awaitedRound, ok := chainAwaited(tx, c)
+		if !ok || awaited != b.Name || awaitedRound != round {
 			return nil
 		}
 		entries, err := tx.ReadLog(b.Name)
@@ -175,9 +173,10 @@ func chainRemoteSend(ctx context.Context, rt Runtime, b store.Binding, round int
 
 // chainRemoteSendFailed records a failed ship the way the plan pins it: the
 // member goes NEEDS YOU with the "builder send failed" halt, and the chain ends
-// with the sweep's own terminal shape and the reason "member <name> could not
-// start". One trace row, one delivery. The outcome is recorded, not returned;
-// only a store write failure is returned.
+// through the engine -- the state's status and reason, its projected columns
+// and one workflow trace row -- with the reason "member <name> could not
+// start". The outcome is recorded, not returned; only a store write failure is
+// returned.
 func chainRemoteSendFailed(ctx context.Context, rt Runtime, b store.Binding, sendErr error) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
 		c, err := tx.ChainByMember(b.Name)
@@ -200,8 +199,7 @@ func chainRemoteSendFailed(ctx context.Context, rt Runtime, b store.Binding, sen
 		if err := tx.Save(cur); err != nil {
 			return err
 		}
-		part := chainPartOf(c, b.Name)
 		reason := fmt.Sprintf("member %s could not start: %v", b.Name, sendErr)
-		return chainSweepHalt(ctx, rt, tx, c, part, b.Name, reason)
+		return chainSweepFlowHalt(ctx, rt, tx, c, reason)
 	})
 }

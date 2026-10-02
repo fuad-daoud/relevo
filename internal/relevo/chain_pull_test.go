@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainPullRuntime is a chain runtime whose remote is the given fake and whose
@@ -492,6 +494,60 @@ func TestChainPullCreatesAMemberTheServerAdded(t *testing.T) {
 	}
 }
 
+// TestChainPullAddedMemberGetsAMemberRow pins the chain_member write for a late
+// member: a server member the mirror creates gets its chain_member row beside
+// its binding, so chainReadMembers and chainEndMembers include it.
+func TestChainPullAddedMemberGetsAMemberRow(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 1, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	view := fr.getChainResp
+	sec := chainPullMemberView(chain.MemberSecurity, "shop-sec", 1, store.ShapeReader)
+	sec.Actor = "security"
+	view.Members = append(view.Members, sec)
+	fr.getChainResp = view
+
+	pullRounds(t, rt, "shop")
+
+	rows, err := rt.Store.ChainMembers("shop")
+	if err != nil {
+		t.Fatalf("ChainMembers: %v", err)
+	}
+	found := false
+	for _, m := range rows {
+		if m.Binding == "shop-sec" {
+			found = true
+			if m.Actor != "security" {
+				t.Errorf("member row actor = %q, want security", m.Actor)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("chain_member rows = %+v, want shop-sec", rows)
+	}
+
+	row := chainStoredRow(t, rt, "shop")
+	if got := chainReadMembers(rt.Store, row); !containsString(got, "shop-sec") {
+		t.Errorf("chainReadMembers = %v, want shop-sec", got)
+	}
+	if got := chainEndMembers(rt.Store, row); !containsString(got, "shop-sec") {
+		t.Errorf("chainEndMembers = %v, want shop-sec", got)
+	}
+}
+
+// containsString reports whether a string list holds want.
+func containsString(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
 // TestChainPullHaltsAChainGoneFromTheServer pins the missing chain: the mirror
 // halts once with the server's absence as the reason, queues the one delivery,
 // and a repeated 404 adds nothing.
@@ -600,6 +656,47 @@ func TestServerChainMemberIsNotCollectedByThePerBindingPath(t *testing.T) {
 	}
 	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 0 {
 		t.Errorf("pending deliveries = %d, want none", len(pending))
+	}
+}
+
+// TestChainPullSetsStateFromView pins the mirror's engine state: the pull
+// stores the shipped default and the engine state the server's legacy columns
+// describe, through workflow.FromLegacy, so the mirror's read surfaces see the
+// position the server drove.
+func TestChainPullSetsStateFromView(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 0, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	view := fr.getChainResp
+	view.Phase = string(chain.PhaseBuild)
+	view.Step = string(chain.StepReviewing)
+	view.Plan, view.Plans, view.Corrections = 2, 2, 1
+	view.AwaitingMember = chain.MemberReviewer
+	view.AwaitingRound = 2
+	fr.getChainResp = view
+
+	pullRounds(t, rt, "shop")
+
+	row := chainStoredRow(t, rt, "shop")
+	if len(row.WorkflowJSON) == 0 || len(row.StateJSON) == 0 {
+		t.Fatalf("mirror row carries workflow %d state %d bytes, want both", len(row.WorkflowJSON), len(row.StateJSON))
+	}
+	def, err := workflow.Parse(row.WorkflowJSON)
+	if err != nil {
+		t.Fatalf("parse the stored workflow: %v", err)
+	}
+	if def.Name != workflow.Default().Name {
+		t.Errorf("stored workflow name = %q, want the shipped default", def.Name)
+	}
+	var st workflow.State
+	if err := json.Unmarshal(row.StateJSON, &st); err != nil {
+		t.Fatalf("decode the stored state: %v", err)
+	}
+	if st.At != "review" || st.Iter["plans"].Index != 1 {
+		t.Errorf("state = at %q plan index %d, want review and 1", st.At, st.Iter["plans"].Index)
 	}
 }
 

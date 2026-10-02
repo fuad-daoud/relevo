@@ -288,8 +288,8 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 // round whose process is still alive, or whose close already exists, is left
 // to the resume's own refusal.
 func closeDeadMemberRound(ctx context.Context, rt Runtime, c db.ChainRow) error {
-	member := chainMemberName(c, c.AwaitingMember)
-	if member == "" {
+	member, _, ok := chainAwaited(rt.Store, c)
+	if !ok {
 		return nil
 	}
 	b, err := rt.Store.Load(member)

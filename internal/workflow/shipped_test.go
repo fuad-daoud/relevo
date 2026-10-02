@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +47,26 @@ func TestShippedSeeds(t *testing.T) {
 	want := []string{"repair", "review", "correct", "scan", "fix"}
 	if got := ShippedSeeds(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ShippedSeeds = %v, want %v", got, want)
+	}
+}
+
+// TestShippedSeedsAllEmbedded pins ShippedSeeds to the templates the binary
+// embeds: every name it lists has its own file, and no embedded file is left
+// out.
+func TestShippedSeedsAllEmbedded(t *testing.T) {
+	entries, err := seedFS.ReadDir("seeds")
+	if err != nil {
+		t.Fatalf("read embedded seeds: %v", err)
+	}
+	var embedded []string
+	for _, e := range entries {
+		embedded = append(embedded, strings.TrimSuffix(e.Name(), ".md"))
+	}
+	got := append([]string(nil), ShippedSeeds()...)
+	sort.Strings(got)
+	sort.Strings(embedded)
+	if !reflect.DeepEqual(got, embedded) {
+		t.Fatalf("ShippedSeeds = %v, embedded = %v", got, embedded)
 	}
 }
 

@@ -29,6 +29,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // addRemoteMasterMind is the mastermind registry the hand-built Runtimes in this
@@ -7356,15 +7357,22 @@ func TestRemoteBuilderCloseCarriesTheGateRecord(t *testing.T) {
 	}
 
 	events := chainTrace(t, rt, "shop")
-	if len(events) != 1 {
-		t.Fatalf("trace = %+v, want one row", events)
+	if len(events) != 2 {
+		t.Fatalf("trace = %+v, want the build close and the check close", events)
 	}
-	ev, err := chain.DecodeEvent(events[0].Event)
+	ev, err := workflow.DecodeEvent(events[0].Event)
 	if err != nil {
 		t.Fatalf("DecodeEvent: %v", err)
 	}
-	if ev.Gate != chain.GateRed {
-		t.Errorf("chain event gate = %q, want red", ev.Gate)
+	if ev.Kind != workflow.EventStepClosed || ev.Status != "done" {
+		t.Errorf("build event = %+v, want a done step close", ev)
+	}
+	cev, err := workflow.DecodeEvent(events[1].Event)
+	if err != nil {
+		t.Fatalf("DecodeEvent check: %v", err)
+	}
+	if cev.Kind != workflow.EventCheckClosed || cev.Result != "red" {
+		t.Errorf("check event = %+v, want a red check close", cev)
 	}
 }
 

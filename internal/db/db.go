@@ -337,6 +337,9 @@ type Tx struct {
 	// origin is the opening DB's installation id; a Tx always scopes and
 	// stamps like the handle it came from.
 	origin string
+	// have is the schema version the opening handle saw, so a transaction
+	// writes only the columns a database at that version carries.
+	have int
 }
 
 // Tx runs fn inside one BEGIN IMMEDIATE transaction: commit on a nil return,
@@ -391,7 +394,7 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 		time.Sleep(time.Duration(25+rand.Intn(76)) * time.Millisecond)
 	}
 
-	if txErr := fn(&Tx{conn: conn, ctx: ctx, origin: d.origin}); txErr != nil {
+	if txErr := fn(&Tx{conn: conn, ctx: ctx, origin: d.origin, have: d.have}); txErr != nil {
 		if _, rerr := conn.ExecContext(ctx, "ROLLBACK"); rerr != nil {
 			return fmt.Errorf("db: tx: rollback failed: %w", errors.Join(txErr, rerr))
 		}
