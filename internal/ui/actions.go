@@ -75,6 +75,17 @@ type Actions interface {
 	// command without running it, so the cockpit can run the pager and the
 	// editor under tea.ExecProcess and start the browser detached.
 	OpenArtifact(path, kind string) (*exec.Cmd, error)
+
+	// The workflows view: every workflow this machine can start a chain
+	// with, one workflow's source (or, for a shipped one, its definition as
+	// JSON), one workflow's step graph, and the two writes that add from a
+	// file and remove a saved one. Each write's Result.Refresh reloads this
+	// adapter's runtime, the way ApplyConfig's does.
+	Workflows() ([]relevo.WorkflowSummary, error)
+	WorkflowSource(name string) (string, bool, error)
+	WorkflowGraph(name string) ([]relevo.GraphRow, error)
+	WorkflowAdd(ctx context.Context, path string, replace bool) Result
+	WorkflowRemove(ctx context.Context, name string) Result
 }
 
 // BindInput is one b key's answers (§3): the new binding's name, the

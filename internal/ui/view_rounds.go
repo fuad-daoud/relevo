@@ -282,6 +282,12 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 		}
 		v, init := newActorsView(env)
 		return rootThen(init, v)
+	case "workflows":
+		if env.Actions == nil {
+			return notice("the config views need relevo ui on this machine")
+		}
+		v, init := newWorkflowsView(env)
+		return rootThen(init, v)
 	case "agents":
 		if env.Actions == nil {
 			return notice("the config views need relevo ui on this machine")

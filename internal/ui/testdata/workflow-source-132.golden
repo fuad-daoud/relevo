@@ -1,0 +1,34 @@
+  ◆ relevo   workflows ›  fix-first                                                                            v0.13.0-28    14:02  
+                                                                                                                                    
+   fix-first   source                                                                                                               
+   name: fix-first                                                                                                               
+   start: build                                                                                                                  
+   steps:                                                                                                                        
+     build: { run: builder, on: { done: check } }                                                                                
+     check: { check: gate, on: { green: done, red: done } }                                                                      
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+
+ ↑↓  scroll      s  graph      :  command      ?  all keys      esc  back                                                           

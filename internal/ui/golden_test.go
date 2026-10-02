@@ -804,6 +804,130 @@ func goldenActorsModel(t *testing.T, width, height int, fa *fakeActions, rep vie
 	return drain(t, m, execLine("actors", m.env(), m.prefs))
 }
 
+// workflowsFixtureList is the workflow list the goldens render: the shipped
+// workflow and two saved ones, so ORIGIN, INPUTS and PARAMS each have a row
+// that is not the same as its neighbours.
+func workflowsFixtureList() []relevo.WorkflowSummary {
+	return []relevo.WorkflowSummary{
+		{
+			Name: "default", Origin: relevo.WorkflowOriginShipped,
+			Description: "plans built, checked and reviewed, then one security scan",
+			Inputs:      workflow.Inputs{Plans: workflow.InputRequired},
+			Params: []relevo.WorkflowParam{
+				{Name: "builder", Kind: workflow.ParamString, Value: "builder"},
+				{Name: "reviewer", Kind: workflow.ParamString, Value: "reviewer"},
+				{Name: "scan", Kind: workflow.ParamBool, Value: "true"},
+			},
+		},
+		{
+			Name: "audit-only", Origin: relevo.WorkflowOriginSaved,
+			Description: "one reader round per plan",
+			Inputs:      workflow.Inputs{Plans: workflow.InputRequired, Task: workflow.InputOptional},
+		},
+		{
+			Name: "fix-first", Origin: relevo.WorkflowOriginSaved,
+			Description: "build once, then check",
+			Inputs:      workflow.Inputs{Task: workflow.InputRequired},
+			Params:      []relevo.WorkflowParam{{Name: "gate", Kind: workflow.ParamString, Value: "make check"}},
+		},
+	}
+}
+
+// workflowsFixtureSources is the source each fixture name serves, and which of
+// them answers with the shipped definition rather than source a user wrote.
+func workflowsFixtureSources() map[string]workflowSourceText {
+	return map[string]workflowSourceText{
+		"default": {text: "{\n  \"name\": \"default\",\n  \"start\": \"plans\"\n}\n", shipped: true},
+		"audit-only": {text: "# one reader round per plan\n" +
+			"name: audit-only\nstart: audit\nsteps:\n  audit: { run: reviewer, on: { done: done } }\n"},
+		"fix-first": {text: "name: fix-first\nstart: build\nsteps:\n" +
+			"  build: { run: builder, on: { done: check } }\n" +
+			"  check: { check: gate, on: { green: done, red: done } }\n"},
+	}
+}
+
+// workflowsFixtureGraphs is the step graph each fixture name serves, in the
+// order WorkflowGraph walks one.
+func workflowsFixtureGraphs() map[string][]relevo.GraphRow {
+	return map[string][]relevo.GraphRow{
+		"default": {
+			{ID: "plans", Kind: "for-each", Edges: []string{"build", "scan-gate"},
+				EdgeText: "on empty → scan-gate · on next → build"},
+			{ID: "build", Kind: "run", Actors: "builder", Edges: []string{"check"},
+				EdgeText: "on done → check"},
+			{ID: "check", Kind: "check", Actors: "gate", Edges: []string{"repair", "review"},
+				EdgeText: "on green → review · on red → repair"},
+			{ID: "repair", Kind: "run", Actors: "builder", Edges: []string{"check"},
+				EdgeText: "on done → check · budget → review"},
+			{ID: "review", Kind: "run", Actors: "reviewer", Edges: []string{"correct", "plans"},
+				EdgeText: "on verdict=changes → correct · on verdict=pass → plans"},
+		},
+		"audit-only": {
+			{ID: "audit", Kind: "run", Actors: "reviewer", EdgeText: "on done → done"},
+		},
+		"fix-first": {
+			{ID: "build", Kind: "run", Actors: "builder", Edges: []string{"check"}, EdgeText: "on done → check"},
+			{ID: "check", Kind: "check", Actors: "gate", EdgeText: "on green → done · on red → done"},
+		},
+	}
+}
+
+// goldenWorkflowsModel is the workflows goldens' builder: a loaded shell, the
+// `:workflows` command, and its list load drained.
+func goldenWorkflowsModel(t *testing.T, width, height int, fa *fakeActions) Model {
+	t.Helper()
+	m := goldenActionModel(t, width, height, fa, view.Report{})
+	return drain(t, m, execLine("workflows", m.env(), m.prefs))
+}
+
+// workflowsFake is the scripted Actions the workflows goldens run on.
+func workflowsFake() *fakeActions {
+	return &fakeActions{
+		workflows: workflowsFixtureList(),
+		sources:   workflowsFixtureSources(),
+		graphs:    workflowsFixtureGraphs(),
+		result:    Result{Text: "stored workflow fix-first", Refresh: true},
+	}
+}
+
+// workflowsOn points the list's cursor at name and returns the model.
+func workflowsOn(t *testing.T, m Model, name string) Model {
+	t.Helper()
+	wv, ok := m.top().(workflowsView)
+	if !ok {
+		t.Fatalf(":workflows did not push a workflows view: %T", m.top())
+	}
+	for i, w := range wv.list {
+		if w.Name == name {
+			wv.cur = i
+			m.stack[len(m.stack)-1] = wv
+			return m
+		}
+	}
+	t.Fatalf("no workflow named %q in the list", name)
+	return m
+}
+
+// workflowsViewModelOn is the list with the cursor on name, over the Actions a
+// test scripted, so a key test can inspect what it recorded.
+func workflowsViewModelOn(t *testing.T, width, height int, fa *fakeActions, name string) Model {
+	t.Helper()
+	return workflowsOn(t, goldenWorkflowsModel(t, width, height, fa), name)
+}
+
+// workflowsViewModel is workflowsViewModelOn over the shared fixture, for the
+// goldens that only render.
+func workflowsViewModel(t *testing.T, width, height int, name string) Model {
+	t.Helper()
+	return workflowsViewModelOn(t, width, height, workflowsFake(), name)
+}
+
+// workflowGraphModel is one workflow's step graph, reached by enter.
+func workflowGraphModel(t *testing.T, width, height int, name string) Model {
+	t.Helper()
+	return candKeys(t, workflowsViewModel(t, width, height, name), tea.KeyMsg{Type: tea.KeyEnter})
+}
+
 // goldenChainsModel is the chains goldens' builder: a loaded shell, the
 // `:chains` command, and its doc load drained.
 func goldenChainsModel(t *testing.T, width, height int, fa *fakeActions) Model {
@@ -1742,6 +1866,65 @@ func TestGoldenViews(t *testing.T) {
 			name: "chain-trace-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				return chainTraceModel(t, 132, 34)
+			},
+		},
+		{
+			name: "workflows-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return goldenWorkflowsModel(t, 132, 34, workflowsFake())
+			},
+		},
+		{
+			name: "workflows-100", width: 100, height: 30,
+			build: func(t *testing.T) Model {
+				return goldenWorkflowsModel(t, 100, 30, workflowsFake())
+			},
+		},
+		{
+			name: "workflow-view-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return workflowGraphModel(t, 132, 34, "default")
+			},
+		},
+		{
+			name: "workflow-source-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := workflowGraphModel(t, 132, 34, "fix-first")
+				return candKeys(t, m, key('s'))
+			},
+		},
+		{
+			name: "workflow-add-invalid-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				fa := workflowsFake()
+				fa.addResults = map[string]Result{
+					"~/workflows/broken.yaml": {Err: workflowInvalidErr(t)},
+				}
+				m := goldenWorkflowsModel(t, 132, 34, fa)
+				m = candKeys(t, m, key('a'))
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
+				m = candType(t, m, "~/workflows/broken.yaml")
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			},
+		},
+		{
+			name: "workflow-replace-confirm-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				fa := workflowsFake()
+				fa.addResults = map[string]Result{
+					"~/workflows/fix-first.yaml": {Err: workflowSavedErr(t, workflowsFixtureSources()["fix-first"].text)},
+				}
+				m := goldenWorkflowsModel(t, 132, 34, fa)
+				m = candKeys(t, m, key('a'))
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
+				m = candType(t, m, "~/workflows/fix-first.yaml")
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			},
+		},
+		{
+			name: "workflow-remove-confirm-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return candKeys(t, workflowsViewModel(t, 132, 34, "audit-only"), key('d'))
 			},
 		},
 	}

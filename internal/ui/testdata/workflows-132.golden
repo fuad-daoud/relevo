@@ -1,0 +1,34 @@
+  ◆ relevo    workflows                                                                                        v0.13.0-28    14:02  
+                                                                                                                                    
+   3 workflows   2 saved   1 shipped                                                                                                
+                                                                                                                                    
+   NAME                             ORIGIN   DESCRIPTION                         INPUTS                PARAMS                       
+   default                          shipped  plans built, checked and reviewed…  plans required        builder=builder, reviewer…   
+   audit-only                       saved    one reader round per plan           plans required · ta…  none                         
+   fix-first                        saved    build once, then check              task required         gate=make check              
+                                                                                                                                    
+                                                                                                                                    
+   default   shipped                                                                                                                
+   inputs plans required                                                                                                            
+   params builder=builder, reviewer=reviewer, scan=true                                                                             
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ ↑↓  move      enter  view      a  add      d  remove      :  command      ?  all keys      q  quit                                 

@@ -53,11 +53,14 @@ var (
 // WorkflowError is the one failure the workflow operations return: the class a
 // caller maps to its own vocabulary, the workflow it happened to, and the whole
 // message to show. Text is complete, so a caller renders it verbatim rather than
-// formatting a class's own wording a second time.
+// formatting a class's own wording a second time. The validation problems are
+// carried beside it, so a caller with room for one line each shows them there
+// instead of splitting the joined message back apart.
 type WorkflowError struct {
-	class error
-	name  string
-	text  string
+	class    error
+	name     string
+	text     string
+	problems []string
 }
 
 // Error returns the message, so the failure reads as the sentence it was
@@ -71,9 +74,23 @@ func (e *WorkflowError) Unwrap() error { return e.class }
 // about a source file that carries no usable name yet.
 func (e *WorkflowError) Workflow() string { return e.name }
 
+// Problems are the validation failures behind the message, in the order the
+// rules reported them. Every class but the invalid one carries none.
+func (e *WorkflowError) Problems() []string { return e.problems }
+
 // workflowErrorf builds a classed failure with a complete message.
 func workflowErrorf(class error, name, format string, args ...any) error {
 	return &WorkflowError{class: class, name: name, text: fmt.Sprintf(format, args...)}
+}
+
+// workflowProblemsf is the invalid-definition failure: the same message the CLI
+// has always printed, plus the problems themselves, so a caller that shows them
+// one per line never has to split the joined text.
+func workflowProblemsf(name string, problems []string) error {
+	err := workflowErrorf(ErrWorkflowInvalid, name, "%s", joinProblems(problems))
+	we := err.(*WorkflowError)
+	we.problems = append([]string(nil), problems...)
+	return we
 }
 
 // WorkflowParam is one param a workflow declares: its name, the kind it
@@ -160,7 +177,7 @@ func WorkflowAdd(rt Runtime, path string, replace, force bool) (string, error) {
 		return "", workflowErrorf(ErrWorkflowSource, def.Name, "%v", err)
 	}
 	if problems := WorkflowValidateProblems(rt, embedded); len(problems) > 0 {
-		return "", workflowErrorf(ErrWorkflowInvalid, embedded.Name, "%s", joinProblems(problems))
+		return "", workflowProblemsf(embedded.Name, problems)
 	}
 	if err := WorkflowSave(rt, embedded.Name, raw, embedded, "config workflow add "+embedded.Name); err != nil {
 		return "", err
@@ -274,6 +291,11 @@ type GraphRow struct {
 	Kind   string
 	Actors string
 	Edges  []string
+	// EdgeText is the same edges as one line of display text: each on entry as
+	// `on <key> → <step>`, `on <key> → done` or `on <key> → halt: <reason>`, then
+	// the budget as `budget → <target>`. It is here rather than in the view so
+	// the graph a reader sees and the graph the rules walk are one thing.
+	EdgeText string
 }
 
 // WorkflowGraph returns def's steps as graph rows, in the same order the chain
@@ -287,13 +309,55 @@ func WorkflowGraph(def workflow.Definition) []GraphRow {
 	rows := make([]GraphRow, 0, len(order))
 	for _, id := range order {
 		rows = append(rows, GraphRow{
-			ID:     id,
-			Kind:   workflow.StepKind(def, id),
-			Actors: workflow.StepActors(def, id),
-			Edges:  append([]string(nil), edges[id]...),
+			ID:       id,
+			Kind:     workflow.StepKind(def, id),
+			Actors:   workflow.StepActors(def, id),
+			Edges:    append([]string(nil), edges[id]...),
+			EdgeText: graphEdgeText(def, id),
 		})
 	}
 	return rows
+}
+
+// graphEdgeText is one step's edges as a reader reads them: every on entry with
+// the key that selects it and where it goes, then the budget. A step with no
+// edge at all yields "", so a view can show a dash rather than a blank column.
+func graphEdgeText(def workflow.Definition, id string) string {
+	step, ok := def.Steps[id]
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, key := range sortedStepKeys(step.On) {
+		parts = append(parts, "on "+key+" → "+targetText(step.On[key]))
+	}
+	if step.Budget != nil {
+		parts = append(parts, "budget → "+targetText(step.Budget.Then))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// targetText is a target as an edge reads: the step it goes to, `done`, or
+// `halt: <reason>` for the reason the workflow's author wrote.
+func targetText(t workflow.Target) string {
+	switch t.Kind {
+	case workflow.TargetStep:
+		return t.Step
+	case workflow.TargetHalt:
+		return "halt: " + t.Reason
+	default:
+		return "done"
+	}
+}
+
+// sortedStepKeys is a step's on keys in the order the edges are listed.
+func sortedStepKeys(on map[string]workflow.Target) []string {
+	keys := make([]string, 0, len(on))
+	for k := range on {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // checkWorkflowName refuses a name that is shipped, or already saved, unless the

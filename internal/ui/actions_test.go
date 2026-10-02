@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,9 +97,34 @@ type fakeActions struct {
 	previewErr error
 	rollbacks  []int64
 
+	// The workflows view: the scripted list, the source and graph a name
+	// answers with, and the paths a workflow add or remove was asked for.
+	workflows    []relevo.WorkflowSummary
+	workflowsErr error
+	sources      map[string]workflowSourceText
+	graphs       map[string][]relevo.GraphRow
+	graphErr     error
+	adds         []workflowAddCall
+	addResults   map[string]Result
+	removes      []string
+	removeResult Result
+
 	result   Result
 	shellCmd *exec.Cmd
 	shellErr error
+}
+
+// workflowSourceText is one scripted source: the text a name serves and
+// whether it is a shipped workflow's definition rendered as JSON.
+type workflowSourceText struct {
+	text    string
+	shipped bool
+}
+
+// workflowAddCall is one WorkflowAdd invocation, recorded by fakeActions.
+type workflowAddCall struct {
+	path    string
+	replace bool
 }
 
 func (f *fakeActions) Stop(_ context.Context, key string) Result {
@@ -248,6 +274,45 @@ func (f *fakeActions) RollbackPreview(rev int64) ([]relevo.ChangeLine, error) {
 func (f *fakeActions) Rollback(_ context.Context, rev int64) Result {
 	f.rollbacks = append(f.rollbacks, rev)
 	return f.result
+}
+
+// Workflows answers the scripted workflow list.
+func (f *fakeActions) Workflows() ([]relevo.WorkflowSummary, error) {
+	return f.workflows, f.workflowsErr
+}
+
+// WorkflowSource answers the scripted source for a name, and whether it is a
+// shipped workflow's definition.
+func (f *fakeActions) WorkflowSource(name string) (string, bool, error) {
+	s, ok := f.sources[name]
+	if !ok {
+		return "", false, errors.New("workflow " + name + " is not saved")
+	}
+	return s.text, s.shipped, nil
+}
+
+// WorkflowGraph answers the scripted step graph for a name.
+func (f *fakeActions) WorkflowGraph(name string) ([]relevo.GraphRow, error) {
+	if f.graphErr != nil {
+		return nil, f.graphErr
+	}
+	return f.graphs[name], nil
+}
+
+// WorkflowAdd records the path and whether replace was set, and answers the
+// scripted result for that path, or the shared result when none is scripted.
+func (f *fakeActions) WorkflowAdd(_ context.Context, path string, replace bool) Result {
+	f.adds = append(f.adds, workflowAddCall{path: path, replace: replace})
+	if res, ok := f.addResults[path]; ok {
+		return res
+	}
+	return f.result
+}
+
+// WorkflowRemove records the name and answers the scripted result.
+func (f *fakeActions) WorkflowRemove(_ context.Context, name string) Result {
+	f.removes = append(f.removes, name)
+	return f.removeResult
 }
 
 // key is one rune keypress, as the tests send them.

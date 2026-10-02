@@ -1,0 +1,34 @@
+  ◆ relevo   workflows ›  default                                                                              v0.13.0-28    14:02  
+                                                                                                                                    
+   default   5 steps                                                                                                                
+                                                                                                                                    
+   STEP                                                              KIND      ACTOR             EDGES                              
+   plans                                                             for-each  —                 on empty → scan-gate · on next →   
+   build                                                             run       builder           on done → check                    
+   check                                                             check     gate              on green → review · on red → rep   
+   repair                                                            run       builder           on done → check · budget → revie   
+   review                                                            run       reviewer          on verdict=changes → correct · o   
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ ↑↓  move      s  source      :  command      ?  all keys      esc  back                                                            
