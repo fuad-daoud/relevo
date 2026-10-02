@@ -831,9 +831,11 @@ func TestReaderSentencesUseTheOutputWord(t *testing.T) {
 		t.Errorf("artifactNoun(reader) = %q, want findings", got)
 	}
 	prompt := nudgePromptFor(rt, reader)
-	wantPath := rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings")
-	if !strings.Contains(prompt, "before writing your findings") || !strings.Contains(prompt, "write your findings to "+wantPath) {
-		t.Errorf("reader nudge = %q, want the findings label and its output path %s", prompt, wantPath)
+	if !strings.Contains(prompt, "you stopped before your deliverable") || !strings.Contains(prompt, "complete deliverable") {
+		t.Errorf("reader nudge = %q, want continuation prompt", prompt)
+	}
+	if strings.Contains(prompt, "write your findings") {
+		t.Errorf("reader nudge must not tell reader to write a file: %q", prompt)
 	}
 	if strings.Contains(prompt, rt.Store.ReportPath("reader-bind", 1)) {
 		t.Errorf("reader nudge names the writer's report path: %q", prompt)
