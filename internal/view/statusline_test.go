@@ -2115,6 +2115,88 @@ func TestStatusLineRowsConsumedContrast(t *testing.T) {
 	}
 }
 
+// TestStatusLineSanitizesReasonAndChain pins the one sanitizing point in
+// statusLineRowText: a control byte in a member row's Reason or in a chain
+// row's Chain is stripped from the rendered row, and the plain rows agree.
+func TestStatusLineSanitizesReasonAndChain(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		row  StatusLineRow
+		want string
+	}{
+		{
+			name: "member row reason",
+			row: StatusLineRow{
+				Name: "shop", Round: 2, Display: "NEEDS YOU",
+				Actor: "builder", Status: "NEEDS YOU", Tone: "needs",
+				Reason: "conflict\x07 here",
+			},
+			want: "conflict here",
+		},
+		{
+			name: "chain row chain text",
+			row: StatusLineRow{
+				Name: "shop", Display: "ACTIVE",
+				Chain: "chain shop · plan 2/4 · reviewing\x07\x1b[2J",
+			},
+			want: "chain shop · plan 2/4 · reviewing",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plain := PlainStatusLineRows([]StatusLineRow{tc.row}, 0)
+			if len(plain) != 1 {
+				t.Fatalf("plain rows = %d, want 1", len(plain))
+			}
+			if strings.Contains(plain[0], "\x1b") || strings.Contains(plain[0], "\x07") {
+				t.Errorf("row = %q, want no control byte", plain[0])
+			}
+			if !strings.Contains(plain[0], tc.want) {
+				t.Errorf("row = %q, want it to carry %q", plain[0], tc.want)
+			}
+
+			line := RenderStatusLine(Report{}, baseTime, 80)
+			if line != "" {
+				t.Fatalf("an empty report rendered %q, want nothing", line)
+			}
+			stripped := stripSGR(PlainStatusLineRows([]StatusLineRow{tc.row}, 0)[0])
+			if strings.Contains(stripped, "\x1b") {
+				t.Errorf("stripped row = %q, want no control byte", stripped)
+			}
+		})
+	}
+}
+
+// TestStatusLineJSONKeepsControlBytesEscaped pins the JSON path is untouched:
+// the encoder escapes a control byte rather than stripping it, so a consumer of
+// the document still sees the byte the row actually carries.
+func TestStatusLineJSONKeepsControlBytesEscaped(t *testing.T) {
+	t.Parallel()
+
+	row := StatusLineRow{
+		Name: "shop", Round: 2, Display: "NEEDS YOU",
+		Actor: "builder", Status: "NEEDS YOU", Tone: "needs",
+		Reason: "conflicted\x1b[31m here",
+	}
+	data, err := json.Marshal(StatusLineDoc{Now: baseTime.UTC(), Rows: []StatusLineRow{row}})
+	if err != nil {
+		t.Fatalf("marshal the statusline doc: %v", err)
+	}
+	if !strings.Contains(string(data), `\u001b`) {
+		t.Errorf("json = %s, want the control byte escaped, not stripped", data)
+	}
+	if strings.Contains(string(data), "\x1b") {
+		t.Errorf("json = %q, want no raw control byte", data)
+	}
+
+	// The rendered row, by contrast, drops it: the two paths differ by design.
+	if strings.Contains(PlainStatusLineRows([]StatusLineRow{row}, 0)[0], "\x1b") {
+		t.Error("the rendered row kept the control byte the JSON path escapes")
+	}
+}
+
 // TestRenderBoardLine pins the board line: nil renders nothing, a block renders
 // dim "board <mastermind> · <url>" (falling back to the scene name when the
 // owner is unknown), and an over-wide line is truncated (S8).

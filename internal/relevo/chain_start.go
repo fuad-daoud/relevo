@@ -68,6 +68,8 @@ type ChainOptions struct {
 	// Params overrides the workflow's params, keyed by param name; they win
 	// over every old flag and the policy.
 	Params map[string]string
+	// Parent names the chain's parent when this is a child of a fork.
+	Parent string
 	// Task is the chain's task input text, already read from --task-file when
 	// that flag named one.
 	Task string
@@ -407,6 +409,7 @@ func chainRow(opts ChainOptions, set chain.Settings, members []chainMember, base
 	return db.ChainRow{
 		ID:             db.NewID(),
 		Name:           opts.Name,
+		Parent:         opts.Parent,
 		Status:         string(chain.StatusRunning),
 		Phase:          string(chain.PhaseBuild),
 		Step:           string(chain.StepBuilding),

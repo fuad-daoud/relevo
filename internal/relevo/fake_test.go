@@ -286,6 +286,14 @@ type fakeGit struct {
 	mergeConflicts []string
 	mergeErr       error
 
+	// mergeKeepConflicts is MergeKeep's conflict set per ref: a ref named here
+	// merges to those paths with git.ErrMergeConflict, any other ref merges
+	// clean, so a test can script which child of a fork is the conflicting
+	// one. mergeKeepErr makes every MergeKeep call fail instead.
+	mergeKeepCalls     []mergeCall
+	mergeKeepConflicts map[string][]string
+	mergeKeepErr       error
+
 	pushCalls []pushCall
 	pushErr   error
 
@@ -669,6 +677,18 @@ func (f *fakeGit) Merge(ctx context.Context, dir, ref string) ([]string, error) 
 	}
 	if len(f.mergeConflicts) > 0 {
 		return f.mergeConflicts, git.ErrMergeConflict
+	}
+	return nil, nil
+}
+
+func (f *fakeGit) MergeKeep(ctx context.Context, dir, ref string) ([]string, error) {
+	f.calls++
+	f.mergeKeepCalls = append(f.mergeKeepCalls, mergeCall{Dir: dir, Ref: ref})
+	if f.mergeKeepErr != nil {
+		return nil, f.mergeKeepErr
+	}
+	if paths := f.mergeKeepConflicts[ref]; len(paths) > 0 {
+		return paths, git.ErrMergeConflict
 	}
 	return nil, nil
 }

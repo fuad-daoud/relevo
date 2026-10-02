@@ -32,6 +32,25 @@ type ChainFacts struct {
 	PlanPos   int    `json:"plan_pos,omitempty"`
 	PlanTotal int    `json:"plan_total,omitempty"`
 	Check     bool   `json:"check,omitempty"`
+	// Parent is the chain a fork's child belongs to, empty on every other
+	// chain. A row that carries it is not a top-level row: it prints indented
+	// under the parent it names.
+	Parent string `json:"parent,omitempty"`
+	// Children are the parent chain's child chain names in key order, and
+	// ChildrenDone how many of them have ended. Both are empty on a chain with
+	// no fork, so its row renders exactly as it did before forks existed.
+	Children     []string `json:"children,omitempty"`
+	ChildrenDone int      `json:"children_done,omitempty"`
+}
+
+// ChainForkSegment is the fork progress a parent chain's row shows after its
+// own step: "fork split · 1/2 done". A chain with no children returns "", so a
+// row without a fork keeps the text it had.
+func ChainForkSegment(f ChainFacts) string {
+	if len(f.Children) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("fork split · %d/%d done", f.ChildrenDone, len(f.Children))
 }
 
 // ChainSegment is the text a chain row shows after its name: the plan in
@@ -80,6 +99,12 @@ func flowChainSegment(f ChainFacts) string {
 			s += " · "
 		}
 		s += fmt.Sprintf("plans %d/%d", f.PlanPos, f.PlanTotal)
+	}
+	if fork := ChainForkSegment(f); fork != "" {
+		if s != "" {
+			s += " · "
+		}
+		s += fork
 	}
 	return s
 }

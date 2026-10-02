@@ -117,6 +117,10 @@ type Git interface {
 	// escape hatch). On a conflict it returns the unmerged paths and aborts
 	// the merge, leaving the worktree as it was.
 	Merge(ctx context.Context, dir, ref string) ([]string, error)
+	// MergeKeep is Merge that leaves a conflict in the tree: it returns the
+	// unmerged paths and keeps the merge in progress, so the builder a fork
+	// routes to can resolve the markers in the tree it is handed.
+	MergeKeep(ctx context.Context, dir, ref string) ([]string, error)
 	// Push pushes branch to remote, force-with-lease when the rebase rewrote
 	// a branch that already exists there.
 	Push(ctx context.Context, dir, remote, branch string, forceWithLease bool) error

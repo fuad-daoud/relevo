@@ -29,7 +29,11 @@ type ChainTraceDoc struct {
 	Plan        int
 	Plans       int
 	Corrections int
-	Events      []ChainTraceEvent `json:"events"`
+	// Parent names the chain that forked this one. Empty on a chain that is not
+	// a fork child, so its trace header is exactly the header it had before
+	// forks existed.
+	Parent string            `json:"parent,omitempty"`
+	Events []ChainTraceEvent `json:"events"`
 }
 
 // ChainTraceEvent is one trace row: the transition's order and time, the phase
@@ -71,6 +75,7 @@ func ChainTrace(ctx context.Context, rt Runtime, name string) (ChainTraceDoc, er
 	doc := ChainTraceDoc{
 		Name: c.Name, Status: c.Status, Phase: c.Phase, Step: c.Step,
 		Plan: c.Plan, Plans: c.Plans, Corrections: c.Corrections,
+		Parent: c.Parent,
 	}
 	// A row's own event encoding cannot say whether the engine or the fixed
 	// state machine wrote it: a chain converted onto the engine carries both its
@@ -121,6 +126,12 @@ func chainTraceEvent(seq int, ts time.Time, phase, step, member string, round, p
 // existed (plan 0) falls back to the chain's current plan.
 func RenderTrace(doc ChainTraceDoc) string {
 	var b strings.Builder
+	// A fork child's trace is its own, so its header names the parent it was
+	// forked from: the rows below are the child's, and the parent reads its own
+	// when asked. A chain with no parent prints no header line at all.
+	if doc.Parent != "" {
+		fmt.Fprintf(&b, "child of %s\n", doc.Parent)
+	}
 	for _, e := range doc.Events {
 		if e.Flow != nil && e.FlowAction != nil {
 			b.WriteString(flowTraceLine(e))
@@ -162,11 +173,35 @@ func flowTraceLine(e ChainTraceEvent) string {
 		fmt.Fprintf(&b, "%s stopped", e.Step)
 	case workflow.EventNeedsYou:
 		fmt.Fprintf(&b, "%s needs you", e.Step)
+	case workflow.EventChildEnded:
+		fmt.Fprintf(&b, "child %s %s", e.Flow.Child, e.Flow.Status)
+	case workflow.EventMergeClosed:
+		b.WriteString(mergeTraceText(e))
 	default:
 		b.WriteString(e.Step)
 	}
 	b.WriteString(" → " + flowTargetText(*e.FlowAction))
 	return b.String()
+}
+
+// mergeTraceText is a fork's merge row: the children the merge integrated and
+// the result, "merged 1, 2 → joined". A conflict carries the paths it left in
+// the tree, so the row reads "merged → conflict (n paths)" -- the count is what
+// the author has to resolve by hand. The row's action already carries the
+// merged keys as its reason, so that text is reused rather than recomputed from
+// a state the merge has already cleared.
+func mergeTraceText(e ChainTraceEvent) string {
+	joined := e.FlowAction != nil && e.FlowAction.Reason != ""
+	if n := len(e.Flow.Artifacts["conflict"]); e.Flow.Result == "conflict" && n > 0 {
+		return fmt.Sprintf("merged → conflict (%d paths)", n)
+	}
+	if joined {
+		return e.FlowAction.Reason
+	}
+	if e.Flow.Result != "" {
+		return "merged → " + e.Flow.Result
+	}
+	return "merged"
 }
 
 // flowOutcomesText renders a close's outcomes as sorted key=value pairs.
@@ -202,6 +237,15 @@ func flowTargetText(act workflow.Action) string {
 		return "halt"
 	case workflow.ActionStop:
 		return "stopped"
+	case workflow.ActionFork:
+		if len(act.Children) > 0 {
+			keys := make([]string, len(act.Children))
+			for i, ch := range act.Children {
+				keys[i] = ch.Key
+			}
+			return "forked " + strings.Join(keys, ", ")
+		}
+		return "fork"
 	default:
 		return string(act.Kind)
 	}

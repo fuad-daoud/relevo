@@ -235,20 +235,6 @@ func TestNextWhenTrueAndFalse(t *testing.T) {
 	}
 }
 
-func TestNextForkHalts(t *testing.T) {
-	def := tdef("split", map[string]Step{
-		"split": {Fork: &Fork{Each: "plans", Workflow: "default"},
-			On: map[string]Target{"joined": DoneTarget(), "conflict": DoneTarget()}},
-	})
-	s, actions := Start(def, StartInputs{Plans: []string{"a.md"}})
-	if s.Status != StatusHalted || s.Reason != "fork steps are not run by this engine" {
-		t.Fatalf("status %q reason %q", s.Status, s.Reason)
-	}
-	if a := only(t, actions); a.Kind != ActionHalt || a.Reason != "fork steps are not run by this engine" {
-		t.Fatalf("action = %+v", a)
-	}
-}
-
 func TestNextHaltTargetRendersParams(t *testing.T) {
 	def := tdef("a", map[string]Step{
 		"a": {Run: "builder", On: map[string]Target{"done": HaltTarget("gave up after {{params.tries}} tries")}},

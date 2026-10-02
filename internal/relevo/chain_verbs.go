@@ -49,6 +49,10 @@ var ErrChainDone = errors.New("the chain is done")
 // `relevo stop` already gives and the CLI reports as exit 0. When the awaited
 // member has no open round, nothing would ever raise the event, so the chain is
 // stopped directly under the state lock instead.
+//
+// A chain waiting on fork children is stopped the same way and then takes its
+// children down with it, so no child is left running under a parent that has
+// stopped hearing from it.
 func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error) {
 	c, err := rt.Store.Chain(name)
 	if errors.Is(err, store.ErrNotFound) {
@@ -63,7 +67,14 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 	if c.Status != string(chain.StatusRunning) {
 		return StopResult{}, ErrNothingToStop
 	}
-	return chainStopWorkflow(ctx, rt, c)
+	res, err := chainStopWorkflow(ctx, rt, c)
+	if err != nil {
+		return StopResult{}, err
+	}
+	if err := chainStopForkChildren(ctx, rt, c); err != nil {
+		return StopResult{}, err
+	}
+	return res, nil
 }
 
 // chainStopWorkflow stops a workflow chain's awaited member. The actor the

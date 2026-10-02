@@ -93,8 +93,37 @@ func (c *Client) Merge(ctx context.Context, dir, ref string) ([]string, error) {
 	return paths, ErrMergeConflict
 }
 
-// unmergedPaths lists the paths git marked unmerged, the conflict set Rebase and
-// Merge return.
+// MergeKeep is Merge that keeps a conflict instead of undoing it: on a conflict
+// the merge is left in progress -- MERGE_HEAD present, the markers written into
+// the worktree -- and the unmerged paths are returned with ErrMergeConflict, so
+// the caller's tree is the resolution the builder is handed. Any other failure
+// is not a conflict, so the merge is aborted and the original error returned,
+// exactly as Merge does.
+func (c *Client) MergeKeep(ctx context.Context, dir, ref string) ([]string, error) {
+	_, err := c.run(ctx, dir, nil, "merge", "--no-edit", ref)
+	if err == nil {
+		return nil, nil
+	}
+	if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, err
+	}
+
+	paths, perr := c.unmergedPaths(ctx, dir)
+	if perr != nil {
+		return nil, perr
+	}
+	// No unmerged path means the failure was not a conflict -- an unresolvable
+	// ref, a dirty index -- so the original error is the honest answer, and the
+	// abort still runs: git may have left a merge in progress before failing.
+	if len(paths) == 0 {
+		_, _ = c.run(ctx, dir, nil, "merge", "--abort")
+		return nil, err
+	}
+	return paths, ErrMergeConflict
+}
+
+// unmergedPaths lists the paths git marked unmerged, the conflict set Rebase,
+// Merge and MergeKeep return.
 func (c *Client) unmergedPaths(ctx context.Context, dir string) ([]string, error) {
 	out, err := c.run(ctx, dir, nil, "diff", "--name-only", "--diff-filter=U")
 	if err != nil {
