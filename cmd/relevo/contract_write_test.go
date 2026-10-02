@@ -381,6 +381,19 @@ func TestContractWriteUnclassifiedIsInternal(t *testing.T) {
 		{"tier above max", fmt.Errorf("bind: %w", relevo.ErrTierAboveMax), codeTierCap},
 		{"everything gated", fmt.Errorf("bind: %w", relevo.ErrAllGated), codeGateActive},
 		{"no candidate serves the actor", fmt.Errorf("bind: %w", relevo.ErrNoCandidates), codePolicyRefused},
+		// An invalid binding name is the caller's own --name, so it is usage
+		// with `relevo help` as the way out -- never internal.
+		{"invalid binding name", fmt.Errorf("bind: %w", store.ErrInvalidName), codeUsage},
+		{"invalid feature label", fmt.Errorf("bind: %w", store.ErrInvalidFeature), codeUsage},
+		{"invalid ticket", fmt.Errorf("bind: %w", store.ErrInvalidTicket), codeUsage},
+		{"caller input refusal", fmt.Errorf("bind: %w", relevo.ErrBadInput), codeUsage},
+		// A send against a round whose previous process is still alive is a
+		// refusal: the caller waits or stops, nothing is relevo's fault.
+		{"builder busy", fmt.Errorf("send: %w", relevo.ErrBuilderBusy), codeRefused},
+		{"report pending", fmt.Errorf("send: %w", relevo.ErrReportPending), codeRefused},
+		{"scope active", fmt.Errorf("send: %w", relevo.ErrScopeActive), codeRefused},
+		{"bare refusal", fmt.Errorf("chain: %w", relevo.ErrRefused), codeRefused},
+		{"round out of range", fmt.Errorf("show: %w", relevo.ErrRoundNotFound), codeRoundNotFound},
 		{"unclassified", errors.New("something nobody classified"), codeInternal},
 	} {
 		t.Run(c.name, func(t *testing.T) {

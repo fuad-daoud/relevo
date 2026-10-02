@@ -158,6 +158,31 @@ func DefaultRoot() (string, error) {
 	return filepath.Join(home, ".local", "state", "relevo"), nil
 }
 
+// ErrInvalidName is ValidName's class: a name that does not satisfy the
+// binding-name rule. A name is the caller's own input, so every error carrying
+// it is a usage failure, not an internal one. ValidName wraps this rather than
+// returning it bare, so the message the user reads names the offending
+// character and stays free of a second "invalid binding name" tail.
+var ErrInvalidName = errors.New("invalid binding name")
+
+// invalid is a store validation error carrying the class the CLI classifies
+// on while rendering only its own message. errors.Is(err, class) is what the
+// CLI maps, so no %w tail rewrites the pinned message the user reads. One type
+// covers every store validator, each naming its own class.
+type invalid struct {
+	msg   string
+	class error
+}
+
+func (e *invalid) Error() string { return e.msg }
+
+func (e *invalid) Unwrap() error { return e.class }
+
+// invalidOf builds a validation error of a class from a format and arguments.
+func invalidOf(class error, format string, args ...any) error {
+	return &invalid{msg: fmt.Sprintf(format, args...), class: class}
+}
+
 // Root returns the store's root directory.
 func (s *Store) Root() string { return s.root }
 
@@ -230,13 +255,13 @@ func WriteTemp(root, pattern string, data []byte) (string, error) {
 // then up to 31 more of [a-z0-9_-].
 func ValidName(name string) error {
 	if name == "" {
-		return errors.New("binding name is empty")
+		return invalidOf(ErrInvalidName, "binding name is empty")
 	}
 	if len(name) > MaxAgentNameLen {
-		return fmt.Errorf("binding name %q exceeds %d characters", name, MaxAgentNameLen)
+		return invalidOf(ErrInvalidName, "binding name %q exceeds %d characters", name, MaxAgentNameLen)
 	}
 	if name[0] < 'a' || name[0] > 'z' {
-		return fmt.Errorf("binding name %q must start with a lowercase letter", name)
+		return invalidOf(ErrInvalidName, "binding name %q must start with a lowercase letter", name)
 	}
 
 	for i := 1; i < len(name); i++ {
@@ -244,7 +269,7 @@ func ValidName(name string) error {
 		lower := c >= 'a' && c <= 'z'
 		digit := c >= '0' && c <= '9'
 		if !lower && !digit && c != '-' && c != '_' {
-			return fmt.Errorf("binding name %q has an invalid character %q", name, string(c))
+			return invalidOf(ErrInvalidName, "binding name %q has an invalid character %q", name, string(c))
 		}
 	}
 
