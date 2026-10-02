@@ -266,8 +266,7 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 			lines = append(lines, fmt.Sprintf("%s: read log: %v", b.Name, err))
 			continue
 		}
-		if HasPromptEntry(entries, b.Round) &&
-			!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport) {
+		if store.RoundOpen(entries, b.Round) {
 			open = append(open, b)
 		}
 	}
