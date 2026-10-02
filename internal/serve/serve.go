@@ -324,10 +324,33 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		// runs the harness binary, which is the same for every owner.
 		SessionReaper: s.cfg.SessionReaper,
 	}
-	if s.cfg.Isolation == isolate.ModeUser {
+	switch s.cfg.Isolation {
+	case isolate.ModeUser:
 		s.applyTenant(root, st, &rt)
+	case isolate.ModeContainer:
+		s.applyContainer(root, &rt)
 	}
 	return rt
+}
+
+// applyContainer rewires rt for one container-mode owner: its runner starts
+// every process as a rootless podman container bound to the owner's repo, so a
+// round, gate, consult or owner-path git runs confined by the container rather
+// than as the serve uid. There is no tenant chown and no tenant root: the
+// container runs as the serve uid on the host via keep-id. A runner that is not
+// a Boundary is wrapped to refuse every Start, so container mode never falls
+// back to the serve uid.
+func (s *Server) applyContainer(root string, rt *relevo.Runtime) {
+	repo, err := s.repoRoot(ownerIDOf(root))
+	if err != nil {
+		rt.Runner = isolate.Refuse(s.cfg.Runner, err)
+		return
+	}
+	if b, ok := s.cfg.Runner.(isolate.Boundary); ok {
+		rt.Runner = b.ForContainer(isolate.ContainerSpec{Image: s.cfg.IsolationImage, RepoRoot: repo})
+		return
+	}
+	rt.Runner = isolate.Refuse(s.cfg.Runner, fmt.Errorf("serve.isolation=container needs a container boundary runner, got %T", s.cfg.Runner))
 }
 
 // applyTenant rewires rt for one user-mode owner: the boundary refuses when the

@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -84,7 +85,7 @@ func TestServeChecksNoServerKey(t *testing.T) {
 		fileContents:  map[string]string{},
 	}
 	now := time.Now()
-	checks := ServeChecks(env, serveTestDB(t, false, "", ""), "/fake/serve", now, "none", false)
+	checks := ServeChecks(env, serveTestDB(t, false, "", ""), "/fake/serve", now, "none", "", false)
 	if len(checks) != 0 {
 		t.Fatalf("ServeChecks without the serve.tls.key secret returned %d checks, want 0", len(checks))
 	}
@@ -110,7 +111,7 @@ func TestServeChecksCertificate(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			checks := ServeChecks(env, serveTestDB(t, true, tc.certPEM, ""), serveRoot, now, "none", false)
+			checks := ServeChecks(env, serveTestDB(t, true, tc.certPEM, ""), serveRoot, now, "none", "", false)
 			c := findCheck(Report{Checks: checks}, "serve", "certificate")
 			if c == nil {
 				t.Fatal("missing serve: certificate check")
@@ -137,7 +138,7 @@ func TestServeChecksClients(t *testing.T) {
 		env := &fakeEnv{
 			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveTestDB(t, true, "", clientsJSON), serveRoot, now, "none", false)
+		checks := ServeChecks(env, serveTestDB(t, true, "", clientsJSON), serveRoot, now, "none", "", false)
 		c := findCheck(Report{Checks: checks}, "serve", "clients")
 		if c == nil {
 			t.Fatal("missing serve: clients check")
@@ -154,7 +155,7 @@ func TestServeChecksClients(t *testing.T) {
 		env := &fakeEnv{
 			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveTestDB(t, true, "", "[]"), serveRoot, now, "none", false)
+		checks := ServeChecks(env, serveTestDB(t, true, "", "[]"), serveRoot, now, "none", "", false)
 		c := findCheck(Report{Checks: checks}, "serve", "clients")
 		if c == nil {
 			t.Fatal("missing serve: clients check")
@@ -173,7 +174,7 @@ func TestServeChecksClients(t *testing.T) {
 		}
 		// Valid JSON of the wrong shape: the kv row is validated on write, so
 		// a malformed document is one that is not the client array.
-		checks := ServeChecks(env, serveTestDB(t, true, "", `{"not":"a client list"}`), serveRoot, now, "none", false)
+		checks := ServeChecks(env, serveTestDB(t, true, "", `{"not":"a client list"}`), serveRoot, now, "none", "", false)
 		c := findCheck(Report{Checks: checks}, "serve", "clients")
 		if c == nil {
 			t.Fatal("missing serve: clients check")
@@ -188,10 +189,10 @@ func TestServeChecksClients(t *testing.T) {
 }
 
 // TestServeChecksIsolation pins the serve isolation row's rule table: none is
-// OK with at most one active client and a Warn with two, user and container
-// Fail with the Available sentence, an unknown value Fails naming
-// serve.isolation, and a broken client registry Fails rather than reading as
-// a clean none.
+// OK with at most one active client and a Warn with two, user is refused
+// without root, an unknown value Fails naming serve.isolation, and a broken
+// client registry Fails rather than reading as a clean none. The container
+// row's prerequisites are pinned separately.
 func TestServeChecksIsolation(t *testing.T) {
 	now := time.Now()
 	serveRoot := "/fake/serve"
@@ -211,13 +212,12 @@ func TestServeChecksIsolation(t *testing.T) {
 		{name: "none with one client", isolation: "none", clients: `[{"id":"id1","label":"c1"}]`, wantSev: SevOK, wantDetail: "none", detailExact: true},
 		{name: "none with two clients", isolation: "none", clients: `[{"id":"id1","label":"c1"},{"id":"id2","label":"c2"}]`, wantSev: SevWarn, wantDetail: "2 active clients share one unix user", detailExact: true},
 		{name: "user fails", isolation: "user", clients: "[]", wantSev: SevFail, wantDetail: "serve.isolation=user", wantFix: fix},
-		{name: "container fails", isolation: "container", clients: "[]", wantSev: SevFail, wantDetail: "serve.isolation=container", wantFix: fix},
 		{name: "unknown fails", isolation: "host", clients: "[]", wantSev: SevFail, wantDetail: "serve.isolation:", wantFix: fix},
 		{name: "broken registry fails", isolation: "none", clients: `{"not":"a client list"}`, wantSev: SevFail, wantDetail: "serve.clients unreadable", wantFix: "fix the serve.clients row in the database"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			checks := ServeChecks(env, serveTestDB(t, true, "", tc.clients), serveRoot, now, tc.isolation, false)
+			checks := ServeChecks(env, serveTestDB(t, true, "", tc.clients), serveRoot, now, tc.isolation, "", false)
 			c := findCheck(Report{Checks: checks}, "serve", "isolation")
 			if c == nil {
 				t.Fatal("missing serve: isolation check")
@@ -239,6 +239,58 @@ func TestServeChecksIsolation(t *testing.T) {
 	}
 }
 
+// TestServeChecksIsolationContainer pins the container isolation row, one row
+// per prerequisite: podman absent, the configured image absent, and the OK row.
+// The two probes are injected so the row is checked without a container
+// runtime.
+func TestServeChecksIsolationContainer(t *testing.T) {
+	now := time.Now()
+	serveRoot := "/fake/serve"
+	env := &fakeEnv{existingFiles: map[string]bool{serveRoot: true}}
+
+	origLook, origImage := containerPodmanLookPath, containerImageExists
+	t.Cleanup(func() { containerPodmanLookPath, containerImageExists = origLook, origImage })
+
+	const image = "relevo-builder:local"
+	cases := []struct {
+		name       string
+		lookErr    error
+		imageErr   error
+		wantSev    Severity
+		wantDetail string
+		wantFix    string
+	}{
+		{name: "podman absent", lookErr: errors.New("not found"), wantSev: SevFail, wantDetail: "podman not found", wantFix: "install podman"},
+		{name: "image absent", imageErr: errors.New("no such image"), wantSev: SevFail, wantDetail: "not found", wantFix: "dist/Containerfile"},
+		{name: "ok", wantSev: SevOK, wantDetail: "isolation=container"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			containerPodmanLookPath = func(string) (string, error) {
+				if tc.lookErr != nil {
+					return "", tc.lookErr
+				}
+				return "/usr/bin/podman", nil
+			}
+			containerImageExists = func(context.Context, string) error { return tc.imageErr }
+			checks := ServeChecks(env, serveTestDB(t, true, "", "[]"), serveRoot, now, "container", image, false)
+			c := findCheck(Report{Checks: checks}, "serve", "isolation")
+			if c == nil {
+				t.Fatal("missing serve: isolation check")
+			}
+			if c.Severity != tc.wantSev {
+				t.Errorf("severity = %v, want %v (detail %q)", c.Severity, tc.wantSev, c.Detail)
+			}
+			if !strings.Contains(c.Detail, tc.wantDetail) {
+				t.Errorf("detail = %q, want containing %q", c.Detail, tc.wantDetail)
+			}
+			if tc.wantFix != "" && !strings.Contains(c.Fix, tc.wantFix) {
+				t.Errorf("fix = %q, want containing %q", c.Fix, tc.wantFix)
+			}
+		})
+	}
+}
+
 func TestServeChecksState(t *testing.T) {
 	now := time.Now()
 	serveRoot := "/fake/serve"
@@ -247,7 +299,7 @@ func TestServeChecksState(t *testing.T) {
 		env := &fakeEnv{
 			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none", false)
+		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none", "", false)
 		c := findCheck(Report{Checks: checks}, "serve", "state")
 		if c == nil {
 			t.Fatal("missing serve: state check")
@@ -265,7 +317,7 @@ func TestServeChecksState(t *testing.T) {
 			// serveRoot missing
 			existingFiles: map[string]bool{},
 		}
-		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none", false)
+		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none", "", false)
 		c := findCheck(Report{Checks: checks}, "serve", "state")
 		if c == nil {
 			t.Fatal("missing serve: state check")
@@ -280,7 +332,7 @@ func TestServeChecksState(t *testing.T) {
 			existingFiles: map[string]bool{serveRoot: true},
 			probeErr:      errors.New("permission denied"),
 		}
-		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none", false)
+		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none", "", false)
 		c := findCheck(Report{Checks: checks}, "serve", "state")
 		if c == nil {
 			t.Fatal("missing serve: state check")
@@ -339,7 +391,7 @@ func TestServeChecksIsolationUser(t *testing.T) {
 			tenantEUID = func() int { return tc.euid }
 			tenantLookup = tc.lookup
 			tenantStat = tc.stat
-			checks := ServeChecks(env, serveTestDB(t, true, "", tc.clients), serveRoot, now, "user", tc.shared)
+			checks := ServeChecks(env, serveTestDB(t, true, "", tc.clients), serveRoot, now, "user", "", tc.shared)
 			c := findCheck(Report{Checks: checks}, "serve", "isolation")
 			if c == nil {
 				t.Fatal("missing serve: isolation check")
