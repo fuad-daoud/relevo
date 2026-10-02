@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
@@ -130,6 +131,14 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 	return WaitResult{}
 }
 
+// waitReader covers the store reads wait needs: loading a binding and reading its log.
+type waitReader interface {
+	Load(name string) (store.Binding, error)
+	ReadLog(name string) ([]store.LogEntry, error)
+}
+
+var _ waitReader = (*store.Store)(nil)
+
 // WaitOptions configures Wait.
 type WaitOptions struct {
 	Names    []string      // one name, or several for --any; len >= 1
@@ -137,6 +146,11 @@ type WaitOptions struct {
 	Timeout  time.Duration // > 0; the CLI defaults 10m
 	Interval time.Duration // poll period; the CLI passes 1s; tests pass something small
 	Peek     bool          // --peek: report the outcome only, deliver nothing
+
+	reader waitReader
+	now    func() time.Time
+	sleep  func(context.Context, time.Duration) error
+	stderr io.Writer
 }
 
 // waitDeliverable reports whether code is an exit on which `relevo wait`
@@ -144,6 +158,26 @@ type WaitOptions struct {
 // done or unbound binding (4).
 func waitDeliverable(code int) bool {
 	return code != WaitTimeout && code != WaitGone
+}
+
+func initialWaitRounds(rdr waitReader, opts WaitOptions) (map[string]int, error) {
+	rounds := make(map[string]int, len(opts.Names))
+	for _, n := range opts.Names {
+		b, err := rdr.Load(n)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := rdr.ReadLog(n)
+		if err != nil {
+			return nil, err
+		}
+		round := opts.Round
+		if round == 0 {
+			round = DefaultWaitRound(b, entries)
+		}
+		rounds[n] = round
+	}
+	return rounds, nil
 }
 
 // Wait polls the store until one of opts.Names closes its
@@ -169,25 +203,14 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 		return "", WaitResult{}, fmt.Errorf("wait: interval must be positive")
 	}
 
-	rounds := make(map[string]int, len(opts.Names))
-	for _, n := range opts.Names {
-		b, err := rt.Store.Load(n)
-		if err != nil {
-			return "", WaitResult{}, err
-		}
-		entries, err := rt.Store.ReadLog(n)
-		if err != nil {
-			return "", WaitResult{}, err
-		}
-		round := opts.Round
-		if round == 0 {
-			round = DefaultWaitRound(b, entries)
-		}
-		rounds[n] = round
+	retryer := newWaitRetryer(rt, opts)
+	rounds, err := initialWaitRounds(retryer.reader, opts)
+	if err != nil {
+		return "", WaitResult{}, err
 	}
 
 	qf := questionFirstLine(rt)
-	start := rt.Now()
+	start := retryer.now()
 
 	for {
 		// A remote binding's closed round is collected here too (spec §2.2):
@@ -198,14 +221,14 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 		_, _, _ = SyncRemoteUnlessDaemon(ctx, rt)
 
 		for _, n := range opts.Names {
-			b, err := rt.Store.Load(n)
+			b, err := retryer.load(ctx, n)
 			if errors.Is(err, store.ErrNotFound) {
 				return n, WaitResult{Code: WaitGone, Done: true}, nil
 			}
 			if err != nil {
 				return n, WaitResult{}, err
 			}
-			entries, err := rt.Store.ReadLog(n)
+			entries, err := retryer.readLog(ctx, n)
 			if err != nil {
 				return n, WaitResult{}, err
 			}
@@ -228,14 +251,12 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 			}
 		}
 
-		if rt.Now().Sub(start) >= opts.Timeout {
+		if retryer.now().Sub(start) >= opts.Timeout {
 			return "", WaitResult{Code: WaitTimeout, Done: true}, nil
 		}
 
-		select {
-		case <-ctx.Done():
-			return "", WaitResult{}, ctx.Err()
-		case <-time.After(opts.Interval):
+		if err := retryer.sleep(ctx, opts.Interval); err != nil {
+			return "", WaitResult{}, err
 		}
 	}
 }
