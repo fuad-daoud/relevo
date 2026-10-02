@@ -2116,21 +2116,25 @@ func TestStatusLineRowsConsumedContrast(t *testing.T) {
 }
 
 // TestRenderBoardLine pins the board line: nil renders nothing, a block renders
-// dim "board <name> · <url>", and an over-wide line is truncated (S8).
+// dim "board <mastermind> · <url>" (falling back to the scene name when the
+// owner is unknown), and an over-wide line is truncated (S8).
 func TestRenderBoardLine(t *testing.T) {
 	t.Parallel()
 
-	if got := RenderBoardLine(nil, 80); got != "" {
+	if got := RenderBoardLine(nil, "", 80); got != "" {
 		t.Errorf("RenderBoardLine(nil) = %q, want empty", got)
 	}
 
 	b := &StatusLineBoard{Name: "board", Scope: "live", URL: "http://127.0.0.1:9/#t=abc"}
-	if got, want := RenderBoardLine(b, 80), ansiDim+"board board · http://127.0.0.1:9/#t=abc"+ansiReset+"\n"; got != want {
+	if got, want := RenderBoardLine(b, "opencode-120", 80), ansiDim+"board opencode-120 · http://127.0.0.1:9/#t=abc"+ansiReset+"\n"; got != want {
 		t.Errorf("RenderBoardLine = %q, want %q", got, want)
+	}
+	if got, want := RenderBoardLine(b, "", 80), ansiDim+"board board · http://127.0.0.1:9/#t=abc"+ansiReset+"\n"; got != want {
+		t.Errorf("RenderBoardLine without an owner = %q, want %q", got, want)
 	}
 
 	long := &StatusLineBoard{Name: "board", Scope: "live", URL: strings.Repeat("x", 200)}
-	got := RenderBoardLine(long, 20)
+	got := RenderBoardLine(long, "opencode-120", 20)
 	visible := strings.TrimSuffix(strings.TrimPrefix(got, ansiDim), ansiReset+"\n")
 	if n := utf8.RuneCountInString(visible); n != 20 {
 		t.Errorf("truncated board line = %q (%d runes), want 20", visible, n)

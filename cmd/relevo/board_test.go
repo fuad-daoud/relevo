@@ -757,3 +757,18 @@ func TestBoardAnnotateRefusals(t *testing.T) {
 		})
 	}
 }
+
+// TestBoardURLNamesTheOwner pins the printed URL: a live board carries one
+// owner segment (so a copied URL says whose board it is), a repo board carries
+// none, and the per-run token always stays in the fragment.
+func TestBoardURLNamesTheOwner(t *testing.T) {
+	if got, want := boardURL("127.0.0.1:9", "opencode-120", "abc"), "http://127.0.0.1:9/opencode-120/#t=abc"; got != want {
+		t.Errorf("boardURL(owner) = %q, want %q", got, want)
+	}
+	if got, want := boardURL("127.0.0.1:9", "", "abc"), "http://127.0.0.1:9/#t=abc"; got != want {
+		t.Errorf("boardURL(repo) = %q, want %q", got, want)
+	}
+	if got, want := boardURL("127.0.0.1:9", "a b", "abc"), "http://127.0.0.1:9/a%20b/#t=abc"; got != want {
+		t.Errorf("boardURL(escaped) = %q, want %q", got, want)
+	}
+}

@@ -11,14 +11,19 @@ type StatusLineBoard struct {
 	URL   string `json:"url"`
 }
 
-// RenderBoardLine is the statusline's board line: "board <name> · <url>", dim,
-// directly after the MasterMind line, truncated to the statusline width. A nil
-// block renders nothing.
-func RenderBoardLine(b *StatusLineBoard, columns int) string {
+// RenderBoardLine is the statusline's board line: "board <mastermind> · <url>",
+// dim, directly after the MasterMind line, truncated to the statusline width.
+// The owner names the MasterMind whose board it is; when it is unknown the line
+// falls back to the scene name. A nil block renders nothing.
+func RenderBoardLine(b *StatusLineBoard, mastermind string, columns int) string {
 	if b == nil || b.Name == "" {
 		return ""
 	}
-	text := "board " + b.Name + " · " + b.URL
+	name := mastermind
+	if name == "" {
+		name = b.Name
+	}
+	text := "board " + name + " · " + b.URL
 	if columns > 0 && utf8.RuneCountInString(text) > columns {
 		text = truncate(text, columns)
 	}

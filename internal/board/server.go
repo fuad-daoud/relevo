@@ -169,9 +169,12 @@ func (s *Server) putScene(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, etagDoc{Etag: etag})
 }
 
-// handleIndex serves the page at "/" and refuses every other path.
+// handleIndex serves the page at "/" and under one owner segment
+// ("/<owner>"), so a live board's printed URL names the MasterMind that owns
+// it. The page itself only ever calls /api and /assets; anything deeper than
+// one segment is refused.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	if p := strings.Trim(r.URL.Path, "/"); strings.Contains(p, "/") {
 		http.NotFound(w, r)
 		return
 	}

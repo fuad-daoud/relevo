@@ -97,6 +97,9 @@ type boardOptions struct {
 	theme   *board.Theme
 	noOpen  bool
 	liveDir string
+	// owner names the MasterMind a live board belongs to (its name, else its
+	// id); empty for the repo scope. It only shapes the printed URL.
+	owner string
 }
 
 // boardServerInfo composes the advertisement a live board writes after its
@@ -143,7 +146,7 @@ func cmdBoardURL(args []string) error {
 		return fail(codeUsage, "relevo board url takes no scene path, got %q", fs.Args()[0])
 	}
 
-	id, err := boardMasterMind(*v.mastermind)
+	id, _, err := boardMasterMind(*v.mastermind)
 	if err != nil {
 		return err
 	}
@@ -247,7 +250,7 @@ func cmdBoard(args []string) error {
 	if res.Scope == board.ScopeLive {
 		liveDir = res.LiveDir
 	}
-	return runBoard(boardOptions{scene: res.Path, theme: theme, noOpen: *v.noOpen, liveDir: liveDir})
+	return runBoard(boardOptions{scene: res.Path, theme: theme, noOpen: *v.noOpen, liveDir: liveDir, owner: res.Owner})
 }
 
 // boardResolveTheme applies the precedence: --theme, then the repo-local
@@ -431,6 +434,18 @@ func cmdBoardAnnotate(args []string) error {
 	return nil
 }
 
+// boardURL is the printed board URL: the loopback host, the owner segment when
+// there is one (a live board), and the per-run token in the fragment, so the
+// token never rides a request line. The server serves the page under that one
+// owner segment.
+func boardURL(host, owner, token string) string {
+	path := "/"
+	if owner != "" {
+		path = "/" + neturl.PathEscape(owner) + "/"
+	}
+	return "http://" + host + path + "#t=" + token
+}
+
 // runBoard serves the scene on a loopback listener until SIGINT or SIGTERM,
 // then drains through Shutdown so an in-flight save finishes.
 func runBoard(opts boardOptions) error {
@@ -448,7 +463,7 @@ func runBoard(opts boardOptions) error {
 	srv := &board.Server{Token: token, ScenePath: opts.scene, Theme: opts.theme, Host: host}
 	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
-	url := "http://" + host + "/#t=" + token
+	url := boardURL(host, opts.owner, token)
 
 	// S6/S7: a live board writes server.json after the listener binds and
 	// removes it on shutdown only when the file still carries our pid and start

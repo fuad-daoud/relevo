@@ -52,6 +52,10 @@ type Resolved struct {
 	Path        string
 	LiveDir     string
 	FromPointer bool
+	// Owner names the MasterMind a live board belongs to: its name when known,
+	// else its id. It is empty for the repo scope and is only used to make the
+	// printed URL readable ("http://127.0.0.1:PORT/<owner>/#t=...").
+	Owner string
 }
 
 // ResolveLiveArg classifies arg as a live scene path. It returns ok true with
