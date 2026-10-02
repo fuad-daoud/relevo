@@ -57,7 +57,7 @@ func chainBuilderRoundOpen(s *store.Store, c db.ChainRow) bool {
 	if err != nil {
 		return false
 	}
-	return HasPromptEntry(entries, b.Round) && !HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
+	return store.RoundOpen(entries, b.Round)
 }
 
 // WaitChain polls a chain until it is no longer running and reports how it
