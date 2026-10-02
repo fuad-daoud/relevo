@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -267,11 +268,89 @@ func TestContractStatusLine(t *testing.T) {
 	}
 }
 
+// TestStatuslineBoardBlock pins the board block (S8): a live server for the
+// calling mastermind shows the block in both --line --json and --line; a dead
+// pid shows "board":null and no text line.
+func TestStatuslineBoardBlock(t *testing.T) {
+	orig := boardProcStart
+	t.Cleanup(func() { boardProcStart = orig })
+	boardProcStart = func(int) (int64, error) { return 4242, nil }
+
+	fx := seedStatusFixture(t)
+	t.Setenv("RELEVO_MASTERMIND", fx.mastermindID)
+	liveDir := filepath.Join(fx.roots[0], "boards", fx.mastermindID)
+	url := "http://127.0.0.1:41234/#t=abc"
+	if err := board.WritePointer(liveDir, "board"); err != nil {
+		t.Fatalf("WritePointer: %v", err)
+	}
+	info := board.ServerInfo{Scene: "board", URL: url, Port: 41234, PID: os.Getpid(), StartedAt: 4242}
+	if err := board.WriteServerInfo(liveDir, info); err != nil {
+		t.Fatalf("WriteServerInfo: %v", err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error { return run([]string{"status", "--line", "--json"}) })
+	if err != nil {
+		t.Fatalf("status --line --json: %v (stderr %s)", err, stderr)
+	}
+	if doc := string(normalize(stdout, fx.roots...)); !strings.Contains(doc, `"board":{"name":"board","scope":"live","url":"`+url+`"}`) {
+		t.Errorf("statusline json = %s, want the board block", doc)
+	}
+
+	stdout, stderr, err = captureOutput(t, func() error { return run([]string{"status", "--line"}) })
+	if err != nil {
+		t.Fatalf("status --line: %v (stderr %s)", err, stderr)
+	}
+	if line := string(normalize(stdout, fx.roots...)); !strings.Contains(line, "board board · "+url) {
+		t.Errorf("statusline text = %q, want the board line", line)
+	}
+
+	// A dead pid: the block is null and no board line is drawn.
+	boardProcStart = func(int) (int64, error) { return 0, errors.New("gone") }
+	stdout, stderr, err = captureOutput(t, func() error { return run([]string{"status", "--line", "--json"}) })
+	if err != nil {
+		t.Fatalf("status --line --json (dead): %v (stderr %s)", err, stderr)
+	}
+	if doc := string(stdout); !strings.Contains(doc, `"board":null`) {
+		t.Errorf("statusline json (dead pid) = %s, want \"board\":null", doc)
+	}
+	stdout, stderr, err = captureOutput(t, func() error { return run([]string{"status", "--line"}) })
+	if err != nil {
+		t.Fatalf("status --line (dead): %v (stderr %s)", err, stderr)
+	}
+	if line := string(stdout); strings.Contains(line, "board board ·") {
+		t.Errorf("statusline text (dead pid) = %q, want no board line", line)
+	}
+}
+
+// TestBoardBlockForWithoutADatabase pins that the block is a pure file read: a
+// state root with no relevo.db still yields it (S8).
+func TestBoardBlockForWithoutADatabase(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir()) // a state root with no database
+	orig := boardProcStart
+	t.Cleanup(func() { boardProcStart = orig })
+	boardProcStart = func(int) (int64, error) { return 4242, nil }
+
+	root := t.TempDir()
+	id := "mm_aaaaaaaaaaaa"
+	liveDir := filepath.Join(root, "boards", id)
+	if err := board.WritePointer(liveDir, "board"); err != nil {
+		t.Fatalf("WritePointer: %v", err)
+	}
+	info := board.ServerInfo{Scene: "board", URL: "http://127.0.0.1:9/#t=abc", Port: 9, PID: os.Getpid(), StartedAt: 4242}
+	if err := board.WriteServerInfo(liveDir, info); err != nil {
+		t.Fatalf("WriteServerInfo: %v", err)
+	}
+
+	blk := boardBlockFor(root, id, boardProcStart)
+	if blk == nil || blk.Name != "board" || blk.Scope != "live" || blk.URL != info.URL {
+		t.Errorf("boardBlockFor = %+v, want the live block", blk)
+	}
+}
+
 // ---------------------------------------------------------------------
 // C3: relevo show <name> --json, for every section flag, plus
 // show <name> --log --after 0 --json.
 // ---------------------------------------------------------------------
-
 const showFixtureFindingsID = "7f2a3c1d"
 
 // seedShowSectionsFixture seeds one binding with every section's artifact on

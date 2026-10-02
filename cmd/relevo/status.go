@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -198,6 +201,28 @@ func cmdStatus(args []string) error {
 	return nil
 }
 
+// boardBlockFor reads one MasterMind's live board block from the state root's
+// files alone -- the pointer, server.json and a pid check, with no database
+// read (S8). It is present only when the pointer names a scene, server.json
+// advertises the same scene, and the server's pid is alive with a matching
+// start. Any read error, a missing pointer, a scene mismatch or a dead pid
+// yields nil, never a failure.
+func boardBlockFor(root, id string, procStart func(pid int) (int64, error)) *view.StatusLineBoard {
+	if root == "" || id == "" {
+		return nil
+	}
+	liveDir := filepath.Join(root, "boards", id)
+	scene, present, err := board.Pointer(liveDir)
+	if err != nil || !present {
+		return nil
+	}
+	url, ok, err := board.LiveURL(liveDir, scene, procStart)
+	if err != nil || !ok {
+		return nil
+	}
+	return &view.StatusLineBoard{Name: scene, Scope: string(board.ScopeLive), URL: url}
+}
+
 // runStatusline is statusline's body (the old cmdStatusline), now reached
 // through `status --line` (§4.5): the same output, COLUMNS,
 // RELEVO_STATUSLINE_MARGIN and mastermind filtering. With asJSON, it prints
@@ -235,6 +260,9 @@ func runStatusline(asJSON bool) error {
 		// MasterMindStatus failure: the line is the mastermind's identity, not a
 		// binding row.
 		fmt.Print(view.RenderMasterMindLine(rec.Name, columns))
+		if root, rerr := store.DefaultRoot(); rerr == nil {
+			fmt.Print(view.RenderBoardLine(boardBlockFor(root, rec.ID, boardProcStart), columns))
+		}
 		rep, err := relevo.MasterMindStatus(context.Background(), rt, rec.ID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
@@ -256,6 +284,9 @@ func runStatusline(asJSON bool) error {
 	doc := view.StatusLineDoc{Now: now, Rows: []view.StatusLineRow{}}
 	if ok {
 		doc.MasterMind = &view.StatusLineMasterMind{ID: rec.ID, Name: rec.Name}
+		if root, rerr := store.DefaultRoot(); rerr == nil {
+			doc.Board = boardBlockFor(root, rec.ID, boardProcStart)
+		}
 		rep, err := relevo.MasterMindStatus(context.Background(), rt, rec.ID)
 		if err == nil {
 			doc.Rows = view.StatusLineRows(rep, rt.Now())

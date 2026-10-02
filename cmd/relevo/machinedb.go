@@ -118,8 +118,8 @@ func routeForArgs(args []string) (dbRoute, time.Duration, time.Duration) {
 // runtime reads and writes the repository itself. A peek verb also skips
 // captureAgyEnv, which would open -- and can migrate -- the very database the
 // verb promises not to touch. bugreport's own flags (--name/--round/--logs),
-// db query's SQL, and board's ([path]/--theme/--no-open) pick what the verb
-// does and never change the route.
+// db query's SQL, and board's ([path]/--board/--mastermind/--theme/--no-open)
+// pick what the verb does and never change the route.
 func isPeekArgs(args []string) bool {
 	if len(args) == 0 {
 		return false
