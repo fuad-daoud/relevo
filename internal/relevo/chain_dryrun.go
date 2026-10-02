@@ -39,6 +39,7 @@ type DryRunStep struct {
 	Kind      string
 	Actor     string
 	Placement string
+	Children  []string
 	Refs      []string
 	Edges     []string
 }
@@ -74,7 +75,7 @@ func ChainDryRun(ctx context.Context, rt Runtime, opts ChainOptions) (DryRunDoc,
 
 	actors := rt.RoleRegistry().WorkflowActors()
 	doc := DryRunDoc{Workflow: applied.Name, Origin: origin, Params: dryRunParams(applied)}
-	doc.Steps = dryRunSteps(applied, actors, rt)
+	doc.Steps = dryRunSteps(applied, actors, rt, opts)
 	for _, p := range workflow.Validate(applied, dryRunEnv(rt, opts)) {
 		doc.Problems = append(doc.Problems, p.String())
 	}
@@ -132,7 +133,7 @@ func dryRunParams(def workflow.Definition) []DryRunParam {
 
 // dryRunSteps lists every step of the resolved graph, sorted by id, with the
 // edges, references, actor and placement a reviewer needs to read it.
-func dryRunSteps(def workflow.Definition, actors map[string]workflow.ActorInfo, rt Runtime) []DryRunStep {
+func dryRunSteps(def workflow.Definition, actors map[string]workflow.ActorInfo, rt Runtime, opts ChainOptions) []DryRunStep {
 	ids := make([]string, 0, len(def.Steps))
 	for id := range def.Steps {
 		ids = append(ids, id)
@@ -151,7 +152,28 @@ func dryRunSteps(def workflow.Definition, actors map[string]workflow.ActorInfo, 
 			ds.Actor = workflow.RenderParams(def, step.Run)
 			ds.Placement = dryRunPlacement(rt, ds.Actor)
 		}
+		if step.Fork != nil {
+			ds.Children = dryRunForkChildren(opts.Name, step.Fork, opts)
+		}
 		out = append(out, ds)
+	}
+	return out
+}
+
+// dryRunForkChildren names the children a fork step would create.
+func dryRunForkChildren(name string, f *workflow.Fork, opts ChainOptions) []string {
+	if name == "" {
+		name = "<chain>"
+	}
+	var out []string
+	if len(f.Children) > 0 {
+		for i := range f.Children {
+			out = append(out, fmt.Sprintf("%s.%d", name, i+1))
+		}
+	} else if f.Each == "plans" {
+		for i := range opts.Plans {
+			out = append(out, fmt.Sprintf("%s.%d", name, i+1))
+		}
 	}
 	return out
 }
@@ -246,6 +268,9 @@ func RenderChainDryRun(doc DryRunDoc) string {
 		line := "  " + s.ID + " [" + s.Kind + "]"
 		if s.Actor != "" {
 			line += " actor=" + s.Actor + " placement=" + s.Placement
+		}
+		if len(s.Children) > 0 {
+			line += " children=" + strings.Join(s.Children, ",")
 		}
 		if len(s.Refs) > 0 {
 			line += " refs=" + strings.Join(s.Refs, " ")

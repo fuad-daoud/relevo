@@ -202,6 +202,15 @@ func flowTargetText(act workflow.Action) string {
 		return "halt"
 	case workflow.ActionStop:
 		return "stopped"
+	case workflow.ActionFork:
+		if len(act.Children) > 0 {
+			keys := make([]string, len(act.Children))
+			for i, ch := range act.Children {
+				keys[i] = ch.Key
+			}
+			return "forked " + strings.Join(keys, ", ")
+		}
+		return "fork"
 	default:
 		return string(act.Kind)
 	}

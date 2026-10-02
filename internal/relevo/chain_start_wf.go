@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -111,6 +112,9 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	if err := chainRefuseTwoCheckCommandsOnPlacedWriter(def, plan); err != nil {
 		return chainWFStart{}, err
 	}
+	if err := chainRefuseForkPlacedWriter(opts, def, plan); err != nil {
+		return chainWFStart{}, err
+	}
 
 	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
 	if err != nil {
@@ -154,6 +158,35 @@ func chainRefuseReaderBuilder(def workflow.Definition, actors map[string]workflo
 		return refuse("chain builder actor %q must be a writer actor, not a reader", name)
 	}
 	return nil
+}
+
+// chainRefuseForkPlacedWriter refuses a workflow with a fork step on a server
+// or on a placed writer, naming W4 as not supported yet.
+func chainRefuseForkPlacedWriter(opts ChainOptions, def workflow.Definition, plan chainWFStart) error {
+	if !workflowHasFork(def) {
+		return nil
+	}
+	if opts.Server != "" {
+		return refuse("workflow %s has a fork step: forks on a server are not supported yet (W4)", def.Name)
+	}
+	for _, m := range plan.members {
+		if m.writer {
+			if p := plan.placements[m.part]; !p.local() {
+				return refuse("workflow %s has a fork step: forks on placed writer %s are not supported yet (W4)", def.Name, m.name)
+			}
+		}
+	}
+	return nil
+}
+
+// workflowHasFork reports whether the workflow has at least one fork step.
+func workflowHasFork(def workflow.Definition) bool {
+	for _, step := range def.Steps {
+		if step.Fork != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // chainValidateWorkflowOpts refuses a bad name or feature choice before
@@ -299,25 +332,33 @@ func chainSingleCheckCommand(def workflow.Definition) string {
 	return ""
 }
 
-// chainCreateWorkflow is the half of a workflow start that creates things.
-func chainCreateWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) (ChainResult, error) {
-	var (
-		built   []store.Binding
-		rowBase chainBase
-		unwind  func()
-	)
+// chainPreparedWorkflow holds the artifacts of a prepared workflow start before
+// database persistence.
+type chainPreparedWorkflow struct {
+	opts    ChainOptions
+	plan    chainWFStart
+	rowBase chainBase
+	row     db.ChainRow
+	built   []store.Binding
+	start   workflow.State
+	acts    []workflow.Action
+	remote  bool
+	gate    string
+	unwind  func()
+}
+
+// chainBuildStartMembers builds member bindings and worktree/branch for a workflow start.
+func chainBuildStartMembers(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) ([]store.Binding, chainBase, func(), bool, error) {
 	remote := len(plan.placements) > 0 && !plan.placements[chain.MemberBuilder].local()
 	if remote {
 		synth := chainStartPlan{
 			settings: plan.settings, repo: plan.repo, ticket: plan.ticket,
 			members: plan.members, resolutions: plan.resolutions, remote: plan.remote,
 		}
-		wb, un, err := chainBuildRemoteBuilder(ctx, rt, opts, synth)
+		wb, unwind, err := chainBuildRemoteBuilder(ctx, rt, opts, synth)
 		if err != nil {
-			return ChainResult{}, err
+			return nil, chainBase{}, nil, true, err
 		}
-		unwind = un
-		built = append(built, wb)
 		readersBase := chainBase{
 			cwd: plan.repo, mastermind: plan.mastermind, mastermindID: plan.mastermindID,
 			repo: plan.repo, repoRef: captureRepo(ctx, rt, plan.repo), feature: opts.Feature, ticket: plan.ticket,
@@ -332,39 +373,39 @@ func chainCreateWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, pla
 		rb, err := chainBuildMembers(ctx, rt, readers, plan.resolutions, readersBase, plan.settings)
 		if err != nil {
 			unwind()
-			return ChainResult{}, err
+			return nil, chainBase{}, nil, true, err
 		}
-		built = append(built, rb...)
-		rowBase = readersBase
+		rowBase := readersBase
 		rowBase.worktree = ""
 		rowBase.branch = "relevo/" + opts.Name
 		rowBase.commit = plan.remote.base
-	} else {
-		worktree, branch, commit, baseRef, err := cutWorktree(ctx, rt, opts.Name, plan.repo, opts.Base)
-		if err != nil {
-			return ChainResult{}, err
-		}
-		rowBase = chainBase{
-			cwd: worktree, mastermind: plan.mastermind, mastermindID: plan.mastermindID,
-			repo: plan.repo, repoRef: captureRepo(ctx, rt, plan.repo), feature: opts.Feature, ticket: plan.ticket,
-			worktree: worktree, branch: branch, commit: commit, baseRef: baseRef,
-		}
-		locals, berr := chainBuildMembers(ctx, rt, plan.members, plan.resolutions, rowBase, plan.settings)
-		if berr != nil {
-			chainRollback(ctx, rt, plan.repo, worktree, branch)
-			return ChainResult{}, berr
-		}
-		built = locals
+		return append([]store.Binding{wb}, rb...), rowBase, unwind, true, nil
 	}
-	defer func() {
-		if unwind != nil {
-			unwind()
-		}
-	}()
 
-	// A workflow chain runs its checks as steps, so a local writer carries no
-	// gate of its own; a placed writer's binding carries the one check command
-	// its server runs on the writer's completion marker.
+	worktree, branch, commit, baseRef, err := cutWorktree(ctx, rt, opts.Name, plan.repo, opts.Base)
+	if err != nil {
+		return nil, chainBase{}, nil, false, err
+	}
+	rowBase := chainBase{
+		cwd: worktree, mastermind: plan.mastermind, mastermindID: plan.mastermindID,
+		repo: plan.repo, repoRef: captureRepo(ctx, rt, plan.repo), feature: opts.Feature, ticket: plan.ticket,
+		worktree: worktree, branch: branch, commit: commit, baseRef: baseRef,
+	}
+	locals, berr := chainBuildMembers(ctx, rt, plan.members, plan.resolutions, rowBase, plan.settings)
+	if berr != nil {
+		chainRollback(ctx, rt, plan.repo, worktree, branch)
+		return nil, chainBase{}, nil, false, berr
+	}
+	return locals, rowBase, nil, false, nil
+}
+
+// chainPrepareWorkflow is the preparation half of a workflow start: git,
+// bindings and row construction, without the state lock.
+func chainPrepareWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) (chainPreparedWorkflow, error) {
+	built, rowBase, unwind, remote, err := chainBuildStartMembers(ctx, rt, opts, plan)
+	if err != nil {
+		return chainPreparedWorkflow{}, err
+	}
 	gate := ""
 	if remote {
 		gate = chainSingleCheckCommand(plan.def)
@@ -388,17 +429,29 @@ func chainCreateWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, pla
 	if err != nil {
 		if !remote {
 			chainRollback(ctx, rt, plan.repo, rowBase.worktree, rowBase.branch)
+		} else if unwind != nil {
+			unwind()
 		}
-		return ChainResult{}, err
+		return chainPreparedWorkflow{}, err
 	}
 	defJSON, err := json.Marshal(plan.def)
 	if err != nil {
-		return ChainResult{}, fmt.Errorf("encode chain workflow: %w", err)
+		if !remote {
+			chainRollback(ctx, rt, plan.repo, rowBase.worktree, rowBase.branch)
+		} else if unwind != nil {
+			unwind()
+		}
+		return chainPreparedWorkflow{}, fmt.Errorf("encode chain workflow: %w", err)
 	}
 	start, acts := workflow.Start(plan.def, plan.in)
 	stateJSON, err := json.Marshal(start)
 	if err != nil {
-		return ChainResult{}, fmt.Errorf("encode chain state: %w", err)
+		if !remote {
+			chainRollback(ctx, rt, plan.repo, rowBase.worktree, rowBase.branch)
+		} else if unwind != nil {
+			unwind()
+		}
+		return chainPreparedWorkflow{}, fmt.Errorf("encode chain state: %w", err)
 	}
 	row.WorkflowJSON = defJSON
 	row.StateJSON = stateJSON
@@ -407,46 +460,78 @@ func chainCreateWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, pla
 	row.Plan = 1
 	applyChainLegacy(&row, plan.def, start)
 
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		if err := tx.CreateChain(row, built); err != nil {
-			return err
-		}
-		return chainAppendPickNotes(tx, rt, plan.members, plan.resolutions)
-	}); err != nil {
-		if !remote {
-			chainRollback(ctx, rt, plan.repo, rowBase.worktree, rowBase.branch)
-		}
+	return chainPreparedWorkflow{
+		opts: opts, plan: plan, rowBase: rowBase, row: row,
+		built: built, start: start, acts: acts, remote: remote,
+		gate: gate, unwind: unwind,
+	}, nil
+}
+
+// chainPersistAndStartWorkflow writes the chain row, its members and notes to
+// the database under the caller's transaction, copies plans, and runs the start actions.
+func chainPersistAndStartWorkflow(ctx context.Context, rt Runtime, tx *store.Tx, prep chainPreparedWorkflow) (ChainResult, error) {
+	if err := tx.CreateChain(prep.row, prep.built); err != nil {
 		return ChainResult{}, err
 	}
-	unwind = nil
-
-	stored, err := chainStoredMembers(rt, plan.members)
+	if err := chainAppendPickNotes(tx, rt, prep.plan.members, prep.plan.resolutions); err != nil {
+		return ChainResult{}, err
+	}
+	stored, err := chainStoredMembers(rt, prep.plan.members)
 	if err != nil {
 		return ChainResult{}, err
 	}
-	if err := chainCopyPlans(rt, opts.Name, plan.bodies); err != nil {
-		return ChainResult{}, fmt.Errorf("chain %q started, but copying its plans failed: %w", opts.Name, err)
+	if err := chainCopyPlans(rt, prep.opts.Name, prep.plan.bodies); err != nil {
+		return ChainResult{}, fmt.Errorf("chain %q started, but copying its plans failed: %w", prep.opts.Name, err)
 	}
-	if opts.Task != "" {
-		if err := writeChainTask(rt, opts.Name, opts.Task); err != nil {
-			return ChainResult{}, fmt.Errorf("chain %q started, but writing its task failed: %w", opts.Name, err)
+	if prep.opts.Task != "" {
+		if err := writeChainTask(rt, prep.opts.Name, prep.opts.Task); err != nil {
+			return ChainResult{}, fmt.Errorf("chain %q started, but writing its task failed: %w", prep.opts.Name, err)
 		}
 	}
 
-	if err := chainRunStartActions(ctx, rt, opts.Name, plan.def, start, acts); err != nil {
-		return ChainResult{}, err
-	}
-	if remote {
-		if err := chainSendPending(ctx, rt); err != nil {
-			return ChainResult{}, fmt.Errorf("chain %q started, but its remote member could not be handed its round: %w", opts.Name, err)
+	st := prep.start
+	for _, act := range prep.acts {
+		if err := chainRunAction(ctx, rt, tx, prep.row, prep.plan.def, prep.start, &st, workflow.Event{}, act); err != nil {
+			return ChainResult{}, err
 		}
 	}
-	// The start actions opened the first round; the result carries the row as
-	// the store now holds it, so its awaiting round is the one just sent.
-	if current, cerr := rt.Store.Chain(opts.Name); cerr == nil {
+	if prep.remote {
+		if err := chainSendPending(ctx, rt); err != nil {
+			return ChainResult{}, fmt.Errorf("chain %q started, but its remote member could not be handed its round: %w", prep.opts.Name, err)
+		}
+	}
+	row := prep.row
+	if current, cerr := tx.Chain(prep.opts.Name); cerr == nil {
 		row = current
 	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: gate}, nil
+	return ChainResult{Chain: row, Members: stored, Plans: len(prep.plan.bodies), Check: prep.gate}, nil
+}
+
+// chainCreateWorkflow is the half of a workflow start that creates things.
+func chainCreateWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) (ChainResult, error) {
+	prep, err := chainPrepareWorkflow(ctx, rt, opts, plan)
+	if err != nil {
+		return ChainResult{}, err
+	}
+	defer func() {
+		if prep.unwind != nil {
+			prep.unwind()
+		}
+	}()
+
+	var res ChainResult
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var perr error
+		res, perr = chainPersistAndStartWorkflow(ctx, rt, tx, prep)
+		return perr
+	}); err != nil {
+		if !prep.remote {
+			chainRollback(ctx, rt, plan.repo, prep.rowBase.worktree, prep.rowBase.branch)
+		}
+		return ChainResult{}, err
+	}
+	prep.unwind = nil
+	return res, nil
 }
 
 // chainRunStartActions runs a start's actions in one critical section, after
