@@ -28,8 +28,8 @@ func putChainCheck(t *testing.T, d *DB, c ChainCheckRow) {
 // records nothing new.
 func TestMigration021AddsChainColumns(t *testing.T) {
 	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
-	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 19)); err != nil {
-		t.Fatalf("applyMigrations through 019: %v", err)
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 20)); err != nil {
+		t.Fatalf("applyMigrations through 020: %v", err)
 	}
 	if _, err := sqlDB.Exec(`INSERT INTO chains
 			(id, name, status, phase, step, plan, plans, plan_paths, builder, created_at, updated_at)
@@ -38,7 +38,7 @@ func TestMigration021AddsChainColumns(t *testing.T) {
 		t.Fatalf("insert chains row: %v", err)
 	}
 
-	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 20)); err != nil {
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 21)); err != nil {
 		t.Fatalf("applyMigrations 021: %v", err)
 	}
 	assertColumns(t, sqlDB, "chains", []string{"workflow", "state", "parent"})
@@ -61,15 +61,15 @@ func TestMigration021AddsChainColumns(t *testing.T) {
 		t.Errorf("old row custom columns = %q/%q/%q, want the empty defaults", workflow, state, parent)
 	}
 
-	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 20)); err != nil {
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 21)); err != nil {
 		t.Fatalf("second applyMigrations 021: %v", err)
 	}
 	var rows, versions int
 	if err := sqlDB.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT version) FROM schema_version`).Scan(&rows, &versions); err != nil {
 		t.Fatalf("count schema_version: %v", err)
 	}
-	if rows != 20 || versions != 20 {
-		t.Errorf("schema_version has %d rows and %d versions, want 20 and 20", rows, versions)
+	if rows != 21 || versions != 21 {
+		t.Errorf("schema_version has %d rows and %d versions, want 21 and 21", rows, versions)
 	}
 }
 
