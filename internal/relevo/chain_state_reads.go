@@ -1,6 +1,9 @@
 package relevo
 
 import (
+	"sort"
+	"strconv"
+
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -87,6 +90,44 @@ func chainEndMembers(m chainMemberLister, c db.ChainRow) []string {
 		}
 	}
 	return out
+}
+
+// chainFindingsOfState reads a chain's security finding count from its engine
+// state: the `findings` outcome the workflow's scan step recorded in Results. A
+// row with no engine state, or a scan that never closed, carries 0.
+func chainFindingsOfState(c db.ChainRow) int {
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		return 0
+	}
+	return flowFindings(st)
+}
+
+// flowFindings is the finding count a state recorded: the newest step result
+// whose outcomes carry a `findings` count. Only a security run step declares
+// one, so this is that step's count; the round breaks a tie when a workflow
+// runs more than one.
+func flowFindings(st workflow.State) int {
+	steps := make([]string, 0, len(st.Results))
+	for step := range st.Results {
+		steps = append(steps, step)
+	}
+	sort.Strings(steps)
+	findings, round := 0, -1
+	for _, step := range steps {
+		val, ok := st.Results[step].Outcomes["findings"]
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(val)
+		if err != nil || n < 0 {
+			continue
+		}
+		if r := st.Results[step].Round; r >= round {
+			findings, round = n, r
+		}
+	}
+	return findings
 }
 
 // chainStoredFacts is a chain's fixed-column facts as a read surface shows

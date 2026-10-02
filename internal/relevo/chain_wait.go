@@ -112,8 +112,8 @@ func WaitChain(ctx context.Context, rt Runtime, name string, timeout, interval t
 // reached and the corrections it spent. A halt carries its reason. Unless peek
 // is set, the chain's end payload is pulled off whichever member holds it -- the
 // first of builder, reviewer, planner and security whose record exists, the
-// same order chainTerminal queued it in; a delivery failure is returned in
-// DeliverErr and never changes the exit.
+// same order the terminal transition queued it in; a delivery failure is
+// returned in DeliverErr and never changes the exit.
 func waitChainEnd(ctx context.Context, rt Runtime, c db.ChainRow, peek bool) (WaitResult, error) {
 	res := WaitResult{Done: true, Line: chainEndLine(c)}
 	if c.Status == string(chain.StatusDone) {

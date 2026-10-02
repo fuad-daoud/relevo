@@ -187,10 +187,12 @@ func newRuntimeOn(root string, d *db.DB) (relevo.Runtime, error) {
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
-	// The one-time chain conversion, at daemon start: a row written before
-	// chains carried a workflow gains the default one and its engine state,
-	// so the new engine drives it. A failure is a warning, and the
-	// unconverted row keeps working on the fixed state machine.
+	// The one-time chain conversion, at daemon start: every row written before
+	// chains carried a workflow gains the default one and its engine state, so
+	// the new engine drives it. Each row converts in its own transaction; a row
+	// that cannot convert is halted with the failure as its reason and the rows
+	// after it still convert, so only a store-level read or write failure warns
+	// here.
 	if err := relevo.ConvertLegacyChains(rt); err != nil {
 		slog.Warn("chains not converted to workflows", "err", err)
 	}

@@ -258,6 +258,48 @@ func TestChainSendPendingFailureHaltsTheChain(t *testing.T) {
 	}
 }
 
+// TestWorkflowRemoteSendFailureHaltsTheEngineState pins the engine halt: a
+// failed remote ship ends the chain through the workflow state, so the row and
+// the state both read halted and a resume can move it again.
+func TestWorkflowRemoteSendFailureHaltsTheEngineState(t *testing.T) {
+	t.Parallel()
+
+	fr := chainRemoteFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	startedChain(t, rt, ChainOptions{})
+	advanceRemoteChain(t, rt, 2)
+	stageRemoteRoundFile(t, rt, "shop", 2, "the next plan")
+	fr.startRoundErr = errors.New("socket closed")
+
+	if err := chainSendPending(context.Background(), rt); err != nil {
+		t.Fatalf("chainSendPending = %v, want the failure recorded, not returned", err)
+	}
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+	st, err := chainWorkflowState(row)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.Status != workflow.StatusHalted {
+		t.Errorf("state status = %q, want halted", st.Status)
+	}
+	if st.Reason != "member shop could not start: socket closed" {
+		t.Errorf("state reason = %q, want the member-could-not-start wording", st.Reason)
+	}
+
+	// The engine halt is what a resume reads: it must accept the chain now.
+	fr.startRoundErr = nil
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume after the engine halt = %v, want it to continue", err)
+	}
+	if got := chainStoredRow(t, rt, "shop").Status; got != string(chain.StatusRunning) {
+		t.Errorf("resumed status = %q, want running", got)
+	}
+}
+
 func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }

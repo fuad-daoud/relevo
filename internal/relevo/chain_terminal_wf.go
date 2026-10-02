@@ -60,8 +60,8 @@ func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 // halt) or shows its trace.
 func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "chain %s %s: status %s, at %s, plans %d/%d.",
-		c.Name, chainTerminalVerb(chain.Status(s.Status)), string(s.Status), flowTerminalStep(s), flowPlanPos(s), flowPlanTotal(s))
+	fmt.Fprintf(&b, "chain %s %s: status %s, at %s, plans %d/%d, findings %d.",
+		c.Name, chainTerminalVerb(chain.Status(s.Status)), string(s.Status), flowTerminalStep(s), flowPlanPos(s), flowPlanTotal(s), flowFindings(s))
 	if s.Reason != "" {
 		fmt.Fprintf(&b, " Reason: %s.", s.Reason)
 	}

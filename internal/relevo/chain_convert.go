@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -35,34 +36,64 @@ type chainLegacyConversion struct {
 // legacy step migrates to, its four member columns become chain_member rows,
 // and its members' own gates are cleared so the next check is a step. A row
 // that already carries a state is left alone, so running it twice changes
-// nothing. The whole set converts in one transaction under the lock: a failure
-// leaves every row as it was.
+// nothing.
+//
+// Each row converts in its own transaction, so one row that cannot convert is
+// halted and the rows after it still convert. Only a store read or write
+// failure is returned; a row that fails to convert is handled inside its own
+// transaction.
 func ConvertLegacyChains(rt Runtime) error {
+	rows, err := rt.Store.Chains()
+	if err != nil {
+		return err
+	}
+	for _, c := range rows {
+		if len(c.StateJSON) > 0 {
+			continue
+		}
+		if err := convertLegacyChain(rt, c.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// convertLegacyChain converts one row under its own lock. A row that cannot
+// convert is halted with the reason the conversion named, written to the row's
+// own status column so it needs no engine, and logged; every later row still
+// converts. A read or write failure is returned rather than swallowed.
+func convertLegacyChain(rt Runtime, name string) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
-		rows, err := tx.Chains()
+		c, err := tx.Chain(name)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-		for _, c := range rows {
-			if len(c.StateJSON) > 0 {
-				continue
-			}
-			conv, cerr := chainConvertLegacy(tx, c)
-			if cerr != nil {
-				return cerr
-			}
-			if err := tx.ChainPut(conv.row); err != nil {
+		if len(c.StateJSON) > 0 {
+			return nil
+		}
+		conv, cerr := chainConvertLegacy(tx, c)
+		if cerr != nil {
+			reason := fmt.Sprintf("could not convert to a workflow: %v", cerr)
+			slog.Warn("chain not converted to a workflow", "chain", name, "err", cerr)
+			c.Status = string(chain.StatusHalted)
+			c.Reason = reason
+			c.UpdatedAt = rt.Now().UTC()
+			return tx.ChainPut(c)
+		}
+		if err := tx.ChainPut(conv.row); err != nil {
+			return err
+		}
+		if len(conv.members) > 0 {
+			if err := tx.ChainMembersPut(c.Name, conv.members); err != nil {
 				return err
 			}
-			if len(conv.members) > 0 {
-				if err := tx.ChainMembersPut(c.Name, conv.members); err != nil {
-					return err
-				}
-			}
-			for _, name := range conv.cleared {
-				if err := chainClearMemberGate(tx, name); err != nil {
-					return err
-				}
+		}
+		for _, member := range conv.cleared {
+			if err := chainClearMemberGate(tx, member); err != nil {
+				return err
 			}
 		}
 		return nil

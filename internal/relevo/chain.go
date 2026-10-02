@@ -5,13 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -103,25 +100,16 @@ func chainMemberName(c db.ChainRow, part string) string {
 	return ""
 }
 
-// chainStateOf is a chain row as the pure state machine's State.
-func chainStateOf(c db.ChainRow) (chain.State, error) {
+// chainSettingsOf reads a chain row's stored settings; a row with none reads
+// the zero settings, exactly as a chain started under the defaults.
+func chainSettingsOf(c db.ChainRow) (chain.Settings, error) {
 	var set chain.Settings
 	if len(c.SettingsJSON) > 0 {
 		if err := json.Unmarshal(c.SettingsJSON, &set); err != nil {
-			return chain.State{}, fmt.Errorf("chain %s settings: %w", c.Name, err)
+			return chain.Settings{}, fmt.Errorf("chain %s settings: %w", c.Name, err)
 		}
 	}
-	return chain.State{
-		Status:      chain.Status(c.Status),
-		Reason:      c.Reason,
-		Phase:       chain.Phase(c.Phase),
-		Step:        chain.Step(c.Step),
-		Plan:        c.Plan,
-		Plans:       c.Plans,
-		Corrections: c.Corrections,
-		Awaiting:    chain.Awaiting{Member: c.AwaitingMember, Round: c.AwaitingRound},
-		Settings:    set,
-	}, nil
+	return set, nil
 }
 
 // chainPlanPaths decodes the chain's stored plan copies.
@@ -134,21 +122,6 @@ func chainPlanPaths(c db.ChainRow) ([]string, error) {
 		return nil, fmt.Errorf("chain %s plan paths: %w", c.Name, err)
 	}
 	return paths, nil
-}
-
-// chainRowWithState is c carrying the state machine's state.
-func chainRowWithState(c db.ChainRow, s chain.State, now time.Time) db.ChainRow {
-	c.Status = string(s.Status)
-	c.Reason = s.Reason
-	c.Phase = string(s.Phase)
-	c.Step = string(s.Step)
-	c.Plan = s.Plan
-	c.Plans = s.Plans
-	c.Corrections = s.Corrections
-	c.AwaitingMember = s.Awaiting.Member
-	c.AwaitingRound = s.Awaiting.Round
-	c.UpdatedAt = now
-	return c
 }
 
 // chainApply advances the chain a closing member belongs to: it loads the
@@ -285,69 +258,6 @@ func chainRoundGate(tx *store.Tx, builder string, round int) (*store.GateRecord,
 	return rec, nil
 }
 
-// chainSaveWithTrace writes the chain's new state and its one trace row in one
-// database transaction. The trace names the phase and step before the event,
-// the closing member and its round, the encoded event and action, and the halt
-// reason when there is one.
-func chainSaveWithTrace(rt Runtime, tx *store.Tx, c db.ChainRow, before, next chain.State, ev chain.Event, act chain.Action, closing string) error {
-	now := rt.Now().UTC()
-	row := chainRowWithState(c, next, now)
-	trace := db.ChainEventRow{
-		TS:     now,
-		Phase:  string(before.Phase),
-		Step:   string(before.Step),
-		Member: closing,
-		Round:  ev.Round,
-		Plan:   before.Plan,
-		Event:  ev.Encode(),
-		Action: act.Encode(),
-		Reason: act.Reason,
-	}
-	return tx.ChainSaveWithEvent(row, trace)
-}
-
-// chainTerminal ends a chain: it writes the status, the reason and the trace
-// row, then queues exactly one end delivery on the first member whose record
-// still exists. The transition to a terminal status happens once -- a later
-// tick's close is ignored by the state machine -- so the payload exists once.
-//
-// The delivery does not belong to the builder: a chain whose builder record is
-// the one that is gone must still tell the MasterMind, so the carrier is the
-// first of builder, reviewer, planner and security that the store still holds.
-// When every record is gone there is nowhere to deliver: the row is still ended
-// and the fact is logged.
-func chainTerminal(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, before, next chain.State, ev chain.Event, act chain.Action, closing string) error {
-	if err := chainSaveWithTrace(rt, tx, c, before, next, ev, act, closing); err != nil {
-		return err
-	}
-	// A done or stopped chain has no further use for its input copies; a
-	// halted one keeps them. The sweep is best-effort and never fails the
-	// transition.
-	chainInputsSweep(rt, c.Name, string(next.Status))
-	member, carrier, ok, err := chainDeliveryMember(tx, c)
-	if err != nil {
-		return err
-	}
-	findings, err := chainFindings(tx, c.Name)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		slog.Warn("chain ended with no member record to deliver on",
-			"chain", c.Name, "status", string(next.Status))
-		return nil
-	}
-	entry := store.LogEntry{
-		TS: rt.Now().UTC(), Round: carrier.Round,
-		Direction: store.DirToMasterMind, Kind: store.KindChain,
-		Payload: chainTerminalPayload(c, next, findings),
-	}
-	if chainServedCarrier(carrier) {
-		return nil
-	}
-	return delivery.Queue(ctx, deliveryDeps(rt), tx, member, entry)
-}
-
 // chainDeliveryMember names the member that carries a chain's end delivery: the
 // first of the chain's member bindings whose record still exists, in the order
 // builder, reviewer, planner, security. ok is false when every record is gone,
@@ -367,37 +277,18 @@ func chainDeliveryMember(tx *store.Tx, c db.ChainRow) (name string, b store.Bind
 	return "", store.Binding{}, false, nil
 }
 
-// chainFindings is the last security close's finding count from the trace. The
-// chain row carries no findings column; a chain that never ran security
-// carries 0.
-func chainFindings(tx *store.Tx, name string) (int, error) {
-	events, err := tx.ChainEvents(name)
-	if err != nil {
-		return 0, err
-	}
-	for _, e := range events {
-		ev, err := chain.DecodeEvent(e.Event)
-		if err != nil {
-			continue
-		}
-		if ev.Kind == chain.EventSecurityClosed {
-			return ev.Findings, nil
-		}
-	}
-	return 0, nil
-}
-
 // chainTerminalPayload is what the mastermind reads when a chain ends: how it
 // ended, where it got to, and the command that resumes it (on a halt) or shows
-// its trace.
-func chainTerminalPayload(c db.ChainRow, s chain.State, findings int) string {
+// its trace. The phase, plan and correction counts are the row's projected
+// legacy columns, which the engine keeps in step with the state.
+func chainTerminalPayload(c db.ChainRow, findings int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "chain %s %s: status %s, phase %s, plan %d/%d, corrections %d, findings %d.",
-		c.Name, chainTerminalVerb(s.Status), string(s.Status), string(s.Phase), s.Plan, s.Plans, s.Corrections, findings)
-	if s.Reason != "" {
-		fmt.Fprintf(&b, " Reason: %s.", s.Reason)
+		c.Name, chainTerminalVerb(chain.Status(c.Status)), c.Status, c.Phase, c.Plan, c.Plans, c.Corrections, findings)
+	if c.Reason != "" {
+		fmt.Fprintf(&b, " Reason: %s.", c.Reason)
 	}
-	if s.Status == chain.StatusHalted {
+	if c.Status == string(chain.StatusHalted) {
 		fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it.", c.Name)
 	}
 	fmt.Fprintf(&b, " Branch %s. relevo show %s --trace", c.Branch, c.Name)

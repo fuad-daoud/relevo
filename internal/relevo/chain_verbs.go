@@ -222,17 +222,21 @@ func chainInputsSweep(rt Runtime, name, status string) {
 	}
 }
 
-// chainDoneRow is the chain's own close: status done, phase finished, and one
-// trace row naming the member the release was carried out from. No payload is
-// queued -- the human ran this verb, so there is nobody to tell.
+// chainDoneRow is the chain's own close: the engine state's status done, its
+// legacy columns projected, and one workflow trace row naming the member the
+// release was carried out from. No payload is queued -- the human ran this verb,
+// so there is nobody to tell.
 func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
-	before, err := chainStateOf(c)
+	def, err := chainWorkflowDef(c)
+	if err != nil {
+		return err
+	}
+	before, err := chainWorkflowState(c)
 	if err != nil {
 		return err
 	}
 	next := before
-	next.Status = chain.StatusDone
-	next.Phase = chain.PhaseFinished
+	next.Status = workflow.StatusDone
 
 	member, carrier, ok, err := chainDeliveryMember(tx, c)
 	if err != nil {
@@ -244,9 +248,9 @@ func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 		part = chainPartOf(c, member)
 		round = carrier.Round
 	}
-	ev := chain.Event{Kind: chain.EventNeedsYou, Member: part, Round: round, Reason: chainDoneReason}
-	act := chain.Action{Kind: chain.ActionFinish}
-	return chainSaveWithTrace(rt, tx, c, before, next, ev, act, member)
+	ev := workflow.Event{Kind: workflow.EventNeedsYou, Member: part, Round: round, Reason: chainDoneReason}
+	act := workflow.Action{Kind: workflow.ActionFinish}
+	return chainSaveFlow(rt, tx, c, def, before, next, ev, act, member)
 }
 
 // supersedeChainDelivery confirms a chain's undelivered end payload: a halt's

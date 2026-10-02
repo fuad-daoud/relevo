@@ -475,6 +475,41 @@ func TestWorkflowChainDoneReleasesEveryMember(t *testing.T) {
 	}
 }
 
+// TestWorkflowChainDoneWritesTheEngineState pins done on a workflow chain: the
+// engine state's status becomes done, so a later read sees done rather than the
+// stopped the chain carried before the verb.
+func TestWorkflowChainDoneWritesTheEngineState(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	stoppedChain(t, rt, ChainOptions{})
+
+	row := chainStoredRow(t, rt, "shop")
+	st, err := chainWorkflowState(row)
+	if err != nil {
+		t.Fatalf("chainWorkflowState before done: %v", err)
+	}
+	if st.Status != workflow.StatusStopped {
+		t.Fatalf("state before done = %q, want stopped", st.Status)
+	}
+
+	if _, err := ChainDone(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainDone: %v", err)
+	}
+
+	row = chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusDone) {
+		t.Fatalf("chain status = %q, want done", row.Status)
+	}
+	st, err = chainWorkflowState(row)
+	if err != nil {
+		t.Fatalf("chainWorkflowState after done: %v", err)
+	}
+	if st.Status != workflow.StatusDone {
+		t.Errorf("state status after done = %q, want done", st.Status)
+	}
+}
+
 // TestWorkflowEndDeliveryCarrierIsAMember pins the carrier: the one end
 // delivery lands on the first surviving member in chain_member order, even when
 // that member fills no legacy part.

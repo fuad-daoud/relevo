@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
-	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -312,7 +311,7 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 	if err != nil {
 		return remote.ChainView{}, err
 	}
-	state, err := chainStateOf(c)
+	set, err := chainSettingsOf(c)
 	if err != nil {
 		return remote.ChainView{}, err
 	}
@@ -332,7 +331,7 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 		Feature:         c.Feature,
 		Ticket:          c.Ticket,
 		PlanStartCommit: c.PlanStartCommit,
-		Settings:        chainSettingsToWire(state.Settings),
+		Settings:        chainSettingsToWire(set),
 	}
 	// A workflow chain's position is its engine state, so the view projects the
 	// state onto the legacy columns rather than reading the row's saved copy.
@@ -381,21 +380,6 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 			Round: e.Round, Plan: e.Plan, Event: e.Event, Action: e.Action, Reason: e.Reason,
 		})
 	}
-	view.Findings = chainFindingsOf(events)
+	view.Findings = chainFindingsOfState(c)
 	return view, nil
-}
-
-// chainFindingsOf is chainFindings over an already-read trace: the last security
-// close's finding count, or 0 for a chain that never ran security.
-func chainFindingsOf(events []db.ChainEventRow) int {
-	for _, e := range events {
-		ev, err := chain.DecodeEvent(e.Event)
-		if err != nil {
-			continue
-		}
-		if ev.Kind == chain.EventSecurityClosed {
-			return ev.Findings
-		}
-	}
-	return 0
 }

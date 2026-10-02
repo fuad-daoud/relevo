@@ -70,24 +70,6 @@ func chainSweep(ctx context.Context, rt Runtime, tx *store.Tx, name string) erro
 	return chainSweepFlow(ctx, rt, tx, c)
 }
 
-// chainSweepHalt ends a chain the sweep found unable to move: the status, one
-// trace row and the one end delivery, all through chainTerminal. The halt
-// status is written under the same lock the decision was made in, so a second
-// tick re-reads a terminal chain and writes nothing more.
-func chainSweepHalt(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, part, member, reason string) error {
-	before, err := chainStateOf(c)
-	if err != nil {
-		return err
-	}
-	next := before
-	next.Status = chain.StatusHalted
-	next.Reason = reason
-
-	ev := chain.Event{Kind: chain.EventNeedsYou, Member: part, Round: before.Awaiting.Round, Reason: reason}
-	act := chain.Action{Kind: chain.ActionHalt, Reason: reason}
-	return chainTerminal(ctx, rt, tx, c, before, next, ev, act, member)
-}
-
 // chainSweepFlow decides a workflow chain: it walks chain_member in creation
 // order, and the first member whose record is gone, or that sits NEEDS YOU,
 // ends the chain with that member's reason. A chain member is the binding a

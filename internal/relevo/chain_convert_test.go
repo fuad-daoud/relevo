@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,4 +232,37 @@ func TestConvertLegacyChainsEveryStepThenContinues(t *testing.T) {
 			t.Errorf("%s/%s: close from %s produced no action, want the chain to continue", tc.phase, tc.step, tc.want)
 		}
 	}
+}
+
+// TestConvertLegacyChainsSkipsABadRowAndConvertsTheRest pins the per-row
+// conversion: a row that cannot convert is halted with the failure as its reason
+// and no engine state, while every other row converts.
+func TestConvertLegacyChainsSkipsABadRowAndConvertsTheRest(t *testing.T) {
+	rt := newRuntime(t)
+	good := legacyChainRow("good", "running", "build", "building", "builder", 1, 0)
+	bad := legacyChainRow("bad", "running", "build", "building", "builder", 1, 0)
+	bad.SettingsJSON = []byte(`{"MaxCorrections":`)
+	seedLegacyChain(t, rt, good, legacyChainBindings("good"))
+	seedLegacyChain(t, rt, bad, legacyChainBindings("bad"))
+
+	if err := ConvertLegacyChains(rt); err != nil {
+		t.Fatalf("ConvertLegacyChains: %v", err)
+	}
+
+	badRow, err := rt.Store.Chain("bad")
+	if err != nil {
+		t.Fatalf("Chain bad: %v", err)
+	}
+	if badRow.Status != "halted" {
+		t.Errorf("bad row status = %q, want halted", badRow.Status)
+	}
+	if !strings.Contains(badRow.Reason, "could not convert to a workflow:") {
+		t.Errorf("bad row reason = %q, want the conversion failure", badRow.Reason)
+	}
+	if len(badRow.StateJSON) != 0 {
+		t.Errorf("bad row carries %d state bytes, want none", len(badRow.StateJSON))
+	}
+
+	// The good row converted: the engine reads a workflow and a state off it.
+	convertedState(t, rt, "good")
 }

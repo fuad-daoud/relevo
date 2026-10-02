@@ -100,14 +100,10 @@ func chainPullGone(ctx context.Context, rt Runtime, c db.ChainRow) error {
 		if !ok {
 			return nil
 		}
-		state, err := chainStateOf(cur)
-		if err != nil {
-			return err
-		}
 		entry := store.LogEntry{
 			TS: rt.Now().UTC(), Round: carrier.Round,
 			Direction: store.DirToMasterMind, Kind: store.KindChain,
-			Payload: chainTerminalPayload(cur, state, 0),
+			Payload: chainTerminalPayload(cur, 0),
 		}
 		return delivery.Queue(ctx, deliveryDeps(rt), tx, member, entry)
 	})
@@ -457,14 +453,10 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 		if !ok {
 			return nil
 		}
-		state, err := chainStateOf(row)
-		if err != nil {
-			return err
-		}
 		entry := store.LogEntry{
 			TS: now, Round: carrier.Round,
 			Direction: store.DirToMasterMind, Kind: store.KindChain,
-			Payload: chainTerminalPayload(row, state, view.Findings),
+			Payload: chainTerminalPayload(row, view.Findings),
 		}
 		return delivery.Queue(ctx, deliveryDeps(rt), tx, member, entry)
 	})

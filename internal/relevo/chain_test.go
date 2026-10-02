@@ -2284,3 +2284,69 @@ func assertInputsGone(t *testing.T, dir string) {
 		t.Errorf("inputs dir %s is still there (err %v), want it swept", dir, err)
 	}
 }
+
+// TestWorkflowFindingsCountReachesTheEndPayload pins the finding count's three
+// readers: the served view, the local end payload and the mirror's end payload
+// all carry the scan's count from the engine state.
+func TestWorkflowFindingsCountReachesTheEndPayload(t *testing.T) {
+	t.Parallel()
+
+	t.Run("local end payload", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{Security: ptr(true)})
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
+		chainReaderClose(t, rt, "shop-sec", chainFindingsBody(3))
+
+		if _, err := ChainStop(context.Background(), rt, "shop"); err != nil {
+			t.Fatalf("ChainStop: %v", err)
+		}
+		pending := chainPendingChain(t, rt, "shop")
+		if len(pending) != 1 {
+			t.Fatalf("pending deliveries = %d, want the one end payload", len(pending))
+		}
+		if !strings.Contains(pending[0].Payload, "findings 3") {
+			t.Errorf("local end payload = %q, want it to carry findings 3", pending[0].Payload)
+		}
+	})
+
+	t.Run("served view", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{Security: ptr(true)})
+		chainBuilderClose(t, rt, "shop", chainDoneBody())
+		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
+		chainReaderClose(t, rt, "shop-sec", chainFindingsBody(3))
+
+		view, err := ServedChainView(rt, "shop", func(string) string { return "" }, "")
+		if err != nil {
+			t.Fatalf("ServedChainView: %v", err)
+		}
+		if view.Findings != 3 {
+			t.Errorf("served view findings = %d, want 3", view.Findings)
+		}
+	})
+
+	t.Run("mirror end payload", func(t *testing.T) {
+		t.Parallel()
+
+		view := chainPullView("shop", string(chain.StatusStopped), 1, 0, 0)
+		view.Findings = 3
+		fr := chainPullFake(view)
+		rt := chainPullRuntime(t, fr)
+		seedServerChain(t, rt, "shop")
+
+		pullRounds(t, rt, "shop")
+
+		pending := chainPendingChain(t, rt, "shop")
+		if len(pending) != 1 {
+			t.Fatalf("pending deliveries = %d, want the one mirror end payload", len(pending))
+		}
+		if !strings.Contains(pending[0].Payload, "findings 3") {
+			t.Errorf("mirror end payload = %q, want it to carry findings 3", pending[0].Payload)
+		}
+	})
+}
