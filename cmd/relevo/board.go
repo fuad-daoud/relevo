@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	neturl "net/url"
@@ -16,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/board"
@@ -188,8 +191,8 @@ func boardNotAvailable(scene, id string) error {
 
 // cmdBoard parses the verb, resolves the scene and scope, writes the pointer
 // for a live board that was not read from the pointer, and then runs the
-// foreground server. The `url` subverb is dispatched first: a scene path always
-// ends in .excalidraw, so it can never collide with the subverb name.
+// foreground server. The subverbs dispatch first: a scene path always ends in
+// .excalidraw, so it can never collide with a subverb name.
 func cmdBoard(args []string) error {
 	var sub string
 	if len(args) > 0 {
@@ -202,6 +205,10 @@ func cmdBoard(args []string) error {
 		return cmdBoardComments(args[1:])
 	case "comment":
 		return cmdBoardComment(args[1:])
+	case "text":
+		return cmdBoardText(args[1:])
+	case "annotate":
+		return cmdBoardAnnotate(args[1:])
 	}
 	fs := flag.NewFlagSet("relevo board", flag.ContinueOnError)
 	v := boardFlagSet(fs)
@@ -260,15 +267,168 @@ func boardResolveTheme(cwd, flagTheme string) (*board.Theme, error) {
 	return board.Lookup(name)
 }
 
-// boardRefusal maps a board package refusal to the catalog code it earns.
+// boardRefusal maps a board package refusal to the catalog code it earns: a
+// usage error exits 2 with the usage hint, a missing or invalid scene is a
+// refused error with no next command, and anything else is internal.
 func boardRefusal(err error) error {
-	if errors.Is(err, board.ErrUsage) {
+	switch {
+	case errors.Is(err, board.ErrUsage):
 		return fail(codeUsage, "%s", err)
-	}
-	if errors.Is(err, board.ErrInvalid) {
+	case errors.Is(err, board.ErrNotFound):
 		return fail(codeRefused, "%s", err)
+	case errors.Is(err, board.ErrInvalid):
+		return fail(codeRefused, "%s", boardInvalidText(err))
+	default:
+		return fail(codeInternal, "%s", err)
 	}
-	return fail(codeInternal, "%s", err)
+}
+
+// boardInvalidText is the board.ErrInvalid message without its sentinel word,
+// so the refusal names the scene's fault rather than the sentinel.
+func boardInvalidText(err error) string {
+	return strings.TrimPrefix(err.Error(), board.ErrInvalid.Error()+": ")
+}
+
+// boardTextFlagValues holds the pointers board text parses into.
+type boardTextFlagValues struct {
+	asJSON *bool
+}
+
+// boardTextFlagSet defines board text's flags on fs and returns what it parses
+// into, so the registry's parity test finds exactly one installer per verb.
+func boardTextFlagSet(fs *flag.FlagSet) *boardTextFlagValues {
+	v := &boardTextFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the text elements as a JSON document")
+	return v
+}
+
+// boardAnnotateFlagValues holds the pointers board annotate parses into.
+type boardAnnotateFlagValues struct {
+	text *string
+	x    *float64
+	y    *float64
+}
+
+// boardAnnotateFlagSet defines board annotate's flags on fs and returns what it
+// parses into.
+func boardAnnotateFlagSet(fs *flag.FlagSet) *boardAnnotateFlagValues {
+	v := &boardAnnotateFlagValues{}
+	v.text = fs.String("text", "", "the text to append")
+	v.x = fs.Float64("x", 0, "the appended element's x coordinate")
+	v.y = fs.Float64("y", 0, "the appended element's y coordinate")
+	return v
+}
+
+// boardAgentPath resolves a subverb's scene path: the working directory, the
+// repository root and the confined scene path. A path outside a repository is
+// usage.
+func boardAgentPath(arg string) (string, string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", "", fail(codeInternal, "%v", err)
+	}
+	root, err := boardRepoRootFn(cwd)
+	if err != nil {
+		return "", "", fail(codeUsage, "not inside a git repository: %v", err)
+	}
+	path, err := board.Resolve(root, cwd, arg)
+	if err != nil {
+		return "", "", boardRefusal(err)
+	}
+	return cwd, path, nil
+}
+
+// cmdBoardText lists a scene's text elements: one JSON document under --json,
+// one tabwriter row each otherwise.
+func cmdBoardText(args []string) error {
+	fs := flag.NewFlagSet("relevo board text", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	v := boardTextFlagSet(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	positional := fs.Args()
+	if len(positional) != 1 {
+		return fail(codeUsage, "relevo board text needs one scene path")
+	}
+	_, path, err := boardAgentPath(positional[0])
+	if err != nil {
+		return err
+	}
+	elements, err := board.TextElements(path)
+	if err != nil {
+		return boardRefusal(err)
+	}
+	if *v.asJSON {
+		return json.NewEncoder(os.Stdout).Encode(elements)
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	for _, e := range elements {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.ID,
+			strconv.FormatFloat(e.X, 'f', -1, 64),
+			strconv.FormatFloat(e.Y, 'f', -1, 64),
+			e.Text)
+	}
+	return tw.Flush()
+}
+
+// cmdBoardAnnotate appends one text element to a scene and prints its id. Every
+// usage check runs before any repository, theme or file work.
+func cmdBoardAnnotate(args []string) error {
+	fs := flag.NewFlagSet("relevo board annotate", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	v := boardAnnotateFlagSet(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	positional := fs.Args()
+	if len(positional) != 1 {
+		return fail(codeUsage, "relevo board annotate needs one scene path")
+	}
+
+	var textSet, xSet, ySet bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "text":
+			textSet = true
+		case "x":
+			xSet = true
+		case "y":
+			ySet = true
+		}
+	})
+	if !textSet {
+		return fail(codeUsage, "--text is required")
+	}
+	if *v.text == "" {
+		return fail(codeUsage, "--text must not be empty")
+	}
+	if xSet != ySet {
+		return fail(codeUsage, "--x and --y come together")
+	}
+	if xSet && (math.IsNaN(*v.x) || math.IsInf(*v.x, 0)) {
+		return fail(codeUsage, "--x must be a finite number")
+	}
+	if ySet && (math.IsNaN(*v.y) || math.IsInf(*v.y, 0)) {
+		return fail(codeUsage, "--y must be a finite number")
+	}
+
+	cwd, path, err := boardAgentPath(positional[0])
+	if err != nil {
+		return err
+	}
+	theme, err := boardResolveTheme(cwd, "")
+	if err != nil {
+		return boardRefusal(err)
+	}
+	el, err := board.Annotate(path, board.AnnotateOptions{
+		Text: *v.text, X: *v.x, Y: *v.y, HasX: xSet, HasY: ySet, Theme: theme,
+	})
+	if err != nil {
+		return boardRefusal(err)
+	}
+	fmt.Printf("board: annotated %s (id %s)\n", path, el.ID)
+	return nil
 }
 
 // runBoard serves the scene on a loopback listener until SIGINT or SIGTERM,

@@ -28,6 +28,14 @@ var registry = []verbEntry{
 		Errors:  []string{"internal", "mastermind_not_found", "refused", "usage"},
 	},
 	{
+		Name:    "board annotate",
+		Summary: "append one text element to a scene in the repo",
+		Args:    "<file> --text S [--x X --y Y]",
+		Flags:   []string{"--text", "--x", "--y"},
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"internal", "refused", "usage"},
+	},
+	{
 		Name: "board comment", Summary: "append one comment to a live or repo board scene",
 		Args:  "[path] [--board NAME] --text S [--x X --y Y] [--by B]",
 		Flags: []string{"--board", "--by", "--text", "--x", "--y"},
@@ -38,6 +46,15 @@ var registry = []verbEntry{
 		Args:  "[path] [--board NAME] [--json]",
 		Flags: []string{"--board", "--json"}, Output: "json:[]Comment",
 		Exit: []int{0, 1, 2}, Errors: []string{"internal", "mastermind_not_found", "refused", "usage"},
+	},
+	{
+		Name:    "board text",
+		Summary: "list a scene's text elements",
+		Args:    "<file> [--json]",
+		Flags:   []string{"--json"},
+		Output:  "json:[]board.AgentText",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"internal", "refused", "usage"},
 	},
 	{
 		Name:    "board url",

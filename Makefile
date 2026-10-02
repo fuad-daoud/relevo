@@ -51,6 +51,7 @@ check-static:
 	rm -f go.mod.check go.sum.check
 	sh scripts/check-plugin-version.sh
 	sh scripts/check-name.sh
+	sh scripts/check-board-theme.sh
 	$(MAKE) check-scripts
 
 check-scripts:
