@@ -164,30 +164,81 @@ func TestRoundStateOfReportsAnUnackedCloseOverNeedsYou(t *testing.T) {
 }
 
 // TestFetchRemoteCollectsACloseOverNeedsYou is the fetch half: the catch-up a
-// close earns is fetched whenever the server says this round closed, whatever
-// the state word rides along with it.
+// close earns is fetched whenever the server names a ClosedRound at or past
+// this round, whatever the state word rides along with it.
+//
+// The two words that must NOT collect are pinned here too, so the gate is
+// load-bearing in both directions: a running or queued round has no close to
+// collect and keeps its log mirror, and a round whose report this client
+// already holds is not fetched again.
 func TestFetchRemoteCollectsACloseOverNeedsYou(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	b := haltedRemoteBinding("zen")
-	b.Round = 1
-	rt, fr := reopenRemoteRuntime(t, b)
-	fr.getBindingResp = remote.BindingView{
+	closeView := remote.BindingView{
 		RoundState:  remote.RoundNeedsYou,
 		ClosedRound: 1,
 		Halt:        "api: zen: round 1 closed with 400 artifacts over the cap",
 	}
-	fr.roundFileFunc = roundFiles("report body\n")
 
-	f := fetchRemote(ctx, rt, b)
-	defer f.release()
-	if f.CatchUp == nil {
-		t.Fatal("no catch-up fetched: a NEEDS YOU view whose ClosedRound is this round is never collected")
+	t.Run("a needs_you view that also closed collects", func(t *testing.T) {
+		t.Parallel()
+		b := haltedRemoteBinding("zen")
+		b.Round = 1
+		rt, fr := reopenRemoteRuntime(t, b)
+		fr.getBindingResp = closeView
+		fr.roundFileFunc = roundFiles("report body\n")
+
+		f := fetchRemote(ctx, rt, b)
+		defer f.release()
+		if f.CatchUp == nil {
+			t.Fatal("no catch-up fetched: a NEEDS YOU view whose ClosedRound is this round is never collected")
+		}
+		if f.CatchUp.Round != 1 {
+			t.Errorf("CatchUp.Round = %d, want 1", f.CatchUp.Round)
+		}
+	})
+
+	for _, st := range []remote.RoundState{remote.RoundRunning, remote.RoundQueued} {
+		t.Run("a "+string(st)+" round does not collect", func(t *testing.T) {
+			t.Parallel()
+			b := haltedRemoteBinding("zen")
+			b.Round = 1
+			rt, fr := reopenRemoteRuntime(t, b)
+			fr.getBindingResp = remote.BindingView{
+				RoundState:   st,
+				ClosedRound:  1,
+				StalledSince: baseTime.Add(-time.Minute),
+			}
+			fr.roundFileFunc = roundFiles("report body\n")
+
+			f := fetchRemote(ctx, rt, b)
+			defer f.release()
+			if f.CatchUp != nil {
+				t.Errorf("CatchUp fetched for a %s round: there is no close to collect", st)
+			}
+		})
 	}
-	if f.CatchUp.Round != 1 {
-		t.Errorf("CatchUp.Round = %d, want 1", f.CatchUp.Round)
-	}
+
+	t.Run("a round already collected is not fetched again", func(t *testing.T) {
+		t.Parallel()
+		b := haltedRemoteBinding("zen")
+		b.Round = 1
+		rt, fr := reopenRemoteRuntime(t, b)
+		if err := rt.Store.AppendLog("api", store.LogEntry{
+			TS: baseTime, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		fr.getBindingResp = closeView
+		fr.roundFileFunc = roundFiles("report body\n")
+
+		f := fetchRemote(ctx, rt, b)
+		defer f.release()
+		if f.CatchUp != nil {
+			t.Error("CatchUp fetched for a round whose report this client already holds")
+		}
+	})
 }
 
 // TestApplyRemoteCollectsBeforeItHalts is the apply half: a fetched close is
