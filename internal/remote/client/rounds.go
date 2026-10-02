@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // roundFileDeadline is a variable so a test can shorten the download deadline.
@@ -44,7 +45,7 @@ func startRoundDeadline(size int64) time.Duration {
 // spoolStartRound writes the multipart body once to a temp file so every retry
 // re-reads the same plan and bundle bytes; on error the temp file is removed.
 func spoolStartRound(round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, verify *bool) (tmp *os.File, size int64, bodySHA []byte, contentType string, err error) {
-	tmp, err = os.CreateTemp("", "relevo-start-round-*.tmp")
+	tmp, err = store.CreateTemp("", "relevo-start-round-*.tmp")
 	if err != nil {
 		return nil, 0, nil, "", fmt.Errorf("create temp file: %w", err)
 	}
