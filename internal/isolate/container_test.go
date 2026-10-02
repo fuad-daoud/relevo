@@ -75,6 +75,98 @@ func TestContainerArgv(t *testing.T) {
 	}
 }
 
+// TestContainerArgvEnvHomes pins the Env-derived harness home mounts: an Env
+// with CLAUDE_CONFIG_DIR=/homes/work yields -v /homes/work:/homes/work in the
+// homes position, an empty value yields no mount, a non-home entry
+// (RELEVO_RUNNER=api) yields no mount, and a value equal to a c.Homes path
+// appears once.
+func TestContainerArgvEnvHomes(t *testing.T) {
+	c := containerSpecFixture()
+
+	cases := []struct {
+		name       string
+		env        []string
+		wantMounts []string
+	}{
+		{
+			name: "account home variable mounts read-write",
+			env:  []string{"CLAUDE_CONFIG_DIR=/homes/work"},
+			wantMounts: []string{
+				"-v", "/home/alice/.claude:/home/alice/.claude:ro",
+				"-v", "/homes/work:/homes/work",
+			},
+		},
+		{
+			name: "empty value yields no mount",
+			env:  []string{"CLAUDE_CONFIG_DIR="},
+			wantMounts: []string{
+				"-v", "/home/alice/.claude:/home/alice/.claude:ro",
+			},
+		},
+		{
+			name: "non-home entry yields no mount",
+			env:  []string{"RELEVO_RUNNER=api"},
+			wantMounts: []string{
+				"-v", "/home/alice/.claude:/home/alice/.claude:ro",
+			},
+		},
+		{
+			name: "value equal to c.Homes path appears once",
+			env:  []string{"CLAUDE_CONFIG_DIR=/home/alice/.claude"},
+			wantMounts: []string{
+				"-v", "/home/alice/.claude:/home/alice/.claude:ro",
+			},
+		},
+		{
+			name: "duplicate env entries appear once",
+			env:  []string{"CLAUDE_CONFIG_DIR=/homes/work", "CODEX_HOME=/homes/work"},
+			wantMounts: []string{
+				"-v", "/home/alice/.claude:/home/alice/.claude:ro",
+				"-v", "/homes/work:/homes/work",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := spawn.ProcSpec{
+				Dir:        "/round/tree",
+				Argv:       []string{"true"},
+				Env:        tc.env,
+				StreamPath: "/binding/r1-runner.jsonl",
+			}
+			got := ContainerArgv(spec, c)
+			assertHomesMounts(t, got.Argv, tc.wantMounts)
+			for _, e := range tc.env {
+				if !containsArgPair(got.Argv, "--env", e) {
+					t.Errorf("Argv = %v, want --env %q", got.Argv, e)
+				}
+			}
+		})
+	}
+}
+
+// assertHomesMounts checks that the mounts between the repo mount and --tmpfs match want.
+func assertHomesMounts(t *testing.T, argv, want []string) {
+	t.Helper()
+	repoIdx, tmpfsIdx := -1, -1
+	for i := 0; i < len(argv); i++ {
+		if argv[i] == "/srv/repos/ab:/srv/repos/ab" {
+			repoIdx = i
+		}
+		if argv[i] == "--tmpfs" && i+1 < len(argv) && argv[i+1] == "/tmp" {
+			tmpfsIdx = i
+		}
+	}
+	if repoIdx == -1 || tmpfsIdx == -1 || repoIdx >= tmpfsIdx {
+		t.Fatalf("could not locate homes section between repo and /tmp: repoIdx=%d, tmpfsIdx=%d", repoIdx, tmpfsIdx)
+	}
+	gotHomes := argv[repoIdx+1 : tmpfsIdx]
+	if !reflect.DeepEqual(gotHomes, want) {
+		t.Errorf("homes mounts = %v, want %v", gotHomes, want)
+	}
+}
+
 // TestContainerArgvNoScopeNoBounds pins the bare render: with no scope and no
 // env there are no bound flags and no --env, the name falls back to the stream
 // base, and the supervisor always carries the empty wanted unit.

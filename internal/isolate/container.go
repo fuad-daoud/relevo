@@ -2,6 +2,7 @@ package isolate
 
 import (
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -62,9 +63,9 @@ func containerCommand(spec spawn.ProcSpec, c ContainerSpec) []string {
 
 // containerMounts renders every bind in the fixed order the contract names:
 // the round tree, the binding's out/ directory, the owner's bare repo, the
-// owner's harness homes, then a private /tmp. Each mount uses the identical
-// host and container path, which is what keeps the round tree's absolute paths
-// valid inside the container.
+// owner's harness homes, then the round's Env-derived harness homes, then a
+// private /tmp. Each mount uses the identical host and container path, which
+// is what keeps the round tree's absolute paths valid inside the container.
 func containerMounts(spec spawn.ProcSpec, c ContainerSpec) []string {
 	var argv []string
 	add := func(m Mount) {
@@ -80,8 +81,20 @@ func containerMounts(spec spawn.ProcSpec, c ContainerSpec) []string {
 	add(Mount{Path: spec.Dir})
 	add(Mount{Path: filepath.Join(filepath.Dir(spec.StreamPath), "out")})
 	add(Mount{Path: c.RepoRoot})
+	seenHomes := make(map[string]bool)
 	for _, h := range c.Homes {
 		add(h)
+		if h.Path != "" {
+			seenHomes[h.Path] = true
+		}
+	}
+	for _, e := range spec.Env {
+		name, val, _ := cut(e)
+		if !slices.Contains(AccountHomeVars, name) || val == "" || seenHomes[val] {
+			continue
+		}
+		seenHomes[val] = true
+		add(Mount{Path: val})
 	}
 	return append(argv, "--tmpfs", "/tmp")
 }

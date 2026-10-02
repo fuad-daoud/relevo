@@ -95,17 +95,18 @@ func TestServedRunnerRunsInContainer(t *testing.T) {
 	shapes := []struct {
 		name string
 		argv []string
+		env  []string
 	}{
-		{"round", []string{"claude", "-p", "plan"}},
-		{"gate", []string{"sh", "-c", "relevo gate"}},
-		{"consult", []string{"codex", "exec", "ask"}},
+		{"round", []string{"claude", "-p", "plan"}, []string{"RELEVO_RUNNER=api", "CLAUDE_CONFIG_DIR=/homes/work"}},
+		{"gate", []string{"sh", "-c", "relevo gate"}, []string{"RELEVO_RUNNER=api"}},
+		{"consult", []string{"codex", "exec", "ask"}, []string{"RELEVO_RUNNER=api"}},
 	}
 	for _, shape := range shapes {
 		t.Run(shape.name, func(t *testing.T) {
 			spec := spawn.ProcSpec{
 				Dir:        root,
 				Argv:       shape.argv,
-				Env:        []string{"RELEVO_RUNNER=api"},
+				Env:        shape.env,
 				StreamPath: filepath.Join(root, shape.name+"-runner.jsonl"),
 				Scope:      &spawn.ScopeSpec{Unit: "relevo-round-alice-1", CPUWeight: 100},
 			}
@@ -129,6 +130,15 @@ func TestServedRunnerRunsInContainer(t *testing.T) {
 		for _, mount := range []string{root + ":" + root, repoMount} {
 			if !containsString(got.Argv, mount) {
 				t.Errorf("%s Argv = %v, want volume %q", shapes[i].name, got.Argv, mount)
+			}
+		}
+		if shapes[i].name == "round" {
+			if !containsString(got.Argv, "/homes/work:/homes/work") {
+				t.Errorf("%s Argv = %v, want volume %q", shapes[i].name, got.Argv, "/homes/work:/homes/work")
+			}
+		} else {
+			if containsString(got.Argv, "/homes/work:/homes/work") {
+				t.Errorf("%s Argv = %v, want no harness home volume", shapes[i].name, got.Argv)
 			}
 		}
 	}
