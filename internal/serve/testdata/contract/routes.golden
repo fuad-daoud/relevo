@@ -8,6 +8,9 @@ POST /v1/bindings/test-binding/done 401 not_enrolled
 POST /v1/bindings/test-binding/unbind 401 not_enrolled
 POST /v1/bindings/test-binding/stop 401 not_enrolled
 POST /v1/bindings/test-binding/resume 401 not_enrolled
+POST /v1/bindings/test-binding/checks 401 not_enrolled
+GET /v1/bindings/test-binding/checks/c1 401 not_enrolled
+POST /v1/bindings/test-binding/gate 401 not_enrolled
 POST /v1/bindings/test-binding/rounds 401 not_enrolled
 GET /v1/bindings/test-binding/rounds/1/files/report 401 not_enrolled
 GET /v1/bindings/test-binding/rounds/1/artifacts 401 not_enrolled
