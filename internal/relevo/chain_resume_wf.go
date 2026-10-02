@@ -20,6 +20,12 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
 	}
+	// A child's resume is only meaningful while its parent can follow it back
+	// into the fork, so the parent is asked first and nothing is written on a
+	// refusal.
+	if err := chainForkParentGate(rt, c); err != nil {
+		return ChainResult{}, err
+	}
 	// A gate change on a chain whose writer runs on a server would be ignored
 	// where the check actually runs, so it is refused rather than silently
 	// dropped.
@@ -44,6 +50,13 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	}
 	before, err := chainWorkflowState(c)
 	if err != nil {
+		return ChainResult{}, err
+	}
+	// A parent standing on a fork cannot re-enter the fork step -- entering it
+	// starts the children a second time. So a fork with a child still standing is
+	// refused here, before anything is written and before the chain's own end
+	// delivery is superseded: the human resumes the child instead.
+	if err := chainForkResumeRefusal(c, before); err != nil {
 		return ChainResult{}, err
 	}
 	// The old flags fill the workflow's params exactly as a start's do, so a
@@ -83,6 +96,16 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 		}
 		if err := resumeRefusal(row); err != nil {
 			return err
+		}
+		// A fork whose children have all ended done re-enters its join here,
+		// rather than falling through to a resume that would re-enter the fork
+		// step and start the children a second time. A fork with a child still
+		// standing was already refused above.
+		if handled, res, err := chainForkResumeParent(ctx, rt, tx, row, def, before); err != nil {
+			return err
+		} else if handled {
+			out = res
+			return nil
 		}
 		if len(merged) > 0 {
 			if row, err = chainResumeAddMembers(ctx, rt, tx, row, def); err != nil {
@@ -145,6 +168,12 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 		// as the store now holds it.
 		if current, cerr := tx.Chain(opts.Name); cerr == nil {
 			row = current
+		}
+		// A child that is running again re-opens the parent it halted, in the
+		// same transaction, so the parent is never left waiting on a child that
+		// has already moved.
+		if err := chainForkParentReopen(rt, tx, row); err != nil {
+			return err
 		}
 		out = ChainResult{Chain: row, Members: members, Plans: len(before.Iter["plans"].Items)}
 		return nil
