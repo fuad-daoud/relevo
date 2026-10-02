@@ -142,6 +142,9 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	plan.hasWorkflow = hasWorkflow
 	if !hasWorkflow {
 		plan.members = chainMembersFor(opts, plan.settings)
+		if err := chainFreeNames(rt, plan.members); err != nil {
+			return chainServerPlan{}, err
+		}
 	}
 	plan.origin = hasFeature(who, remote.FeatureOrigin)
 	if plan.base, plan.repoID, plan.authorName, plan.authorEmail, err = chainRemoteFacts(ctx, rt, repo, opts.Base); err != nil {

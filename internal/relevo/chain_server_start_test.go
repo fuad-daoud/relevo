@@ -573,6 +573,35 @@ steps:
 	assertNothingCreated(t, rt, fg, "shop")
 }
 
+// TestServerChainOldServerRefusesTakenMemberName pins that the name-collision
+// guard is not lost on the old-server path: without the workflow feature the
+// client derives the member names itself, so a member name already bound
+// locally still refuses the start before any create.
+func TestServerChainOldServerRefusesTakenMemberName(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	rt, fg, _ := chainServerRuntime(t, fr)
+	if err := rt.Store.Save(store.Binding{Name: "shop-rev", CWD: "/taken", State: store.StateActive}); err != nil {
+		t.Fatalf("seed binding: %v", err)
+	}
+
+	opts := chainServerOpts(t)
+	_, err := ChainStart(context.Background(), rt, opts)
+	if err == nil || !strings.Contains(err.Error(), `"shop-rev" already exists`) {
+		t.Fatalf("err = %v, want a taken-name refusal", err)
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, ErrRefused): a taken name is refused, not internal", err)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateChain") {
+			t.Errorf("CreateChain called: %v, want it refused beforehand", fr.calls)
+		}
+	}
+	assertNothingCreated(t, rt, fg, "shop")
+}
+
 // TestServerChainDefaultOnOldServerSendsSettings pins the new-client/old-server
 // compatibility: when the server lacks the workflow feature, the default
 // workflow sends settings and client binding ids.
