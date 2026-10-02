@@ -192,6 +192,30 @@ func TestWorkflowSourceReportsShippedAndSaved(t *testing.T) {
 	}
 }
 
+// TestWorkflowSourcePrefersSavedOverShippedName pins the shadowing case: a
+// workflow saved over the shipped name is a saved workflow, so its own source
+// is what a caller gets. It is the regression the unconditional shipped-name
+// short-circuit in WorkflowSource introduced, and the mutation is to put that
+// short-circuit back in front of the saved lookup.
+func TestWorkflowSourcePrefersSavedOverShippedName(t *testing.T) {
+	rt := opsRuntime(t)
+	body := strings.Replace(workflowOpsSource, "name: custom", "name: default", 1)
+	if _, err := WorkflowAdd(rt, writeOpsWorkflow(t, body), false, true); err != nil {
+		t.Fatalf("add --force over the shipped name: %v", err)
+	}
+
+	source, shipped, err := WorkflowSource(rt, workflow.Default().Name)
+	if err != nil {
+		t.Fatalf("WorkflowSource(shadowed) error = %v, want nil", err)
+	}
+	if shipped {
+		t.Error("a workflow shadowing the shipped name reports shipped")
+	}
+	if !strings.Contains(source, "# keep this comment") {
+		t.Errorf("source = %q, want the shadowing workflow's own comments", source)
+	}
+}
+
 // TestWorkflowValidateProblemsMatchesCLIText pins the order and the wording of
 // the problems, which is what the CLI joins into one config_invalid message.
 func TestWorkflowValidateProblemsMatchesCLIText(t *testing.T) {

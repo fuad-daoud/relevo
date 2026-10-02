@@ -113,23 +113,25 @@ func WorkflowList(rt Runtime) ([]WorkflowSummary, error) {
 	return out, nil
 }
 
-// WorkflowSource returns a workflow's source text as the user wrote it. A
-// shipped workflow has no source to show -- it ships as a parsed definition, and
-// ResolveWorkflow has no text for it -- so it reports shipped with empty text
-// and the caller renders the definition instead.
+// WorkflowSource returns a workflow's source text as the user wrote it. The
+// saved workflows are consulted first, so a workflow that shadows the shipped
+// name serves its own source the way the CLI did before --force existed as a
+// special case here. The shipped workflow has no source to show, because it
+// ships as a parsed definition and ResolveWorkflow has no text for it, so an
+// unsaved shipped name reports shipped with empty text and the caller renders
+// the definition instead.
 func WorkflowSource(rt Runtime, name string) (string, bool, error) {
-	if name == workflow.Default().Name {
-		return "", true, nil
-	}
 	saved, err := loadWorkflows(rt)
 	if err != nil {
 		return "", false, err
 	}
-	w, ok := saved[name]
-	if !ok {
-		return "", false, workflowErrorf(ErrWorkflowNotSaved, name, "workflow %q is not saved", name)
+	if w, ok := saved[name]; ok {
+		return w.Source, false, nil
 	}
-	return w.Source, false, nil
+	if name == workflow.Default().Name {
+		return "", true, nil
+	}
+	return "", false, workflowErrorf(ErrWorkflowNotSaved, name, "workflow %q is not saved", name)
 }
 
 // WorkflowAdd reads path, validates the workflow it holds against the actors
