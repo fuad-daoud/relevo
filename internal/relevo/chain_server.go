@@ -1,9 +1,11 @@
 package relevo
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -14,6 +16,22 @@ import (
 // on this machine owns it.
 func chainOnServer(c db.ChainRow) bool {
 	return c.Server != ""
+}
+
+// chainGoneReason is the one wording that says a chain is gone from its server:
+// the pull writes it when a 404 halts the mirror, and the walk reads it back to
+// stop polling a mirror the server has already released.
+func chainGoneReason(name, server string) string {
+	return fmt.Sprintf("chain %s is gone from %s", name, server)
+}
+
+// chainGoneMirror reports whether a mirror is halted because its row carries
+// chainGoneReason. The walk skips such a row the same way it skips a done one,
+// so a server that released a mirror which was already halted is not read every
+// tick. A mirror the chain itself halted carries its own halt reason, not the
+// gone wording, and is still polled.
+func chainGoneMirror(c db.ChainRow) bool {
+	return c.Status == string(chain.StatusHalted) && c.Reason == chainGoneReason(c.Name, c.Server)
 }
 
 // serverChainMember reports whether name is a member binding of a chain that
