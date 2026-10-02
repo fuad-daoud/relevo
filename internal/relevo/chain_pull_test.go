@@ -602,6 +602,64 @@ func TestChainPullDoesNotGetAGoneMirrorAgain(t *testing.T) {
 	}
 }
 
+// TestChainPullStopsPollingAHaltedMirrorOnceTheServerDropsIt pins the already
+// halted mirror whose server chain later disappears. The chain halted the
+// mirror with its own reason, so the gone wording is not yet on the row and
+// the walk still reads it; the 404 stamps the gone reason over that reason and
+// queues no end delivery, because the chain already ended once. From then the
+// row reads as a gone mirror, so the walk stops reading the server for it.
+func TestChainPullStopsPollingAHaltedMirrorOnceTheServerDropsIt(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 1, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	// The server reports the chain halted with its own reason: the row takes
+	// the chain's word, which is not the gone wording.
+	view := fr.getChainResp
+	view.Status = string(chain.StatusHalted)
+	view.Reason = "builder halted on plan 8: the gate never ran"
+	fr.getChainResp = view
+	pullRounds(t, rt, "shop")
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Fatalf("mirror status = %q, want halted from the server's view", row.Status)
+	}
+	if row.Reason != view.Reason {
+		t.Fatalf("reason = %q, want the chain's own halt reason %q", row.Reason, view.Reason)
+	}
+	if row.Reason == chainGoneReason("shop", "zen") {
+		t.Fatalf("reason = %q, want it not the gone wording", row.Reason)
+	}
+	before := len(chainPendingChain(t, rt, "shop"))
+
+	// The server drops the chain. The 404 stamps the gone reason onto the
+	// already halted row and queues no second end delivery.
+	fr.getChainErr = &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound}}
+	pullRounds(t, rt, "shop")
+
+	row = chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Errorf("mirror status = %q, want still halted", row.Status)
+	}
+	if row.Reason != chainGoneReason("shop", "zen") {
+		t.Errorf("reason = %q, want the gone wording", row.Reason)
+	}
+	if after := len(chainPendingChain(t, rt, "shop")); after != before {
+		t.Errorf("pending deliveries = %d, want %d: an already halted chain queues none more", after, before)
+	}
+
+	// The gone reason makes the walk skip the row, so the next pass reads the
+	// server no further.
+	before = countCalls(fr, "GetChain:zen:shop")
+	pullRounds(t, rt, "shop")
+	if n := countCalls(fr, "GetChain:zen:shop"); n != before {
+		t.Errorf("GetChain calls = %d, want still %d: a gone mirror is not read again", n, before)
+	}
+}
+
 // TestChainPullSkipsADoneMirror pins the walk's filter: a mirror the local
 // machine has finished is never read from the server again.
 func TestChainPullSkipsADoneMirror(t *testing.T) {
