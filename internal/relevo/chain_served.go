@@ -76,7 +76,10 @@ type servedFacts struct {
 	clientIDs    map[string]string
 	gate         string
 	regate       int
-	now          time.Time
+	// writerCap is the scaled cap the writer member runs under, computed from
+	// the chain's plan count and its correction and repair budgets.
+	writerCap int
+	now       time.Time
 }
 
 // ServedChainPlan is everything a served chain's read-only preflight resolved:
@@ -153,7 +156,9 @@ func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, wo
 		base: req.Base, feature: req.Feature, ticket: req.Ticket,
 		authorName: req.AuthorName, authorEmail: req.AuthorEmail,
 		installation: req.ClientInstallation, clientIDs: req.ClientBindingIDs,
-		gate: plan.settings.Gate, regate: plan.settings.Regate, now: rt.Now().UTC(),
+		gate: plan.settings.Gate, regate: plan.settings.Regate,
+		writerCap: chainWriterRoundCap(len(req.Plans), plan.settings),
+		now:       rt.Now().UTC(),
 	}
 	built := make([]store.Binding, 0, len(plan.members))
 	for _, m := range plan.members {
@@ -227,6 +232,7 @@ func servedChainMember(m chainMember, pick servedPick, f servedFacts) store.Bind
 		b.Branch = "relevo/" + m.name
 		b.Gate = f.gate
 		b.Regate = f.regate
+		b.RoundCap = f.writerCap
 	}
 	return b
 }
