@@ -329,6 +329,15 @@ way the kill record is.
 `bwrap` is present). Every podman flag in this section is a design decision to
 be proven in slice C, never an observed fact. No flag is claimed as tested.
 
+**Slice C landed.** The render, mounts, bounds, kill and doctor checks are in
+the tree — `internal/isolate/container.go`, the container boundary, the serve
+per-owner binding and `dist/Containerfile` — with table tests that never need
+`podman` and one local-only integration test that skips when it is absent. The
+flags remain reasoned from the `podman run` contract; none has been observed on
+this host. `serve.isolation=container` starts under the user unit, refuses at
+startup without `podman`, and a round missing `podman` or the image halts
+naming the piece.
+
 ## 6. Seams and state layout
 
 ### 6.1 The `out/` prerequisite (seed-vs-tree 2, S0)

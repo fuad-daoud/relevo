@@ -31,10 +31,14 @@ work=$(mktemp -d)
 # replaces the script's own.
 trap 'rm -rf "$work" 2>/dev/null || :' EXIT
 
-# Every tracked Go file, minus the allow-list. A listed path that no longer
-# exists is skipped silently, so a round that deletes a file never has to touch
-# the list.
+# Every tracked Go file plus every untracked, non-ignored one, minus the
+# allow-list. An untracked file is still code someone will read and commit, so a
+# history-citing comment in it is a hit the same as in a tracked file. The two
+# lists cannot overlap (index vs untracked), so they need no sort or dedupe.
+# A listed path that no longer exists is skipped silently, so a round that
+# deletes a file never has to touch the list.
 git ls-files -- '*.go' > "$work/all"
+git ls-files --others --exclude-standard -- '*.go' >> "$work/all"
 : > "$work/skip"
 if [ -f "$allow" ]; then
 	grep -v '^[[:space:]]*$' "$allow" > "$work/skip" || :

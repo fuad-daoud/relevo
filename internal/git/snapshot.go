@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // SnapshotTree writes a git tree object capturing dir's entire working tree --
@@ -40,7 +42,7 @@ func (c *Client) SnapshotTree(ctx context.Context, dir string) (string, error) {
 		}
 	}
 
-	tempDir, err := os.MkdirTemp("", "relevo-git-index-*")
+	tempDir, err := store.MkdirTemp("", "relevo-git-index-*")
 	if err != nil {
 		return "", fmt.Errorf("create temp index dir: %w", err)
 	}

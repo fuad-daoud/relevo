@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // Actions is the cockpit's write seam (§1, §4.2): one method per key that
@@ -389,20 +390,13 @@ func (a *mastermindActions) Retry(ctx context.Context, key, candidate string) Re
 		return Result{Err: err, Refresh: true}
 	}
 
-	tmp, err := os.CreateTemp("", "relevo-retry-"+name+"-*.md")
+	tmpPath, err := store.WriteTemp(store.StoreRoot(rt.Store), "relevo-retry-"+name+"-*.md", plan)
 	if err != nil {
 		return Result{Err: err, Refresh: true}
 	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(plan); err != nil {
-		tmp.Close()
-		return Result{Err: err, Refresh: true}
-	}
-	if err := tmp.Close(); err != nil {
-		return Result{Err: err, Refresh: true}
-	}
+	defer os.Remove(tmpPath)
 
-	res, err := relevo.Send(ctx, rt, name, tmp.Name(), relevo.SendOptions{Builder: candidate})
+	res, err := relevo.Send(ctx, rt, name, tmpPath, relevo.SendOptions{Builder: candidate})
 	if err != nil {
 		return Result{Err: err, Refresh: true}
 	}
