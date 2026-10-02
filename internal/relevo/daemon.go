@@ -320,6 +320,14 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 		// P3c §4.3: before Reconcile, seal every closed round whose files
 		// nothing can still read. Errors are logged per binding and never
 		// fail the tick.
+		//
+		// A binding written before the out/ layout has its runner-output files
+		// moved into out/ first, so the seal and every read below see one home.
+		if moved, merr := d.rt.Store.MigrateOutLayout(name); merr != nil {
+			warnOnce(name, "out-migrate", "out layout migration failed", "binding", name, "err", merr)
+		} else if moved > 0 {
+			slog.Info("out layout: migrated runner files into out/", "binding", name, "files", moved)
+		}
 		sealRounds(d.rt.Store, tx, loaded, d.rt.Policy.ArtifactMaxBytes())
 
 		fresh := backfillMasterMindID(d.rt, loaded)
@@ -358,11 +366,6 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 // saved load was most of the tick's per-binding cost.
 func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFetch {
 	if d.rt.Remote == nil {
-		return nil
-	}
-	// A server chain's member is collected by the chain pull, not by the
-	// per-binding catch-up: there is no fetch to prefetch for it.
-	if serverChainMemberStore(d.rt.Store, b.Name) {
 		return nil
 	}
 	if !b.Builder.Remote() || b.State == store.StateDone || b.State == store.StatePaused {
@@ -418,7 +421,7 @@ func mirrorArchived(ctx context.Context, rt Runtime) {
 		if stats != (ingest.Stats{}) {
 			slog.Info("ingest", "binding", a.Binding.Name, "archived", true,
 				"rounds", stats.Rounds, "events", stats.Events,
-				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
+				"artifacts", stats.Artifacts)
 		}
 	}
 }
@@ -499,6 +502,11 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes
 	// there means the directory stays. The error is ignored, like every other
 	// failure in this pass.
 	if b.State == store.StateDone {
+		// An emptied out/ goes before the binding directory that holds it, so
+		// a finished binding leaves nothing on disk.
+		if entries, rerr := os.ReadDir(st.OutDir(b.Name)); rerr == nil && len(entries) == 0 {
+			_ = os.Remove(st.OutDir(b.Name))
+		}
 		if entries, rerr := os.ReadDir(st.Dir(b.Name)); rerr == nil && len(entries) == 0 {
 			_ = os.Remove(st.Dir(b.Name))
 		}
@@ -582,7 +590,7 @@ func (d *Daemon) ingestLiveBindings(ctx context.Context, bindings []store.Bindin
 		if stats != (ingest.Stats{}) {
 			slog.Info("ingest", "binding", b.Name,
 				"rounds", stats.Rounds, "events", stats.Events,
-				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
+				"artifacts", stats.Artifacts)
 		}
 	}
 	d.ingestSeen = seen

@@ -156,6 +156,8 @@ func TestFormatPolicyShowsOff(t *testing.T) {
 		"  1  a  order     <- would pick\n" +
 		"  2  b  off\n" +
 		"  3  c  order\n" +
+		"librarian  (config actors)\n" +
+		"  no candidate listed in config actors librarian.candidates\n" +
 		"reviewer  (config actors)\n" +
 		"  no candidate listed in config actors reviewer.candidates\n" +
 		"researcher  (config actors)\n" +

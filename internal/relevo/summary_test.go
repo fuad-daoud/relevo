@@ -238,6 +238,9 @@ func TestWriteReaderSummaryRefusesASymlinkedArtifactDir(t *testing.T) {
 	if err := os.MkdirAll(rt.Store.Dir(b.Name), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(rt.Store.OutDir(b.Name), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(target, filepath.Dir(out)); err != nil {
 		t.Fatal(err)
 	}
@@ -252,5 +255,69 @@ func TestWriteReaderSummaryRefusesASymlinkedArtifactDir(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("symlinked artifact directory holds %d entries, want none: %v", len(entries), entries)
+	}
+}
+
+// TestWriteReaderOutputRefusesEscapingArtifactDir pins that creating a reader's
+// output through the out/ root refuses a NNN-<actor> directory swapped for a
+// symlink out of out/, so nothing is written outside the state directory.
+func TestWriteReaderOutputRefusesEscapingArtifactDir(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	if err := os.MkdirAll(st.OutDir("reader-bind"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(st.OutDir("reader-bind"), "001-reviewer")); err != nil {
+		t.Fatal(err)
+	}
+	root, err := st.OutRoot("reader-bind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	if err := writeReaderOutput(root, filepath.Join("001-reviewer", "out.md"), "hello"); err == nil {
+		t.Fatal("writeReaderOutput followed an escaping artifact dir")
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the outside directory holds %v, want nothing", entries)
+	}
+}
+
+// TestReplaceReaderOutputRefusesEscapingArtifactDir pins the same for the
+// truncate-write path: the file behind the escaping symlink is refused and left
+// byte-identical.
+func TestReplaceReaderOutputRefusesEscapingArtifactDir(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	if err := os.MkdirAll(st.OutDir("reader-bind"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	outside := filepath.Join(target, "out.md")
+	if err := os.WriteFile(outside, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(st.OutDir("reader-bind"), "001-reviewer")); err != nil {
+		t.Fatal(err)
+	}
+	root, err := st.OutRoot("reader-bind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	if err := replaceReaderOutput(root, filepath.Join("001-reviewer", "out.md"), []byte("pwned\n")); err == nil {
+		t.Fatal("replaceReaderOutput followed an escaping artifact dir")
+	}
+	if b, err := os.ReadFile(outside); err != nil || string(b) != "outside\n" {
+		t.Errorf("outside file = %q, %v; want it untouched", b, err)
 	}
 }

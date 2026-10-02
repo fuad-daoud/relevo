@@ -52,6 +52,9 @@ func closeOnMarkerUnderLockGating(t *testing.T, rt Runtime, b store.Binding) (st
 
 func touch(t *testing.T, path string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatalf("touch %s: %v", path, err)
 	}
@@ -169,6 +172,100 @@ func TestReconcileSkipsPaused(t *testing.T) {
 	}
 	if got.Round != b.Round {
 		t.Errorf("Round = %d, want it untouched at %d", got.Round, b.Round)
+	}
+}
+
+// doneReadBackDeliverer is the MasterMindDeliverer double for the done-binding
+// read-back: its ConfirmOnce answers what the session's read-back would, and
+// its Deliver must never be called.
+type doneReadBackDeliverer struct {
+	deliverCalls int
+	onceCalls    int
+	delivered    bool
+}
+
+func (d *doneReadBackDeliverer) Deliver(context.Context, store.Endpoint, string, string, time.Time) (delivery.Outcome, string, error) {
+	d.deliverCalls++
+	return delivery.OutcomeNotMine, "must not be called", nil
+}
+
+func (d *doneReadBackDeliverer) Confirm(context.Context, store.Endpoint, string, time.Time) (delivery.Outcome, string, error) {
+	return delivery.OutcomeNotMine, "must not be called", nil
+}
+
+func (d *doneReadBackDeliverer) ConfirmOnce(context.Context, store.Endpoint, string, time.Time) (delivery.Outcome, string, error) {
+	d.onceCalls++
+	if d.delivered {
+		return delivery.OutcomeDelivered, "", nil
+	}
+	return delivery.OutcomeAdmitted, "posted; awaiting the session", nil
+}
+
+// TestReconcileDoneConfirmsAnAdmittedPayload pins the delivery gap (#830): a
+// done binding skips the reconciler's own delivery step, but an entry a push
+// route admitted before the state changed must still be settled by a
+// read-back. Nothing else can take an admitted entry, so without this the
+// record stays pending forever although the session took the payload.
+func TestReconcileDoneConfirmsAnAdmittedPayload(t *testing.T) {
+	t.Parallel()
+
+	rt, b := queuedBinding(t)
+	b.State = store.StateDone
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save done: %v", err)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		_, idx, found, err := tx.PendingForMasterMind(b.Name)
+		if err != nil {
+			return err
+		}
+		if !found {
+			t.Fatal("no queued payload to admit")
+		}
+		return tx.AdmitIndex(b.Name, idx)
+	}); err != nil {
+		t.Fatalf("admit: %v", err)
+	}
+
+	stub := &doneReadBackDeliverer{delivered: true}
+	rt.Deliverers = map[string]delivery.MasterMindDeliverer{b.MasterMind.Kind: stub}
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if stub.deliverCalls != 0 {
+		t.Fatalf("Deliver calls = %d, want 0: a done binding must not push", stub.deliverCalls)
+	}
+	if stub.onceCalls != 1 {
+		t.Fatalf("ConfirmOnce calls = %d, want 1", stub.onceCalls)
+	}
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || pending {
+		t.Errorf("the admitted payload must be confirmed: pending=%v err=%v", pending, err)
+	}
+}
+
+// TestReconcileDoneLeavesANonAdmittedPayloadAlone keeps the guard: a done
+// binding's unadmitted payload waits for the background wait; the tick neither
+// pushes it nor reads it back.
+func TestReconcileDoneLeavesANonAdmittedPayloadAlone(t *testing.T) {
+	t.Parallel()
+
+	rt, b := queuedBinding(t)
+	b.State = store.StateDone
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save done: %v", err)
+	}
+	stub := &doneReadBackDeliverer{delivered: true}
+	rt.Deliverers = map[string]delivery.MasterMindDeliverer{b.MasterMind.Kind: stub}
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if stub.deliverCalls != 0 || stub.onceCalls != 0 {
+		t.Fatalf("deliverer calls = deliver %d, confirmOnce %d; want 0, 0", stub.deliverCalls, stub.onceCalls)
+	}
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || !pending {
+		t.Errorf("the payload must stay pending: pending=%v err=%v", pending, err)
 	}
 }
 
@@ -394,6 +491,9 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.MkdirAll(filepath.Dir(rt.Store.ReportPath(b.Name, b.Round)), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(rt.Store.ReportPath(b.Name, b.Round), []byte("report body"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -410,7 +510,7 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil, "", false)
+			next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil, "", false, scopeVerdict{})
 			if err != nil {
 				return err
 			}
@@ -798,7 +898,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				return err
 			}
 			legacy := fmt.Sprintf("Builder finished round %d. Report: relevo show webshop --round %d --report", cur.Round, cur.Round)
-			next, err := queueReport(context.Background(), rt, tx, cur, entries, reportPath, legacy, "", nil, nil, nil, nil, "", false)
+			next, err := queueReport(context.Background(), rt, tx, cur, entries, reportPath, legacy, "", nil, nil, nil, nil, "", false, scopeVerdict{})
 			if err != nil {
 				return err
 			}

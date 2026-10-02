@@ -1,4 +1,4 @@
-format 11
+format 13
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
@@ -66,7 +66,6 @@ consults[].endpoint.stream_segments[].kind
 consults[].endpoint.stream_segments[].start
 consults[].endpoint.stream_session_id
 consults[].endpoint.stream_start
-consults[].endpoint.transcript_locator
 consults[].findings_path
 consults[].id
 consults[].note
@@ -116,6 +115,7 @@ link.id
 link.installation
 name
 oom_requeue.at
+oom_requeue.peak_bytes
 oom_requeue.running
 owner
 planner.agent_name
@@ -173,7 +173,6 @@ planner.stream_segments[].kind
 planner.stream_segments[].start
 planner.stream_session_id
 planner.stream_start
-planner.transcript_locator
 planner_id
 planner_screen
 planner_screen_at
@@ -259,7 +258,6 @@ runner.stream_segments[].kind
 runner.stream_segments[].start
 runner.stream_session_id
 runner.stream_start
-runner.transcript_locator
 runner_missing_since
 runner_screen
 runner_screen_at

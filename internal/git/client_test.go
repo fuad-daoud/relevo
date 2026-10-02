@@ -5,9 +5,105 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
+
+// TestCommandAppliesCredential pins the identity and environment a git child
+// runs with: a credentialed client's command carries the tenant uid/gid (no
+// extra groups) and the tenant env, and WithCredential leaves the receiver
+// untouched so a none-mode owner keeps running as the serve uid.
+func TestCommandAppliesCredential(t *testing.T) {
+	base := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	tenant := base.WithCredential(1001, 1002, []string{"HOME=/home/alice"})
+
+	cmd := tenant.command(context.Background(), "/round", []string{"GIT_INDEX_FILE=/tmp/x"}, "status")
+	if cmd.SysProcAttr == nil || cmd.SysProcAttr.Credential == nil {
+		t.Fatalf("command SysProcAttr = %+v, want the tenant credential", cmd.SysProcAttr)
+	}
+	if cred := cmd.SysProcAttr.Credential; cred.Uid != 1001 || cred.Gid != 1002 || len(cred.Groups) != 0 {
+		t.Errorf("credential = %+v, want uid 1001 gid 1002 with no groups", cred)
+	}
+	if !slices.Contains(cmd.Env, "HOME=/home/alice") {
+		t.Errorf("child env lacks the tenant HOME: %v", cmd.Env)
+	}
+	if !slices.Contains(cmd.Env, "GIT_INDEX_FILE=/tmp/x") {
+		t.Errorf("child env lacks the per-call env: %v", cmd.Env)
+	}
+	if cmd.Dir != "/round" {
+		t.Errorf("command Dir = %q, want /round", cmd.Dir)
+	}
+
+	plain := base.command(context.Background(), "/round", nil, "status")
+	if plain.SysProcAttr != nil && plain.SysProcAttr.Credential != nil {
+		t.Errorf("the original client gained a credential: %+v", plain.SysProcAttr)
+	}
+	if slices.Contains(plain.Env, "HOME=/home/alice") {
+		t.Errorf("the original client gained the tenant env: %v", plain.Env)
+	}
+}
+
+// TestCommandEnvCarriesOneHome pins the review fix: a credentialed client's git
+// child sees exactly one HOME, the tenant's, even when the daemon's own HOME is
+// in the inherited environment. A reader that takes the first match must never
+// see the daemon's home.
+func TestCommandEnvCarriesOneHome(t *testing.T) {
+	t.Setenv("HOME", "/home/daemon")
+	t.Setenv("USER", "daemon")
+	t.Setenv("LOGNAME", "daemon")
+
+	base := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	tenant := base.WithCredential(1001, 1002, []string{"HOME=/home/alice", "USER=alice", "LOGNAME=alice"})
+	cmd := tenant.command(context.Background(), "/round", nil, "status")
+
+	for _, name := range []string{"HOME", "USER", "LOGNAME"} {
+		var got []string
+		for _, e := range cmd.Env {
+			if strings.HasPrefix(e, name+"=") {
+				got = append(got, e)
+			}
+		}
+		if len(got) != 1 {
+			t.Errorf("%s entries = %v, want exactly one", name, got)
+		}
+	}
+	if !slices.Contains(cmd.Env, "HOME=/home/alice") {
+		t.Errorf("child env = %v, want the tenant HOME", cmd.Env)
+	}
+	if slices.Contains(cmd.Env, "HOME=/home/daemon") {
+		t.Errorf("child env kept the daemon HOME: %v", cmd.Env)
+	}
+}
+
+// TestDiffPatchUsesCommand pins that diffPatch builds its child through the
+// shared command: the client's extra env reaches the git process, so a
+// user-mode diff runs with the tenant's home.
+func TestDiffPatchUsesCommand(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "git")
+	script := "#!/bin/sh\nprintf 'HOME=%s\\n' \"$HOME\"\nprintf 'ARGS=%s\\n' \"$*\"\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(stub, 5*time.Second, DefaultMaxPatchBytes)
+	client.gitEnvExtra = []string{"HOME=/home/tenant"}
+
+	body, truncated, err := client.diffPatch(context.Background(), dir, "from", "to")
+	if err != nil {
+		t.Fatalf("diffPatch: %v", err)
+	}
+	if truncated {
+		t.Fatal("diffPatch truncated a tiny stub output")
+	}
+	if !strings.Contains(string(body), "HOME=/home/tenant") {
+		t.Errorf("diffPatch child output = %q, want the tenant HOME: diffPatch must build through command()", body)
+	}
+	if !strings.Contains(string(body), "ARGS=diff from to") {
+		t.Errorf("diffPatch child output = %q, want the git args", body)
+	}
+}
 
 // TestStatusDoesNotTakeIndexLock pins the index.lock hazard. First, a status read
 // over an index a plain `git status` would refresh leaves .git/index

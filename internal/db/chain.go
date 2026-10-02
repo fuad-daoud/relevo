@@ -112,7 +112,7 @@ const chainCols = `id, origin, owner, name, status, reason, phase, step, plan, p
 	awaiting_member, awaiting_round, settings, builder, reviewer, planner, security,
 	base, branch, repo, worktree, feature, ticket, server, mastermind_id, created_at, updated_at, plan_start_commit`
 
-// chainCustomCols are the columns migration 020 adds, read only when the
+// chainCustomCols are the columns migration 021 adds, read only when the
 // database carries them.
 const chainCustomCols = `workflow, state, parent`
 

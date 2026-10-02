@@ -104,9 +104,11 @@ func (t *Tx) ForkState(src string, dst Binding, throughRound int) error {
 	}
 
 	// Every entry through the cut, confirmed and undelivered (a fork begins
-	// with nothing pending), with a Path that pointed into src's directory
-	// rewritten into dst's.
+	// with nothing pending), with a Path that pointed into src's directory --
+	// the binding directory or its out/ home -- rewritten into dst's.
 	srcDir := t.s.Dir(src)
+	srcOut := t.s.OutDir(src)
+	dstOut := t.s.OutDir(dst.Name)
 	copied := make([]LogEntry, 0, len(entries))
 	lines := make([][]byte, 0, len(entries))
 	for _, e := range entries {
@@ -115,9 +117,7 @@ func (t *Tx) ForkState(src string, dst Binding, throughRound int) error {
 		}
 		e.Confirmed = true
 		e.DeliveredAt = nil
-		if e.Path != "" && filepath.Dir(e.Path) == srcDir {
-			e.Path = filepath.Join(dstDir, filepath.Base(e.Path))
-		}
+		e.Path = rewriteForkPath(e.Path, srcDir, srcOut, dstDir, dstOut)
 		raw, err := json.Marshal(e)
 		if err != nil {
 			return fmt.Errorf("encode log entry for %q: %w", dst.Name, err)
@@ -132,6 +132,22 @@ func (t *Tx) ForkState(src string, dst Binding, throughRound int) error {
 
 	success = true
 	return nil
+}
+
+// rewriteForkPath rewrites a log entry Path that pointed into src's directory
+// -- the binding directory or its out/ runner-output home -- into dst's. Any
+// other path is returned unchanged.
+func rewriteForkPath(path, srcDir, srcOut, dstDir, dstOut string) string {
+	if path == "" {
+		return path
+	}
+	switch filepath.Dir(path) {
+	case srcDir:
+		return filepath.Join(dstDir, filepath.Base(path))
+	case srcOut:
+		return filepath.Join(dstOut, filepath.Base(path))
+	}
+	return path
 }
 
 // forkRoundFiles writes the copied entries as dst's events and every selected
@@ -174,7 +190,15 @@ func (t *Tx) forkRoundFiles(dstName, dstDir, src, srcDir string, throughRound in
 			if !ok || r > throughRound {
 				continue
 			}
-			srcPath := filepath.Join(srcDir, base)
+			// Runner-output files live in src's out/ home; every other round
+			// file -- a prompt, a stream, a gate log -- stays in the binding
+			// directory. ReadFile resolves a runner-output name's two homes
+			// anyway, so a pre-migration source still answers.
+			home := srcDir
+			if runnerOutputName(base) {
+				home = t.s.OutDir(src)
+			}
+			srcPath := filepath.Join(home, filepath.FromSlash(base))
 			body, err := t.s.ReadFile(srcPath)
 			if err != nil {
 				return fmt.Errorf("copy %s: %w", base, err)

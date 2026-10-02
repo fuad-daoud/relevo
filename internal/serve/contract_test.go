@@ -140,7 +140,7 @@ func TestContractRoutes(t *testing.T) {
 
 	kp := fixedKeypair()
 	pubLine := remote.MarshalPublic(kp.Public, "client1")
-	if _, err := srv.clients.Add("client1", pubLine, fixedTime); err != nil {
+	if _, err := srv.clients.Add("client1", pubLine, "", fixedTime); err != nil {
 		t.Fatalf("clients.Add: %v", err)
 	}
 

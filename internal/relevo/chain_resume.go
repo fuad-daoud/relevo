@@ -108,7 +108,7 @@ func resumeSettings(rt Runtime, c db.ChainRow, opts ResumeOptions) (chain.Settin
 		set.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"))
 	}
 	if opts.Regate != nil {
-		set.Regate = resolveRegate(opts.Regate, rt.Policy)
+		set.Regate = ResolveRegate(opts.Regate, rt.Policy)
 	}
 	if opts.ReviewerActor != "" {
 		set.ReviewerActor = opts.ReviewerActor

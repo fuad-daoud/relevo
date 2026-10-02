@@ -605,29 +605,57 @@ func TestChainPullSkipsADoneMirror(t *testing.T) {
 	}
 }
 
-// TestChainPullSkipsTheBindingCatchUp pins that the per-binding machinery never
-// moves a mirror member: the daemon prefetch answers none and the reconcile
-// changes nothing, so only the pull can advance one.
-func TestChainPullSkipsTheBindingCatchUp(t *testing.T) {
+// TestServerChainMemberIsNotCollectedByThePerBindingPath pins the collect half
+// of the split: a member's closed view is observed (its status word written)
+// but nothing is installed -- no round advance, no prompt or report entry, no
+// report file, no ack and no delivery. Only the chain pull collects it.
+func TestServerChainMemberIsNotCollectedByThePerBindingPath(t *testing.T) {
 	t.Parallel()
 
-	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 1, 0, 0))
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			Name: "shop", Round: 1, RoundState: remote.RoundClosed, ClosedRound: 1,
+			ResultCommit: "builder-commit-1",
+		},
+		roundFileFunc: chainPullFiles(),
+	}
 	rt := chainPullRuntime(t, fr)
 	b := seedServerChain(t, rt, "shop")
 
-	if pre := NewDaemon(rt, time.Minute).prefetchRemote(context.Background(), b); pre != nil {
-		t.Errorf("prefetchRemote = %+v, want nil for a mirror member", pre)
-	}
-	var next store.Binding
+	pre := NewDaemon(rt, time.Minute).prefetchRemote(context.Background(), b)
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		var rerr error
-		next, rerr = reconcileRemote(context.Background(), rt, tx, b, nil)
-		return rerr
+		next, rerr := reconcileRemote(context.Background(), rt, tx, b, pre)
+		if rerr != nil {
+			return rerr
+		}
+		return tx.Save(next)
 	}); err != nil {
-		t.Fatalf("reconcileRemote: %v", err)
+		t.Fatalf("reconcileRemote on a member: %v", err)
 	}
-	if !store.SameBinding(next, b) {
-		t.Errorf("reconcileRemote changed the mirror: %+v -> %+v", b, next)
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+
+	if got := chainBinding(t, rt, "shop").Round; got != b.Round {
+		t.Errorf("member Round = %d, want %d unchanged", got, b.Round)
+	}
+	entries := chainLog(t, rt, "shop")
+	if HasEntry(entries, 1, store.DirToMasterMind, store.KindReport) {
+		t.Errorf("report entry installed for a member's closed round")
+	}
+	if HasPromptEntry(entries, 1) {
+		t.Errorf("prompt entry staged for a member's closed round")
+	}
+	if _, err := rt.Store.ReadFile(rt.Store.ReportPath("shop", 1)); err == nil {
+		t.Errorf("report file written for a member's closed round")
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") {
+			t.Errorf("calls = %v, want no Ack for a member", fr.calls)
+		}
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 0 {
+		t.Errorf("pending deliveries = %d, want none", len(pending))
 	}
 }
 

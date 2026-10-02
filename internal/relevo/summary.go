@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
@@ -65,27 +66,67 @@ func writeReaderSummary(rt Runtime, b store.Binding) (string, error) {
 		if !chainReader || text == "" {
 			return path, nil
 		}
-		return path, replaceReaderOutput(path, []byte(text+"\n"))
+		root, rel, err := readerOutputRoot(rt.Store, b, path)
+		if err != nil {
+			return path, err
+		}
+		defer func() { _ = root.Close() }()
+		return path, replaceReaderOutput(root, rel, []byte(text+"\n"))
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return path, err
 	}
 	if text == "" {
 		return path, nil
 	}
-	// The artifact directory is created only when it is absent: a symlink (even
-	// one pointing at a real directory) or any other non-directory is refused,
-	// so MkdirAll never descends one.
-	dir := filepath.Dir(path)
-	if fi, err := os.Lstat(dir); err == nil {
-		if !fi.IsDir() {
-			return path, fmt.Errorf("reader artifact path %s is not a directory", dir)
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return path, err
-	} else if err := os.MkdirAll(dir, 0o755); err != nil {
+	// The artifact directory is created through the output's os.Root: a symlink
+	// (even one pointing at a real directory) or any other non-directory is
+	// refused, so the create never descends one.
+	root, rel, err := readerOutputRoot(rt.Store, b, path)
+	if err != nil {
 		return path, err
 	}
-	return path, writeReaderOutput(path, text)
+	defer func() { _ = root.Close() }()
+	if dir := filepath.Dir(rel); dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return path, err
+		}
+	}
+	return path, writeReaderOutput(root, rel, text)
+}
+
+// readerOutputRoot opens the os.Root a reader's output path lives under: the
+// binding's out/ root for the new layout, the binding directory's own root for
+// a legacy artifact path. out/ is created first when it is the home, and the
+// name the root takes is returned; the caller closes the root.
+func readerOutputRoot(st *store.Store, b store.Binding, path string) (*os.Root, string, error) {
+	if rel, ok := relWithin(st.OutDir(b.Name), path); ok {
+		if err := st.EnsureOutDir(b.Name); err != nil {
+			return nil, "", err
+		}
+		root, err := st.OutRoot(b.Name)
+		if err != nil {
+			return nil, "", err
+		}
+		return root, rel, nil
+	}
+	rel, ok := relWithin(st.Dir(b.Name), path)
+	if !ok {
+		return nil, "", fmt.Errorf("reader output %s is outside the binding", path)
+	}
+	root, err := os.OpenRoot(st.Dir(b.Name))
+	if err != nil {
+		return nil, "", err
+	}
+	return root, rel, nil
+}
+
+// relWithin reports path's name relative to dir, and whether path lies in dir.
+func relWithin(dir, path string) (string, bool) {
+	rel, err := filepath.Rel(filepath.Clean(dir), path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
 }
 
 // readerOutputText is the message a reader's output file is written from. A
@@ -123,12 +164,12 @@ func chainReaderPart(rt Runtime, name string) bool {
 	return false
 }
 
-// writeReaderOutput creates path and writes text with a trailing newline. The
-// Lstat checks in writeReaderSummary are the refusal; O_EXCL and O_NOFOLLOW are
-// the race backstop behind them, so a link swapped in after the check cannot be
-// followed either.
-func writeReaderOutput(path, text string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o644)
+// writeReaderOutput creates name inside root and writes text with a trailing
+// newline. The Lstat checks in writeReaderSummary are the refusal; O_EXCL and
+// O_NOFOLLOW are the race backstop behind them, so a link swapped in after the
+// check cannot be followed either.
+func writeReaderOutput(root *os.Root, name, text string) error {
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o644)
 	if err != nil {
 		return err
 	}
@@ -139,22 +180,22 @@ func writeReaderOutput(path, text string) error {
 	return f.Close()
 }
 
-// replaceReaderOutput truncates an existing regular file in place and writes
-// data over it. A close only reaches here for an output it just read, so a
-// missing path, a symlink, a directory or a fifo is refused rather than
-// followed or recreated, and nothing is created. The Lstat is the refusal and
-// O_NOFOLLOW the race backstop behind it; the check also keeps a fifo open from
-// blocking. Without O_CREATE the mode is inert, so an existing file's mode and
-// owner are left as they were.
-func replaceReaderOutput(path string, data []byte) error {
-	fi, err := os.Lstat(path)
+// replaceReaderOutput truncates an existing regular file in place inside root
+// and writes data over it. A close only reaches here for an output it just
+// read, so a missing path, a symlink, a directory or a fifo is refused rather
+// than followed or recreated, and nothing is created. The Lstat is the refusal
+// and O_NOFOLLOW the race backstop behind it; the check also keeps a fifo open
+// from blocking. Without O_CREATE the mode is inert, so an existing file's mode
+// and owner are left as they were.
+func replaceReaderOutput(root *os.Root, name string, data []byte) error {
+	fi, err := root.Lstat(name)
 	if err != nil {
 		return err
 	}
 	if !fi.Mode().IsRegular() {
-		return fmt.Errorf("reader output %s is not a regular file", path)
+		return fmt.Errorf("reader output %s is not a regular file", filepath.Join(root.Name(), name))
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|oNoFollow, 0o644)
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_TRUNC|oNoFollow, 0o644)
 	if err != nil {
 		return err
 	}

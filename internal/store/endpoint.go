@@ -63,11 +63,6 @@ type Endpoint struct {
 	// queued; nil in every other round state.
 	RemoteQueue *QueueFacts `json:"remote_queue,omitempty"`
 	RemoteLive  *LiveFacts  `json:"remote_live,omitempty"`
-
-	// TranscriptLocator is the harness's own transcript path for this
-	// endpoint's session, resolved at bind time when possible; "" when it
-	// could not be resolved.
-	TranscriptLocator string `json:"transcript_locator,omitempty"`
 }
 
 // QueueFacts is what the server's last GET said about a queued round's place

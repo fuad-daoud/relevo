@@ -51,17 +51,16 @@ type Record struct {
 	// refuses to overwrite a Format it does not know.
 	Format int `json:"format,omitempty"`
 
-	ID                string       `json:"id"`
-	Name              string       `json:"name"`
-	HarnessKind       string       `json:"harness_kind"`
-	SessionID         string       `json:"session_id"`
-	Sessions          []SessionRef `json:"sessions"`
-	HostPID           int          `json:"host_pid"`
-	HostStartedAt     int64        `json:"host_started_at"`
-	CWD               string       `json:"cwd"`
-	TranscriptLocator string       `json:"transcript_locator,omitempty"`
-	CreatedAt         time.Time    `json:"created_at"`
-	SeenAt            time.Time    `json:"seen_at"`
+	ID            string       `json:"id"`
+	Name          string       `json:"name"`
+	HarnessKind   string       `json:"harness_kind"`
+	SessionID     string       `json:"session_id"`
+	Sessions      []SessionRef `json:"sessions"`
+	HostPID       int          `json:"host_pid"`
+	HostStartedAt int64        `json:"host_started_at"`
+	CWD           string       `json:"cwd"`
+	CreatedAt     time.Time    `json:"created_at"`
+	SeenAt        time.Time    `json:"seen_at"`
 }
 
 // MaxNameLen is the longest name ValidName accepts.

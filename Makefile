@@ -10,7 +10,7 @@ UNAME_S := $(shell uname -s)
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
 LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check check-static check-scripts check-test lint build install service uninstall release release-bump release-tag jev
+.PHONY: check check-static check-scripts check-test lint build install service uninstall release release-bump release-tag jev board-assets
 
 # lint runs golangci-lint with .golangci.yml. The binary is not vendored and
 # CI installs it in a setup step, so a machine without it still gets the rest
@@ -50,11 +50,17 @@ check-static:
 
 check-scripts:
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck scripts/*.sh; \
+		shellcheck scripts/*.sh claude-plugin/scripts/*.sh; \
 	else \
 		echo "shellcheck not installed; skipping shell lint"; \
 	fi
 	@for t in scripts/*_test.sh; do echo "==> $$t"; sh "$$t" || exit 1; done
+
+# board-assets rebuilds the vendored page under internal/board/assets from the
+# wrapper under board/. Dev-only: it needs node and network, and CI never runs
+# it. The built assets are committed, so `check` only reads them.
+board-assets:
+	sh scripts/board-assets.sh
 
 check-test:
 	@go test -race -count=1 -cover ./... > .coverage.txt 2>&1; st=$$?; cat .coverage.txt; exit $$st

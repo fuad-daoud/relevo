@@ -132,3 +132,24 @@ func chainArtifactSizes(rt Runtime, art map[string][]string) map[string]int64 {
 	}
 	return sizes
 }
+
+// chainReaderCloseOutcome is the outcome a chain reader member's close
+// records: the status its block-carrying message carries, read the way the
+// chain reads it, or "" when the binding is no workflow chain's member or its
+// declared outcomes do not parse (the close then keeps its own outcome).
+func chainReaderCloseOutcome(rt Runtime, tx *store.Tx, b store.Binding, round int, body []byte) string {
+	c, err := tx.ChainByMember(b.Name)
+	if err != nil || len(c.WorkflowJSON) == 0 {
+		return ""
+	}
+	actor := chainFlowActor(tx, c, b.Name)
+	if actor == "" {
+		actor = BindingRole(b)
+	}
+	info, _ := rt.RoleRegistry().ActorInfo(actor)
+	bodies := chainOutcomeBodies(rt, b, round, body)
+	if _, reason := workflow.ParseOutcomes(info.Outputs, bodies...); reason != "" {
+		return ""
+	}
+	return chainReaderStatus(bodies, info.Outputs)
+}

@@ -123,7 +123,7 @@ func TestInitReportsActors(t *testing.T) {
 
 	L := storedConfig(t)
 	var parts []string
-	for _, name := range []string{"builder", "planner", "lite-planner"} {
+	for _, name := range []string{"builder", "librarian", "planner", "lite-planner"} {
 		a, ok := L.Actors[name]
 		if !ok {
 			t.Fatalf("stored actors = %v, want a %s", L.Actors, name)

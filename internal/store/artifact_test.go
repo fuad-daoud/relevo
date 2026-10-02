@@ -347,8 +347,12 @@ func TestForkCopiesNestedFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadFile dst %s: %v", name, err)
 		}
-		if string(got) != files[filepath.Join(s.Dir(srcName), name)] {
-			t.Errorf("dst %s = %q, want %q", name, got, files[filepath.Join(s.Dir(srcName), name)])
+		srcKey := filepath.Join(s.Dir(srcName), name)
+		if _, ok := files[srcKey]; !ok {
+			srcKey = filepath.Join(s.OutDir(srcName), filepath.FromSlash(name))
+		}
+		if string(got) != files[srcKey] {
+			t.Errorf("dst %s = %q, want %q", name, got, files[srcKey])
 		}
 	}
 }

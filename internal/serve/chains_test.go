@@ -695,7 +695,7 @@ func TestWhoAmIAdvertisesChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 

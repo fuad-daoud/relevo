@@ -212,6 +212,9 @@ func newShowLiveStore(t *testing.T) *store.Store {
 	}
 
 	write := func(path, content string) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
 		}
@@ -1114,6 +1117,9 @@ func TestShowArchivedFindingsOnBindingWithNoRounds(t *testing.T) {
 func seedShowClaimStore(t *testing.T, rt Runtime) {
 	t.Helper()
 	seedPending(t, rt, "webshop", testClaimMasterMind, "opencode")
+	if err := os.MkdirAll(rt.Store.OutDir("webshop"), 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("# round 1 report\n"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}

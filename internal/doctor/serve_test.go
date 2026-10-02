@@ -6,9 +6,11 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,7 +84,7 @@ func TestServeChecksNoServerKey(t *testing.T) {
 		fileContents:  map[string]string{},
 	}
 	now := time.Now()
-	checks := ServeChecks(env, serveTestDB(t, false, "", ""), "/fake/serve", now, "none")
+	checks := ServeChecks(env, serveTestDB(t, false, "", ""), "/fake/serve", now, "none", false)
 	if len(checks) != 0 {
 		t.Fatalf("ServeChecks without the serve.tls.key secret returned %d checks, want 0", len(checks))
 	}
@@ -108,7 +110,7 @@ func TestServeChecksCertificate(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			checks := ServeChecks(env, serveTestDB(t, true, tc.certPEM, ""), serveRoot, now, "none")
+			checks := ServeChecks(env, serveTestDB(t, true, tc.certPEM, ""), serveRoot, now, "none", false)
 			c := findCheck(Report{Checks: checks}, "serve", "certificate")
 			if c == nil {
 				t.Fatal("missing serve: certificate check")
@@ -135,7 +137,7 @@ func TestServeChecksClients(t *testing.T) {
 		env := &fakeEnv{
 			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveTestDB(t, true, "", clientsJSON), serveRoot, now, "none")
+		checks := ServeChecks(env, serveTestDB(t, true, "", clientsJSON), serveRoot, now, "none", false)
 		c := findCheck(Report{Checks: checks}, "serve", "clients")
 		if c == nil {
 			t.Fatal("missing serve: clients check")
@@ -152,7 +154,7 @@ func TestServeChecksClients(t *testing.T) {
 		env := &fakeEnv{
 			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveTestDB(t, true, "", "[]"), serveRoot, now, "none")
+		checks := ServeChecks(env, serveTestDB(t, true, "", "[]"), serveRoot, now, "none", false)
 		c := findCheck(Report{Checks: checks}, "serve", "clients")
 		if c == nil {
 			t.Fatal("missing serve: clients check")
@@ -171,7 +173,7 @@ func TestServeChecksClients(t *testing.T) {
 		}
 		// Valid JSON of the wrong shape: the kv row is validated on write, so
 		// a malformed document is one that is not the client array.
-		checks := ServeChecks(env, serveTestDB(t, true, "", `{"not":"a client list"}`), serveRoot, now, "none")
+		checks := ServeChecks(env, serveTestDB(t, true, "", `{"not":"a client list"}`), serveRoot, now, "none", false)
 		c := findCheck(Report{Checks: checks}, "serve", "clients")
 		if c == nil {
 			t.Fatal("missing serve: clients check")
@@ -215,7 +217,7 @@ func TestServeChecksIsolation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			checks := ServeChecks(env, serveTestDB(t, true, "", tc.clients), serveRoot, now, tc.isolation)
+			checks := ServeChecks(env, serveTestDB(t, true, "", tc.clients), serveRoot, now, tc.isolation, false)
 			c := findCheck(Report{Checks: checks}, "serve", "isolation")
 			if c == nil {
 				t.Fatal("missing serve: isolation check")
@@ -245,7 +247,7 @@ func TestServeChecksState(t *testing.T) {
 		env := &fakeEnv{
 			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none")
+		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none", false)
 		c := findCheck(Report{Checks: checks}, "serve", "state")
 		if c == nil {
 			t.Fatal("missing serve: state check")
@@ -263,7 +265,7 @@ func TestServeChecksState(t *testing.T) {
 			// serveRoot missing
 			existingFiles: map[string]bool{},
 		}
-		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none")
+		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none", false)
 		c := findCheck(Report{Checks: checks}, "serve", "state")
 		if c == nil {
 			t.Fatal("missing serve: state check")
@@ -278,7 +280,7 @@ func TestServeChecksState(t *testing.T) {
 			existingFiles: map[string]bool{serveRoot: true},
 			probeErr:      errors.New("permission denied"),
 		}
-		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none")
+		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now, "none", false)
 		c := findCheck(Report{Checks: checks}, "serve", "state")
 		if c == nil {
 			t.Fatal("missing serve: state check")
@@ -290,4 +292,64 @@ func TestServeChecksState(t *testing.T) {
 			t.Errorf("detail = %q, want containing error", c.Detail)
 		}
 	})
+}
+
+// TestServeChecksIsolationUser pins the user-mode isolation row, one row per
+// prerequisite: not root, a client with no unix_user, a user missing on this
+// host, an owner root with the wrong mode and with the wrong owner, and the OK
+// (and shared-logins Warn) rows. The lookup, stat and euid seams are injected
+// so the row is checked without root, a real account or a real chown.
+func TestServeChecksIsolationUser(t *testing.T) {
+	now := time.Now()
+	serveRoot := t.TempDir()
+	env := &fakeEnv{existingFiles: map[string]bool{serveRoot: true}}
+	const uid, gid = uint32(1001), uint32(1002)
+	// A well-formed ClientID: the owner-root check derives the bindings/<hex>
+	// directory through ClientID.Dir, so the id must decode.
+	clientID := "SHA256:" + base64.RawStdEncoding.EncodeToString(make([]byte, 32))
+	withUser := `[{"id":"` + clientID + `","label":"alice","unix_user":"alice"}]`
+	noUser := `[{"id":"` + clientID + `","label":"alice"}]`
+
+	origEUID, origLookup, origStat := tenantEUID, tenantLookup, tenantStat
+	t.Cleanup(func() { tenantEUID, tenantLookup, tenantStat = origEUID, origLookup, origStat })
+
+	okLookup := func(string) (uint32, uint32, error) { return uid, gid, nil }
+	okStat := func(string) (uint32, uint32, os.FileMode, error) { return 0, gid, 0o710, nil }
+
+	cases := []struct {
+		name       string
+		euid       int
+		clients    string
+		lookup     func(string) (uint32, uint32, error)
+		stat       func(string) (uint32, uint32, os.FileMode, error)
+		shared     bool
+		wantSev    Severity
+		wantDetail string
+	}{
+		{name: "not root", euid: 1000, clients: withUser, lookup: okLookup, stat: okStat, wantSev: SevFail, wantDetail: "requires root"},
+		{name: "no declared user", euid: 0, clients: noUser, lookup: okLookup, stat: okStat, wantSev: SevFail, wantDetail: "no unix user"},
+		{name: "missing user", euid: 0, clients: withUser, lookup: func(string) (uint32, uint32, error) { return 0, 0, errors.New("no such user") }, stat: okStat, wantSev: SevFail, wantDetail: "not on this host"},
+		{name: "owner root wrong mode", euid: 0, clients: withUser, lookup: okLookup, stat: func(string) (uint32, uint32, os.FileMode, error) { return 0, gid, 0o755, nil }, wantSev: SevFail, wantDetail: "chmod 0710"},
+		{name: "owner root wrong owner", euid: 0, clients: withUser, lookup: okLookup, stat: func(string) (uint32, uint32, os.FileMode, error) { return 1234, gid, 0o710, nil }, wantSev: SevFail, wantDetail: "chown root"},
+		{name: "ok", euid: 0, clients: withUser, lookup: okLookup, stat: okStat, wantSev: SevOK, wantDetail: "scopes=off (isolation=user)"},
+		{name: "shared logins warn", euid: 0, clients: withUser, lookup: okLookup, stat: okStat, shared: true, wantSev: SevWarn, wantDetail: "shared logins on"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tenantEUID = func() int { return tc.euid }
+			tenantLookup = tc.lookup
+			tenantStat = tc.stat
+			checks := ServeChecks(env, serveTestDB(t, true, "", tc.clients), serveRoot, now, "user", tc.shared)
+			c := findCheck(Report{Checks: checks}, "serve", "isolation")
+			if c == nil {
+				t.Fatal("missing serve: isolation check")
+			}
+			if c.Severity != tc.wantSev {
+				t.Errorf("severity = %v, want %v (detail %q)", c.Severity, tc.wantSev, c.Detail)
+			}
+			if !strings.Contains(c.Detail, tc.wantDetail) {
+				t.Errorf("detail = %q, want containing %q", c.Detail, tc.wantDetail)
+			}
+		})
+	}
 }

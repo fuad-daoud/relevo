@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -337,5 +338,61 @@ func TestReadFileMissingStaysErrNotExist(t *testing.T) {
 		if _, err := s.ReadFile(p); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("ReadFile(%s) err = %v, want ErrNotExist", p, err)
 		}
+	}
+}
+
+// TestSealRefusesFileBehindEscapingSymlink pins that a file behind an escaping
+// symlink in a round's out/ artifact directory is neither sealed into a row nor
+// removed: the seal reads through the out/ root, skips a non-regular plant, and
+// leaves the outside target byte-identical.
+func TestSealRefusesFileBehindEscapingSymlink(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("webshop", "/home/dev/webshop")
+	b.Round = 5
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	dir := s.ArtifactDir("webshop", 4, "reviewer")
+	if err := os.MkdirAll(dir, bindingDirMode); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "summary.md"), []byte("summary\n"), bindingFileMode); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "outside.md")
+	const outside = "outside\n"
+	if err := os.WriteFile(target, []byte(outside), bindingFileMode); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	link := filepath.Join(dir, "link.md")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	var n int
+	if err := s.WithLock(func(tx *Tx) error {
+		var err error
+		n, err = tx.SealRound("webshop", 4)
+		return err
+	}); err != nil {
+		t.Fatalf("SealRound: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("SealRound sealed %d files, want only the regular summary.md", n)
+	}
+
+	names, err := s.RoundFiles("webshop")
+	if err != nil {
+		t.Fatalf("RoundFiles: %v", err)
+	}
+	if slices.Contains(names, "004-reviewer/link.md") {
+		t.Errorf("RoundFiles = %v, want the escaping link never sealed", names)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+		t.Errorf("the symlink must stay on disk, got info %v err %v", info, err)
+	}
+	if body, err := os.ReadFile(target); err != nil || string(body) != outside {
+		t.Errorf("the symlink target = %q, %v; want it untouched", body, err)
 	}
 }

@@ -22,11 +22,11 @@ func putChainCheck(t *testing.T, d *DB, c ChainCheckRow) {
 	}
 }
 
-// TestMigration020AddsChainColumns pins the additive migration: applying 020
+// TestMigration021AddsChainColumns pins the additive migration: applying 021
 // adds the workflow, state and parent columns and the member and check tables,
 // leaves a row written before it reading the empty defaults, and a second apply
 // records nothing new.
-func TestMigration020AddsChainColumns(t *testing.T) {
+func TestMigration021AddsChainColumns(t *testing.T) {
 	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
 	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 19)); err != nil {
 		t.Fatalf("applyMigrations through 019: %v", err)
@@ -39,7 +39,7 @@ func TestMigration020AddsChainColumns(t *testing.T) {
 	}
 
 	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 20)); err != nil {
-		t.Fatalf("applyMigrations 020: %v", err)
+		t.Fatalf("applyMigrations 021: %v", err)
 	}
 	assertColumns(t, sqlDB, "chains", []string{"workflow", "state", "parent"})
 	assertColumns(t, sqlDB, "chain_member", []string{"chain_id", "binding", "actor", "seq"})
@@ -62,7 +62,7 @@ func TestMigration020AddsChainColumns(t *testing.T) {
 	}
 
 	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 20)); err != nil {
-		t.Fatalf("second applyMigrations 020: %v", err)
+		t.Fatalf("second applyMigrations 021: %v", err)
 	}
 	var rows, versions int
 	if err := sqlDB.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT version) FROM schema_version`).Scan(&rows, &versions); err != nil {

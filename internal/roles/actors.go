@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -59,6 +60,10 @@ type Actor struct {
 	// Check is the writer's gate: run the project's check after the round.
 	// nil means true for a writer; it is refused on a reader.
 	Check *bool `json:"check,omitempty"`
+	// Scope is the writer's declared scope (#801): the paths its rounds may
+	// change, and whether a Go comment-only edit is allowed. nil means
+	// unscoped. It is refused on a reader.
+	Scope *pathscope.Scope `json:"scope,omitempty"`
 }
 
 // Entry is one of an actor's candidates: JSON is either a string (on) or
@@ -231,6 +236,11 @@ func validateActor(name string, a Actor) error {
 	for _, key := range sortedKeys(a.Outputs) {
 		if err := workflow.ValidName(key); err != nil {
 			return fmt.Errorf("actors: %s.outputs: %w: %w", name, err, ErrBadActors)
+		}
+	}
+	if a.Scope != nil {
+		if err := a.Scope.Validate(); err != nil {
+			return fmt.Errorf("actors: %s.scope: %v: %w", name, err, ErrBadActors)
 		}
 	}
 	return nil

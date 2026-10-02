@@ -53,13 +53,11 @@ func TestForkStateCopiesRoundFilesAndLog(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadFile dst %s: %v", name, err)
 		}
-		// A reserved name is row-only, so its source content comes from the
-		// source's row, not from the directory snapshot.
-		want := srcSnap[name]
-		if reservedRoundFile(name) {
-			if want, err = s.ReadFile(filepath.Join(srcDir, name)); err != nil {
-				t.Fatalf("ReadFile src %s: %v", name, err)
-			}
+		// ReadFile answers a runner-output name from its out/ home, a reserved
+		// name from its row, and any other flat file from the binding directory.
+		want, err := s.ReadFile(filepath.Join(srcDir, name))
+		if err != nil {
+			t.Fatalf("ReadFile src %s: %v", name, err)
 		}
 		if !bytes.Equal(dstContent, want) {
 			t.Errorf("file %s content mismatch: dst=%q, src=%q", name, dstContent, want)
@@ -80,6 +78,9 @@ func seedForkSource(t *testing.T, s *Store, srcName string, rounds int) {
 	}
 
 	srcDir := s.Dir(srcName)
+	if err := os.MkdirAll(s.OutDir(srcName), bindingDirMode); err != nil {
+		t.Fatalf("MkdirAll out: %v", err)
+	}
 	for r := 1; r <= rounds; r++ {
 		files := map[string]string{
 			s.PromptPath(srcName, r):                                      fmt.Sprintf("plan content for round %d", r),
@@ -122,6 +123,11 @@ func snapshotDir(t *testing.T, dir string) (map[string][]byte, []os.DirEntry) {
 	}
 	snap := make(map[string][]byte, len(entries))
 	for _, e := range entries {
+		if e.IsDir() {
+			// out/ holds runner-output files, snapshotting the binding directory
+			// only wants its flat entries.
+			continue
+		}
 		content, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
 			t.Fatalf("ReadFile %s: %v", e.Name(), err)
@@ -163,7 +169,7 @@ func checkCopiedLog(t *testing.T, s *Store, dstName, dstDir string) {
 		if e.DeliveredAt != nil {
 			t.Errorf("entry %d DeliveredAt = %v, want nil", i, e.DeliveredAt)
 		}
-		if e.Path != "" && filepath.Dir(e.Path) != dstDir {
+		if e.Path != "" && filepath.Dir(e.Path) != dstDir && filepath.Dir(e.Path) != s.OutDir(dstName) {
 			t.Errorf("entry %d Path = %q, want a path in %s", i, e.Path, dstDir)
 		}
 	}
@@ -182,6 +188,9 @@ func checkSourceUntouched(t *testing.T, s *Store, srcName, srcDir string, entrie
 		t.Fatalf("src file count changed: got %d, want %d", len(entriesAfter), len(entriesBefore))
 	}
 	for _, e := range entriesAfter {
+		if e.IsDir() {
+			continue
+		}
 		content, err := os.ReadFile(filepath.Join(srcDir, e.Name()))
 		if err != nil {
 			t.Fatalf("ReadFile src after %s: %v", e.Name(), err)
@@ -285,6 +294,9 @@ func TestForkStateMidCopyFailureLeavesNoDst(t *testing.T) {
 					t.Fatalf("WriteFile: %v", err)
 				}
 				unreadable := s.ReportPath(srcName, 1)
+				if err := os.MkdirAll(filepath.Dir(unreadable), bindingDirMode); err != nil {
+					t.Fatalf("MkdirAll out: %v", err)
+				}
 				if err := os.WriteFile(unreadable, []byte("report 1"), bindingFileMode); err != nil {
 					t.Fatalf("WriteFile: %v", err)
 				}
@@ -385,6 +397,9 @@ func seedSealedForkSource(t *testing.T, s *Store, srcName string) (onDisk, seale
 	sealed = map[string]string{
 		s.PromptPath(srcName, 2): "round 2 plan",
 		s.ReportPath(srcName, 2): "round 2 report",
+	}
+	if err := os.MkdirAll(s.OutDir(srcName), bindingDirMode); err != nil {
+		t.Fatalf("MkdirAll out: %v", err)
 	}
 	for _, files := range []map[string]string{onDisk, sealed} {
 		for path, content := range files {

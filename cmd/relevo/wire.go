@@ -437,7 +437,6 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 	cls, _ := classify.Resolve(pol.Classify, L.Typesafe, os.Getenv)
 
 	reader, prices := newUsageReader(L.Prices)
-	home, _ := os.UserHomeDir()
 
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
 
@@ -497,7 +496,6 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		Scope:          scopeFromPolicy(pol.ScopeFor(false)),
 		Classify:       cls,
 		Usage:          reader,
-		Sessions:       relevo.AccountSessionLocator(home, L.Accounts),
 		Prices:         prices,
 		Fetcher:        release.NewHTTPFetcher(release.Source(), 5*time.Second),
 		Now:            time.Now,

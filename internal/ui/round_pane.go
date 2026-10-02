@@ -168,26 +168,39 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 	// never block re-targeting the pane.
 	p.src.MarkViewed(key)
 	vp := viewport.New(p.contentWidth(), p.viewportHeight())
+	// The row's shape, a chain row's member round and the round's baseline
+	// head live on the binding, not the status document: a reader round's tabs,
+	// card and context row are keyed on them (round 5b). A key the runtime
+	// cannot resolve, or a read that fails, leaves the pane a writer's.
+	//
+	// A live chain's row stands in for its members, and its builder member
+	// carries the chain's own name, so the row opens that member's current
+	// round rather than the row's absent plan. A chain row whose member cannot
+	// be loaded leaves round 0 -- never the -1 its zero plan would otherwise
+	// give.
+	round, rounds := paneRound(*r), roundsOf(*r)
+	if r.Chain != nil {
+		round, rounds = 0, 0
+	}
+	p.reader, p.baselineHead = false, ""
+	if rt, name, ok := p.src.Runtime(key); ok && rt.Store != nil {
+		if b, err := rt.Store.Load(name); err == nil {
+			if r.Chain != nil {
+				round, rounds = b.Round, b.Round
+			}
+			p.reader = b.Shape == store.ShapeReader
+			p.baselineHead = b.RoundBaselineHead
+		}
+	}
 	p.detail = detailModel{
 		name:     key,
-		round:    paneRound(*r),
-		rounds:   roundsOf(*r),
+		round:    round,
+		rounds:   rounds,
 		live:     true,
 		active:   p.detail.active,
 		vp:       vp,
 		headless: r.Headless != nil,
 		follow:   true,
-	}
-	// The row's shape and its round's baseline head live on the binding,
-	// not the status document: a reader round's tabs, card and context row
-	// are keyed on them (round 5b). A key the runtime cannot resolve, or a
-	// read that fails, leaves the pane a writer's.
-	p.reader, p.baselineHead = false, ""
-	if rt, name, ok := p.src.Runtime(key); ok && rt.Store != nil {
-		if b, err := rt.Store.Load(name); err == nil {
-			p.reader = b.Shape == store.ShapeReader
-			p.baselineHead = b.RoundBaselineHead
-		}
 	}
 	p.artifactSel = 0
 	if r.Last != nil {

@@ -156,7 +156,7 @@ func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {
 
 	caller := callerOf(r)
 	name := r.PathValue("name")
-	b, _, err := s.loadBinding(caller, name)
+	b, rt, err := s.loadBinding(caller, name)
 	if err != nil {
 		s.mu.Unlock()
 		if errors.Is(err, store.ErrNotFound) {
@@ -195,7 +195,7 @@ func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Unlock()
 
-	snap, err := s.transport.Snapshot(r.Context(), bare, refs, since)
+	snap, err := rt.Transport.Snapshot(r.Context(), bare, refs, since)
 	if err != nil {
 		if errors.Is(err, remote.ErrSinceUnknown) {
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "since is not an ancestor of the result")

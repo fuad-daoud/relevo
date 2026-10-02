@@ -15,12 +15,22 @@ import (
 
 // ProcSpec is one process a headless builder round runs.
 type ProcSpec struct {
-	Dir        string     // working directory: the binding's CWD
-	Argv       []string   // Argv[0] is the binary name, resolved on PATH by the runner
-	Env        []string   // additions to the parent environment; nil for none
-	LogPath    string     // stderr, appended, created if absent
-	StreamPath string     // stdout and the exit trailer, appended, created if absent
-	Scope      *ScopeSpec // non-nil launches the process as a transient systemd scope
+	Dir        string      // working directory: the binding's CWD
+	Argv       []string    // Argv[0] is the binary name, resolved on PATH by the runner
+	Env        []string    // additions to the parent environment; nil for none
+	LogPath    string      // stderr, appended, created if absent
+	StreamPath string      // stdout and the exit trailer, appended, created if absent
+	Scope      *ScopeSpec  // non-nil launches the process as a transient systemd scope
+	Credential *Credential // non-nil runs the process as this uid/gid; nil keeps the serve uid
+	DenyEnv    []string    // extra names removed from the inherited environment before Env is appended
+}
+
+// Credential is the unix identity a process runs as. It carries only the uid
+// and primary gid: the tenant's own groups are never added, so a round can only
+// reach what the declared user's primary group grants it.
+type Credential struct {
+	UID uint32
+	GID uint32
 }
 
 // ScopeSpec asks the runner to start the process as a transient systemd scope.
@@ -203,3 +213,10 @@ type ScopeResultProber interface {
 // ErrRunnerUnavailable is returned by a headless path when Runtime.Runner is
 // nil: the binary was built or the runtime assembled without one.
 var ErrRunnerUnavailable = errors.New("no process runner configured")
+
+// ErrBoundarySetup marks a Start refused because its tenant boundary could not
+// be established: no declared user, a user that no longer exists, or an owner
+// root with the wrong owner, group or mode. It is a configuration refusal, not
+// the candidate's fault, so the spawn paths must not record it against the
+// candidate's availability.
+var ErrBoundarySetup = errors.New("tenant boundary not set up")

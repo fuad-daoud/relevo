@@ -360,6 +360,9 @@ func TestRemoteCatchUpRefusesALinkedArtifactDir(t *testing.T) {
 	if err := os.MkdirAll(st.Dir("api"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(st.OutDir("api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	target := t.TempDir()
 	if err := os.Symlink(target, st.ArtifactDir("api", 1, "reviewer")); err != nil {
 		t.Fatal(err)
@@ -448,6 +451,9 @@ func TestRemoteCatchUpRefusesALinkedArtifactAncestor(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(st.Dir("api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(st.OutDir("api"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	target := t.TempDir()

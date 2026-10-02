@@ -20,6 +20,14 @@ var registry = []verbEntry{
 		Errors: []string{"binding_not_found", "conflict", "gate_active", "internal", "policy_refused", "refused", "tier_cap", "usage"},
 	},
 	{
+		Name:    "board",
+		Summary: "open a local Excalidraw whiteboard for a scene in the repo",
+		Args:    "[path] [--theme NAME] [--no-open]",
+		Flags:   []string{"--no-open", "--theme"},
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"internal", "usage"},
+	},
+	{
 		Name:    "bugreport",
 		Summary: "assemble a local, redacted bug-report bundle and print the gh line",
 		Args:    "[--name N] [--round N] [--logs] [--raw] [--out PATH] [--title T] [--body FILE] [--stdout|--json|--gh]",
@@ -434,8 +442,8 @@ var registry = []verbEntry{
 	{
 		Name:    "serve enroll",
 		Summary: "enroll a client's public key",
-		Args:    "--label <label> --key \"<ed25519 line>\" [--state <dir>] [--json]",
-		Flags:   []string{"--json", "--key", "--label", "--state"},
+		Args:    "--label <label> --key \"<ed25519 line>\" [--user <unix user>] [--state <dir>] [--json]",
+		Flags:   []string{"--json", "--key", "--label", "--state", "--user"},
 		Output:  "json:ServeEnrollDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"conflict", "internal", "usage"},

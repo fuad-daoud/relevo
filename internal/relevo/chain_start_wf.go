@@ -121,9 +121,6 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	}
 	plan.mastermindID = rec.ID
 	plan.mastermind = recordEndpoint(rec)
-	if plan.mastermind.TranscriptLocator == "" {
-		plan.mastermind.TranscriptLocator = mastermindLocator(rt, plan.mastermind.Kind, plan.mastermind.SessionID)
-	}
 
 	items := make([]string, len(plan.bodies))
 	for i := range plan.bodies {

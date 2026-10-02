@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -95,6 +96,12 @@ func TestFormatActors(t *testing.T) {
 		},
 		"reviewer": {Agent: "reviewer", Candidates: []roles.Entry{{Candidate: "b"}}, Tier: "yolo"},
 		"designer": {Agent: "ui-designer", Candidates: []roles.Entry{{Candidate: "a"}}},
+		"librarian": {
+			Agent:      "librarian",
+			Candidates: []roles.Entry{{Candidate: "a"}},
+			Tier:       "yolo",
+			Scope:      &pathscope.Scope{Paths: []string{"@docs"}, Comments: true},
+		},
 	}
 	agentsSection := map[string]roles.AgentEntry{
 		"ui-designer": {Source: uiDesignerSource},
@@ -121,6 +128,9 @@ func TestFormatActors(t *testing.T) {
 		"  placement  zen, local\n" +
 		"designer  ui-designer  reader  custom  tier -\n" +
 		"  candidates  a\n" +
+		"librarian  librarian  writer  shipped  tier yolo  check on\n" +
+		"  candidates  a\n" +
+		"  scope  @docs + comments\n" +
 		"reviewer  reviewer  reader  shipped  tier yolo\n" +
 		"  candidates  b\n" +
 		"\nagents\n" +

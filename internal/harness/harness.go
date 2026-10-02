@@ -40,6 +40,12 @@ var roleTable = []RoleSpec{
 		Definitions: []string{"plan-executor", "researcher"},
 	},
 	{
+		Name:        "librarian",
+		Shape:       ShapeBuilder,
+		Definition:  "librarian",
+		Definitions: []string{"librarian"},
+	},
+	{
 		Name:        "reviewer",
 		Shape:       ShapeConsult,
 		Definition:  "reviewer",
@@ -132,6 +138,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
 			{Name: "security-reviewer", Path: ".gemini/config/agents/security-reviewer.md", Doc: "security-reviewer.agy", ExpectModel: "inherit"},
 			{Name: "architect", Path: ".gemini/config/agents/architect.md", Doc: "architect.agy", ExpectModel: "inherit"},
+			{Name: "librarian", Path: ".gemini/config/agents/librarian.md", Doc: "librarian.agy", ExpectModel: "inherit"},
 		},
 	},
 	"claude": {
@@ -155,6 +162,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "reviewer", Path: ".claude/agents/reviewer.md", Doc: "reviewer.claude"},
 			{Name: "security-reviewer", Path: ".claude/agents/security-reviewer.md", Doc: "security-reviewer.claude"},
 			{Name: "architect", Path: ".claude/agents/architect.md", Doc: "architect.claude"},
+			{Name: "librarian", Path: ".claude/agents/librarian.md", Doc: "librarian.claude"},
 		},
 	},
 	"opencode": {
@@ -182,6 +190,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
 			{Name: "security-reviewer", Path: ".config/opencode/agents/security-reviewer.md", Doc: "security-reviewer.opencode"},
 			{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
+			{Name: "librarian", Path: ".config/opencode/agents/librarian.md", Doc: "librarian.opencode"},
 		},
 		Files: []ShippedFile{
 			{Name: "opencode-plugin/package.json", Path: ".config/opencode/plugins/relevo/package.json", Embed: "opencodeplugin/package.json"},
@@ -213,6 +222,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "reviewer", Path: ".codex/reviewer.config.toml", Doc: "reviewer.codex"},
 			{Name: "security-reviewer", Path: ".codex/security-reviewer.config.toml", Doc: "security-reviewer.codex"},
 			{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},
+			{Name: "librarian", Path: ".codex/librarian.config.toml", Doc: "librarian.codex"},
 		},
 	},
 }
@@ -253,10 +263,10 @@ func (h Harness) CanServe(role string) bool {
 // at send time; PrintArgs replaces them. They are exported for tests to
 // recognise, never for a caller to build argv by hand.
 const (
-	PromptPlaceholder = "<prompt>"
-	BudgetPlaceholder = "<budget>"
-	DirPlaceholder    = "<dir>"
-	StatePlaceholder  = "<state>" // codex writable-roots override, after a "-c"
+	PromptPlaceholder       = "<prompt>"
+	BudgetPlaceholder       = "<budget>"
+	DirPlaceholder          = "<dir>"
+	WritableRootPlaceholder = "<writable-root>" // codex writable-roots override, after a "-c"
 )
 
 // Launch describes how to start an agent process for a specific role and model.
@@ -331,17 +341,18 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 	}, nil
 }
 
-// writableRootsArg renders the -c value for state, quoted as a TOML basic
+// writableRootsArg renders the -c value for root, quoted as a TOML basic
 // string (identical escapes for every path this program produces).
-func writableRootsArg(state string) string {
-	return "sandbox_workspace_write.writable_roots=[" + strconv.Quote(state) + "]"
+func writableRootsArg(root string) string {
+	return "sandbox_workspace_write.writable_roots=[" + strconv.Quote(root) + "]"
 }
 
-// PrintArgs is Print with the prompt, budget, working tree and state directory
+// PrintArgs is Print with the prompt, budget, working tree and writable root
 // filled in: a fresh slice, so neither Print nor the caller's extra is touched.
 // A kind whose Print lacks a placeholder ignores that argument; a present
-// StatePlaceholder with an empty state is filled with a value codex rejects.
-func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, state string) []string {
+// WritableRootPlaceholder with an empty root is filled with a value codex
+// rejects.
+func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, writableRoot string) []string {
 	out := make([]string, 0, len(l.Print))
 	for _, a := range l.Print {
 		switch a {
@@ -351,8 +362,8 @@ func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, state string
 			out = append(out, budget.String())
 		case DirPlaceholder:
 			out = append(out, dir)
-		case StatePlaceholder:
-			out = append(out, writableRootsArg(state))
+		case WritableRootPlaceholder:
+			out = append(out, writableRootsArg(writableRoot))
 		default:
 			out = append(out, a)
 		}

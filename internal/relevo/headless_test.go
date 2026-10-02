@@ -227,7 +227,10 @@ func TestStartRoundPassesStateDir(t *testing.T) {
 		t.Fatalf("specs = %+v, want one Start", fr.specs)
 	}
 	spec := fr.specs[0]
-	wantRoot := fmt.Sprintf(`sandbox_workspace_write.writable_roots=[%q]`, rt.Store.Dir(b.Name))
+	wantRoot := fmt.Sprintf(`sandbox_workspace_write.writable_roots=[%q]`, rt.Store.OutDir(b.Name))
+	if wantRoot == fmt.Sprintf(`sandbox_workspace_write.writable_roots=[%q]`, rt.Store.Dir(b.Name)) {
+		t.Fatal("the writable root must be out/, not the binding directory")
+	}
 	found := false
 	for _, arg := range spec.Argv {
 		if arg == wantRoot {
@@ -464,6 +467,40 @@ func TestStartRoundFailureRecordsSpawnFailedAndLeavesPIDZero(t *testing.T) {
 	}
 	if !gated {
 		t.Errorf("spawn_failed must be in the ledger for %s: %+v", testAgyRef, availability.Gates(AvailabilityDeps(rt)))
+	}
+}
+
+// TestBoundarySetupErrorIsNotASpawnFailure pins that a tenant-boundary refusal
+// is the operator's to fix, not the candidate's: it is neither recorded against
+// the candidate's availability nor wrapped as a spawnFailure (which the
+// lost-builder path would answer with a fresh relaunch).
+func TestBoundarySetupErrorIsNotASpawnFailure(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	fr.startErr = fmt.Errorf("start headless builder: %w: no tenant declared for this owner", spawn.ErrBoundarySetup)
+	rt, b := seedHeadless(t, fr)
+
+	var got store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		got, err = startRound(context.Background(), rt, tx, b, "p", false)
+		return err
+	})
+	if err == nil || !errors.Is(err, spawn.ErrBoundarySetup) {
+		t.Fatalf("err = %v, want the boundary-setup error", err)
+	}
+	var sf spawnFailure
+	if errors.As(err, &sf) {
+		t.Errorf("err = %v, want it not to be a spawnFailure", err)
+	}
+	if got.Builder.PID != 0 {
+		t.Errorf("a refused start left a pid: %+v", got.Builder)
+	}
+	for _, g := range availability.Gates(AvailabilityDeps(rt)) {
+		if g.Token == testAgyRef && g.Kind == "spawn_failed" {
+			t.Errorf("spawn_failed was recorded for a boundary-setup refusal: %+v", g)
+		}
 	}
 }
 

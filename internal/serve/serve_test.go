@@ -58,7 +58,7 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 		t.Fatalf("Lookup unknown: got %v, want KeyUnknown", status)
 	}
 
-	cl, err := c.Add("client1", pubLine, time.Now())
+	cl, err := c.Add("client1", pubLine, "", time.Now())
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 		t.Fatalf("Lookup after add = (%v, %v), want the active key", status, pub)
 	}
 
-	if _, err := c.Add("client1", pubLine, time.Now()); !errors.Is(err, ErrAlreadyEnrolled) {
+	if _, err := c.Add("client1", pubLine, "", time.Now()); !errors.Is(err, ErrAlreadyEnrolled) {
 		t.Fatalf("Add duplicate: got %v, want ErrAlreadyEnrolled", err)
 	}
 
@@ -84,7 +84,7 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 		t.Fatalf("Revoke unknown: got %v, want ErrNoSuchClient", err)
 	}
 
-	cl2, err := c.Add("client1-renewed", pubLine, time.Now())
+	cl2, err := c.Add("client1-renewed", pubLine, "", time.Now())
 	if err != nil {
 		t.Fatalf("Re-add: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestClientsLookupSeesEnrollFromAnotherInstance(t *testing.T) {
 	if _, status := c2.Lookup(id); status != remote.KeyUnknown {
 		t.Fatalf("Lookup before add: got %v, want KeyUnknown", status)
 	}
-	if _, err := c1.Add("client1", pubLine, time.Now()); err != nil {
+	if _, err := c1.Add("client1", pubLine, "", time.Now()); err != nil {
 		t.Fatalf("Add on c1: %v", err)
 	}
 
@@ -151,7 +151,7 @@ func TestClientsRefreshKeepsListOnParseError(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	if _, err := c.Add("client1", remote.MarshalPublic(kp.Public, "client 1"), time.Now()); err != nil {
+	if _, err := c.Add("client1", remote.MarshalPublic(kp.Public, "client 1"), "", time.Now()); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestClientsRefreshOnDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	if _, err := c.Add("client1", remote.MarshalPublic(kp.Public, "client 1"), time.Now()); err != nil {
+	if _, err := c.Add("client1", remote.MarshalPublic(kp.Public, "client 1"), "", time.Now()); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 	if _, status := c.Lookup(id); status != remote.KeyActive {
@@ -204,7 +204,7 @@ func TestOwnerLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	if _, err := c.Add("laptop", remote.MarshalPublic(kp.Public, "test client"), time.Now()); err != nil {
+	if _, err := c.Add("laptop", remote.MarshalPublic(kp.Public, "test client"), "", time.Now()); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -241,7 +241,7 @@ func TestAuthRejects(t *testing.T) {
 		t.Fatal(err)
 	}
 	pubLine := remote.MarshalPublic(kpEnrolled.Public, "enrolled")
-	if _, err := s.clients.Add("enrolled", pubLine, time.Now()); err != nil {
+	if _, err := s.clients.Add("enrolled", pubLine, "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -259,7 +259,7 @@ func TestAuthRejects(t *testing.T) {
 			t.Fatal(err)
 		}
 		line := remote.MarshalPublic(kpRevoked.Public, "revoked")
-		if _, err := s.clients.Add("revoked", line, time.Now()); err != nil {
+		if _, err := s.clients.Add("revoked", line, "", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.clients.Revoke(remote.IDOf(kpRevoked.Public), time.Now()); err != nil {
@@ -302,7 +302,7 @@ func TestAuthBodyCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("cap-tester", remote.MarshalPublic(kp.Public, "cap-tester"), time.Now()); err != nil {
+	if _, err := s.clients.Add("cap-tester", remote.MarshalPublic(kp.Public, "cap-tester"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -333,7 +333,7 @@ func TestWhoAmI(t *testing.T) {
 	}
 	id := remote.IDOf(kp.Public)
 	pubLine := remote.MarshalPublic(kp.Public, "alice")
-	if _, err := s.clients.Add("alice", pubLine, time.Now()); err != nil {
+	if _, err := s.clients.Add("alice", pubLine, "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -473,7 +473,7 @@ func TestServerRefusesACreateWithoutAnActor(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -506,7 +506,7 @@ func TestWhoAmIAdvertisesCandidateAndActors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -541,7 +541,7 @@ func TestWhoAmIAdvertisesChainMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -574,7 +574,7 @@ func TestWhoAmIScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := scoped.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+	if _, err := scoped.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -635,7 +635,7 @@ func TestCreateBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -729,6 +729,54 @@ func TestCreateBindingStoresGate(t *testing.T) {
 	}
 }
 
+// TestCreateBindingStoresRegate pins the repair budget on the served binding:
+// the client's resolved value is stored verbatim, and a create request that
+// carries none -- an old client -- takes the server's own policy default.
+func TestCreateBindingStoresRegate(t *testing.T) {
+	set, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := func(v int) *int { return &v }
+	pol := policy.Policy{Gate: &policy.GatePolicy{Regate: ip(2)}}
+	srv, kp := newRoleTestServer(t, pol, roleTestRegistry(t, set, policy.Policy{}))
+
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     testRepoID,
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
+		Regate:     ip(3),
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+	b, err := testRuntime(t, srv, remote.IDOf(kp.Public)).Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load binding: %v", err)
+	}
+	if b.Regate != 3 {
+		t.Fatalf("stored Regate = %d, want 3", b.Regate)
+	}
+
+	oldRec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "old",
+		RepoID:     testRepoID,
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
+	})
+	if oldRec.Code != http.StatusCreated {
+		t.Fatalf("old-client status = %d, want 201; body: %s", oldRec.Code, oldRec.Body.String())
+	}
+	old, err := testRuntime(t, srv, remote.IDOf(kp.Public)).Store.Load("old")
+	if err != nil {
+		t.Fatalf("Load old binding: %v", err)
+	}
+	if old.Regate != 2 {
+		t.Fatalf("old client's stored Regate = %d, want the server policy default 2", old.Regate)
+	}
+}
+
 func TestOwnerDirIsFlatHex(t *testing.T) {
 	s, root := newTestServer(t, 0)
 
@@ -737,7 +785,7 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -802,7 +850,7 @@ func newTierTestServer(t *testing.T, pol policy.Policy) (*Server, remote.Keypair
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	return srv, kp
@@ -856,7 +904,7 @@ func newRoleTestServer(t *testing.T, pol policy.Policy, reg *roles.Registry) (*S
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	return srv, kp
@@ -1112,7 +1160,7 @@ func roleRefusalServer(t *testing.T, checker harness.RoleChecker) (*Server, remo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	return srv, kp
@@ -1171,7 +1219,7 @@ func TestCreateInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), time.Now()); err != nil {
+	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1201,7 +1249,7 @@ func TestCreateDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), time.Now()); err != nil {
+	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1231,14 +1279,14 @@ func TestListIsOwnerScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now()); err != nil {
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	kpB, err := remote.Generate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), time.Now()); err != nil {
+	if _, err := s.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1282,7 +1330,7 @@ func TestGetTouchesLastSeen(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1330,7 +1378,7 @@ func TestGetBindingRefusesAnInvalidName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), time.Now()); err != nil {
+	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1367,7 +1415,7 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 		t.Fatal(err)
 	}
 	idA := remote.IDOf(kpA.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now()); err != nil {
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1413,7 +1461,7 @@ func newAvailableServer(t *testing.T) (*Server, remote.Keypair) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	return s, kp
@@ -2509,7 +2557,7 @@ func seedRunningOwner(t *testing.T, srv *Server, ts *httptest.Server, gitClient 
 	repoID, _ := remote.RepoID(root)
 	kp, _ := remote.Generate()
 	id := remote.IDOf(kp.Public)
-	_, _ = srv.clients.Add(label, remote.MarshalPublic(kp.Public, label), time.Now())
+	_, _ = srv.clients.Add(label, remote.MarshalPublic(kp.Public, label), "", time.Now())
 
 	name := "binding-" + label
 	createBody, _ := json.Marshal(remote.CreateBindingRequest{Name: name, RepoID: repoID, BaseCommit: head, Role: "builder"})
@@ -2551,7 +2599,7 @@ func TestTickWalksEveryOwner(t *testing.T) {
 	idA := seedRunningOwner(t, srv, ts, gitClient, "alice")
 	idB := seedRunningOwner(t, srv, ts, gitClient, "bob")
 	kpC, _ := remote.Generate()
-	_, _ = srv.clients.Add("charlie", remote.MarshalPublic(kpC.Public, "charlie"), time.Now())
+	_, _ = srv.clients.Add("charlie", remote.MarshalPublic(kpC.Public, "charlie"), "", time.Now())
 
 	runner.mu.Lock()
 	initialAliveCount := len(runner.aliveHandles)
@@ -2666,7 +2714,7 @@ func candidatesViewServer(t *testing.T) (*Server, remote.Keypair) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
+	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", now); err != nil {
 		t.Fatal(err)
 	}
 	return srv, kp
@@ -3402,7 +3450,7 @@ func TestUnavailableRejectsAnOverlongReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 

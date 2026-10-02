@@ -23,6 +23,9 @@
               "m"
             ]
           },
+          "librarian": {
+            "agent": "librarian"
+          },
           "researcher": {
             "agent": "researcher"
           },

@@ -99,9 +99,12 @@ session loads the new server without a restart.
 
 ### The Claude Code plugin
 
-A Claude Code MasterMind installs relevo as a plugin. The plugin provides the
-`relevo mcp` MCP server and a `SessionStart` hook that runs
-`relevo mastermind init`, so relevo knows which MasterMind session is calling:
+A Claude Code MasterMind installs relevo as a plugin. The plugin's MCP server,
+its `SessionStart` and `UserPromptSubmit` hooks and its slash commands all run
+through tiny scripts under `${CLAUDE_PLUGIN_ROOT}/scripts/` that exec `relevo`
+from `PATH`, so relevo knows which MasterMind session is calling. Without
+`relevo` on `PATH` the hooks stay silent, and the MCP server and the commands
+print one install hint:
 
     /plugin marketplace add fuad-daoud/relevo
     /plugin install relevo@relevo
@@ -134,7 +137,8 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
    It finds the harness binaries on `PATH`, writes one builder candidate per
    harness to the candidates section except claude, which only plans (it gets the
    `planner` actor), writes the policy section and the builder
-   actor, plus a `planner` and a `lite-planner` reader actor for claude and
+   actor, plus a `librarian` writer over the same candidates and a `planner`
+   and a `lite-planner` reader actor for claude and
    opencode, and installs the agent definitions into each of those harnesses. The
    configuration lives in relevo.db under the state root, not in a file; a
    file you drop into `~/.config/relevo` is imported on the next command and
@@ -145,7 +149,7 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
    the command to run next, e.g.:
    ```
    wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)
-   wrote actors (builder: glm-5.3-flash; planner: opus; lite-planner: deepseek-v4.1-flash)
+   wrote actors (builder: glm-5.3-flash; librarian: glm-5.3-flash; planner: opus; lite-planner: deepseek-v4.1-flash)
    wrote  ~/.claude/agents/plan-executor.md
    wrote  ~/.config/opencode/agents/plan-executor.md
    next: edit the model names, then run: relevo doctor
@@ -181,7 +185,7 @@ One line per file says `wrote`, `updated (unchanged since relevo wrote it)`,
 `kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
 name a harness that is not on `PATH` yet, `--agent` for one definition,
 `--dry-run` to look first. This writes `plan-executor`, `researcher`, `reviewer`,
-`security-reviewer` and `architect` for every kind; `relevo config agents --dry-run` shows what
+`security-reviewer`, `architect` and `librarian` for every kind; `relevo config agents --dry-run` shows what
 would be written.
 
 `researcher` is the read-only agent the builder's own sub-agents run as. It
@@ -247,12 +251,12 @@ the relevo plugin's `SessionStart` hook exports, or through the harness
 process the `relevo mcp` server shares with the session. Run
 `relevo mastermind list` to see the MasterMinds relevo knows.
 
-Its `chat` column names each MasterMind as a person sees it: a Claude Code chat's
-title, or its last prompt, plus the claude.ai link when the session is bridged;
-an opencode session's title; and `-` when nothing can be read. The label is read
-from the harness's own files when the command runs and is never stored. The same
-label follows the MasterMind's name in `relevo status` and `relevo doctor`.
-`relevo mastermind rename <id|name> <new-name>` gives a MasterMind a name of your own.
+Its `chat` column names each opencode MasterMind as a person sees it: the
+session's own title, read from opencode's database when the command runs. Every
+other kind, and an opencode session whose title cannot be read, shows `-`. The
+label is never stored. The same label follows the MasterMind's name in `relevo
+status` and `relevo doctor`. `relevo mastermind rename <id|name> <new-name>`
+gives a MasterMind a name of your own.
 
 ## Command surface
 
@@ -270,6 +274,10 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   existing binding's MasterMind side at the calling MasterMind without touching the
   builder; on a resume `--feature` sets the label, `--no-feature` clears it, and
   naming neither keeps it, while `--ticket` sets one. `relevo unbind N` is the other way out.
+- `relevo board [path] [--theme NAME] [--no-open]` — open a local Excalidraw
+  whiteboard for one scene in the repo, served on `127.0.0.1` with a per-run
+  token, saving the scene and a companion `.svg` beside it. Foreground;
+  Ctrl-C stops. See "relevo board" below.
 - `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
   prompt and hand it to the builder as the prompt of a fresh process started in
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
@@ -372,7 +380,8 @@ label follows the MasterMind's name in `relevo status` and `relevo doctor`.
   once and records its time to first output.
 - `relevo config init` — seed the candidates, policy and actors sections from
   the harnesses on `PATH` (one builder candidate per harness except claude,
-  which only plans, plus a `planner` and a `lite-planner` reader actor for
+  which only plans, plus a `librarian` writer over the same candidates and a
+  `planner` and a `lite-planner` reader actor for
   claude and opencode) and install the agent definitions (`--force`,
   `--no-agents`).
 - `relevo config agents` — install the per-kind agent definitions
@@ -772,7 +781,45 @@ On the server machine, the admin runs these on the server host. No `--state` is 
 - `relevo serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
 - A **DONE** served binding is collected once its last round has been acked by the client, or after seven days without an ack: the daemon removes its worktree, deletes its branch and every `refs/relevo/<name>/*` ref in the owner's bare repo, and archives its record in the database (this cleanup lands in the server's next round). Every server unbind releases the binding's branch and refs as well. A bare repo is deleted once no live binding uses it, and the next bind of that repository recreates it.
 
-What `relevo serve` does not do: it runs no MasterMind and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Tenant isolation by unix user or container is tracked in #204.
+What `relevo serve` does not do: it runs no MasterMind and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Unix-user isolation is available as `serve.isolation: "user"` (above); container isolation is tracked in #204.
+
+### Tenant isolation: `user` mode
+
+By default (`serve.isolation: "none"`, and no config change needed) every
+builder runs as the serve uid. `serve.isolation: "user"` runs each owner's
+builders as that owner's declared unix user instead, so tenants cannot read
+each other's worktrees, logins, binding state or repos. It needs the server to
+run as **root**, and the fixed, root-owned state root `/var/lib/relevo` (the
+unit below does both). A server that is not root refuses to start, and a
+half-done switch fails closed: a round halts **NEEDS YOU** naming the missing
+piece (the user, or the exact `chown`/`chmod`), never running unisolated.
+
+To switch a host from `none` to `user` (spec §10):
+
+1. `useradd --create-home <unix-user>` once per tenant, then log each harness
+   in under that user's own HOME (per-user logins are the recommended setup).
+2. Enrol (or re-enrol) each client with its user:
+   `relevo serve enroll --label <client-label> --key "<public key line>" --user <unix-user>`.
+   An unknown user is refused with the exact `useradd` line; re-enrolling an
+   active key fills `unix_user` without revoking it.
+3. Set `serve.isolation: "user"` in the policy. Leave
+   `serve.isolation_shared_logins` off unless the host deliberately shares one
+   group-readable login; when it is on the doctor warns.
+4. Move to the root system unit, `dist/relevo-serve-system.service` (a system
+   unit with `User=root` and `--state /var/lib/relevo`):
+   ```
+   sudo cp dist/relevo-serve-system.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now relevo-serve-system
+   ```
+5. `relevo doctor` reports the mode in force (`scopes=off (isolation=user)`)
+   and every unmet prerequisite with its fix: not root, an active client with
+   no `unix_user`, a user missing on the host, an owner root with the wrong
+   owner, group or mode.
+
+Switching back to `none` keeps root (or chowns the owner roots back). User mode
+runs its builders without a scope — system-manager `--uid` scopes are a
+follow-up — while the `max_builders` cap still applies.
 
 ### Remote builders: the client
 
@@ -981,14 +1028,13 @@ or the working index, and they are reclaimed automatically by the repository's
 own `git gc`.
 
 **What a binding records.** Beyond its round history and live state, a fresh
-`bind` fills in five more facts about the binding: which
+`bind` fills in four more facts about the binding: which
 repository it works in (the origin URL, normalised, and the git common
 directory — best-effort, so a directory git can't read leaves this blank
 rather than failing the command), the `--feature` label grouping it with
 other bindings (or that it serves none), the `--ticket` issue it serves
-(stored as `#N`, or `owner/repo#N` when the repository is known), which
-binding and round it was forked from, and the MasterMind's own harness
-transcript file path, when relevo can locate one at bind time. None of this
+(stored as `#N`, or `owner/repo#N` when the repository is known), and which
+binding and round it was forked from. None of this
 changes what you see day to day; it exists for `relevo history`, the ui's
 dashboard and the database below.
 
@@ -998,8 +1044,9 @@ relevo keeps a pure-Go sqlite database at `$XDG_STATE_HOME/relevo/relevo.db`
 (defaulting to `~/.local/state/relevo/relevo.db`), mode 0600, and it is the
 record: the configuration sections and secrets, every binding with its round
 log and rounds, gates, MasterMind records, and every file a closed round produced
-(artifact and transcript rows). Nothing else is a source of truth, and no verb
-needs it closed.
+(artifact rows, and transcript rows holding a builder round's rendered stream).
+relevo never reads or records the MasterMind's own harness transcript. Nothing
+else is a source of truth, and no verb needs it closed.
 
 One process opens the file: `relevo daemon`. Every other process -- every verb,
 the lifecycle hooks, `mcp`, `wait`, the ui and `relevo serve` -- reaches it
@@ -1145,6 +1192,49 @@ api-auth round 3 of 4 · report
 report text here
 ```
 
+### relevo board
+
+`relevo board [path] [--theme NAME] [--no-open]` opens a local
+[Excalidraw](https://excalidraw.com) whiteboard for one scene that lives in the
+repository. It binds `127.0.0.1:0`, prints one line,
+`board: http://127.0.0.1:<port>/#t=…  (Ctrl-C to stop)`, and opens that URL in
+the browser unless `--no-open` is given. Ctrl-C stops it, draining an in-flight
+save through `http.Server.Shutdown`.
+
+```
+relevo board                                  edits docs/boards/board.excalidraw
+relevo board docs/boards/api.excalidraw       edits a named scene
+relevo board --theme blueprint                a different palette for new elements
+```
+
+The scene is fixed at startup and confined to the repository: a path must end
+in `.excalidraw` and, after symlinks are resolved on its deepest existing
+ancestor, sit under the git top level, so neither `..` nor a symlinked parent
+escapes. A missing file is a new scene, and it and its parent directories are
+created on the first save, never at startup. Outside a repository the verb is a
+usage error, exit 2.
+
+The theme chooses the colours of **new** elements only -- an existing scene
+keeps the colours it stores. Precedence is `--theme`, then the repo-local git
+config key `relevo.boardTheme` (`git config relevo.boardTheme blueprint`), then
+`cockpit`. An unknown name is a usage error, exit 2, listing the built-ins.
+
+On save the page writes the scene and a companion `<name>.svg` beside it,
+exported for the cockpit, agents and PR diffs; both are committed. The export
+runs with dark mode off and the view background set from the palette, so what
+is stored, shown and exported is the same colour. `Ctrl-S` (or the Save button)
+writes the scene and its companion `.svg`.
+
+The page and its assets (bundle, stylesheet and self-hosted fonts) are vendored,
+committed and embedded, so no CDN is contacted. The page talks to three
+loopback-only routes: `GET /` and `GET /assets/*` are the page, `GET /api/scene`
+returns the scene, and `PUT /api/scene` saves it. A per-run token, carried in
+the URL fragment and sent on every `/api/*` call, plus a `Host` check, guard the
+API; `If-Match` carries the scene's etag, and a stale one is a 409 the page
+reports as `the file changed on disk; reload to continue`. `make board-assets`
+regenerates the vendored assets and their integrity manifest; it is dev-only,
+and CI only reads them.
+
 ### done and unbind are the destructive verbs
 
 `relevo done` and `relevo unbind` both require a binding name (`relevo done ai`, or
@@ -1159,8 +1249,9 @@ that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 
 ## Status line
 
-`relevo status --line` shows this MasterMind's live bindings, one row each, under
-the Claude Code prompt; it shows nothing on error and never probes a builder.
+`relevo status --line` shows this MasterMind's bindings, one row each (one entry
+per chain in place of its members), under the Claude Code prompt; it shows nothing
+on error and never probes a builder.
 The first line names the MasterMind (`MasterMind architect-14`), so each terminal
 shows which MasterMind it is; `relevo mastermind list` maps that name to its chat.
 Each row shows the round's harness (`harness@server` for a remote builder),
@@ -1245,6 +1336,7 @@ A section that does not validate is refused with a message naming the entry; an 
 | actor | shape | agent |
 | --- | --- | --- |
 | `builder` | writer | `plan-executor` |
+| `librarian` | writer | `librarian` |
 | `reviewer` | reader | `reviewer` |
 | `researcher` | reader | `researcher` |
 
@@ -1263,7 +1355,7 @@ For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` r
 
 For `claude` the `model` may end in `:low|medium|high|xhigh|max`: `opus:medium` runs `--model opus --effort medium`, and any other suffix stays part of the model id, so a Bedrock id such as `...-v1:0` passes through whole. For `opencode` the effort is a variant, `model#<variant>`, passed as is to `opencode run -m`: variants are per model, and opencode refuses an unknown one.
 
-Under `workspace-write`, codex also cannot write to Go's default build cache (`~/.cache/go-build`), so a Go plan fails at `go build` unless the plan sets `GOCACHE` inside the worktree or `/tmp`, or your `~/.codex/config.toml` lists it under `sandbox_workspace_write.writable_roots`. relevo adds only its own state directory.
+Under `workspace-write`, codex also cannot write to Go's default build cache (`~/.cache/go-build`), so a Go plan fails at `go build` unless the plan sets `GOCACHE` inside the worktree or `/tmp`, or your `~/.codex/config.toml` lists it under `sandbox_workspace_write.writable_roots`. relevo adds only its own binding's `out/` directory (`<binding>/out/`, where the report, done marker and artifacts live).
 
 Any `extra_args` are appended verbatim after what relevo renders. Because relevo renders the argv, the token in `relevo status` is exactly what was started.
 
@@ -1396,8 +1488,8 @@ who runs it -- the agent plus an ordered list of candidates, a tier, and, for a
 writer, whether its round closes on a gate.
 
 - A **shipped** agent is one relevo renders and installs: `plan-executor`,
-  `reviewer`, `researcher` and `architect`. It needs no `agents` entry -- an
-  actor names it directly.
+  `librarian`, `reviewer`, `researcher` and `architect`. It needs no `agents`
+  entry -- an actor names it directly.
 - A **custom** agent is one you write, carried in the `agents` section as its
   `source` text (an `agentsrc` definition; its `name` must equal its key).
 - A **native** agent points at a harness definition you already have: it names
@@ -1407,9 +1499,40 @@ writer, whether its round closes on a gate.
 | shipped agent | shape | output | requires |
 | --- | --- | --- | --- |
 | `plan-executor` | writer | `report` | `researcher` |
+| `librarian` | writer | `report` | -- |
 | `reviewer` | reader | `findings` | -- |
 | `researcher` | reader | `notes` | -- |
 | `architect` | reader | `plan` | -- |
+
+`librarian` is a writer whose definition states the docs-only contract: it
+edits markdown, agent instruction files, sketches and diagrams, and code
+comments, and never anything that changes behaviour. That contract is a
+**scope**, and relevo enforces it when a round closes.
+
+`actors.<name>.scope` is `{"paths": [...], "comments": bool}`. Each `paths`
+entry is a glob over the repo-relative path -- `*` matches within one segment,
+`**` matches any number of segments, a leading `!` excludes, and the last match
+wins -- or `@docs`, which expands to `**/*.md`, `**/*.markdown`, `**/*.mdx`,
+`**/*.mmd`, `**/*.svg` and `**/*.excalidraw`, excluding `!**/testdata/**`,
+`!vendor/**` and `!**/node_modules/**`. With `comments` true, an edit to an
+out-of-scope `.go` file is still in scope when the old and new contents differ
+only in non-directive comments; a change to a directive comment (`//go:`,
+`// +build`, `//line`, `//export`, `//nolint`, `//lint:`, anything containing
+`#nosec`, the `// Code generated ... DO NOT EDIT.` marker, a test `Output:`
+comment) or to any code token is refused, as is any other extension, a binary
+or a symlink.
+
+A refusal still closes the round -- its report, diff and usage are recorded --
+but its outcome is forced to `halted`, the binding goes to **NEEDS YOU** naming
+the offending file, and the gate never runs. A round relevo cannot judge (no
+baseline tree, or a git error) refuses the same way. A writer with no `scope`
+closes exactly as before.
+
+`relevo config init` seeds `librarian` with
+`{"paths": ["@docs"], "comments": true}`. There is no migration: an existing DB
+adds the scope with `relevo config edit`. The scope is actor config, so a served
+binding is judged by the server's own `actors` section, the same rule that
+applies to its shape and definitions.
 
 Agents and actors are the `agents` and `actors` sections of relevo.db; read
 them with `relevo config get agents` and `relevo config get actors`, and change
@@ -1474,8 +1597,8 @@ Actor entries:
 - `check` -- writers only: whether a round closes on a gate; defaults to true.
   An actor whose agent is a reader must not set it.
 
-An actor named `builder`, `reviewer` or `researcher` keeps that builtin's
-shape: `builder` must run a writer agent, `reviewer` and `researcher` a reader.
+An actor named `builder`, `librarian`, `reviewer` or `researcher` keeps that builtin's
+shape: `builder` and `librarian` must run a writer agent, `reviewer` and `researcher` a reader.
 An unknown agent, a reader with `check`, or a builtin actor with the wrong
 shape is refused when the config loads.
 
@@ -1634,11 +1757,11 @@ The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278,
 | claude | (none) | `--permission-mode plan` | `--permission-mode acceptEdits` | `--dangerously-skip-permissions` |
 | agy | (none) | `--mode plan` | `--mode accept-edits` | `--dangerously-skip-permissions` |
 | opencode | (none) | refuse | refuse | `--auto` |
-| codex | (none) | refuse | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding state dir>"]` | `--dangerously-bypass-approvals-and-sandbox` |
+| codex | (none) | refuse | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding>/out"]` | `--dangerously-bypass-approvals-and-sandbox` |
 
 opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
 
-codex does not support the `read` tier: `-s read-only` cannot write the report, marker, question and findings files relevo stages under `~/.local/state/relevo/<binding>/`, and codex ignores `writable_roots` under read-only. Choosing `read` for a codex candidate is refused with an error directing you to `--tier edit` or `--tier harness`. At `edit` relevo adds the binding's state directory as a writable root; that is the only path outside the worktree the sandbox lets the builder write.
+codex does not support the `read` tier: `-s read-only` cannot write the report, marker, question and findings files relevo stages under `~/.local/state/relevo/<binding>/out/`, and codex ignores `writable_roots` under read-only. Choosing `read` for a codex candidate is refused with an error directing you to `--tier edit` or `--tier harness`. At `edit` relevo adds the binding's `out/` directory as a writable root; that is the only path outside the worktree the sandbox lets the builder write.
 
 ### Ceiling semantics and ordering
 
@@ -2262,10 +2385,13 @@ at runtime with a clear error rather than running without a state lock.
 ## Claude Code plugin
 
 The relevo plugin gives a Claude Code MasterMind two things: the `relevo mcp` MCP
-server (`relevo` from `PATH`), which exposes `status`, `send`, `done`, `show`
-and `gate` as tools, and a `SessionStart` hook that runs
-`relevo mastermind init`. The hook exports `RELEVO_MASTERMIND` and tells the model its
-MasterMind name. Install it once per machine:
+server, which exposes `status`, `send`, `done`, `show` and `gate` as tools, and
+a `SessionStart` hook that runs `relevo mastermind init`. The MCP server, the
+hooks and the slash commands below all run through tiny scripts under
+`${CLAUDE_PLUGIN_ROOT}/scripts/` that exec `relevo` from `PATH`; without it the
+hooks stay silent, and the MCP server and the commands print one install hint.
+The hook exports `RELEVO_MASTERMIND` and tells the model its MasterMind name.
+Install it once per machine:
 
     /plugin marketplace add fuad-daoud/relevo
     /plugin install relevo@relevo

@@ -19,12 +19,11 @@ type Repo struct {
 }
 
 type MasterMind struct {
-	ID                string
-	HarnessKind       string
-	SessionID         string
-	TranscriptLocator *string
-	FirstSeen         time.Time
-	LastSeen          time.Time
+	ID          string
+	HarnessKind string
+	SessionID   string
+	FirstSeen   time.Time
+	LastSeen    time.Time
 }
 
 type Binding struct {
@@ -244,14 +243,11 @@ func ValidArtifactKind(s string) bool {
 
 const (
 	OwnerRound = "round"
-	// OwnerMasterMind keeps the historical "planner" value: transcript
-	// owner_kind is state already written.
-	OwnerMasterMind = "planner"
 )
 
 func ValidOwnerKind(s string) bool {
 	switch s {
-	case OwnerRound, OwnerMasterMind:
+	case OwnerRound:
 		return true
 	}
 	return false

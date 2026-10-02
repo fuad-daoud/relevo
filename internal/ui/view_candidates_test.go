@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -77,6 +78,20 @@ func candFixtureDoc(t *testing.T) relevo.ConfigDoc {
 		},
 	}
 	doc.Agents = map[string]roles.AgentEntry{}
+	return doc
+}
+
+// candFixtureDocWithLibrarian is candFixtureDoc plus the scoped librarian
+// writer, for the scope-line golden: the seeded actor's docs-only scope.
+func candFixtureDocWithLibrarian(t *testing.T) relevo.ConfigDoc {
+	t.Helper()
+	doc := candFixtureDoc(t)
+	doc.Actors["librarian"] = roles.Actor{
+		Agent:      "librarian",
+		Candidates: []roles.Entry{{Candidate: "sonnet"}},
+		Tier:       "yolo",
+		Scope:      &pathscope.Scope{Paths: []string{"@docs"}, Comments: true},
+	}
 	return doc
 }
 

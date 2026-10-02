@@ -4,12 +4,14 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
@@ -27,6 +29,9 @@ type Client struct {
 	PubKey     string          `json:"pubkey"` // the enrollment line, remote.MarshalPublic form
 	EnrolledAt time.Time       `json:"enrolled_at"`
 	RevokedAt  time.Time       `json:"revoked_at,omitempty"`
+	// UnixUser is the login name a user-mode server runs this owner's builders
+	// as. Empty means undeclared: a user-mode round for this owner halts.
+	UnixUser string `json:"unix_user,omitempty"`
 }
 
 // Clients is the enrolled-client list, read from the serve.clients kv row.
@@ -107,7 +112,22 @@ func (c *Clients) Lookup(id remote.ClientID) (ed25519.PublicKey, remote.KeyStatu
 	return nil, remote.KeyUnknown
 }
 
-func (c *Clients) Add(label, pubLine string, now time.Time) (Client, error) {
+// CheckUnixUser resolves a declared login name to the tenant a user-mode server
+// runs its owner's builders as. An empty or unknown name is refused with the
+// exact command that creates it, so the halt text tells the operator what to
+// run. lookup is injected so the check is pure: production passes os/user.
+func CheckUnixUser(lookup func(string) (isolate.Tenant, error), name string) (isolate.Tenant, error) {
+	if name == "" {
+		return isolate.Tenant{}, fmt.Errorf("no unix user declared for this owner: enroll it with `--user <user>`, creating the user first with `useradd --create-home <user>`")
+	}
+	t, err := lookup(name)
+	if err != nil {
+		return isolate.Tenant{}, fmt.Errorf("unix user %q is not on this host: run `useradd --create-home %s` then enroll with --user %s (%w)", name, name, name, err)
+	}
+	return t, nil
+}
+
+func (c *Clients) Add(label, pubLine, unixUser string, now time.Time) (Client, error) {
 	pub, err := remote.ParsePublic(pubLine)
 	if err != nil {
 		return Client{}, err
@@ -124,7 +144,16 @@ func (c *Clients) Add(label, pubLine string, now time.Time) (Client, error) {
 	for i, cl := range c.list {
 		if cl.ID == id {
 			if cl.RevokedAt.IsZero() {
-				return Client{}, ErrAlreadyEnrolled
+				// An active key gains or updates its declared user; only a
+				// call with no user at all is the already-enrolled refusal.
+				if unixUser == "" {
+					return Client{}, ErrAlreadyEnrolled
+				}
+				c.list[i].UnixUser = unixUser
+				if err := c.saveLocked(); err != nil {
+					return Client{}, err
+				}
+				return c.list[i], nil
 			}
 			// re-enrolling a revoked id clears RevokedAt
 			c.list[i].RevokedAt = time.Time{}
@@ -132,6 +161,9 @@ func (c *Clients) Add(label, pubLine string, now time.Time) (Client, error) {
 				c.list[i].Label = label
 			}
 			c.list[i].PubKey = pubLine
+			if unixUser != "" {
+				c.list[i].UnixUser = unixUser
+			}
 			if err := c.saveLocked(); err != nil {
 				return Client{}, err
 			}
@@ -144,6 +176,7 @@ func (c *Clients) Add(label, pubLine string, now time.Time) (Client, error) {
 		Label:      label,
 		PubKey:     pubLine,
 		EnrolledAt: now,
+		UnixUser:   unixUser,
 	}
 	c.list = append(c.list, cl)
 	if err := c.saveLocked(); err != nil {

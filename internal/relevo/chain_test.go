@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -171,6 +172,24 @@ func TestConsumedMemberCloseReadsAsSeen(t *testing.T) {
 	}
 	if row.Unread {
 		t.Error("a consumed report must read as seen")
+	}
+
+	rows := view.StatusLineRows(view.Report{Bindings: []view.BindingStatus{row}}, rt.Now())
+	if len(rows) != 1 {
+		t.Fatalf("len(rows) = %d, want 1", len(rows))
+	}
+	slRow := rows[0]
+	if slRow.ReportIn {
+		t.Errorf("ReportIn = true, want false")
+	}
+	if slRow.Status != "report in" {
+		t.Errorf("Status = %q, want 'report in'", slRow.Status)
+	}
+	if slRow.Tone != "phase" {
+		t.Errorf("Tone = %q, want 'phase'", slRow.Tone)
+	}
+	if !strings.Contains(slRow.Reason, "consumed by chain") {
+		t.Errorf("Reason = %q, want to contain 'consumed by chain'", slRow.Reason)
 	}
 }
 
@@ -2189,6 +2208,51 @@ func TestSecurityRecapAfterTheBlockStillYieldsTheFindings(t *testing.T) {
 	}
 	if strings.Contains(string(out), "findings:") {
 		t.Errorf("the security member's written output carries the findings block:\n%s", out)
+	}
+}
+
+// TestChainReaderClosesRecordTheirParsedBlockAsDone pins the member's own
+// outcome: a chain reviewer or security member's artifact is relevo's to write
+// and its block is stripped before the close parses it, so the tail parse
+// reads unstructured; the verdict or finding count the chain parsed from the
+// stream is the round's real end and must record the member's round as done.
+func TestChainReaderClosesRecordTheirParsedBlockAsDone(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{Security: ptr(true)})
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	rev := chainBinding(t, rt, "shop-rev")
+	revStream := chainStreamResultLine(t, "Review done.\n\n"+chainFence+"relevo\nverdict: pass\n"+chainFence+"\n")
+	if err := os.WriteFile(rt.Store.StreamPath("shop-rev", rev.Round), []byte(revStream), 0o644); err != nil {
+		t.Fatalf("write the reviewer stream: %v", err)
+	}
+	chainReaderClose(t, rt, "shop-rev", "Review done.")
+
+	sec := chainBinding(t, rt, "shop-sec")
+	secStream := chainStreamResultLine(t, "Scan done.\n\n"+chainFence+"relevo\nfindings: 0\n"+chainFence+"\n")
+	if err := os.WriteFile(rt.Store.StreamPath("shop-sec", sec.Round), []byte(secStream), 0o644); err != nil {
+		t.Fatalf("write the security stream: %v", err)
+	}
+	chainReaderClose(t, rt, "shop-sec", "Scan done.")
+
+	for _, tc := range []struct {
+		name  string
+		round int
+	}{
+		{"shop-rev", rev.Round},
+		{"shop-sec", sec.Round},
+	} {
+		got := ""
+		for _, e := range chainLog(t, rt, tc.name) {
+			if e.Round == tc.round && e.Kind == store.KindReport {
+				got = e.Outcome
+			}
+		}
+		if got != reporttail.OutcomeDone {
+			t.Errorf("%s round %d report outcome = %q, want %q", tc.name, tc.round, got, reporttail.OutcomeDone)
+		}
 	}
 }
 

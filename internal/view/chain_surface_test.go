@@ -111,4 +111,28 @@ func TestStatuslineChainRowShowsThePlanSegment(t *testing.T) {
 		t.Errorf("halted chain row = needs %v, status %q, tone %q; want true/NEEDS YOU/needs",
 			rows[0].NeedsYou, rows[0].Status, rows[0].Tone)
 	}
+
+	// A settled chain reads DONE with quiet tone, drops the step from its segment, and has no round clock.
+	rep.Bindings[0].Display = "DONE"
+	rep.Bindings[0].Chain.Status = "done"
+	rep.Bindings[0].Chain.Reason = ""
+	rows = StatusLineRows(rep, baseTime)
+	if rows[0].NeedsYou || rows[0].Status != "DONE" || rows[0].Tone != "quiet" {
+		t.Errorf("done chain row = needs %v, status %q, tone %q; want false/DONE/quiet",
+			rows[0].NeedsYou, rows[0].Status, rows[0].Tone)
+	}
+	wantDone := "chain x · plan 2/4 · 1 correction"
+	if rows[0].Chain != wantDone {
+		t.Errorf("Chain = %q, want %q", rows[0].Chain, wantDone)
+	}
+	plainDone := stripSGR(splitLines(RenderStatusLine(rep, baseTime, 120))[0])
+	if !strings.Contains(plainDone, wantDone) {
+		t.Errorf("rendered line %q does not carry the chain segment %q", plainDone, wantDone)
+	}
+	if !strings.Contains(plainDone, "DONE") {
+		t.Errorf("rendered line %q does not show DONE: %q", plainDone, plainDone)
+	}
+	if strings.Contains(plainDone, "r0 · ") {
+		t.Errorf("a done chain row must not carry the round-and-actor middle: %q", plainDone)
+	}
 }

@@ -134,13 +134,15 @@ func loadArtifactsAt(t *testing.T, rv roundView, rel string) roundView {
 	return rv
 }
 
-// TestArtifactsEnterOpensByKind: enter on a .md, .html and .txt row calls the
-// fake open action with pager, browser and editor, each on that row's file.
+// TestArtifactsEnterOpensByKind: enter on a .md, .html, .svg and .txt row calls
+// the fake open action with pager, browser, browser and editor, each on that
+// row's file.
 func TestArtifactsEnterOpensByKind(t *testing.T) {
 	st := store.New(t.TempDir())
 	seedReaderArtifacts(t, st, "review-568", "reviewer", 1, map[string]string{
 		"summary.md": "# hi\n",
 		"page.html":  "<h1>hi</h1>\n",
+		"icon.svg":   "<svg></svg>\n",
 		"notes.txt":  "hello\n",
 	}, railNow)
 
@@ -157,6 +159,7 @@ func TestArtifactsEnterOpensByKind(t *testing.T) {
 	for _, tc := range []struct{ rel, kind string }{
 		{"summary.md", "pager"},
 		{"page.html", "browser"},
+		{"icon.svg", "browser"},
 		{"notes.txt", "editor"},
 	} {
 		rv = loadArtifactsAt(t, rv, tc.rel)

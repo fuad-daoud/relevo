@@ -183,6 +183,34 @@ func buildArgv(spec spawn.ProcSpec, bin string) []string {
 	return inner
 }
 
+// buildCmd assembles the exec.Cmd for a spec resolved against bin: the argv,
+// the working directory, the filtered child environment and the process
+// attributes. It is pure -- no file is opened and no process started -- so the
+// credential and environment rules can be pinned without spawning. Start sets
+// the stdout and stderr file handles the caller opened; everything else about
+// the command is decided here.
+func buildCmd(spec spawn.ProcSpec, bin string) *exec.Cmd {
+	argv := buildArgv(spec, bin)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = spec.Dir
+	cmd.Env = spawnEnv(os.Environ(), spec.Env, spec.Scope, spec.DenyEnv)
+	cmd.Stdin = nil
+	cmd.SysProcAttr = sysProcAttr(spec)
+	return cmd
+}
+
+// sysProcAttr is the process attribute block a spec starts with: a new session
+// always, so Kill's process group is the child's own, and the tenant credential
+// only when one was asked for. A nil credential leaves the process running as
+// the serve uid -- the none-mode default.
+func sysProcAttr(spec spawn.ProcSpec) *syscall.SysProcAttr {
+	attr := &syscall.SysProcAttr{Setsid: true}
+	if spec.Credential != nil {
+		attr.Credential = &syscall.Credential{Uid: spec.Credential.UID, Gid: spec.Credential.GID}
+	}
+	return attr
+}
+
 // Start launches spec under a detached supervisor and returns its handle
 // without waiting. exec.Command, not CommandContext: the caller's context
 // ending must not kill a builder relevo meant to leave running. Setsid keeps the
@@ -200,14 +228,9 @@ func (r *Runner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHand
 	defer func() { _ = streamf.Close() }()
 
 	spec = r.resolveScope(ctx, spec)
-	argv := buildArgv(spec, bin)
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = spec.Dir
-	cmd.Env = spawnEnv(os.Environ(), spec.Env, spec.Scope)
-	cmd.Stdin = nil
+	cmd := buildCmd(spec, bin)
 	cmd.Stdout = streamf
 	cmd.Stderr = logf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return spawn.ProcHandle{}, fmt.Errorf("proc: start: %w", err)
 	}
@@ -316,13 +339,15 @@ func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.Pr
 
 // spawnEnv adds the GOMAXPROCS and fsmonitor entries and filters the parent so
 // the child sees exactly one of each; the full-slice expressions copy, so the
-// caller's Env array and the DeniedEnv var are never written in place.
-func spawnEnv(parent, extra []string, scope *spawn.ScopeSpec) []string {
+// caller's Env array, the DeniedEnv var and the spec's DenyEnv are never
+// written in place. specDeny names extra variables the spec itself refuses.
+func spawnEnv(parent, extra []string, scope *spawn.ScopeSpec, specDeny []string) []string {
 	add := goMaxProcsEnv(parent, extra, scope)
 	env := append(extra[:len(extra):len(extra)], add...)
 	env = append(env[:len(env):len(env)], gitNoFsmonitorEnv(parent, env)...)
 
-	deny := append(DeniedEnv[:len(DeniedEnv):len(DeniedEnv)], "GIT_CONFIG_COUNT")
+	deny := append(DeniedEnv[:len(DeniedEnv):len(DeniedEnv)], specDeny...)
+	deny = append(deny, "GIT_CONFIG_COUNT")
 	if len(add) > 0 {
 		deny = append(deny[:len(deny):len(deny)], "GOMAXPROCS")
 	}

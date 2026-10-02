@@ -98,6 +98,10 @@ Add to the ordinary `serve` block of `policy.json`:
 - `serve.isolation_image`: string. Container-only, and **required** when
   `isolation` is `"container"`, so the admin names the image rather than a
   default being run silently.
+- `serve.isolation_shared_logins`: bool. Default `false`. User-mode only, and
+  refused when `isolation` is not `"user"`: it keeps the server's account-home
+  entries (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, …) in a round's environment
+  instead of stripping them, and the doctor warns when it is on (§4.6).
 
 Anchors: the DB-backed policy section is `policy.ServePolicy`
 (`internal/policy/policy.go:ServePolicy`); the new keys are validated beside
@@ -172,24 +176,44 @@ added; `HOME`, `USER` and `LOGNAME` are set to the tenant (§4.5).
 
 ### 4.3 Directories
 
-- `<serve root>/bindings/<owner-hex>/` and `<serve root>/repos/<owner-hex>/` are
-  `0700` and owned by the tenant. They are created by root and `chown`ed, so the
-  tenant can write its own tree and cannot see a sibling's.
+- The layout is the **root-owned split**: root owns the bindings tree, and a
+  tenant owns only `out/`, `.worktrees/` and its `repos/<owner-hex>` and
+  `tmp/<owner-hex>`:
+
+  | Path | Owner | Mode |
+  | --- | --- | --- |
+  | `<root>`, `bindings/`, `repos/`, `tmp/` | root | `0711` |
+  | `bindings/<hex>` | `root:<tenant-gid>` | `0710` |
+  | `bindings/<hex>/<name>` | root | as today |
+  | `bindings/<hex>/<name>/out` | tenant | `0700` |
+  | `bindings/<hex>/.worktrees`, `.worktrees/.scratch` | tenant | `0700` |
+  | `repos/<hex>`, `tmp/<hex>` | tenant | `0700` |
+
+  A tenant-owned `bindings/<owner-hex>` would let a tenant swap a binding
+  directory for a symlink and redirect root's writes, so `bindings/<hex>` stays
+  root-owned and only group-traversable.
 - The serve root is tenant-traversable: `--state /var/lib/relevo` is the
   decided default (owner, 2026-10-01), with `0711` on the components a tenant
-  must pass through (the root itself and the `bindings`/`repos` parents).
-  `EnsureStateRoot` (`internal/serve/serve.go:EnsureStateRoot`) is where the
-  root is created; the per-owner roots are
-  `internal/serve/serve.go:ownerRoot` and `internal/serve/serve.go:repoRoot`.
+  must pass through (the root itself and the `bindings`/`repos`/`tmp`
+  parents). `EnsureUserModeRoot` (`internal/serve/serve.go:EnsureUserModeRoot`)
+  creates them; the per-owner layout is created and verified by
+  `ensureTenantRoots` (`internal/serve/tenant.go:ensureTenantRoots`), reached
+  from `runtimeAt`.
+- Root's own operations under the tenant-owned `out/` and `.worktrees/` never
+  follow a symlink out of them: the reads, seals, migrations and scratch
+  removals go through an `os.Root` (`internal/store/confined.go:OutRoot`,
+  `WorktreeRoot`). This holds in every mode.
 - The machine DB stays in the admin's own `0700` state root, outside the
   tenant-traversable tree.
 
 ### 4.4 Owner-path git runs as the tenant
 
 The server's own git process is the second execution surface after the harness.
-There is a single exec site, `internal/git/client.go:run`
-(`internal/git/client.go:NewClient`); the per-owner client is injected through
-`internal/serve/serve.go:runtimeAt`, beside the per-owner runner. In `user` mode
+There are two exec sites, `internal/git/client.go:run`
+(`internal/git/client.go:NewClient` around it) and
+`internal/git/snapshot.go:diffPatch`, which share the same `command` builder;
+the per-owner client is injected through `internal/serve/serve.go:runtimeAt`,
+beside the per-owner runner. In `user` mode
 that client runs with the owner's credential; in `container` mode it runs inside
 the container (§5). Either way the server never executes a tenant-writable repo's
 `hooks`, `fsmonitor` or filters as a more privileged identity.
@@ -203,13 +227,15 @@ The four spawn sites, all of which must be covered or the boundary has a hole:
 | round builder | `internal/relevo/headless.go:startProcess` (reached from `startRound`/`resumeRound`) |
 | gate shell | `internal/relevo/gate.go:startGate` |
 | consult | `internal/consult/verify.go:verifyStart.start` |
-| session reaper | `cmd/relevo/serve.go:cmdServeRun` (`SessionReaper`), `cmd/relevo/exec.go:binExec.Run` |
+| session reaper | `cmd/relevo/serve.go:cmdServeRun` (`SessionReaper`, `ReaperFor`), `cmd/relevo/serve_isolation.go:userReaperFor`, `cmd/relevo/exec.go:binExec.Run` |
 
 Seed-vs-tree 5: the session reaper does **not** use `spawn.Runner` today — it
-runs `binExec` synchronously (`cmd/relevo/serve.go:522`). It is the one path a
-`Runner`-only boundary would miss; in `user` mode it must run as the tenant, or
-it deletes sessions in the tenant's store as the daemon user. This design brings
-it under the same wrapper.
+runs `binExec` synchronously (`cmd/relevo/serve.go:247` and `:520`). It is the
+one path a `Runner`-only boundary would miss; in `user` mode it must run as the
+tenant, or it deletes sessions in the tenant's store as the daemon user. This
+design brings it under the same wrapper: `ReaperFor` builds a per-tenant reaper
+from `isolate.UserSpec`'s env rule, and `applyTenant`
+(`internal/serve/serve.go:applyTenant`) installs it on the owner runtime.
 
 ### 4.6 HOME, logins, accounts
 
@@ -221,6 +247,10 @@ it under the same wrapper.
 - **Per-user logins are the recommended setup** (each tenant logs each harness
   in under its own HOME). A group-readable shared login is **allowed** as an
   explicit opt-in fallback that doctor warns on (owner, 2026-10-01).
+- `serve.isolation_shared_logins` (§3.1) is that opt-in switch: **off** (the
+  default) strips the server's account-home entries (`CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME`, …) from a round's environment; **on** keeps them, and the
+  doctor warns.
 - #100's shared credentials apply to `none` only; under `user` they would be a
   cross-tenant read.
 - #485 account homes must be per-owner here. The accounts design names this gap
@@ -331,9 +361,10 @@ Nothing else in the spawn contract changes.
 
 ### 6.3 Owner-path git
 
-`internal/git/client.go:run` is the single exec site. In `user` mode it runs as
-the tenant; in `container` mode it runs inside the container alongside the
-round (owner, 2026-10-01) — one boundary. This is what binds the server's own
+There are two exec sites, `internal/git/client.go:run` and
+`internal/git/snapshot.go:diffPatch`. In `user` mode they run as the tenant; in
+`container` mode they run inside the container alongside the round (owner,
+2026-10-01) — one boundary. This is what binds the server's own
 git — repo config, hooks, `fsmonitor`, filters — to the
 boundary (seed-vs-tree 7). The server's git is otherwise "repo-config code
 execution" on a tenant-writable repo, which is the whole point of the finding.
@@ -482,3 +513,22 @@ questions remain.
    reference build; §5.1.
 5. **Client-side require-isolation is a later, optional slice**; the mode stays
    a server-side fact the client displays; §3.4 and §8.
+
+6. **The split layout** (2026-10-01, this session): `bindings/<owner-hex>` is
+   `root:<tenant-gid> 0710`, binding directories stay root-owned, and the only
+   tenant-owned directories under `bindings/` are `<name>/out/` and
+   `<owner-hex>/.worktrees/` (with `.scratch`); `repos/<hex>` and `tmp/<hex>`
+   are tenant-owned `0700`. §4.3 carries the table, and root's own operations
+   under the tenant-owned directories go through an `os.Root`.
+7. **Scopes are off in user mode** (2026-10-01, this session):
+   `proc.ScopeArgv` always uses `systemd-run --user`, and stop, probe and
+   journal use `systemctl`/`journalctl --user` — root's own user manager, not
+   the tenant's. A user-mode server therefore runs with no scope, and the
+   startup line and doctor say `scopes=off (isolation=user)`. System-manager
+   scopes with `--uid` are a follow-up, out of this slice; the caps
+   (`max_builders`) still apply.
+8. **`serve.isolation_shared_logins` is the opt-in switch** for the
+   group-readable shared login (owner, 2026-10-01, this session): default
+   `false`, user-mode only, validated beside `serve.max_builders`. Off strips
+   account-home entries from a round's environment; on keeps them, and the
+   doctor warns. §3.1 and §4.6.

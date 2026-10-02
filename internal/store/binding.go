@@ -75,6 +75,10 @@ type OOMRequeue struct {
 	// Running is the number of local headless rounds with a live process at the
 	// moment of the kill, including the killed one; always at least 1.
 	Running int `json:"running"`
+	// PeakBytes is the killed scope's peak memory, the fact the requeue note
+	// and the halt message render; 0 means unknown. It is kept on the record so
+	// the incident survives the log note.
+	PeakBytes int64 `json:"peak_bytes,omitempty"`
 }
 
 type ServeFacts struct {

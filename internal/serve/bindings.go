@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -122,6 +123,16 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A user-mode create needs a resolvable tenant before it makes anything: an
+	// owner with no declared user, or one that is not on this host, is refused
+	// here rather than by a round that halts later.
+	if s.cfg.Isolation == isolate.ModeUser {
+		if _, err := s.tenantFor(caller); err != nil {
+			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
+			return
+		}
+	}
+
 	b, ok := s.buildServedBinding(w, r.Context(), rt, caller, req)
 	if !ok {
 		return
@@ -217,7 +228,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		return store.Binding{}, false
 	}
 
-	if err := s.cfg.Git.InitBare(ctx, bare); err != nil {
+	if err := rt.Git.InitBare(ctx, bare); err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return store.Binding{}, false
 	}
@@ -249,6 +260,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		Feature:          req.Feature,
 		Ticket:           req.Ticket,
 		Gate:             req.Gate,
+		Regate:           relevo.ResolveRegate(req.Regate, rt.Policy),
 		Serve: &store.ServeFacts{
 			RepoID:      req.RepoID,
 			BareRepo:    bare,
@@ -521,7 +533,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.cfg.Git.CheckoutWorktree(r.Context(), b.Serve.BareRepo, b.Worktree, b.Branch); err != nil {
+	if err := rt.Git.CheckoutWorktree(r.Context(), b.Serve.BareRepo, b.Worktree, b.Branch); err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return
 	}

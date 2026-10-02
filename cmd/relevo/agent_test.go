@@ -65,6 +65,7 @@ func TestAgentInstallDryRunWritesNothing(t *testing.T) {
 		"would write  ~/.claude/agents/reviewer.md",
 		"would write  ~/.claude/agents/security-reviewer.md",
 		"would write  ~/.claude/agents/architect.md",
+		"would write  ~/.claude/agents/librarian.md",
 	}
 	gotLines := strings.Split(strings.TrimSuffix(string(stdout), "\n"), "\n")
 	if len(gotLines) != len(wantLines) {
@@ -96,7 +97,7 @@ func TestAgentInstallWritesThenKeeps(t *testing.T) {
 		t.Errorf("expected empty stderr, got %q", string(stderr))
 	}
 
-	roles := []string{"plan-executor", "researcher", "reviewer", "security-reviewer", "architect"}
+	roles := []string{"plan-executor", "researcher", "reviewer", "security-reviewer", "architect", "librarian"}
 	var wantLines []string
 	for _, role := range roles {
 		wantLines = append(wantLines, "wrote  ~/.gemini/config/agents/"+role+".md")
@@ -234,8 +235,8 @@ func TestAgentInstallWriteFailureExits1(t *testing.T) {
 
 	outStr := string(stdout)
 	lines := strings.Split(strings.TrimSuffix(outStr, "\n"), "\n")
-	if len(lines) != 5 {
-		t.Errorf("expected loop not to stop at first error (5 lines), got %d (%v)", len(lines), lines)
+	if len(lines) != 6 {
+		t.Errorf("expected loop not to stop at first error (6 lines), got %d (%v)", len(lines), lines)
 	}
 	hasPlanExecutorError := false
 	for _, line := range lines {

@@ -448,7 +448,7 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -531,7 +531,7 @@ func addOwner(t *testing.T, env *testEnv, label string) ownerEnv {
 		t.Fatal(err)
 	}
 	id := remote.IDOf(kp.Public)
-	if _, err := env.srv.clients.Add(label, remote.MarshalPublic(kp.Public, label), time.Now()); err != nil {
+	if _, err := env.srv.clients.Add(label, remote.MarshalPublic(kp.Public, label), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 

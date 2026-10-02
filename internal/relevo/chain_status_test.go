@@ -263,9 +263,9 @@ func TestStatusAllListsTheMembersUnderTheChain(t *testing.T) {
 	}
 }
 
-// TestStatusDoneChainLeavesMemberRows pins the finished case: a done chain
-// awards no chain row, and every member keeps its own row.
-func TestStatusDoneChainLeavesMemberRows(t *testing.T) {
+// TestStatusDoneChainCollapsesToOwnRow pins the finished case: a done chain
+// collapses to its own row, which HideDone hides by default.
+func TestStatusDoneChainCollapsesToOwnRow(t *testing.T) {
 	rt := newRuntime(t)
 	c, _ := newChainFixture(t, rt, "done")
 
@@ -273,14 +273,68 @@ func TestStatusDoneChainLeavesMemberRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	want := []string{"x", "x-plan", "x-rev"}
-	if got := rowNames(rep); len(got) != len(want) {
-		t.Fatalf("rows = %v, want every member's own row %v", got, want)
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("got %d rows (%v), want exactly 1 chain row", len(rep.Bindings), rowNames(rep))
 	}
-	for _, row := range rep.Bindings {
-		if row.Chain != nil {
-			t.Errorf("done chain %q still awards a chain row", c.Name)
+	row := rep.Bindings[0]
+	if row.Name != c.Name {
+		t.Errorf("row.Name = %q, want %q", row.Name, c.Name)
+	}
+	if row.Display != "DONE" {
+		t.Errorf("row.Display = %q, want DONE", row.Display)
+	}
+	if row.Chain == nil {
+		t.Fatal("row.Chain is nil")
+	}
+	if row.Chain.Status != "done" || row.Chain.Plan != 2 || row.Chain.Plans != 4 {
+		t.Errorf("row.Chain = %+v, want done plan 2/4", row.Chain)
+	}
+	seg := view.ChainSegment(*row.Chain)
+	if !strings.Contains(seg, "plan 2/4") {
+		t.Errorf("ChainSegment = %q, want 'plan 2/4'", seg)
+	}
+	hidden := view.HideDone(rep)
+	if hidden.DoneHidden != 1 || len(hidden.Bindings) != 0 {
+		t.Errorf("HideDone = hidden %d, remaining %d; want 1 and 0", hidden.DoneHidden, len(hidden.Bindings))
+	}
+}
+
+// TestStatuslineDoneChain pins the statusline path for a done chain:
+// members present collapses to one row; members released or gone conjures no row.
+func TestStatuslineDoneChain(t *testing.T) {
+	rt := newRuntime(t)
+	c, members := newChainFixture(t, rt, "done")
+
+	// Members present: MasterMindStatus collapses to one row.
+	rep, err := MasterMindStatus(context.Background(), rt, testMasterMindID)
+	if err != nil {
+		t.Fatalf("MasterMindStatus: %v", err)
+	}
+	rows := view.StatusLineRows(rep, rt.Now())
+	if len(rows) != 1 || rows[0].Name != c.Name {
+		t.Fatalf("statusline rows = %+v, want only %q", rows, c.Name)
+	}
+	if rows[0].Display != "DONE" {
+		t.Errorf("rows[0].Display = %q, want DONE", rows[0].Display)
+	}
+	if !strings.Contains(rows[0].Chain, "chain x · plan 2/4") {
+		t.Errorf("rows[0].Chain = %q, want 'chain x · plan 2/4'", rows[0].Chain)
+	}
+
+	// Members released or gone: conjures no row.
+	for _, m := range members {
+		m.State = store.StateDone
+		if err := rt.Store.Save(m); err != nil {
+			t.Fatalf("Save: %v", err)
 		}
+	}
+	repReleased, err := MasterMindStatus(context.Background(), rt, testMasterMindID)
+	if err != nil {
+		t.Fatalf("MasterMindStatus: %v", err)
+	}
+	releasedRows := view.StatusLineRows(repReleased, rt.Now())
+	if len(releasedRows) != 0 {
+		t.Errorf("released members: statusline rows = %+v, want none", releasedRows)
 	}
 }
 
