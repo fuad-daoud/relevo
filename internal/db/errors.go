@@ -28,3 +28,23 @@ var ErrLocked = errors.New("database is locked by another process")
 // refuses and leaves the file for a writable open -- the daemon's -- to convert
 // and mark.
 var ErrNotConverted = errors.New("relevo.db is not converted yet; start the daemon once")
+
+// IsTransient reports whether err is a transient database failure that a caller
+// may retry: SQLite busy (ErrBusy or code 5) or SQLite I/O error (code 10).
+// Permanent failures (not found, constraint, schema mismatch, corrupt, misuse)
+// and non-SQLite errors (dial failures, owner refusals) are not transient.
+func IsTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNewerSchema) {
+		return false
+	}
+	if errors.Is(err, ErrBusy) {
+		return true
+	}
+	if code, _, ok := errCode(err); ok {
+		return code == sqliteBusy || code == sqliteIOErr
+	}
+	return false
+}

@@ -108,17 +108,13 @@ func TestParse(t *testing.T) {
 }
 
 func TestAvailable(t *testing.T) {
-	for _, m := range []Mode{ModeNone, ModeUser} {
+	// Every mode this build parses can run, so Available is nil for all of
+	// them. The runtime prerequisites (podman, the image) are probed where
+	// they are used, not here.
+	for _, m := range []Mode{ModeNone, ModeUser, ModeContainer} {
 		if err := m.Available(); err != nil {
 			t.Fatalf("%s.Available() = %v, want nil", m, err)
 		}
-	}
-	err := ModeContainer.Available()
-	if err == nil {
-		t.Fatalf("%s.Available() = nil, want a refusal", ModeContainer)
-	}
-	if !strings.Contains(err.Error(), "serve.isolation="+string(ModeContainer)) {
-		t.Fatalf("%s.Available() = %q, want it to name serve.isolation=%s", ModeContainer, err, ModeContainer)
 	}
 }
 
@@ -266,7 +262,11 @@ func TestUserBoundaryRefusesWithoutTenant(t *testing.T) {
 }
 
 func TestWrapRefusesUnavailableModes(t *testing.T) {
-	for _, m := range []Mode{ModeContainer} {
+	// No mode this build knows is unavailable, so the list is empty. It stays
+	// as the regression site: a future mode that needs a build capability goes
+	// here, and the assertions below pin that its Wrap and Start both refuse
+	// and neither reaches the base.
+	for _, m := range []Mode{} {
 		base := &recordRunner{}
 		runner, err := Wrap(base, m)
 		if err == nil {
