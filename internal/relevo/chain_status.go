@@ -121,7 +121,9 @@ func viewChainRow(s *store.Store, c db.ChainRow) view.BindingStatus {
 }
 
 // applyChains replaces the member rows of every chain with the chain's own
-// row, so the mastermind reads one row per chain instead of its members'.
+// row, so the mastermind reads one row per chain instead of its members'. A
+// fork's child is the exception: it takes no top-level row of its own, and is
+// threaded in under the parent that forked it.
 //
 // The rows are re-sorted, so a chain that waits on a human rises to the top of
 // the listing like any other NEEDS YOU row.
@@ -144,6 +146,11 @@ func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Rep
 			rows = append(rows, b)
 			continue
 		}
+		// A fork's child is never a row of the top level: it prints under the
+		// parent that forked it, and only there (appendChainChildRows).
+		if c.Parent != "" {
+			continue
+		}
 		// The chain row takes the place of the first of its members, and the
 		// other member rows go with it.
 		if !placed[c.Name] {
@@ -154,7 +161,7 @@ func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Rep
 	// A chain whose member rows are all gone from the report still exists, so
 	// it still gets its row. Chains() orders by name, so the tail is stable.
 	for _, c := range chains {
-		if c.Status == string(chain.StatusDone) {
+		if c.Status == string(chain.StatusDone) || c.Parent != "" {
 			continue
 		}
 		if !placed[c.Name] {
@@ -162,11 +169,15 @@ func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Rep
 			rows = append(rows, chainTopRow(s, c))
 		}
 	}
-	// A fork's children print under the parent that forked them, in key order,
-	// each with its own step and status: a child is a chain, and a halted child
-	// says why. They never print as top-level rows of their own.
+	// The top-level rows sort first, so a chain that waits on a human rises to
+	// the top of the listing like any other NEEDS YOU row. Only then are a
+	// fork's children threaded in under the parent that forked them, in key
+	// order, each with its own step and status: a child is a chain, and a halted
+	// child says why. Inserting them last is what keeps the sort from pulling a
+	// halted child ahead of the still-running parent it belongs under.
+	rows = view.SortRows(rows, true)
 	rows = appendChainChildRows(s, rows, chains)
-	rep.Bindings = view.SortRows(rows, true)
+	rep.Bindings = rows
 	return rep
 }
 

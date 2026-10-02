@@ -2,6 +2,8 @@ package relevo
 
 import (
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -37,11 +39,30 @@ func chainChildRows(s *store.Store, c db.ChainRow) (children []db.ChainRow, done
 
 // sortChainRowsByKey orders child rows by their fork key, the suffix after the
 // parent name. Keys are the short digit runs the engine assigned in order, so
-// the order is the declaration order. Sorting is on the whole name because the
-// parent prefix is identical across the rows, which leaves the key as the only
-// thing that varies.
+// the order is the declaration order -- and that order is numeric, not textual:
+// with ten or more children a plain string comparison reads "10" before "2".
+// A key that does not parse as a number -- which the engine never writes --
+// falls back to the name comparison, so the sort still orders the rows.
 func sortChainRowsByKey(rows []db.ChainRow) {
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, aok := chainRowForkKey(rows[i])
+		b, bok := chainRowForkKey(rows[j])
+		if aok && bok && a != b {
+			return a < b
+		}
+		return rows[i].Name < rows[j].Name
+	})
+}
+
+// chainRowForkKey is a row's own fork key -- its name with its own
+// "<parent>." prefix trimmed -- as the integer the engine declared it with. ok
+// is false for a row whose key is not a number.
+func chainRowForkKey(c db.ChainRow) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimPrefix(c.Name, c.Parent+"."))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // chainChildFacts fills a chain's fork facts: the child chain names in key order

@@ -1,10 +1,12 @@
 package relevo
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -13,6 +15,44 @@ func flowEvent(e workflow.Event, a workflow.Action) ChainTraceEvent {
 	return ChainTraceEvent{
 		Seq: 1, TS: time.Time{}, Step: "fork",
 		Flow: &e, FlowAction: &a,
+	}
+}
+
+// TestForkChildrenOrderNumericallyWithTenKeys pins that the key order is the
+// declaration order at any width: with children "1".."12" a plain string
+// comparison would read 1, 10, 11, 12, 2, 3, ... Both children the rows the
+// nested status listing threads under the parent and the names the chain
+// facts' own child list carries come through sortChainRowsByKey, so both are
+// asserted here.
+func TestForkChildrenOrderNumericallyWithTenKeys(t *testing.T) {
+	rt := newRuntime(t)
+	parent, _ := newChainFixture(t, rt, "running")
+	keys := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"}
+	for _, k := range keys {
+		newForkChildFixture(t, rt, parent.Name, k, "running")
+	}
+
+	c, err := rt.Store.Chain(parent.Name)
+	if err != nil {
+		t.Fatalf("Chain: %v", err)
+	}
+	children, _ := chainChildRows(rt.Store, c)
+	got := make([]string, len(children))
+	for i, ch := range children {
+		got[i] = ch.Name
+	}
+	want := make([]string, len(keys))
+	for i, k := range keys {
+		want[i] = parent.Name + "." + k
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("chainChildRows = %v, want numeric declaration order %v", got, want)
+	}
+
+	var f view.ChainFacts
+	chainChildFacts(rt.Store, &f, c)
+	if !reflect.DeepEqual(f.Children, want) {
+		t.Errorf("ChainFacts.Children = %v, want numeric declaration order %v", f.Children, want)
 	}
 }
 
