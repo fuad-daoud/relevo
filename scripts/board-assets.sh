@@ -30,9 +30,14 @@ node_modules/.bin/esbuild src/index.jsx \
 # compiles its CDN base (https://esm.sh/.../dist/prod/) in as
 # ASSETS_FALLBACK_URL and appends it to every font candidate list, so setting
 # window.EXCALIDRAW_ASSET_PATH adds a local candidate but never removes the CDN
-# one. Replace that base with the local /assets/ and fail hard unless the 0.18.1
-# template is found exactly once and no https://esm.sh/ remains, so an
-# Excalidraw bump cannot silently reintroduce the CDN.
+# one. Replace that base and fail hard unless the 0.18.1 template is found
+# exactly once and no https://esm.sh/ remains, so an Excalidraw bump cannot
+# silently reintroduce the CDN.
+#
+# The replacement must be a runtime-absolute URL, not "/assets/": the font
+# wrapper does `new URL(candidate, ASSETS_FALLBACK_URL)`, and a relative base
+# throws `Invalid base URL`. `${location.origin}/assets/` evaluates to an
+# absolute URL in the page and keeps the candidate on the board's own origin.
 #
 # The template's local identifier is an esbuild-minified name (`Cr` in
 # Excalidraw 0.18.1's own bundle, `io` once the pinned mermaid-to-excalidraw
@@ -45,7 +50,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 const file = process.env.BOARD_BUNDLE;
 const template =
   /https:\/\/esm\.sh\/\$\{([A-Za-z_$][\w$]*)\.PKG_NAME\?`\$\{\1\.PKG_NAME\}@\$\{\1\.PKG_VERSION\}`:"@excalidraw\/excalidraw"\}\/dist\/prod\//g;
-const local = "/assets/";
+const local = "${location.origin}/assets/";
 
 const js = readFileSync(file, "utf8");
 const found = js.match(template) || [];
