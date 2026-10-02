@@ -57,4 +57,3 @@ func chainStopForkChild(ctx context.Context, rt Runtime, parent db.ChainRow, key
 	}
 	return nil
 }
-
