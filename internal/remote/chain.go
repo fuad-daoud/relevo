@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -11,6 +12,10 @@ import (
 // accepts POST /v1/chains and drives the chain on its own daemon, serving
 // GET /v1/chains/{name} and the stop, resume and done routes on it.
 const FeatureChain = "chain"
+
+// FeatureWorkflow is the WhoAmI.Features token a server advertises when it
+// accepts custom workflow definitions on chain create.
+const FeatureWorkflow = "workflow"
 
 // CodeChainRunning is a 409: the chain is already running, so a request that
 // wanted it otherwise cannot proceed.
@@ -43,6 +48,8 @@ type CreateChainRequest struct {
 	Author             *GitIdentity      `json:"author,omitempty"`
 	ClientInstallation string            `json:"client_installation,omitempty"`
 	ClientBindingIDs   map[string]string `json:"client_binding_ids,omitempty"`
+	Workflow           json.RawMessage   `json:"workflow,omitempty"`
+	ClientActorIDs     map[string]string `json:"client_actor_ids,omitempty"`
 }
 
 // ClosedRoundView is one closed member round's facts: the facts BindingView
@@ -107,6 +114,8 @@ type ChainView struct {
 	Findings        int               `json:"findings,omitempty"`
 	Members         []ChainMemberView `json:"members,omitempty"`
 	Trace           []ChainEventView  `json:"trace,omitempty"`
+	Workflow        json.RawMessage   `json:"workflow,omitempty"`
+	State           json.RawMessage   `json:"state,omitempty"`
 }
 
 // ChainResumeRequest is the body of POST /v1/chains/{name}/resume. A nil

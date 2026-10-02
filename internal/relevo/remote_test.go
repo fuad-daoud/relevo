@@ -115,6 +115,13 @@ type fakeRemote struct {
 	chainResumeErr      error
 	chainResumeReq      remote.ChainResumeRequest
 	chainDoneErr        error
+	createCheckResp     remote.CheckView
+	createCheckErr      error
+	createCheckReq      remote.CreateCheckRequest
+	getCheckResp        remote.CheckView
+	getCheckErr         error
+	setGateReq          remote.SetGateRequest
+	setGateErr          error
 
 	beforeCall func(call string)
 
@@ -319,6 +326,23 @@ func (f *fakeRemote) ChainResume(ctx context.Context, server, name string, req r
 func (f *fakeRemote) ChainDone(ctx context.Context, server, name string) error {
 	f.calls = append(f.calls, "ChainDone:"+server+":"+name)
 	return f.chainDoneErr
+}
+
+func (f *fakeRemote) CreateCheck(ctx context.Context, server, name string, req remote.CreateCheckRequest) (remote.CheckView, error) {
+	f.calls = append(f.calls, "CreateCheck:"+server+":"+name+":"+req.ID)
+	f.createCheckReq = req
+	return f.createCheckResp, f.createCheckErr
+}
+
+func (f *fakeRemote) GetCheck(ctx context.Context, server, name, id string) (remote.CheckView, error) {
+	f.calls = append(f.calls, "GetCheck:"+server+":"+name+":"+id)
+	return f.getCheckResp, f.getCheckErr
+}
+
+func (f *fakeRemote) SetGate(ctx context.Context, server, name string, req remote.SetGateRequest) error {
+	f.calls = append(f.calls, "SetGate:"+server+":"+name)
+	f.setGateReq = req
+	return f.setGateErr
 }
 
 type fakeTransport struct {

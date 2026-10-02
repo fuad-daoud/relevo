@@ -463,6 +463,40 @@ const FeatureAccounts = "accounts"
 // field can tell a server that predates isolation, whose view lacks it.
 const FeatureIsolation = "isolation"
 
+// FeatureCheck is the WhoAmI.Features token a server that accepts check runs
+// and gate updates on served bindings advertises.
+const FeatureCheck = "check"
+
+// CodeCheckRunning is a 409: the binding is already running a check, so
+// another check cannot start until it finishes.
+const CodeCheckRunning Code = "check_running"
+
+// CreateCheckRequest is the body of POST /v1/bindings/{name}/checks.
+type CreateCheckRequest struct {
+	ID      string `json:"id"`
+	Command string `json:"command"`
+	Step    string `json:"step,omitempty"`
+}
+
+// CheckView is the wire view of one check run on a served binding.
+type CheckView struct {
+	ID           string `json:"id"`
+	Command      string `json:"command"`
+	Step         string `json:"step,omitempty"`
+	Result       string `json:"result,omitempty"`
+	ExitCode     int    `json:"exit_code,omitempty"`
+	DurationMS   int64  `json:"duration_ms,omitempty"`
+	Note         string `json:"note,omitempty"`
+	LogTail      string `json:"log_tail,omitempty"`
+	LogTruncated bool   `json:"log_truncated,omitempty"`
+}
+
+// SetGateRequest is the body of POST /v1/bindings/{name}/gate.
+type SetGateRequest struct {
+	Gate   *string `json:"gate,omitempty"`
+	Regate *int    `json:"regate,omitempty"`
+}
+
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {
 	Code    Code   `json:"error"`

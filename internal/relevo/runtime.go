@@ -452,4 +452,7 @@ type RemoteClient interface {
 	ChainStop(ctx context.Context, server, name string) (remote.ChainStopResponse, error)
 	ChainResume(ctx context.Context, server, name string, req remote.ChainResumeRequest) (remote.ChainView, error)
 	ChainDone(ctx context.Context, server, name string) error
+	CreateCheck(ctx context.Context, server, name string, req remote.CreateCheckRequest) (remote.CheckView, error)
+	GetCheck(ctx context.Context, server, name, id string) (remote.CheckView, error)
+	SetGate(ctx context.Context, server, name string, req remote.SetGateRequest) error
 }
