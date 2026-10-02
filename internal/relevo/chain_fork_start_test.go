@@ -14,15 +14,16 @@ import (
 
 // childWorkflowBody is a minimal child workflow running a builder step.
 const childWorkflowBody = `name: sub
-inputs: { plans: optional }
+inputs: { plans: optional, task: optional }
 start: work
 steps:
-  work: { run: builder, seed: "{{task}}", on: { done: done } }
+  work: { run: builder, seed: "child work", on: { done: done } }
 `
 
 // forkFixedWorkflow defines a workflow that forks into two fixed children.
 func forkFixedWorkflow(childFile string) string {
 	return fmt.Sprintf(`name: parent
+inputs: { plans: optional }
 start: split
 steps:
   split:
@@ -30,7 +31,7 @@ steps:
       children:
         - { workflow: %s, task: "first" }
         - { workflow: %s, task: "second" }
-    on: { joined: done, conflict: done }
+    on: { joined: merge, conflict: done }
   merge: { run: builder, seed: "merge", on: { done: done } }
 `, childFile, childFile)
 }
@@ -39,14 +40,13 @@ steps:
 func forkEachWorkflow(childFile string) string {
 	return fmt.Sprintf(`name: parent
 inputs: { plans: required }
-start: plans
+start: split
 steps:
-  plans: { for-each: plans, on: { next: split, empty: done } }
   split:
     fork:
       each: plans
       workflow: %s
-    on: { joined: done, conflict: done }
+    on: { joined: merge, conflict: done }
   merge: { run: builder, seed: "merge", on: { done: done } }
 `, childFile)
 }
@@ -199,7 +199,7 @@ func TestForkFailureRollsBackEarlierChildrenAndHaltsParent(t *testing.T) {
 
 	foundRemove := false
 	for _, call := range fg.removeWorktreeCalls {
-		if strings.Contains(call.Dir, "shop.1") {
+		if strings.Contains(call.Path, "shop.1") {
 			foundRemove = true
 			break
 		}
@@ -228,11 +228,11 @@ func TestForkNameOverCapRefused(t *testing.T) {
 	rt, _ := chainRuntime(t)
 	// Long child workflow with reviewer reader member (suffix -reviewer, 9 chars).
 	childWorkflow := `name: sublong
-inputs: { plans: optional }
+inputs: { plans: optional, task: optional }
 start: work
 steps:
-  work: { run: builder, seed: "{{task}}", on: { done: check } }
-  check: { run: reviewer, seed: "rev", on: { done: done } }
+  work: { run: builder, seed: "build", on: { done: check } }
+  check: { run: reviewer, seed: "rev", on: { verdict=pass: done, verdict=changes: done } }
 `
 	childFile := writeWorkflowFile(t, childWorkflow)
 	// Cap is store.MaxAgentNameLen (32) - len("-reviewer") (9) = 23 chars.

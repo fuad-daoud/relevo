@@ -495,11 +495,6 @@ func chainPersistAndStartWorkflow(ctx context.Context, rt Runtime, tx *store.Tx,
 			return ChainResult{}, err
 		}
 	}
-	if prep.remote {
-		if err := chainSendPending(ctx, rt); err != nil {
-			return ChainResult{}, fmt.Errorf("chain %q started, but its remote member could not be handed its round: %w", prep.opts.Name, err)
-		}
-	}
 	row := prep.row
 	if current, cerr := tx.Chain(prep.opts.Name); cerr == nil {
 		row = current
@@ -531,6 +526,11 @@ func chainCreateWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, pla
 		return ChainResult{}, err
 	}
 	prep.unwind = nil
+	if prep.remote {
+		if err := chainSendPending(ctx, rt); err != nil {
+			return ChainResult{}, fmt.Errorf("chain %q started, but its remote member could not be handed its round: %w", prep.opts.Name, err)
+		}
+	}
 	return res, nil
 }
 

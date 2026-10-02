@@ -367,8 +367,9 @@ func (s *Store) WorktreePath(name string) string {
 }
 
 // ChainDir is a chain's plan directory: <root>/.chains/<name>. It is
-// dot-prefixed, so the store's readers skip it, and ValidName forbids "." in
-// binding names, so no binding's directory can collide with it.
+// dot-prefixed, so the store's readers skip it, and a binding name can never
+// start with "." (the first-character rule), so no binding's directory can
+// collide with it — "." is otherwise permitted.
 func (s *Store) ChainDir(name string) string {
 	return filepath.Join(s.root, ".chains", name)
 }
@@ -427,9 +428,9 @@ func (s *Store) VerifyWorktreePath(name string, round int) string {
 	return filepath.Join(s.WorktreeDir(), ".verify", fmt.Sprintf("%s-%03d", name, round))
 }
 
-// ScratchWorktreeDir is dot-prefixed, so the store's readers skip it, and
-// ValidName forbids "." in binding names, so a binding's worktree can never
-// collide with it.
+// ScratchWorktreeDir is dot-prefixed, so the store's readers skip it, and a
+// binding name can never start with "." (the first-character rule), so a
+// binding's worktree can never collide with it — "." is otherwise permitted.
 func (s *Store) ScratchWorktreeDir() string {
 	return filepath.Join(s.WorktreeDir(), ".scratch")
 }

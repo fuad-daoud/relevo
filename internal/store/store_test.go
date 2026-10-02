@@ -272,7 +272,7 @@ func TestViewedRoundTrip(t *testing.T) {
 }
 
 func TestValidName(t *testing.T) {
-	for _, ok := range []string{"webshop", "a", "money-ai", "x_1"} {
+	for _, ok := range []string{"webshop", "a", "money-ai", "x_1", "shop.1"} {
 		if err := ValidName(ok); err != nil {
 			t.Errorf("ValidName(%q) = %v, want nil", ok, err)
 		}

@@ -172,7 +172,7 @@ func ValidName(name string) error {
 		c := name[i]
 		lower := c >= 'a' && c <= 'z'
 		digit := c >= '0' && c <= '9'
-		if !lower && !digit && c != '-' && c != '_' {
+		if !lower && !digit && c != '-' && c != '_' && c != '.' {
 			return fmt.Errorf("binding name %q has an invalid character %q", name, string(c))
 		}
 	}
