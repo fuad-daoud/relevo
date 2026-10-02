@@ -663,3 +663,24 @@ The W1 planning round found these gaps. They are settled as follows.
     4. Then `done`.
     5. Then `else`.
 12. **`internal/workflow` owns `ValidName`** (the actor-name pattern).
+
+## 12. Decisions made while building W2
+
+The W2 rounds settled these. They override the sections they name.
+
+1. **Member names (section 6.1).**
+   - The shipped `default` workflow keeps today's member names: the builder is `<chain>`, then `<chain>-rev`, `<chain>-plan` and `<chain>-sec`. A member takes the legacy suffix when its actor fills the `reviewer`, `planner` or `security` param.
+   - Every other workflow uses `<chain>-<actor>`.
+   - Why: chains converted from before workflows keep their binding names. Resume matches members by name, so a renamed default would create a second reviewer. The chain-name cap stays 27 for the default.
+2. **Params and policy (sections 3.3 and 7).**
+   - Policy fills the `reviewer`, `planner`, `security`, `scan`, `gate`, `regate` and `max_corrections` params of the shipped `default` workflow only.
+   - A custom workflow's own param defaults win over policy. Flags and `--param` override both.
+   - A custom param with no default is required.
+3. **A repeated red skips the repair budget.** When a red check's output signature equals the previous red's within the same plan (the same `for-each` item), the repair step counts as over budget and its `then` is taken. This is the legacy behaviour; it never crosses plans.
+4. **A `for-each` resets its budget scope only on `next`.** An `empty` keeps the counts. That is how a finished chain keeps its last plan's correction count.
+5. **A placed writer's check (section 6.3, until W4).**
+   - It is answered from the gate record its served round pulls back. The served binding keeps `Gate = <the check command>` and `Regate = 0`; repair is the workflow's step.
+   - One distinct check command per placed writer is supported.
+   - A resume that changes the gate of a chain with a placed writer is refused until W4 adds the server route.
+6. **Converting old rows (section 8).** `ConvertLegacyChains` converts each row in its own transaction. A row that cannot convert is halted with the reason, and the rest still convert.
+7. **`file:` seeds** must be regular files inside the workflow's directory. Symlinks, and symlinked directories that resolve outside it, are refused.
