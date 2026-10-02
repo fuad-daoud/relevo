@@ -37,22 +37,66 @@ func stopEntries(t *testing.T, rt Runtime, name string) []store.LogEntry {
 func TestStopDecisionTable(t *testing.T) {
 	t.Parallel()
 
+	prompt := store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true}
+	report := store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true}
 	open := store.Binding{Round: 1, RoundStartedAt: baseTime}
 	queued := store.Binding{Round: 1, QueuedAt: baseTime}
 
 	cases := []struct {
-		name string
-		b    store.Binding
-		want stopAction
+		name    string
+		b       store.Binding
+		entries []store.LogEntry
+		want    stopAction
 	}{
-		{"no round", store.Binding{Round: 1}, stopNothing},
-		{"open round", open, stopKill},
-		{"queued round", queued, stopDequeue},
+		{"no round", store.Binding{Round: 1}, nil, stopNothing},
+		{"open round", open, []store.LogEntry{prompt}, stopKill},
+		{"queued round", queued, []store.LogEntry{prompt}, stopDequeue},
+		// A round the log calls open is stoppable whatever the timestamps say:
+		// this is the disagreement the issue names, with stop on the wrong side.
+		{
+			"an open round with no start stamp",
+			store.Binding{Round: 1},
+			[]store.LogEntry{prompt},
+			stopKill,
+		},
+		{
+			"a re-sent round: two prompts, no report",
+			store.Binding{Round: 1},
+			[]store.LogEntry{prompt, prompt},
+			stopKill,
+		},
+		{
+			"a closed round with a stale start stamp",
+			store.Binding{Round: 1, RoundStartedAt: baseTime},
+			[]store.LogEntry{prompt, report},
+			stopNothing,
+		},
+		// And the other direction: a round that has reported is closed, so stop
+		// must not claim it can end it.
+		{
+			"a closed round with a live start stamp",
+			open,
+			[]store.LogEntry{prompt, report},
+			stopNothing,
+		},
+		{
+			"a round that was never sent",
+			open,
+			nil,
+			stopNothing,
+		},
+		// A nudge is not a send: it must not open a round.
+		{
+			"a round opened only by a nudge",
+			open,
+			[]store.LogEntry{{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Note: store.NudgeNote, Confirmed: true}},
+			stopNothing,
+		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := stopDecision(c.b, baseTime); got != c.want {
+			if got := stopDecision(c.b, c.entries, baseTime); got != c.want {
 				t.Errorf("stopDecision = %v, want %v", got, c.want)
 			}
 		})
@@ -510,6 +554,14 @@ func TestStopNothingToStop(t *testing.T) {
 		rt, b := sentBinding(t)
 		b.RoundStartedAt = time.Time{}
 		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		// The round closed: the report landed, so the log has nothing open
+		// even though no timestamp says so.
+		if err := rt.Store.AppendLog("webshop", store.LogEntry{
+			TS: baseTime, Round: b.Round, Direction: store.DirToMasterMind,
+			Kind: store.KindReport, Confirmed: true,
+		}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := Stop(context.Background(), rt, "webshop", StopOptions{}); !errors.Is(err, ErrNothingToStop) {

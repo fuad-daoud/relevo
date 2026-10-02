@@ -697,8 +697,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if err != nil {
 		return b, err
 	}
-	roundOpen := HasPromptEntry(entries, b.Round) &&
-		!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
+	roundOpen := store.RoundOpen(entries, b.Round)
 
 	if !roundOpen {
 		// Idle is normal (spec §5.1): between rounds there is no process.

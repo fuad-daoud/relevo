@@ -65,11 +65,19 @@ func TestChainStopWithAClosedMemberRoundMarksTheChainStopped(t *testing.T) {
 	startedChain(t, rt, ChainOptions{})
 
 	// The member's round already closed but the chain has not mapped it: there
-	// is nothing on the member for an ordinary stop to end.
+	// is nothing on the member for an ordinary stop to end. The report is what
+	// closed it -- an open round is a prompt with no report, whichever
+	// timestamps the binding happens to carry.
 	b := chainBinding(t, rt, "shop")
 	b.RoundStartedAt = time.Time{}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
+	}
+	if err := rt.Store.AppendLog("shop", store.LogEntry{
+		TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind,
+		Kind: store.KindReport, Confirmed: true,
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
 	}
 
 	res, err := ChainStop(context.Background(), rt, "shop")
