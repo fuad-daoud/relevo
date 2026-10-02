@@ -457,7 +457,7 @@ func TestValidateForkEachAndMissingResolver(t *testing.T) {
 	env.Workflow = func(string) (Definition, bool) {
 		return mustParse(t, "name: child\ninputs: { plans: required }\nstart: a\nsteps:\n  a: { run: builder, on: { done: done } }"), true
 	}
-	each := "name: sample\ninputs: { plans: required }\nstart: f\nsteps:\n  f: { fork: { each: plans, workflow: child }, on: { joined: done, conflict: done } }"
+	each := "name: sample\ninputs: { plans: required }\nstart: f\nsteps:\n  f: { fork: { each: plans, workflow: child }, on: { joined: done, conflict: done } }\n  b: { run: builder, on: { done: done } }"
 	if problems := Validate(mustParse(t, each), env); hasProblem(problems, RuleFork, "f") {
 		t.Fatalf("Validate = %v, want the each fork child to resolve", problems)
 	}

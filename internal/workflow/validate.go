@@ -387,52 +387,6 @@ func (v *validator) checkInput(name string, mode InputMode, given bool) {
 	}
 }
 
-// checkForks is rule 7: each fork child resolves and validates under the same
-// rules with its own inputs.
-func (v *validator) checkForks() {
-	for _, id := range sortedKeys(v.def.Steps) {
-		step := v.def.Steps[id]
-		if step.Fork == nil || len(step.Kinds()) != 1 {
-			continue
-		}
-		if step.Fork.Each != "" {
-			v.checkForkChild(id, step.Fork.Workflow, &Given{Plans: true})
-			continue
-		}
-		for _, child := range step.Fork.Children {
-			v.checkForkChild(id, child.Workflow, &Given{Plans: len(child.Plans) > 0, Task: child.Task != ""})
-		}
-	}
-}
-
-// checkForkChild resolves one fork child and wraps its problems under the fork
-// step.
-func (v *validator) checkForkChild(id, name string, given *Given) {
-	if v.env.Workflow == nil {
-		v.add(id, RuleFork, "fork-child: %s: does not resolve", name)
-		return
-	}
-	child, ok := v.env.Workflow(name)
-	if !ok {
-		v.add(id, RuleFork, "fork-child: %s: does not resolve", name)
-		return
-	}
-	if v.visited[name] {
-		v.add(id, RuleFork, "fork-child: %s: a workflow cannot fork itself", name)
-		return
-	}
-	visited := make(map[string]bool, len(v.visited)+1)
-	for k := range v.visited {
-		visited[k] = true
-	}
-	visited[name] = true
-	childEnv := v.env
-	childEnv.Given = given
-	for _, p := range validate(child, childEnv, visited) {
-		v.add(id, RuleFork, "fork-child: %s: %s", name, p.String())
-	}
-}
-
 // checkWhens is rule 8: a when is exactly one reference to a bool param.
 func (v *validator) checkWhens() {
 	for _, id := range sortedKeys(v.def.Steps) {
