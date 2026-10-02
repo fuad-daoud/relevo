@@ -321,3 +321,31 @@ func TestReplaceReaderOutputRefusesEscapingArtifactDir(t *testing.T) {
 		t.Errorf("outside file = %q, %v; want it untouched", b, err)
 	}
 }
+
+// TestReaderArtifactIsTheBlockCarryingMessageNotATrailingSummary pins the
+// artifact selection for a reader that writes a complete deliverable ending in
+// a relevo block followed by a trailing summary or recap: the saved artifact
+// must be the block-carrying message, not the trailing summary.
+func TestReaderArtifactIsTheBlockCarryingMessageNotATrailingSummary(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	b := testReaderBinding()
+	const planMessage = "# Plan\n\n1. Do the work.\n2. Verify it.\n\n```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n```\n"
+	const trailingSummary = "The plan is above, outlining the two implementation steps."
+	writeReaderMessages(t, rt, b.Name, b.Round, planMessage, trailingSummary)
+
+	if _, err := writeReaderSummary(rt, b); err != nil {
+		t.Fatalf("writeReaderSummary: %v", err)
+	}
+	got, err := os.ReadFile(reportPathFor(rt, b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "# Plan") {
+		t.Errorf("artifact = %q, want the plan message", got)
+	}
+	if strings.Contains(string(got), trailingSummary) {
+		t.Errorf("artifact = %q, want trailing summary excluded", got)
+	}
+}

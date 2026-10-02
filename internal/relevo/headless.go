@@ -845,40 +845,43 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 	// Exited after writing a report but without the marker: an exited
 	// process cannot be mid-write, so the report is trusted and the
-	// omission noted (spec §4.4).
-	reportPath, serr := writeReaderSummary(rt, b)
-	if serr != nil {
-		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
-	}
-	if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
-		_, m, _, err := gateOnLimit(ctx, rt, tx, b, limitText(ctx, rt, b), false)
-		if err != nil {
-			return b, err
+	// omission noted (spec §4.4). A reader whose deliverable is absent
+	// skips this and falls through to the exit-without-report path.
+	if b.Shape != store.ShapeReader || readerDeliverablePresent(rt, b) {
+		reportPath, serr := writeReaderSummary(rt, b)
+		if serr != nil {
+			slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 		}
-		slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
-		payload := fmt.Sprintf(
-			"Builder exited (code %s) after writing its %s but never confirmed completion (no %s). %s.",
-			codeText, artifactNoun(rt, b), filepath.Base(rt.Store.DonePath(b.Name, b.Round)), closeClause(rt, b, b.Round))
-		if m.Line != "" {
-			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, availability.GateTimeText(m.Until))
+		if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
+			_, m, _, err := gateOnLimit(ctx, rt, tx, b, limitText(ctx, rt, b), false)
+			if err != nil {
+				return b, err
+			}
+			slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
+			payload := fmt.Sprintf(
+				"Builder exited (code %s) after writing its %s but never confirmed completion (no %s). %s.",
+				codeText, artifactNoun(rt, b), filepath.Base(rt.Store.DonePath(b.Name, b.Round)), closeClause(rt, b, b.Round))
+			if m.Line != "" {
+				payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, availability.GateTimeText(m.Until))
+			}
+			note := "unmarked"
+			if escapeCheck(ctx, rt, b, true) == EscapeNote {
+				note = joinNotes(note, escapeNote)
+			}
+			next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", false, scopeVerdict{})
+			if err != nil {
+				return b, err
+			}
+			if next.Owner != "" {
+				// An unmarked close is still a close: record the served round's
+				// facts as markerClose does, or the owner sees "idle" and never
+				// fetches the report.
+				next = closeServedRound(ctx, rt, next)
+			}
+			next.Builder = clearProcess(next.Builder)
+			next.StalledSince = time.Time{}
+			return deliverAndSettle(ctx, rt, tx, next)
 		}
-		note := "unmarked"
-		if escapeCheck(ctx, rt, b, true) == EscapeNote {
-			note = joinNotes(note, escapeNote)
-		}
-		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", false, scopeVerdict{})
-		if err != nil {
-			return b, err
-		}
-		if next.Owner != "" {
-			// An unmarked close is still a close: record the served round's
-			// facts as markerClose does, or the owner sees "idle" and never
-			// fetches the report.
-			next = closeServedRound(ctx, rt, next)
-		}
-		next.Builder = clearProcess(next.Builder)
-		next.StalledSince = time.Time{}
-		return deliverAndSettle(ctx, rt, tx, next)
 	}
 
 	// Exited without a report.
@@ -1074,6 +1077,10 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	} else if resumed {
 		slog.Info("headless builder nudged to finish", "binding", b.Name, "round", b.Round, "session", b.Builder.StreamSessionID)
 		return next, nil
+	}
+
+	if b.Shape == store.ShapeReader && codeText == "0" {
+		return haltBinding(ctx, rt, b, readerUndeliveredReason(rt, b, nudgesSincePlan(entries, b.Round)))
 	}
 
 	if !switchable {
