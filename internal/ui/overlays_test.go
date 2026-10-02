@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,8 +101,11 @@ func TestCommandModalFoldsOverflow(t *testing.T) {
 	if shown != 8 {
 		t.Errorf("the box shows %d match rows, want 8:\n%s", shown, box)
 	}
-	if !strings.Contains(box, "+ 19 more match; keep typing") {
-		t.Errorf("the box must fold the overflow, got:\n%s", box)
+	// The count is derived rather than written down, so a command added to the
+	// table moves it without this test having to be told.
+	folded := fmt.Sprintf("+ %d more match; keep typing", m.cmd.matchCount(m.env())-8)
+	if !strings.Contains(box, folded) {
+		t.Errorf("the box must fold the overflow as %q, got:\n%s", folded, box)
 	}
 	if strings.Contains(box, "round b") {
 		t.Errorf("no binding row fits in the cap of 8:\n%s", box)
