@@ -7,7 +7,7 @@ import (
 )
 
 // Shell is a shell in the binding's own tree: its worktree when relevo made
-// one, else its recorded CWD. A remote binding has no local tree (§4.2).
+// one, else its recorded CWD. A remote binding has no local tree to run in.
 func (a *mastermindActions) Shell(key string) (*exec.Cmd, error) {
 	rt, name, ok := a.resolve(key)
 	if !ok {
