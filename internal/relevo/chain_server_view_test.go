@@ -408,6 +408,86 @@ func TestChainDoneOnAServerChainRefusesWhileRunning(t *testing.T) {
 	}
 }
 
+// TestChainDoneOnAGoneServerChainSettlesTheMirror pins the gone done: a 404
+// from the server for the chain -- on the mirror pull or on the done post --
+// means it already released the chain, so the mirror is settled locally. Every
+// member is released through the ordinary done, which skips the server for a
+// chain member, and the row is closed.
+func TestChainDoneOnAGoneServerChainSettlesTheMirror(t *testing.T) {
+	t.Parallel()
+
+	// The real mirror was pulled while the server was alive: one halted 200
+	// pull converts the row onto the engine, so its workflow columns exist.
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusHalted), 0, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+	pullRounds(t, rt, "shop")
+
+	notFound := &client.HTTPError{Status: http.StatusNotFound, Body: remote.ErrorBody{Code: remote.CodeNotFound}}
+	fr.getChainErr = notFound
+	fr.chainDoneErr = notFound
+
+	if _, err := ChainDone(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainDone on a gone server chain = %v, want it settled locally", err)
+	}
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusDone) {
+		t.Errorf("mirror status = %q, want done", row.Status)
+	}
+	for _, member := range []string{"shop", "shop-rev", "shop-plan"} {
+		got, err := rt.Store.Load(member)
+		if err != nil {
+			t.Errorf("load mirror %s: %v", member, err)
+		} else if got.State != store.StateDone {
+			t.Errorf("mirror %s state = %q, want done", member, got.State)
+		}
+	}
+	if n := countCalls(fr, "Done:zen:"); n != 0 {
+		t.Errorf("Remote.Done calls = %d, want none: a chain member skips the server", n)
+	}
+}
+
+// TestChainDoneOnAServerChainStillPostsDoneAfterTheGonePath pins the other side
+// of the 404 gate: a server that is alive is still asked to release the chain,
+// exactly once, so treating a 404 as already-released never skips the post for
+// a live server. The wire view carries no workflow fields; the pull converts
+// them.
+func TestChainDoneOnAServerChainStillPostsDoneAfterTheGonePath(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusHalted), 0, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+	pullRounds(t, rt, "shop")
+
+	// The server answers 200 again: the same legacy wire view (no workflow
+	// fields) is served, and the done post succeeds.
+	fr.getChainErr = nil
+
+	if _, err := ChainDone(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainDone on a live server chain = %v, want the done path", err)
+	}
+	if n := countCalls(fr, "ChainDone:zen:shop"); n != 1 {
+		t.Errorf("ChainDone calls = %d, want exactly 1", n)
+	}
+}
+
+// TestChainTraceOnAGoneServerChainIsNotFound pins the trace read's mapping: a
+// 404 from the server for the chain wraps store.ErrNotFound, so the CLI's
+// classifyReadErr reports the not-found code instead of an internal failure.
+func TestChainTraceOnAGoneServerChainIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	fr := &fakeRemote{
+		getChainErr: &client.HTTPError{Status: http.StatusNotFound, Body: remote.ErrorBody{Code: remote.CodeNotFound}},
+	}
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	if _, err := ChainTrace(context.Background(), rt, "shop"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("ChainTrace on a gone server chain = %v, want errors.Is(err, store.ErrNotFound)", err)
+	}
+}
+
 // exactCalls counts the recorded calls equal to one exact string.
 func exactCalls(calls []string, want string) int {
 	n := 0

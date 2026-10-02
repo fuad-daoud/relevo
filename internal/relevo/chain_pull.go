@@ -36,7 +36,7 @@ func chainPullServers(ctx context.Context, rt Runtime) error {
 	}
 	var errs []error
 	for _, c := range chains {
-		if !chainOnServer(c) || c.Status == string(chain.StatusDone) {
+		if !chainOnServer(c) || c.Status == string(chain.StatusDone) || chainGoneMirror(c) {
 			continue
 		}
 		if err := chainPullOne(ctx, rt, c); err != nil {
@@ -76,19 +76,29 @@ func chainPullOne(ctx context.Context, rt Runtime, c db.ChainRow) error {
 // chainPullGone ends a mirror whose chain the server no longer knows: it halts
 // the row once, with the chain's absence as the reason, and queues the one end
 // delivery. A mirror that is already terminal is left alone, so a repeated 404
-// queues nothing more.
+// queues nothing more; a mirror already halted is stamped with the gone reason
+// so the walk stops reading it, and nothing is delivered a second time.
 func chainPullGone(ctx context.Context, rt Runtime, c db.ChainRow) error {
 	name, server := c.Name, c.Server
+	gone := chainGoneReason(name, server)
 	return rt.Store.WithLock(func(tx *store.Tx) error {
 		cur, err := tx.Chain(name)
 		if err != nil {
 			return err
 		}
+		if cur.Status == string(chain.StatusHalted) {
+			if cur.Reason == gone {
+				return nil
+			}
+			cur.Reason = gone
+			cur.UpdatedAt = rt.Now().UTC()
+			return tx.ChainPut(cur)
+		}
 		if cur.Status != string(chain.StatusRunning) {
 			return nil
 		}
 		cur.Status = string(chain.StatusHalted)
-		cur.Reason = fmt.Sprintf("chain %s is gone from %s", name, server)
+		cur.Reason = gone
 		cur.UpdatedAt = rt.Now().UTC()
 		if err := tx.ChainPut(cur); err != nil {
 			return err
