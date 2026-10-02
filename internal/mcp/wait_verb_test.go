@@ -75,6 +75,29 @@ func TestRelevoVerbsWaitTimeoutResolutionAndClamps(t *testing.T) {
 	}
 }
 
+// TestWaitOutcomeWordCoversEveryWaitCode pins the wire word each Wait exit
+// code carries, including the fallback an unrecognised code gets.
+func TestWaitOutcomeWordCoversEveryWaitCode(t *testing.T) {
+	tests := []struct {
+		code int
+		want string
+	}{
+		{relevo.WaitClosed, "closed"},
+		{relevo.WaitUnmarked, "unmarked"},
+		{relevo.WaitNeedsYou, "needs-you"},
+		{relevo.WaitGone, "gone"},
+		{relevo.WaitHalted, "halted"},
+		{relevo.WaitNotStarted, "not-started"},
+		{relevo.WaitTimeout, "still-open"},
+		{-7, "code--7"},
+	}
+	for _, tt := range tests {
+		if got := waitOutcomeWord(tt.code); got != tt.want {
+			t.Errorf("waitOutcomeWord(%d) = %q, want %q", tt.code, got, tt.want)
+		}
+	}
+}
+
 func TestRelevoVerbsWaitRejectsBadArgs(t *testing.T) {
 	tests := []struct {
 		name string
@@ -243,5 +266,65 @@ func TestRelevoVerbsWaitCancelledContextIsNormalResult(t *testing.T) {
 	text := waitText(t, func() (any, error) { return v.Wait(ctx, "", WaitArgs{Name: "canc", Timeout: "1h"}) })
 	if text != "canc round 1 cancelled" {
 		t.Errorf("text = %q, want 'canc round 1 cancelled'", text)
+	}
+}
+
+// TestRelevoVerbsWaitNeedsYouIsANormalResult: a round stalled on a human
+// answers with its needs-you line and no error, which is what toolResultFrom
+// turns into an isError:false result the model can act on.
+func TestRelevoVerbsWaitNeedsYouIsANormalResult(t *testing.T) {
+	s := store.New(t.TempDir())
+	halt := "rate limit: gate the builder before the next round"
+	saveVerbBinding(t, s, store.Binding{
+		Name: "stalled", CWD: "/repo-stalled", MasterMindID: mcpTestMasterMindA,
+		Round: 1, State: store.StateNeedsYou,
+		Halt: halt, HaltAt: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC),
+	})
+	// The round was sent and is still open: only the halt, not a report entry,
+	// makes the classifier call it needs-you.
+	if err := s.AppendLog("stalled", store.LogEntry{
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	v := waitVerbsFor(s, time.Now)
+	text := waitText(t, func() (any, error) { return v.Wait(context.Background(), "", WaitArgs{Name: "stalled"}) })
+	want := "stalled round 1 needs-you\n" + halt
+	if text != want {
+		t.Errorf("wait text = %q, want %q", text, want)
+	}
+}
+
+// TestRelevoVerbsWaitNoNameTakesTheDefaultBudget: with no name and no explicit
+// timeout, the store's own default is the budget the poll runs on, so it has
+// to arrive at the poll positive -- a zero there is refused outright.
+func TestRelevoVerbsWaitNoNameTakesTheDefaultBudget(t *testing.T) {
+	s := store.New(t.TempDir())
+	saveVerbBinding(t, s, store.Binding{Name: "owned", CWD: "/repo-owned", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
+	if err := s.AppendLog("owned", store.LogEntry{
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	base := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	tick := 0
+	nowFn := func() time.Time {
+		now := base.Add(time.Duration(tick) * time.Minute)
+		tick += 360
+		return now
+	}
+
+	v := waitVerbsFor(s, nowFn)
+	text := waitText(t, func() (any, error) {
+		return v.Wait(context.Background(), "", WaitArgs{HasProgressToken: true})
+	})
+	// A timeout leaves WaitOwned with no binding and no round to name, so the
+	// still-open line opens with blanks; what matters here is that the default
+	// budget reached the poll at all, since a non-positive one is refused.
+	want := " round 0 still-open\nround still open, call wait again"
+	if text != want {
+		t.Errorf("wait text = %q, want %q", text, want)
 	}
 }
