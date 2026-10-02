@@ -579,6 +579,29 @@ func TestChainPullHaltsAChainGoneFromTheServer(t *testing.T) {
 	}
 }
 
+// TestChainPullDoesNotGetAGoneMirrorAgain pins the walk's gone filter: once a
+// 404 halts the mirror with the gone reason, the next pass does not read the
+// server for it, the same way a done mirror is never read again.
+func TestChainPullDoesNotGetAGoneMirrorAgain(t *testing.T) {
+	t.Parallel()
+
+	fr := &fakeRemote{
+		getChainErr: &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound}},
+	}
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	pullRounds(t, rt, "shop")
+	if n := countCalls(fr, "GetChain:zen:shop"); n != 1 {
+		t.Fatalf("GetChain calls after the first pass = %d, want 1", n)
+	}
+
+	pullRounds(t, rt, "shop")
+	if n := countCalls(fr, "GetChain:zen:shop"); n != 1 {
+		t.Errorf("GetChain calls after a second pass = %d, want still 1: a gone mirror is not read again", n)
+	}
+}
+
 // TestChainPullSkipsADoneMirror pins the walk's filter: a mirror the local
 // machine has finished is never read from the server again.
 func TestChainPullSkipsADoneMirror(t *testing.T) {
