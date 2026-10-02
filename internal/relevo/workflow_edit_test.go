@@ -154,3 +154,26 @@ func TestWorkflowEditRoundRefusesUnresolvedFileSeed(t *testing.T) {
 		})
 	}
 }
+
+// TestWorkflowEditDoesNotSaveItsProblemComments pins the strip: a buffer that
+// still carries the problem block relevo prepended is saved without it, so
+// relevo's own comments never land in the stored source.
+func TestWorkflowEditDoesNotSaveItsProblemComments(t *testing.T) {
+	saved := config.StoredWorkflow{Source: editSource}
+	edited := WorkflowEditReopen([]string{"# a stale problem line"}, []byte(editSource))
+
+	stored, def, problems, done := WorkflowEditRound(edited, edited, saved, nil)
+	if !done {
+		t.Fatalf("done = false, problems = %v", problems)
+	}
+	if def.Name != "custom" {
+		t.Errorf("def.Name = %q, want custom", def.Name)
+	}
+	got := string(stored)
+	if strings.Contains(got, WorkflowEditProblemMarker) || strings.Contains(got, "a stale problem line") {
+		t.Errorf("stored source carries relevo's problem comments:\n%s", got)
+	}
+	if got != editSource {
+		t.Errorf("stored = %q, want the user's source %q", got, editSource)
+	}
+}

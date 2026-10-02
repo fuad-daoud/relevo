@@ -14,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
-	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // remoteCode reports whether err is the server's own refusal for one code at
@@ -80,37 +79,14 @@ func chainServerTrace(ctx context.Context, rt Runtime, c db.ChainRow) (ChainTrac
 		Plans: chainIntOr(v.Plans, c.Plans), Corrections: v.Corrections,
 	}
 	for _, r := range v.Trace {
-		// A mirror whose row carries a workflow was written by the engine, so
-		// its rows are workflow events; a legacy mirror keeps the fixed state
-		// machine's vocabulary.
-		if len(c.WorkflowJSON) > 0 {
-			fev, ferr := workflow.DecodeEvent(r.Event)
-			if ferr != nil {
-				return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, ferr)
-			}
-			act, aerr := workflow.DecodeAction(r.Action)
-			if aerr != nil {
-				return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, aerr)
-			}
-			doc.Events = append(doc.Events, ChainTraceEvent{
-				Seq: r.Seq, TS: r.TS, Step: r.Step,
-				Member: r.Member, Round: r.Round, Plan: r.Plan, Reason: r.Reason,
-				Flow: &fev, FlowAction: &act,
-			})
-			continue
-		}
-		ev, err := chain.DecodeEvent(r.Event)
+		// A mirror whose row carries a workflow may still hold rows the server
+		// wrote before its conversion: decode each row on its own, exactly as a
+		// local trace does.
+		ev, err := chainTraceEvent(r.Seq, r.TS, r.Phase, r.Step, r.Member, r.Round, r.Plan, r.Event, r.Action, r.Reason)
 		if err != nil {
 			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, err)
 		}
-		act, err := chain.DecodeAction(r.Action)
-		if err != nil {
-			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, err)
-		}
-		doc.Events = append(doc.Events, ChainTraceEvent{
-			Seq: r.Seq, TS: r.TS, Phase: r.Phase, Step: r.Step,
-			Member: r.Member, Round: r.Round, Plan: r.Plan, Event: ev, Action: act, Reason: r.Reason,
-		})
+		doc.Events = append(doc.Events, ev)
 	}
 	return doc, nil
 }

@@ -388,11 +388,8 @@ func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflo
 }
 
 // reopenWith puts the problem lines at the top, then a blank line and the text
-// the user last wrote, so the next editor pass opens on something fixable.
+// the user last wrote with any earlier problem block stripped, so the next
+// editor pass opens on something fixable and the comments never accumulate.
 func reopenWith(problems []string, edited []byte) []byte {
-	var b strings.Builder
-	b.WriteString(strings.Join(problems, "\n"))
-	b.WriteString("\n\n")
-	b.Write(edited)
-	return []byte(b.String())
+	return relevo.WorkflowEditReopen(problems, edited)
 }

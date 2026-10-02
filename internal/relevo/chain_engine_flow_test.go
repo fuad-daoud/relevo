@@ -45,6 +45,62 @@ steps:
   report: { run: assistant, seed: "the log is at {{check.log}}", on: { verdict=pass: done, verdict=changes: { halt: "changes" } } }
 `
 
+// flowLocalRepairWorkflow runs a local check that routes a red straight to a
+// repair round seeded by the shipped repair template, so the repair prompt's
+// naming of the failed check's log is exercised.
+const flowLocalRepairWorkflow = `name: repairflow
+inputs: { plans: required }
+start: plans
+steps:
+  plans: { for-each: plans, on: { next: build, empty: done } }
+  build: { run: builder, seed: "{{plans.current}}", on: { done: check } }
+  check: { check: "true", on: { green: done, red: repair } }
+  repair: { run: builder, seed: shipped:repair, on: { done: done } }
+`
+
+// TestWorkflowLocalRepairSeedNamesTheCheckLog pins the repair seed's log input:
+// a local red check routes to repair, and the prompt the builder is handed names
+// the failed check's sealed log as an openable copy and carries its tail. A
+// chain writer carries no gate, so the log must come from the engine's recorded
+// check result.
+func TestWorkflowLocalRepairSeedNamesTheCheckLog(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowLocalRepairWorkflow)
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainRedCheck(t, rt, "shop", "FAIL the thing\n")
+
+	builder := chainBinding(t, rt, "shop")
+	if builder.Round != 2 {
+		t.Fatalf("builder round = %d, want the repair round 2", builder.Round)
+	}
+	prompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop", builder.Round))
+	if err != nil {
+		t.Fatalf("read the repair prompt: %v", err)
+	}
+	text := string(prompt)
+	const line = "Acceptance check output: "
+	i := strings.Index(text, line)
+	if i < 0 {
+		t.Fatalf("the repair seed does not name the check log:\n%s", text)
+	}
+	named := strings.SplitN(text[i+len(line):], " -- last ", 2)[0]
+	if !rt.Store.DiskRegularFile(named) {
+		t.Errorf("the repair seed's check log %s is not a regular file on disk", named)
+	}
+	got, err := rt.Store.ReadFile(named)
+	if err != nil {
+		t.Fatalf("read the repair seed's check log %s: %v", named, err)
+	}
+	if !strings.Contains(string(got), "FAIL the thing") {
+		t.Errorf("the repair seed's check log = %q, want the failed check's output", got)
+	}
+	if !strings.Contains(text, "FAIL the thing") {
+		t.Errorf("the repair seed does not carry the log tail:\n%s", text)
+	}
+}
+
 // TestWorkflowSendRendersSeedPaths pins the seed rendering: a plan reference
 // becomes an openable path holding the plan's bytes, and an inline reference
 // renders in place.

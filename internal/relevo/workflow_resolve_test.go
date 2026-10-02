@@ -130,3 +130,34 @@ func TestEmbedFileSeedsRefusesEscape(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbedFileSeedsRefusesASymlink pins the security rule: a file: seed may
+// name a regular file beside the workflow, never a symlink to one outside the
+// directory, and never a path through a symlinked directory that resolves out.
+func TestEmbedFileSeedsRefusesASymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret\n"), 0o644); err != nil {
+		t.Fatalf("write the outside file: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatalf("symlink a file: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "sub")); err != nil {
+		t.Fatalf("symlink a directory: %v", err)
+	}
+
+	for _, seed := range []string{"file:link.txt", "file:sub/secret.txt"} {
+		def := workflow.Definition{Steps: map[string]workflow.Step{
+			"build": {Run: "builder", Seed: seed},
+		}}
+		got, err := EmbedFileSeeds(def, dir)
+		if err == nil {
+			t.Errorf("EmbedFileSeeds(%q) = %+v, want a refusal", seed, got)
+			continue
+		}
+		if !errors.Is(err, ErrRefused) {
+			t.Errorf("EmbedFileSeeds(%q) error = %v, want ErrRefused", seed, err)
+		}
+	}
+}

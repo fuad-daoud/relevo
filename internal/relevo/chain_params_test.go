@@ -132,3 +132,43 @@ func TestChainParamsMatchChainSettings(t *testing.T) {
 		}
 	}
 }
+
+// TestCustomWorkflowParamDefaultsBeatPolicy pins the MasterMind decision: policy
+// fills a param only for the shipped default workflow, so a custom workflow's own
+// default stands and a custom reviewer is never overwritten.
+func TestCustomWorkflowParamDefaultsBeatPolicy(t *testing.T) {
+	def := workflow.Definition{
+		Name:   "triage",
+		Params: map[string]workflow.Param{"reviewer": {Kind: workflow.ParamString, Str: "custom-reviewer"}},
+	}
+	pol := policy.Policy{Chain: &policy.ChainPolicy{ReviewerActor: "policy-reviewer"}}
+
+	got, err := chainParamsFor(def, pol, ChainOptions{})
+	if err != nil {
+		t.Fatalf("chainParamsFor(custom): %v", err)
+	}
+	if _, ok := got["reviewer"]; ok {
+		t.Errorf("chainParamsFor wrote reviewer = %q for a custom workflow, want policy to leave it alone", got["reviewer"])
+	}
+	applied, err := workflow.WithParams(def, got)
+	if err != nil {
+		t.Fatalf("WithParams: %v", err)
+	}
+	if r := workflow.RenderParams(applied, "{{params.reviewer}}"); r != "custom-reviewer" {
+		t.Errorf("reviewer = %q, want the custom default", r)
+	}
+}
+
+// TestDefaultWorkflowParamsComeFromPolicy pins the other half: the shipped
+// default workflow still takes its reviewer from policy.
+func TestDefaultWorkflowParamsComeFromPolicy(t *testing.T) {
+	pol := policy.Policy{Chain: &policy.ChainPolicy{ReviewerActor: "policy-reviewer"}}
+
+	got, err := chainParamsFor(workflow.Default(), pol, ChainOptions{})
+	if err != nil {
+		t.Fatalf("chainParamsFor(default): %v", err)
+	}
+	if got["reviewer"] != "policy-reviewer" {
+		t.Errorf("reviewer = %q, want policy's policy-reviewer for the shipped default", got["reviewer"])
+	}
+}

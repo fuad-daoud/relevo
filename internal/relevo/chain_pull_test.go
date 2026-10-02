@@ -494,6 +494,60 @@ func TestChainPullCreatesAMemberTheServerAdded(t *testing.T) {
 	}
 }
 
+// TestChainPullAddedMemberGetsAMemberRow pins the chain_member write for a late
+// member: a server member the mirror creates gets its chain_member row beside
+// its binding, so chainReadMembers and chainEndMembers include it.
+func TestChainPullAddedMemberGetsAMemberRow(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 1, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	view := fr.getChainResp
+	sec := chainPullMemberView(chain.MemberSecurity, "shop-sec", 1, store.ShapeReader)
+	sec.Actor = "security"
+	view.Members = append(view.Members, sec)
+	fr.getChainResp = view
+
+	pullRounds(t, rt, "shop")
+
+	rows, err := rt.Store.ChainMembers("shop")
+	if err != nil {
+		t.Fatalf("ChainMembers: %v", err)
+	}
+	found := false
+	for _, m := range rows {
+		if m.Binding == "shop-sec" {
+			found = true
+			if m.Actor != "security" {
+				t.Errorf("member row actor = %q, want security", m.Actor)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("chain_member rows = %+v, want shop-sec", rows)
+	}
+
+	row := chainStoredRow(t, rt, "shop")
+	if got := chainReadMembers(rt.Store, row); !containsString(got, "shop-sec") {
+		t.Errorf("chainReadMembers = %v, want shop-sec", got)
+	}
+	if got := chainEndMembers(rt.Store, row); !containsString(got, "shop-sec") {
+		t.Errorf("chainEndMembers = %v, want shop-sec", got)
+	}
+}
+
+// containsString reports whether a string list holds want.
+func containsString(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
 // TestChainPullHaltsAChainGoneFromTheServer pins the missing chain: the mirror
 // halts once with the server's absence as the reason, queues the one delivery,
 // and a repeated 404 adds nothing.

@@ -82,7 +82,7 @@ func chainEventFromCloseWF(rt Runtime, tx *store.Tx, c db.ChainRow, b store.Bind
 		}
 	}
 
-	artifacts := chainCloseArtifacts(rt, b, wf.Path, outs)
+	artifacts := chainCloseArtifacts(rt, b, round, wf.Path, outs)
 	if miss := workflow.MissingArtifact(outs, chainArtifactSizes(rt, artifacts)); miss != "" {
 		ev.Status = reporttail.OutcomeHalted
 		ev.Reason = miss
@@ -94,8 +94,10 @@ func chainEventFromCloseWF(rt Runtime, tx *store.Tx, c db.ChainRow, b store.Bind
 
 // chainCloseArtifacts keys a closing round's artifacts: a writer exposes its
 // report and its round diff; a reader exposes its saved output, plus every
-// artifact the actor declares, all pointing at the saved output.
-func chainCloseArtifacts(rt Runtime, b store.Binding, path string, outs workflow.Outputs) map[string][]string {
+// artifact the actor declares, all pointing at the saved output. round is the
+// round that closed: the close's caller has already advanced the binding, so
+// b.Round is the next round and the diff key must be the closed one's.
+func chainCloseArtifacts(rt Runtime, b store.Binding, round int, path string, outs workflow.Outputs) map[string][]string {
 	art := map[string][]string{}
 	if b.Shape == store.ShapeReader {
 		if path != "" {
@@ -109,7 +111,7 @@ func chainCloseArtifacts(rt Runtime, b store.Binding, path string, outs workflow
 	if path != "" {
 		art["report"] = []string{path}
 	}
-	art["diff"] = []string{rt.Store.DiffPath(b.Name, b.Round)}
+	art["diff"] = []string{rt.Store.DiffPath(b.Name, round)}
 	return art
 }
 

@@ -7,6 +7,9 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // traceChain closes one whole correction cycle on a one-plan chain: the
@@ -146,5 +149,53 @@ func TestShowRoundStillReadsTheBuilderBinding(t *testing.T) {
 	if res.Section != ShowPrompt || res.Text != "plan one" || res.Trace != nil {
 		t.Errorf("Show --round 1 = section %q text %q trace %v, want the builder's round-1 prompt",
 			res.Section, res.Text, res.Trace)
+	}
+}
+
+// TestChainTraceOfAConvertedChainRendersItsLegacyRows pins the per-row decode:
+// a chain converted onto the engine keeps the trace rows the fixed state machine
+// wrote, and ChainTrace renders them instead of failing to decode a builder
+// close as a workflow event.
+func TestChainTraceOfAConvertedChainRendersItsLegacyRows(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	c := legacyChainRow("x", "running", "build", "building", "builder", 1, 0)
+	seedLegacyChain(t, rt, c, legacyChainBindings("x"))
+	ev := chain.Event{
+		Kind: chain.EventBuilderClosed, Member: chain.MemberBuilder, Round: 1,
+		Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
+	}
+	act := chain.Action{Kind: chain.ActionSend, Member: chain.MemberReviewer, Seed: chain.SeedReviewer}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.ChainEventAppend("x", db.ChainEventRow{
+			Phase: string(chain.PhaseBuild), Step: string(chain.StepBuilding),
+			Member: "x", Round: 1, Plan: 1,
+			Event: ev.Encode(), Action: act.Encode(),
+		})
+	}); err != nil {
+		t.Fatalf("plant the legacy row: %v", err)
+	}
+
+	if err := ConvertLegacyChains(rt); err != nil {
+		t.Fatalf("ConvertLegacyChains: %v", err)
+	}
+
+	doc, err := ChainTrace(context.Background(), rt, "x")
+	if err != nil {
+		t.Fatalf("ChainTrace: %v", err)
+	}
+	if len(doc.Events) != 1 {
+		t.Fatalf("trace events = %d, want 1", len(doc.Events))
+	}
+	if doc.Events[0].Flow != nil {
+		t.Errorf("the legacy row decoded as a workflow event: %+v", doc.Events[0].Flow)
+	}
+	if doc.Events[0].Event.Kind != chain.EventBuilderClosed || doc.Events[0].Action.Kind != chain.ActionSend {
+		t.Errorf("event/action = %+v/%+v, want the legacy row decoded",
+			doc.Events[0].Event, doc.Events[0].Action)
+	}
+	if out := RenderTrace(doc); !strings.Contains(out, "check green") {
+		t.Errorf("RenderTrace = %q, want the legacy builder close line", out)
 	}
 }

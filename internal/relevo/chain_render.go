@@ -145,7 +145,7 @@ var shippedSeedKinds = map[string]chain.SeedKind{
 // check's own record.
 func chainRenderShippedSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State, name string) (string, error) {
 	if name == "repair" {
-		return chainRenderRepairSeed(rt, tx, c, def)
+		return chainRenderRepairSeed(rt, tx, c, def, st)
 	}
 	kind, ok := shippedSeedKinds[name]
 	if !ok {
@@ -200,19 +200,18 @@ func flowCheckResult(st workflow.State) (string, string) {
 // chainRenderRepairSeed renders the repair seed a workflow's repair step hands
 // its writer: the round the send opens, the round whose check failed, the check
 // command, the failed round's own prompt and the tail of the failed check's log.
-func chainRenderRepairSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition) (string, error) {
+// An engine chain runs its checks as steps, so the log comes from the engine's
+// recorded result -- the newest check flowCheckResult names -- not from a
+// member-gate record a chain writer no longer carries.
+func chainRenderRepairSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State) (string, error) {
 	failedRound := memberNewestClosedRound(tx, c.Builder)
 	b, err := tx.Load(c.Builder)
 	if err != nil {
 		return "", err
 	}
-	rec, err := chainRoundGate(tx, c.Builder, failedRound)
-	if err != nil {
-		return "", err
-	}
 	logPath := ""
-	if rec != nil {
-		logPath = rec.LogPath
+	if _, log := flowCheckResult(st); log != "" {
+		logPath = chainSeedInput(rt, c, log)
 	}
 	return workflow.RenderShipped("repair", workflow.SeedView{
 		Name:        c.Builder,

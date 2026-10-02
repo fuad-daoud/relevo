@@ -125,6 +125,14 @@ func chainPullMembers(rt Runtime, c db.ChainRow, view remote.ChainView) (db.Chai
 		if err != nil {
 			return err
 		}
+		// A member the server added gets a chain_member row beside its binding,
+		// so the state reads and the end verbs that walk chain_member see it.
+		// The existing rows set the next sequence.
+		existing, err := tx.ChainMembers(cur.Name)
+		if err != nil {
+			return err
+		}
+		var added []db.ChainMemberRow
 		changed := false
 		for _, mv := range view.Members {
 			if mv.Part == "" || mv.Name == "" || chainMemberName(cur, mv.Part) == mv.Name {
@@ -147,11 +155,19 @@ func chainPullMembers(rt Runtime, c db.ChainRow, view remote.ChainView) (db.Chai
 				if err := tx.Save(nb); err != nil {
 					return err
 				}
+				added = append(added, db.ChainMemberRow{
+					Binding: nb.Name, Actor: nb.Role, Seq: len(existing) + len(added),
+				})
 			} else if lerr != nil {
 				return lerr
 			}
 			setChainMemberColumn(&cur, mv.Part, mv.Name)
 			changed = true
+		}
+		if len(added) > 0 {
+			if err := tx.ChainMembersPut(cur.Name, added); err != nil {
+				return err
+			}
 		}
 		if changed {
 			cur.UpdatedAt = rt.Now().UTC()

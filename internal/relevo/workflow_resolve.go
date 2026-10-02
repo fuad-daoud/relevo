@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,7 +80,11 @@ func EmbedFileSeeds(def workflow.Definition, dir string) (workflow.Definition, e
 }
 
 // readSeedFile reads one seed file below dir, refusing an empty, absolute or
-// escaping path before it touches the disk.
+// escaping path, a parent directory that resolves outside dir through a symlink,
+// and a target that is not a regular file. The Lstat is the refusal -- a symlink
+// is never a regular file -- and O_NOFOLLOW is the race backstop behind it, so a
+// link swapped in after the check cannot be followed. It mirrors the store's own
+// DiskRegularFile rule, because a workflow file is human-supplied input.
 func readSeedFile(dir, rel string) (string, error) {
 	if rel == "" {
 		return "", refuse("seed file: names no path")
@@ -92,9 +97,43 @@ func readSeedFile(dir, rel string) (string, error) {
 	if err != nil || within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
 		return "", refuse("seed file %q escapes the workflow's directory", rel)
 	}
-	data, err := os.ReadFile(full)
+	if err := refuseSymlinkedDir(dir, filepath.Dir(full), rel); err != nil {
+		return "", err
+	}
+	fi, err := os.Lstat(full)
+	if err != nil {
+		return "", err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", refuse("seed file %q is not a regular file", rel)
+	}
+	f, err := os.OpenFile(full, os.O_RDONLY|oNoFollow, 0)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// refuseSymlinkedDir refuses a seed whose parent directory resolves outside dir
+// once every symlink in the path is followed: a workflow may name files beside
+// itself, never a path that leaves the directory by a link.
+func refuseSymlinkedDir(dir, parent, rel string) error {
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return refuse("seed file %q: %v", rel, err)
+	}
+	resolvedParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return err
+	}
+	within, err := filepath.Rel(resolvedDir, resolvedParent)
+	if err != nil || within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
+		return refuse("seed file %q resolves outside the workflow's directory", rel)
+	}
+	return nil
 }

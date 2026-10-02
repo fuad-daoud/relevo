@@ -201,3 +201,42 @@ func writeGapReaderOutput(t *testing.T, body []byte) string {
 	}
 	return path
 }
+
+// flowDiffSeedWorkflow is a workflow whose second step's seed names the closed
+// build round's diff, so a wrong artifact key would render the next round's.
+const flowDiffSeedWorkflow = `name: diffseed
+inputs: { plans: required }
+start: plans
+steps:
+  plans: { for-each: plans, on: { next: build, empty: done } }
+  build: { run: builder, seed: "{{plans.current}}", on: { done: use } }
+  use: { run: assistant, seed: "the diff: {{build.diff}}", on: { verdict=pass: done, verdict=changes: done } }
+`
+
+// TestWorkflowCloseKeysTheClosedRoundsDiff pins the artifact's round: a build
+// close has already advanced the binding to the next round, so the diff artifact
+// it keys must be the round that closed. A custom workflow whose next seed names
+// {{build.diff}} then resolves to that closed round's diff, not a path for a
+// round that never captured one.
+func TestWorkflowCloseKeysTheClosedRoundsDiff(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	chainPlanDiffFixtures(fg)
+	startFlowChain(t, rt, flowDiffSeedWorkflow)
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	key := rt.Store.DiffPath("shop", 1)
+	copyPath, ok := rt.Store.ChainInputPath("shop", key)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", key)
+	}
+	assistant := chainBinding(t, rt, "shop-assistant")
+	prompt, err := rt.Store.ReadFile(rt.Store.PromptPath("shop-assistant", assistant.Round))
+	if err != nil {
+		t.Fatalf("read the use seed: %v", err)
+	}
+	if want := "the diff: " + copyPath; !strings.Contains(string(prompt), want) {
+		t.Errorf("the use seed does not name the closed round's diff copy %q:\n%s", want, prompt)
+	}
+}
