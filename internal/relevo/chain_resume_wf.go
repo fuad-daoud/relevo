@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strconv"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -243,6 +244,12 @@ func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptio
 // event through the same close path a live close uses, reading the round's
 // stored report entry and its own stream. No newer round means no event, and
 // the resume re-runs the step.
+//
+// A newer round whose report file is not on disk routes nothing either: a stop
+// close records the round as stopped without a report, so that round is already
+// closed as stopped and there is no body to review. Such a round leaves no event
+// and the resume re-runs the step; only a store failure other than the missing
+// report is an error.
 func chainResumeClosed(rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.State) (*workflow.Event, error) {
 	if st.Awaiting.Member == "" || st.Awaiting.Round <= 0 {
 		return nil, nil
@@ -260,6 +267,9 @@ func chainResumeClosed(rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.Stat
 		return nil, nil
 	}
 	body, err := rt.Store.ReadFile(entry.Path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -883,6 +885,93 @@ func TestChainResumeClosesADeadMemberRound(t *testing.T) {
 	if row.Status != string(chain.StatusRunning) || row.AwaitingMember != chain.MemberReviewer {
 		t.Errorf("chain row = %s awaiting %s, want running awaiting reviewer", row.Status, row.AwaitingMember)
 	}
+}
+
+// TestChainResumeOverAReportlessNewerRoundClosesStoppedAndReRuns pins the
+// reportless close: a newer round on the awaited member whose report entry
+// exists but whose report file was never written -- a stop close writes exactly
+// that -- must not reach the resume as a bare store error. The resume has no
+// body to route on, so it closes the round as stopped and re-runs the halted
+// step rather than answering internal.
+func TestChainResumeOverAReportlessNewerRoundClosesStoppedAndReRuns(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+	chainBuilderClose(t, rt, "shop", chainHaltedBody("stuck"))
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+
+	// A manual round sent while the chain was down, then stopped: a stop close
+	// records the round as closed without a report, so the round has a report
+	// entry and no report file.
+	if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+		t.Fatalf("manual Send to the builder: %v", err)
+	}
+	if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
+		t.Fatalf("Stop the manual round: %v", err)
+	}
+	manual := chainBinding(t, rt, "shop").Round - 1
+	assertStopCloseOnRound(t, rt, "shop", manual)
+
+	res, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	if err != nil {
+		t.Fatalf("ChainResume over a reportless round: %v", err)
+	}
+
+	// The step is re-run, not reviewed: there was no report to review, so the
+	// chain hands the builder a fresh round of its own step.
+	row := chainStoredRow(t, rt, "shop")
+	builder := chainBinding(t, rt, "shop")
+	if row.Status != string(chain.StatusRunning) || row.Step != string(chain.StepBuilding) {
+		t.Errorf("chain = status %q step %q, want running/building: a reportless round is re-run, not reviewed", row.Status, row.Step)
+	}
+	if builder.Round <= manual || row.AwaitingRound != builder.Round {
+		t.Errorf("builder round = %d, chain awaits %d, want a fresh round after %d", builder.Round, row.AwaitingRound, manual)
+	}
+	if !store.RoundOpen(chainLog(t, rt, "shop"), builder.Round) {
+		t.Errorf("the builder's round %d must be open: the resume re-runs the step", builder.Round)
+	}
+	if res.Chain.Status != string(chain.StatusRunning) {
+		t.Errorf("result chain = %+v, want the resumed row", res.Chain)
+	}
+	assertStopCloseOnRound(t, rt, "shop", manual)
+}
+
+// assertStopCloseOnRound pins that the given round was closed the way a stop
+// closes one -- a report entry noting no report was written, an unstructured
+// outcome and the stop entry beside it -- and returns the report entry's path,
+// which is on no disk.
+func assertStopCloseOnRound(t *testing.T, rt Runtime, name string, round int) string {
+	t.Helper()
+
+	var close store.LogEntry
+	stopped := false
+	for _, e := range chainLog(t, rt, name) {
+		switch {
+		case e.Direction == store.DirToMasterMind && e.Kind == store.KindReport && e.Round == round:
+			close = e
+		case e.Direction == store.DirToMasterMind && e.Kind == store.KindStop && e.Round == round:
+			stopped = true
+		}
+	}
+	if close.Path == "" {
+		t.Fatalf("%s round %d has no report entry", name, round)
+	}
+	if !strings.Contains(close.Note, "stopped") || !strings.Contains(close.Note, "noreport") {
+		t.Errorf("round %d close note = %q, want the stop close's stopped/noreport", round, close.Note)
+	}
+	if close.Outcome != reporttail.OutcomeUnstructured {
+		t.Errorf("round %d close outcome = %q, want %q: a stop close reports nothing", round, close.Outcome, reporttail.OutcomeUnstructured)
+	}
+	if !stopped {
+		t.Errorf("round %d has no stop entry: its close was not a stop close", round)
+	}
+	if _, err := os.Stat(close.Path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the report file %s = %v, want it absent: this round is reportless", close.Path, err)
+	}
+	return close.Path
 }
 
 // assertResumeReSendsTheStagedPrompt stops on a chain awaiting the builder on
