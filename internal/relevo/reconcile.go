@@ -208,7 +208,14 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 // rewritten by other steps of the same tick, which is what made every earlier
 // State-keyed guard log once per poll instead of once. Per round is also the
 // behaviour a human wants: one log line per round that goes wrong.
-func haltBinding(_ context.Context, rt Runtime, b store.Binding, message string) (store.Binding, error) {
+//
+// The same key decides the queued entry: setting the state word and nothing
+// more left a MasterMind with no push route never hearing about the halt.
+// haltBinding therefore needs the caller's tx to write that entry, which is
+// why every halt site threads one through -- the entry has to land in the same
+// critical section as the halt itself, or a crash between them leaves a halted
+// binding the log never mentioned.
+func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, message string) (store.Binding, error) {
 	text := strings.TrimPrefix(message, b.Name+": ")
 	if b.Halt != text || b.HaltAt.IsZero() {
 		b.HaltAt = rt.Now().UTC()
@@ -219,10 +226,120 @@ func haltBinding(_ context.Context, rt Runtime, b store.Binding, message string)
 		slog.Info("binding halted", "binding", b.Name, "round", b.Round, "reason", message)
 
 		b.HaltNotifiedRound = b.Round
+
+		// Queued after the key is stamped, not before: the stamp is the dedup,
+		// so an entry written and then re-entered would queue twice.
+		if err := queueHalt(ctx, rt, tx, b, text); err != nil {
+			return b, err
+		}
 	}
 
 	b.State = store.StateNeedsYou
 
+	return b, nil
+}
+
+// queueHalt writes the one to_planner entry a halt owes the MasterMind for its
+// round, and is the whole of the halt notification: payload plus a pointer to
+// the verb that resolves it, no file.
+//
+// The payload is the halt reason as `b.Halt` records it -- the name-stripped
+// text, which is also the line view.WaitingOn shows a human -- followed by the
+// same `relevo status --name <binding>` pointer Waiting.Hint carries, so the
+// reader of the entry and the reader of the waiting line are pointed at one
+// place.
+//
+// Path is empty on purpose: a halt wrote no artifact, and pointing at a file
+// that does not exist would send the MasterMind to read nothing. That also
+// makes PushText return the payload whole -- the push expansion admits only
+// the report, findings and edge kinds -- so there is no truncation pointer to
+// render.
+//
+// The caller owns the dedup: this queues unconditionally, and haltBinding is
+// what gates it on HaltNotifiedRound, so the key that keeps a second halt of
+// the same round from repeating an entry is the key that keeps it from
+// repeating the log line.
+func queueHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string) error {
+	if tx == nil {
+		// A caller with no transaction cannot queue. Refusing loudly would
+		// fail the whole tick over a notification, so the halt stands and the
+		// state word is still set; the entry is lost, which is the old
+		// behaviour rather than a broken one.
+		slog.Warn("halt not queued: no transaction", "binding", b.Name, "round", b.Round)
+		return nil
+	}
+
+	return delivery.Queue(ctx, deliveryDeps(rt), tx, b.Name, store.LogEntry{
+		TS:        rt.Now().UTC(),
+		Round:     b.Round,
+		Direction: store.DirToMasterMind,
+		Kind:      store.KindHalt,
+		Note:      text,
+		Payload:   fmt.Sprintf("%s. %s", strings.TrimSuffix(text, "."), haltPointer(b.Name)),
+	})
+}
+
+// haltAndSettle is haltBinding plus the delivery attempt, and it is what every
+// halt path that ENDS a reconcile tick calls.
+//
+// A halt path returns straight out of the tick. That is harmless as long as a
+// halt writes nothing, and it is not any more: the halt queues an entry, and a
+// tick that returns without a delivery attempt leaves that entry pending with
+// nothing scheduled to take it. The halted binding is reconciled again on the
+// next tick, so the entry is not lost forever -- but "eventually, if the next
+// tick happens to halt again" is not a notification. So the halt path attempts
+// delivery itself, through the same route every other payload takes.
+//
+// It is safe where the tick already delivered: DeliverPending on a binding with
+// nothing pending returns Empty without touching the log, so calling this ahead
+// of a later deliverAndSettle is a no-op in that case.
+//
+// queueReport's cap and scope halts deliberately do not come through here.
+// They sit inside a round close, and the close's own caller delivers
+// immediately afterwards; settling inside queueReport would deliver the round's
+// report from the middle of its own close, before the chain bookkeeping below
+// the halt has run.
+func haltAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, message string) (store.Binding, error) {
+	next, err := haltBinding(ctx, rt, tx, b, message)
+	if err != nil {
+		return next, err
+	}
+	return deliverAndSettle(ctx, rt, tx, next)
+}
+
+// haltPointer is the verb that resolves a halt: the same one view.WaitingOn
+// hands a human in Waiting.Hint, named here so the queue needs no import of
+// view.
+func haltPointer(name string) string {
+	return "relevo status --name " + name
+}
+
+// queueBrokenHalt is the broken-binding half of queueHalt. A binding that is
+// StateBroken and not switchable is waiting on a human, exactly as a halted one
+// is, so it owes the same entry -- under the same per-round key, because a
+// broken binding's Halt is empty and it never passes through haltBinding to
+// stamp one.
+//
+// switchable mirrors view.WaitingOn's own test, and that is the whole point:
+// WaitingOn answers ok=false for a switchable broken binding because the
+// daemon is about to fix it itself. Queuing for that binding would notify the
+// MasterMind about a fault that resolves itself. Duplicated here rather than
+// exported for the same reason view carries its own copy.
+//
+// It returns the binding because the dedup stamp is part of the answer: the
+// caller saves what comes back, and the next tick must see the same
+// HaltNotifiedRound key haltBinding uses for its own log line.
+func queueBrokenHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string) (store.Binding, error) {
+	if b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero() {
+		return b, nil
+	}
+	if b.HaltNotifiedRound == b.Round {
+		return b, nil
+	}
+	if err := queueHalt(ctx, rt, tx, b, reason); err != nil {
+		return b, err
+	}
+	b.HaltNotifiedRound = b.Round
 	return b, nil
 }
 
@@ -255,7 +372,7 @@ func checkRoundTimeout(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 	}
 
-	next, err := haltBinding(ctx, rt, b,
+	next, err := haltAndSettle(ctx, rt, tx, b,
 		fmt.Sprintf("%s: round %d has run past %s", b.Name, b.Round, budget))
 
 	return next, true, err
@@ -723,7 +840,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// is deleted: sealRounds holds the round back until the cap is raised.
 	if b.Shape == store.ShapeReader {
 		if over, total := artifactCapExceeded(rt.Store, b, closedRound, rt.Policy.ArtifactMaxBytes()); over {
-			b, _ = haltBinding(ctx, rt, b, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
+			b, _ = haltBinding(ctx, rt, tx, b, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
 		}
 	}
 
@@ -731,7 +848,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// cap does: after the round has advanced, naming the offending file
 	// (#801).
 	if verdict.Refused {
-		b, _ = haltBinding(ctx, rt, b, scopeHaltText(b, closedRound, verdict))
+		b, _ = haltBinding(ctx, rt, tx, b, scopeHaltText(b, closedRound, verdict))
 	}
 
 	// The round has advanced, so the chain may now move: the close is mapped

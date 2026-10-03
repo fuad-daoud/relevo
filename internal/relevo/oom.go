@@ -88,7 +88,7 @@ func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	b.StalledSince = time.Time{}
 
 	if b.RoundOOMKills >= oomMaxKills {
-		return haltBinding(ctx, rt, b, fmt.Sprintf(
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 			"%s: builder %s %d times this round; free memory, then relevo send --name %s --file <plan> again",
 			b.Name, oomWords(peak), b.RoundOOMKills, b.Name))
 	}

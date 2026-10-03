@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -293,6 +294,65 @@ func TestRelevoVerbsWaitNeedsYouIsANormalResult(t *testing.T) {
 	want := "stalled round 1 needs-you\n" + halt
 	if text != want {
 		t.Errorf("wait text = %q, want %q", text, want)
+	}
+}
+
+// TestRelevoVerbsWaitPullsAHaltEntryOnce pins the pairing a halt's queued entry
+// buys: the first wait carries the halt text as tool output, and the second
+// falls back to the needs-you outcome line alone.
+//
+// Both halves matter. With nothing queued the first wait prints res.Line and
+// the second prints res.Line too -- two identical results, and a mastermind
+// polling in a loop cannot tell a first halt from a repeat. The entry is what
+// makes the first call carry the payload and the second carry nothing, so both
+// are asserted rather than either.
+func TestRelevoVerbsWaitPullsAHaltEntryOnce(t *testing.T) {
+	s := store.New(t.TempDir())
+	now := func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) }
+	halt := "builder exited (code 1) without a report"
+	saveVerbBinding(t, s, store.Binding{
+		Name: "halted", CWD: "/repo-halted", MasterMindID: mcpTestMasterMindA,
+		Round: 1, State: store.StateNeedsYou,
+		Halt: halt, HaltAt: now(),
+	})
+	if err := s.AppendLog("halted", store.LogEntry{
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	// The entry as haltBinding writes it: queued through delivery.Queue, so the
+	// origin line and the unconfirmed state are the real producer's, not a
+	// hand-written approximation of them.
+	deps := delivery.Deps{Store: s, Now: now}
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return delivery.Queue(context.Background(), deps, tx, "halted", store.LogEntry{
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindHalt,
+			Note:    halt,
+			Payload: halt + ". relevo status --name halted",
+		})
+	}); err != nil {
+		t.Fatalf("Queue: %v", err)
+	}
+
+	v := waitVerbsFor(s, now)
+
+	first := waitText(t, func() (any, error) { return v.Wait(context.Background(), "", WaitArgs{Name: "halted"}) })
+	if !strings.HasPrefix(first, "halted round 1 needs-you\n") {
+		t.Errorf("wait #1 = %q, want it to open with the needs-you outcome line", first)
+	}
+	if !strings.Contains(first, halt) {
+		t.Errorf("wait #1 = %q, want the queued halt text", first)
+	}
+	if !strings.Contains(first, "relevo status --name halted") {
+		t.Errorf("wait #1 = %q, want the halt's pointer too", first)
+	}
+
+	// Second wait: the entry was confirmed by the first, so there is nothing
+	// left to pull and formatWaitResult falls back to res.Line.
+	second := waitText(t, func() (any, error) { return v.Wait(context.Background(), "", WaitArgs{Name: "halted"}) })
+	if second != "halted round 1 needs-you\n"+halt {
+		t.Errorf("wait #2 = %q, want the needs-you outcome line only", second)
 	}
 }
 
