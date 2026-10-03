@@ -59,6 +59,8 @@ type ClosedRoundView struct {
 	ReportOutcome string        `json:"report_outcome,omitempty"`
 	GateResult    string        `json:"gate_result,omitempty"`
 	Stopped       string        `json:"stopped,omitempty"`
+	ReportNote    string        `json:"report_note,omitempty"`
+	Switches      []string      `json:"switches,omitempty"`
 	DiffNote      string        `json:"diff_note,omitempty"`
 	DiffCommits   int           `json:"diff_commits,omitempty"`
 	DiffTree      string        `json:"diff_tree,omitempty"`

@@ -305,12 +305,27 @@ func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool, c
 		payload, note = stopPayload(view.Stopped, name, n, " on "+server, haveReport, clause, b.Shape)
 	} else {
 		payload = fmt.Sprintf("The runner finished round %d on %s. %s", n, server, clause)
+		// The server's own report note is what says the round closed without
+		// its completion marker, and this note is the only place the client's
+		// log records that. Without it an unmarked close reads as marked, and
+		// Wait certifies a report nothing confirmed.
+		note = view.ReportNote
 	}
 	if line := capture.DiffLineFromNote(view.DiffNote, view.DiffCommits, view.DiffTree, b.Branch); line != "" {
 		payload = payload + "\n" + line
 	}
 	if line := capture.PathsLineFromNote(view.DiffNote); line != "" {
 		payload = payload + "\n" + line
+	}
+	// The switches the round took on the server, one line each, after the diff
+	// and before the usage -- the same place and the same rendering a local
+	// close puts them. The client logs a switch only when a poll happens to
+	// observe a candidate delta, so these are the round's own history: every
+	// rotation and every leg of an A-B-A, which that one line can never be.
+	for _, s := range view.Switches {
+		if line := switchLine(s); line != "" {
+			payload = payload + "\n" + line
+		}
 	}
 	if view.DirtyCommit != "" {
 		note = joinNotes(note, fmt.Sprintf("uncommitted work at refs/relevo/%s/round-%d", name, n))
