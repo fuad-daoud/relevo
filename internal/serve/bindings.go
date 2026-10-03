@@ -102,10 +102,10 @@ func parseCreateRequest(r *http.Request) (remote.CreateBindingRequest, string) {
 	return req, ""
 }
 
+// handleCreateBinding takes no server-wide lock: its own owner's store lock and
+// the git work below are the only exclusion it needs, and holding s.mu across
+// either would block every other owner's poll.
 func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	req, bad := parseCreateRequest(r)
 	if bad != "" {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, bad)
@@ -118,6 +118,10 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
 		return
 	}
+	// A cheap unlocked precheck, so the common duplicate create is refused
+	// before any git work. The authoritative check-then-save is the one under
+	// the owner's store lock below; that pair is what has to be atomic now that
+	// s.mu no longer spans it.
 	if _, err := rt.Store.Load(req.Name); err == nil {
 		writeErr(w, http.StatusConflict, remote.CodeInvalid, "binding exists")
 		return
@@ -137,8 +141,22 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := rt.Store.Save(b); err != nil {
+	// Check and save under the owner's own store lock, so two creates of one
+	// name cannot both pass: one 409s on the row the other just wrote. The lock
+	// is per-owner, so this never blocks a different owner's request.
+	exists := false
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if _, err := tx.Load(req.Name); err == nil {
+			exists = true
+			return nil
+		}
+		return tx.Save(b)
+	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
+		return
+	}
+	if exists {
+		writeErr(w, http.StatusConflict, remote.CodeInvalid, "binding exists")
 		return
 	}
 	if reloaded, err := rt.Store.Load(req.Name); err == nil {
@@ -272,9 +290,6 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 }
 
 func (s *Server) handleListBindings(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	caller := callerOf(r)
 	rt, err := s.runtime(caller)
 	if err != nil {
@@ -305,9 +320,6 @@ func (s *Server) handleGetBinding(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
 	b, rt, view, ok := func() (store.Binding, relevo.Runtime, remote.BindingView, bool) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
 		b, rt, err := s.loadBinding(caller, name)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
@@ -322,12 +334,30 @@ func (s *Server) handleGetBinding(w http.ResponseWriter, r *http.Request) {
 			return store.Binding{}, relevo.Runtime{}, remote.BindingView{}, false
 		}
 
+		// The LastSeen bump is a read-modify-write, so it runs under this
+		// owner's own store lock: a concurrent poll or a tick reconcile of the
+		// same owner cannot land a write between the read and the save. The lock
+		// is per-owner, so another owner's poll is never blocked by it.
 		now := s.cfg.Now()
-		if b.Serve == nil {
-			b.Serve = &store.ServeFacts{}
+		if err := rt.Store.WithLock(func(tx *store.Tx) error {
+			fresh, err := tx.Load(name)
+			if err != nil {
+				return err
+			}
+			if fresh.Serve == nil {
+				fresh.Serve = &store.ServeFacts{}
+			}
+			fresh.Serve.LastSeen = now
+			if err := tx.Save(fresh); err != nil {
+				return err
+			}
+			b = fresh
+			return nil
+		}); err != nil {
+			// The bump is best-effort bookkeeping: the poll still answers from
+			// the binding it loaded rather than failing a client's read.
+			slog.Warn("record last seen failed", "binding", name, "err", err)
 		}
-		b.Serve.LastSeen = now
-		_ = rt.Store.Save(b)
 
 		entries, _ := rt.Store.ReadLog(name)
 		view := s.servedView(rt, b, entries)
@@ -358,9 +388,6 @@ func (s *Server) handleGetBinding(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	caller := callerOf(r)
 	name := r.PathValue("name")
 
@@ -420,9 +447,6 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	caller := callerOf(r)
 	name := r.PathValue("name")
 
@@ -457,9 +481,6 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 // handleStop ends the binding's open round, leaving the binding in place: an
 // idle or closed one is 409 nothing_to_stop.
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	caller := callerOf(r)
 	name := r.PathValue("name")
 
@@ -501,9 +522,6 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	caller := callerOf(r)
 	name := r.PathValue("name")
 
@@ -549,9 +567,6 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 // is server-wide, so there is no /v1/bindings/{name}/available route.
 // relevo.Available decides what the subject names.
 func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	caller := callerOf(r)
 	rt, err := s.runtime(caller)
 	if err != nil {

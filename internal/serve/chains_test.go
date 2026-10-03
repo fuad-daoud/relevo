@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -139,6 +140,83 @@ func chainRepoPath(t *testing.T, env *testEnv) string {
 		t.Fatal(err)
 	}
 	return filepath.Join(repoRoot, env.repoID+".git")
+}
+
+// postResult is one concurrent request's outcome: its status, its body, and the
+// error when it never got a usable response.
+type postResult struct {
+	status int
+	body   []byte
+	err    error
+}
+
+// signedPost builds a ready-to-fire signed POST. It runs on the test goroutine
+// because signedRequest may t.Fatalf, which is only legal there; the request is
+// then handed to fireConcurrently.
+func signedPost(t *testing.T, ts *httptest.Server, kp remote.Keypair, path string, body []byte, contentType string) *http.Request {
+	t.Helper()
+	req := signedRequest(t, kp, "POST", path, body)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.URL.Scheme = "http"
+	req.URL.Host = strings.TrimPrefix(ts.URL, "http://")
+	return req
+}
+
+// fireConcurrently issues every request at once and returns their outcomes in
+// the order given. The client carries a timeout, so a request that blocks fails
+// its own assertion rather than hanging the suite.
+func fireConcurrently(reqs ...*http.Request) []postResult {
+	out := make([]postResult, len(reqs))
+	done := make(chan struct{}, len(reqs))
+	client := &http.Client{Timeout: 30 * time.Second}
+	start := make(chan struct{})
+	for i, req := range reqs {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			<-start
+			resp, err := client.Do(req)
+			if err != nil {
+				out[i] = postResult{err: err}
+				return
+			}
+			body, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			out[i] = postResult{status: resp.StatusCode, body: body, err: readErr}
+		}()
+	}
+	close(start)
+	for range reqs {
+		<-done
+	}
+	return out
+}
+
+// requireCreatedAndRetried asserts the duplicate-request shape: across the
+// concurrent requests, exactly one 201 and exactly one 200 retry. It returns
+// both bodies so a caller can compare the created view against the retried one.
+func requireCreatedAndRetried(t *testing.T, label string, results []postResult) (created, retried []byte) {
+	t.Helper()
+	var createdBodies, retriedBodies [][]byte
+	for _, res := range results {
+		if res.err != nil {
+			t.Fatalf("%s: a concurrent request failed: %v", label, res.err)
+		}
+		switch res.status {
+		case http.StatusCreated:
+			createdBodies = append(createdBodies, res.body)
+		case http.StatusOK:
+			retriedBodies = append(retriedBodies, res.body)
+		default:
+			t.Fatalf("%s: a concurrent request answered %d; body: %s", label, res.status, string(res.body))
+		}
+	}
+	if len(createdBodies) != 1 || len(retriedBodies) != 1 {
+		t.Fatalf("%s: concurrent requests = %d created + %d retried, want 1 created + 1 retried",
+			label, len(createdBodies), len(retriedBodies))
+	}
+	return createdBodies[0], retriedBodies[0]
 }
 
 func TestCreateChainRunsPlanOneOnTheServer(t *testing.T) {
@@ -410,6 +488,110 @@ func TestCreateChainRetryIsIdempotentOnlyWhenIdentical(t *testing.T) {
 	requireStatus(t, resp, body, http.StatusConflict)
 	if errBody := decodeErrorBody(t, body); errBody.Code != remote.CodeInvalid || errBody.Message != "chain exists" {
 		t.Fatalf("error = (%q, %q), want (invalid, chain exists)", errBody.Code, errBody.Message)
+	}
+}
+
+// TestDuplicateChainCreateIsAtomicPerOwner pins the exclusion chainFinishCreate
+// takes: two identical concurrent creates for one owner yield one 201 and one
+// 200 retry, the chain row the winner wrote is the one that survives, and the
+// branch and worktree are cut once.
+//
+// Without the section both requests clear the post-absorb re-check while the
+// chain does not exist yet and both go on to cut the branch and create the row,
+// so the second create answers 201 as well.
+func TestDuplicateChainCreateIsAtomicPerOwner(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	req := chainWireRequest("shop", env.repoID, env.headSHA)
+	bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+	form, ct := makeChainForm(t, req, bundle)
+
+	results := fireConcurrently(
+		signedPost(t, env.ts, env.kp, "/v1/chains", form, ct),
+		signedPost(t, env.ts, env.kp, "/v1/chains", form, ct),
+	)
+	createdBody, retriedBody := requireCreatedAndRetried(t, "concurrent chain create", results)
+
+	created := decodeChainView(t, createdBody)
+	retried := decodeChainView(t, retriedBody)
+	if retried.Name != created.Name || retried.Status != created.Status || retried.Base != created.Base {
+		t.Errorf("retried view = %+v, want the created view %+v", retried, created)
+	}
+
+	// The row the winner wrote is intact: the store still holds exactly one
+	// chain and one binding per part, and the builder's worktree is the one the
+	// winner checked out rather than a second cut over it.
+	rt := env.runtime(t)
+	row, err := rt.Store.Chain("shop")
+	if err != nil {
+		t.Fatalf("chain row after the pair: %v", err)
+	}
+	if row.Status != created.Status {
+		t.Errorf("stored chain status = %q, want the created view's %q", row.Status, created.Status)
+	}
+	bindings, err := rt.Store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings) != 3 {
+		t.Errorf("bindings = %d, want 3 (one per member; a second create would add three more)", len(bindings))
+	}
+	builder, err := rt.Store.Load("shop")
+	if err != nil {
+		t.Fatalf("load builder: %v", err)
+	}
+	if _, statErr := os.Stat(builder.Worktree); statErr != nil {
+		t.Errorf("builder worktree missing after the pair: %v", statErr)
+	}
+	head, ok, err := env.gitClient.RefSHA(ctx, builder.Worktree, "HEAD")
+	if err != nil || !ok || head != env.headSHA {
+		t.Errorf("worktree HEAD = (%q, %v, %v), want %q", head, ok, err, env.headSHA)
+	}
+	branch, ok, err := env.gitClient.RefSHA(ctx, chainRepoPath(t, env), "refs/heads/relevo/shop")
+	if err != nil || !ok || branch != env.headSHA {
+		t.Errorf("branch = (%q, %v, %v), want %q", branch, ok, err, env.headSHA)
+	}
+}
+
+// TestDuplicateChainCreateDoesNotBlockAnotherOwner pins the width of that
+// section: it is one owner's, so a second owner creating its own chain of the
+// same name is never waited on by the first owner's in-flight create.
+func TestDuplicateChainCreateDoesNotBlockAnotherOwner(t *testing.T) {
+	env := setupTestEnv(t)
+	ownerB := addOwner(t, env, "bob")
+
+	reqA := chainWireRequest("shop", env.repoID, env.headSHA)
+	formA, ctA := makeChainForm(t, reqA, chainBundle(t, env, env.clientDir, env.headSHA, "shop"))
+	reqB := chainWireRequest("shop", ownerB.repoID, ownerB.headSHA)
+	formB, ctB := makeChainForm(t, reqB, chainBundle(t, env, ownerB.clientDir, ownerB.headSHA, "shop"))
+
+	results := fireConcurrently(
+		signedPost(t, env.ts, env.kp, "/v1/chains", formA, ctA),
+		signedPost(t, env.ts, ownerB.kp, "/v1/chains", formB, ctB),
+	)
+	for i, res := range results {
+		if res.err != nil {
+			t.Fatalf("concurrent cross-owner create %d failed: %v", i, res.err)
+		}
+		if res.status != http.StatusCreated {
+			t.Fatalf("cross-owner create %d answered %d; body: %s", i, res.status, string(res.body))
+		}
+	}
+
+	// Each owner holds its own chain of the same name, over its own bare repo.
+	rtA := testRuntime(t, env.srv, env.id)
+	rowA, err := rtA.Store.Chain("shop")
+	if err != nil {
+		t.Fatalf("A chain row: %v", err)
+	}
+	rtB := testRuntime(t, env.srv, ownerB.id)
+	rowB, err := rtB.Store.Chain("shop")
+	if err != nil {
+		t.Fatalf("B chain row: %v", err)
+	}
+	if rowA.Repo == rowB.Repo {
+		t.Errorf("both owners' chains name the same repo %q; the sections are not per-owner", rowA.Repo)
 	}
 }
 

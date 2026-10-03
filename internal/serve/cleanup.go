@@ -166,8 +166,9 @@ func unusedRepos(repos []string, live []store.Binding) []string {
 	return unused
 }
 
-// pruneUnusedRepos deletes every bare repo no live binding references. The
-// caller holds s.mu.
+// pruneUnusedRepos deletes every bare repo no live binding references. It runs
+// under the tick's admitMu hold, so the live set it reads is the post-collect
+// one, and it takes each owner's own store lock in turn.
 func (s *Server) pruneUnusedRepos(ctx context.Context) int {
 	reposDir := filepath.Join(s.cfg.Root, "repos")
 	entries, err := os.ReadDir(reposDir)

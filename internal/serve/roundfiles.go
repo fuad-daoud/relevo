@@ -144,9 +144,6 @@ func writeLogHeaders(w http.ResponseWriter, data []byte, fromOffset int64, hasFr
 }
 
 func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	caller := callerOf(r)
 	name := r.PathValue("name")
 	b, rt, err := s.loadBinding(caller, name)
@@ -204,13 +201,10 @@ func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-
 	caller := callerOf(r)
 	name := r.PathValue("name")
 	b, rt, err := s.loadBinding(caller, name)
 	if err != nil {
-		s.mu.Unlock()
 		if errors.Is(err, store.ErrNotFound) {
 			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 			return
@@ -219,21 +213,18 @@ func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !Allowed(caller, "bundle", b) {
-		s.mu.Unlock()
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		return
 	}
 
 	n, err := strconv.Atoi(r.PathValue("n"))
 	if err != nil || b.Serve == nil || n != b.Serve.ClosedRound {
-		s.mu.Unlock()
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "round not closed")
 		return
 	}
 	if b.Branch == "" {
 		// A branchless member -- a chain reader sharing the builder's tree --
 		// has no branch to bundle.
-		s.mu.Unlock()
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "no branch")
 		return
 	}
@@ -244,8 +235,6 @@ func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {
 		refs = append(refs, fmt.Sprintf("refs/relevo/%s/round-%d", name, n))
 	}
 	since := r.URL.Query().Get("since")
-
-	s.mu.Unlock()
 
 	snap, err := rt.Transport.Snapshot(r.Context(), bare, refs, since)
 	if err != nil {
@@ -269,9 +258,6 @@ func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAckRound(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	caller := callerOf(r)
 	name := r.PathValue("name")
 	b, rt, err := s.loadBinding(caller, name)
