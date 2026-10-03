@@ -722,6 +722,136 @@ func seedCLIOpenMemberChain(t *testing.T, name string) {
 	}
 }
 
+// seedCLIReportlessRound writes a stopped chain whose awaited builder carries a
+// newer round closed without a report -- the shape a stop close leaves -- and
+// sits on a third round of its own that is still open. Store-only: the close and
+// the open round are log entries, so no harness and no process are involved.
+func seedCLIReportlessRound(t *testing.T, name string) {
+	t.Helper()
+
+	seedCLIChain(t, name, "stopped")
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	now := time.Now().UTC()
+	entries := []store.LogEntry{
+		{TS: now, Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{
+			TS: now, Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport,
+			Path: s.ReportPath(name, 2), Note: "noreport stopped", Outcome: "unstructured", Confirmed: true,
+		},
+		{TS: now, Round: 2, Direction: store.DirToMasterMind, Kind: store.KindStop, Note: "stopped/killed", Confirmed: true},
+		{TS: now, Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+	}
+	err = s.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load(name)
+		if err != nil {
+			return err
+		}
+		b.Round = 3
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if err := tx.AppendLog(name, e); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("seed reportless round on %s: %v", name, err)
+	}
+}
+
+// TestChainResumeReportlessRoundIsNotInternal pins the class at the CLI edge: a
+// newer round on the awaited member whose report file is not on disk is a round
+// a stop closed, and the resume must read it as no close at all rather than as
+// the store's own missing-file error. The refusal it reaches instead is the
+// builder's open round, which is a conflict naming the stop that ends it.
+// Store-only: both refusals precede the send, so nothing spawns and no harness
+// or network is reached.
+func TestChainResumeReportlessRoundIsNotInternal(t *testing.T) {
+	const name = "cliresumeless"
+	seedCLIReportlessRound(t, name)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"chain", "--resume", "--name", name})
+	})
+	ce := requireCLIError(t, err, codeConflict, "relevo stop "+name)
+	if strings.Contains(ce.message, "file does not exist") {
+		t.Errorf("message = %q, want the reportless close read as no close, not as a missing file", ce.message)
+	}
+}
+
+// TestStopOnAHaltedChainWithAnOpenMemberRoundIsNotNothingToStop pins the other
+// half at the CLI edge: the next command the conflict above names is the stop
+// that ends the round, and on a chain whose builder carries the chain's own name
+// that stop is the chain's own. It answers with the member's stop, not with
+// nothing to stop.
+func TestStopOnAHaltedChainWithAnOpenMemberRoundIsNotNothingToStop(t *testing.T) {
+	const name = "cliresumeless"
+	seedCLIReportlessRound(t, name)
+
+	out, _, err := captureOutput(t, func() error { return run([]string{"stop", "--name", name}) })
+	if err != nil {
+		t.Fatalf("stop on a chain with an open member round: %v", err)
+	}
+	if strings.Contains(string(out), "nothing to stop") {
+		t.Errorf("output = %q, want the member's stop", out)
+	}
+	root, rerr := store.DefaultRoot()
+	if rerr != nil {
+		t.Fatalf("DefaultRoot: %v", rerr)
+	}
+	entries, lerr := store.New(root).ReadLog(name)
+	if lerr != nil {
+		t.Fatalf("ReadLog %s: %v", name, lerr)
+	}
+	if store.RoundOpen(entries, 3) {
+		t.Errorf("the builder's round 3 is still open: `relevo stop <chain>` did not reach it")
+	}
+}
+
+// TestChainResumeWorkflowlessChainIsRefused pins the class at the CLI edge: a
+// row the engine's own conversion could not migrate is refused, naming the
+// reason on the row and the command that reads it. Never internal: the row is
+// the state a human can look at, not a failure inside relevo.
+func TestChainResumeWorkflowlessChainIsRefused(t *testing.T) {
+	const name = "cliresumenolegacy"
+	seedCLIChain(t, name, "halted")
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	err = s.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		c.WorkflowJSON = nil
+		c.StateJSON = nil
+		c.SettingsJSON = []byte("not json")
+		return tx.ChainPut(c)
+	})
+	if err != nil {
+		t.Fatalf("strip %s onto the legacy shape: %v", name, err)
+	}
+
+	_, _, err = captureOutput(t, func() error { return run([]string{"chain", "--resume", "--name", name}) })
+	ce := requireCLIError(t, err, codeRefused, "")
+	if !strings.Contains(ce.message, "carries no workflow") {
+		t.Errorf("message = %q, want it to name the missing workflow as its reason", ce.message)
+	}
+	if !strings.Contains(ce.message, "relevo status "+name) {
+		t.Errorf("message = %q, want it to name `relevo status %s` as the next step", ce.message, name)
+	}
+}
+
 // TestChainResumeOpenMemberRoundIsAConflict pins the class of a resume that
 // finds its member's round still open: a conflict naming `relevo stop <member>`
 // as the next command, not an internal failure.
