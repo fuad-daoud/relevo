@@ -165,17 +165,17 @@ func workflowStepLine(row relevo.GraphRow, sel bool, stepW int, cols []workflowC
 		style := mutedStyle
 		switch col.key {
 		case "kind":
-			text = row.Kind
+			text = sanitizeText(row.Kind)
 			if text == "" {
 				text, style = "—", faintStyle
 			}
 		case "actor":
-			text = row.Actors
+			text = sanitizeText(row.Actors)
 			if text == "" {
 				text, style = "—", faintStyle
 			}
 		case "edges":
-			text = row.EdgeText
+			text = sanitizeText(row.EdgeText)
 			if text == "" {
 				text, style = "—", faintStyle
 			} else {
@@ -232,7 +232,7 @@ func (v workflowView) Body(env Env, width, height int) string {
 		return v.sourceBody(env, width, height)
 	}
 	if v.graphErr != nil && !v.graphLoaded {
-		return strings.Join(statsCentered(v.graphErr.Error(), width, height), "\n")
+		return strings.Join(statsCentered(sanitizeText(v.graphErr.Error()), width, height), "\n")
 	}
 	if !v.graphLoaded {
 		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
@@ -255,7 +255,7 @@ func (v workflowView) Body(env Env, width, height int) string {
 // sourceBody is the scrolled source text, sized to the shell's body box.
 func (v workflowView) sourceBody(env Env, width, height int) string {
 	if v.sourceErr != nil && !v.sourceLoaded {
-		return strings.Join(statsCentered(v.sourceErr.Error(), width, height), "\n")
+		return strings.Join(statsCentered(sanitizeText(v.sourceErr.Error()), width, height), "\n")
 	}
 	if !v.sourceLoaded {
 		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")

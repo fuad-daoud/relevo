@@ -421,6 +421,63 @@ func workflowsFixtureCells() []string {
 	return out
 }
 
+// TestWorkflowsListDescriptionSanitizes pins Finding 4's list half: a
+// description parsed straight out of a supplied workflow document reaches the
+// row raw, with no sanitizer anywhere upstream of it.
+// Mutation: drop the sanitizeText call in workflowsDataLine.
+func TestWorkflowsListDescriptionSanitizes(t *testing.T) {
+	list := workflowsFixtureList()
+	// The description carries control bytes the way a hand-written document can:
+	// a quoted YAML scalar keeps a carriage return and an escape verbatim.
+	list[2].Description = "build once,\rthen check\x1b[2J"
+
+	m := goldenActionModel(t, 132, 34, &fakeActions{workflows: list}, view.Report{})
+	m = drain(t, m, execLine("workflows", m.env(), m.prefs))
+	body := stripANSI(m.View())
+
+	if !strings.Contains(body, "fix-first") {
+		t.Fatalf("the workflow row is not on screen, so nothing was pinned:\n%s", body)
+	}
+	assertNoControlBytes(t, "the workflows list", body)
+}
+
+// TestWorkflowGraphSanitizesSuppliedText pins Finding 4's graph half: a step's
+// kind, actors and on:-derived edge text all come from the supplied document,
+// and the two local read errors (graph and source) draw into the body too.
+// Mutation: drop the sanitizeText calls in view_workflow.go.
+func TestWorkflowGraphSanitizesSuppliedText(t *testing.T) {
+	graphs := workflowsFixtureGraphs()
+	for name := range graphs {
+		for i := range graphs[name] {
+			graphs[name][i].Kind = "run\ving"
+			graphs[name][i].Actors = "builder\ractor"
+			graphs[name][i].EdgeText = "on done \x1b[2J → check"
+		}
+	}
+	fa := &fakeActions{workflows: workflowsFixtureList(), graphs: graphs}
+
+	m := goldenActionModel(t, 132, 34, fa, view.Report{})
+	m = drain(t, m, execLine("workflows", m.env(), m.prefs))
+	m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	wv, ok := m.top().(workflowView)
+	if !ok {
+		t.Fatalf("enter did not push a workflow view: %T", m.top())
+	}
+	if !wv.graphLoaded || len(wv.rows) == 0 {
+		t.Fatalf("the graph must open loaded with rows: loaded=%v rows=%d", wv.graphLoaded, len(wv.rows))
+	}
+	assertNoControlBytes(t, "the workflow graph body", stripANSI(wv.Body(m.env(), 132, 20)))
+
+	// The same graph read failing is drawn into the body, so its message needs
+	// the same treatment.
+	errView := workflowView{graphErr: errors.New("read failed\r\a\033[2J")}
+	assertNoControlBytes(t, "the workflow graph error body", stripANSI(errView.Body(m.env(), 132, 20)))
+
+	srcView := workflowView{src: true, sourceErr: errors.New("read failed\r\a\033[2J")}
+	assertNoControlBytes(t, "the workflow source error body", stripANSI(srcView.Body(m.env(), 132, 20)))
+}
+
 // TestExpandHome pins the one path transformation the form applies before it
 // calls WorkflowAdd.
 func TestExpandHome(t *testing.T) {

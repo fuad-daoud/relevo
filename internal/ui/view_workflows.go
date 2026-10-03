@@ -162,7 +162,7 @@ func workflowsDataLine(w relevo.WorkflowSummary, sel bool, nameW int, cols []wor
 		case "origin":
 			text, style = workflowOriginText(w.Origin)
 		case "desc":
-			text = w.Description
+			text = sanitizeText(w.Description)
 			if text == "" {
 				text, style = "—", faintStyle
 			}

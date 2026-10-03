@@ -86,7 +86,7 @@ func (v chainTraceView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if v.err != nil && !v.loaded {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(statsCentered(sanitizeText(v.err.Error()), width, height), "\n")
 	}
 	if !v.loaded {
 		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")

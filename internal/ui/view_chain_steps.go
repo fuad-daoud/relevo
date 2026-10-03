@@ -90,18 +90,18 @@ func chainStepLine(s relevo.ChainStep, sel bool, stepW int, cols []chainCol, cw 
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
-	cells := []candCell{{text: pad(s.ID, stepW), style: nameStyle}}
+	cells := []candCell{{text: pad(sanitizeText(s.ID), stepW), style: nameStyle}}
 	for _, col := range cols {
 		text := ""
 		style := base
 		switch col.key {
 		case "kind":
-			text = s.Kind
+			text = sanitizeText(s.Kind)
 			if text == "" {
 				text, style = "—", faintStyle
 			}
 		case "actor":
-			text = s.Actor
+			text = sanitizeText(s.Actor)
 			if text == "" {
 				text, style = "—", faintStyle
 			}
@@ -113,7 +113,7 @@ func chainStepLine(s relevo.ChainStep, sel bool, stepW int, cols []chainCol, cw 
 				style = faintStyle
 			}
 		case "outcome":
-			text = s.LastOutcome
+			text = sanitizeText(s.LastOutcome)
 			if text == "" {
 				text, style = "—", faintStyle
 			}
@@ -206,7 +206,7 @@ func (v chainStepsView) Context(env Env) (string, string) {
 	left := "   " + statusStyle.Bold(true).Render(statusText)
 	right := ""
 	if entry.Step != "" {
-		right = mutedStyle.Render(entry.Step) + "   "
+		right = mutedStyle.Render(sanitizeText(entry.Step)) + "   "
 	} else {
 		right = mutedStyle.Render(pluralStep(len(entry.Steps))) + "   "
 	}

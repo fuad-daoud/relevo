@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -217,6 +218,96 @@ func TestChainTraceFromStepsLoads(t *testing.T) {
 	if body := stripANSI(tv.Body(m.env(), 132, 20)); strings.Contains(body, "loading") {
 		t.Errorf("trace body still reads loading after the read landed:\n%s", body)
 	}
+}
+
+// assertNoControlBytes fails when rendered carries a control byte sanitize.Text
+// is supposed to have replaced. lipgloss emits SGR runs of its own, so the
+// check is for the raw C0 bytes rather than for ESC, and the replacement rune
+// is checked separately so dropping the text cannot pass for making it inert.
+func assertNoControlBytes(t *testing.T, what, rendered string) {
+	t.Helper()
+	for _, r := range []rune{'\r', '\a', '\x1b', '\x0b', '\x0c'} {
+		if strings.ContainsRune(rendered, r) {
+			t.Errorf("%s still carries %q:\n%q", what, r, rendered)
+		}
+	}
+}
+
+// TestChainsViewSanitizesPeerFields pins Finding 1: a peer server's own
+// status, step and halt reason reach the chains table and its reason line, so
+// a status word the engine does not recognise (and therefore falls through the
+// chainStatusText switch) must render inert like any other.
+// Mutation: drop the three sanitizeText calls in view_chains.go.
+func TestChainsViewSanitizesPeerFields(t *testing.T) {
+	fa := &fakeActions{
+		chainsDoc: relevo.ChainsDoc{
+			Chains: []relevo.ChainEntry{
+				{
+					// A status word outside the four the switch knows, so the
+					// default branch draws it rather than a fixed word.
+					Name:      "hostile-chain",
+					Status:    "run\ning\x1b[2J",
+					Step:      "build\rstep",
+					Reason:    "reviewer said nobell",
+					PlanPos:   1,
+					PlanTotal: 1,
+					Where:     "server us-east",
+				},
+			},
+		},
+	}
+	m := goldenActionModel(t, 132, 34, fa, view.Report{})
+	m = drain(t, m, execLine("chains", m.env(), m.prefs))
+	body := stripANSI(m.View())
+
+	if !strings.Contains(body, "hostile-chain") {
+		t.Fatalf("the hostile chain is not on screen, so nothing was pinned:\n%s", body)
+	}
+	assertNoControlBytes(t, "the chains view", body)
+}
+
+// TestChainStepsViewSanitizesPeerFields pins the rest of Finding 1: a chain's
+// steps, their actor and outcome text and the steps context row are peer- and
+// model-influenced too.
+// Mutation: drop the sanitizeText calls in view_chain_steps.go.
+func TestChainStepsViewSanitizesPeerFields(t *testing.T) {
+	doc := chainsFixtureDoc()
+	for i := range doc.Chains {
+		if doc.Chains[i].Name != "feature-auth" {
+			continue
+		}
+		c := &doc.Chains[i]
+		c.Step = "review\rstep"
+		c.Reason = "haltedbell"
+		for j := range c.Steps {
+			s := &c.Steps[j]
+			s.ID = "build\x1b[2J"
+			s.Kind = "run\ving"
+			s.Actor = "builder\ractor"
+			s.LastOutcome = "done\x0bout"
+		}
+	}
+	m := chainsStepsModel(t, 132, 34, &fakeActions{chainsDoc: doc}, "feature-auth")
+	body := stripANSI(m.View())
+	assertNoControlBytes(t, "the chain steps view", body)
+
+	left, right := m.top().(chainStepsView).Context(m.env())
+	for _, part := range []string{stripANSI(left), stripANSI(right)} {
+		assertNoControlBytes(t, "the chain steps context row", part)
+	}
+}
+
+// TestChainTraceErrorBodySanitizes pins Finding 2: the trace body drew the raw
+// error while its context row sanitized the same error two lines above it.
+// Mutation: draw v.err.Error() raw in chainTraceView.Body.
+func TestChainTraceErrorBodySanitizes(t *testing.T) {
+	tv := chainTraceView{err: errors.New("pull failed: 502\r\a\033[2J")}
+	body := stripANSI(tv.Body(Env{}, 132, 20))
+
+	if !strings.Contains(body, "pull failed") {
+		t.Fatalf("the error body is not on screen, so nothing was pinned:\n%q", body)
+	}
+	assertNoControlBytes(t, "the chain trace error body", body)
 }
 
 // TestChainEscFromDrillStopsAtSteps pins the drill's own esc: one level back

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
 // Status is where a chain is. Halted, stopped and done are terminal: a close
@@ -178,8 +179,9 @@ type Action struct {
 // carries onto the chain: the first present of the report tail's halted_at,
 // the close note and the first not_done item, each labelled; the outcome word
 // when none of them is set. A value that carries a newline is cut at its first
-// one and trimmed before it is labelled, and an empty source is skipped rather
-// than rendered as an empty label. Pure.
+// one and trimmed before it is labelled, and a control character in what
+// survives is made inert before it is labelled, and an empty source is skipped
+// rather than rendered as an empty label. Pure.
 func BuilderHaltReason(tail reporttail.Tail, note, outcome string) string {
 	for _, src := range []struct{ label, value string }{
 		{"halted_at", tail.HaltedAt},
@@ -187,7 +189,7 @@ func BuilderHaltReason(tail reporttail.Tail, note, outcome string) string {
 		{"not_done", firstOrEmpty(tail.NotDone)},
 	} {
 		if v := firstLine(src.value); v != "" {
-			return src.label + ": " + v
+			return src.label + ": " + sanitize.Text(v)
 		}
 	}
 	return "status: " + outcome

@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -309,7 +310,7 @@ func printChainsStatus(doc relevo.ChainsDoc) error {
 		indent := strings.Repeat("  ", c.Depth)
 		stepPlans := ""
 		if c.Step != "" {
-			stepPlans = fmt.Sprintf("%s · plans %d/%d", c.Step, c.PlanPos, c.PlanTotal)
+			stepPlans = fmt.Sprintf("%s · plans %d/%d", sanitize.Text(c.Step), c.PlanPos, c.PlanTotal)
 		} else {
 			stepPlans = fmt.Sprintf("plans %d/%d", c.PlanPos, c.PlanTotal)
 		}
@@ -318,9 +319,9 @@ func printChainsStatus(doc relevo.ChainsDoc) error {
 		if where == "" {
 			where = "local"
 		}
-		fmt.Printf("%s%s  %s  %s  %s  %s\n", indent, c.Name, c.Status, stepPlans, elapsed, where)
+		fmt.Printf("%s%s  %s  %s  %s  %s\n", indent, c.Name, sanitize.Text(c.Status), stepPlans, elapsed, where)
 		if c.Reason != "" {
-			fmt.Printf("%s  %s\n", indent, c.Reason)
+			fmt.Printf("%s  %s\n", indent, sanitize.Text(c.Reason))
 		}
 	}
 	return nil

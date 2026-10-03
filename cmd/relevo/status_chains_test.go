@@ -118,3 +118,68 @@ func TestStatusChainsJSONRoundTrips(t *testing.T) {
 		t.Errorf("textOut missing indented child row:\n%s", outStr)
 	}
 }
+
+// TestStatusChainsTextSanitizesChainFields pins Finding 1 on the CLI side: the
+// mirrored chain status, step and halt reason come from a peer server, and
+// status --chains prints them straight to a terminal. The status word here is
+// one the engine does not recognise, so it reaches printChainsStatus whole.
+// Mutation: drop the three sanitize.Text calls in status.go.
+// The run reads only the local store: no remote is configured in this fixture,
+// so the test spawns no harness process and touches no network.
+func TestStatusChainsTextSanitizesChainFields(t *testing.T) {
+	stateHome := filepath.Join(t.TempDir(), "state")
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+
+	fixedTS := time.Date(2026, 9, 30, 9, 0, 0, 0, time.UTC)
+	row := db.ChainRow{
+		ID:        db.NewID(),
+		Name:      "hostile-chain",
+		Status:    "run\ning\x1b[2J",
+		Reason:    "reviewer said nobell",
+		Phase:     "build",
+		Step:      "review\rstep",
+		Plan:      1,
+		Plans:     1,
+		Builder:   "hostile-b",
+		CreatedAt: fixedTS,
+		UpdatedAt: fixedTS,
+	}
+	if err := s.WithLock(func(tx *store.Tx) error { return tx.ChainPut(row) }); err != nil {
+		t.Fatalf("seed chain: %v", err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"status", "--chains"})
+	})
+	if err != nil {
+		t.Fatalf("run status --chains: %v (stderr: %s)", err, stderr)
+	}
+
+	outStr := string(stdout)
+	if !strings.Contains(outStr, "hostile-chain") {
+		t.Fatalf("the chain row is not on stdout, so nothing was pinned:\n%s", outStr)
+	}
+	for _, r := range []rune{'\r', '\a', '\x1b'} {
+		if strings.ContainsRune(outStr, r) {
+			t.Errorf("status --chains stdout still carries %q:\n%q", r, outStr)
+		}
+	}
+
+	// The JSON shape is untouched: the bytes stay raw there, since that output
+	// is a machine contract rather than something a terminal draws.
+	jsonOut, _, err := captureOutput(t, func() error {
+		return run([]string{"status", "--chains", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("run status --chains --json: %v", err)
+	}
+	if !strings.Contains(string(jsonOut), "review\\rstep") {
+		t.Errorf("the JSON output must keep the raw bytes:\n%s", jsonOut)
+	}
+}

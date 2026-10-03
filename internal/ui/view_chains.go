@@ -114,7 +114,7 @@ func chainStatusText(c relevo.ChainEntry) (string, lipgloss.Style) {
 	case string(chain.StatusDone):
 		return "done", faintStyle
 	default:
-		return c.Status, mutedStyle
+		return sanitizeText(c.Status), mutedStyle
 	}
 }
 
@@ -137,7 +137,7 @@ func chainDataLine(c relevo.ChainEntry, sel bool, nameW int, cols []chainCol, cw
 		case "status":
 			text, style = statusText, statusStyle
 		case "step":
-			text = c.Step
+			text = sanitizeText(c.Step)
 			if text == "" {
 				text, style = "—", faintStyle
 			}
@@ -162,7 +162,7 @@ func chainDataLine(c relevo.ChainEntry, sel bool, nameW int, cols []chainCol, cw
 // chainReasonLine renders a halted chain's reason on a dim second line.
 func chainReasonLine(c relevo.ChainEntry, sel bool, cw int) string {
 	indent := strings.Repeat("  ", c.Depth)
-	text := indent + "  " + c.Reason
+	text := indent + "  " + sanitizeText(c.Reason)
 	cells := []candCell{{text: text, style: faintStyle}}
 	return candLine(cells, sel, cw)
 }
