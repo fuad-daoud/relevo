@@ -78,7 +78,7 @@ func TestStatusChainsJSONRoundTrips(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return run([]string{"status", "--chains", "--json"})
+		return run([]string{"status", "--all-masterminds", "--chains", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("run status --chains --json: %v (stderr: %s)", err, stderr)
@@ -101,7 +101,7 @@ func TestStatusChainsJSONRoundTrips(t *testing.T) {
 
 	// Text rendering check
 	textOut, textErr, err := captureOutput(t, func() error {
-		return run([]string{"status", "--chains"})
+		return run([]string{"status", "--all-masterminds", "--chains"})
 	})
 	if err != nil {
 		t.Fatalf("run status --chains: %v (stderr: %s)", err, textErr)
@@ -155,7 +155,7 @@ func TestStatusChainsTextSanitizesChainFields(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return run([]string{"status", "--chains"})
+		return run([]string{"status", "--all-masterminds", "--chains"})
 	})
 	if err != nil {
 		t.Fatalf("run status --chains: %v (stderr: %s)", err, stderr)
@@ -174,7 +174,7 @@ func TestStatusChainsTextSanitizesChainFields(t *testing.T) {
 	// The JSON shape is untouched: the bytes stay raw there, since that output
 	// is a machine contract rather than something a terminal draws.
 	jsonOut, _, err := captureOutput(t, func() error {
-		return run([]string{"status", "--chains", "--json"})
+		return run([]string{"status", "--all-masterminds", "--chains", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("run status --chains --json: %v", err)

@@ -573,7 +573,7 @@ var registry = []verbEntry{
 		Name:    "status",
 		Summary: "one row per binding: round, state, live pane status, what is pending",
 		Args:    "[--all] [--name NAME] [--line] [--chains] [--json]",
-		Flags:   []string{"--all", "--chains", "--json", "--line", "--name"},
+		Flags:   []string{"--all", "--all-masterminds", "--chains", "--json", "--line", "--mastermind", "--name"},
 		Output:  "json:view.Report; --line: json:view.StatusLineDoc; --chains: json:relevo.ChainsDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"binding_not_found", "internal", "usage"},
