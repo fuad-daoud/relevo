@@ -528,33 +528,6 @@ func gcScope(mastermindFlag string, all bool, resolve func(ref string) (mastermi
 	return relevo.GCOptions{MasterMindID: rec.ID}, nil
 }
 
-// mastermindFilter resolves this session's mastermind for the commands that filter
-// by it without requiring one: `relevo status` with no name (§3.3) and
-// `relevo status --line`. A miss is not an error there -- the caller keeps its
-// old behaviour -- and neither is a Runtime with no registry (tests).
-func mastermindFilter(rt relevo.Runtime) (mastermind.Record, bool) {
-	if rt.MasterMinds == nil {
-		return mastermind.Record{}, false
-	}
-	var now time.Time
-	if rt.Now != nil {
-		now = rt.Now()
-	}
-	cwd, _ := os.Getwd()
-	rec, _, err := mastermind.Resolve(rt.MasterMinds, mastermind.ResolveInput{
-		Env:             os.Getenv,
-		PPID:            os.Getppid(),
-		ProcStart:       rt.ProcStart,
-		Now:             now,
-		CWD:             cwd,
-		OpencodeSession: rt.OpencodeSession,
-	})
-	if err != nil {
-		return mastermind.Record{}, false
-	}
-	return rec, true
-}
-
 // mastermindInUse is Forget's guard (§4.7): a record any binding that is not DONE
 // still names is in use, and forgetting it would strand that binding's
 // history. It walks the same store listing `relevo status --all` reads.
