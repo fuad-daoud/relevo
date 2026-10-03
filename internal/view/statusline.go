@@ -543,12 +543,9 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		(b.LastPayload.Kind == store.KindReport || b.LastPayload.Kind == store.KindQuestion)
 
 	// A payload still waiting on the mastermind is only a fault when relevo
-	// cannot push it: a pull route, or a route that is not live right now. A
-	// live push route stays non-alarming however long the session takes to
-	// pick the payload up -- the elapsed time says nothing about whether a
-	// human must act.
+	// cannot push it; which route that is lives in pendingStalled.
 	pending := b.Pending != nil
-	stalled := pending && (b.MasterMindRoute == "pull" || !b.MasterMindRouteLive)
+	stalled := pendingStalled(b, pending, now)
 
 	needsYou := b.Display == "NEEDS YOU" || stalled
 	reportRound := 0
