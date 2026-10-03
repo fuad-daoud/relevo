@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 type aliveRunner struct{}
@@ -740,6 +741,15 @@ func TestAdminStatusKeepsARowTheStoreLacks(t *testing.T) {
 	}
 	if !strings.Contains(string(blob), `"detail":"`+goneRowNote+`"`) {
 		t.Errorf("the status document does not carry the gone note:\n%s", blob)
+	}
+
+	flat, err := FlatStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("FlatStatus: %v", err)
+	}
+	out := view.RenderStatus(flat)
+	if !strings.Contains(out, goneRowNote) {
+		t.Errorf("RenderStatus = %q, want the gone note on the human row", out)
 	}
 }
 
