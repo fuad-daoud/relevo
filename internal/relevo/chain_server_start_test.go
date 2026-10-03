@@ -1,9 +1,11 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainServerFake is a server that can run a whole chain: it advertises the
@@ -525,5 +528,315 @@ func TestChainSweepAndPendingSendSkipServerChains(t *testing.T) {
 	}
 	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusRunning) {
 		t.Errorf("mirror status = %q, want running", row.Status)
+	}
+}
+
+// TestServerChainRefusesCustomWorkflowWithoutFeature pins that a custom
+// workflow on a server lacking the workflow feature is refused with the server
+// and feature named, before CreateChain is called.
+func TestServerChainRefusesCustomWorkflowWithoutFeature(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	rt, fg, _ := chainServerRuntime(t, fr)
+	const customYAML = `name: custom-flow
+inputs:
+  plans: required
+start: b
+steps:
+  b:
+    run: builder
+    on:
+      done: done
+`
+	wfPath := filepath.Join(t.TempDir(), "custom.yaml")
+	if err := os.WriteFile(wfPath, []byte(customYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	opts := chainServerOpts(t)
+	opts.Workflow = wfPath
+
+	_, err := ChainStart(context.Background(), rt, opts)
+	if err == nil {
+		t.Fatal("ChainStart = nil, want refusal for server missing workflow feature")
+	}
+	wantMsg := fmt.Sprintf("server zen cannot run workflow %s (missing the \"workflow\" feature)", wfPath)
+	if !strings.Contains(err.Error(), wantMsg) {
+		t.Errorf("err = %q, want it to contain %q", err.Error(), wantMsg)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateChain") {
+			t.Errorf("CreateChain called: %v, want it refused beforehand", fr.calls)
+		}
+	}
+	assertNothingCreated(t, rt, fg, "shop")
+}
+
+// TestServerChainOldServerRefusesTakenMemberName pins that the name-collision
+// guard is not lost on the old-server path: without the workflow feature the
+// client derives the member names itself, so a member name already bound
+// locally still refuses the start before any create.
+func TestServerChainOldServerRefusesTakenMemberName(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	rt, fg, _ := chainServerRuntime(t, fr)
+	if err := rt.Store.Save(store.Binding{Name: "shop-rev", CWD: "/taken", State: store.StateActive}); err != nil {
+		t.Fatalf("seed binding: %v", err)
+	}
+
+	opts := chainServerOpts(t)
+	_, err := ChainStart(context.Background(), rt, opts)
+	if err == nil || !strings.Contains(err.Error(), `"shop-rev" already exists`) {
+		t.Fatalf("err = %v, want a taken-name refusal", err)
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, ErrRefused): a taken name is refused, not internal", err)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateChain") {
+			t.Errorf("CreateChain called: %v, want it refused beforehand", fr.calls)
+		}
+	}
+	assertNothingCreated(t, rt, fg, "shop")
+}
+
+// TestServerChainDefaultOnOldServerSendsSettings pins the new-client/old-server
+// compatibility: when the server lacks the workflow feature, the default
+// workflow sends settings and client binding ids.
+func TestServerChainDefaultOnOldServerSendsSettings(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	rt, _, ft := chainServerRuntime(t, fr)
+	ft.snapshotResp = remote.Snapshot{
+		Heads: map[string]string{"refs/relevo/shop/out": seedRemoteBase},
+		Body:  io.NopCloser(strings.NewReader("bundle-bytes")),
+	}
+
+	opts := chainServerOpts(t)
+	res, err := ChainStart(context.Background(), rt, opts)
+	if err != nil {
+		t.Fatalf("ChainStart: %v", err)
+	}
+
+	req := fr.createChainReq
+	if len(req.Workflow) != 0 {
+		t.Errorf("create Workflow = %s, want empty for old server", req.Workflow)
+	}
+	if req.Settings.ReviewerActor != "reviewer" || req.Settings.MaxCorrections != 3 {
+		t.Errorf("create Settings = %+v, want resolved settings", req.Settings)
+	}
+	if len(req.ClientBindingIDs) != 3 {
+		t.Errorf("ClientBindingIDs = %v, want 3 entries", req.ClientBindingIDs)
+	}
+	if len(req.ClientActorIDs) != 0 {
+		t.Errorf("ClientActorIDs = %v, want empty", req.ClientActorIDs)
+	}
+	if res.Chain.Name != "shop" {
+		t.Errorf("Chain.Name = %q, want shop", res.Chain.Name)
+	}
+}
+
+// TestServerChainSendsWorkflowWhenFeaturePresent pins the new-client/new-server
+// path: when the server advertises the workflow feature, the client sends the
+// workflow definition and actor IDs, omitting settings.
+func TestServerChainSendsWorkflowWhenFeaturePresent(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	fr.whoAmIResp.Features = append(fr.whoAmIResp.Features, remote.FeatureWorkflow)
+	rt, _, ft := chainServerRuntime(t, fr)
+	ft.snapshotResp = remote.Snapshot{
+		Heads: map[string]string{"refs/relevo/shop/out": seedRemoteBase},
+		Body:  io.NopCloser(strings.NewReader("bundle-bytes")),
+	}
+
+	opts := chainServerOpts(t)
+	res, err := ChainStart(context.Background(), rt, opts)
+	if err != nil {
+		t.Fatalf("ChainStart: %v", err)
+	}
+
+	req := fr.createChainReq
+	if len(req.Workflow) == 0 {
+		t.Fatal("create Workflow is empty, want workflow definition")
+	}
+	def, err := workflow.Parse(req.Workflow)
+	if err != nil {
+		t.Fatalf("parse Workflow: %v", err)
+	}
+	if def.Name != "default" {
+		t.Errorf("Workflow name = %q, want default", def.Name)
+	}
+	if req.Settings != (remote.ChainSettings{}) {
+		t.Errorf("Settings = %+v, want empty zero value", req.Settings)
+	}
+	if len(req.ClientBindingIDs) != 0 {
+		t.Errorf("ClientBindingIDs = %v, want empty", req.ClientBindingIDs)
+	}
+	used := workflow.UsedActors(def)
+	if len(req.ClientActorIDs) != len(used) {
+		t.Errorf("ClientActorIDs len = %d (%v), want %d (%v)", len(req.ClientActorIDs), req.ClientActorIDs, len(used), used)
+	}
+	for _, a := range used {
+		if id, ok := req.ClientActorIDs[a]; !ok || id == "" {
+			t.Errorf("missing ClientActorID for actor %s", a)
+		}
+	}
+	if res.Chain.Name != "shop" {
+		t.Errorf("Chain.Name = %q, want shop", res.Chain.Name)
+	}
+}
+
+// TestMirrorTakesWorkflowAndStateFromView pins that a view carrying workflow
+// and engine state is recorded verbatim on the mirror row, without invoking
+// workflow.FromLegacy.
+func TestMirrorTakesWorkflowAndStateFromView(t *testing.T) {
+	t.Parallel()
+
+	customWF := []byte(`{"name":"custom-wf","steps":{"special_step":{"run":"builder"}}}`)
+	customState := []byte(`{"step":"special_step_unreachable_by_legacy","status":"running"}`)
+
+	v := chainServerView("shop", seedRemoteBase)
+	v.Workflow = customWF
+	v.State = customState
+
+	opts := ChainOptions{Name: "shop", Feature: "auth"}
+	plan := chainServerPlan{base: seedRemoteBase, repo: "/repo", server: "zen"}
+	paths := []string{"/plan1"}
+
+	row, err := chainMirrorRow(opts, plan, v, paths, time.Now())
+	if err != nil {
+		t.Fatalf("chainMirrorRow: %v", err)
+	}
+	if !bytes.Equal(row.WorkflowJSON, customWF) {
+		t.Errorf("WorkflowJSON = %s, want %s", row.WorkflowJSON, customWF)
+	}
+	if !bytes.Equal(row.StateJSON, customState) {
+		t.Errorf("StateJSON = %s, want %s", row.StateJSON, customState)
+	}
+
+	baseRow := db.ChainRow{Name: "shop"}
+	pulled, err := chainRowFromView(baseRow, v, time.Now())
+	if err != nil {
+		t.Fatalf("chainRowFromView: %v", err)
+	}
+	if !bytes.Equal(pulled.WorkflowJSON, customWF) {
+		t.Errorf("chainRowFromView WorkflowJSON = %s, want %s", pulled.WorkflowJSON, customWF)
+	}
+	if !bytes.Equal(pulled.StateJSON, customState) {
+		t.Errorf("chainRowFromView StateJSON = %s, want %s", pulled.StateJSON, customState)
+	}
+}
+
+// TestChainRowFromViewFallsBackToLegacy pins that a server view without workflow
+// or state falls back to converting the row via workflow.FromLegacy.
+func TestChainRowFromViewFallsBackToLegacy(t *testing.T) {
+	t.Parallel()
+
+	v := chainServerView("shop", seedRemoteBase)
+	v.Workflow = nil
+	v.State = nil
+
+	paths, err := json.Marshal([]string{"/path/to/plan1"})
+	if err != nil {
+		t.Fatalf("marshal plan paths: %v", err)
+	}
+	settings, err := json.Marshal(chain.Settings{ReviewerActor: "reviewer", MaxCorrections: 3})
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	baseRow := db.ChainRow{
+		Name:          "shop",
+		Status:        string(chain.StatusRunning),
+		Phase:         string(chain.PhaseBuild),
+		Step:          string(chain.StepBuilding),
+		Plan:          1,
+		Plans:         1,
+		PlanPathsJSON: paths,
+		SettingsJSON:  settings,
+	}
+
+	pulled, err := chainRowFromView(baseRow, v, time.Now())
+	if err != nil {
+		t.Fatalf("chainRowFromView: %v", err)
+	}
+	if len(pulled.WorkflowJSON) == 0 {
+		t.Fatal("WorkflowJSON is empty, want fallback default definition")
+	}
+	if len(pulled.StateJSON) == 0 {
+		t.Fatal("StateJSON is empty, want fallback engine state")
+	}
+	def, err := workflow.Parse(pulled.WorkflowJSON)
+	if err != nil {
+		t.Fatalf("parse WorkflowJSON: %v", err)
+	}
+	if def.Name != "default" {
+		t.Errorf("Workflow name = %q, want default", def.Name)
+	}
+}
+
+// TestServerChainMembersComeFromView pins that the mirror's member bindings
+// come authoritatively from view.Members, rather than a client-side plan.
+func TestServerChainMembersComeFromView(t *testing.T) {
+	t.Parallel()
+
+	fr := chainServerFake()
+	fr.whoAmIResp.Features = append(fr.whoAmIResp.Features, remote.FeatureWorkflow)
+	fr.createChainResp = remote.ChainView{
+		Name: "shop", Status: string(chain.StatusRunning),
+		Phase: string(chain.PhaseBuild), Step: string(chain.StepBuilding),
+		Plan: 1, Plans: 1, AwaitingMember: "shop-lead", AwaitingRound: 1,
+		Base: seedRemoteBase, Branch: "relevo/shop", PlanStartCommit: seedRemoteBase,
+		Workflow: []byte(`{"name":"custom"}`),
+		State:    []byte(`{"step":"lead"}`),
+		Members: []remote.ChainMemberView{
+			{
+				Part: "lead", Name: "shop-lead", Actor: "leader",
+				View: remote.BindingView{
+					Name: "shop-lead", Candidate: testClaudeRef, Tier: "harness",
+					Shape: store.ShapeWriter, State: string(store.StateActive), Round: 1,
+				},
+			},
+			{
+				Part: "tester", Name: "shop-tester", Actor: "qa",
+				View: remote.BindingView{
+					Name: "shop-tester", Candidate: testClaudeRef, Tier: "harness",
+					Shape: store.ShapeReader, State: string(store.StateActive), Round: 1,
+				},
+			},
+		},
+	}
+
+	rt, _, ft := chainServerRuntime(t, fr)
+	ft.snapshotResp = remote.Snapshot{
+		Heads: map[string]string{"refs/relevo/shop/out": seedRemoteBase},
+		Body:  io.NopCloser(strings.NewReader("bundle-bytes")),
+	}
+
+	opts := chainServerOpts(t)
+	res, err := ChainStart(context.Background(), rt, opts)
+	if err != nil {
+		t.Fatalf("ChainStart: %v", err)
+	}
+
+	if len(res.Members) != 2 {
+		t.Fatalf("len(res.Members) = %d, want 2 members from view", len(res.Members))
+	}
+	lead := memberByName(t, res.Members, "shop-lead")
+	if lead.Role != "leader" || lead.Shape != store.ShapeWriter || lead.Branch != "relevo/shop-lead" {
+		t.Errorf("lead = %+v, want leader writer on relevo/shop-lead", lead)
+	}
+	tester := memberByName(t, res.Members, "shop-tester")
+	if tester.Role != "qa" || tester.Shape != store.ShapeReader || tester.Branch != "" {
+		t.Errorf("tester = %+v, want qa reader branchless", tester)
+	}
+	if _, err := rt.Store.Load("shop-lead"); err != nil {
+		t.Errorf("load shop-lead from store: %v", err)
+	}
+	if _, err := rt.Store.Load("shop-tester"); err != nil {
+		t.Errorf("load shop-tester from store: %v", err)
 	}
 }

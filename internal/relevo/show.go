@@ -280,7 +280,17 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 			return ShowResult{}, err
 		}
 	} else if round < 1 || round > rounds {
-		return ShowResult{}, roundRangef("round %d: binding has %d rounds", round, rounds)
+		// A server-chain member installs its rounds only at close, so the
+		// round in flight sits outside the prompt-entry range that bounds an
+		// explicit --round. A transcript read may still name it, as the
+		// default does; every other section keeps the refusal.
+		open, oerr := openRoundTranscriptRound(rt, b, opts.Section, round)
+		if oerr != nil {
+			return ShowResult{}, oerr
+		}
+		if !open {
+			return ShowResult{}, roundRangef("round %d: binding has %d rounds", round, rounds)
+		}
 	}
 
 	res := ShowResult{

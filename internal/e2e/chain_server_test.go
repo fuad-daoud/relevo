@@ -414,6 +414,10 @@ func TestChainServerE2E(t *testing.T) {
 // the shipped builder and reviewer plus the lite-planner whose claude
 // definition is architect. Its candidate set is the server's own, so both
 // machines resolve the same token.
+//
+// The shipped default also names a security actor, which this chain leaves
+// switched off, but a served chain validates the whole definition against the
+// server's own actors, so the server must know it.
 func newServerChainRegistry(t *testing.T, set *candidate.Set, pol policy.Policy) *roles.Registry {
 	t.Helper()
 	reader := "reader"
@@ -424,6 +428,11 @@ func newServerChainRegistry(t *testing.T, set *candidate.Set, pol policy.Policy)
 			Shape:       &reader,
 			Candidates:  []string{chainServerToken},
 			Definitions: map[string]roles.DefRow{"claude": {Agent: "architect"}},
+		},
+		"security": {
+			Shape:       &reader,
+			Candidates:  []string{chainServerToken},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "security-reviewer"}},
 		},
 	}
 	reg, err := roles.Build(&roles.File{Rows: rows}, set, pol)

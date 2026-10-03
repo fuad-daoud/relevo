@@ -100,6 +100,19 @@ func convertLegacyChain(rt Runtime, name string) error {
 	})
 }
 
+// convertLegacyChainRow migrates one chain row onto the workflow engine and
+// hands back the row the store holds afterwards. It is convertLegacyChain plus
+// the read a caller needs, for the verbs that meet a single row the daemon's
+// start-up sweep has not carried onto the engine. A row that cannot convert is
+// halted with the reason the conversion named rather than reported here, so the
+// caller reads that reason off the row it gets back.
+func convertLegacyChainRow(rt Runtime, name string) (db.ChainRow, error) {
+	if err := convertLegacyChain(rt, name); err != nil {
+		return db.ChainRow{}, err
+	}
+	return rt.Store.Chain(name)
+}
+
 // chainConvertLegacy is the pure half of a conversion: it reads the row's
 // settings and plan copies, resolves its member bindings through tx, and
 // returns the row the engine reads plus its member rows.

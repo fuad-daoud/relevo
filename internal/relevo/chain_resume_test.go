@@ -3,6 +3,8 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -885,6 +888,208 @@ func TestChainResumeClosesADeadMemberRound(t *testing.T) {
 	}
 }
 
+// TestChainResumeOverAReportlessNewerRoundClosesStoppedAndReRuns pins the
+// reportless close: a newer round on the awaited member whose report entry
+// exists but whose report file was never written -- a stop close writes exactly
+// that -- must not reach the resume as a bare store error. The resume has no
+// body to route on, so it closes the round as stopped and re-runs the halted
+// step rather than answering internal.
+func TestChainResumeOverAReportlessNewerRoundClosesStoppedAndReRuns(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+	chainBuilderClose(t, rt, "shop", chainHaltedBody("stuck"))
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+
+	// A manual round sent while the chain was down, then stopped: a stop close
+	// records the round as closed without a report, so the round has a report
+	// entry and no report file.
+	if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+		t.Fatalf("manual Send to the builder: %v", err)
+	}
+	if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
+		t.Fatalf("Stop the manual round: %v", err)
+	}
+	manual := chainBinding(t, rt, "shop").Round - 1
+	assertStopCloseOnRound(t, rt, "shop", manual)
+
+	res, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	if err != nil {
+		t.Fatalf("ChainResume over a reportless round: %v", err)
+	}
+
+	// The step is re-run, not reviewed: there was no report to review, so the
+	// chain hands the builder a fresh round of its own step.
+	row := chainStoredRow(t, rt, "shop")
+	builder := chainBinding(t, rt, "shop")
+	if row.Status != string(chain.StatusRunning) || row.Step != string(chain.StepBuilding) {
+		t.Errorf("chain = status %q step %q, want running/building: a reportless round is re-run, not reviewed", row.Status, row.Step)
+	}
+	if builder.Round <= manual || row.AwaitingRound != builder.Round {
+		t.Errorf("builder round = %d, chain awaits %d, want a fresh round after %d", builder.Round, row.AwaitingRound, manual)
+	}
+	if !store.RoundOpen(chainLog(t, rt, "shop"), builder.Round) {
+		t.Errorf("the builder's round %d must be open: the resume re-runs the step", builder.Round)
+	}
+	if res.Chain.Status != string(chain.StatusRunning) {
+		t.Errorf("result chain = %+v, want the resumed row", res.Chain)
+	}
+	assertStopCloseOnRound(t, rt, "shop", manual)
+}
+
+// TestChainResumeOnAWorkflowlessChainNeverInternal pins the row the engine's
+// own conversion cannot leave behind: `chain --resume` read its missing workflow
+// or its missing engine state as a plain error, which the CLI reports as
+// internal. A row with no workflow is migrated through the same single-row
+// conversion the daemon's start-up sweep runs; a row that still carries neither
+// a workflow nor a state is refused in the input class, naming its own reason
+// and the command that reads it.
+func TestChainResumeOnAWorkflowlessChainNeverInternal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a row with no workflow is migrated", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stripChainEngine(t, rt, true)
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+			t.Fatalf("ChainResume over a legacy row: %v", err)
+		}
+
+		row := chainStoredRow(t, rt, "shop")
+		if row.Status != string(chain.StatusRunning) || len(row.WorkflowJSON) == 0 || len(row.StateJSON) == 0 {
+			t.Errorf("chain = status %q with %d workflow bytes and %d state bytes, want it migrated and running",
+				row.Status, len(row.WorkflowJSON), len(row.StateJSON))
+		}
+	})
+
+	t.Run("an unconvertible row is refused, not internal", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stripChainEngine(t, rt, true)
+		// Settings the conversion reads and cannot parse: the migration cannot
+		// bring this row onto the engine, which is what halts it in the sweep.
+		corruptChainSettings(t, rt, "shop")
+
+		_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+		if err == nil {
+			t.Fatal("ChainResume over an unconvertible row = nil, want a refusal")
+		}
+		assertResumeRefusedNotInternal(t, err)
+	})
+
+	t.Run("a row with no engine state is refused, not internal", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stripChainEngine(t, rt, false)
+
+		_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+		if err == nil {
+			t.Fatal("ChainResume over a state-less row = nil, want a refusal")
+		}
+		assertResumeRefusedNotInternal(t, err)
+	})
+}
+
+// stripChainEngine leaves the chain row as one that predates the workflow
+// engine: its engine state is gone and, with dropWorkflow, so is its
+// definition, leaving the legacy columns and the row's own reason as all it
+// holds.
+func stripChainEngine(t *testing.T, rt Runtime, dropWorkflow bool) {
+	t.Helper()
+
+	startedChain(t, rt, ChainOptions{})
+	chainBuilderClose(t, rt, "shop", chainHaltedBody("stuck"))
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		c.StateJSON = nil
+		if dropWorkflow {
+			c.WorkflowJSON = nil
+			c.Status = string(chain.StatusHalted)
+			c.Reason = "could not convert to a workflow: chain shop: unknown legacy step"
+		}
+		c.UpdatedAt = rt.Now().UTC()
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatalf("strip the engine columns: %v", err)
+	}
+}
+
+// corruptChainSettings writes settings no chain conversion can read.
+func corruptChainSettings(t *testing.T, rt Runtime, name string) {
+	t.Helper()
+
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		c.SettingsJSON = []byte("not json")
+		c.UpdatedAt = rt.Now().UTC()
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatalf("corrupt the chain settings: %v", err)
+	}
+}
+
+// assertResumeRefusedNotInternal pins the class of a resume refusal: the input
+// class, so the CLI reports it as refused or conflict and never as an internal
+// failure, and it names the command that reads the row.
+func assertResumeRefusedNotInternal(t *testing.T, err error) {
+	t.Helper()
+
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("refusal %v is not in the input class: errors.Is(err, ErrRefused) is false, so the CLI reads it as internal", err)
+	}
+	if !strings.Contains(err.Error(), "relevo status shop") {
+		t.Errorf("refusal %q names no working next step", err)
+	}
+}
+
+// assertStopCloseOnRound pins that the given round was closed the way a stop
+// closes one -- a report entry noting no report was written, an unstructured
+// outcome and the stop entry beside it -- and returns the report entry's path,
+// which is on no disk.
+func assertStopCloseOnRound(t *testing.T, rt Runtime, name string, round int) string {
+	t.Helper()
+
+	var close store.LogEntry
+	stopped := false
+	for _, e := range chainLog(t, rt, name) {
+		switch {
+		case e.Direction == store.DirToMasterMind && e.Kind == store.KindReport && e.Round == round:
+			close = e
+		case e.Direction == store.DirToMasterMind && e.Kind == store.KindStop && e.Round == round:
+			stopped = true
+		}
+	}
+	if close.Path == "" {
+		t.Fatalf("%s round %d has no report entry", name, round)
+	}
+	if !strings.Contains(close.Note, "stopped") || !strings.Contains(close.Note, "noreport") {
+		t.Errorf("round %d close note = %q, want the stop close's stopped/noreport", round, close.Note)
+	}
+	if close.Outcome != reporttail.OutcomeUnstructured {
+		t.Errorf("round %d close outcome = %q, want %q: a stop close reports nothing", round, close.Outcome, reporttail.OutcomeUnstructured)
+	}
+	if !stopped {
+		t.Errorf("round %d has no stop entry: its close was not a stop close", round)
+	}
+	if _, err := os.Stat(close.Path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the report file %s = %v, want it absent: this round is reportless", close.Path, err)
+	}
+	return close.Path
+}
+
 // assertResumeReSendsTheStagedPrompt stops on a chain awaiting the builder on
 // the round whose staged prompt contains marker (the planner's text or the
 // repair plan), resumes it, and pins that the re-sent round was handed that
@@ -922,5 +1127,83 @@ func assertResumeReSendsTheStagedPrompt(t *testing.T, rt Runtime, marker string)
 	}
 	if string(got) == string(planCopy) {
 		t.Errorf("the re-sent round got the plan copy, not the stopped round's own text:\n%s", got)
+	}
+}
+
+// TestChainResumeConvertsLegacyRow pins the legacy resume path: a halted chain
+// row with legacy columns, member bindings, and empty WorkflowJSON/StateJSON
+// converts through the legacy conversion and resumes instead of failing with
+// chain_engine.go:22 carries no workflow.
+func TestChainResumeConvertsLegacyRow(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	plan := writePlan(t, "build something")
+	c := legacyChainRow("leg", "halted", "build", "building", "builder", 1, 0)
+	c.PlanPathsJSON = []byte(fmt.Sprintf("[%q]", plan))
+	members := legacyChainBindings("leg")
+	seedLegacyChain(t, rt, c, members)
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "leg"})
+	if err != nil {
+		t.Fatalf("ChainResume: %v (chain_engine.go:22)", err)
+	}
+
+	row := chainStoredRow(t, rt, "leg")
+	if len(row.WorkflowJSON) == 0 || len(row.StateJSON) == 0 {
+		t.Errorf("row carries workflow %d and state %d bytes, want both", len(row.WorkflowJSON), len(row.StateJSON))
+	}
+	if row.Status != string(chain.StatusRunning) {
+		t.Errorf("chain status = %q, want running", row.Status)
+	}
+}
+
+// TestChainResumeUnconvertibleLegacyRowStaysHaltedWithReason pins the conversion failure:
+// a legacy row that cannot convert keeps today's failure (chain carries no workflow)
+// and is halted with the conversion reason in the database.
+func TestChainResumeUnconvertibleLegacyRowStaysHaltedWithReason(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	c := legacyChainRow("unconv", "halted", "build", "building", "builder", 1, 0)
+	c.SettingsJSON = []byte(`{invalid-json`)
+	members := legacyChainBindings("unconv")
+	seedLegacyChain(t, rt, c, members)
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "unconv"})
+	if err == nil || !strings.Contains(err.Error(), "carries no workflow") {
+		t.Fatalf("ChainResume error = %v, want carries no workflow", err)
+	}
+
+	row := chainStoredRow(t, rt, "unconv")
+	if row.Status != string(chain.StatusHalted) {
+		t.Errorf("chain status = %q, want halted", row.Status)
+	}
+	if !strings.Contains(row.Reason, "could not convert to a workflow") {
+		t.Errorf("chain reason = %q, want conversion error reason", row.Reason)
+	}
+}
+
+// TestChainResumeAlreadyConvertedRowSkipsConversion pins the idempotency: an already-converted
+// row retains its exact workflow definition and state bytes.
+func TestChainResumeAlreadyConvertedRowSkipsConversion(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{Name: "conv"})
+	if _, err := Stop(context.Background(), rt, "conv", StopOptions{}); err != nil {
+		t.Fatalf("Stop conv: %v", err)
+	}
+	before := chainStoredRow(t, rt, "conv")
+
+	res, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "conv"})
+	if err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	_ = res
+
+	after := chainStoredRow(t, rt, "conv")
+	if string(after.WorkflowJSON) != string(before.WorkflowJSON) {
+		t.Errorf("workflow changed on resume: got %s, want %s", after.WorkflowJSON, before.WorkflowJSON)
 	}
 }

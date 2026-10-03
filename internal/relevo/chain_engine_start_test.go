@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/store"
-	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // flowThreeActorsWorkflow reaches three actors, so a start creates three
@@ -84,11 +83,11 @@ func TestWorkflowChainStartCreatesMembersAllOrNone(t *testing.T) {
 	}
 }
 
-// TestPlacedWriterTwoCheckCommandsRefused pins the placed-writer refusal: a
-// workflow with two different check commands cannot be answered from the
-// writer's single pulled gate record, so the start refuses and names the server
-// and the server feature the fix needs.
-func TestPlacedWriterTwoCheckCommandsRefused(t *testing.T) {
+// TestPlacedStartRefusesWhenServerLacksCheck pins the placed-writer start
+// refusal: a workflow with a check step places a writer on a server, and a
+// server that cannot run that check has nowhere to answer it from, so the start
+// refuses and names the server and the feature it lacks.
+func TestPlacedStartRefusesWhenServerLacksCheck(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := chainPlacedRuntime(t, chainRemoteFake(), chainRemoteRows())
@@ -98,7 +97,7 @@ func TestPlacedWriterTwoCheckCommandsRefused(t *testing.T) {
 		Workflow: writeWorkflowFile(t, flowTwoChecksWorkflow),
 	})
 	if err == nil {
-		t.Fatal("ChainStart = nil, want the two-check refusal")
+		t.Fatal("ChainStart = nil, want the placed-writer check refusal")
 	}
 	if !strings.Contains(err.Error(), "zen") || !strings.Contains(err.Error(), `"check"`) {
 		t.Errorf("refusal = %q, want it to name server zen and feature check", err)
@@ -148,36 +147,5 @@ func TestDefaultChainMemberNamesPerActor(t *testing.T) {
 	if row.Builder != "shop" || row.Reviewer != "shop-rev" || row.Planner != "shop-plan" || row.Security != "shop-sec" {
 		t.Errorf("member columns = %q/%q/%q/%q, want shop/shop-rev/shop-plan/shop-sec",
 			row.Builder, row.Reviewer, row.Planner, row.Security)
-	}
-}
-
-// TestPlacedWriterCheckAnsweredFromPulledGate pins the placed writer's check:
-// a check whose writer runs on a server starts no local run; it answers green
-// from the gate record the writer's newest closed round carries.
-func TestPlacedWriterCheckAnsweredFromPulledGate(t *testing.T) {
-	t.Parallel()
-
-	fr := chainRemoteFake()
-	rt, _, _ := chainRemoteRuntime(t, fr)
-	startFlowChain(t, rt, flowPlacedCheckWorkflow)
-
-	// The writer's newest closed round carries the gate its server ran.
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("shop", store.LogEntry{
-			TS: baseTime, Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
-			Path: "/x/001-report.md",
-			Gate: &store.GateRecord{Result: "pass", LogPath: "/x/check.log"},
-		})
-	}); err != nil {
-		t.Fatalf("append the pulled gate: %v", err)
-	}
-
-	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
-
-	if got := flowChainRow(t, rt); got.Status != string(workflow.StatusDone) {
-		t.Errorf("status = %s (%q), want done from the pulled gate", got.Status, got.Reason)
-	}
-	if _, err := rt.Store.ChainCheck("shop", 1); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("a local check run exists on a placed writer: %v", err)
 	}
 }

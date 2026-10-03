@@ -154,6 +154,69 @@ func TestChainStopOnAStoppedOrHaltedChainIsNothingToStop(t *testing.T) {
 	})
 }
 
+// TestChainStopOnAHaltedChainWithAnOpenMemberRoundStopsTheMember pins the one
+// place a chain that is not running still has something to stop: the awaited
+// member's manual round. The builder carries the chain's own name, so this verb
+// is the only route to that round, and it must stop it rather than answer
+// nothing to stop. A chain with no open member round keeps that answer.
+func TestChainStopOnAHaltedChainWithAnOpenMemberRoundStopsTheMember(t *testing.T) {
+	t.Parallel()
+
+	t.Run("halted", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		startedChain(t, rt, ChainOptions{})
+		chainBuilderClose(t, rt, "shop", chainHaltedBody("stuck"))
+		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+			t.Fatalf("chain status = %q, want halted", row.Status)
+		}
+		if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+			t.Fatalf("manual Send to the builder: %v", err)
+		}
+		assertChainStopEndsTheOpenMemberRound(t, rt, chain.StatusHalted)
+	})
+
+	t.Run("stopped", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{})
+		if _, err := Send(context.Background(), rt, "shop", writePlan(t, "carry on"), SendOptions{}); err != nil {
+			t.Fatalf("manual Send to the builder: %v", err)
+		}
+		assertChainStopEndsTheOpenMemberRound(t, rt, chain.StatusStopped)
+	})
+}
+
+// assertChainStopEndsTheOpenMemberRound pins the delegation: `relevo stop
+// <chain>` on a chain in status want, whose awaited builder carries the chain's
+// own name, stops that member's open round the way any binding's round is
+// stopped, and the chain row is left where it was -- the round was the work,
+// not the chain.
+func assertChainStopEndsTheOpenMemberRound(t *testing.T, rt Runtime, want chain.Status) {
+	t.Helper()
+
+	open := chainBinding(t, rt, "shop")
+	if !HasPromptEntry(chainLog(t, rt, "shop"), open.Round) {
+		t.Fatalf("test premise: the builder's manual round %d must be open", open.Round)
+	}
+
+	res, err := ChainStop(context.Background(), rt, "shop")
+	if err != nil {
+		t.Fatalf("ChainStop on a %s chain with an open member round: %v", want, err)
+	}
+	if res.Action != "killed" || res.Round != open.Round {
+		t.Errorf("result = %+v, want the member's own stop of round %d", res, open.Round)
+	}
+	if store.RoundOpen(chainLog(t, rt, "shop"), open.Round) {
+		t.Errorf("the builder's round %d is still open: the stop delegated nothing", open.Round)
+	}
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(want) {
+		t.Errorf("chain status = %q, want it left at %q: stopping a member round is not the chain's own end", row.Status, want)
+	}
+}
+
 // TestDoneRefusedOnARunningChainMember pins the first guard: done on a member
 // of a running chain is refused the way a manual send is, because a DONE member
 // is neither gone nor NEEDS YOU and the chain would wait forever for a close

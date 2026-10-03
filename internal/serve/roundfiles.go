@@ -28,7 +28,59 @@ func roundFilePath(rt relevo.Runtime, name string, n int, kind string) (string, 
 	case "drift":
 		return rt.Store.DriftPath(name, n), true
 	case "gate":
-		return rt.Store.GateLogPath(name, n), true
+		return gatePath(rt, name, n), true
+	}
+	return "", false
+}
+
+// gatePath is the round file a round-file request for the acceptance check
+// serves. A served chain runs its check as a chain step rather than as the
+// binding's own gate, and that step seals the log into a round_file row and
+// removes it from the directory, so a member round with no gate log of its own
+// has nothing at the gate log path. Such a round serves the sealed row of the
+// latest chain check run keyed to it: the check does reach the client, as the
+// round's log rather than as a name the client has to know. A plain binding,
+// and a member round that has a gate log of its own, keep the gate log --
+// wherever that log lives, on disk or sealed.
+func gatePath(rt relevo.Runtime, name string, n int) string {
+	gate := rt.Store.GateLogPath(name, n)
+	if _, _, found, _ := rt.Store.StatFile(gate); found {
+		return gate
+	}
+	if sealed, ok := chainGateLogPath(rt, name, n); ok {
+		return sealed
+	}
+	return gate
+}
+
+// chainGateLogPath is the sealed check log to serve as a chain member round's
+// gate: the latest run of that chain whose check log was keyed to this member
+// and round and whose log still resolves, on disk or as a row. ok is false for
+// a binding in no chain, a chain with no check run keyed to this round, and a
+// run whose log was never written -- in every case the caller keeps the gate
+// log path and answers a miss the way it always has.
+func chainGateLogPath(rt relevo.Runtime, name string, n int) (string, bool) {
+	c, err := rt.Store.ChainByMember(name)
+	if err != nil {
+		return "", false
+	}
+	next, err := rt.Store.ChainCheckNextRun(c.Name)
+	if err != nil {
+		return "", false
+	}
+	for run := next - 1; run >= 1; run-- {
+		row, err := rt.Store.ChainCheck(c.Name, run)
+		if err != nil {
+			continue
+		}
+		member, round, ok := rt.Store.CheckLogTarget(row.Log)
+		if !ok || member != name || round != n {
+			continue
+		}
+		if _, _, found, serr := rt.Store.StatFile(row.Log); serr != nil || !found {
+			continue
+		}
+		return row.Log, true
 	}
 	return "", false
 }

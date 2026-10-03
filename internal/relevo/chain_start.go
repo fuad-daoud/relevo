@@ -148,13 +148,13 @@ type chainStartPlan struct {
 // Errors: the validation refusals above, ErrGitRequired, git.ErrBranchExists,
 // ErrNoMasterMindSession, or a wrapped git, store or send failure.
 func ChainStart(ctx context.Context, rt Runtime, opts ChainOptions) (ChainResult, error) {
-	if opts.Server != "" {
-		return chainStartServer(ctx, rt, opts)
-	}
 	// The shipped default is the workflow every chain runs when no --workflow
 	// names another, so a start always runs on the engine.
 	if opts.Workflow == "" {
 		opts.Workflow = "default"
+	}
+	if opts.Server != "" {
+		return chainStartServer(ctx, rt, opts)
 	}
 	return chainStartWorkflow(ctx, rt, opts)
 }

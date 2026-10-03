@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strconv"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -26,11 +27,11 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err := chainForkParentGate(rt, c); err != nil {
 		return ChainResult{}, err
 	}
-	// A gate change on a chain whose writer runs on a server would be ignored
-	// where the check actually runs, so it is refused rather than silently
-	// dropped.
+	// A gate change on a chain whose writer runs on a server has to reach that
+	// server's binding, so it is refused there when the server cannot take it.
+	// The push that delivers it waits for every other refusal below to clear.
 	if chainResumeChangesGate(opts) {
-		if err := resumeRemoteGateRefusal(rt, c); err != nil {
+		if err := resumeRemoteGateRefusal(ctx, rt, c); err != nil {
 			return ChainResult{}, err
 		}
 	}
@@ -40,15 +41,14 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err := closeDeadMemberRound(ctx, rt, c); err != nil {
 		return ChainResult{}, err
 	}
-	def, err := chainWorkflowDef(c)
+	// The row's engine definition and state, migrated onto the engine when the
+	// row still predates it and refused in the input class when it carries
+	// neither, so a resume never answers internal on a row a human can read.
+	c, def, before, err := chainResumeWorkflowRow(rt, c)
 	if err != nil {
 		return ChainResult{}, err
 	}
 	set, err := resumeSettings(rt, c, opts)
-	if err != nil {
-		return ChainResult{}, err
-	}
-	before, err := chainWorkflowState(c)
 	if err != nil {
 		return ChainResult{}, err
 	}
@@ -186,6 +186,15 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if out.Chain.Status == string(workflow.StatusHalted) {
 		return out, fmt.Errorf("chain %s: %s", out.Chain.Name, out.Chain.Reason)
 	}
+	// The resume itself has committed and nothing refused it, so the gate change
+	// a placed writer's server is owed can go out now. Any later abort of this
+	// resume -- the shipped round -- can no longer leave the server ahead of a
+	// chain whose own settings already carry the new gate.
+	if chainResumeChangesGate(opts) {
+		if err := resumeRemoteGatePush(ctx, rt, out.Chain, opts); err != nil {
+			return ChainResult{}, err
+		}
+	}
 	return out, nil
 }
 
@@ -243,6 +252,12 @@ func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptio
 // event through the same close path a live close uses, reading the round's
 // stored report entry and its own stream. No newer round means no event, and
 // the resume re-runs the step.
+//
+// A newer round whose report file is not on disk routes nothing either: a stop
+// close records the round as stopped without a report, so that round is already
+// closed as stopped and there is no body to review. Such a round leaves no event
+// and the resume re-runs the step; only a store failure other than the missing
+// report is an error.
 func chainResumeClosed(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.State) (*workflow.Event, error) {
 	if st.Awaiting.Member == "" || st.Awaiting.Round <= 0 {
 		return nil, nil
@@ -260,6 +275,9 @@ func chainResumeClosed(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 		return nil, nil
 	}
 	body, err := rt.Store.ReadFile(entry.Path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
