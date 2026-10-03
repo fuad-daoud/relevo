@@ -293,8 +293,8 @@ func cmdMasterMindDisableRun(args []string) error {
 		}
 		kindV, sessionV = caller.Kind, caller.SessionID
 	} else {
-		rec, ok := mastermindFilter(rt)
-		if !ok {
+		rec, err := gcResolver(rt)("")
+		if err != nil {
 			return fail(codeRefused, "not in a detectable mastermind session: pass --repo to answer for the repository, --kind/--session to name one, or run relevo mastermind forget <id|name>")
 		}
 		kindV, sessionV = rec.HarnessKind, rec.SessionID

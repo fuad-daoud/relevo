@@ -15,6 +15,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/doctor"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -26,18 +27,6 @@ import (
 //
 // An unknown name is an error rather than an empty report: a silent blank
 // would read exactly like a healthy binding with nothing outstanding.
-// scopeReport decides what a status-shaped command shows. A named binding is
-// always shown, DONE or not: asking for one by name is already a request for
-// that specific thing. Otherwise DONE rows are hidden unless --all, and the
-// same rule applies to --json so the two formats never disagree about what
-// exists. It is a pure function so the rule can be tested without a harness.
-func scopeReport(rep view.Report, name string, all bool) view.Report {
-	if name != "" || all {
-		return rep
-	}
-	return view.HideDone(rep)
-}
-
 func filterReport(rep view.Report, name string) (view.Report, error) {
 	if name == "" {
 		return rep, nil
@@ -50,23 +39,6 @@ func filterReport(rep view.Report, name string) (view.Report, error) {
 	return view.Report{}, fail(codeBindingNotFound, "no binding named %q", name)
 }
 
-// filterReportMasterMind narrows a status report to one mastermind's bindings. It
-// is a pure function so the rule is testable without a harness. An empty
-// mastermind id keeps every row, which is what a runtime with no registry gets.
-func filterReportMasterMind(rep view.Report, mastermindID string) view.Report {
-	if mastermindID == "" {
-		return rep
-	}
-	kept := rep.Bindings[:0:0]
-	for _, b := range rep.Bindings {
-		if b.MasterMindID == mastermindID {
-			kept = append(kept, b)
-		}
-	}
-	rep.Bindings = kept
-	return rep
-}
-
 // statusChain reports whether name resolves to a chain rather than a binding.
 // A store that cannot answer -- no database, a read failure -- reads as "not a
 // chain", so the ordinary binding path still decides.
@@ -75,20 +47,41 @@ func statusChain(rt relevo.Runtime, name string) bool {
 	return err == nil
 }
 
+// statusScope resolves the one scope every status verb renders from, and
+// classifies what it could not resolve. An identity that stays ambiguous or
+// unknown is a refusal naming the next step, never a silent listing of every
+// mastermind and never a silent empty set; nothing here is ever internal,
+// because an agent can always be told which flag settles it.
+func statusScope(mastermindRef string, allMasterMinds, allDone, named bool, rt relevo.Runtime) (relevo.Scope, *mastermind.Record, error) {
+	sc, rec, err := relevo.ResolveScope(mastermindRef, allMasterMinds, allDone, named, gcResolver(rt))
+	if err != nil {
+		var refusal relevo.ScopeRefusal
+		if !errors.As(err, &refusal) {
+			return sc, nil, fail(codeInternal, "%v", err)
+		}
+		return sc, nil, failNext(codeUsage, refusal.Next, "%v", refusal)
+	}
+	return sc, rec, nil
+}
+
 // statusFlagValues holds the pointers status parses into.
 type statusFlagValues struct {
-	all    *bool
-	asJSON *bool
-	name   *string
-	line   *bool
-	chains *bool
+	all            *bool
+	allMasterMinds *bool
+	asJSON         *bool
+	mastermind     *string
+	name           *string
+	line           *bool
+	chains         *bool
 }
 
 // statusFlagSet defines those flags on fs and returns what they parse into.
 func statusFlagSet(fs *flag.FlagSet) *statusFlagValues {
 	v := &statusFlagValues{}
 	v.all = fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo unbind --done clears them)")
+	v.allMasterMinds = fs.Bool("all-masterminds", false, "show every mastermind's bindings instead of this session's")
 	v.asJSON = fs.Bool("json", false, "machine-readable output")
+	v.mastermind = fs.String("mastermind", "", "show this mastermind's bindings (default: the one this session resolves to)")
 	v.name = fs.String("name", "", "show only this binding (default: all)")
 	v.line = fs.Bool("line", false, "this mastermind's builders, one row each, for Claude Code's statusLine setting; with --json, output as JSON")
 	v.chains = fs.Bool("chains", false, "show chains and their steps")
@@ -107,16 +100,21 @@ func cmdStatus(args []string) error {
 		if *line || *name != "" || len(fs.Args()) > 0 {
 			return fail(codeUsage, "--chains cannot be combined with --line/--name")
 		}
-		return runStatusChains(*asJSON)
+		return runStatusChains(*asJSON, *v.mastermind, *v.allMasterMinds)
 	}
 
 	// --line is today's statusline: one row per builder of the calling
-	// mastermind, so it takes no binding and no other output mode (§4.5).
+	// mastermind, so it takes no binding and no other output mode. It also
+	// takes no --all-masterminds: it names one mastermind on its first line
+	// and in its document, which is no answer at all for every one of them.
 	if *line {
 		if *all || *name != "" || len(fs.Args()) > 0 {
 			return fail(codeUsage, "--line cannot be combined with --all/--name")
 		}
-		return runStatusline(*asJSON)
+		if *v.allMasterMinds {
+			return fail(codeUsage, "--line cannot be combined with --all-masterminds: it shows one mastermind's builders")
+		}
+		return runStatusline(*asJSON, *v.mastermind)
 	}
 
 	target, err := bindingArg(*name, fs.Args())
@@ -139,6 +137,10 @@ func cmdStatus(args []string) error {
 	// its members under it. The chain lookup runs before filterReport, so a
 	// chain name never comes back as a missing binding.
 	isChain := target != "" && statusChain(rt, target)
+	sc, _, err := statusScope(*v.mastermind, *v.allMasterMinds, *all, target != "", rt)
+	if err != nil {
+		return err
+	}
 	var rep view.Report
 	if isChain {
 		rep, err = relevo.ChainStatus(context.Background(), rt, target)
@@ -147,15 +149,6 @@ func cmdStatus(args []string) error {
 	}
 	if err != nil {
 		return fail(codeInternal, "%v", err)
-	}
-
-	// §3.3: a bare `relevo status` shows the calling mastermind's bindings. A
-	// session with no mastermind -- no registry, no match -- keeps the old
-	// behaviour and lists everything.
-	if target == "" {
-		if rec, ok := mastermindFilter(rt); ok {
-			rep = filterReportMasterMind(rep, rec.ID)
-		}
 	}
 
 	// A chain report already holds exactly the chain and its members, so it
@@ -167,9 +160,9 @@ func cmdStatus(args []string) error {
 			return err
 		}
 	}
-	rep = scopeReport(rep, target, *all)
+	rep = relevo.ScopeReport(rep, sc)
 
-	// #386: the mastermind's chat label is computed here, in the command a
+	// The mastermind's chat label is computed here, in the command a
 	// person ran, and only printed. internal/relevo.Status leaves it empty,
 	// so no label is ever computed on, or sent to, a server.
 	annotateMasterMindChat(rt, &rep, chatResolver())
@@ -180,7 +173,7 @@ func cmdStatus(args []string) error {
 		return enc.Encode(rep)
 	}
 
-	// #293: one line above the rows, only when the daemon's cached check has
+	// One line above the rows, only when the daemon's cached check has
 	// seen a newer release. Read through the doctor's own Env so `status` and
 	// `doctor` can never disagree about the same file. JSON output above stays
 	// notice-free.
@@ -189,7 +182,7 @@ func cmdStatus(args []string) error {
 	if notice := statusNotice(running, latest, ok, kind); notice != "" {
 		fmt.Println(notice)
 	}
-	// #370: one line above the rows only when a daemon restart right now would
+	// One line above the rows only when a daemon restart right now would
 	// kill a process running outside its own scope. The same computation
 	// doctor's restart row makes -- cheap, one small file read per running
 	// process. JSON output above stays notice-free.
@@ -197,7 +190,7 @@ func cmdStatus(args []string) error {
 		fmt.Println(notice)
 	}
 
-	// #371: the daemon's own version state, read from its record rather than
+	// The daemon's own version state, read from its record rather than
 	// probed. A read error prints nothing: a status must never fail because its
 	// record could not be read.
 	if daemonRunning, derr := rt.Store.DaemonRunning(); derr == nil {
@@ -214,7 +207,7 @@ func cmdStatus(args []string) error {
 
 // boardBlockFor reads one MasterMind's live board block from the state root's
 // files alone -- the pointer, server.json and a pid check, with no database
-// read (S8). It is present only when the pointer names a scene, server.json
+// read. It is present only when the pointer names a scene, server.json
 // advertises the same scene, and the server's pid is alive with a matching
 // start. Any read error, a missing pointer, a scene mismatch or a dead pid
 // yields nil, never a failure.
@@ -234,47 +227,50 @@ func boardBlockFor(root, id string, procStart func(pid int) (int64, error)) *vie
 	return &view.StatusLineBoard{Name: scene, Scope: string(board.ScopeLive), URL: url}
 }
 
-// runStatusline is statusline's body (the old cmdStatusline), now reached
-// through `status --line` (§4.5): the same output, COLUMNS,
-// RELEVO_STATUSLINE_MARGIN and mastermind filtering. With asJSON, it prints
-// StatusLineDoc as JSON.
-func runStatusline(asJSON bool) error {
+// runStatusline is statusline's body, now reached through `status --line`: the
+// same output, COLUMNS and RELEVO_STATUSLINE_MARGIN, over the same scoped
+// report every other status surface reads. With asJSON it prints
+// StatusLineDoc instead of the text.
+//
+// A store or owner that cannot answer still prints nothing at all: the
+// statusline runs inside a prompt and must never fail one. The scope is the
+// exception, because a statusline that cannot say whose builders it is would
+// render an empty line that reads exactly like a healthy session.
+func runStatusline(asJSON bool, mastermindRef string) error {
 	if fi, err := os.Stdin.Stat(); err != nil || view.ShouldDrainStdin(fi.Mode()) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	}
+	rt, err := newRuntime()
+	if err != nil {
+		if errors.Is(err, errOwnerUnavailable) {
+			return nil
+		}
+		if asJSON {
+			return fail(codeInternal, "%v", err)
+		}
+		fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
+		return nil
+	}
+	sc, rec, err := statusScope(mastermindRef, false, false, false, rt)
+	if err != nil {
+		return err
+	}
+
 	if !asJSON {
 		columns, err := strconv.Atoi(os.Getenv("COLUMNS"))
 		if err != nil || columns <= 0 {
 			columns = 0
 		}
 		columns = view.StatusLineWidth(columns, os.Getenv("RELEVO_STATUSLINE_MARGIN"))
-		rt, err := newRuntime()
-		if err != nil {
-			// An owner that never answered prints nothing at all: the
-			// statusline runs inside a prompt and must never fail one. Every
-			// other failure keeps the line below.
-			if errors.Is(err, errOwnerUnavailable) {
-				return nil
-			}
-			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
-			return nil
-		}
-		// §3.3: the row set is the calling mastermind's bindings. A session with no
-		// mastermind renders nothing, the same as no mastermind did
-		// before #303.
-		rec, ok := mastermindFilter(rt)
-		if !ok {
-			return nil
-		}
-		// #386: the first line names the mastermind, so each terminal shows which
-		// mastermind it is. It is printed before MasterMindStatus and survives a
-		// MasterMindStatus failure: the line is the mastermind's identity, not a
+		// The first line names the mastermind, so each terminal shows which
+		// mastermind it is. It is printed before the rows and survives a
+		// failure to read them: the line is the mastermind's identity, not a
 		// binding row.
 		fmt.Print(view.RenderMasterMindLine(rec.Name, columns))
 		if root, rerr := store.DefaultRoot(); rerr == nil {
-			fmt.Print(view.RenderBoardLine(boardBlockFor(root, rec.ID, boardProcStart), rec.Name, columns))
+			fmt.Print(view.RenderBoardLine(boardBlockFor(root, sc.MasterMindID, boardProcStart), rec.Name, columns))
 		}
-		rep, err := relevo.MasterMindStatus(context.Background(), rt, rec.ID)
+		rep, err := relevo.MasterMindStatus(context.Background(), rt, sc.MasterMindID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
 			return nil
@@ -283,38 +279,28 @@ func runStatusline(asJSON bool) error {
 		return nil
 	}
 
-	rt, err := newRuntime()
-	if err != nil {
-		doc := view.StatusLineDoc{Now: time.Now().UTC(), Rows: []view.StatusLineRow{}}
-		data, _ := json.Marshal(doc)
-		fmt.Println(string(data))
-		return nil
+	doc := view.StatusLineDoc{Now: time.Now().UTC(), Rows: []view.StatusLineRow{}}
+	doc.MasterMind = &view.StatusLineMasterMind{ID: sc.MasterMindID, Name: rec.Name}
+	if root, rerr := store.DefaultRoot(); rerr == nil {
+		doc.Board = boardBlockFor(root, sc.MasterMindID, boardProcStart)
 	}
-	rec, ok := mastermindFilter(rt)
-	now := rt.Now().UTC()
-	doc := view.StatusLineDoc{Now: now, Rows: []view.StatusLineRow{}}
-	if ok {
-		doc.MasterMind = &view.StatusLineMasterMind{ID: rec.ID, Name: rec.Name}
-		if root, rerr := store.DefaultRoot(); rerr == nil {
-			doc.Board = boardBlockFor(root, rec.ID, boardProcStart)
+	if rep, err := relevo.MasterMindStatus(context.Background(), rt, sc.MasterMindID); err == nil {
+		doc.Rows = view.StatusLineRows(rep, rt.Now())
+		for i, text := range view.PlainStatusLineRows(doc.Rows, 0) {
+			doc.Rows[i].Text = text
 		}
-		rep, err := relevo.MasterMindStatus(context.Background(), rt, rec.ID)
-		if err == nil {
-			doc.Rows = view.StatusLineRows(rep, rt.Now())
-			for i, text := range view.PlainStatusLineRows(doc.Rows, 0) {
-				doc.Rows[i].Text = text
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
-		}
+	} else {
+		fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
 	}
 	data, _ := json.Marshal(doc)
 	fmt.Println(string(data))
 	return nil
 }
 
-// runStatusChains prints chains and their steps in text or JSON format.
-func runStatusChains(asJSON bool) error {
+// runStatusChains prints chains and their steps in text or JSON format, under
+// the same scope every other status verb uses: a chain is a builder's row, so
+// a chain belongs to the mastermind that owns it.
+func runStatusChains(asJSON bool, mastermindRef string, allMasterMinds bool) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return fail(codeInternal, "%v", err)
@@ -324,7 +310,11 @@ func runStatusChains(asJSON bool) error {
 			fmt.Fprintf(os.Stderr, "relevo: sync remote bindings: %v\n", serr)
 		}
 	}
-	doc, err := relevo.ReadChains(context.Background(), rt)
+	sc, _, err := statusScope(mastermindRef, allMasterMinds, false, false, rt)
+	if err != nil {
+		return err
+	}
+	doc, err := relevo.ReadChainsScope(context.Background(), rt, sc)
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
