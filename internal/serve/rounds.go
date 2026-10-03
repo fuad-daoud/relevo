@@ -173,6 +173,9 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The fast path: an obvious retry or refusal never absorbs a bundle. It is
+	// not the authority -- two concurrent identical requests can both pass it --
+	// so finishRoundStart re-decides under this owner's section before it sends.
 	entries, _ := rt.Store.ReadLog(name)
 	if dec, msg := roundStartDecisionOf(rt, b, entries, req.Round, req.Plan); dec != startProceed {
 		dec.write(w, s.servedView(rt, b, entries), msg)
@@ -197,9 +200,10 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	bare := b.Serve.BareRepo
 	outRef := "refs/relevo/" + name + "/out"
 
-	// The bundle absorb is the long git step, and it holds no server-wide lock:
-	// another owner's poll runs while this one absorbs. The ref it writes is
-	// this owner's own, and finishRoundStart re-reads under this owner's lock.
+	// The bundle absorb is the long git step, and it holds no lock at all:
+	// another owner's poll runs while this one absorbs. The ref it writes is this
+	// owner's own, and finishRoundStart re-decides and sends under this owner's
+	// section, which the absorb deliberately does not hold.
 	if !s.absorbRoundBundle(w, r, rt.Transport, bare, outRef, req.Bundle) {
 		return
 	}
@@ -340,11 +344,27 @@ func (s *Server) recordRoundAccepted(r *http.Request, rt relevo.Runtime, name st
 	}
 }
 
-// finishRoundStart runs the locked half of a round start -- ref, worktree,
+// finishRoundStart runs the second half of a round start -- ref, worktree,
 // send, accept census, admit -- writing the 201 view or the failure itself.
+//
+// It re-decides the request from freshly re-read state under this owner's
+// section, before any Send: handleStartRound's decision was taken before the
+// bundle absorb, so two concurrent identical starts could both pass it and each
+// write a prompt entry, a queue entry and a queued hook. The second one to reach
+// this section sees the round the first one queued and answers the retry or the
+// conflict instead. Another owner never waits on this section.
 func (s *Server) finishRoundStart(w http.ResponseWriter, r *http.Request, rt relevo.Runtime, caller remote.ClientID, name, bare, outRef string, b store.Binding, req roundRequest) {
+	unlock := lockOwnerSection(caller)
+	defer unlock()
+
 	if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {
 		b = reloaded
+	}
+	if entries, logErr := rt.Store.ReadLog(name); logErr == nil {
+		if dec, msg := roundStartDecisionOf(rt, b, entries, req.Round, req.Plan); dec != startProceed {
+			dec.write(w, s.servedView(rt, b, entries), msg)
+			return
+		}
 	}
 
 	outSHA, ok, refErr := rt.Git.RefSHA(r.Context(), bare, outRef)

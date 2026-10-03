@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/git"
@@ -18,6 +19,28 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// zeroSHA is the all-zero object name git reads as "this ref must not exist
+// yet". Passed as UpdateRef's old value it makes the write create-only, so the
+// second of two concurrent creates is refused by git itself instead of
+// overwriting the branch the first one cut.
+const zeroSHA = "0000000000000000000000000000000000000000"
+
+// ownerSections holds one exclusion per owner, keyed by client id: the
+// per-owner serialization a create and a round start each need across the
+// window where a re-check and the write it guards have to be a single step.
+// It is deliberately narrower than s.mu, which guards only the stores map, and
+// than admitMu, which decides the server-wide builder cap: keyed by owner, one
+// owner's section is never waited on by another owner's poll, ack or start.
+var ownerSections sync.Map // remote.ClientID -> *sync.Mutex
+
+// lockOwnerSection takes the named owner's section and returns its release.
+func lockOwnerSection(owner remote.ClientID) func() {
+	v, _ := ownerSections.LoadOrStore(owner, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
 
 // The bounds a chain create and resume enforce on their untrusted fields, each
 // a named constant so a refusal and the plan agree.
@@ -163,10 +186,11 @@ func validateChainActorIDs(ids map[string]string) string {
 
 // handleCreateChain accepts a whole chain: a multipart POST /v1/chains whose
 // "chain" field is the create JSON and whose "bundle" part is the base bundle.
-// Validation and the preflight run before anything exists; the bundle is
-// absorbed without any server-wide lock held, so another owner's poll is not
-// blocked by it; a second preflight closes the race with a create that landed
-// while the bundle was absorbed.
+// Validation and the preflight run before anything exists, and the bundle is
+// absorbed with no lock held, so another owner's poll never waits on it. The
+// absorb leaves a window in which an identical create can land, so
+// chainFinishCreate repeats the re-check and the preflight under this owner's
+// own section and answers the retry rather than cutting the branch twice.
 func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(s.cfg.MaxBundleBytes); err != nil {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "invalid multipart form: "+err.Error())
@@ -218,7 +242,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The absorb is the long git step and holds no server-wide lock.
-	if !s.chainInitAndAbsorb(w, r, rt, bare, outRef, bundle) {
+	if !s.chainInitAndAbsorb(w, r, rt, caller, bare, outRef, bundle) {
 		return
 	}
 
@@ -248,12 +272,20 @@ func (s *Server) chainPrepareCreate(w http.ResponseWriter, rt relevo.Runtime, ca
 	return false
 }
 
-// chainFinishCreate is the create's locked half, after the bundle was absorbed:
-// the second preflight closes the create race, then the branch is cut at the
-// base commit, the builder's worktree is checked out, the chain is created and
-// the queue is admitted. Any failure past the absorb unwinds the out ref; a
-// failure past the checkout also unwinds the worktree and the branch.
+// chainFinishCreate is the create's second half, after the bundle was absorbed.
+// It takes this owner's section first, so the re-check below, the branch cut and
+// the row create are one step against a second identical create for the same
+// owner: that create waits here, then finds the row this one wrote and answers
+// the retry instead of cutting the branch a second time. Another owner never
+// waits on this section, and the absorb ran before it, so a slow bundle does
+// not hold it either.
+//
+// Any failure past the absorb unwinds the out ref; a failure past the checkout
+// also unwinds the worktree and the branch.
 func (s *Server) chainFinishCreate(w http.ResponseWriter, r *http.Request, rt relevo.Runtime, caller remote.ClientID, bare, outRef string, req remote.CreateChainRequest) {
+	unlock := lockOwnerSection(caller)
+	defer unlock()
+
 	ctx := r.Context()
 	name := req.Name
 	worktree := rt.Store.WorktreePath(name)
@@ -330,7 +362,9 @@ func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, g 
 		writeErr(w, http.StatusConflict, remote.CodeInvalid, "branch "+branch+" already exists")
 		return false
 	}
-	if err := g.UpdateRef(ctx, bare, "refs/heads/"+branch, base, ""); err != nil {
+	// The old value is the all-zero name, so git refuses this write instead of
+	// overwriting a branch another create cut between the check above and here.
+	if err := g.UpdateRef(ctx, bare, "refs/heads/"+branch, base, zeroSHA); err != nil {
 		unwind(false, false)
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return false
@@ -347,9 +381,24 @@ func (s *Server) cutChainWorktree(ctx context.Context, w http.ResponseWriter, g 
 // base bundle into refs/relevo/<name>/out. It reports the response itself and
 // returns false when it wrote a failure. Both steps run through the owner's
 // runtime: a user-mode owner's git and bundle transport run as the tenant.
-func (s *Server) chainInitAndAbsorb(w http.ResponseWriter, r *http.Request, rt relevo.Runtime, bare, outRef string, bundle io.Reader) bool {
+// initOwnerBare creates the owner's bare repo under that owner's section, so two
+// identical creates for one owner take the init one at a time: InitBare's own
+// existence check and its mkdir are not one step, and the loser of that race
+// fails inside git with "File exists".
+func (s *Server) initOwnerBare(ctx context.Context, rt relevo.Runtime, caller remote.ClientID, bare string) error {
+	unlock := lockOwnerSection(caller)
+	defer unlock()
+	return rt.Git.InitBare(ctx, bare)
+}
+
+func (s *Server) chainInitAndAbsorb(w http.ResponseWriter, r *http.Request, rt relevo.Runtime, caller remote.ClientID, bare, outRef string, bundle io.Reader) bool {
 	ctx := r.Context()
-	if err := rt.Git.InitBare(ctx, bare); err != nil {
+	// The init is one mkdir-and-git-init step whose own existence check is not
+	// atomic, so two identical creates for one owner can both try it and the
+	// loser of that race fails inside git. It takes this owner's section, which
+	// is free for every other owner and is released again before the absorb --
+	// the long transport step below still runs with no lock held.
+	if err := s.initOwnerBare(ctx, rt, caller, bare); err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return false
 	}
