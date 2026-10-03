@@ -189,11 +189,13 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	// then removes the binding and its consults with it.
 	//
 	// On those early-return paths deliverAndSettle is skipped, so queued
-	// findings wait on disk and the background wait's delivery retrieves them
-	// -- the same behaviour the halt comment below describes for a halted
-	// binding. An entry a push route already admitted is the exception: no
-	// other route can take it (an admitted entry is not claimable), so the
-	// read-back runs here or it never runs at all.
+	// findings wait on disk and the background wait's delivery retrieves them.
+	// That is the opposite of what a halt does: a halt queues an entry and
+	// settles it in the same tick (haltAndSettle), so nothing about the halt
+	// is a precedent for leaving an entry pending here. An entry a push route
+	// already admitted is the exception: no other route can take it (an
+	// admitted entry is not claimable), so the read-back runs here or it never
+	// runs at all.
 	b, err = consult.Reconcile(ctx, consultDeps(rt), tx, b)
 	if err != nil {
 		return b, err
@@ -908,17 +910,34 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// already advanced to: the cause is this round's artifact size, and a
 	// default wait still sitting on this round would never pull an N+1 entry
 	// (closedRoundHalt).
+	//
+	// A halt whose entry cannot be written is returned, not dropped. The dedup
+	// key is stamped before the queue, so swallowing the error here would save
+	// the stamp with no entry behind it -- and a binding whose
+	// HaltNotifiedRound already equals its Round queues nothing ever again, so
+	// the notification would be lost for good rather than retried. Returning
+	// it ends the tick unsaved: the next tick re-closes the round, halts again
+	// under the same condition and queues the entry.
 	if b.Shape == store.ShapeReader {
 		if over, total := artifactCapExceeded(rt.Store, b, closedRound, rt.Policy.ArtifactMaxBytes()); over {
-			b, _ = closedRoundHalt(ctx, rt, tx, b, closedRound, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
+			next, herr := closedRoundHalt(ctx, rt, tx, b, closedRound, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
+			b = next
+			if herr != nil {
+				return b, herr
+			}
 		}
 	}
 
 	// A scope refusal asks for a human, exactly where the reader artifact
 	// cap does: after the round has advanced, naming the offending file
-	// (#801). Filed under closedRound for the same reason.
+	// (#801). Filed under closedRound, and its failed queue surfaced, for the
+	// reasons the cap halt above gives.
 	if verdict.Refused {
-		b, _ = closedRoundHalt(ctx, rt, tx, b, closedRound, scopeHaltText(b, closedRound, verdict))
+		next, herr := closedRoundHalt(ctx, rt, tx, b, closedRound, scopeHaltText(b, closedRound, verdict))
+		b = next
+		if herr != nil {
+			return b, herr
+		}
 	}
 
 	// The round has advanced, so the chain may now move: the close is mapped

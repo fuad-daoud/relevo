@@ -549,3 +549,35 @@ func TestRelevoVerbsWaitNoNameTakesTheDefaultBudget(t *testing.T) {
 		t.Errorf("wait text = %q, want %q", text, want)
 	}
 }
+
+// TestOversizeWaitBodyLabelsAnEntryWithNoPath pins the same label in the
+// over-cap renderer. A halt entry carries no artifact, so its Path is empty by
+// design and the header rendered "not delivered earlier ()" -- a label that
+// named nothing while implying that it had. Both renderers share one header
+// function, so this and the delivery-side case cannot drift apart.
+func TestOversizeWaitBodyLabelsAnEntryWithNoPath(t *testing.T) {
+	s := store.New(t.TempDir())
+
+	res := relevo.WaitResult{
+		Round: 1,
+		Delivered: []delivery.Delivered{
+			{Entry: store.LogEntry{Round: 1, Kind: store.KindHalt}, Text: "halting: the round ran past its budget"},
+			{Entry: store.LogEntry{Round: 1, Kind: store.KindReport, Path: "/repo-big/001-report.md"}, Text: "round 1 done"},
+		},
+	}
+
+	body := oversizeWaitBody(s, "big", 1, res)
+
+	if strings.Contains(body, "()") {
+		t.Errorf("an entry with no path rendered empty parens:\n%s", body)
+	}
+	if !strings.Contains(body, "── round 1: not delivered earlier ──\n") {
+		t.Errorf("the label does not name the entry's round:\n%s", body)
+	}
+	if !strings.Contains(body, "halting: the round ran past its budget") {
+		t.Errorf("the entry's own text is missing:\n%s", body)
+	}
+	if !strings.HasSuffix(body, "round 1 done") {
+		t.Errorf("the waited entry is not last:\n%s", body)
+	}
+}

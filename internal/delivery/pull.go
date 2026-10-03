@@ -184,6 +184,22 @@ func PullPendingThroughEntries(ctx context.Context, st *store.Store, name, route
 	return out, nil
 }
 
+// EarlierHeader is the line that introduces an entry a through-pull delivers
+// before the waited round, so an older undelivered payload is neither dropped
+// nor mistaken for the newest text.
+//
+// The path is dropped when there is none. A halt entry carries no artifact, so
+// its Path is empty by design and an unconditional (%s) rendered it as a bare
+// pair of parens -- a header that named nothing while implying it had. Both
+// renderers of this line share the function so the two cannot drift apart on
+// what a label looks like.
+func EarlierHeader(round int, path string) string {
+	if path == "" {
+		return fmt.Sprintf("── round %d: not delivered earlier ──\n", round)
+	}
+	return fmt.Sprintf("── round %d: not delivered earlier (%s) ──\n", round, path)
+}
+
 // JoinDelivered renders one whole-result string from the per-entry deliveries,
 // waited round last: the single entry's text when there is one, and every
 // earlier entry under a header naming its round otherwise. It is the shape
@@ -197,7 +213,7 @@ func JoinDelivered(delivered []Delivered) string {
 
 	var b strings.Builder
 	for _, d := range delivered[:len(delivered)-1] {
-		fmt.Fprintf(&b, "── round %d: not delivered earlier (%s) ──\n", d.Entry.Round, d.Entry.Path)
+		b.WriteString(EarlierHeader(d.Entry.Round, d.Entry.Path))
 		b.WriteString(d.Text)
 		b.WriteString("\n\n")
 	}
