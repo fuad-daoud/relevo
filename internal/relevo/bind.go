@@ -457,7 +457,6 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		b.Progress = nil
 		b.ExploringSince = time.Time{}
 		b.StaleSince = time.Time{}
-		b.StaleNotifiedAt = time.Time{}
 		if rebinding {
 			// A rebind can land mid-round: resume refuses only while the
 			// current process is alive (ErrBuilderAlive above), so an open

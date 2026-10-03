@@ -67,8 +67,6 @@ func stateStyle(display string) lipgloss.Style {
 	switch display {
 	case "NEEDS YOU":
 		return stateNeedsYouStyle
-	case "HELD":
-		return stateHeldStyle
 	case "ACTIVE":
 		return stateActiveStyle
 	case "PAUSED":

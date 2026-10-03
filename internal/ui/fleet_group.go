@@ -28,7 +28,7 @@ func groupOf(b view.BindingStatus) fleetGroup {
 		return groupWorking
 	case b.Display == "ACTIVE" && b.BuilderStatus == "idle":
 		return groupIdle
-	case b.Display == "HELD" || b.Display == "PAUSED":
+	case b.Display == "PAUSED":
 		return groupHeld
 	case b.Display == "DONE":
 		return groupDone

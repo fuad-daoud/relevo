@@ -280,9 +280,6 @@ func rowStatus(b BindingStatus, needsYou, reportIn bool) (status, tone string) {
 		return "NEEDS YOU", "needs"
 	}
 	if b.Display != "" && b.Display != "ACTIVE" {
-		if b.Display == "HELD" {
-			return b.Display, "held"
-		}
 		return b.Display, "quiet"
 	}
 	if reportIn && b.LastPayload != nil {

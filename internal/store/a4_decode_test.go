@@ -127,3 +127,32 @@ func TestBindingEmptyRoleReadsAsBuilder(t *testing.T) {
 		t.Errorf("encoded record = %s, want actor \"builder\"", raw)
 	}
 }
+
+// TestBindingDropsARemovedKey pins that a record still carrying a key this
+// binary no longer has -- stale_notified_at, the write-only stale notification
+// stamp -- decodes, and the next save writes it back without the key. Nothing
+// read it, so nothing may break on the way in.
+func TestBindingDropsARemovedKey(t *testing.T) {
+	s := New(t.TempDir())
+	putRecordJSON(t, s, "webshop", fmt.Sprintf(
+		`{"format":%d,"name":"webshop","cwd":"/repo","actor":"builder","state":"needs_you","stale_since":"2026-10-01T09:00:00Z","stale_notified_at":"2026-10-01T09:30:00Z"}`,
+		BindingFormat))
+
+	loaded, err := s.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load of a record with the removed key: %v", err)
+	}
+	if loaded.StaleSince.IsZero() {
+		t.Error("StaleSince = zero, want the value the record carried")
+	}
+	if err := s.Save(loaded); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw := bindingRecordJSON(t, s, "webshop")
+	if bytes.Contains(raw, []byte(`"stale_notified_at"`)) {
+		t.Errorf("re-encoded record still carries the removed key:\n%s", raw)
+	}
+	if !bytes.Contains(raw, []byte(`"stale_since"`)) {
+		t.Errorf("re-encoded record lost the stale clock:\n%s", raw)
+	}
+}
