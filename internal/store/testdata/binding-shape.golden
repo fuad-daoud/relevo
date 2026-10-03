@@ -283,7 +283,6 @@ serve.last_seen
 serve.repo_id
 serve.result_commit
 shape
-stale_notified_at
 stale_since
 stalled_since
 state

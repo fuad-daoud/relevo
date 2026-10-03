@@ -184,7 +184,19 @@ func TestResolveBoardHTMLExcalidrawStillResolvesThroughTheOldPath(t *testing.T) 
 	if err != nil {
 		t.Fatalf("resolveBoard: %v", err)
 	}
-	if legacy.Path != scene {
+	// Temp roots can carry symlinks (/var -> /private/var on macos), and the
+	// resolver may return either form. The scene file itself need not exist,
+	// so evaluate the directory both paths share and compare from there: the
+	// test pins the target, not the spelling.
+	wantDir, werr := filepath.EvalSymlinks(filepath.Dir(scene))
+	if werr != nil {
+		t.Fatalf("EvalSymlinks scene dir: %v", werr)
+	}
+	gotDir, gerr := filepath.EvalSymlinks(filepath.Dir(legacy.Path))
+	if gerr != nil {
+		t.Fatalf("EvalSymlinks legacy dir: %v", gerr)
+	}
+	if gotDir != wantDir || filepath.Base(legacy.Path) != filepath.Base(scene) {
 		t.Errorf("resolveBoard path = %q, want %q", legacy.Path, scene)
 	}
 	if _, err := resolveBoardHTML(t.TempDir(), "", "", scene); err == nil {

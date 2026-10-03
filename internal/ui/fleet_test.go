@@ -21,7 +21,7 @@ func TestFleetGroupsOrderAndOmission(t *testing.T) {
 		{Name: "b-idle", Display: "ACTIVE", BuilderStatus: "idle"},
 		{Name: "b-need", Display: "NEEDS YOU"},
 		{Name: "b-work", Display: "ACTIVE", BuilderStatus: "working"},
-		{Name: "b-held", Display: "HELD"},
+		{Name: "b-held", Display: "PAUSED"},
 	}
 	env := Env{Loaded: true, Report: view.Report{Bindings: rows}, Now: railNow, Width: 140, Height: 40}
 	f := newFleetView(true)
@@ -98,7 +98,7 @@ func TestFleetCardKeysByGroup(t *testing.T) {
 		{Name: "b-need", Display: "NEEDS YOU"},
 		{Name: "b-work", Display: "ACTIVE", BuilderStatus: "working"},
 		{Name: "b-idle", Display: "ACTIVE", BuilderStatus: "idle"},
-		{Name: "b-held", Display: "HELD"},
+		{Name: "b-held", Display: "PAUSED"},
 		{Name: "b-done", Display: "DONE"},
 	}
 	env := Env{
