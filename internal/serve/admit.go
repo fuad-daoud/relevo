@@ -96,8 +96,21 @@ func (s *Server) census() (census, error) {
 }
 
 // admit starts queued rounds, oldest first, while the running count stays below
-// cap. The caller holds s.mu, so census's running count is a fact, not a race.
+// cap. It takes admitMu for the whole count-and-start loop, so the server-wide
+// cap is decided against one running count even when a tick's admit and a round
+// start's admit overlap. The lock is server-wide on purpose: the cap is
+// server-wide, so per-owner exclusion would not decide it.
 func (s *Server) admit(ctx context.Context) error {
+	s.admitMu.Lock()
+	defer s.admitMu.Unlock()
+	return s.admitLocked(ctx)
+}
+
+// admitLocked is admit for a caller already holding admitMu. The tick's
+// collectSettled -> pruneUnusedRepos -> admit sequence runs under one hold, so
+// Tick's unlocked per-owner reconcile cannot interleave between the count and
+// the starts.
+func (s *Server) admitLocked(ctx context.Context) error {
 	c, cerr := s.census()
 	running := c.Running
 	limit := s.cap()
@@ -122,7 +135,9 @@ func (s *Server) admit(ctx context.Context) error {
 }
 
 // queuePositionView fills a queued round's place in the queue. A round not found
-// in a fresh census (raced -- admitted or unbound since the view) is nil.
+// in a fresh census (raced -- admitted or unbound since the view) is nil. The
+// census is a read-only walk, so it takes no admitMu: a poll must not queue
+// behind another owner's admit.
 func (s *Server) queuePositionView(b store.Binding, view remote.BindingView, caller remote.ClientID) *remote.QueueView {
 	if view.RoundState != remote.RoundQueued {
 		return nil
