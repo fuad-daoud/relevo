@@ -214,6 +214,22 @@ type BindingStatus struct {
 	// for a chain's members; nil on every ordinary binding row, whose
 	// document then keeps exactly the keys it always had.
 	Chain *ChainFacts `json:"chain,omitempty"`
+	// Gone marks a row whose backing binding is no longer in the store: a
+	// chain whose members are all gone, or a binding deleted between the list
+	// and the read that followed it. The row stays listed -- a human has to
+	// see the reference to clear it -- and Gone says so instead of the row
+	// being silently dropped. omitempty, so every other row's document keeps
+	// exactly the keys it always had.
+	Gone bool `json:"gone,omitempty"`
+	// GoneStep is the next step for a gone row, naming the verb that clears
+	// it. Empty on every other row, and omitted from JSON with it, so a live
+	// row's document keeps exactly the keys it always had.
+	//
+	// A chain row's step is `relevo chain --resume`, not `serve gc` or
+	// `serve unbind`: those two walk Store.List() and Store.Load(name), which
+	// a chain row is in neither of -- it is a chains-table row, not a binding
+	// -- so neither verb could remove it.
+	GoneStep string `json:"gone_step,omitempty"`
 }
 
 // Key is the UI's row identity. A mastermind row keys by Name; a server row
