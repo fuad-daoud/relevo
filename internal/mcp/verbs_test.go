@@ -519,6 +519,98 @@ func TestRelevoVerbsShowSectionAndRound(t *testing.T) {
 	}
 }
 
+// TestRelevoVerbsShowClaimsOnlyWhatItPrinted pins the MCP verb against the CLI's
+// claim rule, over the same store shape: a report read of the round whose report
+// is pending claims it, and every other read of every other round claims nothing.
+// The verb shares relevo.Show with `relevo show`, so no peek arg is needed for
+// the two to agree.
+func TestRelevoVerbsShowClaimsOnlyWhatItPrinted(t *testing.T) {
+	confirmed := func(t *testing.T, s *store.Store) bool {
+		t.Helper()
+		entries, err := s.ReadLog("webshop")
+		if err != nil {
+			t.Fatalf("ReadLog: %v", err)
+		}
+		for _, e := range entries {
+			if e.Direction == store.DirToMasterMind && e.Confirmed {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("a report read of the pending round claims it", func(t *testing.T) {
+		s := pendingShowVerbStore(t)
+		v := &RelevoVerbs{RT: relevo.Runtime{Store: s}}
+		if _, err := v.Show(context.Background(), "", ShowArgs{Name: "webshop", Round: 1, Section: "report"}); err != nil {
+			t.Fatalf("Show report: %v", err)
+		}
+		if !confirmed(t, s) {
+			t.Error("show --report round 1 must claim round 1's pending payload")
+		}
+	})
+
+	t.Run("a report read of another round claims nothing", func(t *testing.T) {
+		s := pendingShowVerbStore(t)
+		v := &RelevoVerbs{RT: relevo.Runtime{Store: s}}
+		if _, err := v.Show(context.Background(), "", ShowArgs{Name: "webshop", Round: 2, Section: "report"}); err != nil {
+			t.Fatalf("Show report: %v", err)
+		}
+		if confirmed(t, s) {
+			t.Error("show --report round 2 must leave round 1's pending payload alone")
+		}
+	})
+
+	t.Run("another section claims nothing", func(t *testing.T) {
+		for _, section := range []string{"prompt", "diff", "log", "transcript", "gate"} {
+			s := pendingShowVerbStore(t)
+			v := &RelevoVerbs{RT: relevo.Runtime{Store: s}}
+			if _, err := v.Show(context.Background(), "", ShowArgs{Name: "webshop", Round: 1, Section: section}); err != nil {
+				t.Fatalf("Show %s: %v", section, err)
+			}
+			if confirmed(t, s) {
+				t.Errorf("show --%s must claim nothing", section)
+			}
+		}
+	})
+}
+
+// pendingShowVerbStore seeds the same two rounds as newShowVerbStore with both
+// reports on disk and round 1's payload still pending, so a read of either round
+// finds a report section and only the round-1 read has a payload to claim.
+func pendingShowVerbStore(t *testing.T) *store.Store {
+	t.Helper()
+	s := store.New(t.TempDir())
+	saveVerbBinding(t, s, store.Binding{Name: "webshop", CWD: "/repo", Round: 3, State: store.StateActive})
+
+	write := func(path, content string) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(s.PromptPath("webshop", 1), "# Round 1 plan\n")
+	write(s.ReportPath("webshop", 1), "# Round 1 report\n")
+	write(s.PromptPath("webshop", 2), "# Round 2 plan\n")
+	write(s.ReportPath("webshop", 2), "# Round 2 report\n")
+
+	for _, e := range []store.LogEntry{
+		{TS: time.Date(2026, 9, 29, 9, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{
+			TS: time.Date(2026, 9, 29, 9, 1, 0, 0, time.UTC), Round: 1, Direction: store.DirToMasterMind,
+			Kind: store.KindReport, Payload: "round 1 report", Path: s.ReportPath("webshop", 1),
+		},
+		{TS: time.Date(2026, 9, 29, 9, 2, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+	} {
+		if err := s.AppendLog("webshop", e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+	return s
+}
+
 // assertGateSetDoc checks a set document: the provider, the candidate count,
 // the mode, the expiry `until` names and the absence of removed.
 func assertGateSetDoc(t *testing.T, doc gateDoc, provider string, candidates int, until time.Time) {

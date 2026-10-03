@@ -57,6 +57,17 @@ const (
 	// reads when a chain finishes, halts or stops. It is additive, like
 	// DirToConsult: nothing enumerates the set exhaustively.
 	KindChain Kind = "chain"
+
+	// KindHalt is the one to_planner entry a halt or a non-switchable broken
+	// transition queues for the round. Additive for the same reason as
+	// KindChain: nothing enumerates the set exhaustively.
+	//
+	// It is deliberately not KindReport: a report entry closes a round in
+	// every reader -- store.RoundOpen, HasEntry, and the wait classifier --
+	// and a halt does not close anything. It is deliberately not KindQuestion
+	// either: a question entry classifies the binding as blocked and replaces
+	// the halt line with the question's own text.
+	KindHalt Kind = "halt"
 )
 
 // kindPlanLegacy is the kind a round's prompt carried before the rename: it is

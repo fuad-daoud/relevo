@@ -257,8 +257,8 @@ func TestDeliverPendingAdmitsThenConfirmsWithoutResending(t *testing.T) {
 	}
 
 	// A reader can neither claim nor print it any more.
-	if _, found, err := pullPending(context.Background(), rt.Store, b.Name, "wait"); err != nil || found {
-		t.Errorf("pullPending after an admit = found %v, err %v; want nothing claimable", found, err)
+	if _, found, err := Pull(context.Background(), rt.Store, b.Name, "wait"); err != nil || found {
+		t.Errorf("Pull after an admit = found %v, err %v; want nothing claimable", found, err)
 	}
 
 	// Tick 2: a single read-back only -- no Deliver at all, and no second

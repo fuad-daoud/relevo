@@ -143,7 +143,7 @@ const catchUpFailureBudget = 10
 // round's result: the store has the round, so the failure is not evidence that
 // the round is missing, and counting it would halt a binding that is already
 // caught up.
-func applyCatchUpAbsorb(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch) (next store.Binding, stop bool, err error) {
+func applyCatchUpAbsorb(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (next store.Binding, stop bool, err error) {
 	switch {
 	case cf.CheckedOut:
 		return b, true, nil
@@ -153,7 +153,7 @@ func applyCatchUpAbsorb(ctx context.Context, rt Runtime, b store.Binding, view r
 		}
 		b.RemoteAbsorbFailures++
 		if b.RemoteAbsorbFailures >= catchUpFailureBudget {
-			next, err = haltBinding(ctx, rt, b, cf.AbsorbErr.Error())
+			next, err = haltAndSettle(ctx, rt, tx, b, cf.AbsorbErr.Error())
 			return next, true, err
 		}
 		return b, true, nil
@@ -167,10 +167,10 @@ func applyCatchUpAbsorb(ctx context.Context, rt Runtime, b store.Binding, view r
 // at the shared budget. The fetch half runs without the state lock, so the
 // count lands here. Unlike an absorb failure there is no verified-store gate: a
 // bundle that never arrived left nothing to check the round against.
-func applyCatchUpBundleFailure(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, *catchUpAck, error) {
+func applyCatchUpBundleFailure(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, *catchUpAck, error) {
 	b.RemoteBundleFailures++
 	if b.RemoteBundleFailures >= catchUpFailureBudget {
-		next, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: cannot fetch round bundle %d from %s: %s", b.Name, view.ClosedRound, b.Builder.Server, cf.BundleErr))
+		next, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: cannot fetch round bundle %d from %s: %s", b.Name, view.ClosedRound, b.Builder.Server, cf.BundleErr))
 		return next, nil, err
 	}
 	return b, nil, nil

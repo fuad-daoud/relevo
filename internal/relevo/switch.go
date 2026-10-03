@@ -150,7 +150,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		if b.Builder.PID == 0 {
 			b = abandonSession(b)
 		}
-		return haltBinding(ctx, rt, b, fmt.Sprintf(
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 			"%s: builder %s (%s); already switched %d time(s) this round (max_switches %d)",
 			b.Name, reason, b.BuilderCandidate, b.RoundSwitches, limit))
 	}
@@ -179,7 +179,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			if b.Builder.PID == 0 {
 				b = abandonSession(b)
 			}
-			return haltBinding(ctx, rt, b, fmt.Sprintf(
+			return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 				"%s: builder %s (%s); cannot switch: %v",
 				b.Name, reason, b.BuilderCandidate, err))
 		}
@@ -191,7 +191,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// process was still running.
 		if b.Builder.PID != 0 && rt.Runner != nil {
 			if err := rt.Runner.Kill(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); err != nil {
-				return haltBinding(ctx, rt, b, fmt.Sprintf(
+				return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 					"%s: builder %s; could not stop its process %d to replace it: %v",
 					b.Name, reason, b.Builder.PID, err))
 			}
@@ -223,7 +223,15 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		}
 		b.State = store.StateBroken
 		slog.Warn("builder switch failed", "binding", b.Name, "round", b.Round, "pick", res.Token(), "err", err)
-		return b, nil
+		// A broken binding no route will fix owes the MasterMind the same entry
+		// a halt does; queueBrokenHalt skips the switchable ones, which are
+		// exactly the bindings the gone trigger below is about to retry.
+		next, qerr := queueBrokenHalt(ctx, rt, tx, b,
+			fmt.Sprintf("%s: builder %s; switching to %s failed: %v", b.Name, b.BuilderCandidate, res.Token(), err))
+		if qerr != nil {
+			return b, qerr
+		}
+		return deliverAndSettle(ctx, rt, tx, next)
 	}
 
 	// The whole install shares one opencode login, so a rotation must move the
@@ -255,7 +263,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	text := roundPrompt(rt, tx, b, rt.Store.PromptPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 	started, err := startRound(ctx, rt, tx, b, text, false)
 	if err != nil {
-		return haltBinding(ctx, rt, b, fmt.Sprintf(
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 			"%s: switched builder to %s but could not start round %d: %v",
 			b.Name, res.Token(), b.Round, err))
 	}
