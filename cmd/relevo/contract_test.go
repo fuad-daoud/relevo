@@ -47,10 +47,10 @@ func assertGolden(t *testing.T, name string, got []byte) {
 
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("missing golden file %s: re-run with 'go test ./cmd/relevo -run Contract -update' to generate", path)
+		t.Fatalf("missing golden file %s: re-run with 'go test ./cmd/relevo -run \"Contract|HelpJSON\" -update' to generate", path)
 	}
 	if !bytes.Equal(got, want) {
-		t.Fatalf("golden mismatch in %s at byte %d: re-run with 'go test ./cmd/relevo -run Contract -update' to update\n--- got ---\n%s\n--- want ---\n%s",
+		t.Fatalf("golden mismatch in %s at byte %d: re-run with 'go test ./cmd/relevo -run \"Contract|HelpJSON\" -update' to update\n--- got ---\n%s\n--- want ---\n%s",
 			path, firstDiffByte(got, want), got, want)
 	}
 }
