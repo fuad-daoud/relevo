@@ -724,12 +724,6 @@ var rowStatusCases = []struct {
 		wantTone:   "quiet",
 	},
 	{
-		name:       "held display",
-		binding:    BindingStatus{Name: "api", Round: 1, Display: "HELD", BuilderCandidate: "agy"},
-		wantStatus: "HELD",
-		wantTone:   "held",
-	},
-	{
 		name: "needs you display carries its detail as the reason",
 		binding: BindingStatus{
 			Name:             "api",

@@ -49,7 +49,7 @@ func TestAttentionRankPaused(t *testing.T) {
 }
 
 // TestSortRowsAttentionOrder: every display state, in every input order,
-// lands NEEDS YOU, HELD, ACTIVE, PAUSED, DONE.
+// lands NEEDS YOU, ACTIVE, PAUSED, DONE.
 func TestSortRowsAttentionOrder(t *testing.T) {
 	t.Parallel()
 
@@ -57,9 +57,9 @@ func TestSortRowsAttentionOrder(t *testing.T) {
 		{Name: "d", Display: "DONE"},
 		{Name: "a", Display: "ACTIVE"},
 		{Name: "n", Display: "NEEDS YOU"},
-		{Name: "h", Display: "HELD"},
+		{Name: "p", Display: "PAUSED"},
 	}
-	want := []string{"n", "h", "a", "d"}
+	want := []string{"n", "a", "p", "d"}
 	// Rotate the input through every starting point: four permutations
 	// that each begin with a different state.
 	for shift := 0; shift < len(rows); shift++ {
@@ -127,9 +127,9 @@ func TestSortRowsOwnerEmptyLabelsPinsLegacyOrder(t *testing.T) {
 		{Name: "d", Display: "DONE"},
 		{Name: "a", Display: "ACTIVE"},
 		{Name: "n", Display: "NEEDS YOU"},
-		{Name: "h", Display: "HELD"},
+		{Name: "p", Display: "PAUSED"},
 	}
-	want := []string{"n", "h", "a", "d"}
+	want := []string{"n", "a", "p", "d"}
 	if got := names(SortRows(attention, true)); !equalNames(got, want) {
 		t.Errorf("attention order: got %v want %v", got, want)
 	}
@@ -190,13 +190,11 @@ func TestSortStaleFirst(t *testing.T) {
 	rows := []BindingStatus{
 		{Name: "fresh", Display: "NEEDS YOU", Last: &LastEvent{TS: t0}},
 		{Name: "stale", Display: "NEEDS YOU", Stale: "stale 4h 0m", Last: &LastEvent{TS: t0.Add(-time.Hour)}},
-		{Name: "held-stale", Display: "HELD", Stale: "stale 5h 0m", Last: &LastEvent{TS: t0.Add(-2 * time.Hour)}},
-		{Name: "held", Display: "HELD", Last: &LastEvent{TS: t0.Add(-3 * time.Hour)}},
 	}
-	if got, want := names(SortRows(rows, true)), []string{"stale", "fresh", "held-stale", "held"}; !equalNames(got, want) {
+	if got, want := names(SortRows(rows, true)), []string{"stale", "fresh"}; !equalNames(got, want) {
 		t.Errorf("attention order: got %v want %v", got, want)
 	}
-	if got, want := names(SortRows(rows, false)), []string{"fresh", "held", "held-stale", "stale"}; !equalNames(got, want) {
+	if got, want := names(SortRows(rows, false)), []string{"fresh", "stale"}; !equalNames(got, want) {
 		t.Errorf("name order: got %v want %v", got, want)
 	}
 }
