@@ -105,7 +105,7 @@ func whatAge(b view.BindingStatus, now time.Time) (what, age string) {
 			age = ago(b.Last.TS, now)
 		}
 	}
-	if (b.Display == "NEEDS YOU" || b.Display == "HELD") && b.Stale != "" {
+	if b.Display == "NEEDS YOU" && b.Stale != "" {
 		what += " · " + b.Stale
 	}
 	return what, age

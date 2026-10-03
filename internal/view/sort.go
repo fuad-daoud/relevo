@@ -9,12 +9,11 @@ import "sort"
 // today) sort after DONE.
 var attentionRank = map[string]int{
 	"NEEDS YOU": 0,
-	"HELD":      1,
-	"ACTIVE":    2,
-	"HALTED":    2,
-	"STOPPED":   2,
-	"PAUSED":    3,
-	"DONE":      4,
+	"ACTIVE":    1,
+	"HALTED":    1,
+	"STOPPED":   1,
+	"PAUSED":    2,
+	"DONE":      3,
 }
 
 func rankOf(display string) int {
@@ -26,7 +25,7 @@ func rankOf(display string) int {
 
 // SortRows orders status rows for a human. OwnerLabel is the primary key
 // (ascending, plain <): a client's cards stay contiguous under a header in
-// the serve ui. Then attention groups by display state -- NEEDS YOU, HELD,
+// the serve ui. Then attention groups by display state -- NEEDS YOU,
 // ACTIVE, DONE -- and within a group puts the most recent Last.TS first (a
 // nil Last last), name as the tiebreak; name is the order Status has
 // always returned. With every label empty (a mastermind) the output is
@@ -45,8 +44,8 @@ func SortRows(rows []BindingStatus, attention bool) []BindingStatus {
 				return ra < rb
 			}
 			// Inside one attention group the rows a human has left the
-			// longest come first, so an unacted NEEDS YOU or HELD row does not
-			// drift down the list behind fresher ones.
+			// longest come first, so an unacted NEEDS YOU row does not drift
+			// down the list behind fresher ones.
 			if sa, sb := a.Stale != "", b.Stale != ""; sa != sb {
 				return sa
 			}
