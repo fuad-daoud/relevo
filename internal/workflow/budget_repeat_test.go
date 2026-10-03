@@ -195,6 +195,131 @@ func TestPassAfterRedNeedsATraceVisibleOverride(t *testing.T) {
 	}
 }
 
+// fixReviewState walks the shipped default with one plan through a whole
+// review phase and into the security phase, up to the fix-review send. Its
+// fixCheck argument is what the security phase's own check reports: green
+// reaches fix-review directly, red buys one fix-repair round and reaches it
+// over that budget.
+//
+// The first phase's check is left recorded red, answered by the reviewer's
+// override: the reviewer passed over it, so the entry is stale by the time the
+// security phase runs its own gate.
+func fixReviewState(t *testing.T, fixCheck string) (Definition, State) {
+	t.Helper()
+	def := Default()
+	s, actions := Start(def, StartInputs{Plans: []string{"plan-1.md"}})
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "build" {
+		t.Fatalf("start action = %+v, want a send to build", a)
+	}
+	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "build", Member: "builder", Round: 0, Status: "done"})
+	if a := only(t, actions); a.Kind != ActionRunCheck || a.Step != "check" {
+		t.Fatalf("build close action = %+v, want a check run", a)
+	}
+
+	// Two reds: the first buys the single repair round, the second is over the
+	// budget and reaches the reviewer with the gate still red.
+	for run := 1; run <= 2; run++ {
+		s.Awaiting.Run = run
+		s, actions = Next(def, s, Event{Kind: EventCheckClosed, Step: "check", Run: run, Result: "red", Log: fmt.Sprintf("L%d", run)})
+		if run == 1 {
+			if a := only(t, actions); a.Kind != ActionSend || a.Step != "repair" {
+				t.Fatalf("first red action = %+v, want a send to repair", a)
+			}
+			s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "repair", Member: "builder", Status: "done"})
+			if a := only(t, actions); a.Kind != ActionRunCheck || a.Step != "check" {
+				t.Fatalf("repair close action = %+v, want a check run", a)
+			}
+			continue
+		}
+		if a := only(t, actions); a.Kind != ActionSend || a.Step != "review" {
+			t.Fatalf("red past the budget action = %+v, want a send to review", a)
+		}
+	}
+
+	// The reviewer passes on a recorded override, which answers that red and
+	// carries the run on to the security phase.
+	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "review", Member: "reviewer", Status: "done",
+		Outcomes: map[string]string{"verdict": "pass"}, Override: "the failure is in the vendored fixture"})
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "scan" {
+		t.Fatalf("review pass action = %+v, want a send to scan", a)
+	}
+
+	// A finding is planned and built, and its own check runs.
+	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "scan", Member: "security", Status: "done",
+		Outcomes: map[string]string{"findings": "1"}})
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "fix-plan" {
+		t.Fatalf("scan action = %+v, want a send to fix-plan", a)
+	}
+	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "fix-plan", Member: "lite-planner", Status: "done"})
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "fix-build" {
+		t.Fatalf("fix-plan action = %+v, want a send to fix-build", a)
+	}
+	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "fix-build", Member: "builder", Status: "done"})
+	if a := only(t, actions); a.Kind != ActionRunCheck || a.Step != "fix-check" {
+		t.Fatalf("fix-build action = %+v, want a fix-check run", a)
+	}
+
+	s.Awaiting.Run = 3
+	s, actions = Next(def, s, Event{Kind: EventCheckClosed, Step: "fix-check", Run: 3, Result: fixCheck, Log: "L3"})
+	if fixCheck == "green" {
+		if a := only(t, actions); a.Kind != ActionSend || a.Step != "fix-review" {
+			t.Fatalf("green fix-check action = %+v, want a send to fix-review", a)
+		}
+		return def, s
+	}
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "fix-repair" {
+		t.Fatalf("red fix-check action = %+v, want a send to fix-repair", a)
+	}
+	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "fix-repair", Member: "builder", Status: "done"})
+	if a := only(t, actions); a.Kind != ActionRunCheck || a.Step != "fix-check" {
+		t.Fatalf("fix-repair close action = %+v, want a check run", a)
+	}
+	s.Awaiting.Run = 4
+	s, actions = Next(def, s, Event{Kind: EventCheckClosed, Step: "fix-check", Run: 4, Result: "red", Log: "L4"})
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "fix-review" {
+		t.Fatalf("red fix-check past the budget action = %+v, want a send to fix-review", a)
+	}
+	return def, s
+}
+
+// TestCrossPhasePassAfterRedAdvancesOnItsOwnGreenCheck pins the gate's scope
+// across two review phases: a red the first reviewer already answered on an
+// override is stale, so it must not gate a later pass whose own check is green,
+// and a red that is still unanswered gates that pass and names itself.
+func TestCrossPhasePassAfterRedAdvancesOnItsOwnGreenCheck(t *testing.T) {
+	t.Parallel()
+
+	// A green security check: the only red left in the state was answered, so
+	// the reviewer's bare pass advances the run.
+	def, green := fixReviewState(t, "green")
+	if got := green.Results["check"].Status; got != "red" {
+		t.Fatalf("check result = %q, want the red the reviewer overrode", got)
+	}
+	pass := Event{Kind: EventStepClosed, Step: "fix-review", Member: "reviewer", Status: "done",
+		Outcomes: map[string]string{"verdict": "pass"}}
+	next, actions := Next(def, green, pass)
+	if next.Status != StatusDone {
+		t.Fatalf("status = %q, reason = %q, want done: fix-check is green", next.Status, next.Reason)
+	}
+	if a := only(t, actions); a.Kind != ActionFinish {
+		t.Fatalf("action = %+v, want finish", a)
+	}
+
+	// A red security check is unanswered, so the same bare pass halts on it --
+	// naming that check, not the stale one from the first phase.
+	def, red := fixReviewState(t, "red")
+	halted, actions := Next(def, red, pass)
+	if halted.Status != StatusHalted {
+		t.Fatalf("status = %q, want halted on the red fix-check", halted.Status)
+	}
+	if !strings.Contains(halted.Reason, "check fix-check is red") {
+		t.Fatalf("halt reason = %q, want it to name fix-check", halted.Reason)
+	}
+	if a := only(t, actions); a.Kind != ActionHalt {
+		t.Fatalf("action = %+v, want a halt", a)
+	}
+}
+
 // TestGreenCheckStillReachesTheReviewer pins the arm the gate must leave alone:
 // a green check goes to the reviewer whether or not a repair budget is left.
 func TestGreenCheckStillReachesTheReviewer(t *testing.T) {
