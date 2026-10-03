@@ -422,3 +422,68 @@ func TestScratchWritesNeverReachTheSource(t *testing.T) {
 		t.Errorf("worktree list still names the scratch:\n%s", list)
 	}
 }
+
+// TestDiffPatchDeadlineErrorNamesRevRange pins that a patch read which runs out
+// of the client's budget names the rev range it was reading, for both of the
+// two ways diffPatch can hit the deadline -- the child failing to start, and the
+// child being killed mid-read. The wrap must also keep
+// errors.Is(err, context.DeadlineExceeded) true, since the probing call sites
+// (DiffTrees and its callers) match the timeout by exactly that.
+//
+// Both cases run a stub binary rather than git, so neither a repository, the
+// network nor a slow real child is involved.
+func TestDiffPatchDeadlineErrorNamesRevRange(t *testing.T) {
+	const from, to = "abc123", "def456"
+	revRange := "git diff " + from + " " + to
+
+	// slowStub exits immediately; hungStub starts and never finishes, so the
+	// budget expires with the child already running.
+	slowStub := func(t *testing.T, dir string) string {
+		t.Helper()
+		p := filepath.Join(dir, "git-slow")
+		if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	hangStub := func(t *testing.T, dir string) string {
+		t.Helper()
+		p := filepath.Join(dir, "git-hang")
+		// exec, so the killed process is the one holding the stdout pipe: a
+		// shim that merely spawned sleep would leave the grandchild holding the
+		// pipe open and ReadAll would block for the whole sleep.
+		if err := os.WriteFile(p, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	for _, tc := range []struct {
+		name    string
+		stub    func(t *testing.T, dir string) string
+		timeout time.Duration
+	}{
+		// 1ns is spent before the child is started, so Start reports the
+		// deadline without waiting on anything.
+		{"start", slowStub, time.Nanosecond},
+		// The child starts and is still running when the budget expires, so the
+		// deadline surfaces at Wait.
+		{"wait", hangStub, 50 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			client := NewClient(tc.stub(t, dir), tc.timeout, DefaultMaxPatchBytes)
+
+			_, _, err := client.diffPatch(context.Background(), dir, from, to)
+			if err == nil {
+				t.Fatal("diffPatch with an expired budget returned no error")
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("errors.Is(err, context.DeadlineExceeded) = false for %v; DiffTrees and its callers probe the timeout by that", err)
+			}
+			if !strings.Contains(err.Error(), revRange) {
+				t.Errorf("deadline error = %q, want it to name the rev range %q", err, revRange)
+			}
+		})
+	}
+}
