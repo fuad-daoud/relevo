@@ -21,6 +21,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// opencodeRowMS is a session row's time_created stamp. OpenCode writes all
+// three counted columns in epoch milliseconds, so the read-back's bound
+// compares them against the entry's queuedAt in the same unit.
+const opencodeRowMS = "1789021109130"
+
 // fakeSqliteExec is the fake usage.Exec deliver_opencode_test.go controls
 // directly: it records every query and answers seen()'s "select count(*)"
 // with a count that flips from 0 to 1 once callNumber reaches seenFrom (0
@@ -345,7 +350,11 @@ func TestOpencodeDeliverUnavailableCases(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := &OpencodeDeliverer{StateFiles: tc.stateFiles, DBPath: filepath.Join(t.TempDir(), "opencode.db"), Exec: tc.exec, Alive: tc.alive}
+			// A refused POST is answered without waiting: the caller's lock is a
+			// global one, so a sleep here would stall every other binding's tick.
+			start := time.Now()
 			out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
+			took := time.Since(start)
 			if err != nil {
 				t.Fatalf("Deliver: %v", err)
 			}
@@ -355,22 +364,204 @@ func TestOpencodeDeliverUnavailableCases(t *testing.T) {
 			if !strings.HasPrefix(reason, tc.wantReasonPrefix) {
 				t.Errorf("reason = %q, want prefix %q", reason, tc.wantReasonPrefix)
 			}
+			if took > 2*time.Second {
+				t.Errorf("Deliver took %s, want no waiting between attempts: an unreachable service must answer promptly", took)
+			}
 		})
 	}
 }
 
-// TestOpencodeDeliverFallsBackAfterFallbackAfter proves every OutcomeUnavailable
-// condition becomes OutcomeNotMine once FallbackAfter has passed, so the pane path
-// takes over rather than retrying forever.
+// opencodeDownServer is a service that refuses the first failures POSTs and takes
+// the one after them: the opencode-down-then-recovered shape the across-tick
+// retry exists for. It records every POST it is asked for.
+type opencodeDownServer struct {
+	mu       sync.Mutex
+	posts    int
+	failures int // POSTs answered 503 before the service takes one
+}
+
+func (s *opencodeDownServer) start(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		s.mu.Lock()
+		s.posts++
+		failing := s.posts <= s.failures
+		s.mu.Unlock()
+		if failing {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func (s *opencodeDownServer) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.posts
+}
+
+// TestOpencodeDeliverRetriesAcrossTicks is the push that must not strand: a
+// service that refuses the first POSTs is retried on the following ticks, each
+// call POSTing exactly once, and the payload is admitted once the service takes
+// one rather than being written off at a short fallback so a pane path with no
+// collector behind it would take it. The read-back that follows confirms it,
+// and no POST is repeated after that.
+//
+// No call sleeps between POSTs: the retry is the tick, so the per-call cost is
+// one request and the entry stays pending in between.
+func TestOpencodeDeliverRetriesAcrossTicks(t *testing.T) {
+	t.Parallel()
+
+	svc := &opencodeDownServer{failures: 2}
+	srv := svc.start(t)
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
+	// seenFrom 0: the session has not taken the payload yet, so every call's
+	// read-back below finds nothing.
+	exec := &fakeSqliteExec{}
+
+	d := &OpencodeDeliverer{
+		StateFiles: []string{stateFile},
+		DBPath:     filepath.Join(dir, "opencode.db"),
+		Exec:       exec,
+		Alive:      aliveAlways,
+	}
+
+	payload := "relevo: round 1 · to MasterMind · about runner \"w\" (not the human)\n\nThe runner finished round 1."
+	queuedAt := time.Now().Add(-time.Minute)
+	endpoint := opencodeMasterMind("ses_abc123")
+
+	// The first two ticks the service refuses the one POST each of them sends.
+	// A refusal is unavailable, never given up on: the entry stays pending and
+	// the next tick tries again under the same 30-minute horizon.
+	for tick, wantPosts := range []int{1, 2} {
+		out, reason, err := d.Deliver(context.Background(), endpoint, payload, "/x/001-report.md", queuedAt)
+		if err != nil {
+			t.Fatalf("Deliver on tick %d: %v", tick+1, err)
+		}
+		if out != OutcomeUnavailable {
+			t.Fatalf("tick %d: out = %v, reason = %q, want OutcomeUnavailable: a refused POST is retried on the next tick, not given up on", tick+1, out, reason)
+		}
+		if !strings.HasPrefix(reason, "post: ") {
+			t.Errorf("tick %d: reason = %q, want the POST refusal as the reason", tick+1, reason)
+		}
+		if got := svc.count(); got != wantPosts {
+			t.Fatalf("tick %d: POSTs = %d, want %d: one call POSTs once", tick+1, got, wantPosts)
+		}
+	}
+
+	// The third tick the service takes the payload and it is admitted.
+	out, reason, err := d.Deliver(context.Background(), endpoint, payload, "/x/001-report.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver on tick 3: %v", err)
+	}
+	if out != OutcomeAdmitted || reason != "posted; awaiting the session" {
+		t.Fatalf("tick 3 Deliver = (%v, %q), want OutcomeAdmitted after the service recovered", out, reason)
+	}
+	if got := svc.count(); got != 3 {
+		t.Fatalf("POSTs = %d, want 3: the two refusals and the one that took it", got)
+	}
+
+	// The session takes the turn and the read-back confirms it, with no further
+	// POST: an outage is ridden out, not double-sent.
+	exec.seenFrom = exec.calls + 1
+	out, reason, err = d.Confirm(context.Background(), endpoint, payload, queuedAt)
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if out != OutcomeDelivered {
+		t.Fatalf("Confirm = (%v, %q), want OutcomeDelivered once the session took it", out, reason)
+	}
+	if got := svc.count(); got != 3 {
+		t.Fatalf("POSTs = %d after the confirming read-back, want 3: a read-back never sends", got)
+	}
+}
+
+// TestOpencodeDeliverSeenFirstSkipsThePOSTOnALaterTick pins the idempotence
+// rule across ticks: once the session holds the payload, the next call confirms
+// it before anything is sent, so the retries an outage causes never re-POST a
+// payload that already landed. The refusal below is one that had in fact
+// queued the turn, which is exactly the case a retry must not duplicate.
+func TestOpencodeDeliverSeenFirstSkipsThePOSTOnALaterTick(t *testing.T) {
+	t.Parallel()
+
+	svc := &opencodeDownServer{failures: 1}
+	srv := svc.start(t)
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
+	exec := &fakeSqliteExec{} // nothing seen yet
+
+	d := &OpencodeDeliverer{
+		StateFiles: []string{stateFile},
+		DBPath:     filepath.Join(dir, "opencode.db"),
+		Exec:       exec,
+		Alive:      aliveAlways,
+	}
+
+	endpoint := opencodeMasterMind("ses_abc123")
+	queuedAt := time.Now().Add(-time.Minute)
+
+	// The first tick's read-back finds nothing, so the one POST it sends is the
+	// refused one that had queued the turn all the same.
+	out, reason, err := d.Deliver(context.Background(), endpoint, "relevo: round 1\n\nbody", "/x/r.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeUnavailable || !strings.HasPrefix(reason, "post: ") {
+		t.Fatalf("Deliver = (%v, %q), want OutcomeUnavailable on the refusal", out, reason)
+	}
+	if got := svc.count(); got != 1 {
+		t.Fatalf("POSTs = %d, want 1", got)
+	}
+
+	// From the next read-back on, the session holds the payload.
+	exec.seenFrom = exec.calls + 1
+
+	// The next tick confirms it with no request at all.
+	out, reason, err = d.Deliver(context.Background(), endpoint, "relevo: round 1\n\nbody", "/x/r.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeDelivered || reason != "already present" {
+		t.Fatalf("Deliver = (%v, %q), want OutcomeDelivered/\"already present\"", out, reason)
+	}
+	if got := svc.count(); got != 1 {
+		t.Fatalf("POSTs = %d, want 1: a retry must never re-POST a payload the session holds", got)
+	}
+
+	// And it stays confirmed on the tick after that, still without a POST.
+	out, reason, err = d.Deliver(context.Background(), endpoint, "relevo: round 1\n\nbody", "/x/r.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeDelivered || reason != "already present" {
+		t.Fatalf("Deliver = (%v, %q), want OutcomeDelivered/\"already present\" on the following tick", out, reason)
+	}
+	if got := svc.count(); got != 1 {
+		t.Fatalf("POSTs = %d, want 1 across every later tick", got)
+	}
+}
+
+// TestOpencodeDeliverFallsBackAfterFallbackAfter proves the give-up gate still
+// ends a payload an opencode cannot take: once the opencode push horizon has
+// passed, the entry is OutcomeNotMine and reported for the pane path rather
+// than retried forever. The horizon is the long one, because an opencode give-up
+// has no collector behind it, so the gate sits at the end of the retry window
+// and not just after it.
 func TestOpencodeDeliverFallsBackAfterFallbackAfter(t *testing.T) {
 	t.Parallel()
 
 	stateFile := writeOpencodeServiceFile(t, t.TempDir(), "http://127.0.0.1:1", "pw", 1)
 	queuedAt := time.Unix(1000, 0)
-	now := queuedAt.Add(31 * time.Second) // past the 30s default
+	now := queuedAt.Add(OpencodePushHorizon + time.Second) // past the opencode horizon
 
 	d := &OpencodeDeliverer{
-		StateFiles: []string{stateFile}, // deliberately unusable (dead pid) -- would be OutcomeUnavailable before the FallbackAfter check
+		StateFiles: []string{stateFile}, // deliberately unusable (dead pid) -- would be OutcomeUnavailable before the horizon check
 		DBPath:     filepath.Join(t.TempDir(), "opencode.db"),
 		Exec:       &fakeSqliteExec{},
 		Alive:      aliveNever,
@@ -391,7 +582,7 @@ func TestOpencodeDeliverFallsBackAfterFallbackAfter(t *testing.T) {
 
 // TestOpencodeDeliverConfirmsAPayloadSeenPastFallback proves the read-back
 // precedes the give-up gate: a payload whose text is already in the session is
-// confirmed past FallbackAfter, and never POSTs.
+// confirmed past the push horizon, and never POSTs.
 func TestOpencodeDeliverConfirmsAPayloadSeenPastFallback(t *testing.T) {
 	t.Parallel()
 
@@ -407,7 +598,7 @@ func TestOpencodeDeliverConfirmsAPayloadSeenPastFallback(t *testing.T) {
 	exec := &fakeSqliteExec{seenFrom: 1}
 
 	queuedAt := time.Unix(1000, 0)
-	now := queuedAt.Add(31 * time.Second) // past the 30s default
+	now := queuedAt.Add(OpencodePushHorizon + time.Second) // past the opencode horizon
 
 	d := &OpencodeDeliverer{
 		StateFiles: []string{stateFile},
@@ -437,7 +628,7 @@ func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 
 	stateFile := writeOpencodeServiceFile(t, t.TempDir(), "http://127.0.0.1:1", "pw", 1)
 	queuedAt := time.Unix(1000, 0)
-	now := queuedAt.Add(31 * time.Second)
+	now := queuedAt.Add(OpencodePushHorizon + time.Second)
 
 	d := &OpencodeDeliverer{
 		StateFiles: []string{stateFile},
@@ -450,8 +641,12 @@ func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 	payload := "relevo: round 1\n\nbody"
 	endpoint := opencodeMasterMind("ses_abc123")
 
-	// 1. call Deliver three times with the same payload and queuedAt, with now = queuedAt+31s, +32s and +33s
-	for _, sec := range []time.Duration{31 * time.Second, 32 * time.Second, 33 * time.Second} {
+	// 1. call Deliver three times with the same payload and queuedAt, each past the horizon
+	for _, sec := range []time.Duration{
+		OpencodePushHorizon + time.Second,
+		OpencodePushHorizon + 2*time.Second,
+		OpencodePushHorizon + 3*time.Second,
+	} {
 		now = queuedAt.Add(sec)
 		out, reason, err := d.Deliver(context.Background(), endpoint, payload, "/x/r.md", queuedAt)
 		if err != nil {
@@ -477,7 +672,7 @@ func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 
 	// 4. call once more with a different queuedAt (queuedAt+1s) and a now past its fallback, and assert the count is 2
 	queuedAt2 := queuedAt.Add(time.Second)
-	now = queuedAt2.Add(31 * time.Second)
+	now = queuedAt2.Add(OpencodePushHorizon + time.Second)
 	out, reason, err := d.Deliver(context.Background(), endpoint, payload, "/x/r.md", queuedAt2)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
@@ -490,7 +685,7 @@ func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 	}
 
 	// 5. set now one hour past the first call and call with the first payload again, and assert the count is 3
-	now = queuedAt.Add(31*time.Second + time.Hour)
+	now = queuedAt.Add(OpencodePushHorizon + time.Second + time.Hour)
 	out, reason, err = d.Deliver(context.Background(), endpoint, payload, "/x/r.md", queuedAt)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
@@ -662,7 +857,7 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 	const origin = "relevo: round 1 to builder"
 
 	tables := []string{
-		"create table message (id text, data text)",
+		"create table message (id text, session_id text, time_created integer, data text)",
 		"create table part (id text, message_id text, session_id text, data text)",
 		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
 	}
@@ -678,33 +873,33 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 			name: "session_inbox row whose payload carries the origin -> seen",
 			stmts: append(append([]string{}, tables...),
 				"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
-				"insert into session_inbox values ('inbox1', 'ses_x', 'message', '{\"text\":\""+origin+"\"}', 'queue', 0, 1)"),
+				"insert into session_inbox values ('inbox1', 'ses_x', 'message', '{\"text\":\""+origin+"\"}', 'queue', 0, "+opencodeRowMS+")"),
 			want: true,
 		},
 		{
 			name: "db with no session_inbox table still works",
 			stmts: append(append([]string{}, tables...),
-				"insert into session_message values ('m1', 'ses_x', 'user', 0, 1, 1, '"+v2UserText+"')"),
+				"insert into session_message values ('m1', 'ses_x', 'user', 0, '"+opencodeRowMS+"', 1, '"+v2UserText+"')"),
 			want: true,
 		},
 		{
 			name: "session_message user row containing the origin -> seen",
 			stmts: append(append([]string{}, tables...),
-				"insert into session_message values ('m1', 'ses_x', 'user', 0, 1, 1, '"+v2UserText+"')"),
+				"insert into session_message values ('m1', 'ses_x', 'user', 0, '"+opencodeRowMS+"', 1, '"+v2UserText+"')"),
 			want: true,
 		},
 		{
 			name: "legacy part/message user row containing the origin -> seen",
 			stmts: append(append([]string{}, tables...),
-				`insert into message values ('msg1', '{"role":"user"}')`,
+				"insert into message values ('msg1', 'ses_x', '"+opencodeRowMS+"', '{\"role\":\"user\"}')",
 				"insert into part values ('p1', 'msg1', 'ses_x', '"+userText+"')"),
 			want: true,
 		},
 		{
 			name: "assistant row containing the origin -> not seen",
 			stmts: append(append([]string{}, tables...),
-				"insert into session_message values ('m1', 'ses_x', 'assistant', 0, 1, 1, '"+v2UserText+"')",
-				`insert into message values ('msg1', '{"role":"assistant"}')`,
+				"insert into session_message values ('m1', 'ses_x', 'assistant', 0, '"+opencodeRowMS+"', 1, '"+v2UserText+"')",
+				"insert into message values ('msg1', 'ses_x', '"+opencodeRowMS+"', '{\"role\":\"assistant\"}')",
 				"insert into part values ('p1', 'msg1', 'ses_x', '"+userText+"')"),
 			want: false,
 		},
@@ -715,7 +910,7 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 			db := sqliteFixture(t, tc.stmts...)
 			d := &OpencodeDeliverer{DBPath: db, Exec: cliExec{}}
 
-			got, err := d.seen(context.Background(), "ses_x", origin)
+			got, err := d.seen(context.Background(), "ses_x", origin, time.Time{})
 			if err != nil {
 				t.Fatalf("seen: %v", err)
 			}
@@ -777,7 +972,7 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 	dir := t.TempDir()
 	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
 	db := sqliteFixture(t,
-		"create table message (id text, data text)",
+		"create table message (id text, session_id text, time_created integer, data text)",
 		"create table part (id text, message_id text, session_id text, data text)",
 		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
 		"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
@@ -813,7 +1008,7 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 	// Once the row appears in session_inbox, the read-back reports delivered
 	// with no new POST.
 	out, err := exec.Command("sqlite3", db,
-		"insert into session_inbox values ('inbox1', 'ses_abc123', 'message', '"+payload1+"', 'queue', 0, 100)").CombinedOutput()
+		"insert into session_inbox values ('inbox1', 'ses_abc123', 'message', '"+payload1+"', 'queue', 0, '"+strconv.FormatInt(startTime.UnixMilli(), 10)+"')").CombinedOutput()
 	if err != nil {
 		t.Fatalf("insert session_inbox: %v: %s", err, out)
 	}
@@ -829,6 +1024,129 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 	opencodeDeliverWant(t, d, payload2, "/x/002-report.md", startTime, OutcomeAdmitted, "posted; awaiting the session")
 	if got := opencodePosts(&mu, &posts); got != 2 {
 		t.Fatalf("after payload 2, got %d POSTs, want 2", got)
+	}
+}
+
+// TestOpencodeConfirmQueryBoundsRowsByQueuedAt pins the read-back's time bound:
+// a non-zero queuedAt puts the not-before stamp on all three counted sources
+// (the legacy pair's rides on the joined message row, which is the only one of
+// the two that has a clock), and a zero queuedAt emits today's unbounded query.
+// The ' escape and the hasInbox gate are the same either way.
+func TestOpencodeConfirmQueryBoundsRowsByQueuedAt(t *testing.T) {
+	t.Parallel()
+
+	queuedAt := time.UnixMilli(1789021109130)
+	notBefore := strconv.FormatInt(queuedAt.Add(-opencodeClockSkew).UnixMilli(), 10)
+
+	unbounded := opencodeConfirmQuery("ses_x", "origin", true, time.Time{})
+	if strings.Contains(unbounded, "time_created") {
+		t.Errorf("a zero queuedAt emitted a time bound: %q", unbounded)
+	}
+	if !strings.Contains(unbounded, "session_inbox") {
+		t.Errorf("unbounded query = %q, want the inbox source a 2.0 database has", unbounded)
+	}
+
+	bounded := opencodeConfirmQuery("ses_x", "origin", true, queuedAt)
+	if !strings.Contains(bounded, "and m.time_created >= "+notBefore) {
+		t.Errorf("bounded query = %q, want the legacy join bounded on m.time_created", bounded)
+	}
+	if n := strings.Count(bounded, "time_created >= "+notBefore); n != 3 {
+		t.Errorf("bounded query bounds %d sources, want 3: %q", n, bounded)
+	}
+	if n := strings.Count(bounded, "like '%origin%'"); n != 3 {
+		t.Errorf("bounded query matches the origin on %d sources, want 3: %q", n, bounded)
+	}
+	if strings.Contains(opencodeConfirmQuery("ses_x", "origin", false, queuedAt), "session_inbox") {
+		t.Error("a database without session_inbox must not be queried for one")
+	}
+	quoted := opencodeConfirmQuery("ses_x", "o'rigin", true, queuedAt)
+	if !strings.Contains(quoted, "like '%o''rigin%'") {
+		t.Errorf("quoted query = %q, want the ' doubled", quoted)
+	}
+}
+
+// TestOpencodeDeliverIgnoresOlderMatchingRow pins the bound against a real
+// database. Two consult findings payloads for one binding name carry
+// byte-identical origin lines -- the findings origin names no round -- so the
+// first entry's row would answer "already present" for the second one forever.
+// With the bound the older row does not count, the second entry POSTs once, and
+// each entry retried with its own queuedAt still confirms its own row without a
+// second POST.
+func TestOpencodeDeliverIgnoresOlderMatchingRow(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		posts++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
+	db := sqliteFixture(t,
+		"create table message (id text, session_id text, time_created integer, data text)",
+		"create table part (id text, message_id text, session_id text, data text)",
+		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
+		"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
+	)
+
+	firstAt := time.Unix(1000, 0)
+	secondAt := firstAt.Add(time.Hour)
+	curTime := firstAt
+	d := &OpencodeDeliverer{
+		StateFiles: []string{stateFile},
+		DBPath:     db,
+		Exec:       cliExec{},
+		Alive:      aliveAlways,
+		Now:        func() time.Time { return curTime },
+	}
+
+	// Both payloads are consult findings about the same runner, so their origin
+	// lines are byte-identical and only the queue time tells them apart.
+	origin := `relevo: consult · to MasterMind · about runner "ev-903-fix" (not the human)`
+	payload1 := origin + "\n\nfindings 1"
+	payload2 := origin + "\n\nfindings 2"
+
+	enqueue := func(id, payload string, at time.Time) {
+		t.Helper()
+		out, err := exec.Command("sqlite3", db,
+			"insert into session_inbox values ('"+id+"', 'ses_abc123', 'message', '"+payload+"', 'queue', 0, "+
+				strconv.FormatInt(at.UnixMilli(), 10)+")").CombinedOutput()
+		if err != nil {
+			t.Fatalf("enqueue %s: %v: %s", id, err, out)
+		}
+	}
+
+	// The first entry is admitted by its own POST and takes the session.
+	opencodeDeliverWant(t, d, payload1, "/x/001-findings.md", firstAt, OutcomeAdmitted, "posted; awaiting the session")
+	enqueue("inbox1", payload1, firstAt)
+	if got := opencodePosts(&mu, &posts); got != 1 {
+		t.Fatalf("after the first entry, got %d POSTs, want 1", got)
+	}
+
+	// The same entry retried with its own queuedAt still finds its own row.
+	opencodeDeliverWant(t, d, payload1, "/x/001-findings.md", firstAt, OutcomeDelivered, "already present")
+	if got := opencodePosts(&mu, &posts); got != 1 {
+		t.Fatalf("after the first entry's retry, got %d POSTs, want 1", got)
+	}
+
+	// A second findings payload for the same runner, queued an hour later, must
+	// not be answered by the first entry's row: it POSTs and is admitted.
+	curTime = secondAt
+	opencodeDeliverWant(t, d, payload2, "/x/002-findings.md", secondAt, OutcomeAdmitted, "posted; awaiting the session")
+	if got := opencodePosts(&mu, &posts); got != 2 {
+		t.Fatalf("after the second entry, got %d POSTs, want 2", got)
+	}
+
+	// And once the session holds its own row, its retry confirms without a POST.
+	enqueue("inbox2", payload2, secondAt)
+	opencodeDeliverWant(t, d, payload2, "/x/002-findings.md", secondAt, OutcomeDelivered, "already present")
+	if got := opencodePosts(&mu, &posts); got != 2 {
+		t.Fatalf("after the second entry's retry, got %d POSTs, want 2: a retry never re-sends", got)
 	}
 }
 
@@ -877,7 +1195,7 @@ func TestOpencodeConfirmOnceNeverPosts(t *testing.T) {
 	dir := t.TempDir()
 	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
 	db := sqliteFixture(t,
-		"create table message (id text, data text)",
+		"create table message (id text, session_id text, time_created integer, data text)",
 		"create table part (id text, message_id text, session_id text, data text)",
 		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
 		"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",

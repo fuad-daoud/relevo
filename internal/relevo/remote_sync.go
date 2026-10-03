@@ -476,12 +476,20 @@ func settleCatchUp(ctx context.Context, rt Runtime, a *catchUpAck, reconcile boo
 			if err != nil {
 				return err
 			}
-			emitMutations(ctx, rt, cur, next)
 		}
 		if store.SameBinding(next, cur) {
 			return nil
 		}
-		return tx.Save(next)
+		if err := tx.Save(next); err != nil {
+			return err
+		}
+		if reconcile {
+			// Announced after the commit, like the daemon's own tick (#909):
+			// the catch-up's second emit-before-save site moves under the same
+			// rule, so a save that failed announces nothing.
+			emitCommitted(ctx, rt, cur, next)
+		}
+		return nil
 	})
 }
 

@@ -166,7 +166,7 @@ func TestWorkflowCloseParsesDeclaredOutcomes(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		ev, err = chainEventFromCloseWF(rt, tx, c, b, chainCloseWF{Body: body, Path: report, Outcome: "done"})
+		ev, err = chainEventFromCloseWF(context.Background(), rt, tx, c, b, chainCloseWF{Body: body, Path: report, Outcome: "done"})
 		return err
 	}); err != nil {
 		t.Fatalf("chainEventFromCloseWF: %v", err)
@@ -319,7 +319,7 @@ func TestWorkflowReviewPassFinishes(t *testing.T) {
 		if cerr != nil {
 			return cerr
 		}
-		ev, cerr = chainEventFromCloseWF(rt, tx, c, b, chainCloseWF{Body: body, Path: report, Outcome: "done"})
+		ev, cerr = chainEventFromCloseWF(context.Background(), rt, tx, c, b, chainCloseWF{Body: body, Path: report, Outcome: "done"})
 		return cerr
 	}); err != nil {
 		t.Fatalf("chainEventFromCloseWF: %v", err)

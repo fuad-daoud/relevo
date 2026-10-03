@@ -75,6 +75,23 @@ func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 	}
 }
 
+// emitCommitted announces a reconcile's events once the state they describe is
+// durable (#909). emitMutations above is the pure builder over orig->saved;
+// this is the one place that dispatches it, and it is deliberately silent when
+// the transition never landed: a save that failed announced nothing, and a
+// caller that skipped an unchanged save has nothing to announce.
+//
+// saved is the binding as committed, not the one the reconcile proposed, so
+// what a listener reads back from the store is what it was told. The store
+// lock is still held -- dispatch is fire-and-forget by design -- so the probe
+// and the write that preceded it are both visible to the handler.
+func emitCommitted(ctx context.Context, rt Runtime, orig, saved store.Binding) {
+	if store.SameBinding(orig, saved) {
+		return
+	}
+	emitMutations(ctx, rt, orig, saved)
+}
+
 // stampStale maintains the stale clock (#135) for a NEEDS YOU or HELD binding:
 // it stamps StaleSince on the moment the binding started waiting -- the halt
 // time when there is one, otherwise the newest log entry -- once that moment is
@@ -151,13 +168,13 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		return b, nil
 	}
 
-	orig := b
 	defer func() {
 		if err == nil {
 			// The stale clock (#135) is stamped on whatever state the tick
-			// settled on, before the mutations and notices read it.
+			// settled on, before the caller saves and announces it (#909): the
+			// stamp is part of the transition being committed, not an event of
+			// its own, so it is set here and dispatched by the caller.
 			out = stampStale(rt, tx, out)
-			emitMutations(ctx, rt, orig, out)
 		}
 	}()
 	// Consults reconcile before the builder is located, and before the DONE

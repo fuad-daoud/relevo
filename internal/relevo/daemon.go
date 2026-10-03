@@ -346,7 +346,15 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 			return nil
 		}
 
-		return tx.Save(next)
+		if err := tx.Save(next); err != nil {
+			return err
+		}
+		// Announced only once the write above committed (#909). This is the
+		// single commit point for the daemon path, so a save that failed or
+		// was skipped announces nothing and the next tick that commits the
+		// same transition announces it exactly once.
+		emitCommitted(ctx, d.rt, loaded, next)
+		return nil
 	})
 	if err != nil {
 		return err
