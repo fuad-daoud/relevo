@@ -232,7 +232,13 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 // why every halt site threads one through -- the entry has to land in the same
 // critical section as the halt itself, or a crash between them leaves a halted
 // binding the log never mentioned.
-func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, message string) (store.Binding, error) {
+//
+// entryRound is the round the entry is filed under, which is b.Round at every
+// site but one: queueReport's post-advance halts have already advanced the
+// binding, and file under the round whose artifact size or scope verdict caused
+// the halt. It is threaded rather than inferred for that reason -- see
+// closedRoundHalt.
+func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entryRound int, message string) (store.Binding, error) {
 	text := strings.TrimPrefix(message, b.Name+": ")
 	if b.Halt != text || b.HaltAt.IsZero() {
 		b.HaltAt = rt.Now().UTC()
@@ -246,7 +252,7 @@ func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 		// Queued after the key is stamped, not before: the stamp is the dedup,
 		// so an entry written and then re-entered would queue twice.
-		if err := queueHalt(ctx, rt, tx, b, text); err != nil {
+		if err := queueHalt(ctx, rt, tx, b, entryRound, text); err != nil {
 			return b, err
 		}
 	}
@@ -254,6 +260,22 @@ func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.State = store.StateNeedsYou
 
 	return b, nil
+}
+
+// closedRoundHalt is haltBinding for a caller whose b.Round has already moved
+// past the round the halt is about: the entry is filed under closedRound, the
+// round whose artifact size or scope verdict decided it.
+//
+// The round is passed, not read off the binding, because the binding cannot
+// say which round closed once it has advanced. It matters because
+// PullPendingThroughEntries answers `<= round` and DefaultWaitRound waits on
+// the round the builder was sent, so an entry filed under N+1 is one nobody
+// pulls while the wait on N is still running -- and WaitOutcome has already
+// returned Done on N's report by then, so the halt text is never seen. The
+// dedup key stays b.Round: HaltNotifiedRound is the per-round notification
+// stamp, and a halt of the new round is a new notification.
+func closedRoundHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, closedRound int, message string) (store.Binding, error) {
+	return haltBinding(ctx, rt, tx, b, closedRound, message)
 }
 
 // queueHalt writes the one to_planner entry a halt owes the MasterMind for its
@@ -276,7 +298,10 @@ func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 // what gates it on HaltNotifiedRound, so the key that keeps a second halt of
 // the same round from repeating an entry is the key that keeps it from
 // repeating the log line.
-func queueHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string) error {
+//
+// entryRound is the round the entry is filed under rather than b.Round, for the
+// reason closedRoundHalt gives.
+func queueHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entryRound int, text string) error {
 	if tx == nil {
 		// A caller with no transaction cannot queue. Refusing loudly would
 		// fail the whole tick over a notification, so the halt stands and the
@@ -288,7 +313,7 @@ func queueHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, t
 
 	return delivery.Queue(ctx, deliveryDeps(rt), tx, b.Name, store.LogEntry{
 		TS:        rt.Now().UTC(),
-		Round:     b.Round,
+		Round:     entryRound,
 		Direction: store.DirToMasterMind,
 		Kind:      store.KindHalt,
 		Note:      text,
@@ -317,7 +342,7 @@ func queueHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, t
 // report from the middle of its own close, before the chain bookkeeping below
 // the halt has run.
 func haltAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, message string) (store.Binding, error) {
-	next, err := haltBinding(ctx, rt, tx, b, message)
+	next, err := haltBinding(ctx, rt, tx, b, b.Round, message)
 	if err != nil {
 		return next, err
 	}
@@ -367,7 +392,7 @@ func queueBrokenHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 	if b.HaltNotifiedRound == b.Round {
 		return b, nil
 	}
-	if err := queueHalt(ctx, rt, tx, b, reason); err != nil {
+	if err := queueHalt(ctx, rt, tx, b, b.Round, reason); err != nil {
 		return b, err
 	}
 	b.HaltNotifiedRound = b.Round
@@ -878,17 +903,22 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// policy.artifact_max_mb closes as usual -- the summary is written and
 	// the report is queued -- but the binding asks for a human, and nothing
 	// is deleted: sealRounds holds the round back until the cap is raised.
+	//
+	// The entry is filed under closedRound, not the round the binding has
+	// already advanced to: the cause is this round's artifact size, and a
+	// default wait still sitting on this round would never pull an N+1 entry
+	// (closedRoundHalt).
 	if b.Shape == store.ShapeReader {
 		if over, total := artifactCapExceeded(rt.Store, b, closedRound, rt.Policy.ArtifactMaxBytes()); over {
-			b, _ = haltBinding(ctx, rt, tx, b, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
+			b, _ = closedRoundHalt(ctx, rt, tx, b, closedRound, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
 		}
 	}
 
 	// A scope refusal asks for a human, exactly where the reader artifact
 	// cap does: after the round has advanced, naming the offending file
-	// (#801).
+	// (#801). Filed under closedRound for the same reason.
 	if verdict.Refused {
-		b, _ = haltBinding(ctx, rt, tx, b, scopeHaltText(b, closedRound, verdict))
+		b, _ = closedRoundHalt(ctx, rt, tx, b, closedRound, scopeHaltText(b, closedRound, verdict))
 	}
 
 	// The round has advanced, so the chain may now move: the close is mapped
