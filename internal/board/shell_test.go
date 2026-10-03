@@ -714,7 +714,7 @@ func TestShellClickOpensTheInputDialog(t *testing.T) {
 	c := string(shell)
 	for _, want := range []string{
 		`var dialogEl = document.getElementById("comment-dialog");`,
-		`if (msg.type === "relevo.pick") { openDraft(msg.selector || "", msg.x, msg.y); return; }`,
+		`if (msg.type === "relevo.pick") { openDraft(msg); return; }`,
 		`dialogEl.classList.add("open");`,
 		`if (msg.type === "relevo.pin") {`,
 		"list.openCard(msg.id, msg.x, msg.y);",
@@ -868,5 +868,190 @@ func TestShellReplyKeepsTheCardOpen(t *testing.T) {
 	}
 	if strings.Contains(shellFunc(c, "function post(anchor, text) {"), "closeCard") {
 		t.Error("comments.js post closes a card, so a reply would tear down the thread being read")
+	}
+}
+
+// TestShellAnchorsTheComposerBesideThePick pins that the composer a fresh click opens
+// lands beside the point that was clicked. The pick carries the click's own place in the
+// frame's viewport, clamped to it, because a click on the last row of a board reports a
+// point a row past the window; and the dialog is placed through the thread card's own
+// placement, so the two floating surfaces cannot disagree about which edge has room.
+func TestShellAnchorsTheComposerBesideThePick(t *testing.T) {
+	overlay, err := readShellFile("overlay.js")
+	if err != nil {
+		t.Fatalf("read shell overlay.js: %v", err)
+	}
+	o := string(overlay)
+	// Both coordinates travel with the pick: the fractions place the dot and survive a
+	// resize, the viewport point places the composer now.
+	pick := shellFunc(o, "function pick(el, clientX, clientY) {")
+	for _, want := range []string{
+		"label: labelFor(el),",
+		"vx: inView(clientX, window.innerWidth), vy: inView(clientY, window.innerHeight)",
+	} {
+		if !strings.Contains(pick, want) {
+			t.Errorf("overlay.js pick does not carry %q, which anchoring the composer needs", want)
+		}
+	}
+	// The clamp is both ends, or the last row of a board opens the composer off-screen.
+	if !strings.Contains(shellFunc(o, "function inView(v, limit) {"),
+		"v < 0 ? 0 : v > limit ? limit : v") {
+		t.Error("overlay.js inView does not clamp the viewport point to the viewport at both ends")
+	}
+	shell, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	c := string(shell)
+	open := shellFunc(c, "function openDraft(msg) {")
+	if !strings.Contains(open, "list.placeBeside(dialogEl, { x: msg.vx, y: msg.vy });") {
+		t.Error("comments.js openDraft does not place the composer beside the picked point")
+	}
+	if !strings.Contains(open, `dialogEl.classList.add("open");`) {
+		t.Error("comments.js openDraft does not show the dialog, so there is nothing to place")
+	}
+	// One placement for both floating surfaces: the card's, so the edge rules are one set.
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	l := string(list)
+	if !strings.Contains(shellFunc(l, "function placeCard(point) {"), "placeBeside(cardEl, point);") {
+		t.Error("commentlist.js placeCard does not place through the shared placement, so the two surfaces could disagree")
+	}
+	beside := shellFunc(l, "function placeBeside(el, point) {")
+	for _, want := range []string{
+		"var px = (frameBox ? frameBox.left : 0) + point.x;",
+		"if (left + wide > window.innerWidth - 8) left = px - wide - 14;",
+		"if (top + tall > window.innerHeight - 8) top = window.innerHeight - tall - 8;",
+		"el.style.left = left + \"px\";",
+	} {
+		if !strings.Contains(beside, want) {
+			t.Errorf("commentlist.js placeBeside does not carry %q, which keeps the box on screen", want)
+		}
+	}
+	// A pick with no point places nothing rather than writing NaN into a style, which
+	// would leave the box wherever the last pick put it.
+	if !strings.Contains(beside, `if (!el || !point || typeof point.x !== "number" || typeof point.y !== "number") return;`) {
+		t.Error("commentlist.js placeBeside places a point it does not have")
+	}
+	if !strings.Contains(l, "placeBeside: placeBeside,") {
+		t.Error("commentlist.js does not export placeBeside, so the composer cannot reach it")
+	}
+	// The dot's own point is still the stored fraction: two questions, two answers.
+	if !strings.Contains(c, "x: anchor.x,") || !strings.Contains(c, "y: anchor.y,") {
+		t.Error("comments.js post no longer sends the anchor fractions the dot is placed from")
+	}
+}
+
+// TestShellNamesTheAnchorInsteadOfTheSelector pins what the reader is shown for an
+// anchor: a name, never the CSS path. The frame derives it -- the board's own
+// data-board-id where the anchor has one, otherwise the element's tag with a few words
+// of its own text -- and puts it in the pick and in a labels report, so a thread stored
+// before any of this existed is named live from the DOM it still resolves in. The
+// selector stays where the agent and the CLI read it.
+func TestShellNamesTheAnchorInsteadOfTheSelector(t *testing.T) {
+	overlay, err := readShellFile("overlay.js")
+	if err != nil {
+		t.Fatalf("read shell overlay.js: %v", err)
+	}
+	o := string(overlay)
+	label := shellFunc(o, "function labelFor(el) {")
+	if label == "" {
+		t.Fatal("overlay.js has no labelFor, so nothing derives a human name for an anchor")
+	}
+	// The board's own id first, because that is the name its author gave the element.
+	for _, want := range []string{
+		`var host = el.closest("[data-board-id]");`,
+		`var id = host.getAttribute("data-board-id");`,
+		"if (id) return String(id);",
+	} {
+		if !strings.Contains(label, want) {
+			t.Errorf("overlay.js labelFor does not carry %q, which names an anchor by its board id", want)
+		}
+	}
+	// Otherwise the tag and a snippet of the element's own text, collapsed so a heading
+	// reads as one line rather than as the paragraph around it.
+	if !strings.Contains(label, `return text ? tag + " · " + text : tag;`) {
+		t.Error("overlay.js labelFor does not fall back to the tag and a text snippet")
+	}
+	snip := shellFunc(o, "function snippet(el) {")
+	for _, want := range []string{`/\s+/g`, "cut.lastIndexOf(\" \")"} {
+		if !strings.Contains(snip, want) {
+			t.Errorf("overlay.js snippet does not carry %q, which makes the snippet readable", want)
+		}
+	}
+	// The name travels with the pick, and a stored thread's name is derived on request.
+	if !strings.Contains(shellFunc(o, "function pick(el, clientX, clientY) {"), "label: labelFor(el),") {
+		t.Error("overlay.js pick does not carry the label, so the composer can only show a selector")
+	}
+	if !strings.Contains(o, `else if (msg.type === "relevo.labels") post({ type: "relevo.labels", labels: labels() });`) {
+		t.Error("overlay.js does not answer a labels request, so a stored thread would never be named")
+	}
+	report := shellFunc(o, "function labels() {")
+	if !strings.Contains(report, "label: key ? labelFor(resolve(key)) : \"\"") {
+		t.Error("overlay.js labels does not derive each anchor's name from the element it resolves to")
+	}
+	shell, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	c := string(shell)
+	open := shellFunc(c, "function openDraft(msg) {")
+	if !strings.Contains(open, `selEl.textContent = msg.label || (msg.selector ? "element" : "board");`) {
+		t.Error("comments.js openDraft does not show the pick's label in the composer")
+	}
+	if strings.Contains(open, "selEl.textContent = msg.selector") {
+		t.Error("comments.js openDraft shows the raw selector, which is for the agent and the CLI")
+	}
+	if !strings.Contains(shellFunc(c, "function requestLabels() {"), `postToFrame({ type: "relevo.labels" });`) {
+		t.Error("comments.js does not ask the frame what the anchors are called")
+	}
+	if !strings.Contains(c, "list.setLabels(msg.labels);") {
+		t.Error("comments.js does not hand the frame's labels to the list")
+	}
+	// Nothing is stored with the note: the post body is the shape the API already takes.
+	if strings.Contains(shellFunc(c, "function post(anchor, text) {"), "label") {
+		t.Error("comments.js post carries a label, so a stored note would differ from one written by the CLI")
+	}
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	l := string(list)
+	if !strings.Contains(shellFunc(l, "function openCard(id, x, y) {"),
+		`cardLabel = line("div", "relevo-anchor", labelFor(thread));`) {
+		t.Error("commentlist.js openCard does not head the card with the anchor's name")
+	}
+	// The card falls back to what an anchor is, never to the selector it is stored under.
+	named := shellFunc(l, "function labelFor(thread) {")
+	for _, want := range []string{`if (!thread.key) return "the board";`, `return labels[thread.key] || "element";`} {
+		if !strings.Contains(named, want) {
+			t.Errorf("commentlist.js labelFor does not carry %q, so the card would show a selector", want)
+		}
+	}
+	if strings.Contains(named, "thread.key;") && !strings.Contains(named, `labels[thread.key] || "element";`) {
+		t.Error("commentlist.js labelFor falls back to the raw selector")
+	}
+	// A label turning up must not empty a reply being typed, so the open card is
+	// rewritten in place rather than drawn again.
+	setLabels := shellFunc(l, "function setLabels(next) {")
+	if !strings.Contains(setLabels, "cardLabel.textContent = labelFor(thread);") {
+		t.Error("commentlist.js setLabels does not name the open card when its label arrives")
+	}
+	if strings.Contains(setLabels, "render()") || strings.Contains(setLabels, "openCard(") {
+		t.Error("commentlist.js setLabels redraws the card, which would empty a reply already being typed")
+	}
+	// The readout is prose, so it is not set in the monospace face a selector wears.
+	page, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	readout := shellInjectedRule(string(page), "#comment-selector")
+	if readout == "" {
+		t.Fatal("index.html has no rule for the composer's anchor readout")
+	}
+	if strings.Contains(readout, "monospace") {
+		t.Error("index.html sets the anchor readout in a monospace, which is the selector's own face")
 	}
 }

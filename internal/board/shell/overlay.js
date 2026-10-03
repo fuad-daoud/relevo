@@ -13,6 +13,7 @@
   var pinLayer = null;
   var preview = null;        // the small card a hovered dot opens
   var hovered = null;
+  var SNIPPET = 40;          // how much of an element's own text a label carries
 
   // installStyles injects the rules the overlay needs, because the board is a
   // stranger's document: a class with no rule draws nothing there. The outline's
@@ -54,6 +55,7 @@
     if (msg.type === "relevo.mode") setMode(msg.on === true);
     else if (msg.type === "relevo.pins") setPins(msg.annotations);
     else if (msg.type === "relevo.points") post({ type: "relevo.points", points: points() });
+    else if (msg.type === "relevo.labels") post({ type: "relevo.labels", labels: labels() });
   });
 
   // selectorFor builds a note's anchor in a fixed order, so one element always yields
@@ -115,19 +117,57 @@
     return String(value == null ? "" : value).replace(/["\\]/g, "\\$&");
   }
 
+  // labelFor names an element the way a reader would: the board's own id for it when it
+  // has one, otherwise the element's tag and a few words of its own text, which reads
+  // like a breadcrumb up from the thing that was clicked. A reader is never handed a
+  // CSS path -- that is for the agent and the CLI, and it stays in the file.
+  function labelFor(el) {
+    if (!el || el.nodeType !== 1) return "";
+    var host = el.closest("[data-board-id]");
+    if (host) {
+      var id = host.getAttribute("data-board-id");
+      if (id) return String(id);
+    }
+    var tag = el.tagName.toLowerCase();
+    var text = snippet(el);
+    return text ? tag + " · " + text : tag;
+  }
+
+  // snippet is a few words of the element's own text, whitespace collapsed and cut at a
+  // word rather than mid-word, so a heading reads as its heading and not as a fragment.
+  function snippet(el) {
+    var text = String(el.textContent || "").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+    if (text.length <= SNIPPET) return text;
+    var cut = text.slice(0, SNIPPET);
+    var at = cut.lastIndexOf(" ");
+    return (at > 0 ? cut.slice(0, at) : cut) + "…";
+  }
+
   // pick reports fractions of the element's box rather than pixels, so the dot survives
-  // a resize.
+  // a resize, and the click's own point in the frame's viewport beside them, so the
+  // composer can open where the reader clicked. The two are different questions: one has
+  // to survive a resize and the other names where the reader is looking now.
   function pick(el, clientX, clientY) {
     var box = el.getBoundingClientRect();
     var x = box.width ? (clientX - box.left) / box.width : 0;
     var y = box.height ? (clientY - box.top) / box.height : 0;
-    post({ type: "relevo.pick", selector: selectorFor(el), x: clamp(x), y: clamp(y) });
+    post({ type: "relevo.pick", selector: selectorFor(el), label: labelFor(el),
+      x: clamp(x), y: clamp(y),
+      vx: inView(clientX, window.innerWidth), vy: inView(clientY, window.innerHeight) });
   }
 
   // clamp keeps a fraction inside the unit square: a border click reports one outside it.
   function clamp(v) {
     if (typeof v !== "number" || !isFinite(v)) return 0;
     return v < 0 ? 0 : v > 1 ? 1 : v;
+  }
+
+  // inView is a viewport pixel clamped to the viewport, for the same reason: the last
+  // row of a long board reports a y a row past the window, and a composer anchored to it
+  // would open where the reader cannot see it.
+  function inView(v, limit) {
+    if (typeof v !== "number" || !isFinite(v)) return 0;
+    return Math.round(v < 0 ? 0 : v > limit ? limit : v);
   }
 
   // setPins holds what the shell sent, grouped by anchor: the same selector string is
@@ -292,6 +332,18 @@
     return out;
   }
 
+  // labels reports what each drawn thread's anchor is called. It is derived here and now
+  // because the frame is the only place the elements are: nothing stores a label, so a
+  // thread written before this existed is named as soon as its element still resolves.
+  function labels() {
+    var out = [];
+    for (var i = 0; i < pins.length; i++) {
+      var key = pins[i].key;
+      out.push({ selector: key, label: key ? labelFor(resolve(key)) : "" });
+    }
+    return out;
+  }
+
   window.addEventListener("scroll", reposition, true);
   window.addEventListener("resize", reposition);
 
@@ -304,7 +356,11 @@
     if (hovered) hovered.classList.add("relevo-hover");
   }
 
-  document.addEventListener("mouseover", funner("mouseleave", function () { outline(null); hidePreview(); }, true);
+  document.addEventListener("mouseover", function (e) {
+    if (mode) outline(e.target);
+  }, true);
+
+  document.addEventListener("mouseleave", function () { outline(null); hidePreview(); }, true);
 
   // The click is captured, default action and propagation both stopped, so a board's
   // own link does not navigate. A click on our own pin is let through: stopping

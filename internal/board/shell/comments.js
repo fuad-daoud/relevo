@@ -68,6 +68,13 @@
     postToFrame({ type: "relevo.points" });
   }
 
+  // requestLabels asks the frame what each thread's anchor is called, for the same
+  // reason: the elements are in the frame, so the names are derived there too.
+  function requestLabels() {
+    if (!mode) return;
+    postToFrame({ type: "relevo.labels" });
+  }
+
   // onFrameMessage accepts a message only when it came from our own frame: the
   // board's own scripts share that frame, so the source is the only identity.
   function onFrameMessage(ev) {
@@ -82,9 +89,10 @@
       postPins();
       return;
     }
-    if (msg.type === "relevo.pick") { openDraft(msg.selector || "", msg.x, msg.y); return; }
+    if (msg.type === "relevo.pick") { openDraft(msg); return; }
     if (msg.type === "relevo.orphans") { list.setOrphans(msg.ids); return; }
     if (msg.type === "relevo.points") { list.setPoints(msg.points); return; }
+    if (msg.type === "relevo.labels") { list.setLabels(msg.labels); return; }
     if (msg.type === "relevo.pin") {
       // A dot was clicked: open that thread's card and mark its list row.
       list.setPoints([]);
@@ -95,17 +103,22 @@
   window.addEventListener("message", onFrameMessage);
 
   // openDraft takes a pick and opens the composer on it, which is what a fresh click
-  // on the board opens. The selector is shown, not edited: the overlay built it.
-  // The card goes away first: the composer and a thread card are two surfaces to
+  // on the board opens. It opens beside the point that was clicked rather than in a
+  // corner, and it says what was clicked by name rather than by selector: the name is
+  // the frame's to derive, and the selector stays in the file for the agent and the
+  // CLI. The card goes away first: the composer and a thread card are two surfaces to
   // write in, and one gesture has to be enough to reach the one the reader meant.
-  function openDraft(selector, x, y) {
+  function openDraft(msg) {
     list.closeCard();
-    picked = { selector: selector, x: x, y: y };
+    picked = { selector: msg.selector || "", x: msg.x, y: msg.y };
     draft = "";
     draftEl.value = "";
-    selEl.textContent = selector ? selector : "board";
+    selEl.textContent = msg.label || (msg.selector ? "element" : "board");
     setDirty(true);
     dialogEl.classList.add("open");
+    // The same placement the card uses, so the two floating surfaces cannot disagree
+    // about which edge of the window has room for them.
+    list.placeBeside(dialogEl, { x: msg.vx, y: msg.vy });
     draftEl.focus();
   }
 
@@ -212,6 +225,7 @@
     postPins();
     list.setDocument(doc);
     requestPoints();
+    requestLabels();
     if (next.external && next.external.length) {
       api.showBanner(
         "this board references " + next.external.length +
@@ -301,6 +315,7 @@
       postPins();
       list.setDocument(doc);
       requestPoints();
+      requestLabels();
       startPolling();
     });
   }

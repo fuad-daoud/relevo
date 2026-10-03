@@ -8,6 +8,7 @@
   var doc = null;            // the last board document
   var orphanIds = {};        // ids the frame reported as having no element
   var pinPoints = {};        // id -> where the frame last drew that pin
+  var labels = {};           // selector -> what the frame calls that anchor
   var onReply = null;        // comments.js posts the card's reply box
   var onOpenCard = null;    // comments.js closes the composer when a card opens
   var HINT = "Ctrl+Enter to post";
@@ -15,6 +16,7 @@
   var listEl = document.getElementById("comment-list");
   var cardEl = document.getElementById("thread-card");
   var cardId = null;         // the thread the open card is showing
+  var cardLabel = null;      // the card's own heading, rewritten when a label arrives
 
   // ---- the document ---------------------------------------------------------
 
@@ -37,6 +39,29 @@
       pinPoints[points[i].id] = points[i];
     }
     if (cardId) placeCard();
+  }
+
+  // setLabels records what the frame calls each anchor, so a card can head itself with a
+  // name instead of a CSS path. The open card is rewritten in place rather than drawn
+  // again: a label turning up must not empty a reply already being typed into it.
+  function setLabels(next) {
+    labels = {};
+    for (var i = 0; i < (next || []).length; i++) {
+      labels[next[i].selector] = next[i].label;
+    }
+    if (cardId && cardLabel) {
+      var thread = threadById(cardId);
+      if (thread) cardLabel.textContent = labelFor(thread);
+    }
+  }
+
+  // labelFor is a thread's anchor by name: the board's own id for it where the frame found
+  // one, otherwise the element's tag with a few words of its own text. An anchor with no
+  // name yet says what it is rather than falling back to the selector, which is the
+  // agent's and the CLI's to read.
+  function labelFor(thread) {
+    if (!thread.key) return "the board";
+    return labels[thread.key] || "element";
   }
 
   // threads groups the flat annotations by their anchor, in file order: the same
@@ -157,8 +182,8 @@
 
   // ---- the floating card ---------------------------------------------------
 
-  // openCard shows one thread beside its dot: every note on that anchor in file
-  // order, then the box that answers them and the row of controls under it. One
+  // openCard shows one thread beside its dot: what it is about, every note on that anchor
+  // in file order, then the box that answers them and the row of controls under it. One
   // card at a time, and re-opening the open one is how a second click closes it.
   // onOpenCard is how comments.js keeps the composer out of the way: the card is
   // the one writing surface while it is open, wherever the reader got to it from.
@@ -173,6 +198,8 @@
     cardId = id;
     var point = pinPoints[id] || (x != null ? { x: x, y: y } : null);
     cardEl.textContent = "";
+    cardLabel = line("div", "relevo-anchor", labelFor(thread));
+    cardEl.appendChild(cardLabel);
     for (var i = 0; i < thread.entries.length; i++) {
       var entry = thread.entries[i];
       cardEl.appendChild(byLine(entry));
@@ -261,6 +288,7 @@
 
   function closeCard() {
     cardId = null;
+    cardLabel = null;
     cardEl.className = "";
     cardEl.textContent = "";
   }
@@ -272,31 +300,41 @@
   // placeCard puts the card beside its dot, flipping side near an edge; the dot's
   // coordinates are frame-relative, so the frame's own position carries them.
   function placeCard(point) {
-    if (!point) return;
+    placeBeside(cardEl, point);
+  }
+
+  // placeBeside is the one placement both floating surfaces use, so the thread card and
+  // the composer a pick opens cannot disagree about where an edge has room. A point with
+  // no coordinates places nothing and leaves the box where its own rule puts it, which is
+  // the corner rather than off-screen.
+  function placeBeside(el, point) {
+    if (!el || !point || typeof point.x !== "number" || typeof point.y !== "number") return;
     var frame = document.getElementById("frame");
     var frameBox = frame && frame.getBoundingClientRect ? frame.getBoundingClientRect() : null;
     var px = (frameBox ? frameBox.left : 0) + point.x;
     var py = (frameBox ? frameBox.top : 0) + point.y;
-    var card = cardEl.getBoundingClientRect();
-    var wide = card.width || 288;
-    var tall = card.height || 72;
+    var box = el.getBoundingClientRect();
+    var wide = box.width || 288;
+    var tall = box.height || 72;
     var left = px + 14;
     if (left + wide > window.innerWidth - 8) left = px - wide - 14;
     if (left < 8) left = 8;
     var top = py - tall / 2;
     if (top < 8) top = 8;
     if (top + tall > window.innerHeight - 8) top = window.innerHeight - tall - 8;
-    cardEl.style.left = left + "px";
-    cardEl.style.top = Math.max(8, top) + "px";
+    el.style.left = left + "px";
+    el.style.top = Math.max(8, top) + "px";
   }
 
   window.__relevoList = {
     setDocument: setDocument,
     setOrphans: setOrphans,
     setPoints: setPoints,
+    setLabels: setLabels,
     render: render,
     focus: focus,
     openCard: openCard,
+    placeBeside: placeBeside,
     closeCard: closeCard,
     cardOpen: cardOpen,
     setReplyHandler: setReplyHandler,

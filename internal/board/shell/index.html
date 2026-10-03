@@ -139,6 +139,22 @@ body {
 #comment-dialog-title { font-size: 11px; text-transform: uppercase; color: #666; }
 #comment-dialog-actions { justify-content: flex-end; }
 
+/* What the composer is about, and what a thread card heads itself with: the name the
+   frame derived for the element. A reader is never shown the CSS path, which is why
+   this is the body font and not the selector's monospace. */
+#comment-selector, .relevo-anchor {
+  font-size: 12px;
+  color: #666;
+  overflow-wrap: anywhere;
+}
+.relevo-anchor {
+  font-weight: 600;
+  color: inherit;
+  padding-bottom: 3px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--relevo-edge);
+}
+
 #comment-toggle {
   padding: 4px 10px;
   border: 1px solid rgba(128, 128, 128, 0.6);
@@ -150,12 +166,6 @@ body {
 }
 #comment-toggle.on { background: var(--relevo-accent); border-color: var(--relevo-accent); color: #fff; }
 #banner-apply { margin-left: 8px; padding: 2px 8px; cursor: pointer; }
-
-#comment-selector {
-  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #666;
-  word-break: break-all;
-}
 #comment-draft, #thread-reply {
   display: block;
   width: 100%;
