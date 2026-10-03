@@ -133,7 +133,7 @@ func workflowsParamsText(params []relevo.WorkflowParam) string {
 	}
 	parts := make([]string, 0, len(params))
 	for _, p := range params {
-		parts = append(parts, p.Name+"="+p.Value)
+		parts = append(parts, p.Name+"="+sanitizeText(p.Value))
 	}
 	return strings.Join(parts, ", ")
 }

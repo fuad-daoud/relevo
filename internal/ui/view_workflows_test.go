@@ -441,6 +441,32 @@ func TestWorkflowsListDescriptionSanitizes(t *testing.T) {
 	assertNoControlBytes(t, "the workflows list", body)
 }
 
+// TestWorkflowsParamsValueSanitizes pins Finding 4's last reachable sink: a
+// saved workflow's param *value* is validated for nothing at all (only the
+// param's name is checked), so it reaches both the PARAMS column and the
+// cursor row's detail block raw.
+// Mutation: drop the sanitizeText wrap in workflowsParamsText.
+func TestWorkflowsParamsValueSanitizes(t *testing.T) {
+	list := workflowsFixtureList()
+	// The value carries control bytes the way a hand-written document can: a
+	// quoted YAML scalar keeps a carriage return and an escape verbatim.
+	list[2].Params[0].Value = "make\rc\x1b[2Jcheck"
+
+	m := goldenActionModel(t, 132, 34, &fakeActions{workflows: list}, view.Report{})
+	m = drain(t, m, execLine("workflows", m.env(), m.prefs))
+	body := stripANSI(m.View())
+
+	if !strings.Contains(body, "fix-first") {
+		t.Fatalf("the workflow row is not on screen, so nothing was pinned:\n%s", body)
+	}
+	assertNoControlBytes(t, "the workflows list", body)
+
+	// The cursor row's detail block draws the params in full, on every visit,
+	// without a keypress: it has to be sanitized by the same helper.
+	assertNoControlBytes(t, "the cursor row's detail block",
+		stripANSI(strings.Join(workflowDetailLines(list[2], 132), "\n")))
+}
+
 // TestWorkflowGraphSanitizesSuppliedText pins Finding 4's graph half: a step's
 // kind, actors and on:-derived edge text all come from the supplied document,
 // and the two local read errors (graph and source) draw into the body too.
