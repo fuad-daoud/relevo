@@ -275,6 +275,12 @@ type CloseInfo struct {
 type PendingInfo struct {
 	Round int        `json:"round"`
 	Kind  store.Kind `json:"kind"`
+	// TS is when the pending entry itself was written: the age of the
+	// payload nobody has collected yet. LastPayload.TS cannot stand in for
+	// it, because that is the newest payload of either direction and would
+	// date the report from a later question. The zero time when the entry
+	// predates this field, which reads as no age rather than as an old one.
+	TS time.Time `json:"ts,omitzero"`
 }
 
 // Report is the whole status surface.

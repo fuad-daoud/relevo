@@ -339,7 +339,10 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 		return view.BindingStatus{}, err
 	}
 	if found {
-		row.Pending = &view.PendingInfo{Round: pending.Round, Kind: pending.Kind}
+		// TS is the pending entry's own write time, so the row can say how
+		// long the payload has been waiting for a collector. The log entry
+		// already carries it; it was simply dropped on the way to the row.
+		row.Pending = &view.PendingInfo{Round: pending.Round, Kind: pending.Kind, TS: pending.TS}
 	}
 
 	// The newest reviewer verdict, while it judged the round just closed:

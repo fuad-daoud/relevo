@@ -84,6 +84,33 @@ func TestStatusJSONOmitsPaneEraFields(t *testing.T) {
 	}
 }
 
+// TestStatusPendingCarriesTS pins that the row's pending entry keeps the log
+// entry's own write time. The row's age -- the one the graced pull rule reads --
+// comes from exactly this field, so a row that dropped it would be a row with no
+// age at all and nothing would ever escalate.
+func TestStatusPendingCarriesTS(t *testing.T) {
+	rt := routeRuntime(t)
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("status has %d rows, want 1", len(rep.Bindings))
+	}
+	pending := rep.Bindings[0].Pending
+	if pending == nil {
+		t.Fatal("Pending = nil, want the seeded undelivered payload")
+	}
+	if pending.TS.IsZero() {
+		t.Error("Pending.TS is the zero time, want the pending log entry's own TS")
+	}
+	if got := pending.TS.UTC(); !got.Equal(baseTime) {
+		t.Errorf("Pending.TS = %s, want the seeded write time %s", got, baseTime)
+	}
+}
+
 // statusDoc marshals a Status report and reads back the route fields.
 func statusDoc(t *testing.T, rt Runtime) routeDoc {
 	t.Helper()
