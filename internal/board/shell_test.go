@@ -6,6 +6,31 @@ import (
 	"testing"
 )
 
+// TestShellPostAdoptsTheEntry pins the post success path. It once called a
+// refresh() that exists nowhere, so every successful post threw into the
+// failure handler and the list never redrew. The handler must fold the posted
+// entry into the document itself: update the etag, append the annotation, push
+// the pins to the frame, and render the list.
+func TestShellPostAdoptsTheEntry(t *testing.T) {
+	data, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	src := string(data)
+	if strings.Contains(src, "refresh(") {
+		t.Error("comments.js calls refresh(), which is not defined; fold the posted entry into the document instead")
+	}
+	for _, want := range []string{
+		"posted.annotationsEtag",
+		"posted.annotation",
+		"relevo.pins",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("comments.js post path does not %s", want)
+		}
+	}
+}
+
 // TestOverlayHasNoScriptCloseTag is the pin that keeps the overlay splittable.
 // shell.js splices the overlay into the board's HTML as a script element, so an
 // overlay that itself contained a closing script tag would end the element

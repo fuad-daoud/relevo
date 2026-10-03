@@ -139,14 +139,18 @@
       }
       if (!res.ok) throw new Error("the server answered " + res.status);
       return res.json();
-    }).then(function (doc) {
-      if (!doc) return;
-      aetag = doc.annotationsEtag;
+    }).then(function (posted) {
+      // The post worked. The entry joins the document the list and the pins
+      // both read from; there is no refresh to call, only the state to adopt.
+      if (!posted) return;
+      aetag = posted.annotationsEtag || aetag;
+      if (doc) doc.annotations = (doc.annotations || []).concat([posted.annotation]);
       picked = null;
       setDirty(false);
       draftEl.value = "";
       selEl.textContent = "";
-      refresh();
+      postToFrame({ type: "relevo.pins", annotations: (doc && doc.annotations) || [] });
+      render();
     }).catch(function (err) {
       api.setStatus("could not post the comment: " + err.message);
     });
