@@ -89,12 +89,16 @@ func TestMatchCreditPhrases(t *testing.T) {
 func TestMatchCreditIgnoresAResetLikeTail(t *testing.T) {
 	t.Parallel()
 
+	// Each row also matches one of the harness's own credit patterns, so
+	// MatchLimit really does reach it today -- which is what makes the row
+	// prove anything. A row built from a seed phrase with no harness pattern
+	// would never have been timed, so it would pass here for the wrong reason.
 	cases := []struct {
 		name string
 		text string
 	}{
 		{"a duration reset", "Error: this request requires more credits; the limit resets in 23m"},
-		{"a clock reset", "Error: credits exhausted, resets at 23:30"},
+		{"a clock reset", "Error: insufficient credits, resets at 23:30"},
 		{"an absolute date", "Error: insufficient credits, try again at Oct 19th, 2026 7:14 PM"},
 	}
 
@@ -311,31 +315,31 @@ func TestCreditGateClearsWithTheExistingPath(t *testing.T) {
 		t.Errorf("GateUntilText = %q, want %q", got, want)
 	}
 
-	// And it is live for as long as the ledger holds it.
-	if _, err := Unavailable(d, testOpencodeRef, baseTime.Add(30*24*time.Hour), "stop"); err != nil {
-		t.Fatalf("Unavailable: %v", err)
-	}
+	// And it stays live: the projection still reports it a month on, because a
+	// zero Until is never expired by time alone. Only the clear below lifts it.
+	monthLater := baseTime.Add(30 * 24 * time.Hour)
+	d.Now = func() time.Time { return monthLater }
 	gates := LedgerGates(d, []string{testOpencodeRef})
 	if len(gates) != 1 {
-		t.Fatalf("gates = %+v, want one live gate a month later: a zero Until never expires", gates)
+		t.Fatalf("gates = %+v, want the credit gate still live a month later: a zero Until never expires", gates)
 	}
+	if gates[0].Until.IsZero() != true {
+		t.Errorf("gate Until = %v, want the zero value that renders as until cleared", gates[0].Until)
+	}
+	d.Now = func() time.Time { return baseTime }
 
 	// The existing clear path resolves and clears it, unchanged.
-	l, err := LoadLedger(d.Gates)
+	provider, removed, err := Available(d, "test", ClearedByMasterMind)
 	if err != nil {
-		t.Fatalf("LoadLedger: %v", err)
+		t.Fatalf("Available: %v", err)
 	}
-	provider, err := ResolveClearSubject(d.Candidates, l, "test")
-	if err != nil {
-		t.Fatalf("ResolveClearSubject: %v", err)
+	if removed != 1 {
+		t.Errorf("removed = %d, want 1: the existing clear path must clear a credit gate unchanged", removed)
 	}
 	if provider != "test" {
-		t.Errorf("ResolveClearSubject = %q, want %q", provider, "test")
-	}
-	if err := Clear(d, []string{provider}); err != nil {
-		t.Fatalf("Clear: %v", err)
+		t.Errorf("provider = %q, want %q", provider, "test")
 	}
 	if gates := LedgerGates(d, []string{testOpencodeRef}); len(gates) != 0 {
-		t.Errorf("gates = %+v, want none: the existing clear path must clear a credit gate unchanged", gates)
+		t.Errorf("gates = %+v, want none after the existing clear path ran", gates)
 	}
 }
