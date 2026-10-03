@@ -306,7 +306,7 @@ func TestStatuslineDoneChain(t *testing.T) {
 	c, members := newChainFixture(t, rt, "done")
 
 	// Members present: MasterMindStatus collapses to one row.
-	rep, err := MasterMindStatus(context.Background(), rt, testMasterMindID)
+	rep, err := MasterMindStatus(context.Background(), rt, Scope{MasterMindID: testMasterMindID})
 	if err != nil {
 		t.Fatalf("MasterMindStatus: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestStatuslineDoneChain(t *testing.T) {
 			t.Fatalf("Save: %v", err)
 		}
 	}
-	repReleased, err := MasterMindStatus(context.Background(), rt, testMasterMindID)
+	repReleased, err := MasterMindStatus(context.Background(), rt, Scope{MasterMindID: testMasterMindID})
 	if err != nil {
 		t.Fatalf("MasterMindStatus: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestStatuslineChainRowReplacesMembers(t *testing.T) {
 		t.Fatalf("Save other: %v", err)
 	}
 
-	rep, err := MasterMindStatus(context.Background(), rt, testMasterMindID)
+	rep, err := MasterMindStatus(context.Background(), rt, Scope{MasterMindID: testMasterMindID})
 	if err != nil {
 		t.Fatalf("MasterMindStatus: %v", err)
 	}

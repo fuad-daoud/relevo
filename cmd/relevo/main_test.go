@@ -1813,21 +1813,25 @@ func TestStatusLineFlags(t *testing.T) {
 		}
 	})
 
-	t.Run("status --line --all exits 2", func(t *testing.T) {
-		_, _, err := captureOutput(t, func() error {
+	t.Run("status --line --all renders the fleet", func(t *testing.T) {
+		// --all is the fleet view in every format, so the line takes it rather
+		// than refusing the combination.
+		t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+		_, stderr, err := captureOutput(t, func() error {
 			return run([]string{"status", "--line", "--all"})
 		})
-		var ec exitCodeErr
-		if !errors.As(err, &ec) || ec.code != 2 {
-			t.Errorf("status --line --all: err = %v, want exit code 2", err)
+		if err != nil {
+			t.Errorf("status --line --all: err = %v (stderr: %s), want the fleet line", err, stderr)
 		}
 	})
 
-	t.Run("status --line --json prints StatusLineDoc with null mastermind and empty rows", func(t *testing.T) {
+	t.Run("status --line --json prints StatusLineDoc with null mastermind and the store's rows", func(t *testing.T) {
+		// A session that names no MasterMind, in a store one MasterMind owns:
+		// the scope is unambiguous, so the line carries that store's rows with
+		// no mastermind to name. It used to carry none, which is how the line
+		// and `relevo status` disagreed about the same store.
+		seedStatusScopeFixture(t, "architect-1")
 		t.Setenv("RELEVO_MASTERMIND", "")
-		t.Setenv("CLAUDECODE", "")
-		t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
-		t.Setenv("RELEVO_HARNESS", "")
 
 		stdout, stderr, err := captureOutput(t, func() error {
 			return run([]string{"status", "--line", "--json"})
@@ -1843,8 +1847,8 @@ func TestStatusLineFlags(t *testing.T) {
 		if doc.MasterMind != nil {
 			t.Errorf("doc.MasterMind = %+v, want nil", doc.MasterMind)
 		}
-		if doc.Rows == nil || len(doc.Rows) != 0 {
-			t.Errorf("doc.Rows = %+v, want empty []", doc.Rows)
+		if len(doc.Rows) != 1 || doc.Rows[0].Name != "architect-1" {
+			t.Errorf("doc.Rows = %+v, want the store's one binding", doc.Rows)
 		}
 		s := string(stdout)
 		if !strings.Contains(s, `"mastermind":null`) {
@@ -1852,9 +1856,6 @@ func TestStatusLineFlags(t *testing.T) {
 		}
 		if !strings.Contains(s, `"board":null`) {
 			t.Errorf("output %q does not contain '\"board\":null'", s)
-		}
-		if !strings.Contains(s, `"rows":[]`) {
-			t.Errorf("output %q does not contain '\"rows\":[]'", s)
 		}
 	})
 }

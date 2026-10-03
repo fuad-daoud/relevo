@@ -321,6 +321,7 @@ gives a MasterMind a name of your own.
   each hunk and each `' '`/`'+'` line with its `path:line`, ready to quote into a
   review comment (see "Reviewing a round" below).
 - `relevo status [NAME|--name N] [--json] [--all] [--line]` — one row per binding: round, display state, the builder's own status, the last relayed event and anything pending. `--line` is the one-row-per-binding form Claude Code's status line runs (see [Status line](#status-line)). Rows are attention-first -- NEEDS YOU, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relevo ui` has always used, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
+  Every format -- the human listing, `--json` and `--line` -- shows the same scope: the bindings of the MasterMind this session belongs to, whichever MasterMind owns the rest. When that view leaves another MasterMind's bindings out, the human listing adds a footer naming how many and pointing at `--all`; `--all` shows every MasterMind's bindings, DONE ones included, in all three formats. A session that names no MasterMind while more than one owns bindings here is refused rather than guessed at -- set `RELEVO_MASTERMIND=<id\|name>`, or pass `--all`.
   While a round is open a row also shows the round's live diff against its baseline (`+120/-30 in 6`, `(shared tree)` for a `--cwd` binding sharing the MasterMind's own working tree), an ACTIVE row's `quiet <age>` since its last progress sample, and `●new` when the binding's newest report is unread (its record's `viewed_at` stamp is older than the newest report).
   `--json` also carries fields the prose above does not spell out:
   ```
@@ -1411,7 +1412,10 @@ that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 
 `relevo status --line` shows this MasterMind's bindings, one row each (one entry
 per chain in place of its members), under the Claude Code prompt; it shows nothing
-on error and never probes a builder.
+on error and never probes a builder. It resolves the same scope `relevo status`
+and `--json` do, so the line and the listing can never name different bindings:
+`--line --all` is the fleet view, and a session whose MasterMind cannot be
+resolved where several own bindings draws no row and says so on stderr.
 The first line names the MasterMind (`MasterMind architect-14`), so each terminal
 shows which MasterMind it is; `relevo mastermind list` maps that name to its chat.
 While a live board runs for this MasterMind, the next line is `board <mastermind> · <url>`,

@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/consult"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -62,13 +63,43 @@ func waitLive(rt Runtime, name string) bool {
 // locally: the mastermind record, a live channel claim and the configured
 // deliverers. Only store failures fail the call. Each chain's member rows
 // are replaced by the chain's own row (applyChains).
+//
+// This is the whole store: the server, the MCP verbs and the cockpit all read
+// the fleet. A person reading `relevo status` reads ScopedStatus instead, which
+// narrows the same rows to the MasterMind that session belongs to.
 func Status(ctx context.Context, rt Runtime) (view.Report, error) {
+	return ScopedStatus(ctx, rt, Scope{All: true})
+}
+
+// Scope is the one rule every status format resolves before it reads a row:
+// which MasterMind's bindings the reader is looking at. An empty MasterMindID
+// with All false keeps every row, which is what a store no single MasterMind
+// owns resolves to -- one MasterMind, or none registered at all.
+//
+// HideDone is the one rule that is a format's own rather than the reader's: the
+// statusline gives a DONE binding no row. It is applied to the store listing
+// rather than to the finished report, so a chain whose members are live still
+// collapses into its own DONE row and takes the line.
+type Scope struct {
+	MasterMindID string
+	All          bool
+	HideDone     bool
+}
+
+// Fleet reports whether the scope is every MasterMind's bindings, which is what
+// --all asks for in every format.
+func (s Scope) Fleet() bool { return s.All || s.MasterMindID == "" }
+
+// ScopedStatus builds the report for one scope: the whole store for the fleet
+// scope, else the named MasterMind's bindings with its chains collapsed into
+// their own rows.
+func ScopedStatus(ctx context.Context, rt Runtime, scope Scope) (view.Report, error) {
 	bindings, err := rt.Store.List()
 	if err != nil {
 		return view.Report{}, err
 	}
 
-	rep, err := buildReport(ctx, rt, bindings)
+	rep, err := buildReport(ctx, rt, scopedBindings(bindings, scope))
 	if err != nil {
 		return view.Report{}, err
 	}
@@ -76,7 +107,62 @@ func Status(ctx context.Context, rt Runtime) (view.Report, error) {
 	if err != nil {
 		return view.Report{}, err
 	}
-	return applyChains(rt.Store, rep, chains), nil
+	if scope.Fleet() {
+		return applyChains(rt.Store, rep, chains), nil
+	}
+	return applyChains(rt.Store, rep, scopedChains(chains, scope)), nil
+}
+
+// scopedBindings keeps one MasterMind's bindings, and every binding for the
+// fleet scope, minus the DONE ones for a scope that gives them no row.
+func scopedBindings(bindings []store.Binding, scope Scope) []store.Binding {
+	if scope.Fleet() && !scope.HideDone {
+		return bindings
+	}
+	kept := make([]store.Binding, 0, len(bindings))
+	for _, b := range bindings {
+		if !scope.Fleet() && b.MasterMindID != scope.MasterMindID {
+			continue
+		}
+		if scope.HideDone && b.State == store.StateDone {
+			continue
+		}
+		kept = append(kept, b)
+	}
+	return kept
+}
+
+// scopedChains is scopedBindings for chains: the fleet keeps them all, a named
+// MasterMind keeps the chains it owns, so a chain row never names a chain
+// another MasterMind is running.
+func scopedChains(chains []db.ChainRow, scope Scope) []db.ChainRow {
+	if scope.Fleet() {
+		return chains
+	}
+	kept := make([]db.ChainRow, 0, len(chains))
+	for _, c := range chains {
+		if c.MasterMindID == scope.MasterMindID {
+			kept = append(kept, c)
+		}
+	}
+	return kept
+}
+
+// OtherMasterMindCount counts the bindings the scoped view leaves out because
+// they belong to another MasterMind: the exact number the human footer states.
+// DONE rows are not counted, because the default view hides those in every
+// scope -- pointing at --all for them would overstate what the scope hid.
+func OtherMasterMindCount(bindings []store.Binding, scope Scope) int {
+	if scope.Fleet() {
+		return 0
+	}
+	n := 0
+	for _, b := range bindings {
+		if b.MasterMindID != "" && b.MasterMindID != scope.MasterMindID && b.State != store.StateDone {
+			n++
+		}
+	}
+	return n
 }
 
 func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (view.Report, error) {

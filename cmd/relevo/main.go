@@ -47,6 +47,7 @@ Commands:
                         attach another runner to this MasterMind, on its own worktree or tree
   send      stage a plan file as the current round and start the runner [--tier] [--dry-run] [--verify|--no-verify]
   status    one row per binding: round, state, live pane status, what is pending [--all] [--line]
+            scoped to this MasterMind's bindings in every format; --all shows every MasterMind's
   history   round history as JSON [--here] [--binding B] [--mastermind P] [--since D] [--limit N] [-q QUERY] [--json]
   show      one round's plan, report, diff, drift, gate, findings, log or transcript, live or archived [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]
   wait      block until a round closes or needs you, then print the pending report; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 6 not started, 3 needs you, 4 done/unbound, 124 timeout [--peek]

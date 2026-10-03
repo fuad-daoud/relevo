@@ -528,13 +528,14 @@ func gcScope(mastermindFlag string, all bool, resolve func(ref string) (mastermi
 	return relevo.GCOptions{MasterMindID: rec.ID}, nil
 }
 
-// mastermindFilter resolves this session's mastermind for the commands that filter
-// by it without requiring one: `relevo status` with no name (§3.3) and
-// `relevo status --line`. A miss is not an error there -- the caller keeps its
-// old behaviour -- and neither is a Runtime with no registry (tests).
-func mastermindFilter(rt relevo.Runtime) (mastermind.Record, bool) {
+// mastermindIdentity resolves this session's mastermind and keeps the reason it
+// could not. A caller that only needs to know whether one resolved reads
+// mastermindFilter; a caller that has to tell "no mastermind anywhere" from
+// "this session names one I cannot" -- the status scope, which refuses rather
+// than guesses -- reads the error.
+func mastermindIdentity(rt relevo.Runtime) (mastermind.Record, error) {
 	if rt.MasterMinds == nil {
-		return mastermind.Record{}, false
+		return mastermind.Record{}, mastermind.ErrNoMasterMind
 	}
 	var now time.Time
 	if rt.Now != nil {
@@ -549,6 +550,18 @@ func mastermindFilter(rt relevo.Runtime) (mastermind.Record, bool) {
 		CWD:             cwd,
 		OpencodeSession: rt.OpencodeSession,
 	})
+	if err != nil {
+		return mastermind.Record{}, err
+	}
+	return rec, nil
+}
+
+// mastermindFilter resolves this session's mastermind for the commands that filter
+// by it without requiring one: `relevo consent` and unbind's scope helper. A
+// miss is not an error there -- the caller keeps its old behaviour -- and
+// neither is a Runtime with no registry (tests).
+func mastermindFilter(rt relevo.Runtime) (mastermind.Record, bool) {
+	rec, err := mastermindIdentity(rt)
 	if err != nil {
 		return mastermind.Record{}, false
 	}

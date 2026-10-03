@@ -147,8 +147,9 @@ func TestReadVerbErrorCodes(t *testing.T) {
 		// A name wait never loaded is the poll's own failure: internal.
 		{"wait unknown name", []string{"wait", "--any", "nosuch", "--timeout", "1ns"}, codeInternal, ""},
 		// status: --line takes no binding selector, and an unknown name is a
-		// binding the store does not hold.
-		{"status line with all", []string{"status", "--line", "--all"}, codeUsage, "relevo help"},
+		// binding the store does not hold. --all is the fleet view and reaches
+		// the line like every other format, so it is not a misuse.
+		{"status line with name", []string{"status", "--line", "--name", "x"}, codeUsage, "relevo help"},
 		{"status unknown name", []string{"status", "--name", "nosuch", "--json"}, codeBindingNotFound, "relevo status --all"},
 		// history takes no positionals.
 		{"history positional", []string{"history", "extra"}, codeUsage, "relevo help"},
@@ -227,7 +228,7 @@ func TestReadVerbErrorFrame(t *testing.T) {
 		next string
 	}{
 		{"wait", []string{"wait", "--name", "errcodes", "--timeout", "0"}, codeUsage, "relevo help"},
-		{"status", []string{"status", "--line", "--all"}, codeUsage, "relevo help"},
+		{"status", []string{"status", "--line", "--name", "x"}, codeUsage, "relevo help"},
 		{"history", []string{"history", "extra"}, codeUsage, "relevo help"},
 		{"show", []string{"show", "errcodes", "--stat"}, codeUsage, "relevo help"},
 	} {

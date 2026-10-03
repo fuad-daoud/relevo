@@ -60,7 +60,7 @@ func TestMasterMindStatusFiltersToOneMasterMind(t *testing.T) {
 	rt := setupMasterMindStatusStore(t)
 	ctx := context.Background()
 
-	rep, err := MasterMindStatus(ctx, rt, testClaimMasterMind)
+	rep, err := MasterMindStatus(ctx, rt, Scope{MasterMindID: testClaimMasterMind})
 	if err != nil {
 		t.Fatalf("MasterMindStatus: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestMasterMindStatusFiltersToOneMasterMind(t *testing.T) {
 		}
 	}
 
-	repOther, err := MasterMindStatus(ctx, rt, otherClaimMasterMind)
+	repOther, err := MasterMindStatus(ctx, rt, Scope{MasterMindID: otherClaimMasterMind})
 	if err != nil {
 		t.Fatalf("MasterMindStatus(other): %v", err)
 	}
@@ -85,15 +85,45 @@ func TestMasterMindStatusFiltersToOneMasterMind(t *testing.T) {
 	}
 }
 
-func TestMasterMindStatusEmptyMasterMindIsEmpty(t *testing.T) {
+// TestMasterMindStatusEmptyScopeIsTheWholeStore pins the scope rule the line
+// and every other format share: an unnamed scope is the fleet, not the empty
+// report. It used to be the empty report, which is how a session that could not
+// name its MasterMind saw no rows here while `relevo status` showed it
+// everything. DONE rows still take no line.
+func TestMasterMindStatusEmptyScopeIsTheWholeStore(t *testing.T) {
 	rt := setupMasterMindStatusStore(t)
 	ctx := context.Background()
 
-	rep, err := MasterMindStatus(ctx, rt, "")
+	rep, err := MasterMindStatus(ctx, rt, Scope{})
 	if err != nil {
 		t.Fatalf("MasterMindStatus: %v", err)
 	}
-	if len(rep.Bindings) != 0 {
-		t.Errorf("got %d bindings, want 0", len(rep.Bindings))
+	names := make([]string, 0, len(rep.Bindings))
+	for _, b := range rep.Bindings {
+		names = append(names, b.Name)
+	}
+	if len(names) != 3 {
+		t.Fatalf("got bindings %v, want the three live ones from every MasterMind", names)
+	}
+	for _, n := range names {
+		if n == "finished" {
+			t.Errorf("got bindings %v, want no DONE row", names)
+		}
+	}
+}
+
+// TestMasterMindStatusAllScopeKeepsDoneRows pins that --all is the fleet in
+// full for the line too: the DONE rule is the default view's, and the fleet
+// view is what asks to see them.
+func TestMasterMindStatusAllScopeKeepsDoneRows(t *testing.T) {
+	rt := setupMasterMindStatusStore(t)
+	ctx := context.Background()
+
+	rep, err := MasterMindStatus(ctx, rt, Scope{All: true})
+	if err != nil {
+		t.Fatalf("MasterMindStatus: %v", err)
+	}
+	if len(rep.Bindings) != 4 {
+		t.Errorf("got %d bindings, want all four including the DONE one", len(rep.Bindings))
 	}
 }
