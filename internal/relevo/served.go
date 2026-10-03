@@ -147,6 +147,8 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		ReportOutcome:  facts.ReportOutcome,
 		GateResult:     facts.GateResult,
 		Stopped:        facts.Stopped,
+		ReportNote:     facts.ReportNote,
+		Switches:       facts.Switches,
 		Shape:          b.Shape,
 		DiffNote:       facts.DiffNote,
 		DiffCommits:    facts.DiffCommits,
@@ -168,10 +170,10 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 }
 
 // servedRoundFacts is the per-round scan ServedView used to run for its
-// ClosedRound: round n's report outcome, usage and rusage; its gate result; its
-// diff note, commit count and tree; and how it was stopped. n <= 0 yields the
-// zero value. Every field names the newest entry for round n of its kind, the
-// order the four original scans walked.
+// ClosedRound: round n's report outcome, note, usage and rusage; its gate
+// result; its diff note, commit count and tree; its switch history; and how it
+// was stopped. n <= 0 yields the zero value. Every field names the newest entry
+// for round n of its kind, the order the original scans walked.
 func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 	var f remote.ClosedRoundView
 	if n <= 0 {
@@ -181,6 +183,7 @@ func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Round == n && entries[i].Kind == store.KindReport {
 			f.ReportOutcome = entries[i].Outcome
+			f.ReportNote = entries[i].Note
 			f.Usage = entries[i].Usage
 			f.Rusage = entries[i].Rusage
 			break
@@ -200,6 +203,15 @@ func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 			f.DiffCommits = entries[i].Commits
 			f.DiffTree = entries[i].Tree
 			break
+		}
+	}
+	// switches is the round's whole switch history, in log order, so a round
+	// that rotated or went A-B-A carries every switch it took rather than only
+	// the one a client's poll could have happened to observe. Nudge entries are
+	// excluded by note, as switchLines excludes them.
+	for _, e := range entries {
+		if e.Round == n && e.Kind == store.KindSwitch && e.Note != nudgeNote && e.Note != "" {
+			f.Switches = append(f.Switches, e.Note)
 		}
 	}
 	// stopped is how the round was stopped: the newest KindStop entry for n
