@@ -186,8 +186,9 @@ func TestHTMLShellAssetsNeedNoToken(t *testing.T) {
 	}
 }
 
-// TestHTMLBoardExternalPopulated: a board that names a remote resource says so
-// in the response, so the shell can banner it.
+// TestHTMLBoardExternalPopulated: a board that names a remote load says so
+// in the response, so the shell can banner it. The anchor href is not a load
+// and rides along unreported.
 func TestHTMLBoardExternalPopulated(t *testing.T) {
 	s, _ := testHTMLServer(t)
 	body := `<img src="https://cdn.example/logo.png"><a href="//cdn.example/docs">docs</a>`
@@ -198,7 +199,7 @@ func TestHTMLBoardExternalPopulated(t *testing.T) {
 		t.Fatalf("write board: %v", err)
 	}
 	doc := decodeBoardDoc(t, doHTML(t, s, http.MethodGet, "/api/board", testHost, testToken))
-	want := []string{"https://cdn.example/logo.png", "//cdn.example/docs"}
+	want := []string{"https://cdn.example/logo.png"}
 	if len(doc.External) != len(want) {
 		t.Fatalf("external = %v, want %v", doc.External, want)
 	}

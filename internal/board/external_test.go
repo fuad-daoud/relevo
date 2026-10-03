@@ -2,6 +2,7 @@ package board
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -13,10 +14,11 @@ func TestExternalRefsCatchesNetworkReferences(t *testing.T) {
 		"https in src":      `<img src="https://cdn.example/logo.png">`,
 		"http in src":       `<img src='http://cdn.example/logo.png'>`,
 		"https in href":     `<link href="https://cdn.example/a.css" rel="stylesheet">`,
+		"icon href":         `<link rel="icon" href="https://cdn.example/f.ico">`,
 		"protocol relative": `<img src="//cdn.example/logo.png">`,
 		"ws in script":      `<script src="ws://cdn.example/s.js"></script>`,
 		"wss in script":     `<script src="wss://cdn.example/s.js"></script>`,
-		"ftp in href":       `<a href="ftp://files.example/board">board</a>`,
+		"ftp in stylesheet": `<link href="ftp://files.example/a.css" rel="stylesheet">`,
 		"xlink in svg":      `<svg><use xlink:href="https://cdn.example/i.svg#g"/></svg>`,
 		"action on form":    `<form action="https://api.example/post"></form>`,
 		"poster on video":   `<video poster="https://cdn.example/p.jpg"></video>`,
@@ -45,6 +47,9 @@ func TestExternalRefsIgnoresLocalValues(t *testing.T) {
 		"data image":       `<img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=">`,
 		"blob image":       `<img src="blob:http://127.0.0.1:1234/abc">`,
 		"fragment link":    `<a href="#section-2">jump</a>`,
+		"plain https link": `<a href="https://github.com/fuad-daoud/relevo/issues/906">#906</a>`,
+		"preconnect link":  `<link rel="preconnect" href="https://fonts.googleapis.com">`,
+		"canonical link":   `<link rel="canonical" href="https://example.com/board">`,
 		"relative src":     `<img src="assets/logo.png">`,
 		"root relative":    `<img src="/assets/logo.png">`,
 		"xmlns svg":        `<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`,
@@ -114,6 +119,20 @@ func TestIsExternalRefSchemes(t *testing.T) {
 		if isExternalRef(ref) {
 			t.Errorf("isExternalRef(%q) = true, want false", ref)
 		}
+	}
+}
+
+// TestShellRendersBoardsAsUTF8 pins the blob MIME type the shell renders a
+// board with: without the charset a board without its own <meta charset>
+// decodes as Latin-1 and every non-ASCII byte is mojibake. Dropping the
+// charset in shell/shell.js fails this test.
+func TestShellRendersBoardsAsUTF8(t *testing.T) {
+	data, err := readShellFile("shell.js")
+	if err != nil {
+		t.Fatalf("read shell shell.js: %v", err)
+	}
+	if !strings.Contains(string(data), "text/html;charset=utf-8") {
+		t.Errorf("shell.js does not render the board blob as text/html;charset=utf-8")
 	}
 }
 

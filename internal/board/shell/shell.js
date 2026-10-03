@@ -37,7 +37,7 @@
   // keeps the board's bytes out of the network and out of this document's DOM,
   // and the sandbox attribute above is what makes the origin opaque.
   function render(html) {
-    var blob = new Blob([html], { type: "text/html" });
+    var blob = new Blob([html], { type: "text/html;charset=utf-8" });
     frame.src = URL.createObjectURL(blob);
     setStatus("");
     document.body.appendChild(frame);

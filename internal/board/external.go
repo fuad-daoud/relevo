@@ -25,11 +25,20 @@ var externalRefs = struct {
 	cssImport *regexp.Regexp
 	// fetch("...") and import("...") string literals.
 	jsCall *regexp.Regexp
+	// linkTag finds a <link> element, so a stylesheet or icon href -- the
+	// only hrefs that fetch -- can be checked with its rel in view. A plain
+	// <a href> only navigates when clicked and never loads, so it is not a
+	// reference.
+	linkTag *regexp.Regexp
+	// linkAttr reads one attribute out of a <link> tag.
+	linkAttr *regexp.Regexp
 }{
-	attr:      regexp.MustCompile(`(?is)\b(xlink:href|xmlns(?::[a-z0-9_-]+)?|src|srcset|href|action|poster)\s*=\s*(?:"([^"]*)"|'([^']*)')`),
+	attr:      regexp.MustCompile(`(?is)\b(xlink:href|xmlns(?::[a-z0-9_-]+)?|src|srcset|action|poster)\s*=\s*(?:"([^"]*)"|'([^']*)')`),
 	cssURL:    regexp.MustCompile(`(?is)url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"]*))\s*\)`),
 	cssImport: regexp.MustCompile(`(?is)@import\s+(?:url\()?\s*(?:"([^"]*)"|'([^']*)')`),
 	jsCall:    regexp.MustCompile(`(?is)\b(?:fetch|import)\(\s*(?:"([^"]*)"|'([^']*)')`),
+	linkTag:   regexp.MustCompile(`(?is)<link\b[^<>]*>`),
+	linkAttr:  regexp.MustCompile(`(?is)\b(rel|href)\s*=\s*(?:"([^"]*)"|'([^']*)')`),
 }
 
 // xmlnsDecl matches a namespace declaration attribute: xmlns or xmlns:prefix.
@@ -38,11 +47,33 @@ var externalRefs = struct {
 // this every inline-SVG board would report its own namespace as external.
 var xmlnsDecl = regexp.MustCompile(`(?i)^xmlns(:[a-z0-9_-]+)?$`)
 
+// linkLoads reports whether a <link> tag's href is fetched: only a
+// stylesheet or an icon loads without a click. Every other rel -- preload
+// aside, which a board has no use for -- either navigates or does nothing.
+func linkLoads(tag string) (href string, ok bool) {
+	rel, href := "", ""
+	for _, m := range externalRefs.linkAttr.FindAllStringSubmatch(tag, -1) {
+		switch strings.ToLower(m[1]) {
+		case "rel":
+			rel = m[2] + m[3]
+		case "href":
+			href = m[2] + m[3]
+		}
+	}
+	for _, token := range strings.Fields(strings.ToLower(rel)) {
+		if token == "stylesheet" || token == "icon" {
+			return href, true
+		}
+	}
+	return "", false
+}
+
 // ExternalRefs lists the references in an HTML board that would reach the
 // network: http:, https:, ws:, wss:, ftp: and the protocol-relative //host
-// form, found in src, href, srcset, action, poster and xlink:href attributes,
-// in CSS url(...) and @import, and in fetch(...) and import(...) string
-// literals. Namespace declarations are excluded. The result is in first-
+// form, found in src, srcset, action, poster and xlink:href attributes, in a
+// stylesheet or icon <link>'s href, in CSS url(...) and @import, and in
+// fetch(...) and import(...) string literals. A plain <a href> only navigates
+// and never loads, so it is not reported. Namespace declarations are excluded. The result is in first-
 // appearance order and carries no duplicates, so the caller can name the first
 // reference and the count.
 //
@@ -75,6 +106,13 @@ func ExternalRefs(html []byte) []string {
 	}
 	for _, m := range externalRefs.cssURL.FindAllStringSubmatch(string(html), -1) {
 		add(m[1], m[2], m[3])
+	}
+	// A <link> href counts only when the link loads: a stylesheet or an icon.
+	// Every other href -- anchors above all -- only navigates.
+	for _, tag := range externalRefs.linkTag.FindAllString(string(html), -1) {
+		if href, ok := linkLoads(tag); ok {
+			add(href)
+		}
 	}
 	for _, m := range externalRefs.cssImport.FindAllStringSubmatch(string(html), -1) {
 		add(m[1], m[2])
