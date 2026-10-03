@@ -46,8 +46,9 @@ func ago(since, now time.Time) string {
 }
 
 // reportReady is the fleet's rule for a report waiting on the human at this
-// cockpit (§4.5): the binding's mastermind is `you`, and a payload is pending for
-// it. Such a row's NOW cell says so, and opening it pulls the report.
+// cockpit: the binding's mastermind is `you`, and a payload is pending for it.
+// Such a row's NOW cell says so, and opening it lands on the report tab --
+// read, not claimed, so the payload is left for the route that pushes it.
 func reportReady(b view.BindingStatus) bool {
 	return b.MasterMindName == "you" && b.Pending != nil
 }
