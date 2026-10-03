@@ -272,6 +272,12 @@ func TestShellFloatsTheCommentPanes(t *testing.T) {
 			t.Errorf("comments.js does not carry %q, which the floating layout needs", want)
 		}
 	}
+	// The toggle sits in the bar, outside both the frame and the pane. Without
+	// an exclusion the document click-outside handler closes the panel in the
+	// same click that opened it, so the toggle never appears to work.
+	if !strings.Contains(string(comments), "commentBtn.contains(ev.target)") {
+		t.Error("comments.js click-outside handler does not exclude the toggle that opened the panel")
+	}
 }
 
 // TestShellHoverOutlineIsThemeAware pins the restyled hover: a fixed blue

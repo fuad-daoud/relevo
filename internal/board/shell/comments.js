@@ -275,6 +275,9 @@
     var frame = document.getElementById("frame");
     if (frame && frame.contains(ev.target)) return;
     if (pane.contains(ev.target)) return;
+    // The toggle opened the panel with this same click as it bubbles up; it
+    // must not dismiss what it just opened.
+    if (commentBtn.contains(ev.target)) return;
     if (list.cardOpen()) {
       list.closeCard();
       return;
