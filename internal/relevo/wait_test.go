@@ -87,6 +87,30 @@ func TestWaitOutcome(t *testing.T) {
 		}
 	})
 
+	t.Run("marked close carrying a gate result is WaitClosed (0)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "gate=pass"},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("marked close carrying a stopped note is WaitClosed (0)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "stopped"},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
 	t.Run("marked report with Outcome: halted is WaitHalted (5)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
@@ -144,6 +168,101 @@ func TestWaitOutcome(t *testing.T) {
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("marked close with a scope verdict is WaitClosed (0)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "scope=ok"},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("marked close that escaped is WaitClosed (0)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "escaped"},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("marked close with a remote-catchup note is WaitClosed (0)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{
+				Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+				Path: "/x/001-report.md", Note: "uncommitted work at refs/relevo/ev-wait/round-1",
+			},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a marked close consumed by a chain is WaitClosed (0)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{
+				Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+				Path: "/x/001-report.md", Note: "gate=pass consumed by chain rev-1", Confirmed: true,
+			},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("marked close refused by scope is WaitHalted (5)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{
+				Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+				Path: "/x/001-report.md", Note: "scope=refused", Outcome: reporttail.OutcomeHalted,
+			},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitHalted, Line: "/x/001-report.md", Done: true}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a joined no-marker note is WaitUnmarked", func(t *testing.T) {
+		cases := []struct {
+			note string
+			line string
+		}{
+			{note: "noreport stopped", line: "/x/001-report.md"},
+			{note: "unmarked escaped", line: "/x/001-report.md"},
+			// The dash line is reserved for a bare "noreport": a joined note
+			// keeps the report path, since the close did write one.
+			{note: "noreport gate=fail", line: "/x/001-report.md"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.note, func(t *testing.T) {
+				b := store.Binding{Round: 1}
+				entries := []store.LogEntry{
+					{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: tc.note},
+				}
+				got := WaitOutcome(b, entries, 1, noQuestion)
+				want := WaitResult{Code: WaitUnmarked, Line: tc.line, Done: true}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+				}
+			})
 		}
 	})
 

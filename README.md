@@ -275,11 +275,14 @@ gives a MasterMind a name of your own.
   builder; on a resume `--feature` sets the label, `--no-feature` clears it, and
   naming neither keeps it, while `--ticket` sets one. `relevo unbind N` is the other way out.
 - `relevo board [path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]` — open
-  an Excalidraw whiteboard: a bare `relevo board` opens the live board of the
-  calling MasterMind under the state root, and a named path opens one scene in
-  the repo, served on `127.0.0.1` with a per-run token, saving the scene and (for
-  a repo scene) a companion `.svg` beside it. `relevo board url` prints a live
-  board's URL. Foreground; Ctrl-C stops. See "relevo board" below.
+  a board: a single HTML page served on `127.0.0.1` with a per-run token. A bare
+  `relevo board` opens the live board of the calling MasterMind under the state
+  root, and a path ending in `/board.html` opens one board in the repo. A path
+  ending in `.excalidraw` opens the
+  [Excalidraw](https://excalidraw.com) whiteboard instead, saving the scene and
+  (for a repo scene) a companion `.svg` beside it. `relevo board url` prints a
+  live board's URL and `relevo board promote` copies a live board into the repo.
+  Foreground; Ctrl-C stops. See "relevo board" below.
 - `relevo board comments [path|--board NAME] [--json]` — list every comment in the
   resolved scene in scene order (`id, x, y, text, by, at`); `--json` is one compact
   array. `relevo board comment [path|--board NAME] --text S [--x X --y Y] [--by B]`
@@ -288,7 +291,6 @@ gives a MasterMind a name of your own.
 - `relevo board text <file> [--json]`, `relevo board annotate <file> --text S
   [--x X --y Y]` — list the scene's text elements, or append one without
   touching the rest of the scene. See "relevo board" below.
->>>>>>> 40c2bb9a (docs(board): the text and annotate subverbs and the .excalidraw fallback (S2.7))
 - `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
   prompt and hand it to the builder as the prompt of a fresh process started in
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
@@ -1235,47 +1237,79 @@ report text here
 ### relevo board
 
 `relevo board [path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]`
-opens an [Excalidraw](https://excalidraw.com) whiteboard. A bare `relevo board`
-opens this MasterMind's live board; naming a path opens one scene in the
-repository. Either way it binds `127.0.0.1:0`, prints one line,
+opens a board. A bare `relevo board` opens this MasterMind's live board; naming
+a path ending in `/board.html` opens one board in the repository. Either way it
+binds `127.0.0.1:0`, prints one line,
 `board: http://127.0.0.1:<port>/#t=…  (Ctrl-C to stop)`, and opens that URL in
 the browser unless `--no-open` is given. Ctrl-C stops it, draining an in-flight
 save through `http.Server.Shutdown`.
 
 ```
-relevo board                                  opens this MasterMind's live board
-relevo board --board api                      opens the live scene "api"
-relevo board --mastermind architect-2         another MasterMind's live board
-relevo board docs/boards/api.excalidraw       edits a named repo scene
-relevo board --theme blueprint                a different palette for new elements
-relevo board comments                         lists the scene's comments
-relevo board comment --text "check state 3"   appends one comment
-relevo board text docs/boards/api.excalidraw  lists the scene's text elements
+relevo board                                       opens this MasterMind's live board
+relevo board --board api                           opens the live board "api"
+relevo board --mastermind architect-2              another MasterMind's live board
+relevo board docs/boards/api/board.html            opens a named repo board
+relevo board url                                   prints a live board's URL
+relevo board promote                               copies a live board into the repo
+relevo board docs/boards/api.excalidraw            edits a named Excalidraw scene
+relevo board --theme blueprint                     a palette for new scene elements
+relevo board comments                              lists a scene's comments
+relevo board comment --text "check state 3"        appends one comment
+relevo board text docs/boards/api.excalidraw       lists the scene's text elements
 relevo board annotate docs/boards/api.excalidraw --text "step 1"
-                                              appends one text element
+                                                   appends one text element
 ```
 
-A live board lives under the state root, at
-`<state root>/boards/<mastermind-id>/<name>.excalidraw`; the default name is
-`board`. The scene name is `--board`, else the `current` pointer file in the
-live directory -- written when a board is opened or selected, and never for a
-repo scene -- else `board`. `--mastermind <id|name>` selects whose board;
-without it `RELEVO_MASTERMIND` is used, and with neither the single registered
-MasterMind is used, else a usage error lists them. An `mm_`/`pl_`/ULID id or a
-path opens no database at all; a name, or the single-MasterMind fallback, reads
-the registry read-only. A live directory is created `0700` and its scene, pointer
-and `server.json` are written `0600`.
+A board is one HTML file. A live board is
+`<state root>/boards/<mastermind-id>/<name>/board.html` and a repo board is
+`<repo>/docs/boards/<name>/board.html`; the default name is `board`. The board
+name is `--board`, else the `current` pointer file in the live directory --
+written when a board is opened or selected, and never for a repo board -- else
+`board`. `--mastermind <id|name>` selects whose board; without it
+`RELEVO_MASTERMIND` is used, and with neither the single registered MasterMind is
+used, else a usage error lists them. An `mm_`/`pl_`/ULID id or a path opens no
+database at all; a name, or the single-MasterMind fallback, reads the registry
+read-only. A live directory is created `0700` and its board, pointer and
+`server.json` are written `0600`.
+
+The page is served under a content security policy that names no remote origin:
+`default-src 'none'`, so nothing loads unless the policy allows it, and no entry
+is an `http` or `https` host. The browser loads a small shell that needs no
+token; the shell reads the token from the URL fragment, asks `GET /api/board`
+for the board's bytes, and renders them in a `blob:` iframe sandboxed without
+`allow-same-origin`. The board's own scripts therefore run in an opaque origin
+where the API is unreachable and the token is unreadable. The API is `GET` only,
+requires the per-run token compared in constant time, refuses a `Host` header
+that is not the bound `127.0.0.1:<port>`, and never caches. A board that names an
+external resource -- an `http`, `https`, `ws`, `wss` or `ftp` URL, or a
+protocol-relative `//host` -- is still served: the shell banners the references
+and `relevo board` names the first one on stderr, and the policy is what blocks
+the load. A missing `board.html` is not an error; the shell says there is no
+board at that path yet, and nothing is created until you save one.
+
+`relevo board promote [--board NAME] [--mastermind M] [--to SLUG] [--force]`
+copies a live board into `<repo>/docs/boards/<SLUG>/board.html`, atomically.
+`--to` renames it; `--force` overwrites an existing repo board. A missing source
+and an existing target without `--force` are both refused (exit 2) naming what to
+do about it; a bad slug and a run outside a repository are usage. It is a peek
+verb: no daemon, no server, and no pointer write -- promoting is not opening, so
+the pointer still names the board you are looking at.
 
 A running live board writes `server.json` (`scene`, `url`, `port`, `pid`,
-`started_at`) beside the scene and removes it on shutdown only while it is still
+`started_at`) beside the board and removes it on shutdown only while it is still
 its own; a second server on the same board is allowed and the most recent writer
-wins. `relevo board url [--board NAME] [--mastermind M]` prints that URL -- its
-token included -- for a shell copy, and exits 1 when no live server holds it.
+wins. The advertised `scene` is the board's slug, so `board url` and the
+statusline find a live HTML board the same way they find any other.
+`relevo board url [--board NAME] [--mastermind M]` prints that URL -- its token
+included -- for a shell copy, and exits 1 when no live server holds it.
 A live board's URL names its owner in the path,
 `http://127.0.0.1:<port>/<mastermind>/#t=<token>`, so a copied URL says whose
-board it is; the token still rides only the fragment.
-The URL also appears in the statusline (below). Promotion of a live board into
-the repo is a later cut.
+board it is; the token still rides only the fragment. The URL also appears in the
+statusline (below).
+
+An explicit `.excalidraw` path opens the
+[Excalidraw](https://excalidraw.com) whiteboard instead, with `--theme` choosing
+the palette for new elements.
 
 `relevo board comments [path|--board NAME] [--json]` reads the resolved scene
 and prints every comment in scene order -- `id, x, y, text, by, at` -- one
@@ -1295,14 +1329,18 @@ and are peek verbs: no daemon, no database, and `comments` never writes the
 pointer. Comments are flat -- no replies, resolve, delete or thread -- and the
 CLI never deletes.
 
-A repo scene is fixed at startup and confined to the repository: a path must end
-in `.excalidraw` and, after symlinks are resolved on its deepest existing
-ancestor, sit under the git top level, so neither `..` nor a symlinked parent
-escapes. A missing file is a new scene, and it and its parent directories are
-created on the first save, never at startup. An explicit repo path outside a
-repository is a usage error, exit 2; a bare `relevo board` is the live board and
-never requires a repository. A live board refuses a state root that sits inside
-a repository (or a repository inside it), because the two scopes may not nest.
+Both formats are confined the same way. A repo path must end in `/board.html`
+(or `.excalidraw`), its parent directory must be a board slug, and after symlinks
+are resolved on its deepest existing ancestor the whole path must sit under the
+git top level, so neither `..` nor a symlinked parent escapes. A live path must
+be exactly `<live root>/<mastermind-id>/<slug>/board.html` under the state root.
+A missing file is a new board or a new scene, and nothing is created on disk
+until the first save. An explicit repo path outside a repository is a usage
+error, exit 2; a bare `relevo board` is the live board and never requires a
+repository. A live board refuses a state root that sits inside a repository (or a
+repository inside it), because the two scopes may not nest. Because every path
+must name its file, a bare slug directory is never a path, so a board directory
+can never collide with a subverb name.
 
 The theme chooses the colours of **new** elements only -- an existing scene
 keeps the colours it stores. Precedence is `--theme`, then the repo-local git
