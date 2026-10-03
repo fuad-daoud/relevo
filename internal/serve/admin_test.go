@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -664,6 +665,100 @@ func TestStatusDocumentEmpty(t *testing.T) {
 	want := `{"runners":{"running":0,"queued":0,"cap":0,"scopes":false},"last_contact":null,"owners":[]}`
 	if string(blob) != want {
 		t.Errorf("StatusDocument(nil) JSON = %s, want %s", blob, want)
+	}
+}
+
+// seedGoneRowOwner enrols one owner holding a real binding and a chain whose
+// name is not a binding of its own: the chain's row stands in for its member's
+// row, so the owner's report names a row the store cannot Load.
+func seedGoneRowOwner(t *testing.T, s *Server, label, chainName, member string) remote.ClientID {
+	t.Helper()
+	id := enrol(t, s, label)
+	rt := ownerRuntime(t, s, id)
+	if err := rt.Store.Save(store.Binding{
+		Name: member, Owner: string(id), CWD: rt.Store.WorktreePath(member),
+		State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
+	}); err != nil {
+		t.Fatalf("save member binding %s: %v", member, err)
+	}
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.ChainPut(db.ChainRow{
+			ID: chainName, Owner: string(id), Name: chainName,
+			Status: string(chain.StatusRunning), Phase: string(chain.PhaseBuild),
+			Step: string(chain.StepBuilding), Plan: 1, Plans: 1, Builder: member,
+		})
+	})
+	if err != nil {
+		t.Fatalf("ChainPut %s: %v", chainName, err)
+	}
+	return id
+}
+
+// TestAdminStatusKeepsARowTheStoreLacks pins that a row the store no longer
+// holds keeps its row, marked gone and unenriched, and that the verb still
+// answers with every other owner and binding.
+func TestAdminStatusKeepsARowTheStoreLacks(t *testing.T) {
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	s := newAdminServer(t, now)
+	seedGoneRowOwner(t, s, "alice", "board-23", "board-23-web")
+	idB := enrol(t, s, "bob")
+	seen := now.Add(-2 * time.Hour)
+	saveOwnerBinding(t, s, idB, "app-b", func(b *store.Binding) {
+		b.Serve = &store.ServeFacts{LastSeen: seen}
+	})
+
+	owners, _, err := AdminStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("AdminStatus: %v, want the gone row to leave the verb answering", err)
+	}
+	if len(owners) != 2 || owners[0].Label != "alice" || owners[1].Label != "bob" {
+		t.Fatalf("owners = %+v, want alice then bob", owners)
+	}
+	if len(owners[0].Report.Bindings) != 1 {
+		t.Fatalf("alice bindings = %+v, want the gone row kept", owners[0].Report.Bindings)
+	}
+	gone := owners[0].Report.Bindings[0]
+	if gone.Name != "board-23" {
+		t.Errorf("alice's row name = %q, want board-23", gone.Name)
+	}
+	if gone.Detail != goneRowNote {
+		t.Errorf("gone row detail = %q, want %q", gone.Detail, goneRowNote)
+	}
+	if !owners[0].LastSeen.IsZero() {
+		t.Errorf("alice LastSeen = %v, want the zero time: a gone row reports no contact", owners[0].LastSeen)
+	}
+	if got := owners[1].Report.Bindings[0].Name; got != "app-b" {
+		t.Errorf("bob's row = %q, want app-b", got)
+	}
+	if !owners[1].LastSeen.Equal(seen) {
+		t.Errorf("bob LastSeen = %v, want %v: the other owners still answer", owners[1].LastSeen, seen)
+	}
+
+	blob, err := json.Marshal(StatusDocument(owners, remote.BuildersView{}))
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(blob), `"detail":"`+goneRowNote+`"`) {
+		t.Errorf("the status document does not carry the gone note:\n%s", blob)
+	}
+}
+
+// TestAdminStatusFailsOnAStoreErrorThatIsNotNotFound pins that the gone arm is
+// narrow: a store failure that is not the missing-binding predicate still takes
+// the verb down, so a real store fault cannot pass for a stale reference.
+func TestAdminStatusFailsOnAStoreErrorThatIsNotNotFound(t *testing.T) {
+	s := newAdminServer(t, time.Now())
+	seedGoneRowOwner(t, s, "alice", "Board-23", "board-23-web")
+
+	owners, _, err := AdminStatus(context.Background(), s)
+	if err == nil {
+		t.Fatalf("AdminStatus = %+v, nil; want a store failure that is not not-found to fail the verb", owners)
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		t.Errorf("AdminStatus err = %v, want the error the store raised, not a missing binding", err)
+	}
+	if !strings.Contains(err.Error(), "Board-23") {
+		t.Errorf("AdminStatus err = %v, want it naming the row that could not be read", err)
 	}
 }
 

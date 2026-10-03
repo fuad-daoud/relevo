@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -39,7 +40,9 @@ func (s *Server) isolationView(v remote.BuildersView) remote.BuildersView {
 
 // AdminStatus returns every owner who has a bindings directory, sorted by
 // Label, plus the builder census. Every queued row gains its Queued position
-// and a "queued <age> (<ahead> ahead)" BuilderStatus.
+// and a "queued <age> (<ahead> ahead)" BuilderStatus. A row the store no longer
+// holds keeps its row and carries the gone note, unenriched: it contributes no
+// contact and no queue view.
 func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.BuildersView, error) {
 	builders := s.isolationView(remote.BuildersView{Cap: s.cap()})
 
@@ -80,6 +83,12 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 			// Only a client request counts as contact: no RoundStartedAt fallback.
 			b, err := rt.Store.Load(row.Name)
 			if err != nil {
+				// A row the store no longer holds is gone, not broken. It keeps
+				// its row, marked, and every other owner and binding still prints.
+				if errors.Is(err, store.ErrNotFound) {
+					markGoneRow(row)
+					continue
+				}
 				return nil, remote.BuildersView{}, err
 			}
 			if b.Serve != nil && b.Serve.LastSeen.After(lastSeen) {
@@ -107,6 +116,20 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 	})
 
 	return owners, builders, nil
+}
+
+// goneRowNote is the trailer note a row the store no longer holds carries: the
+// name is in the report, but no binding answers to it.
+const goneRowNote = "gone: no binding of this name in the store"
+
+// markGoneRow records on row that the store holds no binding by its name. The
+// row's own detail is kept rather than replaced: a row that is both halted and
+// gone must still say why it halted.
+func markGoneRow(row *view.BindingStatus) {
+	if row.Detail != "" {
+		row.Detail += "; "
+	}
+	row.Detail += goneRowNote
 }
 
 // FlatStatus is the whole fleet as one report, Owner/OwnerLabel stamped on each
