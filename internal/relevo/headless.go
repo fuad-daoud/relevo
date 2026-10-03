@@ -1161,6 +1161,31 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if !switchable {
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: builder exited (code %s) %s; see %s", b.Name, codeText, withoutArtifact(b.Shape), showCommand(b.Name, b.Round, "log")))
 	}
+	// A provider-side outage behind this exit is a provider gate, not a
+	// builder failure (#931), so it is offered the timed gate rather than the
+	// until-cleared exclusion below: one rate_limited entry whose note keeps
+	// the cause, and the builder switched UNCUNTED, so the candidate is
+	// eligible again as soon as the provider recovers instead of staying
+	// locked out of the round until a human clears it.
+	//
+	// It sits at the exclusion decision and nowhere earlier, so a stop, an
+	// oom kill, a loss to a restart, an escape, a denial, a nudge, an
+	// undelivered reader and a !switchable halt all keep their existing order
+	// and outcomes -- and gateOnLimit above, which is the quota-shaped case,
+	// still runs first. A tail that names no provider fault falls through
+	// untouched, so a genuine crash keeps every part of #191.
+	//
+	// No repeat-record guard is needed here, unlike the stalled-live scan's:
+	// this tick is on the exited path, and the switch restarts RoundStartedAt
+	// and the stream cursor, so the next decision point scans a different
+	// process's own bytes.
+	outaged, gated, gerr := gateOnOutage(ctx, rt, tx, b, limitText(ctx, rt, b))
+	if gerr != nil {
+		return outaged, gerr
+	}
+	if gated {
+		return outaged, nil
+	}
 	// The exclusion is appended to the b that switchBuilder receives so the
 	// replacement inherits it and the field is persisted with the switch
 	// (#191): a headless builder that exited without a report is excluded
