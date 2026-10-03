@@ -370,7 +370,7 @@ func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
 	t.Run("a policy gate.default travels with no flag", func(t *testing.T) {
 		t.Parallel()
 
-		fr := chainRemoteFake()
+		fr := chainCheckFake()
 		rt, _, _ := chainRemoteRuntime(t, fr)
 		rt.Policy = policyWithGate("make check", ptr(2))
 
@@ -394,7 +394,7 @@ func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
 	t.Run("no-gate sends an empty check", func(t *testing.T) {
 		t.Parallel()
 
-		fr := chainRemoteFake()
+		fr := chainCheckFake()
 		rt, _, _ := chainRemoteRuntime(t, fr)
 		rt.Policy = policyWithGate("make check", ptr(2))
 
@@ -411,7 +411,7 @@ func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
 	t.Run("regate stays client-side", func(t *testing.T) {
 		t.Parallel()
 
-		fr := chainRemoteFake()
+		fr := chainCheckFake()
 		rt, _, _ := chainRemoteRuntime(t, fr)
 
 		res := startedChain(t, rt, ChainOptions{Regate: ptr(3)})

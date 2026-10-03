@@ -180,20 +180,25 @@ func TestWorkflowResumeParamCreatesMissingMember(t *testing.T) {
 	}
 }
 
-// TestPlacedWriterCheckAnsweredWhenTheGateRecordArrivesLater pins the pending
-// placed check: a check that starts with no pulled gate record leaves the chain
-// awaiting it, and the next tick answers it from the record a later pull
-// installs on the writer's round.
-func TestPlacedWriterCheckAnsweredWhenTheGateRecordArrivesLater(t *testing.T) {
+// TestOldPlacedChainStillAnswersFromPulledGate pins the check a chain started
+// before the check route still gets: its awaiting check carries no run id, so
+// the tick leaves it where it is and then answers it from the gate record a
+// later pull installs on the writer's round.
+func TestOldPlacedChainStillAnswersFromPulledGate(t *testing.T) {
 	t.Parallel()
 
-	fr := chainRemoteFake()
-	rt, _, _ := chainRemoteRuntime(t, fr)
+	rt, _, _ := chainRemoteRuntime(t, chainCheckFake())
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 
-	// The check begins with no pulled gate record: the chain is left awaiting
-	// the check, with no local run of its own.
-	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
+	// The server goes back to a build without the check feature, and the chain
+	// is left in the shape it had before the check route existed:
+	// awaiting its check step, with no local run of its own.
+	rt.Remote = chainRemoteFake()
+	chainSetWorkflowState(t, rt, func(st *workflow.State) {
+		st.At = "check"
+		st.Awaiting = workflow.Awaiting{Step: "check"}
+		st.Status = workflow.StatusRunning
+	})
 	st, err := chainWorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
@@ -274,12 +279,13 @@ func TestWorkflowResumeShipsAPlacedCustomMembersRound(t *testing.T) {
 	}
 }
 
-// TestWorkflowResumeRefusesAGateChangeOnAPlacedWriter pins the refusal the base
-// code had and W2 dropped: a chain whose writer member runs on a server cannot
-// change its check on resume, because relevo has no route that updates a served
-// binding's gate and the change would be silently ignored. The flag, the
-// --param and the wire's shape are all refused as usage errors.
-func TestWorkflowResumeRefusesAGateChangeOnAPlacedWriter(t *testing.T) {
+// TestResumeGateOnPlacedWriterWithoutCheckFeatureRefused pins the refusal a
+// server too old to update itself forces: a chain whose writer member runs on
+// that server cannot change its check on resume, because that server has no
+// route to take the change and it would be silently ignored. The flag, the
+// --param and the wire's shape are all refused as usage errors, and the refusal
+// names the server and the feature it lacks.
+func TestResumeGateOnPlacedWriterWithoutCheckFeatureRefused(t *testing.T) {
 	t.Parallel()
 
 	fr := chainRemoteFake()
@@ -303,8 +309,8 @@ func TestWorkflowResumeRefusesAGateChangeOnAPlacedWriter(t *testing.T) {
 		if !errors.Is(err, ErrRefused) {
 			t.Errorf("ChainResume(%+v) = %v, want ErrRefused", opts, err)
 		}
-		if !strings.Contains(err.Error(), "no route to change a served binding's gate") {
-			t.Errorf("ChainResume(%+v) refusal = %q, want it to name the missing route", opts, err)
+		if !strings.Contains(err.Error(), "zen") || !strings.Contains(err.Error(), `"check"`) {
+			t.Errorf("ChainResume(%+v) refusal = %q, want it to name server zen and feature check", opts, err)
 		}
 	}
 	if row := flowChainRow(t, rt); row.Status != string(workflow.StatusHalted) {

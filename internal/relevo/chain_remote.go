@@ -47,6 +47,7 @@ type chainRemotePlan struct {
 	tier        string
 	candidate   string
 	role        string
+	who         remote.WhoAmI
 }
 
 // chainResolvePlacements resolves every member's placement, read-only and
@@ -108,10 +109,16 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 		return nil, errors.New(miss)
 	}
 
+	who, err := rt.Remote.WhoAmI(ctx, server)
+	if err != nil {
+		return nil, err
+	}
+
 	return &chainRemotePlan{
 		server: server, base: base, repoID: repoID,
 		authorName: authorName, authorEmail: authorEmail,
 		tier: string(tier), candidate: srv, role: role,
+		who: who,
 	}, nil
 }
 
@@ -181,12 +188,8 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 		return store.Binding{}, nil, ErrGitRequired
 	}
 
-	// The feature probe the create needs: FeatureOrigin decides whether the two
-	// link ids travel, exactly as addRemote's.
-	who, err := rt.Remote.WhoAmI(ctx, server)
-	if err != nil {
-		return store.Binding{}, nil, err
-	}
+	// FeatureOrigin decides whether the two link ids travel, exactly as addRemote's.
+	who := rp.who
 	clientInstallation := ""
 	clientBindingID := ""
 	if slices.Contains(who.Features, remote.FeatureOrigin) {

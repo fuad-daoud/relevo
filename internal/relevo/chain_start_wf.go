@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -109,9 +110,6 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 		res.Placement = p
 		plan.resolutions[part] = res
 	}
-	if err := chainRefuseTwoCheckCommandsOnPlacedWriter(def, plan); err != nil {
-		return chainWFStart{}, err
-	}
 
 	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
 	if err != nil {
@@ -135,6 +133,9 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 		synth.repo = repo
 		if plan.remote, err = chainRemotePreflight(ctx, rt, ropts, synth, plan.placements[chain.MemberBuilder]); err != nil {
 			return chainWFStart{}, err
+		}
+		if chainHasCheckStep(def) && !hasFeature(plan.remote.who, remote.FeatureCheck) {
+			return chainWFStart{}, refuse("chain %s places a writer on server %s, which lacks the %q feature", plan.planned[0].Name, plan.remote.server, remote.FeatureCheck)
 		}
 	}
 	return plan, nil
@@ -254,26 +255,15 @@ func chainPartRank(part string) int {
 	return 4
 }
 
-// chainRefuseTwoCheckCommandsOnPlacedWriter refuses a workflow that places a
-// writer on a server and carries two different non-empty check commands: the
-// client can answer one command from the writer's pulled gate record, but not
-// two. The refusal names the server and the feature the server would need.
-func chainRefuseTwoCheckCommandsOnPlacedWriter(def workflow.Definition, plan chainWFStart) error {
-	placed := ""
-	for _, m := range plan.members {
-		if m.writer {
-			if p := plan.placements[m.part]; !p.local() {
-				placed = p.Name
-			}
+// chainHasCheckStep reports whether a workflow has any check step with a
+// non-empty rendered command.
+func chainHasCheckStep(def workflow.Definition) bool {
+	for _, s := range def.Steps {
+		if s.Check != "" && workflow.RenderParams(def, s.Check) != "" {
+			return true
 		}
 	}
-	if placed == "" {
-		return nil
-	}
-	if len(chainCheckCommands(def)) <= 1 {
-		return nil
-	}
-	return refuse("chain %s places a writer on server %s, whose workflow runs two different check commands: the server feature %q is not available yet", plan.planned[0].Name, placed, "check")
+	return false
 }
 
 // chainCheckCommands returns the distinct non-empty check commands a workflow's
@@ -295,7 +285,10 @@ func chainCheckCommands(def workflow.Definition) []string {
 }
 
 // chainSingleCheckCommand is the one non-empty check command a placed writer's
-// binding carries as its own gate, or "" when the workflow has none.
+// binding carries as its own gate, or "" when the workflow does not have
+// exactly one. A placed writer's binding keeps this gate so a chain started
+// before the check route can still be answered from the record the writer's
+// newest closed round carries.
 func chainSingleCheckCommand(def workflow.Definition) string {
 	cmds := chainCheckCommands(def)
 	if len(cmds) == 1 {

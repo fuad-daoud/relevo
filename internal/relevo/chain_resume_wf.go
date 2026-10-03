@@ -20,11 +20,11 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err := resumeRefusal(c); err != nil {
 		return ChainResult{}, err
 	}
-	// A gate change on a chain whose writer runs on a server would be ignored
-	// where the check actually runs, so it is refused rather than silently
-	// dropped.
+	// A gate change on a chain whose writer runs on a server has to reach that
+	// server's binding, so it is refused there or applied through the gate
+	// route, never silently dropped.
 	if chainResumeChangesGate(opts) {
-		if err := resumeRemoteGateRefusal(rt, c); err != nil {
+		if err := resumeRemoteGateRefusal(ctx, rt, c, opts); err != nil {
 			return ChainResult{}, err
 		}
 	}

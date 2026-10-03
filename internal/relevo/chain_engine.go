@@ -7,6 +7,7 @@ import (
 	"maps"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -225,15 +226,56 @@ func chainFlowPlanStart(def workflow.Definition, before workflow.State, step str
 	return ok && prev.Seed == chainFixSeedName
 }
 
-// chainFlowCheck starts one check run for a check step. A check whose writer
-// member is placed on a server starts no local run: it answers from the pulled
-// gate record on the writer's newest closed round, or waits for one. Every
-// other check runs through the gate runner on the chain's tree, and its end
-// feeds check_closed through the same driver.
+// chainNextPlacedCheckRun returns the next run sequence number for placed checks.
+func chainNextPlacedCheckRun(rt Runtime, c db.ChainRow) int {
+	rows, err := rt.Store.ChainEvents(c.Name)
+	if err != nil {
+		return 1
+	}
+	maxRun := 0
+	for _, r := range rows {
+		ev, derr := workflow.DecodeEvent(r.Event)
+		if derr == nil && ev.Kind == workflow.EventCheckClosed {
+			if ev.Run > maxRun {
+				maxRun = ev.Run
+			}
+		}
+	}
+	return maxRun + 1
+}
+
+// chainCheckID formats the client-minted id for a check run.
+func chainCheckID(run int) string {
+	return fmt.Sprintf("chk-%d", run)
+}
+
+// chainFlowCheck starts one check run for a check step. For a placed writer on
+// a server with check support, it starts the check via the check route. On a
+// server without check support, it falls back to answering from the writer's
+// newest closed round's gate record. Local checks run through the gate runner
+// on the chain's tree.
 func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action) error {
 	member, err := chainFlowWriterMember(tx, c)
 	if err == nil {
 		if b, lerr := tx.Load(member); lerr == nil && b.Builder.Remote() {
+			if rt.Remote != nil {
+				who, werr := rt.Remote.WhoAmI(ctx, b.Builder.Server)
+				if werr == nil && hasFeature(who, remote.FeatureCheck) {
+					run := chainNextPlacedCheckRun(rt, c)
+					req := remote.CreateCheckRequest{
+						ID:      chainCheckID(run),
+						Command: act.Command,
+						Step:    act.Step,
+					}
+					if _, cerr := rt.Remote.CreateCheck(ctx, b.Builder.Server, b.Name, req); cerr != nil {
+						next.Status = workflow.StatusHalted
+						next.Reason = fmt.Sprintf("check %s could not start: %v", act.Step, cerr)
+						return chainTerminalWF(ctx, rt, tx, c, def, before, *next, ev, workflow.Action{Kind: workflow.ActionHalt, Reason: next.Reason})
+					}
+					next.Awaiting.Run = run
+					return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member)
+				}
+			}
 			return chainFlowPullCheck(ctx, rt, tx, c, def, before, next, ev, act, member)
 		}
 	}
