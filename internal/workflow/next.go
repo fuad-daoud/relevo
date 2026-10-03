@@ -90,13 +90,86 @@ func (a Awaiting) matchesCheck(e Event) bool {
 }
 
 // stepClosed records a run step's close and routes it to the edge that matches.
+// A close that advances the run past a red check carries its override into the
+// action the trace stores, so the pass stays reviewable; a close that would
+// advance without one halts instead.
 func (s State) stepClosed(def Definition, e Event) (State, []Action) {
 	s.recordStep(e)
-	t, ok := matchRun(def.Steps[e.Step].On, s.Results[e.Step])
+	key, t, ok := matchRun(def.Steps[e.Step].On, s.Results[e.Step])
 	if !ok {
 		return s.unmatchedRun(e)
 	}
-	return route(def, s, e.Step, t, 0)
+	if reason, gated := s.redCheckGate(def, e, key); gated {
+		return halt(s, e.Step, reason)
+	}
+	next, actions := route(def, s, e.Step, t, 0)
+	return next, carryOverride(actions, e)
+}
+
+// redCheckGate reports the halt reason for a close that takes a pass edge while
+// the check it passed a red gate on is still red. It fires only on a pass edge --
+// the arm that lets a run move on with the gate unproven -- so a close that
+// routes onward for any other reason, a verdict of changes above all, is left
+// alone.
+//
+// An explicit override on the close answers the gate: the value lands in the
+// state, in the encoded event and in the action a trace row stores.
+func (s State) redCheckGate(def Definition, e Event, edge string) (string, bool) {
+	if !passEdge(edge) || e.Override != "" {
+		return "", false
+	}
+	gate, ok := lastRedCheck(def, s)
+	if !ok {
+		return "", false
+	}
+	return e.Step + " passed while check " + gate + " is red: the run does not pass a red check without an explicit override naming why; rerun the check, or record the override on the close", true
+}
+
+// passEdge reports whether an edge name is a pass arm: the bare word, or a
+// name=pass value arm. Those are the edges a close takes to say a gate is
+// satisfied.
+func passEdge(edge string) bool {
+	if edge == passWord {
+		return true
+	}
+	_, value, ok := cutEq(edge)
+	return ok && value == passWord
+}
+
+// passWord is the outcome value that says a gate is satisfied.
+const passWord = "pass"
+
+// lastRedCheck names the check step whose latest result is red, or ok false
+// when every check the run has recorded is green. A run with no recorded check
+// result at all is not gated: a check that never ran has no verdict to overrule.
+func lastRedCheck(def Definition, s State) (string, bool) {
+	for _, id := range sortedKeys(def.Steps) {
+		if def.Steps[id].Check == "" {
+			continue
+		}
+		if r, ok := s.Results[id]; ok && r.Status == "red" {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// carryOverride stamps a close's override onto the actions it produced, so the
+// encoded action a trace row stores names the override beside the send it
+// caused. The reason is set too, so a trace row that renders only the reason
+// still shows why a red gate was passed.
+func carryOverride(actions []Action, e Event) []Action {
+	if e.Override == "" {
+		return actions
+	}
+	reason := e.Step + " passed a red check on the recorded override " + e.Override
+	for i := range actions {
+		actions[i].Override = e.Override
+		if actions[i].Reason == "" {
+			actions[i].Reason = reason
+		}
+	}
+	return actions
 }
 
 // unmatchedRun halts a run close that matched no edge: a caller-rendered halt
@@ -132,60 +205,69 @@ func outcomesText(outcomes map[string]string) string {
 	return strings.Join(pairs, ", ")
 }
 
-// matchRun returns the edge a run close takes. A status other than done
-// matches only status=<s>; done tries the declared value edges in sorted key
-// order, then the count arms, then done and status=done, then else.
-func matchRun(on map[string]Target, r Result) (Target, bool) {
+// matchRun returns the edge a run close takes and the name of the edge it
+// matched, so a caller can tell a pass arm from any other without re-deriving
+// the match. A status other than done matches only status=<s>; done tries the
+// declared value edges in sorted key order, then the count arms, then done and
+// status=done, then else. The name is "" when nothing matched.
+func matchRun(on map[string]Target, r Result) (string, Target, bool) {
 	if r.Status != "done" {
-		t, ok := on["status="+r.Status]
-		return t, ok
+		key := "status=" + r.Status
+		t, ok := on[key]
+		return edgeName(key, ok), t, ok
 	}
-	if t, ok := matchValue(on, r.Outcomes); ok {
-		return t, true
+	if key, t, ok := matchValue(on, r.Outcomes); ok {
+		return key, t, true
 	}
-	if t, ok := matchCount(on, r.Outcomes); ok {
-		return t, true
+	if key, t, ok := matchCount(on, r.Outcomes); ok {
+		return key, t, true
 	}
-	if t, ok := on["done"]; ok {
-		return t, true
+	for _, key := range []string{"done", "status=done", "else"} {
+		if t, ok := on[key]; ok {
+			return key, t, true
+		}
 	}
-	if t, ok := on["status=done"]; ok {
-		return t, true
+	return "", Target{}, false
+}
+
+// edgeName is the matched edge's own name, or "" when it did not match.
+func edgeName(key string, ok bool) string {
+	if !ok {
+		return ""
 	}
-	t, ok := on["else"]
-	return t, ok
+	return key
 }
 
 // matchValue returns the first sorted edge name=value whose value the close
 // carries. An =0 edge is a count arm and is left to matchCount.
-func matchValue(on map[string]Target, outcomes map[string]string) (Target, bool) {
+func matchValue(on map[string]Target, outcomes map[string]string) (string, Target, bool) {
 	for _, key := range sortedKeys(on) {
 		name, value, ok := cutEq(key)
 		if !ok || name == "status" || value == "0" {
 			continue
 		}
 		if outcomes[name] == value {
-			return on[key], true
+			return key, on[key], true
 		}
 	}
-	return Target{}, false
+	return "", Target{}, false
 }
 
 // matchCount returns the count arm a close's outcome takes: name>0 for a
 // positive count, or name=0 for a zero one.
-func matchCount(on map[string]Target, outcomes map[string]string) (Target, bool) {
+func matchCount(on map[string]Target, outcomes map[string]string) (string, Target, bool) {
 	for _, key := range sortedKeys(on) {
 		if name, ok := strings.CutSuffix(key, ">0"); ok {
 			if n, err := strconv.Atoi(outcomes[name]); err == nil && n > 0 {
-				return on[key], true
+				return key, on[key], true
 			}
 			continue
 		}
 		if name, value, ok := cutEq(key); ok && value == "0" && outcomes[name] == "0" {
-			return on[key], true
+			return key, on[key], true
 		}
 	}
-	return Target{}, false
+	return "", Target{}, false
 }
 
 // cutEq splits name=value at its first equals sign.
@@ -220,10 +302,14 @@ func matchCheck(on map[string]Target, result string) (Target, bool) {
 	return t, ok
 }
 
-// recordStep stores a run step's latest close.
+// recordStep stores a run step's latest close, its override included, so the
+// override survives in the state a resume reads back.
 func (s State) recordStep(e Event) State {
 	s.Results = ensureResults(s.Results)
-	s.Results[e.Step] = Result{Round: e.Round, Status: e.Status, Outcomes: e.Outcomes, Artifacts: e.Artifacts}
+	s.Results[e.Step] = Result{
+		Round: e.Round, Status: e.Status, Outcomes: e.Outcomes,
+		Artifacts: e.Artifacts, Override: e.Override,
+	}
 	return s
 }
 

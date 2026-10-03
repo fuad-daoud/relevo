@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -138,6 +139,62 @@ func TestRedFixCheckWithNoRegateNeverReachesFixReview(t *testing.T) {
 	}
 }
 
+// TestPassAfterRedNeedsATraceVisibleOverride pins the override's own half: a
+// reviewer may pass over a red check, but only by recording why, and the value
+// must be readable from every record the trace keeps -- the state, the encoded
+// event, and the action with its reason.
+func TestPassAfterRedNeedsATraceVisibleOverride(t *testing.T) {
+	t.Parallel()
+
+	def := tdef("check", map[string]Step{
+		"check":  {Check: "make check", On: map[string]Target{"green": DoneTarget(), "red": StepTarget("review")}},
+		"review": {Run: "reviewer", On: map[string]Target{"verdict=pass": DoneTarget(), "verdict=changes": DoneTarget()}},
+	})
+	s, _ := Next(def, awaitingCheck("check", 1), Event{Kind: EventCheckClosed, Step: "check", Run: 1, Result: "red", Log: "L1"})
+	pass := Event{Kind: EventStepClosed, Step: "review", Member: "reviewer", Status: "done",
+		Outcomes: map[string]string{"verdict": "pass"}, Override: "the failure is in the vendored fixture, not the plan"}
+
+	next, actions := Next(def, s, pass)
+	if next.Status != StatusDone {
+		t.Fatalf("status = %q, want done: the override answered the gate", next.Status)
+	}
+	a := only(t, actions)
+	if a.Kind != ActionFinish {
+		t.Fatalf("action = %+v, want finish", a)
+	}
+	const why = "the failure is in the vendored fixture, not the plan"
+	if got := next.Results["review"].Override; got != why {
+		t.Errorf("results override = %q, want %q", got, why)
+	}
+	if a.Override != why {
+		t.Errorf("action override = %q, want %q", a.Override, why)
+	}
+	if !strings.Contains(a.Reason, why) {
+		t.Errorf("action reason = %q, want it to name the override", a.Reason)
+	}
+
+	// The same close without the override halts, and says which check is red.
+	plain := pass
+	plain.Override = ""
+	halted, actions := Next(def, s, plain)
+	if halted.Status != StatusHalted {
+		t.Fatalf("status = %q, want halted without an override", halted.Status)
+	}
+	if !strings.Contains(halted.Reason, "check") {
+		t.Errorf("halt reason = %q, want it to name the red check", halted.Reason)
+	}
+	if a := only(t, actions); a.Kind != ActionHalt {
+		t.Fatalf("action = %+v, want a halt", a)
+	}
+
+	// A verdict of changes is not a pass: it routes on with the red unread.
+	changes := Event{Kind: EventStepClosed, Step: "review", Member: "reviewer", Status: "done",
+		Outcomes: map[string]string{"verdict": "changes"}}
+	if next, _ := Next(def, s, changes); next.Status != StatusDone {
+		t.Errorf("changes after a red check: status = %q, want done", next.Status)
+	}
+}
+
 // TestGreenCheckStillReachesTheReviewer pins the arm the gate must leave alone:
 // a green check goes to the reviewer whether or not a repair budget is left.
 func TestGreenCheckStillReachesTheReviewer(t *testing.T) {
@@ -174,12 +231,22 @@ func TestRegateStillBuysARepair(t *testing.T) {
 			t.Fatalf("red run %d action = %+v, want a send to repair", run, a)
 		}
 	}
-	// The budget is spent: the next red takes its then target, which is the arm
-	// the gate rewires only when no repair is left to buy.
-	s, _ = Next(def, s, Event{Kind: EventStepClosed, Step: "repair", Member: "builder", Status: "done"})
+	// The budget is spent: the red still reaches the reviewer, exactly as
+	// before the gate, and the reviewer is the one who cannot pass it.
+	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "repair", Member: "builder", Status: "done"})
+	if a := only(t, actions); a.Kind != ActionRunCheck || a.Step != "check" {
+		t.Fatalf("last repair close action = %+v, want a check run", a)
+	}
 	s.Awaiting.Run = 4
-	_, actions = Next(def, s, Event{Kind: EventCheckClosed, Step: "check", Run: 4, Result: "red", Log: "L4"})
-	if a := only(t, actions); !redGateRouted(a, "correct", "review") {
-		t.Fatalf("red past the budget action = %+v, want a halt or a send to correct", a)
+	s, actions = Next(def, s, Event{Kind: EventCheckClosed, Step: "check", Run: 4, Result: "red", Log: "L4"})
+	if a := only(t, actions); a.Kind != ActionSend || a.Step != "review" {
+		t.Fatalf("red past the budget action = %+v, want a send to review", a)
+	}
+
+	// The reviewer's pass then halts: a red check is not passed by a verdict.
+	_, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "review", Member: "reviewer", Status: "done",
+		Outcomes: map[string]string{"verdict": "pass"}})
+	if a := only(t, actions); a.Kind != ActionHalt {
+		t.Fatalf("pass after a red check = %+v, want a halt", a)
 	}
 }

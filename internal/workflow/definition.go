@@ -6,6 +6,7 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 )
 
 // InputMode says whether a chain input is required, optional or absent.
@@ -177,6 +178,15 @@ func (t Target) MarshalJSON() ([]byte, error) {
 type Limit struct {
 	Count int
 	Ref   string
+}
+
+// Text renders a limit as it is written in a definition, so a wording that
+// quotes a budget quotes its own expression rather than a resolved number.
+func (l Limit) Text() string {
+	if l.Ref == "" {
+		return strconv.Itoa(l.Count)
+	}
+	return l.Ref
 }
 
 // Per says which step entries reset a budget's count.
