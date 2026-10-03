@@ -105,6 +105,8 @@ func whatAge(b view.BindingStatus, now time.Time) (what, age string) {
 			age = ago(b.Last.TS, now)
 		}
 	}
+	// HELD: DisplayState never produces it; the stale suffix follows the
+	// word wherever a row still carries it.
 	if (b.Display == "NEEDS YOU" || b.Display == "HELD") && b.Stale != "" {
 		what += " · " + b.Stale
 	}

@@ -28,6 +28,8 @@ func groupOf(b view.BindingStatus) fleetGroup {
 		return groupWorking
 	case b.Display == "ACTIVE" && b.BuilderStatus == "idle":
 		return groupIdle
+	// HELD: DisplayState never produces it; PAUSED is live and groups
+	// here, and the word still groups the same way when a row carries it.
 	case b.Display == "HELD" || b.Display == "PAUSED":
 		return groupHeld
 	case b.Display == "DONE":

@@ -9,12 +9,15 @@ import "sort"
 // today) sort after DONE.
 var attentionRank = map[string]int{
 	"NEEDS YOU": 0,
-	"HELD":      1,
-	"ACTIVE":    2,
-	"HALTED":    2,
-	"STOPPED":   2,
-	"PAUSED":    3,
-	"DONE":      4,
+	// HELD: no state maps to it any more (DisplayState), but the word still
+	// reaches a row from a builder that sets Display directly, and an
+	// unknown word would sort after DONE instead of above ACTIVE.
+	"HELD":    1,
+	"ACTIVE":  2,
+	"HALTED":  2,
+	"STOPPED": 2,
+	"PAUSED":  3,
+	"DONE":    4,
 }
 
 func rankOf(display string) int {

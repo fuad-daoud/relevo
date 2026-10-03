@@ -32,8 +32,16 @@ const (
 type Kind string
 
 const (
-	KindPrompt   Kind = "prompt"
-	KindReport   Kind = "report"
+	KindPrompt Kind = "prompt"
+	KindReport Kind = "report"
+	// KindQuestion has no writer left: nothing has appended a to_planner
+	// question entry since the round vocabulary settled, and no code path
+	// reaches one. It stays because the log is append-only state on disk --
+	// a log.jsonl written before that still carries question entries, and
+	// every reader below (view.WaitingOn, the statusline's payload phase, the
+	// report tab) has to decode and classify them rather than drop a
+	// persisted record on the floor. Removing the constant would not remove
+	// those entries; it would only stop them being named.
 	KindQuestion Kind = "question"
 	KindAnswer   Kind = "answer"
 	KindDiff     Kind = "diff"
