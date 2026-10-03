@@ -46,6 +46,9 @@ For anything subtle, mutation-test it: break the specific condition the change
 turns on and confirm a named test fails. A test that passes both with and
 without the logic is not pinning anything.
 
+The step-by-step runbook -- temp space, where the suite runs, merging,
+deploying, running chains -- is `docs/runbook.md`.
+
 ## Conventions
 
 - Specs live in `docs/specs/YYYY-MM-DD-<topic>-design.md`. Implementation
