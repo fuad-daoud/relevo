@@ -37,6 +37,22 @@ func liveBoardFor(t *testing.T, liveRoot, id string) (string, string) {
 	return liveDir, filepath.Join(liveDir, "board.excalidraw")
 }
 
+// liveHTMLBoardFor seeds a live single-file board and returns (liveDir,
+// boardHTML path). The bare-call tests below were switched to the Excalidraw
+// scene because a bare call is an HTML board now; this is the shape they need.
+func liveHTMLBoardFor(t *testing.T, liveRoot, id, name string) (string, string) {
+	t.Helper()
+	slug := filepath.Join(liveRoot, id, name)
+	if err := os.MkdirAll(slug, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	page := filepath.Join(slug, "board.html")
+	if err := os.WriteFile(page, []byte("<html><body>board</body></html>"), 0o600); err != nil {
+		t.Fatalf("write board.html: %v", err)
+	}
+	return filepath.Join(liveRoot, id), page
+}
+
 func writeScene(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -58,7 +74,7 @@ func TestBoardCommentsJSONShape(t *testing.T) {
 		`]}`)
 	t.Setenv("RELEVO_MASTERMIND", id)
 
-	stdout, stderr, err := captureOutput(t, func() error { return cmdBoardComments([]string{"--json"}) })
+	stdout, stderr, err := captureOutput(t, func() error { return cmdBoardComments([]string{scene, "--json"}) })
 	if err != nil {
 		t.Fatalf("board comments --json: %v (stderr %s)", err, stderr)
 	}
@@ -73,7 +89,7 @@ func TestBoardCommentsJSONShape(t *testing.T) {
 
 	// Zero comments is [].
 	writeScene(t, scene, `{"type":"excalidraw","elements":[]}`)
-	stdout, _, err = captureOutput(t, func() error { return cmdBoardComments([]string{"--json"}) })
+	stdout, _, err = captureOutput(t, func() error { return cmdBoardComments([]string{scene, "--json"}) })
 	if err != nil {
 		t.Fatalf("board comments --json (none): %v", err)
 	}
@@ -94,7 +110,7 @@ func TestBoardCommentsTextRows(t *testing.T) {
 		`]}`)
 	t.Setenv("RELEVO_MASTERMIND", id)
 
-	stdout, _, err := captureOutput(t, func() error { return cmdBoardComments(nil) })
+	stdout, _, err := captureOutput(t, func() error { return cmdBoardComments([]string{scene}) })
 	if err != nil {
 		t.Fatalf("board comments: %v", err)
 	}
@@ -132,9 +148,12 @@ func TestBoardCommentWritesPointer(t *testing.T) {
 	stubBoardTheme(t)
 	stubBoardClock(t, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
 	id := "mm_aaaaaaaaaaaa"
+	_, scene := liveBoardFor(t, liveRoot, id)
 	t.Setenv("RELEVO_MASTERMIND", id)
 
-	stdout, _, err := captureOutput(t, func() error { return cmdBoardComment([]string{"--text", "hello"}) })
+	stdout, _, err := captureOutput(t, func() error {
+		return cmdBoardComment([]string{scene, "--text", "hello", "--by", "human"})
+	})
 	if err != nil {
 		t.Fatalf("board comment: %v", err)
 	}
@@ -161,7 +180,9 @@ func TestBoardCommentByDefaultsToMasterMind(t *testing.T) {
 	_, scene := liveBoardFor(t, liveRoot, id)
 	t.Setenv("RELEVO_MASTERMIND", id)
 
-	if _, _, err := captureOutput(t, func() error { return cmdBoardComment([]string{"--text", "hello"}) }); err != nil {
+	if _, _, err := captureOutput(t, func() error {
+		return cmdBoardComment([]string{scene, "--text", "hello"})
+	}); err != nil {
 		t.Fatalf("board comment: %v", err)
 	}
 	comments, err := board.ReadComments(scene)
@@ -186,7 +207,7 @@ func TestBoardCommentPrintsLineAndAppends(t *testing.T) {
 	t.Setenv("RELEVO_MASTERMIND", id)
 
 	stdout, _, err := captureOutput(t, func() error {
-		return cmdBoardComment([]string{"--text", "a note", "--by", "human", "--x", "5", "--y", "6"})
+		return cmdBoardComment([]string{scene, "--text", "a note", "--by", "human", "--x", "5", "--y", "6"})
 	})
 	if err != nil {
 		t.Fatalf("board comment: %v", err)

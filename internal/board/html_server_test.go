@@ -179,7 +179,7 @@ func TestHTMLShellServedUnderOwnerSegment(t *testing.T) {
 // token, so the shell and its script must be readable without one.
 func TestHTMLShellAssetsNeedNoToken(t *testing.T) {
 	s, _ := testHTMLServer(t)
-	for _, target := range []string{"/", "/shell.js"} {
+	for _, target := range []string{"/", "/shell.js", "/comments.js", "/overlay.js"} {
 		if w := doHTML(t, s, http.MethodGet, target, testHost, ""); w.Code != http.StatusOK {
 			t.Errorf("GET %s without a token = %d, want 200", target, w.Code)
 		}

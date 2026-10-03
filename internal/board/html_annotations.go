@@ -18,8 +18,8 @@ const maxAnnotationBody = 64 << 10
 // written and the etag the file now carries, so the shell can post again
 // without a re-read.
 type annotationPostDoc struct {
-	Annotation     Annotation `json:"annotation"`
-	AnnotationsEtag string    `json:"annotationsEtag"`
+	Annotation      Annotation `json:"annotation"`
+	AnnotationsEtag string     `json:"annotationsEtag"`
 }
 
 // handleAnnotations is POST /api/annotations: the one route that writes. It is

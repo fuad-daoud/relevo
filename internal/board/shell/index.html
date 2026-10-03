@@ -10,6 +10,7 @@ body {
   margin: 0;
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
+#bar { display: flex; gap: 8px; align-items: center; padding: 6px 12px; }
 #banner {
   display: none;
   padding: 8px 12px;
@@ -19,12 +20,89 @@ body {
 }
 #banner.on { display: block; }
 #status { padding: 8px 12px; color: #666; }
+
+/* Comment mode. The list pane takes its room from the frame, not from the page,
+   so turning it on does not move the board out from under the pointer. */
+#comments {
+  display: none;
+  position: fixed;
+  top: 2.6rem;
+  right: 0;
+  bottom: 0;
+  width: 20rem;
+  max-width: 40vw;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: Canvas;
+  border-left: 1px solid rgba(128, 128, 128, 0.4);
+  box-sizing: border-box;
+}
+#comments.open { display: block; }
 #frame { display: block; width: 100%; height: calc(100vh - 4rem); border: 0; }
+#comments.open ~ #frame { width: calc(100% - 20rem); }
+
+#comment-toggle {
+  padding: 4px 10px;
+  border: 1px solid rgba(128, 128, 128, 0.6);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+#comment-toggle.on { background: #2a6fb5; border-color: #2a6fb5; color: #fff; }
+#banner-apply { margin-left: 8px; padding: 2px 8px; cursor: pointer; }
+
+#comment-selector {
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #666;
+  word-break: break-all;
+}
+#comment-draft {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 5rem;
+  font: inherit;
+  margin: 6px 0;
+}
+#comment-list h3 { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; color: #666; }
+.relevo-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0 0 4px;
+  padding: 6px 8px;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.relevo-row.focused { border-color: #2a6fb5; }
+.relevo-row.orphan { opacity: 0.75; }
+.relevo-by { display: block; font-size: 11px; color: #666; }
+.relevo-text { display: block; }
+.relevo-orphan-mark { display: block; font-size: 11px; color: #8a5a00; }
+.relevo-empty, .relevo-error { color: #666; }
+.relevo-error { color: #a33; }
 </style>
 </head>
 <body>
+<div id="bar">
+  <button id="comment-toggle" type="button" aria-pressed="false">Comment</button>
+  <button id="banner-apply" type="button" style="display:none">Apply</button>
+</div>
 <div id="banner"></div>
 <div id="status">loading board&hellip;</div>
+<aside id="comments" aria-label="comments">
+  <div id="comment-selector"></div>
+  <textarea id="comment-draft" placeholder="say something about this element"></textarea>
+  <button id="comment-post" type="button">Post</button>
+  <div id="comment-list"></div>
+</aside>
 <script src="shell.js"></script>
+<script src="comments.js"></script>
 </body>
 </html>
