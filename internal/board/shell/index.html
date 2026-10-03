@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>relevo board</title>
+<style>
+:root { color-scheme: light dark; }
+body {
+  margin: 0;
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+#banner {
+  display: none;
+  padding: 8px 12px;
+  background: #8a5a00;
+  color: #fff;
+  word-break: break-all;
+}
+#banner.on { display: block; }
+#status { padding: 8px 12px; color: #666; }
+#frame { display: block; width: 100%; height: calc(100vh - 4rem); border: 0; }
+</style>
+</head>
+<body>
+<div id="banner"></div>
+<div id="status">loading board&hellip;</div>
+<script src="shell.js"></script>
+</body>
+</html>
