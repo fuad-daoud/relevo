@@ -161,6 +161,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// A check a workflow chain started is advanced here, next to the sweep: its
 	// end feeds check_closed through the same driver, under the same lock.
 	d.safely("chain check sweep", func() { tickChainChecks(ctx, d.rt) })
+	// A served binding's own check is advanced here, beside that sweep, because
+	// a check is not a round: it runs when a client asks, and outlives the round
+	// it was asked in, so it cannot wait on a round's completion marker.
+	d.safely("served check sweep", func() { tickServedChecks(ctx, d.rt) })
 
 	if len(bindings) == 0 {
 		return nil

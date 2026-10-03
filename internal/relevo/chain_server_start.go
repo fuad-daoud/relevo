@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainServerPlan is everything a server-chain start resolved before anything
@@ -41,13 +42,18 @@ type chainServerPlan struct {
 	// origin is whether the server advertises FeatureOrigin, which decides
 	// whether the client mints the member ids the create carries.
 	origin bool
+	// def is the resolved and parameterized workflow definition.
+	def workflow.Definition
+	// hasWorkflow reports whether the server advertises FeatureWorkflow.
+	hasWorkflow bool
 }
 
 // chainServerIDs is the client's own identifiers for a server chain: the
-// installation id the create names and one record id per member part.
+// installation id the create names and one record id per member part or actor.
 type chainServerIDs struct {
 	installation string
 	byPart       map[string]string
+	byActor      map[string]string
 }
 
 // chainStartServer starts a chain on a server: the local refusals run first,
@@ -74,7 +80,19 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	if rt.Transport == nil {
 		return chainServerPlan{}, errors.New("no remote transport configured")
 	}
+	def, origin, err := ResolveWorkflow(rt, opts.Workflow)
+	if err != nil {
+		return chainServerPlan{}, err
+	}
+	values, err := chainParamsFor(def, rt.Policy, opts)
+	if err != nil {
+		return chainServerPlan{}, err
+	}
+	if def, err = workflow.WithParams(def, values); err != nil {
+		return chainServerPlan{}, refuse("%v", err)
+	}
 	plan := chainServerPlan{
+		def:      def,
 		settings: chainSettings(rt.Policy, opts, roleChecks(rt.RoleRegistry(), "builder")),
 		server:   opts.Server,
 	}
@@ -83,17 +101,23 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 		return chainServerPlan{}, fmt.Errorf("resolve working directory: %w", err)
 	}
 	plan.repo = repo
-	if err := chainValidate(opts); err != nil {
-		return chainServerPlan{}, err
+	isCustom := origin != "shipped"
+	if isCustom {
+		if err := chainValidateWorkflowOpts(opts); err != nil {
+			return chainServerPlan{}, err
+		}
+		if plan.bodies, err = chainPlanBodiesFor(opts); err != nil {
+			return chainServerPlan{}, err
+		}
+	} else {
+		if err := chainValidate(opts); err != nil {
+			return chainServerPlan{}, err
+		}
+		if plan.bodies, err = chainPlanBodies(opts.Plans); err != nil {
+			return chainServerPlan{}, err
+		}
 	}
 	if plan.ticket, err = chainTicket(ctx, rt, opts.Ticket, repo); err != nil {
-		return chainServerPlan{}, err
-	}
-	if plan.bodies, err = chainPlanBodies(opts.Plans); err != nil {
-		return chainServerPlan{}, err
-	}
-	plan.members = chainMembersFor(opts, plan.settings)
-	if err := chainFreeNames(rt, plan.members); err != nil {
 		return chainServerPlan{}, err
 	}
 	if err := chainServerBranchFree(ctx, rt, repo, opts.Name); err != nil {
@@ -109,6 +133,18 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	if missing := missingChainFeatures(who); len(missing) > 0 {
 		return chainServerPlan{}, fmt.Errorf("server %s cannot run a chain (missing the %s); upgrade it, or start the chain without --server",
 			opts.Server, chainFeatureList(missing))
+	}
+	hasWorkflow := hasFeature(who, remote.FeatureWorkflow)
+	if isCustom && !hasWorkflow {
+		return chainServerPlan{}, fmt.Errorf("server %s cannot run workflow %s (missing the %s)",
+			opts.Server, opts.Workflow, chainFeatureList([]string{remote.FeatureWorkflow}))
+	}
+	plan.hasWorkflow = hasWorkflow
+	if !hasWorkflow {
+		plan.members = chainMembersFor(opts, plan.settings)
+		if err := chainFreeNames(rt, plan.members); err != nil {
+			return chainServerPlan{}, err
+		}
 	}
 	plan.origin = hasFeature(who, remote.FeatureOrigin)
 	if plan.base, plan.repoID, plan.authorName, plan.authorEmail, err = chainRemoteFacts(ctx, rt, repo, opts.Base); err != nil {
@@ -214,11 +250,25 @@ func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan 
 	}); err != nil {
 		return localFail(err)
 	}
-	stored, err := chainStoredMembers(rt, plan.members)
+	stored, err := chainMirrorStored(rt, members)
 	if err != nil {
 		return ChainResult{}, err
 	}
 	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chainBuilderCheck(stored, name)}, nil
+}
+
+// chainMirrorStored loads the mirror bindings from the store, so the returned
+// result carries the fields the store stamps.
+func chainMirrorStored(rt Runtime, members []store.Binding) ([]store.Binding, error) {
+	out := make([]store.Binding, 0, len(members))
+	for _, m := range members {
+		b, err := rt.Store.Load(m.Name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, nil
 }
 
 // chainServerCreateError rebuilds the typed actor refusal from the create's own
@@ -258,26 +308,34 @@ func chainServerBundle(ctx context.Context, rt Runtime, repo, name, base string)
 	return bundle, closer, nil
 }
 
-// chainServerRequest is the create a server-chain start posts: the resolved
-// settings, the plans as text, the labels, the author and the client's ids.
+// chainServerRequest is the create a server-chain start posts: the workflow
+// or resolved settings, the plans as text, the labels, the author and the
+// client's ids.
 func chainServerRequest(opts ChainOptions, plan chainServerPlan, ids chainServerIDs) remote.CreateChainRequest {
-	return remote.CreateChainRequest{
+	req := remote.CreateChainRequest{
 		Name:               opts.Name,
 		RepoID:             plan.repoID,
 		BaseCommit:         plan.base,
 		Plans:              chainPlanTexts(plan.bodies),
-		Settings:           chainWireSettings(plan.settings),
 		Feature:            opts.Feature,
 		Ticket:             plan.ticket,
 		Author:             &remote.GitIdentity{Name: plan.authorName, Email: plan.authorEmail},
 		ClientInstallation: ids.installation,
-		ClientBindingIDs:   ids.byPart,
 	}
+	if plan.hasWorkflow && plan.def.Name != "" {
+		wfJSON, _ := json.Marshal(plan.def)
+		req.Workflow = wfJSON
+		req.ClientActorIDs = ids.byActor
+	} else {
+		req.Settings = chainWireSettings(plan.settings)
+		req.ClientBindingIDs = ids.byPart
+	}
+	return req
 }
 
 // chainServerBindingIDs mints the client's identifiers for the create when the
-// server advertises FeatureOrigin; a pre-origin server gets none, exactly as a
-// remote binding create does.
+// server advertises FeatureOrigin: by actor for a workflow create, and by part
+// for a legacy settings create. A pre-origin server gets none.
 func chainServerBindingIDs(rt Runtime, plan chainServerPlan) (chainServerIDs, error) {
 	if !plan.origin {
 		return chainServerIDs{}, nil
@@ -285,6 +343,14 @@ func chainServerBindingIDs(rt Runtime, plan chainServerPlan) (chainServerIDs, er
 	inst, err := installation.Load(filepath.Dir(rt.Store.DBPath()))
 	if err != nil {
 		return chainServerIDs{}, err
+	}
+	if plan.hasWorkflow && plan.def.Name != "" {
+		used := workflow.UsedActors(plan.def)
+		byActor := make(map[string]string, len(used))
+		for _, actor := range used {
+			byActor[actor] = db.NewID()
+		}
+		return chainServerIDs{installation: inst.ID, byActor: byActor}, nil
 	}
 	byPart := make(map[string]string, len(plan.members))
 	for _, m := range plan.members {
@@ -330,12 +396,12 @@ func chainMirrorRow(opts ChainOptions, plan chainServerPlan, view remote.ChainVi
 	if err != nil {
 		return db.ChainRow{}, fmt.Errorf("encode chain settings: %w", err)
 	}
-	names := make(map[string]string, len(plan.members))
-	for _, m := range plan.members {
-		names[m.part] = m.name
+	names := make(map[string]string, len(view.Members))
+	for _, m := range view.Members {
+		names[m.Part] = m.Name
 	}
 	at := now.UTC()
-	return db.ChainRow{
+	row := db.ChainRow{
 		ID:              db.NewID(),
 		Name:            opts.Name,
 		Status:          chainOr(view.Status, string(chain.StatusRunning)),
@@ -363,29 +429,48 @@ func chainMirrorRow(opts ChainOptions, plan chainServerPlan, view remote.ChainVi
 		PlanStartCommit: view.PlanStartCommit,
 		CreatedAt:       at,
 		UpdatedAt:       at,
-	}, nil
+	}
+	if len(view.Workflow) > 0 && len(view.State) > 0 {
+		row.WorkflowJSON = view.Workflow
+		row.StateJSON = view.State
+		return row, nil
+	}
+	leg, err := chainViewLegacy(row, view)
+	if err != nil {
+		return db.ChainRow{}, err
+	}
+	def, st, err := workflow.FromLegacy(leg)
+	if err != nil {
+		return db.ChainRow{}, fmt.Errorf("chain %s: %w", row.Name, err)
+	}
+	if row.WorkflowJSON, err = json.Marshal(def); err != nil {
+		return db.ChainRow{}, fmt.Errorf("chain %s workflow: %w", row.Name, err)
+	}
+	if row.StateJSON, err = json.Marshal(st); err != nil {
+		return db.ChainRow{}, fmt.Errorf("chain %s state: %w", row.Name, err)
+	}
+	return row, nil
 }
 
-// chainMirrorMembers builds the mirror bindings in part order, one per member,
-// from the server's member views.
+// chainMirrorMembers builds the mirror bindings from the server's member views.
 func chainMirrorMembers(ctx context.Context, rt Runtime, opts ChainOptions, plan chainServerPlan, view remote.ChainView, ids chainServerIDs) []store.Binding {
-	views := make(map[string]remote.ChainMemberView, len(view.Members))
-	for _, v := range view.Members {
-		views[v.Part] = v
-	}
 	repoRef := captureRepo(ctx, rt, plan.repo)
-	out := make([]store.Binding, 0, len(plan.members))
-	for _, m := range plan.members {
-		out = append(out, chainMirrorMember(opts, plan, m, views[m.part], ids.byPart[m.part], repoRef))
+	out := make([]store.Binding, 0, len(view.Members))
+	for _, v := range view.Members {
+		id := ids.byActor[v.Actor]
+		if id == "" {
+			id = ids.byPart[v.Part]
+		}
+		out = append(out, chainMirrorMember(opts, plan, v, id, repoRef))
 	}
 	return out
 }
 
 // chainMirrorMember is one member's mirror binding: a remote member on the
-// chain's server, built from its BindingView. The builder carries the branch,
+// chain's server, built from its ChainMemberView. The writer carries the branch,
 // the base, the check and the branch head; a reader carries no branch, because
-// it reads the builder's artifacts on the server.
-func chainMirrorMember(opts ChainOptions, plan chainServerPlan, m chainMember, v remote.ChainMemberView, id string, repoRef *store.RepoRef) store.Binding {
+// it reads the writer's artifacts on the server.
+func chainMirrorMember(opts ChainOptions, plan chainServerPlan, v remote.ChainMemberView, id string, repoRef *store.RepoRef) store.Binding {
 	bv := v.View
 	kind := ""
 	if bv.Candidate != "" {
@@ -393,27 +478,29 @@ func chainMirrorMember(opts ChainOptions, plan chainServerPlan, m chainMember, v
 			kind = ref.Harness
 		}
 	}
+	shape := chainOr(bv.Shape, store.ShapeWriter)
+	writer := shape == store.ShapeWriter
 	b := store.Binding{
-		Name:             m.name,
+		Name:             v.Name,
 		CWD:              plan.repo,
 		Repo:             plan.repo,
 		MasterMind:       plan.mastermind,
 		MasterMindID:     plan.mastermindID,
-		Builder:          store.Endpoint{Mode: store.ModeRemote, Server: plan.server, Kind: kind, AgentName: m.name},
+		Builder:          store.Endpoint{Mode: store.ModeRemote, Server: plan.server, Kind: kind, AgentName: v.Name},
 		BuilderCandidate: bv.Candidate,
 		Round:            chainIntOr(bv.Round, 1),
 		State:            chainMemberState(bv.State),
 		Tier:             bv.Tier,
-		Role:             normRole(m.actor),
-		Shape:            chainOr(bv.Shape, m.shape),
+		Role:             normRole(v.Actor),
+		Shape:            shape,
 		RepoRef:          repoRef,
 		Feature:          opts.Feature,
 		Ticket:           plan.ticket,
 		Link:             remoteLink(bv),
 		RecordID:         id,
 	}
-	if m.writer {
-		b.Branch = "relevo/" + m.name
+	if writer {
+		b.Branch = "relevo/" + v.Name
 		b.Base = plan.base
 		b.Gate = plan.settings.Gate
 		b.Regate = plan.settings.Regate

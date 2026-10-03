@@ -339,6 +339,11 @@ func filledCreateChainRequest() CreateChainRequest {
 			"builder":  "01CLIENTBINDINGBUILDER000000",
 			"reviewer": "01CLIENTBINDINGREVIEWER00000",
 		},
+		Workflow: json.RawMessage(`{"version":1,"steps":[{"name":"build","actor":"builder"}]}`),
+		ClientActorIDs: map[string]string{
+			"builder":  "01CLIENTACTORBUILDER0000000",
+			"reviewer": "01CLIENTACTORREVIEWER000000",
+		},
 	}
 }
 
@@ -403,6 +408,8 @@ func filledChainView() ChainView {
 		Findings:        1,
 		Members:         []ChainMemberView{filledChainMemberView()},
 		Trace:           []ChainEventView{filledChainEventView()},
+		Workflow:        json.RawMessage(`{"version":1,"steps":[{"name":"build","actor":"builder"}]}`),
+		State:           json.RawMessage(`{"phase":"build","step":"reviewing"}`),
 	}
 }
 
@@ -427,6 +434,37 @@ func filledChainStopResponse() ChainStopResponse {
 		Round:  2,
 		Action: "stopped",
 		Chain:  filledChainView(),
+	}
+}
+
+func filledCreateCheckRequest() CreateCheckRequest {
+	return CreateCheckRequest{
+		ID:      "01CHECKRUN000000000000000000",
+		Command: "make check",
+		Step:    "reviewing",
+	}
+}
+
+func filledCheckView() CheckView {
+	return CheckView{
+		ID:           "01CHECKRUN000000000000000000",
+		Command:      "make check",
+		Step:         "reviewing",
+		Result:       "pass",
+		ExitCode:     1,
+		DurationMS:   1250,
+		Note:         "acceptance passed",
+		LogTail:      "all tests pass",
+		LogTruncated: true,
+	}
+}
+
+func filledSetGateRequest() SetGateRequest {
+	gate := "make check"
+	regate := 2
+	return SetGateRequest{
+		Gate:   &gate,
+		Regate: &regate,
 	}
 }
 
@@ -463,6 +501,9 @@ var protoCases = []protoTypeCase{
 	{"ChainView", filledChainView(), func() any { return new(ChainView) }},
 	{"ChainResumeRequest", filledChainResumeRequest(), func() any { return new(ChainResumeRequest) }},
 	{"ChainStopResponse", filledChainStopResponse(), func() any { return new(ChainStopResponse) }},
+	{"CreateCheckRequest", filledCreateCheckRequest(), func() any { return new(CreateCheckRequest) }},
+	{"CheckView", filledCheckView(), func() any { return new(CheckView) }},
+	{"SetGateRequest", filledSetGateRequest(), func() any { return new(SetGateRequest) }},
 	{"ErrorBody", filledErrorBody(), func() any { return new(ErrorBody) }},
 }
 
@@ -538,6 +579,54 @@ func TestChainResumeRequestKeepsAbsentDistinctFromEmpty(t *testing.T) {
 	}
 	if !bytes.Contains(out, []byte(`"gate":""`)) {
 		t.Fatalf("gate pointing at \"\" marshaled %s, want a gate key", out)
+	}
+}
+
+// TestCreateChainRequestWorkflowOmittedWhenEmpty pins that a create request
+// without workflow fields matches the pre-workflow JSON shape byte-for-byte.
+//
+// Mutation: drop omitempty on Workflow and the null field appears in JSON.
+func TestCreateChainRequestWorkflowOmittedWhenEmpty(t *testing.T) {
+	req := filledCreateChainRequest()
+	req.Workflow = nil
+	req.ClientActorIDs = nil
+	got, err := json.MarshalIndent(req, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got = append(got, '\n')
+	const preChangeGolden = `{
+  "name": "test-chain",
+  "repo_id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "base_commit": "1111222233334444555566667777888899990000",
+  "plans": [
+    "# Plan one\n",
+    "# Plan two\n"
+  ],
+  "settings": {
+    "max_corrections": 3,
+    "reviewer_actor": "reviewer",
+    "planner_actor": "planner",
+    "security_actor": "security",
+    "security": true,
+    "gate": "make check",
+    "regate": 2
+  },
+  "feature": "auth",
+  "ticket": "o/r#607",
+  "author": {
+    "name": "Test Builder",
+    "email": "builder@example.com"
+  },
+  "client_installation": "01CLIENTINSTALLATION0000000",
+  "client_binding_ids": {
+    "builder": "01CLIENTBINDINGBUILDER000000",
+    "reviewer": "01CLIENTBINDINGREVIEWER00000"
+  }
+}
+`
+	if !bytes.Equal(got, []byte(preChangeGolden)) {
+		t.Fatalf("mismatch:\n--- got ---\n%s\n--- want ---\n%s", string(got), preChangeGolden)
 	}
 }
 

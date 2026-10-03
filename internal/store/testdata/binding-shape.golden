@@ -1,4 +1,4 @@
-format 13
+format 14
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
@@ -8,6 +8,18 @@ base
 base_ref
 branch
 candidate
+check_run.attempt
+check_run.command
+check_run.duration_ms
+check_run.exit_code
+check_run.id
+check_run.log_path
+check_run.note
+check_run.pid
+check_run.result
+check_run.round
+check_run.started_at
+check_run.step
 consult_cap
 consults[].actor
 consults[].ask_path

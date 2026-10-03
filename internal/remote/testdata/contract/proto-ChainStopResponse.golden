@@ -200,6 +200,19 @@
         "action": "{\"member\":\"reviewer\",\"round\":2}",
         "reason": "check red after regate"
       }
-    ]
+    ],
+    "workflow": {
+      "version": 1,
+      "steps": [
+        {
+          "name": "build",
+          "actor": "builder"
+        }
+      ]
+    },
+    "state": {
+      "phase": "build",
+      "step": "reviewing"
+    }
   }
 }

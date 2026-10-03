@@ -1,0 +1,11 @@
+{
+  "id": "01CHECKRUN000000000000000000",
+  "command": "make check",
+  "step": "reviewing",
+  "result": "pass",
+  "exit_code": 1,
+  "duration_ms": 1250,
+  "note": "acceptance passed",
+  "log_tail": "all tests pass",
+  "log_truncated": true
+}

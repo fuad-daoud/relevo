@@ -22,10 +22,13 @@ import (
 // The bounds a chain create and resume enforce on their untrusted fields, each
 // a named constant so a refusal and the plan agree.
 const (
-	maxChainPlans       = 64
-	maxChainPlanBytes   = 1 << 20
-	maxChainCorrections = 20
-	maxChainRegate      = 10
+	maxChainPlans         = 64
+	maxChainPlanBytes     = 1 << 20
+	maxChainCorrections   = 20
+	maxChainRegate        = 10
+	maxChainWorkflowBytes = 1 << 20
+	maxChainActorIDs      = 64
+	maxChainActorNameLen  = store.MaxAgentNameLen
 	// chainMaxNameLen mirrors internal/relevo's unexported cap: a chain name
 	// must leave room for its longest member suffix, "-plan".
 	chainMaxNameLen = store.MaxAgentNameLen - len("-plan")
@@ -43,6 +46,12 @@ func parseCreateChainRequest(req remote.CreateChainRequest) string {
 	if bad := validateChainPlans(req.Plans); bad != "" {
 		return bad
 	}
+	if len(req.Workflow) > 0 {
+		if len(req.Workflow) > maxChainWorkflowBytes {
+			return fmt.Sprintf("workflow exceeds %d bytes", maxChainWorkflowBytes)
+		}
+		return validateChainActorIDs(req.ClientActorIDs)
+	}
 	if bad := validateChainSettings(req.Settings); bad != "" {
 		return bad
 	}
@@ -56,7 +65,7 @@ func parseChainCreateShared(req remote.CreateChainRequest) string {
 	if err := store.ValidName(req.Name); err != nil {
 		return err.Error()
 	}
-	if len(req.Name) > chainMaxNameLen {
+	if len(req.Workflow) == 0 && len(req.Name) > chainMaxNameLen {
 		return fmt.Sprintf("chain name %q exceeds %d characters (the longest member suffix is -plan)", req.Name, chainMaxNameLen)
 	}
 	if len(req.RepoID) != 64 || !isHex(req.RepoID) || strings.ToLower(req.RepoID) != req.RepoID {
@@ -130,6 +139,23 @@ func validateChainBindingIDs(ids map[string]string) string {
 		case chain.MemberBuilder, chain.MemberReviewer, chain.MemberPlanner, chain.MemberSecurity:
 		default:
 			return fmt.Sprintf("client_binding_ids: unknown part %q", part)
+		}
+	}
+	return ""
+}
+
+// validateChainActorIDs checks that client_actor_ids has at most
+// maxChainActorIDs entries and that every actor key is non-empty and bounded.
+func validateChainActorIDs(ids map[string]string) string {
+	if len(ids) > maxChainActorIDs {
+		return fmt.Sprintf("client_actor_ids: at most %d ids allowed", maxChainActorIDs)
+	}
+	for actor := range ids {
+		if actor == "" {
+			return "client_actor_ids: actor name is empty"
+		}
+		if len(actor) > maxChainActorNameLen {
+			return fmt.Sprintf("client_actor_ids: actor name %q exceeds %d characters", actor, maxChainActorNameLen)
 		}
 	}
 	return ""
@@ -531,65 +557,4 @@ func resumeOptionsFromWire(name string, req remote.ChainResumeRequest) (relevo.R
 		opts.Params = params
 	}
 	return opts, ""
-}
-
-func (s *Server) handleDoneChain(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	rt, name, ok := s.chainRuntime(w, r)
-	if !ok {
-		return
-	}
-	if _, err := relevo.ChainDone(r.Context(), rt, name); err != nil {
-		var open *relevo.RoundOpenError
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-		case errors.As(err, &open):
-			writeErr(w, http.StatusConflict, remote.CodeRoundOpen, err.Error())
-		case errors.Is(err, relevo.ErrChainRunning):
-			writeErr(w, http.StatusConflict, remote.CodeChainRunning, err.Error())
-		default:
-			writeErr(w, http.StatusInternalServerError, "", err.Error())
-		}
-		return
-	}
-
-	// Settle every member's entries up to its closed round, the way handleDone
-	// settles a lone binding's.
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		c, err := tx.Chain(name)
-		if err != nil {
-			return err
-		}
-		for _, member := range []string{c.Builder, c.Reviewer, c.Planner, c.Security} {
-			if member == "" {
-				continue
-			}
-			b, err := tx.Load(member)
-			if errors.Is(err, store.ErrNotFound) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if b.Serve == nil {
-				continue
-			}
-			if _, err := settleServed(tx, member, b.Serve.ClosedRound); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		slog.Warn("settle chain members", "chain", name, "err", err)
-	}
-
-	view, err := s.servedChainView(rt, name)
-	if err != nil {
-		s.writeChainReadError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, view)
 }

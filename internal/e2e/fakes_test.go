@@ -180,3 +180,10 @@ func finishRound(t *testing.T, serverRT relevo.Runtime, name string, round int, 
 		sr.mu.Unlock()
 	}
 }
+
+// isServedCheckSpec reports whether spec is a served binding's check run rather
+// than the gate of a builder round: a check streams to its own served-check log,
+// while a round's gate logs to the round's gate log.
+func isServedCheckSpec(spec spawn.ProcSpec) bool {
+	return strings.HasSuffix(spec.LogPath, "-served-check.log")
+}
