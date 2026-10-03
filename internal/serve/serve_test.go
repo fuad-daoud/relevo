@@ -2450,6 +2450,132 @@ func TestStopAnotherOwnersBindingIs404(t *testing.T) {
 	}
 }
 
+// TestStopOnHaltedBindingPerformsStop pins that handleStop performs the stop
+// on a halted binding: the round closes, halt is cleared, a second stop is
+// refused with nothing_to_stop, and resend starts clean.
+func TestStopOnHaltedBindingPerformsStop(t *testing.T) {
+	env := setupTestEnv(t)
+
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, resp, body, "A")
+
+	rt := env.runtime(t)
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("api")
+		if err != nil {
+			return err
+		}
+		b.State = store.StateNeedsYou
+		b.Halt = "halted for test"
+		b.Builder.PID = 0
+		return tx.Save(b)
+	}); err != nil {
+		t.Fatalf("halt binding: %v", err)
+	}
+	env.runner.setAlive(false)
+
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/stop", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	view := decodeView(t, body)
+	if view.RoundState != remote.RoundClosed || view.ClosedRound != 1 || view.Stopped != "gone" {
+		t.Errorf("view after stop = %+v, want closed round 1, gone", view)
+	}
+
+	stopped, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load after stop: %v", err)
+	}
+	if stopped.Round != 2 || stopped.Halt != "" || stopped.State != store.StateActive {
+		t.Errorf("stopped binding = round %d, halt %q, state %s; want round 2, empty halt, active",
+			stopped.Round, stopped.Halt, stopped.State)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/stop", nil, "")
+	requireStatus(t, resp, body, http.StatusConflict)
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(body, &errBody)
+	if errBody.Code != remote.CodeNothingToStop {
+		t.Errorf("second stop code = %q, want %q", errBody.Code, remote.CodeNothingToStop)
+	}
+
+	outRef := "refs/relevo/api/out"
+	bundleBytes := snapshotRef(t, env, env.clientDir, outRef)
+	formBytes, ct := makeRoundForm(t, 2, "# Plan B", bundleBytes)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
+	if resendView := decodeView(t, body); resendView.RoundState != remote.RoundRunning {
+		t.Errorf("resend round_state = %q, want running", resendView.RoundState)
+	}
+}
+
+// TestStopOnHaltedBindingKillsLiveProcess pins that a halted binding whose process
+// is still alive is killed like any open round.
+func TestStopOnHaltedBindingKillsLiveProcess(t *testing.T) {
+	env := setupTestEnv(t)
+
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, resp, body, "A")
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	pid := b.Builder.PID
+	if pid == 0 {
+		t.Fatal("builder PID = 0, want a running process")
+	}
+
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		loaded, lerr := tx.Load("api")
+		if lerr != nil {
+			return lerr
+		}
+		loaded.State = store.StateNeedsYou
+		loaded.Halt = "halted while alive"
+		return tx.Save(loaded)
+	}); err != nil {
+		t.Fatalf("halt binding: %v", err)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/stop", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	view := decodeView(t, body)
+	if view.Stopped != "killed" {
+		t.Errorf("view.Stopped = %q, want killed", view.Stopped)
+	}
+
+	env.runner.mu.Lock()
+	alive := env.runner.alive[pid]
+	env.runner.mu.Unlock()
+	if alive {
+		t.Errorf("builder pid %d still alive after stop, want killed", pid)
+	}
+}
+
+// TestWriteSendErrorAnswersRoundHaltedWhenBindingHalted pins the kept case:
+// a send failure on a halted binding answers 409 round_halted.
+func TestWriteSendErrorAnswersRoundHaltedWhenBindingHalted(t *testing.T) {
+	env := setupTestEnv(t)
+	rt := env.runtime(t)
+
+	rec := httptest.NewRecorder()
+	b := store.Binding{Name: "api", Round: 1, State: store.StateNeedsYou, Halt: "simulated halt"}
+	writeSendError(rec, rt, "api", b, errors.New("unhandled send failure"))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(rec.Body.Bytes(), &errBody)
+	if errBody.Code != remote.CodeRoundHalted {
+		t.Errorf("send error code = %q, want %q", errBody.Code, remote.CodeRoundHalted)
+	}
+	if errBody.Message != "simulated halt" {
+		t.Errorf("send error message = %q, want simulated halt", errBody.Message)
+	}
+}
+
 func TestGetBindingRunningHasLive(t *testing.T) {
 	env := setupTestEnv(t)
 
