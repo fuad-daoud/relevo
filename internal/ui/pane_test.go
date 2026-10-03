@@ -131,7 +131,7 @@ func TestRoundContextByGroup(t *testing.T) {
 		},
 		{
 			name:     "on hold",
-			b:        view.BindingStatus{Name: "b4", Round: 1, Display: "HELD"},
+			b:        view.BindingStatus{Name: "b4", Round: 1, Display: "PAUSED"},
 			pillWord: "on hold",
 		},
 		{

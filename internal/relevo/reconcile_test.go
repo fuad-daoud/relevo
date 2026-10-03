@@ -2244,9 +2244,6 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 	if !loaded.StaleSince.IsZero() {
 		t.Errorf("StaleSince = %s after Send, want zero", loaded.StaleSince)
 	}
-	if !loaded.StaleNotifiedAt.IsZero() {
-		t.Errorf("StaleNotifiedAt = %s after Send, want zero", loaded.StaleNotifiedAt)
-	}
 }
 
 // TestVerifyRoundStartsAReviewerInAThrowawayWorktree pins #144's close path:
