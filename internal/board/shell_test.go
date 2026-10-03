@@ -687,13 +687,17 @@ func TestShellClickOpensTheInputDialog(t *testing.T) {
 	for _, want := range []string{
 		`id="comment-draft"`,
 		`id="comment-selector"`,
-		`id="comment-post"`,
 		`id="comment-dialog-close"`,
 		`aria-label="cancel this comment"`,
+		`Ctrl+Enter to post`,
 	} {
 		if !strings.Contains(dialog, want) {
 			t.Errorf("the input dialog does not carry %q", want)
 		}
+	}
+	// Keyboard-only post: there is no Post button left to carry the id.
+	if strings.Contains(dialog, `id="comment-post"`) {
+		t.Error("the input dialog still carries a Post button; Ctrl+Enter is the post path")
 	}
 	// It floats like the card, so opening it cannot move the board under the
 	// pointer, and it is hidden until a pick opens it.
@@ -756,8 +760,9 @@ func TestShellCtrlEnterPostsFromBothTextareas(t *testing.T) {
 	if !strings.Contains(box, "submitOnCtrlEnter(box, function () { sendReply(thread, box); });") {
 		t.Error("commentlist.js replyBox does not post on Ctrl+Enter")
 	}
-	if got := strings.Count(box, "sendReply(thread, box)"); got != 2 {
-		t.Errorf("the card's box posts through sendReply from %d places, want the key and the button", got)
+	// Keyboard-only post: the key is the single path, and no button backs it.
+	if got := strings.Count(box, "sendReply(thread, box)"); got != 1 {
+		t.Errorf("the card's box posts through sendReply from %d places, want the key alone", got)
 	}
 	shell, err := readShellFile("comments.js")
 	if err != nil {
@@ -766,12 +771,14 @@ func TestShellCtrlEnterPostsFromBothTextareas(t *testing.T) {
 	for _, want := range []string{
 		"function submitDraft() {",
 		"post(picked, draftEl.value);",
-		`postBtn.addEventListener("click", submitDraft);`,
 		"list.submitOnCtrlEnter(draftEl, submitDraft);",
 	} {
 		if !strings.Contains(string(shell), want) {
 			t.Errorf("comments.js does not carry %q, which a keyboard post needs", want)
 		}
+	}
+	if strings.Contains(string(shell), `postBtn.addEventListener("click", submitDraft);`) {
+		t.Error("comments.js still posts the draft from a button; Ctrl+Enter is the post path")
 	}
 }
 

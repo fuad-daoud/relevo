@@ -79,13 +79,16 @@ body {
 #comments-close:hover, #thread-close:hover,
 #comment-dialog-close:hover, .relevo-card-actions button:hover { border-color: var(--relevo-accent); }
 
-/* One thread card at a time, anchored beside the pin it belongs to. */
+/* One thread card at a time, anchored beside the pin it belongs to. It is wide
+   and wraps: the boxes carry no resize handles, so width is where a long
+   comment gets room rather than a corner the reader has to find. */
 #thread-card {
   display: none;
   position: fixed;
   z-index: 21;
-  width: 18rem;
+  width: 24rem;
   max-width: calc(100vw - 16px);
+  overflow-wrap: anywhere;
   padding: 8px 10px;
   background: var(--relevo-surface);
   border: 1px solid var(--relevo-edge);
@@ -116,8 +119,9 @@ body {
   z-index: 22;
   top: 3.4rem;
   left: 12px;
-  width: 18rem;
+  width: 24rem;
   max-width: calc(100vw - 24px);
+  overflow-wrap: anywhere;
   padding: 8px 10px;
   background: var(--relevo-surface);
   border: 1px solid var(--relevo-edge);
@@ -159,6 +163,14 @@ body {
   min-height: 5rem;
   font: inherit;
   margin: 6px 0;
+  /* No corner to drag: the boxes wrap on a fixed width instead, so a comment
+     never has to be resized before it can be read whole. */
+  resize: none;
+}
+.relevo-hint {
+  display: block;
+  font-size: 11px;
+  color: #666;
 }
 #comment-list h3 { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; color: #666; }
 .relevo-row {
@@ -205,7 +217,7 @@ body {
   <div id="comment-selector"></div>
   <textarea id="comment-draft" placeholder="say something about this element"></textarea>
   <div id="comment-dialog-actions">
-    <button id="comment-post" type="button">Post</button>
+    <span class="relevo-hint">Ctrl+Enter to post</span>
   </div>
 </section>
 <section id="thread-card" aria-label="comment thread"></section>

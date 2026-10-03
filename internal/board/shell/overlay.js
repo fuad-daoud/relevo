@@ -1,10 +1,9 @@
 // overlay.js -- the script that runs inside the board's frame.
 //
-// The board renders in <iframe sandbox="allow-scripts">, an opaque origin: the
-// shell cannot reach in, and neither can this script read anything on the shell,
-// so every crossing is a postMessage in both directions. It must never write a
-// note: the board's own scripts share this frame, so the shell treats every
-// message here as a claim, and only its own draft box posts.
+// The board renders in <iframe sandbox="allow-scripts">, an opaque origin, so every
+// crossing is a postMessage in both directions. It must never write a note: the
+// board's own scripts share this frame, so the shell treats every message here as a
+// claim, and only its own draft box posts.
 (function () {
   "use strict";
 
@@ -12,16 +11,17 @@
   var mode = false;
   var pins = [];             // the threads the shell last sent, each with its entries
   var pinLayer = null;
+  var preview = null;        // the small card a hovered dot opens
   var hovered = null;
 
   // installStyles injects the rules the overlay needs, because the board is a
   // stranger's document: a class with no rule draws nothing there. The outline's
-  // negative offset takes it out of layout, so hovering never reflows the board,
-  // and Highlight rather than a fixed blue keeps it right on a board that brought
-  // its own theme. A pin is a solid dot, not a numbered badge: it names a thread,
-  // and a count would renumber itself on every note that arrived. It is drawn at
-  // 1.3em, big enough to hit on a board scaled to a projector, and its negative
-  // margin is half of that so the dot still sits on the point it names.
+  // negative offset keeps it out of layout, so hovering never reflows the board, and
+  // Highlight rather than a fixed blue keeps it right on a board that brought its own
+  // theme. A pin is a solid dot, not a numbered badge: it names a thread, and a count
+  // would renumber itself on every note that arrived. It is drawn at 1.3em, big
+  // enough to hit on a board scaled to a projector, and its negative margin is half
+  // of that so it still sits on the point it names.
   function installStyles() {
     var style = document.createElement("style");
     style.textContent =
@@ -31,12 +31,18 @@
       "margin:-0.65em 0 0 -0.65em;padding:0;border-radius:50%;background:#2a6fb5;" +
       "box-shadow:0 0 0 2px rgba(255,255,255,0.9);cursor:pointer;}" +
       ".relevo-board-pin{background:#5a5a5a;}" +
-      ".relevo-orphan-pin{background:#8a5a00;outline:1px dashed #fff;}";
+      ".relevo-orphan-pin{background:#8a5a00;outline:1px dashed #fff;}" +
+      ".relevo-preview{position:absolute;pointer-events:none;max-width:16rem;padding:5px 7px;" +
+      "background:Canvas;color:CanvasText;word-break:break-word;font:12px/1.35 " +
+      "ui-sans-serif,system-ui,sans-serif;border:1px solid rgba(128,128,128,0.6);" +
+      "border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);}" +
+      ".relevo-preview-by,.relevo-preview-text{display:block;}" +
+      ".relevo-preview-by{font-size:10px;opacity:0.75;}";
     (document.head || document.documentElement).appendChild(style);
   }
 
-  // post is every message out of this frame. The origin is "*": the sandbox took
-  // the shell's own, and nothing here is secret.
+  // post is every message out of this frame. The origin is "*": the sandbox took the
+  // shell's own, and nothing here is secret.
   function post(msg) {
     parent.postMessage(msg, "*");
   }
@@ -50,8 +56,8 @@
     else if (msg.type === "relevo.points") post({ type: "relevo.points", points: points() });
   });
 
-  // selectorFor builds a note's anchor in a fixed order, so one element always
-  // yields one string: a data-board-id, a unique id, then a path.
+  // selectorFor builds a note's anchor in a fixed order, so one element always yields
+  // one string: a data-board-id, a unique id, then a path.
   function selectorFor(el) {
     if (!el || el.nodeType !== 1) return "";
     var host = el.closest("[data-board-id]");
@@ -61,12 +67,7 @@
   }
 
   function isUniqueId(id) {
-    var nodes;
-    try {
-      nodes = document.querySelectorAll("[id]");
-    } catch (e) {
-      return false;
-    }
+    var nodes = document.querySelectorAll("[id]");
     var seen = 0;
     for (var i = 0; i < nodes.length; i++) {
       if (nodes[i].id === id && ++seen > 1) return false;
@@ -74,17 +75,16 @@
     return seen === 1;
   }
 
-  // pathFor steps down from the nearest ancestor carrying an id or a
-  // data-board-id, as tag:nth-of-type(n) read live so a sibling the board's own
-  // script adds later does not break the path.
+  // pathFor steps down from the nearest ancestor carrying an id or a data-board-id,
+  // as tag:nth-of-type(n) read live so a sibling the board's own script adds later
+  // does not break the path.
   function pathFor(el) {
     var steps = [];
     var node = el;
     while (node && node.nodeType === 1 && node !== document.body) {
       steps.unshift(tagStep(node));
       var up = node.parentElement;
-      if (!up) break;
-      if (up.id || up.hasAttribute("data-board-id")) break;
+      if (!up || up.id || up.hasAttribute("data-board-id")) break;
       node = up;
     }
     var anchor = node && node.parentElement;
@@ -115,7 +115,8 @@
     return String(value == null ? "" : value).replace(/["\\]/g, "\\$&");
   }
 
-  // pick reports fractions of the element's box rather than pixels, so the dot survives a resize.
+  // pick reports fractions of the element's box rather than pixels, so the dot survives
+  // a resize.
   function pick(el, clientX, clientY) {
     var box = el.getBoundingClientRect();
     var x = box.width ? (clientX - box.left) / box.width : 0;
@@ -129,9 +130,9 @@
     return v < 0 ? 0 : v > 1 ? 1 : v;
   }
 
-  // setPins holds what the shell sent, grouped by anchor: the same selector
-  // string is one thread, an empty selector the board. Presentation only, so the
-  // stored file stays flat.
+  // setPins holds what the shell sent, grouped by anchor: the same selector string is
+  // one thread, an empty selector the board. Presentation only, so the stored file
+  // stays flat.
   function setPins(entries) {
     pins = [];
     var by = {};
@@ -148,13 +149,14 @@
     draw();
   }
 
-  // draw puts one dot per thread on the board, and only in comment mode: out of
-  // it the board is the board again, so the layer goes back off the document. An
-  // anchor matching nothing, or throwing, is an orphan -- still drawn, still
-  // listed, still reported by id, because a note whose element moved is a note.
-  // A dot with no element to sit on is stacked down the left edge instead, so a
-  // board-level thread and an orphaned one are both still clickable.
+  // draw puts one dot per thread on the board, and only in comment mode: out of it the
+  // board is the board again, so the layer goes back off the document. An anchor
+  // matching nothing, or throwing, is an orphan -- still drawn and still reported by
+  // id, because a note whose element moved is a note. A dot with no element to sit on
+  // is stacked down the left edge, so a board-level thread and an orphaned one are both
+  // still clickable.
   function draw() {
+    hidePreview();
     if (!mode) {
       if (pinLayer && pinLayer.parentNode) pinLayer.parentNode.removeChild(pinLayer);
       pinLayer = null;
@@ -175,7 +177,8 @@
     post({ type: "relevo.orphans", ids: orphans });
   }
 
-  // resolve finds the element a selector names; one that throws is a miss, not an error: stored selectors are not trusted to parse.
+  // resolve finds the element a selector names; one that throws is a miss, not an
+  // error: stored selectors are not trusted to parse.
   function resolve(selector) {
     try {
       return document.querySelector(selector);
@@ -201,14 +204,51 @@
       e.preventDefault();
       e.stopPropagation();
       var box = pin.getBoundingClientRect();
-      post({
-        type: "relevo.pin", id: thread.id,
+      post({ type: "relevo.pin", id: thread.id,
         x: Math.round(box.left + box.width / 2),
-        y: Math.round(box.top + box.height / 2)
-      });
+        y: Math.round(box.top + box.height / 2) });
     });
+    pin.addEventListener("mouseenter", function () { showPreview(thread, pin); });
+    pin.addEventListener("focus", function () { showPreview(thread, pin); });
+    pin.addEventListener("mouseleave", hidePreview);
+    pin.addEventListener("blur", hidePreview);
     pinLayer.appendChild(pin);
     placePin(pin, thread, el, index);
+  }
+
+  // showPreview is the card a hovered dot opens: the thread's entries, so a reader
+  // sees what a dot names before the full card covers the board. It is built per
+  // hover because the threads the shell sends change under it, and it takes no
+  // clicks -- pointer-events is off in its rule -- so it cannot come between the dot
+  // and the click that opens the card.
+  function showPreview(thread, pin) {
+    hidePreview();
+    if (!pinLayer) return;
+    preview = document.createElement("div");
+    preview.className = "relevo-preview";
+    for (var i = 0; i < thread.entries.length; i++) {
+      preview.appendChild(spans("relevo-preview-by", thread.entries[i].by + " · " + thread.entries[i].at));
+      preview.appendChild(spans("relevo-preview-text", thread.entries[i].text));
+    }
+    pinLayer.appendChild(preview);
+    var box = pin.getBoundingClientRect();
+    var wide = preview.offsetWidth || 256;
+    var left = box.right + 8;
+    if (left + wide > window.innerWidth - 8) left = Math.max(8, box.left - wide - 8);
+    preview.style.left = left + "px";
+    preview.style.top = Math.max(8, Math.min(box.top - 6, window.innerHeight - 48)) + "px";
+  }
+
+  function hidePreview() {
+    if (preview && preview.parentNode) preview.parentNode.removeChild(preview);
+    preview = null;
+  }
+
+  function spans(className, text) {
+    var el = document.createElement("span");
+    el.className = className;
+    el.textContent = text;
+    return el;
   }
 
   function placePin(pin, thread, el, index) {
@@ -223,29 +263,32 @@
     pin.style.top = (box.top + box.height * clamp(first.y)) + "px";
   }
 
-  function reposition() {
+  // eachPin walks the drawn dots with the thread behind each, so placing and
+  // reporting cannot disagree about which dot is which.
+  function eachPin(fn) {
     if (!pinLayer) return;
     for (var i = 0; i < pins.length; i++) {
       var pin = pinLayer.querySelector('[data-relevo-id="' + pins[i].id + '"]');
-      if (!pin) continue;
-      placePin(pin, pins[i], pins[i].key ? resolve(pins[i].key) : null, i);
+      if (pin) fn(pin, pins[i], i);
     }
   }
 
-  // points reports where each dot sits, so the shell anchors a card beside one from the placed dot's own box.
+  function reposition() {
+    eachPin(function (pin, thread, i) {
+      placePin(pin, thread, thread.key ? resolve(thread.key) : null, i);
+    });
+  }
+
+  // points reports where each dot sits, so the shell anchors a card beside one from
+  // the placed dot's own box.
   function points() {
     var out = [];
-    if (!pinLayer) return out;
-    for (var i = 0; i < pins.length; i++) {
-      var pin = pinLayer.querySelector('[data-relevo-id="' + pins[i].id + '"]');
-      if (!pin) continue;
+    eachPin(function (pin, thread) {
       var box = pin.getBoundingClientRect();
-      out.push({
-        id: pins[i].id,
+      out.push({ id: thread.id,
         x: Math.round(box.left + box.width / 2),
-        y: Math.round(box.top + box.height / 2)
-      });
-    }
+        y: Math.round(box.top + box.height / 2) });
+    });
     return out;
   }
 
@@ -261,15 +304,11 @@
     if (hovered) hovered.classList.add("relevo-hover");
   }
 
-  document.addEventListener("mouseover", function (e) {
-    if (mode) outline(e.target);
-  }, true);
+  document.addEventListener("mouseover", funner("mouseleave", function () { outline(null); hidePreview(); }, true);
 
-  document.addEventListener("mouseleave", function () { outline(null); }, true);
-
-  // The click is captured, default action and propagation both stopped, so a
-  // board's own link does not navigate. A click on our own pin is let through:
-  // stopping propagation this early would leave the dot unclickable.
+  // The click is captured, default action and propagation both stopped, so a board's
+  // own link does not navigate. A click on our own pin is let through: stopping
+  // propagation this early would leave the dot unclickable.
   function onClick(e) {
     var el = e.target;
     if (el && el.closest && el.closest(".relevo-pin")) return;
@@ -278,8 +317,8 @@
     pick(e.target, e.clientX, e.clientY);
   }
 
-  // setMode turns comment mode on and off. Off takes the click listener and the
-  // dots back off the board; on puts back the threads already held here.
+  // setMode turns comment mode on and off. Off takes the click listener and the dots
+  // back off the board; on puts back the threads already held here.
   function setMode(on) {
     mode = on === true;
     if (mode) {

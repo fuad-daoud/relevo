@@ -9,6 +9,8 @@
   var orphanIds = {};        // ids the frame reported as having no element
   var pinPoints = {};        // id -> where the frame last drew that pin
   var onReply = null;        // comments.js posts the card's reply box
+  var onOpenCard = null;    // comments.js closes the composer when a card opens
+  var HINT = "Ctrl+Enter to post";
 
   var listEl = document.getElementById("comment-list");
   var cardEl = document.getElementById("thread-card");
@@ -158,6 +160,8 @@
   // openCard shows one thread beside its dot: every note on that anchor in file
   // order, then the box that answers them and the row of controls under it. One
   // card at a time, and re-opening the open one is how a second click closes it.
+  // onOpenCard is how comments.js keeps the composer out of the way: the card is
+  // the one writing surface while it is open, wherever the reader got to it from.
   function openCard(id, x, y) {
     if (cardId === id) {
       closeCard();
@@ -165,6 +169,7 @@
     }
     var thread = threadById(id);
     if (!thread) return;
+    if (onOpenCard) onOpenCard();
     cardId = id;
     var point = pinPoints[id] || (x != null ? { x: x, y: y } : null);
     cardEl.textContent = "";
@@ -181,10 +186,10 @@
   }
 
   // replyBox is the card's bottom section: the box that answers the thread, and
-  // the row of controls under it -- Reply left, the way out right, a row rather
-  // than a control floated beside the box, which the box then covered. It posts
-  // through the handler comments.js gave the thread's anchor: a reply lands on
-  // the thread, not on the last pick.
+  // the row of controls under it -- the keyboard hint left, the way out right,
+  // a row rather than a control floated beside the box, which the box then
+  // covered. It posts through the handler comments.js gave the thread's anchor:
+  // a reply lands on the thread, not on the last pick.
   function replyBox(thread) {
     var box = document.createElement("textarea");
     box.id = "thread-reply";
@@ -192,11 +197,7 @@
     submitOnCtrlEnter(box, function () { sendReply(thread, box); });
     var row = document.createElement("div");
     row.className = "relevo-card-actions";
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = "Reply";
-    btn.addEventListener("click", function () { sendReply(thread, box); });
-    row.appendChild(btn);
+    row.appendChild(line("span", "relevo-hint", HINT));
     row.appendChild(closeButton());
     var wrap = document.createElement("div");
     wrap.appendChild(box);
@@ -204,7 +205,7 @@
     return wrap;
   }
 
-  // sendReply is the one post a reply makes, so the key and the button cannot differ.
+  // sendReply is the one post a reply makes: Ctrl+Enter is the only path to it.
   function sendReply(thread, box) {
     var text = box.value.trim();
     if (text && onReply) onReply(anchorOf(thread), text);
@@ -229,6 +230,12 @@
   // setReplyHandler is how comments.js takes the posting back from this file.
   function setReplyHandler(fn) {
     onReply = fn;
+  }
+
+  // setCardOpenHandler is the other half of that seam: this file holds the card,
+  // comments.js holds the composer, and only comments.js may put one away.
+  function setCardOpenHandler(fn) {
+    onOpenCard = fn;
   }
 
   // clearReply empties the box once a reply has landed, by drawing the card again
@@ -293,6 +300,7 @@
     closeCard: closeCard,
     cardOpen: cardOpen,
     setReplyHandler: setReplyHandler,
+    setCardOpenHandler: setCardOpenHandler,
     clearReply: clearReply,
     submitOnCtrlEnter: submitOnCtrlEnter
   };

@@ -22,8 +22,8 @@
 
   var commentBtn = document.getElementById("comment-toggle");
   var pane = document.getElementById("comments");
+  var cardEl = document.getElementById("thread-card");
   var closeBtn = document.getElementById("comments-close");
-  var postBtn = document.getElementById("comment-post");
   var draftEl = document.getElementById("comment-draft");
   var selEl = document.getElementById("comment-selector");
   var applyBtn = document.getElementById("banner-apply");
@@ -88,6 +88,7 @@
     if (msg.type === "relevo.pin") {
       // A dot was clicked: open that thread's card and mark its list row.
       list.setPoints([]);
+      closeDialog();
       list.openCard(msg.id, msg.x, msg.y);
     }
   }
@@ -95,7 +96,10 @@
 
   // openDraft takes a pick and opens the composer on it, which is what a fresh click
   // on the board opens. The selector is shown, not edited: the overlay built it.
+  // The card goes away first: the composer and a thread card are two surfaces to
+  // write in, and one gesture has to be enough to reach the one the reader meant.
   function openDraft(selector, x, y) {
+    list.closeCard();
     picked = { selector: selector, x: x, y: y };
     draft = "";
     draftEl.value = "";
@@ -236,15 +240,14 @@
     adopt(held);
   }
 
-  // submitDraft is the one path a draft takes to the API: Post and Ctrl+Enter
-  // both call it, so a keypress and a click cannot post differently.
+  // submitDraft is the one path a draft takes to the API: Ctrl+Enter in the box
+  // calls it and nothing else does, so a post is one gesture to learn.
   function submitDraft() {
     post(picked, draftEl.value);
   }
 
   commentBtn.addEventListener("click", function () { setMode(!mode); });
   closeBtn.addEventListener("click", function () { setMode(false); });
-  postBtn.addEventListener("click", submitDraft);
   cancelBtn.addEventListener("click", closeDialog);
   applyBtn.addEventListener("click", apply);
   draftEl.addEventListener("input", function () { draft = draftEl.value; });
@@ -252,6 +255,9 @@
 
   // The card's reply box posts here too, onto the anchor of the thread it answers.
   list.setReplyHandler(post);
+  // And the card puts the composer away when it opens, whichever way it was
+  // reached: a pick, a dot, or a row in the panel.
+  list.setCardOpenHandler(closeDialog);
 
   // Escape unwinds one layer at a time: the card, then the composer, then the panel.
   document.addEventListener("keydown", function (ev) {
@@ -269,12 +275,16 @@
   });
 
   // A click on the canvas is a pick, not a dismissal: the frame owns that gesture.
+  // Every surface the reader is writing or reading in is excluded, the card
+  // included: a click in the reply box is that box taking focus, and the card
+  // must survive it.
   document.addEventListener("click", function (ev) {
     if (!mode) return;
     var frame = document.getElementById("frame");
     if (frame && frame.contains(ev.target)) return;
     if (pane.contains(ev.target)) return;
     if (dialogEl.contains(ev.target)) return;
+    if (cardEl.contains(ev.target)) return;
     // The toggle opened the panel with this same click as it bubbles up.
     if (commentBtn.contains(ev.target)) return;
     if (list.cardOpen()) {
