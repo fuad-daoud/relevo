@@ -28,6 +28,12 @@ const nudgePromptFormat = `You ended your turn before writing the report, and no
 // relevo block, followed by the marker.
 const readerContinuationPromptFormat = `you stopped before your deliverable; continue, and make your final message the complete deliverable. The final message must end with the relevo block, then create %s.`
 
+// readerFenceNote is the sentence a reader's continuation gains when the round
+// carries a bare `relevo` line whose block names no readable value: the backtick
+// fences were lost, and the only thing that can put them back is the reader. It
+// is a fixed string, so the same loss is worded the same way every round.
+const readerFenceNote = "Your block's opening and closing ``` fences are missing, so none of its values could be read: put ``` on its own line above the block and again below it."
+
 // readerNudgeLimit is how many continuations a reader is granted before halting.
 const readerNudgeLimit = 2
 
@@ -48,13 +54,19 @@ func nudgePrompt(reportPath, donePath string) string {
 }
 
 // nudgePromptFor renders the nudge prompt for b: a writer is told its round's
-// report and done paths, a reader is told to continue to its deliverable.
+// report and done paths, a reader is told to continue to its deliverable. A
+// reader whose block lost its fences is told so, because the generic wording
+// would send it looking for a missing block it in fact wrote.
 func nudgePromptFor(rt Runtime, b store.Binding) string {
 	done := rt.Store.DonePath(b.Name, b.Round)
 	if b.Shape != store.ShapeReader {
 		return nudgePrompt(rt.Store.ReportPath(b.Name, b.Round), done)
 	}
-	return fmt.Sprintf(readerContinuationPromptFormat, done)
+	prompt := fmt.Sprintf(readerContinuationPromptFormat, done)
+	if readerLostFences(rt, b) {
+		return prompt + " " + readerFenceNote
+	}
+	return prompt
 }
 
 // nudgesSincePlan returns the count of nudge switch entries that follow the

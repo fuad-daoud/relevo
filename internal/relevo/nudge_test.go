@@ -142,6 +142,66 @@ func TestReaderNudgeNoteSaysWithoutAnOutput(t *testing.T) {
 	}
 }
 
+// TestReaderContinuationNamesTheLostFences pins the reader continuation's two
+// wordings: a round whose body opens a block with a bare `relevo` line is told
+// the fences are missing, and a round that carried only narration keeps the
+// generic sentence.
+func TestReaderContinuationNamesTheLostFences(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		text      string
+		wantFence bool
+	}{
+		{
+			name:      "a closing block whose fences were lost",
+			text:      "# Review\n\nrelevo\nstatus: done\n",
+			wantFence: true,
+		},
+		{
+			name:      "narration only",
+			text:      "I am reviewing the repo now.",
+			wantFence: false,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rt, b := bindReader(t, readerRepo(t))
+			fr, ok := rt.Runner.(*fakeRunner)
+			if !ok {
+				t.Fatalf("Runtime.Runner = %T, want *fakeRunner", rt.Runner)
+			}
+			b.Builder.StreamSessionID = "S1"
+			if err := rt.Store.Save(b); err != nil {
+				t.Fatal(err)
+			}
+			fr.script(b.Builder.PID, false)
+			fr.exit(b.Builder.PID, 0)
+			if err := os.WriteFile(b.Builder.LogPath, []byte("starting\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			writeReaderStream(t, rt, b.Name, b.Round, tc.text)
+
+			if _, err := reconcile(t, at(rt, time.Minute), b); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			if len(fr.specs) != 2 {
+				t.Fatalf("specs = %d, want 2 (one continuation)", len(fr.specs))
+			}
+			resume := fr.specs[1].Argv
+			if !anyArgContains(resume, "you stopped before your deliverable") {
+				t.Errorf("resume argv = %v, want the continuation prompt", resume)
+			}
+			if got := anyArgContains(resume, readerFenceNote); got != tc.wantFence {
+				t.Errorf("resume argv carries the fence note = %v, want %v", got, tc.wantFence)
+			}
+		})
+	}
+}
+
 func TestSecondExitAfterNudgeSwitchesAsBefore(t *testing.T) {
 	t.Parallel()
 

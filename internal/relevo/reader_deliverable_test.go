@@ -16,17 +16,19 @@ func TestReaderDeliverablePresent(t *testing.T) {
 	cases := []struct {
 		name       string
 		runnerFile bool
+		fileBody   string
 		streamText string
 		want       bool
 	}{
 		{
 			name:       "block-carrying final message",
-			streamText: "Here is the work.\n\n```relevo\nstatus: done\n```\n",
+			streamText: "Here is the work.\n\n```relevo\nverdict: pass\n```\n",
 			want:       true,
 		},
 		{
 			name:       "runner-written output file",
 			runnerFile: true,
+			fileBody:   "# Findings\n\n```relevo\nverdict: pass\n```\n",
 			want:       true,
 		},
 		{
@@ -35,8 +37,24 @@ func TestReaderDeliverablePresent(t *testing.T) {
 			want:       true,
 		},
 		{
+			name:       "fenceless closing block",
+			streamText: "# Review\n\nrelevo\nverdict: pass\n",
+			want:       true,
+		},
+		{
 			name:       "narration sentence",
 			streamText: "I am analyzing the code now.",
+			want:       false,
+		},
+		{
+			name:       "a report file carrying no declared outcome",
+			runnerFile: true,
+			fileBody:   "# Findings\n\nThe code is sound.\n",
+			want:       false,
+		},
+		{
+			name:       "a block carrying only undeclared keys",
+			streamText: "# Review\n\n```relevo\nstatus: done\n```\n",
 			want:       false,
 		},
 		{
@@ -63,7 +81,11 @@ func TestReaderDeliverablePresent(t *testing.T) {
 				if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(out, []byte("# Findings\n"), 0o644); err != nil {
+				body := tc.fileBody
+				if body == "" {
+					body = "# Findings\n"
+				}
+				if err := os.WriteFile(out, []byte(body), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -124,7 +146,8 @@ func TestReaderWithoutBlockIsContinuedOnceAndClosesWithContinuedOutput(t *testin
 	if err := rt.Store.Save(first); err != nil {
 		t.Fatal(err)
 	}
-	writeReaderMessages(t, rt, first.Name, first.Round, "I am reviewing the repo now.", plainReaderBlock)
+	const plainReviewerBlock = "# Findings\n\nThe code is sound.\n\n```relevo\nverdict: pass\n```\n"
+	writeReaderMessages(t, rt, first.Name, first.Round, "I am reviewing the repo now.", plainReviewerBlock)
 
 	second, err := reconcile(t, at(rt, 2*time.Minute), first)
 	if err != nil {

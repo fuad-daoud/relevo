@@ -33,6 +33,33 @@ func TestParseOutcomesPresent(t *testing.T) {
 	}
 }
 
+// fencelessOutcomeBlock renders the shipped closing block with its backtick
+// fences lost: a bare `relevo` line, the key lines, and no closing fence.
+func fencelessOutcomeBlock(keys ...string) []byte {
+	return []byte("prose\n\nrelevo\n" + strings.Join(keys, "\n") + "\n")
+}
+
+// TestParseOutcomesFencelessBlock pins the closing block whose backtick fences
+// were lost: a valid declared value parses as if the block were fenced, and an
+// invalid one still halts, so the tolerance never weakens validation.
+func TestParseOutcomesFencelessBlock(t *testing.T) {
+	t.Parallel()
+
+	o := Outputs{"findings": {Kind: OutputCount}}
+	got, reason := ParseOutcomes(o, fencelessOutcomeBlock("findings: 0"))
+	if reason != "" {
+		t.Fatalf("ParseOutcomes(fenceless findings: 0) reason = %q, want empty", reason)
+	}
+	if got["findings"] != "0" {
+		t.Fatalf("findings = %q, want 0", got["findings"])
+	}
+
+	_, reason = ParseOutcomes(o, fencelessOutcomeBlock("findings: many"))
+	if want := `findings: "many" is not a count`; reason != want {
+		t.Fatalf("ParseOutcomes(fenceless findings: many) reason = %q, want %q", reason, want)
+	}
+}
+
 func TestParseOutcomesMissing(t *testing.T) {
 	t.Parallel()
 
