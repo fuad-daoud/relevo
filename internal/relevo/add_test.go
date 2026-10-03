@@ -493,7 +493,10 @@ func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
 }
 
 // TestAddBranchMissingRefuses pins that a branch on neither the local repo nor
-// origin is a refusal before any git write.
+// origin -- and not brought by the fetch -- is a refusal before any git write.
+// The error class is part of the pin: an unclassified error here is what made
+// the CLI answer `internal` for a plain caller mistake (#893), so errors.Is
+// ErrRefused is asserted alongside the wording.
 func TestAddBranchMissingRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -506,6 +509,9 @@ func TestAddBranchMissingRefuses(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "not found locally or on origin") {
 		t.Fatalf("got %v, want a 'not found locally or on origin' refusal", err)
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("err = %v, want ErrRefused so the CLI renders `refused`, not `internal`", err)
 	}
 
 	if len(fg.addWorktreeCalls)+len(fg.checkoutWorktreeCalls)+len(fg.createTrackingBranchCalls)+

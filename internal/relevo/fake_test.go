@@ -277,6 +277,11 @@ type fakeGit struct {
 
 	fetchCalls []fetchCall
 	fetchErr   error
+	// fetchPopulates maps "<remote>/<ref>" to the sha that ref's
+	// remote-tracking entry gets on a successful fetch of it, so a fake-level
+	// test can stage "origin has the branch once we look" the way a real
+	// remote does. See Fetch.
+	fetchPopulates map[string]string
 
 	rebaseCalls     []rebaseCall
 	rebaseConflicts []string
@@ -654,7 +659,23 @@ func (f *fakeGit) CurrentBranch(ctx context.Context, dir string) (string, error)
 func (f *fakeGit) Fetch(ctx context.Context, dir, remote, ref string) error {
 	f.calls++
 	f.fetchCalls = append(f.fetchCalls, fetchCall{Dir: dir, Remote: remote, Ref: ref})
-	return f.fetchErr
+	if f.fetchErr != nil {
+		return f.fetchErr
+	}
+	// Real git opportunistically writes the remote-tracking ref when a fetch
+	// brings a branch down, and TestFetchMakesOriginRefResolvable in
+	// internal/git pins that against a real repo. fetchPopulates carries the
+	// same effect into the fake: on a successful fetch of <ref> from <remote>,
+	// the ref the caller is about to re-probe becomes resolvable, seeded with
+	// the sha named for it. A ref with no sha stays absent, which is how the
+	// fetched-but-still-missing refusal is staged.
+	if sha, ok := f.fetchPopulates[remote+"/"+ref]; ok {
+		if f.refSHA == nil {
+			f.refSHA = map[string]string{}
+		}
+		f.refSHA["refs/remotes/"+remote+"/"+ref] = sha
+	}
+	return nil
 }
 
 func (f *fakeGit) Rebase(ctx context.Context, dir, onto string) ([]string, error) {

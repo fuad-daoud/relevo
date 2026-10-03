@@ -852,6 +852,83 @@ func TestChainResumeWorkflowlessChainIsRefused(t *testing.T) {
 	}
 }
 
+// TestChainDoneWorkflowlessChainIsRefused pins the done-path refusal's class at
+// the CLI edge: a row the engine's own conversion could not migrate, and a row
+// whose engine state is gone, are both refused -- naming the row's own reason
+// and the command that reads it, and never an internal failure, which is what
+// the plain "carries no workflow" error answered. The running-chain sibling
+// above keeps its conflict class, so a script can still tell "stop it first"
+// from a refusal and from a failure inside relevo.
+func TestChainDoneWorkflowlessChainIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		shape string
+		strip func(t *testing.T, s *store.Store, name string)
+		want  string
+	}{
+		{
+			shape: "unconvertible",
+			strip: func(t *testing.T, s *store.Store, name string) {
+				t.Helper()
+				withChainRow(t, s, name, func(c *db.ChainRow) {
+					c.WorkflowJSON = nil
+					c.StateJSON = nil
+					c.SettingsJSON = []byte("not json")
+				})
+			},
+			want: "carries no workflow",
+		},
+		{
+			shape: "stateless",
+			strip: func(t *testing.T, s *store.Store, name string) {
+				t.Helper()
+				withChainRow(t, s, name, func(c *db.ChainRow) { c.StateJSON = nil })
+			},
+			want: "has no engine state",
+		},
+	} {
+		t.Run(tc.shape, func(t *testing.T) {
+			const name = "clidonenolegacy"
+			seedCLIChain(t, name, "halted")
+
+			root, err := store.DefaultRoot()
+			if err != nil {
+				t.Fatalf("DefaultRoot: %v", err)
+			}
+			tc.strip(t, store.New(root), name)
+
+			_, _, err = captureOutput(t, func() error { return run([]string{"done", name}) })
+			ce := requireCLIError(t, err, codeRefused, "")
+			if !strings.Contains(ce.message, "cannot be done") {
+				t.Errorf("message = %q, want it worded for the done verb", ce.message)
+			}
+			if !strings.Contains(ce.message, tc.want) {
+				t.Errorf("message = %q, want it to name %q as the row's own reason", ce.message, tc.want)
+			}
+			if !strings.Contains(ce.message, "relevo status "+name) {
+				t.Errorf("message = %q, want it to name `relevo status %s` as the next step", ce.message, name)
+			}
+		})
+	}
+}
+
+// withChainRow rewrites one seeded chain row under the store's own lock.
+func withChainRow(t *testing.T, s *store.Store, name string, edit func(c *db.ChainRow)) {
+	t.Helper()
+
+	err := s.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		edit(&c)
+		c.UpdatedAt = time.Now().UTC()
+		return tx.ChainPut(c)
+	})
+	if err != nil {
+		t.Fatalf("rewrite chain %s: %v", name, err)
+	}
+}
+
 // TestChainResumeOpenMemberRoundIsAConflict pins the class of a resume that
 // finds its member's round still open: a conflict naming `relevo stop <member>`
 // as the next command, not an internal failure.

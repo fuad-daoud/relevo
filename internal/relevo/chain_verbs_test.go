@@ -581,6 +581,224 @@ func TestWorkflowChainDoneWritesTheEngineState(t *testing.T) {
 	}
 }
 
+// TestChainDoneOnAWorkflowlessChainNeverInternal pins the row the engine's own
+// conversion cannot leave behind on the done path: `chain --done` read its
+// missing workflow or its missing engine state as a plain error, which the CLI
+// reports as internal. A row with no workflow is migrated through the same
+// single-row conversion the daemon's start-up sweep runs, and done then
+// releases it as any other chain. A row that still carries neither a workflow
+// nor a state -- or one whose stored definition no longer decodes -- is refused
+// in the input class instead, naming its own reason and the command that reads
+// it, and it is refused before any member is released, so the refusal leaves
+// every member and the chain's own status untouched and the verb retryable.
+func TestChainDoneOnAWorkflowlessChainNeverInternal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a row with no workflow is migrated and released", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stripChainToLegacy(t, rt, "shop")
+		// The copies of the round files the chain's seeds named are no longer
+		// needed once it is done, so the sweep has something to remove.
+		inputs := rt.Store.ChainInputDir("shop")
+		if err := os.MkdirAll(inputs, 0o755); err != nil {
+			t.Fatalf("MkdirAll the chain inputs: %v", err)
+		}
+		if err := os.WriteFile(inputs+"/seed-1.md", []byte("seed\n"), 0o644); err != nil {
+			t.Fatalf("write the chain inputs: %v", err)
+		}
+		pendingBefore := len(chainPendingChain(t, rt, "shop"))
+		traceBefore := len(chainTrace(t, rt, "shop"))
+
+		if _, err := ChainDone(context.Background(), rt, "shop"); err != nil {
+			t.Fatalf("ChainDone over a legacy row: %v", err)
+		}
+
+		row := chainStoredRow(t, rt, "shop")
+		if row.Status != string(chain.StatusDone) {
+			t.Errorf("chain status = %q, want done", row.Status)
+		}
+		if len(row.WorkflowJSON) == 0 || len(row.StateJSON) == 0 {
+			t.Errorf("chain carries workflow %d and state %d bytes, want the migration to have written both",
+				len(row.WorkflowJSON), len(row.StateJSON))
+		}
+		st, err := chainWorkflowState(row)
+		if err != nil {
+			t.Fatalf("chainWorkflowState after the migrated done: %v", err)
+		}
+		if st.Status != workflow.StatusDone {
+			t.Errorf("engine state status = %q, want done", st.Status)
+		}
+
+		members, err := rt.Store.ChainMembers("shop")
+		if err != nil {
+			t.Fatalf("ChainMembers shop: %v", err)
+		}
+		if len(members) == 0 {
+			t.Fatal("the chain has no members: the fixture did not start one")
+		}
+		if members[0].Binding != "shop" {
+			t.Errorf("first member = %q, want the builder shop", members[0].Binding)
+		}
+		for _, m := range members {
+			if b := chainBinding(t, rt, m.Binding); b.State != store.StateDone {
+				t.Errorf("member %s state = %q, want done", m.Binding, b.State)
+			}
+		}
+
+		events := chainTrace(t, rt, "shop")
+		if len(events) != traceBefore+1 {
+			t.Fatalf("trace = %d rows, want one more than %d", len(events), traceBefore)
+		}
+		act, err := chain.DecodeAction(events[len(events)-1].Action)
+		if err != nil {
+			t.Fatalf("DecodeAction: %v", err)
+		}
+		if act.Kind != chain.ActionFinish {
+			t.Errorf("done row action = %+v, want finish", act)
+		}
+		if pending := chainPendingChain(t, rt, "shop"); len(pending) != pendingBefore {
+			t.Errorf("pending chain deliveries = %d, want %d: done tells nobody", len(pending), pendingBefore)
+		}
+		if _, err := os.Stat(inputs); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the chain inputs directory %s = %v, want it swept", inputs, err)
+		}
+	})
+
+	t.Run("an unconvertible row is refused, not internal", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stripChainEngine(t, rt, true)
+		// Settings the conversion reads and cannot parse: the migration cannot
+		// bring this row onto the engine, which is what halts it in the sweep.
+		corruptChainSettings(t, rt, "shop")
+		traceBefore := len(chainTrace(t, rt, "shop"))
+
+		_, err := ChainDone(context.Background(), rt, "shop")
+		if err == nil {
+			t.Fatal("ChainDone over an unconvertible row = nil, want a refusal")
+		}
+		assertDoneRefusedNotInternal(t, err)
+		if !strings.Contains(err.Error(), "carries no workflow") {
+			t.Errorf("refusal = %q, want the row's own reason named as the cause", err)
+		}
+		assertDoneRefusedTouchedNothing(t, rt, "shop", traceBefore)
+	})
+
+	t.Run("a row with no engine state is refused, not internal", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stripChainEngine(t, rt, false)
+		traceBefore := len(chainTrace(t, rt, "shop"))
+
+		_, err := ChainDone(context.Background(), rt, "shop")
+		if err == nil {
+			t.Fatal("ChainDone over a state-less row = nil, want a refusal")
+		}
+		assertDoneRefusedNotInternal(t, err)
+		if !strings.Contains(err.Error(), "has no engine state") {
+			t.Errorf("refusal = %q, want the missing engine state named as the cause", err)
+		}
+		assertDoneRefusedTouchedNothing(t, rt, "shop", traceBefore)
+	})
+
+	t.Run("a row whose definition no longer decodes is refused, not internal", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stoppedChain(t, rt, ChainOptions{})
+		corruptChainWorkflow(t, rt, "shop")
+		traceBefore := len(chainTrace(t, rt, "shop"))
+
+		_, err := ChainDone(context.Background(), rt, "shop")
+		if err == nil {
+			t.Fatal("ChainDone over a corrupt definition = nil, want a refusal")
+		}
+		assertDoneRefusedNotInternal(t, err)
+		assertDoneRefusedTouchedNothing(t, rt, "shop", traceBefore)
+	})
+}
+
+// stripChainToLegacy leaves a stopped chain row as one that predates the
+// workflow engine: its definition and its engine state are gone and its legacy
+// columns and member rows are all it holds. Nothing on the row says a
+// conversion failed, so a done over it is the plainly migratable case.
+func stripChainToLegacy(t *testing.T, rt Runtime, name string) {
+	t.Helper()
+
+	stoppedChain(t, rt, ChainOptions{Name: name})
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		c.WorkflowJSON = nil
+		c.StateJSON = nil
+		c.UpdatedAt = rt.Now().UTC()
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatalf("strip %s onto the legacy shape: %v", name, err)
+	}
+}
+
+// corruptChainWorkflow writes a chain definition no workflow parser can read.
+func corruptChainWorkflow(t *testing.T, rt Runtime, name string) {
+	t.Helper()
+
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		c.WorkflowJSON = []byte("not json")
+		c.UpdatedAt = rt.Now().UTC()
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatalf("corrupt the chain workflow: %v", err)
+	}
+}
+
+// assertDoneRefusedNotInternal pins the class of a done refusal: the input
+// class, so the CLI reports it as refused or conflict and never as an internal
+// failure; it names the row's own reason, the done verb rather than the resume
+// verb the shared pattern carries, and the command that reads the row.
+func assertDoneRefusedNotInternal(t *testing.T, err error) {
+	t.Helper()
+
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("refusal %v is not in the input class: errors.Is(err, ErrRefused) is false, so the CLI reads it as internal", err)
+	}
+	if !strings.Contains(err.Error(), "cannot be done") {
+		t.Errorf("refusal %q is not worded for the done verb", err)
+	}
+	if strings.Contains(err.Error(), "cannot be resumed") {
+		t.Errorf("refusal %q reuses the resume verb's wording", err)
+	}
+	if !strings.Contains(err.Error(), "relevo status shop") {
+		t.Errorf("refusal %q names no working next step", err)
+	}
+}
+
+// assertDoneRefusedTouchedNothing pins that a refusal released nothing: every
+// member keeps its own state, the chain carries no done row of its own, and the
+// verb can be run again.
+func assertDoneRefusedTouchedNothing(t *testing.T, rt Runtime, name string, traceBefore int) {
+	t.Helper()
+
+	if b := chainBinding(t, rt, name); b.State == store.StateDone {
+		t.Errorf("member %s state = %q, want it untouched by a refusal", name, b.State)
+	}
+	if row := chainStoredRow(t, rt, name); row.Status == string(chain.StatusDone) {
+		t.Errorf("chain status = %q, want it untouched by a refusal", row.Status)
+	}
+	if events := chainTrace(t, rt, name); len(events) != traceBefore {
+		t.Errorf("trace = %d rows, want the %d it had: a refusal writes no done row", len(events), traceBefore)
+	}
+}
+
 // TestWorkflowEndDeliveryCarrierIsAMember pins the carrier: the one end
 // delivery lands on the first surviving member in chain_member order, even when
 // that member fills no legacy part.
