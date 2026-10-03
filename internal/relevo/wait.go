@@ -260,3 +260,30 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 		}
 	}
 }
+
+// WaitOwned lists Store.List() filtered to masterMindID, excluding StateDone,
+// and calls Wait with those names.
+func WaitOwned(ctx context.Context, rt Runtime, masterMindID string, round int, timeout, interval time.Duration) (string, WaitResult, error) {
+	if rt.Store == nil {
+		return "", WaitResult{}, errors.New("wait: store is required")
+	}
+	all, err := rt.Store.List()
+	if err != nil {
+		return "", WaitResult{}, err
+	}
+	var names []string
+	for _, b := range all {
+		if b.MasterMindID == masterMindID && b.State != store.StateDone {
+			names = append(names, b.Name)
+		}
+	}
+	if len(names) == 0 {
+		return "", WaitResult{}, fmt.Errorf("no active bindings for mastermind %s", masterMindID)
+	}
+	return Wait(ctx, rt, WaitOptions{
+		Names:    names,
+		Round:    round,
+		Timeout:  timeout,
+		Interval: interval,
+	})
+}

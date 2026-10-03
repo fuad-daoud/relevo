@@ -63,8 +63,7 @@ func callSend(t *testing.T, mode Mode, res any) string {
 }
 
 // TestMCPSendResultDependsOnMode covers the two mode-specific shapes of a
-// send tool result, replacing TestMCPToolsModeSendResultCarriesBackgroundWait
-// and TestMCPChannelModeSendResultHasNoWaitLine.
+// send tool result.
 func TestMCPSendResultDependsOnMode(t *testing.T) {
 	res := sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"}
 	tests := []struct {
@@ -72,15 +71,17 @@ func TestMCPSendResultDependsOnMode(t *testing.T) {
 		mode  Mode
 		check func(t *testing.T, text string)
 	}{
-		{"tools mode carries the background wait", ModeTools, func(t *testing.T, text string) {
-			want := "background wait (run with run_in_background, then end your turn):\n" +
-				"  relevo wait --name webshop --timeout 24h0m0s"
+		{"tools mode points at the wait tool", ModeTools, func(t *testing.T, text string) {
+			want := "wait tool:\n  wait(name: \"webshop\", timeout: \"24h0m0s\")"
 			if !strings.HasSuffix(text, want) {
 				t.Fatalf("send result text = %q, want it to end with:\n%s", text, want)
 			}
+			if strings.Contains(text, "run_in_background") || strings.Contains(text, "relevo wait") {
+				t.Fatalf("tools-mode send result must carry no background shell block, got %q", text)
+			}
 		}},
 		{"channel mode has no wait line", ModeChannel, func(t *testing.T, text string) {
-			if strings.Contains(text, "background wait") || strings.Contains(text, "relevo wait") {
+			if strings.Contains(text, "wait tool") || strings.Contains(text, "relevo wait") {
 				t.Fatalf("channel-mode send result must carry no wait line, got %q", text)
 			}
 		}},
@@ -104,13 +105,16 @@ func TestMCPInstructionsDependOnMode(t *testing.T) {
 			t.Errorf("channel instructions must not mention %q", word)
 		}
 	}
-	if strings.Contains(channel, "background wait") {
-		t.Error("channel instructions must not describe the background wait")
+	if strings.Contains(channel, "background wait") || strings.Contains(channel, "wait tool") {
+		t.Error("channel instructions must not describe a wait")
 	}
-	for _, want := range []string{"background wait", "relevo wait", "WaitTimeout", "relevo status --name"} {
+	for _, want := range []string{"wait tool", "still-open", "needs-you", "status(name)"} {
 		if !strings.Contains(tools, want) {
 			t.Errorf("tools instructions must mention %q", want)
 		}
+	}
+	if strings.Contains(tools, "run_in_background") {
+		t.Error("tools instructions must not teach the background shell wait")
 	}
 	if strings.Contains(tools, "this pane") || strings.Contains(channel, "this pane") {
 		t.Error(`instructions must say "this mastermind", not "this pane"`)

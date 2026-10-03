@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log"
 	"regexp"
 	"sync"
+	"time"
 )
 
 // ProtocolVersion is what initialize always answers: Claude Code refuses a channel that negotiates a newer one.
@@ -52,6 +54,12 @@ type Server struct {
 	Notice func() string
 	// OnInitialized fires once, after notifications/initialized.
 	OnInitialized func()
+
+	// ProgressInterval overrides the 30s progress tick when non-zero; tests use it.
+	ProgressInterval time.Duration
+
+	cancelMu    sync.Mutex
+	waitCancels map[string]context.CancelFunc
 
 	logger     *log.Logger
 	loggerOnce sync.Once
@@ -166,10 +174,17 @@ func (s *Server) handleLine(ctx context.Context, line []byte) {
 		}
 	case "tools/list":
 		if !isNotification {
-			s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": Tools()}})
+			s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": ToolsFor(s.Mode, s.Kind)}})
 		}
 	case "tools/call":
 		s.handleToolsCall(ctx, req)
+	case "notifications/cancelled":
+		var cp struct {
+			RequestID json.RawMessage `json:"requestId"`
+		}
+		if err := json.Unmarshal(req.Params, &cp); err == nil && len(cp.RequestID) > 0 {
+			s.cancelWait(string(bytes.TrimSpace(cp.RequestID)))
+		}
 	default:
 		if !isNotification {
 			s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: CodeMethodMissing, Message: fmt.Sprintf("unknown method %q", req.Method)}})
@@ -213,6 +228,8 @@ type callMeta struct {
 	SessionID string `json:"sessionID"`
 	// OpenCodeSessionID is the namespaced key opencode 2.0.18 sends.
 	OpenCodeSessionID string `json:"ai.opencode/sessionID"`
+	// ProgressToken is the MCP progress token if the caller requests progress notifications.
+	ProgressToken json.RawMessage `json:"progressToken,omitempty"`
 }
 
 // session picks the calling harness session: opencode's namespaced key when it
@@ -231,12 +248,120 @@ func (s *Server) handleToolsCall(ctx context.Context, req Request) {
 		return
 	}
 
+	if params.Name == "wait" {
+		if s.Mode != ModeTools || s.Kind == "opencode" {
+			s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: CodeInvalidParams, Message: fmt.Sprintf("unknown tool %q", params.Name)}})
+			return
+		}
+		s.handleWaitCall(ctx, req, params)
+		return
+	}
+
 	result, rpcErr := s.callTool(ctx, params.Name, params.Arguments, params.Meta.session())
 	if rpcErr != nil {
 		s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: rpcErr})
 		return
 	}
 	s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Result: s.withNotice(result)})
+}
+
+func (s *Server) handleWaitCall(ctx context.Context, req Request, params toolCallParams) {
+	var a WaitArgs
+	if err := decodeArgs(params.Arguments, &a); err != nil {
+		s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: CodeInvalidParams, Message: err.Error()}})
+		return
+	}
+	if err := validateWaitArgs(a); err != nil {
+		s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: CodeInvalidParams, Message: err.Error()}})
+		return
+	}
+
+	rawProg := bytes.TrimSpace(params.Meta.ProgressToken)
+	hasProgress := len(rawProg) > 0 && !bytes.Equal(rawProg, []byte("null"))
+	a.HasProgressToken = hasProgress
+
+	reqIDKey := string(bytes.TrimSpace(req.ID))
+	callCtx, cancel := context.WithCancel(ctx)
+	s.recordWaitCancel(reqIDKey, cancel)
+
+	if hasProgress {
+		var token any
+		_ = json.Unmarshal(rawProg, &token)
+		interval := s.ProgressInterval
+		if interval <= 0 {
+			interval = 30 * time.Second
+		}
+		s.emitProgress(token, 1, "waiting for runner")
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			beat := 1
+			for {
+				select {
+				case <-callCtx.Done():
+					return
+				case <-ticker.C:
+					beat++
+					s.emitProgress(token, beat, "waiting for runner")
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer func() {
+			cancel()
+			s.clearWaitCancel(reqIDKey)
+		}()
+
+		res, err := s.Verbs.Wait(callCtx, params.Meta.session(), a)
+		out, rpcErr := toolResultFrom(res, err)
+		if rpcErr != nil {
+			s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: rpcErr})
+			return
+		}
+		s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Result: s.withNotice(out)})
+	}()
+}
+
+func (s *Server) emitProgress(token any, progress int, msg string) {
+	note := Notification{
+		JSONRPC: "2.0",
+		Method:  "notifications/progress",
+		Params: map[string]any{
+			"progressToken": token,
+			"progress":      progress,
+			"message":       msg,
+		},
+	}
+	raw, err := json.Marshal(note)
+	if err != nil {
+		return
+	}
+	s.writeLine(raw)
+}
+
+func (s *Server) recordWaitCancel(id string, cancel context.CancelFunc) {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	if s.waitCancels == nil {
+		s.waitCancels = make(map[string]context.CancelFunc)
+	}
+	s.waitCancels[id] = cancel
+}
+
+func (s *Server) clearWaitCancel(id string) {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	delete(s.waitCancels, id)
+}
+
+func (s *Server) cancelWait(id string) {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	if cancel, ok := s.waitCancels[id]; ok {
+		cancel()
+	}
 }
 
 // withNotice appends the upgrade notice as one more content block; a nil Notice, or "", leaves the result unchanged.
@@ -275,11 +400,11 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage,
 		if rpcErr != nil || err != nil || a.DryRun {
 			return out, rpcErr
 		}
-		// Claude's tools mode gets no push, so the result ends with the
-		// background wait to start; channel mode already gets the event, and
-		// an opencode mastermind gets the report as a new turn.
+		// Claude's tools mode gets no push, so the result points at the wait
+		// tool; channel mode already gets the event, and an opencode mastermind
+		// gets the report as a new turn.
 		if s.Mode == ModeTools && s.Kind != "opencode" {
-			return appendWaitCommand(out, a.Name, budgetOf(res)), nil
+			return appendWaitPointer(out, a.Name, budgetOf(res)), nil
 		}
 		return out, nil
 
@@ -326,6 +451,9 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage,
 func toolResultFrom(res any, err error) (ToolResult, *RPCError) {
 	if err != nil {
 		return textResult(err.Error(), true), nil
+	}
+	if s, ok := res.(string); ok {
+		return textResult(s, false), nil
 	}
 	r, jerr := jsonResult(res)
 	if jerr != nil {
