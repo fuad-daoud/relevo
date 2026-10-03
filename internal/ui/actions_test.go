@@ -1036,9 +1036,23 @@ func TestReportReadyRowOpensReportTabWithoutClaiming(t *testing.T) {
 	if err := st.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 4, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
+	// The production shape, and the one that discriminates: the close payload
+	// is a pointer sentence naming the artifact, NOT the artifact's text, and
+	// the text itself lives in the file at Path. A fixture whose payload
+	// embedded the report body would pass whether or not the tab expanded,
+	// because payload-only text already carried the asserted body.
+	const payload = "The runner finished round 3. Report: relevo show atlas --round 3 --report"
+	const reportBody = "## round 3\n\nall good\n"
+	reportPath := st.ReportPath(name, 3)
+	if err := os.MkdirAll(filepath.Dir(reportPath), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(reportPath), err)
+	}
+	if err := os.WriteFile(reportPath, []byte(reportBody), 0o644); err != nil {
+		t.Fatalf("write report %s: %v", reportPath, err)
+	}
 	if err := st.AppendLog(name, store.LogEntry{
 		TS: railNow, Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport,
-		Payload: "round 3 report\n\nall good\n", Path: st.ReportPath(name, 3),
+		Payload: payload, Path: reportPath,
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
@@ -1081,8 +1095,18 @@ func TestReportReadyRowOpensReportTabWithoutClaiming(t *testing.T) {
 	if rv.pane.detail.active != tabReport {
 		t.Errorf("a report-ready round must open on the report tab, got %v", rv.pane.detail.active)
 	}
-	if got := rv.pane.detail.cache[tabReport].body; !strings.Contains(got, "all good") {
-		t.Errorf("report tab body = %q, want the report", got)
+	// The tab carries what the push path would carry: the pointer payload, then
+	// a blank line, then the report file's text. The second half is what a
+	// payload-only body could not produce.
+	body := rv.pane.detail.cache[tabReport].body
+	if !strings.Contains(body, payload) {
+		t.Errorf("report tab body = %q, want it to carry the pointer payload", body)
+	}
+	if !strings.Contains(body, "all good") {
+		t.Errorf("report tab body = %q, want the report file's text after the payload", body)
+	}
+	if !strings.Contains(body, payload+"\n\n"+reportBody) {
+		t.Errorf("report tab body = %q, want payload, blank line, then the file verbatim", body)
 	}
 
 	// The cockpit read claimed nothing: the payload is still there for the
@@ -1091,7 +1115,7 @@ func TestReportReadyRowOpensReportTabWithoutClaiming(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("Pull after opening a report-ready round = found %v, err %v; want the payload still pending", found, err)
 	}
-	if !strings.Contains(text, "round 3 report") {
+	if !strings.Contains(text, payload) {
 		t.Errorf("Pull text = %q, want round 3's payload", text)
 	}
 }
