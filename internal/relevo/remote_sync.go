@@ -352,18 +352,13 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
 				next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
 				f.Settle = a
-				// The catch-up path owns the tick's outcome whenever it ran,
-				// settled or not. Returning here rather than falling through to
-				// the halt below is what keeps it to one halt: a fallthrough
-				// discarded `next` and halted the stale `b` with view.Halt,
-				// clobbering the reason the catch-up decided on, filing a second
-				// entry for a round already notified, attempting a second
-				// delivery, and dropping the RemoteBundleFailures and
-				// RemoteAbsorbFailures increments so the budget never
-				// accumulated through this path.
-				//
-				// The retry-no-halt outcomes (abort, checked-out, absorb-retry)
-				// also stop here: they owe no halt at all.
+				// The catch-up owns the tick's outcome whenever it ran,
+				// settled or not. Falling through to the halt below discarded
+				// `next` and halted the stale `b` with view.Halt: the deciding
+				// reason clobbered, a second entry for a round already
+				// notified, a second delivery, and the failure counters
+				// dropped so the budget never accumulated here. The
+				// retry-no-halt outcomes stop here too -- they owe no halt.
 				return next, true, err
 			} else {
 				next, err := catchUp(ctx, rt, tx, b, view)

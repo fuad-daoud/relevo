@@ -51,7 +51,7 @@ func TestOriginLine(t *testing.T) {
 	})
 }
 
-// TestOriginLineHaltDistinctReportUnchanged pins #961's second defect: a halt
+// TestOriginLineHaltDistinctReportUnchanged pins the origin split: a halt
 // gets a line of its own, so a halt row cannot be mistaken for the report of
 // the same round by a read-back that keys on the origin string, and the report's
 // own line is left byte-identical.

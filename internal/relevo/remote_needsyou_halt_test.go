@@ -55,7 +55,7 @@ func remoteNeedsYouCatchUpCountsHaltEntries(t *testing.T, st *store.Store, name 
 	return n
 }
 
-// TestRemoteNeedsYouCatchUpHaltSingleEntry pins #961's third defect: a
+// TestRemoteNeedsYouCatchUpHaltSingleEntry pins the double-halted catch-up: a
 // needs_you view that also names a closed round halts once, and the reason is
 // the catch-up's.
 //

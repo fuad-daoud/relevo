@@ -87,7 +87,8 @@ func likePatterns(query string) []string {
 	}
 }
 
-// TestOpencodeReportNotShadowedBySameRoundHalt pins #961's second defect on the
+// TestOpencodeReportNotShadowedBySameRoundHalt pins the halt-shadows-report
+// defect on the
 // opencode side: a session that already holds the round's halt must not cause
 // the round's report to be confirmed without a POST.
 //

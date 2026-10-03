@@ -62,7 +62,8 @@ func waitOnClosedRoundHaltText(t *testing.T, rt Runtime, name string, b store.Bi
 	return text
 }
 
-// TestQueueReportArtifactCapHaltWaitOnClosedRound pins #961's first defect: a
+// TestQueueReportArtifactCapHaltWaitOnClosedRound pins the stranded
+// post-advance halt: a
 // reader round that closes over the artifact cap halts AFTER the round has
 // advanced, and the halt entry must be filed under the round that closed.
 //
