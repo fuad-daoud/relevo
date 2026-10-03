@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // gateCall is one Gate invocation, recorded by fakeActions.
@@ -54,9 +56,14 @@ type fakeActions struct {
 	candRole []string // the roles Candidates was asked for
 
 	candidates []string // what Candidates returns
-	pullText   string
-	pullOK     bool
-	pullErr    error
+	chainsDoc  relevo.ChainsDoc
+	chainsErr  error
+	// The scripted per-chain traces the trace view reads, by chain name.
+	chainTraces map[string]relevo.ChainTraceDoc
+	traceErr    error
+	pullText    string
+	pullOK      bool
+	pullErr     error
 
 	// The config views (round 2): the scripted stored doc and its error,
 	// plus the edits and probes the view made.
@@ -91,9 +98,48 @@ type fakeActions struct {
 	previewErr error
 	rollbacks  []int64
 
+	// The workflows view: the scripted list, the source and graph a name
+	// answers with, and the paths a workflow add or remove was asked for.
+	workflows    []relevo.WorkflowSummary
+	workflowsErr error
+	sources      map[string]workflowSourceText
+	graphs       map[string][]relevo.GraphRow
+	graphErr     error
+	adds         []workflowAddCall
+	addResults   map[string]Result
+	removes      []string
+	removeResult Result
+
+	// The edit loop: the actors an edited workflow may name, and the saves it
+	// was asked to store.
+	actors map[string]workflow.ActorInfo
+	saves  []workflowSaveCall
+
+	saveResult Result
+
 	result   Result
 	shellCmd *exec.Cmd
 	shellErr error
+}
+
+// workflowSourceText is one scripted source: the text a name serves and
+// whether it is a shipped workflow's definition rendered as JSON.
+type workflowSourceText struct {
+	text    string
+	shipped bool
+}
+
+// workflowAddCall is one WorkflowAdd invocation, recorded by fakeActions.
+type workflowAddCall struct {
+	path    string
+	replace bool
+}
+
+// workflowSaveCall is one WorkflowSave invocation, recorded by fakeActions.
+type workflowSaveCall struct {
+	name   string
+	source string
+	def    workflow.Definition
 }
 
 func (f *fakeActions) Stop(_ context.Context, key string) Result {
@@ -152,6 +198,17 @@ func (f *fakeActions) Candidates(role string) []string {
 }
 
 func (f *fakeActions) ConfigDoc() (relevo.ConfigDoc, error) { return f.doc, f.docErr }
+
+func (f *fakeActions) Chains(_ context.Context) (relevo.ChainsDoc, error) {
+	return f.chainsDoc, f.chainsErr
+}
+
+func (f *fakeActions) ChainTrace(_ context.Context, name string) (relevo.ChainTraceDoc, error) {
+	if f.traceErr != nil {
+		return relevo.ChainTraceDoc{}, f.traceErr
+	}
+	return f.chainTraces[name], nil
+}
 
 func (f *fakeActions) ApplyConfig(_ context.Context, e relevo.ConfigEdit) Result {
 	f.configEdits = append(f.configEdits, e)
@@ -232,6 +289,65 @@ func (f *fakeActions) RollbackPreview(rev int64) ([]relevo.ChangeLine, error) {
 func (f *fakeActions) Rollback(_ context.Context, rev int64) Result {
 	f.rollbacks = append(f.rollbacks, rev)
 	return f.result
+}
+
+// Workflows answers the scripted workflow list.
+func (f *fakeActions) Workflows() ([]relevo.WorkflowSummary, error) {
+	return f.workflows, f.workflowsErr
+}
+
+// WorkflowSource answers the scripted source for a name, and whether it is a
+// shipped workflow's definition.
+func (f *fakeActions) WorkflowSource(name string) (string, bool, error) {
+	s, ok := f.sources[name]
+	if !ok {
+		return "", false, errors.New("workflow " + name + " is not saved")
+	}
+	return s.text, s.shipped, nil
+}
+
+// WorkflowGraph answers the scripted step graph for a name.
+func (f *fakeActions) WorkflowGraph(name string) ([]relevo.GraphRow, error) {
+	if f.graphErr != nil {
+		return nil, f.graphErr
+	}
+	return f.graphs[name], nil
+}
+
+// WorkflowAdd records the path and whether replace was set, and answers the
+// scripted result for that path, or the shared result when none is scripted.
+func (f *fakeActions) WorkflowAdd(_ context.Context, path string, replace bool) Result {
+	f.adds = append(f.adds, workflowAddCall{path: path, replace: replace})
+	if res, ok := f.addResults[path]; ok {
+		return res
+	}
+	return f.result
+}
+
+// WorkflowRemove records the name and answers the scripted result.
+func (f *fakeActions) WorkflowRemove(_ context.Context, name string) Result {
+	f.removes = append(f.removes, name)
+	return f.removeResult
+}
+
+// WorkflowDefinition parses the scripted source, so the definition the edit loop
+// validates against is the one the fixture's own text describes.
+func (f *fakeActions) WorkflowDefinition(name string) (workflow.Definition, error) {
+	s, ok := f.sources[name]
+	if !ok {
+		return workflow.Definition{}, errors.New("workflow " + name + " is not saved")
+	}
+	return workflow.Parse([]byte(s.text))
+}
+
+// WorkflowActors answers the scripted actors an edited workflow may name.
+func (f *fakeActions) WorkflowActors() map[string]workflow.ActorInfo { return f.actors }
+
+// WorkflowSave records what an edit loop asked to store and answers the shared
+// result.
+func (f *fakeActions) WorkflowSave(_ context.Context, name, source string, def workflow.Definition) Result {
+	f.saves = append(f.saves, workflowSaveCall{name: name, source: source, def: def})
+	return f.saveResult
 }
 
 // key is one rune keypress, as the tests send them.

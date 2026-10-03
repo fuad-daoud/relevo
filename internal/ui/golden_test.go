@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 var updateGolden = flag.Bool("update", false, "update golden files")
@@ -803,6 +804,359 @@ func goldenActorsModel(t *testing.T, width, height int, fa *fakeActions, rep vie
 	return drain(t, m, execLine("actors", m.env(), m.prefs))
 }
 
+// workflowsFixtureList is the workflow list the goldens render: the shipped
+// workflow and two saved ones, so ORIGIN, INPUTS and PARAMS each have a row
+// that is not the same as its neighbours.
+func workflowsFixtureList() []relevo.WorkflowSummary {
+	return []relevo.WorkflowSummary{
+		{
+			Name: "default", Origin: relevo.WorkflowOriginShipped,
+			Description: "plans built, checked and reviewed, then one security scan",
+			Inputs:      workflow.Inputs{Plans: workflow.InputRequired},
+			Params: []relevo.WorkflowParam{
+				{Name: "builder", Kind: workflow.ParamString, Value: "builder"},
+				{Name: "reviewer", Kind: workflow.ParamString, Value: "reviewer"},
+				{Name: "scan", Kind: workflow.ParamBool, Value: "true"},
+			},
+		},
+		{
+			Name: "audit-only", Origin: relevo.WorkflowOriginSaved,
+			Description: "one reader round per plan",
+			Inputs:      workflow.Inputs{Plans: workflow.InputRequired, Task: workflow.InputOptional},
+		},
+		{
+			Name: "fix-first", Origin: relevo.WorkflowOriginSaved,
+			Description: "build once, then check",
+			Inputs:      workflow.Inputs{Task: workflow.InputRequired},
+			Params:      []relevo.WorkflowParam{{Name: "gate", Kind: workflow.ParamString, Value: "make check"}},
+		},
+	}
+}
+
+// workflowsFixtureSources is the source each fixture name serves, and which of
+// them answers with the shipped definition rather than source a user wrote.
+func workflowsFixtureSources() map[string]workflowSourceText {
+	return map[string]workflowSourceText{
+		"default": {text: "{\n  \"name\": \"default\",\n  \"start\": \"plans\"\n}\n", shipped: true},
+		"audit-only": {text: "# one reader round per plan\n" +
+			"name: audit-only\nstart: audit\nsteps:\n  audit: { run: reviewer, on: { done: done } }\n"},
+		"fix-first": {text: "name: fix-first\nstart: build\nsteps:\n" +
+			"  build: { run: builder, on: { done: check } }\n" +
+			"  check: { check: gate, on: { green: done, red: done } }\n"},
+	}
+}
+
+// workflowsFixtureGraphs is the step graph each fixture name serves, in the
+// order WorkflowGraph walks one.
+func workflowsFixtureGraphs() map[string][]relevo.GraphRow {
+	return map[string][]relevo.GraphRow{
+		"default": {
+			{ID: "plans", Kind: "for-each", Edges: []string{"build", "scan-gate"},
+				EdgeText: "on empty → scan-gate · on next → build"},
+			{ID: "build", Kind: "run", Actors: "builder", Edges: []string{"check"},
+				EdgeText: "on done → check"},
+			{ID: "check", Kind: "check", Actors: "gate", Edges: []string{"repair", "review"},
+				EdgeText: "on green → review · on red → repair"},
+			{ID: "repair", Kind: "run", Actors: "builder", Edges: []string{"check"},
+				EdgeText: "on done → check · budget → review"},
+			{ID: "review", Kind: "run", Actors: "reviewer", Edges: []string{"correct", "plans"},
+				EdgeText: "on verdict=changes → correct · on verdict=pass → plans"},
+		},
+		"audit-only": {
+			{ID: "audit", Kind: "run", Actors: "reviewer", EdgeText: "on done → done"},
+		},
+		"fix-first": {
+			{ID: "build", Kind: "run", Actors: "builder", Edges: []string{"check"}, EdgeText: "on done → check"},
+			{ID: "check", Kind: "check", Actors: "gate", EdgeText: "on green → done · on red → done"},
+		},
+	}
+}
+
+// goldenWorkflowsModel is the workflows goldens' builder: a loaded shell, the
+// `:workflows` command, and its list load drained.
+func goldenWorkflowsModel(t *testing.T, width, height int, fa *fakeActions) Model {
+	t.Helper()
+	m := goldenActionModel(t, width, height, fa, view.Report{})
+	return drain(t, m, execLine("workflows", m.env(), m.prefs))
+}
+
+// workflowsFake is the scripted Actions the workflows goldens run on.
+func workflowsFake() *fakeActions {
+	return &fakeActions{
+		workflows: workflowsFixtureList(),
+		sources:   workflowsFixtureSources(),
+		graphs:    workflowsFixtureGraphs(),
+		actors:    workflowsFixtureActors(),
+		result:    Result{Text: "stored workflow fix-first", Refresh: true},
+		saveResult: Result{
+			Text:    "workflow edit fix-first (config version 4)",
+			Refresh: true,
+		},
+	}
+}
+
+// workflowsFixtureActors are the actors the fixture workflows name, so the edit
+// loop validates against the same names its sources run.
+func workflowsFixtureActors() map[string]workflow.ActorInfo {
+	return map[string]workflow.ActorInfo{
+		"builder":  {Shape: workflow.ShapeWriter},
+		"reviewer": {Shape: workflow.ShapeReader},
+	}
+}
+
+// workflowsOn points the list's cursor at name and returns the model.
+func workflowsOn(t *testing.T, m Model, name string) Model {
+	t.Helper()
+	wv, ok := m.top().(workflowsView)
+	if !ok {
+		t.Fatalf(":workflows did not push a workflows view: %T", m.top())
+	}
+	for i, w := range wv.list {
+		if w.Name == name {
+			wv.cur = i
+			m.stack[len(m.stack)-1] = wv
+			return m
+		}
+	}
+	t.Fatalf("no workflow named %q in the list", name)
+	return m
+}
+
+// workflowsViewModelOn is the list with the cursor on name, over the Actions a
+// test scripted, so a key test can inspect what it recorded.
+func workflowsViewModelOn(t *testing.T, width, height int, fa *fakeActions, name string) Model {
+	t.Helper()
+	return workflowsOn(t, goldenWorkflowsModel(t, width, height, fa), name)
+}
+
+// workflowsViewModel is workflowsViewModelOn over the shared fixture, for the
+// goldens that only render.
+func workflowsViewModel(t *testing.T, width, height int, name string) Model {
+	t.Helper()
+	return workflowsViewModelOn(t, width, height, workflowsFake(), name)
+}
+
+// workflowGraphModel is one workflow's step graph, reached by enter.
+func workflowGraphModel(t *testing.T, width, height int, name string) Model {
+	t.Helper()
+	return candKeys(t, workflowsViewModel(t, width, height, name), tea.KeyMsg{Type: tea.KeyEnter})
+}
+
+// goldenChainsModel is the chains goldens' builder: a loaded shell, the
+// `:chains` command, and its doc load drained.
+func goldenChainsModel(t *testing.T, width, height int, fa *fakeActions) Model {
+	t.Helper()
+	m := goldenActionModel(t, width, height, fa, view.Report{})
+	return drain(t, m, execLine("chains", m.env(), m.prefs))
+}
+
+func chainsFixtureDoc() relevo.ChainsDoc {
+	return relevo.ChainsDoc{
+		Chains: []relevo.ChainEntry{
+			{
+				Name:      "api-worker",
+				Status:    "running",
+				Step:      "building",
+				PlanPos:   1,
+				PlanTotal: 3,
+				Elapsed:   4 * time.Minute,
+				Where:     "local",
+				Depth:     0,
+			},
+			{
+				Name:      "db-migrate",
+				Status:    "halted",
+				Reason:    "migration failed: schema mismatch on table users",
+				Step:      "verify",
+				PlanPos:   2,
+				PlanTotal: 2,
+				Elapsed:   12 * time.Minute,
+				Where:     "local",
+				Depth:     0,
+			},
+			{
+				Name:      "feature-auth",
+				Status:    "running",
+				Step:      "review",
+				PlanPos:   1,
+				PlanTotal: 1,
+				Elapsed:   25 * time.Minute,
+				Where:     "placed prod-1",
+				Depth:     0,
+				Children:  []string{"feature-auth.oauth", "feature-auth.token"},
+				Steps: []relevo.ChainStep{
+					{ID: "build", Kind: "run", Actor: "builder", Member: "feature-auth", Visits: 2, Round: 2, LastOutcome: "build r2 · done"},
+					{ID: "review", Kind: "run", Actor: "reviewer", Member: "feature-auth-reviewer", Visits: 1, Round: 1, InFlight: true, LastOutcome: "review r1 · verdict=changes"},
+					{ID: "check", Kind: "check", Visits: 1, Round: 1, LastOutcome: "check · red → repair"},
+					{ID: "repair", Kind: "run", Actor: "builder", Member: "feature-auth", Visits: 0},
+				},
+				Members: []view.BindingStatus{
+					chainMemberRow("feature-auth", 2),
+					chainMemberRow("feature-auth-reviewer", 1),
+				},
+			},
+			{
+				Name:      "feature-auth.oauth",
+				Parent:    "feature-auth",
+				Status:    "halted",
+				Reason:    "oauth callback endpoint returned 503",
+				Step:      "test",
+				PlanPos:   1,
+				PlanTotal: 1,
+				Elapsed:   8 * time.Minute,
+				Where:     "local",
+				Depth:     1,
+			},
+			{
+				Name:      "feature-auth.token",
+				Parent:    "feature-auth",
+				Status:    "done",
+				Step:      "finish",
+				PlanPos:   1,
+				PlanTotal: 1,
+				Elapsed:   15 * time.Minute,
+				Where:     "local",
+				Depth:     1,
+			},
+		},
+	}
+}
+
+// chainMemberRow is one chain member's status row: a writer mid-round, as the
+// chains read model carries it from the status document.
+func chainMemberRow(name string, round int) view.BindingStatus {
+	return view.BindingStatus{
+		Name: name, Round: round, PlanRound: round, Display: "ACTIVE",
+		State: "active", BuilderStatus: "working",
+		BuilderCandidate: "agy/antigravity/claude-sonnet-4-6",
+		BuilderName:      "claude-sonnet-4-6",
+		MasterMindName:   "architect-2", Branch: "relevo/" + name,
+		RoundStart: railNow.Add(-2 * time.Minute),
+	}
+}
+
+// chainsStepsModel is the steps golden's builder: the chains list, the cursor
+// pointed at the named chain, and enter.
+func chainsStepsModel(t *testing.T, width, height int, fa *fakeActions, chain string) Model {
+	t.Helper()
+	return chainsStepsModelOn(t, goldenChainsModel(t, width, height, fa), chain)
+}
+
+// chainsStepsModelOn points a chains list already built at chain and enters
+// it, so a golden can seed its own store first.
+func chainsStepsModelOn(t *testing.T, m Model, chain string) Model {
+	t.Helper()
+	cv, ok := m.top().(chainsView)
+	if !ok {
+		t.Fatalf(":chains did not push a chains view: %T", m.top())
+	}
+	for i, c := range cv.doc.Chains {
+		if c.Name == chain {
+			cv.cur = i
+			m.stack[len(m.stack)-1] = cv
+			break
+		}
+	}
+	return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+}
+
+// chainStepsHaltedModel is the halted chain's steps: a check that went red
+// and the repair step it chose.
+func chainStepsHaltedModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	doc := chainsFixtureDoc()
+	for i := range doc.Chains {
+		if doc.Chains[i].Name != "feature-auth" {
+			continue
+		}
+		doc.Chains[i].Status = "halted"
+		doc.Chains[i].Reason = "check went red twice on the same assertion"
+		doc.Chains[i].Steps = []relevo.ChainStep{
+			{ID: "build", Kind: "run", Actor: "builder", Member: "feature-auth", Visits: 2, Round: 2, LastOutcome: "build r2 · done"},
+			{ID: "review", Kind: "run", Actor: "reviewer", Member: "feature-auth-reviewer", Visits: 1, Round: 1, LastOutcome: "review r1 · verdict=changes"},
+			{ID: "check", Kind: "check", Visits: 2, Round: 2, LastOutcome: "check · red → repair"},
+			{ID: "repair", Kind: "run", Actor: "builder", Member: "feature-auth", Visits: 1, Round: 3, LastOutcome: "repair r3 · done"},
+		}
+	}
+	fa := &fakeActions{chainsDoc: doc}
+	m := chainsStepsModel(t, width, height, fa, "feature-auth")
+	return candKeys(t, m, tea.KeyMsg{Type: tea.KeyDown}) // the check step
+}
+
+// chainDrillModel is the member round a check step's outcome came from: the
+// builder's round 2, opened under the crumbs chains › feature-auth › build.
+func chainDrillModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	st := store.New(t.TempDir())
+	seedPlanFixture(t, st, "feature-auth", 2, railNow.Add(-6*time.Minute),
+		"# Round 2 plan\n\nAdd the token refresh path and its tests.\n")
+	fa := &fakeActions{chainsDoc: chainsFixtureDoc()}
+	m := goldenActionModelWithStore(t, width, height, fa, view.Report{}, st)
+	m = drain(t, m, execLine("chains", m.env(), m.prefs))
+	m = chainsStepsModelOn(t, m, "feature-auth")
+	return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // the build step
+}
+
+// chainTraceModel is the chains list with the trace of the cursor's chain
+// pushed and its read drained.
+func chainTraceModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	fa := &fakeActions{
+		chainsDoc:   chainsFixtureDoc(),
+		chainTraces: map[string]relevo.ChainTraceDoc{"feature-auth": chainTraceFixture()},
+	}
+	m := goldenChainsModel(t, width, height, fa)
+	cv := m.top().(chainsView)
+	for i, c := range cv.doc.Chains {
+		if c.Name == "feature-auth" {
+			cv.cur = i
+		}
+	}
+	m.stack[len(m.stack)-1] = cv
+	res, cmd := m.Update(key('t'))
+	return drain(t, res.(Model), cmd)
+}
+
+// chainTraceFromStepsModel is the same trace pushed from the steps view rather
+// than from the chains list: the two entry points must draw one breadcrumb, so
+// the golden for the steps path exists to pin that.
+func chainTraceFromStepsModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	fa := &fakeActions{
+		chainsDoc:   chainsFixtureDoc(),
+		chainTraces: map[string]relevo.ChainTraceDoc{"feature-auth": chainTraceFixture()},
+	}
+	m := chainsStepsModel(t, width, height, fa, "feature-auth")
+	res, cmd := m.Update(key('t'))
+	return drain(t, res.(Model), cmd)
+}
+
+// chainTraceFixture is the trace the trace golden renders: two closed rounds
+// and a check that went red.
+func chainTraceFixture() relevo.ChainTraceDoc {
+	seq := []relevo.ChainTraceEvent{
+		{
+			Seq: 1, TS: railNow.Add(-9 * time.Minute), Step: "build", Member: "feature-auth", Round: 1,
+			Flow:       &workflow.Event{Kind: workflow.EventStepClosed, Step: "build"},
+			FlowAction: &workflow.Action{Kind: workflow.ActionSend, Step: "review"},
+		},
+		{
+			Seq: 2, TS: railNow.Add(-6 * time.Minute), Step: "review", Member: "feature-auth-reviewer", Round: 1,
+			Flow:       &workflow.Event{Kind: workflow.EventStepClosed, Step: "review", Outcomes: map[string]string{"verdict": "changes"}},
+			FlowAction: &workflow.Action{Kind: workflow.ActionRunCheck, Step: "check"},
+		},
+		{
+			Seq: 3, TS: railNow.Add(-4 * time.Minute), Step: "check",
+			Flow:       &workflow.Event{Kind: workflow.EventCheckClosed, Step: "check", Run: 1, Result: "red"},
+			FlowAction: &workflow.Action{Kind: workflow.ActionSend, Step: "repair"},
+		},
+	}
+	return relevo.ChainTraceDoc{
+		Name: "feature-auth", Status: "running", Step: "repair",
+		Plan: 1, Plans: 1, Events: seq,
+	}
+}
+
 // goldenActorViewModel pushes the builder detail via enter.
 func goldenActorViewModel(t *testing.T, width, height int) Model {
 	t.Helper()
@@ -1494,6 +1848,129 @@ func TestGoldenViews(t *testing.T) {
 			build: func(t *testing.T) Model {
 				m := candDown(t, goldenAuditModel(t, 132, 34, auditFixtureFake()), 3) // #5, #4, #3, #2
 				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			},
+		},
+		{
+			name: "chains-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				fa := &fakeActions{chainsDoc: chainsFixtureDoc()}
+				return goldenChainsModel(t, 132, 34, fa)
+			},
+		},
+		{
+			name: "chains-100", width: 100, height: 30,
+			build: func(t *testing.T) Model {
+				fa := &fakeActions{chainsDoc: chainsFixtureDoc()}
+				return goldenChainsModel(t, 100, 30, fa)
+			},
+		},
+		{
+			name: "chain-steps-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				fa := &fakeActions{chainsDoc: chainsFixtureDoc()}
+				return chainsStepsModel(t, 132, 34, fa, "feature-auth")
+			},
+		},
+		{
+			name: "chain-steps-100", width: 100, height: 30,
+			build: func(t *testing.T) Model {
+				fa := &fakeActions{chainsDoc: chainsFixtureDoc()}
+				return chainsStepsModel(t, 100, 30, fa, "feature-auth")
+			},
+		},
+		{
+			name: "chain-steps-halted-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return chainStepsHaltedModel(t, 132, 34)
+			},
+		},
+		{
+			name: "chain-drill-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return chainDrillModel(t, 132, 34)
+			},
+		},
+		{
+			name: "chain-trace-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return chainTraceModel(t, 132, 34)
+			},
+		},
+		{
+			name: "chain-trace-steps-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return chainTraceFromStepsModel(t, 132, 34)
+			},
+		},
+		{
+			name: "chain-trace-steps-100", width: 100, height: 30,
+			build: func(t *testing.T) Model {
+				return chainTraceFromStepsModel(t, 100, 30)
+			},
+		},
+		{
+			name: "workflows-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return goldenWorkflowsModel(t, 132, 34, workflowsFake())
+			},
+		},
+		{
+			name: "workflows-100", width: 100, height: 30,
+			build: func(t *testing.T) Model {
+				return goldenWorkflowsModel(t, 100, 30, workflowsFake())
+			},
+		},
+		{
+			name: "workflow-view-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return workflowGraphModel(t, 132, 34, "default")
+			},
+		},
+		{
+			name: "workflow-source-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := workflowGraphModel(t, 132, 34, "fix-first")
+				return candKeys(t, m, key('s'))
+			},
+		},
+		{
+			name: "workflow-add-invalid-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				fa := workflowsFake()
+				fa.addResults = map[string]Result{
+					"~/workflows/broken.yaml": {Err: workflowInvalidErr(t)},
+				}
+				m := goldenWorkflowsModel(t, 132, 34, fa)
+				m = candKeys(t, m, key('a'))
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
+				m = candType(t, m, "~/workflows/broken.yaml")
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			},
+		},
+		{
+			name: "workflow-replace-confirm-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				fa := workflowsFake()
+				fa.addResults = map[string]Result{
+					"~/workflows/fix-first.yaml": {Err: workflowSavedErr(t, workflowsFixtureSources()["fix-first"].text)},
+				}
+				m := goldenWorkflowsModel(t, 132, 34, fa)
+				m = candKeys(t, m, key('a'))
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
+				m = candType(t, m, "~/workflows/fix-first.yaml")
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			},
+		},
+		{
+			name: "workflow-remove-confirm-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return candKeys(t, workflowsViewModel(t, 132, 34, "audit-only"), key('d'))
+			},
+		},
+		{
+			name: "workflow-edit-problems-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return workflowEditReopenModel(t, 132, 34)
 			},
 		},
 	}

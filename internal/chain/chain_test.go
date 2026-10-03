@@ -3,6 +3,7 @@ package chain
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
@@ -141,5 +142,49 @@ func TestBuilderHaltReasonCapsToOneLine(t *testing.T) {
 	// The note is capped the same way.
 	if got, want := BuilderHaltReason(reporttail.Tail{}, "first line\nsecond line", "halted"), "note: first line"; got != want {
 		t.Errorf("BuilderHaltReason = %q, want %q", got, want)
+	}
+}
+
+// TestBuilderHaltReasonSanitizesControlCharacters pins the defence in depth at
+// the source: firstLine cuts only on a newline, so a carriage return or an
+// escape sequence sitting mid-string survives into the halt reason every view
+// then draws. The reason must be inert before it leaves here.
+// Mutation: return the raw v.
+func TestBuilderHaltReasonSanitizesControlCharacters(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		tail reporttail.Tail
+		note string
+		want string
+	}{
+		{
+			name: "escape in the tail",
+			tail: reporttail.Tail{HaltedAt: "step 3\x1b[2J"},
+			want: "halted_at: step 3\uFFFD[2J",
+		},
+		{
+			name: "carriage return in the note",
+			note: "gate=fail\rrecovered",
+			want: "note: gate=failrecovered",
+		},
+		{
+			name: "escape in the first not_done item",
+			tail: reporttail.Tail{NotDone: []string{"finish the tests\x07", "then the docs"}},
+			want: "not_done: finish the tests\uFFFD",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BuilderHaltReason(tc.tail, tc.note, "halted")
+			if got != tc.want {
+				t.Fatalf("BuilderHaltReason = %q, want %q", got, tc.want)
+			}
+			if strings.ContainsRune(got, '\x1b') {
+				t.Errorf("BuilderHaltReason = %q, want no raw escape byte", got)
+			}
+		})
 	}
 }

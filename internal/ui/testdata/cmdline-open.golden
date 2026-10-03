@@ -15,12 +15,12 @@
      working   3    a round │   actors  who runs each job, and in what order                                   │                            
    ●  api                 r2│   agents  agent definitions per harness                                          │                            
    ●  atlas               r4│   stats  rounds, cost and health                                                 │                            
-   ●  worker              r2│   ungate  clear a recorded rate limit                                            │                            
-                            │   candidates  candidates, gates and who picks them                               │                            
-     on hold   1    paused o│ BINDINGS                                                                         │                            
-   ◐  ledger              r3│   round api  working · r2 · -                                                    │                            
-                            │   round atlas  working · r4 · -                                                  │                            
-   ✓  1 done  ·  1 today  · │ + 2 more match; keep typing                                                      │                            
+   ●  worker              r2│   chains  chains and their steps                                                 │                            
+                            │   ungate  clear a recorded rate limit                                            │                            
+     on hold   1    paused o│   candidates  candidates, gates and who picks them                               │                            
+   ◐  ledger              r3│ BINDINGS                                                                         │                            
+                            │   round api  working · r2 · -                                                    │                            
+   ✓  1 done  ·  1 today  · │ + 3 more match; keep typing                                                      │                            
                             │                                              tab complete · enter go · esc close │                            
                             ╰──────────────────────────────────────────────────────────────────────────────────╯                            
                                                                                                                                             

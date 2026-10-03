@@ -264,6 +264,12 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 			return notice("no database: " + err.Error())
 		}
 		return rootThen(init, v)
+	case "chains":
+		if env.Actions == nil {
+			return notice("the config views need relevo ui on this machine")
+		}
+		v, init := newChainsView(env)
+		return rootThen(init, v)
 	case "candidates":
 		if env.Actions == nil {
 			return notice("the config views need relevo ui on this machine")
@@ -275,6 +281,12 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 			return notice("the config views need relevo ui on this machine")
 		}
 		v, init := newActorsView(env)
+		return rootThen(init, v)
+	case "workflows":
+		if env.Actions == nil {
+			return notice("the config views need relevo ui on this machine")
+		}
+		v, init := newWorkflowsView(env)
 		return rootThen(init, v)
 	case "agents":
 		if env.Actions == nil {
