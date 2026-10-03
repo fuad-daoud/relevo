@@ -364,18 +364,149 @@ func TestOpencodeDeliverUnavailableCases(t *testing.T) {
 	}
 }
 
-// TestOpencodeDeliverFallsBackAfterFallbackAfter proves every OutcomeUnavailable
-// condition becomes OutcomeNotMine once FallbackAfter has passed, so the pane path
-// takes over rather than retrying forever.
+// opencodeDownServer is a service that refuses the first failures POSTs and takes
+// the one after them: the opencode-down-then-recovered shape the retry exists
+// for. It records every POST it is asked for.
+type opencodeDownServer struct {
+	mu       sync.Mutex
+	posts    int
+	failures int // POSTs answered 503 before the service takes one
+}
+
+func (s *opencodeDownServer) start(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		s.mu.Lock()
+		s.posts++
+		failing := s.posts <= s.failures
+		s.mu.Unlock()
+		if failing {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func (s *opencodeDownServer) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.posts
+}
+
+// TestOpencodeDeliverRetriesThroughAnOutage is the push that must not strand: a
+// service that refuses the first POSTs is retried with backoff and the payload
+// is admitted once it takes one, rather than being written off at a short
+// fallback so a pane path with no collector behind it would take it. The read
+// back that follows in the same tick confirms it, and no POST is repeated
+// after that.
+func TestOpencodeDeliverRetriesThroughAnOutage(t *testing.T) {
+	t.Parallel()
+
+	svc := &opencodeDownServer{failures: 2}
+	srv := svc.start(t)
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
+	// seenFrom 0: the session has not taken the payload yet, so every attempt
+	// below is a read-back that finds nothing.
+	exec := &fakeSqliteExec{}
+
+	d := &OpencodeDeliverer{
+		StateFiles:  []string{stateFile},
+		DBPath:      filepath.Join(dir, "opencode.db"),
+		Exec:        exec,
+		Alive:       aliveAlways,
+		RetryWindow: 5 * time.Second,
+		RetryBase:   time.Millisecond,
+		RetryMax:    2 * time.Millisecond,
+	}
+
+	payload := "relevo: round 1 · to MasterMind · about runner \"w\" (not the human)\n\nThe runner finished round 1."
+	queuedAt := time.Now().Add(-time.Minute)
+
+	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), payload, "/x/001-report.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeAdmitted || reason != "posted; awaiting the session" {
+		t.Fatalf("Deliver = (%v, %q), want OutcomeAdmitted after the service recovered", out, reason)
+	}
+	if got := svc.count(); got != 3 {
+		t.Fatalf("POSTs = %d, want 3: the two refusals and the one that took it", got)
+	}
+
+	// The session takes the turn and the read-back the same tick runs confirms
+	// it, with no further POST: an outage is ridden out, not double-sent.
+	exec.seenFrom = exec.calls + 1
+	out, reason, err = d.Confirm(context.Background(), opencodeMasterMind("ses_abc123"), payload, queuedAt)
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if out != OutcomeDelivered {
+		t.Fatalf("Confirm = (%v, %q), want OutcomeDelivered once the session took it", out, reason)
+	}
+	if got := svc.count(); got != 3 {
+		t.Fatalf("POSTs = %d after the confirming read-back, want 3: a read-back never sends", got)
+	}
+}
+
+// TestOpencodeDeliverRetryStopsOnASeenPayload pins the idempotence rule inside
+// the retry loop: once the session holds the payload, the loop confirms it and
+// stops, so the retries that follow an outage never re-POST a payload that
+// already landed. Only the POST before the payload was seen is ever sent.
+func TestOpencodeDeliverRetryStopsOnASeenPayload(t *testing.T) {
+	t.Parallel()
+
+	svc := &opencodeDownServer{failures: 1}
+	srv := svc.start(t)
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
+	// seenFrom 2: the first read-back finds nothing and the first POST is
+	// refused; the second read-back finds the payload the refused POST had in
+	// fact already queued.
+	exec := &fakeSqliteExec{seenFrom: 2}
+
+	d := &OpencodeDeliverer{
+		StateFiles:  []string{stateFile},
+		DBPath:      filepath.Join(dir, "opencode.db"),
+		Exec:        exec,
+		Alive:       aliveAlways,
+		RetryWindow: 5 * time.Second,
+		RetryBase:   time.Millisecond,
+		RetryMax:    2 * time.Millisecond,
+	}
+
+	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeDelivered || reason != "already present" {
+		t.Fatalf("Deliver = (%v, %q), want OutcomeDelivered/\"already present\"", out, reason)
+	}
+	if got := svc.count(); got != 1 {
+		t.Fatalf("POSTs = %d, want 1: a retry must never re-POST a payload the session holds", got)
+	}
+}
+
+// TestOpencodeDeliverFallsBackAfterFallbackAfter proves the give-up gate still
+// ends a payload an opencode cannot take: once the opencode push horizon has
+// passed, the entry is OutcomeNotMine and reported for the pane path rather
+// than retried forever. The horizon is the long one, because an opencode give-up
+// has no collector behind it, so the gate sits at the end of the retry window
+// and not just after it.
 func TestOpencodeDeliverFallsBackAfterFallbackAfter(t *testing.T) {
 	t.Parallel()
 
 	stateFile := writeOpencodeServiceFile(t, t.TempDir(), "http://127.0.0.1:1", "pw", 1)
 	queuedAt := time.Unix(1000, 0)
-	now := queuedAt.Add(31 * time.Second) // past the 30s default
+	now := queuedAt.Add(OpencodePushHorizon + time.Second) // past the opencode horizon
 
 	d := &OpencodeDeliverer{
-		StateFiles: []string{stateFile}, // deliberately unusable (dead pid) -- would be OutcomeUnavailable before the FallbackAfter check
+		StateFiles: []string{stateFile}, // deliberately unusable (dead pid) -- would be OutcomeUnavailable before the horizon check
 		DBPath:     filepath.Join(t.TempDir(), "opencode.db"),
 		Exec:       &fakeSqliteExec{},
 		Alive:      aliveNever,
@@ -396,7 +527,7 @@ func TestOpencodeDeliverFallsBackAfterFallbackAfter(t *testing.T) {
 
 // TestOpencodeDeliverConfirmsAPayloadSeenPastFallback proves the read-back
 // precedes the give-up gate: a payload whose text is already in the session is
-// confirmed past FallbackAfter, and never POSTs.
+// confirmed past the push horizon, and never POSTs.
 func TestOpencodeDeliverConfirmsAPayloadSeenPastFallback(t *testing.T) {
 	t.Parallel()
 
@@ -412,7 +543,7 @@ func TestOpencodeDeliverConfirmsAPayloadSeenPastFallback(t *testing.T) {
 	exec := &fakeSqliteExec{seenFrom: 1}
 
 	queuedAt := time.Unix(1000, 0)
-	now := queuedAt.Add(31 * time.Second) // past the 30s default
+	now := queuedAt.Add(OpencodePushHorizon + time.Second) // past the opencode horizon
 
 	d := &OpencodeDeliverer{
 		StateFiles: []string{stateFile},
@@ -442,7 +573,7 @@ func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 
 	stateFile := writeOpencodeServiceFile(t, t.TempDir(), "http://127.0.0.1:1", "pw", 1)
 	queuedAt := time.Unix(1000, 0)
-	now := queuedAt.Add(31 * time.Second)
+	now := queuedAt.Add(OpencodePushHorizon + time.Second)
 
 	d := &OpencodeDeliverer{
 		StateFiles: []string{stateFile},
@@ -455,8 +586,12 @@ func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 	payload := "relevo: round 1\n\nbody"
 	endpoint := opencodeMasterMind("ses_abc123")
 
-	// 1. call Deliver three times with the same payload and queuedAt, with now = queuedAt+31s, +32s and +33s
-	for _, sec := range []time.Duration{31 * time.Second, 32 * time.Second, 33 * time.Second} {
+	// 1. call Deliver three times with the same payload and queuedAt, each past the horizon
+	for _, sec := range []time.Duration{
+		OpencodePushHorizon + time.Second,
+		OpencodePushHorizon + 2*time.Second,
+		OpencodePushHorizon + 3*time.Second,
+	} {
 		now = queuedAt.Add(sec)
 		out, reason, err := d.Deliver(context.Background(), endpoint, payload, "/x/r.md", queuedAt)
 		if err != nil {
@@ -482,7 +617,7 @@ func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 
 	// 4. call once more with a different queuedAt (queuedAt+1s) and a now past its fallback, and assert the count is 2
 	queuedAt2 := queuedAt.Add(time.Second)
-	now = queuedAt2.Add(31 * time.Second)
+	now = queuedAt2.Add(OpencodePushHorizon + time.Second)
 	out, reason, err := d.Deliver(context.Background(), endpoint, payload, "/x/r.md", queuedAt2)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
@@ -495,7 +630,7 @@ func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 	}
 
 	// 5. set now one hour past the first call and call with the first payload again, and assert the count is 3
-	now = queuedAt.Add(31*time.Second + time.Hour)
+	now = queuedAt.Add(OpencodePushHorizon + time.Second + time.Hour)
 	out, reason, err = d.Deliver(context.Background(), endpoint, payload, "/x/r.md", queuedAt)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)

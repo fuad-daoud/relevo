@@ -24,6 +24,28 @@ const (
 	OpencodeConfirmWindow  = 3 * time.Second
 	OpencodeConfirmPoll    = 250 * time.Millisecond
 	DefaultFallbackAfter   = 30 * time.Second
+
+	// OpencodePushHorizon is how long an opencode payload may keep being POSTed
+	// before Deliver gives up on it. It is opencode's own and it is long: an
+	// opencode mastermind has no collector on the pane path, so a give-up here
+	// hands the payload to nothing that would deliver it -- it only makes the
+	// entry visible to a human. Thirty minutes rides out a service restart or a
+	// closed laptop, and still bounds the wait.
+	OpencodePushHorizon = 30 * time.Minute
+
+	// OpencodeRetryWindow bounds one Deliver call's POST retry loop, so a
+	// single tick never holds the caller's lock for the whole horizon: what one
+	// call's window does not cover, the next tick's call covers, up to the
+	// horizon.
+	OpencodeRetryWindow = 30 * time.Second
+	// OpencodeRetryBase is the first wait between POST attempts and
+	// OpencodeRetryMax the ceiling it doubles up to. The shape mirrors confirm,
+	// which re-reads the session every OpencodeConfirmPoll: the retry re-POSTs
+	// every OpencodeRetryBase and doubles, so a service that is down is polled
+	// gently rather than hammered.
+	OpencodeRetryBase = time.Second
+	OpencodeRetryMax  = 15 * time.Second
+
 	// opencodeClockSkew tolerates opencode's clock reading slightly behind
 	// the releaser's when comparing a session row's timestamp against the
 	// entry's queuedAt. It is agy's value, so both routes tolerate the same
@@ -37,13 +59,21 @@ const (
 // session back out of opencode's sqlite db, because a 2xx from the wrong
 // server process is not evidence anything arrived.
 type OpencodeDeliverer struct {
-	Client        *http.Client // nil -> &http.Client{Timeout: OpencodeRequestTimeout}
-	StateFiles    []string     // candidate service.json files, tried in order
-	DBPath        string       // $XDG_DATA_HOME/opencode/opencode.db
-	Exec          usage.Exec   // the sqlite3 shell-out; nil -> OutcomeNotMine
-	Now           func() time.Time
-	Alive         func(pid int) bool // nil -> the same rule the claim store uses
-	FallbackAfter time.Duration      // zero -> DefaultFallbackAfter
+	Client     *http.Client // nil -> &http.Client{Timeout: OpencodeRequestTimeout}
+	StateFiles []string     // candidate service.json files, tried in order
+	DBPath     string       // $XDG_DATA_HOME/opencode/opencode.db
+	Exec       usage.Exec   // the sqlite3 shell-out; nil -> OutcomeNotMine
+	Now        func() time.Time
+	Alive      func(pid int) bool // nil -> the same rule the claim store uses
+	// FallbackAfter is the give-up horizon; zero -> OpencodePushHorizon. agy
+	// shares the 30s DefaultFallbackAfter instead, and that default is not moved.
+	FallbackAfter time.Duration
+	// RetryWindow bounds one call's POST retry loop; zero -> OpencodeRetryWindow.
+	RetryWindow time.Duration
+	// RetryBase is the first POST backoff and RetryMax its ceiling; zero ->
+	// OpencodeRetryBase and OpencodeRetryMax.
+	RetryBase time.Duration
+	RetryMax  time.Duration
 
 	// gaveUp rate-limits the give-up log line.
 	gaveUp giveUpLog
@@ -85,22 +115,52 @@ func (d *OpencodeDeliverer) client() *http.Client {
 	return &http.Client{Timeout: OpencodeRequestTimeout}
 }
 
+// fallbackAfter is the give-up horizon: opencode's own long one, because an
+// opencode give-up has nowhere to hand the payload but a human. The shared
+// 30s DefaultFallbackAfter stays where agy reads it.
 func (d *OpencodeDeliverer) fallbackAfter() time.Duration {
 	if d.FallbackAfter > 0 {
 		return d.FallbackAfter
 	}
-	return DefaultFallbackAfter
+	return OpencodePushHorizon
+}
+
+func (d *OpencodeDeliverer) retryWindow() time.Duration {
+	if d.RetryWindow > 0 {
+		return d.RetryWindow
+	}
+	return OpencodeRetryWindow
+}
+
+func (d *OpencodeDeliverer) retryBase() time.Duration {
+	if d.RetryBase > 0 {
+		return d.RetryBase
+	}
+	return OpencodeRetryBase
+}
+
+func (d *OpencodeDeliverer) retryMax() time.Duration {
+	if d.RetryMax > 0 {
+		return d.RetryMax
+	}
+	return OpencodeRetryMax
 }
 
 // Deliver implements MasterMindDeliverer's push half for opencode
 // masterminds.
 //
 // The step order is fixed and non-obvious: guards, origin, seen, pastFallback,
-// service resolution, POST. The read-back runs before the give-up gate, so a
-// payload whose text is already in the session is confirmed at any age -- a
-// late-admitted payload must not be failed by the fallback before it is ever
-// read. The gate stays above the service checks, so a dead service past the
-// window still gives up.
+// service resolution, the retried POST. The read-back runs before the give-up
+// gate, so a payload whose text is already in the session is confirmed at any
+// age -- a late-admitted payload must not be failed by the horizon before it
+// is ever read. The gate stays above the service checks, so a dead service past
+// the window still gives up.
+//
+// Once the service resolves, post retries the POST with backoff instead of
+// giving the payload up on the first failure, so an opencode that is down for
+// a moment is ridden out rather than stranding the entry on a route no
+// opencode collector reads. Only a failure that outlives the call's retry
+// window is reported, and only the horizon ends the retries for good.
 //
 // A 2xx is admission, not delivery: Deliver returns OutcomeAdmitted without
 // reading the session back, and the caller records that admit before calling
@@ -155,24 +215,7 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoi
 		return OutcomeUnavailable, "opencode service url is not loopback", nil
 	}
 
-	req, err := d.buildRequest(ctx, svc, mastermind.SessionID, payload)
-	if err != nil {
-		return OutcomeNotMine, "", fmt.Errorf("build opencode request: %w", err)
-	}
-
-	resp, err := d.client().Do(req)
-	if err != nil {
-		return OutcomeUnavailable, "post: " + firstErrorLine(err), nil
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return OutcomeUnavailable, fmt.Sprintf("post: %d", resp.StatusCode), nil
-	}
-
-	// The 2xx only proves the service queued the prompt: the caller marks
-	// the entry admitted and reads the session back through Confirm.
-	return OutcomeAdmitted, "posted; awaiting the session", nil
+	return d.post(ctx, svc, mastermind.SessionID, origin, payload, queuedAt)
 }
 
 // Confirm implements MasterMindDeliverer's read-back half for opencode
@@ -230,6 +273,95 @@ func (d *OpencodeDeliverer) pastFallback(sessionID, payload string, queuedAt tim
 		slog.Info("opencode push not confirmed; payload stays pending for the background wait", "session", sessionID, "reason", reason)
 	}
 	return OutcomeNotMine, reason, true
+}
+
+// post POSTs the payload and retries it with backoff, in the shape confirm
+// uses -- a deadline, a read-back on every pass, a wait between passes -- with
+// the POST as the retried unit instead of the read-back.
+//
+// The read-back stays above every send in the loop, so a payload an earlier
+// attempt did land is confirmed instead of being POSTed again. An attempt that
+// fails is a reason, not a Go error: the payload stays pending, the next tick
+// picks the loop up again under the same horizon, and only the horizon ends
+// the retries. A 2xx ends the loop and the caller confirms it.
+func (d *OpencodeDeliverer) post(ctx context.Context, svc opencodeService, sessionID, origin, payload string, queuedAt time.Time) (Outcome, string, error) {
+	deadline := d.retryDeadline(queuedAt)
+	backoff := d.retryBase()
+
+	// The read-back above the give-up gate already answered for this call's
+	// first attempt, so it POSTs; every attempt after it reads the session
+	// back first, which is what stops the loop from re-sending a payload an
+	// earlier attempt did land.
+	for first := true; ; first = false {
+		if !first {
+			seen, err := d.seen(ctx, sessionID, origin, queuedAt)
+			if err != nil {
+				return OutcomeUnavailable, "sqlite3: " + firstErrorLine(err), nil
+			}
+			if seen {
+				slog.Info("opencode push delivered", "session", sessionID)
+				return OutcomeDelivered, "already present", nil
+			}
+		}
+
+		took, reason, err := d.postOnce(ctx, svc, sessionID, payload)
+		if err != nil {
+			return OutcomeNotMine, "", err
+		}
+		if took {
+			// The 2xx only proves the service queued the prompt: the caller
+			// marks the entry admitted and reads the session back through
+			// Confirm, in this same tick.
+			return OutcomeAdmitted, "posted; awaiting the session", nil
+		}
+
+		if !time.Now().Before(deadline) {
+			return OutcomeUnavailable, reason, nil
+		}
+		select {
+		case <-ctx.Done():
+			return OutcomeUnavailable, reason, nil
+		case <-time.After(backoff):
+		}
+		backoff = min(2*backoff, d.retryMax())
+	}
+}
+
+// postOnce POSTs the payload once. took reports whether the service took it; a
+// service that refused it is a reason string, because an opencode that is down
+// or busy is OutcomeUnavailable rather than a bug in relevo.
+func (d *OpencodeDeliverer) postOnce(ctx context.Context, svc opencodeService, sessionID, payload string) (bool, string, error) {
+	req, err := d.buildRequest(ctx, svc, sessionID, payload)
+	if err != nil {
+		return false, "", fmt.Errorf("build opencode request: %w", err)
+	}
+
+	resp, err := d.client().Do(req)
+	if err != nil {
+		return false, "post: " + firstErrorLine(err), nil
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Sprintf("post: %d", resp.StatusCode), nil
+	}
+	return true, "", nil
+}
+
+// retryDeadline bounds this call's retry loop: the call's own retry window,
+// never past the give-up horizon, so a loop cannot outlive the moment the entry
+// would be given up on anyway. A zero queuedAt has no horizon to respect and
+// takes the retry window alone.
+func (d *OpencodeDeliverer) retryDeadline(queuedAt time.Time) time.Time {
+	deadline := time.Now().Add(d.retryWindow())
+	if queuedAt.IsZero() {
+		return deadline
+	}
+	horizon := queuedAt.Add(d.fallbackAfter())
+	if horizon.Before(deadline) {
+		return horizon
+	}
+	return deadline
 }
 
 // confirm polls the session until the origin is seen in it, the confirm
