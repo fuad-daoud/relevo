@@ -14,13 +14,21 @@ import (
 
 // Tick advances every binding across all client owners.
 //
-// The owner list is snapshotted first and each owner is then reconciled outside
+// The config refresh runs first, once per tick, so every owner this tick
+// reconciles and every round it admits is decided against the same config: a
+// reload can never land halfway through a tick. It reads the machine database
+// outside s.mu, so a slow reload delays the tick without blocking the request
+// handlers, which keep serving the previous copy until the swap.
+//
+// The owner list is snapshotted next and each owner is then reconciled outside
 // s.mu: a slow or blocked owner therefore cannot stall another owner's poll,
 // ack or round start. s.mu is not held across any Daemon.Tick call, so the only
 // per-owner exclusion in the reconcile is each owner's own Store lock, which the
 // daemon already takes per binding. A failing owner is still isolated: its error
 // is logged and the walk continues.
 func (s *Server) Tick(ctx context.Context) error {
+	s.refreshConfig()
+
 	owners, err := s.ownerRoots()
 	if err != nil {
 		if os.IsNotExist(err) {

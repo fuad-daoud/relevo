@@ -310,34 +310,9 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		if rt.Git == nil {
 			return AddResult{}, ErrGitRequired
 		}
-		if err := branchDrivenByLiveBinding(rt, opts.Branch); err != nil {
-			return AddResult{}, err
-		}
-		exists, err := rt.Git.BranchExists(ctx, opts.Repo, opts.Branch)
+		tip, createdTracking, err := resolveAdoptedBranch(ctx, rt, opts.Repo, opts.Branch)
 		if err != nil {
 			return AddResult{}, err
-		}
-		createdTracking := false
-		if !exists {
-			originRef := "origin/" + opts.Branch
-			_, ok, err := rt.Git.RefSHA(ctx, opts.Repo, "refs/remotes/"+originRef)
-			if err != nil {
-				return AddResult{}, err
-			}
-			if !ok {
-				return AddResult{}, fmt.Errorf("branch %q not found locally or on origin", opts.Branch)
-			}
-			if err := rt.Git.CreateTrackingBranch(ctx, opts.Repo, opts.Branch, originRef); err != nil {
-				return AddResult{}, err
-			}
-			createdTracking = true
-		}
-		tip, ok, err := rt.Git.RefSHA(ctx, opts.Repo, "refs/heads/"+opts.Branch)
-		if err != nil {
-			return AddResult{}, err
-		}
-		if !ok {
-			return AddResult{}, fmt.Errorf("branch %q vanished", opts.Branch)
 		}
 		cwd = rt.Store.WorktreePath(opts.Name)
 		if err := rt.Git.CheckoutWorktree(ctx, opts.Repo, cwd, opts.Branch); err != nil {

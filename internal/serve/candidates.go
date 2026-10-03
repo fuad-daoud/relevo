@@ -26,13 +26,16 @@ func (s *Server) handleCandidates(w http.ResponseWriter, r *http.Request) {
 	pickedToken, _, _ := relevo.PickServedCandidate(rt, "")
 
 	var views []remote.CandidateView
-	if s.cfg.Candidates != nil {
-		for _, refStr := range s.cfg.Candidates.Refs() {
+	// One copy for the whole walk: a reload landing mid-request cannot show a
+	// view built from two different candidate sets.
+	candidates := s.live().Candidates
+	if candidates != nil {
+		for _, refStr := range candidates.Refs() {
 			ref, err := candidate.ParseRef(refStr)
 			if err != nil {
 				continue
 			}
-			c, err := s.cfg.Candidates.Lookup(ref)
+			c, err := candidates.Lookup(ref)
 			if err != nil {
 				continue
 			}

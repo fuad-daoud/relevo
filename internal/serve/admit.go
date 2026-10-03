@@ -30,11 +30,14 @@ type census struct {
 }
 
 // cap is the builder cap in effect: cfg.MaxBuilders if set, else the default.
+// The flag wins over the policy because it was given on this process's command
+// line; the policy half is the reloadable serve.max_builders, so a policy edit
+// changes the cap on the next tick or admission.
 func (s *Server) cap() int {
 	if s.cfg.MaxBuilders > 0 {
 		return s.cfg.MaxBuilders
 	}
-	return s.cfg.Policy.MaxBuildersOrDefault()
+	return s.live().Policy.MaxBuildersOrDefault()
 }
 
 // census counts running headless builders and queued rounds across all owners.

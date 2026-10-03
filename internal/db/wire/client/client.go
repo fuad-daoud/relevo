@@ -64,19 +64,24 @@ func (c *connector) Connect(context.Context) (driver.Conn, error) {
 
 func (c *connector) Driver() driver.Driver { return &Driver{} }
 
-// Info dials sock, performs the handshake and returns the owner's answer. It
-// closes its connection; the caller opens the handle it keeps separately.
+// Info dials sock, performs the handshake and returns the owner's answer. The
+// caller opens the handle it keeps separately, so this connection is closed
+// here -- drained, not abandoned. The owner counts a connection from the moment
+// it accepts one until its own cleanup finishes, so a probe that closed without
+// saying so left its own transient in the count the next caller reads.
 func Info(ctx context.Context, sock string) (info, error) {
 	nc, err := dialSock(ctx, sock)
 	if err != nil {
 		return info{}, err
 	}
-	defer func() { _ = nc.Close() }()
 	c := &conn{nc: nc, w: wire.NewConn(nc)}
 	if err := c.handshake(ctx); err != nil {
+		_ = nc.Close()
 		return info{}, err
 	}
-	return info{Have: c.have, Know: c.know, Origin: c.origin, PID: c.pid, Conns: c.conns}, nil
+	answer := info{Have: c.have, Know: c.know, Origin: c.origin, PID: c.pid, Conns: c.conns}
+	_ = c.Close()
+	return answer, nil
 }
 
 func dialSock(ctx context.Context, sock string) (net.Conn, error) {
