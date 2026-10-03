@@ -110,10 +110,8 @@ func WaitChain(ctx context.Context, rt Runtime, name string, timeout, interval t
 // waitChainEnd classifies a chain that has stopped running: done is exit 0 and
 // halted or stopped is exit 3, with the line naming the state, the plan it
 // reached and the corrections it spent. A halt carries its reason. Unless peek
-// is set, the chain's end payload is pulled off whichever member holds it -- the
-// first of builder, reviewer, planner and security whose record exists, the
-// same order the terminal transition queued it in; a delivery failure is
-// returned in DeliverErr and never changes the exit.
+// is set, the chain's end payloads are pulled off the members that hold them;
+// a delivery failure is returned in DeliverErr and never changes the exit.
 func waitChainEnd(ctx context.Context, rt Runtime, c db.ChainRow, peek bool) (WaitResult, error) {
 	res := WaitResult{Done: true, Line: chainEndLine(c)}
 	if c.Status == string(chain.StatusDone) {
@@ -124,21 +122,65 @@ func waitChainEnd(ctx context.Context, rt Runtime, c db.ChainRow, peek bool) (Wa
 	if peek {
 		return res, nil
 	}
-	// A member whose record is gone has no log, so PullPendingThrough finds
-	// nothing there and confirms nothing: the walk reaches the surviving
-	// member that carries the delivery.
-	for _, member := range chainReadMembers(rt.Store, c) {
-		text, found, err := delivery.PullPendingThrough(ctx, rt.Store, member, "wait", 0)
-		if err != nil {
-			res.DeliverErr = err
-			return res, nil
-		}
-		if found {
-			res.Payload = text
-			return res, nil
-		}
+	delivered, err := chainEndEntries(ctx, rt, c)
+	if err != nil {
+		res.DeliverErr = err
+		return res, nil
 	}
+	if len(delivered) == 0 {
+		return res, nil
+	}
+	res.Delivered = delivered
+	res.Payload = delivery.JoinDelivered(delivered)
 	return res, nil
+}
+
+// chainEndEntries collects every payload the chain's members still owe the
+// MasterMind and answers them in the order the end result reads them.
+//
+// Every member is walked, not the first one with a payload: the chain's one end
+// delivery is not the only thing a member can owe it, and a halt on a later
+// member -- a reviewer that timed out, a security member that found something
+// -- is the most urgent fact on the chain. Stopping at the first member holding
+// anything would leave that halt pending for a reader that never comes. A
+// member whose record is gone has no log, so the pull finds nothing there and
+// confirms nothing: the walk reaches the surviving member that carries the
+// delivery.
+func chainEndEntries(ctx context.Context, rt Runtime, c db.ChainRow) ([]delivery.Delivered, error) {
+	var collected []delivery.Delivered
+	for _, member := range chainReadMembers(rt.Store, c) {
+		entries, err := delivery.PullPendingThroughEntries(ctx, rt.Store, member, "wait", 0)
+		if err != nil {
+			return nil, err
+		}
+		collected = append(collected, entries...)
+	}
+	return chainHaltsFirst(collected), nil
+}
+
+// chainHaltsFirst is the precedence the end result is ordered by: every halt
+// entry leads, then the other entries, each group in the order the members were
+// walked. A halt is the one fact on a chain a human has to act on, so a halt on
+// a later member must not sit behind an ordinary report from an earlier one.
+//
+// Nothing is dropped for the halt: the entries after it are still delivered, so
+// a chain holding both answers with both rather than losing the report the halt
+// outranked. Within each group the walk order holds, which is what keeps the
+// result the one the walk read.
+func chainHaltsFirst(collected []delivery.Delivered) []delivery.Delivered {
+	if len(collected) < 2 {
+		return collected
+	}
+	halts := make([]delivery.Delivered, 0, len(collected))
+	rest := make([]delivery.Delivered, 0, len(collected))
+	for _, d := range collected {
+		if d.Entry.Kind == store.KindHalt {
+			halts = append(halts, d)
+			continue
+		}
+		rest = append(rest, d)
+	}
+	return append(halts, rest...)
 }
 
 // chainEndLine is the line `relevo wait` prints for a chain that has stopped
