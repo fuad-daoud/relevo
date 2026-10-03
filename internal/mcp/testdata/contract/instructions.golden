@@ -79,7 +79,11 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 - `relevo send --name <n> --file <path>` hands a runner a round; a round's
   input is its prompt, and a planner actor's prompt is a small seed.
 - `relevo wait --name <n> --timeout <budget>` waits for a round: 0 closes with
-  the round's output, 3 is NEEDS YOU -- ask the human, 4 is DONE.
+  the round's output, 2 closed with a report but no done marker (read the
+  report path it prints), 3 is NEEDS YOU -- ask the human, 4 is DONE (or the
+  binding is gone), 5 halted (read why, same as 3), 6 never sent (send first,
+  then wait again), 124 still-open (the timeout elapsed, the round is still
+  running -- wait again or intervene).
 - `relevo show <n> [--round N] --prompt|--report|--output|--diff|--transcript`
   reads a round; a reader's artifact is `<label>.md`, printed with `--output`.
 - `relevo db query '<SQL>' [--json]` reads relevo.db with one read-only
