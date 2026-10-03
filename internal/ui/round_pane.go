@@ -125,6 +125,14 @@ func (p roundPane) artifactsFetch() tea.Cmd {
 	return fetchFor(p.ctx, p.src, tabArtifacts, p.detail.name, p.detail.round, 1, p.artifactSel, p.detail.live)
 }
 
+// reportFetch reads the round's report tab, whatever tab is on screen. Opening
+// a binding whose report is ready lands on that tab, so it needs its read even
+// when another tab's fetch is in flight; the two replies are told apart by
+// their tab, so issuing it beside startFetch's own fetch is safe.
+func (p roundPane) reportFetch() tea.Cmd {
+	return fetchFor(p.ctx, p.src, tabReport, p.detail.name, p.detail.round, 1, p.artifactSel, p.detail.live)
+}
+
 // startFetch issues whatever the pane must read now: the visible tab's fetch,
 // and a reader round's artifact list, in one command. It is a no-op while a
 // fetch is in flight, and marks the pane in flight when it returns one.

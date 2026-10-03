@@ -5,8 +5,48 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
+
+// flowSecurityWorkflow is the scan workflow: a plan is built and the security
+// member counts findings, so a member close routes on its own count.
+const flowSecurityWorkflow = `name: secflow
+inputs: { plans: required }
+start: plans
+steps:
+  plans: { for-each: plans, on: { next: build, empty: done } }
+  build: { run: builder, seed: "{{plans.current}}", on: { done: scan } }
+  scan: { run: security, seed: "scan the build", on: { findings=0: done, findings>0: { halt: "findings" } } }
+`
+
+// TestChainParseOutcomesFencelessSecurityBlockDoesNotHalt pins the security
+// member's closing block whose backtick fences were lost: the count still
+// reaches the chain, so a clean scan closes the step done instead of halting on
+// a block the round did write.
+func TestChainParseOutcomesFencelessSecurityBlockDoesNotHalt(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowSecurityWorkflow)
+	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: reporttail.OutcomeDone})
+
+	body := []byte("I scanned the branch.\n\nrelevo\nfindings: 0\n")
+	path := writeGapReaderOutput(t, body)
+	sec := chainBinding(t, rt, "shop-security")
+
+	ev := closeWFEvent(t, rt, sec, body, path, reporttail.OutcomeUnstructured)
+	if ev.Status != reporttail.OutcomeDone {
+		t.Fatalf("event status = %q with reason %q, want done from the fenceless block", ev.Status, ev.Reason)
+	}
+	if ev.Outcomes["findings"] != "0" {
+		t.Fatalf("outcomes = %+v, want findings=0 read from the fenceless block", ev.Outcomes)
+	}
+	flowAdvance(t, rt, ev)
+	if got := flowChainRow(t, rt); got.Status != string(workflow.StatusDone) {
+		t.Errorf("row = %s %q, want done: a clean scan must not halt the chain", got.Status, got.Reason)
+	}
+}
 
 func TestChainParseOutcomesBodyThenStream(t *testing.T) {
 	t.Parallel()

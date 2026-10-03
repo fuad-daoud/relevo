@@ -138,7 +138,7 @@ func (s *Server) servedChainView(rt relevo.Runtime, name string) (remote.ChainVi
 }
 
 // chainRuntime resolves the caller's runtime and the path's chain name for a
-// chain route; the caller holds s.mu. A name no chain can carry is answered as
+// chain route. A name no chain can carry is answered as
 // not-found, exactly as loadBinding does for a binding.
 func (s *Server) chainRuntime(w http.ResponseWriter, r *http.Request) (relevo.Runtime, string, bool) {
 	rt, err := s.runtime(callerOf(r))
@@ -165,9 +165,6 @@ func (s *Server) writeChainReadError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) handleDoneChain(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	rt, name, ok := s.chainRuntime(w, r)
 	if !ok {
 		return

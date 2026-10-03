@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -117,7 +118,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitHalted, Line: "/x/001-report.md", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -129,7 +130,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitHalted, Line: "/x/001-report.md", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -141,7 +142,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -153,7 +154,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -165,7 +166,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -272,7 +273,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitUnmarked, Line: "/x/001-report.md", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -284,7 +285,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitUnmarked, Line: "/x/001-report.md", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -296,7 +297,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitUnmarked, Line: "-", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -305,7 +306,7 @@ func TestWaitOutcome(t *testing.T) {
 		b := store.Binding{Round: 1, State: store.StateDone}
 		got := WaitOutcome(b, nil, 1, noQuestion)
 		want := WaitResult{Code: WaitGone, Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -350,7 +351,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})
@@ -362,7 +363,7 @@ func TestWaitOutcome(t *testing.T) {
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
 	})

@@ -61,9 +61,6 @@ func artifactFiles(files []relevo.ArtifactFile) []remote.ArtifactFile {
 // are PathValue-safe: they come from relevo.RoundArtifacts, which never lists a
 // path outside the artifact directory.
 func (s *Server) handleRoundArtifacts(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	b, rt, n, ok := s.resolveReaderRound(w, r)
 	if !ok {
 		return
@@ -89,9 +86,6 @@ func (s *Server) handleRoundArtifacts(w http.ResponseWriter, r *http.Request) {
 // empty rel included -- is ErrNoArtifact, so nothing outside the artifact
 // directory is ever read.
 func (s *Server) handleRoundArtifact(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	b, rt, n, ok := s.resolveReaderRound(w, r)
 	if !ok {
 		return

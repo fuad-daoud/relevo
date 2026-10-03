@@ -104,12 +104,24 @@ type Server struct {
 	// audiences is the accepted audience set, copied from cfg so a later
 	// mutation of the caller's slice cannot widen it.
 	audiences []string
-	mu        sync.Mutex // every store/ledger mutation and every tick
+	// mu guards only the two pieces of process-wide state below: the stores
+	// map and the listen flags. It is never held across Store, git or
+	// transport I/O -- per-owner exclusion is each owner's own Store lock
+	// (see ownerStore), and the server-wide builder cap is admitMu -- so a
+	// slow owner's reconcile cannot block another owner's poll.
+	mu sync.Mutex
 	// gates is a `serve.`-prefixed view of the machine database, so a server-wide
 	// gate never collides with this machine's own rows.
 	gates db.KV
-	// stores is one Store per owner root, guarded by s.mu.
+	// stores is one Store per owner root, guarded by s.mu. The map only ever
+	// grows; the *Store values are immutable after creation and are safe to
+	// use once read out from under s.mu.
 	stores map[string]*store.Store
+	// admitMu serializes census-and-admit, so the server-wide builder cap is
+	// decided against one running count even when a tick's admit and a
+	// round start's admit overlap. collectSettled -> pruneUnusedRepos -> admit
+	// still run in that order inside the section they share.
+	admitMu sync.Mutex
 	// liveCache caches running round LiveViews per caller/binding/round.
 	liveCache *liveCache
 	// tickFn, when non-nil, replaces Tick in Run; the drain tests set it.
@@ -200,8 +212,13 @@ func ownerIDOf(root string) remote.ClientID {
 }
 
 // ownerStore returns the one Store for an owner root, creating it on first use;
-// every record call goes through the machine database. The caller holds s.mu.
+// every record call goes through the machine database. It takes s.mu itself
+// for the map lookup only: the returned Store is then used without any lock, and
+// its own Store.WithLock is what serialises one owner's writes. Nothing that
+// holds s.mu may take this path, so the map lock is never nested inside another.
 func (s *Server) ownerStore(root string) *store.Store {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if st, ok := s.stores[root]; ok {
 		return st
 	}
@@ -279,19 +296,17 @@ func insideRoot(root, p string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
-// OwnerRuntime resolves owner's runtime for the ui's server source; it takes
-// s.mu itself. A caller holding s.mu calls runtimeAt instead.
+// OwnerRuntime resolves owner's runtime for the ui's server source. It holds no
+// lock of its own beyond ownerStore's map lookup.
 func (s *Server) OwnerRuntime(owner remote.ClientID) (relevo.Runtime, error) {
 	root, err := s.ownerRoot(owner)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.runtimeAt(root), nil
 }
 
-// runtime is OwnerRuntime for a caller that already holds s.mu.
+// runtime resolves the Runtime for one client id.
 func (s *Server) runtime(id remote.ClientID) (relevo.Runtime, error) {
 	root, err := s.ownerRoot(id)
 	if err != nil {
@@ -389,8 +404,9 @@ func (s *Server) applyTenant(root string, st *store.Store, rt *relevo.Runtime) {
 
 // heldCPUs is the server's cross-owner core census, injected as
 // Runtime.HeldCPUs so internal/relevo stays unaware of owners. The caller holds
-// s.mu, so taking another owner's store lock is safe: the admin CLI takes one
-// owner lock at a time. A per-owner List error is logged and skipped.
+// this owner's own store lock, and each other owner's List is a lock-free
+// database read, so no owner's lock is nested inside another's here. A per-owner
+// List error is logged and skipped.
 func (s *Server) heldCPUs(root string, tx *store.Tx, self string) ([]int, error) {
 	var held []int
 	var firstErr error

@@ -41,9 +41,6 @@ func (s *Server) isolationView(v remote.BuildersView) remote.BuildersView {
 // Label, plus the builder census. Every queued row gains its Queued position
 // and a "queued <age> (<ahead> ahead)" BuilderStatus.
 func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.BuildersView, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	builders := s.isolationView(remote.BuildersView{Cap: s.cap()})
 
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
@@ -234,9 +231,6 @@ func gcArchive(ctx context.Context, rt relevo.Runtime, id remote.ClientID, b sto
 // running; dryRun only lists. It releases the served refs when unbind keeps no
 // worktree.
 func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now time.Time, dryRun bool) ([]GCAbandonedResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)
 	if err != nil {
@@ -302,9 +296,6 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 // `add --server` whose 409 means the server already holds that name. A running
 // round is refused unless force is set.
 func AdminUnbind(ctx context.Context, s *Server, owner string, name string, force bool) (relevo.UnbindResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	id, err := s.resolveOwner(owner)
 	if err != nil {
 		return relevo.UnbindResult{}, err
@@ -345,9 +336,6 @@ func AdminUnbind(ctx context.Context, s *Server, owner string, name string, forc
 // MkdirAll on the root, so the check must come first, or a read-only verb would
 // create state for an owner that has never bound.
 func AdminOwnerRuntime(s *Server, owner string) (relevo.Runtime, string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	id, err := s.resolveOwner(owner)
 	if err != nil {
 		return relevo.Runtime{}, "", err

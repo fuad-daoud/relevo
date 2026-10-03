@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -254,6 +255,20 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 						},
 					}
 				}
+				// The tab shows the same bytes a push would carry: the pointer
+				// payload plus the artifact file it points at, expanded by the
+				// push path's own helper (delivery.PushText), so a report whose
+				// payload is only a `relevo show` line still reads as the
+				// report here. Expansion is PushText's rule, not a second one:
+				// KindQuestion and every other kind stay payload-only, the file
+				// text is joined on a blank line, capped at MaxPushBytes, and
+				// an unreadable file falls back to the payload alone.
+				//
+				// Still non-claiming: PushText only reads, so the payload stays
+				// pending for the route that pushes it. The read happens out
+				// here, after ReadLog returned and outside any lock -- no file
+				// I/O under the state lock, as pullMatching also insists.
+				body, _ := delivery.PushText(e, delivery.BindingFor(rt.Store, name), rt.Store.ReadFile)
 				return tabMsg{
 					name:  key,
 					round: round,
@@ -262,7 +277,7 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 						loaded: true,
 						at:     e.TS,
 						round:  round,
-						body:   e.Payload,
+						body:   body,
 					},
 				}
 			}

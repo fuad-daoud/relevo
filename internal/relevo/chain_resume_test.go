@@ -855,7 +855,7 @@ func TestChainResumeClosesADeadMemberRound(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		rev, err = haltBinding(context.Background(), rt, rev, "reviewer exited without an output")
+		rev, err = haltBinding(context.Background(), rt, tx, rev, "reviewer exited without an output")
 		if err != nil {
 			return err
 		}

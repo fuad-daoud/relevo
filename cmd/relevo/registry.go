@@ -32,6 +32,7 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"board annotate":       installer(boardAnnotateFlagSet),
 	"board comment":        installer(boardCommentFlagSet),
 	"board comments":       installer(boardCommentsFlagSet),
+	"board promote":        installer(boardPromoteFlagSet),
 	"board text":           installer(boardTextFlagSet),
 	"board url":            installer(boardURLFlagSet),
 	"bugreport":            installer(bugreportFlagSet),
