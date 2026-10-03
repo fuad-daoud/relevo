@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -198,6 +199,53 @@ func TestWorkflowDirtyGateNeverReadsAGitErrorAsClean(t *testing.T) {
 	}
 	if strings.Contains(c.Reason, "nothing") {
 		t.Errorf("halt reason %q reads an unreadable tree as a clean one", c.Reason)
+	}
+}
+
+// startNoRegateFlowChain starts the shipped default workflow with no repair
+// budget: regate renders to zero, so a red check buys no repair round and the
+// repair budget's then target is taken on the red itself. The gate is a command
+// so a check really runs, and the scan is off so the walk stops inside the plan.
+func startNoRegateFlowChain(t *testing.T, rt Runtime) ChainResult {
+	t.Helper()
+	body, err := json.Marshal(workflow.Default())
+	if err != nil {
+		t.Fatalf("encode the shipped workflow: %v", err)
+	}
+	return startedChain(t, rt, ChainOptions{
+		Workflow: writeWorkflowFile(t, string(body)),
+		Params:   map[string]string{"regate": "0", "gate": "make check", "scan": "false"},
+	})
+}
+
+// TestWorkflowRedCheckWithNoRegateNeverReachesReview pins the red-budget gate
+// on the shipped workflow, end to end: a red check with no repair budget behind
+// it must not send the plan to a reviewer whose pass verdict finishes it. The
+// chain halts, or routes the round to the correction step instead.
+func TestWorkflowRedCheckWithNoRegateNeverReachesReview(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startNoRegateFlowChain(t, rt)
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainRedCheck(t, rt, "shop", "FAIL the gate\n")
+
+	c := flowChainRow(t, rt)
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.Awaiting.Step == "review" {
+		t.Errorf("the red check sent the plan to review with no repair budget: %s (%q)", c.Status, c.Reason)
+	}
+	switch {
+	case c.Status == string(workflow.StatusHalted):
+	case st.Awaiting.Step == "correct":
+	default:
+		t.Errorf("status = %s (%q), awaiting %+v: want a halt or a correct round", c.Status, c.Reason, st.Awaiting)
+	}
+	if got := st.Results["check"].Status; got != chainCheckRed {
+		t.Errorf("check result = %q, want the red recorded", got)
 	}
 }
 
