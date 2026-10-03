@@ -25,12 +25,16 @@ type Waiting struct {
 	Hint  string    `json:"hint"`            // the relevo verb that resolves it, e.g. `relevo status --name api`
 }
 
-// switchable mirrors Reconcile's inline expression: a
-// switchable broken binding is one the daemon will fix itself within
-// switchGrace, so it is not (yet) a human's problem. Duplicated rather than
-// factored out, since reconcile.go is not touched by this change.
+// switchable mirrors reconcile.bindingSwitchable: a switchable broken binding
+// is one the daemon will fix itself, so it is not (yet) a human's problem.
+//
+// A PID is required, not just a candidate and a started round. A switch whose
+// replacement failed to spawn leaves both of those behind with no process, and
+// nothing retries it, so such a binding waits on a human -- exactly what this
+// predicate now says. Duplicated rather than factored out, since reconcile.go
+// is not importable from here.
 func switchable(b store.Binding) bool {
-	return b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
+	return b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero() && b.Builder.PID != 0
 }
 
 // capLine returns the first non-blank line of s, trimmed, truncated to n

@@ -259,18 +259,21 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}, b.Name)
 	if err != nil {
 		// resolveBuilder already recorded spawn_failed for the pick, which
-		// gates it for the next resolution. Count the attempt and leave the
-		// binding for the next tick: with the old pane closed (or already
-		// gone) the gone trigger fires again after switchGrace and walks on
-		// to the next candidate.
+		// gates it for the next resolution -- so the next human send picks a
+		// different candidate. What does not happen is a retry: with the old
+		// pane closed (or already gone) and no replacement process, the next
+		// tick returns at reconcileHeadless' PID == 0 branch without acting,
+		// and view.WaitingOn reads the binding as broken rather than waiting
+		// on the daemon. So this binding stops here, and the spawn_failed
+		// entry is what keeps the bad candidate out of the next send.
 		if counted && !rotated {
 			b.RoundSwitches++
 		}
 		b.State = store.StateBroken
 		slog.Warn("builder switch failed", "binding", b.Name, "round", b.Round, "pick", res.Token(), "err", err)
 		// A broken binding no route will fix owes the MasterMind the same entry
-		// a halt does; queueBrokenHalt skips the switchable ones, which are
-		// exactly the bindings the gone trigger below is about to retry.
+		// a halt does; queueBrokenHalt skips only the ones a later tick can
+		// still switch, and without a process this is not one of them.
 		next, qerr := queueBrokenHalt(ctx, rt, tx, b,
 			fmt.Sprintf("%s: builder %s; switching to %s failed: %v", b.Name, b.BuilderCandidate, res.Token(), err))
 		if qerr != nil {

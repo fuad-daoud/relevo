@@ -156,9 +156,29 @@ func TestWaitingOnBrokenAndCaps(t *testing.T) {
 		b := store.Binding{
 			Name: "api", Round: 4, State: store.StateBroken,
 			BuilderCandidate: "agy/x/y", RoundStartedAt: time.Unix(1757000000, 0),
+			Builder: store.Endpoint{PID: 909},
 		}
 		if _, ok := WaitingOn(b, nil, mapQuestion(nil)); ok {
 			t.Error("a switchable broken binding must not be waiting")
+		}
+	})
+
+	// The same binding with no process: a switch whose replacement never
+	// spawned leaves the candidate and the start stamp behind, and nothing
+	// retries it, so this one is a human's problem (#965).
+	t.Run("broken mid-round with no process is waiting", func(t *testing.T) {
+		ts := time.Unix(1757000000, 0).UTC()
+		b := store.Binding{
+			Name: "api", Round: 4, State: store.StateBroken,
+			BuilderCandidate: "agy/x/y", RoundStartedAt: ts,
+			BuilderMissingSince: ts,
+		}
+		w, ok := WaitingOn(b, nil, mapQuestion(nil))
+		if !ok {
+			t.Fatal("want ok: no process means nothing retries this switch")
+		}
+		if w.Cause != "broken" || w.Hint != rebindHint {
+			t.Errorf("Waiting = %+v", w)
 		}
 	})
 

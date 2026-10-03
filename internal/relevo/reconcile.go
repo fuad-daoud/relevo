@@ -331,23 +331,37 @@ func haltPointer(name string) string {
 	return "relevo status --name " + name
 }
 
+// bindingSwitchable is the one definition of "the daemon will bring a builder
+// back by itself", which is the only thing that excuses a broken binding from
+// owing its MasterMind an entry. It mirrors view.WaitingOn's own test, and the
+// two must agree: WaitingOn answers ok=false for a switchable broken binding
+// because the fault resolves itself, and queueBrokenHalt queues for every
+// binding WaitingOn does call waiting. Duplicated rather than exported for the
+// same reason view carries its own copy.
+//
+// The PID clause is what makes that agreement reachable. A round's builder
+// candidate and RoundStartedAt survive the switch that failed to replace them,
+// so a mid-round switch whose spawn failed looks switchable while having no
+// process at all -- and no tick retries it (reconcileHeadless returns at the
+// PID == 0 branch without acting). That binding is waiting on a human, not on
+// the daemon, so with no process it is not switchable. The spawn_failed ledger
+// entry the failed resolve already recorded still gates the bad candidate, so
+// self-healing is preserved: the next human send picks a different one.
+func bindingSwitchable(b store.Binding) bool {
+	return b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero() && b.Builder.PID != 0
+}
+
 // queueBrokenHalt is the broken-binding half of queueHalt. A binding that is
 // StateBroken and not switchable is waiting on a human, exactly as a halted one
 // is, so it owes the same entry -- under the same per-round key, because a
 // broken binding's Halt is empty and it never passes through haltBinding to
 // stamp one.
 //
-// switchable mirrors view.WaitingOn's own test, and that is the whole point:
-// WaitingOn answers ok=false for a switchable broken binding because the
-// daemon is about to fix it itself. Queuing for that binding would notify the
-// MasterMind about a fault that resolves itself. Duplicated here rather than
-// exported for the same reason view carries its own copy.
-//
 // It returns the binding because the dedup stamp is part of the answer: the
 // caller saves what comes back, and the next tick must see the same
 // HaltNotifiedRound key haltBinding uses for its own log line.
 func queueBrokenHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string) (store.Binding, error) {
-	if b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero() {
+	if bindingSwitchable(b) {
 		return b, nil
 	}
 	if b.HaltNotifiedRound == b.Round {

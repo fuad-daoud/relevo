@@ -196,6 +196,75 @@ func TestAdmitSpawnFailure(t *testing.T) {
 //
 // Mutation check: drop the `gatedBuilder` branch in queue.go (always call
 // startRound) and this fails on BuilderCandidate staying "agy/other/m".
+// TestAdmitSwitchFailureRecordsNoStart pins #965's second half: when the
+// switch Admit performs cannot resolve a replacement, switchBuilder queues
+// the binding's halt entry and returns -- with no process and no error. Admit
+// must not stamp RoundStartedAt or log "started after ... queued" for a round
+// that never began, and must not leave the binding switchable again.
+//
+// Mutation check: delete the `b.Builder.PID == 0` guard in queue.go and this
+// fails on RoundStartedAt no longer being zero and the started note appearing.
+func TestAdmitSwitchFailureRecordsNoStart(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	// Two providers, so gating the first leaves the second reachable, and the
+	// read tier the binding carries is one opencode refuses.
+	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"first","model":"m","roles":["builder","reviewer"]},
+	  {"harness":"opencode","provider":"second","model":"m","roles":["builder"]}]`)
+	rt.Policy = orderOf("builder", "claude/first/m", "opencode/second/m")
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "claude/first/m", MasterMindID: testMasterMindName, CWD: "/repo", Tier: "read",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
+		t.Fatalf("Send(Defer): %v", err)
+	}
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "claude/first/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	// The fault is the queued entry switchBuilder leaves behind, not a return
+	// value: Admit runs in the daemon, so a plain error would be dropped.
+	if err := Admit(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !got.RoundStartedAt.IsZero() {
+		t.Errorf("RoundStartedAt = %v, want zero: nothing started", got.RoundStartedAt)
+	}
+	if got.Builder.PID != 0 {
+		t.Errorf("pid = %d, want 0", got.Builder.PID)
+	}
+	if got.State != store.StateBroken {
+		t.Errorf("state = %s, want %s", got.State, store.StateBroken)
+	}
+	if !got.QueuedAt.IsZero() {
+		t.Errorf("QueuedAt = %v, want zero (the same failed switch must not be retried every tick)", got.QueuedAt)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindQueue && strings.Contains(e.Note, "started after") {
+			t.Errorf("entry = %+v, want no started note for a round that did not start", e)
+		}
+	}
+	if halts := haltEntries(t, rt, "webshop"); len(halts) != 1 {
+		t.Errorf("halt entries = %d, want 1: the switch failure owes its entry: %+v", len(halts), halts)
+	}
+}
+
 func TestAdmitGatedSwitches(t *testing.T) {
 	t.Parallel()
 
