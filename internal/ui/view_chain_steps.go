@@ -20,43 +20,73 @@ type chainStepsView struct {
 	top   int
 }
 
-// chainStepsLayout is the steps table's columns: STEP takes the width the
-// fixed columns leave, then KIND, ACTOR and VISITS, then LAST OUTCOME with
-// what is left. A terminal too narrow for the outcome drops it first, then
-// the actor.
-func chainStepsLayout(width int) (int, []chainCol) {
+// chainStepCap bounds how wide STEP grows to fit a step's id. Past it a long id
+// is cut with an ellipsis, so one verbose step cannot starve the outcome
+// beside it. Every step id the built-in workflows and the goldens name fits
+// well inside 32 -- the longest, planning-fixes, is 14 cells -- so the cap only
+// bites on an id no workflow here uses.
+const chainStepCap = 32
+
+// chainStepsLayout is the steps table's columns: STEP is as wide as the longest
+// step id in the read model, capped at chainStepCap, then KIND, ACTOR and VISITS
+// at their widths, then LAST OUTCOME with what is left. STEP never takes the
+// greedy remainder: the outcome is the cell that says what happened in a round,
+// so the width STEP does not need is the outcome's. A terminal too narrow for
+// the outcome drops it first, then the actor.
+func chainStepsLayout(width int, entry relevo.ChainEntry) (int, []chainCol) {
 	cw := width - 6
 	if cw < 0 {
 		cw = 0
 	}
-	fixed := func(cols []chainCol) int {
-		n := 0
-		for i, c := range cols {
-			n += c.w
-			if i < len(cols)-1 {
-				n += 2
-			}
-		}
-		return n
-	}
+	stepW := chainStepWidth(entry.Steps)
 	cols := []chainCol{
 		{"kind", "KIND", 8},
 		{"actor", "ACTOR", 16},
 		{"visits", "VISITS", 6},
 		{"outcome", "LAST OUTCOME", 30},
 	}
+	// LAST OUTCOME is the cell that says what happened in a round, so it is the
+	// one that grows: it takes the row's width whatever STEP does not need, down
+	// to the 24 cells below which an outcome reads as a fragment. Under that the
+	// whole column goes, then ACTOR, so the row degrades by whole columns rather
+	// than by cutting an outcome in half.
+	outcomeW := func(cols []chainCol) int {
+		last := cols[len(cols)-1].key == "outcome"
+		rest := columnsWidth(cols)
+		if last {
+			rest -= cols[len(cols)-1].w
+		}
+		return cw - stepW - rest
+	}
 	for len(cols) > 0 {
-		left := cw - fixed(cols)
 		minimum := 16
-		if len(cols) > 0 && cols[len(cols)-1].key == "outcome" {
+		if cols[len(cols)-1].key == "outcome" {
 			minimum = 24
 		}
-		if left >= minimum {
+		if outcomeW(cols) >= minimum {
 			break
 		}
 		cols = cols[:len(cols)-1]
 	}
-	return cw - fixed(cols), cols
+	if w := outcomeW(cols); w > 0 {
+		cols[len(cols)-1].w = w
+	}
+	return stepW, cols
+}
+
+// chainStepWidth is the width STEP needs for the steps it renders: the longest
+// step id, never less than the header.
+func chainStepWidth(steps []relevo.ChainStep) int {
+	w := lipgloss.Width("STEP")
+	for _, s := range steps {
+		if n := lipgloss.Width(sanitizeText(s.ID)); n > w {
+			w = n
+		}
+	}
+	if w > chainStepCap {
+		w = chainStepCap
+	}
+	return w
 }
 
 // chainStepsHeaderLine renders the steps table's header row.
@@ -125,7 +155,6 @@ func chainStepLine(s relevo.ChainStep, sel bool, stepW int, cols []chainCol, cw 
 
 // chainStepsBodyLines is the whole steps body before the viewport windows it.
 func (v chainStepsView) bodyLines(width int) []string {
-	stepW, cols := chainStepsLayout(width)
 	cw := width - 6
 	if cw < 0 {
 		cw = 0
@@ -134,6 +163,7 @@ func (v chainStepsView) bodyLines(width int) []string {
 	if !ok {
 		return []string{""}
 	}
+	stepW, cols := chainStepsLayout(width, entry)
 	lines := []string{""}
 	lines = append(lines, chainStepsHeaderLine(stepW, cols, cw))
 	for i, s := range entry.Steps {
@@ -286,7 +316,7 @@ func (v chainStepsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		if env.Actions == nil {
 			return v, notice("a chain's trace needs relevo ui on this machine")
 		}
-		return v, tea.Batch(push(newChainTraceView(env, v.chain), nil), chainTraceCmd(env, v.chain))
+		return v, tea.Batch(push(newChainTraceView(env, v.chain, "trace"), nil), chainTraceCmd(env, v.chain))
 	case "esc":
 		return v, pop()
 	}

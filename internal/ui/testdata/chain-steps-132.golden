@@ -2,11 +2,11 @@
                                                                                                                                     
    running                                                                                                                 review   
                                                                                                                                     
-   STEP                                                          KIND      ACTOR             VISITS  LAST OUTCOME                   
-   build                                                         run       builder           2       build r2 · done                
-   review                                                        run       reviewer          1       review r1 · verdict=changes    
-   check                                                         check     —                 1       check · red → repair           
-   repair                                                        run       builder           —       —                              
+   STEP    KIND      ACTOR             VISITS  LAST OUTCOME                                                                         
+   build   run       builder           2       build r2 · done                                                                      
+   review  run       reviewer          1       review r1 · verdict=changes                                                          
+   check   check     —                 1       check · red → repair                                                                 
+   repair  run       builder           —       —                                                                                    
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     

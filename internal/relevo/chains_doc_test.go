@@ -11,6 +11,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -462,5 +464,179 @@ func TestChainsServerChainViaFakeGetChain(t *testing.T) {
 	}
 	if len(doc.Chains) != 1 || doc.Chains[0].Stale == "" {
 		t.Errorf("unreachable server: chains = %+v, want the chain marked stale", doc.Chains)
+	}
+}
+
+// goneFake is a server that answers every chain read with the 404 it gives a
+// chain it no longer holds, which is the released-chain case: not a transport
+// fault, and not an error the read may report as one.
+func goneFake() *fakeRemote {
+	return &fakeRemote{
+		getChainErr: &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound}},
+	}
+}
+
+// TestReadChainsReleasedDoneChainKeepsItsStatus pins the released terminal row:
+// a 404 from a chain the store already holds as done keeps the stored status
+// with an empty Stale. Stale means the server could not be asked, and this one
+// was asked and answered.
+// Mutation: make chainDocEntry take the 404 branch that sets staleErr.
+func TestReadChainsReleasedDoneChainKeepsItsStatus(t *testing.T) {
+	t.Parallel()
+
+	fr := goneFake()
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "srv-chain")
+	setChainStoredStatus(t, rt, "srv-chain", string(chain.StatusDone))
+
+	doc, err := ReadChains(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("ReadChains: %v", err)
+	}
+	if len(doc.Chains) != 1 {
+		t.Fatalf("got %d chains, want 1", len(doc.Chains))
+	}
+	if doc.Chains[0].Status != string(chain.StatusDone) {
+		t.Errorf("entry.Status = %q, want the stored done kept", doc.Chains[0].Status)
+	}
+	if doc.Chains[0].Stale != "" {
+		t.Errorf("entry.Stale = %q, want empty for a released chain", doc.Chains[0].Stale)
+	}
+}
+
+// TestReadChainsReleasedRunningChainReadsGone pins the released open row: the
+// server dropping a chain the store still holds as running is not stale either,
+// but the chain is genuinely gone, so the read says gone and carries the reason
+// the pull writes for exactly this case.
+// Mutation: drop the is404 branch that renames a non-terminal row to gone.
+func TestReadChainsReleasedRunningChainReadsGone(t *testing.T) {
+	t.Parallel()
+
+	rt := chainPullRuntime(t, goneFake())
+	seedServerChain(t, rt, "srv-chain")
+
+	doc, err := ReadChains(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("ReadChains: %v", err)
+	}
+	if len(doc.Chains) != 1 {
+		t.Fatalf("got %d chains, want 1", len(doc.Chains))
+	}
+	if doc.Chains[0].Status != string(chain.StatusGone) {
+		t.Errorf("entry.Status = %q, want gone", doc.Chains[0].Status)
+	}
+	if doc.Chains[0].Stale != "" {
+		t.Errorf("entry.Stale = %q, want empty for a released chain", doc.Chains[0].Stale)
+	}
+	if want := "chain srv-chain is gone from zen"; doc.Chains[0].Reason != want {
+		t.Errorf("entry.Reason = %q, want %q", doc.Chains[0].Reason, want)
+	}
+}
+
+// TestReadChainsUnreachableOnTerminalRowIsStillStale keeps the other half of
+// the rule: a chain this machine cannot ask at all is stale whatever its stored
+// status, because the mark reports the failed question, not the chain's state.
+// Mutation: make the terminal-row branch swallow every GET error.
+func TestReadChainsUnreachableOnTerminalRowIsStillStale(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("srv-chain", string(chain.StatusDone), 0, 0, 0))
+	fr.getChainErr = errors.New("dial tcp: connection refused")
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "srv-chain")
+	setChainStoredStatus(t, rt, "srv-chain", string(chain.StatusDone))
+
+	doc, err := ReadChains(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("ReadChains: %v", err)
+	}
+	if len(doc.Chains) != 1 {
+		t.Fatalf("got %d chains, want 1", len(doc.Chains))
+	}
+	if doc.Chains[0].Stale == "" {
+		t.Error("an unreachable server left no stale mark, want one")
+	}
+	if doc.Chains[0].Status != string(chain.StatusDone) {
+		t.Errorf("entry.Status = %q, want the stored done kept", doc.Chains[0].Status)
+	}
+}
+
+// TestChainTraceOfAReleasedDoneChainReadsStoredEvents pins the trace read path
+// for the same released terminal row: a 404 must resolve the trace from the
+// events this machine stored while mirroring, not fail the read. The mirror's
+// events are its whole trace, so the row renders rather than errors.
+// Mutation: restore the 404 to store.ErrNotFound in chainServerTrace.
+func TestChainTraceOfAReleasedDoneChainReadsStoredEvents(t *testing.T) {
+	t.Parallel()
+
+	rt := chainPullRuntime(t, goneFake())
+	seedServerChain(t, rt, "srv-chain")
+	setChainStoredStatus(t, rt, "srv-chain", string(chain.StatusDone))
+	plantServerChainEvent(t, rt, "srv-chain")
+
+	doc, err := ChainTrace(context.Background(), rt, "srv-chain")
+	if err != nil {
+		t.Fatalf("ChainTrace on a released done chain: %v", err)
+	}
+	if len(doc.Events) != 1 {
+		t.Fatalf("trace events = %d, want the stored row", len(doc.Events))
+	}
+	if doc.Events[0].Round != 3 {
+		t.Errorf("stored event round = %d, want 3", doc.Events[0].Round)
+	}
+	if doc.Status != string(chain.StatusDone) {
+		t.Errorf("doc.Status = %q, want the stored done", doc.Status)
+	}
+}
+
+// TestChainTraceOfAReleasedRunningChainStillRefuses pins that only a terminal
+// row resolves a 404 from stored events: a chain the store still holds as
+// running was never finished here, so its trace cannot be the stored one and
+// the read keeps the store's own not-found answer.
+// Mutation: let chainServerTrace resolve every 404 from stored events.
+func TestChainTraceOfAReleasedRunningChainStillRefuses(t *testing.T) {
+	t.Parallel()
+
+	rt := chainPullRuntime(t, goneFake())
+	seedServerChain(t, rt, "srv-chain")
+
+	if _, err := ChainTrace(context.Background(), rt, "srv-chain"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ChainTrace err = %v, want store.ErrNotFound", err)
+	}
+}
+
+// setChainStoredStatus writes a chain's stored status, so a read can be pinned
+// against a row the server's own view never set.
+func setChainStoredStatus(t *testing.T, rt Runtime, name, status string) {
+	t.Helper()
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		c.Status = status
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatalf("set %s to %s: %v", name, status, err)
+	}
+}
+
+// plantServerChainEvent appends one decodable trace row to a chain, the row a
+// mirror has after installing a closed round.
+func plantServerChainEvent(t *testing.T, rt Runtime, name string) {
+	t.Helper()
+	ev := chain.Event{
+		Kind: chain.EventBuilderClosed, Member: chain.MemberBuilder, Round: 3,
+		Outcome: reporttail.OutcomeDone, Gate: chain.GateGreen,
+	}
+	act := chain.Action{Kind: chain.ActionSend, Member: chain.MemberReviewer, Seed: chain.SeedReviewer}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.ChainEventAppend(name, db.ChainEventRow{
+			Phase: string(chain.PhaseBuild), Step: string(chain.StepBuilding),
+			Member: name, Round: 3, Plan: 1,
+			Event: ev.Encode(), Action: act.Encode(),
+		})
+	}); err != nil {
+		t.Fatalf("plant the chain's trace row: %v", err)
 	}
 }

@@ -2,14 +2,14 @@
                                                                                                                                     
    5 chains   2 running   2 halted   1 done                                                                                         
                                                                                                                                     
-   NAME                                                               STATUS    STEP            PLANS    AGE     WHERE              
-   api-worker                                                         running   building        1/3      4m      local              
-   db-migrate                                                         halted    verify          2/2      12m     local              
+   NAME                  STATUS    STEP            PLANS    AGE  WHERE                                                              
+   api-worker            running   building        1/3      4m   local                                                              
+   db-migrate            halted    verify          2/2      12m  local                                                              
      migration failed: schema mismatch on table users                                                                               
-   feature-auth                                                       running   review          1/1      25m     placed prod-1      
-     feature-auth.oauth                                               halted    test            1/1      8m      local              
+   feature-auth          running   review          1/1      25m  placed prod-1                                                      
+     feature-auth.oauth  halted    test            1/1      8m   local                                                              
        oauth callback endpoint returned 503                                                                                         
-     feature-auth.token                                               done      finish          1/1      15m     local              
+     feature-auth.token  done      finish          1/1      15m  local                                                              
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     

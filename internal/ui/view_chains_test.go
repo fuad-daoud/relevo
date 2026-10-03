@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -217,6 +218,147 @@ func TestChainTraceFromStepsLoads(t *testing.T) {
 	}
 	if body := stripANSI(tv.Body(m.env(), 132, 20)); strings.Contains(body, "loading") {
 		t.Errorf("trace body still reads loading after the read landed:\n%s", body)
+	}
+}
+
+// longAgeDoc is a read model whose ages are the hour-and-minute form
+// view.AgeText renders at seven and six cells -- "124h 5m", "14h 5m" -- the
+// shapes a chain that has run for days reaches. The fixed six-cell AGE column
+// the table carried cut the first into "124h 5…", so at 100 cells both must
+// show whole.
+func longAgeDoc() relevo.ChainsDoc {
+	return relevo.ChainsDoc{
+		Chains: []relevo.ChainEntry{
+			{Name: "long-running-job", Status: "running", Step: "building", PlanPos: 1, PlanTotal: 2, Elapsed: 124*time.Hour + 5*time.Minute, Where: "server zen"},
+			{Name: "another-long-one", Status: "running", Step: "review", PlanPos: 2, PlanTotal: 2, Elapsed: 14*time.Hour + 5*time.Minute, Where: "server contabo"},
+		},
+	}
+}
+
+// TestChainsViewShowsLongAgesWholeAt100 pins the AGE column's width: an age the
+// human reads is worth more than a WHERE column, so at 100 cells every age and
+// every placement shows whole.
+// Mutation: restore the fixed six-cell AGE width in chainsLayout, or restore the
+// greedy remainder NAME that starves the columns after it.
+func TestChainsViewShowsLongAgesWholeAt100(t *testing.T) {
+	m := goldenActionModel(t, 100, 30, &fakeActions{chainsDoc: longAgeDoc()}, view.Report{})
+	m = drain(t, m, execLine("chains", m.env(), m.prefs))
+	body := stripANSI(m.View())
+
+	if !strings.Contains(body, "124h 5m") {
+		t.Errorf("the seven-cell age was cut at width 100:\n%s", body)
+	}
+	if !strings.Contains(body, "14h 5m") {
+		t.Errorf("the six-cell age was cut at width 100:\n%s", body)
+	}
+	for _, want := range []string{"server zen", "server contabo"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("WHERE lost %q at width 100:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "…") {
+		t.Errorf("a chains cell was ellipsised at width 100:\n%s", body)
+	}
+}
+
+// TestChainsViewNameIsNotTheGreedyRemainder pins NAME's width: it is the longest
+// name the read model holds, not the width the other columns happen to leave.
+// A greedy NAME pushes WHERE off the row entirely at 100.
+// Mutation: make chainsLayout give NAME the columns' leftover width again.
+func TestChainsViewNameIsNotTheGreedyRemainder(t *testing.T) {
+	m := goldenActionModel(t, 100, 30, &fakeActions{chainsDoc: longAgeDoc()}, view.Report{})
+	m = drain(t, m, execLine("chains", m.env(), m.prefs))
+	nameW, cols := chainsLayout(100, longAgeDoc())
+
+	if nameW < lipgloss.Width("another-long-one") {
+		t.Errorf("NAME width = %d, want at least the longest name (%d)", nameW, lipgloss.Width("another-long-one"))
+	}
+	if nameW > chainsNameCap {
+		t.Errorf("NAME width = %d, want at most the cap %d", nameW, chainsNameCap)
+	}
+	if !chainColsHave(cols, "where") {
+		t.Errorf("WHERE dropped at width 100 with %d cells for the columns: %+v", nameW, cols)
+	}
+	_ = m
+}
+
+// TestChainStepsViewGivesSlackToLastOutcome pins the steps table the same way:
+// STEP is the longest step id and LAST OUTCOME takes the rest, so a full outcome
+// shows at 100.
+// Mutation: make chainStepsLayout return the remainder as STEP's width.
+func TestChainStepsViewGivesSlackToLastOutcome(t *testing.T) {
+	m := chainsStepsModel(t, 100, 30, &fakeActions{chainsDoc: chainsFixtureDoc()}, "feature-auth")
+	stepW, cols := chainStepsLayout(100, m.top().(chainStepsView).doc.Chains[2])
+
+	if stepW < lipgloss.Width("review") {
+		t.Errorf("STEP width = %d, want at least the longest step id (%d)", stepW, lipgloss.Width("review"))
+	}
+	outcome, ok := chainColBy(cols, "outcome")
+	if !ok {
+		t.Fatalf("LAST OUTCOME dropped at width 100: %+v", cols)
+	}
+	if outcome < lipgloss.Width("review r1 · verdict=changes") {
+		t.Errorf("LAST OUTCOME width = %d, want the longest outcome (%d)", outcome, lipgloss.Width("review r1 · verdict=changes"))
+	}
+	body := stripANSI(m.View())
+	if !strings.Contains(body, "review r1 · verdict=changes") {
+		t.Errorf("a step outcome was cut at width 100:\n%s", body)
+	}
+}
+
+// chainColBy reads a laid-out column's width by key.
+func chainColBy(cols []chainCol, key string) (int, bool) {
+	for _, c := range cols {
+		if c.key == key {
+			return c.w, true
+		}
+	}
+	return 0, false
+}
+
+// chainColsHave reports whether a laid-out table shows the named column.
+func chainColsHave(cols []chainCol, key string) bool {
+	_, ok := chainColBy(cols, key)
+	return ok
+}
+
+// TestChainTraceCrumbsNameTheChainOnce pins the breadcrumb from both entry
+// points: the stack contributes chains, then the chain, then the trace. Pushed
+// from the step list, the trace's own segment is trace alone, because the step
+// list already contributes the chain's name.
+// Mutation: restore the unconditional two-segment [name, trace] Crumbs, or drop
+// the caller's crumbs in the steps view's t.
+func TestChainTraceCrumbsNameTheChainOnce(t *testing.T) {
+	fa := &fakeActions{
+		chainsDoc:   chainsFixtureDoc(),
+		chainTraces: map[string]relevo.ChainTraceDoc{"feature-auth": chainTraceFixture()},
+	}
+
+	// From the chains list: chains, then the chain and its trace.
+	m := chainTraceModel(t, 132, 34)
+	assertTraceHeader(t, m, "chains › feature-auth › trace")
+
+	// From the step list: chains, then the chain (the step list's own crumb),
+	// then the trace.
+	m = chainsStepsModel(t, 132, 34, fa, "feature-auth")
+	res, cmd := m.Update(key('t'))
+	m = drain(t, res.(Model), cmd)
+	assertTraceHeader(t, m, "chains › feature-auth › trace")
+}
+
+// assertTraceHeader fails when the rendered breadcrumb does not read want: the
+// chain named twice is the defect, so the whole trail is compared.
+func assertTraceHeader(t *testing.T, m Model, want string) {
+	t.Helper()
+	// The header draws each crumb and its separator through lipgloss, so the
+	// line is read with the runs stripped and the spacing collapsed before the
+	// segments are compared.
+	got := strings.Join(strings.Fields(stripANSI(strings.Split(stripANSI(m.View()), "\n")[0])), " ")
+	if !strings.Contains(got, want) {
+		t.Errorf("breadcrumb line = %q, want it to read %q", got, want)
+	}
+	if n := strings.Count(got, "feature-auth"); n != 1 {
+		t.Errorf("the chain is named %d times in %q, want once", n, got)
 	}
 }
 

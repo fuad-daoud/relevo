@@ -1117,6 +1117,20 @@ func chainTraceModel(t *testing.T, width, height int) Model {
 	return drain(t, res.(Model), cmd)
 }
 
+// chainTraceFromStepsModel is the same trace pushed from the steps view rather
+// than from the chains list: the two entry points must draw one breadcrumb, so
+// the golden for the steps path exists to pin that.
+func chainTraceFromStepsModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	fa := &fakeActions{
+		chainsDoc:   chainsFixtureDoc(),
+		chainTraces: map[string]relevo.ChainTraceDoc{"feature-auth": chainTraceFixture()},
+	}
+	m := chainsStepsModel(t, width, height, fa, "feature-auth")
+	res, cmd := m.Update(key('t'))
+	return drain(t, res.(Model), cmd)
+}
+
 // chainTraceFixture is the trace the trace golden renders: two closed rounds
 // and a check that went red.
 func chainTraceFixture() relevo.ChainTraceDoc {
@@ -1880,6 +1894,18 @@ func TestGoldenViews(t *testing.T) {
 			name: "chain-trace-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				return chainTraceModel(t, 132, 34)
+			},
+		},
+		{
+			name: "chain-trace-steps-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return chainTraceFromStepsModel(t, 132, 34)
+			},
+		},
+		{
+			name: "chain-trace-steps-100", width: 100, height: 30,
+			build: func(t *testing.T) Model {
+				return chainTraceFromStepsModel(t, 100, 30)
 			},
 		},
 		{

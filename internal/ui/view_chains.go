@@ -52,8 +52,39 @@ type chainCol struct {
 	w    int
 }
 
+// chainsNameCap bounds how wide NAME grows to fit a chain's name. Past it a
+// long name is cut with an ellipsis, exactly as every other over-wide cell in
+// these tables is: the columns after it carry the chain's state, and a name
+// wide enough to need a 40-cell column would starve them. The longest name the
+// read model has to show is a fork child's -- its name plus its parent's indent
+// -- and 32 leaves those whole.
+const chainsNameCap = 32
+
+// chainsAgeWidth is the AGE column's width: the widest age any chain in the
+// read model actually renders. view.AgeText's longest ordinary form is
+// "Nhh Mmm" at six cells, and the hour count grows with a chain's age, so the
+// column is sized from the rows rather than fixed -- a chain running for a day
+// shows "26h 4m" whole instead of "26h 4…".
+func chainsAgeWidth(doc relevo.ChainsDoc) int {
+	w := lipgloss.Width("AGE")
+	for _, c := range doc.Chains {
+		if a := lipgloss.Width(view.AgeText(c.Elapsed)); a > w {
+			w = a
+		}
+	}
+	return w
+}
+
 // chainsLayout calculates column widths and handles degradation across widths.
-func chainsLayout(width int) (int, []chainCol) {
+//
+// NAME is sized from the rows -- the longest indent plus name in the read model,
+// capped at chainsNameCap -- and never takes the width the other columns leave
+// over. A greedy NAME swallows every cell, so the freed width goes to AGE,
+// WHERE and the rest instead, which is what lets an age or an outcome show
+// whole at 100 columns. Too narrow a terminal drops whole columns, newest
+// information last, rather than truncating AGE: an age the human can read is
+// worth more than a WHERE column naming a server the human already knows.
+func chainsLayout(width int, doc relevo.ChainsDoc) (int, []chainCol) {
 	cw := width - 6
 	if cw < 0 {
 		cw = 0
@@ -62,21 +93,23 @@ func chainsLayout(width int) (int, []chainCol) {
 		{"status", "STATUS", 8},
 		{"step", "STEP", 14},
 		{"plans", "PLANS", 7},
-		{"age", "AGE", 6},
-		{"where", "WHERE", 16},
+		{"age", "AGE", chainsAgeWidth(doc)},
+		{"where", "WHERE", chainsWhereWidth(doc)},
 	}
-	nameW := func(cols []chainCol) int {
-		fixed := 2
-		for i, c := range cols {
-			fixed += c.w
-			if i < len(cols)-1 {
-				fixed += 2
-			}
-		}
-		return cw - fixed
+	nameW := chainsNameWidth(doc)
+	if nameW < lipgloss.Width("NAME") {
+		nameW = lipgloss.Width("NAME")
 	}
+	// Width NAME no longer takes belongs to WHERE, the one column whose content
+	// varies with the deployment rather than with the chain, so a short chain
+	// name widens the placement instead of padding the row.
 	for _, drop := range []string{"where", "age"} {
-		if nameW(visible) >= 36 {
+		if slack := cw - nameW - columnsWidth(visible); slack >= 0 {
+			for i := range visible {
+				if visible[i].key == "where" {
+					visible[i].w += slack
+				}
+			}
 			break
 		}
 		for i, c := range visible {
@@ -86,7 +119,51 @@ func chainsLayout(width int) (int, []chainCol) {
 			}
 		}
 	}
-	return nameW(visible), visible
+	return nameW, visible
+}
+
+// columnsWidth is the width a set of columns takes, with the two-cell gap
+// between each pair of them.
+func columnsWidth(cols []chainCol) int {
+	n := 0
+	for i, c := range cols {
+		n += c.w
+		if i < len(cols)-1 {
+			n += 2
+		}
+	}
+	return n
+}
+
+// chainsNameWidth is the width NAME needs for the read model: the longest
+// displayed name, which is a chain's name under its nesting indent.
+func chainsNameWidth(doc relevo.ChainsDoc) int {
+	w := 0
+	for _, c := range doc.Chains {
+		if n := lipgloss.Width(strings.Repeat("  ", c.Depth) + sanitizeText(c.Name)); n > w {
+			w = n
+		}
+	}
+	if w > chainsNameCap {
+		w = chainsNameCap
+	}
+	return w
+}
+
+// chainsWhereWidth is the width WHERE needs for the longest placement in the
+// read model, never less than the width it had when the column was fixed.
+func chainsWhereWidth(doc relevo.ChainsDoc) int {
+	w := 16
+	for _, c := range doc.Chains {
+		text := c.Where
+		if text == "" {
+			text = "local"
+		}
+		if n := lipgloss.Width(sanitizeText(text)); n > w {
+			w = n
+		}
+	}
+	return w
 }
 
 // chainsHeaderLine renders the table header row.
@@ -113,6 +190,10 @@ func chainStatusText(c relevo.ChainEntry) (string, lipgloss.Style) {
 		return "stopped", mutedStyle
 	case string(chain.StatusDone):
 		return "done", faintStyle
+	case string(chain.StatusGone):
+		// A chain the server released: the warn tone says its status could not
+		// be read, not that the chain is waiting on the human.
+		return "gone", warnStyle
 	default:
 		return sanitizeText(c.Status), mutedStyle
 	}
@@ -169,7 +250,7 @@ func chainReasonLine(c relevo.ChainEntry, sel bool, cw int) string {
 
 // bodyLines builds all rendered table lines before viewport windowing.
 func (v chainsView) bodyLines(env Env, width int) []string {
-	nameW, cols := chainsLayout(width)
+	nameW, cols := chainsLayout(width, v.doc)
 	cw := width - 6
 	if cw < 0 {
 		cw = 0
@@ -241,7 +322,7 @@ func pluralChain(n int) string {
 }
 
 func (v chainsView) Context(env Env) (string, string) {
-	running, halted, stopped, done := 0, 0, 0, 0
+	running, halted, stopped, done, gone := 0, 0, 0, 0, 0
 	for _, c := range v.doc.Chains {
 		switch c.Status {
 		case string(chain.StatusRunning):
@@ -252,6 +333,8 @@ func (v chainsView) Context(env Env) (string, string) {
 			stopped++
 		case string(chain.StatusDone):
 			done++
+		case string(chain.StatusGone):
+			gone++
 		}
 	}
 	part := func(n int, label string, style lipgloss.Style) string {
@@ -269,6 +352,9 @@ func (v chainsView) Context(env Env) (string, string) {
 	}
 	if done > 0 {
 		left += "   " + part(done, "done", faintStyle)
+	}
+	if gone > 0 {
+		left += "   " + part(gone, "gone", warnStyle)
 	}
 	return left, ""
 }

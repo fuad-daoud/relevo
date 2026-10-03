@@ -68,10 +68,18 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 // chainServerTrace is `show <chain> --trace` for a chain that runs on a
 // server: the document is the server's own trace, decoded exactly as a local
 // trace is, so a trace that cannot be decoded is an error rather than a guess.
+//
+// A 404 from a chain this machine already holds as over is not a missing
+// trace: the server has released the chain, and the events this machine stored
+// while mirroring it are the trace it has. Any other 404 still means the server
+// holds no such chain.
 func chainServerTrace(ctx context.Context, rt Runtime, c db.ChainRow) (ChainTraceDoc, error) {
 	v, err := chainGetView(ctx, rt, c)
 	if err != nil {
 		if is404(err) {
+			if chainTerminalStatus(c.Status) {
+				return chainStoredTrace(rt, c)
+			}
 			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, store.ErrNotFound)
 		}
 		return ChainTraceDoc{}, err

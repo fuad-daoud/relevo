@@ -87,13 +87,30 @@ func ReadChains(ctx context.Context, rt Runtime) (ChainsDoc, error) {
 }
 
 // chainDocEntry builds one ChainEntry from stored data and optional remote view.
+//
+// `stale` means one thing only: this machine could not ask the server. A 404 is
+// the server's answer that it no longer holds the chain, which is not a fault
+// to report and never overwrites the stored status. A chain the stored row
+// already holds as over keeps that status with an empty `Stale`: the pull wrote
+// the row's end from the same view that closed it, so there is nothing left to
+// ask the server. A chain the row still holds as open reads as gone instead,
+// carrying the gone wording the pull writes for a chain the server dropped.
 func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time, repByName map[string]view.BindingStatus, storeBindings map[string]store.Binding) ChainEntry {
 	var liveTrace []db.ChainEventRow
 	var staleErr string
 
 	if chainOnServer(c) && rt.Remote != nil {
 		if v, err := chainGetView(ctx, rt, c); err != nil {
-			staleErr = err.Error()
+			switch {
+			case is404(err) && chainTerminalStatus(c.Status):
+				// Released and already over: the stored row is the answer, and
+				// a server that no longer holds it is not stale.
+			case is404(err):
+				c.Status = string(chain.StatusGone)
+				c.Reason = chainGoneReason(c.Name, c.Server)
+			default:
+				staleErr = err.Error()
+			}
 		} else {
 			if mirrored, merr := chainRowFromView(c, v, now); merr == nil {
 				c = mirrored
@@ -468,7 +485,10 @@ func chainTerminalStatus(st string) bool {
 	return st == string(chain.StatusHalted) || st == string(chain.StatusStopped) || st == string(chain.StatusDone)
 }
 
-// chainStatusRank assigns a sort rank: running and halted first, then stopped, then done.
+// chainStatusRank assigns a sort rank: running and halted first, then stopped,
+// then done, then gone. A gone chain ranks last of the words the read model
+// knows, because nothing about it can change and nothing is waiting on it; a
+// word no rule knows still sorts after every one of them.
 func chainStatusRank(status string) int {
 	switch status {
 	case string(chain.StatusRunning), string(chain.StatusHalted):
@@ -477,8 +497,10 @@ func chainStatusRank(status string) int {
 		return 1
 	case string(chain.StatusDone):
 		return 2
-	default:
+	case string(chain.StatusGone):
 		return 3
+	default:
+		return 4
 	}
 }
 

@@ -25,11 +25,20 @@ type chainTraceView struct {
 	err    error
 	loaded bool
 	vp     viewport.Model
+	// crumbs replaces the default chain-and-trace breadcrumb when the trace was
+	// reached through a view that already names the chain, so the trail reads
+	// chains › chain › trace instead of naming the chain twice.
+	crumbs []string
 }
 
-// newChainTraceView pushes a chain's trace and the read that fills it.
-func newChainTraceView(env Env, name string) View {
-	return chainTraceView{name: name, vp: viewport.New(maxInt(env.Width-6, 20), maxInt(bodyHeight(env), 1))}
+// newChainTraceView pushes a chain's trace and the read that fills it. Crumbs
+// are the trail this view contributes on its own: the chain's name plus trace
+// when it was pushed straight from the chains list, and the segments the caller
+// supplies when a view below it already names the chain.
+func newChainTraceView(env Env, name string, crumbs ...string) View {
+	v := chainTraceView{name: name, vp: viewport.New(maxInt(env.Width-6, 20), maxInt(bodyHeight(env), 1))}
+	v.crumbs = crumbs
+	return v
 }
 
 // maxInt is the larger of two ints.
@@ -51,7 +60,15 @@ func chainTraceCmd(env Env, name string) tea.Cmd {
 	}
 }
 
-func (v chainTraceView) Crumbs() []string { return []string{v.name, "trace"} }
+// Crumbs is the trail this view contributes: the chain and its trace when the
+// chains list pushed it, and the caller's own segments when the step list did,
+// since that view already contributes the chain's name.
+func (v chainTraceView) Crumbs() []string {
+	if len(v.crumbs) > 0 {
+		return v.crumbs
+	}
+	return []string{v.name, "trace"}
+}
 
 func (v chainTraceView) Capturing() bool { return false }
 

@@ -23,6 +23,12 @@ const (
 	StatusHalted  Status = "halted"
 	StatusStopped Status = "stopped"
 	StatusDone    Status = "done"
+	// StatusGone is a chain whose server no longer holds it. It is the chains
+	// read model's word alone: a row never carries it, because the row is this
+	// machine's record of the chain and keeps whatever status the pull left on
+	// it. Only a read renames a released chain to gone, so every reader that
+	// acts on a chain's status is untouched by a server dropping one.
+	StatusGone Status = "gone"
 )
 
 // Phase is the part of the run a chain is in. The security phase scans once:

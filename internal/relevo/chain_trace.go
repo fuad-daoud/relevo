@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -67,7 +68,16 @@ func ChainTrace(ctx context.Context, rt Runtime, name string) (ChainTraceDoc, er
 	if chainOnServer(c) {
 		return chainServerTrace(ctx, rt, c)
 	}
-	rows, err := rt.Store.ChainEvents(name)
+	return chainStoredTrace(rt, c)
+}
+
+// chainStoredTrace is a chain's trace from the events this machine stored, in
+// seq order, decoded exactly as a server view's rows are. It is the whole
+// answer for a local chain, and the answer for a server chain the server has
+// released: the pull installs every round the mirror closed before the row
+// reached a terminal status, so a released chain's stored events are its trace.
+func chainStoredTrace(rt Runtime, c db.ChainRow) (ChainTraceDoc, error) {
+	rows, err := rt.Store.ChainEvents(c.Name)
 	if err != nil {
 		return ChainTraceDoc{}, err
 	}
@@ -85,7 +95,7 @@ func ChainTrace(ctx context.Context, rt Runtime, name string) (ChainTraceDoc, er
 	for _, r := range rows {
 		ev, err := chainTraceEvent(r.Seq, r.TS, r.Phase, r.Step, r.Member, r.Round, r.Plan, r.Event, r.Action, r.Reason)
 		if err != nil {
-			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", name, err)
+			return ChainTraceDoc{}, fmt.Errorf("chain %s: %w", c.Name, err)
 		}
 		doc.Events = append(doc.Events, ev)
 	}
