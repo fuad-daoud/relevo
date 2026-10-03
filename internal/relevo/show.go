@@ -65,12 +65,7 @@ type ShowOptions struct {
 	// the payload for the route that pushes it. `show --owner` sets it too,
 	// so the admin's read of another owner's binding stays read-only.
 	Peek bool
-	// ArchivedOnly answers from the archived record or rt.DB and never from a
-	// live binding of the same name (#967). The cockpit's history rows are the
-	// human's view of rounds that already closed, so a rebind leaving a live
-	// binding under a name those rows also carry must not shadow them. Nothing
-	// is pending on that path, so ArchivedOnly needs no Peek to stay
-	// non-claiming -- Peek remains the cockpit's own belt.
+	// ArchivedOnly skips a live binding of the same name: history rows show closed rounds.
 	ArchivedOnly bool
 	// FindingsID is the consult whose findings --findings names (§4.2). It is
 	// meaningful only with Section == ShowFindings.
@@ -111,7 +106,6 @@ type ShowResult struct {
 // round files and log; and finally against rt.DB, for a binding the live
 // store never held (docs/specs/2026-09-20-persistence-design.md §5.7). It
 // returns store.ErrNotFound, wrapped, when opts.Name is none of the three.
-// opts.ArchivedOnly starts at the second step, skipping the live one (#967).
 func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error) {
 	if opts.Name == "" {
 		return ShowResult{}, fmt.Errorf("show: a binding name is required")
@@ -130,11 +124,8 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 		return showWorkflow(ctx, rt, opts)
 	}
 
-	// A history-row read (ArchivedOnly) never enters the live branch: the name
-	// may belong to a live binding again after a rebind, and that binding's
-	// files and pending payloads are not the archived rounds being shown.
 	b, err := rt.Store.Load(opts.Name)
-	if err == nil && !opts.ArchivedOnly {
+	if err == nil && !opts.ArchivedOnly { // history rows skip live bindings: a rebind may reuse the name
 		res, err := showLive(rt, b, opts)
 		if err != nil {
 			return ShowResult{}, err
