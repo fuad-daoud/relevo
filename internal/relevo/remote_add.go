@@ -70,32 +70,12 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		if opts.Base != "" {
 			return AddResult{}, errors.New("--base and --branch are exclusive")
 		}
-		if err := branchDrivenByLiveBinding(rt, opts.Branch); err != nil {
-			return AddResult{}, err
-		}
-		exists, err := rt.Git.BranchExists(ctx, opts.Repo, opts.Branch)
+		// Resolved locally before anything below, so the fetch this may run
+		// happens before every server call: a refusal or a fetch failure must
+		// reach the server never.
+		tip, _, err := resolveAdoptedBranch(ctx, rt, opts.Repo, opts.Branch)
 		if err != nil {
 			return AddResult{}, err
-		}
-		if !exists {
-			originRef := "origin/" + opts.Branch
-			_, ok, err := rt.Git.RefSHA(ctx, opts.Repo, "refs/remotes/"+originRef)
-			if err != nil {
-				return AddResult{}, err
-			}
-			if !ok {
-				return AddResult{}, fmt.Errorf("branch %q not found locally or on origin", opts.Branch)
-			}
-			if err := rt.Git.CreateTrackingBranch(ctx, opts.Repo, opts.Branch, originRef); err != nil {
-				return AddResult{}, err
-			}
-		}
-		tip, ok, err := rt.Git.RefSHA(ctx, opts.Repo, "refs/heads/"+opts.Branch)
-		if err != nil {
-			return AddResult{}, err
-		}
-		if !ok {
-			return AddResult{}, fmt.Errorf("branch %q vanished", opts.Branch)
 		}
 		branch = opts.Branch
 		existingBranch = true
