@@ -254,8 +254,6 @@ type Binding struct {
 	// been unacted for policy.json's stale_after_ms.
 	StaleSince time.Time `json:"stale_since,omitempty"`
 
-	StaleNotifiedAt time.Time `json:"stale_notified_at,omitempty"`
-
 	// RoundBaselineTree empty means no baseline was captured and the round
 	// produces no diff.
 	RoundBaselineTree string `json:"round_baseline_tree,omitempty"`
