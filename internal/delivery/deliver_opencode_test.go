@@ -350,7 +350,11 @@ func TestOpencodeDeliverUnavailableCases(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := &OpencodeDeliverer{StateFiles: tc.stateFiles, DBPath: filepath.Join(t.TempDir(), "opencode.db"), Exec: tc.exec, Alive: tc.alive}
+			// A refused POST is answered without waiting: the caller's lock is a
+			// global one, so a sleep here would stall every other binding's tick.
+			start := time.Now()
 			out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
+			took := time.Since(start)
 			if err != nil {
 				t.Fatalf("Deliver: %v", err)
 			}
@@ -360,13 +364,16 @@ func TestOpencodeDeliverUnavailableCases(t *testing.T) {
 			if !strings.HasPrefix(reason, tc.wantReasonPrefix) {
 				t.Errorf("reason = %q, want prefix %q", reason, tc.wantReasonPrefix)
 			}
+			if took > 2*time.Second {
+				t.Errorf("Deliver took %s, want no waiting between attempts: an unreachable service must answer promptly", took)
+			}
 		})
 	}
 }
 
 // opencodeDownServer is a service that refuses the first failures POSTs and takes
-// the one after them: the opencode-down-then-recovered shape the retry exists
-// for. It records every POST it is asked for.
+// the one after them: the opencode-down-then-recovered shape the across-tick
+// retry exists for. It records every POST it is asked for.
 type opencodeDownServer struct {
 	mu       sync.Mutex
 	posts    int
@@ -396,13 +403,16 @@ func (s *opencodeDownServer) count() int {
 	return s.posts
 }
 
-// TestOpencodeDeliverRetriesThroughAnOutage is the push that must not strand: a
-// service that refuses the first POSTs is retried with backoff and the payload
-// is admitted once it takes one, rather than being written off at a short
-// fallback so a pane path with no collector behind it would take it. The read
-// back that follows in the same tick confirms it, and no POST is repeated
-// after that.
-func TestOpencodeDeliverRetriesThroughAnOutage(t *testing.T) {
+// TestOpencodeDeliverRetriesAcrossTicks is the push that must not strand: a
+// service that refuses the first POSTs is retried on the following ticks, each
+// call POSTing exactly once, and the payload is admitted once the service takes
+// one rather than being written off at a short fallback so a pane path with no
+// collector behind it would take it. The read-back that follows confirms it,
+// and no POST is repeated after that.
+//
+// No call sleeps between POSTs: the retry is the tick, so the per-call cost is
+// one request and the entry stays pending in between.
+func TestOpencodeDeliverRetriesAcrossTicks(t *testing.T) {
 	t.Parallel()
 
 	svc := &opencodeDownServer{failures: 2}
@@ -410,38 +420,56 @@ func TestOpencodeDeliverRetriesThroughAnOutage(t *testing.T) {
 
 	dir := t.TempDir()
 	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
-	// seenFrom 0: the session has not taken the payload yet, so every attempt
-	// below is a read-back that finds nothing.
+	// seenFrom 0: the session has not taken the payload yet, so every call's
+	// read-back below finds nothing.
 	exec := &fakeSqliteExec{}
 
 	d := &OpencodeDeliverer{
-		StateFiles:  []string{stateFile},
-		DBPath:      filepath.Join(dir, "opencode.db"),
-		Exec:        exec,
-		Alive:       aliveAlways,
-		RetryWindow: 5 * time.Second,
-		RetryBase:   time.Millisecond,
-		RetryMax:    2 * time.Millisecond,
+		StateFiles: []string{stateFile},
+		DBPath:     filepath.Join(dir, "opencode.db"),
+		Exec:       exec,
+		Alive:      aliveAlways,
 	}
 
 	payload := "relevo: round 1 · to MasterMind · about runner \"w\" (not the human)\n\nThe runner finished round 1."
 	queuedAt := time.Now().Add(-time.Minute)
+	endpoint := opencodeMasterMind("ses_abc123")
 
-	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), payload, "/x/001-report.md", queuedAt)
+	// The first two ticks the service refuses the one POST each of them sends.
+	// A refusal is unavailable, never given up on: the entry stays pending and
+	// the next tick tries again under the same 30-minute horizon.
+	for tick, wantPosts := range []int{1, 2} {
+		out, reason, err := d.Deliver(context.Background(), endpoint, payload, "/x/001-report.md", queuedAt)
+		if err != nil {
+			t.Fatalf("Deliver on tick %d: %v", tick+1, err)
+		}
+		if out != OutcomeUnavailable {
+			t.Fatalf("tick %d: out = %v, reason = %q, want OutcomeUnavailable: a refused POST is retried on the next tick, not given up on", tick+1, out, reason)
+		}
+		if !strings.HasPrefix(reason, "post: ") {
+			t.Errorf("tick %d: reason = %q, want the POST refusal as the reason", tick+1, reason)
+		}
+		if got := svc.count(); got != wantPosts {
+			t.Fatalf("tick %d: POSTs = %d, want %d: one call POSTs once", tick+1, got, wantPosts)
+		}
+	}
+
+	// The third tick the service takes the payload and it is admitted.
+	out, reason, err := d.Deliver(context.Background(), endpoint, payload, "/x/001-report.md", queuedAt)
 	if err != nil {
-		t.Fatalf("Deliver: %v", err)
+		t.Fatalf("Deliver on tick 3: %v", err)
 	}
 	if out != OutcomeAdmitted || reason != "posted; awaiting the session" {
-		t.Fatalf("Deliver = (%v, %q), want OutcomeAdmitted after the service recovered", out, reason)
+		t.Fatalf("tick 3 Deliver = (%v, %q), want OutcomeAdmitted after the service recovered", out, reason)
 	}
 	if got := svc.count(); got != 3 {
 		t.Fatalf("POSTs = %d, want 3: the two refusals and the one that took it", got)
 	}
 
-	// The session takes the turn and the read-back the same tick runs confirms
-	// it, with no further POST: an outage is ridden out, not double-sent.
+	// The session takes the turn and the read-back confirms it, with no further
+	// POST: an outage is ridden out, not double-sent.
 	exec.seenFrom = exec.calls + 1
-	out, reason, err = d.Confirm(context.Background(), opencodeMasterMind("ses_abc123"), payload, queuedAt)
+	out, reason, err = d.Confirm(context.Background(), endpoint, payload, queuedAt)
 	if err != nil {
 		t.Fatalf("Confirm: %v", err)
 	}
@@ -453,11 +481,12 @@ func TestOpencodeDeliverRetriesThroughAnOutage(t *testing.T) {
 	}
 }
 
-// TestOpencodeDeliverRetryStopsOnASeenPayload pins the idempotence rule inside
-// the retry loop: once the session holds the payload, the loop confirms it and
-// stops, so the retries that follow an outage never re-POST a payload that
-// already landed. Only the POST before the payload was seen is ever sent.
-func TestOpencodeDeliverRetryStopsOnASeenPayload(t *testing.T) {
+// TestOpencodeDeliverSeenFirstSkipsThePOSTOnALaterTick pins the idempotence
+// rule across ticks: once the session holds the payload, the next call confirms
+// it before anything is sent, so the retries an outage causes never re-POST a
+// payload that already landed. The refusal below is one that had in fact
+// queued the turn, which is exactly the case a retry must not duplicate.
+func TestOpencodeDeliverSeenFirstSkipsThePOSTOnALaterTick(t *testing.T) {
 	t.Parallel()
 
 	svc := &opencodeDownServer{failures: 1}
@@ -465,22 +494,36 @@ func TestOpencodeDeliverRetryStopsOnASeenPayload(t *testing.T) {
 
 	dir := t.TempDir()
 	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
-	// seenFrom 2: the first read-back finds nothing and the first POST is
-	// refused; the second read-back finds the payload the refused POST had in
-	// fact already queued.
-	exec := &fakeSqliteExec{seenFrom: 2}
+	exec := &fakeSqliteExec{} // nothing seen yet
 
 	d := &OpencodeDeliverer{
-		StateFiles:  []string{stateFile},
-		DBPath:      filepath.Join(dir, "opencode.db"),
-		Exec:        exec,
-		Alive:       aliveAlways,
-		RetryWindow: 5 * time.Second,
-		RetryBase:   time.Millisecond,
-		RetryMax:    2 * time.Millisecond,
+		StateFiles: []string{stateFile},
+		DBPath:     filepath.Join(dir, "opencode.db"),
+		Exec:       exec,
+		Alive:      aliveAlways,
 	}
 
-	out, reason, err := d.Deliver(context.Background(), opencodeMasterMind("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Now().Add(-time.Minute))
+	endpoint := opencodeMasterMind("ses_abc123")
+	queuedAt := time.Now().Add(-time.Minute)
+
+	// The first tick's read-back finds nothing, so the one POST it sends is the
+	// refused one that had queued the turn all the same.
+	out, reason, err := d.Deliver(context.Background(), endpoint, "relevo: round 1\n\nbody", "/x/r.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeUnavailable || !strings.HasPrefix(reason, "post: ") {
+		t.Fatalf("Deliver = (%v, %q), want OutcomeUnavailable on the refusal", out, reason)
+	}
+	if got := svc.count(); got != 1 {
+		t.Fatalf("POSTs = %d, want 1", got)
+	}
+
+	// From the next read-back on, the session holds the payload.
+	exec.seenFrom = exec.calls + 1
+
+	// The next tick confirms it with no request at all.
+	out, reason, err = d.Deliver(context.Background(), endpoint, "relevo: round 1\n\nbody", "/x/r.md", queuedAt)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -489,6 +532,18 @@ func TestOpencodeDeliverRetryStopsOnASeenPayload(t *testing.T) {
 	}
 	if got := svc.count(); got != 1 {
 		t.Fatalf("POSTs = %d, want 1: a retry must never re-POST a payload the session holds", got)
+	}
+
+	// And it stays confirmed on the tick after that, still without a POST.
+	out, reason, err = d.Deliver(context.Background(), endpoint, "relevo: round 1\n\nbody", "/x/r.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeDelivered || reason != "already present" {
+		t.Fatalf("Deliver = (%v, %q), want OutcomeDelivered/\"already present\" on the following tick", out, reason)
+	}
+	if got := svc.count(); got != 1 {
+		t.Fatalf("POSTs = %d, want 1 across every later tick", got)
 	}
 }
 
