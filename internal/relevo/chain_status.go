@@ -38,9 +38,15 @@ func chainFactsOf(s *store.Store, c db.ChainRow) view.ChainFacts {
 		Corrections: lf.Corrections,
 		Awaiting:    lf.Awaiting,
 		Reason:      c.Reason,
+		Parent:      c.Parent,
 	}
 	if len(c.StateJSON) > 0 {
 		chainFlowFacts(&f, c)
+	}
+	// A parent's own children are the fork's progress; a child's row carries
+	// the parent instead, and its own children are none of its own rows' business.
+	if c.Parent == "" {
+		chainChildFacts(s, &f, c)
 	}
 	if (c.Status == string(chain.StatusHalted) || c.Status == string(chain.StatusStopped)) &&
 		chainBuilderRoundOpen(s, c) {
@@ -115,7 +121,9 @@ func viewChainRow(s *store.Store, c db.ChainRow) view.BindingStatus {
 }
 
 // applyChains replaces the member rows of every chain with the chain's own
-// row, so the mastermind reads one row per chain instead of its members'.
+// row, so the mastermind reads one row per chain instead of its members'. A
+// fork's child is the exception: it takes no top-level row of its own, and is
+// threaded in under the parent that forked it.
 //
 // The rows are re-sorted, so a chain that waits on a human rises to the top of
 // the listing like any other NEEDS YOU row.
@@ -138,25 +146,76 @@ func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Rep
 			rows = append(rows, b)
 			continue
 		}
+		// A fork's child is never a row of the top level: it prints under the
+		// parent that forked it, and only there (appendChainChildRows).
+		if c.Parent != "" {
+			continue
+		}
 		// The chain row takes the place of the first of its members, and the
 		// other member rows go with it.
 		if !placed[c.Name] {
 			placed[c.Name] = true
-			rows = append(rows, viewChainRow(s, c))
+			rows = append(rows, chainTopRow(s, c))
 		}
 	}
 	// A chain whose member rows are all gone from the report still exists, so
 	// it still gets its row. Chains() orders by name, so the tail is stable.
 	for _, c := range chains {
-		if c.Status == string(chain.StatusDone) {
+		if c.Status == string(chain.StatusDone) || c.Parent != "" {
 			continue
 		}
 		if !placed[c.Name] {
-			rows = append(rows, viewChainRow(s, c))
+			placed[c.Name] = true
+			rows = append(rows, chainTopRow(s, c))
 		}
 	}
-	rep.Bindings = view.SortRows(rows, true)
+	// The top-level rows sort first, so a chain that waits on a human rises to
+	// the top of the listing like any other NEEDS YOU row. Only then are a
+	// fork's children threaded in under the parent that forked them, in key
+	// order, each with its own step and status: a child is a chain, and a halted
+	// child says why. Inserting them last is what keeps the sort from pulling a
+	// halted child ahead of the still-running parent it belongs under.
+	rows = view.SortRows(rows, true)
+	rows = appendChainChildRows(s, rows, chains)
+	rep.Bindings = rows
 	return rep
+}
+
+// chainTopRow is the row a chain prints when it is not a fork's child.
+func chainTopRow(s *store.Store, c db.ChainRow) view.BindingStatus {
+	return viewChainRow(s, c)
+}
+
+// appendChainChildRows inserts every fork child under the parent row it belongs
+// to, in key order. A child whose parent is not in the row set -- a parent that
+// is done, or a chain on another surface -- is skipped rather than printed at
+// the top level, because the child has no top level of its own.
+func appendChainChildRows(s *store.Store, rows []view.BindingStatus, chains []db.ChainRow) []view.BindingStatus {
+	children := map[string][]db.ChainRow{}
+	for _, c := range chains {
+		if c.Parent != "" {
+			children[c.Parent] = append(children[c.Parent], c)
+		}
+	}
+	for parent, kids := range children {
+		sortChainRowsByKey(kids)
+		at := -1
+		for i, r := range rows {
+			if r.Name == parent {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			continue
+		}
+		nested := make([]view.BindingStatus, 0, len(kids))
+		for _, k := range kids {
+			nested = append(nested, chainChildRowOf(s, k))
+		}
+		rows = append(rows[:at+1], append(nested, rows[at+1:]...)...)
+	}
+	return rows
 }
 
 // ChainStatus is `relevo status <chain>`: the chain's own row with its member

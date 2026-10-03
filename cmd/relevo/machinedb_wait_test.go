@@ -418,6 +418,8 @@ func TestRouteStartWaitExemptions(t *testing.T) {
 		{"daemon", []string{"daemon"}, routeNone, verbDialBudget, 0},
 		{"daemon check", []string{"daemon", "--check"}, routeNone, verbDialBudget, 0},
 		{"bugreport", []string{"bugreport"}, routeNone, verbDialBudget, 0},
+		{"board", []string{"board"}, routeNone, verbDialBudget, 0},
+		{"board url", []string{"board", "url"}, routeNone, verbDialBudget, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

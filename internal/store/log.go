@@ -69,6 +69,52 @@ func IsPromptKind(k Kind) bool {
 	return k == KindPrompt || k == kindPlanLegacy
 }
 
+// NudgeNote marks the one reminder a send writes when a builder went idle
+// without reporting. It is state already written, and the log queries below
+// exclude it: a nudge is not a send, so a round it reminds about is not open
+// by it, and a question it asks is not one a human must answer.
+const NudgeNote = "nudge"
+
+// HasPrompt reports whether the log holds a to-builder prompt entry of round,
+// in either kind spelling, excluding a nudge.
+func HasPrompt(entries []LogEntry, round int) bool {
+	for _, e := range entries {
+		if e.Round == round && e.Direction == DirToBuilder && IsPromptKind(e.Kind) && e.Note != NudgeNote {
+			return true
+		}
+	}
+	return false
+}
+
+// HasKind reports whether the log holds an entry of that round, direction and
+// kind, excluding a nudge.
+func HasKind(entries []LogEntry, round int, dir Direction, kind Kind) bool {
+	for _, e := range entries {
+		if e.Round == round && e.Direction == dir && e.Kind == kind && e.Note != NudgeNote {
+			return true
+		}
+	}
+	return false
+}
+
+// RoundOpen reports whether round is open: a prompt went out for it and no
+// report has come back. This is the one definition of "open" in the system.
+//
+// It lives here because three readers need it and none of them can import each
+// other: the daemon and the served view decide whether a round is in flight,
+// `stop` decides whether there is something to stop, and the history ingest
+// decides what a round's outcome was. When each spelled the condition its own
+// way they disagreed, and the disagreement showed a human a closed round as
+// open (so `stop` refused to end it) or an open one as closed.
+//
+// The log is the whole answer, not the binding's state word: a round that has a
+// prompt and no report is open whatever the state says, so a halt, a pause or a
+// broken binding still has a live round, and a round that has reported is closed
+// whatever the state has become since.
+func RoundOpen(entries []LogEntry, round int) bool {
+	return HasPrompt(entries, round) && !HasKind(entries, round, DirToMasterMind, KindReport)
+}
+
 // LogEntry is one relayed message. An unconfirmed DirToMasterMind entry is also
 // relevo's pending-delivery record, which makes a crash mid-delivery
 // recoverable without a second file.

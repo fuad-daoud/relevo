@@ -717,3 +717,43 @@ func TestServeRunRefusesUserModeWithoutRoot(t *testing.T) {
 		t.Fatal("relevo serve did not refuse isolation=user within 10s; it may have started a daemon")
 	}
 }
+
+// TestServeRunRefusesContainerModeWithoutPodman pins the container startup
+// prerequisite: with the runtime absent, a configured serve.isolation=container
+// is refused with not_available naming podman, before any side effect. The
+// lookup seam is overridden so the result does not depend on the host, and the
+// wait is bounded like the user-mode refusal test.
+func TestServeRunRefusesContainerModeWithoutPodman(t *testing.T) {
+	orig := containerLookPath
+	containerLookPath = func(string) (string, error) { return "", errors.New("not found") }
+	t.Cleanup(func() { containerLookPath = orig })
+
+	stateHome := t.TempDir()
+	configHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	policyDir := filepath.Join(configHome, "relevo")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir policy dir: %v", err)
+	}
+	policyJSON := `{"serve":{"isolation":"container","isolation_image":"relevo-builder:local"}}`
+	if err := os.WriteFile(filepath.Join(policyDir, "policy.json"), []byte(policyJSON), 0o644); err != nil {
+		t.Fatalf("write policy.json: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- run([]string{"serve", "--listen", "127.0.0.1:0", "--insecure-http"})
+	}()
+
+	select {
+	case err := <-done:
+		ce := requireCLIError(t, err, codeNotAvailable, "")
+		if !strings.Contains(ce.message, "podman") {
+			t.Errorf("message = %q, want it to name podman", ce.message)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("relevo serve did not refuse isolation=container within 10s; it may have started a daemon")
+	}
+}

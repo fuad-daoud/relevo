@@ -136,6 +136,16 @@ func (t *Tx) CreateChain(c db.ChainRow, members []Binding) error {
 	})
 }
 
+// ChainDelete removes the chain and its trace and member rows from the store.
+func (t *Tx) ChainDelete(name string) error {
+	return t.withDB(func(dtx *db.Tx) error { return dtx.ChainDelete(t.s.owner, name) })
+}
+
+// ChainDelete removes the chain and its trace and member rows under the state lock.
+func (s *Store) ChainDelete(name string) error {
+	return s.WithLock(func(tx *Tx) error { return tx.ChainDelete(name) })
+}
+
 // ChainMembers returns the named chain's member rows, in creation order.
 func (s *Store) ChainMembers(name string) ([]db.ChainMemberRow, error) {
 	var members []db.ChainMemberRow

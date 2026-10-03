@@ -32,21 +32,23 @@ import (
 // ErrBuilderBusy reports a send against a headless binding whose previous
 // round's process is still running (headless spec §5.2). One process per
 // round is the model; two at once in one tree would race each other's
-// edits.
-var ErrBuilderBusy = errors.New("the previous process is still running; wait for the round to close, or relevo done")
+// edits. Being a refusalSentinel, anything wrapping it also unwraps to
+// ErrRefused, so the CLI classifies the busy send as refused (exit 2) rather
+// than internal without each call site naming both sentinels.
+var ErrBuilderBusy = refusalSentinel("the previous process is still running; wait for the round to close, or relevo done")
 
 // ErrReportPending reports a send refused because the current round already
 // has its completion marker or report on disk, but the daemon has not yet
 // ingested the close. The round is over: restaging its plan and starting a
 // second builder would make the daemon close on the stale marker and deliver
 // the old report. The caller retries once the report is delivered.
-var ErrReportPending = errors.New("the round's output is on disk but not yet delivered; relevo wait delivers it, then send the next round")
+var ErrReportPending = refusalSentinel("the round's output is on disk but not yet delivered; relevo wait delivers it, then send the next round")
 
 // ErrScopeActive reports a send refused because this round's systemd scope
 // unit is still loaded: a builder for the round is already alive, most
 // likely started by an earlier send whose bookkeeping failed (#445). Nothing
 // was spawned and nothing was saved.
-var ErrScopeActive = errors.New("this round's builder scope is still running")
+var ErrScopeActive = refusalSentinel("this round's builder scope is still running")
 
 // handleOf is the endpoint's stored process fields as the Runner's handle.
 // StartedAt is Unix seconds on the endpoint (store spec §3.1, amended).
@@ -684,7 +686,7 @@ func streamLastActivity(rt Runtime, b store.Binding) time.Time {
 // round is a stray relevo stops.
 func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	if b.Round > b.RoundCap {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: hit the round cap of %d", b.Name, b.RoundCap))
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s of %d", b.Name, ErrRoundCap, b.RoundCap))
 	}
 
 	// Render what the builder has streamed since the last tick before
@@ -697,8 +699,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if err != nil {
 		return b, err
 	}
-	roundOpen := HasPromptEntry(entries, b.Round) &&
-		!HasEntry(entries, b.Round, store.DirToMasterMind, store.KindReport)
+	roundOpen := store.RoundOpen(entries, b.Round)
 
 	if !roundOpen {
 		// Idle is normal (spec §5.1): between rounds there is no process.
@@ -845,40 +846,43 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 	// Exited after writing a report but without the marker: an exited
 	// process cannot be mid-write, so the report is trusted and the
-	// omission noted (spec §4.4).
-	reportPath, serr := writeReaderSummary(rt, b)
-	if serr != nil {
-		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
-	}
-	if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
-		_, m, _, err := gateOnLimit(ctx, rt, tx, b, limitText(ctx, rt, b), false)
-		if err != nil {
-			return b, err
+	// omission noted (spec §4.4). A reader whose deliverable is absent
+	// skips this and falls through to the exit-without-report path.
+	if b.Shape != store.ShapeReader || readerDeliverablePresent(rt, b) {
+		reportPath, serr := writeReaderSummary(rt, b)
+		if serr != nil {
+			slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 		}
-		slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
-		payload := fmt.Sprintf(
-			"Builder exited (code %s) after writing its %s but never confirmed completion (no %s). %s.",
-			codeText, artifactNoun(rt, b), filepath.Base(rt.Store.DonePath(b.Name, b.Round)), closeClause(rt, b, b.Round))
-		if m.Line != "" {
-			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, availability.GateTimeText(m.Until))
+		if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
+			_, m, _, err := gateOnLimit(ctx, rt, tx, b, limitText(ctx, rt, b), false)
+			if err != nil {
+				return b, err
+			}
+			slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
+			payload := fmt.Sprintf(
+				"Builder exited (code %s) after writing its %s but never confirmed completion (no %s). %s.",
+				codeText, artifactNoun(rt, b), filepath.Base(rt.Store.DonePath(b.Name, b.Round)), closeClause(rt, b, b.Round))
+			if m.Line != "" {
+				payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, availability.GateTimeText(m.Until))
+			}
+			note := "unmarked"
+			if escapeCheck(ctx, rt, b, true) == EscapeNote {
+				note = joinNotes(note, escapeNote)
+			}
+			next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", false, scopeVerdict{})
+			if err != nil {
+				return b, err
+			}
+			if next.Owner != "" {
+				// An unmarked close is still a close: record the served round's
+				// facts as markerClose does, or the owner sees "idle" and never
+				// fetches the report.
+				next = closeServedRound(ctx, rt, next)
+			}
+			next.Builder = clearProcess(next.Builder)
+			next.StalledSince = time.Time{}
+			return deliverAndSettle(ctx, rt, tx, next)
 		}
-		note := "unmarked"
-		if escapeCheck(ctx, rt, b, true) == EscapeNote {
-			note = joinNotes(note, escapeNote)
-		}
-		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", false, scopeVerdict{})
-		if err != nil {
-			return b, err
-		}
-		if next.Owner != "" {
-			// An unmarked close is still a close: record the served round's
-			// facts as markerClose does, or the owner sees "idle" and never
-			// fetches the report.
-			next = closeServedRound(ctx, rt, next)
-		}
-		next.Builder = clearProcess(next.Builder)
-		next.StalledSince = time.Time{}
-		return deliverAndSettle(ctx, rt, tx, next)
 	}
 
 	// Exited without a report.
@@ -1074,6 +1078,10 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	} else if resumed {
 		slog.Info("headless builder nudged to finish", "binding", b.Name, "round", b.Round, "session", b.Builder.StreamSessionID)
 		return next, nil
+	}
+
+	if b.Shape == store.ShapeReader && codeText == "0" {
+		return haltBinding(ctx, rt, b, readerUndeliveredReason(rt, b, nudgesSincePlan(entries, b.Round)))
 	}
 
 	if !switchable {

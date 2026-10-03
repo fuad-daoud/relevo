@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -227,9 +228,36 @@ func remoteRecord(rt Runtime, tx *store.Tx, b store.Binding, ship remoteShipped,
 		return 0, "", fmt.Errorf("append plan log: %w", err)
 	}
 
+	// The send half resets the round the way Send's local branch does, field for
+	// field. A remote send that starts (or restarts) a round is the same fresh
+	// attempt a local one is, so the client must not keep the state a halt left
+	// behind: state active, halt and halt-at cleared, and the per-round
+	// bookkeeping that described the previous process cleared with it.
 	cur.RoundStartedAt = now
+	cur.QueuedAt = time.Time{}
+	cur.FinishPending = true
 	cur.State = store.StateActive
 	cur.Halt = ""
+	cur.HaltAt = time.Time{}
+	// A human re-send is a fresh attempt: the next halt in this round notifies
+	// again, and the round gets a full switch budget.
+	cur.HaltNotifiedRound = 0
+	cur.RoundSwitches = 0
+	cur.RoundExcluded = nil
+	cur.RoundOOMKills = 0
+	// A fresh send is a fresh process: the stall stamp, the progress clock and
+	// the last land all describe the round that just ended.
+	cur.StalledSince = time.Time{}
+	cur.StopRequestedAt = time.Time{}
+	cur.StopGraceMS = 0
+	cur.LandedAt = time.Time{}
+	cur.LandedPR = ""
+	cur.Progress = nil
+	cur.ExploringSince = time.Time{}
+	cur.StaleSince = time.Time{}
+	cur.StaleNotifiedAt = time.Time{}
+	// A round that moves on leaves the last round's closed tree behind.
+	cur.RoundClosedTree = ""
 	if ship.heads != nil {
 		cur.Builder.LastShipped = ship.heads[ship.outRef]
 	}

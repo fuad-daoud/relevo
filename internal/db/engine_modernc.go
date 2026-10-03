@@ -20,6 +20,9 @@ const engineName = "sqlite"
 // life. It is a modernc-only pragma: Turso does not support it.
 const journalSizeLimit = 64 << 20
 
+// sqliteIOErr is SQLite's primary result code for I/O errors (SQLITE_IOERR).
+const sqliteIOErr = 10
+
 // fileDSN builds a `file:` DSN for path with params after the `?`. The path is
 // percent-encoded, so a `#`, `?` or `%` in it stays part of the filename
 // instead of truncating the DSN to another file; the path must be absolute,

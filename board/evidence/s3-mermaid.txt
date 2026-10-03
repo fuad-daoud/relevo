@@ -1,0 +1,6 @@
+flowchart TD
+  subgraph G
+    A --> B
+    B --> C
+    B --> D
+  end

@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -252,7 +253,11 @@ func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflo
 	actors := rt.RoleRegistry().WorkflowActors()
 	prev := []byte(saved.Source)
 
-	tmp, err := os.CreateTemp("", "relevo-workflow-*.yaml")
+	root := ""
+	if rt.Store != nil {
+		root = rt.Store.Root()
+	}
+	tmp, err := store.CreateTemp(root, "relevo-workflow-*.yaml")
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -37,13 +38,42 @@ func artifactOpenKind(rel string) string {
 	}
 }
 
+// artifactOpenTarget decides how one artifact opens. An .excalidraw scene with
+// a companion .svg beside it opens that svg in the browser; every other file
+// opens by its own extension kind, at its own path.
+func artifactOpenTarget(rel, path string) (kind, target string) {
+	if strings.EqualFold(filepath.Ext(rel), ".excalidraw") {
+		companion := strings.TrimSuffix(path, filepath.Ext(path)) + ".svg"
+		if _, err := os.Stat(companion); err == nil {
+			return "browser", companion
+		}
+		return "editor", path
+	}
+	return artifactOpenKind(rel), path
+}
+
 // artifactOpensIn is the kind as the table's OPENS IN cell names it.
-func artifactOpensIn(rel string) string {
-	kind := artifactOpenKind(rel)
+func artifactOpensIn(c tabContent, rel string) string {
+	kind, _ := artifactOpenTarget(rel, filepath.Join(c.artifactDir, filepath.FromSlash(rel)))
 	if kind == "editor" {
 		return "$EDITOR"
 	}
 	return kind
+}
+
+// artifactEditHint is the faint line an .excalidraw scene with no companion
+// shows: the command that edits it. It is empty for every other file, and for
+// a scene whose companion already opens in the browser.
+func artifactEditHint(c tabContent) string {
+	if !strings.EqualFold(filepath.Ext(c.artifactRel), ".excalidraw") {
+		return ""
+	}
+	path := filepath.Join(c.artifactDir, filepath.FromSlash(c.artifactRel))
+	kind, target := artifactOpenTarget(c.artifactRel, path)
+	if kind != "editor" {
+		return ""
+	}
+	return "run relevo board " + target + " to edit"
 }
 
 // artifactsWord is the artifact count as prose: "1 artifact", "2 artifacts".
@@ -90,7 +120,7 @@ func artifactsBody(c tabContent) string {
 		rel := sanitizeText(f.Rel)
 		size := relevo.ArtifactSizeText(f.Size)
 		when := f.MTime.Local().Format("15:04")
-		opens := artifactOpensIn(f.Rel)
+		opens := artifactOpensIn(c, f.Rel)
 		row := fit(rel, artifactFileWidth) + fit(size, artifactSizeWidth) +
 			fit(when, artifactTimeWidth) + fit(opens, artifactOpensWidth)
 		if i == sel {
@@ -107,6 +137,10 @@ func artifactsBody(c tabContent) string {
 	b.WriteByte('\n')
 	b.WriteString(faintStyle.Render(artifactCaption(c)))
 	b.WriteByte('\n')
+	if hint := artifactEditHint(c); hint != "" {
+		b.WriteString(faintStyle.Render(hint))
+		b.WriteByte('\n')
+	}
 
 	if c.artifactErr != nil {
 		b.WriteString(errorStyle.Render("error: " + sanitizeText(c.artifactErr.Error())))

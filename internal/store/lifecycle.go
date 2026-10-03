@@ -224,7 +224,7 @@ func (s *Store) prepareSave(b Binding, siblings []string) (Binding, db.Record, e
 	}
 	b.UpdatedAt = now
 	if b.RoundCap == 0 {
-		b.RoundCap = defaultRoundCap
+		b.RoundCap = DefaultRoundCap
 	}
 	if b.RoundTimeoutMS == 0 {
 		b.RoundTimeoutMS = defaultRoundMSecs

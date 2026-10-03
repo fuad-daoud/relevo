@@ -32,6 +32,26 @@ func parseFor(s string, now time.Time) (time.Time, error) {
 	return now.Add(d), nil
 }
 
+// gateUntil is when a manually recorded gate expires: --for when the caller
+// gave one, and otherwise the reset the --reason names, if it names one this
+// parser trusts. "RESOURCE_EXHAUSTED 429: ... Resets in 51m30s" is the provider
+// stating the moment the limit lifts, so a gate recorded from it ends then
+// rather than sitting until a human clears it. A reason naming no reset keeps
+// the until-cleared default (the zero time): relevo does not invent an expiry
+// no provider ever stated.
+func gateUntil(forFlag, reason string, now time.Time) (time.Time, error) {
+	until, err := parseFor(forFlag, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if until.IsZero() {
+		if reset, ok := availability.ResetFromReason(reason, now); ok {
+			return reset, nil
+		}
+	}
+	return until, nil
+}
+
 // cmdGate is one verb for the gate operations that used to be four: the
 // top-level unavailable and available, and the serve gates|available|unavailable
 // subverbs (§4.3). With no positional it lists the active
@@ -109,7 +129,7 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 		return writeError(err)
 	}
 
-	until, err := parseFor(forFlag, rt.Now())
+	until, err := gateUntil(forFlag, reason, rt.Now())
 	if err != nil {
 		return fail(codeUsage, "%v", err)
 	}

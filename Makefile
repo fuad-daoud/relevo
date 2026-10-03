@@ -31,8 +31,13 @@ check:
 	$(MAKE) check-static
 	$(MAKE) check-test
 
+# The gofmt step reads the index and the untracked, non-ignored files: an
+# untracked Go file is still code someone will read and commit, so it is
+# formatted like a tracked one. --exclude-standard leaves ignored build output
+# and scratch trees alone, which is what keeps a dirty untracked file from
+# failing the gate over something nobody will commit.
 check-static:
-	@test -z "$$(gofmt -l $$(git ls-files '*.go'))" || { gofmt -l $$(git ls-files '*.go'); exit 1; }
+	@test -z "$$(gofmt -l $$(git ls-files --cached --others --exclude-standard -- '*.go'))" || { gofmt -l $$(git ls-files --cached --others --exclude-standard -- '*.go'); exit 1; }
 	go vet ./...
 	$(MAKE) lint
 	sh scripts/check-comments.sh
@@ -46,6 +51,7 @@ check-static:
 	rm -f go.mod.check go.sum.check
 	sh scripts/check-plugin-version.sh
 	sh scripts/check-name.sh
+	sh scripts/check-board-theme.sh
 	$(MAKE) check-scripts
 
 check-scripts:
@@ -68,11 +74,12 @@ check-test:
 
 # e2e runs relevo's headless end-to-end scenarios (internal/e2e): one round on
 # its own, a chain of two plans with the security phase, a chain whose builder
-# runs on a served member, and a chain the server drives end to end with a
-# correction. CI runs it; it needs no session manager on PATH and is not part
+# runs on a served member, a chain the server drives end to end with a
+# correction, and a fork chain whose two children are merged back into their
+# parent. CI runs it; it needs no session manager on PATH and is not part
 # of check.
 e2e:
-	go test ./internal/e2e/ -run 'TestHeadlessE2E|TestChainE2E|TestChainTriageE2E|TestChainRemoteBuilderE2E|TestChainServerE2E' -count=1
+	go test ./internal/e2e/ -run 'TestHeadlessE2E|TestChainE2E|TestChainTriageE2E|TestChainForkE2E|TestChainRemoteBuilderE2E|TestChainServerE2E' -count=1
 
 # jev runs the classifier fixtures against the real TypeSafe endpoint
 # (docs/plans/2026-09-19-injection-classify.md §8). Local only: it needs

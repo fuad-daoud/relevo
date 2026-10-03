@@ -19,6 +19,10 @@ var ErrConflict = errors.New("conflict")
 // ErrInvalid reports a body that is not an Excalidraw scene or not an svg.
 var ErrInvalid = errors.New("invalid")
 
+// ErrNotFound reports a scene the caller named but which is not on disk. The
+// agent leg refuses it rather than treating a missing file as a new scene.
+var ErrNotFound = errors.New("not found")
+
 // Etag is the content address of a scene: the sha256 of its bytes on disk.
 func Etag(data []byte) string {
 	sum := sha256.Sum256(data)

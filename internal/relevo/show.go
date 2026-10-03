@@ -188,7 +188,7 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 func findingsRound(requested, upper int, exists func(round int) (bool, error)) (int, error) {
 	if requested > 0 {
 		if requested > upper {
-			return 0, fmt.Errorf("round %d: binding has %d rounds", requested, upper)
+			return 0, roundRangef("round %d: binding has %d rounds", requested, upper)
 		}
 		return requested, nil
 	}
@@ -275,15 +275,12 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 			return ShowResult{}, err
 		}
 	} else if round == 0 {
-		if completed == 0 {
-			completed = b.Round - 1
+		round, err = defaultRound(rt, b, completed, opts.Section)
+		if err != nil {
+			return ShowResult{}, err
 		}
-		if completed < 1 {
-			return ShowResult{}, ErrNoCompletedRound
-		}
-		round = completed
 	} else if round < 1 || round > rounds {
-		return ShowResult{}, fmt.Errorf("round %d: binding has %d rounds", round, rounds)
+		return ShowResult{}, roundRangef("round %d: binding has %d rounds", round, rounds)
 	}
 
 	res := ShowResult{
@@ -442,7 +439,7 @@ func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowR
 		}
 		round = completed
 	} else if round < 1 || round > rounds {
-		return ShowResult{}, fmt.Errorf("round %d: binding has %d rounds", round, rounds)
+		return ShowResult{}, roundRangef("round %d: binding has %d rounds", round, rounds)
 	}
 
 	res := ShowResult{
@@ -500,7 +497,7 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 		}
 		round = completed
 	} else if round < 1 || round > total {
-		return ShowResult{}, fmt.Errorf("round %d: binding has %d rounds", round, total)
+		return ShowResult{}, roundRangef("round %d: binding has %d rounds", round, total)
 	}
 
 	var target *db.Round
@@ -511,7 +508,7 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 		}
 	}
 	if target == nil {
-		return ShowResult{}, fmt.Errorf("round %d: binding has %d rounds", round, total)
+		return ShowResult{}, roundRangef("round %d: binding has %d rounds", round, total)
 	}
 
 	res := ShowResult{

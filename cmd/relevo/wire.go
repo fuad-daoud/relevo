@@ -481,6 +481,11 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		opencodeSessionDir = finder.Directory
 	}
 
+	tmpDir, err := store.TempDir(root)
+	if err != nil {
+		return relevo.Runtime{}, err
+	}
+
 	rt := relevo.Runtime{
 		Git:            gitClient,
 		Runner:         proc.New(),
@@ -503,7 +508,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		Remote:         remoteClient,
 		// The transport depends only on the git client, not the servers
 		// section, so a server added while the daemon runs needs no rebuild.
-		Transport:          remote.NewBundleTransport(gitClient, ""),
+		Transport:          remote.NewBundleTransport(gitClient, tmpDir),
 		Roles:              harness.OSRoleChecker(),
 		Channels:           claims,
 		ProcStart:          procStartUnix,

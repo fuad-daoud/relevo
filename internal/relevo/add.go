@@ -172,10 +172,10 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 			// refused here too, naming the flag, exactly as the local path
 			// below does.
 			if opts.Gate != "" {
-				return AddResult{}, errors.New("--gate: a reader round has no check")
+				return AddResult{}, badInputf("--gate: a reader round has no check")
 			}
 			if opts.Regate != nil {
-				return AddResult{}, errors.New("--regate: a reader round has no check")
+				return AddResult{}, badInputf("--regate: a reader round has no check")
 			}
 		}
 		// A caller that resolved the actor's list (a plain bind that landed
@@ -206,10 +206,10 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 				return AddResult{}, err
 			}
 			if opts.Gate != "" {
-				return AddResult{}, errors.New("--gate: a reader round has no check")
+				return AddResult{}, badInputf("--gate: a reader round has no check")
 			}
 			if opts.Regate != nil {
-				return AddResult{}, errors.New("--regate: a reader round has no check")
+				return AddResult{}, badInputf("--regate: a reader round has no check")
 			}
 		}
 		return addRemote(ctx, rt, opts, rec, haveRec)
@@ -225,10 +225,10 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// add, naming the flag.
 	if shape == store.ShapeReader {
 		if opts.Gate != "" {
-			return AddResult{}, errors.New("--gate: a reader round has no check")
+			return AddResult{}, badInputf("--gate: a reader round has no check")
 		}
 		if opts.Regate != nil {
-			return AddResult{}, errors.New("--regate: a reader round has no check")
+			return AddResult{}, badInputf("--regate: a reader round has no check")
 		}
 	}
 	if err := store.ValidName(opts.Name); err != nil {
@@ -276,7 +276,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	mastermindEP := recordEndpoint(rec)
 
 	if _, err := rt.Store.Load(opts.Name); err == nil {
-		return AddResult{}, fmt.Errorf(
+		return AddResult{}, badInputf(
 			"binding %q already exists: `relevo unbind %s` to start fresh, or `relevo bind --resume --name %s` to adopt it",
 			opts.Name, opts.Name, opts.Name)
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -294,7 +294,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	)
 
 	if opts.Branch != "" && opts.CWD != "" {
-		return AddResult{}, errors.New("--branch and --cwd are exclusive")
+		return AddResult{}, badInputf("--branch and --cwd are exclusive")
 	}
 
 	if opts.CWD != "" {

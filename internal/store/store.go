@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,8 +35,11 @@ const (
 	// StateRootMode is the state root's own mode: owner-only, because the root
 	// holds the database and every binding's files. MkdirAll never chmods, so a
 	// root that already exists keeps whatever mode it has.
-	StateRootMode   = 0o700
-	defaultRoundCap = 20
+	StateRootMode = 0o700
+	// DefaultRoundCap is the cap a binding gets when it names none. An
+	// ordinary binding runs this many rounds; a chain's writer member is
+	// built with a cap scaled to its chain and floored here.
+	DefaultRoundCap = 20
 	// defaultRoundMSecs is the round budget: 24 hours. A builder working a real
 	// stage runs for hours, so a short budget flags healthy work as needing a
 	// human. A runaway guard, not a progress estimate; `relevo bind --timeout`
@@ -155,26 +159,135 @@ func DefaultRoot() (string, error) {
 	return filepath.Join(home, ".local", "state", "relevo"), nil
 }
 
+// ErrInvalidName is ValidName's class: a name that does not satisfy the
+// binding-name rule. A name is the caller's own input, so every error carrying
+// it is a usage failure, not an internal one. ValidName wraps this rather than
+// returning it bare, so the message the user reads names the offending
+// character and stays free of a second "invalid binding name" tail.
+var ErrInvalidName = errors.New("invalid binding name")
+
+// invalid is a store validation error carrying the class the CLI classifies
+// on while rendering only its own message. errors.Is(err, class) is what the
+// CLI maps, so no %w tail rewrites the pinned message the user reads. One type
+// covers every store validator, each naming its own class.
+type invalid struct {
+	msg   string
+	class error
+}
+
+func (e *invalid) Error() string { return e.msg }
+
+func (e *invalid) Unwrap() error { return e.class }
+
+// invalidOf builds a validation error of a class from a format and arguments.
+func invalidOf(class error, format string, args ...any) error {
+	return &invalid{msg: fmt.Sprintf(format, args...), class: class}
+}
+
+// Root returns the store's root directory.
+func (s *Store) Root() string { return s.root }
+
+// TempDir returns <root>/tmp, created StateRootMode (0700). If root is empty, DefaultRoot is used.
+func TempDir(root string) (string, error) {
+	if root == "" {
+		var err error
+		root, err = DefaultRoot()
+		if err != nil {
+			return "", err
+		}
+	}
+	dir := filepath.Join(root, "tmp")
+	if err := os.MkdirAll(dir, StateRootMode); err != nil {
+		return "", fmt.Errorf("create state tmp dir: %w", err)
+	}
+	if err := os.Chmod(dir, StateRootMode); err != nil {
+		return "", fmt.Errorf("chmod state tmp dir: %w", err)
+	}
+	return dir, nil
+}
+
+// CreateTemp creates a new temporary file in <root>/tmp. If root is empty, DefaultRoot is used.
+func CreateTemp(root, pattern string) (*os.File, error) {
+	dir, err := TempDir(root)
+	if err != nil {
+		return nil, err
+	}
+	return os.CreateTemp(dir, pattern)
+}
+
+// MkdirTemp creates a new temporary directory in <root>/tmp. If root is empty, DefaultRoot is used.
+func MkdirTemp(root, pattern string) (string, error) {
+	dir, err := TempDir(root)
+	if err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(dir, pattern)
+}
+
+// StoreRoot returns s.Root() or an empty string when s is nil.
+func StoreRoot(s *Store) string {
+	if s == nil {
+		return ""
+	}
+	return s.Root()
+}
+
+// WriteTemp creates a temporary file in <root>/tmp, writes data to it, and closes it.
+// On failure, any created file is removed.
+func WriteTemp(root, pattern string, data []byte) (string, error) {
+	f, err := CreateTemp(root, pattern)
+	if err != nil {
+		return "", err
+	}
+	name := f.Name()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
 // ValidName enforces relevo's binding-name rule: a lowercase letter first,
-// then up to 31 more of [a-z0-9_-].
+// then up to 31 more of [a-z0-9_-.]. A dot is accepted mid-name, because the
+// fork-child names ("shop.1") are built from it, but never where it would mint
+// a name git refuses as a ref: a trailing dot, "..", or a ".lock" suffix.
 func ValidName(name string) error {
 	if name == "" {
-		return errors.New("binding name is empty")
+		return invalidOf(ErrInvalidName, "binding name is empty")
 	}
 	if len(name) > MaxAgentNameLen {
-		return fmt.Errorf("binding name %q exceeds %d characters", name, MaxAgentNameLen)
+		return invalidOf(ErrInvalidName, "binding name %q exceeds %d characters", name, MaxAgentNameLen)
 	}
 	if name[0] < 'a' || name[0] > 'z' {
-		return fmt.Errorf("binding name %q must start with a lowercase letter", name)
+		return invalidOf(ErrInvalidName, "binding name %q must start with a lowercase letter", name)
 	}
 
 	for i := 1; i < len(name); i++ {
 		c := name[i]
 		lower := c >= 'a' && c <= 'z'
 		digit := c >= '0' && c <= '9'
-		if !lower && !digit && c != '-' && c != '_' {
-			return fmt.Errorf("binding name %q has an invalid character %q", name, string(c))
+		if !lower && !digit && c != '-' && c != '_' && c != '.' {
+			return invalidOf(ErrInvalidName, "binding name %q has an invalid character %q", name, string(c))
 		}
+	}
+
+	// The dot is in the character class above because a fork child's name is
+	// "<parent>.<key>", but these three shapes are exactly the ones git's
+	// check-ref-format rejects. Every caller mints a branch from the name, so
+	// refusing them here is the one choke point that keeps a binding bindable.
+	if strings.HasSuffix(name, ".") {
+		return fmt.Errorf("binding name %q must not end with a dot", name)
+	}
+	if strings.Contains(name, "..") {
+		return fmt.Errorf("binding name %q must not contain %q", name, "..")
+	}
+	if strings.HasSuffix(name, ".lock") {
+		return fmt.Errorf("binding name %q must not end with %q", name, ".lock")
 	}
 
 	return nil

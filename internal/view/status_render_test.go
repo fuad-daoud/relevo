@@ -738,3 +738,25 @@ func TestPriorTokensOf(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderStatusChainReasonStripsControlBytes pins the render boundary for a
+// chain row's reason line: the detail is model text or git's stderr, so a
+// control byte in it must not reach the terminal.
+func TestRenderStatusChainReasonStripsControlBytes(t *testing.T) {
+	t.Parallel()
+
+	out := RenderStatus(Report{Bindings: []BindingStatus{{
+		Name: "shop", CWD: "/repo", Round: 2, Display: "HALTED",
+		Chain:  &ChainFacts{Status: "halted", StepAt: "merge", Round: 2},
+		Detail: "merge conflicted\x1b[31m on base.txt\x1b[0m",
+	}}})
+
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("chain reason line kept a control byte:\n%q", out)
+	}
+	for _, want := range []string{"reason   merge conflicted", "on base.txt"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chain reason line = %q, want it to carry %q", out, want)
+		}
+	}
+}

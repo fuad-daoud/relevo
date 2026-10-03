@@ -179,6 +179,74 @@ func TestArtifactsEnterOpensByKind(t *testing.T) {
 	}
 }
 
+// TestArtifactsExcalidrawFallback pins both states of the .excalidraw cockpit
+// fallback: a scene with a companion .svg opens that svg in the browser with
+// no hint; a scene without one opens in $EDITOR and the tab carries the faint
+// hint line naming the edit command.
+func TestArtifactsExcalidrawFallback(t *testing.T) {
+	st := store.New(t.TempDir())
+	seedReaderArtifacts(t, st, "review-568", "reviewer", 1, map[string]string{
+		"board.excalidraw":  `{"type":"excalidraw","elements":[]}`,
+		"board.svg":         "<svg></svg>\n",
+		"lonely.excalidraw": `{"type":"excalidraw","elements":[]}`,
+	}, railNow)
+
+	fa := &fakeActions{}
+	env := testEnv(mastermindSource{relevo.Runtime{Store: st}},
+		view.Report{Bindings: []view.BindingStatus{readerRoundRow("review-568", "reviewer")}}, 140, 40)
+	env.Actions = fa
+
+	v, _ := newRoundView(env, "review-568", 0)
+	rv := v.(roundView)
+	rv.pane, _ = rv.pane.switchTab(tabArtifacts)
+	dir := st.ArtifactDir("review-568", 1, "reviewer")
+
+	// A companion .svg beside the scene: browser on the svg, no hint.
+	rv = loadArtifactsAt(t, rv, "board.excalidraw")
+	content := rv.pane.detail.cache[tabArtifacts]
+	if opens := artifactOpensIn(content, "board.excalidraw"); opens != "browser" {
+		t.Errorf("OPENS IN = %q, want browser", opens)
+	}
+	if hint := artifactEditHint(content); hint != "" {
+		t.Errorf("hint = %q, want none beside a companion", hint)
+	}
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
+	rv = next.(roundView)
+	if cmd == nil {
+		t.Fatal("enter on the scene returned no command")
+	}
+	if len(fa.opened) == 0 {
+		t.Fatal("enter did not call OpenArtifact")
+	}
+	got := fa.opened[len(fa.opened)-1]
+	if want := filepath.Join(dir, "board.svg"); got.kind != "browser" || got.path != want {
+		t.Errorf("OpenArtifact = (%q, %q), want (%q, %q)", got.path, got.kind, want, "browser")
+	}
+
+	// No companion: the editor on the scene, with the hint line.
+	rv = loadArtifactsAt(t, rv, "lonely.excalidraw")
+	content = rv.pane.detail.cache[tabArtifacts]
+	if opens := artifactOpensIn(content, "lonely.excalidraw"); opens != "$EDITOR" {
+		t.Errorf("OPENS IN = %q, want $EDITOR", opens)
+	}
+	wantHint := "run relevo board " + filepath.Join(dir, "lonely.excalidraw") + " to edit"
+	if hint := artifactEditHint(content); hint != wantHint {
+		t.Errorf("hint = %q, want %q", hint, wantHint)
+	}
+	if plain := stripANSI(artifactsBody(content)); !strings.Contains(plain, wantHint) {
+		t.Errorf("the tab body does not carry the hint %q:\n%s", wantHint, plain)
+	}
+	next, cmd = rv.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
+	rv = next.(roundView)
+	if cmd == nil {
+		t.Fatal("enter on the companionless scene returned no command")
+	}
+	got = fa.opened[len(fa.opened)-1]
+	if want := filepath.Join(dir, "lonely.excalidraw"); got.kind != "editor" || got.path != want {
+		t.Errorf("OpenArtifact = (%q, %q), want (%q, %q)", got.path, got.kind, want, "editor")
+	}
+}
+
 // TestArtifactsTabReadsSealedFiles: after SealRound the artifacts tab still
 // lists the round's files and renders the selected one from its sealed rows.
 func TestArtifactsTabReadsSealedFiles(t *testing.T) {

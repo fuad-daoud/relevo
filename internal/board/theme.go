@@ -45,6 +45,9 @@ type Theme struct {
 	Good   string `json:"good"`
 	Warn   string `json:"warn"`
 	Bad    string `json:"bad"`
+	// Comment is the single colour both writers' comment text uses; by
+	// distinguishes the agent from the human.
+	Comment string `json:"comment"`
 }
 
 // themes is the built-in table, cockpit first: it is the default.
@@ -54,12 +57,14 @@ var themes = []*Theme{
 		BG:   "#0f1115", Ink: "#e6e8ec", Muted: "#9097a3", Faint: "#596070",
 		Line: "#3a4150", Panel: "#1a1f28", Accent: "#6ea8fe",
 		Good: "#5fd08f", Warn: "#f2b84b", Bad: "#ff6b81",
+		Comment: "#b48cf2",
 	},
 	{
 		Name: "blueprint",
 		BG:   "#0b1220", Ink: "#dbe4f0", Muted: "#8296b3", Faint: "#4c5f7d",
 		Line: "#2c3c58", Panel: "#111c2f", Accent: "#7dd3fc",
 		Good: "#86efac", Warn: "#fcd34d", Bad: "#fca5a5",
+		Comment: "#c4b5fd",
 	},
 }
 

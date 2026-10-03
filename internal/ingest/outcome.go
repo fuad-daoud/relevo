@@ -16,6 +16,11 @@ import (
 //	needs_you or Halt on n    -> halted
 //	switch entry              -> switched
 //	otherwise                 -> open
+//
+// The open arm reads store.RoundOpen, the definition `stop` and the served view
+// read too, so history cannot call a round closed that they call open. A halt
+// on the current round names the round it halted, and only that one: a halt
+// recorded against a later round says nothing about an earlier one.
 func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[string]bool) string {
 	var hasReport, hasExit, hasSwitch bool
 	for _, e := range events {

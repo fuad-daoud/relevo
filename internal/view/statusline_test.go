@@ -1485,6 +1485,9 @@ func TestStatusLineRowsEmptyDoc(t *testing.T) {
 		if !strings.Contains(s, `"mastermind":null`) {
 			t.Errorf("json %q does not contain '\"mastermind\":null'", s)
 		}
+		if !strings.Contains(s, `"board":null`) {
+			t.Errorf("json %q does not contain '\"board\":null'", s)
+		}
 		if !strings.Contains(s, `"rows":[]`) {
 			t.Errorf("json %q does not contain '\"rows\":[]'", s)
 		}
@@ -2109,5 +2112,113 @@ func TestStatusLineRowsConsumedContrast(t *testing.T) {
 	rows := StatusLineRows(rep, rsNow)
 	if !rows[0].ReportIn || rows[0].Status != "REPORT IN · ordinary note" || rows[0].Tone != "report" || rows[0].Reason != "" {
 		t.Errorf("contrast row = %+v", rows[0])
+	}
+}
+
+// TestStatusLineSanitizesReasonAndChain pins the one sanitizing point in
+// statusLineRowText: a control byte in a member row's Reason or in a chain
+// row's Chain is stripped from the rendered row, and the plain rows agree.
+func TestStatusLineSanitizesReasonAndChain(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		row  StatusLineRow
+		want string
+	}{
+		{
+			name: "member row reason",
+			row: StatusLineRow{
+				Name: "shop", Round: 2, Display: "NEEDS YOU",
+				Actor: "builder", Status: "NEEDS YOU", Tone: "needs",
+				Reason: "conflict\x07 here",
+			},
+			want: "conflict here",
+		},
+		{
+			name: "chain row chain text",
+			row: StatusLineRow{
+				Name: "shop", Display: "ACTIVE",
+				Chain: "chain shop · plan 2/4 · reviewing\x07\x1b[2J",
+			},
+			want: "chain shop · plan 2/4 · reviewing",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plain := PlainStatusLineRows([]StatusLineRow{tc.row}, 0)
+			if len(plain) != 1 {
+				t.Fatalf("plain rows = %d, want 1", len(plain))
+			}
+			if strings.Contains(plain[0], "\x1b") || strings.Contains(plain[0], "\x07") {
+				t.Errorf("row = %q, want no control byte", plain[0])
+			}
+			if !strings.Contains(plain[0], tc.want) {
+				t.Errorf("row = %q, want it to carry %q", plain[0], tc.want)
+			}
+
+			line := RenderStatusLine(Report{}, baseTime, 80)
+			if line != "" {
+				t.Fatalf("an empty report rendered %q, want nothing", line)
+			}
+			stripped := stripSGR(PlainStatusLineRows([]StatusLineRow{tc.row}, 0)[0])
+			if strings.Contains(stripped, "\x1b") {
+				t.Errorf("stripped row = %q, want no control byte", stripped)
+			}
+		})
+	}
+}
+
+// TestStatusLineJSONKeepsControlBytesEscaped pins the JSON path is untouched:
+// the encoder escapes a control byte rather than stripping it, so a consumer of
+// the document still sees the byte the row actually carries.
+func TestStatusLineJSONKeepsControlBytesEscaped(t *testing.T) {
+	t.Parallel()
+
+	row := StatusLineRow{
+		Name: "shop", Round: 2, Display: "NEEDS YOU",
+		Actor: "builder", Status: "NEEDS YOU", Tone: "needs",
+		Reason: "conflicted\x1b[31m here",
+	}
+	data, err := json.Marshal(StatusLineDoc{Now: baseTime.UTC(), Rows: []StatusLineRow{row}})
+	if err != nil {
+		t.Fatalf("marshal the statusline doc: %v", err)
+	}
+	if !strings.Contains(string(data), `\u001b`) {
+		t.Errorf("json = %s, want the control byte escaped, not stripped", data)
+	}
+	if strings.Contains(string(data), "\x1b") {
+		t.Errorf("json = %q, want no raw control byte", data)
+	}
+
+	// The rendered row, by contrast, drops it: the two paths differ by design.
+	if strings.Contains(PlainStatusLineRows([]StatusLineRow{row}, 0)[0], "\x1b") {
+		t.Error("the rendered row kept the control byte the JSON path escapes")
+	}
+}
+
+// TestRenderBoardLine pins the board line: nil renders nothing, a block renders
+// dim "board <mastermind> · <url>" (falling back to the scene name when the
+// owner is unknown), and an over-wide line is truncated (S8).
+func TestRenderBoardLine(t *testing.T) {
+	t.Parallel()
+
+	if got := RenderBoardLine(nil, "", 80); got != "" {
+		t.Errorf("RenderBoardLine(nil) = %q, want empty", got)
+	}
+
+	b := &StatusLineBoard{Name: "board", Scope: "live", URL: "http://127.0.0.1:9/#t=abc"}
+	if got, want := RenderBoardLine(b, "opencode-120", 80), ansiDim+"board opencode-120 · http://127.0.0.1:9/#t=abc"+ansiReset+"\n"; got != want {
+		t.Errorf("RenderBoardLine = %q, want %q", got, want)
+	}
+	if got, want := RenderBoardLine(b, "", 80), ansiDim+"board board · http://127.0.0.1:9/#t=abc"+ansiReset+"\n"; got != want {
+		t.Errorf("RenderBoardLine without an owner = %q, want %q", got, want)
+	}
+
+	long := &StatusLineBoard{Name: "board", Scope: "live", URL: strings.Repeat("x", 200)}
+	got := RenderBoardLine(long, "opencode-120", 20)
+	visible := strings.TrimSuffix(strings.TrimPrefix(got, ansiDim), ansiReset+"\n")
+	if n := utf8.RuneCountInString(visible); n != 20 {
+		t.Errorf("truncated board line = %q (%d runes), want 20", visible, n)
 	}
 }

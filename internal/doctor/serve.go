@@ -1,14 +1,17 @@
 package doctor
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -16,6 +19,20 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/serve"
 )
+
+// containerPodmanLookPath resolves the container runtime for the isolation
+// row. It is a var so a test can pin it absent or present.
+var containerPodmanLookPath = exec.LookPath
+
+// containerImageExists probes whether the configured image is present. It is a
+// var so the container row is testable without a runtime.
+var containerImageExists = func(ctx context.Context, image string) error {
+	out, err := exec.CommandContext(ctx, "podman", "image", "exists", image).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("podman image exists %s: %w (%s)", image, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 // tenantEUID reports the effective uid the user-mode isolation row checks. It
 // is a var so a test can pin root or a non-root euid.
@@ -61,9 +78,10 @@ var tenantStat = func(path string) (uid, gid uint32, mode os.FileMode, err error
 // show on a box started with a non-default --state.
 //
 // isolation is the raw serve.isolation policy value; the isolation row parses
-// it, so a hand-built unknown reads as a failure. sharedLogins is the parsed
+// it, so a hand-built unknown reads as a failure. image is the configured
+// serve.isolation_image the container row probes. sharedLogins is the parsed
 // serve.isolation_shared_logins value: the user-mode row warns when it is on.
-func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time, isolation string, sharedLogins bool) []Check {
+func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time, isolation, image string, sharedLogins bool) []Check {
 	if d == nil {
 		return nil
 	}
@@ -79,7 +97,7 @@ func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time, isolation s
 	return []Check{
 		serveCertificateCheck(d, now),
 		serveClientsCheck(d),
-		serveIsolationCheck(d, root, isolation, sharedLogins),
+		serveIsolationCheck(d, root, isolation, image, sharedLogins),
 		serveStateCheck(env, root),
 	}
 }
@@ -197,11 +215,13 @@ func serveClientCount(d *db.DB) (active int, present bool, err error) {
 //     client with no unix_user, a user missing on this host, or an owner root
 //     with the wrong owner, group or mode -- and otherwise OK (or Warn when
 //     shared logins are on), Detail "scopes=off (isolation=user)".
-//   - container: Fail with Available's sentence and the config Fix.
+//   - container: Fail when podman is absent or the configured image is
+//     missing, naming the exact fix, and otherwise OK, Detail
+//     "isolation=container".
 //   - an unknown value: Fail naming serve.isolation.
 //   - an unreadable or unparseable serve.clients row: Fail, so a broken
 //     registry can never read as a clean none.
-func serveIsolationCheck(d *db.DB, root, raw string, sharedLogins bool) Check {
+func serveIsolationCheck(d *db.DB, root, raw, image string, sharedLogins bool) Check {
 	c := Check{Group: "serve", Name: "isolation"}
 	const fix = `relevo config set policy.serve '{"isolation":"none"}'`
 
@@ -224,6 +244,9 @@ func serveIsolationCheck(d *db.DB, root, raw string, sharedLogins bool) Check {
 	if mode == isolate.ModeUser {
 		return serveUserIsolationCheck(c, root, clients, sharedLogins, fix)
 	}
+	if mode == isolate.ModeContainer {
+		return serveContainerIsolationCheck(c, image)
+	}
 
 	if len(clients) <= 1 {
 		c.Severity, c.Detail = SevOK, "none"
@@ -231,6 +254,24 @@ func serveIsolationCheck(d *db.DB, root, raw string, sharedLogins bool) Check {
 	}
 	c.Severity = SevWarn
 	c.Detail = fmt.Sprintf("%d active clients share one unix user", len(clients))
+	return c
+}
+
+// serveContainerIsolationCheck is the container-mode half of the isolation row.
+// It fails with the exact fix when podman is absent or the configured image is
+// missing, and otherwise reports the mode in force.
+func serveContainerIsolationCheck(c Check, image string) Check {
+	if _, err := containerPodmanLookPath("podman"); err != nil {
+		c.Severity, c.Detail = SevFail, "podman not found on PATH"
+		c.Fix = "install podman and ensure it is on PATH"
+		return c
+	}
+	if err := containerImageExists(context.Background(), image); err != nil {
+		c.Severity, c.Detail = SevFail, fmt.Sprintf("container image %q not found", image)
+		c.Fix = "build or pull the image (see dist/Containerfile)"
+		return c
+	}
+	c.Severity, c.Detail = SevOK, "isolation=container"
 	return c
 }
 

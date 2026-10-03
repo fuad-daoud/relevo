@@ -17,29 +17,21 @@ import (
 // chainTerminalWF ends a workflow chain: it writes the status and the trace
 // row, then queues exactly one end delivery on the first member whose record
 // still exists, in chain_member order. A later tick's close is ignored by the
-// engine, so the payload exists once.
+// engine, so the payload exists once. A fork child is the one end that
+// delivers nothing: its end is the parent's child_ended instead.
 func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before, next workflow.State, ev workflow.Event, act workflow.Action) error {
-	rows, err := chainFlowMembers(tx, c)
+	carrier, found, err := chainTerminalCarrier(tx, c)
 	if err != nil {
 		return err
 	}
-	var carrier store.Binding
-	found := false
-	for _, m := range rows {
-		b, lerr := tx.Load(m.Binding)
-		if errors.Is(lerr, store.ErrNotFound) {
-			continue
-		}
-		if lerr != nil {
-			return lerr
-		}
-		carrier, found = b, true
-		break
-	}
-	if err := chainSaveFlow(rt, tx, c, def, before, next, ev, act, carrier.Name); err != nil {
+	closing := carrier.Name
+	if err := chainSaveFlow(rt, tx, c, def, before, next, ev, act, closing); err != nil {
 		return err
 	}
 	chainInputsSweep(rt, c.Name, string(next.Status))
+	if c.Parent != "" {
+		return chainForkChildEnded(ctx, rt, tx, c, next)
+	}
 	if !found {
 		slog.Warn("chain ended with no member record to deliver on", "chain", c.Name, "status", string(next.Status))
 		return nil
@@ -53,6 +45,31 @@ func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 		Payload: chainTerminalWFPayload(c, next),
 	}
 	return delivery.Queue(ctx, deliveryDeps(rt), tx, carrier.Name, entry)
+}
+
+// chainTerminalCarrier names the member a chain's end is recorded against: the
+// first member whose record still exists, in chain_member order. A fork child
+// names none -- it looks no member up and carries no delivery, only the
+// handoff to its parent.
+func chainTerminalCarrier(tx *store.Tx, c db.ChainRow) (store.Binding, bool, error) {
+	if c.Parent != "" {
+		return store.Binding{}, false, nil
+	}
+	rows, err := chainFlowMembers(tx, c)
+	if err != nil {
+		return store.Binding{}, false, err
+	}
+	for _, m := range rows {
+		b, lerr := tx.Load(m.Binding)
+		if errors.Is(lerr, store.ErrNotFound) {
+			continue
+		}
+		if lerr != nil {
+			return store.Binding{}, false, lerr
+		}
+		return b, true, nil
+	}
+	return store.Binding{}, false, nil
 }
 
 // chainTerminalWFPayload is what the mastermind reads when a workflow chain

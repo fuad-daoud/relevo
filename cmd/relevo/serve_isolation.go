@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os/exec"
 	"os/user"
 	"strconv"
 
@@ -12,11 +14,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
+// containerLookPath resolves the container runtime at startup. It is a var so a
+// test can force it absent without touching the host's PATH, so the refusal is
+// deterministic.
+var containerLookPath = exec.LookPath
+
 // resolveIsolation parses the configured serve.isolation and wraps the process
 // runner in its boundary. A mode this build cannot run, a mode the running euid
-// cannot serve, or an unknown value is returned as an error naming
-// serve.isolation, so cmdServeRun can refuse it with not_available before any
-// side effect: fail closed, never start and warn.
+// cannot serve, an unknown value, or a container mode whose runtime is not
+// installed is returned as an error naming serve.isolation, so cmdServeRun can
+// refuse it with not_available before any side effect: fail closed, never start
+// and warn.
 func resolveIsolation(raw string, euid int) (spawn.Runner, isolate.Mode, error) {
 	mode, err := isolate.Parse(raw)
 	if err != nil {
@@ -24,6 +32,11 @@ func resolveIsolation(raw string, euid int) (spawn.Runner, isolate.Mode, error) 
 	}
 	if err := isolate.CheckPrivilege(mode, euid); err != nil {
 		return nil, mode, err
+	}
+	if mode == isolate.ModeContainer {
+		if _, err := containerLookPath("podman"); err != nil {
+			return nil, mode, fmt.Errorf("serve.isolation=container requires podman: install podman and ensure it is on PATH")
+		}
 	}
 	runner, err := isolate.Wrap(proc.New(), mode)
 	if err != nil {
