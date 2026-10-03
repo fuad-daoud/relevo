@@ -92,12 +92,12 @@ func emitCommitted(ctx context.Context, rt Runtime, orig, saved store.Binding) {
 	emitMutations(ctx, rt, orig, saved)
 }
 
-// stampStale maintains the stale clock (#135) for a NEEDS YOU or HELD binding:
+// stampStale maintains the stale clock (#135) for a NEEDS YOU binding:
 // it stamps StaleSince on the moment the binding started waiting -- the halt
 // time when there is one, otherwise the newest log entry -- once that moment is
-// stale_after_ms old. Every other state carries no stale stamp. It never
-// clears StaleNotifiedAt; Send, resume/rebind and round close do that, which is
-// what makes a notification one per episode rather than one per tick.
+// stale_after_ms old. Every other state carries no stale stamp. Send,
+// resume/rebind and round close clear StaleSince, so a stamp never outlives
+// the episode it was taken in.
 func stampStale(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
 	switch b.State {
 	case store.StateNeedsYou:
@@ -849,7 +849,6 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.Progress = nil
 	b.ExploringSince = time.Time{}
 	b.StaleSince = time.Time{}
-	b.StaleNotifiedAt = time.Time{}
 
 	// §3.4: a reader round whose artifact directory is over
 	// policy.artifact_max_mb closes as usual -- the summary is written and
