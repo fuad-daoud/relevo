@@ -154,7 +154,9 @@ func chainRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 	case workflow.ActionFinish, workflow.ActionHalt, workflow.ActionStop:
 		return chainTerminalWF(ctx, rt, tx, c, def, before, *next, ev, act)
 	case workflow.ActionFork:
-		return fmt.Errorf("chain %s: fork steps are not run by this engine", c.Name)
+		return chainFlowFork(ctx, rt, tx, c, def, before, next, ev, act)
+	case workflow.ActionMerge:
+		return chainFlowMerge(ctx, rt, tx, c, def, before, next, ev, act)
 	default:
 		return fmt.Errorf("chain %s: unhandled action %q", c.Name, string(act.Kind))
 	}
@@ -396,8 +398,9 @@ func chainSaveFlow(rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definit
 	row.StateJSON = stateJSON
 	applyChainLegacy(&row, def, next)
 	// A start's send has no event of its own: the row's state is the record,
-	// exactly as the fixed state machine's start keeps no trace row.
-	if ev.Kind == "" {
+	// exactly as the fixed state machine's start keeps no trace row. A fork
+	// action writes its trace row so the trace records the fork.
+	if ev.Kind == "" && act.Kind != workflow.ActionFork {
 		return tx.ChainPut(row)
 	}
 	trace := db.ChainEventRow{

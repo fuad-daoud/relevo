@@ -59,6 +59,21 @@ func newRoundView(env Env, key string, round int) (View, tea.Cmd) {
 	return roundView{pane: p, actions: env.Actions != nil}, cmd
 }
 
+// newChainRoundView targets a member's round from a chain's step list, where
+// the member's row is not in the shell's report: it opens the round against a
+// report carrying the chain's own member rows, and carries them as the view's
+// extra so every later status refresh keeps the pane's target resolvable.
+func newChainRoundView(env Env, key string, round int, members []view.BindingStatus, crumbs []string) (View, tea.Cmd) {
+	env.Report = mergeRows(env.Report, members)
+	v, cmd := newRoundView(env, key, round)
+	if rv, ok := v.(roundView); ok {
+		rv.extra = members
+		rv.crumbs = crumbs
+		v = rv
+	}
+	return v, cmd
+}
+
 // newHistRoundView targets an archived binding's round through
 // pointDetailAtHist. round == 0 means the default (Rounds) (§4.5, R2.4).
 func newHistRoundView(env Env, h relevo.HistoryBinding, round int) (View, tea.Cmd) {
@@ -119,15 +134,52 @@ func roundsOf(r view.BindingStatus) int {
 type roundView struct {
 	pane    roundPane
 	actions bool // Actions != nil at construction: the action keys are shown (r1)
+	// extra carries report rows the shell's report no longer holds: a chain's
+	// own members are folded into its synthetic row by the cockpit's read
+	// model, so a round drilled in from the chains view lends them back for
+	// as long as the view is on screen.
+	extra []view.BindingStatus
+	// crumbs replaces the default binding-and-round breadcrumb when the round
+	// was reached through a chain, so the trail reads chains › chain › step
+	// rather than naming the member twice.
+	crumbs []string
+}
+
+// mergeRows is rep with extra appended, one loop, dropping any extra row the
+// report already carries under the same key: the shell's own row wins, and a
+// member spliced in twice is one row.
+func mergeRows(rep view.Report, extra []view.BindingStatus) view.Report {
+	if len(extra) == 0 {
+		return rep
+	}
+	have := make(map[string]bool, len(rep.Bindings))
+	for _, b := range rep.Bindings {
+		have[b.Key()] = true
+	}
+	out := rep
+	out.Bindings = append([]view.BindingStatus(nil), rep.Bindings...)
+	for _, b := range extra {
+		if have[b.Key()] {
+			continue
+		}
+		have[b.Key()] = true
+		out.Bindings = append(out.Bindings, b)
+	}
+	return out
 }
 
 func (r roundView) Crumbs() []string {
+	if len(r.crumbs) > 0 {
+		return r.crumbs
+	}
 	return []string{r.pane.detail.name, fmt.Sprintf("r%d", r.pane.detail.round)}
 }
 
-// Context is the context row.
+// Context is the context row. It reads the same report the pane does, with
+// the view's own rows merged in, so a chain member's round names its binding
+// after a status refresh as it did when it was opened.
 func (r roundView) Context(env Env) (string, string) {
-	b := row(env.Report, r.pane.detail.name)
+	b := row(mergeRows(env.Report, r.extra), r.pane.detail.name)
 
 	rightText := fmt.Sprintf("round %d of %d", r.pane.detail.round, r.pane.detail.rounds)
 	if !r.pane.detail.archivedAt.IsZero() {
@@ -356,8 +408,10 @@ func (r roundView) Capturing() bool { return false }
 
 func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	// Every call lends the pane the shell's current report and box (§4.4):
-	// invalidate, the ages and the fetch all read these.
-	r.pane.report = env.Report
+	// invalidate, the ages and the fetch all read these. The pane's own rows
+	// ride along, or a member the shell's report no longer carries would
+	// vanish on the first status refresh.
+	r.pane.report = mergeRows(env.Report, r.extra)
 	r.pane.now = envNow(env)
 	r.pane.width = env.Width
 	r.pane.rows = bodyHeight(env)
@@ -503,7 +557,7 @@ func (r roundView) updateKey(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
 func (r roundView) Body(env Env, width, height int) string {
 	r.pane.width = width
 	r.pane.rows = height
-	r.pane.report = env.Report
+	r.pane.report = mergeRows(env.Report, r.extra)
 	r.pane.now = envNow(env)
 	r.pane.actions = r.actions
 	return r.pane.view(width)

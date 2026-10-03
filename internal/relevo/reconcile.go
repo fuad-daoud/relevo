@@ -777,11 +777,7 @@ func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 }
 
 // HasEntry reports whether the log already contains a message of that shape.
+// It reads store's shared definition rather than repeating it.
 func HasEntry(entries []store.LogEntry, round int, dir store.Direction, kind store.Kind) bool {
-	for _, e := range entries {
-		if e.Round == round && e.Direction == dir && e.Kind == kind && e.Note != nudgeNote {
-			return true
-		}
-	}
-	return false
+	return store.HasKind(entries, round, dir, kind)
 }

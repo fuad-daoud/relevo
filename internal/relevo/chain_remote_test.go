@@ -66,7 +66,7 @@ func seedRemoteChain(t *testing.T, rt Runtime, name string, opts remoteChainOpts
 	if err != nil {
 		t.Fatalf("seedRemoteChain: resolve actors: %v", err)
 	}
-	built, err := chainBuildMembers(ctx, rt, members, resolutions, base, settings)
+	built, err := chainBuildMembers(ctx, rt, members, resolutions, base, settings, opts.Plans)
 	if err != nil {
 		t.Fatalf("seedRemoteChain: build members: %v", err)
 	}

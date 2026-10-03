@@ -687,3 +687,73 @@ The W2 rounds settled these. They override the sections they name.
    - A resume that changes the gate of a chain with a placed writer is allowed once the server has `check`, and pushes the binding's gate through `POST /v1/bindings/{n}/gate`. Without the feature it is refused, naming the server and the feature.
 6. **Converting old rows (section 8).** `ConvertLegacyChains` converts each row in its own transaction. A row that cannot convert is halted with the reason, and the rest still convert.
 7. **`file:` seeds** must be regular files inside the workflow's directory. Symlinks, and symlinked directories that resolve outside it, are refused.
+
+## 13. Decisions made while building W3
+
+The W3 rounds settled the gaps section 4.5 left. They override the sections they
+name.
+
+**Note on section 4.5's example.** The `each: plans.current-stage` in that
+section's first snippet is **not what is built**. `each` takes the same two forms
+`for-each` does, and `current-stage` is not one of them; see gap 1 below. Read the
+`children:` snippet in section 4.5 as the accurate one.
+
+1. **`each`'s source.** A fork's `each` is validated with `checkForEachSource`,
+   the same check `for-each` uses, so it takes exactly two forms: `plans`, or a
+   single `{{step.artifact}}` list reference. Each item becomes one child run with
+   that item as its only plan — an artifact item is a round-file key, as a
+   `for-each` item is. Items come from the plans input seeded into `Iter[fork]` or
+   from `Results[root].Artifacts[attr]`. `plans.current-stage` is not built.
+2. **Child keys and names.** The engine names children `"1".."N"` — declaration
+   order for `children`, item order for `each` — and `Awaiting.Children` holds
+   those keys. The caller turns key `k` into the chain name `<parent>.<k>`, whose
+   members are `<parent>.<k>` (the builder) and `<parent>.<k>-<actor>`, so W2's
+   rule that a member suffix follows `chainMemberNames` still holds. Store binding
+   names accept `.`, which the workflow `namePattern` does not: that pattern
+   governs workflow and actor names only. Every child's chain name is checked
+   against `chainNameCap` at fork time.
+3. **`halted` is an optional edge.** Rule 3 requires `joined` and `conflict`;
+   `halted` is declared at will and is never rejected as an undeclared match. An
+   unwired `halted` halts the parent with the first halted child's reason, children
+   in key order, and a `stopped` child reads `child <k> stopped`. A wired
+   `halted: { halt: ... }` halts with the author's wording instead. A `halted`
+   edge may also name a step, but a parent halted on such an edge is not
+   re-openable by resuming a child.
+4. **`merge_closed` is a new event.** Section 5's list had an action `merge` and
+   no event carrying its result back. `EventMergeClosed` carries `Result`
+   (`joined` or `conflict`) and `Artifacts{"conflict": [key]}`. The fork step
+   awaits one `child_ended` per child first, then the single `merge_closed`.
+5. **A conflict stays in the tree.** `git.Client.MergeKeep` runs
+   `merge --no-edit <ref>` and, on a conflict, leaves the merge in progress —
+   `MERGE_HEAD` present, the markers written — returning the unmerged paths with
+   `ErrMergeConflict`. Any other failure is not a conflict, so the merge is
+   aborted and the original error returned, exactly as `Merge` does. It lives
+   beside `Merge` in `internal/git/sync.go`. Children are merged in key order and
+   the merge stops at the first conflict. The conflict report is a round file
+   under the parent: the unmerged paths, one per line, then a `not yet merged:`
+   section naming the branches after the stopped child, because the author's
+   merge round has to merge those itself. A git failure that is not a conflict
+   halts the parent, naming the child and git's message.
+   - **The merge row's rendered form.** The parent's trace reads
+     `merged → joined` and `merged → conflict (n paths)`. The keys the merge
+     integrated live on the `merge` action row (which carries the preceding
+     `child_ended`), not on the `merge_closed` row, because the `merge_closed`
+     row's action is whatever the outcome routed to.
+6. **A fork needs a writer on the parent.** The merge target is the parent
+   writer's tree and branch, so a fork is refused (`RuleFork`, "workflow has no
+   writer run step") in a workflow with no writer `run` step. Start also refuses a
+   workflow with a fork on a server or on a placed writer, naming W4 as not
+   supported yet: section 12.5 supports one placed writer check, and merging into a
+   remote tree is not designed. `--dry-run` lists each fork and the children it
+   would create, without creating anything.
+7. **A child's input.** Rule 7 already validates each child against its own given
+   inputs. `each` and a `children` entry's `plans` hand the child its plan copies
+   and its entry's `task` the task text, through the same reader and writer the
+   chain's own start uses. The child's definition is resolved by name or path.
+8. **A child's end belongs to the parent.** Only a top-level chain delivers to the
+   MasterMind: a child's end is the parent's `child_ended` event, run in the same
+   transaction as the child's own save. A parent row that is gone, or already
+   terminal, is a warning and the child still ends.
+9. **Children are not cleaned up.** A child's bindings and worktrees are not
+   removed when the parent ends; they end like any chain's members do, through
+   `relevo done` or `unbind`. Automatic removal is out of scope for W3.

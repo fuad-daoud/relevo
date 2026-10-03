@@ -3,6 +3,7 @@ package relevo
 import (
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -73,17 +74,32 @@ func TestMemberNamesNoWriter(t *testing.T) {
 // and a custom workflow running lite-planner caps at 19.
 func TestChainNameCapFromLongestMemberSuffix(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		members []plannedMember
-		want    int
+		name      string
+		chainName string
+		members   []plannedMember
+		want      int
 	}{
-		{"the default's -plan sets 27", []plannedMember{{Name: "shop"}, {Name: "shop-rev"}, {Name: "shop-plan"}, {Name: "shop-sec"}}, 27},
-		{"lite-planner sets 19", []plannedMember{{Name: "shop"}, {Name: "shop-lite-planner"}, {Name: "shop-reviewer"}}, 19},
+		{"the default's -plan sets 27", "shop", []plannedMember{{Name: "shop"}, {Name: "shop-rev"}, {Name: "shop-plan"}, {Name: "shop-sec"}}, 27},
+		{"lite-planner sets 19", "shop", []plannedMember{{Name: "shop"}, {Name: "shop-lite-planner"}, {Name: "shop-reviewer"}}, 19},
+		{"dotted child name with reviewer suffix sets 23", "shop.1", []plannedMember{{Name: "shop.1"}, {Name: "shop.1-reviewer"}}, 23},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := chainNameCap("shop", tc.members); got != tc.want {
-				t.Errorf("chainNameCap(%v) = %d, want %d", tc.members, got, tc.want)
+			if got := chainNameCap(tc.chainName, tc.members); got != tc.want {
+				t.Errorf("chainNameCap(%q, %v) = %d, want %d", tc.chainName, tc.members, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestChainNameCapCountsLongestSuffixForChild pins that a dotted child chain name
+// counts the longest suffix beyond its own name.
+func TestChainNameCapCountsLongestSuffixForChild(t *testing.T) {
+	members := []plannedMember{
+		{Name: "shop.1"},
+		{Name: "shop.1-reviewer"},
+	}
+	want := store.MaxAgentNameLen - len("-reviewer")
+	if got := chainNameCap("shop.1", members); got != want {
+		t.Errorf("chainNameCap(shop.1) = %d, want %d", got, want)
 	}
 }

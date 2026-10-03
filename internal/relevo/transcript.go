@@ -302,3 +302,43 @@ func readBytesMissing(read func(string) ([]byte, error), path string) ([]byte, b
 	}
 	return data, true, nil
 }
+
+// defaultRound is showLive's no---round rule. A transcript read prefers the
+// round in flight: a server-chain member installs its rounds only at close, so
+// its open round has no report entry and the completed-round default would
+// show the round before it. A round with no readable transcript, and every
+// other section, falls back to the newest completed round; ErrNoCompletedRound
+// is returned when the binding has no completed round at all.
+func defaultRound(rt Runtime, b store.Binding, completed int, section ShowSection) (int, error) {
+	if section == ShowTranscript {
+		if open, found, err := openTranscriptRound(rt, b); err != nil {
+			return 0, err
+		} else if found {
+			return open, nil
+		}
+	}
+	if completed == 0 {
+		completed = b.Round - 1
+	}
+	if completed < 1 {
+		return 0, ErrNoCompletedRound
+	}
+	return completed, nil
+}
+
+// openTranscriptRound returns the binding's open round when it has a readable
+// transcript: its mirrored builder log, or its stream. found is false when the
+// open round has neither, so a transcript default can fall back to the newest
+// completed round. RoundTranscript owns the read; this only names the round.
+func openTranscriptRound(rt Runtime, b store.Binding) (round int, found bool, err error) {
+	if b.Round < 1 {
+		return 0, false, nil
+	}
+	_, _, found, err = RoundTranscript(rt.Store, b.Name, b.Round, b.Builder, func(path string) ([]byte, bool, error) {
+		return readBytesMissing(rt.Store.ReadFile, path)
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return b.Round, found, nil
+}

@@ -75,16 +75,18 @@ func fetchRemote(ctx context.Context, rt Runtime, b store.Binding) remoteFetch {
 	f.View = view
 	// An observing member never fetches a catch-up: the chain pull is the one
 	// collector that installs its closed rounds and acks them.
-	if !f.Observe {
-		if view.RoundState == remote.RoundClosed && view.ClosedRound >= f.Round {
-			f.CatchUp = fetchCatchUp(ctx, rt, b, view)
-			return f
-		}
-		if view.RoundState == remote.RoundIdle && view.ClosedRound >= f.Round &&
-			reportMissingForRound(rt, f.Name, f.Round) {
-			f.CatchUp = fetchCatchUp(ctx, rt, b, view)
-			return f
-		}
+	//
+	// A close is collected by the fact that the server named a ClosedRound at
+	// or past this round, not by the state word that rides with it. The words
+	// are not exclusive: a round that closed and then halted again is both, and
+	// a needs_you or idle word on top of a close must not cost the client the
+	// round's report. A running or queued round has no close to collect, since
+	// ClosedRound only moves on a close.
+	if !f.Observe && view.ClosedRound >= f.Round &&
+		view.RoundState != remote.RoundRunning && view.RoundState != remote.RoundQueued &&
+		reportMissingForRound(rt, f.Name, f.Round) {
+		f.CatchUp = fetchCatchUp(ctx, rt, b, view)
+		return f
 	}
 	if view.RoundState != remote.RoundRunning {
 		return f

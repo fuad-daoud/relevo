@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 var _ TreeTransport = (*BundleTransport)(nil)
@@ -42,10 +43,14 @@ func WithOwnerTmp(dir string, uid, gid uint32) BundleOption {
 }
 
 // NewBundleTransport creates a new BundleTransport using g and tmpDir for temporary bundle files.
-// If tmpDir is "", os.TempDir() is used.
+// If tmpDir is "", the state root's tmp directory (<root>/tmp) is used, falling back to os.TempDir().
 func NewBundleTransport(g *git.Client, tmpDir string, opts ...BundleOption) *BundleTransport {
 	if tmpDir == "" {
-		tmpDir = os.TempDir()
+		if stTmp, err := store.TempDir(""); err == nil {
+			tmpDir = stTmp
+		} else {
+			tmpDir = os.TempDir()
+		}
 	}
 	t := &BundleTransport{
 		git: g,

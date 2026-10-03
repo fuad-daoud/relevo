@@ -18,6 +18,10 @@ func Next(def Definition, s State, e Event) (State, []Action) {
 		return s.stepClosed(def, e)
 	case EventCheckClosed:
 		return s.checkClosed(def, e)
+	case EventChildEnded:
+		return s.childEnded(def, e)
+	case EventMergeClosed:
+		return s.mergeClosed(def, e)
 	case EventNeedsYou:
 		return halt(s, e.Step, e.Reason)
 	case EventStopped:
@@ -36,14 +40,42 @@ func (s State) awaits(e Event) bool {
 		return s.Awaiting.matchesRun(e)
 	case EventCheckClosed:
 		return s.Awaiting.matchesCheck(e)
+	case EventChildEnded:
+		return s.Awaiting.matchesChild(e)
+	case EventMergeClosed:
+		return s.Awaiting.matchesMerge(e)
 	case EventNeedsYou, EventStopped:
 		if s.Awaiting.Member != "" {
 			return s.Awaiting.matchesRun(e)
+		}
+		if len(s.Awaiting.Children) > 0 {
+			return e.Step == s.Awaiting.Step
 		}
 		return s.Awaiting.matchesCheck(e)
 	default:
 		return false
 	}
+}
+
+// matchesChild reports whether a child_ended event closes a child the fork awaits.
+func (a Awaiting) matchesChild(e Event) bool {
+	if a.Step != e.Step || a.Merging {
+		return false
+	}
+	if !containsStr(a.Children, e.Child) {
+		return false
+	}
+	if a.Ended != nil {
+		if _, ended := a.Ended[e.Child]; ended {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesMerge reports whether a merge_closed event closes the merge the fork awaits.
+func (a Awaiting) matchesMerge(e Event) bool {
+	return a.Merging && a.Step == e.Step
 }
 
 // matchesRun reports whether an event closes the run step the state awaits. A
@@ -54,7 +86,7 @@ func (a Awaiting) matchesRun(e Event) bool {
 
 // matchesCheck reports whether an event closes the check the state awaits.
 func (a Awaiting) matchesCheck(e Event) bool {
-	return a.Member == "" && e.Step == a.Step && e.Run == a.Run
+	return a.Member == "" && len(a.Children) == 0 && e.Step == a.Step && e.Run == a.Run
 }
 
 // stepClosed records a run step's close and routes it to the edge that matches.

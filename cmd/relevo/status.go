@@ -8,11 +8,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
+	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -76,6 +81,7 @@ type statusFlagValues struct {
 	asJSON *bool
 	name   *string
 	line   *bool
+	chains *bool
 }
 
 // statusFlagSet defines those flags on fs and returns what they parse into.
@@ -85,15 +91,23 @@ func statusFlagSet(fs *flag.FlagSet) *statusFlagValues {
 	v.asJSON = fs.Bool("json", false, "machine-readable output")
 	v.name = fs.String("name", "", "show only this binding (default: all)")
 	v.line = fs.Bool("line", false, "this mastermind's builders, one row each, for Claude Code's statusLine setting; with --json, output as JSON")
+	v.chains = fs.Bool("chains", false, "show chains and their steps")
 	return v
 }
 
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	v := statusFlagSet(fs)
-	all, asJSON, name, line := v.all, v.asJSON, v.name, v.line
+	all, asJSON, name, line, chains := v.all, v.asJSON, v.name, v.line, v.chains
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+
+	if *chains {
+		if *line || *name != "" || len(fs.Args()) > 0 {
+			return fail(codeUsage, "--chains cannot be combined with --line/--name")
+		}
+		return runStatusChains(*asJSON)
 	}
 
 	// --line is today's statusline: one row per builder of the calling
@@ -198,6 +212,28 @@ func cmdStatus(args []string) error {
 	return nil
 }
 
+// boardBlockFor reads one MasterMind's live board block from the state root's
+// files alone -- the pointer, server.json and a pid check, with no database
+// read (S8). It is present only when the pointer names a scene, server.json
+// advertises the same scene, and the server's pid is alive with a matching
+// start. Any read error, a missing pointer, a scene mismatch or a dead pid
+// yields nil, never a failure.
+func boardBlockFor(root, id string, procStart func(pid int) (int64, error)) *view.StatusLineBoard {
+	if root == "" || id == "" {
+		return nil
+	}
+	liveDir := filepath.Join(root, "boards", id)
+	scene, present, err := board.Pointer(liveDir)
+	if err != nil || !present {
+		return nil
+	}
+	url, ok, err := board.LiveURL(liveDir, scene, procStart)
+	if err != nil || !ok {
+		return nil
+	}
+	return &view.StatusLineBoard{Name: scene, Scope: string(board.ScopeLive), URL: url}
+}
+
 // runStatusline is statusline's body (the old cmdStatusline), now reached
 // through `status --line` (§4.5): the same output, COLUMNS,
 // RELEVO_STATUSLINE_MARGIN and mastermind filtering. With asJSON, it prints
@@ -235,6 +271,9 @@ func runStatusline(asJSON bool) error {
 		// MasterMindStatus failure: the line is the mastermind's identity, not a
 		// binding row.
 		fmt.Print(view.RenderMasterMindLine(rec.Name, columns))
+		if root, rerr := store.DefaultRoot(); rerr == nil {
+			fmt.Print(view.RenderBoardLine(boardBlockFor(root, rec.ID, boardProcStart), rec.Name, columns))
+		}
 		rep, err := relevo.MasterMindStatus(context.Background(), rt, rec.ID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
@@ -256,6 +295,9 @@ func runStatusline(asJSON bool) error {
 	doc := view.StatusLineDoc{Now: now, Rows: []view.StatusLineRow{}}
 	if ok {
 		doc.MasterMind = &view.StatusLineMasterMind{ID: rec.ID, Name: rec.Name}
+		if root, rerr := store.DefaultRoot(); rerr == nil {
+			doc.Board = boardBlockFor(root, rec.ID, boardProcStart)
+		}
 		rep, err := relevo.MasterMindStatus(context.Background(), rt, rec.ID)
 		if err == nil {
 			doc.Rows = view.StatusLineRows(rep, rt.Now())
@@ -268,5 +310,50 @@ func runStatusline(asJSON bool) error {
 	}
 	data, _ := json.Marshal(doc)
 	fmt.Println(string(data))
+	return nil
+}
+
+// runStatusChains prints chains and their steps in text or JSON format.
+func runStatusChains(asJSON bool) error {
+	rt, err := newRuntime()
+	if err != nil {
+		return fail(codeInternal, "%v", err)
+	}
+	if rt.Remote != nil {
+		if _, _, serr := relevo.SyncRemoteUnlessDaemon(context.Background(), rt); serr != nil {
+			fmt.Fprintf(os.Stderr, "relevo: sync remote bindings: %v\n", serr)
+		}
+	}
+	doc, err := relevo.ReadChains(context.Background(), rt)
+	if err != nil {
+		return fail(codeInternal, "%v", err)
+	}
+	if asJSON {
+		return printDoc(doc)
+	}
+	return printChainsStatus(doc)
+}
+
+// printChainsStatus formats chains as one line per chain, indented for nesting,
+// followed by the halt reason when halted.
+func printChainsStatus(doc relevo.ChainsDoc) error {
+	for _, c := range doc.Chains {
+		indent := strings.Repeat("  ", c.Depth)
+		stepPlans := ""
+		if c.Step != "" {
+			stepPlans = fmt.Sprintf("%s · plans %d/%d", sanitize.Text(c.Step), c.PlanPos, c.PlanTotal)
+		} else {
+			stepPlans = fmt.Sprintf("plans %d/%d", c.PlanPos, c.PlanTotal)
+		}
+		elapsed := view.AgeText(c.Elapsed)
+		where := c.Where
+		if where == "" {
+			where = "local"
+		}
+		fmt.Printf("%s%s  %s  %s  %s  %s\n", indent, c.Name, sanitize.Text(c.Status), stepPlans, elapsed, where)
+		if c.Reason != "" {
+			fmt.Printf("%s  %s\n", indent, sanitize.Text(c.Reason))
+		}
+	}
 	return nil
 }

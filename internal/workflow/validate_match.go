@@ -20,7 +20,7 @@ func (v *validator) checkMatches() {
 		case "when":
 			v.checkEnumMatches(id, step, "", "true", "false")
 		case "fork":
-			v.checkEnumMatches(id, step, "", "joined", "conflict")
+			v.checkForkMatches(id, step)
 		}
 	}
 }
@@ -164,4 +164,33 @@ func hasMatch(on map[string]Target, resultKind, name string) bool {
 		return ok
 	}
 	return false
+}
+
+// checkForkMatches is rule 3 for a fork: joined and conflict are required, and
+// halted is accepted as an optional outcome.
+func (v *validator) checkForkMatches(id string, step Step) {
+	on := step.On
+	valid := map[string]bool{
+		"joined":          true,
+		"conflict":        true,
+		"halted":          true,
+		"result=joined":   true,
+		"result=conflict": true,
+		"result=halted":   true,
+		"else":            true,
+	}
+	for _, key := range sortedKeys(on) {
+		if !valid[key] {
+			v.add(id, RuleMatch, "match %q is not valid for this step", key)
+		}
+	}
+	if _, ok := on["else"]; ok {
+		return
+	}
+	if !hasMatch(on, "result", "joined") {
+		v.add(id, RuleMatch, "uncovered: joined")
+	}
+	if !hasMatch(on, "result", "conflict") {
+		v.add(id, RuleMatch, "uncovered: conflict")
+	}
 }

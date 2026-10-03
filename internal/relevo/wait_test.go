@@ -659,3 +659,101 @@ func TestWaitDeliversTheWaitedRoundAfterAFailedOne(t *testing.T) {
 		t.Errorf("pullPending after Wait = (%q, %v), want nothing pending", payload, found)
 	}
 }
+
+func TestWaitOwned(t *testing.T) {
+	t.Parallel()
+
+	t.Run("owned-set resolution", func(t *testing.T) {
+		rt := newRuntime(t)
+		b1 := store.Binding{Name: "b1", MasterMindID: "mm1", State: store.StateActive, Round: 1, CWD: "/repo1"}
+		b2 := store.Binding{Name: "b2", MasterMindID: "mm2", State: store.StateActive, Round: 1, CWD: "/repo2"}
+		if err := rt.Store.Save(b1); err != nil {
+			t.Fatalf("Save b1: %v", err)
+		}
+		if err := rt.Store.Save(b2); err != nil {
+			t.Fatalf("Save b2: %v", err)
+		}
+		report := store.LogEntry{
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/report.md",
+		}
+		if err := rt.Store.AppendLog("b1", report); err != nil {
+			t.Fatalf("AppendLog b1: %v", err)
+		}
+
+		name, res, err := WaitOwned(context.Background(), rt, "mm1", 1, time.Minute, time.Millisecond)
+		if err != nil {
+			t.Fatalf("WaitOwned: %v", err)
+		}
+		if name != "b1" || res.Code != WaitClosed {
+			t.Fatalf("WaitOwned = (%q, %d), want (b1, WaitClosed)", name, res.Code)
+		}
+	})
+
+	t.Run("empty-set error", func(t *testing.T) {
+		rt := newRuntime(t)
+		_, _, err := WaitOwned(context.Background(), rt, "mm-missing", 0, time.Minute, time.Millisecond)
+		if err == nil {
+			t.Fatal("WaitOwned on empty set want error, got nil")
+		}
+		if !strings.Contains(err.Error(), "mm-missing") {
+			t.Errorf("WaitOwned error %q must name mastermind id", err.Error())
+		}
+	})
+
+	t.Run("done-exclusion", func(t *testing.T) {
+		rt := newRuntime(t)
+		bDone := store.Binding{Name: "bdone", MasterMindID: "mm-done", State: store.StateDone, Round: 1, CWD: "/repo"}
+		if err := rt.Store.Save(bDone); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		_, _, err := WaitOwned(context.Background(), rt, "mm-done", 0, time.Minute, time.Millisecond)
+		if err == nil {
+			t.Fatal("WaitOwned with only done bindings want error, got nil")
+		}
+
+		bActive := store.Binding{Name: "bactive", MasterMindID: "mm-done", State: store.StateActive, Round: 1, CWD: "/repo"}
+		if err := rt.Store.Save(bActive); err != nil {
+			t.Fatalf("Save bActive: %v", err)
+		}
+		report := store.LogEntry{
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/report.md",
+		}
+		if err := rt.Store.AppendLog("bactive", report); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+		name, res, err := WaitOwned(context.Background(), rt, "mm-done", 0, time.Minute, time.Millisecond)
+		if err != nil {
+			t.Fatalf("WaitOwned: %v", err)
+		}
+		if name != "bactive" || res.Code != WaitClosed {
+			t.Fatalf("WaitOwned = (%q, %d), want (bactive, WaitClosed)", name, res.Code)
+		}
+	})
+
+	t.Run("round-0 passthrough", func(t *testing.T) {
+		rt := newRuntime(t)
+		b := store.Binding{Name: "bround0", MasterMindID: "mm-r0", State: store.StateActive, Round: 1, CWD: "/repo"}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		prompt := store.LogEntry{
+			Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+		}
+		report := store.LogEntry{
+			Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/002-report.md",
+		}
+		if err := rt.Store.AppendLog("bround0", prompt); err != nil {
+			t.Fatalf("AppendLog prompt: %v", err)
+		}
+		if err := rt.Store.AppendLog("bround0", report); err != nil {
+			t.Fatalf("AppendLog report: %v", err)
+		}
+		name, res, err := WaitOwned(context.Background(), rt, "mm-r0", 0, time.Minute, time.Millisecond)
+		if err != nil {
+			t.Fatalf("WaitOwned: %v", err)
+		}
+		if name != "bround0" || res.Round != 2 || res.Code != WaitClosed {
+			t.Fatalf("WaitOwned = (%q, round %d, code %d), want (bround0, 2, WaitClosed)", name, res.Round, res.Code)
+		}
+	})
+}

@@ -19,8 +19,8 @@ package e2e
 //	   kind="report" channel notification;
 //	6  pull and done;
 //	7  the hook fires again for /clear: same mastermind id, moved session;
-//	8  a tools-mode relevo mcp sends round two, and its result carries the
-//	   background wait the mastermind runs for its report.
+//	8  a tools-mode relevo mcp sends round two, and its result points at the
+//	   wait tool the mastermind closes its report with.
 //
 // Every wait is bounded and fails with the thing it was waiting for named, so
 // a broken step fails the test instead of hanging it.
@@ -75,7 +75,7 @@ const (
 	mcpDeadline    = 10 * time.Second
 
 	// The two bindings the scenario creates: one delivered by the channel,
-	// one by the tools-mode mastermind's background wait.
+	// one by the tools-mode mastermind's wait tool.
 	channelBinding = "e2e-round"
 	toolsBinding   = "e2e-tools"
 )
@@ -236,33 +236,36 @@ func TestHeadlessE2E(t *testing.T) {
 	}
 	toolsPlan := writePlan(t, "tools.md", "# Round two\n\nOne line of work.\n")
 
-	// 8.1/8.2: the send tool's result ends with the background wait for this
-	// binding's name and budget.
+	// 8.1/8.2: the send tool's result ends by pointing at the wait tool, for
+	// this binding's name and budget.
 	text := tools.callSend(t, toolsBinding, toolsPlan)
 	budget := (time.Duration(loadBinding(t, rt, toolsBinding).RoundTimeoutMS) * time.Millisecond).String()
-	wantCommand := "relevo wait --name " + toolsBinding + " --timeout " + budget
-	if !strings.HasSuffix(text, wantCommand) {
-		t.Fatalf("the tools-mode send result does not end with the background-wait command for %s (budget %s):\n%s",
+	wantPointer := "wait tool:\n  wait(name: \"" + toolsBinding + "\", timeout: \"" + budget + "\")"
+	if !strings.HasSuffix(text, wantPointer) {
+		t.Fatalf("the tools-mode send result does not end with the wait-tool pointer for %s (budget %s):\n%s",
 			toolsBinding, budget, text)
 	}
+	if strings.Contains(text, "run_in_background") {
+		t.Fatalf("the tools-mode send result still teaches the background shell wait:\n%s", text)
+	}
 
-	// 8.3: the daemon closes round two, then the test runs the command the
-	// result named -- through the in-process equivalent of relevo wait, with
-	// the name and budget parsed out of the result itself. The wait delivers
-	// the report itself (§4.1), so there is no second command.
+	// 8.3: the daemon closes round two, then the test drives the round's close
+	// through the wait-tool path -- the in-process equivalent of the wait
+	// tool's verb, with the name and budget parsed out of the result itself.
+	// The wait delivers the report itself (§4.1), so there is no second read.
 	tickUntilRoundCloses(t, ctx, daemon, rt, toolsBinding)
 
-	waitName, waitBudget := parseWaitCommand(t, text)
+	waitName, waitBudget := parseWaitPointer(t, text)
 	timeout, err := time.ParseDuration(waitBudget)
 	if err != nil {
-		t.Fatalf("the send result's budget %q is not a duration relevo wait accepts: %v", waitBudget, err)
+		t.Fatalf("the send result's budget %q is not a duration the wait tool accepts: %v", waitBudget, err)
 	}
 	waited := runWait(t, ctx, rt, waitName, timeout)
 	if waited.err != nil {
-		t.Fatalf("relevo wait --name %s --timeout %s: %v", waitName, waitBudget, waited.err)
+		t.Fatalf("wait --name %s --timeout %s: %v", waitName, waitBudget, waited.err)
 	}
 	if waited.res.Code == relevo.WaitTimeout || !waited.res.Done {
-		t.Fatalf("relevo wait --name %s --timeout %s = %+v, want the closed round (a timeout means round 1 never closed)", waitName, waitBudget, waited.res)
+		t.Fatalf("wait --name %s --timeout %s = %+v, want the closed round (a timeout means round 1 never closed)", waitName, waitBudget, waited.res)
 	}
 	if want := rt.Store.ReportPath(toolsBinding, 1); waited.res.Line != want {
 		t.Fatalf("relevo wait printed %q, want the round's report path %s", waited.res.Line, want)
@@ -944,18 +947,18 @@ func (c *mcpClient) noteSummary() string {
 
 // --- small assertions -------------------------------------------------------
 
-// waitCommandRE pulls the background wait out of a send result:
-// relevo wait --name <n> --timeout <budget>. The wait prints the report
-// itself, so there is no second half (§4.1).
-var waitCommandRE = regexp.MustCompile(`relevo wait --name (\S+) --timeout (\S+)`)
+// waitPointerRE pulls the wait tool's arguments out of a send result:
+// wait(name: "<n>", timeout: "<budget>"). The wait prints the report itself,
+// so there is no second half (§4.1).
+var waitPointerRE = regexp.MustCompile(`wait\(name: "([^"]+)", timeout: "([^"]+)"\)`)
 
-// parseWaitCommand reads the wait command's name and budget out of a send
-// result, so the test runs exactly what the result told the model to run.
-func parseWaitCommand(t *testing.T, text string) (name, budget string) {
+// parseWaitPointer reads the wait tool's name and budget out of a send result,
+// so the test waits exactly what the result told the model to wait on.
+func parseWaitPointer(t *testing.T, text string) (name, budget string) {
 	t.Helper()
-	m := waitCommandRE.FindStringSubmatch(text)
+	m := waitPointerRE.FindStringSubmatch(text)
 	if m == nil {
-		t.Fatalf("no background-wait command in the send result:\n%s", text)
+		t.Fatalf("no wait-tool pointer in the send result:\n%s", text)
 	}
 	return m[1], m[2]
 }

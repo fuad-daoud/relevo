@@ -61,6 +61,28 @@
       "name": "send"
     },
     {
+      "description": "Block until a round closes, needs attention, or times out. Omit name to wait on all active bindings this MasterMind owns.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "binding name; omit to wait on all active bindings this MasterMind owns",
+            "type": "string"
+          },
+          "round": {
+            "description": "the round to wait for; omit or 0 for the newest planned round",
+            "type": "integer"
+          },
+          "timeout": {
+            "description": "maximum time to wait as a duration (e.g. 10m, 2h); defaults to the round budget",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "wait"
+    },
+    {
       "description": "Mark a binding done once its round is verified; relaying stops. A name that is a chain releases every member instead. Calls relevo.Done.",
       "inputSchema": {
         "additionalProperties": false,

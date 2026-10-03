@@ -1,0 +1,31 @@
+# Reference build for serve.isolation=container.
+#
+# This image is a starting point, not a finished runtime. relevo binds the
+# round tree, the owner's bare repo and the binding's out/ directory into the
+# container at their host absolute paths, then runs the builder's argv under
+# the in-container supervisor with /bin/sh. The image must therefore provide:
+#
+#   * git, so a linked worktree can reach its common dir and commit;
+#   * a POSIX sh at /bin/sh, the supervisor's interpreter;
+#   * the harness binaries and runtimes on PATH.
+#
+# The admin adds the harness binaries; they are deliberately not baked in here,
+# because which harnesses a server serves is the admin's choice.
+#
+# Build and select it with:
+#
+#   podman build -t relevo-builder:local -f dist/Containerfile .
+#   relevo config set policy.serve \
+#     '{"isolation":"container","isolation_image":"relevo-builder:local"}'
+#
+# It is meant for rootless podman: --userns=keep-id runs the container as the
+# invoking serve uid, so bind-mounted ownership and git's file checks match the
+# host. The workdir is /, matching the host absolute paths every bind uses.
+
+FROM docker.io/library/debian:stable-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /

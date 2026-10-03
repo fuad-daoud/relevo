@@ -32,9 +32,9 @@ func reportPathFor(rt Runtime, b store.Binding) string {
 // assistant text when no message carried a block. Either is rendered with the
 // harness kind of the last segment that ran, which a mid-round switch can
 // change. A runner that wrote only summary.md does not keep it as the report:
-// the old file stays an extra artifact. An empty text writes nothing, so the
-// round closes without a report exactly as a writer that wrote none. A writer
-// is untouched: it writes its own report.
+// the old file stays an extra artifact. The caller no longer calls it when no
+// deliverable exists; an absent deliverable falls through to the continuation
+// or halt path. A writer is untouched: it writes its own report.
 //
 // A chain's reviewer and security members are the exception: their report is
 // the message that carried the block their seed demands (a recap after the

@@ -123,6 +123,13 @@ func TestReaderNudgeNoteSaysWithoutAnOutput(t *testing.T) {
 	if len(fr.specs) != 2 {
 		t.Fatalf("specs = %d, want 2 (the resume): a reader that ends its turn is nudged too", len(fr.specs))
 	}
+	resume := fr.specs[1].Argv
+	if !anyArgContains(resume, "you stopped before your deliverable") {
+		t.Errorf("resume argv = %v, want continuation prompt to say you stopped before your deliverable", resume)
+	}
+	if anyArgContains(resume, "write your") {
+		t.Errorf("resume argv = %v: reader continuation prompt must not tell reader to write file", resume)
+	}
 	sw := switchNotes(t, rt, "reader-bind")
 	if len(sw) != 1 || !strings.HasPrefix(sw[0], nudgeNotePrefix) {
 		t.Fatalf("switch notes = %+v, want one starting %q", sw, nudgeNotePrefix)
@@ -393,5 +400,60 @@ func TestLimitExitIsGatedNotNudged(t *testing.T) {
 	if got.BuilderCandidate != otherRef || got.RoundSwitches != 0 {
 		t.Errorf("candidate=%q switches=%d, want %q and 0 (the gate is uncounted)",
 			got.BuilderCandidate, got.RoundSwitches, otherRef)
+	}
+}
+
+// TestWriterNudgeLimitStaysOne pins that a writer is granted exactly one nudge
+// per plan: a second exit 0 without a report switches candidates rather than
+// continuing.
+func TestWriterNudgeLimitStaysOne(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := seedClaudeHeadless(t, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	b.Builder.StreamSessionID = "S1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+	if err := os.WriteFile(b.Builder.LogPath, []byte("starting\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first, err := reconcile(t, at(rt, time.Minute), b)
+	if err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	if len(fr.specs) != 2 {
+		t.Fatalf("specs after 1st exit = %d, want 2 (one nudge)", len(fr.specs))
+	}
+
+	// Resumed writer exits 0 without a report again: must switch, not nudge.
+	fr.script(first.Builder.PID, false)
+	fr.exit(first.Builder.PID, 0)
+	first.Builder.StreamSessionID = "S2"
+	if err := rt.Store.Save(first); err != nil {
+		t.Fatal(err)
+	}
+	second, err := reconcile(t, at(rt, 2*time.Minute), first)
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if len(fr.specs) != 3 {
+		t.Fatalf("specs after 2nd exit = %d, want 3 (switch spawned replacement)", len(fr.specs))
+	}
+	if second.BuilderCandidate != testAgyRef || second.RoundSwitches != 1 {
+		t.Errorf("after second exit: candidate=%q switches=%d, want %q and 1",
+			second.BuilderCandidate, second.RoundSwitches, testAgyRef)
+	}
+	var nudges int
+	for _, e := range switches(t, rt) {
+		if strings.HasPrefix(e.Note, nudgeNotePrefix) {
+			nudges++
+		}
+	}
+	if nudges != 1 {
+		t.Errorf("nudges = %d, want 1: writer limit must stay 1", nudges)
 	}
 }

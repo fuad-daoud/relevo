@@ -13,11 +13,21 @@ decision that closes it.
 
 ## 1. The loop
 
-1. Send the plan: `relevo send --name <n> --file <plan>`.
-2. Wait for the round in the background:
-   `relevo wait --name <n> --timeout <budget>` (run it with
-   run_in_background, then end your turn; 0 closes with the report, 3 is NEEDS
-   YOU, 4 is DONE, 124 is the timeout).
+1. Send the plan: the `send` MCP tool, `send(name: "<n>", file: "<plan>")`. Its
+   result ends by pointing at the wait tool with the round's budget.
+2. Close the round with the blocking `wait` MCP tool: `wait(name: "<n>",
+   timeout: "<budget>")`. It blocks until the round closes, needs attention, or
+   the timeout elapses; omit `name` to wait on every active binding you own.
+   The first line names the binding, the round and one outcome:
+   - `closed` -- the round is done; act on the payload below the line.
+   - `unmarked`, `needs-you`, `halted`, `gone`, `not-started` -- something needs
+     a decision; the line carries the reason, so go to step 3 of section 3.
+   - `still-open` -- the round is still running. Call `wait` again when you
+     want to wait longer.
+
+   With no MCP tools in the session, `relevo wait --name <n> --timeout <budget>`
+   is the fallback: run it with run_in_background, then end your turn (0 closes
+   with the report, 3 is NEEDS YOU, 4 is DONE, 124 is the timeout).
 3. Read it: `relevo show <n> --report`, a reader's artifact with
    `relevo show <n> --output`, and the shape of the change with
    `relevo show <n> --diff --stat`.

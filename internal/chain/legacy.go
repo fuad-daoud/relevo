@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
 // Status is where a chain is. Halted, stopped and done are terminal: a close
@@ -22,6 +23,12 @@ const (
 	StatusHalted  Status = "halted"
 	StatusStopped Status = "stopped"
 	StatusDone    Status = "done"
+	// StatusGone is a chain whose server no longer holds it. It is the chains
+	// read model's word alone: a row never carries it, because the row is this
+	// machine's record of the chain and keeps whatever status the pull left on
+	// it. Only a read renames a released chain to gone, so every reader that
+	// acts on a chain's status is untouched by a server dropping one.
+	StatusGone Status = "gone"
 )
 
 // Phase is the part of the run a chain is in. The security phase scans once:
@@ -178,8 +185,9 @@ type Action struct {
 // carries onto the chain: the first present of the report tail's halted_at,
 // the close note and the first not_done item, each labelled; the outcome word
 // when none of them is set. A value that carries a newline is cut at its first
-// one and trimmed before it is labelled, and an empty source is skipped rather
-// than rendered as an empty label. Pure.
+// one and trimmed before it is labelled, and a control character in what
+// survives is made inert before it is labelled, and an empty source is skipped
+// rather than rendered as an empty label. Pure.
 func BuilderHaltReason(tail reporttail.Tail, note, outcome string) string {
 	for _, src := range []struct{ label, value string }{
 		{"halted_at", tail.HaltedAt},
@@ -187,7 +195,7 @@ func BuilderHaltReason(tail reporttail.Tail, note, outcome string) string {
 		{"not_done", firstOrEmpty(tail.NotDone)},
 	} {
 		if v := firstLine(src.value); v != "" {
-			return src.label + ": " + v
+			return src.label + ": " + sanitize.Text(v)
 		}
 	}
 	return "status: " + outcome

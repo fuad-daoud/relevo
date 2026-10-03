@@ -274,10 +274,21 @@ gives a MasterMind a name of your own.
   existing binding's MasterMind side at the calling MasterMind without touching the
   builder; on a resume `--feature` sets the label, `--no-feature` clears it, and
   naming neither keeps it, while `--ticket` sets one. `relevo unbind N` is the other way out.
-- `relevo board [path] [--theme NAME] [--no-open]` — open a local Excalidraw
-  whiteboard for one scene in the repo, served on `127.0.0.1` with a per-run
-  token, saving the scene and a companion `.svg` beside it. Foreground;
-  Ctrl-C stops. See "relevo board" below.
+- `relevo board [path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]` — open
+  an Excalidraw whiteboard: a bare `relevo board` opens the live board of the
+  calling MasterMind under the state root, and a named path opens one scene in
+  the repo, served on `127.0.0.1` with a per-run token, saving the scene and (for
+  a repo scene) a companion `.svg` beside it. `relevo board url` prints a live
+  board's URL. Foreground; Ctrl-C stops. See "relevo board" below.
+- `relevo board comments [path|--board NAME] [--json]` — list every comment in the
+  resolved scene in scene order (`id, x, y, text, by, at`); `--json` is one compact
+  array. `relevo board comment [path|--board NAME] --text S [--x X --y Y] [--by B]`
+  — append one comment element, leaving every other byte of the scene unchanged.
+  See "relevo board" below.
+- `relevo board text <file> [--json]`, `relevo board annotate <file> --text S
+  [--x X --y Y]` — list the scene's text elements, or append one without
+  touching the rest of the scene. See "relevo board" below.
+>>>>>>> 40c2bb9a (docs(board): the text and annotate subverbs and the .excalidraw fallback (S2.7))
 - `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N] [--force]` — stage the file as the current round's
   prompt and hand it to the builder as the prompt of a fresh process started in
   the binding's tree. A planner actor's prompt is a seed, capped at 4 KiB, and a
@@ -781,7 +792,7 @@ On the server machine, the admin runs these on the server host. No `--state` is 
 - `relevo serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
 - A **DONE** served binding is collected once its last round has been acked by the client, or after seven days without an ack: the daemon removes its worktree, deletes its branch and every `refs/relevo/<name>/*` ref in the owner's bare repo, and archives its record in the database (this cleanup lands in the server's next round). Every server unbind releases the binding's branch and refs as well. A bare repo is deleted once no live binding uses it, and the next bind of that repository recreates it.
 
-What `relevo serve` does not do: it runs no MasterMind and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Unix-user isolation is available as `serve.isolation: "user"` (above); container isolation is tracked in #204.
+What `relevo serve` does not do: it runs no MasterMind and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Unix-user isolation is available as `serve.isolation: "user"` (above); rootless-container isolation is available as `serve.isolation: "container"` (below).
 
 ### Tenant isolation: `user` mode
 
@@ -820,6 +831,35 @@ To switch a host from `none` to `user` (spec §10):
 Switching back to `none` keeps root (or chowns the owner roots back). User mode
 runs its builders without a scope — system-manager `--uid` scopes are a
 follow-up — while the `max_builders` cap still applies.
+
+### Tenant isolation: `container` mode
+
+`serve.isolation: "container"` runs every owner's builders in a rootless
+`podman` container instead of as a unix user. It needs no root and keeps the
+default user unit (`dist/relevo-serve.service`): the container runs as the
+serve uid through `--userns=keep-id`, so bind-mounted ownership and git's file
+checks match the host. Tenants cannot reach the server's database, TLS key or
+another owner's files because those paths are not mounted.
+
+To switch a host from `none` to `container`:
+
+1. Build an image containing `git`, a POSIX `sh` and the harness binaries on
+   `PATH`. `dist/Containerfile` is the reference build:
+   `podman build -t relevo-builder:local -f dist/Containerfile .`
+2. Set `serve.isolation: "container"` and `serve.isolation_image` to the full
+   image reference in the policy. The image is required; there is no default.
+3. `relevo doctor` reports the mode in force (`isolation=container`) and fails
+   with the exact fix when `podman` is not on `PATH` or the image is missing.
+
+A container round binds the round tree, the binding's `out/` directory, the
+owner's `repos/<hex>` and each owner harness home at their host absolute paths,
+with a private `/tmp` tmpfs. `serve.scope`'s memory, CPU and task limits render
+as `--memory`, `--cpus` and `--pids-limit`; `Slice`, `CPUWeight` and
+`AllowedCPUs` have no podman equivalent and are dropped, and `Rusage` reports no
+measurement. A round whose `podman` or image is missing halts **NEEDS YOU**
+naming the piece instead of running unisolated. The `podman` flags are reasoned
+from the `podman run` contract, not observed on every host; a host without
+`podman` cannot start a container server, and `relevo serve` refuses at startup.
 
 ### Remote builders: the client
 
@@ -1194,25 +1234,75 @@ report text here
 
 ### relevo board
 
-`relevo board [path] [--theme NAME] [--no-open]` opens a local
-[Excalidraw](https://excalidraw.com) whiteboard for one scene that lives in the
-repository. It binds `127.0.0.1:0`, prints one line,
+`relevo board [path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]`
+opens an [Excalidraw](https://excalidraw.com) whiteboard. A bare `relevo board`
+opens this MasterMind's live board; naming a path opens one scene in the
+repository. Either way it binds `127.0.0.1:0`, prints one line,
 `board: http://127.0.0.1:<port>/#t=…  (Ctrl-C to stop)`, and opens that URL in
 the browser unless `--no-open` is given. Ctrl-C stops it, draining an in-flight
 save through `http.Server.Shutdown`.
 
 ```
-relevo board                                  edits docs/boards/board.excalidraw
-relevo board docs/boards/api.excalidraw       edits a named scene
+relevo board                                  opens this MasterMind's live board
+relevo board --board api                      opens the live scene "api"
+relevo board --mastermind architect-2         another MasterMind's live board
+relevo board docs/boards/api.excalidraw       edits a named repo scene
 relevo board --theme blueprint                a different palette for new elements
+relevo board comments                         lists the scene's comments
+relevo board comment --text "check state 3"   appends one comment
+relevo board text docs/boards/api.excalidraw  lists the scene's text elements
+relevo board annotate docs/boards/api.excalidraw --text "step 1"
+                                              appends one text element
 ```
 
-The scene is fixed at startup and confined to the repository: a path must end
+A live board lives under the state root, at
+`<state root>/boards/<mastermind-id>/<name>.excalidraw`; the default name is
+`board`. The scene name is `--board`, else the `current` pointer file in the
+live directory -- written when a board is opened or selected, and never for a
+repo scene -- else `board`. `--mastermind <id|name>` selects whose board;
+without it `RELEVO_MASTERMIND` is used, and with neither the single registered
+MasterMind is used, else a usage error lists them. An `mm_`/`pl_`/ULID id or a
+path opens no database at all; a name, or the single-MasterMind fallback, reads
+the registry read-only. A live directory is created `0700` and its scene, pointer
+and `server.json` are written `0600`.
+
+A running live board writes `server.json` (`scene`, `url`, `port`, `pid`,
+`started_at`) beside the scene and removes it on shutdown only while it is still
+its own; a second server on the same board is allowed and the most recent writer
+wins. `relevo board url [--board NAME] [--mastermind M]` prints that URL -- its
+token included -- for a shell copy, and exits 1 when no live server holds it.
+A live board's URL names its owner in the path,
+`http://127.0.0.1:<port>/<mastermind>/#t=<token>`, so a copied URL says whose
+board it is; the token still rides only the fragment.
+The URL also appears in the statusline (below). Promotion of a live board into
+the repo is a later cut.
+
+`relevo board comments [path|--board NAME] [--json]` reads the resolved scene
+and prints every comment in scene order -- `id, x, y, text, by, at` -- one
+tab-separated row each, or one compact JSON array with `--json` (`[]` when
+there are none). A comment is a text element carrying
+`customData.relevo` `{comment: true, by, at}`; both writers use the theme's
+`comment` colour and `by` distinguishes them. `relevo board comment
+[path|--board NAME] --text S [--x X --y Y] [--by B]` appends one comment, at
+`--x`/`--y` when both are given and otherwise below the scene's bounds so it
+never lands on a drawing, authored by `--by` (default `RELEVO_MASTERMIND`, else
+`human`); every other byte of the scene is unchanged. A missing scene is a new
+one carrying the comment for `comment`, and simply no comments for `comments`.
+A malformed marker, or a file that is not a scene, is `refused` (exit 2) naming
+the element or the path; an author that is empty, longer than 64 bytes or holds
+a control character is `usage` (exit 2). Both verbs resolve like `relevo board`
+and are peek verbs: no daemon, no database, and `comments` never writes the
+pointer. Comments are flat -- no replies, resolve, delete or thread -- and the
+CLI never deletes.
+
+A repo scene is fixed at startup and confined to the repository: a path must end
 in `.excalidraw` and, after symlinks are resolved on its deepest existing
 ancestor, sit under the git top level, so neither `..` nor a symlinked parent
 escapes. A missing file is a new scene, and it and its parent directories are
-created on the first save, never at startup. Outside a repository the verb is a
-usage error, exit 2.
+created on the first save, never at startup. An explicit repo path outside a
+repository is a usage error, exit 2; a bare `relevo board` is the live board and
+never requires a repository. A live board refuses a state root that sits inside
+a repository (or a repository inside it), because the two scopes may not nest.
 
 The theme chooses the colours of **new** elements only -- an existing scene
 keeps the colours it stores. Precedence is `--theme`, then the repo-local git
@@ -1235,6 +1325,38 @@ reports as `the file changed on disk; reload to continue`. `make board-assets`
 regenerates the vendored assets and their integrity manifest; it is dev-only,
 and CI only reads them.
 
+The agent leg is pure Go, so an agent reads and writes a scene without the
+page: `relevo board text <file>` prints one row per non-deleted text element --
+id, x, y, then the raw text -- and `--json` prints one line,
+`[{"id":"…","x":10,"y":20,"text":"…"}]` (`[]` for a scene with none, never
+`null`). `relevo board annotate <file> --text S [--x X --y Y]` appends one text
+element and prints `board: annotated <path> (id <id>)`; it never unmarshals and
+re-marshals the scene, so every other byte keeps its position and a diff shows
+only the insertion. Without `--x/--y` the element lands below the scene's
+current bounds, left-aligned with its leftmost element, so an agent's note
+never lands on a drawing.
+
+Both subverbs require a scene path that ends in `.excalidraw` and sits under
+the repository root, and both refuse rather than create one: a missing scene is
+`no scene at <path>` (exit 2), and an invalid scene is refused with the
+validator's own words. The other usage refusals are exit 2 as well: a path that
+is missing or repeated, `--text` absent or empty, `--x` without `--y` (they
+come together), and a non-finite coordinate.
+
+Annotate's element is built for Excalidraw 0.18.1: `fontFamily` 3 (Cascadia),
+`lineHeight` 1.2, `fontSize` 20, `roughness` 0, and `strokeColor` from the
+resolved theme's ink. Font safety is explicit -- `autoResize` is true and the
+width is an estimate (twelve pixels per byte of the widest line, so it errs
+upward) that the emitted element never falls below, which is what keeps
+CLI-made text from rendering clipped before the font loads. Only the id (16
+random bytes), the seed and the timestamp are random.
+
+In the cockpit, an `.excalidraw` artifact opens its companion `.svg` in the
+browser when one sits beside it; without one it opens in `$EDITOR` and the tab
+shows the faint line `run relevo board <path> to edit`, so the scene can be
+opened on the board. The OPENS IN cell and the open action share one decision,
+so they cannot disagree.
+
 ### done and unbind are the destructive verbs
 
 `relevo done` and `relevo unbind` both require a binding name (`relevo done ai`, or
@@ -1254,6 +1376,11 @@ per chain in place of its members), under the Claude Code prompt; it shows nothi
 on error and never probes a builder.
 The first line names the MasterMind (`MasterMind architect-14`), so each terminal
 shows which MasterMind it is; `relevo mastermind list` maps that name to its chat.
+While a live board runs for this MasterMind, the next line is `board <mastermind> · <url>`,
+dim, carrying the full token-bearing URL; `status --line --json` carries the same
+as the top-level `board` block (`name`, `scope`, `url`, null when absent), and the
+OpenCode plugin's sidebar draws the same line. The block is a file read only --
+the pointer, `server.json` and a pid check -- and never reads the database.
 Each row shows the round's harness (`harness@server` for a remote builder),
 what it is waiting on, this round's tokens, and the round's length: ticking while
 it runs, frozen once the report is in. While a round runs the row also says what

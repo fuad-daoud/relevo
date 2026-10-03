@@ -258,12 +258,39 @@ func writeError(err error) error {
 	}
 	var openMember *relevo.RoundOpenError
 	switch {
+	// The busy family is checked before the bare ErrRefused case, because
+	// each of these sentinels also unwraps to ErrRefused: they are refusals
+	// first and a named reason second, and only the reason picks the next
+	// hint the caller should follow.
+	case errors.Is(err, relevo.ErrBuilderBusy):
+		return failNext(codeRefused, "relevo done", "%v", err)
+	case errors.Is(err, relevo.ErrReportPending):
+		return failNext(codeRefused, "relevo wait", "%v", err)
+	case errors.Is(err, relevo.ErrScopeActive):
+		return failNext(codeRefused, "relevo stop", "%v", err)
 	case errors.Is(err, relevo.ErrRefused):
 		return fail(codeRefused, "%v", err)
+	case errors.Is(err, store.ErrInvalidName):
+		// A binding name is the caller's own argument: a corrected --name is
+		// the whole way out, so this is usage (exit 2), never internal.
+		return fail(codeUsage, "%v", err)
+	case errors.Is(err, store.ErrInvalidFeature), errors.Is(err, store.ErrInvalidTicket):
+		// Same shape as a bad name: the flag value itself is what is wrong.
+		return fail(codeUsage, "%v", err)
+	case errors.Is(err, relevo.ErrBadInput):
+		// A flag pair that cannot both hold, a flag the shape does not
+		// honour, a name already taken: usage, not an internal failure.
+		return fail(codeUsage, "%v", err)
+	case errors.Is(err, relevo.ErrRoundNotFound):
+		return fail(codeRoundNotFound, "%v", err)
 	case errors.Is(err, store.ErrNotFound):
 		return fail(codeBindingNotFound, "%v", err)
 	case errors.Is(err, relevo.ErrSeedOverCap):
 		return failNext(codeUsage, "trim the seed or pass --force", "%v", err)
+	case errors.Is(err, relevo.ErrRoundCap):
+		// A binding that used every round its cap allows needs a fresh
+		// builder; the cap is not an internal failure.
+		return failWrap(codeRoundCap, err, "%v", err)
 	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, relevo.ErrRunningChainMember), errors.Is(err, relevo.ErrChainRunning), errors.Is(err, relevo.ErrChainDone):
 		return fail(codeConflict, "%v", err)
 	case errors.As(err, &openMember):

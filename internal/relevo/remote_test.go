@@ -95,33 +95,37 @@ type fakeRemote struct {
 	ackResp             remote.BindingView
 	ackErr              error
 	unavailableErr      error
-	availableResp       remote.AvailableResponse
-	availableErr        error
-	doneErr             error
-	unbindErr           error
-	resumeResp          remote.BindingView
-	resumeErr           error
-	stopResp            remote.BindingView
-	stopErr             error
-	createChainResp     remote.ChainView
-	createChainErr      error
-	createChainReq      remote.CreateChainRequest
-	createChainBundle   []byte
-	getChainResp        remote.ChainView
-	getChainErr         error
-	chainStopResp       remote.ChainStopResponse
-	chainStopErr        error
-	chainResumeResp     remote.ChainView
-	chainResumeErr      error
-	chainResumeReq      remote.ChainResumeRequest
-	chainDoneErr        error
-	createCheckResp     remote.CheckView
-	createCheckErr      error
-	createCheckReq      remote.CreateCheckRequest
-	getCheckResp        remote.CheckView
-	getCheckErr         error
-	setGateReq          remote.SetGateRequest
-	setGateErr          error
+	// unavailableErrFor, when set, answers each per-binding Unavailable by
+	// name so a test can fail one binding and succeed the rest.
+	unavailableErrFor func(server, name, token string) error
+	availableResp     remote.AvailableResponse
+	availableErr      error
+	availableErrFor   func(server, subject string) error
+	doneErr           error
+	unbindErr         error
+	resumeResp        remote.BindingView
+	resumeErr         error
+	stopResp          remote.BindingView
+	stopErr           error
+	createChainResp   remote.ChainView
+	createChainErr    error
+	createChainReq    remote.CreateChainRequest
+	createChainBundle []byte
+	getChainResp      remote.ChainView
+	getChainErr       error
+	chainStopResp     remote.ChainStopResponse
+	chainStopErr      error
+	chainResumeResp   remote.ChainView
+	chainResumeErr    error
+	chainResumeReq    remote.ChainResumeRequest
+	chainDoneErr      error
+	createCheckResp   remote.CheckView
+	createCheckErr    error
+	createCheckReq    remote.CreateCheckRequest
+	getCheckResp      remote.CheckView
+	getCheckErr       error
+	setGateReq        remote.SetGateRequest
+	setGateErr        error
 
 	beforeCall func(call string)
 
@@ -263,11 +267,17 @@ func (f *fakeRemote) Ack(ctx context.Context, server, name string, round int) (r
 
 func (f *fakeRemote) Unavailable(ctx context.Context, server, name, token, reason string) error {
 	f.calls = append(f.calls, fmt.Sprintf("Unavailable:%s:%s:%s", server, name, token))
+	if f.unavailableErrFor != nil {
+		return f.unavailableErrFor(server, name, token)
+	}
 	return f.unavailableErr
 }
 
 func (f *fakeRemote) Available(ctx context.Context, server, subject string) (remote.AvailableResponse, error) {
 	f.calls = append(f.calls, fmt.Sprintf("Available:%s:%s", server, subject))
+	if f.availableErrFor != nil {
+		return remote.AvailableResponse{}, f.availableErrFor(server, subject)
+	}
 	return f.availableResp, f.availableErr
 }
 

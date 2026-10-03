@@ -406,6 +406,129 @@ func TestChainStatusReadsState(t *testing.T) {
 	}
 }
 
+// newForkChildFixture writes one fork child of parent: a chain row named
+// "<parent>.<key>" with Parent set, and a single builder member, through the
+// same Tx.CreateChain the engine forks through.
+func newForkChildFixture(t *testing.T, rt Runtime, parent, key, status string) db.ChainRow {
+	t.Helper()
+	root := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	name := parent + "." + key
+	c := db.ChainRow{
+		ID:             db.NewID(),
+		Name:           name,
+		Status:         status,
+		Phase:          "build",
+		Step:           "working",
+		Plan:           1,
+		Plans:          1,
+		PlanPathsJSON:  []byte(`["/plans/001.md"]`),
+		SettingsJSON:   []byte(`{"max_corrections":1}`),
+		AwaitingMember: "builder",
+		AwaitingRound:  1,
+		Builder:        name,
+		Parent:         parent,
+		Worktree:       filepath.Join(root, name),
+		MasterMindID:   testMasterMindID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if status == "halted" {
+		c.Reason = "child " + key + " wants changes"
+	}
+	members := []store.Binding{{
+		Name: name, CWD: filepath.Join(root, name), Round: 1, State: store.StateActive,
+		MasterMindID:     testMasterMindID,
+		Builder:          store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		BuilderCandidate: testAgyRef,
+	}}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error { return tx.CreateChain(c, members) }); err != nil {
+		t.Fatalf("CreateChain %q: %v", name, err)
+	}
+	return c
+}
+
+// TestStatusKeepsForkChildrenUnderTheirParent pins the two placement rules a
+// fork child depends on: a child is never a top-level row of its own, so its
+// name appears exactly once in the listing, and it is threaded in after its
+// parent's row rather than left to the attention sort -- which would put a
+// halted child ahead of its still-running parent and interleave the unrelated
+// NEEDS YOU row between them.
+func TestStatusKeepsForkChildrenUnderTheirParent(t *testing.T) {
+	rt := newRuntime(t)
+	parent, _ := newChainFixture(t, rt, "running")
+	halted := newForkChildFixture(t, rt, parent.Name, "1", "halted")
+	running := newForkChildFixture(t, rt, parent.Name, "2", "running")
+
+	// An unrelated halted chain of its own: a NEEDS YOU row that outranks the
+	// parent, so a child threaded in before the sort could not stay beside it.
+	other := db.ChainRow{
+		ID: db.NewID(), Name: "zz", Status: "halted", Phase: "build", Step: "reviewing",
+		Plan: 1, Plans: 1, PlanPathsJSON: []byte(`["/plans/001.md"]`),
+		SettingsJSON: []byte(`{"max_corrections":1}`), AwaitingMember: "builder", AwaitingRound: 1,
+		Builder: "zz", Reason: "unrelated chain halted", Worktree: filepath.Join(t.TempDir(), "zz"),
+		MasterMindID: testMasterMindID, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.CreateChain(other, []store.Binding{{
+			Name: "zz", CWD: other.Worktree, Round: 1, State: store.StateActive,
+			MasterMindID:     testMasterMindID,
+			Builder:          store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+			BuilderCandidate: testAgyRef,
+		}})
+	}); err != nil {
+		t.Fatalf("CreateChain %q: %v", other.Name, err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	names := rowNames(rep)
+	for _, child := range []string{halted.Name, running.Name} {
+		if n := countNames(names, child); n != 1 {
+			t.Errorf("child %q appears %d times in %v, want exactly once", child, n, names)
+		}
+	}
+	// The halted child reads NEEDS YOU and the parent reads ACTIVE, so the sort
+	// alone would put the child first; the child belongs directly under its
+	// parent, whatever the unrelated halted chain's own rank is.
+	if names[0] != other.Name {
+		t.Errorf("first row = %q, want the unrelated NEEDS YOU chain %q: %v", names[0], other.Name, names)
+	}
+	at := indexOf(names, parent.Name)
+	if at < 0 {
+		t.Fatalf("parent %q missing from %v", parent.Name, names)
+	}
+	if names[at+1] != halted.Name {
+		t.Errorf("row after the parent = %q, want the halted child %q: %v", names[at+1], halted.Name, names)
+	}
+	if names[at+2] != running.Name {
+		t.Errorf("row after the halted child = %q, want the running child %q: %v", names[at+2], running.Name, names)
+	}
+}
+
+// countNames is how many times name appears in the row names.
+func countNames(names []string, name string) int {
+	n := 0
+	for _, got := range names {
+		if got == name {
+			n++
+		}
+	}
+	return n
+}
+
+// indexOf is the position of name in the row names, or -1.
+func indexOf(names []string, name string) int {
+	for i, got := range names {
+		if got == name {
+			return i
+		}
+	}
+	return -1
+}
+
 // TestStatusJSONCarriesTheChainFacts pins the document: a chain row carries a
 // chain object, and an ordinary row carries no chain key at all.
 func TestStatusJSONCarriesTheChainFacts(t *testing.T) {

@@ -179,6 +179,22 @@ func TestAssetsAndPageNeedNoToken(t *testing.T) {
 	}
 }
 
+// TestPageServedUnderOwnerSegment pins the readable URL: the page is served at
+// "/" and under one owner segment ("/<mastermind>"), and anything deeper is
+// not the page.
+func TestPageServedUnderOwnerSegment(t *testing.T) {
+	s, _ := testServer(t)
+	for _, p := range []string{"/", "/opencode-120", "/opencode-120/"} {
+		w := do(t, s, http.MethodGet, p, testHost, "", nil)
+		if w.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", p, w.Code)
+		}
+	}
+	if w := do(t, s, http.MethodGet, "/opencode-120/board", testHost, "", nil); w.Code != http.StatusNotFound {
+		t.Errorf("GET /opencode-120/board = %d, want 404", w.Code)
+	}
+}
+
 func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 	s, _ := testServer(t)
 	w := do(t, s, http.MethodGet, "/api/scene", testHost, testToken, nil)

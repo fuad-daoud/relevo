@@ -165,7 +165,7 @@ func TestReadVerbErrorCodes(t *testing.T) {
 		{"show round with nothing completed", []string{"show", "errround", "--report"}, codeRoundNotFound, "relevo history"},
 		{"show diff with nothing completed", []string{"show", "errround", "--diff"}, codeRoundNotFound, "relevo history"},
 		{"show diff not recorded", []string{"show", "errcodes", "--diff"}, codeArtifactNotFound, "relevo history"},
-		{"show unknown round", []string{"show", "errcodes", "--round", "5", "--report"}, codeInternal, ""},
+		{"show unknown round", []string{"show", "errcodes", "--round", "5", "--report"}, codeRoundNotFound, "relevo history"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			stdout, stderr, runErr := captureOutput(t, func() error { return run(c.args) })

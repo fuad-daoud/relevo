@@ -99,6 +99,48 @@ func TestConfigWorkflowAddRefusesShippedNameWithoutForce(t *testing.T) {
 	}
 }
 
+// TestConfigWorkflowShowAndEditShadowedShippedName pins the shadowing case at
+// the CLI: a workflow saved over the shipped name with --force is a saved
+// workflow, so show prints its source and edit opens it rather than both
+// refusing with the shipped workflow's "is not saved". The mutation is to put
+// WorkflowSource's shipped-name short-circuit back in front of its saved
+// lookup, which turns both of these into the refusal.
+func TestConfigWorkflowShowAndEditShadowedShippedName(t *testing.T) {
+	initRoot(t)
+	body := strings.Replace(configWorkflowSource, "name: custom", "name: default", 1)
+	path := writeWorkflowFile(t, body)
+	if _, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "workflow", "add", path, "--force"})
+	}); err != nil {
+		t.Fatalf("config workflow add --force: %v (stderr: %s)", err, stderr)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "workflow", "show", "default"})
+	})
+	if err != nil {
+		t.Fatalf("show of the shadowing workflow: %v (stderr: %s)", err, stderr)
+	}
+	for _, want := range []string{"# keep this comment", "name: default"} {
+		if !strings.Contains(string(stdout), want) {
+			t.Errorf("show output = %q, want it to contain %q", stdout, want)
+		}
+	}
+
+	// An editor that leaves the buffer alone ends the loop with "no changes",
+	// so this reaches the editor and stays out of a real edit.
+	t.Setenv("EDITOR", writeEditor(t, "exit 0"))
+	stdout, stderr, err = captureOutput(t, func() error {
+		return run([]string{"config", "workflow", "edit", "default"})
+	})
+	if err != nil {
+		t.Fatalf("edit of the shadowing workflow: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(string(stdout), "no changes") {
+		t.Errorf("edit output = %q, want the editor loop's %q", stdout, "no changes")
+	}
+}
+
 func TestConfigWorkflowShowKeepsComments(t *testing.T) {
 	initRoot(t)
 	addConfigWorkflow(t, writeWorkflowFile(t, configWorkflowSource))

@@ -120,7 +120,7 @@ func ProbeCandidate(ctx context.Context, d Deps, x LineExec, c candidate.Candida
 		return probeFailure(d, ref, c, host, "no known role")
 	}
 
-	dir, err := os.MkdirTemp("", "relevo-probe-")
+	dir, err := store.MkdirTemp("", "relevo-probe-")
 	if err != nil {
 		return probeFailure(d, ref, c, host, err.Error())
 	}

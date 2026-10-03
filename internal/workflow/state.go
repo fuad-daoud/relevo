@@ -38,6 +38,22 @@ type Awaiting struct {
 	Round    int
 	Run      int
 	Children []string
+	Ended    map[string]ChildEnd
+	Merging  bool
+}
+
+// ChildEnd is the terminal state of one ended child of a fork.
+type ChildEnd struct {
+	Status string
+	Reason string
+}
+
+// ChildSpec specifies one child workflow to be started by a fork action.
+type ChildSpec struct {
+	Key      string
+	Workflow string
+	Task     string
+	Plans    []string
 }
 
 // Iter is a for-each step's walk: the item index and the items it walks. The
@@ -82,6 +98,7 @@ const (
 	EventStepClosed  EventKind = "step_closed"
 	EventCheckClosed EventKind = "check_closed"
 	EventChildEnded  EventKind = "child_ended"
+	EventMergeClosed EventKind = "merge_closed"
 	EventNeedsYou    EventKind = "needs_you"
 	EventStopped     EventKind = "stopped"
 )
@@ -128,12 +145,13 @@ const (
 // Action is what relevo does next. A send names the actor and the raw seed; a
 // run_check names the command; a halt carries the reason.
 type Action struct {
-	Kind    ActionKind
-	Step    string
-	Actor   string
-	Seed    string
-	Command string
-	Reason  string
+	Kind     ActionKind
+	Step     string
+	Actor    string
+	Seed     string
+	Command  string
+	Reason   string
+	Children []ChildSpec
 }
 
 // EncodeEvent writes an event as the one document DecodeEvent reads back. A
@@ -185,7 +203,7 @@ func DecodeAction(s string) (Action, error) {
 // known reports whether an event kind is one the engine reads.
 func (k EventKind) known() bool {
 	switch k {
-	case EventStepClosed, EventCheckClosed, EventChildEnded, EventNeedsYou, EventStopped:
+	case EventStepClosed, EventCheckClosed, EventChildEnded, EventMergeClosed, EventNeedsYou, EventStopped:
 		return true
 	}
 	return false

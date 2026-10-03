@@ -17,11 +17,15 @@ func Start(def Definition, in StartInputs) (State, []Action) {
 	return enter(def, seedPlans(def, s, in), def.Start, 0)
 }
 
-// seedPlans gives every for-each over the plans input its items, with the
-// index before the first one.
+// seedPlans gives every for-each and fork over the plans input its items, with
+// the index before the first one.
 func seedPlans(def Definition, s State, in StartInputs) State {
 	for _, id := range sortedKeys(def.Steps) {
-		if def.Steps[id].ForEach == "plans" {
+		step := def.Steps[id]
+		if step.ForEach == "plans" {
+			s.Iter[id] = Iter{Index: -1, Items: append([]string(nil), in.Plans...)}
+		}
+		if step.Fork != nil && step.Fork.Each == "plans" {
 			s.Iter[id] = Iter{Index: -1, Items: append([]string(nil), in.Plans...)}
 		}
 	}
@@ -64,7 +68,7 @@ func enter(def Definition, s State, id string, walked int) (State, []Action) {
 	case "when":
 		return walkWhen(def, s, id, step, walked+1)
 	case "fork":
-		return halt(s, id, "fork steps are not run by this engine")
+		return enterFork(def, s, id, step, walked)
 	default:
 		return halt(s, id, id+": not a step kind")
 	}
