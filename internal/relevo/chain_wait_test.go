@@ -211,6 +211,136 @@ func TestWaitChainFindsTheEndDeliveryOnASurvivingMember(t *testing.T) {
 	}
 }
 
+// chainPending is one uncollected payload planted on a member: the kind it was
+// written as, the member that holds it, and the text it carries.
+type chainPending struct {
+	kind    store.Kind
+	member  string
+	payload string
+}
+
+// chainHaltedWithPending halts the chain and leaves each of the named payloads
+// on its member, so a wait on it has something to collect and the order it
+// collects it in is the thing under test.
+func chainHaltedWithPending(t *testing.T, rt Runtime, pending ...chainPending) {
+	t.Helper()
+	startedChain(t, rt, ChainOptions{})
+	for _, p := range pending {
+		if err := rt.Store.AppendLog(p.member, store.LogEntry{
+			TS: baseTime, Round: 1, Direction: store.DirToMasterMind,
+			Kind: p.kind, Payload: p.payload,
+		}); err != nil {
+			t.Fatalf("plant the %s on %s: %v", p.kind, p.member, err)
+		}
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		row, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		row.Status = string(chain.StatusHalted)
+		row.Reason = "reviewer still wants changes"
+		return tx.ChainPut(row)
+	}); err != nil {
+		t.Fatalf("halt the chain: %v", err)
+	}
+}
+
+// TestWaitChainReturnsTheHaltWhereverTheWalkFindsIt pins the precedence: a
+// halt leads the chain's end payload whatever member holds it, and the
+// ordinary payload behind it is delivered rather than dropped. A halt planted
+// on the SECOND member is the case member order gets wrong -- the walk reaches
+// it only because it walks every member -- so this test fails if the walk
+// returns at the first member holding anything.
+func TestWaitChainReturnsTheHaltWhereverTheWalkFindsIt(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		haltOn   string
+		haltText string
+		reportOn string
+		repText  string
+	}{
+		{
+			name:     "halt on the later member",
+			haltOn:   "shop-rev",
+			haltText: "REVIEWER HALT TEXT",
+			reportOn: "shop",
+			repText:  "BUILDER REPORT TEXT",
+		},
+		{
+			name:     "halt on the earlier member",
+			haltOn:   "shop",
+			haltText: "BUILDER HALT TEXT",
+			reportOn: "shop-rev",
+			repText:  "REVIEWER REPORT TEXT",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rt, _ := chainRuntime(t)
+			chainHaltedWithPending(t, rt,
+				chainPending{store.KindReport, tc.reportOn, tc.repText},
+				chainPending{store.KindHalt, tc.haltOn, tc.haltText})
+
+			timeout, interval := waitChainOpts()
+			res, err := WaitChain(context.Background(), rt, "shop", timeout, interval, false)
+			if err != nil {
+				t.Fatalf("WaitChain: %v", err)
+			}
+			if res.Code != WaitNeedsYou {
+				t.Errorf("code = %d, want %d for a halted chain", res.Code, WaitNeedsYou)
+			}
+			haltAt := strings.Index(res.Payload, tc.haltText)
+			reportAt := strings.Index(res.Payload, tc.repText)
+			if haltAt < 0 || reportAt < 0 {
+				t.Fatalf("payload = %q, want both the halt and the report", res.Payload)
+			}
+			if haltAt > reportAt {
+				t.Errorf("payload puts the halt at %d and the report at %d, want the halt first: %q",
+					haltAt, reportAt, res.Payload)
+			}
+			if res.DeliverErr != nil {
+				t.Errorf("deliver error = %v, want none", res.DeliverErr)
+			}
+		})
+	}
+}
+
+// TestWaitChainCollectsEveryMemberWithNothingPending pins the other half of the
+// walk: a chain with no halt anywhere still answers with every member's
+// uncollected payload, not only the first member's. It is what keeps the halt
+// precedence from costing the payload path its entries.
+func TestWaitChainCollectsEveryMemberWithNothingPending(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	chainHaltedWithPending(t, rt,
+		chainPending{store.KindReport, "shop", "BUILDER REPORT TEXT"},
+		chainPending{store.KindReport, "shop-plan", "PLANNER REPORT TEXT"})
+
+	timeout, interval := waitChainOpts()
+	res, err := WaitChain(context.Background(), rt, "shop", timeout, interval, false)
+	if err != nil {
+		t.Fatalf("WaitChain: %v", err)
+	}
+	for _, want := range []string{"BUILDER REPORT TEXT", "PLANNER REPORT TEXT"} {
+		if !strings.Contains(res.Payload, want) {
+			t.Errorf("payload = %q, want it to carry %q", res.Payload, want)
+		}
+	}
+	for _, member := range []string{"shop", "shop-plan"} {
+		for _, e := range chainLog(t, rt, member) {
+			if e.Kind == store.KindReport && !e.Confirmed {
+				t.Errorf("member %s still holds an uncollected report: %+v", member, e)
+			}
+		}
+	}
+}
+
 // TestWaitChainRunningAlwaysWaitsOnTheChain pins the running case: a running
 // chain waits on the chain even with the builder's round open, because the
 // chain's end is the one event the caller asked about.

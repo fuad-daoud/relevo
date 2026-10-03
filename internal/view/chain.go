@@ -32,6 +32,15 @@ type ChainFacts struct {
 	PlanPos   int    `json:"plan_pos,omitempty"`
 	PlanTotal int    `json:"plan_total,omitempty"`
 	Check     bool   `json:"check,omitempty"`
+	// PendingMembers names, in member order, the members holding a payload the
+	// MasterMind has not collected -- a report, a halt, a chain's end delivery.
+	// Empty when every member's payloads are collected, so a chain row with
+	// nothing stranded renders exactly as it did before this field existed.
+	//
+	// It is what makes a stranded member visible from the chain's own row: the
+	// roll-up replaces every member's row with one chain row, so a payload
+	// waiting on one of them had no row left to surface it.
+	PendingMembers []string `json:"pending_members,omitempty"`
 	// Parent is the chain a fork's child belongs to, empty on every other
 	// chain. A row that carries it is not a top-level row: it prints indented
 	// under the parent it names.
@@ -41,6 +50,24 @@ type ChainFacts struct {
 	// no fork, so its row renders exactly as it did before forks existed.
 	Children     []string `json:"children,omitempty"`
 	ChildrenDone int      `json:"children_done,omitempty"`
+}
+
+// ChainPendingSegment is the segment a chain row shows after its plan segment:
+// "pending on x-rev", or every stranded member's name when more than one holds
+// an uncollected payload. A chain with nothing pending returns "", so a row
+// without a stranded member keeps the text it had.
+//
+// The names are member bindings rather than roles on purpose: the reader has to
+// open one by name, and a chain row is the only place left that can say which.
+func ChainPendingSegment(f ChainFacts) string {
+	switch len(f.PendingMembers) {
+	case 0:
+		return ""
+	case 1:
+		return "pending on " + f.PendingMembers[0]
+	default:
+		return "pending on " + strings.Join(f.PendingMembers, ", ")
+	}
 }
 
 // ChainForkSegment is the fork progress a parent chain's row shows after its

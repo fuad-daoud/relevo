@@ -30,6 +30,13 @@ func statusLineRowOfChain(b BindingStatus) StatusLineRow {
 	if split := chainSplitText(*b.Chain); split != "" {
 		mid += " · " + split
 	}
+	// The stranded member's name rides with the chain's own middle: it is the
+	// only row the roll-up leaves for that member, so naming it here is what
+	// keeps an uncollected payload from being invisible until someone opens
+	// every member by hand.
+	if pending := ChainPendingSegment(*b.Chain); pending != "" {
+		mid += " · " + pending
+	}
 	return StatusLineRow{
 		Name:     b.Name,
 		Chain:    mid,

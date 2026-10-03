@@ -48,6 +48,7 @@ func chainFactsOf(s *store.Store, c db.ChainRow) view.ChainFacts {
 	if c.Parent == "" {
 		chainChildFacts(s, &f, c)
 	}
+	f.PendingMembers = chainPendingMembers(s, c)
 	if (c.Status == string(chain.StatusHalted) || c.Status == string(chain.StatusStopped)) &&
 		chainBuilderRoundOpen(s, c) {
 		if b, err := s.Load(c.Builder); err == nil {
