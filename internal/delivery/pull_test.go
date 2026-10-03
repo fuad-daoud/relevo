@@ -762,3 +762,36 @@ func TestPullPendingThroughEntriesSkipsAdmitted(t *testing.T) {
 		}
 	}
 }
+
+// TestJoinDeliveredLabelsAnEntryWithNoPath pins the label of an entry that
+// names no file. A halt wrote no artifact, so its Path is empty on purpose; the
+// header interpolated it unconditionally and rendered "not delivered earlier
+// ()" -- a label that named nothing while implying that it had.
+func TestJoinDeliveredLabelsAnEntryWithNoPath(t *testing.T) {
+	t.Parallel()
+
+	got := JoinDelivered([]Delivered{
+		{Entry: store.LogEntry{Round: 1, Kind: store.KindHalt}, Text: "halting: the round ran past its budget"},
+		{Entry: store.LogEntry{Round: 1, Kind: store.KindReport, Path: "/repo/.relevo/webshop/001-report.md"}, Text: "round 1 done"},
+	})
+
+	if strings.Contains(got, "()") {
+		t.Errorf("an entry with no path rendered empty parens:\n%s", got)
+	}
+	if !strings.Contains(got, "── round 1: not delivered earlier ──\n") {
+		t.Errorf("the label does not name the entry's round:\n%s", got)
+	}
+	if !strings.Contains(got, "halting: the round ran past its budget") {
+		t.Errorf("the entry's own text is missing:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "round 1 done") {
+		t.Errorf("the waited entry is not last:\n%s", got)
+	}
+
+	// The path still renders when there is one: the label names the file for
+	// every kind that has one.
+	withPath := EarlierHeader(1, "/repo/.relevo/webshop/001-report.md")
+	if !strings.Contains(withPath, "(/repo/.relevo/webshop/001-report.md)") {
+		t.Errorf("EarlierHeader with a path = %q, want it to name the file", withPath)
+	}
+}

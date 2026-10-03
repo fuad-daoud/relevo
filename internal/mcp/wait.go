@@ -140,7 +140,7 @@ func oversizeWaitBody(st *store.Store, name string, round int, res relevo.WaitRe
 		case len(text) <= budget:
 			budget -= len(text)
 			if len(delivered) > 1 && !last {
-				fmt.Fprintf(&b, "── round %d: not delivered earlier (%s) ──\n", d.Entry.Round, d.Entry.Path)
+				b.WriteString(delivery.EarlierHeader(d.Entry.Round, d.Entry.Path))
 			}
 			b.WriteString(text)
 		case budget > len(ref)+1:

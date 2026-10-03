@@ -843,7 +843,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		now := rt.Now().UTC()
 		next, halted, err := checkRoundTimeout(ctx, rt, tx, b)
 		if halted {
-			return next, err // a halt does not deliver, as in the pane path
+			return next, err // the halt queued its entry and settled delivery itself
 		}
 		if err != nil {
 			return b, err

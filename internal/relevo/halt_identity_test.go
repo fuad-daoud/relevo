@@ -301,3 +301,160 @@ func TestRoundCapHaltDoesNotAdvanceRoundAtAll(t *testing.T) {
 		t.Errorf("HaltAt = %v, want it no later than the halt tick", got.HaltAt)
 	}
 }
+
+// storeLogCap mirrors the store's binding-log entry cap (maxLogEntries). Only
+// the store holds that number and this package cannot ask it, so it is repeated
+// here; fillLogToCapLessOne fails loudly rather than silently seeding the wrong
+// count if the two ever disagree.
+const storeLogCap = 10000
+
+// fillLogLeavingRoom tops a binding's log up so that exactly room further
+// appends still fit under the cap. The filler is marked as filler so a test can
+// tell the entries a close wrote from the ones this seeded.
+//
+// The log is the only fault this package can inject that a close cannot write
+// past: a shared store's closed database fails every append, including the
+// report one, which would prove nothing about the halt's own queue.
+func fillLogLeavingRoom(t *testing.T, rt Runtime, name string, room int) {
+	t.Helper()
+
+	target := storeLogCap - room
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load(name)
+		if err != nil {
+			return err
+		}
+		entries, err := tx.ReadLog(name)
+		if err != nil {
+			return err
+		}
+		need := target - len(entries)
+		if need < 0 {
+			t.Fatalf("log already holds %d entries, past the %d this test needs", len(entries), target)
+		}
+		if need == 0 {
+			return nil
+		}
+		filler := make([]store.LogEntry, need)
+		for i := range filler {
+			filler[i] = store.LogEntry{
+				TS: rt.Now().UTC(), Round: 1, Direction: store.DirToMasterMind,
+				Kind: store.KindReport, Payload: "filler", Note: logFillerNote, Confirmed: true,
+			}
+		}
+		return tx.SaveWithLog(cur, filler...)
+	})
+	if err != nil {
+		t.Fatalf("fill log to %d entries: %v", target, err)
+	}
+
+	got, err := rt.Store.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog after the fill: %v", err)
+	}
+	if len(got) != target {
+		t.Fatalf("log holds %d entries after the fill, want %d: the store's cap is not the one this test mirrors", len(got), target)
+	}
+}
+
+// logFillerNote marks the entries fillLogLeavingRoom seeded, so an assertion
+// about what a close queued cannot be satisfied by the seeding itself.
+const logFillerNote = "log-cap filler"
+
+// TestQueueReportScopeRefusalHaltAppendFailureSurfaces pins that a post-advance
+// halt whose entry cannot be written is reported as a failure instead of being
+// dropped.
+//
+// The dedup key is stamped before the entry is queued, so swallowing the error
+// saved the stamp with nothing behind it. A binding whose HaltNotifiedRound
+// already equals its Round queues nothing ever again, so the notification was
+// not merely delayed -- it was gone, and the binding was left running rather
+// than asking for a human. Returning the error ends the tick unsaved, so the
+// round is still closed on disk and the next tick halts and queues again.
+func TestQueueReportScopeRefusalHaltAppendFailureSurfaces(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := sentBinding(t)
+
+	reportPath := rt.Store.ReportPath("webshop", 1)
+	if err := os.WriteFile(reportPath, []byte("all done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	refused := scopeVerdict{Scoped: true, Refused: true, Path: "internal/other.go", Reason: "outside scope"}
+
+	// Room for the two entries a writer's close queues before the halt -- the
+	// round diff and the report -- so the halt's own append is the one the cap
+	// refuses.
+	fillLogLeavingRoom(t, rt, "webshop", 2)
+
+	var saved store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		entries, err := tx.ReadLog("webshop")
+		if err != nil {
+			return err
+		}
+		next, err := queueReport(context.Background(), rt, tx, cur, entries,
+			reportPath, "done", "test", nil, nil, nil, nil, "", false, refused)
+		saved = next
+		if err != nil {
+			return err
+		}
+		return tx.Save(next)
+	})
+	if err == nil {
+		t.Fatal("queueReport returned no error, want the halt's failed queue surfaced")
+	}
+	if !strings.Contains(err.Error(), "log exceeds") {
+		t.Fatalf("queueReport error = %v, want the failed append on the log cap", err)
+	}
+
+	// The entries the close queued before the halt did land, which is what
+	// makes this the halt's append that failed rather than an earlier one.
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	queuedReport, queuedDiff := false, false
+	for _, e := range entries {
+		if e.Note == logFillerNote {
+			continue
+		}
+		switch {
+		case e.Kind == store.KindReport && e.Round == 1 && e.Direction == store.DirToMasterMind:
+			queuedReport = true
+		case e.Kind == store.KindDiff && e.Round == 1:
+			queuedDiff = true
+		}
+	}
+	if !queuedDiff || !queuedReport {
+		t.Errorf("close queued diff=%v report=%v, want both: the fault hit an earlier append, not the halt's", queuedDiff, queuedReport)
+	}
+	if halts := haltEntriesFor(t, rt, "webshop"); len(halts) != 0 {
+		t.Errorf("halt entries = %d, want 0: the log was already full", len(halts))
+	}
+
+	// Nothing was saved, so the close did not advance and the dedup stamp did
+	// not persist: the next tick re-closes this round and queues the entry.
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Round != 1 {
+		t.Errorf("stored Round = %d, want 1: a failed close is retried, not committed", got.Round)
+	}
+	if got.HaltNotifiedRound != 0 {
+		t.Errorf("stored HaltNotifiedRound = %d, want 0: the stamp must not outlive the entry it deduplicates", got.HaltNotifiedRound)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("stored State = %q, want %q", got.State, store.StateActive)
+	}
+	if saved.Round != 2 {
+		t.Errorf("returned Round = %d, want 2 (the close advanced before the halt ran)", saved.Round)
+	}
+}
