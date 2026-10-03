@@ -339,6 +339,14 @@ func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
 // ledger when it fails: an adopted builder is never gated by relevo, and no
 // call site has to repeat the check.
 //
+// It checks the credit class before MatchLimit, because the two differ in kind
+// and not only in duration: a credit exhaustion gates until a human tops the
+// account up and clears it, while every other limit gates until a reset the
+// provider named. Everything after the match is the same either way -- one
+// rate_limited ledger entry, the report-on-disk branch, then an uncounted
+// switch -- so a credit tail that also carries a reset, a clock or a date takes
+// the credit gate and never the timed one.
+//
 // On a match it records one rate_limited ledger entry (source relevo), warns,
 // marks a headless builder's log, then checks whether this round already has
 // a report on disk: if so the gate is recorded but the round is left for the
@@ -351,10 +359,15 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 
 	now := rt.Now()
-	patterns := availability.LimitPatterns(AvailabilityDeps(rt), b.BuilderCandidate)
-	m, ok := availability.MatchLimit(text, patterns, now, rt.Policy.LimitGateDefault())
-	if !ok {
-		return b, availability.LimitMatch{}, false, nil
+	credit := false
+	if line, ok := availability.MatchCredit(text); ok {
+		credit, m.Line = true, line
+	} else {
+		patterns := availability.LimitPatterns(AvailabilityDeps(rt), b.BuilderCandidate)
+		m, ok = availability.MatchLimit(text, patterns, now, rt.Policy.LimitGateDefault())
+		if !ok {
+			return b, availability.LimitMatch{}, false, nil
+		}
 	}
 
 	// A limit is recorded against the login that hit it, so another login of
@@ -373,19 +386,31 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		Source:  "relevo",
 		Binding: b.Name,
 	}
+	reason := "rate-limited: " + m.Line
+	if credit {
+		// The zero Until is the whole point of the class: the gate lifts when a
+		// human tops the account up and clears it. The note names that, because
+		// the line itself names only a limit that ran out.
+		entry.Until = time.Time{}
+		entry.Note = m.Line + " -- out of credits, top up the account and clear the gate"
+		reason = "out of credits: " + m.Line
+		slog.Warn("provider out of credits",
+			"binding", b.Name, "round", b.Round, "provider", entry.Subject,
+			"until", "cleared", "line", m.Line)
+	} else {
+		slog.Warn("provider rate-limited",
+			"binding", b.Name, "round", b.Round, "provider", entry.Subject,
+			"until", m.Until, "parsed", m.Parsed, "line", m.Line)
+	}
 	if err := availability.AppendEntryLocked(AvailabilityDeps(rt), entry); err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not record rate limit gate: %v\n", err)
 	}
-
-	slog.Warn("provider rate-limited",
-		"binding", b.Name, "round", b.Round, "provider", entry.Subject,
-		"until", m.Until, "parsed", m.Parsed, "line", m.Line)
 
 	if _, _, ok, _ := rt.Store.StatFile(rt.Store.ReportPath(b.Name, b.Round)); ok {
 		return b, m, false, nil
 	}
 
-	next, err = switchBuilder(ctx, rt, tx, b, "rate-limited: "+m.Line, closeOld, false)
+	next, err = switchBuilder(ctx, rt, tx, b, reason, closeOld, false)
 	return next, m, true, err
 }
 
