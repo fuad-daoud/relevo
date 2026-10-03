@@ -65,7 +65,8 @@
       "dirty": false,
       "pending": {
         "round": 1,
-        "kind": "report"
+        "kind": "report",
+        "ts": "<TIME>"
       },
       "landed_at": "<TIME>",
       "last_progress_at": "<TIME>",

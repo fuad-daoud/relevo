@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
@@ -95,6 +97,30 @@ func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 	return round
 }
 
+// unmarkedNote reports whether a report entry's note says the round closed
+// without its completion marker, which is what WaitUnmarked (2) means.
+//
+// A note is only ever that claim when it carries one of the no-marker tokens
+// themselves: "unmarked" (the builder exited after its report but never wrote
+// the marker), "scraped" (the body is a terminal capture, not the builder's
+// own file), or "noreport" (the marker is there but no report). Notes are
+// space-joined, so each token is matched as a whole word and a join like
+// "noreport stopped" still reads as unmarked.
+//
+// Every other note an annotated marked close carries -- "gate=<result>",
+// "stopped", "scope=ok", "escaped", "uncommitted work at refs/relevo/...",
+// "consumed by chain ..." -- describes a close that did happen, so a
+// non-empty note alone is never enough to call a round unmarked.
+func unmarkedNote(note string) bool {
+	for _, tok := range strings.Fields(note) {
+		switch tok {
+		case "unmarked", noteScraped, "noreport":
+			return true
+		}
+	}
+	return false
+}
+
 // WaitOutcome classifies one binding's round into a WaitResult, per spec
 // §4.6. Pure apart from questionOf. The report entry for round is checked
 // before State == done and before view.WaitingOn, so an earlier round's close is
@@ -106,7 +132,7 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 		// also 5 -- the mastermind has to read why either way.
 		if e.Outcome == reporttail.OutcomeHalted || e.Outcome == reporttail.OutcomeBlocked {
 			code = WaitHalted
-		} else if e.Note != "" {
+		} else if unmarkedNote(e.Note) {
 			code = WaitUnmarked
 		}
 		line := e.Path
@@ -187,6 +213,57 @@ func initialWaitRounds(rdr waitReader, opts WaitOptions) (map[string]int, error)
 	return rounds, nil
 }
 
+// waitRegistration is one `relevo wait` process's hold on the bindings it is
+// polling, in the store the status path reads. Its zero value is a
+// registration that holds nothing, so a Runtime with no wait store needs no
+// branch at the call site.
+type waitRegistration struct {
+	store     delivery.WaitClaimStore
+	names     []string
+	pid       int
+	startedAt time.Time
+}
+
+// registerWait writes a registration for names, and returns the handle that
+// removes it again.
+//
+// Every write is best-effort and its failure is swallowed: this records who is
+// polling, and the wait's actual job is to collect the payload. A store that
+// refuses the row must not stop the wait -- the status row falls back to its
+// grace, which is the direction that still escalates a payload nobody collects.
+func registerWait(rt Runtime, names []string, now time.Time) waitRegistration {
+	reg := waitRegistration{store: rt.Waits, names: names, pid: os.Getpid(), startedAt: now}
+	reg.refresh(now)
+	return reg
+}
+
+// refresh re-stamps every held binding, so a poll that is running stays live.
+// StartedAt is the first refresh's clock and never moves: it is when this
+// process began polling, which is what it says, not when the row was last
+// touched.
+func (r waitRegistration) refresh(now time.Time) {
+	if r.store == nil {
+		return
+	}
+	for _, n := range r.names {
+		_ = r.store.Write(delivery.WaitClaim{
+			Name: n, PID: r.pid, StartedAt: r.startedAt, SeenAt: now,
+		}, now)
+	}
+}
+
+// release drops the registration. It is deferred for the whole wait, so every
+// exit path -- a delivered round, a timeout, an error -- leaves no row behind
+// that would read as a live wait.
+func (r waitRegistration) release() {
+	if r.store == nil {
+		return
+	}
+	for _, n := range r.names {
+		_ = r.store.Remove(n, r.pid)
+	}
+}
+
 // Wait polls the store until one of opts.Names closes its
 // round, needs a human, or is gone, or opts.Timeout elapses, per spec §4.7.
 // On an exit that delivers (every code but WaitTimeout and WaitGone) it then
@@ -218,6 +295,15 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 
 	qf := questionFirstLine(rt)
 	start := retryer.now()
+
+	// The registration is held for the whole poll loop and dropped on the way
+	// out, including on every error return, so a crashed or timed-out wait
+	// cannot leave a row that reads as live. It is written from the clock read
+	// the loop already makes, so registering costs no extra read: a wait that
+	// resolves on its first pass still holds a registration, because the write
+	// happens before the loop and the release after it.
+	registration := registerWait(rt, opts.Names, start)
+	defer registration.release()
 
 	for {
 		// A remote binding's closed round is collected here too (spec §2.2):
@@ -259,7 +345,15 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 			}
 		}
 
-		if retryer.now().Sub(start) >= opts.Timeout {
+		// One clock read per pass serves both the timeout check and the
+		// registration: the same instant answers "has this wait run long
+		// enough to give up" and "is this wait still polling". A wait that is
+		// running therefore keeps its row fresh, and one that died between
+		// passes ages out on its own without anything having to clean it up.
+		now := retryer.now()
+		registration.refresh(now)
+
+		if now.Sub(start) >= opts.Timeout {
 			return "", WaitResult{Code: WaitTimeout, Done: true}, nil
 		}
 

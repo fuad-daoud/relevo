@@ -268,6 +268,15 @@ type Runtime struct {
 	// for `relevo wait`; cmd/relevo wires delivery.KVClaims.
 	Channels delivery.ClaimStore
 
+	// Waits is where `relevo wait` records that it is polling, so a status
+	// read can tell a pull payload a live wait is about to collect from one
+	// nobody is coming for. Wait writes and refreshes a registration per
+	// binding on every poll and removes it on the way out; statusRow only
+	// reads. Nil means no registrations exist and every wait reads as not
+	// live, which is the safe direction: a payload nobody is waiting on
+	// still escalates. cmd/relevo wires delivery.KVWaitClaims.
+	Waits delivery.WaitClaimStore
+
 	// MasterMinds is the mastermind registry (#303 step 1a). bind, add, fork and
 	// ask resolve their mastermind through it, and the daemon back-fills a
 	// binding written before MasterMindID existed. Nil means no registry is

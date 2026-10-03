@@ -39,6 +39,25 @@ func mastermindRoute(rt Runtime, b store.Binding) (route string, live bool) {
 	return "pull", false
 }
 
+// waitLive reports whether a `relevo wait` is polling the named binding now.
+// It is the pull route's one liveness fact the route itself cannot carry.
+//
+// Every failure reads as not live: a Runtime with no wait store, an unreadable
+// row, a read error. That is the deliberate direction -- a false positive would
+// hold back an escalation on a payload nobody is collecting, and a false
+// negative only costs the grace window before the row escalates on its own.
+func waitLive(rt Runtime, name string) bool {
+	if rt.Waits == nil {
+		return false
+	}
+	now := time.Now()
+	if rt.Now != nil {
+		now = rt.Now()
+	}
+	c, err := rt.Waits.Live(name, now)
+	return err == nil && c != nil
+}
+
 // Status builds every row from the store and what relevo can determine
 // locally: the mastermind record, a live channel claim and the configured
 // deliverers. Only store failures fail the call. Each chain's member rows
@@ -134,6 +153,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 	}
 
 	row.MasterMindRoute, row.MasterMindRouteLive = mastermindRoute(rt, b)
+	row.WaitLive = waitLive(rt, b.Name)
 
 	// MasterMindName is the record's name, so `status --json` and a status row
 	// can say "mastermind architect-1" without a second lookup by the reader.
@@ -339,7 +359,10 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 		return view.BindingStatus{}, err
 	}
 	if found {
-		row.Pending = &view.PendingInfo{Round: pending.Round, Kind: pending.Kind}
+		// TS is the pending entry's own write time, so the row can say how
+		// long the payload has been waiting for a collector. The log entry
+		// already carries it; it was simply dropped on the way to the row.
+		row.Pending = &view.PendingInfo{Round: pending.Round, Kind: pending.Kind, TS: pending.TS}
 	}
 
 	// The newest reviewer verdict, while it judged the round just closed:

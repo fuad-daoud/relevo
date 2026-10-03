@@ -247,9 +247,20 @@ func TestLibrarianDefinitionsCarryTheDocsOnlyContract(t *testing.T) {
 			t.Fatalf("AgentDoc(librarian, %s): %v", kind, err)
 		}
 		body := definitionBody(t, kind, string(doc))
-		for _, want := range []string{"README", "docs/", "CHANGELOG", "CLAUDE.md", ".excalidraw", "Mermaid", "doc comments"} {
+		for _, want := range []string{"README", "docs/", "CHANGELOG", "CLAUDE.md", ".excalidraw", "doc comments"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("librarian.%s body lacks the in-scope anchor %q", kind, want)
+			}
+		}
+		for _, want := range []string{
+			"docs/boards/<name>.svg",
+			"![alt](boards/<name>.svg)",
+			"grouped `<text>`",
+			"board palette",
+			"only when the plan explicitly asks for a Mermaid block",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("librarian.%s body lacks the SVG-default anchor %q", kind, want)
 			}
 		}
 		for _, want := range []string{"//go:build", "//nolint", "@ts-ignore"} {
@@ -259,6 +270,29 @@ func TestLibrarianDefinitionsCarryTheDocsOnlyContract(t *testing.T) {
 		}
 		if !strings.Contains(body, "A round that changes code is a failed round") {
 			t.Errorf("librarian.%s body lacks the failed-round sentence", kind)
+		}
+	}
+}
+
+// TestLibrarianDefinitionsPinOneDiagramFormatPerFlow pins the never-both
+// rule: an SVG and a Mermaid fence for the same flow drift apart, so every
+// dialect must forbid carrying both and must halt the ambiguous case instead
+// of guessing.
+func TestLibrarianDefinitionsPinOneDiagramFormatPerFlow(t *testing.T) {
+	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
+		doc, err := AgentDoc("librarian", kind)
+		if err != nil {
+			t.Fatalf("AgentDoc(librarian, %s): %v", kind, err)
+		}
+		body := definitionBody(t, kind, string(doc))
+		for _, want := range []string{
+			"One flow gets one format",
+			"Never carry an SVG and a Mermaid fence for the same flow",
+			"leaves the format ambiguous, halt that step and report it",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("librarian.%s body lacks the never-both anchor %q", kind, want)
+			}
 		}
 	}
 }
