@@ -215,6 +215,17 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 		return DoneResult{}, fmt.Errorf("chain %s is running; relevo stop %s first: %w", c.Name, c.Name, ErrChainRunning)
 	}
 
+	// The row this verb releases: a row that predates the workflow engine is
+	// migrated onto it here, through the same single-row conversion the sweep
+	// runs, and a row that still carries neither a workflow nor a state is
+	// refused in the input class instead. Both answers land before the check
+	// kill below and the member loop after it, so a refusal releases nothing
+	// and the verb can be run again.
+	c, err = chainDoneWorkflowRow(rt, c)
+	if err != nil {
+		return DoneResult{}, err
+	}
+
 	// A check left running by an earlier stop still owns the chain's tree: kill
 	// it and record it stopped before any member's worktree is released, so a
 	// done never takes the tree out from under a live check.
@@ -262,6 +273,47 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 	// found it already there.
 	chainInputsSweep(rt, name, string(chain.StatusDone))
 	return out, nil
+}
+
+// chainDoneWorkflowRow is the done path's read of the chain row's engine
+// definition and state, and hands back the row the store holds afterwards. The
+// sweep that migrates pre-engine rows runs at daemon start, so a verb can meet a
+// row the sweep could not finish: it is halted with the reason the conversion
+// named and carries neither a workflow nor a state. Reading such a row as a
+// plain error left `chain --done` answering internal on a chain the human can
+// still look at.
+//
+// A row with no workflow is migrated here, through the same single-row
+// conversion the sweep runs, so a chain the sweep simply has not reached yet is
+// done as any other. Whatever still lacks a workflow or a state is refused in
+// the input class instead, naming the row's own reason and the command that
+// reads it. The wording is this verb's own -- the resume path's refusals say a
+// chain cannot be resumed, which is the wrong verb here.
+func chainDoneWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, error) {
+	if len(c.WorkflowJSON) == 0 {
+		fresh, err := convertLegacyChainRow(rt, c.Name)
+		if err != nil {
+			return c, err
+		}
+		c = fresh
+	}
+	_, derr := chainWorkflowDef(c)
+	_, serr := chainWorkflowState(c)
+	why := derr
+	if why == nil {
+		why = serr
+	}
+	if why == nil {
+		return c, nil
+	}
+	if c.Reason != "" {
+		return c, refuse(
+			"chain %s cannot be done: %v; its own reason reads %q -- `relevo status %s` shows it",
+			c.Name, why, c.Reason, c.Name)
+	}
+	return c, refuse(
+		"chain %s cannot be done: %v; this row predates the workflow engine and carries nothing to migrate -- `relevo status %s` shows what it holds",
+		c.Name, why, c.Name)
 }
 
 // chainInputsSweep removes a chain's inputs directory when the chain has ended

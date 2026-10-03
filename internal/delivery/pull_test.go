@@ -287,10 +287,12 @@ func TestPullMatchingClaimsOnlyWhatMatchAccepts(t *testing.T) {
 	}
 }
 
-// TestPullMatchingNeverReordersTheQueue pins that a conditional claim is still
-// the oldest claimable entry or nothing: with rounds 1 and 2 pending and a match
-// that accepts only round 2, the read confirms nothing rather than skipping
-// ahead to the entry it accepts.
+// TestPullMatchingNeverReordersTheQueue pins that a conditional claim takes the
+// OLDEST entry it accepts and leaves the queue otherwise untouched: with rounds
+// 1 and 2 pending and a match that accepts only round 2, the read confirms
+// round 2 and nothing else, and round 1 stays pending and unconfirmed -- so the
+// next unconditional pull still gets round 1 first. Skipping ahead must not
+// reorder what is left behind.
 func TestPullMatchingNeverReordersTheQueue(t *testing.T) {
 	t.Parallel()
 
@@ -305,18 +307,147 @@ func TestPullMatchingNeverReordersTheQueue(t *testing.T) {
 	seedPendingRounds(t, rt, "webshop", []int{1, 2}, paths)
 
 	round2Only := func(e store.LogEntry) bool { return e.Round == 2 }
-	if _, found, err := PullMatching(context.Background(), rt.Store, "webshop", "show", round2Only); err != nil || found {
-		t.Errorf("PullMatching accepting round 2 = found %v, err %v; want nothing: round 1 comes first", found, err)
+	text, found, err := PullMatching(context.Background(), rt.Store, "webshop", "show", round2Only)
+	if err != nil || !found {
+		t.Fatalf("PullMatching accepting round 2 = (%q, %v, %v), want round 2's payload", text, found, err)
+	}
+	if !strings.Contains(text, "round 2 body") {
+		t.Errorf("PullMatching text = %q, want round 2's body", text)
 	}
 
+	// Only the accepted entry is confirmed; the entry the match rejected is
+	// still pending, in front, so the queue's own delivery order is unchanged.
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	confirmed, pending := 0, 0
+	for _, e := range entries {
+		if e.Direction != store.DirToMasterMind {
+			continue
+		}
+		if e.Confirmed {
+			confirmed++
+			if e.Round != 2 {
+				t.Errorf("round %d confirmed, want only round 2", e.Round)
+			}
+		} else {
+			pending++
+			if e.Round != 1 {
+				t.Errorf("round %d left pending, want only round 1", e.Round)
+			}
+		}
+	}
+	if confirmed != 1 || pending != 1 {
+		t.Fatalf("confirmed = %d, pending = %d, want 1 and 1", confirmed, pending)
+	}
+
+	// The rejected entry is untouched and still first: the next unconditional
+	// claim gets it, which is what "never reorders the queue" means.
+	next, found, err := Pull(context.Background(), rt.Store, "webshop", "wait")
+	if err != nil || !found {
+		t.Fatalf("Pull after the conditional claim = (%q, %v, %v), want round 1's payload", next, found, err)
+	}
+	if !strings.Contains(next, "round 1 body") {
+		t.Errorf("Pull text = %q, want round 1's body: the queue kept its order", next)
+	}
+}
+
+// TestPullMatchingTakesTheOldestItAccepts pins the other half: scanning past a
+// rejected entry is not a licence to take a later one. With rounds 1 and 2
+// pending and a match that accepts both, the claim is round 1.
+func TestPullMatchingTakesTheOldestItAccepts(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	dir := t.TempDir()
+	paths := []string{filepath.Join(dir, "001-report.md"), filepath.Join(dir, "002-report.md")}
+	for i, p := range paths {
+		if err := os.WriteFile(p, []byte(fmt.Sprintf("round %d body\n", i+1)), 0o644); err != nil {
+			t.Fatalf("write round %d report: %v", i+1, err)
+		}
+	}
+	seedPendingRounds(t, rt, "webshop", []int{1, 2}, paths)
+
+	both := func(e store.LogEntry) bool { return true }
+	text, found, err := PullMatching(context.Background(), rt.Store, "webshop", "show", both)
+	if err != nil || !found {
+		t.Fatalf("PullMatching accepting both = (%q, %v, %v), want round 1's payload", text, found, err)
+	}
+	if !strings.Contains(text, "round 1 body") {
+		t.Errorf("PullMatching text = %q, want round 1's body: the oldest accepted entry wins", text)
+	}
+}
+
+// TestPullMatchingScansPastAnOlderRejectedEntry pins the scan itself: a pending
+// entry the match rejects -- a stale halt, an older findings entry -- does not
+// stop the read from confirming the payload it did print. That is what lets
+// `show --report` confirm its report while a findings entry sits ahead of it.
+func TestPullMatchingScansPastAnOlderRejectedEntry(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	dir := t.TempDir()
+	report := filepath.Join(dir, "001-report.md")
+	if err := os.WriteFile(report, []byte("round 1 body\n"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	// The stale halt is queued FIRST, so it is the oldest claimable entry and
+	// the scan has to pass it to reach the report.
+	b := store.Binding{
+		Name:         "webshop",
+		CWD:          "/repo/webshop",
+		Round:        1,
+		State:        store.StateActive,
+		MasterMind:   store.Endpoint{Kind: "claude", SessionID: "sess"},
+		MasterMindID: "pl_aaaaaaaabbbb",
+		Builder:      store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		if err := tx.AppendLog("webshop", store.LogEntry{
+			TS: rt.Now().UTC(), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindHalt,
+			Payload: "halted: the runner needs a switch",
+		}); err != nil {
+			return err
+		}
+		return tx.AppendLog("webshop", store.LogEntry{
+			TS: rt.Now().UTC(), Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+			Payload: "round 1 report", Path: report,
+		})
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	reportOnly := func(e store.LogEntry) bool { return e.Kind == store.KindReport && e.Round == 1 }
+	text, found, err := PullMatching(context.Background(), rt.Store, "webshop", "show", reportOnly)
+	if err != nil || !found {
+		t.Fatalf("PullMatching accepting the report = (%q, %v, %v), want the report behind the halt", text, found, err)
+	}
+	if !strings.Contains(text, "round 1 body") {
+		t.Errorf("PullMatching text = %q, want the report's own body", text)
+	}
+
+	// The halt it passed is not consumed by passing it: it is still pending and
+	// still first for the next reader.
 	entries, err := rt.Store.ReadLog("webshop")
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
 	for _, e := range entries {
-		if e.Direction == store.DirToMasterMind && e.Confirmed {
-			t.Fatal("a conditional claim must not skip the older payload")
+		if e.Direction == store.DirToMasterMind && e.Kind == store.KindHalt && e.Confirmed {
+			t.Error("an entry the match rejected must not be confirmed by the scan")
 		}
+	}
+	next, found, err := Pull(context.Background(), rt.Store, "webshop", "wait")
+	if err != nil || !found {
+		t.Fatalf("Pull after the conditional claim = (%q, %v, %v), want the halt", next, found, err)
+	}
+	if !strings.Contains(next, "halted") {
+		t.Errorf("Pull text = %q, want the halt payload: it was skipped, not dropped", next)
 	}
 }
 

@@ -99,13 +99,46 @@ func TestWaitOutcome(t *testing.T) {
 		}
 	})
 
-	t.Run("marked close carrying a stopped note is WaitClosed (0)", func(t *testing.T) {
+	t.Run("a stopped report is WaitUnmarked (2), not WaitClosed", func(t *testing.T) {
+		// #964: a stopped round never wrote its done marker, so the report on
+		// disk is unconfirmed and possibly partial. Exit 0 would certify a
+		// final report nothing confirmed.
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
 			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "stopped"},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
-		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
+		want := WaitResult{Code: WaitUnmarked, Line: "/x/001-report.md", Done: true}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a stopped report with a halted outcome is WaitHalted (5)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{
+				Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+				Path: "/x/001-report.md", Note: "stopped", Outcome: reporttail.OutcomeHalted,
+			},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitHalted, Line: "/x/001-report.md", Done: true}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a stopped report with a blocked outcome is WaitHalted (5)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{
+				Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+				Path: "/x/001-report.md", Note: "stopped", Outcome: reporttail.OutcomeBlocked,
+			},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitHalted, Line: "/x/001-report.md", Done: true}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
 		}
@@ -245,11 +278,15 @@ func TestWaitOutcome(t *testing.T) {
 			note string
 			line string
 		}{
-			{note: "noreport stopped", line: "/x/001-report.md"},
+			// A joined "noreport" still means no file was written, so the dash
+			// applies: printing the entry's path would point at nothing. Only
+			// notes without that token keep the report path -- the round did
+			// write one.
+			{note: "noreport stopped", line: "-"},
+			{note: "noreport gate=fail", line: "-"},
+			{note: "noreport escaped", line: "-"},
 			{note: "unmarked escaped", line: "/x/001-report.md"},
-			// The dash line is reserved for a bare "noreport": a joined note
-			// keeps the report path, since the close did write one.
-			{note: "noreport gate=fail", line: "/x/001-report.md"},
+			{note: "stopped", line: "/x/001-report.md"},
 		}
 		for _, tc := range cases {
 			t.Run(tc.note, func(t *testing.T) {

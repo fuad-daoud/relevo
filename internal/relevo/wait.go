@@ -20,8 +20,9 @@ import (
 // WaitResult is what `relevo wait` reports once it stops polling.
 type WaitResult struct {
 	Code int    // one of the Wait* exit constants below; meaningful only when Done
-	Line string // stdout line: report path, "-" (noreport), or the Waiting line
-	Done bool   // false while the round is open and nothing needs a human
+	Line string // stdout line: report path, "-" (no report on disk at all, so
+	// the note carries noreport), or the Waiting line
+	Done bool // false while the round is open and nothing needs a human
 
 	// Payload is the pending entry's text Wait delivered for the round it
 	// stopped on (§4.1): the same text `relevo wait` printed. "" when nothing
@@ -97,28 +98,64 @@ func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 	return round
 }
 
+// noteClaims reads a report entry's space-joined note once and reports the two
+// claims it can make about the round's artifacts: unmarked, that the round
+// closed without its completion marker, and noReport, that no report file
+// exists at all, so Wait prints "-" instead of a path. Both come from one
+// Fields scan because a joined "noreport" still means there is no file on disk
+// -- printing the entry's Path for it would point at nothing.
+func noteClaims(note string) (unmarked, noReport bool) {
+	for _, tok := range strings.Fields(note) {
+		switch tok {
+		case "noreport":
+			// The marker is there but the builder wrote no report.
+			unmarked, noReport = true, true
+		case "unmarked", noteScraped, "stopped":
+			unmarked = true
+		}
+	}
+	return unmarked, noReport
+}
+
 // unmarkedNote reports whether a report entry's note says the round closed
 // without its completion marker, which is what WaitUnmarked (2) means.
 //
 // A note is only ever that claim when it carries one of the no-marker tokens
 // themselves: "unmarked" (the builder exited after its report but never wrote
 // the marker), "scraped" (the body is a terminal capture, not the builder's
-// own file), or "noreport" (the marker is there but no report). Notes are
-// space-joined, so each token is matched as a whole word and a join like
-// "noreport stopped" still reads as unmarked.
+// own file), "noreport" (the marker is there but no report), or "stopped"
+// (the runner was stopped). Notes are space-joined, so each token is matched as
+// a whole word and a join like "noreport stopped" still reads as unmarked.
 //
-// Every other note an annotated marked close carries -- "gate=<result>",
-// "stopped", "scope=ok", "escaped", "uncommitted work at refs/relevo/...",
-// "consumed by chain ..." -- describes a close that did happen, so a
-// non-empty note alone is never enough to call a round unmarked.
+// "stopped" is the one token whose round did leave a report on disk, and it is
+// unmarked all the same (#964): a stopped round never wrote its done marker --
+// closeStopped only runs on an open round -- so that report is unconfirmed and
+// possibly partial, killed mid-write. That is a weaker guarantee than
+// "unmarked", where an exited process cannot be mid-write. Reading it as closed
+// would certify a final report nothing confirmed. It matches how "noreport
+// stopped" has always read, so an accident of a partial file being on disk
+// cannot flip the verdict.
+//
+// It cannot misclassify a marked close. The only production writer of the
+// "stopped" report note is stopPayload's haveReport arm, always marker-less by
+// construction, and queueReport's stopRequested join is write-dead:
+// StopRequestedAt is only ever cleared in production (send, remote send, round
+// close) and only tests ever set it. Every other note an annotated marked
+// close carries -- "gate=<result>", "scope=ok", "escaped", "uncommitted work
+// at refs/relevo/...", "consumed by chain ..." -- describes a close that did
+// happen, so a non-empty note alone is never enough to call a round unmarked.
 func unmarkedNote(note string) bool {
-	for _, tok := range strings.Fields(note) {
-		switch tok {
-		case "unmarked", noteScraped, "noreport":
-			return true
-		}
-	}
-	return false
+	unmarked, _ := noteClaims(note)
+	return unmarked
+}
+
+// noreportNote reports whether a report entry's note says no report file was
+// written, which is what the "-" Line means. Matched as a whole word, so a
+// joined "noreport" -- "noreport stopped", "noreport gate=fail", "noreport
+// escaped" -- prints the dash too: every one of those closes wrote no file.
+func noreportNote(note string) bool {
+	_, noReport := noteClaims(note)
+	return noReport
 }
 
 // WaitOutcome classifies one binding's round into a WaitResult, per spec
@@ -136,7 +173,7 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 			code = WaitUnmarked
 		}
 		line := e.Path
-		if e.Note == "noreport" {
+		if noreportNote(e.Note) {
 			line = "-"
 		}
 		return WaitResult{Code: code, Line: line, Done: true}
@@ -302,7 +339,16 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 	// the loop already makes, so registering costs no extra read: a wait that
 	// resolves on its first pass still holds a registration, because the write
 	// happens before the loop and the release after it.
-	registration := registerWait(rt, opts.Names, start)
+	//
+	// A --peek wait does not register at all: it never collects (see the
+	// delivery arm below), so it is not the wait a status row's WaitLive means.
+	// Only a wait that will collect counts as live, and a peeking script or loop
+	// must not hold a stranded pull payload at REPORT IN instead of NEEDS YOU.
+	// The zero registration holds nothing, so release and refresh stay no-ops.
+	var registration waitRegistration
+	if !opts.Peek {
+		registration = registerWait(rt, opts.Names, start)
+	}
 	defer registration.release()
 
 	for {

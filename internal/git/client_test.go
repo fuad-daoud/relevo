@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -152,5 +153,46 @@ func TestStatusDoesNotTakeIndexLock(t *testing.T) {
 
 	if _, err := client.Dirty(ctx, repoDir); err != nil {
 		t.Fatalf("Dirty while .git/index.lock is held: %v", err)
+	}
+}
+
+// TestRunDeadlineErrorNamesArgv pins that a command killed by the client's
+// per-command budget names the argv it was running, and only that: the wrap
+// must keep errors.Is(err, context.DeadlineExceeded) true, since a dozen call
+// sites probe the timeout with exactly that, and a named error that stopped
+// matching would silently turn every timeout into a mystery failure.
+//
+// The seam is a stub binary plus a 1ns budget: the stub is not git, so no real
+// repository, network or slow child is involved, and the budget is already spent
+// before the child is ever started.
+func TestRunDeadlineErrorNamesArgv(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "git")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(stub, time.Nanosecond, DefaultMaxPatchBytes)
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"rev-parse", []string{"rev-parse", "HEAD"}},
+		{"bundle create", []string{"bundle", "create", "--all"}},
+		{"merge-base", []string{"merge-base", "--is-ancestor", "a", "b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.run(context.Background(), dir, nil, tc.args...)
+			if err == nil {
+				t.Fatal("run with an expired budget returned no error")
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("errors.Is(err, context.DeadlineExceeded) = false for %v; the call sites probing the timeout need it true", err)
+			}
+			want := "git " + strings.Join(tc.args, " ")
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("deadline error = %q, want it to name the argv %q", err, want)
+			}
+		})
 	}
 }

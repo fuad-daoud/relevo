@@ -1310,6 +1310,126 @@ func TestShowOtherSectionsNeverClaim(t *testing.T) {
 	}
 }
 
+// seedShowFindingsClaim is the fixture the findings claim tests share: a live
+// binding whose round 1 consult abc has a findings file on disk and a pending
+// mastermind-bound findings entry pointing at it -- the shape a consult queues
+// (internal/consult/reconcile.go finishConsult), and the payload that tells the
+// MasterMind to run exactly this read.
+func seedShowFindingsClaim(t *testing.T, rt Runtime) {
+	t.Helper()
+	if err := rt.Store.Save(store.Binding{
+		Name:         "webshop",
+		CWD:          "/repo/webshop",
+		Round:        1,
+		State:        store.StateActive,
+		MasterMind:   store.Endpoint{Kind: "opencode", SessionID: "sess"},
+		MasterMindID: testClaimMasterMind,
+		Builder:      store.Endpoint{Mode: store.ModeHeadless},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	path := rt.Store.FindingsPath("webshop", 1, "abc")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir findings dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("# review\n\ntwo things to change\n"), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	if err := rt.Store.AppendLog("webshop", store.LogEntry{
+		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindFindings,
+		Payload: "Findings from critic consult abc: relevo show webshop --findings abc",
+		Path:    path,
+	}); err != nil {
+		t.Fatalf("AppendLog findings: %v", err)
+	}
+}
+
+// TestShowFindingsClaimsPendingFindingsPayload pins #962: a plain (non-peek)
+// `show --findings` prints the consult's findings file, which is the very
+// artifact the pending findings entry points at, so it claims that entry with
+// route "show". Without the claim the entry stays pending, the next wait
+// delivers the same findings a second time, and the statusline escalates it to
+// NEEDS YOU after the grace.
+func TestShowFindingsClaimsPendingFindingsPayload(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedShowFindingsClaim(t, rt)
+
+	res, err := Show(context.Background(), rt, ShowOptions{
+		Name: "webshop", Section: ShowFindings, FindingsID: "abc",
+	})
+	if err != nil {
+		t.Fatalf("Show --findings: %v", err)
+	}
+	if res.Missing || res.Text != "# review\n\ntwo things to change\n" {
+		t.Fatalf("res = %+v, want the findings text", res)
+	}
+
+	if route, confirmed := claimRoute(t, rt, "webshop"); !confirmed || route != "show" {
+		t.Errorf("confirmed/route = %v/%q, want true/\"show\"", confirmed, route)
+	}
+	// The second half of #962: nothing is left for the next wait to redeliver.
+	if _, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait"); err != nil || found {
+		t.Errorf("Pull after show --findings = found %v, err %v; want the findings already claimed", found, err)
+	}
+}
+
+// TestShowFindingsPeekLeavesFindingsPending keeps #673's --peek contract on the
+// findings section too: a peeked findings read prints the section and claims
+// nothing, so the payload is left for the route that pushes it.
+func TestShowFindingsPeekLeavesFindingsPending(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedShowFindingsClaim(t, rt)
+
+	res, err := Show(context.Background(), rt, ShowOptions{
+		Name: "webshop", Section: ShowFindings, FindingsID: "abc", Peek: true,
+	})
+	if err != nil {
+		t.Fatalf("Show --findings --peek: %v", err)
+	}
+	if res.Missing || res.Text != "# review\n\ntwo things to change\n" {
+		t.Fatalf("res = %+v, want the findings text", res)
+	}
+
+	if _, confirmed := claimRoute(t, rt, "webshop"); confirmed {
+		t.Error("a peeked findings read must claim nothing")
+	}
+	if _, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait"); err != nil || !found {
+		t.Errorf("Pull after a peeked findings read = found %v, err %v; want the findings still pending", found, err)
+	}
+}
+
+// TestShowFindingsClaimsNothingWhenMissing pins the Missing half on the new arm:
+// a findings read that printed no content confirms nothing, however it resolved.
+// The fixture's findings entry is consult abc's; a read naming another consult
+// resolves the same round and finds no file there, so it printed nothing and
+// must not consume the entry that sits pending.
+func TestShowFindingsClaimsNothingWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedShowFindingsClaim(t, rt)
+
+	res, err := Show(context.Background(), rt, ShowOptions{
+		Name: "webshop", Round: 1, Section: ShowFindings, FindingsID: "zzz",
+	})
+	if err != nil {
+		t.Fatalf("Show --findings: %v", err)
+	}
+	if !res.Missing {
+		t.Fatalf("Missing = false, want true for a consult with no findings file")
+	}
+	if _, confirmed := claimRoute(t, rt, "webshop"); confirmed {
+		t.Error("a findings read that printed nothing must claim nothing")
+	}
+	if _, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait"); err != nil || !found {
+		t.Errorf("Pull after a missing findings read = found %v, err %v; want the payload still pending", found, err)
+	}
+}
+
 // TestShowFailedReadClaimsNothing pins the failed-read half: an out-of-range
 // round is an error, and the payload it could not print stays pending for the
 // route that pushes it.

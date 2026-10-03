@@ -14,6 +14,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -236,6 +237,88 @@ func TestArchivedStepRoundRefetches(t *testing.T) {
 	}
 	if tMsg.round != 2 {
 		t.Errorf("fetched round = %d, want 2", tMsg.round)
+	}
+}
+
+// TestHistRowReportLeavesSameNameLiveBindingPending pins #967: a history row
+// whose name is live again after a rebind reads the archive, and its read
+// claims nothing of the live binding's. Before the fix the row went through
+// Show's live branch, showed the live report and claimPrinted consumed the
+// live pending payload for the very round it printed -- so that report was
+// never delivered to the MasterMind (#902 held for live tabs, not this path).
+func TestHistRowReportLeavesSameNameLiveBindingPending(t *testing.T) {
+	rt, h := seedArchivedHistBinding(t)
+
+	// The rebind: the same name is live again, with a round 2 report and a
+	// pending payload for it. Distinct markers so each assertion discriminates
+	// which side answered.
+	const liveBody = "# LIVE round 2 report\n"
+	const livePayload = "round 2 report from the live binding"
+	if err := rt.Store.Save(store.Binding{
+		Name: "fixture", CWD: t.TempDir(), Round: 3, State: store.StateActive,
+	}); err != nil {
+		t.Fatalf("Save live fixture: %v", err)
+	}
+	// showLive bounds an explicit --round by the prompt entries it finds, so
+	// round 2 needs its prompt entry present.
+	if err := rt.Store.AppendLog("fixture", store.LogEntry{
+		TS: time.Now(), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+	}); err != nil {
+		t.Fatalf("AppendLog prompt: %v", err)
+	}
+	if err := os.MkdirAll(rt.Store.OutDir("fixture"), 0o755); err != nil {
+		t.Fatalf("mkdir out: %v", err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("fixture", 2), []byte(liveBody), 0o644); err != nil {
+		t.Fatalf("write live report: %v", err)
+	}
+	if err := rt.Store.AppendLog("fixture", store.LogEntry{
+		TS: time.Now(), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		Payload: livePayload, Path: rt.Store.ReportPath("fixture", 2),
+	}); err != nil {
+		t.Fatalf("AppendLog report: %v", err)
+	}
+
+	// The archived round 2 report the history row must show, read from the
+	// golden fixture rather than restated here.
+	archivedBody, err := os.ReadFile(filepath.Join(histFixtureDir, "002-report.md"))
+	if err != nil {
+		t.Fatalf("read fixture 002-report.md: %v", err)
+	}
+
+	rv := newTestHistRound(t, rt, h, 0)
+	// Round 3 has no report, so step to round 2 -- the round both the archived
+	// and the live binding have a report for.
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}, testEnv(mastermindSource{rt}, view.Report{}, 140, 40))
+	rv = next.(roundView)
+	if rv.pane.detail.round != 2 {
+		t.Fatalf("round = %d, want 2", rv.pane.detail.round)
+	}
+
+	rv.pane.tabInFlight = false
+	next, cmd = rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}, testEnv(mastermindSource{rt}, view.Report{}, 140, 40))
+	rv = next.(roundView)
+	if cmd == nil {
+		t.Fatal("expected a fetch command for the report tab")
+	}
+	msg := cmd().(tabMsg)
+	if msg.content.err != nil {
+		t.Fatalf("unexpected error: %v", msg.content.err)
+	}
+	if msg.content.body != string(archivedBody) {
+		t.Errorf("history report body = %q, want the archived round 2 report", msg.content.body)
+	}
+	if strings.Contains(msg.content.body, liveBody) {
+		t.Error("a history row must not show the same-name live binding's report")
+	}
+
+	// The live entry is untouched: still pending, for the route that pushes it.
+	text, found, err := delivery.Pull(context.Background(), rt.Store, "fixture", "wait")
+	if err != nil || !found {
+		t.Fatalf("Pull after reading a history row's report = found %v, err %v; want the live payload still pending", found, err)
+	}
+	if !strings.Contains(text, livePayload) {
+		t.Errorf("Pull text = %q, want the live binding's round 2 payload", text)
 	}
 }
 

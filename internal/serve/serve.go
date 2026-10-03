@@ -57,6 +57,11 @@ type Config struct {
 	Registry *roles.Registry
 	// MaxBuilders caps headless builders at once across all owners; 0 means the policy default.
 	MaxBuilders int
+	// Reloader refreshes the config sections a serve restart does not govern --
+	// the candidates, the policy, the roles registry and the accounts pool --
+	// once per tick, so a config edit takes effect on the next tick or
+	// admission. Nil keeps the copy loaded at startup for the process's life.
+	Reloader *ConfigRefresher
 	// Hooks dispatches lifecycle events; nil means none.
 	Hooks hooks.Dispatcher
 	// Scope is the systemd scope template served rounds launch under; nil means none.
@@ -95,7 +100,13 @@ type Config struct {
 }
 
 type Server struct {
-	cfg          Config
+	cfg Config
+	// reloaded is cfg as of the last successful tick refresh, guarded by s.mu.
+	// It differs from cfg only in the four sections a config edit may replace,
+	// and every reader copies the whole struct out under the lock, so a request
+	// or a tick step sees one consistent config for all of its work and never a
+	// mix of two reloads.
+	reloaded     Config
 	clients      *Clients
 	nonces       *remote.NonceWindow  // ttl = remote.MaxClockSkew
 	transport    remote.TreeTransport // remote.NewBundleTransport(cfg.Git, filepath.Join(cfg.Root, "tmp"))
@@ -104,12 +115,13 @@ type Server struct {
 	// audiences is the accepted audience set, copied from cfg so a later
 	// mutation of the caller's slice cannot widen it.
 	audiences []string
-	// mu guards only the two pieces of process-wide state below: the stores
-	// map and the listen flags. It is never held across Store, git or
-	// transport I/O -- per-owner exclusion is each owner's own Store lock
-	// (see ownerStore), and the server-wide builder cap is admitMu -- so a
-	// slow owner's reconcile cannot block another owner's poll.
-	mu sync.Mutex
+	// mu guards the three pieces of process-wide state below: the stores map,
+	// the listen flags and the reloaded config. It is never held across Store,
+	// git or transport I/O -- a reader copies the reloaded config out and then
+	// works from the copy, per-owner exclusion is each owner's own Store lock
+	// (see ownerStore), and the server-wide builder cap is admitMu -- so a slow
+	// owner's reconcile cannot block another owner's poll.
+	mu sync.RWMutex
 	// gates is a `serve.`-prefixed view of the machine database, so a server-wide
 	// gate never collides with this machine's own rows.
 	gates db.KV
@@ -194,6 +206,7 @@ func New(cfg Config) (*Server, error) {
 
 	return &Server{
 		cfg:       cfg,
+		reloaded:  cfg,
 		clients:   clients,
 		nonces:    nonces,
 		transport: transport,
@@ -205,6 +218,38 @@ func New(cfg Config) (*Server, error) {
 }
 
 func (s *Server) DB() *db.DB { return s.cfg.DB }
+
+// live returns the config as of the last successful refresh: one consistent
+// copy of every section, taken under s.mu and used without it. A tick that
+// reloads mid-request cannot make one request see two different configs,
+// because the copy is of the whole struct rather than of the hot sections one
+// field at a time.
+//
+// Every reader of a reloadable section goes through this, and never through
+// s.cfg directly: cfg is the startup copy and would pin a server to the config
+// it launched with. The sections no reload can change are identical in both,
+// so a caller that reaches past live for them reads the same value.
+func (s *Server) live() Config {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.reloaded
+}
+
+// refreshConfig advances the reloadable sections from the machine config. It
+// replaces the whole copy in one store, so a tick's reconcile, its census and
+// its admissions each see one config and never a partial reload; a nil
+// reloader, an unchanged version and a failed load all keep the last good copy
+// (see ConfigRefresher.Refresh). The reload itself runs off the lock, so a
+// slow database read never blocks a request that only wants the current copy.
+func (s *Server) refreshConfig() {
+	if s.cfg.Reloader == nil {
+		return
+	}
+	next := s.cfg.Reloader.Refresh(s.live())
+	s.mu.Lock()
+	s.reloaded = next
+	s.mu.Unlock()
+}
 
 func ownerIDOf(root string) remote.ClientID {
 	id, _ := remote.IDFromDir(filepath.Base(root))
@@ -316,30 +361,33 @@ func (s *Server) runtime(id remote.ClientID) (relevo.Runtime, error) {
 }
 
 func (s *Server) runtimeAt(root string) relevo.Runtime {
+	// One copy for the whole runtime: the candidates, policy, registry and
+	// accounts a pick sees all come from the same reload.
+	cfg := s.live()
 	st := s.ownerStore(root)
 	rt := relevo.Runtime{
-		Git:        s.cfg.Git,
-		Runner:     s.cfg.Runner,
+		Git:        cfg.Git,
+		Runner:     cfg.Runner,
 		Store:      st,
 		Transport:  s.transport,
-		Candidates: s.cfg.Candidates,
-		Accounts:   s.cfg.Accounts,
-		Policy:     s.cfg.Policy,
+		Candidates: cfg.Candidates,
+		Accounts:   cfg.Accounts,
+		Policy:     cfg.Policy,
 		Gates:      s.gates, // server-wide, not the owner's own
-		Usage:      s.cfg.Usage,
-		Prices:     s.cfg.Prices,
-		Now:        s.cfg.Now,
-		StartedAt:  s.cfg.StartedAt,
-		Roles:      s.cfg.Roles,
-		Registry:   s.cfg.Registry,
-		Hooks:      s.cfg.Hooks,
-		Scope:      s.cfg.Scope,
+		Usage:      cfg.Usage,
+		Prices:     cfg.Prices,
+		Now:        cfg.Now,
+		StartedAt:  cfg.StartedAt,
+		Roles:      cfg.Roles,
+		Registry:   cfg.Registry,
+		Hooks:      cfg.Hooks,
+		Scope:      cfg.Scope,
 		HeldCPUs:   func(tx *store.Tx, self string) ([]int, error) { return s.heldCPUs(root, tx, self) },
 		// The reaper is server-wide: deleting an owner's abandoned session
 		// runs the harness binary, which is the same for every owner.
-		SessionReaper: s.cfg.SessionReaper,
+		SessionReaper: cfg.SessionReaper,
 	}
-	switch s.cfg.Isolation {
+	switch cfg.Isolation {
 	case isolate.ModeUser:
 		s.applyTenant(root, st, &rt)
 	case isolate.ModeContainer:
@@ -379,7 +427,7 @@ func (s *Server) applyTenant(root string, st *store.Store, rt *relevo.Runtime) {
 	owner := ownerIDOf(root)
 	t, err := s.tenantFor(owner)
 	if b, ok := s.cfg.Runner.(isolate.Boundary); ok {
-		rt.Runner = b.ForTenant(t, err)
+		rt.Runner = withTmpDir(b.ForTenant(t, err), s.ownerTmpDir(root))
 	} else {
 		// User mode runs every builder under a tenant boundary. Production
 		// wraps the runner in resolveIsolation, so a runner that is not one is

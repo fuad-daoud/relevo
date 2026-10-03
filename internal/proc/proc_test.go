@@ -517,6 +517,68 @@ func TestStartStripsDeniedEnv(t *testing.T) {
 	}
 }
 
+// TestStartGivesChildTheRunnerTmpDir: a child sees the runner's own temporary
+// directory for both variables when neither the parent nor the spec names one,
+// so parallel builds keep their scratch off the shared system temp. The
+// variables are cleared in the parent, because an inherited value is the
+// user's own choice and must survive.
+func TestStartGivesChildTheRunnerTmpDir(t *testing.T) {
+	t.Setenv("TMPDIR", "")
+	t.Setenv("GOTMPDIR", "")
+	r := New()
+	r.TmpDir = t.TempDir()
+	out := startEchoEnv(t, r)
+	for _, name := range TmpDirEnv {
+		want := name + "=" + r.TmpDir
+		if !strings.Contains(out, want) {
+			t.Errorf("child env does not contain %q: %q", want, out)
+		}
+	}
+}
+
+// TestStartKeepsTheUsersTmpDir: a value the user set in the parent reaches the
+// child unchanged, so an operator who points TMPDIR somewhere himself keeps it.
+func TestStartKeepsTheUsersTmpDir(t *testing.T) {
+	user := t.TempDir()
+	t.Setenv("TMPDIR", user)
+	t.Setenv("GOTMPDIR", user)
+	r := New()
+	r.TmpDir = t.TempDir()
+	out := startEchoEnv(t, r)
+	for _, name := range TmpDirEnv {
+		want := name + "=" + user
+		if !strings.Contains(out, want) {
+			t.Errorf("child env does not contain %q: %q", want, out)
+		}
+		if strings.Contains(out, name+"="+r.TmpDir) {
+			t.Errorf("the runner's directory overrode the user's for %s: %q", name, out)
+		}
+	}
+}
+
+// startEchoEnv starts sh under r and returns the child's environment as env
+// printed it to the stream.
+func startEchoEnv(t *testing.T, r *Runner) string {
+	t.Helper()
+	dir := t.TempDir()
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
+		Dir:        dir,
+		Argv:       []string{"sh", "-c", "env"},
+		LogPath:    filepath.Join(dir, "001-builder.log"),
+		StreamPath: stream,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	return string(data)
+}
+
 // TestStartStripsMasterMindIdentityEnv: a child relevo spawns must never
 // inherit a MasterMind or planner identity from the daemon, and a stale
 // runner marker from the parent must not shadow the round's own. The child's
@@ -1069,7 +1131,7 @@ func TestBuildCmdAppliesCredential(t *testing.T) {
 		Dir: "/tmp", Argv: []string{"echo", "hi"}, Env: []string{"A=1"},
 		Credential: &spawn.Credential{UID: 1234, GID: 5678},
 	}
-	cmd := buildCmd(spec, "/usr/bin/echo")
+	cmd := buildCmd(spec, "/usr/bin/echo", "")
 	if cmd.SysProcAttr == nil {
 		t.Fatal("buildCmd left SysProcAttr nil")
 	}
@@ -1087,7 +1149,7 @@ func TestBuildCmdAppliesCredential(t *testing.T) {
 		t.Errorf("credential Groups = %v, want empty: only the primary gid is set", cred.Groups)
 	}
 
-	plain := buildCmd(spawn.ProcSpec{Dir: "/tmp", Argv: []string{"echo", "hi"}}, "/usr/bin/echo")
+	plain := buildCmd(spawn.ProcSpec{Dir: "/tmp", Argv: []string{"echo", "hi"}}, "/usr/bin/echo", "")
 	if plain.SysProcAttr == nil || plain.SysProcAttr.Credential != nil {
 		t.Errorf("buildCmd without a Credential = %+v, want Setsid and a nil Credential", plain.SysProcAttr)
 	}
@@ -1105,7 +1167,7 @@ func TestBuildCmdAppliesCredential(t *testing.T) {
 func TestSpawnEnvDeniesSpecDenyEnv(t *testing.T) {
 	parent := []string{"XDG_RUNTIME_DIR=/run/1", "KEEP=yes", "CLAUDE_CONFIG_DIR=/root/.claude"}
 	got := spawnEnv(parent, []string{"HOME=/home/tenant"}, nil,
-		[]string{"XDG_RUNTIME_DIR", "CLAUDE_CONFIG_DIR"})
+		[]string{"XDG_RUNTIME_DIR", "CLAUDE_CONFIG_DIR"}, "")
 	if slices.Contains(got, "XDG_RUNTIME_DIR=/run/1") {
 		t.Errorf("spawnEnv kept a denied entry: %v", got)
 	}
