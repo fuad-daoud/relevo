@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -117,16 +118,7 @@ func TestServedCheckRouteEndToEnd(t *testing.T) {
 func TestServedCheckRefusesReaderAndOtherTenant(t *testing.T) {
 	env := setupTestEnv(t)
 	seedServedBinding(t, env, "reader", store.ServeFacts{})
-
-	rt := env.runtime(t)
-	reader, err := rt.Store.Load("reader")
-	if err != nil {
-		t.Fatal(err)
-	}
-	reader.Shape = store.ShapeReader
-	if err := rt.Store.Save(reader); err != nil {
-		t.Fatal(err)
-	}
+	makeReader(t, env, "reader")
 
 	t.Run("a reader has no check", func(t *testing.T) {
 		status, _ := postCheck(t, env, "reader", remote.CreateCheckRequest{ID: "c1", Command: "make check"})
@@ -141,37 +133,10 @@ func TestServedCheckRefusesReaderAndOtherTenant(t *testing.T) {
 	t.Run("another tenant's binding is not found", func(t *testing.T) {
 		other := addOwner(t, env, "bob")
 		otherRT := testRuntime(t, env.srv, other.id)
-		bare := otherRT.Store.WorktreePath("secret")
-		if err := otherRT.Store.Save(store.Binding{
-			Name:     "secret",
-			Owner:    string(other.id),
-			CWD:      bare,
-			Worktree: bare,
-			State:    store.StateDone,
-			Round:    1,
-			Serve:    &store.ServeFacts{RepoID: strings.Repeat("b", 64)},
-		}); err != nil {
-			t.Fatal(err)
-		}
+		saveForeignBinding(t, otherRT, "secret", string(other.id), strings.Repeat("b", 64))
 
-		before := len(env.runner.specs)
-		if status, _ := postCheck(t, env, "secret", remote.CreateCheckRequest{ID: "c1", Command: "make check"}); status != http.StatusNotFound {
-			t.Errorf("POST status = %d, want %d", status, http.StatusNotFound)
-		}
-		if status, _ := getCheck(t, env, "secret", "c1"); status != http.StatusNotFound {
-			t.Errorf("GET status = %d, want %d", status, http.StatusNotFound)
-		}
-		body, err := json.Marshal(remote.SetGateRequest{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp, _ := doSigned(t, env.ts, env.kp, http.MethodPost, "/v1/bindings/secret/gate", body, "application/json")
-		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("gate status = %d, want %d", resp.StatusCode, http.StatusNotFound)
-		}
-		if len(env.runner.specs) != before {
-			t.Errorf("Start calls = %d, want the refusals to start nothing", len(env.runner.specs))
-		}
+		assertRoutesRefuseBinding(t, env, "secret")
+
 		// The binding is untouched: the guard refused before anything loaded.
 		stored, err := otherRT.Store.Load("secret")
 		if err != nil {
@@ -188,40 +153,70 @@ func TestServedCheckRefusesReaderAndOtherTenant(t *testing.T) {
 	// disagreement the guard has to catch on its own.
 	t.Run("a binding owned by somebody else is not found", func(t *testing.T) {
 		other := addOwner(t, env, "bob")
-		rt := env.runtime(t)
-		worktree := t.TempDir()
-		if err := rt.Store.Save(store.Binding{
-			Name:     "stray",
-			Owner:    string(other.id),
-			CWD:      worktree,
-			Worktree: worktree,
-			State:    store.StateDone,
-			Round:    1,
-			Serve:    &store.ServeFacts{RepoID: strings.Repeat("c", 64)},
-		}); err != nil {
-			t.Fatal(err)
-		}
+		saveForeignBinding(t, env.runtime(t), "stray", string(other.id), strings.Repeat("c", 64))
 
-		before := len(env.runner.specs)
-		if status, _ := postCheck(t, env, "stray", remote.CreateCheckRequest{ID: "c1", Command: "make check"}); status != http.StatusNotFound {
-			t.Errorf("POST status = %d, want %d", status, http.StatusNotFound)
-		}
-		if status, _ := getCheck(t, env, "stray", "c1"); status != http.StatusNotFound {
-			t.Errorf("GET status = %d, want %d", status, http.StatusNotFound)
-		}
-		gate := "make check"
-		body, err := json.Marshal(remote.SetGateRequest{Gate: &gate})
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp, _ := doSigned(t, env.ts, env.kp, http.MethodPost, "/v1/bindings/stray/gate", body, "application/json")
-		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("gate status = %d, want %d", resp.StatusCode, http.StatusNotFound)
-		}
-		if len(env.runner.specs) != before {
-			t.Errorf("Start calls = %d, want the refusals to start nothing", len(env.runner.specs))
-		}
+		assertRoutesRefuseBinding(t, env, "stray")
 	})
+}
+
+// makeReader turns an existing served binding into a reader.
+func makeReader(t *testing.T, env *testEnv, name string) {
+	t.Helper()
+	rt := env.runtime(t)
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Shape = store.ShapeReader
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// saveForeignBinding writes a served binding owned by owner into rt's store.
+func saveForeignBinding(t *testing.T, rt relevo.Runtime, name, owner, repoID string) {
+	t.Helper()
+	worktree := rt.Store.WorktreePath(name)
+	if err := rt.Store.Save(store.Binding{
+		Name:     name,
+		Owner:    owner,
+		CWD:      worktree,
+		Worktree: worktree,
+		State:    store.StateDone,
+		Round:    1,
+		Serve:    &store.ServeFacts{RepoID: repoID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertRoutesRefuseBinding asks all three check and gate routes about a
+// binding the caller may not reach, and requires each to answer not-found and
+// to start nothing. Both ways of naming another tenant's binding are held to
+// it, so the routes' guard is proved once instead of per case.
+func assertRoutesRefuseBinding(t *testing.T, env *testEnv, name string) {
+	t.Helper()
+	before := len(env.runner.specs)
+
+	if status, _ := postCheck(t, env, name, remote.CreateCheckRequest{ID: "c1", Command: "make check"}); status != http.StatusNotFound {
+		t.Errorf("POST %s/checks = %d, want %d", name, status, http.StatusNotFound)
+	}
+	if status, _ := getCheck(t, env, name, "c1"); status != http.StatusNotFound {
+		t.Errorf("GET %s/checks/c1 = %d, want %d", name, status, http.StatusNotFound)
+	}
+
+	gate := "make check"
+	body, err := json.Marshal(remote.SetGateRequest{Gate: &gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, _ := doSigned(t, env.ts, env.kp, http.MethodPost, "/v1/bindings/"+name+"/gate", body, "application/json")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("POST %s/gate = %d, want %d", name, resp.StatusCode, http.StatusNotFound)
+	}
+	if len(env.runner.specs) != before {
+		t.Errorf("Start calls = %d, want the refusals to start nothing", len(env.runner.specs))
+	}
 }
 
 // whoami asks the server what it is and returns the decoded answer.
