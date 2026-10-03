@@ -265,6 +265,58 @@ func TestAdmitSwitchFailureRecordsNoStart(t *testing.T) {
 	}
 }
 
+// TestAdmitSpawnFailureQueuesAHaltEntry pins #966: Admit halts through the
+// shared path, so a spawn failure owes its MasterMind the same one entry every
+// other NEEDS YOU owes. It used to set State and Halt by hand and queue
+// nothing -- the binding read as needs-you with no payload, and a MasterMind
+// with no push route was never told at all.
+//
+// Mutation check: restore the hand-set State/Halt block in queue.go and this
+// fails on haltEntries = 0 and on the empty wait payload.
+func TestAdmitSpawnFailureQueuesAHaltEntry(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, fr)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
+		t.Fatalf("Send(Defer): %v", err)
+	}
+	fr.startErr = errors.New("boom: no such binary")
+
+	if err := Admit(context.Background(), rt, "webshop"); err == nil {
+		t.Fatal("Admit: err = nil, want the spawn error")
+	}
+
+	halts := haltEntries(t, rt, "webshop")
+	if len(halts) != 1 {
+		t.Fatalf("halt entries = %d, want exactly 1: %+v", len(halts), halts)
+	}
+	if !strings.Contains(halts[0].Payload, "builder spawn failed") || !strings.Contains(halts[0].Payload, "boom") {
+		t.Errorf("entry.Payload = %q, want it to carry the spawn failure", halts[0].Payload)
+	}
+	if !strings.Contains(halts[0].Payload, "relevo status --name webshop") {
+		t.Errorf("entry.Payload = %q, want it to carry the status pointer", halts[0].Payload)
+	}
+
+	// The entry is what wait has to work with, so the wait reports the reason
+	// rather than an empty needs-you.
+	name, res, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Timeout: time.Minute, Interval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if name != "webshop" || res.Code != WaitNeedsYou || !res.Done {
+		t.Fatalf("Wait = (%q, %+v), want needs-you for webshop", name, res)
+	}
+	if res.Payload == "" {
+		t.Error("Wait Payload is empty, want the queued spawn failure")
+	}
+	if !strings.Contains(res.Payload, "builder spawn failed") {
+		t.Errorf("Wait Payload = %q, want the spawn failure", res.Payload)
+	}
+}
+
 func TestAdmitGatedSwitches(t *testing.T) {
 	t.Parallel()
 

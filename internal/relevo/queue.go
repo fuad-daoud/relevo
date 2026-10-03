@@ -75,15 +75,33 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 		}
 
 		if startErr != nil {
-			// Mirror Send's own spawn-failure handling: the round stays open
-			// (the plan was already staged when it was deferred), but nothing
-			// started, so a human has to act. QueuedAt is zeroed so the round
-			// is never re-admitted.
-			b.State = store.StateNeedsYou
-			b.Halt = "builder spawn failed: " + startErr.Error()
-			b.HaltAt = rt.Now().UTC()
-			b.QueuedAt = time.Time{}
-			if saveErr := tx.Save(b); saveErr != nil {
+			// Mirror Send's own spawn-failure handling -- the round stays open
+			// (the plan was already staged when it was deferred), nothing
+			// started, so a human has to act -- but halt through the shared
+			// path rather than by hand, so the failure owes its MasterMind the
+			// one halt entry every other NEEDS YOU owes. Send can return the
+			// error to a caller that reports it; Admit runs in the daemon, and
+			// a MasterMind with no push route heard nothing at all before.
+			// haltAndSettle also attempts the delivery, in this same critical
+			// section, exactly as a reconcile halt does.
+			//
+			// A binding that came back already halted keeps its reason: the
+			// switch paths halt with a fuller text than "spawn failed", and
+			// the entry carrying it is already queued.
+			if b.Halt != "" {
+				b.QueuedAt = time.Time{}
+				if saveErr := tx.Save(b); saveErr != nil {
+					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", startErr, saveErr)
+				}
+				return startErr
+			}
+			halted, herr := haltAndSettle(ctx, rt, tx, b, "builder spawn failed: "+startErr.Error())
+			if herr != nil {
+				return fmt.Errorf("%v; and halting the round failed: %w", startErr, herr)
+			}
+			// QueuedAt is zeroed so the round is never re-admitted.
+			halted.QueuedAt = time.Time{}
+			if saveErr := tx.Save(halted); saveErr != nil {
 				return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", startErr, saveErr)
 			}
 			return startErr
