@@ -80,8 +80,16 @@ type BindingStatus struct {
 	// MasterMindRouteLive reports whether that route can push right now: a live
 	// channel claim, or a configured deliverer. A pull route is never live,
 	// because the daemon cannot see whether a background wait is running.
-	MasterMindRouteLive bool   `json:"mastermind_route_live"`
-	BuilderKind         string `json:"harness"`
+	MasterMindRouteLive bool `json:"mastermind_route_live"`
+	// WaitLive reports whether a `relevo wait` is polling this binding right
+	// now: it wrote a registration and has refreshed it within its TTL. It is
+	// the fact MasterMindRouteLive cannot carry, since a pull route is never
+	// live precisely because the daemon cannot see the wait. False for a
+	// binding nobody is waiting on, and for every binding on a host with no
+	// wait store configured -- both of which the row treats alike, and both
+	// of which are the direction that still escalates an uncollected payload.
+	WaitLive    bool   `json:"wait_live,omitempty"`
+	BuilderKind string `json:"harness"`
 	// BuilderDefinition is the builder's resolved agent definition on this
 	// binding's builder kind, set only when it is custom: a shipped
 	// definition leaves the field empty and omitted, so today's JSON is
