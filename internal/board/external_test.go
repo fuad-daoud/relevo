@@ -47,7 +47,7 @@ func TestExternalRefsIgnoresLocalValues(t *testing.T) {
 		"data image":       `<img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=">`,
 		"blob image":       `<img src="blob:http://127.0.0.1:1234/abc">`,
 		"fragment link":    `<a href="#section-2">jump</a>`,
-		"plain https link": `<a href="https://github.com/fuad-daoud/relevo/issues/906">#906</a>`,
+		"plain https link": `<a href="https://github.com/fuad-daoud/relevo/issues/906">an issue</a>`,
 		"preconnect link":  `<link rel="preconnect" href="https://fonts.googleapis.com">`,
 		"canonical link":   `<link rel="canonical" href="https://example.com/board">`,
 		"relative src":     `<img src="assets/logo.png">`,
