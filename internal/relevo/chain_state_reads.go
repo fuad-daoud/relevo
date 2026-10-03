@@ -70,6 +70,43 @@ func chainReadMembers(s *store.Store, c db.ChainRow) []string {
 	return chainMembersOf(c)
 }
 
+// chainPendingMembers names, in member order, the members of a chain that still
+// hold a payload the MasterMind has not collected: an unconfirmed to-mastermind
+// entry nobody has read back.
+//
+// It reads each member's own log rather than the roll-up's, because the roll-up
+// is exactly what no longer shows those members: a chain row replaces them, so
+// this is the only place that can still say which one is holding something.
+//
+// A member whose record is gone answers nothing and is not named, and a log that
+// cannot be read names nothing: a chain row must not claim a member is stranded
+// on the strength of a read that failed.
+func chainPendingMembers(s *store.Store, c db.ChainRow) []string {
+	var out []string
+	for _, member := range chainReadMembers(s, c) {
+		entries, err := s.ReadLog(member)
+		if err != nil {
+			continue
+		}
+		if chainHoldsUncollected(entries) {
+			out = append(out, member)
+		}
+	}
+	return out
+}
+
+// chainHoldsUncollected reports whether the log holds an entry still waiting on
+// the MasterMind. An admitted entry is excluded along with a confirmed one: a
+// push route has taken it, so nobody is waiting on it here.
+func chainHoldsUncollected(entries []store.LogEntry) bool {
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && !e.Confirmed && e.AdmittedAt == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // chainEndMembers names the members a chain's end verbs walk: the bindings its
 // engine recorded in chain_member, in creation order, when the row carries a
 // workflow; the legacy part columns otherwise. A binding the row leaves empty

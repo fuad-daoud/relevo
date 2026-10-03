@@ -406,6 +406,108 @@ func TestChainStatusReadsState(t *testing.T) {
 	}
 }
 
+// TestStatusNamesTheMemberHoldingAnUncollectedPayload pins the stranded half of
+// the roll-up: a member still holding a payload nobody collected is named on
+// the chain row, because the chain row is the only row left for it. Both
+// surfaces name it -- the human listing and the statusline.
+func TestStatusNamesTheMemberHoldingAnUncollectedPayload(t *testing.T) {
+	rt := newRuntime(t)
+	c, _ := newChainFixture(t, rt, "running")
+
+	// The reviewer is left holding a report no collector took.
+	if err := rt.Store.AppendLog("x-rev", store.LogEntry{
+		TS: time.Now().UTC(), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport,
+	}); err != nil {
+		t.Fatalf("plant the pending report: %v", err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	row := rep.Bindings[0]
+	if row.Chain == nil {
+		t.Fatalf("row %q carries no chain facts", row.Name)
+	}
+	if len(row.Chain.PendingMembers) != 1 || row.Chain.PendingMembers[0] != "x-rev" {
+		t.Errorf("pending members = %v, want [x-rev]", row.Chain.PendingMembers)
+	}
+	if got := view.ChainPendingSegment(*row.Chain); got != "pending on x-rev" {
+		t.Errorf("ChainPendingSegment = %q, want %q", got, "pending on x-rev")
+	}
+	if line := view.RenderStatus(rep); !strings.Contains(line, "pending on x-rev") {
+		t.Errorf("human row missing the pending member:\n%s", line)
+	}
+	rows := view.StatusLineRows(rep, rt.Now())
+	if len(rows) != 1 {
+		t.Fatalf("statusline rows = %+v, want only %q", rows, c.Name)
+	}
+	if !strings.Contains(rows[0].Chain, "pending on x-rev") {
+		t.Errorf("statusline row = %q, want it to name the pending member", rows[0].Chain)
+	}
+
+	// The other members hold nothing, so only the stranded one is named.
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"pending_members":["x-rev"]`) {
+		t.Errorf("document is missing the pending member: %s", raw)
+	}
+}
+
+// TestStatusNamesEveryStrandedMember pins the plural: a chain with two members
+// holding an uncollected payload names both, because one name would leave the
+// other invisible exactly as before.
+func TestStatusNamesEveryStrandedMember(t *testing.T) {
+	rt := newRuntime(t)
+	newChainFixture(t, rt, "running")
+
+	for _, member := range []string{"x-rev", "x-plan"} {
+		if err := rt.Store.AppendLog(member, store.LogEntry{
+			TS: time.Now().UTC(), Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		}); err != nil {
+			t.Fatalf("plant the pending report on %s: %v", member, err)
+		}
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	got := rep.Bindings[0].Chain.PendingMembers
+	if len(got) != 2 || got[0] != "x-rev" || got[1] != "x-plan" {
+		t.Errorf("pending members = %v, want [x-rev x-plan] in member order", got)
+	}
+}
+
+// TestStatusNamesNoMemberWhenNothingIsStranded pins the unchanged case: with no
+// member holding an uncollected payload the row carries no pending member and
+// no segment, so a healthy chain reads exactly as it did before.
+func TestStatusNamesNoMemberWhenNothingIsStranded(t *testing.T) {
+	rt := newRuntime(t)
+	newChainFixture(t, rt, "running")
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	f := rep.Bindings[0].Chain
+	if len(f.PendingMembers) != 0 {
+		t.Errorf("pending members = %v, want none", f.PendingMembers)
+	}
+	if got := view.ChainPendingSegment(*f); got != "" {
+		t.Errorf("ChainPendingSegment = %q, want no segment", got)
+	}
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "pending_members") {
+		t.Errorf("document carries a pending_members key with nothing pending: %s", raw)
+	}
+}
+
 // newForkChildFixture writes one fork child of parent: a chain row named
 // "<parent>.<key>" with Parent set, and a single builder member, through the
 // same Tx.CreateChain the engine forks through.

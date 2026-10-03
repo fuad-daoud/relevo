@@ -2,6 +2,45 @@ package view
 
 import "testing"
 
+// TestChainPendingSegmentNamesTheStrandedMembers pins the segment a chain row
+// adds when a member still holds a payload nobody collected: one name, every
+// name, and nothing at all when there is none -- the last is what keeps a row
+// without a stranded member byte-identical to the one before this segment.
+func TestChainPendingSegmentNamesTheStrandedMembers(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		f    ChainFacts
+		want string
+	}{
+		{
+			name: "no stranded member leaves the segment off",
+			f:    ChainFacts{Plan: 1, Plans: 1},
+			want: "",
+		},
+		{
+			name: "one stranded member is named alone",
+			f:    ChainFacts{Plan: 1, Plans: 1, PendingMembers: []string{"x-rev"}},
+			want: "pending on x-rev",
+		},
+		{
+			name: "several stranded members are all named",
+			f:    ChainFacts{Plan: 1, Plans: 1, PendingMembers: []string{"x-rev", "x-sec"}},
+			want: "pending on x-rev, x-sec",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := ChainPendingSegment(tc.f); got != tc.want {
+				t.Errorf("ChainPendingSegment(%+v) = %q, want %q", tc.f, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestChainSegmentPlanPhaseCorrections(t *testing.T) {
 	t.Parallel()
 
