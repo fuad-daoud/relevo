@@ -255,7 +255,6 @@ func remoteRecord(rt Runtime, tx *store.Tx, b store.Binding, ship remoteShipped,
 	cur.Progress = nil
 	cur.ExploringSince = time.Time{}
 	cur.StaleSince = time.Time{}
-	cur.StaleNotifiedAt = time.Time{}
 	// A round that moves on leaves the last round's closed tree behind.
 	cur.RoundClosedTree = ""
 	if ship.heads != nil {
