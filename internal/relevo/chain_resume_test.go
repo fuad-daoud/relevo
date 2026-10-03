@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -922,5 +923,83 @@ func assertResumeReSendsTheStagedPrompt(t *testing.T, rt Runtime, marker string)
 	}
 	if string(got) == string(planCopy) {
 		t.Errorf("the re-sent round got the plan copy, not the stopped round's own text:\n%s", got)
+	}
+}
+
+// TestChainResumeConvertsLegacyRow pins the legacy resume path: a halted chain
+// row with legacy columns, member bindings, and empty WorkflowJSON/StateJSON
+// converts through the legacy conversion and resumes instead of failing with
+// chain_engine.go:22 carries no workflow.
+func TestChainResumeConvertsLegacyRow(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	plan := writePlan(t, "build something")
+	c := legacyChainRow("leg", "halted", "build", "building", "builder", 1, 0)
+	c.PlanPathsJSON = []byte(fmt.Sprintf("[%q]", plan))
+	members := legacyChainBindings("leg")
+	seedLegacyChain(t, rt, c, members)
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "leg"})
+	if err != nil {
+		t.Fatalf("ChainResume: %v (chain_engine.go:22)", err)
+	}
+
+	row := chainStoredRow(t, rt, "leg")
+	if len(row.WorkflowJSON) == 0 || len(row.StateJSON) == 0 {
+		t.Errorf("row carries workflow %d and state %d bytes, want both", len(row.WorkflowJSON), len(row.StateJSON))
+	}
+	if row.Status != string(chain.StatusRunning) {
+		t.Errorf("chain status = %q, want running", row.Status)
+	}
+}
+
+// TestChainResumeUnconvertibleLegacyRowStaysHaltedWithReason pins the conversion failure:
+// a legacy row that cannot convert keeps today's failure (chain carries no workflow)
+// and is halted with the conversion reason in the database.
+func TestChainResumeUnconvertibleLegacyRowStaysHaltedWithReason(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	c := legacyChainRow("unconv", "halted", "build", "building", "builder", 1, 0)
+	c.SettingsJSON = []byte(`{invalid-json`)
+	members := legacyChainBindings("unconv")
+	seedLegacyChain(t, rt, c, members)
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "unconv"})
+	if err == nil || !strings.Contains(err.Error(), "carries no workflow") {
+		t.Fatalf("ChainResume error = %v, want carries no workflow", err)
+	}
+
+	row := chainStoredRow(t, rt, "unconv")
+	if row.Status != string(chain.StatusHalted) {
+		t.Errorf("chain status = %q, want halted", row.Status)
+	}
+	if !strings.Contains(row.Reason, "could not convert to a workflow") {
+		t.Errorf("chain reason = %q, want conversion error reason", row.Reason)
+	}
+}
+
+// TestChainResumeAlreadyConvertedRowSkipsConversion pins the idempotency: an already-converted
+// row retains its exact workflow definition and state bytes.
+func TestChainResumeAlreadyConvertedRowSkipsConversion(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{Name: "conv"})
+	if _, err := Stop(context.Background(), rt, "conv", StopOptions{}); err != nil {
+		t.Fatalf("Stop conv: %v", err)
+	}
+	before := chainStoredRow(t, rt, "conv")
+
+	res, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "conv"})
+	if err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	_ = res
+
+	after := chainStoredRow(t, rt, "conv")
+	if string(after.WorkflowJSON) != string(before.WorkflowJSON) {
+		t.Errorf("workflow changed on resume: got %s, want %s", after.WorkflowJSON, before.WorkflowJSON)
 	}
 }

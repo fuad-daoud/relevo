@@ -455,7 +455,7 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleStop ends the binding's open round, leaving the binding in place: an
-// idle or closed one is 409 nothing_to_stop, a halted one 409 round_halted.
+// idle or closed one is 409 nothing_to_stop.
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -481,9 +481,6 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	switch relevo.RoundStateOf(b, entries) {
 	case remote.RoundIdle, remote.RoundClosed:
 		writeErr(w, http.StatusConflict, remote.CodeNothingToStop, relevo.ErrNothingToStop.Error())
-		return
-	case remote.RoundNeedsYou:
-		writeErr(w, http.StatusConflict, remote.CodeRoundHalted, b.Halt)
 		return
 	}
 
