@@ -1,0 +1,263 @@
+package relevo
+
+import (
+	"context"
+	"errors"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/store"
+)
+
+// fakeWaitClaims is the map-backed delivery.WaitClaimStore the wait-liveness
+// tests use, the wait-side twin of fakeClaimStore: a registration present for
+// a binding name means live, absent means not. kept records every write and
+// removal in order, so a test can pin that the registration is refreshed while
+// the poll runs and dropped when it exits.
+type fakeWaitClaims struct {
+	held    map[string]delivery.WaitClaim
+	events  []string
+	removed []string
+}
+
+func newFakeWaitClaims() *fakeWaitClaims {
+	return &fakeWaitClaims{held: map[string]delivery.WaitClaim{}}
+}
+
+func (f *fakeWaitClaims) Live(name string, _ time.Time) (*delivery.WaitClaim, error) {
+	c, ok := f.held[name]
+	if !ok {
+		return nil, nil
+	}
+	return &c, nil
+}
+
+func (f *fakeWaitClaims) Write(c delivery.WaitClaim, _ time.Time) error {
+	f.held[c.Name] = c
+	f.events = append(f.events, "write:"+c.Name)
+	return nil
+}
+
+func (f *fakeWaitClaims) Remove(name string, pid int) error {
+	if c, ok := f.held[name]; ok && c.PID == pid {
+		delete(f.held, name)
+		f.removed = append(f.removed, name)
+	}
+	f.events = append(f.events, "remove:"+name)
+	return nil
+}
+
+func (f *fakeWaitClaims) live(name string) bool {
+	_, ok := f.held[name]
+	return ok
+}
+
+// waitLivenessRuntime is a Runtime with a wait store wired and the wait seams
+// driven by hand, so the registration's whole lifecycle runs without sleeping.
+func waitLivenessRuntime(t *testing.T, waits *fakeWaitClaims) Runtime {
+	t.Helper()
+	rt := routeRuntime(t)
+	rt.Waits = waits
+	return rt
+}
+
+// seedOpenRound saves an active binding whose round 1 was sent but has not
+// closed, so a wait polls it instead of returning on the first pass.
+func seedOpenRound(t *testing.T, rt Runtime, name string) {
+	t.Helper()
+	b := store.Binding{
+		Name:         name,
+		CWD:          "/repo/" + name,
+		Round:        1,
+		State:        store.StateActive,
+		MasterMind:   store.Endpoint{Kind: "claude", SessionID: "sess"},
+		MasterMindID: testClaimMasterMind,
+		Builder:      store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		return tx.AppendLog(name, store.LogEntry{
+			TS: baseTime, Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+		})
+	}); err != nil {
+		t.Fatalf("seed %s: %v", name, err)
+	}
+}
+
+// TestWaitRegistersAndReleases pins that a wait records itself for each name it
+// polls while it runs, and leaves no registration behind when it exits. The
+// release matters as much as the register: a row left behind would read as a
+// live wait for as long as its TTL, and every payload on that binding would
+// stay off NEEDS YOU for that window after the wait was gone.
+func TestWaitRegistersAndReleases(t *testing.T) {
+	waits := newFakeWaitClaims()
+	rt := waitLivenessRuntime(t, waits)
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+	// The round is already closed by the seeded report, so the wait returns on
+	// its first pass -- which is exactly the shape that must still have
+	// registered on the way in and released on the way out.
+	_, _, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Round: 1,
+		Timeout: time.Second, Interval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+
+	if len(waits.events) == 0 || waits.events[0] != "write:webshop" {
+		t.Errorf("events = %v, want a registration written before the first poll", waits.events)
+	}
+	if len(waits.removed) != 1 || waits.removed[0] != "webshop" {
+		t.Errorf("removed = %v, want exactly one removal of webshop on exit", waits.removed)
+	}
+	if waits.live("webshop") {
+		t.Error("registration still held after Wait returned, want it released")
+	}
+}
+
+// TestWaitRefreshesWhilePolling pins the other half of liveness: the
+// registration is re-stamped on each pass, not written once and left to age
+// out. A wait whose whole run stayed inside one TTL would pass without it.
+func TestWaitRefreshesWhilePolling(t *testing.T) {
+	waits := newFakeWaitClaims()
+	rt := waitLivenessRuntime(t, waits)
+	seedOpenRound(t, rt, "webshop")
+
+	// The clock the wait reads advances a step per call, so the poll loop runs
+	// several passes and then leaves on its own timeout rather than on a signal.
+	clock := baseTime
+	polls := 0
+	_, res, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Round: 1,
+		Timeout: time.Minute, Interval: time.Millisecond,
+		// One step per call is what a real poll clock does; the step is a
+		// tenth of a second so a minute of poll time is a few hundred passes
+		// rather than a million.
+		now: func() time.Time {
+			clock = clock.Add(100 * time.Millisecond)
+			return clock
+		},
+		sleep: func(context.Context, time.Duration) error {
+			polls++
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if res.Code != WaitTimeout {
+		t.Errorf("exit code = %d, want WaitTimeout so the loop ran to its timeout", res.Code)
+	}
+	if polls < 3 {
+		t.Fatalf("polls = %d, want the loop to run several passes before timing out", polls)
+	}
+
+	// One write before the loop plus one per pass: several writes, not one.
+	if len(waits.events) < polls+1 {
+		t.Errorf("events = %v over %d polls, want a refresh on each pass", waits.events, polls)
+	}
+}
+
+// TestWaitWithNoStoreStillWaits pins that a Runtime with no wait store wired is
+// not a failure. The registration is a fact for the status row to read, not a
+// precondition for collecting the payload, so a host without the database must
+// still wait.
+func TestWaitWithNoStoreStillWaits(t *testing.T) {
+	rt := routeRuntime(t)
+	rt.Waits = nil
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+	res := WaitOutcome(store.Binding{Round: 1}, []store.LogEntry{{
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+	}}, 1, func(string, int) string { return "" })
+	if res.Done {
+		t.Fatalf("WaitOutcome = %+v, want the round still open", res)
+	}
+
+	if _, _, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Round: 1,
+		Timeout: time.Millisecond, Interval: time.Millisecond,
+	}); err != nil {
+		t.Fatalf("Wait with no wait store: %v", err)
+	}
+}
+
+// TestStatusRowWaitLive pins that statusRow carries the store's liveness onto
+// the row, and that it distinguishes a live wait from an absent one -- the
+// distinction the graced pull rule reads.
+func TestStatusRowWaitLive(t *testing.T) {
+	t.Run("a registered wait reads as live", func(t *testing.T) {
+		waits := newFakeWaitClaims()
+		rt := waitLivenessRuntime(t, waits)
+		b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+		waits.held[b.Name] = delivery.WaitClaim{Name: b.Name, PID: os.Getpid(), SeenAt: baseTime}
+
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if len(rep.Bindings) != 1 {
+			t.Fatalf("status has %d rows, want 1", len(rep.Bindings))
+		}
+		if !rep.Bindings[0].WaitLive {
+			t.Error("WaitLive = false, want true for a binding a wait is polling")
+		}
+	})
+
+	t.Run("no registration reads as not live", func(t *testing.T) {
+		waits := newFakeWaitClaims()
+		rt := waitLivenessRuntime(t, waits)
+		seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if rep.Bindings[0].WaitLive {
+			t.Error("WaitLive = true, want false when nobody is waiting on the binding")
+		}
+	})
+
+	// The deliberate direction: a store that cannot answer must not hold back an
+	// escalation, so an error reads as not live rather than as a guess.
+	t.Run("an unreadable store reads as not live", func(t *testing.T) {
+		rt := routeRuntime(t)
+		rt.Waits = errorWaitClaims{}
+		seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if rep.Bindings[0].WaitLive {
+			t.Error("WaitLive = true on a read error, want false: the row must still escalate")
+		}
+	})
+
+	t.Run("a runtime with no wait store reads as not live", func(t *testing.T) {
+		rt := routeRuntime(t)
+		seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if rep.Bindings[0].WaitLive {
+			t.Error("WaitLive = true with no wait store, want false")
+		}
+	})
+}
+
+// errorWaitClaims is a wait store whose every read fails.
+type errorWaitClaims struct{}
+
+func (errorWaitClaims) Live(string, time.Time) (*delivery.WaitClaim, error) {
+	return nil, errors.New("kv unavailable")
+}
+func (errorWaitClaims) Write(delivery.WaitClaim, time.Time) error { return nil }
+func (errorWaitClaims) Remove(string, int) error                  { return nil }

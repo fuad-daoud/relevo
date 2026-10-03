@@ -1,9 +1,9 @@
 # measured with go1.27 linux/amd64
-github.com/fuad-daoud/relevo/cmd/relevo 69.5
+github.com/fuad-daoud/relevo/cmd/relevo 70.2
 github.com/fuad-daoud/relevo/internal/account 97.6
 github.com/fuad-daoud/relevo/internal/agentsrc 92.4
 github.com/fuad-daoud/relevo/internal/availability 86.4
-github.com/fuad-daoud/relevo/internal/board 81.7
+github.com/fuad-daoud/relevo/internal/board 87.2
 github.com/fuad-daoud/relevo/internal/bugreport 91.5
 github.com/fuad-daoud/relevo/internal/candidate 96.5
 github.com/fuad-daoud/relevo/internal/capture 95.5

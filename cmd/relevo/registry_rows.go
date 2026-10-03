@@ -21,7 +21,7 @@ var registry = []verbEntry{
 	},
 	{
 		Name:    "board",
-		Summary: "open a live or repo Excalidraw whiteboard for a scene",
+		Summary: "open a live or repo board: a single-file HTML page, or an Excalidraw scene by its explicit path",
 		Args:    "[path] [--board NAME] [--mastermind M] [--theme NAME] [--no-open]",
 		Flags:   []string{"--board", "--mastermind", "--no-open", "--theme"},
 		Exit:    []int{0, 1, 2},
@@ -46,6 +46,14 @@ var registry = []verbEntry{
 		Args:  "[path] [--board NAME] [--json]",
 		Flags: []string{"--board", "--json"}, Output: "json:[]Comment",
 		Exit: []int{0, 1, 2}, Errors: []string{"internal", "mastermind_not_found", "refused", "usage"},
+	},
+	{
+		Name:    "board promote",
+		Summary: "copy a live board into the repo as a committed board.html",
+		Args:    "[--board NAME] [--mastermind M] [--to SLUG] [--force]",
+		Flags:   []string{"--board", "--force", "--mastermind", "--to"},
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"internal", "mastermind_not_found", "refused", "usage"},
 	},
 	{
 		Name:    "board text",
