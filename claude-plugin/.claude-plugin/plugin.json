@@ -9,7 +9,7 @@
   "documentationUrl": "https://relevo.sh/docs",
   "supportUrl": "https://github.com/fuad-daoud/relevo/issues",
   "privacyPolicyUrl": "https://relevo.sh/privacy",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "mcpServers": {
     "relevo": {"command": "${CLAUDE_PLUGIN_ROOT}/scripts/mcp.sh"}
   }

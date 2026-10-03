@@ -1,7 +1,7 @@
 # relevo
 
 [![ci](https://github.com/fuad-daoud/relevo/actions/workflows/ci.yml/badge.svg)](https://github.com/fuad-daoud/relevo/actions/workflows/ci.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Site: [relevo-site.fuad-daoud.com](https://relevo-site.fuad-daoud.com) (source in [fuad-daoud/relevo-site](https://github.com/fuad-daoud/relevo-site), together with the `DESIGN.md` and `PRODUCT.md` that govern the page).
 
@@ -2639,4 +2639,4 @@ part of `make check`.
 
 ## License
 
-[MIT](LICENSE) © Fuad Daoud
+[Apache-2.0](LICENSE) © Fuad Daoud

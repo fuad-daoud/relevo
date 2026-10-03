@@ -111,4 +111,4 @@ may ask for.
 ## License
 
 By contributing you agree that your contributions are licensed under the
-[MIT License](LICENSE) that covers the project.
+[Apache License 2.0](LICENSE) that covers the project.

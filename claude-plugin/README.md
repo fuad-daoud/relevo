@@ -62,4 +62,4 @@ Privacy policy: https://relevo.sh/privacy
 ## More
 
 - Source, issues and the full manual: https://github.com/fuad-daoud/relevo
-- License: MIT
+- License: Apache-2.0
