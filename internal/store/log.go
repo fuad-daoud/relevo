@@ -327,6 +327,14 @@ func (s *Store) AdmitIndex(name string, idx int) error {
 	return s.WithLock(func(tx *Tx) error { return tx.AdmitIndex(name, idx) })
 }
 
+// ClearAdmitIndex removes a push route's admit stamp from one pending
+// mastermind entry, under the same state lock AdmitIndex takes: the entry falls
+// back into the pending and claimable scans, so the push path may offer it again
+// and a reader may claim it.
+func (s *Store) ClearAdmitIndex(name string, idx int) error {
+	return s.WithLock(func(tx *Tx) error { return tx.ClearAdmitIndex(name, idx) })
+}
+
 func (t *Tx) AppendLog(name string, e LogEntry) error {
 	return t.s.appendLog(name, e)
 }
@@ -359,6 +367,12 @@ func (t *Tx) ConfirmIndex(name string, idx int, route string) error {
 // the route's own queue holds the payload and no reader may claim it again.
 func (t *Tx) AdmitIndex(name string, idx int) error {
 	return t.s.admitIndex(name, idx)
+}
+
+// ClearAdmitIndex drops the idx'th event's admit stamp: the payload is pending
+// and claimable again.
+func (t *Tx) ClearAdmitIndex(name string, idx int) error {
+	return t.s.clearAdmitIndex(name, idx)
 }
 
 // ClaimableForMasterMind reads the oldest mastermind payload no reader has

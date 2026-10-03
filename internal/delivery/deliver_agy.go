@@ -94,6 +94,13 @@ func (d *AgyDeliverer) fallbackAfter() time.Duration {
 	return DefaultFallbackAfter
 }
 
+// AdmitHorizon reports agy's short shared horizon: a message the inbox never
+// marks read stops being an admit after this long, so the entry returns to the
+// pending and claimable scans.
+func (d *AgyDeliverer) AdmitHorizon() time.Duration {
+	return d.fallbackAfter()
+}
+
 func (d *AgyDeliverer) confirmWindow() time.Duration {
 	if d.ConfirmWindow > 0 {
 		return d.ConfirmWindow

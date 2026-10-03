@@ -57,4 +57,11 @@ type MasterMindDeliverer interface {
 	// calls ConfirmOnce, so a repeat tick holds the caller's lock for one
 	// read-back instead of the whole window.
 	ConfirmOnce(ctx context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error)
+	// AdmitHorizon bounds how long an entry this route admitted may sit
+	// unconfirmed before the admit is treated as expired: the stamp is cleared
+	// and the entry becomes pending and claimable again. It is the same give-up
+	// horizon Deliver already defends, reached through one accessor so the
+	// caller need not know the route. Zero means the route sets no bound and its
+	// admits never expire.
+	AdmitHorizon() time.Duration
 }

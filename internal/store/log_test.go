@@ -546,6 +546,145 @@ func TestAdmitIndexMarksButDoesNotConfirm(t *testing.T) {
 	}
 }
 
+// TestClearAdmitIndexUnadmitsWithoutConfirming is the mirror of the admit test:
+// clearing drops the stamp, keeps the entry pending, puts it back in the
+// claimable scan, and writes through the seq while leaving every other key alone.
+func TestClearAdmitIndexUnadmitsWithoutConfirming(t *testing.T) {
+	s, name := seedBinding(t)
+	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x"}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	if err := s.AdmitIndex(name, 0); err != nil {
+		t.Fatalf("AdmitIndex: %v", err)
+	}
+
+	var claimable bool
+	if err := s.WithLock(func(tx *Tx) error {
+		_, _, found, err := tx.ClaimableForMasterMind(name)
+		claimable = found
+		return err
+	}); err != nil {
+		t.Fatalf("ClaimableForMasterMind: %v", err)
+	}
+	if claimable {
+		t.Fatal("an admitted entry must not be claimable before it is cleared")
+	}
+
+	if err := s.ClearAdmitIndex(name, 0); err != nil {
+		t.Fatalf("ClearAdmitIndex: %v", err)
+	}
+
+	entries, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if entries[0].AdmittedAt != nil {
+		t.Error("AdmittedAt is still set, want the admit cleared")
+	}
+	if entries[0].Confirmed {
+		t.Error("clearing an admit must not confirm the entry: only a session read-back may")
+	}
+	if entries[0].Payload != "x" || entries[0].Round != 1 {
+		t.Errorf("entry = %+v, want the payload and round untouched by the clear", entries[0])
+	}
+	if _, pending, err := s.PendingForMasterMind(name); err != nil || !pending {
+		t.Errorf("a cleared entry stays pending: pending=%v err=%v", pending, err)
+	}
+	if err := s.WithLock(func(tx *Tx) error {
+		_, idx, found, err := tx.ClaimableForMasterMind(name)
+		if err != nil {
+			return err
+		}
+		if !found || idx != 0 {
+			t.Errorf("claimable = (idx %d, found %v), want the cleared entry at index 0", idx, found)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("ClaimableForMasterMind: %v", err)
+	}
+
+	stored := bindingEvents(t, s, name)
+	if len(stored) != 1 {
+		t.Fatalf("stored events = %d, want 1", len(stored))
+	}
+	if strings.Contains(stored[0].JSON, `"admitted_at"`) {
+		t.Errorf("stored entry = %s, want the admitted key gone", stored[0].JSON)
+	}
+	if !strings.Contains(stored[0].JSON, `"seq":1`) {
+		t.Errorf("stored entry = %s, want the seq written through", stored[0].JSON)
+	}
+
+	// A second clear is idempotent: there is no stamp left to remove.
+	if err := s.ClearAdmitIndex(name, 0); err != nil {
+		t.Fatalf("second ClearAdmitIndex: %v", err)
+	}
+}
+
+// TestClearAdmitIndexLeavesAConfirmedEntryAlone keeps the clear out of a
+// settlement's way: a confirmed entry has nothing left to un-admit, so the
+// stored keys are not rewritten at all.
+func TestClearAdmitIndexLeavesAConfirmedEntryAlone(t *testing.T) {
+	s, name := seedBinding(t)
+	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x"}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	if err := s.AdmitIndex(name, 0); err != nil {
+		t.Fatalf("AdmitIndex: %v", err)
+	}
+	if err := s.ConfirmIndex(name, 0, "deliverer:opencode"); err != nil {
+		t.Fatalf("ConfirmIndex: %v", err)
+	}
+
+	if err := s.ClearAdmitIndex(name, 0); err != nil {
+		t.Fatalf("ClearAdmitIndex: %v", err)
+	}
+
+	entries, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if !entries[0].Confirmed {
+		t.Error("a clear must never un-confirm an entry")
+	}
+	stored := bindingEvents(t, s, name)
+	if len(stored) != 1 {
+		t.Fatalf("stored events = %d, want 1", len(stored))
+	}
+	if !strings.Contains(stored[0].JSON, `"confirmed":true`) {
+		t.Errorf("stored entry = %s, want the confirmed keys untouched", stored[0].JSON)
+	}
+}
+
+// TestClearAdmitIndexRefusesABadNameOrIndex keeps the two guards admitIndex
+// takes: the name is refused before it becomes a path, and an index outside the
+// log is an error rather than a silent no-op.
+func TestClearAdmitIndexRefusesABadNameOrIndex(t *testing.T) {
+	s, name := seedBinding(t)
+	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToMasterMind, Kind: KindReport, Payload: "x"}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	if err := s.AdmitIndex(name, 0); err != nil {
+		t.Fatalf("AdmitIndex: %v", err)
+	}
+
+	if err := s.ClearAdmitIndex("../escape", 0); err == nil {
+		t.Error("ClearAdmitIndex with an invalid name must fail")
+	}
+	for _, idx := range []int{-1, 1, 99} {
+		if err := s.ClearAdmitIndex(name, idx); err == nil {
+			t.Errorf("ClearAdmitIndex with index %d must fail: the log has 1 entry", idx)
+		}
+	}
+
+	entries, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if entries[0].AdmittedAt == nil {
+		t.Error("a refused clear must leave the admit in place")
+	}
+}
+
 // TestClaimableSkipsAdmitted pins the split: the claimable scans skip an entry a
 // push route admitted, while the pending scans -- which the deliverer and the
 // status row use -- still see it.

@@ -319,6 +319,9 @@ type stubDeliverer struct {
 	reason  string
 	err     error
 	calls   int
+	// texts records the payload of each Deliver, so a test can tell which
+	// queue entry a push carried.
+	texts []string
 
 	confirmOutcome Outcome
 	confirmReason  string
@@ -328,10 +331,15 @@ type stubDeliverer struct {
 	onceOutcome Outcome
 	onceReason  string
 	onceCalls   int
+
+	// horizon bounds how long an admit this stub leaves stands. Zero means
+	// unbounded, which is what a stub that never sets it means.
+	horizon time.Duration
 }
 
-func (s *stubDeliverer) Deliver(_ context.Context, _ store.Endpoint, _, _ string, _ time.Time) (Outcome, string, error) {
+func (s *stubDeliverer) Deliver(_ context.Context, _ store.Endpoint, payload, _ string, _ time.Time) (Outcome, string, error) {
 	s.calls++
+	s.texts = append(s.texts, payload)
 	return s.outcome, s.reason, s.err
 }
 
@@ -343,6 +351,19 @@ func (s *stubDeliverer) Confirm(_ context.Context, _ store.Endpoint, _ string, _
 func (s *stubDeliverer) ConfirmOnce(_ context.Context, _ store.Endpoint, _ string, _ time.Time) (Outcome, string, error) {
 	s.onceCalls++
 	return s.onceOutcome, s.onceReason, nil
+}
+
+func (s *stubDeliverer) AdmitHorizon() time.Duration { return s.horizon }
+
+func (notMineDeliverer) AdmitHorizon() time.Duration { return 0 }
+
+func (deliveredDeliverer) AdmitHorizon() time.Duration { return 0 }
+
+// agedClock reads as `after` past the wall clock. An admit stamp is written by
+// the store from the real clock, so ageing an admit means moving Deps.Now
+// forward rather than rewriting the stamp under the lock.
+func agedClock(after time.Duration) func() time.Time {
+	return func() time.Time { return time.Now().Add(after) }
 }
 
 // TestDeliverConsultsDelivererForMatchingKind proves DeliverPending routes a
@@ -445,5 +466,138 @@ func TestDeliverIgnoresStaleClaim(t *testing.T) {
 	}
 	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || !pending {
 		t.Errorf("the entry must stay pending for pull: pending=%v err=%v", pending, err)
+	}
+}
+
+// admitOf reads the admit stamp off the named binding's oldest unconfirmed
+// mastermind entry, so a test can tell "still admitted" from "the admit is
+// gone".
+func admitOf(t *testing.T, rt Deps, name string) *time.Time {
+	t.Helper()
+	entries, err := rt.Store.ReadLog(name)
+	if err != nil {
+		t.Fatalf("read log %s: %v", name, err)
+	}
+	for _, entry := range entries {
+		if entry.Direction == store.DirToMasterMind && !entry.Confirmed {
+			return entry.AdmittedAt
+		}
+	}
+	return nil
+}
+
+// TestDeliverPendingExpiredAdmitFallsBackAndDelivers is the core regression:
+// an entry a push route admitted, whose payload never showed up in a
+// read-back, stops being an admit once the route's horizon passes. The admit is
+// cleared and the same tick pushes it again -- Deliver reads the session back
+// before it sends, so a payload that did arrive is confirmed instead of posted
+// twice.
+func TestDeliverPendingExpiredAdmitFallsBackAndDelivers(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "opencode")
+	admit(t, rt, b.Name)
+	rt.Now = agedClock(time.Hour) // an hour of wall clock: past the stub's minute
+
+	stub := &stubDeliverer{horizon: time.Minute, outcome: OutcomeDelivered, reason: "handed to the session"}
+	rt.Deliverers = map[string]MasterMindDeliverer{"opencode": stub}
+
+	_, got := deliverOnce(t, rt, b)
+	if !got.Delivered {
+		t.Fatalf("Delivery = %+v, want the expired admit handed back to the push path", got)
+	}
+	if stub.calls != 1 {
+		t.Fatalf("Deliver calls = %d, want 1: an expired admit must be pushed again", stub.calls)
+	}
+	if stub.onceCalls != 0 {
+		t.Fatalf("ConfirmOnce calls = %d, want 0: the admit was cleared, not read back", stub.onceCalls)
+	}
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || pending {
+		t.Errorf("a delivered entry must be confirmed: pending=%v err=%v", pending, err)
+	}
+}
+
+// TestDeliverPendingFreshAdmitStaysAdmitted pins the other side of the bound: an
+// admit inside its horizon is still the route's answer. The tick reads the
+// session back once, never pushes, and leaves the stamp alone -- otherwise the
+// bound would double-post every payload that merely has not been read yet.
+func TestDeliverPendingFreshAdmitStaysAdmitted(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "opencode")
+	admit(t, rt, b.Name)
+	rt.Now = time.Now // the admit stamp is seconds old
+
+	stub := &stubDeliverer{horizon: time.Hour, onceOutcome: OutcomeAdmitted, onceReason: "posted; awaiting the session"}
+	rt.Deliverers = map[string]MasterMindDeliverer{"opencode": stub}
+
+	_, got := deliverOnce(t, rt, b)
+	if got.Delivered {
+		t.Fatalf("Delivery = %+v, want the entry still admitted", got)
+	}
+	if stub.calls != 0 {
+		t.Fatalf("Deliver calls = %d, want 0: a fresh admit must never be pushed again", stub.calls)
+	}
+	if stub.onceCalls != 1 {
+		t.Fatalf("ConfirmOnce calls = %d, want 1: a fresh admit is still read back", stub.onceCalls)
+	}
+	if admitOf(t, rt, b.Name) == nil {
+		t.Error("a fresh admit must keep its stamp: clearing it inside the horizon would re-post the payload")
+	}
+}
+
+// TestDeliverPendingExpiredAdmitUnblocksTheQueue proves the bound also clears a
+// stuck head. Two entries are queued and the head is admitted; while that admit
+// stands, PendingForMasterMind keeps returning the head and no reader may claim
+// it, so the second entry is unreachable. Once the head's admit expires the head
+// is delivered and the second entry is pushed on the following tick.
+func TestDeliverPendingExpiredAdmitUnblocksTheQueue(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "opencode")
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return Queue(context.Background(), rt, tx, b.Name, store.LogEntry{
+			Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport,
+			Payload: "round 2 report", Path: "/tmp/report2.md",
+		})
+	}); err != nil {
+		t.Fatalf("queue round 2: %v", err)
+	}
+	admit(t, rt, b.Name) // the head only: round 1
+	rt.Now = agedClock(time.Hour)
+
+	stub := &stubDeliverer{horizon: time.Minute, outcome: OutcomeDelivered, reason: "handed to the session"}
+	rt.Deliverers = map[string]MasterMindDeliverer{"opencode": stub}
+
+	// Tick 1: the head's admit expires, so the head itself is pushed again.
+	if _, got := deliverOnce(t, rt, b); !got.Delivered {
+		t.Fatalf("Delivery = %+v, want the stuck head delivered once its admit expired", got)
+	}
+
+	// Tick 2: the second entry, which the stuck head had been shadowing, is now
+	// the head of the queue and is pushed.
+	if _, got := deliverOnce(t, rt, b); !got.Delivered || got.Round != 2 {
+		t.Fatalf("Delivery = %+v, want round 2 delivered next", got)
+	}
+
+	if stub.calls != 2 {
+		t.Fatalf("Deliver calls = %d, want 2: one per queue entry", stub.calls)
+	}
+	for _, round := range []string{"round 1", "round 2"} {
+		found := false
+		for _, text := range stub.texts {
+			if strings.Contains(text, round) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no Deliver carried the %s payload; pushes = %v", round, stub.texts)
+		}
+	}
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || pending {
+		t.Errorf("both entries must be confirmed: pending=%v err=%v", pending, err)
 	}
 }
