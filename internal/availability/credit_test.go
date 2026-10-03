@@ -276,3 +276,66 @@ func TestCreditPatternsLeaveOutagePatternsAlone(t *testing.T) {
 		}
 	}
 }
+
+// TestCreditGateClearsWithTheExistingPath is the manual-clear contract: a gate
+// written with a zero Until is rendered as "until cleared" and cleared by
+// exactly the existing clear path, with no credit-specific one added.
+//
+// This is what makes the zero Until usable rather than merely recorded -- a
+// gate nothing can clear would strand the candidate for good.
+func TestCreditGateClearsWithTheExistingPath(t *testing.T) {
+	t.Parallel()
+
+	d := testDeps(t)
+	line, ok := MatchCredit("Error 402: insufficient credits, add funds to continue")
+	if !ok {
+		t.Fatal("MatchCredit found nothing")
+	}
+	entry := Entry{
+		Kind:    RateLimited,
+		Subject: "test",
+		At:      baseTime,
+		Note:    line + " -- top up the account to clear",
+		Source:  "relevo",
+		Binding: "webshop",
+	}
+	if !entry.Until.IsZero() {
+		t.Fatalf("Until = %v, want the zero value that means until cleared", entry.Until)
+	}
+	if err := AppendEntryLocked(d, entry); err != nil {
+		t.Fatalf("AppendEntryLocked: %v", err)
+	}
+
+	// Rendered, it reads as until cleared -- not as a time.
+	if got, want := GateUntilText(entry.Until), "until cleared"; got != want {
+		t.Errorf("GateUntilText = %q, want %q", got, want)
+	}
+
+	// And it is live for as long as the ledger holds it.
+	if _, err := Unavailable(d, testOpencodeRef, baseTime.Add(30*24*time.Hour), "stop"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	gates := LedgerGates(d, []string{testOpencodeRef})
+	if len(gates) != 1 {
+		t.Fatalf("gates = %+v, want one live gate a month later: a zero Until never expires", gates)
+	}
+
+	// The existing clear path resolves and clears it, unchanged.
+	l, err := LoadLedger(d.Gates)
+	if err != nil {
+		t.Fatalf("LoadLedger: %v", err)
+	}
+	provider, err := ResolveClearSubject(d.Candidates, l, "test")
+	if err != nil {
+		t.Fatalf("ResolveClearSubject: %v", err)
+	}
+	if provider != "test" {
+		t.Errorf("ResolveClearSubject = %q, want %q", provider, "test")
+	}
+	if err := Clear(d, []string{provider}); err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+	if gates := LedgerGates(d, []string{testOpencodeRef}); len(gates) != 0 {
+		t.Errorf("gates = %+v, want none: the existing clear path must clear a credit gate unchanged", gates)
+	}
+}
