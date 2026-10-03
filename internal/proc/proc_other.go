@@ -16,6 +16,7 @@ const DefaultKillGrace = 5 * time.Second
 
 type Runner struct {
 	KillGrace time.Duration
+	TmpDir    string
 }
 
 var _ spawn.Runner = (*Runner)(nil)

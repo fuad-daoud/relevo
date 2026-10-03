@@ -404,10 +404,15 @@ func cmdServeRun(args []string) error {
 	}
 	defer func() { _ = d.Close() }()
 
+	procRunner, err := serveProcRunner(stateRoot)
+	if err != nil {
+		return err
+	}
+
 	// Fail closed before any side effect: a configured mode this build cannot
 	// run is refused, never started and warned (spec §10), and the mode and
 	// image ride into the server config so whoami and status report them.
-	runner, isoMode, err := resolveIsolation(L.Policy.ServeIsolation(), os.Geteuid())
+	runner, isoMode, err := resolveIsolation(L.Policy.ServeIsolation(), os.Geteuid(), procRunner)
 	if err != nil {
 		return fail(codeNotAvailable, "%v", err)
 	}

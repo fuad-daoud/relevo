@@ -107,6 +107,113 @@ func TestChildEnv(t *testing.T) {
 	}
 }
 
+// TestTmpDirEnv pins the defaulting rule per variable: a spec entry wins, then
+// a non-empty inherited value, and only a name nothing sets takes the runner's
+// directory -- an empty one counts as unset. A defaulted name is denied in the
+// parent so an empty inherited copy cannot reach the child ahead of it.
+func TestTmpDirEnv(t *testing.T) {
+	const dir = "/state/tmp"
+	cases := []struct {
+		name     string
+		parent   []string
+		extra    []string
+		dir      string
+		wantAdd  []string
+		wantDeny []string
+	}{
+		{
+			name: "no directory defaults nothing", parent: []string{"TMPDIR=/tmp"},
+			wantAdd: nil, wantDeny: nil,
+		},
+		{
+			name:    "neither parent nor spec sets either",
+			dir:     dir,
+			wantAdd: []string{"TMPDIR=" + dir, "GOTMPDIR=" + dir}, wantDeny: []string{"TMPDIR", "GOTMPDIR"},
+		},
+		{
+			name:    "spec entry suppresses the default",
+			parent:  nil,
+			extra:   []string{"TMPDIR=/spec/tmp"},
+			dir:     dir,
+			wantAdd: []string{"GOTMPDIR=" + dir}, wantDeny: []string{"GOTMPDIR"},
+		},
+		{
+			name:    "non-empty inherited value suppresses the default",
+			parent:  []string{"TMPDIR=/user/tmp"},
+			dir:     dir,
+			wantAdd: []string{"GOTMPDIR=" + dir}, wantDeny: []string{"GOTMPDIR"},
+		},
+		{
+			name:     "empty inherited value is unset",
+			parent:   []string{"TMPDIR=", "GOTMPDIR"},
+			dir:      dir,
+			wantAdd:  []string{"TMPDIR=" + dir, "GOTMPDIR=" + dir},
+			wantDeny: []string{"TMPDIR", "GOTMPDIR"},
+		},
+		{
+			name:     "both already named leaves nothing to add",
+			parent:   []string{"TMPDIR=/user/tmp", "GOTMPDIR=/user/gotmp"},
+			extra:    []string{"TMPDIR=/spec/tmp"},
+			dir:      dir,
+			wantAdd:  nil,
+			wantDeny: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parentCopy := slices.Clone(tc.parent)
+			extraCopy := slices.Clone(tc.extra)
+
+			add, deny := tmpDirEnv(tc.parent, tc.extra, tc.dir)
+			if !reflect.DeepEqual(add, tc.wantAdd) {
+				t.Errorf("tmpDirEnv() add = %v, want %v", add, tc.wantAdd)
+			}
+			if !reflect.DeepEqual(deny, tc.wantDeny) {
+				t.Errorf("tmpDirEnv() deny = %v, want %v", deny, tc.wantDeny)
+			}
+			if !reflect.DeepEqual(tc.parent, parentCopy) {
+				t.Errorf("parent was mutated: got %v, want %v", tc.parent, parentCopy)
+			}
+			if !reflect.DeepEqual(tc.extra, extraCopy) {
+				t.Errorf("extra was mutated: got %v, want %v", tc.extra, extraCopy)
+			}
+		})
+	}
+}
+
+// TestSpawnEnvAppliesTmpDirDefaults pins that the runner's directory reaches
+// the child through spawnEnv, that it is the only copy of each name, and that
+// an inherited value and a spec entry each keep their own.
+func TestSpawnEnvAppliesTmpDirDefaults(t *testing.T) {
+	got := spawnEnv([]string{"HOME=/root", "TMPDIR=", "KEEP=/user/tmp"}, []string{"GOTMPDIR=/spec/gotmp"},
+		nil, nil, "/state/tmp")
+
+	want := []string{"TMPDIR=/state/tmp", "GOTMPDIR=/spec/gotmp", "KEEP=/user/tmp"}
+	for _, w := range want {
+		if count := countEnvName(got, w); count != 1 {
+			t.Errorf("%q appears %d times in %v; want exactly one", w, count, got)
+		}
+	}
+	if countEnvName(got, "TMPDIR=") != 0 {
+		t.Errorf("the empty inherited TMPDIR survived beside the default: %v", got)
+	}
+	if !slices.Contains(got, "HOME=/root") {
+		t.Errorf("spawnEnv dropped an unrelated parent entry: %v", got)
+	}
+}
+
+// countEnvName counts the entries equal to want.
+func countEnvName(env []string, want string) int {
+	n := 0
+	for _, e := range env {
+		if e == want {
+			n++
+		}
+	}
+	return n
+}
+
 // TestGoMaxProcsEnv pins the one entry to add, or nil: a scope that limits
 // nothing and an extra that already sets GOMAXPROCS both add nothing.
 func TestGoMaxProcsEnv(t *testing.T) {
