@@ -804,10 +804,22 @@ func tabForSection(s relevo.ShowSection) tab {
 // database through it. Missing renders as tabContent.empty prose ("no
 // <section> for round N"), never as an error; a Show error renders as
 // tabContent.err exactly like a failed file read (§6).
+//
+// Peek and ArchivedOnly are both #967: the cockpit is the human's view, so a
+// read here never claims a pending payload (#902 holds for live tabs but not
+// for this path), and a history row reads the archive rather than a live
+// binding of the same name -- which a rebind can leave behind, shadowing the
+// archived rounds the row is showing.
 func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, section relevo.ShowSection) tea.Cmd {
 	t := tabForSection(section)
 	return func() tea.Msg {
-		res, err := relevo.Show(ctx, rt, relevo.ShowOptions{Name: name, Round: round, Section: section})
+		res, err := relevo.Show(ctx, rt, relevo.ShowOptions{
+			Name:         name,
+			Round:        round,
+			Section:      section,
+			Peek:         true,
+			ArchivedOnly: true,
+		})
 		if err != nil {
 			content := tabContent{loaded: true, round: round, err: err}
 			if t != tabPrompt && t != tabReport {
