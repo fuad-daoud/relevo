@@ -3511,6 +3511,270 @@ func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
 	}
 }
 
+// stallAlive is #905's fixture: a live, switchable headless builder whose
+// stream file carries tail (raw agy stream lines) and whose cursor points at
+// the start of that round's stream, so limitText reads exactly the bytes the
+// current process wrote. quietPastStall sets the stream's mtime either past
+// stall_after_ms -- which is what makes the progress sampler stamp the binding
+// stalled on this tick -- or under it, which is the not-stalled control. The
+// binding is returned unsaved, the way reconcile's caller holds it.
+func stallAlive(t *testing.T, rt Runtime, b store.Binding, tail string, quietPastStall bool) store.Binding {
+	t.Helper()
+	// The round opened long enough ago that the sampler sees a readable
+	// signal and a genuinely quiet one, rather than the round's own start.
+	b.RoundStartedAt = baseTime.Add(-30 * time.Minute)
+	streamWrite(t, rt, tail)
+	b.Builder.StreamRound = b.Round
+	b.Builder.StreamStart = 0
+
+	quietAt := baseTime.Add(-20 * time.Minute)
+	if !quietPastStall {
+		quietAt = baseTime.Add(-1 * time.Minute)
+	}
+	stream := rt.Store.RunnerStreamPath(b.Name, b.Round)
+	if err := os.Chtimes(stream, quietAt, quietAt); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	return b
+}
+
+// TestReconcileHeadlessStalledLimitTailSwitchesUncounted pins #905: a live
+// builder the sampler has marked stalled, whose own tail carries a provider
+// limit line, is gated and switched on that tick. Nothing about the exit is
+// required -- the process is still running, there is no marker, and the round
+// is nowhere near its budget.
+//
+// The switch is the existing one: uncounted (a provider closing is not a
+// builder failing), closeOld (the gated process is stopped), the same ledger
+// entry and the same switchEntry note the exit path writes, and the
+// replacement starts on the SAME round.
+func TestReconcileHeadlessStalledLimitTailSwitchesUncounted(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	rt = at(rt, 10*time.Minute)
+	b = stallAlive(t, rt, b, jsonlLine(t, "agy-errors/results.jsonl", 1), true)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if got.Round != 1 {
+		t.Errorf("Round = %d, want 1: the replacement starts on the same round", got.Round)
+	}
+	if got.BuilderCandidate != testClaudeRef {
+		t.Errorf("BuilderCandidate = %q, want %q after provider other is gated", got.BuilderCandidate, testClaudeRef)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0: a rate-limit switch never counts against max_switches", got.RoundSwitches)
+	}
+	if rl := rateLimitedEntries(loadLedger(t, rt)); len(rl) != 1 {
+		t.Fatalf("rate_limited entries = %+v, want exactly one", rl)
+	} else if rl[0].Source != "relevo" || rl[0].Binding != "webshop" {
+		t.Errorf("entry = %+v, want Source=relevo Binding=webshop", rl[0])
+	}
+	if sw := switches(t, rt); len(sw) != 1 {
+		t.Errorf("switch entries = %+v, want exactly one", sw)
+	} else if !strings.HasPrefix(sw[0].Note, "switched builder (rate-limited: ") {
+		t.Errorf("switch note = %q, want the rate-limited note the exit path writes", sw[0].Note)
+	}
+	if len(fr.kills) != 1 {
+		t.Errorf("kills = %d, want 1: closeOld stops the process switched out of a live round", len(fr.kills))
+	}
+	if len(fr.specs) != 2 {
+		t.Errorf("specs = %d, want 2: the replacement starts on this very tick", len(fr.specs))
+	}
+}
+
+// TestReconcileHeadlessStalledWithoutLimitChangesNothing is the other side of
+// the same guard: a stall whose tail holds no limit line is still only a stall.
+// The scan runs, matches nothing, and the tick settles exactly as it did
+// before #905 -- same candidate, same process, no ledger entry, no switch, and
+// the stall stamp the status label reads left standing.
+func TestReconcileHeadlessStalledWithoutLimitChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	rt = at(rt, 10*time.Minute)
+	b = stallAlive(t, rt, b, jsonlLine(t, "agy-errors/results.jsonl", 5), true)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if got.StalledSince.IsZero() {
+		t.Error("StalledSince is zero, want the stall stamp to survive a scan that matched nothing")
+	}
+	if got.BuilderCandidate != b.BuilderCandidate {
+		t.Errorf("BuilderCandidate = %q, want it unchanged at %q", got.BuilderCandidate, b.BuilderCandidate)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0", got.RoundSwitches)
+	}
+	if rl := rateLimitedEntries(loadLedger(t, rt)); len(rl) != 0 {
+		t.Errorf("rate_limited entries = %+v, want none", rl)
+	}
+	if sw := switches(t, rt); len(sw) != 0 {
+		t.Errorf("switch entries = %+v, want none", sw)
+	}
+	if len(fr.kills) != 0 || len(fr.specs) != 1 {
+		t.Errorf("a stalled tail with no limit line is never an action: kills=%d specs=%d", len(fr.kills), len(fr.specs))
+	}
+}
+
+// TestReconcileHeadlessAliveNotStalledNeverGates pins the cost guard (#905
+// step 3): the scan reads nothing unless the binding is already stalled. The
+// tail here carries the same limit line the switch case above gates on, and
+// the stream is still moving, so the binding must come out of the tick
+// untouched. Dropping the StalledSince guard makes this tick gate and switch.
+func TestReconcileHeadlessAliveNotStalledNeverGates(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	rt = at(rt, 10*time.Minute)
+	b = stallAlive(t, rt, b, jsonlLine(t, "agy-errors/results.jsonl", 1), false)
+
+	// The fixture would gate if it were read: prove the line is there.
+	patterns := availability.LimitPatterns(AvailabilityDeps(rt), b.BuilderCandidate)
+	if _, ok := availability.MatchLimit(limitText(context.Background(), rt, b), patterns, rt.Now(), rt.Policy.LimitGateDefault()); !ok {
+		t.Fatal("the tail holds no limit line: this test would pass with the scan removed")
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if !got.StalledSince.IsZero() {
+		t.Errorf("StalledSince = %s, want zero: the stream is still moving", got.StalledSince)
+	}
+	if got.BuilderCandidate != b.BuilderCandidate || got.Builder.PID != b.Builder.PID {
+		t.Errorf("an alive, unstale tick is left alone: candidate=%q pid=%d", got.BuilderCandidate, got.Builder.PID)
+	}
+	if rl := rateLimitedEntries(loadLedger(t, rt)); len(rl) != 0 {
+		t.Errorf("rate_limited entries = %+v, want none from a tick that never scanned", rl)
+	}
+	if sw := switches(t, rt); len(sw) != 0 {
+		t.Errorf("switch entries = %+v, want none", sw)
+	}
+	if len(fr.kills) != 0 || len(fr.specs) != 1 {
+		t.Errorf("kills=%d specs=%d, want no replacement and no kill", len(fr.kills), len(fr.specs))
+	}
+}
+
+// TestReconcileHeadlessStalledLimitHaltsAtTheSwitchLimit pins case (d): the
+// live stall gate spends no switch budget, so a binding already at
+// max_switches halts through switchBuilder's own guard instead of switching --
+// and it halts before the kill, so the process it was holding is left alone.
+func TestReconcileHeadlessStalledLimitHaltsAtTheSwitchLimit(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	rt = at(rt, 10*time.Minute)
+	b = stallAlive(t, rt, b, jsonlLine(t, "agy-errors/results.jsonl", 1), true)
+	b.RoundSwitches = rt.Policy.SwitchLimit()
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you at the switch limit", got.State)
+	}
+	if !strings.Contains(got.Halt, "already switched") {
+		t.Errorf("Halt = %q, want the max_switches reason", got.Halt)
+	}
+	if rl := rateLimitedEntries(loadLedger(t, rt)); len(rl) != 1 {
+		t.Errorf("rate_limited entries = %+v, want one: the limit was recorded before the halt", rl)
+	}
+	if sw := switches(t, rt); len(sw) != 0 {
+		t.Errorf("switch entries = %+v, want none: the binding halted instead", sw)
+	}
+	if len(fr.specs) != 1 || len(fr.kills) != 0 {
+		t.Errorf("the guard runs before the kill and the replacement: specs=%d kills=%d", len(fr.specs), len(fr.kills))
+	}
+}
+
+// TestReconcileHeadlessStalledDenialIsExitOnly pins case (e): the live stall
+// gate reads limit patterns and nothing else. A permission denial on a stalled
+// live tail must not route through it -- the denial belongs to the exit path,
+// which is checked here by letting the same process exit and reading the entry
+// it writes. The escape check is git-based and runs at close for the same
+// reason: no gate, no escape, no new path on a live binding.
+func TestReconcileHeadlessStalledDenialIsExitOnly(t *testing.T) {
+	t.Parallel()
+
+	const denial = `{"event":"step_update","step_update":{"step_type":"tool","state":"ERROR","tool_name":"run_command","tool_info":{"error":{"message":"tool use was rejected: Bash command not allowed"}}}}` + "\n"
+
+	// The live tick: stalled, and the tail's only signal is the denial.
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	rt = at(rt, 10*time.Minute)
+	b = stallAlive(t, rt, b, denial, true)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.StalledSince.IsZero() {
+		t.Fatal("StalledSince is zero, want the fixture stalled")
+	}
+	if got.State != store.StateActive || got.Builder.PID != b.Builder.PID {
+		t.Errorf("a live denial is not this tick's business: state=%s pid=%d", got.State, got.Builder.PID)
+	}
+	if got.BuilderCandidate != b.BuilderCandidate || got.RoundSwitches != 0 {
+		t.Errorf("candidate=%q switches=%d, want no switch from a live denial", got.BuilderCandidate, got.RoundSwitches)
+	}
+	if rl := rateLimitedEntries(loadLedger(t, rt)); len(rl) != 0 {
+		t.Errorf("rate_limited entries = %+v, want none", rl)
+	}
+	if sw := switches(t, rt); len(sw) != 0 {
+		t.Errorf("switch entries = %+v, want none", sw)
+	}
+	if len(fr.kills) != 0 || len(fr.specs) != 1 {
+		t.Errorf("kills=%d specs=%d, want the live tick to change nothing", len(fr.kills), len(fr.specs))
+	}
+
+	// The exit path still owns it: the same denial is recognised there, so
+	// the assertion above is not passing on a line no path ever matches.
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 2)
+	exited, err := reconcile(t, at(rt, 11*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile (exited): %v", err)
+	}
+	if exited.Round != 1 {
+		t.Errorf("Round after the exit = %d, want the same round", exited.Round)
+	}
+	if !strings.Contains(strings.Join(exitNotes(t, rt), " "), "permission-blocked") {
+		t.Errorf("exit notes = %v, want the denial recorded at exit", exitNotes(t, rt))
+	}
+}
+
+// exitNotes is every note webshop's round-1 log carries, for the exit path's
+// denial assertion.
+func exitNotes(t *testing.T, rt Runtime) []string {
+	t.Helper()
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Note != "" {
+			out = append(out, e.Note)
+		}
+	}
+	return out
+}
+
 func TestReconcileHeadlessBudgetHaltsButNeverKills(t *testing.T) {
 	t.Parallel()
 

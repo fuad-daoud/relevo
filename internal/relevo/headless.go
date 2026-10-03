@@ -812,6 +812,33 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if progressDue(next, now, rt.Policy.ProgressInterval()) {
 			next = progressStep(rt, next, now, sampleSignals(ctx, rt, next))
 		}
+		// A builder that went quiet on both signals is not necessarily
+		// working (#905): it may be sitting on a provider's rate-limit
+		// answer it never got to report, because it never got to exit. The
+		// exit path already gates on the same tail, but only once the
+		// process is gone -- a stalled one can sit there until the round's
+		// budget runs out. So the stall is the gate: scan the current
+		// process's own harness lines (limitText) and, on a match, take the
+		// existing gateOnLimit -> switchBuilder path, uncounted and with
+		// closeOld, so the replacement starts on the same round.
+		//
+		// Nothing else about this tick changes: only a stalled binding is
+		// scanned, so an alive tick inside stall_after_ms still pays no
+		// stream read, and a stall with no limit line in its tail falls
+		// through to deliverAndSettle exactly as before. Escape and denial
+		// text keep their precedence at exit -- this scan is limit patterns
+		// only, and never reads anything the exit path would have handled.
+		if !next.StalledSince.IsZero() {
+			gated, _, handled, gerr := gateOnLimit(ctx, rt, tx, next, limitText(ctx, rt, next), true)
+			if gerr != nil {
+				return next, gerr
+			}
+			if handled {
+				// A switch tick does not deliver, like every other switch:
+				// replacing the builder is the whole of what this tick did.
+				return gated, nil
+			}
+		}
 		return deliverAndSettle(ctx, rt, tx, next)
 	}
 
