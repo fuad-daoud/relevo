@@ -992,6 +992,14 @@ func TestShellNamesTheAnchorInsteadOfTheSelector(t *testing.T) {
 	if !strings.Contains(report, "label: key ? labelFor(resolve(key)) : \"\"") {
 		t.Error("overlay.js labels does not derive each anchor's name from the element it resolves to")
 	}
+}
+
+// TestShellShowsTheAnchorNameNotTheSelector pins the other half of the same rule: what
+// the reader is shown for an anchor. The composer says what was clicked by name and the
+// card heads itself with it, neither falling back to the selector that stays in the file
+// for the agent and the CLI. A label arriving rewrites the open card in place, because
+// redrawing it would empty a reply already being typed.
+func TestShellShowsTheAnchorNameNotTheSelector(t *testing.T) {
 	shell, err := readShellFile("comments.js")
 	if err != nil {
 		t.Fatalf("read shell comments.js: %v", err)
@@ -1030,11 +1038,9 @@ func TestShellNamesTheAnchorInsteadOfTheSelector(t *testing.T) {
 			t.Errorf("commentlist.js labelFor does not carry %q, so the card would show a selector", want)
 		}
 	}
-	if strings.Contains(named, "thread.key;") && !strings.Contains(named, `labels[thread.key] || "element";`) {
+	if strings.Contains(named, "return thread.key;") {
 		t.Error("commentlist.js labelFor falls back to the raw selector")
 	}
-	// A label turning up must not empty a reply being typed, so the open card is
-	// rewritten in place rather than drawn again.
 	setLabels := shellFunc(l, "function setLabels(next) {")
 	if !strings.Contains(setLabels, "cardLabel.textContent = labelFor(thread);") {
 		t.Error("commentlist.js setLabels does not name the open card when its label arrives")
