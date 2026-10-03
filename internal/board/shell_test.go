@@ -189,11 +189,12 @@ func TestShellShipsEveryScriptItLoads(t *testing.T) {
 	}
 }
 
-// TestShellCommentUIStateText pins the copy of the five states a reader can be
-// left looking at. These are the strings a board with no notes, an unreadable
+// TestShellCommentUIStateText pins the copy of the states a reader can be left
+// looking at. These are the strings a board with no notes, an unreadable
 // annotations file, a draft that the disk moved under, no board at all, or a
 // failed read produces, and each one says something the reader cannot work out
-// from the page itself.
+// from the page itself. The composer a pick opens and the card that answers a
+// thread are named the same way: what the pane is, and how to leave it.
 func TestShellCommentUIStateText(t *testing.T) {
 	cases := []struct {
 		file string
@@ -204,6 +205,8 @@ func TestShellCommentUIStateText(t *testing.T) {
 		{"commentlist.js", "no comments yet"},
 		// The annotations file could not be read, and the reason is shown.
 		{"commentlist.js", "comments could not be read: "},
+		// The card's own box, which answers a thread rather than the board.
+		{"commentlist.js", "reply to this thread"},
 		// The dirty banner: the board moved, the draft is kept, Apply takes it.
 		{"comments.js", "the board changed on disk -- your draft is kept; apply to take the update"},
 		// No board at this path yet, naming the path rather than failing blank.
@@ -211,6 +214,11 @@ func TestShellCommentUIStateText(t *testing.T) {
 		// The board could not be read, and so could the token be missing.
 		{"shell.js", "could not load the board: "},
 		{"shell.js", "no board token in the URL fragment; reopen the printed board URL"},
+		// The dialog a fresh pick opens, its box, and the way out of it. The
+		// cancel control is named for a reader who cannot see the cross.
+		{"index.html", "new comment"},
+		{"index.html", "say something about this element"},
+		{"index.html", `aria-label="cancel this comment"`},
 	}
 	for _, c := range cases {
 		data, err := readShellFile(c.file)
@@ -336,6 +344,37 @@ func shellFunc(src, signature string) string {
 	}
 	rest := src[start:]
 	end := strings.Index(rest, "\n  }")
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// shellMarkup returns the slice of index.html from an opening marker to the tag
+// that closes that element, so a pin can ask what one element carries rather
+// than whether an id appears anywhere on the page.
+func shellMarkup(src, open, close string) string {
+	from := strings.Index(src, open)
+	if from < 0 {
+		return ""
+	}
+	to := strings.Index(src[from:], close)
+	if to < 0 {
+		return ""
+	}
+	return src[from : from+to]
+}
+
+// shellInjectedRule returns one rule of the styles the overlay injects. Those
+// run the selector straight into its brace, because the style text is a
+// concatenation of quoted pieces, so shellRule's "selector {" cannot find them.
+func shellInjectedRule(src, selector string) string {
+	start := strings.Index(src, selector)
+	if start < 0 {
+		return ""
+	}
+	rest := src[start:]
+	end := strings.Index(rest, "}")
 	if end < 0 {
 		return ""
 	}
@@ -553,5 +592,274 @@ func TestShellPinsAreDotsWithAccessibleNames(t *testing.T) {
 	if !strings.Contains(shellFunc(src, "function setPins(entries)"),
 		`var key = "$" + (entry.selector || "");`) {
 		t.Error("overlay.js does not group the pins by anchor, so one thread would get one pin per note")
+	}
+	// The dot is drawn bigger, and bigger is a placement decision: the margin is
+	// half the width so the dot still sits on the point it names rather than
+	// beside it, and placePin is left alone so it lands in the same place.
+	dot := shellInjectedRule(src, ".relevo-pin{")
+	if dot == "" {
+		t.Fatal("overlay.js carries no rule for the dot")
+	}
+	for _, want := range []string{"width:1.3em;height:1.3em;", "margin:-0.65em 0 0 -0.65em;"} {
+		if !strings.Contains(dot, want) {
+			t.Errorf("the dot rule does not carry %q, which the bigger dot needs", want)
+		}
+	}
+	if strings.Contains(src, "width:0.9em") {
+		t.Error("overlay.js still draws the dot at the old 0.9em")
+	}
+	if !strings.Contains(shellFunc(src, "function placePin(pin, thread, el, index) {"),
+		"box.left + box.width * clamp(first.x)") {
+		t.Error("overlay.js placePin no longer places the dot on the point the thread named")
+	}
+	// The colour variants are what marks a board-level and an orphan thread, and
+	// a bigger dot must not have merged them.
+	for _, want := range []string{".relevo-board-pin{background:#5a5a5a;}", ".relevo-orphan-pin{background:#8a5a00;"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("overlay.js does not carry %q, which marks what kind of thread the dot names", want)
+		}
+	}
+}
+
+// TestShellCommentPanelIsReadOnly pins the all-comments panel as a list and
+// nothing more. The composer a pick opens lives in the input dialog, so the
+// panel holds no box to write into, and a row is a way to the dot: it opens that
+// thread's card and leaves the row it came from marked.
+func TestShellCommentPanelIsReadOnly(t *testing.T) {
+	data, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	aside := shellMarkup(string(data), `<aside id="comments"`, "</aside>")
+	if aside == "" {
+		t.Fatal("index.html has no all-comments panel")
+	}
+	// What still makes it the panel.
+	for _, want := range []string{
+		`id="comment-panel-title"`,
+		`id="comments-close"`,
+		`id="comment-list"`,
+	} {
+		if !strings.Contains(aside, want) {
+			t.Errorf("the all-comments panel does not carry %q", want)
+		}
+	}
+	// And what makes it a list rather than a composer.
+	for _, gone := range []string{
+		`id="comment-draft"`,
+		`id="comment-post"`,
+		`id="comment-selector"`,
+	} {
+		if strings.Contains(aside, gone) {
+			t.Errorf("the all-comments panel still carries %q, so it is not read-only", gone)
+		}
+	}
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	l := string(list)
+	// A row navigates: the click opens the thread's card, and the card focuses
+	// the row that opened it, so the panel and the board name the same thread.
+	row := shellFunc(l, "function addRow(thread) {")
+	if !strings.Contains(row, `row.addEventListener("click", function () { openCard(thread.id); });`) {
+		t.Error("commentlist.js addRow does not open the thread's card on click")
+	}
+	if !strings.Contains(shellFunc(l, "function openCard(id, x, y) {"), "focus(id);") {
+		t.Error("commentlist.js openCard does not focus the row it was opened from")
+	}
+}
+
+// TestShellClickOpensTheInputDialog pins what each click opens. A fresh pick on
+// the board opens the input dialog, carrying the selector it is anchored to and
+// a way to put the composer away again; a click on a dot opens that thread's
+// card instead, with the thread's entries and the box that answers them.
+func TestShellClickOpensTheInputDialog(t *testing.T) {
+	data, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	src := string(data)
+	dialog := shellMarkup(src, `<section id="comment-dialog"`, "</section>")
+	if dialog == "" {
+		t.Fatal("index.html has no input dialog for a fresh pick")
+	}
+	for _, want := range []string{
+		`id="comment-draft"`,
+		`id="comment-selector"`,
+		`id="comment-post"`,
+		`id="comment-dialog-close"`,
+		`aria-label="cancel this comment"`,
+	} {
+		if !strings.Contains(dialog, want) {
+			t.Errorf("the input dialog does not carry %q", want)
+		}
+	}
+	// It floats like the card, so opening it cannot move the board under the
+	// pointer, and it is hidden until a pick opens it.
+	if !strings.Contains(shellRule(src, "#comment-dialog"), "position: fixed") {
+		t.Error("the input dialog does not float over the canvas")
+	}
+	if !strings.Contains(src, "#comment-dialog.open { display: block; }") {
+		t.Error("the input dialog is not shown by opening it")
+	}
+	shell, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	c := string(shell)
+	for _, want := range []string{
+		`var dialogEl = document.getElementById("comment-dialog");`,
+		`if (msg.type === "relevo.pick") { openDraft(msg.selector || "", msg.x, msg.y); return; }`,
+		`dialogEl.classList.add("open");`,
+		`if (msg.type === "relevo.pin") {`,
+		"list.openCard(msg.id, msg.x, msg.y);",
+	} {
+		if !strings.Contains(c, want) {
+			t.Errorf("comments.js does not carry %q, which the two kinds of click need", want)
+		}
+	}
+	// Escape puts the composer away without turning the mode off, and a click in
+	// it is not a click outside the panel.
+	if !strings.Contains(shellFunc(c, `document.addEventListener("keydown"`), "closeDialog();") {
+		t.Error("comments.js Escape does not close the input dialog")
+	}
+	if !strings.Contains(shellFunc(c, `document.addEventListener("click"`), "dialogEl.contains(ev.target)") {
+		t.Error("comments.js treats a click in the input dialog as a click outside")
+	}
+}
+
+// TestShellCtrlEnterPostsFromBothTextareas pins the keyboard path. A note is
+// typed into one of two boxes -- the dialog's draft and the card's reply -- and
+// both post on Ctrl+Enter through the same call their button makes, so a
+// keypress and a click cannot post differently. Enter alone stays a newline.
+func TestShellCtrlEnterPostsFromBothTextareas(t *testing.T) {
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	l := string(list)
+	key := shellFunc(l, "function submitOnCtrlEnter(el, fn) {")
+	for _, want := range []string{
+		`if (!ev.ctrlKey || ev.key !== "Enter") return;`,
+		"ev.preventDefault();",
+	} {
+		if !strings.Contains(key, want) {
+			t.Errorf("commentlist.js submitOnCtrlEnter does not carry %q", want)
+		}
+	}
+	// Without the export the dialog's box has no way to reach it.
+	if !strings.Contains(l, "submitOnCtrlEnter: submitOnCtrlEnter") {
+		t.Error("commentlist.js does not export submitOnCtrlEnter")
+	}
+	box := shellFunc(l, "function replyBox(thread) {")
+	if !strings.Contains(box, "submitOnCtrlEnter(box, function () { sendReply(thread, box); });") {
+		t.Error("commentlist.js replyBox does not post on Ctrl+Enter")
+	}
+	if got := strings.Count(box, "sendReply(thread, box)"); got != 2 {
+		t.Errorf("the card's box posts through sendReply from %d places, want the key and the button", got)
+	}
+	shell, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	for _, want := range []string{
+		"function submitDraft() {",
+		"post(picked, draftEl.value);",
+		`postBtn.addEventListener("click", submitDraft);`,
+		"list.submitOnCtrlEnter(draftEl, submitDraft);",
+	} {
+		if !strings.Contains(string(shell), want) {
+			t.Errorf("comments.js does not carry %q, which a keyboard post needs", want)
+		}
+	}
+}
+
+// TestShellThreadCardStacksItsEntriesBoxAndActions pins the card's own layout:
+// the thread's entries, then the box answering them, then the controls in a row
+// beneath that. A control floated beside the box is what let the textarea cover
+// the buttons under it.
+func TestShellThreadCardStacksItsEntriesBoxAndActions(t *testing.T) {
+	data, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	src := string(data)
+	// The float the round removed: a floated control is a sibling a block box
+	// then overlaps.
+	if strings.Contains(src, "float: right") {
+		t.Error("index.html still floats a card control, which the reply box then covers")
+	}
+	box := shellRule(src, "#comment-draft, #thread-reply")
+	if box == "" {
+		t.Fatal("index.html has no rule sizing the reply box with the draft box")
+	}
+	for _, want := range []string{"display: block;", "width: 100%;"} {
+		if !strings.Contains(box, want) {
+			t.Errorf("the reply box rule does not carry %q, so it can sit beside a control", want)
+		}
+	}
+	actions := shellRule(src, ".relevo-card-actions")
+	if !strings.Contains(actions, "display: flex;") {
+		t.Error("the card's controls are not a row of their own")
+	}
+	if !strings.Contains(actions, "justify-content: space-between;") {
+		t.Error("the card's controls are not spread to the ends of their row")
+	}
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	// Stacked in that order: the entries, then the box and its row together.
+	card := shellFunc(string(list), "function openCard(id, x, y) {")
+	entryAt := strings.Index(card, `line("span", "relevo-text"`)
+	boxAt := strings.Index(card, "cardEl.appendChild(replyBox(thread));")
+	if entryAt < 0 || boxAt < 0 || entryAt > boxAt {
+		t.Error("commentlist.js openCard does not stack the entries above the box")
+	}
+	if !strings.Contains(shellFunc(string(list), "function replyBox(thread) {"),
+		`row.className = "relevo-card-actions";`) {
+		t.Error("commentlist.js replyBox does not build the card's row of controls")
+	}
+}
+
+// TestShellReplyKeepsTheCardOpen pins what a posted reply does to the card it
+// came from: the entry joins the thread on screen and the box comes back empty,
+// while the card stays exactly where the reader left it. A post never tears the
+// card down.
+func TestShellReplyKeepsTheCardOpen(t *testing.T) {
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	l := string(list)
+	clear := shellFunc(l, "function clearReply() {")
+	// The redraw is an open rather than the toggle that closes an open card,
+	// which is why the handle is dropped first and the same thread re-opened.
+	for _, want := range []string{
+		"if (!cardId) return;",
+		"var id = cardId;",
+		"cardId = null;",
+		"openCard(id);",
+	} {
+		if !strings.Contains(clear, want) {
+			t.Errorf("commentlist.js clearReply does not carry %q, which redraws the open card", want)
+		}
+	}
+	if strings.Contains(clear, "closeCard()") {
+		t.Error("commentlist.js clearReply closes the card, so a reply tears down the thread being read")
+	}
+	shell, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	c := string(shell)
+	// A reply goes down clearReply and a first post down the composer, and the
+	// post path itself closes no card.
+	if !strings.Contains(c, "if (picked === anchor) closeDialog(); else list.clearReply();") {
+		t.Error("comments.js does not send a reply down clearReply, which redraws the open card")
+	}
+	if strings.Contains(shellFunc(c, "function post(anchor, text) {"), "closeCard") {
+		t.Error("comments.js post closes a card, so a reply would tear down the thread being read")
 	}
 }

@@ -1,9 +1,7 @@
 // comments.js -- the shell's comment mode: the toggle, the floating panes, the
-// draft box, and the banner for a board that moved under an open draft.
-//
-// It runs in the shell document, the same origin as the API and the only place
-// the token lives, and treats every message from the frame as a claim. Drawing
-// lives in commentlist.js; everything that writes happens here.
+// input dialog a pick opens, and the banner for a board that moved under an open
+// draft. It runs in the shell document, the same origin as the API and the only
+// place the token lives, and treats every message from the frame as a claim.
 (function () {
   "use strict";
 
@@ -30,9 +28,11 @@
   var selEl = document.getElementById("comment-selector");
   var applyBtn = document.getElementById("banner-apply");
   var bannerEl = document.getElementById("banner");
+  var dialogEl = document.getElementById("comment-dialog");
+  var cancelBtn = document.getElementById("comment-dialog-close");
 
-  // setMode turns comment mode on and off. Off takes the listeners back out of
-  // the frame, closes the card, drops the pins and clears the pick, so nothing
+  // setMode turns comment mode on and off. Off takes the listeners back out of the
+  // frame, closes the card, drops the dots and puts the composer away, so nothing
   // is left half-armed on a board nobody is commenting on.
   function setMode(on) {
     mode = on === true;
@@ -42,14 +42,12 @@
     postToFrame({ type: "relevo.mode", on: mode });
     if (mode) {
       postPins();
-      draftEl.focus();
       return;
     }
     list.closeCard();
-    picked = null;
-    selEl.textContent = "";
+    closeDialog();
     postToFrame({ type: "relevo.pins", annotations: [] });
-    // Focus returns to the toggle rather than to a button in a pane that is gone.
+    // Focus returns to the toggle rather than to a box in a pane that is gone.
     commentBtn.focus();
   }
 
@@ -58,22 +56,20 @@
     if (frame && frame.contentWindow) frame.contentWindow.postMessage(msg, "*");
   }
 
-  // postPins sends the annotations only in comment mode: out of it the board
-  // carries no pins.
+  // postPins sends the annotations only in comment mode: out of it the board has none.
   function postPins() {
     if (!mode) return;
     postToFrame({ type: "relevo.pins", annotations: (doc && doc.annotations) || [] });
   }
 
-  // requestPoints asks the frame where it drew the pins: only the frame can see them.
+  // requestPoints asks the frame where it drew the dots: only the frame can see them.
   function requestPoints() {
     if (!mode) return;
     postToFrame({ type: "relevo.points" });
   }
 
-  // onFrameMessage accepts a message only when it came from our own frame. The
-  // check is ev.source against the frame's contentWindow, not a shape test: the
-  // board's own scripts share this frame, so the source is the only identification.
+  // onFrameMessage accepts a message only when it came from our own frame: the
+  // board's own scripts share that frame, so the source is the only identity.
   function onFrameMessage(ev) {
     var frame = document.getElementById("frame");
     if (!frame || ev.source !== frame.contentWindow) return;
@@ -86,35 +82,38 @@
       postPins();
       return;
     }
-    if (msg.type === "relevo.pick") {
-      openDraft(msg.selector || "", msg.x, msg.y);
-      return;
-    }
-    if (msg.type === "relevo.orphans") {
-      list.setOrphans(msg.ids);
-      return;
-    }
-    if (msg.type === "relevo.points") {
-      list.setPoints(msg.points);
-      return;
-    }
+    if (msg.type === "relevo.pick") { openDraft(msg.selector || "", msg.x, msg.y); return; }
+    if (msg.type === "relevo.orphans") { list.setOrphans(msg.ids); return; }
+    if (msg.type === "relevo.points") { list.setPoints(msg.points); return; }
     if (msg.type === "relevo.pin") {
-      // A pin was clicked: open that thread's card and mark its list row.
+      // A dot was clicked: open that thread's card and mark its list row.
       list.setPoints([]);
       list.openCard(msg.id, msg.x, msg.y);
     }
   }
   window.addEventListener("message", onFrameMessage);
 
-  // openDraft takes a pick and opens the draft box. The selector is shown, not
-  // edited: the overlay built it and is not second-guessed.
+  // openDraft takes a pick and opens the composer on it, which is what a fresh click
+  // on the board opens. The selector is shown, not edited: the overlay built it.
   function openDraft(selector, x, y) {
     picked = { selector: selector, x: x, y: y };
     draft = "";
     draftEl.value = "";
     selEl.textContent = selector ? selector : "board";
     setDirty(true);
+    dialogEl.classList.add("open");
     draftEl.focus();
+  }
+
+  // closeDialog puts the composer away without posting. The pick goes with it, so a
+  // Post after it has nothing to name: the dialog is closed, not merely emptied.
+  function closeDialog() {
+    picked = null;
+    draft = "";
+    draftEl.value = "";
+    selEl.textContent = "";
+    setDirty(false);
+    dialogEl.classList.remove("open");
   }
 
   function setDirty(on) {
@@ -148,20 +147,14 @@
       if (!res.ok) throw new Error("the server answered " + res.status);
       return res.json();
     }).then(function (posted) {
-      // The post worked: the entry joins the document the pins and the list read.
+      // The post worked: the entry joins the document the dots and the list read.
       if (!posted) return;
       aetag = posted.annotationsEtag || aetag;
       if (doc) doc.annotations = (doc.annotations || []).concat([posted.annotation]);
       setDirty(false);
-      // Only the box this post came out of is emptied: a reply leaves an open draft
-      // alone, and a first post leaves the card's reply alone.
-      if (picked === anchor) {
-        picked = null;
-        draftEl.value = "";
-        selEl.textContent = "";
-      } else {
-        list.clearReply();
-      }
+      // Only the box this post came out of is emptied: a reply leaves the open card
+      // alone, and a first post puts the composer away.
+      if (picked === anchor) closeDialog(); else list.clearReply();
       postPins();
       list.setDocument(doc);
     }).catch(function (err) {
@@ -191,9 +184,7 @@
     }).then(function (next) {
       if (!next) return;
       onBoardDocument(next);
-    }).catch(function () {
-      // A failed poll is not worth a banner: the next one is two seconds away.
-    });
+    }).catch(function () {});   // a failed poll is not worth a banner: another is two seconds away
   }
 
   function onBoardDocument(next) {
@@ -205,11 +196,10 @@
     showStale();
   }
 
-  // adopt installs a document as the current one and draws it.
-  //
-  // The frame is re-rendered only when the board itself moved. A new annotations
-  // etag redraws the pins and nothing else: re-rendering on every comment tears
-  // down the whole document -- scroll position, page state, the click in flight.
+  // adopt installs a document as the current one and draws it. The frame is
+  // re-rendered only when the board itself moved: a new annotations etag redraws
+  // the dots and nothing else, because re-rendering on every comment tears down
+  // the whole document -- scroll position, page state, the click in flight.
   function adopt(next) {
     var boardMoved = !doc || next.isNew || (next.html || "") !== (doc.html || "");
     doc = next;
@@ -235,8 +225,7 @@
     applyBtn.style.display = "inline-block";
   }
 
-  // apply takes the held-back document and clears the banner. Applying the board
-  // is not applying the comment.
+  // apply takes the held-back document and clears the banner. Applying the board is not applying the comment.
   function apply() {
     applyBtn.style.display = "none";
     bannerEl.className = "";
@@ -247,21 +236,33 @@
     adopt(held);
   }
 
+  // submitDraft is the one path a draft takes to the API: Post and Ctrl+Enter
+  // both call it, so a keypress and a click cannot post differently.
+  function submitDraft() {
+    post(picked, draftEl.value);
+  }
+
   commentBtn.addEventListener("click", function () { setMode(!mode); });
   closeBtn.addEventListener("click", function () { setMode(false); });
-  postBtn.addEventListener("click", function () { post(picked, draftEl.value); });
+  postBtn.addEventListener("click", submitDraft);
+  cancelBtn.addEventListener("click", closeDialog);
   applyBtn.addEventListener("click", apply);
   draftEl.addEventListener("input", function () { draft = draftEl.value; });
+  list.submitOnCtrlEnter(draftEl, submitDraft);
 
   // The card's reply box posts here too, onto the anchor of the thread it answers.
   list.setReplyHandler(post);
 
-  // Escape unwinds one layer at a time: the card if open, then the panel.
+  // Escape unwinds one layer at a time: the card, then the composer, then the panel.
   document.addEventListener("keydown", function (ev) {
     if (ev.key !== "Escape") return;
     if (list.cardOpen()) {
       list.closeCard();
       commentBtn.focus();
+      return;
+    }
+    if (dialogEl.classList.contains("open")) {
+      closeDialog();
       return;
     }
     if (mode) setMode(false);
@@ -273,8 +274,8 @@
     var frame = document.getElementById("frame");
     if (frame && frame.contains(ev.target)) return;
     if (pane.contains(ev.target)) return;
-    // The toggle opened the panel with this same click as it bubbles up, so it must
-    // not dismiss what it just opened.
+    if (dialogEl.contains(ev.target)) return;
+    // The toggle opened the panel with this same click as it bubbles up.
     if (commentBtn.contains(ev.target)) return;
     if (list.cardOpen()) {
       list.closeCard();
@@ -283,7 +284,6 @@
     setMode(false);
   });
 
-  // boot takes the first board document shell.js publishes, so one read serves all.
   function boot() {
     if (api.onDocument) api.onDocument(function (next) {
       doc = next;

@@ -1,10 +1,7 @@
 // commentlist.js -- drawing the comments: the all-comments list, and the one
-// floating card that shows a single thread beside its pin.
-//
-// This is the rendering half of comment mode, split out of comments.js so each
-// file stays readable on its own. It holds no token and writes nothing: posting
-// a note is comments.js's job alone. It reads the same board document off the
-// same small window.__relevo surface rather than fetching a second copy.
+// floating card that shows a single thread beside its dot. It is the rendering
+// half of comment mode: it holds no token and writes nothing, and it reads the
+// board document comments.js already read rather than fetching a second copy.
 (function () {
   "use strict";
 
@@ -31,8 +28,7 @@
     render();
   }
 
-  // setPoints records where the frame drew each pin; the card is anchored from
-  // these rather than from the pin's DOM, which the shell cannot read.
+  // setPoints records where the frame drew each dot, the only place the card can anchor from.
   function setPoints(points) {
     pinPoints = {};
     for (var i = 0; i < (points || []).length; i++) {
@@ -41,10 +37,9 @@
     if (cardId) placeCard();
   }
 
-  // threads groups the document's flat annotations by their anchor, in file
-  // order: the same selector string is one thread, an empty selector the board.
-  // Presentation only -- the stored file stays flat -- and a thread carries the
-  // first entry's id as the handle the pins, rows and card share.
+  // threads groups the flat annotations by their anchor, in file order: the same
+  // selector string is one thread, an empty selector the board. Presentation only,
+  // so the stored file stays flat; a thread's handle is its first entry's id.
   function threads() {
     var entries = (doc && doc.annotations) || [];
     var out = [];
@@ -91,37 +86,42 @@
       (all[i].key ? anchored : boardLevel).push(all[i]);
     }
     if (boardLevel.length) {
-      listEl.appendChild(heading("board"));
+      listEl.appendChild(line("h3", "", "board"));
       for (var b = 0; b < boardLevel.length; b++) addRow(boardLevel[b]);
     }
     if (anchored.length) {
-      listEl.appendChild(heading("elements"));
+      listEl.appendChild(line("h3", "", "elements"));
       for (var a = 0; a < anchored.length; a++) addRow(anchored[a]);
     }
     if (!all.length) {
-      listEl.appendChild(note("relevo-empty", "no comments yet"));
+      listEl.appendChild(line("p", "relevo-empty", "no comments yet"));
     }
     if (doc && doc.annotationsError) {
-      listEl.appendChild(note("relevo-error", "comments could not be read: " + doc.annotationsError));
+      listEl.appendChild(line("p", "relevo-error", "comments could not be read: " + doc.annotationsError));
     }
     if (cardId && !threadById(cardId)) closeCard();
   }
 
-  function note(className, text) {
-    var el = document.createElement("p");
-    el.className = className;
+  // line is every piece of text the panel and the card are built from: one tag,
+  // one class, the text. A row's lines, an orphan mark and a heading are all it.
+  function line(tag, className, text) {
+    var el = document.createElement(tag);
+    el.className = className || "";
     el.textContent = text;
     return el;
   }
 
-  function heading(text) {
-    var h = document.createElement("h3");
-    h.textContent = text;
-    return h;
+  // byLine is the "who, when" line a row and the card share.
+  function byLine(entry) {
+    return line("span", "relevo-by", entry.by + " · " + entry.at);
+  }
+
+  function orphanMark() {
+    return line("span", "relevo-orphan-mark", "element not found");
   }
 
   // addRow is one thread rather than one note: the row carries the first note on
-  // that anchor, and opens the card with the whole conversation.
+  // that anchor, and opens the card on the whole conversation.
   function addRow(thread) {
     var first = thread.entries[0];
     var row = document.createElement("button");
@@ -130,45 +130,18 @@
     row.setAttribute("data-relevo-id", thread.id);
     if (orphan(thread)) row.className += " orphan";
     row.appendChild(byLine(first));
-    row.appendChild(textLine(first.text));
-    if (thread.entries.length > 1) row.appendChild(countLine(thread.entries.length));
+    row.appendChild(line("span", "relevo-text", first.text));
+    // The count is in the by-line's aside style: the row is a conversation, and
+    // the number is the only thing on it that says so.
+    if (thread.entries.length > 1) {
+      row.appendChild(line("span", "relevo-by", thread.entries.length + " in this thread"));
+    }
     if (orphan(thread)) row.appendChild(orphanMark());
     row.addEventListener("click", function () { openCard(thread.id); });
     listEl.appendChild(row);
   }
 
-  // countLine says the row is a conversation, in the by-line's aside style.
-  function countLine(n) {
-    var el = document.createElement("span");
-    el.className = "relevo-by";
-    el.textContent = n + " in this thread";
-    return el;
-  }
-
-  // byLine is the "who, when" line, shared by a row and by the card.
-  function byLine(entry) {
-    var who = document.createElement("span");
-    who.className = "relevo-by";
-    who.textContent = entry.by + " · " + entry.at;
-    return who;
-  }
-
-  function textLine(text) {
-    var what = document.createElement("span");
-    what.className = "relevo-text";
-    what.textContent = text;
-    return what;
-  }
-
-  function orphanMark() {
-    var mark = document.createElement("span");
-    mark.className = "relevo-orphan-mark";
-    mark.textContent = "element not found";
-    return mark;
-  }
-
-  // focus marks the row without opening the card: opening every thread from the
-  // list would leave the board unseen.
+  // focus marks the row alone: opening every thread would leave the board unseen.
   function focus(id) {
     var rows = listEl.querySelectorAll("[data-relevo-id]");
     for (var i = 0; i < rows.length; i++) {
@@ -182,9 +155,9 @@
 
   // ---- the floating card ---------------------------------------------------
 
-  // openCard shows one thread beside its pin: every note on that anchor, in file
-  // order, and the reply box that answers them. One card at a time is the point,
-  // and re-opening the card already showing is how a second click closes it.
+  // openCard shows one thread beside its dot: every note on that anchor in file
+  // order, then the box that answers them and the row of controls under it. One
+  // card at a time, and re-opening the open one is how a second click closes it.
   function openCard(id, x, y) {
     if (cardId === id) {
       closeCard();
@@ -198,34 +171,53 @@
     for (var i = 0; i < thread.entries.length; i++) {
       var entry = thread.entries[i];
       cardEl.appendChild(byLine(entry));
-      cardEl.appendChild(textLine(entry.text));
+      cardEl.appendChild(line("span", "relevo-text", entry.text));
       if (orphanIds[entry.id]) cardEl.appendChild(orphanMark());
     }
     cardEl.appendChild(replyBox(thread));
-    cardEl.appendChild(closeButton());
     cardEl.classList.add("open");
     placeCard(point);
     focus(id);
   }
 
-  // replyBox is the card's own draft box, posting through the handler
-  // comments.js installed with the thread's anchor, so a reply lands on the
-  // element the thread is about rather than on whatever was last clicked.
+  // replyBox is the card's bottom section: the box that answers the thread, and
+  // the row of controls under it -- Reply left, the way out right, a row rather
+  // than a control floated beside the box, which the box then covered. It posts
+  // through the handler comments.js gave the thread's anchor: a reply lands on
+  // the thread, not on the last pick.
   function replyBox(thread) {
-    var wrap = document.createElement("div");
     var box = document.createElement("textarea");
     box.id = "thread-reply";
     box.placeholder = "reply to this thread";
+    submitOnCtrlEnter(box, function () { sendReply(thread, box); });
+    var row = document.createElement("div");
+    row.className = "relevo-card-actions";
     var btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = "Reply";
-    btn.addEventListener("click", function () {
-      var text = box.value.trim();
-      if (text && onReply) onReply(anchorOf(thread), text);
-    });
+    btn.addEventListener("click", function () { sendReply(thread, box); });
+    row.appendChild(btn);
+    row.appendChild(closeButton());
+    var wrap = document.createElement("div");
     wrap.appendChild(box);
-    wrap.appendChild(btn);
+    wrap.appendChild(row);
     return wrap;
+  }
+
+  // sendReply is the one post a reply makes, so the key and the button cannot differ.
+  function sendReply(thread, box) {
+    var text = box.value.trim();
+    if (text && onReply) onReply(anchorOf(thread), text);
+  }
+
+  // submitOnCtrlEnter runs fn on Ctrl+Enter, so every box posts from the keyboard
+  // through its button's path. Enter alone stays a newline: comments are prose.
+  function submitOnCtrlEnter(el, fn) {
+    el.addEventListener("keydown", function (ev) {
+      if (!ev.ctrlKey || ev.key !== "Enter") return;
+      ev.preventDefault();
+      fn();
+    });
   }
 
   // anchorOf is where a reply goes: the thread's selector, at the first note's fractions.
@@ -239,10 +231,15 @@
     onReply = fn;
   }
 
-  // clearReply empties the card's box once a reply has landed, if it is still open.
+  // clearReply empties the box once a reply has landed, by drawing the card again
+  // with the entry just posted: the thread on screen has grown, the box is empty
+  // and the card stays where the reader left it. A post never tears the card
+  // down. Dropping the handle first makes the redraw an open, not the toggle.
   function clearReply() {
-    var box = document.getElementById("thread-reply");
-    if (box) box.value = "";
+    if (!cardId) return;
+    var id = cardId;
+    cardId = null;
+    openCard(id);
   }
 
   function closeButton() {
@@ -265,8 +262,8 @@
     return cardId !== null;
   }
 
-  // placeCard puts the card beside its pin, flipping side near an edge. The pin's
-  // coordinates are frame-relative, so they carry the frame's position.
+  // placeCard puts the card beside its dot, flipping side near an edge; the dot's
+  // coordinates are frame-relative, so the frame's own position carries them.
   function placeCard(point) {
     if (!point) return;
     var frame = document.getElementById("frame");
@@ -296,6 +293,7 @@
     closeCard: closeCard,
     cardOpen: cardOpen,
     setReplyHandler: setReplyHandler,
-    clearReply: clearReply
+    clearReply: clearReply,
+    submitOnCtrlEnter: submitOnCtrlEnter
   };
 })();

@@ -66,7 +66,7 @@ body {
   margin-bottom: 6px;
 }
 #comment-panel-title { font-size: 11px; text-transform: uppercase; color: #666; }
-#comments-close, #thread-close {
+#comments-close, #thread-close, #comment-dialog-close, .relevo-card-actions button {
   border: 1px solid var(--relevo-edge);
   border-radius: 6px;
   background: transparent;
@@ -76,7 +76,8 @@ body {
   padding: 2px 7px;
   cursor: pointer;
 }
-#comments-close:hover, #thread-close:hover { border-color: var(--relevo-accent); }
+#comments-close:hover, #thread-close:hover,
+#comment-dialog-close:hover, .relevo-card-actions button:hover { border-color: var(--relevo-accent); }
 
 /* One thread card at a time, anchored beside the pin it belongs to. */
 #thread-card {
@@ -95,7 +96,44 @@ body {
 }
 #thread-card.open { display: block; }
 #thread-card .relevo-text { margin: 2px 0 4px; }
-#thread-close { float: right; }
+
+/* The card is a column: the thread's entries stacked, the box answering them
+   under them, and the controls in one row beneath that. A control floated beside
+   the box is what let the textarea cover Reply and the close. */
+.relevo-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* What a fresh pick opens. It floats like the card rather than docking, so
+   opening it cannot move the board out from under the pointer, and the panel
+   behind it stays read-only while a note is being written. */
+#comment-dialog {
+  display: none;
+  position: fixed;
+  z-index: 22;
+  top: 3.4rem;
+  left: 12px;
+  width: 18rem;
+  max-width: calc(100vw - 24px);
+  padding: 8px 10px;
+  background: var(--relevo-surface);
+  border: 1px solid var(--relevo-edge);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--relevo-shadow);
+  box-sizing: border-box;
+}
+#comment-dialog.open { display: block; }
+#comment-dialog-head, #comment-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#comment-dialog-title { font-size: 11px; text-transform: uppercase; color: #666; }
+#comment-dialog-actions { justify-content: flex-end; }
 
 #comment-toggle {
   padding: 4px 10px;
@@ -114,7 +152,7 @@ body {
   color: #666;
   word-break: break-all;
 }
-#comment-draft {
+#comment-draft, #thread-reply {
   display: block;
   width: 100%;
   box-sizing: border-box;
@@ -157,11 +195,19 @@ body {
     <span id="comment-panel-title">all comments</span>
     <button id="comments-close" type="button" aria-label="close comments">&times;</button>
   </div>
-  <div id="comment-selector"></div>
-  <textarea id="comment-draft" placeholder="say something about this element"></textarea>
-  <button id="comment-post" type="button">Post</button>
   <div id="comment-list"></div>
 </aside>
+<section id="comment-dialog" aria-label="new comment">
+  <div id="comment-dialog-head">
+    <span id="comment-dialog-title">new comment</span>
+    <button id="comment-dialog-close" type="button" aria-label="cancel this comment">&times;</button>
+  </div>
+  <div id="comment-selector"></div>
+  <textarea id="comment-draft" placeholder="say something about this element"></textarea>
+  <div id="comment-dialog-actions">
+    <button id="comment-post" type="button">Post</button>
+  </div>
+</section>
 <section id="thread-card" aria-label="comment thread"></section>
 <script src="shell.js"></script>
 <script src="commentlist.js"></script>
