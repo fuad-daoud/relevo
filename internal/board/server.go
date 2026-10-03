@@ -66,6 +66,36 @@ type etagDoc struct {
 	Etag string `json:"etag"`
 }
 
+// boardGuard is the request filter both servers wrap their mux in: the Host
+// check, the security headers and no-store on /api/. They live here, once, so
+// the HTML server cannot drift into a weaker policy than the Excalidraw one --
+// csp is the one part that differs, because the two formats need different
+// policies, and every other field is identical by construction.
+type boardGuard struct {
+	host string
+	csp  string
+}
+
+// wrap applies the guard to a mux. The Host check is what defends against DNS
+// rebinding: a rebound name still resolves to this loopback listener, so the
+// only thing that separates a real visit from a rebound one is the Host header
+// the browser sends.
+func (g boardGuard) wrap(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != g.host {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Security-Policy", g.csp)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
 // Handler returns the board's handler: the page at "/", its assets under
 // "/assets/", and the one scene at "/api/scene".
 func (s *Server) Handler() http.Handler {
@@ -74,19 +104,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/assets/", s.handleAsset)
 	mux.HandleFunc("/", s.handleIndex)
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != s.Host {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Content-Security-Policy", securityHeaders)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			w.Header().Set("Cache-Control", "no-store")
-		}
-		mux.ServeHTTP(w, r)
-	})
+	return boardGuard{host: s.Host, csp: securityHeaders}.wrap(mux)
 }
 
 // handleScene serves the one scene. Every method requires the token, compared
@@ -107,10 +125,17 @@ func (s *Server) handleScene(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// authorized compares the request token against the run's in constant time. It
+// is a free function rather than a method so the HTML server shares this one
+// comparison instead of writing its own.
+func authorizedToken(r *http.Request, token string) bool {
+	got := r.Header.Get("X-Relevo-Board-Token")
+	return subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
+}
+
 // authorized compares the request token against the run's in constant time.
 func (s *Server) authorized(r *http.Request) bool {
-	got := r.Header.Get("X-Relevo-Board-Token")
-	return subtle.ConstantTimeCompare([]byte(got), []byte(s.Token)) == 1
+	return authorizedToken(r, s.Token)
 }
 
 // getScene returns the scene, its etag, the theme and whether the file is new.

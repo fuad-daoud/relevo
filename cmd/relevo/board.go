@@ -91,7 +91,12 @@ var boardGitConfig = func(cwd, key string) (string, error) {
 // statusline and the server lifecycle can be tested without a real pid.
 var boardProcStart = procStartUnix
 
-// boardOptions is what one run of the verb was asked for.
+// boardOptions is what one run of the verb was asked for. scene and slug carry
+// the resolved board twice over: scene is the path the server reads, and slug is
+// the scene name the advertisement carries. They are separate because the scene
+// name is the slug -- a board.html path's base name would be "board" for every
+// board in both scopes -- and deriving it from the file name is what made every
+// HTML board advertise the same scene.
 type boardOptions struct {
 	scene   string
 	theme   *board.Theme
@@ -100,6 +105,14 @@ type boardOptions struct {
 	// owner names the MasterMind a live board belongs to (its name, else its
 	// id); empty for the repo scope. It only shapes the printed URL.
 	owner string
+	// slug is the resolved scene name, the one server.json advertises.
+	slug string
+	// scope, host and token are filled by the run's caller: scope tells the HTML
+	// server which scope it is serving, and host and token come from the listener
+	// and the per-run token.
+	scope board.Scope
+	host  string
+	token string
 }
 
 // boardServerInfo composes the advertisement a live board writes after its
@@ -194,8 +207,11 @@ func boardNotAvailable(scene, id string) error {
 
 // cmdBoard parses the verb, resolves the scene and scope, writes the pointer
 // for a live board that was not read from the pointer, and then runs the
-// foreground server. The subverbs dispatch first: a scene path always ends in
-// .excalidraw, so it can never collide with a subverb name.
+// foreground server. The subverbs dispatch first. A scene path is what cannot
+// collide with one of them, and now it names a format rather than a scope: an
+// explicit .excalidraw path keeps the Excalidraw flow and everything else is a
+// single-file board, whose path must end in /board.html. So a bare slug is not
+// a path in either format and the collision cannot arise.
 func cmdBoard(args []string) error {
 	var sub string
 	if len(args) > 0 {
@@ -204,6 +220,8 @@ func cmdBoard(args []string) error {
 	switch sub {
 	case "url":
 		return cmdBoardURL(args[1:])
+	case "promote":
+		return cmdBoardPromote(args[1:])
 	case "comments":
 		return cmdBoardComments(args[1:])
 	case "comment":
@@ -226,31 +244,81 @@ func cmdBoard(args []string) error {
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
-	theme, err := boardResolveTheme(cwd, *v.theme)
-	if err != nil {
-		return boardRefusal(err)
-	}
 
 	arg := ""
 	if len(fs.Args()) == 1 {
 		arg = fs.Args()[0]
 	}
+
+	// The theme is resolved before anything else so an unknown --theme is a
+	// usage refusal naming the built-ins regardless of which format the path
+	// selects. Only the Excalidraw flow consumes it: a single-file board brings
+	// its own colours.
+	theme, err := boardResolveTheme(cwd, *v.theme)
+	if err != nil {
+		return boardRefusal(err)
+	}
+
+	// An explicit Excalidraw path is the old flow, unchanged: the scene keeps
+	// its own verbs and its own server.
+	if strings.HasSuffix(arg, board.SceneExt()) {
+		return runExcalidrawBoard(cwd, arg, v, theme)
+	}
+	return runSingleFileBoard(cwd, arg, v)
+}
+
+// runExcalidrawBoard is the legacy flow: an explicit .excalidraw path resolved
+// and served by the Excalidraw server, with the theme.
+func runExcalidrawBoard(cwd, arg string, v *boardFlagValues, theme *board.Theme) error {
 	res, err := resolveBoard(cwd, *v.mastermind, *v.board, arg)
 	if err != nil {
 		return err
 	}
-	// S4: the pointer is written when a live board is opened or selected and the
-	// name differs; WritePointer is the "only when it differs" rule.
+	opts := boardOptions{
+		scene:   res.Path,
+		slug:    res.Scene,
+		scope:   res.Scope,
+		theme:   theme,
+		noOpen:  *v.noOpen,
+		liveDir: liveDirOf(res),
+		owner:   res.Owner,
+	}
+	return runBoard(opts)
+}
+
+// runSingleFileBoard is the default flow: a live <id>/<slug>/board.html, a repo
+// <slug>/board.html under the git top level, or a new board that does not exist
+// yet. The pointer is written for a live board that was not read from the pointer
+// and never for a repo board, so the pointer always names the board the user is
+// looking at.
+func runSingleFileBoard(cwd, arg string, v *boardFlagValues) error {
+	res, err := resolveBoardHTML(cwd, *v.mastermind, *v.board, arg)
+	if err != nil {
+		return err
+	}
 	if res.Scope == board.ScopeLive && !res.FromPointer {
 		if err := board.WritePointer(res.LiveDir, res.Scene); err != nil {
 			return fail(codeInternal, "%v", err)
 		}
 	}
-	liveDir := ""
-	if res.Scope == board.ScopeLive {
-		liveDir = res.LiveDir
+	opts := boardOptions{
+		scene:   res.Path,
+		slug:    res.Scene,
+		scope:   res.Scope,
+		noOpen:  *v.noOpen,
+		liveDir: liveDirOf(res),
+		owner:   res.Owner,
 	}
-	return runBoard(boardOptions{scene: res.Path, theme: theme, noOpen: *v.noOpen, liveDir: liveDir, owner: res.Owner})
+	return runBoardHTML(opts, nil)
+}
+
+// liveDirOf is the live directory a resolved board writes its advertisement and
+// pointer into, empty for the repo scope.
+func liveDirOf(res board.Resolved) string {
+	if res.Scope != board.ScopeLive {
+		return ""
+	}
+	return res.LiveDir
 }
 
 // boardResolveTheme applies the precedence: --theme, then the repo-local
@@ -446,9 +514,22 @@ func boardURL(host, owner, token string) string {
 	return "http://" + host + path + "#t=" + token
 }
 
-// runBoard serves the scene on a loopback listener until SIGINT or SIGTERM,
-// then drains through Shutdown so an in-flight save finishes.
+// runBoard serves the Excalidraw scene on a loopback listener.
 func runBoard(opts boardOptions) error {
+	return serveBoard(opts, func(host, token string) http.Handler {
+		srv := &board.Server{Token: token, ScenePath: opts.scene, Theme: opts.theme, Host: host}
+		return srv.Handler()
+	})
+}
+
+// serveBoard is the lifecycle both formats share: bind, advertise, print, open
+// the browser, then serve until a signal and drain. newHandler is called once
+// the listener has bound, because the bound host and the per-run token are both
+// part of what a handler needs; passing a ready handler instead would mean
+// binding the listener twice. The scene name in server.json is the resolved
+// slug, never a name derived from the file, which is what lets a live HTML board
+// be found by the statusline and by `board url`.
+func serveBoard(opts boardOptions, newHandler func(host, token string) http.Handler) error {
 	token, err := board.Token()
 	if err != nil {
 		return fail(codeInternal, "board token: %v", err)
@@ -460,8 +541,7 @@ func runBoard(opts boardOptions) error {
 	defer func() { _ = ln.Close() }()
 
 	host := ln.Addr().String()
-	srv := &board.Server{Token: token, ScenePath: opts.scene, Theme: opts.theme, Host: host}
-	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	httpSrv := &http.Server{Handler: newHandler(host, token), ReadHeaderTimeout: 10 * time.Second}
 
 	url := boardURL(host, opts.owner, token)
 
@@ -470,13 +550,12 @@ func runBoard(opts boardOptions) error {
 	// time. A start-time measurement failure writes 0, which readers treat as
 	// not live; the server still runs.
 	if opts.liveDir != "" {
-		sceneName := strings.TrimSuffix(filepath.Base(opts.scene), ".excalidraw")
 		pid := os.Getpid()
 		startedAt, perr := boardProcStart(pid)
 		if perr != nil {
 			startedAt = 0
 		}
-		info := boardServerInfo(sceneName, url, pid, startedAt, opts.liveDir)
+		info := boardServerInfo(opts.slug, url, pid, startedAt, opts.liveDir)
 		if err := board.WriteServerInfo(opts.liveDir, *info); err != nil {
 			return fail(codeInternal, "board: write server.json: %v", err)
 		}
