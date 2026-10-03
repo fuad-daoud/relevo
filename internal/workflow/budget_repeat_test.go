@@ -318,6 +318,25 @@ func TestCrossPhasePassAfterRedAdvancesOnItsOwnGreenCheck(t *testing.T) {
 	if a := only(t, actions); a.Kind != ActionHalt {
 		t.Fatalf("action = %+v, want a halt", a)
 	}
+
+	// The other narrowing: a red the closing step never stood behind. The two
+	// checks here sit on separate branches, so the red on the branch this pass
+	// did not come through is not in front of it.
+	branched := tdef("left-check", map[string]Step{
+		"left-check":   {Check: "make check", On: map[string]Target{"red": StepTarget("left-review"), "green": DoneTarget()}},
+		"left-review":  {Run: "reviewer", On: map[string]Target{"verdict=pass": DoneTarget()}},
+		"right-check":  {Check: "make check", On: map[string]Target{"red": StepTarget("right-review"), "green": DoneTarget()}},
+		"right-review": {Run: "reviewer", On: map[string]Target{"verdict=pass": DoneTarget()}},
+	})
+	s := awaitingRun("right-review", "reviewer", 1)
+	s.Results["left-check"] = Result{Status: "red"}
+	closed := Event{Kind: EventStepClosed, Step: "right-review", Member: "reviewer", Round: 1, Status: "done",
+		Outcomes: map[string]string{"verdict": "pass"}}
+	if next, actions := Next(branched, s, closed); next.Status != StatusDone {
+		t.Fatalf("status = %q, reason = %q, want done: the red is on the other branch", next.Status, next.Reason)
+	} else if a := only(t, actions); a.Kind != ActionFinish {
+		t.Fatalf("action = %+v, want finish", a)
+	}
 }
 
 // TestGreenCheckStillReachesTheReviewer pins the arm the gate must leave alone:

@@ -107,7 +107,7 @@ func (s State) stepClosed(def Definition, e Event) (State, []Action) {
 }
 
 // redCheckGate reports the halt reason for a close that takes a pass edge while
-// the check it passed a red gate on is still red. It fires only on a pass edge --
+// a red check in front of it is still unanswered. It fires only on a pass edge --
 // the arm that lets a run move on with the gate unproven -- so a close that
 // routes onward for any other reason, a verdict of changes above all, is left
 // alone.
@@ -118,11 +118,54 @@ func (s State) redCheckGate(def Definition, e Event, edge string) (string, bool)
 	if !passEdge(edge) || e.Override != "" {
 		return "", false
 	}
-	gate, ok := lastRedCheck(def, s)
+	gate, ok := gatingRedCheck(def, s, e.Step)
 	if !ok {
 		return "", false
 	}
 	return e.Step + " passed while check " + gate + " is red: the run does not pass a red check without an explicit override naming why; rerun the check, or record the override on the close", true
+}
+
+// gatingRedCheck names the check whose red still gates a pass at the closing
+// step, or ok false when no red stands in its way. Three conditions narrow it
+// to the gate that is actually in front of this close:
+//
+//   - the closing step is downstream of the check, so a red on a branch this
+//     close never came through cannot gate it;
+//   - the check's latest result is red, so a check that never ran or last ran
+//     green has no verdict to overrule;
+//   - no recorded override has already answered the red.
+//
+// The last is what makes an answered red stale rather than pending: the
+// reviewer who passed over it recorded why and moved on, so a later pass in
+// another phase is not answerable by the same verdict -- it is gated by its own
+// phase's check, or by nothing.
+func gatingRedCheck(def Definition, s State, at string) (string, bool) {
+	edges := stepEdges(def)
+	for _, id := range sortedKeys(def.Steps) {
+		if def.Steps[id].Check == "" {
+			continue
+		}
+		if !reachableFrom(edges, id)[at] {
+			continue
+		}
+		if r, ok := s.Results[id]; ok && r.Status == "red" && !overrodeGate(s, reachableFrom(edges, id)) {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// overrodeGate reports whether some recorded close already answered a red the
+// pass stood on: an override belongs to a step downstream of the gate it was
+// recorded against, so an override on a step the gate never reaches answers
+// nothing here.
+func overrodeGate(s State, downstream map[string]bool) bool {
+	for id, r := range s.Results {
+		if r.Override != "" && downstream[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // passEdge reports whether an edge name is a pass arm: the bare word, or a
@@ -138,21 +181,6 @@ func passEdge(edge string) bool {
 
 // passWord is the outcome value that says a gate is satisfied.
 const passWord = "pass"
-
-// lastRedCheck names the check step whose latest result is red, or ok false
-// when every check the run has recorded is green. A run with no recorded check
-// result at all is not gated: a check that never ran has no verdict to overrule.
-func lastRedCheck(def Definition, s State) (string, bool) {
-	for _, id := range sortedKeys(def.Steps) {
-		if def.Steps[id].Check == "" {
-			continue
-		}
-		if r, ok := s.Results[id]; ok && r.Status == "red" {
-			return id, true
-		}
-	}
-	return "", false
-}
 
 // carryOverride stamps a close's override onto the actions it produced, so the
 // encoded action a trace row stores names the override beside the send it
