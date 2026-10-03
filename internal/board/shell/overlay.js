@@ -20,6 +20,30 @@
   var pinLayer = null;
   var hovered = null;
 
+  // installStyles adds the one rule this overlay needs: the hover outline.
+  //
+  // The board is a stranger's document, so nothing guarantees a .relevo-hover
+  // rule exists in it, and a class with no rule draws nothing. The rule is
+  // injected here rather than shipped in the shell page because the class is
+  // applied inside the frame, where the shell's stylesheet does not reach.
+  //
+  // The outline is drawn with a negative offset so it paints outside the box
+  // and takes no part in layout: hovering never reflows the board, and a
+  // sibling's getBoundingClientRect is unchanged while an outline is showing.
+  function installStyles() {
+    var style = document.createElement("style");
+    style.textContent =
+      ".relevo-hover{outline:2px solid #2a6fb5;outline-offset:-2px;}" +
+      ".relevo-pins{position:fixed;inset:0;pointer-events:none;z-index:2147483647;}" +
+      ".relevo-pin{position:absolute;pointer-events:auto;min-width:1.35em;height:1.35em;" +
+      "margin:-0.68em 0 0 -0.68em;padding:0;border-radius:50%;" +
+      "background:#2a6fb5;color:#fff;font:600 11px/1.35em ui-sans-serif,system-ui,sans-serif;" +
+      "cursor:pointer;}" +
+      ".relevo-board-pin{background:#5a5a5a;}" +
+      ".relevo-orphan-pin{background:#8a5a00;outline:1px dashed #fff;}";
+    (document.head || document.documentElement).appendChild(style);
+  }
+
   // post is every message out of this frame. The target origin is "*" because
   // the shell is unreadable from here -- its origin is what the sandbox took --
   // and the messages carry no secret: a selector, a fraction, an id.
@@ -253,5 +277,10 @@
     }
   }
 
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", installStyles);
+  } else {
+    installStyles();
+  }
   post({ type: "relevo.overlayReady" });
 })();

@@ -70,7 +70,12 @@
     var msg = ev.data;
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "relevo.overlayReady") {
+      // The frame announces itself only once its overlay script is listening.
+      // Anything sent at render time was posted into a document that did not
+      // exist yet and was lost, so the mode and the pins are both re-sent here.
+      // This is what makes a re-render land the pins without a reload.
       postToFrame({ type: "relevo.mode", on: mode });
+      postToFrame({ type: "relevo.pins", annotations: (doc && doc.annotations) || [] });
       return;
     }
     if (msg.type === "relevo.pick") {
@@ -276,10 +281,17 @@
   var pending = null;
 
   // adopt installs a document as the current one and draws it.
+  //
+  // The frame is re-rendered only when the board itself moved. A new annotations
+  // etag redraws the pins and nothing else: re-rendering the frame on every
+  // comment would tear down and rebuild the whole document -- losing scroll
+  // position, the page's own state, and the click that is in flight -- to show a
+  // change that is only pins.
   function adopt(next) {
+    var boardMoved = !doc || next.isNew || (next.html || "") !== (doc.html || "");
     doc = next;
     aetag = next.annotationsEtag || "";
-    api.render(next.html);
+    if (boardMoved) api.render(next.html);
     postToFrame({ type: "relevo.pins", annotations: next.annotations || [] });
     render();
     if (next.external && next.external.length) {
