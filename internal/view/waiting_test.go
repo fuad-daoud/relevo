@@ -149,6 +149,39 @@ func TestWaitingOnHalts(t *testing.T) {
 
 }
 
+// TestWaitingOnBrokenWithoutAProcess pins the PID clause of the switchable
+// test. A mid-round switch whose replacement failed to spawn leaves the
+// candidate and the RoundStartedAt stamp behind with no process at all, and
+// no tick retries it -- so this binding is waiting on a human, not on the
+// daemon, exactly as it was before the daemon gave up on it silently.
+func TestWaitingOnBrokenWithoutAProcess(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Unix(1757000000, 0).UTC()
+	b := store.Binding{
+		Name: "api", Round: 4, State: store.StateBroken,
+		BuilderCandidate: "agy/x/y", RoundStartedAt: ts,
+		BuilderMissingSince: ts,
+	}
+
+	w, ok := WaitingOn(b, nil, mapQuestion(nil))
+	if !ok {
+		t.Fatal("want ok: no process means nothing retries this switch")
+	}
+	if w.Cause != "broken" {
+		t.Errorf("Cause = %q, want broken", w.Cause)
+	}
+	if w.Hint != rebindHint {
+		t.Errorf("Hint = %q, want %q", w.Hint, rebindHint)
+	}
+	if !w.Since.Equal(ts) {
+		t.Errorf("Since = %v, want the BuilderMissingSince %v", w.Since, ts)
+	}
+	if w.Line == "" {
+		t.Error("Line is empty, want the diagnosis of the missing builder")
+	}
+}
+
 func TestWaitingOnBrokenAndCaps(t *testing.T) {
 	t.Parallel()
 
@@ -156,11 +189,16 @@ func TestWaitingOnBrokenAndCaps(t *testing.T) {
 		b := store.Binding{
 			Name: "api", Round: 4, State: store.StateBroken,
 			BuilderCandidate: "agy/x/y", RoundStartedAt: time.Unix(1757000000, 0),
+			Builder: store.Endpoint{PID: 909},
 		}
 		if _, ok := WaitingOn(b, nil, mapQuestion(nil)); ok {
 			t.Error("a switchable broken binding must not be waiting")
 		}
 	})
+
+	// The same binding with no process: a switch whose replacement never
+	// spawned leaves the candidate and the start stamp behind, and nothing
+	// retries it. TestWaitingOnBrokenWithoutAProcess covers that half.
 
 	t.Run("a long dialog line is capped at 120 runes", func(t *testing.T) {
 		ts := time.Unix(1757000000, 0).UTC()

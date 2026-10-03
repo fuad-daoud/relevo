@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -202,6 +203,10 @@ func TestHaltEntryIsNotAReport(t *testing.T) {
 // broken binding, because view.WaitingOn answers ok=false for those -- the
 // daemon is about to fix them itself, so notifying would report a fault that
 // resolves itself. The two must use the same test or the two halves disagree.
+//
+// Switchable needs a live process, not only a candidate and a started round:
+// that is the case the last subtest covers, and it is the one that used to go
+// silent.
 func TestBrokenHaltsQueueOnlyWhenNotSwitchable(t *testing.T) {
 	t.Parallel()
 
@@ -251,6 +256,7 @@ func TestBrokenHaltsQueueOnlyWhenNotSwitchable(t *testing.T) {
 		rt, b := haltRuntime(t)
 		b.BuilderCandidate = "claude"
 		b.RoundStartedAt = baseTime
+		b.Builder.PID = 4242
 
 		if err := rt.Store.WithLock(func(tx *store.Tx) error {
 			_, err := queueBrokenHalt(context.Background(), rt, tx, b, "builder claude; switching to codex failed")
@@ -262,6 +268,132 @@ func TestBrokenHaltsQueueOnlyWhenNotSwitchable(t *testing.T) {
 			t.Errorf("halt entries = %d, want 0 for a switchable broken binding: %+v", len(got), got)
 		}
 	})
+
+	// A mid-round switch whose replacement never spawned leaves the candidate
+	// and RoundStartedAt behind with no process, and no tick retries it. That
+	// binding is waiting on a human, so it owes the entry a halt owes; before
+	// the predicate learned about the PID this one sat silent.
+	t.Run("broken mid-round with no process queues", func(t *testing.T) {
+		rt, b := haltRuntime(t)
+		b.State = store.StateBroken
+		b.BuilderCandidate = "claude"
+		b.RoundStartedAt = baseTime
+		b.Builder.PID = 0
+
+		var next store.Binding
+		if err := rt.Store.WithLock(func(tx *store.Tx) error {
+			var err error
+			next, err = queueBrokenHalt(context.Background(), rt, tx, b, "builder claude; switching to codex failed: exit status 1")
+			if err != nil {
+				return err
+			}
+			return tx.Save(next)
+		}); err != nil {
+			t.Fatalf("queueBrokenHalt: %v", err)
+		}
+
+		got := haltEntries(t, rt, b.Name)
+		if len(got) != 1 {
+			t.Fatalf("halt entries = %d, want 1: %+v", len(got), got)
+		}
+		if !strings.Contains(got[0].Payload, "switching to codex failed") {
+			t.Errorf("entry.Payload = %q, want it to carry the broken reason", got[0].Payload)
+		}
+		if next.HaltNotifiedRound != next.Round {
+			t.Errorf("HaltNotifiedRound = %d, want %d: the dedup key must be stamped", next.HaltNotifiedRound, next.Round)
+		}
+	})
+}
+
+// TestMidRoundSwitchSpawnFailureHaltsAndWaits is the regression for the broken
+// switch, end to end through switchBuilder: a mid-round switch whose
+// replacement cannot be resolved leaves StateBroken with no process, and that
+// binding owes its MasterMind one halt entry -- which wait then pulls, so the
+// wait answers needs-you instead of running out its clock.
+//
+// Before the predicate learned about the PID the round was "switchable"
+// (candidate set, RoundStartedAt stamped, nothing running) and nothing was
+// queued: no entry, no delivery, and only a timeout left.
+//
+// The switch is made to fail on a tier refusal, which is a resolveBuilder
+// error with a live replacement still reachable in the order: claude carries
+// the read tier, opencode refuses it.
+func TestMidRoundSwitchSpawnFailureHaltsAndWaits(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	// Two providers, so gating the first leaves the second reachable: a gate on
+	// claude/first/m would take opencode/second/m with it.
+	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"first","model":"m","roles":["builder","reviewer"]},
+	  {"harness":"opencode","provider":"second","model":"m","roles":["builder"]}]`)
+	rt.Policy = orderOf("builder", "claude/first/m", "opencode/second/m")
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "claude/first/m", MasterMindID: testMasterMindName, CWD: "/repo", Tier: "read",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "claude/first/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	var next store.Binding
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		loaded, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		// The state the exit-without-report path hands a switch
+		// (headless.go clears the pid before switching): the round is open,
+		// the candidate and the start stamp survive, the process is gone.
+		loaded.Builder.PID, loaded.Builder.StartedAt = 0, 0
+		if err := tx.Save(loaded); err != nil {
+			return err
+		}
+		next, err = switchBuilder(context.Background(), rt, tx, loaded, "rate-limited: 429 too many requests", false, false)
+		if err != nil {
+			return err
+		}
+		return tx.Save(next)
+	}); err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+
+	if next.State != store.StateBroken {
+		t.Fatalf("state = %q, want %q", next.State, store.StateBroken)
+	}
+	if next.Builder.PID != 0 {
+		t.Fatalf("pid = %d, want 0: a switch that spawned nothing", next.Builder.PID)
+	}
+
+	got := haltEntries(t, rt, "webshop")
+	if len(got) != 1 {
+		t.Fatalf("halt entries = %d, want exactly 1: %+v", len(got), got)
+	}
+	if !strings.Contains(got[0].Payload, "switching to") || !strings.Contains(got[0].Payload, "opencode/second/m") {
+		t.Errorf("entry.Payload = %q, want it to name the failed switch", got[0].Payload)
+	}
+	if next.HaltNotifiedRound != next.Round {
+		t.Errorf("HaltNotifiedRound = %d, want %d", next.HaltNotifiedRound, next.Round)
+	}
+
+	// The wait answers with the reason rather than the clock: the entry is
+	// there to pull.
+	name, res, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Timeout: time.Minute, Interval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if name != "webshop" || res.Code != WaitNeedsYou || !res.Done {
+		t.Fatalf("Wait = (%q, %+v), want needs-you for webshop", name, res)
+	}
+	if !strings.Contains(res.Payload, "switching to") {
+		t.Errorf("Wait Payload = %q, want the queued switch failure", res.Payload)
+	}
 }
 
 // TestWaitPullsTheHaltTextOnce is case (a), the point of the whole change: a

@@ -20,6 +20,11 @@ var ErrNotQueued = errors.New("round is not queued")
 // (#285). It spawns the process (switching candidate first if the queued
 // one is now gated), stamps RoundStartedAt, zeroes QueuedAt, and logs the
 // wait as a KindQueue entry -- the audit trail for how long the round sat.
+//
+// The stamp and the note are written only for a start that actually produced a
+// process; the admission itself always happens. A switch whose replacement
+// could not be resolved leaves the binding broken with nothing running, and
+// recording that as a started round is what used to hide the fault.
 func Admit(ctx context.Context, rt Runtime, name string) error {
 	var b store.Binding
 	admitted := false
@@ -70,27 +75,63 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 		}
 
 		if startErr != nil {
-			// Mirror Send's own spawn-failure handling: the round stays open
-			// (the plan was already staged when it was deferred), but nothing
-			// started, so a human has to act. QueuedAt is zeroed so the round
-			// is never re-admitted.
-			b.State = store.StateNeedsYou
-			b.Halt = "builder spawn failed: " + startErr.Error()
-			b.HaltAt = rt.Now().UTC()
-			b.QueuedAt = time.Time{}
-			if saveErr := tx.Save(b); saveErr != nil {
+			// Mirror Send's own spawn-failure handling -- the round stays open
+			// (the plan was already staged when it was deferred), nothing
+			// started, so a human has to act -- but halt through the shared
+			// path rather than by hand, so the failure owes its MasterMind the
+			// one halt entry every other NEEDS YOU owes. Send can return the
+			// error to a caller that reports it; Admit runs in the daemon, and
+			// a MasterMind with no push route heard nothing at all before.
+			// haltAndSettle also attempts the delivery, in this same critical
+			// section, exactly as a reconcile halt does.
+			//
+			// A binding that came back already halted keeps its reason: the
+			// switch paths halt with a fuller text than "spawn failed", and
+			// the entry carrying it is already queued.
+			if b.Halt != "" {
+				b.QueuedAt = time.Time{}
+				if saveErr := tx.Save(b); saveErr != nil {
+					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", startErr, saveErr)
+				}
+				return startErr
+			}
+			halted, herr := haltAndSettle(ctx, rt, tx, b, "builder spawn failed: "+startErr.Error())
+			if herr != nil {
+				return fmt.Errorf("%v; and halting the round failed: %w", startErr, herr)
+			}
+			// QueuedAt is zeroed so the round is never re-admitted.
+			halted.QueuedAt = time.Time{}
+			if saveErr := tx.Save(halted); saveErr != nil {
 				return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", startErr, saveErr)
 			}
 			return startErr
 		}
 
 		age := rt.Now().Sub(b.QueuedAt).Round(time.Second)
+		b.QueuedAt = time.Time{}
+
+		// A start that did not happen is not stamped and not announced.
+		// switchBuilder can come back from the switch branch with no error and
+		// no process: when the replacement's own resolve failed it queued this
+		// binding's halt entry, delivered it and returned. RoundStartedAt is
+		// what both view.WaitingOn and queueBrokenHalt read to mean "the daemon
+		// will fix this itself", so stamping it here would flip a broken
+		// binding with no process back to switchable -- and the KindQueue note
+		// would tell the MasterMind a round began when none did.
+		//
+		// QueuedAt is zeroed either way: the round was admitted and did not
+		// run, and leaving it queued would retry the same failed switch on
+		// every tick. The queued halt entry stands on its own, and wait pulls
+		// it.
+		if b.Builder.PID == 0 {
+			return tx.Save(b)
+		}
+
 		note := fmt.Sprintf("started after %s queued", age)
 		if switched {
 			note = fmt.Sprintf("started after %s queued (switched: %s)", age, reason)
 		}
 		b.RoundStartedAt = rt.Now()
-		b.QueuedAt = time.Time{}
 		if err := tx.AppendLog(name, store.LogEntry{
 			TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindQueue, Confirmed: true,
 			Note: note,
