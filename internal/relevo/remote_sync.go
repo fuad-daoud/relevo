@@ -191,7 +191,7 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		if httpErr.Status == 401 {
 			// A revoked key is permanent: halt at once, as it always did.
 			if httpErr.Body.Code == remote.CodeRevoked {
-				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
+				b, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
 				return b, false, err
 			}
 			// Every other 401 -- stale, bad_signature, not_enrolled -- may
@@ -205,14 +205,14 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 			b.Builder.RemoteStatus = "auth: " + string(httpErr.Body.Code)
 			if rt.AuthGrace.Expired(name, now, authGraceLimit) {
 				dur := now.Sub(first).Truncate(time.Second)
-				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s for %s -- check this machine's clock and relevo config server list",
+				b, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s: %s for %s -- check this machine's clock and relevo config server list",
 					name, server, httpErr.Body.Code, dur))
 				return b, false, err
 			}
 			return b, false, nil
 		}
 		if httpErr.Status == 404 {
-			b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: binding removed by the server admin", name, server))
+			b, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s: binding removed by the server admin", name, server))
 			return b, false, err
 		}
 	}
@@ -228,7 +228,7 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 
 		dur := now.Sub(b.RemoteUnreachableSince).Truncate(time.Second)
 		if roundOpen && now.Sub(b.RemoteUnreachableSince) > roundBudget(b)+unreachableGrace {
-			b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s unreachable for %s; round %d may still be running there",
+			b, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s unreachable for %s; round %d may still be running there",
 				name, server, dur, b.Round))
 			return b, false, err
 		}
@@ -365,7 +365,7 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 				return next, true, nil
 			}
 		}
-		b, err := haltBinding(ctx, rt, b, name+": "+view.Halt)
+		b, err := haltAndSettle(ctx, rt, tx, b, name+": "+view.Halt)
 		return b, false, err
 
 	case remote.RoundClosed:

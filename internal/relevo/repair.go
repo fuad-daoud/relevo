@@ -133,7 +133,7 @@ func repairDecision(b store.Binding, sig string) (ok bool, why string) {
 func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, rec store.GateRecord, failedRound int) (store.Binding, error) {
 	sig := gateSignature(rt.Store.ReadFile, rec.LogPath)
 	if ok, why := repairDecision(b, sig); !ok {
-		return haltBinding(ctx, rt, b, why)
+		return haltAndSettle(ctx, rt, tx, b, why)
 	}
 
 	b.LastGateSig = sig
@@ -142,7 +142,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	text := repairPlan(b, failedRound, rt.Store.PromptPath(b.Name, failedRound), rec.LogPath, tailLines(rt.Store.ReadFile, rec.LogPath, repairTailLines))
 	planPath := rt.Store.PromptPath(b.Name, b.Round)
 	if err := stagePlan(planPath, []byte(text)); err != nil {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not stage its plan: %v", b.Name, b.Round, err))
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not stage its plan: %v", b.Name, b.Round, err))
 	}
 
 	baseline, head := capture.Baseline(ctx, captureDeps(rt), b)
@@ -152,17 +152,17 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	// longer holds: pick again first, exactly as a switch does.
 	b, res, err := repickStale(rt, b, false)
 	if err != nil {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
 	}
 	if res != nil {
 		if err := tx.AppendLog(b.Name, pickEntry(rt.Now().UTC(), b.Round, bindingRole(b), *res)); err != nil {
-			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
+			return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
 		}
 	}
 
 	started, err := startRound(ctx, rt, tx, b, prompt, false)
 	if err != nil {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
 	}
 	b = started
 
@@ -176,7 +176,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		Tier:      string(effectiveTier(b)),
 		Note:      fmt.Sprintf("repair %d/%d", b.RepairCount, b.Regate),
 	}); err != nil {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not record its plan: %v", b.Name, b.Round, err))
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not record its plan: %v", b.Name, b.Round, err))
 	}
 
 	b.RoundBaselineTree, b.RoundBaselineHead = baseline, head

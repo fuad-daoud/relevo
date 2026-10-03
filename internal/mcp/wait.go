@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -91,6 +93,71 @@ func waitOutcomeWord(code int) string {
 	}
 }
 
+// peekRef is the non-claiming command that prints e whole: delivery's own
+// `relevo show` form with --peek appended. The peek is what makes the pointer
+// safe here -- a plain `show` claims the oldest pending payload of its round,
+// so pointing an already-confirmed entry at a claiming command would hand the
+// reader the NEXT pending payload of that round as a side effect of reading one
+// it already has.
+//
+// A kind delivery names no section for (a halt entry, whose payload is the
+// notification itself and carries its own `relevo status` pointer) is pointed
+// at the round's log, which carries the entry and claims nothing.
+func peekRef(b store.Binding, e store.LogEntry) string {
+	if ref := delivery.LogRef(b, e); ref != "" {
+		return ref + " --peek"
+	}
+	return fmt.Sprintf("relevo show %s --round %d --log --peek", b.Name, e.Round)
+}
+
+// oversizeWaitBody renders the over-cap result: one item per entry the delivery
+// confirmed, in confirmation order so the waited round is last. An entry whose
+// text still fits the budget left is delivered whole; an entry that does not is
+// cut to that budget, or -- when too little of it is left for a useful fragment
+// -- reduced to its peek pointer. Either way every confirmed entry is
+// represented, which is the whole point: confirming every entry and printing a
+// path for them all drops the content of each one the caller never sees.
+func oversizeWaitBody(st *store.Store, name string, round int, res relevo.WaitResult) string {
+	binding := delivery.BindingFor(st, name)
+
+	delivered := res.Delivered
+	if len(delivered) == 0 {
+		// Payload only ever comes from a through-pull, which always records per
+		// entry, so this cannot happen; and a bare path is what this branch
+		// exists to stop. Cut the text rather than name a file.
+		delivered = []delivery.Delivered{{
+			Entry: store.LogEntry{Round: round, Kind: store.KindReport},
+			Text:  res.Payload,
+		}}
+	}
+
+	budget := maxWaitOutputBytes
+	var b strings.Builder
+	for i, d := range delivered {
+		last := i == len(delivered)-1
+		ref := peekRef(binding, d.Entry)
+		switch text := d.Text; {
+		case len(text) <= budget:
+			budget -= len(text)
+			if len(delivered) > 1 && !last {
+				fmt.Fprintf(&b, "── round %d: not delivered earlier (%s) ──\n", d.Entry.Round, d.Entry.Path)
+			}
+			b.WriteString(text)
+		case budget > len(ref)+1:
+			b.WriteString(delivery.TruncateTo(text, budget, fmt.Sprintf("%d bytes", budget), ref))
+			budget = 0
+		default:
+			// Too little of the budget left for a useful fragment: the pointer
+			// is the whole delivery.
+			b.WriteString(ref)
+		}
+		if !last {
+			b.WriteString("\n\n")
+		}
+	}
+	return b.String()
+}
+
 func formatWaitResult(st *store.Store, name string, round int, res relevo.WaitResult) string {
 	firstLine := fmt.Sprintf("%s round %d %s", name, round, waitOutcomeWord(res.Code))
 
@@ -102,15 +169,7 @@ func formatWaitResult(st *store.Store, name string, round int, res relevo.WaitRe
 	}
 
 	if len(payload) > maxWaitOutputBytes {
-		hint := fmt.Sprintf("relevo show %s --round %d --report", name, round)
-		path := res.Line
-		if (path == "" || path == "-") && st != nil {
-			path = st.ReportPath(name, round)
-		}
-		if path != "" && path != "-" {
-			return fmt.Sprintf("%s\n%s\n%s", firstLine, path, hint)
-		}
-		return fmt.Sprintf("%s\n%s", firstLine, hint)
+		return firstLine + "\n" + oversizeWaitBody(st, name, round, res)
 	}
 
 	body := firstLine

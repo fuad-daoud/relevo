@@ -360,7 +360,7 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 			cur = next
 		}
 		if bcf != nil {
-			next, stop, aerr := applyCatchUpAbsorb(ctx, rt, cur, mv.View, bcf)
+			next, stop, aerr := applyCatchUpAbsorb(ctx, rt, tx, cur, mv.View, bcf)
 			if aerr != nil {
 				return aerr
 			}

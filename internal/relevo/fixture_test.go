@@ -47,6 +47,26 @@ func seedHeadless(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	return rt, b
 }
 
+// haltOnce runs haltBinding inside one store lock, so a test can halt a
+// binding with the transaction its signature now needs without having to
+// persist the result. haltBinding queues the round's halt entry through that
+// transaction, so the lock is required, not merely convenient.
+//
+// The binding it returns is the one haltBinding built; the caller decides
+// whether to Save it, exactly as it would after an in-tick halt.
+func haltOnce(t *testing.T, rt Runtime, b store.Binding, message string) store.Binding {
+	t.Helper()
+	var next store.Binding
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		next, err = haltBinding(context.Background(), rt, tx, b, message)
+		return err
+	}); err != nil {
+		t.Fatalf("haltBinding(%q): %v", message, err)
+	}
+	return next
+}
+
 // sentBinding puts a binding one Send into round 1, with a working builder.
 func sentBinding(t *testing.T) (Runtime, store.Binding) {
 	t.Helper()

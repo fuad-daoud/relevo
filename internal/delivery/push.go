@@ -128,18 +128,32 @@ func expandablePushKind(k store.Kind) bool {
 // and appends a final line naming ref -- the `relevo show` command that
 // prints the full text -- when it truncated.
 func truncatePushText(text, ref string) string {
-	if len(text) <= MaxPushBytes {
+	return TruncateTo(text, MaxPushBytes, fmt.Sprintf("%d KiB", MaxPushBytes/1024), ref)
+}
+
+// TruncateTo is truncatePushText at a caller's budget, for the callers that do
+// not share MaxPushBytes: a wait result sharing one output budget across the
+// entries it confirmed truncates each of them to what is still free. label
+// names the budget in the marker ("64 KiB", "12288 bytes"), so one marker
+// shape serves every budget and the 64 KiB push marker stays byte-identical.
+//
+// ref is the command that prints the full text, and the caller's choice of it
+// matters: a pointer that claims (plain `relevo show`) would consume the next
+// pending payload of that round, so a caller delivering an already-confirmed
+// entry passes a --peek pointer.
+func TruncateTo(text string, budget int, label, ref string) string {
+	if len(text) <= budget {
 		return text
 	}
 
-	budget := text[:MaxPushBytes]
-	kept := budget
-	if cut := strings.LastIndexByte(budget, '\n'); cut >= 0 {
+	head := text[:budget]
+	kept := head
+	if cut := strings.LastIndexByte(head, '\n'); cut >= 0 {
 		kept = text[:cut+1]
 	}
 	if !strings.HasSuffix(kept, "\n") {
 		kept += "\n"
 	}
 
-	return kept + fmt.Sprintf("[truncated at %d KiB -- full text: %s]", MaxPushBytes/1024, ref)
+	return kept + fmt.Sprintf("[truncated at %s -- full text: %s]", label, ref)
 }
