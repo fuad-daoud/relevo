@@ -543,3 +543,91 @@ func TestPullPendingThroughSingleIsUnchanged(t *testing.T) {
 		t.Errorf("pullPendingThrough = %q, want it to equal Pull's %q", through, pulled)
 	}
 }
+
+// TestPullPendingThroughEntriesMatchesTheJoinedForm: the split form is what a
+// caller with its own per-entry output budget reads, so it has to see
+// the same entries, in the same order, with the same text, as the joined one --
+// and joining them has to reproduce the joined result exactly. A drift between
+// the two would mean a caller budgets against entries nobody saw.
+func TestPullPendingThroughEntriesMatchesTheJoinedForm(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	r1 := filepath.Join(dir, "001-report.md")
+	r2 := filepath.Join(dir, "002-report.md")
+	if err := os.WriteFile(r1, []byte("round 1 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 1 report: %v", err)
+	}
+	if err := os.WriteFile(r2, []byte("round 2 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 2 report: %v", err)
+	}
+
+	// The same fixture twice, so neither call sees the other's confirmation.
+	splitRT := routeRuntime(t)
+	seedPendingRounds(t, splitRT, "webshop", []int{1, 2}, []string{r1, r2})
+	joinedRT := routeRuntime(t)
+	seedPendingRounds(t, joinedRT, "webshop", []int{1, 2}, []string{r1, r2})
+
+	delivered, err := PullPendingThroughEntries(context.Background(), splitRT.Store, "webshop", "wait", 2)
+	if err != nil {
+		t.Fatalf("PullPendingThroughEntries: %v", err)
+	}
+	if len(delivered) != 2 {
+		t.Fatalf("PullPendingThroughEntries returned %d entries, want 2", len(delivered))
+	}
+	// Log order, so the waited round is last -- the property the over-cap
+	// branch renders its output on.
+	if delivered[0].Entry.Round != 1 || delivered[1].Entry.Round != 2 {
+		t.Errorf("rounds = %d,%d, want 1,2 (log order, waited round last)",
+			delivered[0].Entry.Round, delivered[1].Entry.Round)
+	}
+	for i, d := range delivered {
+		if !strings.Contains(d.Text, fmt.Sprintf("round %d body", i+1)) {
+			t.Errorf("entry %d text = %q, want round %d's own report text", i, d.Text, i+1)
+		}
+	}
+
+	joined, found, err := PullPendingThrough(context.Background(), joinedRT.Store, "webshop", "wait", 2)
+	if err != nil {
+		t.Fatalf("PullPendingThrough: %v", err)
+	}
+	if !found {
+		t.Fatal("PullPendingThrough found nothing, want both pending reports")
+	}
+	if got := JoinDelivered(delivered); got != joined {
+		t.Errorf("JoinDelivered = %q, want the joined result %q", got, joined)
+	}
+}
+
+// TestPullPendingThroughEntriesSkipsAdmitted pins case (d) on the split form
+// too: an entry a push route already admitted is neither delivered nor
+// confirmed, so an over-cap wait cannot point the caller at it as though it
+// were among the entries it took.
+func TestPullPendingThroughEntriesSkipsAdmitted(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
+
+	if err := rt.Store.AdmitIndex("webshop", 0); err != nil {
+		t.Fatalf("AdmitIndex: %v", err)
+	}
+
+	delivered, err := PullPendingThroughEntries(context.Background(), rt.Store, "webshop", "wait", 0)
+	if err != nil {
+		t.Fatalf("PullPendingThroughEntries: %v", err)
+	}
+	if len(delivered) != 0 {
+		t.Fatalf("PullPendingThroughEntries = %d entries, want none: the entry is admitted", len(delivered))
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for i, e := range entries {
+		if e.Direction == store.DirToMasterMind && e.Confirmed {
+			t.Errorf("entry %d is confirmed, want an admitted entry left alone", i)
+		}
+	}
+}

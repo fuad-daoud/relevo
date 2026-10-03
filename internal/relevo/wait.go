@@ -26,6 +26,13 @@ type WaitResult struct {
 	// was pending, when --peek suppressed the delivery, or on an exit that
 	// delivers nothing (124 and 4).
 	Payload string
+	// Delivered is Payload's per-entry form: one record per entry the delivery
+	// confirmed, waited round last, each carrying the text that entry alone
+	// carries. Payload is these concatenated, so a caller that prints the
+	// result whole reads Delivered and a caller with an output budget of its
+	// own (#907) can decide per entry which ones fit. Empty whenever Payload
+	// is.
+	Delivered []delivery.Delivered
 	// DeliverErr is a read or confirm failure while delivering Payload. It
 	// never changes the exit code (§6): the CLI prints it to stderr.
 	DeliverErr error
@@ -239,11 +246,12 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 				// outcome only. A delivery failure never changes the exit
 				// code (§6); the CLI prints DeliverErr to stderr.
 				if waitDeliverable(r.Code) && !opts.Peek {
-					text, found, derr := delivery.PullPendingThrough(ctx, rt.Store, n, "wait", rounds[n])
+					delivered, derr := delivery.PullPendingThroughEntries(ctx, rt.Store, n, "wait", rounds[n])
 					if derr != nil {
 						r.DeliverErr = derr
-					} else if found {
-						r.Payload = text
+					} else if len(delivered) > 0 {
+						r.Delivered = delivered
+						r.Payload = delivery.JoinDelivered(delivered)
 					}
 				}
 				r.Round = rounds[n]

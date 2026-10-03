@@ -115,21 +115,30 @@ func pullMatching(ctx context.Context, st *store.Store, name, route string, matc
 	return text, true, nil
 }
 
-// PullPendingThrough returns the text for every pending mastermind payload of name
-// whose round is at most round -- every round when round <= 0 -- and marks each
-// delivered with route, WITHOUT pushing anything. The waited round's text is
-// last; every earlier one is prefixed with a header naming its round, so an
-// older undelivered payload is neither dropped nor mistaken for the newest
-// text.
+// Delivered is one pending entry a through-pull confirmed, with the exact text
+// that entry carries: Text is PushText(e, <name's binding>, st.ReadFile), the
+// same string PullPendingThrough concatenates. Splitting the confirmation from
+// the concatenation is what lets a caller that has one output budget for the
+// whole result decide per entry -- deliver it, cut it, or point at it -- without
+// re-reading a queue whose entries are already confirmed.
+type Delivered struct {
+	Entry store.LogEntry
+	Text  string
+}
+
+// PullPendingThroughEntries returns one Delivered per pending mastermind
+// payload of name whose round is at most round -- every round when round <= 0
+// -- confirming each with route and WITHOUT pushing anything, in log order so
+// the waited round is last. An empty slice with a nil error means nothing was
+// pending and nothing was confirmed.
 //
 // The list and confirm step runs in ONE lock, wrapped in retryBusy: a busy
 // database is retried with a short backoff, and nothing is confirmed unless
-// the whole lock body succeeded. The file reads happen outside the lock, as in
-// pullPending.
-func PullPendingThrough(ctx context.Context, st *store.Store, name, route string, round int) (text string, found bool, err error) {
+// the whole lock body succeeded. The file reads happen outside the lock.
+func PullPendingThroughEntries(ctx context.Context, st *store.Store, name, route string, round int) ([]Delivered, error) {
 	var pending []store.PendingEntry
 
-	err = retryBusy(ctx, busyRetryDelays, nil, func() error {
+	err := retryBusy(ctx, busyRetryDelays, nil, func() error {
 		return st.WithLock(func(tx *store.Tx) error {
 			entries, err := tx.ClaimableForMasterMindThrough(name, round)
 			if err != nil {
@@ -147,27 +156,61 @@ func PullPendingThrough(ctx context.Context, st *store.Store, name, route string
 		})
 	})
 	if err != nil {
-		return "", false, err
+		return nil, err
 	}
 	if len(pending) == 0 {
-		return "", false, nil
+		return nil, nil
 	}
 
 	// The file reads happen outside the lock: no file I/O under the state
 	// lock, as pullPending does.
-	if len(pending) == 1 {
-		text, _ = PushText(pending[0].Entry, BindingFor(st, name), st.ReadFile)
-		return text, true, nil
+	binding := BindingFor(st, name)
+	out := make([]Delivered, 0, len(pending))
+	for _, p := range pending {
+		text, _ := PushText(p.Entry, binding, st.ReadFile)
+		out = append(out, Delivered{Entry: p.Entry, Text: text})
+	}
+	return out, nil
+}
+
+// JoinDelivered renders one whole-result string from the per-entry deliveries,
+// waited round last: the single entry's text when there is one, and every
+// earlier entry under a header naming its round otherwise. It is the shape
+// PullPendingThrough returns and the shape WaitResult.Payload carries, so a
+// caller that reads the result whole and a caller that reads it per entry agree
+// on what the entries were.
+func JoinDelivered(delivered []Delivered) string {
+	if len(delivered) == 1 {
+		return delivered[0].Text
 	}
 
 	var b strings.Builder
-	for _, p := range pending[:len(pending)-1] {
-		fmt.Fprintf(&b, "── round %d: not delivered earlier (%s) ──\n", p.Entry.Round, p.Entry.Path)
-		earlier, _ := PushText(p.Entry, BindingFor(st, name), st.ReadFile)
-		b.WriteString(earlier)
+	for _, d := range delivered[:len(delivered)-1] {
+		fmt.Fprintf(&b, "── round %d: not delivered earlier (%s) ──\n", d.Entry.Round, d.Entry.Path)
+		b.WriteString(d.Text)
 		b.WriteString("\n\n")
 	}
-	last, _ := PushText(pending[len(pending)-1].Entry, BindingFor(st, name), st.ReadFile)
-	b.WriteString(last)
-	return b.String(), true, nil
+	b.WriteString(delivered[len(delivered)-1].Text)
+	return b.String()
+}
+
+// PullPendingThrough returns the text for every pending mastermind payload of name
+// whose round is at most round -- every round when round <= 0 -- and marks each
+// delivered with route, WITHOUT pushing anything. The waited round's text is
+// last; every earlier one is prefixed with a header naming its round, so an
+// older undelivered payload is neither dropped nor mistaken for the newest
+// text.
+//
+// It is PullPendingThroughEntries plus the concatenation a reader of one whole
+// result wants: the split form is what a caller with its own per-entry output
+// budget uses, and both confirm the same entries in the same order.
+func PullPendingThrough(ctx context.Context, st *store.Store, name, route string, round int) (text string, found bool, err error) {
+	delivered, err := PullPendingThroughEntries(ctx, st, name, route, round)
+	if err != nil {
+		return "", false, err
+	}
+	if len(delivered) == 0 {
+		return "", false, nil
+	}
+	return JoinDelivered(delivered), true, nil
 }

@@ -220,7 +220,18 @@ func TestRelevoVerbsWaitStillOpenWhenBoundElapses(t *testing.T) {
 	}
 }
 
-func TestRelevoVerbsWaitCapsOversizePayloadToShowHint(t *testing.T) {
+// TestRelevoVerbsWaitOversizeDeliversEveryEntry pins the over-cap branch: the
+// wait confirmed every entry PullPendingThrough found, so it has to show every
+// one of them. The old branch confirmed them all and printed one path plus a
+// claiming hint, which dropped the content of each entry it had just taken --
+// the caller could not read round 1 at all and reading the pointer consumed the
+// next pending payload of round 2.
+//
+// What is asserted is the invariant rather than one exact string: round 1 is
+// delivered, round 2 is either delivered or pointed at, and the bare path the
+// old branch printed appears nowhere. Every pointer carries --peek, so reading
+// one back is not a second claim.
+func TestRelevoVerbsWaitOversizeDeliversEveryEntry(t *testing.T) {
 	s := store.New(t.TempDir())
 	saveVerbBinding(t, s, store.Binding{Name: "big", CWD: "/repo-big", MasterMindID: mcpTestMasterMindA, Round: 2, State: store.StateActive})
 
@@ -245,9 +256,159 @@ func TestRelevoVerbsWaitCapsOversizePayloadToShowHint(t *testing.T) {
 
 	v := waitVerbsFor(s, time.Now)
 	text := waitText(t, func() (any, error) { return v.Wait(context.Background(), "", WaitArgs{Name: "big", Round: 2}) })
-	want := "big round 2 closed\n" + path2 + "\nrelevo show big --round 2 --report"
-	if text != want {
-		t.Errorf("wait text = %q, want %q", text, want)
+
+	if !strings.HasPrefix(text, "big round 2 closed\n── round 1: not delivered earlier ("+path1+") ──\n") {
+		t.Errorf("wait text = %q, want the outcome line then round 1 under its header", text)
+	}
+	if !strings.Contains(text, body) {
+		t.Error("wait text does not carry round 1's body: an entry was confirmed but never delivered")
+	}
+
+	// Round 2 has 36 KiB of budget left after round 1, so it is cut to that --
+	// and the cut line is what names the round, so it is still represented.
+	const peek2 = "relevo show big --round 2 --report --peek"
+	if !strings.Contains(text, peek2) {
+		t.Errorf("wait text = %q, want it to name round 2 by its peek pointer %q", text, peek2)
+	}
+
+	// The old branch's whole answer was a path and a claiming hint. Neither may
+	// survive: the path is not a delivery, and the hint without --peek claims.
+	if strings.Contains(text, "\n"+path2+"\n") || strings.HasSuffix(text, "\n"+path2) {
+		t.Errorf("wait text = %q, want no bare report path in place of the payload", text)
+	}
+	if strings.Contains(text, "relevo show big --round 2 --report\n") {
+		t.Errorf("wait text = %q, want no claiming `relevo show` pointer", text)
+	}
+
+	// Every confirmed entry was taken, so a second wait on the same round has
+	// nothing left to deliver and reports the outcome alone.
+	second := waitText(t, func() (any, error) { return v.Wait(context.Background(), "", WaitArgs{Name: "big", Round: 2}) })
+	if second != "big round 2 closed" {
+		t.Errorf("second wait text = %q, want exactly 'big round 2 closed'", second)
+	}
+}
+
+// TestRelevoVerbsWaitOversizeSingleEntryIsCutNotPointedAt covers the other
+// shape: one entry whose own text is over the cap. It is cut to the cap and
+// named in the cut line, so the caller gets most of the report rather than a
+// filename -- the old branch answered this case with the path alone.
+func TestRelevoVerbsWaitOversizeSingleEntryIsCutNotPointedAt(t *testing.T) {
+	s := store.New(t.TempDir())
+	saveVerbBinding(t, s, store.Binding{Name: "one", CWD: "/repo-one", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
+
+	// A 40 KiB origin line plus a 60 KiB report: past the 96 KiB cap on its
+	// own, so the single entry is the whole over-cap payload.
+	payload := strings.Repeat("p", 40*1024)
+	path := s.ReportPath("one", 1)
+	writeStoreFile(t, path, strings.Repeat("A", 60*1024))
+
+	for _, e := range []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
+		{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: path, Payload: payload},
+	} {
+		if err := s.AppendLog("one", e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+
+	v := waitVerbsFor(s, time.Now)
+	text := waitText(t, func() (any, error) { return v.Wait(context.Background(), "", WaitArgs{Name: "one", Round: 1}) })
+
+	if !strings.HasPrefix(text, "one round 1 closed\n"+payload) {
+		t.Error("wait text does not open with the entry's own text: a single oversize entry must still be delivered")
+	}
+	if !strings.Contains(text, "[truncated at 98304 bytes -- full text: relevo show one --round 1 --report --peek]") {
+		t.Errorf("wait text = %q, want the cap-cut line naming the peek pointer", text)
+	}
+	if strings.Contains(text, path) {
+		t.Errorf("wait text = %q, want no bare report path in place of the payload", text)
+	}
+}
+
+// TestRelevoVerbsWaitOversizePointsAtAHaltEntry: a halt entry a halt queues is
+// an ordinary claimable payload, so it is one of the entries an over-cap wait
+// confirmed -- and it is delivered or pointed at like any other. The budget is
+// gone by then, so the pointer is what arrives; what must not happen is the
+// halt being confirmed and printed nowhere.
+func TestRelevoVerbsWaitOversizePointsAtAHaltEntry(t *testing.T) {
+	s := store.New(t.TempDir())
+	now := func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) }
+	halt := "builder exited (code 1) without a report"
+	saveVerbBinding(t, s, store.Binding{
+		Name: "halty", CWD: "/repo-halty", MasterMindID: mcpTestMasterMindA,
+		Round: 3, State: store.StateNeedsYou,
+		Halt: halt, HaltAt: now(),
+	})
+
+	body := strings.Repeat("A", 60*1024)
+	for r := 1; r <= 2; r++ {
+		p := s.ReportPath("halty", r)
+		writeStoreFile(t, p, body)
+		for _, e := range []store.LogEntry{
+			{Round: r, Direction: store.DirToBuilder, Kind: store.KindPrompt},
+			{Round: r, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: p},
+		} {
+			if err := s.AppendLog("halty", e); err != nil {
+				t.Fatalf("AppendLog: %v", err)
+			}
+		}
+	}
+	if err := s.AppendLog("halty", store.LogEntry{Round: 3, Direction: store.DirToBuilder, Kind: store.KindPrompt}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	deps := delivery.Deps{Store: s, Now: now}
+	if err := s.WithLock(func(tx *store.Tx) error {
+		return delivery.Queue(context.Background(), deps, tx, "halty", store.LogEntry{
+			Round: 3, Direction: store.DirToMasterMind, Kind: store.KindHalt,
+			Note:    halt,
+			Payload: halt + ". relevo status --name halty",
+		})
+	}); err != nil {
+		t.Fatalf("Queue: %v", err)
+	}
+
+	v := waitVerbsFor(s, now)
+	text := waitText(t, func() (any, error) { return v.Wait(context.Background(), "", WaitArgs{Name: "halty", Round: 3}) })
+
+	if !strings.HasPrefix(text, "halty round 3 needs-you\n") {
+		t.Errorf("wait text = %q, want the needs-you outcome line first", text)
+	}
+	// The halt entry names no show section of its own, so the pointer is the
+	// round's log -- and --peek, so following it claims nothing.
+	if !strings.Contains(text, "relevo show halty --round 3 --log --peek") {
+		t.Errorf("wait text = %q, want a peek pointer naming the round 3 halt entry", text)
+	}
+	if !strings.Contains(text, "── round 1: not delivered earlier") {
+		t.Errorf("wait text = %q, want round 1 delivered before the pointed-at halt", text)
+	}
+}
+
+// TestPeekRefIsNeverClaiming pins the pointer itself: whatever kind an entry is,
+// the command this branch hands back carries --peek, because a plain
+// `relevo show` would claim the oldest pending payload of its round and
+// an already-confirmed entry has nothing to give.
+func TestPeekRefIsNeverClaiming(t *testing.T) {
+	b := store.Binding{Name: "webshop", Shape: store.ShapeWriter}
+	reader := store.Binding{Name: "webshop", Shape: store.ShapeReader}
+
+	tests := []struct {
+		name    string
+		binding store.Binding
+		entry   store.LogEntry
+		want    string
+	}{
+		{"a writer's report", b, store.LogEntry{Round: 2, Kind: store.KindReport, Path: "/x/002-report.md"}, "relevo show webshop --round 2 --report --peek"},
+		{"a reader's report", reader, store.LogEntry{Round: 2, Kind: store.KindReport, Path: "/x/002-output.md"}, "relevo show webshop --round 2 --output --peek"},
+		{"a diff", b, store.LogEntry{Round: 2, Kind: store.KindDiff, Path: "/x/002.diff"}, "relevo show webshop --round 2 --diff --peek"},
+		{"a halt entry names no section, so it points at the log", b, store.LogEntry{Round: 3, Kind: store.KindHalt}, "relevo show webshop --round 3 --log --peek"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := peekRef(tt.binding, tt.entry); got != tt.want {
+				t.Errorf("peekRef = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
