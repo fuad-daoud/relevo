@@ -211,12 +211,16 @@ func seedStatusFixture(t *testing.T) statusFixture {
 func TestContractStatus(t *testing.T) {
 	fx := seedStatusFixture(t)
 
+	// The listing surfaces take an explicit --all-masterminds: a bare `status`
+	// resolves this session's mastermind and refuses when it cannot, which is
+	// the same refusal the statusline gives. --name answers by name and needs
+	// no scope, so it is left bare.
 	for _, c := range []struct {
 		golden string
 		args   []string
 	}{
-		{"status", []string{"status", "--json"}},
-		{"status-all", []string{"status", "--all", "--json"}},
+		{"status", []string{"status", "--all-masterminds", "--json"}},
+		{"status-all", []string{"status", "--all-masterminds", "--all", "--json"}},
 		{"status-name", []string{"status", "--name", "webshop", "--json"}},
 	} {
 		stdout, stderr, err := captureOutput(t, func() error { return run(c.args) })

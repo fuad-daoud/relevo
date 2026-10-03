@@ -54,10 +54,19 @@ type ChainStep struct {
 // ReadChains reads every stored chain and returns the complete read model,
 // querying live trace and status for reachable remote chains.
 func ReadChains(ctx context.Context, rt Runtime) (ChainsDoc, error) {
+	return ReadChainsScope(ctx, rt, Scope{})
+}
+
+// ReadChainsScope is ReadChains narrowed by sc: one mastermind's chains and the
+// children hanging under them, under the same scope rule the binding listing
+// uses. A chain is a builder's row, so a chain belongs to the mastermind that
+// owns it and a chain listing follows the same scope as a binding listing.
+func ReadChainsScope(ctx context.Context, rt Runtime, sc Scope) (ChainsDoc, error) {
 	chains, err := rt.Store.Chains()
 	if err != nil {
 		return ChainsDoc{}, err
 	}
+	chains = scopedChains(chains, sc)
 	if len(chains) == 0 {
 		return ChainsDoc{Chains: []ChainEntry{}}, nil
 	}
