@@ -140,25 +140,7 @@ func cmdBoardComment(args []string) error {
 		arg = fs.Args()[0]
 	}
 	if !isExcalidrawArg(arg) {
-		// A position needs an element to be a fraction of. --selector on its own
-		// defaults to 0,0; --x without --selector is a position with nothing to
-		// position against, which is a mistake rather than a silent default.
-		if (flagGiven(fs, "x") || flagGiven(fs, "y")) && *v.selector == "" {
-			return fail(codeUsage, "relevo board comment: --x and --y need --selector on an HTML board")
-		}
-		by := *v.by
-		if by == "" {
-			by = board.DefaultBy(os.Getenv("RELEVO_MASTERMIND"))
-		}
-		hv := &boardCommentHTMLFlagValues{
-			board:    v.board,
-			text:     v.text,
-			selector: v.selector,
-			x:        v.x,
-			y:        v.y,
-			by:       &by,
-		}
-		return cmdBoardCommentHTML(cwd, arg, *v.board, hv, *v.text)
+		return boardCommentToHTML(fs, cwd, arg, v)
 	}
 	// --selector names an element, and an Excalidraw scene has no elements to
 	// select, so the flag is refused rather than ignored.
@@ -194,6 +176,30 @@ func cmdBoardComment(args []string) error {
 	}
 	fmt.Printf("comment: %s  %s\n", c.ID, res.Path)
 	return nil
+}
+
+// boardCommentToHTML hands a comment off to the HTML branch. It lives apart from
+// cmdBoardComment so the Excalidraw body stays the body it was.
+func boardCommentToHTML(fs *flag.FlagSet, cwd, arg string, v *boardCommentFlagValues) error {
+	// A position needs an element to be a fraction of. --selector on its own
+	// defaults to 0,0; --x without --selector is a position with nothing to
+	// position against, which is a mistake rather than a silent default.
+	if (flagGiven(fs, "x") || flagGiven(fs, "y")) && *v.selector == "" {
+		return fail(codeUsage, "relevo board comment: --x and --y need --selector on an HTML board")
+	}
+	by := *v.by
+	if by == "" {
+		by = board.DefaultBy(os.Getenv("RELEVO_MASTERMIND"))
+	}
+	hv := &boardCommentHTMLFlagValues{
+		board:    v.board,
+		text:     v.text,
+		selector: v.selector,
+		x:        v.x,
+		y:        v.y,
+		by:       &by,
+	}
+	return cmdBoardCommentHTML(cwd, arg, *v.board, hv, *v.text)
 }
 
 // boardNumber renders one position without a trailing zero, for the text row.
