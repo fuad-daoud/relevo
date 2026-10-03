@@ -1,0 +1,4 @@
+{
+  "gate": "make check",
+  "regate": 2
+}

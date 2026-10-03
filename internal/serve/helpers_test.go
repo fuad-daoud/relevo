@@ -120,6 +120,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 type scriptRunner struct {
 	mu           sync.Mutex
 	specs        []spawn.ProcSpec
+	handles      []spawn.ProcHandle
 	aliveHandles []spawn.ProcHandle
 	alive        map[int]bool
 	nextPID      int
@@ -140,11 +141,13 @@ func (r *scriptRunner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.Pr
 	pid := r.nextPID
 	r.nextPID++
 	r.specs = append(r.specs, spec)
+	h := spawn.ProcHandle{PID: pid, StartedAt: time.Now()}
+	r.handles = append(r.handles, h)
 	r.alive[pid] = true
 	if spec.LogPath != "" {
 		_ = os.WriteFile(spec.LogPath, []byte("builder started\n"), 0o644)
 	}
-	return spawn.ProcHandle{PID: pid, StartedAt: time.Now()}, nil
+	return h, nil
 }
 
 func (r *scriptRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {

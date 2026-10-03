@@ -27,11 +27,11 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err := chainForkParentGate(rt, c); err != nil {
 		return ChainResult{}, err
 	}
-	// A gate change on a chain whose writer runs on a server would be ignored
-	// where the check actually runs, so it is refused rather than silently
-	// dropped.
+	// A gate change on a chain whose writer runs on a server has to reach that
+	// server's binding, so it is refused there when the server cannot take it.
+	// The push that delivers it waits for every other refusal below to clear.
 	if chainResumeChangesGate(opts) {
-		if err := resumeRemoteGateRefusal(rt, c); err != nil {
+		if err := resumeRemoteGateRefusal(ctx, rt, c); err != nil {
 			return ChainResult{}, err
 		}
 	}
@@ -185,6 +185,15 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	// state machine's resume returns the send's own error.
 	if out.Chain.Status == string(workflow.StatusHalted) {
 		return out, fmt.Errorf("chain %s: %s", out.Chain.Name, out.Chain.Reason)
+	}
+	// The resume itself has committed and nothing refused it, so the gate change
+	// a placed writer's server is owed can go out now. Any later abort of this
+	// resume -- the shipped round -- can no longer leave the server ahead of a
+	// chain whose own settings already carry the new gate.
+	if chainResumeChangesGate(opts) {
+		if err := resumeRemoteGatePush(ctx, rt, out.Chain, opts); err != nil {
+			return ChainResult{}, err
+		}
 	}
 	return out, nil
 }

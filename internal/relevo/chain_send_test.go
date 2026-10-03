@@ -332,3 +332,86 @@ func TestChainReaderFooterFromDeclaration(t *testing.T) {
 		t.Fatalf("WithLock: %v", err)
 	}
 }
+
+// TestSendChainRoundRefusedWhenPendingRoundFilePresentWithNoOpenRound pins that
+// sendChainRound refuses with ErrReportPending when a member row is at round N,
+// no round N is open in the log, but a done marker or report is on disk
+// (internal/relevo/chain_send.go:57-59), and that ChainResume halts with that reason.
+func TestSendChainRoundRefusedWhenPendingRoundFilePresentWithNoOpenRound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	// shop-rev has round 1, but its round 1 is not open in the log yet.
+	touch(t, rt.Store.DonePath("shop-rev", 1))
+
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		m, err := tx.Load("shop-rev")
+		if err != nil {
+			return err
+		}
+		_, err = sendChainRound(context.Background(), rt, tx, m, "review the round")
+		return err
+	})
+	if err == nil {
+		t.Fatal("sendChainRound must fail when a done marker exists for the round")
+	}
+	if !errors.Is(err, ErrReportPending) {
+		t.Fatalf("err = %v, want it to wrap ErrReportPending", err)
+	}
+	if !strings.Contains(err.Error(), "001-done exists") {
+		t.Errorf("err = %q, want it to name 001-done", err)
+	}
+
+	// Close builder round 1 with halt so the chain is halted.
+	chainBuilderClose(t, rt, "shop", chainHaltedBody("builder failed"))
+
+	// plant 002-done for the awaited builder so resume's re-send fails
+	touch(t, rt.Store.DonePath("shop", 2))
+
+	_, err = ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	if err == nil {
+		t.Fatal("ChainResume must fail when member could not start")
+	}
+	if !strings.Contains(err.Error(), "002-done exists") || !strings.Contains(err.Error(), ErrReportPending.Error()) {
+		t.Fatalf("ChainResume err = %v, want it to contain ErrReportPending and name 002-done exists", err)
+	}
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Errorf("chain row status = %q, want halted", row.Status)
+	}
+	if !strings.Contains(row.Reason, "002-done exists") || !strings.Contains(row.Reason, ErrReportPending.Error()) {
+		t.Errorf("chain row reason = %q, want it to contain 002-done exists and ErrReportPending", row.Reason)
+	}
+}
+
+// TestSendChainRoundRefusedWhenReportPresentWithNoOpenRound pins that
+// sendChainRound also refuses when the report file is present on disk
+// without an open round in the log (internal/relevo/chain_send.go:57-59).
+func TestSendChainRoundRefusedWhenReportPresentWithNoOpenRound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	touch(t, rt.Store.ReportPath("shop-rev", 1))
+
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		m, err := tx.Load("shop-rev")
+		if err != nil {
+			return err
+		}
+		_, err = sendChainRound(context.Background(), rt, tx, m, "review the round")
+		return err
+	})
+	if err == nil {
+		t.Fatal("sendChainRound must fail when a report exists for the round")
+	}
+	if !errors.Is(err, ErrReportPending) {
+		t.Fatalf("err = %v, want it to wrap ErrReportPending", err)
+	}
+	if !strings.Contains(err.Error(), "001-report.md exists") {
+		t.Errorf("err = %q, want it to name 001-report.md", err)
+	}
+}

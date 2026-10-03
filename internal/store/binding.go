@@ -57,6 +57,41 @@ type GateRun struct {
 	Attempt int `json:"attempt,omitempty"`
 }
 
+// CheckRun is one acceptance check a client asked a served binding to run,
+// while it runs and once it settles. A binding keeps one: a check is a single
+// process against one tree, so a second one cannot start until this one ends.
+type CheckRun struct {
+	// ID is the caller's own name for the run. A repeated request carrying it
+	// answers from this record instead of starting a second run, so a client
+	// that lost the first answer learns the run's state rather than doubling
+	// it.
+	ID string `json:"id"`
+	// Command is the check, run through `sh -c` in the binding's worktree.
+	Command string `json:"command"`
+	// Step names the workflow step the check belongs to, when the caller had
+	// one; empty for a plain gate-shaped check.
+	Step string `json:"step,omitempty"`
+	// PID and StartedAt are the process handle while the run is going, empty
+	// before it starts and once it ends.
+	PID       int   `json:"pid,omitempty"`
+	StartedAt int64 `json:"started_at,omitempty"`
+	Round     int   `json:"round,omitempty"`
+	// Attempt is 0 for the run's first process and 1 for the single re-run
+	// allowed after a daemon restart took the first one with it; never greater.
+	Attempt    int    `json:"attempt,omitempty"`
+	Result     string `json:"result,omitempty"`
+	ExitCode   int    `json:"exit_code,omitempty"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+	Note       string `json:"note,omitempty"`
+	// LogPath is the file the run streams to, under the binding's round-file
+	// area. It is written by the run and read as a bounded tail.
+	LogPath string `json:"log_path,omitempty"`
+}
+
+// Settled reports whether the run has a result, so its record is final and a
+// new check may take its place.
+func (r CheckRun) Settled() bool { return r.Result != "" }
+
 // Verdict is one reviewer's verdict on a closed round, shown by status until
 // the round after next.
 type Verdict struct {
@@ -134,6 +169,12 @@ type Binding struct {
 	Gate          string   `json:"gate,omitempty"`
 	GateTimeoutMS int      `json:"gate_timeout_ms,omitempty"`
 	GateRun       *GateRun `json:"gate_run,omitempty"`
+
+	// CheckRun is the served binding's current check: the process while it
+	// runs, and its record once it settles. The record outlives the run on
+	// purpose, because it is what an idempotent repeat and a later read both
+	// answer from.
+	CheckRun *CheckRun `json:"check_run,omitempty"`
 
 	RoundVerify bool `json:"round_verify,omitempty"`
 	// LastVerdict is shown by status while Round-1 == LastVerdict.Round.

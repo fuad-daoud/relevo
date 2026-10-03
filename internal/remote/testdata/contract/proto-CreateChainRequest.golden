@@ -25,5 +25,18 @@
   "client_binding_ids": {
     "builder": "01CLIENTBINDINGBUILDER000000",
     "reviewer": "01CLIENTBINDINGREVIEWER00000"
+  },
+  "workflow": {
+    "version": 1,
+    "steps": [
+      {
+        "name": "build",
+        "actor": "builder"
+      }
+    ]
+  },
+  "client_actor_ids": {
+    "builder": "01CLIENTACTORBUILDER0000000",
+    "reviewer": "01CLIENTACTORREVIEWER000000"
   }
 }

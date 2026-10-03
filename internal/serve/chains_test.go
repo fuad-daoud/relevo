@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainWireRequest is the create body every chain test starts from: one plan,
@@ -730,5 +731,263 @@ func TestRoundBundleRefusesABranchlessMember(t *testing.T) {
 	requireStatus(t, resp, body, http.StatusNotFound)
 	if errBody := decodeErrorBody(t, body); errBody.Message != "no branch" {
 		t.Fatalf("message = %q, want %q", errBody.Message, "no branch")
+	}
+}
+
+// TestServedCreateSettingsOnlyMapsToDefault pins the old-client/new-server
+// compatibility: a settings-only create requires no workflow in the request
+// and stores the default definition with settings mapped onto its params.
+func TestServedCreateSettingsOnlyMapsToDefault(t *testing.T) {
+	env := setupTestEnv(t)
+	req := chainWireRequest("shop", env.repoID, env.headSHA)
+	req.Settings.ReviewerActor = "reviewer"
+	req.Settings.PlannerActor = "researcher"
+	req.Settings.MaxCorrections = 3
+	bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+	form, ct := makeChainForm(t, req, bundle)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
+
+	rt := env.runtime(t)
+	row, err := rt.Store.Chain("shop")
+	if err != nil {
+		t.Fatalf("Chain(shop): %v", err)
+	}
+	if len(row.WorkflowJSON) == 0 {
+		t.Fatal("expected WorkflowJSON to be stored")
+	}
+	def, err := workflow.Parse(row.WorkflowJSON)
+	if err != nil {
+		t.Fatalf("parse stored workflow: %v", err)
+	}
+	if def.Name != workflow.Default().Name {
+		t.Errorf("stored def name = %q, want default %q", def.Name, workflow.Default().Name)
+	}
+	if got := def.Params["reviewer"].Str; got != "reviewer" {
+		t.Errorf("param reviewer = %q, want reviewer", got)
+	}
+	if got := def.Params["planner"].Str; got != "researcher" {
+		t.Errorf("param planner = %q, want researcher", got)
+	}
+	if got := def.Params["max_corrections"].Int; got != 3 {
+		t.Errorf("param max_corrections = %d, want 3", got)
+	}
+}
+
+// TestServedCreateWorkflowValidatesAgainstServerActors pins that a custom
+// workflow is validated against the server's own actors: an unknown actor
+// returns 400 unknown_actor.
+func TestServedCreateWorkflowValidatesAgainstServerActors(t *testing.T) {
+	env := setupTestEnv(t)
+	req := chainWireRequest("shop", env.repoID, env.headSHA)
+	const customJSON = `{"name":"bad-actor","inputs":{"plans":"required"},"start":"a","steps":{"a":{"run":"ghost","on":{"done":"done"}}}}`
+	req.Workflow = json.RawMessage(customJSON)
+	req.ClientActorIDs = map[string]string{"ghost": "ghost-link"}
+	bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+	form, ct := makeChainForm(t, req, bundle)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, string(body))
+	}
+	errBody := decodeErrorBody(t, body)
+	if errBody.Code != remote.CodeUnknownActor {
+		t.Errorf("error code = %q, want %q; body: %s", errBody.Code, remote.CodeUnknownActor, string(body))
+	}
+	requireChainAbsent(t, env, "shop")
+}
+
+// TestServedCreateRefusesBadEdgeAndReaderAsWriter pins that structural workflow
+// defects and shape mismatches return 400 invalid with the first problem text.
+func TestServedCreateRefusesBadEdgeAndReaderAsWriter(t *testing.T) {
+	t.Run("bad edge", func(t *testing.T) {
+		env := setupTestEnv(t)
+		req := chainWireRequest("shop", env.repoID, env.headSHA)
+		const customJSON = `{"name":"bad-edge","inputs":{"plans":"required"},"start":"a","steps":{"a":{"run":"builder","on":{"nope":"done"}}}}`
+		req.Workflow = json.RawMessage(customJSON)
+		bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+		form, ct := makeChainForm(t, req, bundle)
+		resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, string(body))
+		}
+		errBody := decodeErrorBody(t, body)
+		if errBody.Code != remote.CodeInvalid {
+			t.Errorf("error code = %q, want %q", errBody.Code, remote.CodeInvalid)
+		}
+		if !strings.Contains(errBody.Message, "undeclared") && !strings.Contains(errBody.Message, "rule 3") {
+			t.Errorf("message = %q, want first problem text mentioning undeclared outcome", errBody.Message)
+		}
+		requireChainAbsent(t, env, "shop")
+	})
+
+	t.Run("reader as writer", func(t *testing.T) {
+		env := setupTestEnv(t)
+		req := chainWireRequest("shop", env.repoID, env.headSHA)
+		req.Settings.ReviewerActor = "builder"
+		bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+		form, ct := makeChainForm(t, req, bundle)
+		resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, string(body))
+		}
+		errBody := decodeErrorBody(t, body)
+		if errBody.Code != remote.CodeInvalid {
+			t.Errorf("error code = %q, want %q", errBody.Code, remote.CodeInvalid)
+		}
+		if !strings.Contains(errBody.Message, "must be a") {
+			t.Errorf("message = %q, want problem text mentioning must be a reader", errBody.Message)
+		}
+		requireChainAbsent(t, env, "shop")
+	})
+}
+
+// TestServedCreateResolvesShippedSeedFromServerBinary pins that shipped seeds
+// are resolved from the server binary: unknown seeds are rejected, valid ones run.
+func TestServedCreateResolvesShippedSeedFromServerBinary(t *testing.T) {
+	t.Run("bad shipped seed", func(t *testing.T) {
+		env := setupTestEnv(t)
+		req := chainWireRequest("shop", env.repoID, env.headSHA)
+		const customJSON = `{"name":"bad-seed","inputs":{"plans":"required"},"start":"a","steps":{"a":{"run":"builder","seed":"shipped:nonexistent","on":{"done":"done"}}}}`
+		req.Workflow = json.RawMessage(customJSON)
+		bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+		form, ct := makeChainForm(t, req, bundle)
+		resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, string(body))
+		}
+		errBody := decodeErrorBody(t, body)
+		if errBody.Code != remote.CodeInvalid {
+			t.Errorf("error code = %q, want %q", errBody.Code, remote.CodeInvalid)
+		}
+		if !strings.Contains(errBody.Message, "not a shipped seed") {
+			t.Errorf("message = %q, want problem text", errBody.Message)
+		}
+		requireChainAbsent(t, env, "shop")
+	})
+
+	t.Run("good shipped seed", func(t *testing.T) {
+		env := setupTestEnv(t)
+		req := chainWireRequest("shop", env.repoID, env.headSHA)
+		const customJSON = `{"name":"good-seed","inputs":{"plans":"required"},"start":"a","steps":{"a":{"run":"builder","seed":"shipped:review","on":{"done":"done"}}}}`
+		req.Workflow = json.RawMessage(customJSON)
+		bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+		form, ct := makeChainForm(t, req, bundle)
+		resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+		requireStatus(t, resp, body, http.StatusCreated)
+	})
+}
+
+// TestServedCreateRefusesFileSeed pins that file: seeds are refused on served
+// creates, requiring the client to inline them instead.
+func TestServedCreateRefusesFileSeed(t *testing.T) {
+	env := setupTestEnv(t)
+	req := chainWireRequest("shop", env.repoID, env.headSHA)
+	const customJSON = `{"name":"file-seed","inputs":{"plans":"required"},"start":"a","steps":{"a":{"run":"builder","seed":"file:seeds/review.md","on":{"done":"done"}}}}`
+	req.Workflow = json.RawMessage(customJSON)
+	bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+	form, ct := makeChainForm(t, req, bundle)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, string(body))
+	}
+	errBody := decodeErrorBody(t, body)
+	if errBody.Code != remote.CodeInvalid {
+		t.Errorf("error code = %q, want %q", errBody.Code, remote.CodeInvalid)
+	}
+	if !strings.Contains(errBody.Message, "file seeds must be inlined by the client") {
+		t.Errorf("message = %q, want file seeds must be inlined by the client", errBody.Message)
+	}
+	requireChainAbsent(t, env, "shop")
+}
+
+// TestServedCreateRetryComparesDefinition pins the retry behavior for workflow
+// creates: identical requests with different JSON key order succeed with 200,
+// while changed definitions return 409 conflict.
+func TestServedCreateRetryComparesDefinition(t *testing.T) {
+	env := setupTestEnv(t)
+	req := chainWireRequest("shop", env.repoID, env.headSHA)
+	const wf1 = `{"name":"custom","inputs":{"plans":"required","task":"none"},"start":"a","steps":{"a":{"run":"builder","on":{"done":"done"}}}}`
+	req.Workflow = json.RawMessage(wf1)
+	req.ClientActorIDs = map[string]string{"builder": "b-id"}
+	bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+	form, ct := makeChainForm(t, req, bundle)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
+
+	// Same definition with different key order returns 200.
+	const wfKeyOrder = `{"inputs":{"task":"none","plans":"required"},"steps":{"a":{"on":{"done":"done"},"run":"builder"}},"start":"a","name":"custom"}`
+	reqRetry := chainWireRequest("shop", env.repoID, env.headSHA)
+	reqRetry.Settings = remote.ChainSettings{}
+	reqRetry.Workflow = json.RawMessage(wfKeyOrder)
+	reqRetry.ClientActorIDs = map[string]string{"builder": "b-id"}
+	formRetry, ctRetry := makeChainForm(t, reqRetry, nil)
+	respRetry, bodyRetry := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", formRetry, ctRetry)
+	requireStatus(t, respRetry, bodyRetry, http.StatusOK)
+
+	// Changed definition returns 409 conflict.
+	const wfChanged = `{"name":"custom","inputs":{"plans":"required","task":"none"},"start":"a","params":{"timeout":{"kind":"int","int":30}},"steps":{"a":{"run":"builder","on":{"done":"done"}}}}`
+	reqDiff := chainWireRequest("shop", env.repoID, env.headSHA)
+	reqDiff.Workflow = json.RawMessage(wfChanged)
+	reqDiff.ClientActorIDs = map[string]string{"builder": "b-id"}
+	formDiff, ctDiff := makeChainForm(t, reqDiff, nil)
+	respDiff, bodyDiff := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", formDiff, ctDiff)
+	if respDiff.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body: %s", respDiff.StatusCode, string(bodyDiff))
+	}
+}
+
+// TestServedChainViewCarriesWorkflowAndState pins that a chain view for a
+// workflow chain returns the stored workflow definition and engine state.
+func TestServedChainViewCarriesWorkflowAndState(t *testing.T) {
+	env := setupTestEnv(t)
+	req := chainWireRequest("shop", env.repoID, env.headSHA)
+	const customJSON = `{"name":"custom-view","inputs":{"plans":"required"},"start":"a","steps":{"a":{"run":"builder","on":{"done":"done"}}}}`
+	req.Workflow = json.RawMessage(customJSON)
+	bundle := chainBundle(t, env, env.clientDir, env.headSHA, "shop")
+	form, ct := makeChainForm(t, req, bundle)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/chains", form, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
+
+	respGet, bodyGet := doSigned(t, env.ts, env.kp, "GET", "/v1/chains/shop", nil, "")
+	requireStatus(t, respGet, bodyGet, http.StatusOK)
+	view := decodeChainView(t, bodyGet)
+	if len(view.Workflow) == 0 {
+		t.Fatal("view.Workflow is empty")
+	}
+	if len(view.State) == 0 {
+		t.Fatal("view.State is empty")
+	}
+	def, err := workflow.Parse(view.Workflow)
+	if err != nil {
+		t.Fatalf("parse view.Workflow: %v", err)
+	}
+	if def.Name != "custom-view" {
+		t.Errorf("workflow name = %q, want custom-view", def.Name)
+	}
+}
+
+// TestWhoAmIAdvertisesWorkflow pins that the server advertises the workflow
+// feature token so clients know custom workflow creates are supported.
+func TestWhoAmIAdvertisesWorkflow(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var who remote.WhoAmI
+	if err := json.NewDecoder(rec.Body).Decode(&who); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if !slices.Contains(who.Features, remote.FeatureWorkflow) {
+		t.Errorf("Features = %v, want %q", who.Features, remote.FeatureWorkflow)
 	}
 }

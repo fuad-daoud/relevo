@@ -64,6 +64,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/bindings/{name}/unbind", s.handleUnbind)
 	mux.HandleFunc("POST /v1/bindings/{name}/stop", s.handleStop)
 	mux.HandleFunc("POST /v1/bindings/{name}/resume", s.handleResume)
+	mux.HandleFunc("POST /v1/bindings/{name}/checks", s.handleCreateCheck)
+	mux.HandleFunc("GET /v1/bindings/{name}/checks/{id}", s.handleGetCheck)
+	mux.HandleFunc("POST /v1/bindings/{name}/gate", s.handleSetGate)
 	mux.HandleFunc("POST /v1/bindings/{name}/rounds", s.handleStartRound)
 	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/files/{kind}", s.handleRoundFile)
 	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/artifacts", s.handleRoundArtifacts)
@@ -122,7 +125,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		InstallationLabel: s.cfg.Installation.Label,
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain, remote.FeatureIsolation}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain, remote.FeatureIsolation, remote.FeatureWorkflow, remote.FeatureCheck}
 		who.BuilderTier = string(relevo.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()
