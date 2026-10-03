@@ -67,12 +67,18 @@ type Iter struct {
 }
 
 // Result is a step's latest close: its round or run id, its status, the
-// outcomes it declared and the artifacts it produced.
+// outcomes it declared, the artifacts it produced and the explicit override the
+// close carried, if any.
 type Result struct {
 	Round     int
 	Status    string
 	Outcomes  map[string]string
 	Artifacts map[string][]string
+	// Override is the value a close carried to pass over a red check. It is
+	// empty for every ordinary close; a pass that stands on a red check has no
+	// other way to advance, so the value is what makes the pass reviewable
+	// after the fact rather than a bare verdict.
+	Override string
 }
 
 // State is everything the engine reads and writes.
@@ -126,6 +132,11 @@ type Event struct {
 	// rendered it: an unmatched run close halts with exactly this, so a caller
 	// that owns the vocabulary keeps its own reason.
 	HaltReason string
+	// Override is a reviewer's explicit decision to pass while the run's last
+	// check is red. It is never inferred: empty means the close recorded no
+	// override, and a pass standing on a red check then halts rather than
+	// advancing on a bare verdict.
+	Override string
 }
 
 // ActionKind is what relevo does with a transition.
@@ -143,7 +154,9 @@ const (
 )
 
 // Action is what relevo does next. A send names the actor and the raw seed; a
-// run_check names the command; a halt carries the reason.
+// run_check names the command; a halt carries the reason. Override repeats the
+// override value a close carried to pass over a red check, so the action a trace
+// row stores names it too.
 type Action struct {
 	Kind     ActionKind
 	Step     string
@@ -151,6 +164,7 @@ type Action struct {
 	Seed     string
 	Command  string
 	Reason   string
+	Override string
 	Children []ChildSpec
 }
 

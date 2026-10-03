@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,7 +184,7 @@ func closeWFEvent(t *testing.T, rt Runtime, b store.Binding, body []byte, path, 
 		if err != nil {
 			return err
 		}
-		ev, err = chainEventFromCloseWF(rt, tx, c, b, chainCloseWF{Body: body, Path: path, Outcome: outcome})
+		ev, err = chainEventFromCloseWF(context.Background(), rt, tx, c, b, chainCloseWF{Body: body, Path: path, Outcome: outcome})
 		return err
 	}); err != nil {
 		t.Fatalf("chainEventFromCloseWF: %v", err)
