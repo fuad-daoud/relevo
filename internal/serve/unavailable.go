@@ -36,9 +36,6 @@ func tokenForProvider(rt relevo.Runtime, provider string) (string, bool) {
 }
 
 func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	caller := callerOf(r)
 	rt, err := s.runtime(caller)
 	if err != nil {

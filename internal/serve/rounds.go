@@ -157,13 +157,10 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	}
 	defer closeBundle()
 
-	s.mu.Lock()
-
 	caller := callerOf(r)
 	name := r.PathValue("name")
 	b, rt, err := s.loadBinding(caller, name)
 	if err != nil {
-		s.mu.Unlock()
 		if errors.Is(err, store.ErrNotFound) {
 			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 			return
@@ -172,20 +169,17 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !Allowed(caller, "rounds", b) {
-		s.mu.Unlock()
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		return
 	}
 
 	entries, _ := rt.Store.ReadLog(name)
 	if dec, msg := roundStartDecisionOf(rt, b, entries, req.Round, req.Plan); dec != startProceed {
-		s.mu.Unlock()
 		dec.write(w, s.servedView(rt, b, entries), msg)
 		return
 	}
 
 	if b.Serve == nil || b.Serve.BareRepo == "" {
-		s.mu.Unlock()
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "missing bare repo facts")
 		return
 	}
@@ -195,7 +189,6 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	// it under its own lock as a backstop.
 	if req.Candidate != "" {
 		if _, err := relevo.ResolveSendBuilderFor(rt, relevo.BindingRole(b), b.BuilderCandidate, req.Candidate); err != nil {
-			s.mu.Unlock()
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
 			return
 		}
@@ -204,15 +197,13 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	bare := b.Serve.BareRepo
 	outRef := "refs/relevo/" + name + "/out"
 
-	// Absorb OUTSIDE s.mu.
-	s.mu.Unlock()
-
+	// The bundle absorb is the long git step, and it holds no server-wide lock:
+	// another owner's poll runs while this one absorbs. The ref it writes is
+	// this owner's own, and finishRoundStart re-reads under this owner's lock.
 	if !s.absorbRoundBundle(w, r, rt.Transport, bare, outRef, req.Bundle) {
 		return
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.finishRoundStart(w, r, rt, caller, name, bare, outRef, b, req)
 }
 

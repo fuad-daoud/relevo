@@ -164,8 +164,9 @@ func validateChainActorIDs(ids map[string]string) string {
 // handleCreateChain accepts a whole chain: a multipart POST /v1/chains whose
 // "chain" field is the create JSON and whose "bundle" part is the base bundle.
 // Validation and the preflight run before anything exists; the bundle is
-// absorbed outside s.mu; a second preflight under the lock closes the race with
-// a create that landed while the bundle was absorbed.
+// absorbed without any server-wide lock held, so another owner's poll is not
+// blocked by it; a second preflight closes the race with a create that landed
+// while the bundle was absorbed.
 func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(s.cfg.MaxBundleBytes); err != nil {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "invalid multipart form: "+err.Error())
@@ -207,26 +208,20 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	}
 	outRef := "refs/relevo/" + req.Name + "/out"
 
-	s.mu.Lock()
 	rt, err := s.runtime(caller)
 	if err != nil {
-		s.mu.Unlock()
 		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
 		return
 	}
 	if s.chainPrepareCreate(w, rt, caller, bare, req) {
-		s.mu.Unlock()
 		return
 	}
-	s.mu.Unlock()
 
-	// The absorb is the long git step and must not hold s.mu.
+	// The absorb is the long git step and holds no server-wide lock.
 	if !s.chainInitAndAbsorb(w, r, rt, bare, outRef, bundle) {
 		return
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.chainFinishCreate(w, r, rt, caller, bare, outRef, req)
 }
 
@@ -394,9 +389,6 @@ func (s *Server) unwindChainCreate(ctx context.Context, g relevo.Git, bare, name
 }
 
 func (s *Server) handleGetChain(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	rt, name, ok := s.chainRuntime(w, r)
 	if !ok {
 		return
@@ -410,9 +402,6 @@ func (s *Server) handleGetChain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStopChain(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	rt, name, ok := s.chainRuntime(w, r)
 	if !ok {
 		return
@@ -441,9 +430,6 @@ func (s *Server) handleStopChain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResumeChain(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	rt, name, ok := s.chainRuntime(w, r)
 	if !ok {
 		return

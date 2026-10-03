@@ -20,9 +20,6 @@ const maxCheckBodyBytes = 8 << 10
 // already held, so a client that repeated a request learns from the status that
 // nothing was started twice.
 func (s *Server) handleCreateCheck(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	_, rt, name, ok := s.servedRoute(w, r, "check")
 	if !ok {
 		return
@@ -50,9 +47,6 @@ func (s *Server) handleCreateCheck(w http.ResponseWriter, r *http.Request) {
 // stays on the binding once it settles, so a client that polls late still reads
 // the result of the run it asked for.
 func (s *Server) handleGetCheck(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	_, rt, name, ok := s.servedRoute(w, r, "check")
 	if !ok {
 		return
@@ -70,9 +64,6 @@ func (s *Server) handleGetCheck(w http.ResponseWriter, r *http.Request) {
 // binding. It answers the binding's own view, so the client sees what the
 // server stored rather than having to fetch it back.
 func (s *Server) handleSetGate(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	b, rt, name, ok := s.servedRoute(w, r, "gate")
 	if !ok {
 		return
