@@ -85,7 +85,7 @@ func TestStatusChainContract(t *testing.T) {
 		golden string
 		args   []string
 	}{
-		{"status-chain", []string{"status", "--json"}},
+		{"status-chain", []string{"status", "--all-masterminds", "--json"}},
 		{"status-chain-name", []string{"status", "--name", "x", "--json"}},
 	} {
 		stdout, stderr, err := captureOutput(t, func() error { return run(c.args) })

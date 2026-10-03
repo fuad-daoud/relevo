@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -1030,34 +1029,6 @@ func TestFilterReportRejectsAnUnknownName(t *testing.T) {
 	}
 }
 
-// scopeReport is the whole of the status/watch DONE rule, tested as a pure
-// function: a test that ran cmdStatus would need a real harness on PATH, which
-// CI does not have and which made the first version of this test pass only on
-// the dev machine.
-func TestScopeReportHidesDoneUnlessAllOrNamed(t *testing.T) {
-	rep := view.Report{Bindings: []view.BindingStatus{
-		{Name: "live", State: string(store.StateActive)},
-		{Name: "finished", State: string(store.StateDone)},
-	}}
-
-	plain := scopeReport(rep, "", false)
-	if len(plain.Bindings) != 1 || plain.Bindings[0].Name != "live" || plain.DoneHidden != 1 {
-		t.Errorf("plain: got %+v, want only live with DoneHidden 1", plain)
-	}
-
-	all := scopeReport(rep, "", true)
-	if len(all.Bindings) != 2 || all.DoneHidden != 0 {
-		t.Errorf("--all: got %+v, want both rows and DoneHidden 0", all)
-	}
-
-	// filterReport has already narrowed to the named binding by the time
-	// scopeReport runs; what matters is that the name switches the filter off.
-	named := scopeReport(view.Report{Bindings: rep.Bindings[1:]}, "finished", false)
-	if len(named.Bindings) != 1 || named.DoneHidden != 0 {
-		t.Errorf("--name: got %+v, want the DONE row with DoneHidden 0", named)
-	}
-}
-
 func TestParseFor(t *testing.T) {
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
 
@@ -1823,38 +1794,32 @@ func TestStatusLineFlags(t *testing.T) {
 		}
 	})
 
-	t.Run("status --line --json prints StatusLineDoc with null mastermind and empty rows", func(t *testing.T) {
+	// An identity that does not resolve refuses on every surface, including the
+	// two statusline ones: a document reading "mastermind": null over "rows": []
+	// is indistinguishable from a healthy session with nothing to report.
+	t.Run("status --line refuses rather than printing a null mastermind", func(t *testing.T) {
 		t.Setenv("RELEVO_MASTERMIND", "")
 		t.Setenv("CLAUDECODE", "")
 		t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
 		t.Setenv("RELEVO_HARNESS", "")
 
-		stdout, stderr, err := captureOutput(t, func() error {
-			return run([]string{"status", "--line", "--json"})
-		})
-		if err != nil {
-			t.Fatalf("run status --line --json failed: %v (stderr: %s)", err, stderr)
-		}
-
-		var doc view.StatusLineDoc
-		if err := json.Unmarshal(stdout, &doc); err != nil {
-			t.Fatalf("unmarshal json %q: %v", stdout, err)
-		}
-		if doc.MasterMind != nil {
-			t.Errorf("doc.MasterMind = %+v, want nil", doc.MasterMind)
-		}
-		if doc.Rows == nil || len(doc.Rows) != 0 {
-			t.Errorf("doc.Rows = %+v, want empty []", doc.Rows)
-		}
-		s := string(stdout)
-		if !strings.Contains(s, `"mastermind":null`) {
-			t.Errorf("output %q does not contain '\"mastermind\":null'", s)
-		}
-		if !strings.Contains(s, `"board":null`) {
-			t.Errorf("output %q does not contain '\"board\":null'", s)
-		}
-		if !strings.Contains(s, `"rows":[]`) {
-			t.Errorf("output %q does not contain '\"rows\":[]'", s)
+		for _, args := range [][]string{
+			{"status", "--line"},
+			{"status", "--line", "--json"},
+		} {
+			stdout, _, err := captureOutput(t, func() error { return run(args) })
+			if err == nil {
+				t.Errorf("run(%v) = nil, want a refusal", args)
+				continue
+			}
+			requireCLIError(t, err, codeUsage, "relevo mastermind list")
+			var ec exitCodeErr
+			if !errors.As(err, &ec) || ec.code != catalogExit(codeUsage) {
+				t.Errorf("run(%v): exit = %v, want %d", args, err, catalogExit(codeUsage))
+			}
+			if len(stdout) != 0 {
+				t.Errorf("run(%v) wrote %q, want nothing before the refusal", args, stdout)
+			}
 		}
 	})
 }

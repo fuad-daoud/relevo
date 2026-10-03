@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 type aliveRunner struct{}
@@ -699,6 +700,191 @@ func TestAdminStatusLastSeen(t *testing.T) {
 	doc := StatusDocument(owners, remote.BuildersView{})
 	if doc.LastContact == nil || !doc.LastContact.Equal(seen) {
 		t.Errorf("LastContact = %v, want %v", doc.LastContact, seen)
+	}
+}
+
+// saveMemberlessChain plants a chain row named name whose member bindings do
+// not exist in the store, which is the shape applyChains still emits a row for:
+// the chain itself outlives the bindings it was made of. A legacy row (no
+// workflow) is the one chainReadMembers reads the member names off, so the
+// Builder column is what makes the chain a chain rather than an orphan record.
+// Owner comes off the store, because no prepareSave stamps a chain row and a
+// row scoped to "" would be invisible to this owner's own Chains() read.
+func saveMemberlessChain(t *testing.T, rt relevo.Runtime, name string) {
+	t.Helper()
+	row := db.ChainRow{
+		ID: "chain-" + name, Name: name, Owner: rt.Store.Owner(), Status: "halted",
+		Phase: "build", Step: "building", Plan: 1, Plans: 1,
+		Builder: name, Worktree: rt.Store.WorktreePath(name),
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.ChainSaveWithEvent(row, db.ChainEventRow{
+			TS: time.Now(), Phase: "build", Step: "building", Member: name,
+			Round: 1, Plan: 1, Event: "{}", Action: "{}",
+		})
+	}); err != nil {
+		t.Fatalf("plant the member-less chain %s: %v", name, err)
+	}
+}
+
+// TestAdminStatusListsGoneRowWithoutFailing pins the one-gone-among-live case:
+// a row whose backing binding is gone from the store is still listed and marked
+// gone, the live rows beside it are unaffected, and the call does not fail the
+// whole verb. Before the fix the per-row Load returned store.ErrNotFound and
+// cmdServeStatus turned it into `internal: <name>: binding not found`.
+func TestAdminStatusListsGoneRowWithoutFailing(t *testing.T) {
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	s := newAdminServer(t, now)
+	id := enrol(t, s, "alice")
+	saveOwnerBinding(t, s, id, "app-a")
+	saveOwnerBinding(t, s, id, "app-b")
+	rt := ownerRuntime(t, s, id)
+	saveMemberlessChain(t, rt, "board-23")
+
+	owners, _, err := AdminStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("AdminStatus with a gone row: %v", err)
+	}
+	if len(owners) != 1 {
+		t.Fatalf("got %d owners, want 1: one gone row must not drop the owner", len(owners))
+	}
+
+	rows := owners[0].Report.Bindings
+	byName := map[string]view.BindingStatus{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	if len(byName) != 3 {
+		t.Fatalf("rows = %d (%+v), want 3: both live rows and the gone chain row", len(byName), rows)
+	}
+
+	// The two live rows are byte-identical to a run with no chain at all.
+	for _, name := range []string{"app-a", "app-b"} {
+		row, ok := byName[name]
+		if !ok {
+			t.Fatalf("live row %s missing from %+v", name, rows)
+		}
+		if row.Gone {
+			t.Errorf("live row %s is marked gone", name)
+		}
+		if row.Queued != nil {
+			t.Errorf("live row %s gained queue enrichment %+v", name, row.Queued)
+		}
+	}
+
+	gone, ok := byName["board-23"]
+	if !ok {
+		t.Fatalf("the gone chain row is not listed: %+v", rows)
+	}
+	if !gone.Gone {
+		t.Error("the gone chain row is listed but not marked gone")
+	}
+	if gone.Queued != nil {
+		t.Errorf("the gone row gained queue enrichment %+v: a gone row is not queued work", gone.Queued)
+	}
+	if gone.Chain == nil {
+		t.Error("the gone row lost its chain facts: the marking must not strip the row's own shape")
+	}
+}
+
+// TestAdminStatusGoneRowSkipsContactAndPropagates pins the propagation half:
+// the gone row contributes nothing to LastSeen (so last_contact never comes
+// from it), the marking survives FlatStatus and the status document, and the
+// other owners' rows and label order are untouched.
+func TestAdminStatusGoneRowSkipsContactAndPropagates(t *testing.T) {
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	s := newAdminServer(t, now)
+	seen := now.Add(-2 * time.Hour)
+
+	// carol owns only a chain whose members are gone: her owner row exists,
+	// her contact does not, and she still sorts between alice and the end.
+	idC := enrol(t, s, "carol")
+	rtC := ownerRuntime(t, s, idC)
+	saveMemberlessChain(t, rtC, "board-23")
+
+	idA := enrol(t, s, "alice")
+	saveOwnerBinding(t, s, idA, "app-a", func(b *store.Binding) {
+		b.Serve = &store.ServeFacts{LastSeen: seen}
+	})
+
+	owners, _, err := AdminStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("AdminStatus with a gone row: %v", err)
+	}
+	if len(owners) != 2 {
+		t.Fatalf("got %d owners, want 2", len(owners))
+	}
+	if owners[0].Label != "alice" || owners[1].Label != "carol" {
+		t.Fatalf("owners = [%s %s], want [alice carol]: label order is preserved", owners[0].Label, owners[1].Label)
+	}
+	if !owners[0].LastSeen.Equal(seen) {
+		t.Errorf("alice LastSeen = %v, want %v", owners[0].LastSeen, seen)
+	}
+	if !owners[1].LastSeen.IsZero() {
+		t.Errorf("carol LastSeen = %v, want the zero time: a gone row is not contact", owners[1].LastSeen)
+	}
+
+	doc := StatusDocument(owners, remote.BuildersView{})
+	if doc.LastContact == nil || !doc.LastContact.Equal(seen) {
+		t.Errorf("LastContact = %v, want %v from the live row alone", doc.LastContact, seen)
+	}
+	if doc.Owners[1].LastSeen != nil {
+		t.Errorf("carol last_seen = %v, want null: her only row is gone", doc.Owners[1].LastSeen)
+	}
+	if blob, err := json.Marshal(doc); err != nil {
+		t.Fatalf("Marshal: %v", err)
+	} else if !strings.Contains(string(blob), `"gone":true`) {
+		t.Errorf("the status document does not carry the gone marking:\n%s", blob)
+	}
+
+	flat, err := FlatStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("FlatStatus with a gone row: %v", err)
+	}
+	var goneSeen, liveSeen int
+	for _, r := range flat.Bindings {
+		switch r.Name {
+		case "board-23":
+			goneSeen++
+			if !r.Gone {
+				t.Error("FlatStatus dropped the gone marking")
+			}
+		case "app-a":
+			liveSeen++
+			if r.Gone {
+				t.Error("FlatStatus marked a live row gone")
+			}
+		}
+	}
+	if goneSeen != 1 || liveSeen != 1 {
+		t.Errorf("FlatStatus rows = %+v, want one gone chain row and one live row", flat.Bindings)
+	}
+}
+
+// TestAdminStatusLoadFailureStillFails pins the other arm of the gone-row
+// tolerance: a Load failure that is not store.ErrNotFound still fails the whole
+// verb, exactly as it did before. Store.read refuses a name that cannot be a
+// binding before it reads any record, so a chain row named outside the binding
+// name space produces ErrInvalidName -- a real non-NotFound failure, and the
+// reason the tolerance cannot be "ignore whatever Load says".
+func TestAdminStatusLoadFailureStillFails(t *testing.T) {
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	s := newAdminServer(t, now)
+	id := enrol(t, s, "alice")
+	saveOwnerBinding(t, s, id, "app-a")
+	rt := ownerRuntime(t, s, id)
+	saveMemberlessChain(t, rt, "Board_23")
+
+	_, _, err := AdminStatus(context.Background(), s)
+	if err == nil {
+		t.Fatal("AdminStatus with an unloadable row = nil, want the non-NotFound failure to propagate")
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		t.Errorf("AdminStatus error = %v, want a non-NotFound failure, not the gone-row tolerance", err)
+	}
+	if !errors.Is(err, store.ErrInvalidName) {
+		t.Errorf("AdminStatus error = %v, want it to wrap store.ErrInvalidName", err)
 	}
 }
 
