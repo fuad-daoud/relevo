@@ -7,6 +7,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
+// TmpDirEnv names the variables that decide where a child puts its temporary
+// files. A runner with a TmpDir points both at it unless the caller or the
+// inherited environment already chose one, so parallel builds keep their
+// scratch off a shared system temp instead of filling a shared quota.
+var TmpDirEnv = []string{"TMPDIR", "GOTMPDIR"}
+
 // DeniedEnv names the variables relevo never passes to a child it spawns. They
 // are relevo's own -- a secret and its identities -- not the harness's, which
 // needs its provider credentials; a user who wants a builder to hold one sets
@@ -52,6 +58,32 @@ func goMaxProcsEnv(parent, extra []string, scope *spawn.ScopeSpec) []string {
 		return nil
 	}
 	return []string{"GOMAXPROCS=" + strconv.Itoa(n)}
+}
+
+// tmpDirEnv returns the temp-dir entries a child needs and the names those
+// entries replace in the parent. Each name is decided on its own: an extra that
+// already sets it wins, then a non-empty inherited value is left alone, and
+// only a name nothing sets takes dir. An empty dir defaults nothing, so a
+// runner without one keeps its children's environment untouched.
+//
+// The entry is appended after the parent's and the name is denied there, so the
+// child's only copy is the default: a parent carrying an empty "TMPDIR=" would
+// otherwise reach the child first and win a first-match reader.
+func tmpDirEnv(parent, extra []string, dir string) (add, deny []string) {
+	if dir == "" {
+		return nil, nil
+	}
+	for _, name := range TmpDirEnv {
+		if hasEnvName(extra, name) {
+			continue
+		}
+		if v, ok := envLookup(parent, name); ok && v != "" {
+			continue
+		}
+		add = append(add, name+"="+dir)
+		deny = append(deny, name)
+	}
+	return add, deny
 }
 
 // hasEnvName reports whether env carries name, matching as ChildEnv's deny does.

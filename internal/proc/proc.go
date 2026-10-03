@@ -53,6 +53,14 @@ type Runner struct {
 	// KillGrace is the SIGTERM-to-SIGKILL grace; zero means DefaultKillGrace.
 	KillGrace time.Duration
 
+	// TmpDir is where a child's temporary files go when nothing else names a
+	// directory: TmpDirEnv each default to it, and an extra that already sets
+	// one, or a non-empty inherited value, wins instead. Zero means no default,
+	// which leaves a caller's own environment exactly as it was. It is a
+	// directory the child can already write -- the state root's own temp dir,
+	// or the tenant's, never a root-owned one the child cannot enter.
+	TmpDir string
+
 	// probeMu guards the probe state below: one probe on the first scoped
 	// Start, retried after a failure at least ScopeReprobeAfter later.
 	probeMu sync.Mutex
@@ -138,15 +146,16 @@ func buildArgv(spec spawn.ProcSpec, bin string) []string {
 
 // buildCmd assembles the exec.Cmd for a spec resolved against bin: the argv,
 // the working directory, the filtered child environment and the process
-// attributes. It is pure -- no file is opened and no process started -- so the
-// credential and environment rules can be pinned without spawning. Start sets
-// the stdout and stderr file handles the caller opened; everything else about
-// the command is decided here.
-func buildCmd(spec spawn.ProcSpec, bin string) *exec.Cmd {
+// attributes. tmpDir is the runner's default temporary directory, empty for a
+// runner that names none. It is pure -- no file is opened and no process
+// started -- so the credential and environment rules can be pinned without
+// spawning. Start sets the stdout and stderr file handles the caller opened;
+// everything else about the command is decided here.
+func buildCmd(spec spawn.ProcSpec, bin, tmpDir string) *exec.Cmd {
 	argv := buildArgv(spec, bin)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = spec.Dir
-	cmd.Env = spawnEnv(os.Environ(), spec.Env, spec.Scope, spec.DenyEnv)
+	cmd.Env = spawnEnv(os.Environ(), spec.Env, spec.Scope, spec.DenyEnv, tmpDir)
 	cmd.Stdin = nil
 	cmd.SysProcAttr = sysProcAttr(spec)
 	return cmd
@@ -181,7 +190,7 @@ func (r *Runner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHand
 	defer func() { _ = streamf.Close() }()
 
 	spec = r.resolveScope(ctx, spec)
-	cmd := buildCmd(spec, bin)
+	cmd := buildCmd(spec, bin, r.TmpDir)
 	cmd.Stdout = streamf
 	cmd.Stderr = logf
 	if err := cmd.Start(); err != nil {
@@ -290,13 +299,16 @@ func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.Pr
 	return spec
 }
 
-// spawnEnv adds the GOMAXPROCS and fsmonitor entries and filters the parent so
-// the child sees exactly one of each; the full-slice expressions copy, so the
-// caller's Env array, the DeniedEnv var and the spec's DenyEnv are never
-// written in place. specDeny names extra variables the spec itself refuses.
-func spawnEnv(parent, extra []string, scope *spawn.ScopeSpec, specDeny []string) []string {
+// spawnEnv adds the GOMAXPROCS, temp-dir and fsmonitor entries and filters the
+// parent so the child sees exactly one of each; the full-slice expressions
+// copy, so the caller's Env array, the DeniedEnv var and the spec's DenyEnv are
+// never written in place. specDeny names extra variables the spec itself
+// refuses, and tmpDir is the runner's default temporary directory.
+func spawnEnv(parent, extra []string, scope *spawn.ScopeSpec, specDeny []string, tmpDir string) []string {
 	add := goMaxProcsEnv(parent, extra, scope)
+	tmpAdd, tmpDeny := tmpDirEnv(parent, extra, tmpDir)
 	env := append(extra[:len(extra):len(extra)], add...)
+	env = append(env[:len(env):len(env)], tmpAdd...)
 	env = append(env[:len(env):len(env)], gitNoFsmonitorEnv(parent, env)...)
 
 	deny := append(DeniedEnv[:len(DeniedEnv):len(DeniedEnv)], specDeny...)
@@ -304,6 +316,7 @@ func spawnEnv(parent, extra []string, scope *spawn.ScopeSpec, specDeny []string)
 	if len(add) > 0 {
 		deny = append(deny[:len(deny):len(deny)], "GOMAXPROCS")
 	}
+	deny = append(deny[:len(deny):len(deny)], tmpDeny...)
 	return ChildEnv(parent, deny, env)
 }
 

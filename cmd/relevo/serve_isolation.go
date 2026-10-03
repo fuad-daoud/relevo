@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // containerLookPath resolves the container runtime at startup. It is a var so a
@@ -19,13 +20,34 @@ import (
 // deterministic.
 var containerLookPath = exec.LookPath
 
-// resolveIsolation parses the configured serve.isolation and wraps the process
-// runner in its boundary. A mode this build cannot run, a mode the running euid
+// serveProcRunner is the process runner a server's children start through. Its
+// temp directory is the machine state root's own, not the serve root's: user
+// mode overrides it per owner with a tenant-writable directory (applyTenant),
+// and container mode keeps it out of the container entirely, since
+// ContainerArgv passes only the spec's own entries.
+func serveProcRunner(stateRoot string) (*proc.Runner, error) {
+	dir, err := store.TempDir(stateRoot)
+	if err != nil {
+		return nil, err
+	}
+	r := proc.New()
+	r.TmpDir = dir
+	return r, nil
+}
+
+// resolveIsolation parses the configured serve.isolation and wraps its boundary
+// around the base runner. A mode this build cannot run, a mode the running euid
 // cannot serve, an unknown value, or a container mode whose runtime is not
 // installed is returned as an error naming serve.isolation, so cmdServeRun can
 // refuse it with not_available before any side effect: fail closed, never start
-// and warn.
-func resolveIsolation(raw string, euid int) (spawn.Runner, isolate.Mode, error) {
+// and warn. The base runner is built here from the machine state root, already
+// carrying its tmp dir, so the caller passes one string and the wrap order
+// (base before boundary) cannot be reordered by accident.
+func resolveIsolation(raw string, euid int, stateRoot string) (spawn.Runner, isolate.Mode, error) {
+	base, err := serveProcRunner(stateRoot)
+	if err != nil {
+		return nil, "", err
+	}
 	mode, err := isolate.Parse(raw)
 	if err != nil {
 		return nil, "", err
@@ -38,7 +60,7 @@ func resolveIsolation(raw string, euid int) (spawn.Runner, isolate.Mode, error) 
 			return nil, mode, fmt.Errorf("serve.isolation=container requires podman: install podman and ensure it is on PATH")
 		}
 	}
-	runner, err := isolate.Wrap(proc.New(), mode)
+	runner, err := isolate.Wrap(base, mode)
 	if err != nil {
 		return nil, mode, err
 	}

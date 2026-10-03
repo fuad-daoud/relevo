@@ -427,7 +427,7 @@ func (s *Server) applyTenant(root string, st *store.Store, rt *relevo.Runtime) {
 	owner := ownerIDOf(root)
 	t, err := s.tenantFor(owner)
 	if b, ok := s.cfg.Runner.(isolate.Boundary); ok {
-		rt.Runner = b.ForTenant(t, err)
+		rt.Runner = withTmpDir(b.ForTenant(t, err), s.ownerTmpDir(root))
 	} else {
 		// User mode runs every builder under a tenant boundary. Production
 		// wraps the runner in resolveIsolation, so a runner that is not one is

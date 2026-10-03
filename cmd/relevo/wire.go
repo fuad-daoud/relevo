@@ -488,9 +488,15 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		return relevo.Runtime{}, err
 	}
 
+	// The runner's children keep their temp files under the same state tmp dir
+	// the transport writes bundles into, so a parallel round never fills the
+	// system temp a serve daemon happens to inherit.
+	runner := proc.New()
+	runner.TmpDir = tmpDir
+
 	rt := relevo.Runtime{
 		Git:            gitClient,
-		Runner:         proc.New(),
+		Runner:         runner,
 		Store:          st,
 		Candidates:     L.Candidates,
 		Accounts:       L.Accounts,
