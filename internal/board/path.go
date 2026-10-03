@@ -14,6 +14,10 @@ const DefaultScene = "docs/boards/board.excalidraw"
 // collide with a future subverb name.
 const sceneExt = ".excalidraw"
 
+// SceneExt is the Excalidraw scene extension, so a caller can route a path to
+// the legacy flow without repeating the literal.
+func SceneExt() string { return sceneExt }
+
 // Resolve turns arg into the scene path the server reads and writes. An empty
 // arg is the repo default, under repoRoot. A named path is resolved against
 // cwd and must end in .excalidraw; after symlinks are resolved on its deepest
