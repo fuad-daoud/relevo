@@ -86,6 +86,30 @@ func TestWaitOutcome(t *testing.T) {
 		}
 	})
 
+	t.Run("marked close carrying a gate result is WaitClosed (0)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "gate=pass"},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
+		if got != want {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("marked close carrying a stopped note is WaitClosed (0)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Path: "/x/001-report.md", Note: "stopped"},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
+		if got != want {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
 	t.Run("marked report with Outcome: halted is WaitHalted (5)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
