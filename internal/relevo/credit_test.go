@@ -141,8 +141,12 @@ func TestReconcileHeadlessCreditExhaustedNoReportGatesUntilCleared(t *testing.T)
 		if !strings.Contains(strings.ToLower(sw[0].Note), "credit") {
 			t.Errorf("switch note = %q, want it to keep the credit cause", sw[0].Note)
 		}
-		if got.BuilderCandidate != testClaudeRef {
-			t.Errorf("BuilderCandidate = %q, want %q: the gated provider is skipped, the candidate is not excluded", got.BuilderCandidate, testClaudeRef)
+		// The gate lands on the provider, and claude shares that provider, so
+		// the replacement is agy -- the one builder on a provider the empty
+		// balance says nothing about. This is what makes an until-cleared gate
+		// usable: it skips exactly the provider that ran out.
+		if got.BuilderCandidate != "agy/other/m" {
+			t.Errorf("BuilderCandidate = %q, want agy/other/m: the gated provider is skipped, the candidate is not excluded", got.BuilderCandidate)
 		}
 	})
 
