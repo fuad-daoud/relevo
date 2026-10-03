@@ -259,7 +259,14 @@
   // The click is captured: the default action and propagation are both stopped,
   // so a board's own link does not navigate and the board's own handlers never
   // see the click. Outside comment mode nothing is captured at all.
+  //
+  // A click on our own pin is let through to the pin's own handler. This
+  // listener is in the capture phase, so stopping propagation here would
+  // swallow the pin's click before it ever reached the pin -- the pin would be
+  // drawn and unclickable.
   function onClick(e) {
+    var el = e.target;
+    if (el && el.closest && el.closest(".relevo-pin")) return;
     e.preventDefault();
     e.stopPropagation();
     pick(e.target, e.clientX, e.clientY);
