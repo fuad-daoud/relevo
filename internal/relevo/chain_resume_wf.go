@@ -34,6 +34,20 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err := closeDeadMemberRound(ctx, rt, c); err != nil {
 		return ChainResult{}, err
 	}
+	// A legacy chain row written before custom chains carries no workflow:
+	// convert it onto the engine through the pure conversion before reading
+	// its definition. A row that cannot convert is halted with the conversion
+	// failure and left without a workflow, so chainWorkflowDef keeps the refusal.
+	if len(c.WorkflowJSON) == 0 {
+		if err := convertLegacyChain(rt, c.Name); err != nil {
+			return ChainResult{}, err
+		}
+		reloaded, err := rt.Store.Chain(c.Name)
+		if err != nil {
+			return ChainResult{}, err
+		}
+		c = reloaded
+	}
 	def, err := chainWorkflowDef(c)
 	if err != nil {
 		return ChainResult{}, err
