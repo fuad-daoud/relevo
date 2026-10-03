@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -98,6 +99,105 @@ func TestWorkflowLocalRepairSeedNamesTheCheckLog(t *testing.T) {
 	}
 	if !strings.Contains(text, "FAIL the thing") {
 		t.Errorf("the repair seed does not carry the log tail:\n%s", text)
+	}
+}
+
+// TestWorkflowDirtyWriterCloseDoesNotAdvance pins the dirty gate: a writer
+// member that closes done with uncommitted work still sitting in the tree it
+// owns does not carry that work forward as a completed round. The chain halts,
+// and the halt reason names the snapshot ref that holds the work and the diff
+// key the store sealed, so the next builder finds evidence rather than a
+// mystery.
+func TestWorkflowDirtyWriterCloseDoesNotAdvance(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+	fg.dirtyResult = true
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	c := flowChainRow(t, rt)
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.Awaiting.Step == "review" {
+		t.Errorf("the chain advanced to review over an uncommitted tree: status %s", c.Status)
+	}
+	if c.Status != string(workflow.StatusHalted) {
+		t.Fatalf("status = %s (%q), want halted: a dirty done close must not advance", c.Status, c.Reason)
+	}
+	for _, want := range []string{
+		fmt.Sprintf("refs/relevo/shop/round-%d", 1),
+		rt.Store.DiffPath("shop", 1),
+	} {
+		if !strings.Contains(c.Reason, want) {
+			t.Errorf("halt reason %q does not name %s", c.Reason, want)
+		}
+	}
+}
+
+// TestWorkflowCleanWriterCloseStillAdvances pins the other half of the dirty
+// gate: a clean close advances exactly as it did before the gate existed.
+func TestWorkflowCleanWriterCloseStillAdvances(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	c := flowChainRow(t, rt)
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.Awaiting.Step != "review" || st.Awaiting.Member != "assistant" {
+		t.Errorf("awaiting = %+v, want review/assistant from a clean close", st.Awaiting)
+	}
+	if c.Status != string(workflow.StatusRunning) {
+		t.Errorf("status = %s (%q), want running", c.Status, c.Reason)
+	}
+}
+
+// TestWorkflowDirtyReaderCloseKeepsItsRules pins the gate's scope: a reader
+// close keeps its own rules, so a dirty scratch tree next to it says nothing
+// about the round and does not halt its chain.
+func TestWorkflowDirtyReaderCloseKeepsItsRules(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
+	fg.dirtyResult = true
+
+	chainReaderClose(t, rt, "shop-assistant", chainVerdictBody("pass"))
+
+	if got := flowChainRow(t, rt); got.Status != string(workflow.StatusDone) {
+		t.Errorf("status = %s (%q), want done: the gate is the writer's alone", got.Status, got.Reason)
+	}
+}
+
+// TestWorkflowDirtyGateNeverReadsAGitErrorAsClean pins the git-error arm: a
+// dirty read that fails is not a clean tree, so the close does not advance on
+// the guess. The reason says the tree could not be read rather than claiming it
+// held nothing.
+func TestWorkflowDirtyGateNeverReadsAGitErrorAsClean(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	startFlowChain(t, rt, flowReviewWorkflow)
+	fg.dirtyErr = errors.New("git: cannot read the index")
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusHalted) {
+		t.Fatalf("status = %s (%q), want halted: an unreadable tree is not a clean one", c.Status, c.Reason)
+	}
+	if strings.Contains(c.Reason, "nothing") {
+		t.Errorf("halt reason %q reads an unreadable tree as a clean one", c.Reason)
 	}
 }
 
