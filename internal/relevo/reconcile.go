@@ -704,6 +704,16 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		}
 	}
 
+	// The switches this round took, one line each, after the diff and before
+	// the usage the entry carries. A switch is status, not a delivery: nothing
+	// is queued for one, so this line is the only trace of it the mastermind
+	// gets, and it rides the report that would have been delivered anyway.
+	// A round that never switched appends nothing, so its payload is exactly
+	// what it was before this existed.
+	for _, line := range switchLines(entries, closedRound) {
+		payload = payload + "\n" + line
+	}
+
 	// The closed round's usage: what the caller measured (a remote
 	// binding's server measured its own round and shipped it), or a local
 	// read when the caller sent none. entryUsage's type is inferred from
