@@ -11,14 +11,26 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// Pull is pullPending for in-process readers: the cockpit's round view calls it
-// with route "tui" when it opens a binding whose report is ready for the human
-// mastermind, so the text it returns is shown and the entry is marked delivered
-// to the TUI rather than to `relevo wait`; `relevo show`'s live branch calls it
-// with route "show" and discards the text, so a plain read confirms the payload
-// instead of leaving it to be pushed afterwards.
+// Pull claims the oldest claimable mastermind payload for name with route,
+// unconditionally, and returns the text it carried. It is the in-process
+// reader's own claim: a caller that has printed one specific payload uses
+// PullMatching instead, so a read that printed something else cannot consume it.
 func Pull(ctx context.Context, st *store.Store, name, route string) (text string, found bool, err error) {
-	return pullPending(ctx, st, name, route)
+	return pullMatching(ctx, st, name, route, nil)
+}
+
+// PullMatching is Pull's conditional form: it claims the oldest claimable
+// mastermind payload for name with route only when match accepts that entry,
+// and answers found false without confirming anything when it does not. The
+// claimable scan is unchanged, so an entry a push route already admitted is
+// still not claimable here and an older undelivered entry still comes first --
+// a read may confirm a payload, never reorder or bypass the queue.
+//
+// match is the caller's answer to "did this read print that entry?", so a
+// reader that printed one section claims only the payload that section is.
+// A nil match accepts every entry, which is what Pull passes.
+func PullMatching(ctx context.Context, st *store.Store, name, route string, match func(store.LogEntry) bool) (text string, found bool, err error) {
+	return pullMatching(ctx, st, name, route, match)
 }
 
 // busyRetryDelays is the backoff retryBusy sleeps between attempts when a
@@ -47,19 +59,24 @@ func retryBusy(ctx context.Context, delays []time.Duration, sleep func(time.Dura
 	return err
 }
 
-// pullPending returns the oldest pending entry's text for name and marks it
-// delivered with route, WITHOUT pushing anything. It is what the removed pull
-// verb did, and the helper `relevo wait` calls once its round has ended: the
-// CLI prints the result to stdout and the mastermind reads it as tool output.
+// pullMatching returns the oldest claimable entry's text for name and marks it
+// delivered with route, WITHOUT pushing anything -- but only when match accepts
+// that entry. A nil match claims it unconditionally, which is what the removed
+// pull verb did and what the helper `relevo wait` calls once its round has
+// ended: the CLI prints the result to stdout and the mastermind reads it as
+// tool output.
 //
 // The text is PushText(entry, <name's binding>, st.ReadFile): the stored payload (origin
 // line first) plus a blank line plus the report file's text, capped at
-// MaxPushBytes. found is false when nothing is pending.
+// MaxPushBytes. found is false when nothing is pending and when match rejects
+// the entry, so a rejecting caller confirms nothing and reads no text.
 //
 // The lock and confirm step is wrapped in retryBusy: other relevo processes
 // and the daemon hold the database concurrently, so a busy begin is retried
-// with a short backoff rather than failing the delivery outright.
-func pullPending(ctx context.Context, st *store.Store, name, route string) (text string, found bool, err error) {
+// with a short backoff rather than failing the delivery outright. The match
+// decision runs inside the lock, on the entry the scan just returned, so what
+// is decided and what is confirmed cannot come apart.
+func pullMatching(ctx context.Context, st *store.Store, name, route string, match func(store.LogEntry) bool) (text string, found bool, err error) {
 	var entry store.LogEntry
 
 	// Same critical section as DeliverPending: the daemon may be delivering
@@ -71,6 +88,9 @@ func pullPending(ctx context.Context, st *store.Store, name, route string) (text
 				return err
 			}
 			if !ok {
+				return nil
+			}
+			if match != nil && !match(pending) {
 				return nil
 			}
 			if err := tx.ConfirmIndex(name, idx, route); err != nil {

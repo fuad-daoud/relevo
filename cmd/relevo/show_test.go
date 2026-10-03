@@ -368,9 +368,10 @@ func claimedRoute(t *testing.T, s *store.Store, name string) (string, bool) {
 	return "", false
 }
 
-// TestShowPeekFlagLeavesPendingMasterMindPayload pins #673's verb: a plain
-// `show --report` claims the binding's pending payload with route "show", and
-// `show --report --peek` prints the same section but leaves it pending. Both
+// TestShowPeekFlagLeavesPendingMasterMindPayload pins the verb's claim rule:
+// `show --report` prints the pending report and claims that very payload with
+// route "show", `show --report --peek` prints the same section but claims
+// nothing, and a section that is not the report claims nothing either. Both
 // are store-only: no harness, no network.
 func TestShowPeekFlagLeavesPendingMasterMindPayload(t *testing.T) {
 	t.Run("plain report claims with show's route", func(t *testing.T) {
@@ -397,6 +398,18 @@ func TestShowPeekFlagLeavesPendingMasterMindPayload(t *testing.T) {
 		}
 		if route, confirmed := claimedRoute(t, s, name); confirmed {
 			t.Errorf("show --report --peek confirmed the pending payload (route %q); want it left pending", route)
+		}
+	})
+
+	t.Run("another section leaves the report pending", func(t *testing.T) {
+		const name = "showpeekother"
+		s := seedShowPendingStore(t, name)
+
+		if _, _, err := captureOutput(t, func() error { return run([]string{"show", name, "--prompt"}) }); err != nil {
+			t.Fatalf("show --prompt: %v", err)
+		}
+		if route, confirmed := claimedRoute(t, s, name); confirmed {
+			t.Errorf("show --prompt confirmed the pending report payload (route %q); want it left pending", route)
 		}
 	})
 }

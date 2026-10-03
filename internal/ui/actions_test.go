@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -52,7 +53,6 @@ type fakeActions struct {
 	sends    []sendCall
 	binds    []BindInput
 	retries  []retryCall
-	pulls    []string
 	candRole []string // the roles Candidates was asked for
 
 	candidates []string // what Candidates returns
@@ -61,9 +61,6 @@ type fakeActions struct {
 	// The scripted per-chain traces the trace view reads, by chain name.
 	chainTraces map[string]relevo.ChainTraceDoc
 	traceErr    error
-	pullText    string
-	pullOK      bool
-	pullErr     error
 
 	// The config views (round 2): the scripted stored doc and its error,
 	// plus the edits and probes the view made.
@@ -185,11 +182,6 @@ func (f *fakeActions) Bind(_ context.Context, in BindInput) Result {
 func (f *fakeActions) Retry(_ context.Context, key, candidate string) Result {
 	f.retries = append(f.retries, retryCall{key: key, candidate: candidate})
 	return f.result
-}
-
-func (f *fakeActions) Pull(_ context.Context, key string) (string, bool, error) {
-	f.pulls = append(f.pulls, key)
-	return f.pullText, f.pullOK, f.pullErr
 }
 
 func (f *fakeActions) Candidates(role string) []string {
@@ -1034,17 +1026,32 @@ func TestLastPlannedRound(t *testing.T) {
 	}
 }
 
-func TestReportReadyRowAndPull(t *testing.T) {
-	fa := &fakeActions{pullText: "round 3 report\n\nall good\n", pullOK: true}
+// TestReportReadyRowOpensReportTabWithoutClaiming pins the cockpit's
+// non-claiming read: a row whose report is ready still opens on its report tab
+// with the report in it, and the payload that report came from is still pending
+// afterwards -- the human view reads, and only a delivery confirms.
+func TestReportReadyRowOpensReportTabWithoutClaiming(t *testing.T) {
+	const name = "atlas"
+	st := store.New(t.TempDir())
+	if err := st.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 4, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := st.AppendLog(name, store.LogEntry{
+		TS: railNow, Round: 3, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		Payload: "round 3 report\n\nall good\n", Path: st.ReportPath(name, 3),
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	fa := &fakeActions{}
 	b := view.BindingStatus{
-		Name: "atlas", Round: 3, Display: "ACTIVE", MasterMindName: "you",
+		Name: name, Round: 4, PlanRound: 3, Display: "ACTIVE", MasterMindName: "you",
 		Last:    &view.LastEvent{TS: railNow.Add(-3 * time.Minute), Round: 3, Kind: store.KindReport},
 		Pending: &view.PendingInfo{Round: 3, Kind: store.KindReport},
 	}
-	// The post-pull refetch must still answer with the row: a store with no
-	// bindings would read as "atlas is gone" and pop the round view.
+	// The refetch the round view issues must still answer with the row: a store
+	// with no bindings would read as "atlas is gone" and pop the round view.
 	rep := view.Report{Bindings: []view.BindingStatus{b}}
-	st := store.New(t.TempDir())
 	m := newModel(context.Background(), fixedSource{rt: relevo.Runtime{Store: st}, rep: rep},
 		Options{Interval: time.Second, Actions: fa})
 	m.now = func() time.Time { return railNow }
@@ -1053,7 +1060,7 @@ func TestReportReadyRowAndPull(t *testing.T) {
 	m.statusInFlight = false
 	res, _ = m.Update(statusMsg{report: rep})
 	m = res.(Model)
-	m = pointer(t, m, "atlas")
+	m = pointer(t, m, name)
 
 	if !reportReady(m.report.Bindings[0]) {
 		t.Fatal("a you-mastermind row with a pending payload is report ready")
@@ -1067,18 +1074,25 @@ func TestReportReadyRowAndPull(t *testing.T) {
 
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = drain(t, res.(Model), cmd)
-	if len(fa.pulls) != 1 || fa.pulls[0] != "atlas" {
-		t.Fatalf("pulls = %v, want exactly one atlas", fa.pulls)
-	}
 	rv, ok := m.top().(roundView)
 	if !ok {
 		t.Fatalf("enter must open the round view, got %T", m.top())
 	}
 	if rv.pane.detail.active != tabReport {
-		t.Errorf("the pulled report must be shown in the report tab")
+		t.Errorf("a report-ready round must open on the report tab, got %v", rv.pane.detail.active)
 	}
 	if got := rv.pane.detail.cache[tabReport].body; !strings.Contains(got, "all good") {
-		t.Errorf("report tab body = %q, want the pulled text", got)
+		t.Errorf("report tab body = %q, want the report", got)
+	}
+
+	// The cockpit read claimed nothing: the payload is still there for the
+	// route that pushes it.
+	text, found, err := delivery.Pull(context.Background(), st, name, "wait")
+	if err != nil || !found {
+		t.Fatalf("Pull after opening a report-ready round = found %v, err %v; want the payload still pending", found, err)
+	}
+	if !strings.Contains(text, "round 3 report") {
+		t.Errorf("Pull text = %q, want round 3's payload", text)
 	}
 }
 

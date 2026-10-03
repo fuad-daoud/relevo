@@ -14,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -34,13 +33,11 @@ type Actions interface {
 	Ungate(ctx context.Context, subject string) Result
 	Shell(key string) (*exec.Cmd, error) // a shell in the binding's tree
 
-	// Round 2: the acts that need a file (send, retry), a new binding
-	// (bind), or the human mastermind's pending report (pull, via the fleet
-	// row's report-ready state, §4.5).
+	// Round 2: the acts that need a file (send, retry) or a new binding
+	// (bind).
 	Send(ctx context.Context, key, planFile string) Result
 	Bind(ctx context.Context, in BindInput) Result
 	Retry(ctx context.Context, key, candidate string) Result
-	Pull(ctx context.Context, key string) (text string, ok bool, err error)
 	Candidates(role string) []string // names, in the role's order
 	Chains(ctx context.Context) (relevo.ChainsDoc, error)
 	// ChainTrace is one chain's ordered trace rows, read the same way for a
@@ -428,16 +425,6 @@ func plannedRound(base string) (int, bool) {
 	return n, true
 }
 
-// Pull takes the human mastermind's pending payload for key, delivered with the
-// TUI's own route: the cockpit shows it in the round view's report tab.
-func (a *mastermindActions) Pull(ctx context.Context, key string) (string, bool, error) {
-	rt, name, ok := a.resolve(key)
-	if !ok {
-		return "", false, errors.New("unknown binding")
-	}
-	return delivery.Pull(ctx, rt.Store, name, "tui")
-}
-
 // Candidates is a role's candidate names in the role's order (§4.5): what the
 // bind and retry prompts cycle through. A role the registry does not know has
 // none.
@@ -553,23 +540,6 @@ type stderrMsg struct{ line string }
 // workingMsg marks one action in flight, so the footer can show it until its
 // actionMsg arrives (§4.3).
 type workingMsg struct{ verb, key string }
-
-// pullMsg is what a Pull in flight returns: the report the human mastermind was
-// waiting for, or why there is none (§4.5).
-type pullMsg struct {
-	key  string
-	text string
-	ok   bool
-	err  error
-}
-
-// pullCmd takes the human mastermind's pending report off the update loop.
-func pullCmd(ctx context.Context, a Actions, key string) tea.Cmd {
-	return func() tea.Msg {
-		text, ok, err := a.Pull(ctx, key)
-		return pullMsg{key: key, text: text, ok: ok, err: err}
-	}
-}
 
 // openOverlayMsg asks the shell to show an overlay (§3).
 type openOverlayMsg struct{ ov overlay }

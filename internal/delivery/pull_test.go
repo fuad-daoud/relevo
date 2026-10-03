@@ -14,7 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestPullPendingReturnsAndMarksDelivered: pullPending hands back the oldest
+// TestPullPendingReturnsAndMarksDelivered: Pull hands back the oldest
 // pending payload and confirms it with the route it was given -- the helper
 // `relevo wait` calls with route "wait".
 func TestPullPendingReturnsAndMarksDelivered(t *testing.T) {
@@ -23,15 +23,15 @@ func TestPullPendingReturnsAndMarksDelivered(t *testing.T) {
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
-	payload, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
+	payload, found, err := Pull(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
-		t.Fatalf("pullPending: %v", err)
+		t.Fatalf("Pull: %v", err)
 	}
 	if !found || payload == "" {
-		t.Fatalf("pullPending found=%v payload=%q, want the queued report", found, payload)
+		t.Fatalf("Pull found=%v payload=%q, want the queued report", found, payload)
 	}
 	if _, still, err := rt.Store.PendingForMasterMind("webshop"); err != nil || still {
-		t.Errorf("pullPending must confirm what it returns (still pending=%v err=%v)", still, err)
+		t.Errorf("Pull must confirm what it returns (still pending=%v err=%v)", still, err)
 	}
 }
 
@@ -41,21 +41,21 @@ func TestPullPendingWithNothingPending(t *testing.T) {
 
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
-	if _, _, err := pullPending(context.Background(), rt.Store, "webshop", "wait"); err != nil {
-		t.Fatalf("first pullPending: %v", err)
+	if _, _, err := Pull(context.Background(), rt.Store, "webshop", "wait"); err != nil {
+		t.Fatalf("first Pull: %v", err)
 	}
 
-	payload, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
+	payload, found, err := Pull(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
-		t.Fatalf("second pullPending: %v", err)
+		t.Fatalf("second Pull: %v", err)
 	}
 	if found || payload != "" {
-		t.Errorf("second pullPending = (%q, %v), want nothing pending", payload, found)
+		t.Errorf("second Pull = (%q, %v), want nothing pending", payload, found)
 	}
 }
 
 // TestPullPendingSkipsAdmitted pins the reader's half of exactly-once: an entry
-// a push route already admitted is not claimable, so pullPending prints nothing
+// a push route already admitted is not claimable, so Pull prints nothing
 // and leaves it unconfirmed for the deliverer's own read-back.
 func TestPullPendingSkipsAdmitted(t *testing.T) {
 	t.Parallel()
@@ -67,12 +67,12 @@ func TestPullPendingSkipsAdmitted(t *testing.T) {
 		t.Fatalf("AdmitIndex: %v", err)
 	}
 
-	payload, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
+	payload, found, err := Pull(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
-		t.Fatalf("pullPending: %v", err)
+		t.Fatalf("Pull: %v", err)
 	}
 	if found || payload != "" {
-		t.Fatalf("pullPending = (%q, %v), want nothing: the entry is admitted", payload, found)
+		t.Fatalf("Pull = (%q, %v), want nothing: the entry is admitted", payload, found)
 	}
 
 	text, found, err := PullPendingThrough(context.Background(), rt.Store, "webshop", "wait", 0)
@@ -94,7 +94,7 @@ func TestPullPendingSkipsAdmitted(t *testing.T) {
 	}
 }
 
-// TestPullPendingMarksDeliveredRoute: pullPending marks the entry delivered
+// TestPullPendingMarksDeliveredRoute: Pull marks the entry delivered
 // with the route the caller passed -- "wait" from Wait.
 func TestPullPendingMarksDeliveredRoute(t *testing.T) {
 	t.Parallel()
@@ -102,8 +102,8 @@ func TestPullPendingMarksDeliveredRoute(t *testing.T) {
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
-	if _, _, err := pullPending(context.Background(), rt.Store, "webshop", "wait"); err != nil {
-		t.Fatalf("pullPending: %v", err)
+	if _, _, err := Pull(context.Background(), rt.Store, "webshop", "wait"); err != nil {
+		t.Fatalf("Pull: %v", err)
 	}
 
 	entries, err := rt.Store.ReadLog("webshop")
@@ -120,7 +120,7 @@ func TestPullPendingMarksDeliveredRoute(t *testing.T) {
 }
 
 // seedPendingReport saves an active binding and one unconfirmed mastermind-bound
-// entry with the caller's Path and Kind, so pullPending's expansion (PushText)
+// entry with the caller's Path and Kind, so Pull's expansion (PushText)
 // is exercised against a file the test owns. seedPending's own entry points at
 // the literal /tmp/report.md, which may exist on a developer machine.
 //
@@ -153,7 +153,7 @@ func seedPendingReport(t *testing.T, rt Deps, name, path string, kind store.Kind
 	return b
 }
 
-// TestPullPendingPrintsReportText: pullPending returns the pointer payload
+// TestPullPendingPrintsReportText: Pull returns the pointer payload
 // followed by a blank line and the report file's own text, so the mastermind
 // needs no second read.
 func TestPullPendingPrintsReportText(t *testing.T) {
@@ -166,18 +166,18 @@ func TestPullPendingPrintsReportText(t *testing.T) {
 	}
 	seedPendingReport(t, rt, "webshop", path, store.KindReport)
 
-	text, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
+	text, found, err := Pull(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
-		t.Fatalf("pullPending: %v", err)
+		t.Fatalf("Pull: %v", err)
 	}
 	if !found {
-		t.Fatal("pullPending found nothing, want the queued report")
+		t.Fatal("Pull found nothing, want the queued report")
 	}
 	if !strings.HasPrefix(text, "round 1 report\n\n") {
-		t.Errorf("pullPending text = %q, want it to start with the payload and a blank line", text)
+		t.Errorf("Pull text = %q, want it to start with the payload and a blank line", text)
 	}
 	if !strings.Contains(text, "line two") {
-		t.Errorf("pullPending text = %q, want it to carry the report's own text", text)
+		t.Errorf("Pull text = %q, want it to carry the report's own text", text)
 	}
 
 	entries, err := rt.Store.ReadLog("webshop")
@@ -203,17 +203,17 @@ func TestPullPendingCapsReportText(t *testing.T) {
 	}
 	seedPendingReport(t, rt, "webshop", path, store.KindReport)
 
-	text, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
+	text, found, err := Pull(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
-		t.Fatalf("pullPending: %v", err)
+		t.Fatalf("Pull: %v", err)
 	}
 	if !found {
-		t.Fatal("pullPending found nothing, want the queued report")
+		t.Fatal("Pull found nothing, want the queued report")
 	}
 
 	want := fmt.Sprintf("[truncated at %d KiB -- full text: relevo show webshop --round 1 --report]", MaxPushBytes/1024)
 	if !strings.Contains(text, want) {
-		t.Errorf("pullPending text does not carry the truncation tail %q:\n%s", want, text)
+		t.Errorf("Pull text does not carry the truncation tail %q:\n%s", want, text)
 	}
 	if len(text) >= MaxPushBytes+len("round 1 report")+200 {
 		t.Errorf("len(text) = %d, want less than %d", len(text), MaxPushBytes+len("round 1 report")+200)
@@ -230,15 +230,15 @@ func TestPullPendingUnreadableReportFallsBackToPayload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing-report.md")
 	seedPendingReport(t, rt, "webshop", path, store.KindReport)
 
-	text, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
+	text, found, err := Pull(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
-		t.Fatalf("pullPending: %v", err)
+		t.Fatalf("Pull: %v", err)
 	}
 	if !found {
-		t.Fatal("pullPending found nothing, want the queued report")
+		t.Fatal("Pull found nothing, want the queued report")
 	}
 	if text != "round 1 report" {
-		t.Errorf("pullPending text = %q, want the bare payload", text)
+		t.Errorf("Pull text = %q, want the bare payload", text)
 	}
 
 	entries, err := rt.Store.ReadLog("webshop")
@@ -248,6 +248,94 @@ func TestPullPendingUnreadableReportFallsBackToPayload(t *testing.T) {
 	last := entries[len(entries)-1]
 	if !last.Confirmed || last.Route != "wait" {
 		t.Errorf("entry = confirmed:%v route:%q, want confirmed with route=wait", last.Confirmed, last.Route)
+	}
+}
+
+// TestPullMatchingClaimsOnlyWhatMatchAccepts pins the conditional claim: the
+// same fixture as an unconditional Pull, with a match that accepts nothing.
+// Nothing is confirmed, nothing is returned, and the entry is still claimable
+// afterwards by a reader that accepts it.
+func TestPullMatchingClaimsOnlyWhatMatchAccepts(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedPendingReport(t, rt, "webshop", "", store.KindReport)
+
+	never := func(store.LogEntry) bool { return false }
+	text, found, err := PullMatching(context.Background(), rt.Store, "webshop", "show", never)
+	if err != nil {
+		t.Fatalf("PullMatching: %v", err)
+	}
+	if found || text != "" {
+		t.Errorf("PullMatching with a rejecting match = (%q, %v), want nothing", text, found)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && e.Confirmed {
+			t.Fatal("a rejecting match must confirm nothing")
+		}
+	}
+
+	// The entry survived: a reader that does accept it claims it as before.
+	always := func(store.LogEntry) bool { return true }
+	if _, found, err := PullMatching(context.Background(), rt.Store, "webshop", "show", always); err != nil || !found {
+		t.Errorf("PullMatching with an accepting match = found %v, err %v; want the payload", found, err)
+	}
+}
+
+// TestPullMatchingNeverReordersTheQueue pins that a conditional claim is still
+// the oldest claimable entry or nothing: with rounds 1 and 2 pending and a match
+// that accepts only round 2, the read confirms nothing rather than skipping
+// ahead to the entry it accepts.
+func TestPullMatchingNeverReordersTheQueue(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	dir := t.TempDir()
+	paths := []string{filepath.Join(dir, "001-report.md"), filepath.Join(dir, "002-report.md")}
+	for i, p := range paths {
+		if err := os.WriteFile(p, []byte(fmt.Sprintf("round %d body\n", i+1)), 0o644); err != nil {
+			t.Fatalf("write round %d report: %v", i+1, err)
+		}
+	}
+	seedPendingRounds(t, rt, "webshop", []int{1, 2}, paths)
+
+	round2Only := func(e store.LogEntry) bool { return e.Round == 2 }
+	if _, found, err := PullMatching(context.Background(), rt.Store, "webshop", "show", round2Only); err != nil || found {
+		t.Errorf("PullMatching accepting round 2 = found %v, err %v; want nothing: round 1 comes first", found, err)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && e.Confirmed {
+			t.Fatal("a conditional claim must not skip the older payload")
+		}
+	}
+}
+
+// TestPullMatchingSkipsAdmitted pins that the admit exclusion outranks the
+// match: an entry a push route admitted is not claimable, so even a match that
+// accepts it confirms nothing.
+func TestPullMatchingSkipsAdmitted(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedPendingReport(t, rt, "webshop", "", store.KindReport)
+	if err := rt.Store.AdmitIndex("webshop", 0); err != nil {
+		t.Fatalf("AdmitIndex: %v", err)
+	}
+
+	always := func(store.LogEntry) bool { return true }
+	text, found, err := PullMatching(context.Background(), rt.Store, "webshop", "show", always)
+	if err != nil || found || text != "" {
+		t.Errorf("PullMatching on an admitted entry = (%q, %v, %v), want nothing", text, found, err)
 	}
 }
 
@@ -418,7 +506,7 @@ func TestPullPendingThroughDeliversEarlierAndWaited(t *testing.T) {
 }
 
 // TestPullPendingThroughSingleIsUnchanged: with only one pending report,
-// PullPendingThrough returns exactly what pullPending returns for the same
+// PullPendingThrough returns exactly what Pull returns for the same
 // fixture -- a single delivery is untouched by the through-round path.
 func TestPullPendingThroughSingleIsUnchanged(t *testing.T) {
 	t.Parallel()
@@ -443,15 +531,15 @@ func TestPullPendingThroughSingleIsUnchanged(t *testing.T) {
 		t.Fatal("PullPendingThrough found nothing, want the single pending report")
 	}
 
-	pulled, found, err := pullPending(context.Background(), pullRT.Store, "webshop", "wait")
+	pulled, found, err := Pull(context.Background(), pullRT.Store, "webshop", "wait")
 	if err != nil {
-		t.Fatalf("pullPending: %v", err)
+		t.Fatalf("Pull: %v", err)
 	}
 	if !found {
-		t.Fatal("pullPending found nothing, want the same pending report")
+		t.Fatal("Pull found nothing, want the same pending report")
 	}
 
 	if through != pulled {
-		t.Errorf("pullPendingThrough = %q, want it to equal pullPending's %q", through, pulled)
+		t.Errorf("pullPendingThrough = %q, want it to equal Pull's %q", through, pulled)
 	}
 }

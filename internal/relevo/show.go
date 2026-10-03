@@ -128,17 +128,18 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 		if err != nil {
 			return ShowResult{}, err
 		}
-		// #673: a non-peek live read claims the oldest pending
-		// mastermind-bound payload with route "show", so nothing is pushed
-		// afterwards that this read already printed. The pulled text is
-		// discarded -- the caller asked for the section -- and the claim runs
-		// only once the section resolved: a failed read must not consume a
-		// payload. A failed claim is the show error, because a silent failure
-		// would leave the payload to be pushed after it was read. --peek
-		// skips the claim, and the archived and database branches below never
-		// claim: nothing is pending there.
+		// A non-peek live read claims the pending mastermind-bound payload it
+		// printed, and nothing else: the claim runs only once the section
+		// resolved, and only when claimPrinted accepts what was printed, so a
+		// failed read consumes no payload and a read of some other section
+		// confirms nothing. The pulled text is discarded -- the caller asked
+		// for the section. A failed claim is the show error, because a silent
+		// failure would leave the payload to be pushed after it was read.
+		// --peek skips the claim, and the archived and database branches below
+		// never claim: nothing is pending there.
 		if !opts.Peek {
-			if _, _, perr := delivery.Pull(ctx, rt.Store, opts.Name, "show"); perr != nil {
+			if _, _, perr := delivery.PullMatching(ctx, rt.Store, opts.Name, "show",
+				claimPrinted(opts.Section, res)); perr != nil {
 				return ShowResult{}, perr
 			}
 		}

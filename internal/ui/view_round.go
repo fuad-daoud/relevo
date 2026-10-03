@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -50,11 +49,14 @@ func newRoundView(env Env, key string, round int) (View, tea.Cmd) {
 			cmd = tea.Batch(cmd, c)
 		}
 	}
-	// Opening a binding whose report is ready is what delivers it to the
-	// human at this cockpit (§4.5): one Pull, and the report tab shows what
-	// it returns.
-	if b := row(env.Report, key); b != nil && reportReady(*b) && env.Actions != nil {
-		cmd = tea.Batch(cmd, pullCmd(env.Ctx, env.Actions, key))
+	// A binding whose report is ready is opened on its report tab, which the
+	// pane reads like any other tab. That read is non-claiming: the cockpit is
+	// the human's own view, so opening a round leaves the payload pending for
+	// the route that pushes it.
+	if b := row(env.Report, key); b != nil && reportReady(*b) {
+		p.detail.active = tabReport
+		p.fillViewport()
+		cmd = tea.Batch(cmd, p.reportFetch())
 	}
 	return roundView{pane: p, actions: env.Actions != nil}, cmd
 }
@@ -441,36 +443,6 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		r.pane.tabInFlight = false
 		r.pane = r.pane.onTab(msg)
 		return r, nil
-
-	case pullMsg:
-		// The report the human mastermind was owed (§4.5): shown in the report
-		// tab, with the fleet refetched so the binding stops reading "report
-		// ready". A reply for another binding is stale and dropped.
-		if msg.key != r.pane.detail.name {
-			return r, nil
-		}
-		if msg.err != nil {
-			return r, notice(msg.err.Error())
-		}
-		if !msg.ok {
-			return r, nil
-		}
-		// The source line shows when the report arrived, from the row's
-		// LastPayload; without a matching report payload the time is unknown.
-		at := time.Time{}
-		if b := row(env.Report, r.pane.detail.name); b != nil &&
-			b.LastPayload != nil &&
-			b.LastPayload.Direction == store.DirToMasterMind &&
-			b.LastPayload.Kind == store.KindReport &&
-			b.LastPayload.Round == r.pane.detail.round {
-			at = b.LastPayload.TS
-		}
-		r.pane.detail.cache[tabReport] = tabContent{
-			loaded: true, body: msg.text, round: r.pane.detail.round, at: at,
-		}
-		r.pane.detail.active = tabReport
-		r.pane.fillViewport()
-		return r, fetchStatus(r.pane.ctx, r.pane.src)
 
 	case tea.WindowSizeMsg:
 		r.pane.width = env.Width
