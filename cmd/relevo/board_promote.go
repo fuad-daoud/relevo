@@ -84,9 +84,16 @@ func cmdBoardPromote(args []string) error {
 
 	live := filepath.Join(liveDir, name, "board.html")
 	dst := filepath.Join(repoRoot, "docs", "boards", slug, "board.html")
-	if err := board.Promote(live, dst, *v.force); err != nil {
+	copiedAnnotations, err := board.PromoteWithAnnotations(live, dst, *v.force)
+	if err != nil {
 		return boardRefusal(err)
 	}
 	fmt.Printf("board: promoted %s -> %s\n", live, dst)
+	// A second line only when there was an annotations file to copy, so the
+	// common case stays one line and the notes are never silently dropped.
+	if copiedAnnotations {
+		fmt.Printf("board: promoted %s -> %s\n",
+			board.AnnotationsPath(live), board.AnnotationsPath(dst))
+	}
 	return nil
 }

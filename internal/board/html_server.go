@@ -31,17 +31,36 @@ type HTMLServer struct {
 	Name      string
 	Host      string
 	Shell     fs.FS
+
+	// annotations is the write window for POST /api/annotations. It is unexported
+	// because it is not configuration: two servers over one board get two
+	// mutexes, which is the same limitation a lock file would not have had.
+	annotations annotationLock
+}
+
+// shellScripts is the allowlist of shell scripts the server will serve. Each
+// entry names a file this package embeds, so the server reads nothing the
+// allowlist did not name.
+var shellScripts = map[string]bool{
+	"shell.js":    true,
+	"comments.js": true,
+	"overlay.js":  true,
 }
 
 // boardDoc is GET /api/board's body. Html is a string rather than raw JSON
 // because the payload is HTML, and null is the honest "no board yet" value.
+// Annotations is [] rather than null even when there are none, so the shell
+// never has to tell "no notes" from "notes not loaded yet".
 type boardDoc struct {
-	Html     string   `json:"html"`
-	Etag     string   `json:"etag"`
-	IsNew    bool     `json:"isNew"`
-	Scope    Scope    `json:"scope"`
-	Name     string   `json:"name"`
-	External []string `json:"external"`
+	Html             string       `json:"html"`
+	Etag             string       `json:"etag"`
+	Annotations      []Annotation `json:"annotations"`
+	AnnotationsEtag  string       `json:"annotationsEtag"`
+	AnnotationsError string       `json:"annotationsError"`
+	IsNew            bool         `json:"isNew"`
+	Scope            Scope        `json:"scope"`
+	Name             string       `json:"name"`
+	External         []string     `json:"external"`
 }
 
 // Handler returns the board's handler: the shell at "/" and under one owner
@@ -50,7 +69,10 @@ type boardDoc struct {
 func (s *HTMLServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/board", s.handleBoard)
+	mux.HandleFunc("/api/annotations", s.handleAnnotations)
 	mux.HandleFunc("/shell.js", s.handleShellScript)
+	mux.HandleFunc("/comments.js", s.handleShellScript)
+	mux.HandleFunc("/overlay.js", s.handleShellScript)
 	mux.HandleFunc("/", s.handleIndex)
 
 	return boardGuard{host: s.Host, csp: htmlSecurityHeaders}.wrap(mux)
@@ -76,12 +98,25 @@ func (s *HTMLServer) handleBoard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	annotations, annEtag, annErr := boardAnnotations(s.BoardPath)
+
+	// The shell polls with the etags it already holds. Both matching is the only
+	// way to get 204: a new board re-renders the frame and a new annotations
+	// file redraws the pins, and each of those needs the whole document.
+	if annotationsUnchanged(r, etag, annEtag) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	doc := boardDoc{
-		Etag:     etag,
-		IsNew:    isNew,
-		Scope:    s.Scope,
-		Name:     s.Name,
-		External: ExternalRefs(data),
+		Etag:             etag,
+		Annotations:      annotations,
+		AnnotationsEtag:  annEtag,
+		AnnotationsError: annErr,
+		IsNew:            isNew,
+		Scope:            s.Scope,
+		Name:             s.Name,
+		External:         ExternalRefs(data),
 	}
 	if !isNew {
 		doc.Html = string(data)
@@ -106,10 +141,17 @@ func (s *HTMLServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// handleShellScript serves the shell's script, with no token for the same
-// reason the page needs none: it runs before the fragment is read.
+// handleShellScript serves the shell's scripts, with no token for the same
+// reason the page needs none: they run before the fragment is read. The set is
+// a fixed allowlist rather than the request's own path, so a name this server
+// does not ship cannot be probed for through it.
 func (s *HTMLServer) handleShellScript(w http.ResponseWriter, r *http.Request) {
-	data, err := fs.ReadFile(s.shell(), "shell.js")
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	if !shellScripts[name] {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := fs.ReadFile(s.shell(), name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

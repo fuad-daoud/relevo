@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/board"
+	// Aliased because the tests below hold locals named board, which would
+	// otherwise shadow the package.
+	boardpkg "github.com/fuad-daoud/relevo/internal/board"
 )
 
 // promoteEnv isolates the state root, seeds one MasterMind and gives a repo
@@ -17,7 +19,7 @@ func promoteEnv(t *testing.T, name string) (repo, liveBoard string) {
 	t.Helper()
 	repo = withTempRepoRoot(t)
 	liveRoot, liveDir := boardHTMLEnv(t)
-	if err := board.WritePointer(liveDir, name); err != nil {
+	if err := boardpkg.WritePointer(liveDir, name); err != nil {
 		t.Fatalf("WritePointer: %v", err)
 	}
 	liveBoard = seedBoardHTML(t, liveDir, []byte("<h1>"+name+"</h1>"))
@@ -59,7 +61,7 @@ func TestBoardPromoteHonoursBoardFlagAndTo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(liveDir, "other", "board.html"), []byte("<h1>other</h1>"), 0o644); err != nil {
 		t.Fatalf("write other board: %v", err)
 	}
-	if err := board.WritePointer(liveDir, "api"); err != nil {
+	if err := boardpkg.WritePointer(liveDir, "api"); err != nil {
 		t.Fatalf("WritePointer: %v", err)
 	}
 
@@ -77,7 +79,7 @@ func TestBoardPromoteHonoursBoardFlagAndTo(t *testing.T) {
 	}
 	// Promoting is not opening: the pointer still names the board the user is
 	// looking at.
-	name, present, err := board.Pointer(liveDir)
+	name, present, err := boardpkg.Pointer(liveDir)
 	if err != nil || !present || name != "api" {
 		t.Errorf("pointer = %q/%v/%v, want api/true/nil -- promote must not write it", name, present, err)
 	}
@@ -207,4 +209,103 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatalf("read captured stdout: %v", err)
 	}
 	return string(out)
+}
+
+// boardpkgAnnotationsPath is the annotations file beside an HTML board.
+func boardpkgAnnotationsPath(board string) string { return boardpkg.AnnotationsPath(board) }
+
+// boardpkgWriteAnnotations writes an annotations file beside a board.
+func boardpkgWriteAnnotations(t *testing.T, board, body string) {
+	t.Helper()
+	if err := os.WriteFile(boardpkgAnnotationsPath(board), []byte(body), 0o600); err != nil {
+		t.Fatalf("write annotations: %v", err)
+	}
+}
+
+// promoteLiveBoard seeds a live board under a given name and returns the live
+// board's path, for the annotations promotion tests below.
+func promoteLiveBoard(t *testing.T, liveRoot, id, name string) (liveDir, board string) {
+	t.Helper()
+	return liveHTMLBoardFor(t, liveRoot, id, name)
+}
+
+// TestBoardPromotePrintsAnnotationsLine pins the second success line: when the
+// source had an annotations file, promote says so, naming both paths, so a
+// person can see the notes came along without opening the repo.
+func TestBoardPromotePrintsAnnotationsLine(t *testing.T) {
+	liveRoot := boardStateRoot(t)
+	repoRoot := withTempRepoRoot(t)
+	id := "mm_aaaaaaaaaaaa"
+	t.Setenv("RELEVO_MASTERMIND", id)
+	_, live := promoteLiveBoard(t, liveRoot, id, "api")
+	boardpkgWriteAnnotations(t, live,
+		`[{"id":"a1","selector":"#hero","x":0.5,"y":0.5,"text":"hi","by":"human","at":"2026-10-01T00:00:00Z"}]`)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return cmdBoardPromote([]string{"--board", "api", "--to", "api"})
+	})
+	if err != nil {
+		t.Fatalf("board promote: %v", err)
+	}
+	dst := filepath.Join(repoRoot, "docs", "boards", "api", "board.html")
+	wantSecond := "board: promoted " + boardpkgAnnotationsPath(live) +
+		" -> " + boardpkgAnnotationsPath(dst) + "\n"
+	if !strings.HasSuffix(string(stdout), wantSecond) {
+		t.Errorf("stdout = %q, want it to end with %q", stdout, wantSecond)
+	}
+	// The first line is still the board's own, unchanged.
+	first, _, _ := strings.Cut(string(stdout), "\n")
+	if !strings.HasPrefix(first, "board: promoted ") || !strings.HasSuffix(first, dst) {
+		t.Errorf("first line = %q, want the board promotion line", first)
+	}
+}
+
+// TestBoardPromotePrintsOneLineWithoutAnnotations pins that the second line is
+// not printed when there was nothing to copy: an unconditional second line would
+// name a file that does not exist.
+func TestBoardPromotePrintsOneLineWithoutAnnotations(t *testing.T) {
+	liveRoot := boardStateRoot(t)
+	withTempRepoRoot(t)
+	id := "mm_aaaaaaaaaaaa"
+	t.Setenv("RELEVO_MASTERMIND", id)
+	_, live := promoteLiveBoard(t, liveRoot, id, "api")
+
+	stdout, _, err := captureOutput(t, func() error {
+		return cmdBoardPromote([]string{"--board", "api", "--to", "api"})
+	})
+	if err != nil {
+		t.Fatalf("board promote: %v", err)
+	}
+	if got := strings.Count(string(stdout), "\n"); got != 1 {
+		t.Errorf("stdout = %q, want exactly one line", stdout)
+	}
+	if !strings.HasPrefix(string(stdout), "board: promoted "+live) {
+		t.Errorf("stdout = %q, want the board promotion line", stdout)
+	}
+}
+
+// TestBoardPromotePromotesTheAnnotationsOnDisk pins the effect rather than the
+// line: the repo board has its notes beside it after the promotion.
+func TestBoardPromotePromotesTheAnnotationsOnDisk(t *testing.T) {
+	liveRoot := boardStateRoot(t)
+	repoRoot := withTempRepoRoot(t)
+	id := "mm_aaaaaaaaaaaa"
+	t.Setenv("RELEVO_MASTERMIND", id)
+	_, live := promoteLiveBoard(t, liveRoot, id, "api")
+	boardpkgWriteAnnotations(t, live,
+		`[{"id":"a1","selector":"#hero","x":0.5,"y":0.5,"text":"hi","by":"human","at":"2026-10-01T00:00:00Z"}]`)
+
+	if _, _, err := captureOutput(t, func() error {
+		return cmdBoardPromote([]string{"--board", "api", "--to", "api"})
+	}); err != nil {
+		t.Fatalf("board promote: %v", err)
+	}
+	dst := filepath.Join(repoRoot, "docs", "boards", "api", "board.html")
+	got, err := os.ReadFile(boardpkgAnnotationsPath(dst))
+	if err != nil {
+		t.Fatalf("read promoted annotations: %v", err)
+	}
+	if !strings.Contains(string(got), `"text":"hi"`) {
+		t.Errorf("promoted annotations = %q, want the note", got)
+	}
 }

@@ -139,7 +139,7 @@ func TestShellRendersBoardsAsUTF8(t *testing.T) {
 // TestExternalRefsOnOurOwnShell is the offline check applied to the shell this
 // package embeds: the served page must itself have no external reference.
 func TestExternalRefsOnOurOwnShell(t *testing.T) {
-	for _, name := range []string{"index.html", "shell.js"} {
+	for _, name := range []string{"index.html", "shell.js", "comments.js", "overlay.js"} {
 		data, err := readShellFile(name)
 		if err != nil {
 			t.Fatalf("read shell %s: %v", name, err)

@@ -284,9 +284,11 @@ gives a MasterMind a name of your own.
   live board's URL and `relevo board promote` copies a live board into the repo.
   Foreground; Ctrl-C stops. See "relevo board" below.
 - `relevo board comments [path|--board NAME] [--json]` — list every comment in the
-  resolved scene in scene order (`id, x, y, text, by, at`); `--json` is one compact
-  array. `relevo board comment [path|--board NAME] --text S [--x X --y Y] [--by B]`
-  — append one comment element, leaving every other byte of the scene unchanged.
+  resolved board. On an HTML board that is `annotations.json`, one row per entry
+  (`id, selector, x, y, text, by, at`); on an explicit `.excalidraw` path it is the
+  scene, in scene order (`id, x, y, text, by, at`); `--json` is one compact array.
+  `relevo board comment [path|--board NAME] --text S [--selector SEL [--x X --y Y]]
+  [--by B]` — append one comment, leaving every other byte of the board unchanged.
   See "relevo board" below.
 - `relevo board text <file> [--json]`, `relevo board annotate <file> --text S
   [--x X --y Y]` — list the scene's text elements, or append one without
@@ -1253,8 +1255,10 @@ relevo board url                                   prints a live board's URL
 relevo board promote                               copies a live board into the repo
 relevo board docs/boards/api.excalidraw            edits a named Excalidraw scene
 relevo board --theme blueprint                     a palette for new scene elements
-relevo board comments                              lists a scene's comments
+relevo board comments                              lists a board's comments
 relevo board comment --text "check state 3"        appends one comment
+relevo board comment --text "too tight" --selector '#pricing' --x 0.5 --y 0.25
+                                                    a comment about one element
 relevo board text docs/boards/api.excalidraw       lists the scene's text elements
 relevo board annotate docs/boards/api.excalidraw --text "step 1"
                                                    appends one text element
@@ -1288,12 +1292,18 @@ the load. A missing `board.html` is not an error; the shell says there is no
 board at that path yet, and nothing is created until you save one.
 
 `relevo board promote [--board NAME] [--mastermind M] [--to SLUG] [--force]`
-copies a live board into `<repo>/docs/boards/<SLUG>/board.html`, atomically.
-`--to` renames it; `--force` overwrites an existing repo board. A missing source
-and an existing target without `--force` are both refused (exit 2) naming what to
-do about it; a bad slug and a run outside a repository are usage. It is a peek
-verb: no daemon, no server, and no pointer write -- promoting is not opening, so
-the pointer still names the board you are looking at.
+copies a live board into `<repo>/docs/boards/<SLUG>/board.html`, atomically, and
+with it the `annotations.json` beside the source when there is one -- a second
+line `board: promoted <src> -> <dst>` names that copy. `--to` renames it;
+`--force` overwrites an existing repo board and its annotations. A missing source,
+an existing target without `--force`, an existing target `annotations.json`
+without `--force`, and a symlinked source `annotations.json` are all refused
+(exit 2) naming what to do about it; both targets are checked before either file
+is written, so a refused promotion writes nothing. `--force` from a source with
+no `annotations.json` removes a stale target one, so a promoted board never
+inherits another board's comments. A bad slug and a run outside a repository are
+usage. It is a peek verb: no daemon, no server, and no pointer write -- promoting
+is not opening, so the pointer still names the board you are looking at.
 
 A running live board writes `server.json` (`scene`, `url`, `port`, `pid`,
 `started_at`) beside the board and removes it on shutdown only while it is still
@@ -1311,23 +1321,86 @@ An explicit `.excalidraw` path opens the
 [Excalidraw](https://excalidraw.com) whiteboard instead, with `--theme` choosing
 the palette for new elements.
 
-`relevo board comments [path|--board NAME] [--json]` reads the resolved scene
-and prints every comment in scene order -- `id, x, y, text, by, at` -- one
-tab-separated row each, or one compact JSON array with `--json` (`[]` when
-there are none). A comment is a text element carrying
-`customData.relevo` `{comment: true, by, at}`; both writers use the theme's
-`comment` colour and `by` distinguishes them. `relevo board comment
-[path|--board NAME] --text S [--x X --y Y] [--by B]` appends one comment, at
-`--x`/`--y` when both are given and otherwise below the scene's bounds so it
-never lands on a drawing, authored by `--by` (default `RELEVO_MASTERMIND`, else
-`human`); every other byte of the scene is unchanged. A missing scene is a new
-one carrying the comment for `comment`, and simply no comments for `comments`.
-A malformed marker, or a file that is not a scene, is `refused` (exit 2) naming
-the element or the path; an author that is empty, longer than 64 bytes or holds
-a control character is `usage` (exit 2). Both verbs resolve like `relevo board`
+An HTML board's comments live in `annotations.json` beside `board.html`, never
+inside it: the board's own bytes are never rewritten when someone comments on it.
+The file is a JSON array with one entry per line and it only ever grows -- an
+append splices a new line in before the closing `]` and rewrites no existing
+entry, so formatting and any key a given reader does not know survive. A
+symlinked `annotations.json` is refused, and reads are capped at the board's own
+cap. An entry is `id` (`a` plus 12 hex characters from `crypto/rand`, unique
+within the file), `selector`, `x`, `y`, `text`, `by`, `at` (RFC3339); unknown
+fields are tolerated, and a file that is not a JSON array, or an entry with no
+`id` or `by` or an `at` that is not RFC3339, is `refused` naming the path and,
+for an entry, its index and id.
+
+**Comment mode.** A **Comment** toggle in the shell bar turns it on. While it is
+on, hovering any element of the board outlines it and a click is captured -- the
+default action and propagation are both stopped, so the board's own links do not
+fire -- which opens a draft box in the shell. **Post** sends the draft. Turning
+comment mode off removes the listeners and the outline. A side list shows every
+entry in file order with its author, time and text; clicking a pin focuses its
+row and clicking a row focuses its pin. A pin whose element is gone is marked
+"element not found" rather than dropped, and pins reposition on scroll and
+resize. The outline is drawn with a negative `outline-offset` so it takes no part
+in layout: nothing reflows and a sibling's box does not move.
+
+The selector is built in a fixed order -- `[data-board-id="…"]` on the nearest
+ancestor carrying the attribute, else `#id` when that id is unique in the
+document, else a CSS path of `tag:nth-of-type(n)` steps from the nearest ancestor
+with an id or a `data-board-id`. `x` and `y` are fractions of that element's box,
+so a pin survives a resize. A selector that matches nothing, or throws, is an
+orphan: the note is still listed and still drawn in the corner.
+
+`relevo board comments [path|--board NAME] [--json]` reads
+`annotations.json` and prints every entry in file order -- `id, selector, x, y,
+text, by, at` -- one tab-separated row each, or one compact JSON array of
+`board.Annotation` with `--json` (`[]`, never `null`, when there are none).
+`relevo board comment [path|--board NAME] --text S [--selector SEL [--x X --y Y]]
+[--by B]` appends one entry and prints `comment: <id>  <annotations path>`.
+`--x`/`--y` go together and need `--selector`; `--selector` alone places the note
+at `0,0`; no `--selector` makes it a board-level note under a "board" heading,
+whose position is defined as `0,0`. `--selector` with an explicit `.excalidraw`
+path is `usage`, because a scene has no elements to select. A comment on an HTML
+board with no `board.html` is `refused` (exit 2) and creates nothing -- unlike
+the Excalidraw flow, which still makes a new scene. `text` must be non-empty and
+at most 8192 bytes, `selector` at most 1024 bytes with no control characters, and
+`x`/`y` finite and within `[0,1]`; an author that is empty, longer than 64 bytes
+or holds a control character is `usage`. Both verbs resolve like `relevo board`
 and are peek verbs: no daemon, no database, and `comments` never writes the
-pointer. Comments are flat -- no replies, resolve, delete or thread -- and the
-CLI never deletes.
+pointer.
+
+A bare `board comment`/`board comments` -- no path, `--board`, or the pointer --
+targets the HTML board. An explicit `…/board.html` path does too. An explicit
+`.excalidraw` path keeps the scene flow byte for byte: a comment there is a text
+element carrying `customData.relevo` `{comment: true, by, at}`, placed at
+`--x`/`--y` when both are given and otherwise below the scene's bounds so it
+never lands on a drawing; every other byte of the scene is unchanged, and a
+missing scene becomes a new one carrying the comment.
+
+The page polls `GET /api/board` every two seconds and pauses while the tab is
+hidden. A clean page applies the change: a new board etag re-renders the frame
+and a new annotations etag redraws the pins. When a draft is open the page shows
+"the board changed on disk -- your draft is kept; apply to take the update" with
+an **Apply** button, and keeps the draft; a stale post is `409` and shows the same
+banner. Nothing is ever merged into a draft. A malformed or symlinked
+`annotations.json` does not break the board: it is still served, byte for byte,
+with the notes empty and the reason in `annotationsError`.
+
+Hover, click and pins run inside the board's frame, because the frame is sandboxed
+without `allow-same-origin` and the shell cannot reach into it. The shell splices
+the overlay into the board's HTML text in memory, just before it builds the blob:
+nothing is injected on disk, and `GET /api/board` returns the file's bytes exactly.
+The overlay can post a pick but cannot write a note -- only the shell's draft box
+posts, only the shell holds the token, and the shell accepts a frame message only
+when its source is the frame's own `contentWindow`, because a board's own scripts
+share that frame. The token is never sent into the frame.
+
+**A known limit.** Within one server process the read-compare-write window is
+guarded by a mutex and a compare-and-swap, so two overlapping posts cannot both
+pass the same `If-Match`. Across processes there is no lock: a CLI append and a
+page post landing in the same instant can still lose one of the two. `windows/amd64`
+is a CI target, so `syscall.Flock` is not an option and this slice adds no lock
+file.
 
 Both formats are confined the same way. A repo path must end in `/board.html`
 (or `.excalidraw`), its parent directory must be a board slug, and after symlinks

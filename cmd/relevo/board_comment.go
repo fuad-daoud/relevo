@@ -29,22 +29,29 @@ func boardCommentsFlagSet(fs *flag.FlagSet) *boardCommentsFlagValues {
 	return v
 }
 
-// boardCommentFlagValues holds the pointers `board comment` parses into.
+// boardCommentFlagValues holds the pointers `board comment` parses into. The
+// selector is defined by the HTML flag set, which is the branch that uses it;
+// both sets are installed here so the registry's parity test finds one
+// installer per verb on either branch.
 type boardCommentFlagValues struct {
-	board *string
-	text  *string
-	x     *float64
-	y     *float64
-	by    *string
+	board    *string
+	text     *string
+	selector *string
+	x        *float64
+	y        *float64
+	by       *string
 }
 
-// boardCommentFlagSet defines `board comment`'s flags on fs.
+// boardCommentFlagSet defines `board comment`'s flags on fs. The two sets carry
+// the same names, so which one owns a flag is decided by the branch below rather
+// than by the registry.
 func boardCommentFlagSet(fs *flag.FlagSet) *boardCommentFlagValues {
 	v := &boardCommentFlagValues{}
-	v.board = fs.String("board", "", "the live scene name to write (default: the pointer, else board)")
+	v.board = fs.String("board", "", "the live board name to write (default: the pointer, else board)")
 	v.text = fs.String("text", "", "the comment text (required)")
-	v.x = fs.Float64("x", 0, "the comment's x position, with --y (default: below the scene)")
-	v.y = fs.Float64("y", 0, "the comment's y position, with --x (default: below the scene)")
+	v.selector = fs.String("selector", "", "the CSS selector the comment is about (HTML boards only)")
+	v.x = fs.Float64("x", 0, "the comment's x, a fraction of the element's box or a scene x, with --y")
+	v.y = fs.Float64("y", 0, "the comment's y, a fraction of the element's box or a scene y, with --x")
 	v.by = fs.String("by", "", "the comment's author (default: RELEVO_MASTERMIND, else human)")
 	return v
 }
@@ -53,6 +60,14 @@ func boardCommentFlagSet(fs *flag.FlagSet) *boardCommentFlagValues {
 // one compact JSON array with --json, otherwise one tab-separated row each. It
 // is read-only: a missing scene is no comments, exit 0, nothing created, and
 // the pointer is never written.
+// cmdBoardComments prints every comment in the resolved scene in scene order:
+// one compact JSON array with --json, otherwise one tab-separated row each. It
+// is read-only: a missing scene is no comments, exit 0, nothing created, and
+// the pointer is never written.
+//
+// An explicit .excalidraw path keeps the Excalidraw flow byte for byte. Every
+// other shape -- no path, --board, or the pointer -- is an HTML board, so a bare
+// call reads annotations.json rather than creating a scene.
 func cmdBoardComments(args []string) error {
 	fs := flag.NewFlagSet("relevo board comments", flag.ContinueOnError)
 	v := boardCommentsFlagSet(fs)
@@ -70,6 +85,10 @@ func cmdBoardComments(args []string) error {
 	arg := ""
 	if len(fs.Args()) == 1 {
 		arg = fs.Args()[0]
+	}
+	if !isExcalidrawArg(arg) {
+		hv := &boardCommentsHTMLFlagValues{board: v.board, json: v.json}
+		return cmdBoardCommentsHTML(cwd, arg, *v.board, hv)
 	}
 	res, err := resolveBoard(cwd, "", *v.board, arg)
 	if err != nil {
@@ -120,6 +139,14 @@ func cmdBoardComment(args []string) error {
 	if len(fs.Args()) == 1 {
 		arg = fs.Args()[0]
 	}
+	if !isExcalidrawArg(arg) {
+		return boardCommentToHTML(fs, cwd, arg, v)
+	}
+	// --selector names an element, and an Excalidraw scene has no elements to
+	// select, so the flag is refused rather than ignored.
+	if *v.selector != "" {
+		return fail(codeUsage, "relevo board comment: --selector needs an HTML board, not %s", arg)
+	}
 	res, err := resolveBoard(cwd, "", *v.board, arg)
 	if err != nil {
 		return err
@@ -149,6 +176,30 @@ func cmdBoardComment(args []string) error {
 	}
 	fmt.Printf("comment: %s  %s\n", c.ID, res.Path)
 	return nil
+}
+
+// boardCommentToHTML hands a comment off to the HTML branch. It lives apart from
+// cmdBoardComment so the Excalidraw body stays the body it was.
+func boardCommentToHTML(fs *flag.FlagSet, cwd, arg string, v *boardCommentFlagValues) error {
+	// A position needs an element to be a fraction of. --selector on its own
+	// defaults to 0,0; --x without --selector is a position with nothing to
+	// position against, which is a mistake rather than a silent default.
+	if (flagGiven(fs, "x") || flagGiven(fs, "y")) && *v.selector == "" {
+		return fail(codeUsage, "relevo board comment: --x and --y need --selector on an HTML board")
+	}
+	by := *v.by
+	if by == "" {
+		by = board.DefaultBy(os.Getenv("RELEVO_MASTERMIND"))
+	}
+	hv := &boardCommentHTMLFlagValues{
+		board:    v.board,
+		text:     v.text,
+		selector: v.selector,
+		x:        v.x,
+		y:        v.y,
+		by:       &by,
+	}
+	return cmdBoardCommentHTML(cwd, arg, *v.board, hv, *v.text)
 }
 
 // boardNumber renders one position without a trailing zero, for the text row.
