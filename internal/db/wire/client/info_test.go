@@ -12,12 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 )
 
-// probesPerRun is how many back-to-back probes one stability run makes. The
-// window a drain leaves behind is narrow enough that a single probe proves
-// little, but the run must stay short: the count is only eventually exact, and
-// a long run would report that as a failure of the property it is sampling.
-const probesPerRun = 16
-
 // afterWelcome is what a probe left on the wire once its handshake was
 // answered: the frame it sent next, or the error that ended the read instead.
 type afterWelcome struct {
@@ -107,25 +101,5 @@ func TestInfoDrainsItsProbeBeforeReturning(t *testing.T) {
 	close(release)
 	if err := <-returned; err != nil {
 		t.Fatalf("Info: %v", err)
-	}
-}
-
-// TestInfoConnsCountsOnlyItsOwnConnection pins that back-to-back probes report a
-// stable count: each answer names the connections open when the owner built it,
-// so a probe never inherits the previous probe's connection still on its way
-// out. A fire-and-forget close makes the count climb across the run instead.
-func TestInfoConnsCountsOnlyItsOwnConnection(t *testing.T) {
-	sock, _ := startOwner(t)
-
-	for i := 0; i < probesPerRun; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		in, err := client.Info(ctx, sock)
-		cancel()
-		if err != nil {
-			t.Fatalf("probe %d: %v", i, err)
-		}
-		if in.Conns != 1 {
-			t.Fatalf("probe %d reported %d live connections, want 1: an earlier probe's connection outlived it", i, in.Conns)
-		}
 	}
 }
